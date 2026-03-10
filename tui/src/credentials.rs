@@ -77,6 +77,8 @@ pub fn get_credential(provider: &ProviderInfo) -> Option<String> {
 }
 
 /// Delete a credential from the native keychain.
+///
+/// Reserved for future use by credential management UI (e.g. key rotation).
 #[allow(dead_code)]
 pub fn delete_credential(provider_key: &str) -> Result<(), String> {
     let entry = keyring::Entry::new(SERVICE_NAME, provider_key)

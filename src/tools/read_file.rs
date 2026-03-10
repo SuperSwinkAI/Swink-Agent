@@ -8,9 +8,7 @@ use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
 use crate::tool::{AgentTool, AgentToolResult};
-
-/// Maximum output size in bytes before truncation.
-const MAX_OUTPUT_BYTES: usize = 100 * 1024;
+use super::MAX_OUTPUT_BYTES;
 
 /// Built-in tool that reads a file and returns its contents.
 pub struct ReadFileTool {
@@ -76,11 +74,11 @@ impl AgentTool for ReadFileTool {
         Box::pin(async move {
             let parsed: Params = match serde_json::from_value(params) {
                 Ok(p) => p,
-                Err(e) => return AgentToolResult::error(format!("Invalid parameters: {e}")),
+                Err(e) => return AgentToolResult::error(format!("invalid parameters: {e}")),
             };
 
             if cancellation_token.is_cancelled() {
-                return AgentToolResult::error("Cancelled");
+                return AgentToolResult::error("cancelled");
             }
 
             match tokio::fs::read_to_string(&parsed.path).await {
@@ -92,7 +90,7 @@ impl AgentTool for ReadFileTool {
                     AgentToolResult::text(content)
                 }
                 Err(e) => AgentToolResult::error(format!(
-                    "Failed to read {}: {e}",
+                    "failed to read file {}: {e}",
                     parsed.path
                 )),
             }

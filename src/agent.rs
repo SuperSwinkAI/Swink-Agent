@@ -16,6 +16,7 @@ use futures::{Stream, StreamExt};
 use serde_json::Value;
 use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
+use tracing::{info, warn};
 
 use crate::error::HarnessError;
 use crate::loop_::{AgentEvent, AgentLoopConfig, agent_loop, agent_loop_continue};
@@ -151,7 +152,9 @@ impl AgentOptions {
             tools: Vec::new(),
             stream_fn,
             convert_to_llm: Arc::new(convert_to_llm),
-            transform_context: None,
+            transform_context: Some(Arc::new(crate::context::sliding_window(
+                100_000, 50_000, 2,
+            ))),
             get_api_key: None,
             retry_strategy: Box::new(DefaultRetryStrategy::default()),
             stream_options: StreamOptions::default(),
@@ -332,7 +335,7 @@ impl Agent {
     pub fn steer(&mut self, message: AgentMessage) {
         self.steering_queue
             .lock()
-            .expect("steering_queue poisoned")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .push(message);
     }
 
@@ -340,7 +343,7 @@ impl Agent {
     pub fn follow_up(&mut self, message: AgentMessage) {
         self.follow_up_queue
             .lock()
-            .expect("follow_up_queue poisoned")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .push(message);
     }
 
@@ -348,7 +351,7 @@ impl Agent {
     pub fn clear_steering(&mut self) {
         self.steering_queue
             .lock()
-            .expect("steering_queue poisoned")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clear();
     }
 
@@ -356,7 +359,7 @@ impl Agent {
     pub fn clear_follow_up(&mut self) {
         self.follow_up_queue
             .lock()
-            .expect("follow_up_queue poisoned")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clear();
     }
 
@@ -372,12 +375,12 @@ impl Agent {
         let steering_empty = self
             .steering_queue
             .lock()
-            .expect("steering_queue poisoned")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .is_empty();
         let follow_up_empty = self
             .follow_up_queue
             .lock()
-            .expect("follow_up_queue poisoned")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .is_empty();
         !steering_empty || !follow_up_empty
     }
@@ -387,6 +390,7 @@ impl Agent {
     /// Cancel the currently running loop, if any.
     pub fn abort(&mut self) {
         if let Some(ref token) = self.abort_controller {
+            info!("aborting agent loop");
             token.cancel();
         }
     }
@@ -454,7 +458,15 @@ impl Agent {
         &mut self,
         input: Vec<AgentMessage>,
     ) -> Result<Pin<Box<dyn Stream<Item = AgentEvent> + Send>>, HarnessError> {
-        self.check_not_running()?;
+        if let Err(e) = self.check_not_running() {
+            warn!("prompt_stream called while agent is already running");
+            return Err(e);
+        }
+        info!(
+            model = %self.state.model.model_id,
+            input_messages = input.len(),
+            "prompt_stream starting"
+        );
         self.start_loop(input, false)
     }
 
@@ -467,6 +479,11 @@ impl Agent {
         &mut self,
         input: Vec<AgentMessage>,
     ) -> Result<AgentResult, HarnessError> {
+        info!(
+            model = %self.state.model.model_id,
+            input_messages = input.len(),
+            "prompt_async starting"
+        );
         let stream = self.prompt_stream(input)?;
         self.collect_stream(stream).await
     }
@@ -832,7 +849,7 @@ impl RetryStrategy for SharedRetryStrategy {
 // ─── Queue Draining ──────────────────────────────────────────────────────────
 
 fn drain_queue(queue: &Mutex<Vec<AgentMessage>>, one_at_a_time: bool) -> Vec<AgentMessage> {
-    let mut guard = queue.lock().expect("queue mutex poisoned");
+    let mut guard = queue.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     if guard.is_empty() {
         return Vec::new();
     }

@@ -12,11 +12,16 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
+use tracing::{debug, error, warn};
+
 use agent_harness::ContentBlock;
 use agent_harness::stream::{AssistantMessageEvent, StreamFn, StreamOptions};
 use agent_harness::types::{
-    AgentContext, AgentMessage, Cost, LlmMessage, ModelSpec, StopReason, Usage,
+    AgentContext, AssistantMessage as HarnessAssistantMessage, Cost, ModelSpec, StopReason,
+    ToolResultMessage, Usage, UserMessage,
 };
+
+use crate::convert::{self, MessageConverter, error_event};
 
 // ─── Request types ──────────────────────────────────────────────────────────
 
@@ -182,6 +187,7 @@ fn ollama_stream<'a>(
         if !response.status().is_success() {
             let status = response.status().as_u16();
             let body = response.text().await.unwrap_or_default();
+            warn!(status, "Ollama HTTP error");
             return stream::iter(vec![error_event(&format!(
                 "Ollama HTTP {status}: {body}"
             ))])
@@ -201,8 +207,14 @@ async fn send_request(
     options: &StreamOptions,
 ) -> Result<reqwest::Response, AssistantMessageEvent> {
     let url = format!("{}/api/chat", ollama.base_url);
+    debug!(
+        %url,
+        model = %model.model_id,
+        messages = context.messages.len(),
+        "sending Ollama request"
+    );
 
-    let messages = convert_messages(&context.messages, &context.system_prompt);
+    let messages = convert::convert_messages::<OllamaConverter>(&context.messages, &context.system_prompt);
 
     let tools: Vec<OllamaTool> = context
         .tools
@@ -238,75 +250,71 @@ async fn send_request(
         .map_err(|e| error_event(&format!("Ollama connection error: {e}")))
 }
 
-/// Convert harness messages to Ollama message format.
-fn convert_messages(messages: &[AgentMessage], system_prompt: &str) -> Vec<OllamaMessage> {
-    let mut result = Vec::new();
+// ─── MessageConverter impl ──────────────────────────────────────────────────
 
-    // System prompt as first message
-    if !system_prompt.is_empty() {
-        result.push(OllamaMessage {
+/// Marker type for Ollama-specific message conversion.
+struct OllamaConverter;
+
+impl MessageConverter for OllamaConverter {
+    type Message = OllamaMessage;
+
+    fn system_message(system_prompt: &str) -> Option<OllamaMessage> {
+        Some(OllamaMessage {
             role: "system".to_string(),
             content: system_prompt.to_string(),
             tool_calls: None,
-        });
+        })
     }
 
-    for msg in messages {
-        let AgentMessage::Llm(llm) = msg else {
-            continue;
-        };
-        match llm {
-            LlmMessage::User(user) => {
-                let content = ContentBlock::extract_text(&user.content);
-                result.push(OllamaMessage {
-                    role: "user".to_string(),
-                    content,
-                    tool_calls: None,
-                });
-            }
-            LlmMessage::Assistant(assistant) => {
-                let mut content = String::new();
-                let mut tool_calls = Vec::new();
-                for block in &assistant.content {
-                    match block {
-                        ContentBlock::Text { text } => {
-                            content.push_str(text);
-                        }
-                        ContentBlock::ToolCall {
-                            name, arguments, ..
-                        } => {
-                            tool_calls.push(OllamaToolCall {
-                                function: OllamaFunctionCall {
-                                    name: name.clone(),
-                                    arguments: arguments.clone(),
-                                },
-                            });
-                        }
-                        _ => {}
-                    }
-                }
-                result.push(OllamaMessage {
-                    role: "assistant".to_string(),
-                    content,
-                    tool_calls: if tool_calls.is_empty() {
-                        None
-                    } else {
-                        Some(tool_calls)
-                    },
-                });
-            }
-            LlmMessage::ToolResult(tool_result) => {
-                let content = ContentBlock::extract_text(&tool_result.content);
-                result.push(OllamaMessage {
-                    role: "tool".to_string(),
-                    content,
-                    tool_calls: None,
-                });
-            }
+    fn user_message(user: &UserMessage) -> OllamaMessage {
+        let content = ContentBlock::extract_text(&user.content);
+        OllamaMessage {
+            role: "user".to_string(),
+            content,
+            tool_calls: None,
         }
     }
 
-    result
+    fn assistant_message(assistant: &HarnessAssistantMessage) -> OllamaMessage {
+        let mut content = String::new();
+        let mut tool_calls = Vec::new();
+        for block in &assistant.content {
+            match block {
+                ContentBlock::Text { text } => {
+                    content.push_str(text);
+                }
+                ContentBlock::ToolCall {
+                    name, arguments, ..
+                } => {
+                    tool_calls.push(OllamaToolCall {
+                        function: OllamaFunctionCall {
+                            name: name.clone(),
+                            arguments: arguments.clone(),
+                        },
+                    });
+                }
+                _ => {}
+            }
+        }
+        OllamaMessage {
+            role: "assistant".to_string(),
+            content,
+            tool_calls: if tool_calls.is_empty() {
+                None
+            } else {
+                Some(tool_calls)
+            },
+        }
+    }
+
+    fn tool_result_message(result: &ToolResultMessage) -> OllamaMessage {
+        let content = ContentBlock::extract_text(&result.content);
+        OllamaMessage {
+            role: "tool".to_string(),
+            content,
+            tool_calls: None,
+        }
+    }
 }
 
 /// Parse Ollama's NDJSON streaming response into `AssistantMessageEvent` values.
@@ -363,6 +371,7 @@ fn parse_ndjson_stream(
                             let chunk: OllamaChatChunk = match serde_json::from_str(&line) {
                                 Ok(c) => c,
                                 Err(e) => {
+                                    error!(error = %e, "Ollama JSON parse error");
                                     done = true;
                                     let mut events = finalize_blocks(&mut state);
                                     events.push(error_event(&format!("Ollama JSON parse error: {e}")));
@@ -563,15 +572,6 @@ fn ndjson_lines(
             }
         },
     ))
-}
-
-/// Create an error event.
-fn error_event(message: &str) -> AssistantMessageEvent {
-    AssistantMessageEvent::Error {
-        stop_reason: StopReason::Error,
-        error_message: message.to_string(),
-        usage: None,
-    }
 }
 
 // ─── Compile-time assertions ────────────────────────────────────────────────

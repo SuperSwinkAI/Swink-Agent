@@ -79,11 +79,11 @@ impl AgentTool for WriteFileTool {
         Box::pin(async move {
             let parsed: Params = match serde_json::from_value(params) {
                 Ok(p) => p,
-                Err(e) => return AgentToolResult::error(format!("Invalid parameters: {e}")),
+                Err(e) => return AgentToolResult::error(format!("invalid parameters: {e}")),
             };
 
             if cancellation_token.is_cancelled() {
-                return AgentToolResult::error("Cancelled");
+                return AgentToolResult::error("cancelled");
             }
 
             let path = std::path::Path::new(&parsed.path);
@@ -91,7 +91,7 @@ impl AgentTool for WriteFileTool {
             if let Some(parent) = path.parent() {
                 if let Err(e) = tokio::fs::create_dir_all(parent).await {
                     return AgentToolResult::error(format!(
-                        "Failed to create parent directories for {}: {e}",
+                        "failed to create parent directories for {}: {e}",
                         parsed.path
                     ));
                 }
@@ -104,7 +104,7 @@ impl AgentTool for WriteFileTool {
                     parsed.path
                 )),
                 Err(e) => AgentToolResult::error(format!(
-                    "Failed to write {}: {e}",
+                    "failed to write file {}: {e}",
                     parsed.path
                 )),
             }

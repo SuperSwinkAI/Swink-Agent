@@ -1,4 +1,5 @@
 pub mod anthropic;
+mod convert;
 pub mod ollama;
 #[allow(clippy::doc_markdown)] // "OpenAI" is a proper noun, not code.
 pub mod openai;

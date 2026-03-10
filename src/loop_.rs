@@ -4,6 +4,7 @@
 //! injection, event emission, retry integration, error/abort handling, and max
 //! tokens recovery. Stateless — all state is passed in via [`AgentLoopConfig`].
 
+use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -13,6 +14,7 @@ use futures::stream::{FuturesUnordered, StreamExt};
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
+use tracing::{debug, error, info, warn};
 
 use crate::error::HarnessError;
 use crate::retry::RetryStrategy;
@@ -24,6 +26,16 @@ use crate::types::{
     AgentContext, AgentMessage, AssistantMessage, ContentBlock, LlmMessage, ModelSpec, StopReason,
     ToolResultMessage,
 };
+
+// ─── Constants ───────────────────────────────────────────────────────────────
+
+/// Sentinel value used to signal context overflow between `handle_stream_result`
+/// and `run_single_turn`.
+const CONTEXT_OVERFLOW_SENTINEL: &str = "__context_overflow__";
+
+/// Channel capacity for agent events. Sized to handle burst streaming
+/// without backpressure under normal operation.
+const EVENT_CHANNEL_CAPACITY: usize = 256;
 
 // ─── Type Aliases ────────────────────────────────────────────────────────────
 
@@ -182,7 +194,7 @@ fn run_loop(
     config: AgentLoopConfig,
     cancellation_token: CancellationToken,
 ) -> Pin<Box<dyn Stream<Item = AgentEvent> + Send>> {
-    let (tx, rx) = mpsc::channel::<AgentEvent>(256);
+    let (tx, rx) = mpsc::channel::<AgentEvent>(EVENT_CHANNEL_CAPACITY);
 
     tokio::spawn(async move {
         run_loop_inner(
@@ -224,6 +236,12 @@ async fn run_loop_inner(
     tx: mpsc::Sender<AgentEvent>,
 ) {
     let config = Arc::new(config);
+    info!(
+        model = %config.model.model_id,
+        provider = %config.model.provider,
+        tools = config.tools.len(),
+        "starting agent loop"
+    );
     let mut state = LoopState {
         context_messages: initial_messages,
         all_new_messages: Vec::new(),
@@ -296,6 +314,12 @@ async fn run_single_turn(
     cancellation_token: &CancellationToken,
     tx: &mpsc::Sender<AgentEvent>,
 ) -> TurnOutcome {
+    debug!(
+        context_messages = state.context_messages.len(),
+        pending_messages = state.pending_messages.len(),
+        "turn starting"
+    );
+
     // i. Inject any pending messages into context
     if !state.pending_messages.is_empty() {
         state.context_messages.append(&mut state.pending_messages);
@@ -354,7 +378,7 @@ async fn run_single_turn(
 
     // Check if ContextOverflow sentinel was returned
     if assistant_message.stop_reason == StopReason::Length
-        && assistant_message.error_message.as_deref() == Some("__context_overflow__")
+        && assistant_message.error_message.as_deref() == Some(CONTEXT_OVERFLOW_SENTINEL)
     {
         state.overflow_signal = true;
         return TurnOutcome::ContinueInner;
@@ -457,7 +481,7 @@ async fn handle_stream_result(
                 usage: crate::types::Usage::default(),
                 cost: crate::types::Cost::default(),
                 stop_reason: StopReason::Length,
-                error_message: Some("__context_overflow__".to_string()),
+                error_message: Some(CONTEXT_OVERFLOW_SENTINEL.to_string()),
                 timestamp: 0,
             })
         }
@@ -497,6 +521,11 @@ async fn handle_error_stop(
     state: &mut LoopState,
     tx: &mpsc::Sender<AgentEvent>,
 ) -> TurnOutcome {
+    error!(
+        stop_reason = ?assistant_message.stop_reason,
+        error = ?assistant_message.error_message,
+        "agent loop stopping due to error/abort"
+    );
     let msg_clone = assistant_message.clone();
     state
         .all_new_messages
@@ -555,17 +584,20 @@ async fn handle_no_tool_calls(
     state: &mut LoopState,
     tx: &mpsc::Sender<AgentEvent>,
 ) -> TurnOutcome {
-    let msg_clone = assistant_message.clone();
+    // Clone twice: once for all_new_messages, once for TurnEnd event.
+    // The original goes to context_messages.
+    let msg_for_new = assistant_message.clone();
+    let msg_for_event = assistant_message.clone();
     state
         .context_messages
         .push(AgentMessage::Llm(LlmMessage::Assistant(assistant_message)));
     state
         .all_new_messages
-        .push(AgentMessage::Llm(LlmMessage::Assistant(msg_clone.clone())));
+        .push(AgentMessage::Llm(LlmMessage::Assistant(msg_for_new)));
     if !emit(
         tx,
         AgentEvent::TurnEnd {
-            assistant_message: msg_clone,
+            assistant_message: msg_for_event,
             tool_results: vec![],
         },
     )
@@ -586,16 +618,16 @@ async fn handle_tool_calls(
     cancellation_token: &CancellationToken,
     tx: &mpsc::Sender<AgentEvent>,
 ) -> TurnOutcome {
-    // Add assistant message to context
+    // Clone twice: once for all_new_messages, once for TurnEnd event.
+    // The original goes to context_messages.
+    let msg_for_new = assistant_message.clone();
     let msg_for_turn_end = assistant_message.clone();
     state
         .context_messages
         .push(AgentMessage::Llm(LlmMessage::Assistant(assistant_message)));
     state
         .all_new_messages
-        .push(AgentMessage::Llm(LlmMessage::Assistant(
-            msg_for_turn_end.clone(),
-        )));
+        .push(AgentMessage::Llm(LlmMessage::Assistant(msg_for_new)));
 
     // Max tokens recovery: replace incomplete tool calls with error results
     let max_token_results =
@@ -969,6 +1001,7 @@ async fn handle_stream_error(
 
     // Context window overflow — signal and retry
     if matches!(harness_error, HarnessError::ContextWindowOverflow { .. }) {
+        warn!("context window overflow, signaling prune");
         let _ = emit(
             tx,
             AgentEvent::MessageEnd {
@@ -982,10 +1015,12 @@ async fn handle_stream_error(
     // Check if retryable
     if harness_error.is_retryable() && config.retry_strategy.should_retry(&harness_error, attempt) {
         let delay = config.retry_strategy.delay(attempt);
+        warn!(attempt, ?delay, error = %harness_error, "retrying after transient error");
         return StreamErrorAction::Retry(delay);
     }
 
     // Non-retryable error
+    error!(error = %harness_error, "non-retryable stream error");
     let error_msg = build_error_message(&config.model, &harness_error);
     if !emit(
         tx,
@@ -1055,6 +1090,13 @@ async fn execute_tools_concurrently(
     let steering_detected: Arc<std::sync::atomic::AtomicBool> =
         Arc::new(std::sync::atomic::AtomicBool::new(false));
 
+    // Pre-build a tool lookup map for O(1) dispatch by name.
+    let tool_map: HashMap<&str, &Arc<dyn AgentTool>> = config
+        .tools
+        .iter()
+        .map(|t| (t.name(), t))
+        .collect();
+
     let mut handles = Vec::new();
 
     for (idx, tc) in tool_calls.iter().enumerate() {
@@ -1073,6 +1115,7 @@ async fn execute_tools_concurrently(
         }
 
         let handle = dispatch_single_tool(
+            &tool_map,
             config,
             tc,
             idx,
@@ -1111,7 +1154,9 @@ enum DispatchResult {
 }
 
 /// Validate and dispatch a single tool call, returning a join handle or inline result.
+#[allow(clippy::too_many_arguments)]
 async fn dispatch_single_tool(
+    tool_map: &HashMap<&str, &Arc<dyn AgentTool>>,
     config: &Arc<AgentLoopConfig>,
     tc: &ToolCallInfo,
     idx: usize,
@@ -1120,7 +1165,7 @@ async fn dispatch_single_tool(
     steering_flag: &Arc<std::sync::atomic::AtomicBool>,
     tx: &mpsc::Sender<AgentEvent>,
 ) -> DispatchResult {
-    let tool = config.tools.iter().find(|t| t.name() == tc.name);
+    let tool = tool_map.get(tc.name.as_str()).copied();
 
     let tool_call_id = tc.id.clone();
     let tool_name = tc.name.clone();
@@ -1137,6 +1182,7 @@ async fn dispatch_single_tool(
         let validation = validate_tool_arguments(tool.parameters_schema(), &arguments);
 
         let handle = tokio::spawn(async move {
+            debug!(tool = %tool_name, id = %tool_call_id, "tool execution starting");
             let (result, is_error) = if let Err(errors) = validation {
                 (validation_error_result(&errors), true)
             } else {
@@ -1149,6 +1195,7 @@ async fn dispatch_single_tool(
                     .any(|b| matches!(b, ContentBlock::Text { text } if text.starts_with("error")));
                 (result, is_error)
             };
+            debug!(tool = %tool_name, id = %tool_call_id, is_error, "tool execution finished");
 
             let _ = emit(
                 &tx_clone,
@@ -1223,14 +1270,17 @@ async fn collect_tool_results(
             batch_token.cancel();
             while futs.next().await.is_some() {}
 
-            let all_results = results.lock().await;
+            let all_results = std::mem::take(&mut *results.lock().await);
+            let result_map: HashMap<&str, &ToolResultMessage> = all_results
+                .iter()
+                .map(|(_, r)| (r.tool_call_id.as_str(), r))
+                .collect();
             let mut completed: Vec<ToolResultMessage> = Vec::new();
             let mut cancelled: Vec<ToolResultMessage> = Vec::new();
 
             for tc in tool_calls {
-                if let Some((_, result)) = all_results.iter().find(|(_, r)| r.tool_call_id == tc.id)
-                {
-                    completed.push(result.clone());
+                if let Some(result) = result_map.get(tc.id.as_str()) {
+                    completed.push((*result).clone());
                 } else {
                     cancelled.push(ToolResultMessage {
                         tool_call_id: tc.id.clone(),
@@ -1258,11 +1308,15 @@ async fn collect_tool_results(
     }
 
     // All tools completed without steering
-    let all_results = results.lock().await;
+    let all_results = std::mem::take(&mut *results.lock().await);
+    let result_map: HashMap<&str, &ToolResultMessage> = all_results
+        .iter()
+        .map(|(_, r)| (r.tool_call_id.as_str(), r))
+        .collect();
     let mut ordered: Vec<ToolResultMessage> = Vec::with_capacity(tool_calls.len());
     for tc in tool_calls {
-        if let Some((_, result)) = all_results.iter().find(|(_, r)| r.tool_call_id == tc.id) {
-            ordered.push(result.clone());
+        if let Some(result) = result_map.get(tc.id.as_str()) {
+            ordered.push((*result).clone());
         }
     }
 

@@ -203,6 +203,8 @@ impl InputEditor {
     }
 
     /// Check if content is empty.
+    ///
+    /// Reserved for future use by input validation logic.
     #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.lines.iter().all(String::is_empty)

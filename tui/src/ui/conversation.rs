@@ -46,6 +46,8 @@ impl ConversationView {
     }
 
     /// Scroll to bottom and re-engage auto-scroll.
+    ///
+    /// Reserved for future use by keyboard shortcut (e.g. Ctrl+End).
     #[allow(dead_code)]
     pub const fn scroll_to_bottom(&mut self, visible_height: usize) {
         let max = self.rendered_lines.saturating_sub(visible_height);

@@ -13,11 +13,16 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
+use tracing::{debug, error, warn};
+
 use agent_harness::ContentBlock;
 use agent_harness::stream::{AssistantMessageEvent, StreamFn, StreamOptions};
 use agent_harness::types::{
-    AgentContext, AgentMessage, Cost, LlmMessage, ModelSpec, StopReason, Usage,
+    AgentContext, AssistantMessage as HarnessAssistantMessage, Cost, ModelSpec, StopReason,
+    ToolResultMessage, Usage, UserMessage,
 };
+
+use crate::convert::{self, MessageConverter, error_event};
 
 // ─── Request types ──────────────────────────────────────────────────────────
 
@@ -226,6 +231,7 @@ fn openai_stream<'a>(
         if !status.is_success() {
             let code = status.as_u16();
             let body = response.text().await.unwrap_or_default();
+            warn!(status = code, "OpenAI HTTP error");
             let msg = match code {
                 401 | 403 => format!("OpenAI auth error (HTTP {code}): {body}"),
                 429 => format!("OpenAI rate limit (HTTP 429): {body}"),
@@ -248,8 +254,14 @@ async fn send_request(
     options: &StreamOptions,
 ) -> Result<reqwest::Response, AssistantMessageEvent> {
     let url = format!("{}/v1/chat/completions", openai.base_url);
+    debug!(
+        %url,
+        model = %model.model_id,
+        messages = context.messages.len(),
+        "sending OpenAI request"
+    );
 
-    let messages = convert_messages(&context.messages, &context.system_prompt);
+    let messages = convert::convert_messages::<OpenAiConverter>(&context.messages, &context.system_prompt);
 
     let tools: Vec<OpenAiTool> = context
         .tools
@@ -293,88 +305,84 @@ async fn send_request(
         .map_err(|e| error_event(&format!("OpenAI connection error: {e}")))
 }
 
-/// Convert harness messages to OpenAI message format.
-fn convert_messages(messages: &[AgentMessage], system_prompt: &str) -> Vec<OpenAiMessage> {
-    let mut result = Vec::new();
+// ─── MessageConverter impl ──────────────────────────────────────────────────
 
-    // System prompt as first message
-    if !system_prompt.is_empty() {
-        result.push(OpenAiMessage {
+/// Marker type for OpenAI-specific message conversion.
+struct OpenAiConverter;
+
+impl MessageConverter for OpenAiConverter {
+    type Message = OpenAiMessage;
+
+    fn system_message(system_prompt: &str) -> Option<OpenAiMessage> {
+        Some(OpenAiMessage {
             role: "system".to_string(),
             content: Some(system_prompt.to_string()),
             tool_calls: None,
             tool_call_id: None,
-        });
+        })
     }
 
-    for msg in messages {
-        let AgentMessage::Llm(llm) = msg else {
-            continue;
-        };
-        match llm {
-            LlmMessage::User(user) => {
-                let content = ContentBlock::extract_text(&user.content);
-                result.push(OpenAiMessage {
-                    role: "user".to_string(),
-                    content: Some(content),
-                    tool_calls: None,
-                    tool_call_id: None,
-                });
-            }
-            LlmMessage::Assistant(assistant) => {
-                let mut content = String::new();
-                let mut tool_calls = Vec::new();
-                for block in &assistant.content {
-                    match block {
-                        ContentBlock::Text { text } => {
-                            content.push_str(text);
-                        }
-                        ContentBlock::ToolCall {
-                            id,
-                            name,
-                            arguments,
-                            ..
-                        } => {
-                            tool_calls.push(OpenAiToolCallRequest {
-                                id: id.clone(),
-                                r#type: "function".to_string(),
-                                function: OpenAiFunctionCallRequest {
-                                    name: name.clone(),
-                                    arguments: arguments.to_string(),
-                                },
-                            });
-                        }
-                        _ => {}
-                    }
-                }
-                result.push(OpenAiMessage {
-                    role: "assistant".to_string(),
-                    content: if content.is_empty() {
-                        None
-                    } else {
-                        Some(content)
-                    },
-                    tool_calls: if tool_calls.is_empty() {
-                        None
-                    } else {
-                        Some(tool_calls)
-                    },
-                    tool_call_id: None,
-                });
-            }
-            LlmMessage::ToolResult(tool_result) => {
-                let content = ContentBlock::extract_text(&tool_result.content);
-                result.push(OpenAiMessage {
-                    role: "tool".to_string(),
-                    content: Some(content),
-                    tool_calls: None,
-                    tool_call_id: Some(tool_result.tool_call_id.clone()),
-                });
-            }
+    fn user_message(user: &UserMessage) -> OpenAiMessage {
+        let content = ContentBlock::extract_text(&user.content);
+        OpenAiMessage {
+            role: "user".to_string(),
+            content: Some(content),
+            tool_calls: None,
+            tool_call_id: None,
         }
     }
 
-    result
+    fn assistant_message(assistant: &HarnessAssistantMessage) -> OpenAiMessage {
+        let mut content = String::new();
+        let mut tool_calls = Vec::new();
+        for block in &assistant.content {
+            match block {
+                ContentBlock::Text { text } => {
+                    content.push_str(text);
+                }
+                ContentBlock::ToolCall {
+                    id,
+                    name,
+                    arguments,
+                    ..
+                } => {
+                    tool_calls.push(OpenAiToolCallRequest {
+                        id: id.clone(),
+                        r#type: "function".to_string(),
+                        function: OpenAiFunctionCallRequest {
+                            name: name.clone(),
+                            arguments: arguments.to_string(),
+                        },
+                    });
+                }
+                _ => {}
+            }
+        }
+        OpenAiMessage {
+            role: "assistant".to_string(),
+            content: if content.is_empty() {
+                None
+            } else {
+                Some(content)
+            },
+            tool_calls: if tool_calls.is_empty() {
+                None
+            } else {
+                Some(tool_calls)
+            },
+            tool_call_id: None,
+        }
+    }
+
+    fn tool_result_message(result: &ToolResultMessage) -> OpenAiMessage {
+        let content = ContentBlock::extract_text(&result.content);
+        OpenAiMessage {
+            role: "tool".to_string(),
+            content: Some(content),
+            tool_calls: None,
+            tool_call_id: Some(result.tool_call_id.clone()),
+        }
+    }
 }
 
 /// Parse OpenAI's SSE streaming response into `AssistantMessageEvent` values.
@@ -449,6 +457,7 @@ fn parse_sse_stream(
                             let chunk: OpenAiChunk = match serde_json::from_str(&data) {
                                 Ok(c) => c,
                                 Err(e) => {
+                                    error!(error = %e, "OpenAI JSON parse error");
                                     done = true;
                                     let mut events = finalize_blocks(&mut state);
                                     events.push(error_event(&format!(
@@ -715,15 +724,6 @@ fn sse_data_lines(
             }
         },
     ))
-}
-
-/// Create an error event.
-fn error_event(message: &str) -> AssistantMessageEvent {
-    AssistantMessageEvent::Error {
-        stop_reason: StopReason::Error,
-        error_message: message.to_string(),
-        usage: None,
-    }
 }
 
 // ─── Compile-time assertions ────────────────────────────────────────────────

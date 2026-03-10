@@ -12,6 +12,8 @@ use agent_harness::{
     Agent, AgentEvent, AgentMessage, AssistantMessageDelta, ContentBlock, LlmMessage, UserMessage,
 };
 
+use tracing::{info, warn};
+
 use crate::commands::{self, ClipboardContent, CommandResult};
 use crate::config::TuiConfig;
 use crate::credentials;
@@ -648,15 +650,18 @@ impl App {
     }
 
     fn save_session(&mut self) {
+        info!(session_id = %self.session_id, "saving session");
         self.auto_save_session();
         self.push_system_message(format!("Session saved: {}", self.session_id));
     }
 
     fn load_session(&mut self, id: &str) {
         let Some(ref mgr) = self.session_manager else {
+            warn!("session persistence unavailable");
             self.push_system_message("Session persistence unavailable.".to_string());
             return;
         };
+        info!(session_id = %id, "loading session");
         match mgr.load_session(id) {
             Ok((meta, messages)) => {
                 // Rebuild display messages from loaded data
@@ -710,6 +715,7 @@ impl App {
                 ));
             }
             Err(e) => {
+                warn!(session_id = %id, error = %e, "failed to load session");
                 self.push_system_message(format!("Failed to load session: {e}"));
             }
         }
@@ -753,9 +759,11 @@ impl App {
     fn store_key(&mut self, provider: &str, key: &str) {
         match credentials::store_credential(provider, key) {
             Ok(()) => {
+                info!(provider = %provider, "API key stored");
                 self.push_system_message(format!("API key stored for: {provider}"));
             }
             Err(e) => {
+                warn!(provider = %provider, error = %e, "failed to store API key");
                 self.push_system_message(format!("Failed to store key: {e}"));
             }
         }

@@ -13,11 +13,15 @@ use serde::Serialize;
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
+use tracing::{debug, error, warn};
+
 use agent_harness::ContentBlock;
 use agent_harness::stream::{AssistantMessageEvent, StreamFn, StreamOptions};
 use agent_harness::types::{
     AgentContext, AgentMessage, Cost, LlmMessage, ModelSpec, StopReason, ThinkingLevel, Usage,
 };
+
+use crate::convert::error_event;
 
 // ─── Request types ──────────────────────────────────────────────────────────
 
@@ -179,6 +183,7 @@ fn anthropic_stream<'a>(
         if !status.is_success() {
             let code = status.as_u16();
             let body = response.text().await.unwrap_or_default();
+            warn!(status = code, "Anthropic HTTP error");
             let msg = match code {
                 401 => format!(
                     "Anthropic auth error (HTTP {code}): check x-api-key — {body}"
@@ -205,6 +210,12 @@ async fn send_request(
     options: &StreamOptions,
 ) -> Result<reqwest::Response, AssistantMessageEvent> {
     let url = format!("{}/v1/messages", anthropic.base_url);
+    debug!(
+        %url,
+        model = %model.model_id,
+        messages = context.messages.len(),
+        "sending Anthropic request"
+    );
 
     let (system, messages) = convert_messages(&context.messages, &context.system_prompt);
 
@@ -276,7 +287,10 @@ fn resolve_thinking(model: &ModelSpec, max_tokens: u64) -> Option<AnthropicThink
             }
         });
 
-    // Budget must be less than max_tokens
+    // Anthropic requires `budget_tokens` to be strictly less than `max_tokens`.
+    // Silently capping here is intentional — callers set budgets in terms of the
+    // thinking level, not the absolute token limit, so exceeding max_tokens is a
+    // normal edge case rather than a user error worth surfacing.
     let budget = budget.min(max_tokens.saturating_sub(1));
 
     Some(AnthropicThinking {
@@ -663,6 +677,7 @@ fn process_sse_event(
                 })
                 .unwrap_or_else(|| format!("Anthropic stream error: {data}"));
 
+            error!(error = %msg, "Anthropic stream error");
             events.push(error_event(&msg));
         }
 
@@ -769,15 +784,6 @@ fn sse_event_lines(
             }
         },
     ))
-}
-
-/// Create an error event.
-fn error_event(message: &str) -> AssistantMessageEvent {
-    AssistantMessageEvent::Error {
-        stop_reason: StopReason::Error,
-        error_message: message.to_string(),
-        usage: None,
-    }
 }
 
 // ─── Compile-time assertions ────────────────────────────────────────────────

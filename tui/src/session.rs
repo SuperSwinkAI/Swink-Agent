@@ -151,6 +151,8 @@ impl SessionManager {
     }
 
     /// Delete a session file.
+    ///
+    /// Reserved for future use by session management UI (e.g. #delete command).
     #[allow(dead_code)]
     pub fn delete_session(&self, session_id: &str) -> io::Result<()> {
         let path = self.sessions_dir.join(format!("{session_id}.jsonl"));

@@ -10,14 +10,18 @@ use tokio::process::Command;
 use tokio_util::sync::CancellationToken;
 
 use crate::tool::{AgentTool, AgentToolResult};
-
-/// Maximum combined stdout + stderr size in bytes before truncation.
-const MAX_OUTPUT_BYTES: usize = 100 * 1024;
+use super::MAX_OUTPUT_BYTES;
 
 /// Default timeout in milliseconds.
 const DEFAULT_TIMEOUT_MS: u64 = 30_000;
 
 /// Built-in tool that executes a shell command via `sh -c`.
+///
+/// # Security
+///
+/// This tool executes arbitrary shell commands via `sh -c`. It should only
+/// be used with trusted input. It is NOT suitable for production agents
+/// exposed to untrusted users.
 pub struct BashTool {
     schema: Value,
 }
@@ -86,11 +90,11 @@ impl AgentTool for BashTool {
         Box::pin(async move {
             let parsed: Params = match serde_json::from_value(params) {
                 Ok(p) => p,
-                Err(e) => return AgentToolResult::error(format!("Invalid parameters: {e}")),
+                Err(e) => return AgentToolResult::error(format!("invalid parameters: {e}")),
             };
 
             if cancellation_token.is_cancelled() {
-                return AgentToolResult::error("Cancelled");
+                return AgentToolResult::error("cancelled");
             }
 
             let timeout = Duration::from_millis(
@@ -106,7 +110,7 @@ impl AgentTool for BashTool {
             {
                 Ok(c) => c,
                 Err(e) => {
-                    return AgentToolResult::error(format!("Failed to spawn command: {e}"));
+                    return AgentToolResult::error(format!("failed to spawn command: {e}"));
                 }
             };
 
@@ -123,17 +127,17 @@ impl AgentTool for BashTool {
                             let stderr = read_stream(&mut stderr_handle).await;
                             format_output(status.code(), &stdout, &stderr)
                         }
-                        Err(e) => AgentToolResult::error(format!("Command execution failed: {e}")),
+                        Err(e) => AgentToolResult::error(format!("failed to execute command: {e}")),
                     }
                 }
                 () = cancellation_token.cancelled() => {
                     let _ = child.kill().await;
-                    AgentToolResult::error("Cancelled")
+                    AgentToolResult::error("cancelled")
                 }
                 () = tokio::time::sleep(timeout) => {
                     let _ = child.kill().await;
                     AgentToolResult::error(format!(
-                        "Command timed out after {}ms",
+                        "failed to complete command: timed out after {}ms",
                         timeout.as_millis()
                     ))
                 }

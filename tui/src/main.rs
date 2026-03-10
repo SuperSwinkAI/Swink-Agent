@@ -11,6 +11,7 @@ mod ui;
 mod wizard;
 
 use std::io;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use crossterm::{
@@ -29,6 +30,23 @@ use crate::config::TuiConfig;
 type AppResult<T> = Result<T, Box<dyn std::error::Error>>;
 
 fn main() -> AppResult<()> {
+    // Initialize file-based tracing (TUI owns stdout, so we log to a file).
+    let log_dir = dirs::config_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("agent-harness")
+        .join("logs");
+    let file_appender = tracing_appender::rolling::daily(log_dir, "agent-harness.log");
+    let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::from_default_env()
+                .add_directive("agent_harness=info".parse().unwrap()),
+        )
+        .with_writer(non_blocking)
+        .with_ansi(false)
+        .init();
+
     // Install panic hook that restores terminal before printing panic.
     let original_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
