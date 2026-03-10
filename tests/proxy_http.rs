@@ -98,8 +98,7 @@ async fn successful_stream_reconstructs_message() {
 
     let proxy = ProxyStreamFn::new(server.uri(), "test-token");
     let events = collect_events(&proxy).await;
-    let msg = accumulate_message(events, "test", "test-model")
-        .expect("accumulate should succeed");
+    let msg = accumulate_message(events, "test", "test-model").expect("accumulate should succeed");
 
     assert_eq!(msg.content.len(), 1);
     assert_eq!(
@@ -127,8 +126,7 @@ async fn text_and_tool_call_reconstruct_correctly() {
 
     let proxy = ProxyStreamFn::new(server.uri(), "test-token");
     let events = collect_events(&proxy).await;
-    let msg = accumulate_message(events, "test", "test-model")
-        .expect("accumulate should succeed");
+    let msg = accumulate_message(events, "test", "test-model").expect("accumulate should succeed");
 
     assert_eq!(msg.content.len(), 2);
     assert_eq!(
@@ -323,9 +321,9 @@ async fn malformed_sse_event_produces_stream_error() {
     let events = collect_events(&proxy).await;
 
     let has_malformed_error = events.iter().any(|e| match e {
-        AssistantMessageEvent::Error {
-            error_message, ..
-        } => error_message.contains("malformed SSE event JSON"),
+        AssistantMessageEvent::Error { error_message, .. } => {
+            error_message.contains("malformed SSE event JSON")
+        }
         _ => false,
     });
     assert!(
@@ -385,8 +383,7 @@ async fn mid_stream_disconnect_produces_network_error() {
 async fn cancellation_yields_aborted() {
     // Build a slow SSE response: start event, then a long delay before done.
     let body = text_only_sse_body();
-    let slow_response = sse_response(&body)
-        .set_delay(std::time::Duration::from_secs(30));
+    let slow_response = sse_response(&body).set_delay(std::time::Duration::from_secs(30));
 
     let server = MockServer::start().await;
     Mock::given(method("POST"))
@@ -411,9 +408,7 @@ async fn cancellation_yields_aborted() {
     let events: Vec<_> = stream.collect().await;
 
     let has_aborted = events.iter().any(|e| match e {
-        AssistantMessageEvent::Error {
-            stop_reason, ..
-        } => *stop_reason == StopReason::Aborted,
+        AssistantMessageEvent::Error { stop_reason, .. } => *stop_reason == StopReason::Aborted,
         _ => false,
     });
     assert!(

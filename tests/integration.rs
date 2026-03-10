@@ -8,9 +8,9 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use futures::stream::StreamExt;
 use futures::Stream;
-use serde_json::{json, Value};
+use futures::stream::StreamExt;
+use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
 use agent_harness::{
@@ -709,7 +709,10 @@ async fn test_6_9_transform_context_called_before_convert() {
     let stream_calls = tracking_fn.context_sizes.lock().unwrap().len();
 
     // transform_context should be called at least once per turn.
-    assert!(tc >= 2, "transform_context should be called on every turn, got {tc}");
+    assert!(
+        tc >= 2,
+        "transform_context should be called on every turn, got {tc}"
+    );
     // Each stream call corresponds to a turn that had transform_context called first.
     assert_eq!(
         tc as usize, stream_calls,
