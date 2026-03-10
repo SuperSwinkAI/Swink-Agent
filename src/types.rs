@@ -44,6 +44,21 @@ pub enum ContentBlock {
     Image { source: ImageSource },
 }
 
+impl ContentBlock {
+    /// Extract concatenated text from a slice of content blocks.
+    ///
+    /// Returns the joined text of all `Text` variants, ignoring other block types.
+    pub fn extract_text(blocks: &[Self]) -> String {
+        let mut result = String::new();
+        for block in blocks {
+            if let Self::Text { text } = block {
+                result.push_str(text);
+            }
+        }
+        result
+    }
+}
+
 /// Source for image data.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]

@@ -9,6 +9,7 @@ use ratatui::{
 };
 
 use crate::app::{AgentStatus, App};
+use crate::format;
 use crate::theme;
 
 /// Render the status bar.
@@ -20,7 +21,11 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         AgentStatus::Aborted => ("ABORTED", theme::STATUS_ABORTED),
     };
 
-    let status = Line::from(vec![
+    let elapsed = format::format_elapsed(app.session_start);
+    let input_tokens = format::format_tokens(app.total_input_tokens);
+    let output_tokens = format::format_tokens(app.total_output_tokens);
+
+    let mut spans = vec![
         Span::styled(
             format!(" {status_text} "),
             Style::default()
@@ -29,15 +34,24 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         ),
         Span::raw("  "),
         Span::styled(&app.model_name, theme::dim()),
-        Span::raw("  |  "),
-        Span::raw(format!(
-            "tokens: {}down {}up",
-            app.total_input_tokens, app.total_output_tokens
-        )),
-        Span::raw("  |  "),
+        Span::raw("  │  "),
+        Span::raw(format!("↓{input_tokens} ↑{output_tokens}")),
+        Span::raw("  │  "),
         Span::raw(format!("${:.4}", app.total_cost)),
-    ]);
+        Span::raw("  │  "),
+        Span::styled(elapsed, theme::dim()),
+    ];
 
+    // Show retry indicator
+    if let Some(attempt) = app.retry_attempt {
+        spans.push(Span::raw("  │  "));
+        spans.push(Span::styled(
+            format!("Retrying... (attempt {attempt})"),
+            Style::default().fg(theme::ERROR_COLOR),
+        ));
+    }
+
+    let status = Line::from(spans);
     let bar = Paragraph::new(status).style(Style::default().bg(ratatui::style::Color::DarkGray));
     frame.render_widget(bar, area);
 }

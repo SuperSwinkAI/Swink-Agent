@@ -7,7 +7,7 @@
 
 ## System Overview
 
-The Agent Harness is a pure-Rust library crate that provides the core scaffolding for building LLM-powered agentic applications. It is consumed as a dependency by calling applications; it has no runtime process of its own. The harness manages the agent loop, message context, tool dispatch, streaming, and lifecycle events. All LLM provider access is delegated to a caller-supplied `StreamFn` implementation, keeping the harness fully provider-agnostic.
+The Agent Harness is a Rust workspace composed of three crates that provide the core scaffolding for building LLM-powered agentic applications. The **core library** (`agent-harness`) manages the agent loop, message context, tool dispatch, streaming, and lifecycle events. The **adapters crate** (`agent-harness-adapters`) provides ready-made `StreamFn` implementations for specific LLM providers. The **TUI crate** (`agent-harness-tui`) is a binary that provides an interactive terminal interface. All LLM provider access is delegated to a `StreamFn` implementation, keeping the core harness fully provider-agnostic.
 
 ---
 
@@ -22,8 +22,9 @@ flowchart TB
         TUI["Terminal UI<br/>(ratatui + crossterm)"]
     end
 
-    subgraph HarnessSystem["⚙️ Agent Harness (Rust Library)"]
-        Harness["agent-harness<br/>Agent loop, tool dispatch,<br/>streaming, events, retry"]
+    subgraph HarnessSystem["⚙️ Agent Harness (Rust Workspace)"]
+        Harness["agent-harness (core)<br/>Agent loop, tool dispatch,<br/>streaming, events, retry"]
+        Adapters["agent-harness-adapters<br/>LLM provider adapters<br/>(OllamaStreamFn)"]
     end
 
     subgraph ExternalSystems["🌐 External Systems"]
@@ -34,8 +35,9 @@ flowchart TB
     App -->|"Constructs Agent,<br/>supplies StreamFn + Tools"| Harness
     Harness -->|"AgentEvent stream,<br/>AgentResult"| App
     TUI -->|"Agent API +<br/>event subscription"| Harness
+    TUI -->|"Uses adapter"| Adapters
     Harness -->|"AgentEvent stream"| TUI
-    Harness -->|"Streaming inference<br/>via StreamFn (direct)"| LLMProvider
+    Adapters -->|"Streaming inference<br/>via OllamaStreamFn (NDJSON)"| LLMProvider
     Harness -->|"Streaming inference<br/>via ProxyStreamFn (SSE)"| ProxyServer
     ProxyServer -->|"Proxied request"| LLMProvider
 
@@ -44,7 +46,7 @@ flowchart TB
     classDef externalStyle fill:#e0e0e0,stroke:#424242,stroke-width:2px,color:#000
 
     class App,TUI callerStyle
-    class Harness harnessStyle
+    class Harness,Adapters harnessStyle
     class LLMProvider,ProxyServer externalStyle
 ```
 
@@ -54,9 +56,10 @@ flowchart TB
 |---|---|---|
 | App → Harness | Inbound | Caller constructs an `Agent`, registers tools, supplies a `StreamFn`, and invokes prompts |
 | Harness → App | Outbound | Harness emits `AgentEvent` values and returns `AgentResult` on completion |
-| Harness → LLM Provider | Outbound | Direct streaming inference via caller-supplied `StreamFn` |
+| Adapters → LLM Provider | Outbound | `OllamaStreamFn` streams inference via Ollama's `/api/chat` endpoint (NDJSON) |
 | Harness → Proxy Server | Outbound | Optional: built-in `ProxyStreamFn` forwards requests to a proxy over SSE |
 | Proxy Server → LLM Provider | Outbound | Proxy handles auth and routes to the actual provider |
+| TUI → Adapters | Internal | TUI uses `OllamaStreamFn` by default, or `ProxyStreamFn` if `LLM_BASE_URL` is set |
 
 ---
 
@@ -90,6 +93,10 @@ flowchart TB
         ProxyFn["ProxyStreamFn<br/>(SSE + delta reconstruction)"]
     end
 
+    subgraph AdapterLayer["🔌 Adapters Crate"]
+        OllamaFn["OllamaStreamFn<br/>(NDJSON streaming)"]
+    end
+
     subgraph InfraLayer["🏗️ Infrastructure"]
         Events["Event System<br/>(AgentEvent enum)"]
         Retry["Retry Strategy<br/>(exp. back-off + jitter)"]
@@ -119,7 +126,9 @@ flowchart TB
     Executor --> Tools
     Loop -->|"call StreamFn"| StreamFn
     StreamFn --> StreamImpl
+    OllamaFn -->|"implements"| StreamFn
     StreamImpl -->|direct| LLMProvider
+    OllamaFn -->|"NDJSON"| LLMProvider
     ProxyFn -->|SSE| ProxyServer
     ProxyServer --> LLMProvider
     Loop -->|"emit"| Events
@@ -139,6 +148,7 @@ flowchart TB
     classDef loopStyle fill:#1976d2,stroke:#0d47a1,stroke-width:2px,color:#fff
     classDef toolStyle fill:#ff9800,stroke:#e65100,stroke-width:2px,color:#000
     classDef streamStyle fill:#fff3e0,stroke:#f57c00,stroke-width:2px,color:#000
+    classDef adapterStyle fill:#c8e6c9,stroke:#388e3c,stroke-width:2px,color:#000
     classDef infraStyle fill:#f5f5f5,stroke:#616161,stroke-width:2px,color:#000
     classDef externalStyle fill:#e0e0e0,stroke:#424242,stroke-width:2px,color:#000
     classDef tuiStyle fill:#1976d2,stroke:#0d47a1,stroke-width:2px,color:#fff
@@ -148,6 +158,7 @@ flowchart TB
     class Loop loopStyle
     class Validator,Executor toolStyle
     class StreamFn,ProxyFn streamStyle
+    class OllamaFn adapterStyle
     class Events,Retry,Cancel,Errors infraStyle
     class TUIApp,ConvView,InputEditor,ToolPanel,StatusBar tuiStyle
     class LLMProvider,ProxyServer externalStyle
@@ -197,7 +208,7 @@ flowchart LR
     TurnStart --> StreamCall
     StreamCall -->|"retryable failure"| Retry
     Retry --> StreamCall
-    StreamCall <-->|"SSE delta stream"| LLM
+    StreamCall <-->|"SSE or NDJSON<br/>delta stream"| LLM
     StreamCall --> MsgEvents
     MsgEvents --> ToolCheck
     ToolCheck -->|"stop_reason: length"| Errors
@@ -226,34 +237,46 @@ flowchart LR
 
 ---
 
-## Crate Module Dependencies
+## Workspace Crate Dependencies
 
-This diagram shows how the source modules depend on each other, reflecting the build order.
+This diagram shows how the three workspace crates and their internal modules depend on each other.
 
 ```mermaid
 flowchart TB
-    subgraph FoundationLayer["🏗️ Foundation"]
-        types["types.rs<br/>AgentMessage, ContentBlock,<br/>ModelSpec, AgentResult, Usage"]
-        error["error.rs<br/>HarnessError,<br/>ContextWindowOverflow,<br/>MaxTokensReached"]
+    subgraph CoreCrate["📦 agent-harness (core)"]
+        subgraph FoundationLayer["🏗️ Foundation"]
+            types["types.rs<br/>AgentMessage, ContentBlock,<br/>ModelSpec, AgentResult, Usage"]
+            error["error.rs<br/>HarnessError,<br/>ContextWindowOverflow,<br/>MaxTokensReached"]
+        end
+
+        subgraph CoreLayer["⚙️ Core Abstractions"]
+            tool["tool.rs<br/>AgentTool trait,<br/>AgentToolResult,<br/>argument validation"]
+            stream["stream.rs<br/>StreamFn trait,<br/>StreamOptions,<br/>AssistantMessageEvent,<br/>AssistantMessageDelta"]
+            retry["retry.rs<br/>RetryStrategy trait,<br/>default implementation"]
+        end
+
+        subgraph ImplLayer["🔧 Implementations"]
+            proxy["proxy.rs<br/>ProxyStreamFn,<br/>SSE delta reconstruction"]
+        end
+
+        subgraph ExecutionLayer["🔄 Execution"]
+            loop_["loop_.rs<br/>agent_loop,<br/>agent_loop_continue,<br/>run_loop,<br/>AgentLoopConfig"]
+        end
+
+        subgraph APILayer["📦 Public API"]
+            agent["agent.rs<br/>Agent struct,<br/>AgentOptions"]
+            lib["lib.rs<br/>public re-exports"]
+        end
     end
 
-    subgraph CoreLayer["⚙️ Core Abstractions"]
-        tool["tool.rs<br/>AgentTool trait,<br/>AgentToolResult,<br/>argument validation"]
-        stream["stream.rs<br/>StreamFn trait,<br/>StreamOptions,<br/>AssistantMessageEvent,<br/>AssistantMessageDelta"]
-        retry["retry.rs<br/>RetryStrategy trait,<br/>default implementation"]
+    subgraph AdaptersCrate["🔌 agent-harness-adapters"]
+        adapters_lib["lib.rs<br/>re-exports"]
+        ollama["ollama.rs<br/>OllamaStreamFn,<br/>NDJSON streaming"]
     end
 
-    subgraph ImplLayer["🔧 Implementations"]
-        proxy["proxy.rs<br/>ProxyStreamFn,<br/>SSE delta reconstruction"]
-    end
-
-    subgraph ExecutionLayer["🔄 Execution"]
-        loop_["loop_.rs<br/>agent_loop,<br/>agent_loop_continue,<br/>run_loop,<br/>AgentLoopConfig"]
-    end
-
-    subgraph APILayer["📦 Public API"]
-        agent["agent.rs<br/>Agent struct,<br/>AgentOptions"]
-        lib["lib.rs<br/>public re-exports"]
+    subgraph TUICrate["🖥️ agent-harness-tui"]
+        tui_main["main.rs<br/>env var config,<br/>provider selection"]
+        tui_app["app.rs<br/>event loop, layout"]
     end
 
     types --> tool
@@ -271,17 +294,28 @@ flowchart TB
     loop_ --> lib
     types --> lib
 
+    stream -->|"StreamFn trait"| ollama
+    ollama --> adapters_lib
+
+    lib -->|"agent-harness dep"| tui_main
+    adapters_lib -->|"adapters dep"| tui_main
+    tui_main --> tui_app
+
     classDef foundationStyle fill:#f5f5f5,stroke:#616161,stroke-width:2px,color:#000
     classDef coreStyle fill:#fff3e0,stroke:#f57c00,stroke-width:2px,color:#000
     classDef implStyle fill:#e0e0e0,stroke:#424242,stroke-width:2px,color:#000
     classDef execStyle fill:#1976d2,stroke:#0d47a1,stroke-width:2px,color:#fff
     classDef apiStyle fill:#e3f2fd,stroke:#1976d2,stroke-width:2px,color:#000
+    classDef adapterStyle fill:#c8e6c9,stroke:#388e3c,stroke-width:2px,color:#000
+    classDef tuiStyle fill:#1976d2,stroke:#0d47a1,stroke-width:2px,color:#fff
 
     class types,error foundationStyle
     class tool,stream,retry coreStyle
     class proxy implStyle
     class loop_ execStyle
     class agent,lib apiStyle
+    class adapters_lib,ollama adapterStyle
+    class tui_main,tui_app tuiStyle
 ```
 
 ---
@@ -290,7 +324,9 @@ flowchart TB
 
 **Library, not a service.** The harness is a crate, not a daemon. There are no HTTP ports, no config files, no CLI. Callers link it as a dependency and own the runtime.
 
-**StreamFn is the only provider boundary.** All LLM communication flows through a single trait. Direct providers, proxies, mock implementations for testing, and future transports all satisfy the same interface. The harness never holds an API key or SDK client.
+**StreamFn is the only provider boundary.** All LLM communication flows through a single trait. Direct providers, proxies, mock implementations for testing, and future transports all satisfy the same interface. The harness never holds an API key or SDK client. Two built-in implementations ship with the project: `ProxyStreamFn` (SSE, in core) and `OllamaStreamFn` (NDJSON, in the adapters crate).
+
+**Adapters are a separate crate.** Provider-specific `StreamFn` implementations live in `agent-harness-adapters`, keeping the core harness free of any provider SDK or protocol detail. Adding a new provider means adding a module to the adapters crate — no changes to the core.
 
 **Events are outward-only.** The event system is a push channel from the harness to the caller. Hooks that mutate execution (cancel a tool, retry a call) are expressed as callbacks in `AgentLoopConfig`, not as event responses. This avoids re-entrant state.
 
@@ -298,11 +334,24 @@ flowchart TB
 
 **Concurrency is scoped to tool execution.** Tool calls within a single turn run concurrently via `tokio::spawn`. Everything else — turns, steering polls, follow-up polls — is sequential. This makes the loop easy to reason about without sacrificing the main performance win of parallel tool execution.
 
-**TUI is a separate crate.** The terminal interface is a binary crate that depends on the library, not a feature-gated module. This keeps the core harness free of terminal dependencies and allows the TUI to evolve independently. The TUI consumes the same public API that any other application would use.
+**TUI is a separate crate.** The terminal interface is a binary crate that depends on both the core library and the adapters crate, not a feature-gated module. This keeps the core harness free of terminal dependencies and allows the TUI to evolve independently. The TUI consumes the same public API that any other application would use.
 
 ## TUI Architecture
 
-The TUI is a separate binary crate (`agent-harness-tui`) that depends on the `agent-harness` library. It provides an interactive terminal interface for conversing with an LLM agent.
+The TUI is a separate binary crate (`agent-harness-tui`) that depends on both `agent-harness` (core) and `agent-harness-adapters`. It provides an interactive terminal interface for conversing with an LLM agent. The TUI always connects to an LLM provider on startup — Ollama by default, or a custom SSE proxy when configured.
+
+### Provider Configuration
+
+The TUI selects its LLM provider via environment variables. If `LLM_BASE_URL` is set, the TUI uses `ProxyStreamFn` (SSE); otherwise it defaults to `OllamaStreamFn` (NDJSON) targeting `localhost:11434`.
+
+| Variable | Default | Description |
+|---|---|---|
+| `OLLAMA_HOST` | `http://localhost:11434` | Ollama server URL |
+| `OLLAMA_MODEL` | `llama3.2` | Ollama model name |
+| `LLM_BASE_URL` | _(unset)_ | SSE proxy endpoint — takes priority over Ollama if set |
+| `LLM_API_KEY` | _(empty)_ | Bearer token for the proxy |
+| `LLM_MODEL` | `claude-sonnet-4-20250514` | Model identifier for the proxy |
+| `LLM_SYSTEM_PROMPT` | `You are a helpful assistant.` | System prompt (shared across both providers) |
 
 ### Component Model
 

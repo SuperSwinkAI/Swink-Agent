@@ -4,6 +4,8 @@
 - [PRD](./PRD.md)
 - [HLD](../architecture/HLD.md)
 
+**Status:** All 6 phases complete. 144 tests passing.
+
 **Principle:** Each phase produces a compilable, fully tested artifact. Phases are ordered by dependency — each phase depends only on prior phases. A team can pick up any phase once its predecessors are complete.
 
 ---
@@ -26,17 +28,15 @@ flowchart LR
     P4 --> P6
     P5 --> P6
 
-    classDef phase fill:#e3f2fd,stroke:#1976d2,stroke-width:2px,color:#000
-    classDef final fill:#1976d2,stroke:#0d47a1,stroke-width:2px,color:#fff
-    class P1,P2,P3,P4,P5 phase
-    class P6 final
+    classDef done fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#fff
+    class P1,P2,P3,P4,P5,P6 done
 ```
 
 Note: Phases 3 and 5 are independent of each other and can run in parallel once Phase 2 is complete.
 
 ---
 
-## Phase 1 — Foundation Types
+## Phase 1 — Foundation Types ✅
 
 **Files:** `src/types.rs`, `src/error.rs`
 **Depends on:** nothing
@@ -104,7 +104,7 @@ thiserror = "2"
 
 ---
 
-## Phase 2 — Core Traits
+## Phase 2 — Core Traits ✅
 
 **Files:** `src/tool.rs`, `src/stream.rs`, `src/retry.rs`
 **Depends on:** Phase 1
@@ -171,7 +171,7 @@ uuid = { version = "1", features = ["v4"] }
 
 ---
 
-## Phase 3 — Agent Loop
+## Phase 3 — Agent Loop ✅
 
 **Files:** `src/loop_.rs`
 **Depends on:** Phase 1, Phase 2
@@ -240,7 +240,7 @@ None beyond Phase 1 + 2.
 
 ---
 
-## Phase 4 — Agent Struct
+## Phase 4 — Agent Struct ✅
 
 **Files:** `src/agent.rs`, `src/lib.rs`
 **Depends on:** Phase 1, Phase 2, Phase 3
@@ -302,7 +302,7 @@ The stateful public API wrapper. Owns conversation history, manages steering/fol
 
 ---
 
-## Phase 5 — Proxy StreamFn
+## Phase 5 — Proxy StreamFn ✅
 
 **Files:** `src/proxy.rs`
 **Depends on:** Phase 1, Phase 2
@@ -359,7 +359,7 @@ eventsource-stream = "0.2"
 
 ---
 
-## Phase 6 — Integration
+## Phase 6 — Integration ✅
 
 **Files:** `tests/integration/`
 **Depends on:** Phase 1, Phase 2, Phase 3, Phase 4, Phase 5
@@ -399,11 +399,13 @@ End-to-end integration tests that exercise the full stack: `Agent` → loop → 
 
 ## Summary
 
-| Phase | Files | Depends on | Can parallelize with | Estimated scope |
+| Phase | Files | Depends on | Can parallelize with | Status |
 |---|---|---|---|---|
-| 1 — Foundation Types | `types.rs`, `error.rs` | — | — | Data types + error enum |
-| 2 — Core Traits | `tool.rs`, `stream.rs`, `retry.rs` | Phase 1 | — | Trait definitions + validation |
-| 3 — Agent Loop | `loop_.rs` | Phase 1, 2 | Phase 5 | Core execution engine |
-| 4 — Agent Struct | `agent.rs`, `lib.rs` | Phase 1, 2, 3 | Phase 5 | Stateful API wrapper |
-| 5 — Proxy StreamFn | `proxy.rs` | Phase 1, 2 | Phase 3, 4 | HTTP/SSE proxy client |
-| 6 — Integration | `tests/integration/` | All | — | End-to-end validation |
+| 1 — Foundation Types | `types.rs`, `error.rs` | — | — | Complete |
+| 2 — Core Traits | `tool.rs`, `stream.rs`, `retry.rs` | Phase 1 | — | Complete |
+| 3 — Agent Loop | `loop_.rs` | Phase 1, 2 | Phase 5 | Complete |
+| 4 — Agent Struct | `agent.rs`, `lib.rs` | Phase 1, 2, 3 | Phase 5 | Complete |
+| 5 — Proxy StreamFn | `proxy.rs` | Phase 1, 2 | Phase 3, 4 | Complete |
+| 6 — Integration | `tests/integration/` | All | — | Complete |
+
+**Total: 144 tests passing across all phases.**

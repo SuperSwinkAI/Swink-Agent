@@ -17,7 +17,7 @@ The implementation leverages Rust's type system, ownership model, and async runt
 ## 2. Non-Goals
 
 - No built-in web UI or GUI interface
-- No bundled LLM provider SDK implementations (providers are external dependencies)
+- No bundled LLM provider SDK dependencies — provider adapters use direct HTTP calls, not vendor SDKs
 - No research features (memory architecture, compaction) — tracked separately
 
 ---
@@ -351,12 +351,34 @@ Options provided at construction:
 
 No `unsafe` code. No global mutable state.
 
+### 14.1 Adapters Crate Dependencies
+
+| Crate | Purpose |
+|---|---|
+| `agent-harness` | Core types and `StreamFn` trait |
+| `reqwest` | HTTP client for provider APIs |
+| `bytes` | Byte buffer handling for NDJSON parsing |
+
+### 14.2 TUI Crate Dependencies
+
+| Crate | Purpose |
+|---|---|
+| `agent-harness` | Core types and agent API |
+| `agent-harness-adapters` | Provider adapters (Ollama by default) |
+| `ratatui` | Terminal UI framework |
+| `crossterm` | Terminal backend |
+| `syntect` | Syntax highlighting |
+| `arboard` | Clipboard access |
+| `toml` / `dirs` | Config file support |
+
 ---
 
 ## 15. Crate Structure
 
+The project is a 3-crate Cargo workspace:
+
 ```
-agent-harness/
+agent-harness/              Workspace root + core library
   Cargo.toml
   src/
     lib.rs          — public re-exports
@@ -368,7 +390,38 @@ agent-harness/
     retry.rs        — RetryStrategy trait and default implementation
     loop_.rs        — agent_loop, agent_loop_continue, run_loop, AgentLoopConfig
     agent.rs        — Agent struct
+
+adapters/                   LLM provider adapters
+  Cargo.toml
+  src/
+    lib.rs          — public re-exports
+    ollama.rs       — OllamaStreamFn for Ollama's /api/chat NDJSON streaming endpoint
+
+tui/                        Terminal UI binary
+  Cargo.toml
+  src/
+    main.rs         — entry point, agent setup from env vars
+    app.rs          — top-level App state machine
+    event.rs        — async event loop (terminal + agent events)
+    commands.rs     — slash-command system
+    config.rs       — TOML config file support
+    format.rs       — markdown and message formatting
+    theme.rs        — color theme definitions
+    ui/             — UI components (conversation, input, tool panel, status bar)
 ```
+
+### 15.1 Adapters Crate
+
+The `agent-harness-adapters` crate provides concrete `StreamFn` implementations for specific LLM providers. Each adapter translates between the provider's native streaming protocol and the harness's `AssistantMessageEvent` stream.
+
+Current adapters:
+
+- **`OllamaStreamFn`** — connects to Ollama's `/api/chat` endpoint, parses NDJSON streaming responses, and emits `AssistantMessageEvent` values. Supports tool calls via Ollama's native tool-calling protocol.
+
+Future adapters (planned):
+
+- Anthropic Messages API
+- OpenAI Chat Completions API
 
 ---
 

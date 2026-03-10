@@ -1,9 +1,16 @@
 # Streaming Interface
 
-**Source files:** `src/stream.rs`, `src/proxy.rs`
+**Source files:** `src/stream.rs`, `src/proxy.rs`, `adapters/src/ollama.rs`
 **Related:** [PRD §7](../../planning/PRD.md#7-streaming-interface)
 
-The streaming interface is the single boundary between the harness and LLM providers. The harness never holds provider credentials or SDK clients. All inference flows through a caller-supplied `StreamFn` implementation. The built-in `ProxyStreamFn` covers environments where a server-side proxy handles auth and routing.
+The streaming interface is the single boundary between the harness and LLM providers. The harness never holds provider credentials or SDK clients. All inference flows through a `StreamFn` implementation. Two implementations ship with the project:
+
+| Implementation | Crate | Transport | Endpoint |
+|---|---|---|---|
+| `ProxyStreamFn` | `agent-harness` (core) | **SSE** (Server-Sent Events via `eventsource-stream`) | `POST /api/stream` on a caller-managed proxy |
+| `OllamaStreamFn` | `agent-harness-adapters` | **NDJSON** (newline-delimited JSON over chunked HTTP) | `POST /api/chat` on an Ollama server |
+
+Both implementations produce the same `Stream<AssistantMessageEvent>` output. The transport difference is internal: `ProxyStreamFn` parses SSE frames with named event types, while `OllamaStreamFn` splits raw newline-delimited JSON lines and maps Ollama's response schema into harness events. Callers can also supply a fully custom `StreamFn` for any other provider.
 
 ---
 
@@ -15,46 +22,60 @@ flowchart TB
         CallerStreamFn["Custom StreamFn<br/>(direct provider SDK)"]
     end
 
-    subgraph StreamLayer["📡 Streaming Interface"]
+    subgraph StreamLayer["📡 Streaming Interface (core)"]
         StreamFnTrait["StreamFn (trait)<br/>stream(model, context, options)<br/>→ Stream&lt;AssistantMessageEvent&gt;"]
         StreamOptions["StreamOptions<br/>temperature · max_tokens<br/>session_id · transport"]
         EventTypes["AssistantMessageEvent<br/>(start/delta/end protocol)"]
         Delta["AssistantMessageDelta<br/>TextDelta · ThinkingDelta · ToolCallDelta"]
     end
 
-    subgraph ProxyLayer["🔀 Proxy StreamFn"]
-        ProxyStreamFn["ProxyStreamFn<br/>(built-in)"]
+    subgraph ProxyLayer["🔀 Proxy StreamFn (core)"]
+        ProxyStreamFn["ProxyStreamFn"]
         SSEParser["SSE Parser<br/>(eventsource-stream)"]
         Reconstructor["Message Reconstructor<br/>(delta → partial AssistantMessage)"]
+    end
+
+    subgraph OllamaLayer["🔌 Ollama Adapter (adapters crate)"]
+        OllamaStreamFn["OllamaStreamFn"]
+        NDJSONParser["NDJSON Parser<br/>(newline-delimited JSON)"]
+        OllamaMapper["Event Mapper<br/>(Ollama chunks → AssistantMessageEvent)"]
     end
 
     subgraph ExternalLayer["🌐 External"]
         DirectProvider["LLM Provider API<br/>(direct)"]
         ProxyServer["LLM Proxy Server<br/>(HTTP/SSE)"]
         BackendProvider["LLM Provider API<br/>(via proxy)"]
+        OllamaServer["Ollama Server<br/>(HTTP/NDJSON)"]
     end
 
     CallerStreamFn -->|"implements"| StreamFnTrait
     ProxyStreamFn -->|"implements"| StreamFnTrait
+    OllamaStreamFn -->|"implements"| StreamFnTrait
     StreamFnTrait --> StreamOptions
     StreamFnTrait --> EventTypes
     EventTypes --> Delta
     ProxyStreamFn --> SSEParser
     SSEParser --> Reconstructor
     Reconstructor --> EventTypes
+    OllamaStreamFn --> NDJSONParser
+    NDJSONParser --> OllamaMapper
+    OllamaMapper --> EventTypes
     CallerStreamFn -->|"direct calls"| DirectProvider
-    ProxyStreamFn -->|"POST /api/stream<br/>Bearer token"| ProxyServer
+    ProxyStreamFn -->|"POST /api/stream<br/>Bearer token (SSE)"| ProxyServer
     ProxyServer -->|"proxied request"| BackendProvider
+    OllamaStreamFn -->|"POST /api/chat<br/>(NDJSON stream)"| OllamaServer
 
     classDef callerStyle fill:#e3f2fd,stroke:#1976d2,stroke-width:2px,color:#000
     classDef streamStyle fill:#fff3e0,stroke:#f57c00,stroke-width:2px,color:#000
     classDef proxyStyle fill:#1976d2,stroke:#0d47a1,stroke-width:2px,color:#fff
+    classDef adapterStyle fill:#c8e6c9,stroke:#388e3c,stroke-width:2px,color:#000
     classDef externalStyle fill:#e0e0e0,stroke:#424242,stroke-width:2px,color:#000
 
     class CallerStreamFn callerStyle
     class StreamFnTrait,StreamOptions,EventTypes,Delta streamStyle
     class ProxyStreamFn,SSEParser,Reconstructor proxyStyle
-    class DirectProvider,ProxyServer,BackendProvider externalStyle
+    class OllamaStreamFn,NDJSONParser,OllamaMapper adapterStyle
+    class DirectProvider,ProxyServer,BackendProvider,OllamaServer externalStyle
 ```
 
 ---
@@ -152,6 +173,61 @@ flowchart TB
     class HTTPPost,SSERead,ParseEvent,Accumulate,EmitEvent clientStyle
     class HarnessStream outputStyle
 ```
+
+---
+
+## L3 — OllamaStreamFn Architecture
+
+The Ollama adapter connects to Ollama's `/api/chat` endpoint, which streams newline-delimited JSON (NDJSON) rather than SSE. Each line is a self-contained JSON object with a `message` field and a `done` boolean. The adapter maintains a state machine that tracks open content blocks (thinking, text, tool calls) and emits the same `AssistantMessageEvent` protocol that `ProxyStreamFn` produces.
+
+```mermaid
+flowchart TB
+    subgraph OllamaServer["🖥️ Ollama Server"]
+        ServerRecv["Receive POST /api/chat"]
+        ServerInfer["Run model inference"]
+        ServerNDJSON["Stream NDJSON response<br/>(one JSON object per line)"]
+    end
+
+    subgraph OllamaClient["🔌 OllamaStreamFn (adapters crate)"]
+        HTTPPost["POST /api/chat<br/>(model + messages + tools)"]
+        NDJSONRead["Read NDJSON stream<br/>(chunked HTTP body)"]
+        ParseChunk["Parse OllamaChatChunk"]
+        StateMachine["State Machine<br/>(track open blocks:<br/>thinking, text, tool calls)"]
+        EmitEvent["Emit AssistantMessageEvent<br/>(start/delta/end)"]
+    end
+
+    subgraph Output["📤 Output"]
+        HarnessStream["Stream&lt;AssistantMessageEvent&gt;<br/>consumed by run_loop"]
+    end
+
+    HTTPPost --> ServerRecv
+    ServerRecv --> ServerInfer
+    ServerInfer --> ServerNDJSON
+    ServerNDJSON --> NDJSONRead
+    NDJSONRead --> ParseChunk
+    ParseChunk --> StateMachine
+    StateMachine --> EmitEvent
+    EmitEvent --> HarnessStream
+
+    classDef serverStyle fill:#e0e0e0,stroke:#424242,stroke-width:2px,color:#000
+    classDef clientStyle fill:#c8e6c9,stroke:#388e3c,stroke-width:2px,color:#000
+    classDef outputStyle fill:#f5f5f5,stroke:#616161,stroke-width:2px,color:#000
+
+    class ServerRecv,ServerInfer,ServerNDJSON serverStyle
+    class HTTPPost,NDJSONRead,ParseChunk,StateMachine,EmitEvent clientStyle
+    class HarnessStream outputStyle
+```
+
+**Key differences from `ProxyStreamFn`:**
+
+| Aspect | `ProxyStreamFn` (SSE) | `OllamaStreamFn` (NDJSON) |
+|---|---|---|
+| Transport | SSE with named event types | Newline-delimited JSON |
+| Parsing library | `eventsource-stream` | Custom `ndjson_lines` splitter |
+| Message reconstruction | Accumulates deltas into a `partial: AssistantMessage` | State machine tracks open blocks, emits events directly |
+| Tool call delivery | Streamed as incremental JSON fragments | Delivered as complete objects in a single chunk |
+| Authentication | Bearer token header | None (local server) |
+| Cost tracking | Provider-dependent | Always zero (local inference) |
 
 ---
 
