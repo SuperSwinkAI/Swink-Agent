@@ -19,6 +19,7 @@ This diagram shows the agent harness as a single system and the external actors 
 flowchart TB
     subgraph CallerLayer["👤 Caller"]
         App["Calling Application<br/>(Rust binary or library)"]
+        TUI["Terminal UI<br/>(ratatui + crossterm)"]
     end
 
     subgraph HarnessSystem["⚙️ Agent Harness (Rust Library)"]
@@ -32,6 +33,8 @@ flowchart TB
 
     App -->|"Constructs Agent,<br/>supplies StreamFn + Tools"| Harness
     Harness -->|"AgentEvent stream,<br/>AgentResult"| App
+    TUI -->|"Agent API +<br/>event subscription"| Harness
+    Harness -->|"AgentEvent stream"| TUI
     Harness -->|"Streaming inference<br/>via StreamFn (direct)"| LLMProvider
     Harness -->|"Streaming inference<br/>via ProxyStreamFn (SSE)"| ProxyServer
     ProxyServer -->|"Proxied request"| LLMProvider
@@ -40,7 +43,7 @@ flowchart TB
     classDef harnessStyle fill:#1976d2,stroke:#0d47a1,stroke-width:2px,color:#fff
     classDef externalStyle fill:#e0e0e0,stroke:#424242,stroke-width:2px,color:#000
 
-    class App callerStyle
+    class App,TUI callerStyle
     class Harness harnessStyle
     class LLMProvider,ProxyServer externalStyle
 ```
@@ -94,6 +97,14 @@ flowchart TB
         Errors["Error Types<br/>(ContextWindowOverflow,<br/>MaxTokensReached)"]
     end
 
+    subgraph TUILayer["🖥️ Terminal UI"]
+        TUIApp["TUI App<br/>Event loop, layout,<br/>focus management"]
+        ConvView["Conversation View<br/>Message rendering,<br/>markdown, syntax highlighting"]
+        InputEditor["Input Editor<br/>Multi-line text input"]
+        ToolPanel["Tool Panel<br/>Active executions, results"]
+        StatusBar["Status Bar<br/>Model, usage, state"]
+    end
+
     subgraph ExternalLayer["🌐 External"]
         LLMProvider["LLM Provider API"]
         ProxyServer["LLM Proxy Server"]
@@ -116,6 +127,12 @@ flowchart TB
     Loop --> Retry
     Loop --> Cancel
     Loop --> Errors
+    TUIApp -->|"prompt / abort"| Agent
+    Events -->|"subscribe"| TUIApp
+    TUIApp --> ConvView
+    TUIApp --> InputEditor
+    TUIApp --> ToolPanel
+    TUIApp --> StatusBar
 
     classDef callerStyle fill:#e3f2fd,stroke:#1976d2,stroke-width:2px,color:#000
     classDef agentStyle fill:#1976d2,stroke:#0d47a1,stroke-width:2px,color:#fff
@@ -124,6 +141,7 @@ flowchart TB
     classDef streamStyle fill:#fff3e0,stroke:#f57c00,stroke-width:2px,color:#000
     classDef infraStyle fill:#f5f5f5,stroke:#616161,stroke-width:2px,color:#000
     classDef externalStyle fill:#e0e0e0,stroke:#424242,stroke-width:2px,color:#000
+    classDef tuiStyle fill:#1976d2,stroke:#0d47a1,stroke-width:2px,color:#fff
 
     class App,Tools,StreamImpl callerStyle
     class Agent agentStyle
@@ -131,6 +149,7 @@ flowchart TB
     class Validator,Executor toolStyle
     class StreamFn,ProxyFn streamStyle
     class Events,Retry,Cancel,Errors infraStyle
+    class TUIApp,ConvView,InputEditor,ToolPanel,StatusBar tuiStyle
     class LLMProvider,ProxyServer externalStyle
 ```
 
@@ -278,3 +297,72 @@ flowchart TB
 **Errors stay in the message log.** LLM and tool errors produce assistant messages rather than unwinding the call stack. The caller always gets a complete, inspectable message history regardless of outcome.
 
 **Concurrency is scoped to tool execution.** Tool calls within a single turn run concurrently via `tokio::spawn`. Everything else — turns, steering polls, follow-up polls — is sequential. This makes the loop easy to reason about without sacrificing the main performance win of parallel tool execution.
+
+**TUI is a separate crate.** The terminal interface is a binary crate that depends on the library, not a feature-gated module. This keeps the core harness free of terminal dependencies and allows the TUI to evolve independently. The TUI consumes the same public API that any other application would use.
+
+## TUI Architecture
+
+The TUI is a separate binary crate (`agent-harness-tui`) that depends on the `agent-harness` library. It provides an interactive terminal interface for conversing with an LLM agent.
+
+### Component Model
+
+The TUI uses a component-based architecture where each UI element is a stateful widget rendered via `ratatui`. The component tree is:
+
+```
+App
+├── Conversation View (scrollable message history)
+│   ├── User Message Block
+│   ├── Assistant Message Block (with streaming)
+│   │   ├── Text Content (markdown rendered)
+│   │   ├── Thinking Block (collapsible)
+│   │   └── Tool Call Block
+│   └── Tool Result Block
+├── Input Editor (multi-line text composition)
+├── Tool Panel (active tool executions)
+└── Status Bar (model, usage, state)
+```
+
+### Event Loop
+
+The TUI runs a dual event loop:
+
+1. **Terminal events** — `crossterm` delivers keyboard, mouse, and resize events. These are dispatched to the focused component for input handling.
+2. **Agent events** — The TUI subscribes to `AgentEvent` from the harness via `Agent::subscribe`. Events arrive on a channel and trigger UI state updates.
+
+Both event sources are multiplexed via `tokio::select!` in the main render loop.
+
+### Data Flow
+
+```mermaid
+flowchart LR
+    subgraph Terminal["🖥️ Terminal"]
+        Stdin["stdin<br/>(keyboard, mouse)"]
+        Stdout["stdout<br/>(rendered frames)"]
+    end
+
+    subgraph TUI["TUI App"]
+        EventLoop["Event Loop<br/>(tokio::select!)"]
+        State["App State<br/>(messages, focus, scroll)"]
+        Renderer["ratatui Renderer"]
+    end
+
+    subgraph Harness["Agent Harness"]
+        Agent["Agent"]
+        Events["AgentEvent Stream"]
+    end
+
+    Stdin -->|"crossterm events"| EventLoop
+    EventLoop -->|"update"| State
+    State -->|"render"| Renderer
+    Renderer -->|"draw"| Stdout
+    EventLoop -->|"prompt / abort"| Agent
+    Events -->|"subscribe"| EventLoop
+
+    classDef termStyle fill:#e0e0e0,stroke:#424242,stroke-width:2px,color:#000
+    classDef tuiStyle fill:#1976d2,stroke:#0d47a1,stroke-width:2px,color:#fff
+    classDef harnessStyle fill:#e3f2fd,stroke:#1976d2,stroke-width:2px,color:#000
+
+    class Stdin,Stdout termStyle
+    class EventLoop,State,Renderer tuiStyle
+    class Agent,Events harnessStyle
+```

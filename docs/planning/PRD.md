@@ -16,7 +16,7 @@ The implementation leverages Rust's type system, ownership model, and async runt
 
 ## 2. Non-Goals
 
-- No built-in UI, TUI, or CLI interface
+- No built-in web UI or GUI interface
 - No bundled LLM provider SDK implementations (providers are external dependencies)
 - No research features (memory architecture, compaction) — tracked separately
 
@@ -372,7 +372,61 @@ agent-harness/
 
 ---
 
-## 16. Acceptance Criteria
+## 16. Terminal User Interface (TUI)
+
+The TUI is a terminal-based interactive interface for the agent harness, provided as a separate binary crate within the workspace. It renders the agent conversation, tool execution, and streaming responses directly in the terminal.
+
+### 16.1 Architecture
+
+The TUI follows a component-based architecture using `ratatui` for rendering and `crossterm` for terminal input/output. Components are stateful widgets that render into terminal frames.
+
+- **App** — top-level application state machine managing layout, focus, and event dispatch
+- **Conversation View** — scrollable view displaying the message history with syntax-highlighted code blocks, markdown rendering, and thinking block display
+- **Input Editor** — multi-line text editor for composing user messages with line wrapping and cursor management
+- **Tool Panel** — displays active tool executions with progress indicators and results
+- **Status Bar** — shows model info, token usage, cost, and agent state (idle/running/error)
+
+### 16.2 Event Model
+
+The TUI subscribes to `AgentEvent` values from the harness and maps them to UI updates:
+
+- `AgentStart` / `AgentEnd` — toggle running state indicator
+- `TurnStart` / `TurnEnd` — update turn counter
+- `MessageStart` / `MessageUpdate` / `MessageEnd` — incrementally render assistant response
+- `ToolExecutionStart` / `ToolExecutionEnd` — show tool activity in the tool panel
+
+Terminal input events (keyboard, mouse, resize) are handled by `crossterm` and dispatched to the focused component.
+
+### 16.3 Rendering
+
+The TUI uses `ratatui`'s immediate-mode rendering: each frame, the entire UI is re-rendered from current state. `crossterm`'s alternate screen and raw mode provide a clean full-screen terminal experience.
+
+Key rendering features:
+- Word-wrapped markdown with ANSI color support
+- Syntax highlighting for code blocks (via `syntect`)
+- Streaming text display with cursor indicator during generation
+- Scrollable conversation history with viewport tracking
+- Responsive layout adapting to terminal dimensions
+
+### 16.4 Interaction
+
+- **Compose and send messages** — type in the input editor, press Enter to send
+- **Scroll history** — navigate conversation with arrow keys, Page Up/Down, mouse wheel
+- **Cancel generation** — Escape or Ctrl+C to abort the current agent run
+- **Quit** — Ctrl+Q or `/quit` command to exit
+
+### 16.5 Dependencies
+
+| Crate | Purpose |
+|---|---|
+| `ratatui` | Terminal UI framework (immediate-mode rendering) |
+| `crossterm` | Cross-platform terminal backend (input, raw mode, alternate screen) |
+| `syntect` | Syntax highlighting for code blocks |
+| `tokio` | Async runtime (shared with agent harness) |
+
+---
+
+## 17. Acceptance Criteria
 
 | # | Criterion |
 |---|---|
@@ -391,3 +445,8 @@ agent-harness/
 | 13 | Incomplete tool calls caused by max tokens are replaced with error tool results before the next turn |
 | 14 | The default retry strategy applies exponential back-off with jitter and respects the maximum delay cap |
 | 15 | Sync prompt blocks until completion without requiring the caller to manage a Tokio runtime |
+| 16 | TUI renders streaming assistant responses incrementally as deltas arrive |
+| 17 | TUI input editor accepts multi-line input and submits on Enter |
+| 18 | Cancel via Escape/Ctrl+C aborts the running agent and shows aborted state |
+| 19 | Tool execution panel shows active tools and their results |
+| 20 | TUI adapts layout to terminal resize events |

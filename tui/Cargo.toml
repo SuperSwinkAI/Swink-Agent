@@ -1,0 +1,28 @@
+[package]
+name = "agent-harness-tui"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+
+[[bin]]
+name = "agent-tui"
+path = "src/main.rs"
+
+[dependencies]
+agent-harness = { path = ".." }
+ratatui = "0.29"
+crossterm = { version = "0.28", features = ["event-stream"] }
+tokio = { version = "1", features = ["full"] }
+syntect = { version = "5", default-features = false, features = ["default-syntaxes", "default-themes", "parsing", "html", "regex-onig"] }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
