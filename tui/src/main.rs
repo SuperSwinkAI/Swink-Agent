@@ -3,9 +3,12 @@
 mod app;
 mod commands;
 mod config;
+mod credentials;
 mod format;
+mod session;
 mod theme;
 mod ui;
+mod wizard;
 
 use std::io;
 use std::sync::Arc;
@@ -54,6 +57,14 @@ fn restore_terminal() -> io::Result<()> {
 }
 
 fn run(mut terminal: Terminal<CrosstermBackend<io::Stdout>>) -> AppResult<()> {
+    // Run setup wizard on first launch if no API keys are configured
+    if !credentials::any_key_configured() {
+        let mut wiz = wizard::SetupWizard::new();
+        if !wiz.run(&mut terminal)? {
+            return Ok(()); // User chose to quit from wizard
+        }
+    }
+
     let config = TuiConfig::load();
     let rt = tokio::runtime::Runtime::new()?;
 
@@ -87,7 +98,13 @@ fn create_agent() -> Agent {
 
     // Check for proxy mode first
     if let Ok(base_url) = std::env::var("LLM_BASE_URL") {
-        let api_key = std::env::var("LLM_API_KEY").unwrap_or_default();
+        let proxy_provider = credentials::providers()
+            .into_iter()
+            .find(|p| p.key_name == "proxy");
+        let api_key = proxy_provider
+            .as_ref()
+            .and_then(credentials::get_credential)
+            .unwrap_or_default();
         let model_id =
             std::env::var("LLM_MODEL").unwrap_or_else(|_| "claude-sonnet-4-20250514".to_string());
         let proxy: Arc<dyn StreamFn> = Arc::new(ProxyStreamFn::new(&base_url, &api_key));

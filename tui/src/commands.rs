@@ -21,6 +21,16 @@ pub enum CommandResult {
     Reset,
     /// Copy text to clipboard.
     CopyToClipboard(ClipboardContent),
+    /// Save current session.
+    SaveSession,
+    /// Load a session by ID.
+    LoadSession(String),
+    /// List saved sessions.
+    ListSessions,
+    /// Store a credential.
+    StoreKey { provider: String, key: String },
+    /// List configured credentials.
+    ListKeys,
     /// Input was not a recognized command.
     NotACommand,
 }
@@ -63,6 +73,28 @@ fn execute_hash_command(cmd: &str) -> CommandResult {
         "copy" => CommandResult::CopyToClipboard(ClipboardContent::Last),
         "copy all" => CommandResult::CopyToClipboard(ClipboardContent::All),
         "copy code" => CommandResult::CopyToClipboard(ClipboardContent::Code),
+        "sessions" => CommandResult::ListSessions,
+        "save" => CommandResult::SaveSession,
+        "keys" => CommandResult::ListKeys,
+        _ if cmd.starts_with("load ") => {
+            let id = cmd.strip_prefix("load ").unwrap_or("").trim();
+            if id.is_empty() {
+                CommandResult::Feedback("Usage: #load <session-id>".to_string())
+            } else {
+                CommandResult::LoadSession(id.to_string())
+            }
+        }
+        _ if cmd.starts_with("key ") => {
+            let rest = cmd.strip_prefix("key ").unwrap_or("").trim();
+            if let Some((provider, key)) = rest.split_once(' ') {
+                CommandResult::StoreKey {
+                    provider: provider.trim().to_string(),
+                    key: key.trim().to_string(),
+                }
+            } else {
+                CommandResult::Feedback("Usage: #key <provider> <api-key>".to_string())
+            }
+        }
         _ => CommandResult::Feedback(format!("Unknown command: #{cmd}\nType #help for available commands.")),
     }
 }
@@ -119,6 +151,11 @@ fn help_text() -> String {
 │ #copy       Copy last response          │
 │ #copy all   Copy full conversation      │
 │ #copy code  Copy last code block        │
+│ #sessions   List saved sessions         │
+│ #save       Save current session        │
+│ #load <id>  Load a saved session        │
+│ #keys       List configured providers   │
+│ #key <p> <k> Store API key for provider │
 ╰──────────────────────────────────────────╯
 ╭─── / Commands (Agent) ──────────────────╮
 │ /quit       Exit                        │

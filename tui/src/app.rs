@@ -14,6 +14,8 @@ use agent_harness::{
 
 use crate::commands::{self, ClipboardContent, CommandResult};
 use crate::config::TuiConfig;
+use crate::credentials;
+use crate::session::SessionManager;
 use crate::ui;
 use crate::ui::conversation::ConversationView;
 use crate::ui::input::InputEditor;
@@ -97,11 +99,17 @@ pub struct App {
     pub config: TuiConfig,
     /// Retry attempt counter for error display.
     pub retry_attempt: Option<u32>,
+    /// Session manager for persistence.
+    session_manager: Option<SessionManager>,
+    /// Current session ID.
+    session_id: String,
 }
 
 impl App {
     pub fn new(config: TuiConfig) -> Self {
         let (agent_tx, agent_rx) = mpsc::channel(256);
+        let session_manager = SessionManager::new().ok();
+        let session_id = SessionManager::new_session_id();
         Self {
             should_quit: false,
             status: AgentStatus::Idle,
@@ -123,6 +131,8 @@ impl App {
             agent_rx,
             config,
             retry_attempt: None,
+            session_manager,
+            session_id,
         }
     }
 
@@ -347,6 +357,26 @@ impl App {
                 self.copy_to_clipboard(content);
                 return;
             }
+            CommandResult::SaveSession => {
+                self.save_session();
+                return;
+            }
+            CommandResult::LoadSession(id) => {
+                self.load_session(&id);
+                return;
+            }
+            CommandResult::ListSessions => {
+                self.list_sessions();
+                return;
+            }
+            CommandResult::StoreKey { provider, key } => {
+                self.store_key(&provider, &key);
+                return;
+            }
+            CommandResult::ListKeys => {
+                self.list_keys();
+                return;
+            }
         }
 
         // Add user message to display
@@ -496,6 +526,7 @@ impl App {
             AgentEvent::AgentEnd { .. } => {
                 self.status = AgentStatus::Idle;
                 self.retry_attempt = None;
+                self.auto_save_session();
             }
             _ => {}
         }
@@ -596,6 +627,153 @@ impl App {
     /// Approximate visible height of conversation area.
     const fn last_visible_height() -> usize {
         20
+    }
+
+    // ─── Session persistence ────────────────────────────────────────────
+
+    fn auto_save_session(&self) {
+        let Some(ref mgr) = self.session_manager else {
+            return;
+        };
+        let Some(ref agent) = self.agent else {
+            return;
+        };
+        let state = agent.state();
+        let _ = mgr.save_session(
+            &self.session_id,
+            &self.model_name,
+            &state.system_prompt,
+            &state.messages,
+        );
+    }
+
+    fn save_session(&mut self) {
+        self.auto_save_session();
+        self.push_system_message(format!("Session saved: {}", self.session_id));
+    }
+
+    fn load_session(&mut self, id: &str) {
+        let Some(ref mgr) = self.session_manager else {
+            self.push_system_message("Session persistence unavailable.".to_string());
+            return;
+        };
+        match mgr.load_session(id) {
+            Ok((meta, messages)) => {
+                // Rebuild display messages from loaded data
+                self.messages.clear();
+                for msg in &messages {
+                    if let AgentMessage::Llm(llm) = msg {
+                        match llm {
+                            LlmMessage::User(u) => {
+                                self.messages.push(DisplayMessage {
+                                    role: MessageRole::User,
+                                    content: ContentBlock::extract_text(&u.content),
+                                    thinking: None,
+                                    is_streaming: false,
+                                });
+                            }
+                            LlmMessage::Assistant(a) => {
+                                self.messages.push(DisplayMessage {
+                                    role: MessageRole::Assistant,
+                                    content: ContentBlock::extract_text(&a.content),
+                                    thinking: None,
+                                    is_streaming: false,
+                                });
+                            }
+                            LlmMessage::ToolResult(t) => {
+                                let content = ContentBlock::extract_text(&t.content);
+                                if !content.is_empty() {
+                                    self.messages.push(DisplayMessage {
+                                        role: MessageRole::ToolResult,
+                                        content,
+                                        thinking: None,
+                                        is_streaming: false,
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+                self.session_id = id.to_string();
+                self.model_name.clone_from(&meta.model);
+                self.conversation = ConversationView::new();
+                // Set agent messages (takes ownership)
+                if let Some(agent) = &mut self.agent {
+                    if !meta.system_prompt.is_empty() {
+                        agent.set_system_prompt(&meta.system_prompt);
+                    }
+                    agent.set_messages(messages);
+                }
+                self.push_system_message(format!(
+                    "Loaded session: {} ({} messages)",
+                    id, meta.message_count
+                ));
+            }
+            Err(e) => {
+                self.push_system_message(format!("Failed to load session: {e}"));
+            }
+        }
+    }
+
+    fn list_sessions(&mut self) {
+        use std::fmt::Write;
+        let Some(ref mgr) = self.session_manager else {
+            self.push_system_message("Session persistence unavailable.".to_string());
+            return;
+        };
+        match mgr.list_sessions() {
+            Ok(sessions) if sessions.is_empty() => {
+                self.push_system_message("No saved sessions.".to_string());
+            }
+            Ok(sessions) => {
+                let mut text = String::from("Saved sessions:\n");
+                for s in &sessions {
+                    let current = if s.id == self.session_id {
+                        " (current)"
+                    } else {
+                        ""
+                    };
+                    let _ = writeln!(
+                        text,
+                        "  {} — {} msgs, model: {}{current}",
+                        s.id, s.message_count, s.model
+                    );
+                }
+                text.push_str("\nUse #load <id> to restore a session.");
+                self.push_system_message(text);
+            }
+            Err(e) => {
+                self.push_system_message(format!("Failed to list sessions: {e}"));
+            }
+        }
+    }
+
+    // ─── Credential management ──────────────────────────────────────────
+
+    fn store_key(&mut self, provider: &str, key: &str) {
+        match credentials::store_credential(provider, key) {
+            Ok(()) => {
+                self.push_system_message(format!("API key stored for: {provider}"));
+            }
+            Err(e) => {
+                self.push_system_message(format!("Failed to store key: {e}"));
+            }
+        }
+    }
+
+    fn list_keys(&mut self) {
+        use std::fmt::Write;
+        let status = credentials::check_credentials();
+        let providers = credentials::providers();
+        let mut text = String::from("Provider credentials:\n");
+        for p in &providers {
+            let configured = status.get(p.key_name).copied().unwrap_or(false);
+            let icon = if configured { "✓" } else { "✗" };
+            let note = if p.requires_key { "" } else { " (no key needed)" };
+            let _ = writeln!(text, "  {icon} {} — {}{note}", p.name, p.description);
+        }
+        text.push_str("\nUse #key <provider> <api-key> to store a key.");
+        self.push_system_message(text);
     }
 }
 
