@@ -334,7 +334,7 @@ async fn run_single_turn(
     let agent_context = AgentContext {
         system_prompt: system_prompt.to_string(),
         messages: Vec::new(),
-        tools: vec![],
+        tools: config.tools.clone(),
     };
 
     let stream_result = stream_with_retry(

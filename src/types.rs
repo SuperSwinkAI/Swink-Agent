@@ -313,9 +313,8 @@ impl fmt::Debug for AgentResult {
 pub struct AgentContext {
     pub system_prompt: String,
     pub messages: Vec<AgentMessage>,
-    /// Placeholder for tool trait objects. Uses `Any` until the `AgentTool`
-    /// trait is defined in Phase 2.
-    pub tools: Vec<Arc<dyn std::any::Any + Send + Sync>>,
+    /// The tools available during this turn.
+    pub tools: Vec<Arc<dyn crate::tool::AgentTool>>,
 }
 
 impl fmt::Debug for AgentContext {
