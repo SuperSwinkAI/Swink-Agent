@@ -1,0 +1,995 @@
+use agent_harness::{
+    AgentContext, AgentEvent, AgentLoopConfig, AgentMessage, AgentTool, AgentToolResult,
+    AssistantMessageEvent, ContentBlock, Cost, CustomMessage, DefaultRetryStrategy, LlmMessage,
+    ModelSpec, StopReason, StreamFn, StreamOptions, Usage, UserMessage, agent_loop,
+};
+
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+use futures::Stream;
+use futures::stream::StreamExt;
+use serde_json::json;
+use tokio_util::sync::CancellationToken;
+
+// ─── MockStreamFn ────────────────────────────────────────────────────────
+
+/// A mock `StreamFn` that yields scripted event sequences.
+struct MockStreamFn {
+    /// Each call to `stream()` pops the next sequence from the front.
+    responses: Mutex<Vec<Vec<AssistantMessageEvent>>>,
+}
+
+impl MockStreamFn {
+    const fn new(responses: Vec<Vec<AssistantMessageEvent>>) -> Self {
+        Self {
+            responses: Mutex::new(responses),
+        }
+    }
+}
+
+impl StreamFn for MockStreamFn {
+    fn stream<'a>(
+        &'a self,
+        _model: &'a ModelSpec,
+        _context: &'a AgentContext,
+        _options: &'a StreamOptions,
+        _cancellation_token: CancellationToken,
+    ) -> Pin<Box<dyn Stream<Item = AssistantMessageEvent> + Send + 'a>> {
+        let events = {
+            let mut responses = self.responses.lock().unwrap();
+            if responses.is_empty() {
+                vec![AssistantMessageEvent::Error {
+                    stop_reason: StopReason::Error,
+                    error_message: "no more scripted responses".to_string(),
+                    usage: None,
+                }]
+            } else {
+                responses.remove(0)
+            }
+        };
+        Box::pin(futures::stream::iter(events))
+    }
+}
+
+// ─── ContextCapturingStreamFn ────────────────────────────────────────────
+
+/// A mock `StreamFn` that captures the messages passed in the context.
+struct ContextCapturingStreamFn {
+    responses: Mutex<Vec<Vec<AssistantMessageEvent>>>,
+    captured_message_counts: Mutex<Vec<usize>>,
+}
+
+impl ContextCapturingStreamFn {
+    const fn new(responses: Vec<Vec<AssistantMessageEvent>>) -> Self {
+        Self {
+            responses: Mutex::new(responses),
+            captured_message_counts: Mutex::new(Vec::new()),
+        }
+    }
+}
+
+impl StreamFn for ContextCapturingStreamFn {
+    fn stream<'a>(
+        &'a self,
+        _model: &'a ModelSpec,
+        context: &'a AgentContext,
+        _options: &'a StreamOptions,
+        _cancellation_token: CancellationToken,
+    ) -> Pin<Box<dyn Stream<Item = AssistantMessageEvent> + Send + 'a>> {
+        self.captured_message_counts
+            .lock()
+            .unwrap()
+            .push(context.messages.len());
+        let events = {
+            let mut responses = self.responses.lock().unwrap();
+            if responses.is_empty() {
+                vec![AssistantMessageEvent::Error {
+                    stop_reason: StopReason::Error,
+                    error_message: "no more scripted responses".to_string(),
+                    usage: None,
+                }]
+            } else {
+                responses.remove(0)
+            }
+        };
+        Box::pin(futures::stream::iter(events))
+    }
+}
+
+// ─── MockTool ────────────────────────────────────────────────────────────
+
+/// A configurable mock tool for testing.
+struct MockTool {
+    tool_name: String,
+    schema: serde_json::Value,
+    result: Mutex<Option<AgentToolResult>>,
+    delay: Option<Duration>,
+    executed: AtomicBool,
+}
+
+impl MockTool {
+    fn new(name: &str) -> Self {
+        Self {
+            tool_name: name.to_string(),
+            schema: json!({
+                "type": "object",
+                "properties": {},
+                "additionalProperties": true
+            }),
+            result: Mutex::new(Some(AgentToolResult::text("ok"))),
+            delay: None,
+            executed: AtomicBool::new(false),
+        }
+    }
+
+    fn with_schema(mut self, schema: serde_json::Value) -> Self {
+        self.schema = schema;
+        self
+    }
+
+    #[allow(dead_code)]
+    fn with_result(self, result: AgentToolResult) -> Self {
+        *self.result.lock().unwrap() = Some(result);
+        self
+    }
+
+    const fn with_delay(mut self, delay: Duration) -> Self {
+        self.delay = Some(delay);
+        self
+    }
+
+    fn was_executed(&self) -> bool {
+        self.executed.load(Ordering::SeqCst)
+    }
+}
+
+impl AgentTool for MockTool {
+    fn name(&self) -> &str {
+        &self.tool_name
+    }
+
+    fn label(&self) -> &str {
+        &self.tool_name
+    }
+
+    fn description(&self) -> &'static str {
+        "A mock tool for testing"
+    }
+
+    fn parameters_schema(&self) -> &serde_json::Value {
+        &self.schema
+    }
+
+    fn execute(
+        &self,
+        _tool_call_id: &str,
+        _params: serde_json::Value,
+        _cancellation_token: CancellationToken,
+        _on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
+    ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>> {
+        self.executed.store(true, Ordering::SeqCst);
+        let result = self
+            .result
+            .lock()
+            .unwrap()
+            .clone()
+            .unwrap_or_else(|| AgentToolResult::text("ok"));
+        let delay = self.delay;
+        Box::pin(async move {
+            if let Some(d) = delay {
+                tokio::time::sleep(d).await;
+            }
+            result
+        })
+    }
+}
+
+// ─── Helper functions ────────────────────────────────────────────────────
+
+fn default_model() -> ModelSpec {
+    ModelSpec::new("test", "test-model")
+}
+
+fn text_only_events(text: &str) -> Vec<AssistantMessageEvent> {
+    vec![
+        AssistantMessageEvent::Start,
+        AssistantMessageEvent::TextStart { content_index: 0 },
+        AssistantMessageEvent::TextDelta {
+            content_index: 0,
+            delta: text.to_string(),
+        },
+        AssistantMessageEvent::TextEnd { content_index: 0 },
+        AssistantMessageEvent::Done {
+            stop_reason: StopReason::Stop,
+            usage: Usage::default(),
+            cost: Cost::default(),
+        },
+    ]
+}
+
+fn tool_call_events(id: &str, name: &str, args: &str) -> Vec<AssistantMessageEvent> {
+    vec![
+        AssistantMessageEvent::Start,
+        AssistantMessageEvent::ToolCallStart {
+            content_index: 0,
+            id: id.to_string(),
+            name: name.to_string(),
+        },
+        AssistantMessageEvent::ToolCallDelta {
+            content_index: 0,
+            delta: args.to_string(),
+        },
+        AssistantMessageEvent::ToolCallEnd { content_index: 0 },
+        AssistantMessageEvent::Done {
+            stop_reason: StopReason::ToolUse,
+            usage: Usage::default(),
+            cost: Cost::default(),
+        },
+    ]
+}
+
+type ConvertToLlmBoxed = Box<dyn Fn(&AgentMessage) -> Option<LlmMessage> + Send + Sync>;
+
+fn default_convert_to_llm() -> ConvertToLlmBoxed {
+    Box::new(|msg: &AgentMessage| match msg {
+        AgentMessage::Llm(llm) => Some(llm.clone()),
+        AgentMessage::Custom(_) => None,
+    })
+}
+
+fn default_config(stream_fn: Arc<dyn StreamFn>) -> AgentLoopConfig {
+    AgentLoopConfig {
+        model: default_model(),
+        stream_options: StreamOptions::default(),
+        retry_strategy: Box::new(
+            DefaultRetryStrategy::default()
+                .with_jitter(false)
+                .with_base_delay(Duration::from_millis(1)),
+        ),
+        stream_fn,
+        tools: vec![],
+        convert_to_llm: default_convert_to_llm(),
+        transform_context: None,
+        get_api_key: None,
+        get_steering_messages: None,
+        get_follow_up_messages: None,
+    }
+}
+
+/// Collect all events from a loop stream.
+async fn collect_events(stream: Pin<Box<dyn Stream<Item = AgentEvent> + Send>>) -> Vec<AgentEvent> {
+    stream.collect().await
+}
+
+/// Check if events contain a specific variant (by Debug name prefix).
+fn has_event(events: &[AgentEvent], name: &str) -> bool {
+    events.iter().any(|e| format!("{e:?}").starts_with(name))
+}
+
+fn count_events(events: &[AgentEvent], name: &str) -> usize {
+    events
+        .iter()
+        .filter(|e| format!("{e:?}").starts_with(name))
+        .count()
+}
+
+// ─── 3.1: Single-turn no-tool ────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_3_1_single_turn_no_tool() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("Hello!")]));
+    let config = default_config(stream_fn);
+
+    let events = collect_events(agent_loop(
+        vec![],
+        "system".to_string(),
+        config,
+        CancellationToken::new(),
+    ))
+    .await;
+
+    assert!(has_event(&events, "AgentStart"));
+    assert!(has_event(&events, "TurnStart"));
+    assert!(has_event(&events, "MessageStart"));
+    assert!(has_event(&events, "MessageUpdate"));
+    assert!(has_event(&events, "MessageEnd"));
+    assert!(has_event(&events, "TurnEnd"));
+    assert!(has_event(&events, "AgentEnd"));
+
+    let names: Vec<String> = events
+        .iter()
+        .map(|e| {
+            let s = format!("{e:?}");
+            s.split([' ', '{', '(']).next().unwrap_or("").to_string()
+        })
+        .collect();
+
+    let agent_start_idx = names.iter().position(|n| n == "AgentStart").unwrap();
+    let turn_start_idx = names.iter().position(|n| n == "TurnStart").unwrap();
+    let msg_start_idx = names.iter().position(|n| n == "MessageStart").unwrap();
+    let msg_update_idx = names.iter().position(|n| n == "MessageUpdate").unwrap();
+    let msg_end_idx = names.iter().position(|n| n == "MessageEnd").unwrap();
+    let turn_end_idx = names.iter().position(|n| n == "TurnEnd").unwrap();
+    let agent_end_idx = names.iter().position(|n| n == "AgentEnd").unwrap();
+
+    assert!(agent_start_idx < turn_start_idx);
+    assert!(turn_start_idx < msg_start_idx);
+    assert!(msg_start_idx < msg_update_idx);
+    assert!(msg_update_idx < msg_end_idx);
+    assert!(msg_end_idx < turn_end_idx);
+    assert!(turn_end_idx < agent_end_idx);
+}
+
+// ─── 3.2: Single-turn with tool call ─────────────────────────────────────
+
+#[tokio::test]
+async fn test_3_2_single_turn_with_tool_call() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![
+        tool_call_events("tc_1", "read_file", r#"{"path": "/tmp"}"#),
+        text_only_events("Done!"),
+    ]));
+
+    let tool = Arc::new(MockTool::new("read_file"));
+    let mut config = default_config(stream_fn);
+    config.tools = vec![tool];
+
+    let events = collect_events(agent_loop(
+        vec![],
+        "system".to_string(),
+        config,
+        CancellationToken::new(),
+    ))
+    .await;
+
+    assert!(has_event(&events, "ToolExecutionStart"));
+    assert!(has_event(&events, "ToolExecutionEnd"));
+    assert_eq!(count_events(&events, "TurnStart"), 2);
+    assert_eq!(count_events(&events, "TurnEnd"), 2);
+}
+
+// ─── 3.3: Multi-turn ────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_3_3_multi_turn() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![
+        tool_call_events("tc_1", "tool_a", "{}"),
+        tool_call_events("tc_2", "tool_b", "{}"),
+        text_only_events("Final answer"),
+    ]));
+
+    let tool_a = Arc::new(MockTool::new("tool_a"));
+    let tool_b = Arc::new(MockTool::new("tool_b"));
+    let mut config = default_config(stream_fn);
+    config.tools = vec![tool_a, tool_b];
+
+    let events = collect_events(agent_loop(
+        vec![],
+        "system".to_string(),
+        config,
+        CancellationToken::new(),
+    ))
+    .await;
+
+    assert_eq!(count_events(&events, "TurnStart"), 3);
+    assert_eq!(count_events(&events, "TurnEnd"), 3);
+    assert!(has_event(&events, "AgentEnd"));
+}
+
+// ─── 3.4: transform_context ordering ─────────────────────────────────────
+
+#[tokio::test]
+async fn test_3_4_transform_context_ordering() {
+    let counter = Arc::new(AtomicU32::new(0));
+    let counter_transform = Arc::clone(&counter);
+    let counter_convert = Arc::clone(&counter);
+
+    let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("ok")]));
+    let mut config = default_config(stream_fn);
+
+    config.transform_context = Some(Box::new(move |_msgs, _overflow| {
+        counter_transform.fetch_add(1, Ordering::SeqCst);
+    }));
+
+    config.convert_to_llm = Box::new(move |msg: &AgentMessage| {
+        let val = counter_convert.load(Ordering::SeqCst);
+        assert!(
+            val > 0,
+            "transform_context should run before convert_to_llm"
+        );
+        match msg {
+            AgentMessage::Llm(llm) => Some(llm.clone()),
+            AgentMessage::Custom(_) => None,
+        }
+    });
+
+    let events = collect_events(agent_loop(
+        vec![],
+        "system".to_string(),
+        config,
+        CancellationToken::new(),
+    ))
+    .await;
+
+    assert!(has_event(&events, "AgentEnd"));
+    assert!(counter.load(Ordering::SeqCst) > 0);
+}
+
+// ─── 3.5: get_api_key ────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_3_5_get_api_key() {
+    let calls: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let calls_clone = Arc::clone(&calls);
+
+    let stream_fn = Arc::new(MockStreamFn::new(vec![
+        tool_call_events("tc_1", "tool_a", "{}"),
+        text_only_events("done"),
+    ]));
+
+    let tool = Arc::new(MockTool::new("tool_a"));
+    let mut config = default_config(stream_fn);
+    config.tools = vec![tool];
+    config.get_api_key = Some(Box::new(move |provider: &str| {
+        let calls = Arc::clone(&calls_clone);
+        let provider = provider.to_string();
+        Box::pin(async move {
+            calls.lock().unwrap().push(provider);
+            Some("key-123".to_string())
+        })
+    }));
+
+    let events = collect_events(agent_loop(
+        vec![],
+        "system".to_string(),
+        config,
+        CancellationToken::new(),
+    ))
+    .await;
+
+    assert!(has_event(&events, "AgentEnd"));
+    let recorded = calls.lock().unwrap();
+    assert!(
+        recorded.len() >= 2,
+        "get_api_key should be called on each turn, got {} calls",
+        recorded.len()
+    );
+    assert!(recorded.iter().all(|p| p == "test"));
+    drop(recorded);
+}
+
+// ─── 3.6: Concurrent execution ──────────────────────────────────────────
+
+#[tokio::test]
+async fn test_3_6_concurrent_execution() {
+    let events_with_3_tools = vec![
+        AssistantMessageEvent::Start,
+        AssistantMessageEvent::ToolCallStart {
+            content_index: 0,
+            id: "tc_1".to_string(),
+            name: "slow_tool".to_string(),
+        },
+        AssistantMessageEvent::ToolCallDelta {
+            content_index: 0,
+            delta: "{}".to_string(),
+        },
+        AssistantMessageEvent::ToolCallEnd { content_index: 0 },
+        AssistantMessageEvent::ToolCallStart {
+            content_index: 1,
+            id: "tc_2".to_string(),
+            name: "slow_tool2".to_string(),
+        },
+        AssistantMessageEvent::ToolCallDelta {
+            content_index: 1,
+            delta: "{}".to_string(),
+        },
+        AssistantMessageEvent::ToolCallEnd { content_index: 1 },
+        AssistantMessageEvent::ToolCallStart {
+            content_index: 2,
+            id: "tc_3".to_string(),
+            name: "slow_tool3".to_string(),
+        },
+        AssistantMessageEvent::ToolCallDelta {
+            content_index: 2,
+            delta: "{}".to_string(),
+        },
+        AssistantMessageEvent::ToolCallEnd { content_index: 2 },
+        AssistantMessageEvent::Done {
+            stop_reason: StopReason::ToolUse,
+            usage: Usage::default(),
+            cost: Cost::default(),
+        },
+    ];
+
+    let stream_fn = Arc::new(MockStreamFn::new(vec![
+        events_with_3_tools,
+        text_only_events("done"),
+    ]));
+
+    let delay = Duration::from_millis(100);
+    let tool1 = Arc::new(MockTool::new("slow_tool").with_delay(delay));
+    let tool2 = Arc::new(MockTool::new("slow_tool2").with_delay(delay));
+    let tool3 = Arc::new(MockTool::new("slow_tool3").with_delay(delay));
+
+    let mut config = default_config(stream_fn);
+    config.tools = vec![tool1, tool2, tool3];
+
+    let start = std::time::Instant::now();
+    let events = collect_events(agent_loop(
+        vec![],
+        "system".to_string(),
+        config,
+        CancellationToken::new(),
+    ))
+    .await;
+    let elapsed = start.elapsed();
+
+    assert!(has_event(&events, "AgentEnd"));
+    assert!(
+        elapsed < Duration::from_millis(250),
+        "tools should execute concurrently, took {elapsed:?}"
+    );
+}
+
+// ─── 3.7: Steering interrupt ─────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_3_7_steering_interrupt() {
+    let events_with_2_tools = vec![
+        AssistantMessageEvent::Start,
+        AssistantMessageEvent::ToolCallStart {
+            content_index: 0,
+            id: "tc_1".to_string(),
+            name: "fast_tool".to_string(),
+        },
+        AssistantMessageEvent::ToolCallDelta {
+            content_index: 0,
+            delta: "{}".to_string(),
+        },
+        AssistantMessageEvent::ToolCallEnd { content_index: 0 },
+        AssistantMessageEvent::ToolCallStart {
+            content_index: 1,
+            id: "tc_2".to_string(),
+            name: "slow_tool".to_string(),
+        },
+        AssistantMessageEvent::ToolCallDelta {
+            content_index: 1,
+            delta: "{}".to_string(),
+        },
+        AssistantMessageEvent::ToolCallEnd { content_index: 1 },
+        AssistantMessageEvent::Done {
+            stop_reason: StopReason::ToolUse,
+            usage: Usage::default(),
+            cost: Cost::default(),
+        },
+    ];
+
+    let stream_fn = Arc::new(MockStreamFn::new(vec![
+        events_with_2_tools,
+        text_only_events("after steering"),
+    ]));
+
+    let fast_tool = Arc::new(MockTool::new("fast_tool").with_delay(Duration::from_millis(10)));
+    let slow_tool = Arc::new(MockTool::new("slow_tool").with_delay(Duration::from_millis(500)));
+
+    let steering_call_count = Arc::new(AtomicU32::new(0));
+    let steering_count_clone = Arc::clone(&steering_call_count);
+
+    let mut config = default_config(stream_fn);
+    config.tools = vec![fast_tool, slow_tool];
+    config.get_steering_messages = Some(Box::new(move || {
+        let count = steering_count_clone.fetch_add(1, Ordering::SeqCst);
+        if count == 0 {
+            vec![AgentMessage::Llm(LlmMessage::User(UserMessage {
+                content: vec![ContentBlock::Text {
+                    text: "steering: change direction".to_string(),
+                }],
+                timestamp: 0,
+            }))]
+        } else {
+            vec![]
+        }
+    }));
+
+    let events = collect_events(agent_loop(
+        vec![],
+        "system".to_string(),
+        config,
+        CancellationToken::new(),
+    ))
+    .await;
+
+    assert!(has_event(&events, "AgentEnd"));
+    assert!(has_event(&events, "ToolExecutionStart"));
+}
+
+// ─── 3.8: Follow-up ─────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_3_8_follow_up() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![
+        text_only_events("first response"),
+        text_only_events("second response"),
+    ]));
+
+    let follow_up_count = Arc::new(AtomicU32::new(0));
+    let follow_up_clone = Arc::clone(&follow_up_count);
+
+    let mut config = default_config(stream_fn);
+    config.get_follow_up_messages = Some(Box::new(move || {
+        let count = follow_up_clone.fetch_add(1, Ordering::SeqCst);
+        if count == 0 {
+            vec![AgentMessage::Llm(LlmMessage::User(UserMessage {
+                content: vec![ContentBlock::Text {
+                    text: "follow up question".to_string(),
+                }],
+                timestamp: 0,
+            }))]
+        } else {
+            vec![]
+        }
+    }));
+
+    let events = collect_events(agent_loop(
+        vec![],
+        "system".to_string(),
+        config,
+        CancellationToken::new(),
+    ))
+    .await;
+
+    assert_eq!(count_events(&events, "TurnStart"), 2);
+    assert!(has_event(&events, "AgentEnd"));
+}
+
+// ─── 3.9: Error exit ─────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_3_9_error_exit_no_follow_up() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![vec![
+        AssistantMessageEvent::Start,
+        AssistantMessageEvent::Error {
+            stop_reason: StopReason::Error,
+            error_message: "fatal stream error".to_string(),
+            usage: None,
+        },
+    ]]));
+
+    let follow_up_polled = Arc::new(AtomicBool::new(false));
+    let follow_up_polled_clone = Arc::clone(&follow_up_polled);
+
+    let mut config = default_config(stream_fn);
+    config.get_follow_up_messages = Some(Box::new(move || {
+        follow_up_polled_clone.store(true, Ordering::SeqCst);
+        vec![]
+    }));
+
+    let events = collect_events(agent_loop(
+        vec![],
+        "system".to_string(),
+        config,
+        CancellationToken::new(),
+    ))
+    .await;
+
+    assert!(has_event(&events, "AgentEnd"));
+    assert!(
+        !follow_up_polled.load(Ordering::SeqCst),
+        "follow-up should NOT be polled on error exit"
+    );
+}
+
+// ─── 3.10: Abort via CancellationToken ───────────────────────────────────
+
+#[tokio::test]
+async fn test_3_10_abort() {
+    let token = CancellationToken::new();
+    let token_clone = token.clone();
+
+    let stream_fn = Arc::new(MockStreamFn::new(vec![{
+        let mut events = vec![AssistantMessageEvent::Start];
+        for i in 0..100 {
+            events.push(AssistantMessageEvent::TextStart { content_index: i });
+            events.push(AssistantMessageEvent::TextDelta {
+                content_index: i,
+                delta: "x".to_string(),
+            });
+            events.push(AssistantMessageEvent::TextEnd { content_index: i });
+        }
+        events.push(AssistantMessageEvent::Done {
+            stop_reason: StopReason::Stop,
+            usage: Usage::default(),
+            cost: Cost::default(),
+        });
+        events
+    }]));
+
+    let config = default_config(stream_fn);
+
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(5)).await;
+        token_clone.cancel();
+    });
+
+    let events = collect_events(agent_loop(vec![], "system".to_string(), config, token)).await;
+
+    assert!(has_event(&events, "AgentEnd"));
+}
+
+// ─── 3.11: Retry success ─────────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_3_11_retry_success() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![
+        vec![
+            AssistantMessageEvent::Start,
+            AssistantMessageEvent::Error {
+                stop_reason: StopReason::Error,
+                error_message: "rate limit exceeded (429)".to_string(),
+                usage: None,
+            },
+        ],
+        text_only_events("retried successfully"),
+    ]));
+
+    let mut config = default_config(stream_fn);
+    config.retry_strategy = Box::new(
+        DefaultRetryStrategy::default()
+            .with_max_attempts(3)
+            .with_jitter(false)
+            .with_base_delay(Duration::from_millis(1)),
+    );
+
+    let events = collect_events(agent_loop(
+        vec![],
+        "system".to_string(),
+        config,
+        CancellationToken::new(),
+    ))
+    .await;
+
+    assert!(has_event(&events, "AgentEnd"));
+    let has_successful_end = events.iter().any(|e| {
+        matches!(e, AgentEvent::MessageEnd { message } if message.stop_reason == StopReason::Stop)
+    });
+    assert!(
+        has_successful_end,
+        "should have a successful message after retry"
+    );
+}
+
+// ─── 3.12: Non-retryable error ──────────────────────────────────────────
+
+#[tokio::test]
+async fn test_3_12_non_retryable_error() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![
+        vec![
+            AssistantMessageEvent::Start,
+            AssistantMessageEvent::Error {
+                stop_reason: StopReason::Error,
+                error_message: "fatal stream error".to_string(),
+                usage: None,
+            },
+        ],
+        text_only_events("should not reach"),
+    ]));
+
+    let config = default_config(stream_fn);
+
+    let events = collect_events(agent_loop(
+        vec![],
+        "system".to_string(),
+        config,
+        CancellationToken::new(),
+    ))
+    .await;
+
+    assert!(has_event(&events, "AgentEnd"));
+    let has_error_end = events.iter().any(|e| {
+        matches!(e, AgentEvent::MessageEnd { message } if message.stop_reason == StopReason::Error)
+    });
+    assert!(has_error_end, "should have error MessageEnd");
+}
+
+// ─── 3.13: Max tokens recovery ──────────────────────────────────────────
+
+#[tokio::test]
+async fn test_3_13_max_tokens_recovery() {
+    let events_with_incomplete = vec![
+        AssistantMessageEvent::Start,
+        AssistantMessageEvent::ToolCallStart {
+            content_index: 0,
+            id: "tc_1".to_string(),
+            name: "read_file".to_string(),
+        },
+        AssistantMessageEvent::ToolCallDelta {
+            content_index: 0,
+            delta: r#"{"path": "/tmp"#.to_string(),
+        },
+        AssistantMessageEvent::Done {
+            stop_reason: StopReason::Length,
+            usage: Usage::default(),
+            cost: Cost::default(),
+        },
+    ];
+
+    let stream_fn = Arc::new(MockStreamFn::new(vec![
+        events_with_incomplete,
+        text_only_events("recovered"),
+    ]));
+
+    let tool = Arc::new(MockTool::new("read_file"));
+    let mut config = default_config(stream_fn);
+    config.tools = vec![tool];
+
+    let events = collect_events(agent_loop(
+        vec![],
+        "system".to_string(),
+        config,
+        CancellationToken::new(),
+    ))
+    .await;
+
+    assert!(has_event(&events, "AgentEnd"));
+    assert_eq!(
+        count_events(&events, "TurnStart"),
+        2,
+        "should have 2 turns — one with incomplete tool call, one with recovery"
+    );
+}
+
+// ─── 3.14: convert_to_llm filter ────────────────────────────────────────
+
+#[tokio::test]
+async fn test_3_14_convert_to_llm_filter() {
+    #[derive(Debug)]
+    struct CustomMsg;
+    impl CustomMessage for CustomMsg {
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+    }
+
+    let capturing_fn = Arc::new(ContextCapturingStreamFn::new(vec![text_only_events("ok")]));
+
+    let stream_fn: Arc<dyn StreamFn> = Arc::clone(&capturing_fn) as Arc<dyn StreamFn>;
+
+    let mut config = default_config(stream_fn);
+    config.convert_to_llm = Box::new(|msg: &AgentMessage| match msg {
+        AgentMessage::Llm(llm) => Some(llm.clone()),
+        AgentMessage::Custom(_) => None,
+    });
+
+    let messages = vec![
+        AgentMessage::Llm(LlmMessage::User(UserMessage {
+            content: vec![ContentBlock::Text {
+                text: "hello".to_string(),
+            }],
+            timestamp: 0,
+        })),
+        AgentMessage::Custom(Box::new(CustomMsg)),
+    ];
+
+    let events = collect_events(agent_loop(
+        messages,
+        "system".to_string(),
+        config,
+        CancellationToken::new(),
+    ))
+    .await;
+
+    assert!(has_event(&events, "AgentEnd"));
+    let counts = capturing_fn.captured_message_counts.lock().unwrap();
+    assert_eq!(
+        counts[0], 1,
+        "custom message should be filtered from provider input"
+    );
+    drop(counts);
+}
+
+// ─── 3.15: Overflow signal ───────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_3_15_overflow_signal() {
+    let overflow_flags: Arc<Mutex<Vec<bool>>> = Arc::new(Mutex::new(Vec::new()));
+    let flags_clone = Arc::clone(&overflow_flags);
+
+    let stream_fn = Arc::new(MockStreamFn::new(vec![
+        vec![
+            AssistantMessageEvent::Start,
+            AssistantMessageEvent::Error {
+                stop_reason: StopReason::Error,
+                error_message: "context window exceeded".to_string(),
+                usage: None,
+            },
+        ],
+        text_only_events("recovered"),
+    ]));
+
+    let mut config = default_config(stream_fn);
+    config.transform_context = Some(Box::new(move |_msgs, overflow| {
+        flags_clone.lock().unwrap().push(overflow);
+    }));
+
+    let events = collect_events(agent_loop(
+        vec![],
+        "system".to_string(),
+        config,
+        CancellationToken::new(),
+    ))
+    .await;
+
+    assert!(has_event(&events, "AgentEnd"));
+    let flags = overflow_flags.lock().unwrap();
+    assert!(
+        flags.len() >= 2,
+        "transform_context should be called at least twice"
+    );
+    assert!(!flags[0], "first call should not have overflow signal");
+    assert!(flags[1], "second call should have overflow signal");
+    drop(flags);
+}
+
+// ─── 3.16: No tool calls ─────────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_3_16_no_tool_calls() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("Just text")]));
+    let config = default_config(stream_fn);
+
+    let events = collect_events(agent_loop(
+        vec![],
+        "system".to_string(),
+        config,
+        CancellationToken::new(),
+    ))
+    .await;
+
+    assert!(has_event(&events, "TurnEnd"));
+    assert!(!has_event(&events, "ToolExecutionStart"));
+    assert!(!has_event(&events, "ToolExecutionEnd"));
+}
+
+// ─── 3.17: Validation failure ────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_3_17_validation_failure() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![
+        tool_call_events("tc_1", "strict_tool", "{}"),
+        text_only_events("after validation error"),
+    ]));
+
+    let tool = Arc::new(MockTool::new("strict_tool").with_schema(json!({
+        "type": "object",
+        "properties": {
+            "path": { "type": "string" }
+        },
+        "required": ["path"],
+        "additionalProperties": false
+    })));
+    let tool_clone = Arc::clone(&tool);
+
+    let mut config = default_config(stream_fn);
+    config.tools = vec![tool];
+
+    let events = collect_events(agent_loop(
+        vec![],
+        "system".to_string(),
+        config,
+        CancellationToken::new(),
+    ))
+    .await;
+
+    assert!(has_event(&events, "AgentEnd"));
+    let has_error_exec = events
+        .iter()
+        .any(|e| matches!(e, AgentEvent::ToolExecutionEnd { is_error, .. } if *is_error));
+    assert!(has_error_exec, "should have error ToolExecutionEnd");
+    assert!(
+        !tool_clone.was_executed(),
+        "execute should not be called when validation fails"
+    );
+}

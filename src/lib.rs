@@ -1,4 +1,5 @@
 pub mod error;
+pub mod loop_;
 pub mod retry;
 pub mod stream;
 pub mod tool;
@@ -6,6 +7,7 @@ pub mod types;
 
 // Re-exports
 pub use error::HarnessError;
+pub use loop_::{AgentEvent, AgentLoopConfig, agent_loop, agent_loop_continue};
 pub use retry::{DefaultRetryStrategy, RetryStrategy};
 pub use stream::{
     AssistantMessageDelta, AssistantMessageEvent, StreamFn, StreamOptions, StreamTransport,
