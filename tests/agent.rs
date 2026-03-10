@@ -14,7 +14,8 @@ use tokio_util::sync::CancellationToken;
 use agent_harness::{
     Agent, AgentEvent, AgentMessage, AgentOptions, AgentTool, AgentToolResult,
     AssistantMessageEvent, ContentBlock, Cost, DefaultRetryStrategy, HarnessError, LlmMessage,
-    ModelSpec, SteeringMode, StopReason, StreamFn, StreamOptions, Usage, UserMessage,
+    ModelSpec, SteeringMode, StopReason, StreamFn, StreamOptions, ToolResultMessage, Usage,
+    UserMessage,
 };
 
 // ─── MockStreamFn ────────────────────────────────────────────────────────
@@ -857,4 +858,296 @@ async fn test_4_19_context_snapshot_immutable() {
         counts[1], 3,
         "second turn should see 3 messages (user + assistant + tool_result)"
     );
+}
+
+// ─── Gap tests: default state, mutators, multi-turn, continue scenarios ──
+
+#[test]
+fn test_default_state_initialization() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![]));
+    let agent = make_agent(stream_fn);
+    let s = agent.state();
+    assert_eq!(s.system_prompt, "test system prompt");
+    assert!(!s.is_running);
+    assert!(s.messages.is_empty());
+    assert!(s.stream_message.is_none());
+    assert!(s.pending_tool_calls.is_empty());
+    assert!(s.error.is_none());
+}
+
+#[tokio::test]
+async fn test_state_mutators() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![]));
+    let mut agent = make_agent(stream_fn);
+
+    // set_system_prompt
+    agent.set_system_prompt("new prompt");
+    assert_eq!(agent.state().system_prompt, "new prompt");
+
+    // set_model
+    let new_model = ModelSpec::new("other", "other-model");
+    agent.set_model(new_model);
+    assert_eq!(agent.state().model.provider, "other");
+    assert_eq!(agent.state().model.model_id, "other-model");
+
+    // set_thinking_level
+    agent.set_thinking_level(agent_harness::ThinkingLevel::High);
+    assert_eq!(
+        agent.state().model.thinking_level,
+        agent_harness::ThinkingLevel::High
+    );
+
+    // set_messages / clear_messages
+    agent.set_messages(vec![user_msg("hello")]);
+    assert_eq!(agent.state().messages.len(), 1);
+    agent.clear_messages();
+    assert!(agent.state().messages.is_empty());
+
+    // append_messages
+    agent.append_messages(vec![user_msg("a"), user_msg("b")]);
+    assert_eq!(agent.state().messages.len(), 2);
+}
+
+#[tokio::test]
+async fn test_multi_turn_across_separate_prompts() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![
+        text_only_events("first response"),
+        text_only_events("second response"),
+    ]));
+    let mut agent = make_agent(stream_fn);
+
+    let r1 = agent.prompt_async(vec![user_msg("hello")]).await.unwrap();
+    assert_eq!(r1.stop_reason, StopReason::Stop);
+    assert!(
+        !r1.messages.is_empty(),
+        "first prompt should produce messages"
+    );
+
+    // Second prompt uses a ContextCapturingStreamFn to verify growing context,
+    // but here we just verify it completes and produces a result.
+    let r2 = agent
+        .prompt_async(vec![user_msg("follow up")])
+        .await
+        .unwrap();
+    assert_eq!(r2.stop_reason, StopReason::Stop);
+    assert!(
+        !r2.messages.is_empty(),
+        "second prompt should produce messages"
+    );
+
+    // The agent should have messages in state from the latest run.
+    assert!(
+        !agent.state().messages.is_empty(),
+        "state should have messages after second prompt"
+    );
+}
+
+#[tokio::test]
+async fn test_continue_from_tool_result() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events(
+        "continued response",
+    )]));
+    let mut agent = make_agent(stream_fn);
+
+    let user = AgentMessage::Llm(LlmMessage::User(UserMessage {
+        content: vec![ContentBlock::Text {
+            text: "do something".to_string(),
+        }],
+        timestamp: 0,
+    }));
+    let assistant = AgentMessage::Llm(LlmMessage::Assistant(agent_harness::AssistantMessage {
+        content: vec![ContentBlock::ToolCall {
+            id: "tc_1".to_string(),
+            name: "my_tool".to_string(),
+            arguments: serde_json::json!({}),
+            partial_json: None,
+        }],
+        provider: String::new(),
+        model_id: String::new(),
+        stop_reason: StopReason::ToolUse,
+        usage: Usage::default(),
+        cost: Cost::default(),
+        error_message: None,
+        timestamp: 0,
+    }));
+    let tool_result = AgentMessage::Llm(LlmMessage::ToolResult(ToolResultMessage {
+        tool_call_id: "tc_1".to_string(),
+        content: vec![ContentBlock::Text {
+            text: "tool output".to_string(),
+        }],
+        is_error: false,
+        timestamp: 0,
+    }));
+
+    agent.set_messages(vec![user, assistant, tool_result]);
+
+    let result = agent.continue_async().await.unwrap();
+    assert_eq!(result.stop_reason, StopReason::Stop);
+}
+
+#[tokio::test]
+async fn test_continue_drains_queues_from_assistant_tail() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![
+        text_only_events("first"),
+        text_only_events("after steering"),
+    ]));
+    let mut agent = make_agent(stream_fn);
+
+    let _r = agent.prompt_async(vec![user_msg("hello")]).await.unwrap();
+
+    let last = agent.state().messages.last();
+    assert!(
+        matches!(last, Some(AgentMessage::Llm(LlmMessage::Assistant(_)))),
+        "last message should be assistant"
+    );
+
+    // Without queued messages, continue should fail
+    let err = agent.continue_async().await;
+    assert!(matches!(err, Err(HarnessError::InvalidContinue)));
+
+    // Queue a steering message, then continue should succeed
+    agent.steer(user_msg("steering message"));
+    let result = agent.continue_async().await.unwrap();
+    assert_eq!(result.stop_reason, StopReason::Stop);
+}
+
+#[tokio::test]
+async fn test_continue_does_not_reemit_existing_messages() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("continued")]));
+    let mut agent = make_agent(stream_fn);
+
+    let user = AgentMessage::Llm(LlmMessage::User(UserMessage {
+        content: vec![ContentBlock::Text {
+            text: "original".to_string(),
+        }],
+        timestamp: 0,
+    }));
+    let assistant = AgentMessage::Llm(LlmMessage::Assistant(agent_harness::AssistantMessage {
+        content: vec![ContentBlock::ToolCall {
+            id: "tc_1".to_string(),
+            name: "tool".to_string(),
+            arguments: serde_json::json!({}),
+            partial_json: None,
+        }],
+        provider: String::new(),
+        model_id: String::new(),
+        stop_reason: StopReason::ToolUse,
+        usage: Usage::default(),
+        cost: Cost::default(),
+        error_message: None,
+        timestamp: 0,
+    }));
+    let tool_result = AgentMessage::Llm(LlmMessage::ToolResult(ToolResultMessage {
+        tool_call_id: "tc_1".to_string(),
+        content: vec![ContentBlock::Text {
+            text: "result".to_string(),
+        }],
+        is_error: false,
+        timestamp: 0,
+    }));
+    agent.set_messages(vec![user, assistant, tool_result]);
+
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let events_clone = Arc::clone(&events);
+    let _id = agent.subscribe(move |event| {
+        let name = format!("{event:?}");
+        let prefix = name.split([' ', '{', '(']).next().unwrap_or("").to_string();
+        events_clone.lock().unwrap().push(prefix);
+    });
+
+    let _result = agent.continue_async().await.unwrap();
+
+    let collected = events.lock().unwrap().clone();
+    let message_end_count = collected.iter().filter(|n| *n == "MessageEnd").count();
+    assert_eq!(
+        message_end_count, 1,
+        "should only emit MessageEnd for the new assistant message, got {message_end_count}"
+    );
+}
+
+#[tokio::test]
+async fn test_session_id_forwarding() {
+    use std::sync::Mutex as StdMutex;
+
+    struct SessionCapturingStreamFn {
+        responses: StdMutex<Vec<Vec<AssistantMessageEvent>>>,
+        captured_session_ids: StdMutex<Vec<Option<String>>>,
+    }
+
+    impl StreamFn for SessionCapturingStreamFn {
+        fn stream<'a>(
+            &'a self,
+            _model: &'a ModelSpec,
+            _context: &'a agent_harness::AgentContext,
+            options: &'a StreamOptions,
+            _cancellation_token: CancellationToken,
+        ) -> Pin<Box<dyn futures::Stream<Item = AssistantMessageEvent> + Send + 'a>> {
+            self.captured_session_ids
+                .lock()
+                .unwrap()
+                .push(options.session_id.clone());
+            let events = {
+                let mut responses = self.responses.lock().unwrap();
+                if responses.is_empty() {
+                    vec![AssistantMessageEvent::Error {
+                        stop_reason: StopReason::Error,
+                        error_message: "no more responses".to_string(),
+                        usage: None,
+                    }]
+                } else {
+                    responses.remove(0)
+                }
+            };
+            Box::pin(futures::stream::iter(events))
+        }
+    }
+
+    let capturing = Arc::new(SessionCapturingStreamFn {
+        responses: StdMutex::new(vec![text_only_events("ok")]),
+        captured_session_ids: StdMutex::new(Vec::new()),
+    });
+
+    let stream_fn: Arc<dyn StreamFn> = Arc::clone(&capturing) as Arc<dyn StreamFn>;
+
+    let options = StreamOptions {
+        session_id: Some("session-abc".to_string()),
+        ..StreamOptions::default()
+    };
+
+    let mut agent = Agent::new(
+        AgentOptions::new("test", default_model(), stream_fn, default_convert)
+            .with_stream_options(options)
+            .with_retry_strategy(Box::new(
+                DefaultRetryStrategy::default()
+                    .with_jitter(false)
+                    .with_base_delay(Duration::from_millis(1)),
+            )),
+    );
+
+    let _result = agent.prompt_async(vec![user_msg("hi")]).await.unwrap();
+
+    let ids = capturing.captured_session_ids.lock().unwrap();
+    assert_eq!(ids.len(), 1);
+    assert_eq!(ids[0], Some("session-abc".to_string()));
+    drop(ids);
+}
+
+#[tokio::test]
+async fn test_error_sets_state_error() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![vec![
+        AssistantMessageEvent::Start,
+        AssistantMessageEvent::Error {
+            stop_reason: StopReason::Error,
+            error_message: "something went wrong".to_string(),
+            usage: None,
+        },
+    ]]));
+    let mut agent = make_agent(stream_fn);
+
+    let result = agent.prompt_async(vec![user_msg("hi")]).await.unwrap();
+    assert!(result.error.is_some());
+
+    let state_error = agent.state().error.as_ref();
+    assert!(state_error.is_some(), "agent state should have error set");
+    assert_eq!(state_error, result.error.as_ref());
 }

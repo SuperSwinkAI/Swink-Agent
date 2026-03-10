@@ -617,7 +617,9 @@ impl Agent {
             return Err(HarnessError::NoMessages);
         }
         if let Some(AgentMessage::Llm(LlmMessage::Assistant(_))) = self.state.messages.last() {
-            return Err(HarnessError::InvalidContinue);
+            if !self.has_pending_messages() {
+                return Err(HarnessError::InvalidContinue);
+            }
         }
         Ok(())
     }
