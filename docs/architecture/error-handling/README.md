@@ -1,0 +1,188 @@
+# Error Handling
+
+**Source files:** `src/error.rs`, `src/retry.rs`
+**Related:** [PRD §10](../../planning/PRD.md#10-error-handling), [PRD §11](../../planning/PRD.md#11-retry-strategy)
+
+The harness distinguishes three categories of failure: recoverable model errors (surfaced in the message log), typed operational errors (context overflow), transient provider failures (handled by the retry strategy), and fatal errors. No category results in a panic.
+
+---
+
+## L2 — Error Categories
+
+```mermaid
+flowchart TB
+    subgraph Category1["📝 In-Message Errors"]
+        MsgErr["LLM / tool errors<br/>appended as AssistantMessage<br/>stop_reason: error<br/>error_message: String"]
+        ToolValErr["Tool validation errors<br/>returned as error AgentToolResult<br/>(no execute() call)"]
+    end
+
+    subgraph Category2["🔴 Typed Operational Errors"]
+        CWO["ContextWindowOverflow<br/>input exceeds model context window<br/>history preserved for caller"]
+    end
+
+    subgraph Category3["🔁 Transient Failures (Retry)"]
+        Throttle["HarnessError::ModelThrottled<br/>rate limit / 429 from provider"]
+        Network["HarnessError::NetworkError<br/>transient IO / connection failure"]
+        Retry["→ RetryStrategy<br/>exponential back-off + jitter"]
+    end
+
+    subgraph Category4["💥 Fatal Errors"]
+        Fatal["Unrecoverable<br/>(bad config, logic bugs)<br/>→ HarnessError returned to caller<br/>loop exits cleanly"]
+    end
+
+    classDef msgStyle fill:#e3f2fd,stroke:#1976d2,stroke-width:2px,color:#000
+    classDef typeStyle fill:#fff3e0,stroke:#f57c00,stroke-width:2px,color:#000
+    classDef retryStyle fill:#ff9800,stroke:#e65100,stroke-width:2px,color:#000
+    classDef fatalStyle fill:#e0e0e0,stroke:#424242,stroke-width:2px,color:#000
+
+    class MsgErr,ToolValErr msgStyle
+    class CWO typeStyle
+    class Throttle,Network,Retry retryStyle
+    class Fatal fatalStyle
+```
+
+---
+
+## L3 — HarnessError Taxonomy
+
+```mermaid
+flowchart LR
+    subgraph HarnessError["HarnessError (enum)"]
+        CWO["ContextWindowOverflow<br/>{ model: String }"]
+        ModelThrottled["ModelThrottled"]
+        NetErr["NetworkError<br/>{ source: Box&lt;dyn Error&gt; }"]
+        StructFail["StructuredOutputFailed<br/>{ attempts: usize, last_error: String }"]
+        AlreadyRunning["AlreadyRunning"]
+        NoMessages["NoMessages<br/>(continue with empty context)"]
+        InvalidContinue["InvalidContinue<br/>(last message is assistant)"]
+        StreamError["StreamError<br/>{ source: Box&lt;dyn Error&gt; }"]
+        Aborted["Aborted"]
+    end
+
+    subgraph Trigger["Triggered by…"]
+        T1["provider rejects — context too large"]
+        T2["rate limit / 429 from provider"]
+        T3["transient IO / connection failure"]
+        T4["structured output max retries exceeded"]
+        T5["prompt() called while running"]
+        T6["continue() with zero messages"]
+        T7["continue() from assistant message"]
+        T8["StreamFn non-retryable failure"]
+        T9["CancellationToken cancelled"]
+    end
+
+    CWO --- T1
+    ModelThrottled --- T2
+    NetErr --- T3
+    StructFail --- T4
+    AlreadyRunning --- T5
+    NoMessages --- T6
+    InvalidContinue --- T7
+    StreamError --- T8
+    Aborted --- T9
+
+    classDef errStyle fill:#fff3e0,stroke:#f57c00,stroke-width:2px,color:#000
+    classDef trigStyle fill:#f5f5f5,stroke:#616161,stroke-width:2px,color:#000
+
+    class CWO,ModelThrottled,NetErr,StructFail,AlreadyRunning,NoMessages,InvalidContinue,StreamError,Aborted errStyle
+    class T1,T2,T3,T4,T5,T6,T7,T8,T9 trigStyle
+```
+
+---
+
+## L3 — RetryStrategy Trait
+
+```mermaid
+flowchart TB
+    subgraph Trait["RetryStrategy (trait)"]
+        ShouldRetry["should_retry(<br/>  error: &HarnessError,<br/>  attempt: u32<br/>) → bool"]
+        Delay["delay(<br/>  attempt: u32<br/>) → Duration"]
+    end
+
+    subgraph Default["DefaultRetryStrategy"]
+        MaxAttempts["max_attempts: u32 (default 3)"]
+        BaseDelay["base_delay: Duration (default 1s)"]
+        MaxDelay["max_delay: Duration (default 60s)"]
+        Multiplier["multiplier: f64 (default 2.0)"]
+        Jitter["jitter: bool (default true)"]
+        RetryOn["retries on: ModelThrottled, NetworkError"]
+        NeverOn["never retries: ContextWindowOverflow,<br/>Aborted, AlreadyRunning, StructuredOutputFailed"]
+    end
+
+    ShouldRetry --> Default
+    Delay --> Default
+    MaxAttempts --> Delay
+    BaseDelay --> Delay
+    MaxDelay --> Delay
+    Multiplier --> Delay
+    Jitter --> Delay
+
+    classDef traitStyle fill:#ff9800,stroke:#e65100,stroke-width:2px,color:#000
+    classDef defaultStyle fill:#f5f5f5,stroke:#616161,stroke-width:2px,color:#000
+
+    class ShouldRetry,Delay traitStyle
+    class MaxAttempts,BaseDelay,MaxDelay,Multiplier,Jitter,RetryOn,NeverOn defaultStyle
+```
+
+---
+
+## L4 — Context Window Overflow Recovery Flow
+
+```mermaid
+sequenceDiagram
+    participant Caller as Caller
+    participant Loop as run_loop
+    participant Hook as transform_context hook
+    participant StreamFn as StreamFn
+    participant LLM as LLM Provider
+
+    Loop->>Hook: transform_context(messages, overflow=false)
+    Hook-->>Loop: messages (unchanged or lightly pruned)
+    Loop->>StreamFn: call stream()
+    StreamFn->>LLM: POST inference request
+    LLM-->>StreamFn: 400 / context_length_exceeded
+    StreamFn-->>Loop: HarnessError::ContextWindowOverflow
+
+    Note over Loop: does NOT append error message to history
+    Note over Loop: history is intact — caller can reduce and retry
+
+    Loop-->>Caller: Err(ContextWindowOverflow)
+
+    Note over Caller: caller decides to retry
+    Caller->>Loop: agent.continue_loop()
+    Loop->>Hook: transform_context(messages, overflow=true)
+    Note over Hook: overflow signal triggers more aggressive pruning
+    Hook-->>Loop: reduced messages
+    Loop->>StreamFn: call stream()
+    StreamFn->>LLM: POST inference request (smaller context)
+    LLM-->>StreamFn: 200 OK — stream begins
+```
+
+---
+
+## L4 — Max Tokens Recovery Flow
+
+> **Note:** This recovery is handled internally by the loop. `MaxTokensReached` is not surfaced as a `HarnessError` to the caller.
+
+```mermaid
+sequenceDiagram
+    participant LLM as LLM Provider
+    participant Stream as StreamFn
+    participant Loop as run_loop
+
+    LLM-->>Stream: … ToolCallDelta (partial JSON) …
+    LLM-->>Stream: Done(stop_reason=length, usage)
+    Stream-->>Loop: MessageEnd (AssistantMessage, stop_reason=length)
+
+    Note over Loop: detect stop_reason == length
+
+    Loop->>Loop: inspect content blocks for incomplete ToolCalls
+    Note over Loop: ToolCall "search" has partial_json — arguments incomplete
+
+    Loop->>Loop: replace incomplete ToolCall with error ToolResultMessage:<br/>"tool call incomplete — max output tokens reached"
+
+    Note over Loop: context now has valid tool use / tool result pair
+    Loop->>Loop: emit TurnEnd
+    Loop->>Stream: call StreamFn for next turn
+    Note over Loop: LLM receives coherent history and can continue
+```
