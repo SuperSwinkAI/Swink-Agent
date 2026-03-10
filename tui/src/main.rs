@@ -21,7 +21,7 @@ use crossterm::{
 use ratatui::{Terminal, backend::CrosstermBackend};
 
 use agent_harness::{Agent, AgentMessage, AgentOptions, ModelSpec, ProxyStreamFn, StreamFn};
-use agent_harness_adapters::{OllamaStreamFn, OpenAiStreamFn};
+use agent_harness_adapters::{AnthropicStreamFn, OllamaStreamFn, OpenAiStreamFn};
 
 use crate::app::App;
 use crate::config::TuiConfig;
@@ -79,7 +79,7 @@ fn run(mut terminal: Terminal<CrosstermBackend<io::Stdout>>) -> AppResult<()> {
 
 /// Create an agent from environment variables.
 ///
-/// Supports three providers (checked in priority order):
+/// Supports four providers (checked in priority order):
 ///
 /// **Proxy (custom SSE endpoint) — highest priority:**
 /// - `LLM_BASE_URL` — proxy endpoint (takes priority if set)
@@ -90,6 +90,11 @@ fn run(mut terminal: Terminal<CrosstermBackend<io::Stdout>>) -> AppResult<()> {
 /// - `OPENAI_API_KEY` — API key (env var or keychain)
 /// - `OPENAI_BASE_URL` — API base URL (default: `https://api.openai.com`)
 /// - `OPENAI_MODEL` — model name (default: `gpt-4o`)
+///
+/// **Anthropic (native Claude API):**
+/// - `ANTHROPIC_API_KEY` — API key (env var or keychain)
+/// - `ANTHROPIC_BASE_URL` — API base URL (default: `https://api.anthropic.com`)
+/// - `ANTHROPIC_MODEL` — model name (default: `claude-sonnet-4-20250514`)
 ///
 /// **Ollama (default) — lowest priority:**
 /// - `OLLAMA_HOST` — Ollama server URL (default: `http://localhost:11434`)
@@ -130,6 +135,24 @@ fn create_agent() -> Agent {
         let openai: Arc<dyn StreamFn> = Arc::new(OpenAiStreamFn::new(&base_url, &api_key));
         let model = ModelSpec::new("openai", &model_id);
         return build_agent(system_prompt, model, openai);
+    }
+
+    // Check for Anthropic (third priority)
+    let anthropic_provider = credentials::providers()
+        .into_iter()
+        .find(|p| p.key_name == "anthropic");
+    let anthropic_key = anthropic_provider
+        .as_ref()
+        .and_then(credentials::get_credential);
+    if let Some(api_key) = anthropic_key {
+        let base_url = std::env::var("ANTHROPIC_BASE_URL")
+            .unwrap_or_else(|_| "https://api.anthropic.com".to_string());
+        let model_id = std::env::var("ANTHROPIC_MODEL")
+            .unwrap_or_else(|_| "claude-sonnet-4-20250514".to_string());
+        let anthropic: Arc<dyn StreamFn> =
+            Arc::new(AnthropicStreamFn::new(&base_url, &api_key));
+        let model = ModelSpec::new("anthropic", &model_id);
+        return build_agent(system_prompt, model, anthropic);
     }
 
     // Default: Ollama (lowest priority)
