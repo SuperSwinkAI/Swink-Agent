@@ -21,7 +21,7 @@ use crossterm::{
 use ratatui::{Terminal, backend::CrosstermBackend};
 
 use agent_harness::{Agent, AgentMessage, AgentOptions, ModelSpec, ProxyStreamFn, StreamFn};
-use agent_harness_adapters::OllamaStreamFn;
+use agent_harness_adapters::{OllamaStreamFn, OpenAiStreamFn};
 
 use crate::app::App;
 use crate::config::TuiConfig;
@@ -79,24 +79,30 @@ fn run(mut terminal: Terminal<CrosstermBackend<io::Stdout>>) -> AppResult<()> {
 
 /// Create an agent from environment variables.
 ///
-/// Supports two providers:
+/// Supports three providers (checked in priority order):
 ///
-/// **Ollama (default):**
-/// - `OLLAMA_HOST` — Ollama server URL (default: `http://localhost:11434`)
-/// - `OLLAMA_MODEL` — model name (default: `llama3.2`)
-///
-/// **Proxy (custom SSE endpoint):**
+/// **Proxy (custom SSE endpoint) — highest priority:**
 /// - `LLM_BASE_URL` — proxy endpoint (takes priority if set)
 /// - `LLM_API_KEY` — bearer token
 /// - `LLM_MODEL` — model identifier
 ///
+/// **OpenAI (or any OpenAI-compatible API):**
+/// - `OPENAI_API_KEY` — API key (env var or keychain)
+/// - `OPENAI_BASE_URL` — API base URL (default: `https://api.openai.com`)
+/// - `OPENAI_MODEL` — model name (default: `gpt-4o`)
+///
+/// **Ollama (default) — lowest priority:**
+/// - `OLLAMA_HOST` — Ollama server URL (default: `http://localhost:11434`)
+/// - `OLLAMA_MODEL` — model name (default: `llama3.2`)
+///
 /// **Shared:**
 /// - `LLM_SYSTEM_PROMPT` — system prompt (default: "You are a helpful assistant.")
+#[allow(clippy::doc_markdown)] // "OpenAI" is a proper noun, not code.
 fn create_agent() -> Agent {
     let system_prompt = std::env::var("LLM_SYSTEM_PROMPT")
         .unwrap_or_else(|_| "You are a helpful assistant.".to_string());
 
-    // Check for proxy mode first
+    // Check for proxy mode first (highest priority)
     if let Ok(base_url) = std::env::var("LLM_BASE_URL") {
         let proxy_provider = credentials::providers()
             .into_iter()
@@ -112,7 +118,21 @@ fn create_agent() -> Agent {
         return build_agent(system_prompt, model, proxy);
     }
 
-    // Default: Ollama
+    // Check for OpenAI (second priority)
+    let openai_provider = credentials::providers()
+        .into_iter()
+        .find(|p| p.key_name == "openai");
+    let openai_key = openai_provider.as_ref().and_then(credentials::get_credential);
+    if let Some(api_key) = openai_key {
+        let base_url = std::env::var("OPENAI_BASE_URL")
+            .unwrap_or_else(|_| "https://api.openai.com".to_string());
+        let model_id = std::env::var("OPENAI_MODEL").unwrap_or_else(|_| "gpt-4o".to_string());
+        let openai: Arc<dyn StreamFn> = Arc::new(OpenAiStreamFn::new(&base_url, &api_key));
+        let model = ModelSpec::new("openai", &model_id);
+        return build_agent(system_prompt, model, openai);
+    }
+
+    // Default: Ollama (lowest priority)
     let host =
         std::env::var("OLLAMA_HOST").unwrap_or_else(|_| "http://localhost:11434".to_string());
     let model_id = std::env::var("OLLAMA_MODEL").unwrap_or_else(|_| "llama3.2".to_string());
