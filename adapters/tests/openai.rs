@@ -1,11 +1,14 @@
 //! Wiremock-based tests for `OpenAiStreamFn`.
 
-use agent_harness::{AgentContext, AssistantMessageEvent, ModelSpec, StopReason, StreamFn, StreamOptions};
-use agent_harness_adapters::OpenAiStreamFn;
 use futures::StreamExt;
 use tokio_util::sync::CancellationToken;
 use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
+
+use agent_harness::{
+    AgentContext, AssistantMessageEvent, ModelSpec, StopReason, StreamFn, StreamOptions,
+};
+use agent_harness_adapters::OpenAiStreamFn;
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -107,9 +110,18 @@ async fn openai_tool_call_stream() {
     let events = collect_events(&sf).await;
 
     let types: Vec<&str> = events.iter().map(|e| event_name(e)).collect();
-    assert!(types.contains(&"ToolCallStart"), "missing ToolCallStart: {types:?}");
-    assert!(types.contains(&"ToolCallDelta"), "missing ToolCallDelta: {types:?}");
-    assert!(types.contains(&"ToolCallEnd"), "missing ToolCallEnd: {types:?}");
+    assert!(
+        types.contains(&"ToolCallStart"),
+        "missing ToolCallStart: {types:?}"
+    );
+    assert!(
+        types.contains(&"ToolCallDelta"),
+        "missing ToolCallDelta: {types:?}"
+    );
+    assert!(
+        types.contains(&"ToolCallEnd"),
+        "missing ToolCallEnd: {types:?}"
+    );
 
     // Verify tool call start details
     let start = events.iter().find_map(|e| match e {
@@ -154,8 +166,14 @@ async fn openai_text_then_tool() {
     let types: Vec<&str> = events.iter().map(|e| event_name(e)).collect();
 
     // Text must be closed before tool call starts
-    let text_end_pos = types.iter().position(|&t| t == "TextEnd").expect("missing TextEnd");
-    let tool_start_pos = types.iter().position(|&t| t == "ToolCallStart").expect("missing ToolCallStart");
+    let text_end_pos = types
+        .iter()
+        .position(|&t| t == "TextEnd")
+        .expect("missing TextEnd");
+    let tool_start_pos = types
+        .iter()
+        .position(|&t| t == "ToolCallStart")
+        .expect("missing ToolCallStart");
     assert!(
         text_end_pos < tool_start_pos,
         "TextEnd ({text_end_pos}) should come before ToolCallStart ({tool_start_pos})"
@@ -253,14 +271,7 @@ async fn openai_http_500() {
 
 #[tokio::test]
 async fn openai_malformed_json() {
-    let body = [
-        r#"data: {not valid json!!!}"#,
-        "",
-        "data: [DONE]",
-        "",
-        "",
-    ]
-    .join("\n");
+    let body = [r"data: {not valid json!!!}", "", "data: [DONE]", "", ""].join("\n");
 
     let server = MockServer::start().await;
     Mock::given(method("POST"))
@@ -312,10 +323,15 @@ async fn openai_cancellation() {
     let stream = sf.stream(&model, &context, &options, token);
     let events: Vec<_> = stream.collect().await;
 
-    let has_aborted = events.iter().any(|e| matches!(
-        e,
-        AssistantMessageEvent::Error { stop_reason: StopReason::Aborted, .. }
-    ));
+    let has_aborted = events.iter().any(|e| {
+        matches!(
+            e,
+            AssistantMessageEvent::Error {
+                stop_reason: StopReason::Aborted,
+                ..
+            }
+        )
+    });
     assert!(has_aborted, "expected Aborted event, got: {events:?}");
 }
 
@@ -344,8 +360,49 @@ async fn openai_bearer_token_sent() {
     let sf = OpenAiStreamFn::new(server.uri(), "test-key");
     let events = collect_events(&sf).await;
 
-    let has_start = events.iter().any(|e| matches!(e, AssistantMessageEvent::Start));
+    let has_start = events
+        .iter()
+        .any(|e| matches!(e, AssistantMessageEvent::Start));
     assert!(has_start, "expected Start from authenticated request");
+}
+
+#[tokio::test]
+async fn openai_stream_options_api_key_overrides_default() {
+    let body = [
+        r#"data: {"choices":[{"delta":{"content":"hi"},"index":0}]}"#,
+        "",
+        r#"data: {"choices":[{"delta":{},"finish_reason":"stop","index":0}],"usage":{"prompt_tokens":1,"completion_tokens":1}}"#,
+        "",
+        "data: [DONE]",
+        "",
+        "",
+    ]
+    .join("\n");
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .and(header("Authorization", "Bearer override-key"))
+        .respond_with(sse_response(&body))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let sf = OpenAiStreamFn::new(server.uri(), "default-key");
+    let model = test_model();
+    let context = test_context();
+    let options = StreamOptions {
+        api_key: Some("override-key".to_string()),
+        ..StreamOptions::default()
+    };
+    let token = CancellationToken::new();
+    let events: Vec<_> = sf.stream(&model, &context, &options, token).collect().await;
+
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, AssistantMessageEvent::Start))
+    );
 }
 
 #[tokio::test]
@@ -399,7 +456,7 @@ async fn openai_done_without_finish_reason() {
 
 // ── Utility functions ────────────────────────────────────────────────────────
 
-fn event_name(event: &AssistantMessageEvent) -> &'static str {
+const fn event_name(event: &AssistantMessageEvent) -> &'static str {
     match event {
         AssistantMessageEvent::Start => "Start",
         AssistantMessageEvent::TextStart { .. } => "TextStart",

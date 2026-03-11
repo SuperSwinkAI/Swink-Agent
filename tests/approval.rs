@@ -1,0 +1,390 @@
+//! Tests for the tool approval gate feature.
+
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::{Arc, Mutex};
+
+use futures::Stream;
+use serde_json::{Value, json};
+use tokio_util::sync::CancellationToken;
+
+use agent_harness::{
+    Agent, AgentEvent, AgentMessage, AgentOptions, AgentTool, AgentToolResult, ApprovalMode,
+    AssistantMessageEvent, ContentBlock, Cost, LlmMessage, ModelSpec, StopReason, StreamFn,
+    StreamOptions, ToolApproval, Usage, UserMessage,
+};
+
+// ─── MockStreamFn ────────────────────────────────────────────────────────
+
+struct MockStreamFn {
+    responses: Mutex<Vec<Vec<AssistantMessageEvent>>>,
+}
+
+impl MockStreamFn {
+    const fn new(responses: Vec<Vec<AssistantMessageEvent>>) -> Self {
+        Self {
+            responses: Mutex::new(responses),
+        }
+    }
+}
+
+impl StreamFn for MockStreamFn {
+    fn stream<'a>(
+        &'a self,
+        _model: &'a ModelSpec,
+        _context: &'a agent_harness::AgentContext,
+        _options: &'a StreamOptions,
+        _cancellation_token: CancellationToken,
+    ) -> Pin<Box<dyn Stream<Item = AssistantMessageEvent> + Send + 'a>> {
+        let events = {
+            let mut responses = self.responses.lock().unwrap();
+            if responses.is_empty() {
+                vec![AssistantMessageEvent::Error {
+                    stop_reason: StopReason::Error,
+                    error_message: "no more scripted responses".to_string(),
+                    usage: None,
+                }]
+            } else {
+                responses.remove(0)
+            }
+        };
+        Box::pin(futures::stream::iter(events))
+    }
+}
+
+// ─── MockTool ────────────────────────────────────────────────────────────
+
+struct MockTool {
+    tool_name: String,
+    schema: Value,
+    executed: AtomicBool,
+    execute_count: AtomicU32,
+}
+
+impl MockTool {
+    fn new(name: &str) -> Self {
+        Self {
+            tool_name: name.to_string(),
+            schema: json!({
+                "type": "object",
+                "properties": {},
+                "additionalProperties": true
+            }),
+            executed: AtomicBool::new(false),
+            execute_count: AtomicU32::new(0),
+        }
+    }
+
+    fn was_executed(&self) -> bool {
+        self.executed.load(Ordering::SeqCst)
+    }
+}
+
+impl AgentTool for MockTool {
+    fn name(&self) -> &str {
+        &self.tool_name
+    }
+
+    fn label(&self) -> &str {
+        &self.tool_name
+    }
+
+    fn description(&self) -> &'static str {
+        "A mock tool for testing"
+    }
+
+    fn parameters_schema(&self) -> &Value {
+        &self.schema
+    }
+
+    fn execute(
+        &self,
+        _tool_call_id: &str,
+        _params: Value,
+        _cancellation_token: CancellationToken,
+        _on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
+    ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>> {
+        self.executed.store(true, Ordering::SeqCst);
+        self.execute_count.fetch_add(1, Ordering::SeqCst);
+        Box::pin(async { AgentToolResult::text("ok") })
+    }
+}
+
+// ─── Helpers ─────────────────────────────────────────────────────────────
+
+fn default_model() -> ModelSpec {
+    ModelSpec::new("test", "test-model")
+}
+
+fn user_msg(text: &str) -> AgentMessage {
+    AgentMessage::Llm(LlmMessage::User(UserMessage {
+        content: vec![ContentBlock::Text {
+            text: text.to_string(),
+        }],
+        timestamp: 0,
+    }))
+}
+
+fn tool_call_then_stop(id: &str, name: &str, args: &str) -> Vec<Vec<AssistantMessageEvent>> {
+    vec![
+        // Turn 1: tool call
+        vec![
+            AssistantMessageEvent::Start,
+            AssistantMessageEvent::ToolCallStart {
+                content_index: 0,
+                id: id.to_string(),
+                name: name.to_string(),
+            },
+            AssistantMessageEvent::ToolCallDelta {
+                content_index: 0,
+                delta: args.to_string(),
+            },
+            AssistantMessageEvent::ToolCallEnd { content_index: 0 },
+            AssistantMessageEvent::Done {
+                stop_reason: StopReason::ToolUse,
+                usage: Usage::default(),
+                cost: Cost::default(),
+            },
+        ],
+        // Turn 2: text response (after tool result)
+        vec![
+            AssistantMessageEvent::Start,
+            AssistantMessageEvent::TextStart { content_index: 0 },
+            AssistantMessageEvent::TextDelta {
+                content_index: 0,
+                delta: "done".to_string(),
+            },
+            AssistantMessageEvent::TextEnd { content_index: 0 },
+            AssistantMessageEvent::Done {
+                stop_reason: StopReason::Stop,
+                usage: Usage::default(),
+                cost: Cost::default(),
+            },
+        ],
+    ]
+}
+
+fn default_convert(msg: &AgentMessage) -> Option<LlmMessage> {
+    match msg {
+        AgentMessage::Llm(llm) => Some(llm.clone()),
+        AgentMessage::Custom(_) => None,
+    }
+}
+
+fn make_agent(
+    responses: Vec<Vec<AssistantMessageEvent>>,
+    tools: Vec<Arc<dyn AgentTool>>,
+) -> AgentOptions {
+    AgentOptions::new(
+        "test system prompt",
+        default_model(),
+        Arc::new(MockStreamFn::new(responses)),
+        default_convert,
+    )
+    .with_tools(tools)
+    .with_transform_context(|_msgs: &mut Vec<AgentMessage>, _overflow: bool| {})
+}
+
+// ─── Tests ───────────────────────────────────────────────────────────────
+
+/// Test 1: No approval callback → tools execute immediately (backward compat).
+#[tokio::test]
+async fn no_approval_callback_tools_execute_normally() {
+    let tool = Arc::new(MockTool::new("test_tool"));
+    let tool_ref = Arc::clone(&tool);
+
+    let responses = tool_call_then_stop("tc1", "test_tool", "{}");
+    let options = make_agent(responses, vec![tool]);
+    let mut agent = Agent::new(options);
+
+    let result = agent.prompt_async(vec![user_msg("hello")]).await.unwrap();
+    assert!(result.error.is_none());
+    assert!(tool_ref.was_executed());
+}
+
+/// Test 2: Always-approve callback → tools execute normally.
+#[tokio::test]
+async fn always_approve_callback_tools_execute() {
+    let tool = Arc::new(MockTool::new("test_tool"));
+    let tool_ref = Arc::clone(&tool);
+
+    let responses = tool_call_then_stop("tc1", "test_tool", "{}");
+    let options = make_agent(responses, vec![tool])
+        .with_approve_tool(|_req| Box::pin(async { ToolApproval::Approved }));
+    let mut agent = Agent::new(options);
+
+    let result = agent.prompt_async(vec![user_msg("hello")]).await.unwrap();
+    assert!(result.error.is_none());
+    assert!(tool_ref.was_executed());
+}
+
+/// Test 3: Always-reject callback → tools don't execute, LLM gets rejection error.
+#[tokio::test]
+async fn always_reject_callback_tools_not_executed() {
+    let tool = Arc::new(MockTool::new("test_tool"));
+    let tool_ref = Arc::clone(&tool);
+
+    let responses = tool_call_then_stop("tc1", "test_tool", "{}");
+    let options = make_agent(responses, vec![tool])
+        .with_approve_tool(|_req| Box::pin(async { ToolApproval::Rejected }));
+    let mut agent = Agent::new(options);
+
+    let result = agent.prompt_async(vec![user_msg("hello")]).await.unwrap();
+    assert!(!tool_ref.was_executed(), "rejected tool should not execute");
+
+    // The rejection error should appear as a tool result in the messages
+    let has_rejection = result.messages.iter().any(|msg| {
+        if let AgentMessage::Llm(LlmMessage::ToolResult(tr)) = msg {
+            tr.is_error
+                && tr
+                    .content
+                    .iter()
+                    .any(|b| matches!(b, ContentBlock::Text { text } if text.contains("rejected")))
+        } else {
+            false
+        }
+    });
+    assert!(has_rejection, "should contain rejection error tool result");
+}
+
+/// Test 4: Selective approval (approve by name) → correct tools run/rejected.
+#[tokio::test]
+async fn selective_approval_by_tool_name() {
+    let allowed_tool = Arc::new(MockTool::new("allowed"));
+    let blocked_tool = Arc::new(MockTool::new("blocked"));
+    let allowed_ref = Arc::clone(&allowed_tool);
+    let blocked_ref = Arc::clone(&blocked_tool);
+
+    let responses = vec![
+        // Turn 1: two tool calls
+        vec![
+            AssistantMessageEvent::Start,
+            AssistantMessageEvent::ToolCallStart {
+                content_index: 0,
+                id: "tc1".to_string(),
+                name: "allowed".to_string(),
+            },
+            AssistantMessageEvent::ToolCallDelta {
+                content_index: 0,
+                delta: "{}".to_string(),
+            },
+            AssistantMessageEvent::ToolCallEnd { content_index: 0 },
+            AssistantMessageEvent::ToolCallStart {
+                content_index: 1,
+                id: "tc2".to_string(),
+                name: "blocked".to_string(),
+            },
+            AssistantMessageEvent::ToolCallDelta {
+                content_index: 1,
+                delta: "{}".to_string(),
+            },
+            AssistantMessageEvent::ToolCallEnd { content_index: 1 },
+            AssistantMessageEvent::Done {
+                stop_reason: StopReason::ToolUse,
+                usage: Usage::default(),
+                cost: Cost::default(),
+            },
+        ],
+        // Turn 2: text stop
+        vec![
+            AssistantMessageEvent::Start,
+            AssistantMessageEvent::TextStart { content_index: 0 },
+            AssistantMessageEvent::TextDelta {
+                content_index: 0,
+                delta: "done".to_string(),
+            },
+            AssistantMessageEvent::TextEnd { content_index: 0 },
+            AssistantMessageEvent::Done {
+                stop_reason: StopReason::Stop,
+                usage: Usage::default(),
+                cost: Cost::default(),
+            },
+        ],
+    ];
+
+    let options =
+        make_agent(responses, vec![allowed_tool, blocked_tool]).with_approve_tool(|req| {
+            Box::pin(async move {
+                if req.tool_name == "allowed" {
+                    ToolApproval::Approved
+                } else {
+                    ToolApproval::Rejected
+                }
+            })
+        });
+    let mut agent = Agent::new(options);
+
+    let result = agent.prompt_async(vec![user_msg("hello")]).await.unwrap();
+    assert!(allowed_ref.was_executed(), "allowed tool should execute");
+    assert!(
+        !blocked_ref.was_executed(),
+        "blocked tool should not execute"
+    );
+    assert!(result.error.is_none());
+}
+
+/// Test 5: Events appear in correct order.
+#[tokio::test]
+async fn approval_events_in_correct_order() {
+    let tool = Arc::new(MockTool::new("test_tool"));
+    let events_log: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+
+    let responses = tool_call_then_stop("tc1", "test_tool", "{}");
+    let options = make_agent(responses, vec![tool])
+        .with_approve_tool(|_req| Box::pin(async { ToolApproval::Approved }));
+    let mut agent = Agent::new(options);
+
+    let log = Arc::clone(&events_log);
+    agent.subscribe(move |event| {
+        let name = match event {
+            AgentEvent::ToolExecutionStart { .. } => "ToolExecutionStart",
+            AgentEvent::ToolApprovalRequested { .. } => "ToolApprovalRequested",
+            AgentEvent::ToolApprovalResolved { .. } => "ToolApprovalResolved",
+            AgentEvent::ToolExecutionEnd { .. } => "ToolExecutionEnd",
+            _ => return,
+        };
+        log.lock().unwrap().push(name.to_string());
+    });
+
+    let _result = agent.prompt_async(vec![user_msg("hello")]).await.unwrap();
+
+    let tool_events: Vec<String> = events_log.lock().unwrap().clone();
+
+    assert_eq!(
+        tool_events,
+        vec![
+            "ToolExecutionStart",
+            "ToolApprovalRequested",
+            "ToolApprovalResolved",
+            "ToolExecutionEnd",
+        ],
+        "events should follow Start → ApprovalRequested → ApprovalResolved → End order"
+    );
+}
+
+/// Test 6: Bypassed mode with callback set → callback never called, tools execute.
+#[tokio::test]
+async fn bypassed_mode_skips_approval_callback() {
+    let tool = Arc::new(MockTool::new("test_tool"));
+    let tool_ref = Arc::clone(&tool);
+    let callback_called = Arc::new(AtomicBool::new(false));
+    let callback_flag = Arc::clone(&callback_called);
+
+    let responses = tool_call_then_stop("tc1", "test_tool", "{}");
+    let options = make_agent(responses, vec![tool])
+        .with_approve_tool(move |_req| {
+            callback_flag.store(true, Ordering::SeqCst);
+            Box::pin(async { ToolApproval::Rejected })
+        })
+        .with_approval_mode(ApprovalMode::Bypassed);
+    let mut agent = Agent::new(options);
+
+    let result = agent.prompt_async(vec![user_msg("hello")]).await.unwrap();
+    assert!(result.error.is_none());
+    assert!(tool_ref.was_executed(), "tool should execute when bypassed");
+    assert!(
+        !callback_called.load(Ordering::SeqCst),
+        "callback should never be called in Bypassed mode"
+    );
+}

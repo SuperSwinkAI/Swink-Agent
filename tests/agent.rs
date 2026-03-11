@@ -397,10 +397,9 @@ async fn test_4_5_abort_causes_aborted_stop() {
             ref assistant_message,
             ..
         } = event
+            && assistant_message.stop_reason == StopReason::Aborted
         {
-            if assistant_message.stop_reason == StopReason::Aborted {
-                found_abort = true;
-            }
+            found_abort = true;
         }
     }
 
@@ -1072,6 +1071,7 @@ async fn test_session_id_forwarding() {
     struct SessionCapturingStreamFn {
         responses: StdMutex<Vec<Vec<AssistantMessageEvent>>>,
         captured_session_ids: StdMutex<Vec<Option<String>>>,
+        captured_api_keys: StdMutex<Vec<Option<String>>>,
     }
 
     impl StreamFn for SessionCapturingStreamFn {
@@ -1086,6 +1086,10 @@ async fn test_session_id_forwarding() {
                 .lock()
                 .unwrap()
                 .push(options.session_id.clone());
+            self.captured_api_keys
+                .lock()
+                .unwrap()
+                .push(options.api_key.clone());
             let events = {
                 let mut responses = self.responses.lock().unwrap();
                 if responses.is_empty() {
@@ -1105,6 +1109,7 @@ async fn test_session_id_forwarding() {
     let capturing = Arc::new(SessionCapturingStreamFn {
         responses: StdMutex::new(vec![text_only_events("ok")]),
         captured_session_ids: StdMutex::new(Vec::new()),
+        captured_api_keys: StdMutex::new(Vec::new()),
     });
 
     let stream_fn: Arc<dyn StreamFn> = Arc::clone(&capturing) as Arc<dyn StreamFn>;
@@ -1130,6 +1135,131 @@ async fn test_session_id_forwarding() {
     assert_eq!(ids.len(), 1);
     assert_eq!(ids[0], Some("session-abc".to_string()));
     drop(ids);
+
+    let api_keys = capturing.captured_api_keys.lock().unwrap();
+    assert_eq!(api_keys.len(), 1);
+    assert_eq!(api_keys[0], None);
+    drop(api_keys);
+}
+
+#[tokio::test]
+async fn test_get_api_key_forwarding() {
+    use std::sync::Mutex as StdMutex;
+
+    struct ApiKeyCapturingStreamFn {
+        responses: StdMutex<Vec<Vec<AssistantMessageEvent>>>,
+        captured_api_keys: StdMutex<Vec<Option<String>>>,
+    }
+
+    impl StreamFn for ApiKeyCapturingStreamFn {
+        fn stream<'a>(
+            &'a self,
+            _model: &'a ModelSpec,
+            _context: &'a agent_harness::AgentContext,
+            options: &'a StreamOptions,
+            _cancellation_token: CancellationToken,
+        ) -> Pin<Box<dyn futures::Stream<Item = AssistantMessageEvent> + Send + 'a>> {
+            self.captured_api_keys
+                .lock()
+                .unwrap()
+                .push(options.api_key.clone());
+            let events = {
+                let mut responses = self.responses.lock().unwrap();
+                if responses.is_empty() {
+                    vec![AssistantMessageEvent::Error {
+                        stop_reason: StopReason::Error,
+                        error_message: "no more responses".to_string(),
+                        usage: None,
+                    }]
+                } else {
+                    responses.remove(0)
+                }
+            };
+            Box::pin(futures::stream::iter(events))
+        }
+    }
+
+    let capturing = Arc::new(ApiKeyCapturingStreamFn {
+        responses: StdMutex::new(vec![text_only_events("ok")]),
+        captured_api_keys: StdMutex::new(Vec::new()),
+    });
+
+    let stream_fn: Arc<dyn StreamFn> = Arc::clone(&capturing) as Arc<dyn StreamFn>;
+
+    let mut agent = Agent::new(
+        AgentOptions::new("test", default_model(), stream_fn, default_convert)
+            .with_get_api_key(|provider| {
+                assert_eq!(provider, "test");
+                Box::pin(async { Some("resolved-key".to_string()) })
+            })
+            .with_retry_strategy(Box::new(
+                DefaultRetryStrategy::default()
+                    .with_jitter(false)
+                    .with_base_delay(Duration::from_millis(1)),
+            )),
+    );
+
+    let _result = agent.prompt_async(vec![user_msg("hi")]).await.unwrap();
+
+    let api_keys = capturing.captured_api_keys.lock().unwrap();
+    assert_eq!(api_keys.len(), 1);
+    assert_eq!(api_keys[0], Some("resolved-key".to_string()));
+    drop(api_keys);
+}
+
+#[tokio::test]
+async fn test_agent_end_subscriber_retaining_messages_does_not_lose_history() {
+    let stream_fn = Arc::new(ContextCapturingStreamFn::new(vec![
+        text_only_events("first response"),
+        text_only_events("continued response"),
+    ]));
+    let mut agent = make_agent(stream_fn.clone());
+
+    let retained_messages: Arc<Mutex<Vec<Arc<Vec<AgentMessage>>>>> =
+        Arc::new(Mutex::new(Vec::new()));
+    let retained_messages_clone = Arc::clone(&retained_messages);
+    let _subscription = agent.subscribe(move |event| {
+        if let AgentEvent::AgentEnd { messages } = event {
+            retained_messages_clone
+                .lock()
+                .unwrap()
+                .push(Arc::clone(messages));
+        }
+    });
+
+    let result = agent.prompt_async(vec![user_msg("hello")]).await.unwrap();
+    assert_eq!(result.stop_reason, StopReason::Stop);
+    assert_eq!(retained_messages.lock().unwrap().len(), 1);
+
+    assert_eq!(
+        agent.state().messages.len(),
+        2,
+        "state should retain user input plus assistant output"
+    );
+    assert!(
+        matches!(
+            agent.state().messages.first(),
+            Some(AgentMessage::Llm(LlmMessage::User(_)))
+        ),
+        "first state message should remain the original user input"
+    );
+
+    agent.steer(user_msg("follow-up"));
+    let continue_result = agent.continue_async().await.unwrap();
+    assert_eq!(continue_result.stop_reason, StopReason::Stop);
+
+    let counts = stream_fn.captured_message_counts.lock().unwrap().clone();
+    assert_eq!(counts.len(), 2);
+    assert!(
+        counts[1] >= 2,
+        "continue should include the prior prompt history, got counts {counts:?}"
+    );
+
+    assert_eq!(
+        agent.state().messages.len(),
+        3,
+        "state should not duplicate history across prompt + continue"
+    );
 }
 
 #[tokio::test]

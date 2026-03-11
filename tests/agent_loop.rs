@@ -1,9 +1,3 @@
-use agent_harness::{
-    AgentContext, AgentEvent, AgentLoopConfig, AgentMessage, AgentTool, AgentToolResult,
-    AssistantMessageEvent, ContentBlock, Cost, CustomMessage, DefaultRetryStrategy, LlmMessage,
-    ModelSpec, StopReason, StreamFn, StreamOptions, Usage, UserMessage, agent_loop,
-};
-
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -14,6 +8,12 @@ use futures::Stream;
 use futures::stream::StreamExt;
 use serde_json::json;
 use tokio_util::sync::CancellationToken;
+
+use agent_harness::{
+    AgentContext, AgentEvent, AgentLoopConfig, AgentMessage, AgentTool, AgentToolResult,
+    AssistantMessageEvent, ContentBlock, Cost, CustomMessage, DefaultRetryStrategy, LlmMessage,
+    ModelSpec, StopReason, StreamFn, StreamOptions, Usage, UserMessage, agent_loop,
+};
 
 // ─── MockStreamFn ────────────────────────────────────────────────────────
 
@@ -72,6 +72,49 @@ impl ContextCapturingStreamFn {
     }
 }
 
+/// A mock `StreamFn` that captures resolved API keys from stream options.
+struct ApiKeyCapturingStreamFn {
+    responses: Mutex<Vec<Vec<AssistantMessageEvent>>>,
+    captured_api_keys: Mutex<Vec<Option<String>>>,
+}
+
+impl ApiKeyCapturingStreamFn {
+    const fn new(responses: Vec<Vec<AssistantMessageEvent>>) -> Self {
+        Self {
+            responses: Mutex::new(responses),
+            captured_api_keys: Mutex::new(Vec::new()),
+        }
+    }
+}
+
+impl StreamFn for ApiKeyCapturingStreamFn {
+    fn stream<'a>(
+        &'a self,
+        _model: &'a ModelSpec,
+        _context: &'a AgentContext,
+        options: &'a StreamOptions,
+        _cancellation_token: CancellationToken,
+    ) -> Pin<Box<dyn Stream<Item = AssistantMessageEvent> + Send + 'a>> {
+        self.captured_api_keys
+            .lock()
+            .unwrap()
+            .push(options.api_key.clone());
+        let events = {
+            let mut responses = self.responses.lock().unwrap();
+            if responses.is_empty() {
+                vec![AssistantMessageEvent::Error {
+                    stop_reason: StopReason::Error,
+                    error_message: "no more scripted responses".to_string(),
+                    usage: None,
+                }]
+            } else {
+                responses.remove(0)
+            }
+        };
+        Box::pin(futures::stream::iter(events))
+    }
+}
+
 impl StreamFn for ContextCapturingStreamFn {
     fn stream<'a>(
         &'a self,
@@ -109,6 +152,18 @@ struct MockTool {
     result: Mutex<Option<AgentToolResult>>,
     delay: Option<Duration>,
     executed: AtomicBool,
+}
+
+struct UpdatingTool {
+    tool_name: String,
+}
+
+impl UpdatingTool {
+    fn new(name: &str) -> Self {
+        Self {
+            tool_name: name.to_string(),
+        }
+    }
 }
 
 impl MockTool {
@@ -188,6 +243,47 @@ impl AgentTool for MockTool {
     }
 }
 
+impl AgentTool for UpdatingTool {
+    fn name(&self) -> &str {
+        &self.tool_name
+    }
+
+    fn label(&self) -> &str {
+        &self.tool_name
+    }
+
+    fn description(&self) -> &'static str {
+        "A tool that emits partial updates"
+    }
+
+    fn parameters_schema(&self) -> &serde_json::Value {
+        static SCHEMA: std::sync::OnceLock<serde_json::Value> = std::sync::OnceLock::new();
+        SCHEMA.get_or_init(|| {
+            json!({
+                "type": "object",
+                "properties": {},
+                "additionalProperties": true
+            })
+        })
+    }
+
+    fn execute(
+        &self,
+        _tool_call_id: &str,
+        _params: serde_json::Value,
+        _cancellation_token: CancellationToken,
+        on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
+    ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>> {
+        Box::pin(async move {
+            if let Some(on_update) = on_update {
+                on_update(AgentToolResult::text("partial-1"));
+                on_update(AgentToolResult::text("partial-2"));
+            }
+            AgentToolResult::text("final")
+        })
+    }
+}
+
 // ─── Helper functions ────────────────────────────────────────────────────
 
 fn default_model() -> ModelSpec {
@@ -257,6 +353,8 @@ fn default_config(stream_fn: Arc<dyn StreamFn>) -> AgentLoopConfig {
         get_api_key: None,
         get_steering_messages: None,
         get_follow_up_messages: None,
+        approve_tool: None,
+        approval_mode: agent_harness::ApprovalMode::default(),
     }
 }
 
@@ -425,10 +523,11 @@ async fn test_3_5_get_api_key() {
     let calls: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
     let calls_clone = Arc::clone(&calls);
 
-    let stream_fn = Arc::new(MockStreamFn::new(vec![
+    let stream_fn = Arc::new(ApiKeyCapturingStreamFn::new(vec![
         tool_call_events("tc_1", "tool_a", "{}"),
         text_only_events("done"),
     ]));
+    let api_key_captures = Arc::clone(&stream_fn);
 
     let tool = Arc::new(MockTool::new("tool_a"));
     let mut config = default_config(stream_fn);
@@ -459,6 +558,92 @@ async fn test_3_5_get_api_key() {
     );
     assert!(recorded.iter().all(|p| p == "test"));
     drop(recorded);
+
+    let captured_api_keys = api_key_captures.captured_api_keys.lock().unwrap();
+    assert!(
+        captured_api_keys
+            .iter()
+            .all(|key| key.as_deref() == Some("key-123")),
+        "resolved API key should be forwarded on every turn: {captured_api_keys:?}"
+    );
+    drop(captured_api_keys);
+}
+
+#[tokio::test]
+async fn test_3_5b_tool_execution_update_events() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![
+        tool_call_events("tc_1", "updating_tool", "{}"),
+        text_only_events("done"),
+    ]));
+
+    let tool = Arc::new(UpdatingTool::new("updating_tool"));
+    let mut config = default_config(stream_fn);
+    config.tools = vec![tool];
+
+    let events = collect_events(agent_loop(
+        vec![],
+        "system".to_string(),
+        config,
+        CancellationToken::new(),
+    ))
+    .await;
+
+    let names: Vec<String> = events
+        .iter()
+        .map(|event| {
+            format!("{event:?}")
+                .split([' ', '{', '('])
+                .next()
+                .unwrap_or("")
+                .to_string()
+        })
+        .collect();
+    let tool_start_idx = names
+        .iter()
+        .position(|n| n == "ToolExecutionStart")
+        .expect("ToolExecutionStart");
+    let first_update_idx = names
+        .iter()
+        .position(|n| n == "ToolExecutionUpdate")
+        .expect("ToolExecutionUpdate");
+    let tool_end_idx = names
+        .iter()
+        .position(|n| n == "ToolExecutionEnd")
+        .expect("ToolExecutionEnd");
+    assert!(tool_start_idx < first_update_idx);
+    assert!(first_update_idx < tool_end_idx);
+
+    let partials: Vec<String> = events
+        .iter()
+        .filter_map(|event| match event {
+            AgentEvent::ToolExecutionUpdate { partial } => {
+                Some(ContentBlock::extract_text(&partial.content))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        partials,
+        vec!["partial-1".to_string(), "partial-2".to_string()]
+    );
+
+    let final_tool_result = events.iter().find_map(|event| match event {
+        AgentEvent::TurnEnd { tool_results, .. } => Some(tool_results.clone()),
+        _ => None,
+    });
+    let final_tool_result = final_tool_result.expect("turn end with tool result");
+    assert_eq!(final_tool_result.len(), 1);
+    assert_eq!(
+        ContentBlock::extract_text(&final_tool_result[0].content),
+        "final"
+    );
+    assert!(
+        !final_tool_result[0]
+            .content
+            .iter()
+            .any(|block| matches!(block, ContentBlock::Text { text } if text.contains("partial"))),
+        "partial updates must not leak into final tool results"
+    );
 }
 
 // ─── 3.6: Concurrent execution ──────────────────────────────────────────

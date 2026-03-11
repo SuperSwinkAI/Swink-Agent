@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 pub mod agent;
 pub mod context;
 pub mod error;
@@ -21,8 +22,8 @@ pub use stream::{
     accumulate_message,
 };
 pub use tool::{
-    AgentTool, AgentToolResult, unknown_tool_result, validate_tool_arguments,
-    validation_error_result,
+    AgentTool, AgentToolResult, ApprovalMode, ToolApproval, ToolApprovalRequest,
+    unknown_tool_result, validate_tool_arguments, validation_error_result,
 };
 pub use tools::{BashTool, ReadFileTool, WriteFileTool};
 pub use types::{

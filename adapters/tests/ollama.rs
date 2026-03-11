@@ -5,12 +5,15 @@
 //! requests and reconstructs `AssistantMessageEvent` streams from NDJSON
 //! responses.
 
-use agent_harness::{AgentContext, AssistantMessageEvent, ModelSpec, StopReason, StreamFn, StreamOptions};
-use agent_harness_adapters::OllamaStreamFn;
 use futures::StreamExt;
 use tokio_util::sync::CancellationToken;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
+
+use agent_harness::{
+    AgentContext, AssistantMessageEvent, ModelSpec, StopReason, StreamFn, StreamOptions,
+};
+use agent_harness_adapters::OllamaStreamFn;
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -63,12 +66,20 @@ async fn ollama_text_stream() {
 
     // Expect: Start, TextStart, TextDelta("hel"), TextDelta("lo"), TextEnd, Done
     assert!(matches!(events[0], AssistantMessageEvent::Start));
-    assert!(matches!(events[1], AssistantMessageEvent::TextStart { content_index: 0 }));
+    assert!(matches!(
+        events[1],
+        AssistantMessageEvent::TextStart { content_index: 0 }
+    ));
     assert!(matches!(&events[2], AssistantMessageEvent::TextDelta { delta, .. } if delta == "hel"));
     assert!(matches!(&events[3], AssistantMessageEvent::TextDelta { delta, .. } if delta == "lo"));
-    assert!(matches!(events[4], AssistantMessageEvent::TextEnd { content_index: 0 }));
+    assert!(matches!(
+        events[4],
+        AssistantMessageEvent::TextEnd { content_index: 0 }
+    ));
     match &events[5] {
-        AssistantMessageEvent::Done { stop_reason, usage, .. } => {
+        AssistantMessageEvent::Done {
+            stop_reason, usage, ..
+        } => {
             assert_eq!(*stop_reason, StopReason::Stop);
             assert_eq!(usage.input, 10);
             assert_eq!(usage.output, 20);
@@ -110,7 +121,10 @@ async fn ollama_tool_call_stream() {
         }
         other => panic!("expected ToolCallDelta, got {other:?}"),
     }
-    assert!(matches!(events[3], AssistantMessageEvent::ToolCallEnd { .. }));
+    assert!(matches!(
+        events[3],
+        AssistantMessageEvent::ToolCallEnd { .. }
+    ));
     match &events[4] {
         AssistantMessageEvent::Done { stop_reason, .. } => {
             assert_eq!(*stop_reason, StopReason::ToolUse);
@@ -139,20 +153,38 @@ async fn ollama_text_then_tool() {
 
     // Verify text block is opened and closed before tool call starts
     assert!(matches!(events[0], AssistantMessageEvent::Start));
-    assert!(matches!(events[1], AssistantMessageEvent::TextStart { content_index: 0 }));
-    assert!(matches!(&events[2], AssistantMessageEvent::TextDelta { delta, .. } if delta == "Let me check."));
+    assert!(matches!(
+        events[1],
+        AssistantMessageEvent::TextStart { content_index: 0 }
+    ));
+    assert!(
+        matches!(&events[2], AssistantMessageEvent::TextDelta { delta, .. } if delta == "Let me check.")
+    );
     // Text block closed when tool call arrives
-    assert!(matches!(events[3], AssistantMessageEvent::TextEnd { content_index: 0 }));
+    assert!(matches!(
+        events[3],
+        AssistantMessageEvent::TextEnd { content_index: 0 }
+    ));
     // Tool call starts at next content index
     match &events[4] {
-        AssistantMessageEvent::ToolCallStart { content_index, name, .. } => {
+        AssistantMessageEvent::ToolCallStart {
+            content_index,
+            name,
+            ..
+        } => {
             assert_eq!(*content_index, 1);
             assert_eq!(name, "read_file");
         }
         other => panic!("expected ToolCallStart, got {other:?}"),
     }
-    assert!(matches!(events[5], AssistantMessageEvent::ToolCallDelta { .. }));
-    assert!(matches!(events[6], AssistantMessageEvent::ToolCallEnd { .. }));
+    assert!(matches!(
+        events[5],
+        AssistantMessageEvent::ToolCallDelta { .. }
+    ));
+    assert!(matches!(
+        events[6],
+        AssistantMessageEvent::ToolCallEnd { .. }
+    ));
     match &events[7] {
         AssistantMessageEvent::Done { stop_reason, .. } => {
             assert_eq!(*stop_reason, StopReason::ToolUse);
@@ -179,13 +211,32 @@ async fn ollama_thinking_stream() {
     let events = collect_events(&ollama).await;
 
     assert!(matches!(events[0], AssistantMessageEvent::Start));
-    assert!(matches!(events[1], AssistantMessageEvent::ThinkingStart { content_index: 0 }));
-    assert!(matches!(&events[2], AssistantMessageEvent::ThinkingDelta { delta, .. } if delta == "let me think"));
+    assert!(matches!(
+        events[1],
+        AssistantMessageEvent::ThinkingStart { content_index: 0 }
+    ));
+    assert!(
+        matches!(&events[2], AssistantMessageEvent::ThinkingDelta { delta, .. } if delta == "let me think")
+    );
     // Thinking block closed when text arrives
-    assert!(matches!(events[3], AssistantMessageEvent::ThinkingEnd { content_index: 0, .. }));
-    assert!(matches!(events[4], AssistantMessageEvent::TextStart { content_index: 1 }));
-    assert!(matches!(&events[5], AssistantMessageEvent::TextDelta { delta, .. } if delta == "the answer"));
-    assert!(matches!(events[6], AssistantMessageEvent::TextEnd { content_index: 1 }));
+    assert!(matches!(
+        events[3],
+        AssistantMessageEvent::ThinkingEnd {
+            content_index: 0,
+            ..
+        }
+    ));
+    assert!(matches!(
+        events[4],
+        AssistantMessageEvent::TextStart { content_index: 1 }
+    ));
+    assert!(
+        matches!(&events[5], AssistantMessageEvent::TextDelta { delta, .. } if delta == "the answer")
+    );
+    assert!(matches!(
+        events[6],
+        AssistantMessageEvent::TextEnd { content_index: 1 }
+    ));
     match &events[7] {
         AssistantMessageEvent::Done { stop_reason, .. } => {
             assert_eq!(*stop_reason, StopReason::Stop);
@@ -209,7 +260,11 @@ async fn ollama_http_error() {
 
     assert_eq!(events.len(), 1);
     match &events[0] {
-        AssistantMessageEvent::Error { error_message, stop_reason, .. } => {
+        AssistantMessageEvent::Error {
+            error_message,
+            stop_reason,
+            ..
+        } => {
             assert_eq!(*stop_reason, StopReason::Error);
             assert!(
                 error_message.contains("500"),
@@ -228,7 +283,11 @@ async fn ollama_connection_error() {
 
     assert_eq!(events.len(), 1);
     match &events[0] {
-        AssistantMessageEvent::Error { error_message, stop_reason, .. } => {
+        AssistantMessageEvent::Error {
+            error_message,
+            stop_reason,
+            ..
+        } => {
             assert_eq!(*stop_reason, StopReason::Error);
             assert!(
                 error_message.to_lowercase().contains("connection error"),
@@ -245,9 +304,7 @@ async fn ollama_malformed_json() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/api/chat"))
-        .respond_with(ndjson_response(&[
-            "{not valid json!!!}",
-        ]))
+        .respond_with(ndjson_response(&["{not valid json!!!}"]))
         .mount(&server)
         .await;
 
@@ -308,7 +365,7 @@ async fn ollama_cancellation() {
     );
 }
 
-/// 9. Chunks with empty content should not produce TextDelta events.
+/// 9. Chunks with empty content should not produce `TextDelta` events.
 #[tokio::test]
 async fn ollama_empty_content_skipped() {
     let server = MockServer::start().await;
@@ -344,7 +401,7 @@ async fn ollama_empty_content_skipped() {
     }
 }
 
-/// 10. done_reason="length" maps to StopReason::Length.
+/// 10. `done_reason="length"` maps to `StopReason::Length`.
 #[tokio::test]
 async fn ollama_length_stop_reason() {
     let server = MockServer::start().await;
@@ -360,9 +417,13 @@ async fn ollama_length_stop_reason() {
     let ollama = OllamaStreamFn::new(server.uri());
     let events = collect_events(&ollama).await;
 
-    let done_event = events.iter().find(|e| matches!(e, AssistantMessageEvent::Done { .. }));
+    let done_event = events
+        .iter()
+        .find(|e| matches!(e, AssistantMessageEvent::Done { .. }));
     match done_event {
-        Some(AssistantMessageEvent::Done { stop_reason, usage, .. }) => {
+        Some(AssistantMessageEvent::Done {
+            stop_reason, usage, ..
+        }) => {
             assert_eq!(*stop_reason, StopReason::Length);
             assert_eq!(usage.input, 5);
             assert_eq!(usage.output, 100);

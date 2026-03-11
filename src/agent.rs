@@ -19,10 +19,11 @@ use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use crate::error::HarnessError;
+use crate::loop_::ApproveToolFn;
 use crate::loop_::{AgentEvent, AgentLoopConfig, agent_loop, agent_loop_continue};
 use crate::retry::{DefaultRetryStrategy, RetryStrategy};
 use crate::stream::{StreamFn, StreamOptions};
-use crate::tool::AgentTool;
+use crate::tool::{AgentTool, ApprovalMode, ToolApproval, ToolApprovalRequest};
 use crate::types::{
     AgentMessage, AgentResult, ContentBlock, Cost, LlmMessage, ModelSpec, StopReason,
     ThinkingLevel, Usage,
@@ -70,6 +71,7 @@ type TransformContextFn = Arc<dyn Fn(&mut Vec<AgentMessage>, bool) + Send + Sync
 type GetApiKeyFn =
     Arc<dyn Fn(&str) -> Pin<Box<dyn Future<Output = Option<String>> + Send>> + Send + Sync>;
 type ListenerFn = Box<dyn Fn(&AgentEvent) + Send + Sync>;
+type ApproveToolArc = Arc<ApproveToolFn>;
 
 // ─── AgentState ──────────────────────────────────────────────────────────────
 
@@ -136,10 +138,15 @@ pub struct AgentOptions {
     pub follow_up_mode: FollowUpMode,
     /// Max retries for structured output validation.
     pub structured_output_max_retries: usize,
+    /// Optional async callback for approving/rejecting tool calls before execution.
+    pub approve_tool: Option<ApproveToolArc>,
+    /// Controls whether the approval gate is active. Defaults to `Enabled`.
+    pub approval_mode: ApprovalMode,
 }
 
 impl AgentOptions {
     /// Create options with required fields and sensible defaults.
+    #[must_use]
     pub fn new(
         system_prompt: impl Into<String>,
         model: ModelSpec,
@@ -152,15 +159,15 @@ impl AgentOptions {
             tools: Vec::new(),
             stream_fn,
             convert_to_llm: Arc::new(convert_to_llm),
-            transform_context: Some(Arc::new(crate::context::sliding_window(
-                100_000, 50_000, 2,
-            ))),
+            transform_context: Some(Arc::new(crate::context::sliding_window(100_000, 50_000, 2))),
             get_api_key: None,
             retry_strategy: Box::new(DefaultRetryStrategy::default()),
             stream_options: StreamOptions::default(),
             steering_mode: SteeringMode::default(),
             follow_up_mode: FollowUpMode::default(),
             structured_output_max_retries: 3,
+            approve_tool: None,
+            approval_mode: ApprovalMode::default(),
         }
     }
 
@@ -225,6 +232,26 @@ impl AgentOptions {
         self.structured_output_max_retries = n;
         self
     }
+
+    /// Set the tool approval callback.
+    #[must_use]
+    pub fn with_approve_tool(
+        mut self,
+        f: impl Fn(ToolApprovalRequest) -> Pin<Box<dyn Future<Output = ToolApproval> + Send>>
+        + Send
+        + Sync
+        + 'static,
+    ) -> Self {
+        self.approve_tool = Some(Arc::new(f));
+        self
+    }
+
+    /// Set the approval mode.
+    #[must_use]
+    pub const fn with_approval_mode(mut self, mode: ApprovalMode) -> Self {
+        self.approval_mode = mode;
+        self
+    }
 }
 
 // ─── Agent ───────────────────────────────────────────────────────────────────
@@ -253,10 +280,14 @@ pub struct Agent {
     stream_options: StreamOptions,
     structured_output_max_retries: usize,
     idle_notify: Arc<Notify>,
+    in_flight_llm_messages: Option<Vec<AgentMessage>>,
+    approve_tool: Option<ApproveToolArc>,
+    approval_mode: ApprovalMode,
 }
 
 impl Agent {
     /// Create a new agent from the given options.
+    #[must_use]
     pub fn new(options: AgentOptions) -> Self {
         Self {
             state: AgentState {
@@ -283,6 +314,9 @@ impl Agent {
             stream_options: options.stream_options,
             structured_output_max_retries: options.structured_output_max_retries,
             idle_notify: Arc::new(Notify::new()),
+            in_flight_llm_messages: None,
+            approve_tool: options.approve_tool,
+            approval_mode: options.approval_mode,
         }
     }
 
@@ -312,6 +346,11 @@ impl Agent {
     /// Replace the tool set.
     pub fn set_tools(&mut self, tools: Vec<Arc<dyn AgentTool>>) {
         self.state.tools = tools;
+    }
+
+    /// Set the approval mode at runtime.
+    pub const fn set_approval_mode(&mut self, mode: ApprovalMode) {
+        self.approval_mode = mode;
     }
 
     /// Replace the entire message history.
@@ -403,6 +442,7 @@ impl Agent {
         self.state.pending_tool_calls.clear();
         self.state.error = None;
         self.abort_controller = None;
+        self.in_flight_llm_messages = None;
         self.clear_queues();
     }
 
@@ -515,7 +555,10 @@ impl Agent {
     /// Start a new loop from a plain text string, collecting to completion.
     ///
     /// Convenience wrapper that builds a `UserMessage` from the string.
-    pub async fn prompt_text(&mut self, text: impl Into<String>) -> Result<AgentResult, HarnessError> {
+    pub async fn prompt_text(
+        &mut self,
+        text: impl Into<String>,
+    ) -> Result<AgentResult, HarnessError> {
         let msg = AgentMessage::Llm(LlmMessage::User(crate::types::UserMessage {
             content: vec![ContentBlock::Text { text: text.into() }],
             timestamp: now_timestamp(),
@@ -545,7 +588,10 @@ impl Agent {
     /// Start a new loop from a plain text string, blocking the current thread.
     ///
     /// Convenience wrapper that builds a `UserMessage` from the string.
-    pub fn prompt_text_sync(&mut self, text: impl Into<String>) -> Result<AgentResult, HarnessError> {
+    pub fn prompt_text_sync(
+        &mut self,
+        text: impl Into<String>,
+    ) -> Result<AgentResult, HarnessError> {
         let msg = AgentMessage::Llm(LlmMessage::User(crate::types::UserMessage {
             content: vec![ContentBlock::Text { text: text.into() }],
             timestamp: now_timestamp(),
@@ -665,10 +711,10 @@ impl Agent {
         }
 
         self.remove_structured_output_tool();
-        Err(HarnessError::StructuredOutputFailed {
-            attempts: max_retries + 1,
+        Err(HarnessError::structured_output_failed(
+            max_retries + 1,
             last_error,
-        })
+        ))
     }
 
     /// Run a structured output extraction loop, blocking the current thread.
@@ -692,9 +738,8 @@ impl Agent {
         schema: Value,
     ) -> Result<T, HarnessError> {
         let value = self.structured_output(prompt, schema).await?;
-        serde_json::from_value(value).map_err(|e| HarnessError::StructuredOutputFailed {
-            attempts: 1,
-            last_error: format!("deserialization failed: {e}"),
+        serde_json::from_value(value).map_err(|e| {
+            HarnessError::structured_output_failed(1, format!("deserialization failed: {e}"))
         })
     }
 
@@ -752,6 +797,26 @@ impl Agent {
 
         let config = self.build_loop_config();
         let system_prompt = self.state.system_prompt.clone();
+        let in_flight_llm_messages = if is_continue {
+            self.state
+                .messages
+                .iter()
+                .filter_map(|msg| match msg {
+                    AgentMessage::Llm(llm) => Some(AgentMessage::Llm(llm.clone())),
+                    AgentMessage::Custom(_) => None,
+                })
+                .collect()
+        } else {
+            self.state
+                .messages
+                .iter()
+                .chain(input.iter())
+                .filter_map(|msg| match msg {
+                    AgentMessage::Llm(llm) => Some(AgentMessage::Llm(llm.clone())),
+                    AgentMessage::Custom(_) => None,
+                })
+                .collect()
+        };
 
         let messages_for_loop = if is_continue {
             std::mem::take(&mut self.state.messages)
@@ -766,6 +831,8 @@ impl Agent {
         } else {
             agent_loop(messages_for_loop, system_prompt, config, token)
         };
+
+        self.in_flight_llm_messages = Some(in_flight_llm_messages);
 
         Ok(raw_stream)
     }
@@ -813,6 +880,12 @@ impl Agent {
             get_follow_up_messages: Some(Box::new(move || {
                 drain_queue(&follow_up_queue, follow_up_mode == FollowUpMode::OneAtATime)
             })),
+            approve_tool: self.approve_tool.as_ref().map(|a| {
+                let a = Arc::clone(a);
+                let b: Box<ApproveToolFn> = Box::new(move |req| a(req));
+                b
+            }),
+            approval_mode: self.approval_mode,
         }
     }
 
@@ -822,6 +895,8 @@ impl Agent {
         mut stream: Pin<Box<dyn Stream<Item = AgentEvent> + Send>>,
     ) -> Result<AgentResult, HarnessError> {
         let mut all_messages: Vec<AgentMessage> = Vec::new();
+        let mut state_messages = self.in_flight_llm_messages.take().unwrap_or_default();
+        let mut received_full_context = false;
         let mut stop_reason = StopReason::Stop;
         let mut usage = Usage::default();
         let mut cost = Cost::default();
@@ -842,27 +917,30 @@ impl Agent {
                     if let Some(ref err) = assistant_message.error_message {
                         error = Some(err.clone());
                     }
-                    all_messages.push(AgentMessage::Llm(LlmMessage::Assistant(assistant_message)));
+                    let assistant_msg = AgentMessage::Llm(LlmMessage::Assistant(assistant_message));
+                    state_messages.push(match &assistant_msg {
+                        AgentMessage::Llm(msg) => AgentMessage::Llm(msg.clone()),
+                        AgentMessage::Custom(_) => unreachable!(),
+                    });
+                    all_messages.push(assistant_msg);
                     for tr in tool_results {
+                        state_messages.push(AgentMessage::Llm(LlmMessage::ToolResult(tr.clone())));
                         all_messages.push(AgentMessage::Llm(LlmMessage::ToolResult(tr)));
                     }
                 }
                 AgentEvent::AgentEnd { messages } => {
-                    // Merge the returned messages into our state.
-                    // The loop returns all messages it produced; we take those
-                    // as the canonical set. We consume the Arc if possible,
-                    // otherwise we cannot clone AgentMessage (custom messages
-                    // are not cloneable), so we just note the count.
                     if let Ok(returned) = Arc::try_unwrap(messages) {
-                        self.state.messages.extend(returned);
+                        self.state.messages = returned;
+                        received_full_context = true;
                     }
-                    // If Arc::try_unwrap fails, the messages are already
-                    // captured in `all_messages` from TurnEnd events above.
                 }
                 _ => {}
             }
         }
 
+        if !received_full_context {
+            self.state.messages = state_messages;
+        }
         self.state.is_running = false;
         self.state.error.clone_from(&error);
         self.idle_notify.notify_waiters();
@@ -942,7 +1020,9 @@ impl RetryStrategy for SharedRetryStrategy {
 // ─── Queue Draining ──────────────────────────────────────────────────────────
 
 fn drain_queue(queue: &Mutex<Vec<AgentMessage>>, one_at_a_time: bool) -> Vec<AgentMessage> {
-    let mut guard = queue.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut guard = queue
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     if guard.is_empty() {
         return Vec::new();
     }

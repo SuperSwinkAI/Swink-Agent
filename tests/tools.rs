@@ -1,8 +1,9 @@
-use agent_harness::tool::AgentTool;
-use agent_harness::tools::{BashTool, ReadFileTool, WriteFileTool};
-use agent_harness::ContentBlock;
 use serde_json::json;
 use tokio_util::sync::CancellationToken;
+
+use agent_harness::ContentBlock;
+use agent_harness::tool::AgentTool;
+use agent_harness::tools::{BashTool, ReadFileTool, WriteFileTool};
 
 // ═══════════════════════════════════════════════════════════════════════════
 // BashTool
@@ -16,9 +17,13 @@ fn bash_tool_metadata() {
     assert!(!tool.description().is_empty());
 
     let schema = tool.parameters_schema();
-    let required = schema["required"].as_array().expect("required should be an array");
-    let required_strs: Vec<&str> = required.iter().filter_map(|v| v.as_str()).collect();
-    assert!(required_strs.contains(&"command"), "schema must require 'command'");
+    let required = schema["required"]
+        .as_array()
+        .expect("required should be an array");
+    assert!(
+        required.iter().filter_map(|v| v.as_str()).any(|x| x == "command"),
+        "schema must require 'command'"
+    );
 }
 
 #[tokio::test]
@@ -29,8 +34,14 @@ async fn bash_echo_success() {
         .execute("tc_1", json!({"command": "echo hello"}), token, None)
         .await;
     let text = ContentBlock::extract_text(&result.content);
-    assert!(text.contains("Exit code: 0"), "expected exit code 0, got: {text}");
-    assert!(text.contains("hello"), "expected 'hello' in output, got: {text}");
+    assert!(
+        text.contains("Exit code: 0"),
+        "expected exit code 0, got: {text}"
+    );
+    assert!(
+        text.contains("hello"),
+        "expected 'hello' in output, got: {text}"
+    );
 }
 
 #[tokio::test]
@@ -41,7 +52,10 @@ async fn bash_exit_code_nonzero() {
         .execute("tc_2", json!({"command": "exit 42"}), token, None)
         .await;
     let text = ContentBlock::extract_text(&result.content);
-    assert!(text.contains("Exit code: 42"), "expected exit code 42, got: {text}");
+    assert!(
+        text.contains("Exit code: 42"),
+        "expected exit code 42, got: {text}"
+    );
 }
 
 #[tokio::test]
@@ -52,8 +66,14 @@ async fn bash_stderr_captured() {
         .execute("tc_3", json!({"command": "echo err >&2"}), token, None)
         .await;
     let text = ContentBlock::extract_text(&result.content);
-    assert!(text.contains("Stderr:"), "expected Stderr section, got: {text}");
-    assert!(text.contains("err"), "expected 'err' in stderr, got: {text}");
+    assert!(
+        text.contains("Stderr:"),
+        "expected Stderr section, got: {text}"
+    );
+    assert!(
+        text.contains("err"),
+        "expected 'err' in stderr, got: {text}"
+    );
 }
 
 #[tokio::test]
@@ -74,10 +94,18 @@ async fn bash_cancellation() {
     let token = CancellationToken::new();
     token.cancel();
     let result = tool
-        .execute("tc_5", json!({"command": "echo should not run"}), token, None)
+        .execute(
+            "tc_5",
+            json!({"command": "echo should not run"}),
+            token,
+            None,
+        )
         .await;
     let text = ContentBlock::extract_text(&result.content);
-    assert!(text.contains("cancelled"), "expected cancelled, got: {text}");
+    assert!(
+        text.contains("cancelled"),
+        "expected cancelled, got: {text}"
+    );
 }
 
 #[tokio::test]
@@ -126,6 +154,83 @@ async fn bash_output_truncation() {
         text.contains("[truncated]"),
         "expected truncation marker, got length: {}",
         text.len()
+    );
+}
+
+#[tokio::test]
+async fn bash_large_stdout_does_not_deadlock() {
+    let tool = BashTool::new();
+    let token = CancellationToken::new();
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        tool.execute(
+            "tc_8",
+            json!({"command": "head -c 200000 /dev/zero | tr '\\000' A"}),
+            token,
+            None,
+        ),
+    )
+    .await
+    .expect("bash tool should not deadlock on large stdout");
+
+    let text = ContentBlock::extract_text(&result.content);
+    assert!(
+        text.contains("Exit code: 0"),
+        "expected success, got: {text}"
+    );
+}
+
+#[tokio::test]
+async fn bash_large_stdout_and_stderr_do_not_deadlock() {
+    let tool = BashTool::new();
+    let token = CancellationToken::new();
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        tool.execute(
+            "tc_9",
+            json!({"command": "(head -c 150000 /dev/zero | tr '\\000' A) & (head -c 150000 /dev/zero | tr '\\000' B >&2) & wait"}),
+            token,
+            None,
+        ),
+    )
+    .await
+    .expect("bash tool should not deadlock on large stdout/stderr");
+
+    let text = ContentBlock::extract_text(&result.content);
+    assert!(
+        text.contains("Exit code: 0"),
+        "expected success, got: {text}"
+    );
+    assert!(
+        text.contains("Stdout:"),
+        "expected stdout in result, got: {text}"
+    );
+    assert!(
+        text.contains("Stderr:"),
+        "expected stderr in result, got: {text}"
+    );
+}
+
+#[tokio::test]
+async fn bash_noisy_timeout_does_not_deadlock() {
+    let tool = BashTool::new();
+    let token = CancellationToken::new();
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        tool.execute(
+            "tc_10",
+            json!({"command": "yes X", "timeout_ms": 100}),
+            token,
+            None,
+        ),
+    )
+    .await
+    .expect("bash tool timeout should not deadlock under active output");
+
+    let text = ContentBlock::extract_text(&result.content);
+    assert!(
+        text.contains("timed out"),
+        "expected timeout error, got: {text}"
     );
 }
 
@@ -199,15 +304,13 @@ async fn read_file_cancellation() {
     let token = CancellationToken::new();
     token.cancel();
     let result = tool
-        .execute(
-            "tc_4",
-            json!({"path": "/tmp/anything"}),
-            token,
-            None,
-        )
+        .execute("tc_4", json!({"path": "/tmp/anything"}), token, None)
         .await;
     let text = ContentBlock::extract_text(&result.content);
-    assert!(text.contains("cancelled"), "expected cancelled, got: {text}");
+    assert!(
+        text.contains("cancelled"),
+        "expected cancelled, got: {text}"
+    );
 }
 
 #[tokio::test]
@@ -332,5 +435,8 @@ async fn write_file_cancellation() {
         )
         .await;
     let text = ContentBlock::extract_text(&result.content);
-    assert!(text.contains("cancelled"), "expected cancelled, got: {text}");
+    assert!(
+        text.contains("cancelled"),
+        "expected cancelled, got: {text}"
+    );
 }

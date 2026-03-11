@@ -21,7 +21,10 @@ use crate::retry::RetryStrategy;
 use crate::stream::{
     AssistantMessageDelta, AssistantMessageEvent, StreamFn, StreamOptions, accumulate_message,
 };
-use crate::tool::{AgentTool, AgentToolResult, validate_tool_arguments, validation_error_result};
+use crate::tool::{
+    AgentTool, AgentToolResult, ApprovalMode, ToolApproval, ToolApprovalRequest,
+    validate_tool_arguments, validation_error_result,
+};
 use crate::types::{
     AgentContext, AgentMessage, AssistantMessage, ContentBlock, LlmMessage, ModelSpec, StopReason,
     ToolResultMessage,
@@ -52,6 +55,10 @@ type GetApiKeyFn =
 /// Callback that returns steering or follow-up messages.
 type MessageProviderFn = dyn Fn() -> Vec<AgentMessage> + Send + Sync;
 
+/// Async callback for approving or rejecting individual tool calls.
+pub type ApproveToolFn =
+    dyn Fn(ToolApprovalRequest) -> Pin<Box<dyn Future<Output = ToolApproval> + Send>> + Send + Sync;
+
 // ─── AgentEvent ──────────────────────────────────────────────────────────────
 
 /// Fine-grained lifecycle event emitted by the agent loop.
@@ -64,7 +71,7 @@ pub enum AgentEvent {
     /// Emitted once when the loop begins.
     AgentStart,
 
-    /// Emitted once when the loop exits, carrying all new messages produced.
+    /// Emitted once when the loop exits, carrying the final message context.
     AgentEnd { messages: Arc<Vec<AgentMessage>> },
 
     /// Emitted at the beginning of each assistant turn.
@@ -94,6 +101,20 @@ pub enum AgentEvent {
 
     /// Emitted for intermediate partial results from a streaming tool.
     ToolExecutionUpdate { partial: AgentToolResult },
+
+    /// Emitted when a tool call is pending approval.
+    ToolApprovalRequested {
+        id: String,
+        name: String,
+        arguments: serde_json::Value,
+    },
+
+    /// Emitted when a tool call approval decision is made.
+    ToolApprovalResolved {
+        id: String,
+        name: String,
+        approved: bool,
+    },
 
     /// Emitted when a tool call completes.
     ToolExecutionEnd {
@@ -142,6 +163,14 @@ pub struct AgentLoopConfig {
 
     /// Optional callback polled when the agent would otherwise stop.
     pub get_follow_up_messages: Option<Box<MessageProviderFn>>,
+
+    /// Optional async callback for approving/rejecting tool calls before execution.
+    /// When `Some` and `approval_mode` is `Enabled`, each tool call is sent through
+    /// this callback before dispatch. Rejected tools return an error result to the LLM.
+    pub approve_tool: Option<Box<ApproveToolFn>>,
+
+    /// Controls whether the approval gate is active. Defaults to `Enabled`.
+    pub approval_mode: ApprovalMode,
 }
 
 impl std::fmt::Debug for AgentLoopConfig {
@@ -220,7 +249,6 @@ async fn emit(tx: &mpsc::Sender<AgentEvent>, event: AgentEvent) -> bool {
 /// Mutable state threaded through the loop iterations.
 struct LoopState {
     context_messages: Vec<AgentMessage>,
-    all_new_messages: Vec<AgentMessage>,
     pending_messages: Vec<AgentMessage>,
     overflow_signal: bool,
 }
@@ -244,7 +272,6 @@ async fn run_loop_inner(
     );
     let mut state = LoopState {
         context_messages: initial_messages,
-        all_new_messages: Vec::new(),
         pending_messages: Vec::new(),
         overflow_signal: false,
     };
@@ -287,7 +314,7 @@ async fn run_loop_inner(
         let _ = emit(
             &tx,
             AgentEvent::AgentEnd {
-                messages: Arc::new(state.all_new_messages),
+                messages: Arc::new(state.context_messages),
             },
         )
         .await;
@@ -349,10 +376,12 @@ async fn run_single_turn(
         .filter_map(|m| (config.convert_to_llm)(m))
         .collect();
 
-    // iv. Call get_api_key if set
-    if let Some(ref get_key) = config.get_api_key {
-        let _api_key = get_key(&config.model.provider).await;
-    }
+    // iv. Resolve a per-call API key if configured
+    let api_key = if let Some(ref get_key) = config.get_api_key {
+        get_key(&config.model.provider).await
+    } else {
+        None
+    };
 
     // v. Build context and call StreamFn with retry logic
     let agent_context = AgentContext {
@@ -366,6 +395,7 @@ async fn run_single_turn(
         &agent_context,
         &llm_messages,
         system_prompt,
+        api_key,
         cancellation_token,
         tx,
     )
@@ -423,7 +453,7 @@ async fn handle_cancellation(
     let abort_msg = build_abort_message(&config.model);
     let abort_msg_clone = abort_msg.clone();
     state
-        .all_new_messages
+        .context_messages
         .push(AgentMessage::Llm(LlmMessage::Assistant(abort_msg)));
     if !emit(tx, AgentEvent::TurnStart).await {
         return TurnOutcome::Return;
@@ -455,7 +485,7 @@ async fn handle_cancellation(
     let _ = emit(
         tx,
         AgentEvent::AgentEnd {
-            messages: Arc::new(std::mem::take(&mut state.all_new_messages)),
+            messages: Arc::new(std::mem::take(&mut state.context_messages)),
         },
     )
     .await;
@@ -489,7 +519,7 @@ async fn handle_stream_result(
             let abort_msg = build_abort_message(&config.model);
             let abort_msg_clone = abort_msg.clone();
             state
-                .all_new_messages
+                .context_messages
                 .push(AgentMessage::Llm(LlmMessage::Assistant(abort_msg)));
             if !emit(
                 tx,
@@ -505,7 +535,7 @@ async fn handle_stream_result(
             let _ = emit(
                 tx,
                 AgentEvent::AgentEnd {
-                    messages: Arc::new(std::mem::take(&mut state.all_new_messages)),
+                    messages: Arc::new(std::mem::take(&mut state.context_messages)),
                 },
             )
             .await;
@@ -528,7 +558,7 @@ async fn handle_error_stop(
     );
     let msg_clone = assistant_message.clone();
     state
-        .all_new_messages
+        .context_messages
         .push(AgentMessage::Llm(LlmMessage::Assistant(assistant_message)));
     if !emit(
         tx,
@@ -545,7 +575,7 @@ async fn handle_error_stop(
     let _ = emit(
         tx,
         AgentEvent::AgentEnd {
-            messages: Arc::new(std::mem::take(&mut state.all_new_messages)),
+            messages: Arc::new(std::mem::take(&mut state.context_messages)),
         },
     )
     .await;
@@ -586,14 +616,10 @@ async fn handle_no_tool_calls(
 ) -> TurnOutcome {
     // Clone twice: once for all_new_messages, once for TurnEnd event.
     // The original goes to context_messages.
-    let msg_for_new = assistant_message.clone();
     let msg_for_event = assistant_message.clone();
     state
         .context_messages
         .push(AgentMessage::Llm(LlmMessage::Assistant(assistant_message)));
-    state
-        .all_new_messages
-        .push(AgentMessage::Llm(LlmMessage::Assistant(msg_for_new)));
     if !emit(
         tx,
         AgentEvent::TurnEnd {
@@ -620,14 +646,10 @@ async fn handle_tool_calls(
 ) -> TurnOutcome {
     // Clone twice: once for all_new_messages, once for TurnEnd event.
     // The original goes to context_messages.
-    let msg_for_new = assistant_message.clone();
     let msg_for_turn_end = assistant_message.clone();
     state
         .context_messages
         .push(AgentMessage::Llm(LlmMessage::Assistant(assistant_message)));
-    state
-        .all_new_messages
-        .push(AgentMessage::Llm(LlmMessage::Assistant(msg_for_new)));
 
     // Max tokens recovery: replace incomplete tool calls with error results
     let max_token_results =
@@ -637,9 +659,6 @@ async fn handle_tool_calls(
     for tr in &max_token_results {
         state
             .context_messages
-            .push(AgentMessage::Llm(LlmMessage::ToolResult(tr.clone())));
-        state
-            .all_new_messages
             .push(AgentMessage::Llm(LlmMessage::ToolResult(tr.clone())));
     }
 
@@ -674,9 +693,6 @@ async fn handle_tool_calls(
         state
             .context_messages
             .push(AgentMessage::Llm(LlmMessage::ToolResult(tr.clone())));
-        state
-            .all_new_messages
-            .push(AgentMessage::Llm(LlmMessage::ToolResult(tr.clone())));
     }
 
     // xiii. Emit TurnEnd
@@ -693,9 +709,7 @@ async fn handle_tool_calls(
     }
 
     // Poll steering if not already interrupted
-    if !steering_interrupted
-        && let Some(ref get_steering) = config.get_steering_messages
-    {
+    if !steering_interrupted && let Some(ref get_steering) = config.get_steering_messages {
         let msgs = get_steering();
         if !msgs.is_empty() {
             state.pending_messages.extend(msgs);
@@ -802,9 +816,7 @@ fn build_error_message(model: &ModelSpec, error: &HarnessError) -> AssistantMess
 fn classify_stream_error(error_message: &str, stop_reason: StopReason) -> HarnessError {
     let lower = error_message.to_lowercase();
     if lower.contains("context window") || lower.contains("context_length_exceeded") {
-        return HarnessError::ContextWindowOverflow {
-            model: String::new(),
-        };
+        return HarnessError::context_overflow("");
     }
     if lower.contains("rate limit") || lower.contains("429") || lower.contains("throttl") {
         return HarnessError::ModelThrottled;
@@ -825,6 +837,7 @@ async fn stream_with_retry(
     agent_context: &AgentContext,
     llm_messages: &[LlmMessage],
     system_prompt: &str,
+    api_key: Option<String>,
     cancellation_token: &CancellationToken,
     tx: &mpsc::Sender<AgentEvent>,
 ) -> StreamResult {
@@ -847,6 +860,8 @@ async fn stream_with_retry(
                 .collect(),
             tools: agent_context.tools.clone(),
         };
+        let mut stream_options = config.stream_options.clone();
+        stream_options.api_key = api_key.clone();
 
         // Emit MessageStart
         if !emit(tx, AgentEvent::MessageStart).await {
@@ -854,8 +869,14 @@ async fn stream_with_retry(
         }
 
         // Stream from the provider and collect events + emit deltas
-        let attempt_result =
-            stream_single_attempt(config, &call_context, cancellation_token, tx).await;
+        let attempt_result = stream_single_attempt(
+            config,
+            &call_context,
+            &stream_options,
+            cancellation_token,
+            tx,
+        )
+        .await;
 
         let (events, had_error) = match attempt_result {
             StreamAttemptResult::EarlyExit(result) => return result,
@@ -908,13 +929,14 @@ enum StreamAttemptResult {
 async fn stream_single_attempt(
     config: &Arc<AgentLoopConfig>,
     call_context: &AgentContext,
+    stream_options: &StreamOptions,
     cancellation_token: &CancellationToken,
     tx: &mpsc::Sender<AgentEvent>,
 ) -> StreamAttemptResult {
     let mut stream = config.stream_fn.stream(
         &config.model,
         call_context,
-        &config.stream_options,
+        stream_options,
         cancellation_token.clone(),
     );
 
@@ -1091,11 +1113,8 @@ async fn execute_tools_concurrently(
         Arc::new(std::sync::atomic::AtomicBool::new(false));
 
     // Pre-build a tool lookup map for O(1) dispatch by name.
-    let tool_map: HashMap<&str, &Arc<dyn AgentTool>> = config
-        .tools
-        .iter()
-        .map(|t| (t.name(), t))
-        .collect();
+    let tool_map: HashMap<&str, &Arc<dyn AgentTool>> =
+        config.tools.iter().map(|t| (t.name(), t)).collect();
 
     let mut handles = Vec::new();
 
@@ -1112,6 +1131,17 @@ async fn execute_tools_concurrently(
         .await
         {
             return ToolExecOutcome::ChannelClosed;
+        }
+
+        // ── Approval gate ──
+        if let Some(ref approve_fn) = config.approve_tool
+            && config.approval_mode == ApprovalMode::Enabled
+        {
+            match check_approval(approve_fn, tc, idx, &results, tx).await {
+                ApprovalOutcome::Approved => {} // proceed to dispatch
+                ApprovalOutcome::Rejected => continue,
+                ApprovalOutcome::ChannelClosed => return ToolExecOutcome::ChannelClosed,
+            }
         }
 
         let handle = dispatch_single_tool(
@@ -1144,6 +1174,84 @@ async fn execute_tools_concurrently(
 }
 
 // ─── execute_tools_concurrently helpers ──────────────────────────────────────
+
+/// Result of checking the approval gate for a single tool call.
+enum ApprovalOutcome {
+    Approved,
+    Rejected,
+    ChannelClosed,
+}
+
+/// Run the approval gate for a single tool call: emit events, call callback, handle rejection.
+async fn check_approval(
+    approve_fn: &ApproveToolFn,
+    tc: &ToolCallInfo,
+    idx: usize,
+    results: &Arc<tokio::sync::Mutex<Vec<(usize, ToolResultMessage)>>>,
+    tx: &mpsc::Sender<AgentEvent>,
+) -> ApprovalOutcome {
+    if !emit(
+        tx,
+        AgentEvent::ToolApprovalRequested {
+            id: tc.id.clone(),
+            name: tc.name.clone(),
+            arguments: tc.arguments.clone(),
+        },
+    )
+    .await
+    {
+        return ApprovalOutcome::ChannelClosed;
+    }
+
+    let request = ToolApprovalRequest {
+        tool_call_id: tc.id.clone(),
+        tool_name: tc.name.clone(),
+        arguments: tc.arguments.clone(),
+    };
+    let decision = approve_fn(request).await;
+    let approved = decision == ToolApproval::Approved;
+
+    if !emit(
+        tx,
+        AgentEvent::ToolApprovalResolved {
+            id: tc.id.clone(),
+            name: tc.name.clone(),
+            approved,
+        },
+    )
+    .await
+    {
+        return ApprovalOutcome::ChannelClosed;
+    }
+
+    if !approved {
+        let rejection_result = AgentToolResult::error(format!(
+            "Tool call '{}' was rejected by the approval gate.",
+            tc.name
+        ));
+        if !emit(
+            tx,
+            AgentEvent::ToolExecutionEnd {
+                result: rejection_result.clone(),
+                is_error: true,
+            },
+        )
+        .await
+        {
+            return ApprovalOutcome::ChannelClosed;
+        }
+        let tool_result_msg = ToolResultMessage {
+            tool_call_id: tc.id.clone(),
+            content: rejection_result.content,
+            is_error: true,
+            timestamp: now_timestamp(),
+        };
+        results.lock().await.push((idx, tool_result_msg));
+        return ApprovalOutcome::Rejected;
+    }
+
+    ApprovalOutcome::Approved
+}
 
 /// Result of dispatching a single tool call.
 enum DispatchResult {
@@ -1178,6 +1286,7 @@ async fn dispatch_single_tool(
         let steering_clone = Arc::clone(steering_flag);
         let config_clone = Arc::clone(config);
         let tx_clone = tx.clone();
+        let on_update_tx = tx.clone();
 
         let validation = validate_tool_arguments(tool.parameters_schema(), &arguments);
 
@@ -1186,8 +1295,11 @@ async fn dispatch_single_tool(
             let (result, is_error) = if let Err(errors) = validation {
                 (validation_error_result(&errors), true)
             } else {
+                let on_update = Box::new(move |partial: AgentToolResult| {
+                    let _ = on_update_tx.try_send(AgentEvent::ToolExecutionUpdate { partial });
+                });
                 let result = tool
-                    .execute(&tool_call_id, arguments, child_token, None)
+                    .execute(&tool_call_id, arguments, child_token, Some(on_update))
                     .await;
                 let is_error = result
                     .content

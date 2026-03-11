@@ -241,6 +241,8 @@ fn event_variant_name(event: &AgentEvent) -> String {
         AgentEvent::ToolExecutionStart { .. } => "ToolExecutionStart".into(),
         AgentEvent::ToolExecutionUpdate { .. } => "ToolExecutionUpdate".into(),
         AgentEvent::ToolExecutionEnd { .. } => "ToolExecutionEnd".into(),
+        AgentEvent::ToolApprovalRequested { .. } => "ToolApprovalRequested".into(),
+        AgentEvent::ToolApprovalResolved { .. } => "ToolApprovalResolved".into(),
     }
 }
 
@@ -546,10 +548,9 @@ async fn test_6_6_abort_produces_aborted_stop_reason() {
             ref assistant_message,
             ..
         } = event
+            && assistant_message.stop_reason == StopReason::Aborted
         {
-            if assistant_message.stop_reason == StopReason::Aborted {
-                saw_aborted = true;
-            }
+            saw_aborted = true;
         }
     }
 

@@ -127,9 +127,45 @@ pub fn validation_error_result(errors: &[String]) -> AgentToolResult {
     AgentToolResult::error(message)
 }
 
+// ─── Tool Approval ──────────────────────────────────────────────────────────
+
+/// Result of the approval gate for a tool call.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolApproval {
+    /// The tool call is approved and should proceed.
+    Approved,
+    /// The tool call is rejected and should not execute.
+    Rejected,
+}
+
+/// Information about a tool call pending approval.
+#[derive(Debug, Clone)]
+pub struct ToolApprovalRequest {
+    /// The unique ID of this tool call.
+    pub tool_call_id: String,
+    /// The name of the tool being called.
+    pub tool_name: String,
+    /// The arguments passed to the tool.
+    pub arguments: Value,
+}
+
+/// Controls whether the approval gate is active.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ApprovalMode {
+    /// Every tool call goes through the approval callback.
+    #[default]
+    Enabled,
+    /// All tool calls auto-approved — callback is never called.
+    /// Use this to temporarily disable approval without removing the callback.
+    Bypassed,
+}
+
 // ─── Compile-time Send + Sync assertions ────────────────────────────────────
 
 const _: () = {
     const fn assert_send_sync<T: Send + Sync>() {}
     assert_send_sync::<AgentToolResult>();
+    assert_send_sync::<ToolApproval>();
+    assert_send_sync::<ToolApprovalRequest>();
+    assert_send_sync::<ApprovalMode>();
 };

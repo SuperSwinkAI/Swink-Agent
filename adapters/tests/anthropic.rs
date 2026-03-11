@@ -1,11 +1,14 @@
 //! Wiremock-based tests for `AnthropicStreamFn`.
 
-use agent_harness::{AgentContext, AssistantMessageEvent, ModelSpec, StopReason, StreamFn, StreamOptions};
-use agent_harness_adapters::AnthropicStreamFn;
 use futures::StreamExt;
 use tokio_util::sync::CancellationToken;
 use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
+
+use agent_harness::{
+    AgentContext, AssistantMessageEvent, ModelSpec, StopReason, StreamFn, StreamOptions,
+};
+use agent_harness_adapters::AnthropicStreamFn;
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -131,9 +134,18 @@ async fn anthropic_tool_use_stream() {
     let events = collect_events(&sf).await;
 
     let types: Vec<&str> = events.iter().map(|e| event_name(e)).collect();
-    assert!(types.contains(&"ToolCallStart"), "missing ToolCallStart: {types:?}");
-    assert!(types.contains(&"ToolCallDelta"), "missing ToolCallDelta: {types:?}");
-    assert!(types.contains(&"ToolCallEnd"), "missing ToolCallEnd: {types:?}");
+    assert!(
+        types.contains(&"ToolCallStart"),
+        "missing ToolCallStart: {types:?}"
+    );
+    assert!(
+        types.contains(&"ToolCallDelta"),
+        "missing ToolCallDelta: {types:?}"
+    );
+    assert!(
+        types.contains(&"ToolCallEnd"),
+        "missing ToolCallEnd: {types:?}"
+    );
 
     // Verify start details
     let start = events.iter().find_map(|e| match e {
@@ -195,9 +207,18 @@ async fn anthropic_thinking_stream() {
     let events = collect_events(&sf).await;
 
     let types: Vec<&str> = events.iter().map(|e| event_name(e)).collect();
-    assert!(types.contains(&"ThinkingStart"), "missing ThinkingStart: {types:?}");
-    assert!(types.contains(&"ThinkingDelta"), "missing ThinkingDelta: {types:?}");
-    assert!(types.contains(&"ThinkingEnd"), "missing ThinkingEnd: {types:?}");
+    assert!(
+        types.contains(&"ThinkingStart"),
+        "missing ThinkingStart: {types:?}"
+    );
+    assert!(
+        types.contains(&"ThinkingDelta"),
+        "missing ThinkingDelta: {types:?}"
+    );
+    assert!(
+        types.contains(&"ThinkingEnd"),
+        "missing ThinkingEnd: {types:?}"
+    );
     assert!(types.contains(&"TextStart"), "missing TextStart: {types:?}");
     assert!(types.contains(&"TextDelta"), "missing TextDelta: {types:?}");
     assert!(types.contains(&"TextEnd"), "missing TextEnd: {types:?}");
@@ -206,7 +227,10 @@ async fn anthropic_thinking_stream() {
     // Thinking should come before text
     let thinking_end_pos = types.iter().position(|&t| t == "ThinkingEnd").unwrap();
     let text_start_pos = types.iter().position(|&t| t == "TextStart").unwrap();
-    assert!(thinking_end_pos < text_start_pos, "ThinkingEnd should precede TextStart");
+    assert!(
+        thinking_end_pos < text_start_pos,
+        "ThinkingEnd should precede TextStart"
+    );
 }
 
 #[tokio::test]
@@ -287,8 +311,14 @@ async fn anthropic_http_401() {
     let events = collect_events(&sf).await;
 
     let err = find_error_message(&events).expect("expected error event");
-    assert!(err.contains("auth error"), "expected 'auth error', got: {err}");
-    assert!(err.contains("x-api-key"), "expected 'x-api-key' mention, got: {err}");
+    assert!(
+        err.contains("auth error"),
+        "expected 'auth error', got: {err}"
+    );
+    assert!(
+        err.contains("x-api-key"),
+        "expected 'x-api-key' mention, got: {err}"
+    );
 }
 
 #[tokio::test]
@@ -304,7 +334,10 @@ async fn anthropic_http_429() {
     let events = collect_events(&sf).await;
 
     let err = find_error_message(&events).expect("expected error event");
-    assert!(err.contains("rate limit"), "expected 'rate limit', got: {err}");
+    assert!(
+        err.contains("rate limit"),
+        "expected 'rate limit', got: {err}"
+    );
 }
 
 #[tokio::test]
@@ -320,7 +353,10 @@ async fn anthropic_http_529() {
     let events = collect_events(&sf).await;
 
     let err = find_error_message(&events).expect("expected error event");
-    assert!(err.contains("overloaded"), "expected 'overloaded', got: {err}");
+    assert!(
+        err.contains("overloaded"),
+        "expected 'overloaded', got: {err}"
+    );
 }
 
 #[tokio::test]
@@ -386,10 +422,15 @@ async fn anthropic_cancellation() {
     let stream = sf.stream(&model, &context, &options, token);
     let events: Vec<_> = stream.collect().await;
 
-    let has_aborted = events.iter().any(|e| matches!(
-        e,
-        AssistantMessageEvent::Error { stop_reason: StopReason::Aborted, .. }
-    ));
+    let has_aborted = events.iter().any(|e| {
+        matches!(
+            e,
+            AssistantMessageEvent::Error {
+                stop_reason: StopReason::Aborted,
+                ..
+            }
+        )
+    });
     assert!(has_aborted, "expected Aborted event, got: {events:?}");
 }
 
@@ -407,8 +448,38 @@ async fn anthropic_api_key_header() {
     let sf = AnthropicStreamFn::new(server.uri(), "test-key");
     let events = collect_events(&sf).await;
 
-    let has_start = events.iter().any(|e| matches!(e, AssistantMessageEvent::Start));
+    let has_start = events
+        .iter()
+        .any(|e| matches!(e, AssistantMessageEvent::Start));
     assert!(has_start, "expected Start from authenticated request");
+}
+
+#[tokio::test]
+async fn anthropic_stream_options_api_key_overrides_default() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .and(header("x-api-key", "override-key"))
+        .respond_with(sse_response(&basic_text_sse()))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let sf = AnthropicStreamFn::new(server.uri(), "default-key");
+    let model = test_model();
+    let context = test_context();
+    let options = StreamOptions {
+        api_key: Some("override-key".to_string()),
+        ..StreamOptions::default()
+    };
+    let token = CancellationToken::new();
+    let events: Vec<_> = sf.stream(&model, &context, &options, token).collect().await;
+
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, AssistantMessageEvent::Start))
+    );
 }
 
 #[tokio::test]
@@ -444,7 +515,11 @@ async fn anthropic_stop_reason_mapping() {
         let sf = AnthropicStreamFn::new(server.uri(), "test-key");
         let events = collect_events(&sf).await;
         let reason = extract_stop_reason(&events).expect("missing Done");
-        assert_eq!(reason, StopReason::ToolUse, "tool_use should map to ToolUse");
+        assert_eq!(
+            reason,
+            StopReason::ToolUse,
+            "tool_use should map to ToolUse"
+        );
     }
 
     // max_tokens
@@ -459,7 +534,11 @@ async fn anthropic_stop_reason_mapping() {
         let sf = AnthropicStreamFn::new(server.uri(), "test-key");
         let events = collect_events(&sf).await;
         let reason = extract_stop_reason(&events).expect("missing Done");
-        assert_eq!(reason, StopReason::Length, "max_tokens should map to Length");
+        assert_eq!(
+            reason,
+            StopReason::Length,
+            "max_tokens should map to Length"
+        );
     }
 
     // end_turn
@@ -505,7 +584,7 @@ data: {{"type":"message_delta","delta":{{"stop_reason":"{stop_reason}"}},"usage"
     .join("\n")
 }
 
-fn event_name(event: &AssistantMessageEvent) -> &'static str {
+const fn event_name(event: &AssistantMessageEvent) -> &'static str {
     match event {
         AssistantMessageEvent::Start => "Start",
         AssistantMessageEvent::TextStart { .. } => "TextStart",
