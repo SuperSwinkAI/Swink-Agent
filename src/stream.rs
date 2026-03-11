@@ -5,6 +5,7 @@
 //! delta-accumulation function that reconstructs a finalized `AssistantMessage`
 //! from a collected sequence of events.
 
+use std::borrow::Cow;
 use std::pin::Pin;
 use std::time::SystemTime;
 
@@ -116,14 +117,26 @@ pub enum AssistantMessageEvent {
 // ─── AssistantMessageDelta ───────────────────────────────────────────────────
 
 /// A typed incremental update during streaming, used in `MessageUpdate` events.
+///
+/// The `delta` field uses [`Cow<'static, str>`] to avoid cloning on the hot
+/// path when the caller can transfer ownership of the underlying `String`.
 #[derive(Debug, Clone)]
 pub enum AssistantMessageDelta {
     /// An appended text string fragment.
-    Text { content_index: usize, delta: String },
+    Text {
+        content_index: usize,
+        delta: Cow<'static, str>,
+    },
     /// An appended reasoning fragment.
-    Thinking { content_index: usize, delta: String },
+    Thinking {
+        content_index: usize,
+        delta: Cow<'static, str>,
+    },
     /// An appended JSON argument fragment for a tool call.
-    ToolCall { content_index: usize, delta: String },
+    ToolCall {
+        content_index: usize,
+        delta: Cow<'static, str>,
+    },
 }
 
 // ─── StreamFn Trait ──────────────────────────────────────────────────────────

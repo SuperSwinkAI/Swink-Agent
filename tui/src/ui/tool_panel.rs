@@ -2,6 +2,7 @@
 
 use std::time::Instant;
 
+use agent_harness::redact_sensitive_values;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -246,9 +247,10 @@ impl ToolPanel {
 
 /// Summarize tool arguments for display in the approval prompt.
 ///
-/// For simple cases, shows the first string value. For complex objects,
-/// shows a truncated JSON representation.
+/// Sensitive values are redacted before summarization so that secrets
+/// never appear in the terminal UI.
 fn summarize_arguments(args: &Value) -> String {
+    let args = &redact_sensitive_values(args);
     match args {
         Value::Object(map) if map.len() == 1 => {
             if let Some((key, val)) = map.iter().next() {

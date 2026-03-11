@@ -12,7 +12,8 @@ use tokio_util::sync::CancellationToken;
 use agent_harness::{
     AgentContext, AgentEvent, AgentLoopConfig, AgentMessage, AgentTool, AgentToolResult,
     AssistantMessageEvent, ContentBlock, Cost, CustomMessage, DefaultRetryStrategy, LlmMessage,
-    ModelSpec, StopReason, StreamFn, StreamOptions, Usage, UserMessage, agent_loop,
+    MessageProvider, ModelSpec, StopReason, StreamFn, StreamOptions, ToolResultMessage, Usage,
+    UserMessage, agent_loop,
 };
 
 // ─── MockStreamFn ────────────────────────────────────────────────────────
@@ -328,6 +329,38 @@ fn tool_call_events(id: &str, name: &str, args: &str) -> Vec<AssistantMessageEve
     ]
 }
 
+/// Test helper that delegates to closures for steering/follow-up.
+struct MockMessageProvider {
+    steering: Box<dyn Fn() -> Vec<AgentMessage> + Send + Sync>,
+    follow_up: Box<dyn Fn() -> Vec<AgentMessage> + Send + Sync>,
+}
+
+impl MockMessageProvider {
+    fn steering_only(f: impl Fn() -> Vec<AgentMessage> + Send + Sync + 'static) -> Self {
+        Self {
+            steering: Box::new(f),
+            follow_up: Box::new(Vec::new),
+        }
+    }
+
+    fn follow_up_only(f: impl Fn() -> Vec<AgentMessage> + Send + Sync + 'static) -> Self {
+        Self {
+            steering: Box::new(Vec::new),
+            follow_up: Box::new(f),
+        }
+    }
+}
+
+impl MessageProvider for MockMessageProvider {
+    fn poll_steering(&self) -> Vec<AgentMessage> {
+        (self.steering)()
+    }
+
+    fn poll_follow_up(&self) -> Vec<AgentMessage> {
+        (self.follow_up)()
+    }
+}
+
 type ConvertToLlmBoxed = Box<dyn Fn(&AgentMessage) -> Option<LlmMessage> + Send + Sync>;
 
 fn default_convert_to_llm() -> ConvertToLlmBoxed {
@@ -351,8 +384,7 @@ fn default_config(stream_fn: Arc<dyn StreamFn>) -> AgentLoopConfig {
         convert_to_llm: default_convert_to_llm(),
         transform_context: None,
         get_api_key: None,
-        get_steering_messages: None,
-        get_follow_up_messages: None,
+        message_provider: None,
         approve_tool: None,
         approval_mode: agent_harness::ApprovalMode::default(),
     }
@@ -765,7 +797,7 @@ async fn test_3_7_steering_interrupt() {
 
     let mut config = default_config(stream_fn);
     config.tools = vec![fast_tool, slow_tool];
-    config.get_steering_messages = Some(Box::new(move || {
+    config.message_provider = Some(Arc::new(MockMessageProvider::steering_only(move || {
         let count = steering_count_clone.fetch_add(1, Ordering::SeqCst);
         if count == 0 {
             vec![AgentMessage::Llm(LlmMessage::User(UserMessage {
@@ -777,7 +809,7 @@ async fn test_3_7_steering_interrupt() {
         } else {
             vec![]
         }
-    }));
+    })));
 
     let events = collect_events(agent_loop(
         vec![],
@@ -804,7 +836,7 @@ async fn test_3_8_follow_up() {
     let follow_up_clone = Arc::clone(&follow_up_count);
 
     let mut config = default_config(stream_fn);
-    config.get_follow_up_messages = Some(Box::new(move || {
+    config.message_provider = Some(Arc::new(MockMessageProvider::follow_up_only(move || {
         let count = follow_up_clone.fetch_add(1, Ordering::SeqCst);
         if count == 0 {
             vec![AgentMessage::Llm(LlmMessage::User(UserMessage {
@@ -816,7 +848,7 @@ async fn test_3_8_follow_up() {
         } else {
             vec![]
         }
-    }));
+    })));
 
     let events = collect_events(agent_loop(
         vec![],
@@ -847,10 +879,10 @@ async fn test_3_9_error_exit_no_follow_up() {
     let follow_up_polled_clone = Arc::clone(&follow_up_polled);
 
     let mut config = default_config(stream_fn);
-    config.get_follow_up_messages = Some(Box::new(move || {
+    config.message_provider = Some(Arc::new(MockMessageProvider::follow_up_only(move || {
         follow_up_polled_clone.store(true, Ordering::SeqCst);
         vec![]
-    }));
+    })));
 
     let events = collect_events(agent_loop(
         vec![],
@@ -1176,5 +1208,109 @@ async fn test_3_17_validation_failure() {
     assert!(
         !tool_clone.was_executed(),
         "execute should not be called when validation fails"
+    );
+}
+
+// ─── PanickingTool ────────────────────────────────────────────────────
+
+/// A tool that panics during execution.
+struct PanickingTool {
+    tool_name: String,
+    panic_message: String,
+}
+
+impl PanickingTool {
+    fn new(name: &str, panic_message: &str) -> Self {
+        Self {
+            tool_name: name.to_string(),
+            panic_message: panic_message.to_string(),
+        }
+    }
+}
+
+impl AgentTool for PanickingTool {
+    fn name(&self) -> &str {
+        &self.tool_name
+    }
+
+    fn label(&self) -> &str {
+        &self.tool_name
+    }
+
+    fn description(&self) -> &'static str {
+        "A tool that panics for testing"
+    }
+
+    fn parameters_schema(&self) -> &serde_json::Value {
+        static SCHEMA: std::sync::OnceLock<serde_json::Value> = std::sync::OnceLock::new();
+        SCHEMA.get_or_init(|| {
+            json!({
+                "type": "object",
+                "properties": {},
+                "additionalProperties": true
+            })
+        })
+    }
+
+    fn execute(
+        &self,
+        _tool_call_id: &str,
+        _params: serde_json::Value,
+        _cancellation_token: CancellationToken,
+        _on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
+    ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>> {
+        Box::pin(async { panic!("{}", self.panic_message) })
+    }
+}
+
+// ─── 3.18: Panicking tool produces error result ──────────────────────
+
+#[tokio::test]
+async fn panicking_tool_produces_error_result() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![
+        tool_call_events("tc_panic", "panicking_tool", "{}"),
+        text_only_events("after panic"),
+    ]));
+
+    let tool = Arc::new(PanickingTool::new("panicking_tool", "deliberate test panic"));
+    let mut config = default_config(stream_fn);
+    config.tools = vec![tool];
+
+    let events = collect_events(agent_loop(
+        vec![],
+        "system".to_string(),
+        config,
+        CancellationToken::new(),
+    ))
+    .await;
+
+    assert!(has_event(&events, "AgentEnd"), "loop should complete");
+
+    // The panicked tool should produce a TurnEnd with an error tool result.
+    let panic_tool_results: Vec<&ToolResultMessage> = events
+        .iter()
+        .filter_map(|e| match e {
+            AgentEvent::TurnEnd { tool_results, .. } => Some(tool_results),
+            _ => None,
+        })
+        .flatten()
+        .filter(|r| r.tool_call_id == "tc_panic")
+        .collect();
+
+    assert!(
+        !panic_tool_results.is_empty(),
+        "panicked tool should produce a tool result, not be silently skipped"
+    );
+
+    let result = panic_tool_results[0];
+    assert!(result.is_error, "panicked tool result should be an error");
+    let text = ContentBlock::extract_text(&result.content);
+    assert!(
+        text.contains("tool execution panicked"),
+        "error message should mention panic: {text}"
+    );
+    assert!(
+        text.contains("deliberate test panic"),
+        "error message should contain the panic payload: {text}"
     );
 }

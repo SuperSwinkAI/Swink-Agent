@@ -109,3 +109,62 @@ pub fn any_key_configured() -> bool {
         .filter(|p| p.requires_key)
         .any(|p| credential(p).is_some())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn providers_returns_four_entries() {
+        let p = providers();
+        assert_eq!(p.len(), 4);
+    }
+
+    #[test]
+    fn providers_key_names_are_unique() {
+        let p = providers();
+        let mut names: Vec<&str> = p.iter().map(|info| info.key_name).collect();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(names.len(), p.len(), "provider key_names must be unique");
+    }
+
+    #[test]
+    fn providers_env_vars_are_unique() {
+        let p = providers();
+        let mut vars: Vec<&str> = p.iter().map(|info| info.env_var).collect();
+        vars.sort_unstable();
+        vars.dedup();
+        assert_eq!(vars.len(), p.len(), "provider env_vars must be unique");
+    }
+
+    #[test]
+    fn ollama_does_not_require_key() {
+        let p = providers();
+        let ollama = p.iter().find(|info| info.key_name == "ollama").unwrap();
+        assert!(!ollama.requires_key);
+    }
+
+    #[test]
+    fn key_requiring_providers() {
+        let p = providers();
+        let requires_key: Vec<&str> = p
+            .iter()
+            .filter(|info| info.requires_key)
+            .map(|info| info.key_name)
+            .collect();
+        assert!(requires_key.contains(&"openai"));
+        assert!(requires_key.contains(&"anthropic"));
+        assert!(requires_key.contains(&"proxy"));
+    }
+
+    #[test]
+    fn known_provider_key_names() {
+        let p = providers();
+        let names: Vec<&str> = p.iter().map(|info| info.key_name).collect();
+        assert!(names.contains(&"ollama"));
+        assert!(names.contains(&"openai"));
+        assert!(names.contains(&"anthropic"));
+        assert!(names.contains(&"proxy"));
+    }
+}

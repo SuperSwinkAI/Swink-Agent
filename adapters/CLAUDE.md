@@ -31,3 +31,27 @@
 - **Ollama has no sentinel line** — unlike SSE adapters, the NDJSON stream ends when the `done` field is `true` in a response object. Parser checks this per-line.
 - **Bearer token auth** — Anthropic uses `x-api-key` header. OpenAI uses `Authorization: Bearer`. Ollama has no auth by default.
 - **convert.rs is private** — `MessageConverter` is `pub(crate)`, not re-exported. It's an internal abstraction, not part of the public API.
+
+## Live Tests
+
+Live tests hit real provider APIs and are isolated from normal `cargo test` runs via `#[ignore]`.
+
+**Running:**
+```bash
+# All live tests (reads keys from .env via dotenvy)
+cargo test -p agent-harness-adapters -- --ignored
+
+# Just Anthropic
+cargo test -p agent-harness-adapters --test anthropic_live -- --ignored
+
+# Just OpenAI
+cargo test -p agent-harness-adapters --test openai_live -- --ignored
+```
+
+**Conventions:**
+- Live test files are separate from mock tests: `anthropic_live.rs`, `openai_live.rs`.
+- Every live test is `#[ignore]` + `#[tokio::test]`.
+- Each test wraps its stream in `tokio::time::timeout(30s)` to prevent hangs.
+- Use cheap models (`claude-haiku-4-5-20251001`, `gpt-4o-mini`) and short prompts to minimize cost.
+- `dotenvy` (dev-dependency) loads `.env` automatically — no manual `export` needed.
+- Tests validate stream event sequences, not exact text content (LLM output is non-deterministic).

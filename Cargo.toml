@@ -9,6 +9,10 @@ edition = "2024"
 rust-version = "1.88"
 description = "Core scaffolding for running LLM-powered agentic loops"
 license = "MIT"
+repository = "https://github.com/anthropics/agent-harness"
+readme = "README.md"
+keywords = ["llm", "agent", "ai", "streaming", "tools"]
+categories = ["development-tools", "api-bindings", "asynchronous"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
@@ -19,6 +23,7 @@ tokio-util = "0.7"
 futures = "0.3"
 tokio-stream = "0.1"
 jsonschema = "0.28"
+regex = "1"
 uuid = { version = "1", features = ["v4"] }
 rand = "0.8"
 reqwest = { version = "0.12", features = ["stream"] }

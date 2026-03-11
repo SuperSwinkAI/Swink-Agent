@@ -292,6 +292,20 @@ impl ModelSpec {
             thinking_budgets: None,
         }
     }
+
+    /// Set the reasoning depth for this model specification.
+    #[must_use]
+    pub const fn with_thinking_level(mut self, level: ThinkingLevel) -> Self {
+        self.thinking_level = level;
+        self
+    }
+
+    /// Set per-level token budget overrides for reasoning control.
+    #[must_use]
+    pub fn with_thinking_budgets(mut self, budgets: ThinkingBudgets) -> Self {
+        self.thinking_budgets = Some(budgets);
+        self
+    }
 }
 
 // ─── Agent Result ───────────────────────────────────────────────────────────

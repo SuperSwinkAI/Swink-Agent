@@ -213,6 +213,53 @@ async fn openai_usage_captured() {
 }
 
 #[tokio::test]
+async fn openai_usage_in_separate_chunk() {
+    // OpenAI sends finish_reason in one chunk and usage in a separate chunk
+    // before [DONE]. This matches real OpenAI behavior with `include_usage: true`.
+    let body = [
+        r#"data: {"choices":[{"delta":{"content":"hi"},"index":0}]}"#,
+        "",
+        r#"data: {"choices":[{"delta":{},"finish_reason":"stop","index":0}]}"#,
+        "",
+        r#"data: {"choices":[],"usage":{"prompt_tokens":100,"completion_tokens":25}}"#,
+        "",
+        "data: [DONE]",
+        "",
+        "",
+    ]
+    .join("\n");
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(sse_response(&body))
+        .mount(&server)
+        .await;
+
+    let sf = OpenAiStreamFn::new(server.uri(), "test-key");
+    let events = collect_events(&sf).await;
+
+    let (stop_reason, usage) = events
+        .iter()
+        .find_map(|e| match e {
+            AssistantMessageEvent::Done {
+                stop_reason,
+                usage,
+                ..
+            } => Some((*stop_reason, *usage)),
+            _ => None,
+        })
+        .expect("missing Done event");
+
+    assert_eq!(stop_reason, StopReason::Stop);
+    assert_eq!(usage.input, 100, "expected input tokens from separate chunk");
+    assert_eq!(
+        usage.output, 25,
+        "expected output tokens from separate chunk"
+    );
+}
+
+#[tokio::test]
 async fn openai_http_401() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
@@ -478,4 +525,249 @@ fn find_error_message(events: &[AssistantMessageEvent]) -> Option<String> {
         AssistantMessageEvent::Error { error_message, .. } => Some(error_message.clone()),
         _ => None,
     })
+}
+
+// ── Edge case tests ─────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn openai_empty_content_delta_skipped() {
+    let body = [
+        r#"data: {"choices":[{"delta":{"content":""},"index":0}]}"#,
+        "",
+        r#"data: {"choices":[{"delta":{"content":"real text"},"index":0}]}"#,
+        "",
+        r#"data: {"choices":[{"delta":{},"finish_reason":"stop","index":0}],"usage":{"prompt_tokens":5,"completion_tokens":3}}"#,
+        "",
+        "data: [DONE]",
+        "",
+        "",
+    ]
+    .join("\n");
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(sse_response(&body))
+        .mount(&server)
+        .await;
+
+    let sf = OpenAiStreamFn::new(server.uri(), "test-key");
+    let events = collect_events(&sf).await;
+
+    // The adapter skips empty content deltas (checks `!content.is_empty()`),
+    // so only one TextDelta with "real text" should appear.
+    let deltas: Vec<&str> = events
+        .iter()
+        .filter_map(|e| match e {
+            AssistantMessageEvent::TextDelta { delta, .. } => Some(delta.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(deltas, vec!["real text"], "empty delta should be skipped");
+}
+
+#[tokio::test]
+async fn openai_multiple_tool_calls() {
+    let body = [
+        // First tool call starts
+        r#"data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"tc_a","function":{"name":"bash","arguments":""}}]},"index":0}]}"#,
+        "",
+        r#"data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"cmd\":\"ls\"}"}}]},"index":0}]}"#,
+        "",
+        // Second tool call starts
+        r#"data: {"choices":[{"delta":{"tool_calls":[{"index":1,"id":"tc_b","function":{"name":"read_file","arguments":""}}]},"index":0}]}"#,
+        "",
+        r#"data: {"choices":[{"delta":{"tool_calls":[{"index":1,"function":{"arguments":"{\"path\":\"foo.txt\"}"}}]},"index":0}]}"#,
+        "",
+        r#"data: {"choices":[{"delta":{},"finish_reason":"tool_calls","index":0}],"usage":{"prompt_tokens":10,"completion_tokens":30}}"#,
+        "",
+        "data: [DONE]",
+        "",
+        "",
+    ]
+    .join("\n");
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(sse_response(&body))
+        .mount(&server)
+        .await;
+
+    let sf = OpenAiStreamFn::new(server.uri(), "test-key");
+    let events = collect_events(&sf).await;
+
+    // Collect all ToolCallStart events
+    let tool_starts: Vec<(usize, String, String)> = events
+        .iter()
+        .filter_map(|e| match e {
+            AssistantMessageEvent::ToolCallStart {
+                content_index,
+                id,
+                name,
+            } => Some((*content_index, id.clone(), name.clone())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(tool_starts.len(), 2, "expected 2 ToolCallStart events");
+    assert_eq!(tool_starts[0].1, "tc_a");
+    assert_eq!(tool_starts[0].2, "bash");
+    assert_eq!(tool_starts[1].1, "tc_b");
+    assert_eq!(tool_starts[1].2, "read_file");
+
+    // Content indices should be sequential
+    assert_eq!(tool_starts[0].0, 0, "first tool at content_index 0");
+    assert_eq!(tool_starts[1].0, 1, "second tool at content_index 1");
+
+    // Both tool calls should be ended
+    let tool_end_count = events
+        .iter()
+        .filter(|e| matches!(e, AssistantMessageEvent::ToolCallEnd { .. }))
+        .count();
+    assert_eq!(tool_end_count, 2, "expected 2 ToolCallEnd events");
+
+    // Stop reason should be ToolUse
+    let done = events.iter().find_map(|e| match e {
+        AssistantMessageEvent::Done { stop_reason, .. } => Some(*stop_reason),
+        _ => None,
+    });
+    assert_eq!(done, Some(StopReason::ToolUse));
+}
+
+#[tokio::test]
+async fn openai_content_filter_stop_reason() {
+    let body = [
+        r#"data: {"choices":[{"delta":{"content":"filtered"},"index":0}]}"#,
+        "",
+        r#"data: {"choices":[{"delta":{},"finish_reason":"content_filter","index":0}],"usage":{"prompt_tokens":5,"completion_tokens":2}}"#,
+        "",
+        "data: [DONE]",
+        "",
+        "",
+    ]
+    .join("\n");
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(sse_response(&body))
+        .mount(&server)
+        .await;
+
+    let sf = OpenAiStreamFn::new(server.uri(), "test-key");
+    let events = collect_events(&sf).await;
+
+    // content_filter maps to the catch-all StopReason::Stop
+    let done = events.iter().find_map(|e| match e {
+        AssistantMessageEvent::Done { stop_reason, .. } => Some(*stop_reason),
+        _ => None,
+    });
+    assert_eq!(
+        done,
+        Some(StopReason::Stop),
+        "content_filter should map to Stop"
+    );
+}
+
+#[tokio::test]
+async fn openai_empty_choices_array() {
+    let body = [
+        r#"data: {"choices":[]}"#,
+        "",
+        r#"data: {"choices":[{"delta":{"content":"hello"},"index":0}]}"#,
+        "",
+        r#"data: {"choices":[]}"#,
+        "",
+        r#"data: {"choices":[{"delta":{},"finish_reason":"stop","index":0}],"usage":{"prompt_tokens":5,"completion_tokens":2}}"#,
+        "",
+        "data: [DONE]",
+        "",
+        "",
+    ]
+    .join("\n");
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(sse_response(&body))
+        .mount(&server)
+        .await;
+
+    let sf = OpenAiStreamFn::new(server.uri(), "test-key");
+    let events = collect_events(&sf).await;
+
+    // Empty choices are simply skipped; the stream should complete normally
+    let types: Vec<&str> = events.iter().map(|e| event_name(e)).collect();
+    assert!(types.contains(&"Start"), "missing Start: {types:?}");
+    assert!(types.contains(&"TextDelta"), "missing TextDelta: {types:?}");
+    assert!(types.contains(&"Done"), "missing Done: {types:?}");
+
+    let delta_text: String = events
+        .iter()
+        .filter_map(|e| match e {
+            AssistantMessageEvent::TextDelta { delta, .. } => Some(delta.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(delta_text, "hello");
+}
+
+#[tokio::test]
+async fn openai_missing_done_sentinel() {
+    // Stream ends (connection closes) without sending [DONE]
+    let body = [
+        r#"data: {"choices":[{"delta":{"content":"partial"},"index":0}]}"#,
+        "",
+        // No finish_reason, no [DONE] — connection closes
+        "",
+    ]
+    .join("\n");
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(sse_response(&body))
+        .mount(&server)
+        .await;
+
+    let sf = OpenAiStreamFn::new(server.uri(), "test-key");
+    let events = collect_events(&sf).await;
+
+    // Should get an error about unexpected stream end
+    let err = find_error_message(&events).expect("expected error event");
+    assert!(
+        err.contains("stream ended unexpectedly"),
+        "expected 'stream ended unexpectedly', got: {err}"
+    );
+
+    // Open text block should be finalized
+    let types: Vec<&str> = events.iter().map(|e| event_name(e)).collect();
+    assert!(
+        types.contains(&"TextEnd"),
+        "open text block should be finalized: {types:?}"
+    );
+}
+
+#[tokio::test]
+async fn openai_empty_response_body() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(sse_response(""))
+        .mount(&server)
+        .await;
+
+    let sf = OpenAiStreamFn::new(server.uri(), "test-key");
+    let events = collect_events(&sf).await;
+
+    // Empty SSE body means stream ends immediately without [DONE].
+    // Adapter should emit Start then an error about unexpected stream end.
+    let types: Vec<&str> = events.iter().map(|e| event_name(e)).collect();
+    assert!(types.contains(&"Start"), "should still emit Start: {types:?}");
+
+    let err = find_error_message(&events).expect("expected error event");
+    assert!(
+        err.contains("stream ended unexpectedly"),
+        "expected 'stream ended unexpectedly', got: {err}"
+    );
 }

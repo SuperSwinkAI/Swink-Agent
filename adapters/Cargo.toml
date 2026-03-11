@@ -4,6 +4,11 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.88"
 description = "LLM provider adapters for agent-harness"
+license = "MIT"
+repository = "https://github.com/anthropics/agent-harness"
+readme = "../README.md"
+keywords = ["llm", "anthropic", "openai", "adapter", "streaming"]
+categories = ["development-tools", "api-bindings", "asynchronous"]
 
 [dependencies]
 agent-harness = { path = ".." }
@@ -21,6 +26,7 @@ tracing = "0.1"
 tokio = { version = "1", features = ["full", "test-util"] }
 wiremock = "0.6"
 pretty_assertions = "1"
+dotenvy = "0.15"
 
 [lints.rust]
 unsafe_code = "forbid"

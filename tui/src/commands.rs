@@ -4,6 +4,7 @@
 //! Slash commands (`/quit`, `/model`, etc.) affect agent configuration.
 
 /// Result of parsing and executing a command.
+#[derive(Debug)]
 pub enum CommandResult {
     /// Command produced feedback to show in conversation.
     Feedback(String),
@@ -112,7 +113,9 @@ fn execute_hash_command(cmd: &str) -> CommandResult {
         _ if cmd.starts_with("approve ") => {
             CommandResult::Feedback("Usage: #approve [on|off]".to_string())
         }
-        _ => CommandResult::Feedback(format!("Unknown command: #{cmd}\nType #help for available commands.")),
+        _ => CommandResult::Feedback(format!(
+            "Unknown command: #{cmd}\nType #help for available commands."
+        )),
     }
 }
 
@@ -144,7 +147,9 @@ fn execute_slash_command(cmd: &str) -> CommandResult {
             }
         }
         "reset" => CommandResult::Reset,
-        _ => CommandResult::Feedback(format!("Unknown command: /{name}\nType #help for available commands.")),
+        _ => CommandResult::Feedback(format!(
+            "Unknown command: /{name}\nType #help for available commands."
+        )),
     }
 }
 
@@ -185,4 +190,268 @@ fn help_text() -> String {
 │ /reset      Reset agent state           │
 ╰──────────────────────────────────────────╯"
         .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- Not-a-command ---
+
+    #[test]
+    fn plain_text_is_not_a_command() {
+        assert!(matches!(
+            execute_command("hello world"),
+            CommandResult::NotACommand
+        ));
+    }
+
+    #[test]
+    fn empty_input_is_not_a_command() {
+        assert!(matches!(execute_command(""), CommandResult::NotACommand));
+    }
+
+    #[test]
+    fn whitespace_only_is_not_a_command() {
+        assert!(matches!(
+            execute_command("   "),
+            CommandResult::NotACommand
+        ));
+    }
+
+    // --- Hash commands ---
+
+    #[test]
+    fn hash_help_returns_feedback() {
+        assert!(matches!(
+            execute_command("#help"),
+            CommandResult::Feedback(_)
+        ));
+    }
+
+    #[test]
+    fn hash_clear_returns_clear() {
+        assert!(matches!(execute_command("#clear"), CommandResult::Clear));
+    }
+
+    #[test]
+    fn hash_info_returns_feedback() {
+        assert!(matches!(
+            execute_command("#info"),
+            CommandResult::Feedback(_)
+        ));
+    }
+
+    #[test]
+    fn hash_copy_variants() {
+        assert!(matches!(
+            execute_command("#copy"),
+            CommandResult::CopyToClipboard(ClipboardContent::Last)
+        ));
+        assert!(matches!(
+            execute_command("#copy all"),
+            CommandResult::CopyToClipboard(ClipboardContent::All)
+        ));
+        assert!(matches!(
+            execute_command("#copy code"),
+            CommandResult::CopyToClipboard(ClipboardContent::Code)
+        ));
+    }
+
+    #[test]
+    fn hash_sessions_returns_list_sessions() {
+        assert!(matches!(
+            execute_command("#sessions"),
+            CommandResult::ListSessions
+        ));
+    }
+
+    #[test]
+    fn hash_save_returns_save_session() {
+        assert!(matches!(
+            execute_command("#save"),
+            CommandResult::SaveSession
+        ));
+    }
+
+    #[test]
+    fn hash_load_with_id() {
+        match execute_command("#load abc123") {
+            CommandResult::LoadSession(id) => assert_eq!(id, "abc123"),
+            other => panic!("expected LoadSession, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn hash_load_without_id_returns_feedback() {
+        // "#load" alone (no trailing space) is treated as unknown command.
+        match execute_command("#load") {
+            CommandResult::Feedback(msg) => assert!(msg.contains("Unknown command")),
+            other => panic!("expected Feedback, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn hash_key_with_provider_and_key() {
+        match execute_command("#key openai sk-abc123") {
+            CommandResult::StoreKey { provider, key } => {
+                assert_eq!(provider, "openai");
+                assert_eq!(key, "sk-abc123");
+            }
+            other => panic!("expected StoreKey, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn hash_key_without_key_returns_usage() {
+        match execute_command("#key openai") {
+            CommandResult::Feedback(msg) => assert!(msg.contains("Usage")),
+            other => panic!("expected Feedback with usage, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn hash_keys_returns_list_keys() {
+        assert!(matches!(execute_command("#keys"), CommandResult::ListKeys));
+    }
+
+    #[test]
+    fn hash_approve_query() {
+        assert!(matches!(
+            execute_command("#approve"),
+            CommandResult::QueryApprovalMode
+        ));
+    }
+
+    #[test]
+    fn hash_approve_on() {
+        assert!(matches!(
+            execute_command("#approve on"),
+            CommandResult::SetApprovalMode(ApprovalModeArg::On)
+        ));
+    }
+
+    #[test]
+    fn hash_approve_off() {
+        assert!(matches!(
+            execute_command("#approve off"),
+            CommandResult::SetApprovalMode(ApprovalModeArg::Off)
+        ));
+    }
+
+    #[test]
+    fn hash_approve_invalid_arg_returns_usage() {
+        match execute_command("#approve maybe") {
+            CommandResult::Feedback(msg) => assert!(msg.contains("Usage")),
+            other => panic!("expected Feedback with usage, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn hash_unknown_command_returns_feedback() {
+        match execute_command("#nonexistent") {
+            CommandResult::Feedback(msg) => {
+                assert!(msg.contains("Unknown command"));
+                assert!(msg.contains("#nonexistent"));
+            }
+            other => panic!("expected Feedback, got {other:?}"),
+        }
+    }
+
+    // --- Slash commands ---
+
+    #[test]
+    fn slash_quit() {
+        assert!(matches!(execute_command("/quit"), CommandResult::Quit));
+    }
+
+    #[test]
+    fn slash_q_alias() {
+        assert!(matches!(execute_command("/q"), CommandResult::Quit));
+    }
+
+    #[test]
+    fn slash_model_with_arg() {
+        match execute_command("/model gpt-4o") {
+            CommandResult::SetModel(m) => assert_eq!(m, "gpt-4o"),
+            other => panic!("expected SetModel, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn slash_model_without_arg_returns_usage() {
+        match execute_command("/model") {
+            CommandResult::Feedback(msg) => assert!(msg.contains("Usage")),
+            other => panic!("expected Feedback, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn slash_thinking_with_arg() {
+        match execute_command("/thinking high") {
+            CommandResult::SetThinking(level) => assert_eq!(level, "high"),
+            other => panic!("expected SetThinking, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn slash_thinking_without_arg_returns_usage() {
+        match execute_command("/thinking") {
+            CommandResult::Feedback(msg) => assert!(msg.contains("Usage")),
+            other => panic!("expected Feedback, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn slash_system_with_arg() {
+        match execute_command("/system You are a pirate.") {
+            CommandResult::SetSystemPrompt(p) => assert_eq!(p, "You are a pirate."),
+            other => panic!("expected SetSystemPrompt, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn slash_system_without_arg_returns_usage() {
+        match execute_command("/system") {
+            CommandResult::Feedback(msg) => assert!(msg.contains("Usage")),
+            other => panic!("expected Feedback, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn slash_reset() {
+        assert!(matches!(execute_command("/reset"), CommandResult::Reset));
+    }
+
+    #[test]
+    fn slash_unknown_command_returns_feedback() {
+        match execute_command("/nonexistent") {
+            CommandResult::Feedback(msg) => {
+                assert!(msg.contains("Unknown command"));
+                assert!(msg.contains("/nonexistent"));
+            }
+            other => panic!("expected Feedback, got {other:?}"),
+        }
+    }
+
+    // --- Whitespace handling ---
+
+    #[test]
+    fn leading_trailing_whitespace_trimmed() {
+        assert!(matches!(
+            execute_command("  #clear  "),
+            CommandResult::Clear
+        ));
+        assert!(matches!(execute_command("  /quit  "), CommandResult::Quit));
+    }
+
+    // --- Debug impl on enum variants ---
+
+    #[test]
+    fn approval_mode_arg_debug_and_eq() {
+        assert_eq!(ApprovalModeArg::On, ApprovalModeArg::On);
+        assert_ne!(ApprovalModeArg::On, ApprovalModeArg::Off);
+        // Ensure Debug is implemented
+        let _ = format!("{:?}", ApprovalModeArg::On);
+    }
 }

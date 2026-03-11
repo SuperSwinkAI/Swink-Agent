@@ -406,6 +406,7 @@ fn parse_sse_stream(
                 content_index: 0,
                 tool_calls: HashMap::new(),
                 usage: None,
+                stop_reason: None,
             },
             false,
             true,
@@ -441,16 +442,27 @@ fn parse_sse_stream(
                             // Stream ended without [DONE]
                             done = true;
                             let mut events = finalize_blocks(&mut state);
-                            events.push(error_event("OpenAI stream ended unexpectedly"));
+                            if let Some(stop_reason) = state.stop_reason.take() {
+                                // Had a finish_reason but no [DONE] — still valid
+                                let usage = state.usage.take();
+                                events.push(AssistantMessageEvent::Done {
+                                    stop_reason,
+                                    usage: usage.unwrap_or_default(),
+                                    cost: Cost::default(),
+                                });
+                            } else {
+                                events.push(error_event("OpenAI stream ended unexpectedly"));
+                            }
                             Some((events, (lines, token, state, done, false)))
                         }
                         Some(SseLine::Done) => {
                             done = true;
                             let mut events = finalize_blocks(&mut state);
-                            // If we have usage but haven't emitted Done yet, emit it now
+                            let stop_reason = state.stop_reason.take()
+                                .unwrap_or(StopReason::Stop);
                             let usage = state.usage.take();
                             events.push(AssistantMessageEvent::Done {
-                                stop_reason: StopReason::Stop,
+                                stop_reason,
                                 usage: usage.unwrap_or_default(),
                                 cost: Cost::default(),
                             });
@@ -521,7 +533,8 @@ fn parse_sse_stream(
                                     }
                                 }
 
-                                // Handle finish reason
+                                // Handle finish reason — save for [DONE]; usage may
+                                // arrive in a subsequent chunk.
                                 if let Some(reason) = &choice.finish_reason {
                                     let stop_reason = match reason.as_str() {
                                         "tool_calls" => StopReason::ToolUse,
@@ -533,13 +546,7 @@ fn parse_sse_stream(
                                     // Finalize all open blocks
                                     events.extend(finalize_blocks(&mut state));
 
-                                    let usage = state.usage.take();
-                                    events.push(AssistantMessageEvent::Done {
-                                        stop_reason,
-                                        usage: usage.unwrap_or_default(),
-                                        cost: Cost::default(),
-                                    });
-                                    done = true;
+                                    state.stop_reason = Some(stop_reason);
                                 }
                             }
 
@@ -660,6 +667,8 @@ struct SseStreamState {
     content_index: usize,
     tool_calls: HashMap<usize, ToolCallState>,
     usage: Option<Usage>,
+    /// Saved stop reason from `finish_reason`; emitted with `Done` on `[DONE]`.
+    stop_reason: Option<StopReason>,
 }
 
 /// Parsed SSE line.

@@ -21,6 +21,7 @@ use tracing::{info, warn};
 use crate::error::HarnessError;
 use crate::loop_::ApproveToolFn;
 use crate::loop_::{AgentEvent, AgentLoopConfig, agent_loop, agent_loop_continue};
+use crate::message_provider::MessageProvider;
 use crate::retry::{DefaultRetryStrategy, RetryStrategy};
 use crate::stream::{StreamFn, StreamOptions};
 use crate::tool::{AgentTool, ApprovalMode, ToolApproval, ToolApprovalRequest};
@@ -839,12 +840,6 @@ impl Agent {
 
     #[allow(clippy::type_complexity)]
     fn build_loop_config(&self) -> AgentLoopConfig {
-        let steering_queue = Arc::clone(&self.steering_queue);
-        let steering_mode = self.steering_mode;
-
-        let follow_up_queue = Arc::clone(&self.follow_up_queue);
-        let follow_up_mode = self.follow_up_mode;
-
         // Clone Arcs to share closures with the loop config
         let convert = Arc::clone(&self.convert_to_llm);
         let convert_box: Box<dyn Fn(&AgentMessage) -> Option<LlmMessage> + Send + Sync> =
@@ -865,6 +860,13 @@ impl Agent {
             b
         });
 
+        let message_provider: Arc<dyn MessageProvider> = Arc::new(QueueMessageProvider {
+            steering_queue: Arc::clone(&self.steering_queue),
+            follow_up_queue: Arc::clone(&self.follow_up_queue),
+            steering_mode: self.steering_mode,
+            follow_up_mode: self.follow_up_mode,
+        });
+
         AgentLoopConfig {
             model: self.state.model.clone(),
             stream_options: self.stream_options.clone(),
@@ -874,12 +876,7 @@ impl Agent {
             convert_to_llm: convert_box,
             transform_context: transform_box,
             get_api_key: api_key_box,
-            get_steering_messages: Some(Box::new(move || {
-                drain_queue(&steering_queue, steering_mode == SteeringMode::OneAtATime)
-            })),
-            get_follow_up_messages: Some(Box::new(move || {
-                drain_queue(&follow_up_queue, follow_up_mode == FollowUpMode::OneAtATime)
-            })),
+            message_provider: Some(message_provider),
             approve_tool: self.approve_tool.as_ref().map(|a| {
                 let a = Arc::clone(a);
                 let b: Box<ApproveToolFn> = Box::new(move |req| a(req));
@@ -1014,6 +1011,35 @@ impl RetryStrategy for SharedRetryStrategy {
 
     fn delay(&self, attempt: u32) -> std::time::Duration {
         self.0.delay(attempt)
+    }
+}
+
+// ─── QueueMessageProvider ────────────────────────────────────────────────────
+
+/// [`MessageProvider`] backed by shared steering and follow-up queues.
+///
+/// Drains messages according to the configured [`SteeringMode`] and
+/// [`FollowUpMode`] — either one at a time or all at once.
+struct QueueMessageProvider {
+    steering_queue: Arc<Mutex<Vec<AgentMessage>>>,
+    follow_up_queue: Arc<Mutex<Vec<AgentMessage>>>,
+    steering_mode: SteeringMode,
+    follow_up_mode: FollowUpMode,
+}
+
+impl MessageProvider for QueueMessageProvider {
+    fn poll_steering(&self) -> Vec<AgentMessage> {
+        drain_queue(
+            &self.steering_queue,
+            self.steering_mode == SteeringMode::OneAtATime,
+        )
+    }
+
+    fn poll_follow_up(&self) -> Vec<AgentMessage> {
+        drain_queue(
+            &self.follow_up_queue,
+            self.follow_up_mode == FollowUpMode::OneAtATime,
+        )
     }
 }
 

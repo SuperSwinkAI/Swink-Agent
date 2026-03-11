@@ -26,6 +26,22 @@ cargo run -p agent-harness-tui     # launch the TUI
 cargo test --workspace             # run all tests
 ```
 
+## Examples
+
+Runnable examples live in `examples/`:
+
+| Example | What it demonstrates |
+|---|---|
+| [`simple_prompt`](examples/simple_prompt.rs) | Create an Agent with a mock stream function, send a prompt, print the result |
+| [`with_tools`](examples/with_tools.rs) | Register BashTool / ReadFileTool / WriteFileTool and wire up the approval callback |
+| [`custom_adapter`](examples/custom_adapter.rs) | Implement the `StreamFn` trait for a custom provider |
+
+```bash
+cargo run --example simple_prompt
+cargo run --example with_tools
+cargo run --example custom_adapter
+```
+
 See [docs/getting_started.md](docs/getting_started.md) for setup and configuration.
 See [docs/architecture/HLD.md](docs/architecture/HLD.md) for system design.
 See [docs/planning/PRD.md](docs/planning/PRD.md) for product requirements.

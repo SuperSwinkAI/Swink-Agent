@@ -1281,3 +1281,55 @@ async fn test_error_sets_state_error() {
     assert!(state_error.is_some(), "agent state should have error set");
     assert_eq!(state_error, result.error.as_ref());
 }
+
+// ─── Multi-instance independence ──────────────────────────────────────────
+
+#[tokio::test]
+async fn multiple_agents_independent_state() {
+    // Create two agents with different system prompts and stream functions.
+    let stream_fn_a = Arc::new(MockStreamFn::new(vec![text_only_events("response A")]));
+    let stream_fn_b = Arc::new(MockStreamFn::new(vec![text_only_events("response B")]));
+
+    let mut agent_a = Agent::new(AgentOptions::new(
+        "You are Agent A",
+        ModelSpec::new("test", "model-a"),
+        stream_fn_a as Arc<dyn StreamFn>,
+        default_convert,
+    ));
+    let mut agent_b = Agent::new(AgentOptions::new(
+        "You are Agent B",
+        ModelSpec::new("test", "model-b"),
+        stream_fn_b as Arc<dyn StreamFn>,
+        default_convert,
+    ));
+
+    // Verify initial state is independent.
+    assert_eq!(agent_a.state().system_prompt, "You are Agent A");
+    assert_eq!(agent_b.state().system_prompt, "You are Agent B");
+    assert_eq!(agent_a.state().model.model_id, "model-a");
+    assert_eq!(agent_b.state().model.model_id, "model-b");
+
+    // Run both agents concurrently.
+    let (result_a, result_b) = tokio::join!(
+        agent_a.prompt_async(vec![user_msg("hello from A")]),
+        agent_b.prompt_async(vec![user_msg("hello from B")]),
+    );
+
+    let result_a = result_a.unwrap();
+    let result_b = result_b.unwrap();
+
+    assert_eq!(result_a.stop_reason, StopReason::Stop);
+    assert_eq!(result_b.stop_reason, StopReason::Stop);
+
+    // Messages should not cross between agents.
+    assert_eq!(agent_a.state().messages.len(), 2, "agent A: user + assistant");
+    assert_eq!(agent_b.state().messages.len(), 2, "agent B: user + assistant");
+
+    // Mutating one agent does not affect the other.
+    agent_a.set_system_prompt("mutated A");
+    assert_eq!(agent_a.state().system_prompt, "mutated A");
+    assert_eq!(
+        agent_b.state().system_prompt, "You are Agent B",
+        "agent B should be unaffected by mutation of agent A"
+    );
+}

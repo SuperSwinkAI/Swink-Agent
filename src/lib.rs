@@ -3,6 +3,7 @@ pub mod agent;
 pub mod context;
 pub mod error;
 pub mod loop_;
+pub mod message_provider;
 pub mod proxy;
 pub mod retry;
 pub mod stream;
@@ -15,6 +16,7 @@ pub use agent::{Agent, AgentOptions, AgentState, FollowUpMode, SteeringMode, Sub
 pub use context::sliding_window;
 pub use error::HarnessError;
 pub use loop_::{AgentEvent, AgentLoopConfig, agent_loop, agent_loop_continue};
+pub use message_provider::MessageProvider;
 pub use proxy::ProxyStreamFn;
 pub use retry::{DefaultRetryStrategy, RetryStrategy};
 pub use stream::{
@@ -23,7 +25,8 @@ pub use stream::{
 };
 pub use tool::{
     AgentTool, AgentToolResult, ApprovalMode, ToolApproval, ToolApprovalRequest,
-    selective_approve, unknown_tool_result, validate_tool_arguments, validation_error_result,
+    redact_sensitive_values, selective_approve, unknown_tool_result, validate_tool_arguments,
+    validation_error_result,
 };
 pub use tools::{BashTool, ReadFileTool, WriteFileTool};
 pub use types::{

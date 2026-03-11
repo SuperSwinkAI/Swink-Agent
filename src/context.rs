@@ -128,13 +128,47 @@ pub fn sliding_window(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{ContentBlock, LlmMessage, UserMessage};
+    use crate::types::{
+        AssistantMessage, ContentBlock, Cost, LlmMessage, StopReason, ToolResultMessage, Usage,
+        UserMessage,
+    };
 
     fn text_message(text: &str) -> AgentMessage {
         AgentMessage::Llm(LlmMessage::User(UserMessage {
             content: vec![ContentBlock::Text {
                 text: text.to_owned(),
             }],
+            timestamp: 0,
+        }))
+    }
+
+    /// Helper: create an assistant message with a tool call.
+    fn tool_call_message(id: &str) -> AgentMessage {
+        AgentMessage::Llm(LlmMessage::Assistant(AssistantMessage {
+            content: vec![ContentBlock::ToolCall {
+                id: id.into(),
+                name: "test".into(),
+                arguments: serde_json::json!({}),
+                partial_json: None,
+            }],
+            provider: String::new(),
+            model_id: String::new(),
+            usage: Usage::default(),
+            cost: Cost::default(),
+            stop_reason: StopReason::ToolUse,
+            error_message: None,
+            timestamp: 0,
+        }))
+    }
+
+    /// Helper: create a tool result message.
+    fn tool_result_message(id: &str, text: &str) -> AgentMessage {
+        AgentMessage::Llm(LlmMessage::ToolResult(ToolResultMessage {
+            tool_call_id: id.into(),
+            content: vec![ContentBlock::Text {
+                text: text.into(),
+            }],
+            is_error: false,
             timestamp: 0,
         }))
     }
@@ -185,39 +219,14 @@ mod tests {
 
     #[test]
     fn preserves_tool_result_pair() {
-        use crate::types::{AssistantMessage, Cost, StopReason, ToolResultMessage, Usage};
-
         let compact = sliding_window(300, 100, 1);
 
         let body = "x".repeat(400);
         let mut messages = vec![
             text_message(&body), // anchor
             text_message(&body), // will be removed
-            // Assistant with tool call
-            AgentMessage::Llm(LlmMessage::Assistant(AssistantMessage {
-                content: vec![ContentBlock::ToolCall {
-                    id: "tc1".into(),
-                    name: "test".into(),
-                    arguments: serde_json::json!({}),
-                    partial_json: None,
-                }],
-                provider: String::new(),
-                model_id: String::new(),
-                usage: Usage::default(),
-                cost: Cost::default(),
-                stop_reason: StopReason::ToolUse,
-                error_message: None,
-                timestamp: 0,
-            })),
-            // Tool result
-            AgentMessage::Llm(LlmMessage::ToolResult(ToolResultMessage {
-                tool_call_id: "tc1".into(),
-                content: vec![ContentBlock::Text {
-                    text: "result".into(),
-                }],
-                is_error: false,
-                timestamp: 0,
-            })),
+            tool_call_message("tc1"),
+            tool_result_message("tc1", "result"),
         ];
 
         compact(&mut messages, false);
@@ -234,5 +243,188 @@ mod tests {
         if has_result {
             assert!(has_call);
         }
+    }
+
+    // ── New edge case tests ─────────────────────────────────────────────────
+
+    #[test]
+    fn empty_messages_no_change() {
+        let compact = sliding_window(100, 50, 1);
+        let mut messages: Vec<AgentMessage> = vec![];
+        compact(&mut messages, false);
+        assert!(messages.is_empty());
+    }
+
+    #[test]
+    fn single_message_preserved() {
+        // A single message should never be trimmed, even if it exceeds the budget.
+        // With anchor=1, this message is the anchor and tail_start <= effective_anchor
+        // causes an early return.
+        let body = "x".repeat(4000); // 1000 tokens, budget is only 10
+        let compact = sliding_window(10, 5, 1);
+        let mut messages = vec![text_message(&body)];
+        compact(&mut messages, false);
+        assert_eq!(messages.len(), 1);
+    }
+
+    #[test]
+    fn anchor_messages_always_kept() {
+        // Even when anchors alone exceed the budget, they must be preserved.
+        let body = "x".repeat(400); // 100 tokens each
+        let compact = sliding_window(50, 25, 2); // budget < anchor cost
+
+        let mut messages = vec![
+            text_message(&body), // anchor 1
+            text_message(&body), // anchor 2
+            text_message(&body), // non-anchor
+            text_message(&body), // non-anchor
+        ];
+        compact(&mut messages, false);
+
+        // First two anchor messages must survive.
+        assert!(messages.len() >= 2);
+        // Verify the anchor messages are the originals by checking content length.
+        for msg in &messages[..2] {
+            if let AgentMessage::Llm(LlmMessage::User(u)) = msg {
+                assert_eq!(u.content[0], ContentBlock::Text { text: body.clone() });
+            } else {
+                panic!("expected user message in anchor position");
+            }
+        }
+    }
+
+    #[test]
+    fn all_messages_under_budget_with_large_system_prompt() {
+        // The sliding_window function operates on messages only; the system prompt
+        // is not passed to it. Verify that when total message tokens are under
+        // budget, nothing is trimmed regardless of external system prompt size.
+        let compact = sliding_window(500, 250, 1);
+        let mut messages = vec![
+            text_message(&"a".repeat(400)), // 100 tokens
+            text_message(&"b".repeat(400)), // 100 tokens
+        ];
+        // Total = 200 tokens, well under 500 budget.
+        compact(&mut messages, false);
+        assert_eq!(messages.len(), 2);
+    }
+
+    #[test]
+    fn tool_result_at_boundary_preserved() {
+        // When the natural trim point falls exactly on a tool-result message,
+        // the preceding tool-call must also be kept.
+        let body = "x".repeat(400); // 100 tokens each
+        // Budget: anchor (100) + remaining 150 => can fit 1 message from tail.
+        // Without tool-pair preservation, only the tool result would be kept.
+        // With preservation, both the assistant (tool call) and result are kept.
+        let compact = sliding_window(250, 100, 1);
+        let mut messages = vec![
+            text_message(&body),             // anchor (100 tokens)
+            text_message(&body),             // middle, will be removed
+            tool_call_message("tc1"),        // assistant with tool call
+            tool_result_message("tc1", &body), // tool result (100 tokens)
+        ];
+        compact(&mut messages, false);
+
+        let has_result = messages
+            .iter()
+            .any(|m| matches!(m, AgentMessage::Llm(LlmMessage::ToolResult(_))));
+        let has_call = messages.iter().any(|m| {
+            matches!(m, AgentMessage::Llm(LlmMessage::Assistant(a))
+                if a.content.iter().any(|b| matches!(b, ContentBlock::ToolCall { .. })))
+        });
+        if has_result {
+            assert!(has_call, "tool result kept without its preceding tool call");
+        }
+    }
+
+    #[test]
+    fn consecutive_tool_pairs_preserved() {
+        // Multiple consecutive tool call/result pairs at the tail should all
+        // be kept together: if any tool result is included, its call is too.
+        let compact = sliding_window(500, 100, 1);
+        let body = "x".repeat(400); // 100 tokens each
+
+        let mut messages = vec![
+            text_message(&body),                // anchor
+            text_message(&body),                // middle filler
+            tool_call_message("tc1"),           // pair 1
+            tool_result_message("tc1", "r1"),   // pair 1
+            tool_call_message("tc2"),           // pair 2
+            tool_result_message("tc2", "r2"),   // pair 2
+        ];
+        compact(&mut messages, false);
+
+        // For every tool result in the output, verify its call is also present.
+        for msg in &messages {
+            if let AgentMessage::Llm(LlmMessage::ToolResult(tr)) = msg {
+                let call_present = messages.iter().any(|m| {
+                    matches!(m, AgentMessage::Llm(LlmMessage::Assistant(a))
+                        if a.content.iter().any(|b| matches!(b, ContentBlock::ToolCall { id, .. } if id == &tr.tool_call_id)))
+                });
+                assert!(
+                    call_present,
+                    "tool result {} kept without its call",
+                    tr.tool_call_id
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn custom_messages_token_estimation() {
+        // CustomMessage uses 100 tokens flat, regardless of content.
+        // Create a custom message and verify it contributes to budget.
+
+        #[derive(Debug)]
+        struct TestCustom;
+        impl crate::types::CustomMessage for TestCustom {
+            fn as_any(&self) -> &dyn std::any::Any {
+                self
+            }
+        }
+
+        // Budget: 150 tokens. Two custom messages = 200 tokens => should trim.
+        let compact = sliding_window(150, 50, 1);
+        let mut messages: Vec<AgentMessage> = vec![
+            AgentMessage::Custom(Box::new(TestCustom)), // anchor, 100 tokens
+            AgentMessage::Custom(Box::new(TestCustom)), // 100 tokens
+        ];
+        // Total = 200 > 150, but with only 2 messages and anchor=1,
+        // remaining budget = 150 - 100 = 50 < 100, so the second message is trimmed.
+        compact(&mut messages, false);
+        assert_eq!(messages.len(), 1);
+    }
+
+    #[test]
+    fn overflow_budget_smaller_than_normal() {
+        // Verify that overflow mode trims more aggressively.
+        let body = "x".repeat(400); // 100 tokens each
+        let compact = sliding_window(350, 150, 1);
+
+        // 4 messages = 400 tokens.
+        // Normal budget (350): keeps anchor (100) + remaining 250 => 2 tail = 3 total.
+        let mut normal_msgs = vec![
+            text_message(&body),
+            text_message(&body),
+            text_message(&body),
+            text_message(&body),
+        ];
+        compact(&mut normal_msgs, false);
+        let normal_count = normal_msgs.len();
+
+        // Overflow budget (150): keeps anchor (100) + remaining 50 => 0 tail = 1 total.
+        let mut overflow_msgs = vec![
+            text_message(&body),
+            text_message(&body),
+            text_message(&body),
+            text_message(&body),
+        ];
+        compact(&mut overflow_msgs, true);
+        let overflow_count = overflow_msgs.len();
+
+        assert!(
+            overflow_count < normal_count,
+            "overflow budget ({overflow_count} msgs) should be more aggressive than normal ({normal_count} msgs)"
+        );
     }
 }

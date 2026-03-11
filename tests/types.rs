@@ -1,6 +1,9 @@
+use std::collections::HashMap;
+
 use agent_harness::{
     AgentContext, AgentMessage, AssistantMessage, ContentBlock, Cost, CustomMessage, ImageSource,
-    LlmMessage, ModelSpec, StopReason, ThinkingLevel, ToolResultMessage, Usage, UserMessage,
+    LlmMessage, ModelSpec, StopReason, ThinkingBudgets, ThinkingLevel, ToolResultMessage, Usage,
+    UserMessage,
 };
 
 // ── 1.2: ContentBlock variants construct and pattern-match ──
@@ -254,6 +257,50 @@ fn model_spec_defaults() {
     assert_eq!(spec.model_id, "claude-sonnet-4-6");
     assert_eq!(spec.thinking_level, ThinkingLevel::Off);
     assert!(spec.thinking_budgets.is_none());
+}
+
+// ── 1.8: ModelSpec builder methods ──
+
+#[test]
+fn model_spec_with_thinking_level() {
+    let spec = ModelSpec::new("anthropic", "claude-sonnet-4-6")
+        .with_thinking_level(ThinkingLevel::High);
+    assert_eq!(spec.thinking_level, ThinkingLevel::High);
+}
+
+#[test]
+fn model_spec_with_thinking_budgets() {
+    let mut map = HashMap::new();
+    map.insert(ThinkingLevel::High, 10_000);
+    let budgets = ThinkingBudgets::new(map);
+
+    let spec = ModelSpec::new("anthropic", "claude-sonnet-4-6")
+        .with_thinking_budgets(budgets);
+    assert!(spec.thinking_budgets.is_some());
+    assert_eq!(
+        spec.thinking_budgets.unwrap().get(&ThinkingLevel::High),
+        Some(10_000)
+    );
+}
+
+#[test]
+fn model_spec_builder_chain() {
+    let mut map = HashMap::new();
+    map.insert(ThinkingLevel::Medium, 5_000);
+    let budgets = ThinkingBudgets::new(map);
+
+    let spec = ModelSpec::new("anthropic", "claude-sonnet-4-6")
+        .with_thinking_level(ThinkingLevel::Medium)
+        .with_thinking_budgets(budgets);
+
+    assert_eq!(spec.provider, "anthropic");
+    assert_eq!(spec.model_id, "claude-sonnet-4-6");
+    assert_eq!(spec.thinking_level, ThinkingLevel::Medium);
+    assert!(spec.thinking_budgets.is_some());
+    assert_eq!(
+        spec.thinking_budgets.unwrap().get(&ThinkingLevel::Medium),
+        Some(5_000)
+    );
 }
 
 // ── 1.10: AgentContext compiles with Vec<AgentMessage> and Vec<Arc<dyn Any>> ──

@@ -17,6 +17,7 @@ dependencies = [
  "jsonschema",
  "pretty_assertions",
  "rand",
+ "regex",
  "reqwest",
  "serde",
  "serde_json",
@@ -36,6 +37,7 @@ version = "0.1.0"
 dependencies = [
  "agent-harness",
  "bytes",
+ "dotenvy",
  "futures",
  "pretty_assertions",
  "reqwest",
@@ -64,6 +66,7 @@ dependencies = [
  "serde",
  "serde_json",
  "syntect",
+ "tempfile",
  "tokio",
  "toml",
  "tracing",

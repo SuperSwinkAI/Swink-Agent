@@ -4,6 +4,7 @@
 //! injection, event emission, retry integration, error/abort handling, and max
 //! tokens recovery. Stateless — all state is passed in via [`AgentLoopConfig`].
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
@@ -14,7 +15,7 @@ use futures::stream::{FuturesUnordered, StreamExt};
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info, warn};
+use tracing::{Instrument, debug, error, info, info_span, warn};
 
 use crate::error::HarnessError;
 use crate::retry::RetryStrategy;
@@ -52,8 +53,8 @@ type TransformContextFn = dyn Fn(&mut Vec<AgentMessage>, bool) + Send + Sync;
 type GetApiKeyFn =
     dyn Fn(&str) -> Pin<Box<dyn Future<Output = Option<String>> + Send>> + Send + Sync;
 
-/// Callback that returns steering or follow-up messages.
-type MessageProviderFn = dyn Fn() -> Vec<AgentMessage> + Send + Sync;
+// Re-import the trait so call sites can reference it unqualified.
+use crate::message_provider::MessageProvider;
 
 /// Async callback for approving or rejecting individual tool calls.
 pub type ApproveToolFn =
@@ -158,11 +159,11 @@ pub struct AgentLoopConfig {
     /// Optional async callback for dynamic API key resolution.
     pub get_api_key: Option<Box<GetApiKeyFn>>,
 
-    /// Optional callback polled after each tool execution for steering messages.
-    pub get_steering_messages: Option<Box<MessageProviderFn>>,
-
-    /// Optional callback polled when the agent would otherwise stop.
-    pub get_follow_up_messages: Option<Box<MessageProviderFn>>,
+    /// Optional provider polled for steering and follow-up messages.
+    ///
+    /// [`MessageProvider::poll_steering`] is called after each tool execution batch.
+    /// [`MessageProvider::poll_follow_up`] is called when the agent would otherwise stop.
+    pub message_provider: Option<Arc<dyn MessageProvider>>,
 
     /// Optional async callback for approving/rejecting tool calls before execution.
     /// When `Some` and `approval_mode` is `Enabled`, each tool call is sent through
@@ -264,6 +265,14 @@ async fn run_loop_inner(
     tx: mpsc::Sender<AgentEvent>,
 ) {
     let config = Arc::new(config);
+    let span = info_span!(
+        "agent_loop",
+        model_id = %config.model.model_id,
+        provider = %config.model.provider,
+        tool_count = config.tools.len(),
+        message_count = initial_messages.len(),
+    );
+    async {
     info!(
         model = %config.model.model_id,
         provider = %config.model.provider,
@@ -301,9 +310,9 @@ async fn run_loop_inner(
             }
         }
 
-        // Outer loop: poll get_follow_up_messages
-        if let Some(ref get_follow_up) = config.get_follow_up_messages {
-            let msgs = get_follow_up();
+        // Outer loop: poll follow-up messages
+        if let Some(ref provider) = config.message_provider {
+            let msgs = provider.poll_follow_up();
             if !msgs.is_empty() {
                 state.pending_messages.extend(msgs);
                 continue 'outer;
@@ -318,8 +327,10 @@ async fn run_loop_inner(
             },
         )
         .await;
+        info!("agent loop finished");
         return;
     }
+    }.instrument(span).await;
 }
 
 /// Outcome of a single turn execution within the inner loop.
@@ -709,8 +720,8 @@ async fn handle_tool_calls(
     }
 
     // Poll steering if not already interrupted
-    if !steering_interrupted && let Some(ref get_steering) = config.get_steering_messages {
-        let msgs = get_steering();
+    if !steering_interrupted && let Some(ref provider) = config.message_provider {
+        let msgs = provider.poll_steering();
         if !msgs.is_empty() {
             state.pending_messages.extend(msgs);
         }
@@ -845,6 +856,7 @@ async fn stream_with_retry(
 
     loop {
         attempt += 1;
+        debug!(attempt, model_id = %config.model.model_id, "starting stream attempt");
 
         // Check cancellation before each attempt
         if cancellation_token.is_cancelled() {
@@ -984,21 +996,21 @@ async fn emit_delta_event(
             delta,
         } => Some(AssistantMessageDelta::Text {
             content_index: *content_index,
-            delta: delta.clone(),
+            delta: Cow::Owned(delta.clone()),
         }),
         AssistantMessageEvent::ThinkingDelta {
             content_index,
             delta,
         } => Some(AssistantMessageDelta::Thinking {
             content_index: *content_index,
-            delta: delta.clone(),
+            delta: Cow::Owned(delta.clone()),
         }),
         AssistantMessageEvent::ToolCallDelta {
             content_index,
             delta,
         } => Some(AssistantMessageDelta::ToolCall {
             content_index: *content_index,
-            delta: delta.clone(),
+            delta: Cow::Owned(delta.clone()),
         }),
         _ => None,
     };
@@ -1081,6 +1093,14 @@ async fn finalize_stream_message(
         }
     };
 
+    info!(
+        input_tokens = message.usage.input,
+        output_tokens = message.usage.output,
+        total_tokens = message.usage.total,
+        stop_reason = ?message.stop_reason,
+        "stream completed"
+    );
+
     // Emit MessageEnd
     if !emit(
         tx,
@@ -1106,6 +1126,13 @@ async fn execute_tools_concurrently(
     tx: &mpsc::Sender<AgentEvent>,
 ) -> ToolExecOutcome {
     use tokio::sync::Mutex;
+
+    let tool_names: Vec<&str> = tool_calls.iter().map(|tc| tc.name.as_str()).collect();
+    info!(
+        tool_count = tool_calls.len(),
+        tools = ?tool_names,
+        "dispatching tool batch"
+    );
 
     let batch_token = cancellation_token.child_token();
     let results: Arc<Mutex<Vec<(usize, ToolResultMessage)>>> = Arc::new(Mutex::new(Vec::new()));
@@ -1295,6 +1322,11 @@ async fn dispatch_single_tool(
 
         let validation = validate_tool_arguments(tool.parameters_schema(), &arguments);
 
+        let tool_span = info_span!(
+            "tool_execute",
+            tool_name = %tool_name,
+            tool_call_id = %tool_call_id,
+        );
         let handle = tokio::spawn(async move {
             debug!(tool = %tool_name, id = %tool_call_id, "tool execution starting");
             let (result, is_error) = if let Err(errors) = validation {
@@ -1332,13 +1364,13 @@ async fn dispatch_single_tool(
 
             results_clone.lock().await.push((idx, tool_result_msg));
 
-            if let Some(ref get_steering) = config_clone.get_steering_messages {
-                let msgs = get_steering();
+            if let Some(ref provider) = config_clone.message_provider {
+                let msgs = provider.poll_steering();
                 if !msgs.is_empty() {
                     steering_clone.store(true, std::sync::atomic::Ordering::SeqCst);
                 }
             }
-        });
+        }.instrument(tool_span));
 
         DispatchResult::Spawned(handle)
     } else {
@@ -1378,8 +1410,35 @@ async fn collect_tool_results(
         .map(|(idx, handle)| async move { (idx, handle.await) })
         .collect();
 
-    while let Some((_, join_result)) = futs.next().await {
-        if join_result.is_err() {
+    while let Some((idx, join_result)) = futs.next().await {
+        if let Err(join_error) = join_result {
+            let panic_message = if join_error.is_panic() {
+                let panic_value = join_error.into_panic();
+                panic_value
+                    .downcast_ref::<&str>()
+                    .map(|s| (*s).to_string())
+                    .or_else(|| panic_value.downcast_ref::<String>().cloned())
+                    .unwrap_or_else(|| "unknown panic payload".to_string())
+            } else {
+                format!("{join_error}")
+            };
+
+            let tc = &tool_calls[idx];
+            error!(
+                tool_call_id = %tc.id,
+                tool_name = %tc.name,
+                "tool execution panicked: {panic_message}"
+            );
+
+            let panic_result = ToolResultMessage {
+                tool_call_id: tc.id.clone(),
+                content: vec![ContentBlock::Text {
+                    text: format!("tool execution panicked: {panic_message}"),
+                }],
+                is_error: true,
+                timestamp: now_timestamp(),
+            };
+            results.lock().await.push((idx, panic_result));
             continue;
         }
 
@@ -1412,9 +1471,9 @@ async fn collect_tool_results(
             }
 
             let steering_messages = config
-                .get_steering_messages
+                .message_provider
                 .as_ref()
-                .map_or_else(Vec::new, |get_steering| get_steering());
+                .map_or_else(Vec::new, |provider| provider.poll_steering());
 
             return ToolExecOutcome::SteeringInterrupt {
                 completed,

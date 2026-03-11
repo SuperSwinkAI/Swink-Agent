@@ -206,3 +206,153 @@ fn unix_now() -> u64 {
         .unwrap_or_default()
         .as_secs()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn days_to_ymd_unix_epoch() {
+        // Day 0 = 1970-01-01
+        let (y, m, d) = days_to_ymd(0);
+        assert_eq!((y, m, d), (1970, 1, 1));
+    }
+
+    #[test]
+    fn days_to_ymd_known_dates() {
+        // 2000-01-01 is day 10957 from epoch
+        let (y, m, d) = days_to_ymd(10_957);
+        assert_eq!((y, m, d), (2000, 1, 1));
+
+        // 2024-02-29 (leap day) is day 19782
+        let (y, m, d) = days_to_ymd(19_782);
+        assert_eq!((y, m, d), (2024, 2, 29));
+
+        // 2025-03-15 is day 20162
+        let (y, m, d) = days_to_ymd(20_162);
+        assert_eq!((y, m, d), (2025, 3, 15));
+    }
+
+    #[test]
+    fn days_to_ymd_end_of_year() {
+        // 1970-12-31 is day 364
+        let (y, m, d) = days_to_ymd(364);
+        assert_eq!((y, m, d), (1970, 12, 31));
+    }
+
+    #[test]
+    fn session_meta_serialization_roundtrip() {
+        let meta = SessionMeta {
+            id: "20250315_120000".to_string(),
+            model: "gpt-4o".to_string(),
+            system_prompt: "You are helpful.".to_string(),
+            created_at: 1_710_500_000,
+            updated_at: 1_710_500_100,
+            message_count: 5,
+        };
+
+        let json = serde_json::to_string(&meta).unwrap();
+        let deserialized: SessionMeta = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(deserialized.id, meta.id);
+        assert_eq!(deserialized.model, meta.model);
+        assert_eq!(deserialized.system_prompt, meta.system_prompt);
+        assert_eq!(deserialized.created_at, meta.created_at);
+        assert_eq!(deserialized.updated_at, meta.updated_at);
+        assert_eq!(deserialized.message_count, meta.message_count);
+    }
+
+    #[test]
+    fn new_session_id_format() {
+        let id = SessionManager::new_session_id();
+        // Should be YYYYMMDD_HHMMSS format: 15 chars with underscore at index 8
+        assert_eq!(id.len(), 15);
+        assert_eq!(id.as_bytes()[8], b'_');
+        // All other chars should be digits
+        for (i, ch) in id.chars().enumerate() {
+            if i == 8 {
+                assert_eq!(ch, '_');
+            } else {
+                assert!(ch.is_ascii_digit(), "char at index {i} should be a digit, got {ch}");
+            }
+        }
+    }
+
+    #[test]
+    fn session_manager_save_and_load_roundtrip() {
+        let tmp = tempfile::tempdir().unwrap();
+        let manager = SessionManager {
+            sessions_dir: tmp.path().to_path_buf(),
+        };
+
+        let session_id = "test_session_001";
+        let model = "test-model";
+        let system_prompt = "Be concise.";
+
+        // Create a minimal set of messages (empty for simplicity).
+        let messages: Vec<AgentMessage> = Vec::new();
+
+        manager
+            .save_session(session_id, model, system_prompt, &messages)
+            .unwrap();
+
+        let (meta, loaded_messages) = manager.load_session(session_id).unwrap();
+        assert_eq!(meta.id, session_id);
+        assert_eq!(meta.model, model);
+        assert_eq!(meta.system_prompt, system_prompt);
+        assert_eq!(meta.message_count, 0);
+        assert!(loaded_messages.is_empty());
+    }
+
+    #[test]
+    fn list_sessions_sorted_by_updated_at() {
+        let tmp = tempfile::tempdir().unwrap();
+        let manager = SessionManager {
+            sessions_dir: tmp.path().to_path_buf(),
+        };
+
+        let messages: Vec<AgentMessage> = Vec::new();
+
+        // Save two sessions — the second one will have a later updated_at
+        // because unix_now() advances between calls.
+        manager
+            .save_session("session_old", "model-a", "prompt-a", &messages)
+            .unwrap();
+
+        // Manually write the second session with a known higher timestamp
+        let meta2 = SessionMeta {
+            id: "session_new".to_string(),
+            model: "model-b".to_string(),
+            system_prompt: "prompt-b".to_string(),
+            created_at: 9_999_999_999,
+            updated_at: 9_999_999_999,
+            message_count: 0,
+        };
+        let path2 = tmp.path().join("session_new.jsonl");
+        let content = serde_json::to_string(&meta2).unwrap() + "\n";
+        std::fs::write(&path2, content).unwrap();
+
+        let sessions = manager.list_sessions().unwrap();
+        assert_eq!(sessions.len(), 2);
+        // Newest first
+        assert_eq!(sessions[0].id, "session_new");
+        assert_eq!(sessions[1].id, "session_old");
+    }
+
+    #[test]
+    fn delete_session_removes_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let manager = SessionManager {
+            sessions_dir: tmp.path().to_path_buf(),
+        };
+
+        let messages: Vec<AgentMessage> = Vec::new();
+        manager
+            .save_session("to_delete", "model", "prompt", &messages)
+            .unwrap();
+
+        assert!(tmp.path().join("to_delete.jsonl").exists());
+        manager.delete_session("to_delete").unwrap();
+        assert!(!tmp.path().join("to_delete.jsonl").exists());
+    }
+}

@@ -33,6 +33,9 @@ use crate::config::TuiConfig;
 
 type AppResult<T> = Result<T, Box<dyn std::error::Error>>;
 
+/// Default system prompt used when no explicit prompt, env var, or config is provided.
+const DEFAULT_SYSTEM_PROMPT: &str = "You are a helpful assistant.";
+
 fn main() -> AppResult<()> {
     dotenvy::dotenv().ok();
 
@@ -93,13 +96,24 @@ fn run(mut terminal: Terminal<CrosstermBackend<io::Stdout>>) -> AppResult<()> {
     let rt = tokio::runtime::Runtime::new()?;
 
     rt.block_on(async {
+        let system_prompt = resolve_system_prompt(None, &config);
         let mut app = App::new(config);
         let approval_tx = app.approval_sender();
 
-        app.set_agent(create_agent(&approval_tx));
+        app.set_agent(create_agent(system_prompt, &approval_tx));
 
         app.run(&mut terminal).await
     })
+}
+
+/// Resolve the system prompt from multiple sources.
+///
+/// Priority: explicit parameter > `LLM_SYSTEM_PROMPT` env var > config file > default constant.
+fn resolve_system_prompt(explicit: Option<String>, config: &TuiConfig) -> String {
+    explicit
+        .or_else(|| std::env::var("LLM_SYSTEM_PROMPT").ok())
+        .or_else(|| config.system_prompt.clone())
+        .unwrap_or_else(|| DEFAULT_SYSTEM_PROMPT.to_string())
 }
 
 /// Create an agent from environment variables.
@@ -124,15 +138,11 @@ fn run(mut terminal: Terminal<CrosstermBackend<io::Stdout>>) -> AppResult<()> {
 /// **Ollama (default) — lowest priority:**
 /// - `OLLAMA_HOST` — Ollama server URL (default: `http://localhost:11434`)
 /// - `OLLAMA_MODEL` — model name (default: `llama3.2`)
-///
-/// **Shared:**
-/// - `LLM_SYSTEM_PROMPT` — system prompt (default: "You are a helpful assistant.")
 #[allow(clippy::doc_markdown)] // "OpenAI" is a proper noun, not code.
 fn create_agent(
+    system_prompt: String,
     approval_tx: &mpsc::Sender<(ToolApprovalRequest, oneshot::Sender<ToolApproval>)>,
 ) -> Agent {
-    let system_prompt = std::env::var("LLM_SYSTEM_PROMPT")
-        .unwrap_or_else(|_| "You are a helpful assistant.".to_string());
 
     // Check for proxy mode first (highest priority)
     if let Ok(base_url) = std::env::var("LLM_BASE_URL") {

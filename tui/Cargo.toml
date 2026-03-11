@@ -3,6 +3,12 @@ name = "agent-harness-tui"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.88"
+description = "Interactive terminal UI for agent-harness"
+license = "MIT"
+repository = "https://github.com/anthropics/agent-harness"
+readme = "../README.md"
+keywords = ["tui", "terminal", "llm", "agent", "chat"]
+categories = ["command-line-utilities", "development-tools"]
 
 [[bin]]
 name = "agent-tui"
@@ -26,6 +32,9 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"
 dotenvy = "0.15"
+
+[dev-dependencies]
+tempfile = "3"
 
 [lints.rust]
 unsafe_code = "forbid"
