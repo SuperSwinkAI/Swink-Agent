@@ -31,3 +31,7 @@ Thumbs.db
 *.bak
 *.log
 core
+tmp/
+
+# ── Tool / agent state ──────────────────────────────────────────────
+.claude/
