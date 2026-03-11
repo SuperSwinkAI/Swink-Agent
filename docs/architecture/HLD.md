@@ -389,7 +389,7 @@ App
 │   ├── User Message Block
 │   ├── Assistant Message Block (with streaming)
 │   │   ├── Text Content (markdown rendered)
-│   │   ├── Thinking Block (collapsible)
+│   │   ├── Thinking Block (dimmed)
 │   │   └── Tool Call Block
 │   └── Tool Result Block
 ├── Input Editor (multi-line text composition)

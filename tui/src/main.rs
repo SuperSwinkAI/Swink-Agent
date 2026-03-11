@@ -30,6 +30,8 @@ use crate::config::TuiConfig;
 type AppResult<T> = Result<T, Box<dyn std::error::Error>>;
 
 fn main() -> AppResult<()> {
+    dotenvy::dotenv().ok();
+
     // Initialize file-based tracing (TUI owns stdout, so we log to a file).
     let log_dir = dirs::config_dir()
         .unwrap_or_else(|| PathBuf::from("."))

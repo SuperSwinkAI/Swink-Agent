@@ -26,7 +26,7 @@ App
 │   │   └── Green left border, text content
 │   ├── Assistant Message Block
 │   │   ├── Cyan left border
-│   │   ├── Thinking Section (dimmed, collapsible)
+│   │   ├── Thinking Section (dimmed)
 │   │   ├── Text Content (markdown → styled spans)
 │   │   └── Streaming cursor while in-progress
 │   ├── Tool Result Block

@@ -436,14 +436,22 @@ impl Agent {
     }
 
     /// Dispatch an event to all listeners, catching panics.
-    fn dispatch_event(&self, event: &AgentEvent) {
-        for listener in self.listeners.values() {
+    ///
+    /// Any listener that panics is automatically unsubscribed.
+    fn dispatch_event(&mut self, event: &AgentEvent) {
+        let mut panicked = Vec::new();
+        for (id, listener) in &self.listeners {
             let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
                 listener(event);
             }));
             if let Err(e) = result {
                 eprintln!("listener panic: {e:?}");
+                panicked.push(*id);
             }
+        }
+        for id in panicked {
+            self.listeners.remove(&id);
+            warn!("removed panicking listener {id:?}");
         }
     }
 
