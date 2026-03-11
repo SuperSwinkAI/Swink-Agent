@@ -369,16 +369,15 @@ fn convert_messages(
                 };
 
                 // Combine consecutive tool results into a single user message.
-                if let Some(last) = result.last_mut() {
-                    if last.role == "user"
-                        && last
-                            .content
-                            .iter()
-                            .all(|b| matches!(b, AnthropicContentBlock::ToolResult { .. }))
-                    {
-                        last.content.push(block);
-                        continue;
-                    }
+                if let Some(last) = result.last_mut()
+                    && last.role == "user"
+                    && last
+                        .content
+                        .iter()
+                        .all(|b| matches!(b, AnthropicContentBlock::ToolResult { .. }))
+                {
+                    last.content.push(block);
+                    continue;
                 }
 
                 result.push(AnthropicMessage {

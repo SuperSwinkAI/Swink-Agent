@@ -540,11 +540,11 @@ impl App {
             agent.abort();
         }
         self.status = AgentStatus::Aborted;
-        if let Some(msg) = self.messages.last_mut() {
-            if msg.is_streaming {
-                msg.is_streaming = false;
-                msg.content.push_str("\n[aborted]");
-            }
+        if let Some(msg) = self.messages.last_mut()
+            && msg.is_streaming
+        {
+            msg.is_streaming = false;
+            msg.content.push_str("\n[aborted]");
         }
         self.dirty = true;
     }
@@ -552,7 +552,7 @@ impl App {
     /// Tick handler for animations.
     pub fn tick(&mut self) {
         self.tick_count += 1;
-        if self.tick_count % 5 == 0 {
+        if self.tick_count.is_multiple_of(5) {
             self.blink_on = !self.blink_on;
             if self.status == AgentStatus::Running {
                 self.dirty = true;

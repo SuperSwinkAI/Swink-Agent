@@ -45,10 +45,10 @@ pub fn convert_messages<C: MessageConverter>(
 ) -> Vec<C::Message> {
     let mut result = Vec::new();
 
-    if !system_prompt.is_empty() {
-        if let Some(sys) = C::system_message(system_prompt) {
-            result.push(sys);
-        }
+    if !system_prompt.is_empty()
+        && let Some(sys) = C::system_message(system_prompt)
+    {
+        result.push(sys);
     }
 
     for msg in messages {

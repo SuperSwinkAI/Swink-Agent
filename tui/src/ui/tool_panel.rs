@@ -69,7 +69,7 @@ impl ToolPanel {
     }
 
     /// Whether there's anything to display.
-    pub fn is_visible(&self) -> bool {
+    pub const fn is_visible(&self) -> bool {
         !self.active.is_empty() || !self.completed.is_empty()
     }
 

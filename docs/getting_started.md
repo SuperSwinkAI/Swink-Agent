@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- **Rust 1.85+** (edition 2024)
+- **Rust 1.88+** (edition 2024)
 - At least one LLM provider:
   - [Ollama](https://ollama.ai) running locally (no key required)
   - An Anthropic API key
@@ -77,10 +77,14 @@ Keys can also be stored in the OS keychain instead of env vars — the first-run
 ## Run the TUI
 
 ```bash
-# With env vars from .env (requires a .env loader like direnv, or source it)
-source .env && cargo run -p agent-harness-tui
+cargo run -p agent-harness-tui
+```
 
-# Or with Ollama only (no config needed)
+The TUI auto-loads `.env` via dotenvy — no need to source it manually.
+
+For Ollama with no other config:
+
+```bash
 ollama serve &
 ollama pull llama3.2
 cargo run -p agent-harness-tui

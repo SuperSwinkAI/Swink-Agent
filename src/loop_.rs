@@ -693,12 +693,12 @@ async fn handle_tool_calls(
     }
 
     // Poll steering if not already interrupted
-    if !steering_interrupted {
-        if let Some(ref get_steering) = config.get_steering_messages {
-            let msgs = get_steering();
-            if !msgs.is_empty() {
-                state.pending_messages.extend(msgs);
-            }
+    if !steering_interrupted
+        && let Some(ref get_steering) = config.get_steering_messages
+    {
+        let msgs = get_steering();
+        if !msgs.is_empty() {
+            state.pending_messages.extend(msgs);
         }
     }
     // Inner loop continues — model must process tool results.
@@ -981,10 +981,10 @@ async fn emit_delta_event(
         _ => None,
     };
 
-    if let Some(d) = delta {
-        if !emit(tx, AgentEvent::MessageUpdate { delta: d }).await {
-            return Some(StreamResult::ChannelClosed);
-        }
+    if let Some(d) = delta
+        && !emit(tx, AgentEvent::MessageUpdate { delta: d }).await
+    {
+        return Some(StreamResult::ChannelClosed);
     }
     None
 }

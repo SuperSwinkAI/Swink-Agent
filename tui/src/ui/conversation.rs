@@ -97,17 +97,17 @@ impl ConversationView {
             ]));
 
             // Thinking section (dimmed, collapsed)
-            if let Some(thinking) = &msg.thinking {
-                if !thinking.is_empty() {
-                    let thinking_style = Style::default()
-                        .fg(theme::THINKING_COLOR)
-                        .add_modifier(Modifier::DIM);
-                    all_lines.push(Line::from(vec![
-                        Span::styled("│ ", Style::default().fg(role_color)),
-                        Span::styled("💭 ", thinking_style),
-                        Span::styled("[thinking...]", thinking_style),
-                    ]));
-                }
+            if let Some(thinking) = &msg.thinking
+                && !thinking.is_empty()
+            {
+                let thinking_style = Style::default()
+                    .fg(theme::THINKING_COLOR)
+                    .add_modifier(Modifier::DIM);
+                all_lines.push(Line::from(vec![
+                    Span::styled("│ ", Style::default().fg(role_color)),
+                    Span::styled("💭 ", thinking_style),
+                    Span::styled("[thinking...]", thinking_style),
+                ]));
             }
 
             // Message content with markdown rendering

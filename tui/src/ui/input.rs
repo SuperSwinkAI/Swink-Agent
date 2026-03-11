@@ -211,7 +211,7 @@ impl InputEditor {
     }
 
     /// Check if this is a multi-line input.
-    pub fn is_multiline(&self) -> bool {
+    pub const fn is_multiline(&self) -> bool {
         self.lines.len() > 1
     }
 

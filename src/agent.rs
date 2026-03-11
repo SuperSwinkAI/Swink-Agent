@@ -723,10 +723,10 @@ impl Agent {
         if self.state.messages.is_empty() {
             return Err(HarnessError::NoMessages);
         }
-        if let Some(AgentMessage::Llm(LlmMessage::Assistant(_))) = self.state.messages.last() {
-            if !self.has_pending_messages() {
-                return Err(HarnessError::InvalidContinue);
-            }
+        if let Some(AgentMessage::Llm(LlmMessage::Assistant(_))) = self.state.messages.last()
+            && !self.has_pending_messages()
+        {
+            return Err(HarnessError::InvalidContinue);
         }
         Ok(())
     }
@@ -1001,15 +1001,14 @@ fn extract_structured_output(result: &AgentResult, schema: &Value) -> Result<Val
                 if let ContentBlock::ToolCall {
                     name, arguments, ..
                 } = block
+                    && name == "__structured_output"
                 {
-                    if name == "__structured_output" {
-                        // Validate against schema
-                        let validation = crate::tool::validate_tool_arguments(schema, arguments);
-                        match validation {
-                            Ok(()) => return Ok(arguments.clone()),
-                            Err(errors) => {
-                                return Err(errors.join("; "));
-                            }
+                    // Validate against schema
+                    let validation = crate::tool::validate_tool_arguments(schema, arguments);
+                    match validation {
+                        Ok(()) => return Ok(arguments.clone()),
+                        Err(errors) => {
+                            return Err(errors.join("; "));
                         }
                     }
                 }
@@ -1024,10 +1023,10 @@ fn find_structured_output_call_id(result: &AgentResult) -> Option<String> {
     for msg in &result.messages {
         if let AgentMessage::Llm(LlmMessage::Assistant(assistant)) = msg {
             for block in &assistant.content {
-                if let ContentBlock::ToolCall { name, id, .. } = block {
-                    if name == "__structured_output" {
-                        return Some(id.clone());
-                    }
+                if let ContentBlock::ToolCall { name, id, .. } = block
+                    && name == "__structured_output"
+                {
+                    return Some(id.clone());
                 }
             }
         }

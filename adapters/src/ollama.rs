@@ -382,19 +382,19 @@ fn parse_ndjson_stream(
                             let mut events = Vec::new();
 
                             // Handle thinking content
-                            if let Some(thinking) = &chunk.message.thinking {
-                                if !thinking.is_empty() {
-                                    if !state.thinking_started {
-                                        events.push(AssistantMessageEvent::ThinkingStart {
-                                            content_index: state.content_index,
-                                        });
-                                        state.thinking_started = true;
-                                    }
-                                    events.push(AssistantMessageEvent::ThinkingDelta {
+                            if let Some(thinking) = &chunk.message.thinking
+                                && !thinking.is_empty()
+                            {
+                                if !state.thinking_started {
+                                    events.push(AssistantMessageEvent::ThinkingStart {
                                         content_index: state.content_index,
-                                        delta: thinking.clone(),
                                     });
+                                    state.thinking_started = true;
                                 }
+                                events.push(AssistantMessageEvent::ThinkingDelta {
+                                    content_index: state.content_index,
+                                    delta: thinking.clone(),
+                                });
                             }
 
                             // Handle text content

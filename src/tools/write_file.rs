@@ -88,13 +88,13 @@ impl AgentTool for WriteFileTool {
 
             let path = std::path::Path::new(&parsed.path);
 
-            if let Some(parent) = path.parent() {
-                if let Err(e) = tokio::fs::create_dir_all(parent).await {
-                    return AgentToolResult::error(format!(
-                        "failed to create parent directories for {}: {e}",
-                        parsed.path
-                    ));
-                }
+            if let Some(parent) = path.parent()
+                && let Err(e) = tokio::fs::create_dir_all(parent).await
+            {
+                return AgentToolResult::error(format!(
+                    "failed to create parent directories for {}: {e}",
+                    parsed.path
+                ));
             }
 
             let bytes_written = parsed.content.len();

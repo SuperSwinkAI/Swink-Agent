@@ -55,10 +55,10 @@ impl SessionManager {
 
             let file = std::fs::File::open(&path)?;
             let reader = io::BufReader::new(file);
-            if let Some(Ok(first_line)) = reader.lines().next() {
-                if let Ok(meta) = serde_json::from_str::<SessionMeta>(&first_line) {
-                    sessions.push(meta);
-                }
+            if let Some(Ok(first_line)) = reader.lines().next()
+                && let Ok(meta) = serde_json::from_str::<SessionMeta>(&first_line)
+            {
+                sessions.push(meta);
             }
         }
 

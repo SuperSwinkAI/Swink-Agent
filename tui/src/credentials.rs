@@ -65,10 +65,10 @@ pub fn store_credential(provider_key: &str, secret: &str) -> Result<(), String> 
 /// Falls back to the environment variable if keychain lookup fails.
 pub fn get_credential(provider: &ProviderInfo) -> Option<String> {
     // Check env var first (explicit env override always wins)
-    if let Ok(val) = std::env::var(provider.env_var) {
-        if !val.is_empty() {
-            return Some(val);
-        }
+    if let Ok(val) = std::env::var(provider.env_var)
+        && !val.is_empty()
+    {
+        return Some(val);
     }
 
     // Try keychain

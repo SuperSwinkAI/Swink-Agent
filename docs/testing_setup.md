@@ -4,12 +4,12 @@ Step-by-step guide to get the project running against live LLM APIs.
 
 ## 1. Install Rust
 
-Requires **Rust 1.85+** (edition 2024).
+Requires **Rust 1.88+** (edition 2024).
 
 ```bash
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 rustup update stable
-rustc --version   # should print 1.85.0 or later
+rustc --version   # should print 1.88.0 or later
 ```
 
 ## 2. Build the Workspace
@@ -92,15 +92,10 @@ Leave variables commented out to skip that provider. The TUI auto-selects by pri
 ## 6. Launch the TUI
 
 ```bash
-source .env && cargo run -p agent-harness-tui
-```
-
-Or store keys in the OS keychain instead (no `.env` needed):
-
-```bash
 cargo run -p agent-harness-tui
-# First-run wizard prompts for provider selection and key entry
 ```
+
+The TUI auto-loads `.env` via dotenvy — no need to source it manually. If no API keys are found (env or keychain), the first-run wizard prompts for provider selection and key entry.
 
 ## 7. Verify Each Provider
 
@@ -111,12 +106,11 @@ Once the TUI is running, test each configured provider:
 #info
 ```
 
-**Switch models on the fly:**
+**Switch model within the current provider:**
 ```
 /model claude-sonnet-4-20250514
-/model gpt-4o
-/model llama3.2
 ```
+Note: `/model` changes the model ID on the active provider. To test a different provider, update `.env` and restart the TUI.
 
 **Test basic conversation:**
 ```
@@ -147,7 +141,7 @@ Explain why the sky is blue
 | Long output | Conversation scrolls, manual scroll with arrow keys works |
 | Session save/load | `#save` then `#load <id>` restores conversation |
 | Error recovery | Send a prompt that exceeds context window — agent should recover |
-| Model switching | `/model <id>` changes model, `#info` confirms |
+| Model switching | `/model <id>` changes model within current provider, `#info` confirms |
 
 ## 9. Logs
 

@@ -483,19 +483,19 @@ fn parse_sse_stream(
                             // Process choices
                             for choice in &chunk.choices {
                                 // Handle text content
-                                if let Some(content) = &choice.delta.content {
-                                    if !content.is_empty() {
-                                        if !state.text_started {
-                                            events.push(AssistantMessageEvent::TextStart {
-                                                content_index: state.content_index,
-                                            });
-                                            state.text_started = true;
-                                        }
-                                        events.push(AssistantMessageEvent::TextDelta {
+                                if let Some(content) = &choice.delta.content
+                                    && !content.is_empty()
+                                {
+                                    if !state.text_started {
+                                        events.push(AssistantMessageEvent::TextStart {
                                             content_index: state.content_index,
-                                            delta: content.clone(),
                                         });
+                                        state.text_started = true;
                                     }
+                                    events.push(AssistantMessageEvent::TextDelta {
+                                        content_index: state.content_index,
+                                        delta: content.clone(),
+                                    });
                                 }
 
                                 // Handle tool call deltas
@@ -589,15 +589,15 @@ fn process_tool_call_delta(
         });
 
         // Append any initial arguments
-        if let Some(args) = tc_delta.function.as_ref().and_then(|f| f.arguments.as_ref()) {
-            if !args.is_empty() {
-                let tc_state = state.tool_calls.get_mut(&tc_index).expect("just inserted");
-                tc_state.arguments.push_str(args);
-                events.push(AssistantMessageEvent::ToolCallDelta {
-                    content_index,
-                    delta: args.clone(),
-                });
-            }
+        if let Some(args) = tc_delta.function.as_ref().and_then(|f| f.arguments.as_ref())
+            && !args.is_empty()
+        {
+            let tc_state = state.tool_calls.get_mut(&tc_index).expect("just inserted");
+            tc_state.arguments.push_str(args);
+            events.push(AssistantMessageEvent::ToolCallDelta {
+                content_index,
+                delta: args.clone(),
+            });
         }
     } else {
         // Existing tool call — append arguments
@@ -605,14 +605,14 @@ fn process_tool_call_delta(
             .tool_calls
             .get_mut(&tc_index)
             .expect("entry exists per condition");
-        if let Some(args) = tc_delta.function.as_ref().and_then(|f| f.arguments.as_ref()) {
-            if !args.is_empty() {
-                tc_state.arguments.push_str(args);
-                events.push(AssistantMessageEvent::ToolCallDelta {
-                    content_index: tc_state.content_index,
-                    delta: args.clone(),
-                });
-            }
+        if let Some(args) = tc_delta.function.as_ref().and_then(|f| f.arguments.as_ref())
+            && !args.is_empty()
+        {
+            tc_state.arguments.push_str(args);
+            events.push(AssistantMessageEvent::ToolCallDelta {
+                content_index: tc_state.content_index,
+                delta: args.clone(),
+            });
         }
     }
 }
@@ -633,12 +633,12 @@ fn finalize_blocks(state: &mut SseStreamState) -> Vec<AssistantMessageEvent> {
     let mut indices: Vec<usize> = state.tool_calls.keys().copied().collect();
     indices.sort_unstable();
     for idx in indices {
-        if let Some(tc) = state.tool_calls.remove(&idx) {
-            if tc.started {
-                events.push(AssistantMessageEvent::ToolCallEnd {
-                    content_index: tc.content_index,
-                });
-            }
+        if let Some(tc) = state.tool_calls.remove(&idx)
+            && tc.started
+        {
+            events.push(AssistantMessageEvent::ToolCallEnd {
+                content_index: tc.content_index,
+            });
         }
     }
 
@@ -708,15 +708,15 @@ fn sse_data_lines(
                     // Stream ended — flush remaining buffer
                     let remaining = buf.trim().to_string();
                     buf.clear();
-                    if !remaining.is_empty() {
-                        if let Some(data) = remaining.strip_prefix("data: ") {
-                            let data = data.trim();
-                            if data == "[DONE]" {
-                                return Some((SseLine::Done, (stream, buf)));
-                            }
-                            if !data.is_empty() {
-                                return Some((SseLine::Data(data.to_string()), (stream, buf)));
-                            }
+                    if !remaining.is_empty()
+                        && let Some(data) = remaining.strip_prefix("data: ")
+                    {
+                        let data = data.trim();
+                        if data == "[DONE]" {
+                            return Some((SseLine::Done, (stream, buf)));
+                        }
+                        if !data.is_empty() {
+                            return Some((SseLine::Data(data.to_string()), (stream, buf)));
                         }
                     }
                     return None;

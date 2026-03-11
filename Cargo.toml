@@ -6,7 +6,7 @@ resolver = "2"
 name = "agent-harness"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.88"
 description = "Core scaffolding for running LLM-powered agentic loops"
 license = "MIT"
 
