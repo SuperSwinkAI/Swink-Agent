@@ -1,0 +1,336 @@
+use agent_harness::tool::AgentTool;
+use agent_harness::tools::{BashTool, ReadFileTool, WriteFileTool};
+use agent_harness::ContentBlock;
+use serde_json::json;
+use tokio_util::sync::CancellationToken;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// BashTool
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn bash_tool_metadata() {
+    let tool = BashTool::new();
+    assert_eq!(tool.name(), "bash");
+    assert_eq!(tool.label(), "Bash");
+    assert!(!tool.description().is_empty());
+
+    let schema = tool.parameters_schema();
+    let required = schema["required"].as_array().expect("required should be an array");
+    let required_strs: Vec<&str> = required.iter().filter_map(|v| v.as_str()).collect();
+    assert!(required_strs.contains(&"command"), "schema must require 'command'");
+}
+
+#[tokio::test]
+async fn bash_echo_success() {
+    let tool = BashTool::new();
+    let token = CancellationToken::new();
+    let result = tool
+        .execute("tc_1", json!({"command": "echo hello"}), token, None)
+        .await;
+    let text = ContentBlock::extract_text(&result.content);
+    assert!(text.contains("Exit code: 0"), "expected exit code 0, got: {text}");
+    assert!(text.contains("hello"), "expected 'hello' in output, got: {text}");
+}
+
+#[tokio::test]
+async fn bash_exit_code_nonzero() {
+    let tool = BashTool::new();
+    let token = CancellationToken::new();
+    let result = tool
+        .execute("tc_2", json!({"command": "exit 42"}), token, None)
+        .await;
+    let text = ContentBlock::extract_text(&result.content);
+    assert!(text.contains("Exit code: 42"), "expected exit code 42, got: {text}");
+}
+
+#[tokio::test]
+async fn bash_stderr_captured() {
+    let tool = BashTool::new();
+    let token = CancellationToken::new();
+    let result = tool
+        .execute("tc_3", json!({"command": "echo err >&2"}), token, None)
+        .await;
+    let text = ContentBlock::extract_text(&result.content);
+    assert!(text.contains("Stderr:"), "expected Stderr section, got: {text}");
+    assert!(text.contains("err"), "expected 'err' in stderr, got: {text}");
+}
+
+#[tokio::test]
+async fn bash_invalid_params() {
+    let tool = BashTool::new();
+    let token = CancellationToken::new();
+    let result = tool.execute("tc_4", json!({}), token, None).await;
+    let text = ContentBlock::extract_text(&result.content);
+    assert!(
+        text.contains("invalid parameters") || text.contains("error"),
+        "expected error for missing command, got: {text}"
+    );
+}
+
+#[tokio::test]
+async fn bash_cancellation() {
+    let tool = BashTool::new();
+    let token = CancellationToken::new();
+    token.cancel();
+    let result = tool
+        .execute("tc_5", json!({"command": "echo should not run"}), token, None)
+        .await;
+    let text = ContentBlock::extract_text(&result.content);
+    assert!(text.contains("cancelled"), "expected cancelled, got: {text}");
+}
+
+#[tokio::test]
+async fn bash_timeout() {
+    let tool = BashTool::new();
+    let token = CancellationToken::new();
+    let result = tool
+        .execute(
+            "tc_6",
+            json!({"command": "sleep 30", "timeout_ms": 100}),
+            token,
+            None,
+        )
+        .await;
+    let text = ContentBlock::extract_text(&result.content);
+    assert!(
+        text.contains("timed out"),
+        "expected timeout error, got: {text}"
+    );
+}
+
+#[tokio::test]
+async fn bash_output_truncation() {
+    let tool = BashTool::new();
+    let token = CancellationToken::new();
+    // Generate output larger than MAX_OUTPUT_BYTES (100 * 1024 = 102400).
+    // Split output across stdout (55KB) and stderr (55KB), each within the OS
+    // pipe buffer limit, but combined (110KB) exceeding MAX_OUTPUT_BYTES.
+    // This avoids a deadlock where the child blocks on a full pipe buffer
+    // before exiting (stdout/stderr are read after child.wait()).
+    let dir = tempfile::tempdir().expect("failed to create temp dir");
+    let stdout_file = dir.path().join("stdout.txt");
+    let stderr_file = dir.path().join("stderr.txt");
+    std::fs::write(&stdout_file, "A".repeat(55_000)).expect("write stdout file");
+    std::fs::write(&stderr_file, "B".repeat(55_000)).expect("write stderr file");
+    let cmd = format!(
+        "cat {} && cat {} >&2",
+        stdout_file.display(),
+        stderr_file.display()
+    );
+    let result = tool
+        .execute("tc_7", json!({"command": cmd}), token, None)
+        .await;
+    let text = ContentBlock::extract_text(&result.content);
+    assert!(
+        text.contains("[truncated]"),
+        "expected truncation marker, got length: {}",
+        text.len()
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ReadFileTool
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn read_file_metadata() {
+    let tool = ReadFileTool::new();
+    assert_eq!(tool.name(), "read_file");
+    assert_eq!(tool.label(), "Read File");
+    assert!(!tool.description().is_empty());
+}
+
+#[tokio::test]
+async fn read_file_success() {
+    let tool = ReadFileTool::new();
+    let token = CancellationToken::new();
+
+    let dir = tempfile::tempdir().expect("failed to create temp dir");
+    let file_path = dir.path().join("hello.txt");
+    std::fs::write(&file_path, "hello world").expect("failed to write temp file");
+
+    let result = tool
+        .execute(
+            "tc_1",
+            json!({"path": file_path.to_str().unwrap()}),
+            token,
+            None,
+        )
+        .await;
+    let text = ContentBlock::extract_text(&result.content);
+    assert_eq!(text, "hello world");
+}
+
+#[tokio::test]
+async fn read_file_not_found() {
+    let tool = ReadFileTool::new();
+    let token = CancellationToken::new();
+    let result = tool
+        .execute(
+            "tc_2",
+            json!({"path": "/tmp/nonexistent_agent_harness_test_file_xyz"}),
+            token,
+            None,
+        )
+        .await;
+    let text = ContentBlock::extract_text(&result.content);
+    assert!(
+        text.contains("failed to read file"),
+        "expected read error, got: {text}"
+    );
+}
+
+#[tokio::test]
+async fn read_file_invalid_params() {
+    let tool = ReadFileTool::new();
+    let token = CancellationToken::new();
+    let result = tool.execute("tc_3", json!({}), token, None).await;
+    let text = ContentBlock::extract_text(&result.content);
+    assert!(
+        text.contains("invalid parameters"),
+        "expected invalid parameters error, got: {text}"
+    );
+}
+
+#[tokio::test]
+async fn read_file_cancellation() {
+    let tool = ReadFileTool::new();
+    let token = CancellationToken::new();
+    token.cancel();
+    let result = tool
+        .execute(
+            "tc_4",
+            json!({"path": "/tmp/anything"}),
+            token,
+            None,
+        )
+        .await;
+    let text = ContentBlock::extract_text(&result.content);
+    assert!(text.contains("cancelled"), "expected cancelled, got: {text}");
+}
+
+#[tokio::test]
+async fn read_file_truncation() {
+    let tool = ReadFileTool::new();
+    let token = CancellationToken::new();
+
+    let dir = tempfile::tempdir().expect("failed to create temp dir");
+    let file_path = dir.path().join("big.txt");
+    // Write a file larger than MAX_OUTPUT_BYTES (100 * 1024 = 102400).
+    let big_content = "A".repeat(110_000);
+    std::fs::write(&file_path, &big_content).expect("failed to write big file");
+
+    let result = tool
+        .execute(
+            "tc_5",
+            json!({"path": file_path.to_str().unwrap()}),
+            token,
+            None,
+        )
+        .await;
+    let text = ContentBlock::extract_text(&result.content);
+    assert!(
+        text.contains("[truncated]"),
+        "expected truncation marker, got length: {}",
+        text.len()
+    );
+    // Verify the output is smaller than the input.
+    assert!(
+        text.len() < big_content.len(),
+        "truncated output should be smaller than original"
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// WriteFileTool
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn write_file_metadata() {
+    let tool = WriteFileTool::new();
+    assert_eq!(tool.name(), "write_file");
+    assert_eq!(tool.label(), "Write File");
+    assert!(!tool.description().is_empty());
+}
+
+#[tokio::test]
+async fn write_file_success() {
+    let tool = WriteFileTool::new();
+    let token = CancellationToken::new();
+
+    let dir = tempfile::tempdir().expect("failed to create temp dir");
+    let file_path = dir.path().join("output.txt");
+
+    let result = tool
+        .execute(
+            "tc_1",
+            json!({"path": file_path.to_str().unwrap(), "content": "written by test"}),
+            token,
+            None,
+        )
+        .await;
+    let text = ContentBlock::extract_text(&result.content);
+    assert!(
+        text.contains("Successfully wrote"),
+        "expected success message, got: {text}"
+    );
+
+    let on_disk = std::fs::read_to_string(&file_path).expect("failed to read written file");
+    assert_eq!(on_disk, "written by test");
+}
+
+#[tokio::test]
+async fn write_file_creates_dirs() {
+    let tool = WriteFileTool::new();
+    let token = CancellationToken::new();
+
+    let dir = tempfile::tempdir().expect("failed to create temp dir");
+    let nested_path = dir.path().join("a").join("b").join("c").join("deep.txt");
+
+    let result = tool
+        .execute(
+            "tc_2",
+            json!({"path": nested_path.to_str().unwrap(), "content": "deep content"}),
+            token,
+            None,
+        )
+        .await;
+    let text = ContentBlock::extract_text(&result.content);
+    assert!(
+        text.contains("Successfully wrote"),
+        "expected success message, got: {text}"
+    );
+
+    let on_disk = std::fs::read_to_string(&nested_path).expect("failed to read nested file");
+    assert_eq!(on_disk, "deep content");
+}
+
+#[tokio::test]
+async fn write_file_invalid_params() {
+    let tool = WriteFileTool::new();
+    let token = CancellationToken::new();
+    let result = tool.execute("tc_3", json!({}), token, None).await;
+    let text = ContentBlock::extract_text(&result.content);
+    assert!(
+        text.contains("invalid parameters"),
+        "expected invalid parameters error, got: {text}"
+    );
+}
+
+#[tokio::test]
+async fn write_file_cancellation() {
+    let tool = WriteFileTool::new();
+    let token = CancellationToken::new();
+    token.cancel();
+    let result = tool
+        .execute(
+            "tc_4",
+            json!({"path": "/tmp/anything", "content": "nope"}),
+            token,
+            None,
+        )
+        .await;
+    let text = ContentBlock::extract_text(&result.content);
+    assert!(text.contains("cancelled"), "expected cancelled, got: {text}");
+}

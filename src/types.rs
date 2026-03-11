@@ -303,6 +303,8 @@ pub struct AgentResult {
     pub stop_reason: StopReason,
     /// Aggregated token usage across all turns in the run.
     pub usage: Usage,
+    /// Aggregated cost across all turns in the run.
+    pub cost: Cost,
     /// Optional error string if the run ended in an error state.
     pub error: Option<String>,
 }
@@ -313,6 +315,7 @@ impl fmt::Debug for AgentResult {
             .field("messages", &self.messages)
             .field("stop_reason", &self.stop_reason)
             .field("usage", &self.usage)
+            .field("cost", &self.cost)
             .field("error", &self.error)
             .finish()
     }

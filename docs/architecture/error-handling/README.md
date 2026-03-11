@@ -1,6 +1,6 @@
 # Error Handling
 
-**Source files:** `src/error.rs`, `src/retry.rs`
+**Source files:** `src/error.rs`, `src/retry.rs`, `src/loop_.rs`
 **Related:** [PRD §10](../../planning/PRD.md#10-error-handling), [PRD §11](../../planning/PRD.md#11-retry-strategy)
 
 The harness distinguishes three categories of failure: recoverable model errors (surfaced in the message log), typed operational errors (context overflow), transient provider failures (handled by the retry strategy), and fatal errors. No category results in a panic.
@@ -40,6 +40,23 @@ flowchart TB
     class Throttle,Network,Retry retryStyle
     class Fatal fatalStyle
 ```
+
+---
+
+## L3 — Error Classification from Stream Events
+
+When the stream produces an `AssistantMessageEvent::Error`, the loop classifies the `error_message` string into a `HarnessError` variant via pattern matching in `classify_stream_error` (`src/loop_.rs`):
+
+| Pattern in `error_message` (case-insensitive) | HarnessError variant |
+|---|---|
+| `"context window"` or `"context_length_exceeded"` | `ContextWindowOverflow` |
+| `"rate limit"`, `"429"`, or `"throttl"` | `ModelThrottled` |
+| _(stop_reason is Aborted)_ | `Aborted` |
+| _(anything else)_ | `StreamError` |
+
+This classification determines whether the error is retryable (`ModelThrottled` triggers the retry strategy), triggers overflow recovery (`ContextWindowOverflow`), or is treated as a non-retryable failure (`StreamError`).
+
+> **StreamError vs in-message errors.** `StreamError` is a non-retryable `HarnessError` produced when the `StreamFn` itself fails or when `classify_stream_error` cannot match the error to a more specific variant. In-message errors are a distinct path: the provider returns an `AssistantMessageEvent::Error` event that the loop captures and classifies. If the classified result is non-retryable, the loop builds an `AssistantMessage` with `stop_reason: Error` and emits it as a `MessageEnd` agent event. The two paths share the `StreamError` variant name but originate from different failure points.
 
 ---
 

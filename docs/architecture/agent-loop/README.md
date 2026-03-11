@@ -20,11 +20,12 @@ flowchart TB
         Model["model: ModelSpec"]
         StreamOpts["stream_options: StreamOptions"]
         Retry["retry_strategy: RetryStrategy"]
+        StreamFnField["stream_fn: Arc&lt;dyn StreamFn&gt;"]
         ConvertFn["convert_to_llm: Fn(&amp;AgentMessage) → Option&lt;LlmMessage&gt;"]
         TransformFn["transform_context: async Fn(messages) → messages"]
         ApiKey["get_api_key: async Fn(provider) → Option&lt;String&gt;"]
-        SteerFn["get_steering_messages: async Fn() → Vec&lt;AgentMessage&gt;"]
-        FollowFn["get_follow_up_messages: async Fn() → Vec&lt;AgentMessage&gt;"]
+        SteerFn["get_steering_messages: Fn() → Vec&lt;AgentMessage&gt;"]
+        FollowFn["get_follow_up_messages: Fn() → Vec&lt;AgentMessage&gt;"]
     end
 
     subgraph Core["🔄 run_loop"]
@@ -50,7 +51,7 @@ flowchart TB
     classDef eventStyle fill:#f5f5f5,stroke:#616161,stroke-width:2px,color:#000
 
     class AgentLoop,AgentLoopContinue entryStyle
-    class Model,StreamOpts,Retry,ConvertFn,TransformFn,ApiKey,SteerFn,FollowFn configStyle
+    class Model,StreamOpts,Retry,StreamFnField,ConvertFn,TransformFn,ApiKey,SteerFn,FollowFn configStyle
     class OuterLoop,InnerLoop,TurnExec,ToolExec coreStyle
     class AgentEvents eventStyle
 ```
@@ -152,21 +153,19 @@ sequenceDiagram
 
     Note over Loop: — Turn 1 —
     Loop->>Sub: TurnStart
-    Loop->>Sub: MessageStart (user)
-    Loop->>Sub: MessageEnd (user)
-    Loop->>Sub: MessageStart (assistant, streaming)
+    Loop->>Sub: MessageStart (assistant)
     loop streaming
         Loop->>Sub: MessageUpdate (delta)
     end
     Loop->>Sub: MessageEnd (assistant)
     Loop->>Sub: ToolExecutionStart (tool_call_id, name, args)
-    Loop->>Sub: ToolExecutionUpdate (partial result) [optional]
+    Note right of Sub: ToolExecutionUpdate is reserved<br/>for future use (never emitted today)
     Loop->>Sub: ToolExecutionEnd (result, is_error)
     Loop->>Sub: TurnEnd (assistant message + tool results)
 
     Note over Loop: — Turn 2 —
     Loop->>Sub: TurnStart
-    Loop->>Sub: MessageStart (assistant, streaming)
+    Loop->>Sub: MessageStart (assistant)
     loop streaming
         Loop->>Sub: MessageUpdate (delta)
     end

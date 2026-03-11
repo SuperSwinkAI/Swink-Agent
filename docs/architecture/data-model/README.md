@@ -37,7 +37,7 @@ flowchart TB
     end
 
     subgraph ResultLayer["✅ Results"]
-        AgentResult["AgentResult<br/>messages · stop_reason · usage · error"]
+        AgentResult["AgentResult<br/>messages · stop_reason · usage · cost · error"]
         StopReason["StopReason<br/>stop · length · tool_use · aborted · error"]
     end
 
@@ -49,7 +49,8 @@ flowchart TB
     ToolResultMessage --> LlmMessage
     LlmMessage --> AgentMessage
     Usage --> AssistantMessage
-    Cost --> Usage
+    Cost --> AssistantMessage
+    Cost --> AgentResult
     StopReason --> AssistantMessage
     StopReason --> AgentResult
     Usage --> AgentResult
@@ -74,29 +75,27 @@ flowchart TB
 
 ## L3 — Message Type Composition
 
-Each message type is a distinct struct. `LlmMessage` is a discriminated enum wrapping all three. `AgentMessage` extends this further with an open custom variant.
+Each message type is a distinct struct. None of the structs carry an explicit `role` field — the role is encoded in the `LlmMessage` enum discriminant (`User`, `Assistant`, `ToolResult`). This avoids the possibility of a role field contradicting the variant it appears in. `AgentMessage` extends this further with an open custom variant.
 
 ```mermaid
 flowchart TB
     subgraph UserMsg["UserMessage"]
-        UM_role["role: user"]
         UM_content["content: Vec&lt;ContentBlock&gt;<br/>(Text | Image only)"]
         UM_ts["timestamp: u64"]
     end
 
     subgraph AssistantMsg["AssistantMessage"]
-        AM_role["role: assistant"]
         AM_content["content: Vec&lt;ContentBlock&gt;<br/>(Text | Thinking | ToolCall)"]
         AM_provider["provider: String"]
         AM_model["model_id: String"]
         AM_usage["usage: Usage"]
+        AM_cost["cost: Cost"]
         AM_stop["stop_reason: StopReason"]
         AM_err["error_message: Option&lt;String&gt;"]
         AM_ts["timestamp: u64"]
     end
 
     subgraph ToolResultMsg["ToolResultMessage"]
-        TR_role["role: tool_result"]
         TR_id["tool_call_id: String"]
         TR_content["content: Vec&lt;ContentBlock&gt;<br/>(Text | Image only)"]
         TR_err["is_error: bool"]
@@ -129,9 +128,9 @@ flowchart TB
     classDef enumStyle fill:#f5f5f5,stroke:#616161,stroke-width:2px,color:#000
     classDef fieldStyle fill:#fafafa,stroke:#bdbdbd,stroke-width:1px,color:#000
 
-    class UM_role,UM_content,UM_ts fieldStyle
-    class AM_role,AM_content,AM_provider,AM_model,AM_usage,AM_stop,AM_err,AM_ts fieldStyle
-    class TR_role,TR_id,TR_content,TR_err,TR_ts fieldStyle
+    class UM_content,UM_ts fieldStyle
+    class AM_content,AM_provider,AM_model,AM_usage,AM_cost,AM_stop,AM_err,AM_ts fieldStyle
+    class TR_id,TR_content,TR_err,TR_ts fieldStyle
     class LLM_user,LLM_asst,LLM_tool enumStyle
     class AM_llm,AM_custom enumStyle
 ```
@@ -199,3 +198,54 @@ sequenceDiagram
     Loop->>Msg: wrap in AgentMessage::Llm(LlmMessage::Assistant)
     Loop->>Loop: push to context.messages
 ```
+
+---
+
+## Usage & Cost Arithmetic
+
+`Usage` and `Cost` both implement `Add` and `AddAssign`, so they can be accumulated across turns with `+` and `+=`. `Usage` additionally provides a `merge(&mut self, other: &Usage)` method (declared `const fn`) that performs the same field-wise sum in place.
+
+| Type | `Add` | `AddAssign` | `merge()` |
+|-------|:-----:|:-----------:|:---------:|
+| Usage | yes | yes | yes |
+| Cost | yes | yes | — |
+
+All five fields (`input`, `output`, `cache_read`, `cache_write`, `total`) are summed independently.
+
+---
+
+## Serialisation
+
+All message and content types derive `Serialize` and `Deserialize` (from `serde`). The two tagged enums use internally-tagged representation:
+
+| Type | `#[serde(...)]` | Discriminant key |
+|------|-----------------|-----------------|
+| `ContentBlock` | `#[serde(tag = "type", rename_all = "snake_case")]` | `"type"` |
+| `LlmMessage` | `#[serde(tag = "role", rename_all = "snake_case")]` | `"role"` |
+
+This means a serialised `LlmMessage::User(...)` includes `"role": "user"` at the top level, while a `ContentBlock::ToolCall { .. }` includes `"type": "tool_call"`.
+
+---
+
+## Thread-Safety (Send + Sync)
+
+The module contains compile-time assertions that verify every public type is `Send + Sync`:
+
+```
+ContentBlock, ImageSource, UserMessage, AssistantMessage, ToolResultMessage,
+LlmMessage, AgentMessage, Usage, Cost, StopReason, ThinkingLevel,
+ThinkingBudgets, ModelSpec, AgentResult, AgentContext
+```
+
+If any type were changed in a way that broke thread-safety, the build would fail immediately.
+
+---
+
+## Helper Methods
+
+| Method | Description |
+|--------|-------------|
+| `ContentBlock::extract_text(blocks: &[ContentBlock]) -> String` | Concatenates all `Text` variants from a slice, ignoring other block types. |
+| `ThinkingBudgets::new(budgets: HashMap<ThinkingLevel, u64>) -> Self` | Constructs a budget map. |
+| `ThinkingBudgets::get(level: &ThinkingLevel) -> Option<u64>` | Looks up the token budget for a given thinking level. |
+| `ModelSpec::new(provider, model_id) -> Self` | Creates a `ModelSpec` with thinking disabled and no budgets. Accepts `impl Into<String>`. |

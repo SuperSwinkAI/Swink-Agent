@@ -24,8 +24,8 @@ use crate::retry::{DefaultRetryStrategy, RetryStrategy};
 use crate::stream::{StreamFn, StreamOptions};
 use crate::tool::AgentTool;
 use crate::types::{
-    AgentMessage, AgentResult, ContentBlock, LlmMessage, ModelSpec, StopReason, ThinkingLevel,
-    Usage,
+    AgentMessage, AgentResult, ContentBlock, Cost, LlmMessage, ModelSpec, StopReason,
+    ThinkingLevel, Usage,
 };
 
 // ─── SubscriptionId ──────────────────────────────────────────────────────────
@@ -47,9 +47,9 @@ impl SubscriptionId {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SteeringMode {
     /// Drain all pending steering messages at once.
-    #[default]
     All,
     /// Drain one steering message per poll.
+    #[default]
     OneAtATime,
 }
 
@@ -57,9 +57,9 @@ pub enum SteeringMode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FollowUpMode {
     /// Drain all pending follow-up messages at once.
-    #[default]
     All,
     /// Drain one follow-up message per poll.
+    #[default]
     OneAtATime,
 }
 
@@ -502,6 +502,49 @@ impl Agent {
         })
     }
 
+    // ── Invocation: prompt (convenience) ────────────────────────────────
+
+    /// Start a new loop from a plain text string, collecting to completion.
+    ///
+    /// Convenience wrapper that builds a `UserMessage` from the string.
+    pub async fn prompt_text(&mut self, text: impl Into<String>) -> Result<AgentResult, HarnessError> {
+        let msg = AgentMessage::Llm(LlmMessage::User(crate::types::UserMessage {
+            content: vec![ContentBlock::Text { text: text.into() }],
+            timestamp: now_timestamp(),
+        }));
+        self.prompt_async(vec![msg]).await
+    }
+
+    /// Start a new loop from a text string with images, collecting to completion.
+    ///
+    /// Convenience wrapper that builds a `UserMessage` from text and image blocks.
+    pub async fn prompt_text_with_images(
+        &mut self,
+        text: impl Into<String>,
+        images: Vec<crate::types::ImageSource>,
+    ) -> Result<AgentResult, HarnessError> {
+        let mut content = vec![ContentBlock::Text { text: text.into() }];
+        for source in images {
+            content.push(ContentBlock::Image { source });
+        }
+        let msg = AgentMessage::Llm(LlmMessage::User(crate::types::UserMessage {
+            content,
+            timestamp: now_timestamp(),
+        }));
+        self.prompt_async(vec![msg]).await
+    }
+
+    /// Start a new loop from a plain text string, blocking the current thread.
+    ///
+    /// Convenience wrapper that builds a `UserMessage` from the string.
+    pub fn prompt_text_sync(&mut self, text: impl Into<String>) -> Result<AgentResult, HarnessError> {
+        let msg = AgentMessage::Llm(LlmMessage::User(crate::types::UserMessage {
+            content: vec![ContentBlock::Text { text: text.into() }],
+            timestamp: now_timestamp(),
+        }));
+        self.prompt_sync(vec![msg])
+    }
+
     // ── Invocation: continue ─────────────────────────────────────────────
 
     /// Continue from existing messages, returning an event stream.
@@ -620,6 +663,45 @@ impl Agent {
         })
     }
 
+    /// Run a structured output extraction loop, blocking the current thread.
+    ///
+    /// Sync variant of [`structured_output`](Self::structured_output).
+    pub fn structured_output_sync(
+        &mut self,
+        prompt: String,
+        schema: Value,
+    ) -> Result<Value, HarnessError> {
+        let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
+        rt.block_on(self.structured_output(prompt, schema))
+    }
+
+    /// Run structured output extraction and deserialize into a typed result.
+    ///
+    /// Validates against the schema, then deserializes the `Value` into `T`.
+    pub async fn structured_output_typed<T: serde::de::DeserializeOwned>(
+        &mut self,
+        prompt: String,
+        schema: Value,
+    ) -> Result<T, HarnessError> {
+        let value = self.structured_output(prompt, schema).await?;
+        serde_json::from_value(value).map_err(|e| HarnessError::StructuredOutputFailed {
+            attempts: 1,
+            last_error: format!("deserialization failed: {e}"),
+        })
+    }
+
+    /// Run structured output extraction, deserialize into a typed result, blocking.
+    ///
+    /// Sync variant of [`structured_output_typed`](Self::structured_output_typed).
+    pub fn structured_output_typed_sync<T: serde::de::DeserializeOwned>(
+        &mut self,
+        prompt: String,
+        schema: Value,
+    ) -> Result<T, HarnessError> {
+        let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
+        rt.block_on(self.structured_output_typed(prompt, schema))
+    }
+
     // ── Private Helpers ──────────────────────────────────────────────────
 
     const fn check_not_running(&self) -> Result<(), HarnessError> {
@@ -734,6 +816,7 @@ impl Agent {
         let mut all_messages: Vec<AgentMessage> = Vec::new();
         let mut stop_reason = StopReason::Stop;
         let mut usage = Usage::default();
+        let mut cost = Cost::default();
         let mut error: Option<String> = None;
 
         while let Some(event) = stream.next().await {
@@ -747,6 +830,7 @@ impl Agent {
                 } => {
                     stop_reason = assistant_message.stop_reason;
                     usage += assistant_message.usage;
+                    cost += assistant_message.cost;
                     if let Some(ref err) = assistant_message.error_message {
                         error = Some(err.clone());
                     }
@@ -779,6 +863,7 @@ impl Agent {
             messages: all_messages,
             stop_reason,
             usage,
+            cost,
             error,
         })
     }

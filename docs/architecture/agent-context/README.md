@@ -11,46 +11,48 @@ The agent context is the immutable snapshot passed into each loop turn. It conta
 
 ```mermaid
 flowchart TB
-    subgraph AgentContext["📸 AgentContext"]
+    subgraph AgentContext["AgentContext"]
         SP["system_prompt: String"]
         Msgs["messages: Vec&lt;AgentMessage&gt;"]
         Tools["tools: Vec&lt;Arc&lt;dyn AgentTool&gt;&gt;"]
-        Overflow["overflow: bool"]
     end
 
-    subgraph AgentState["⚙️ AgentState"]
-        StateFields["system_prompt · messages · tools<br/>(mutable, long-lived)"]
+    subgraph LoopState["LoopState (internal)"]
+        CtxMsgs["context_messages: Vec&lt;AgentMessage&gt;"]
+        Overflow["overflow_signal: bool"]
     end
 
-    subgraph Consumers["📤 Consumers"]
-        TransformCtx["transform_context<br/>async Fn(&amp;mut Vec&lt;AgentMessage&gt;, bool) → Vec&lt;AgentMessage&gt;"]
+    subgraph Consumers["Consumers"]
+        TransformCtx["transform_context<br/>Fn(&amp;mut Vec&lt;AgentMessage&gt;, bool)"]
         ConvertLlm["convert_to_llm<br/>Fn(&amp;AgentMessage) → Option&lt;LlmMessage&gt;"]
         StreamFn["StreamFn<br/>receives &amp;AgentContext"]
     end
 
-    AgentState -->|"clone relevant fields<br/>(start of each turn)"| AgentContext
-    AgentContext --> TransformCtx
+    LoopState -->|"transform_context called with<br/>(&amp;mut context_messages, overflow_signal)"| TransformCtx
     TransformCtx --> ConvertLlm
-    ConvertLlm --> StreamFn
+    ConvertLlm -->|"LlmMessages built"| AgentContext
+    AgentContext --> StreamFn
 
     classDef contextStyle fill:#e3f2fd,stroke:#1976d2,stroke-width:2px,color:#000
     classDef stateStyle fill:#1976d2,stroke:#0d47a1,stroke-width:2px,color:#fff
     classDef consumerStyle fill:#fff3e0,stroke:#f57c00,stroke-width:2px,color:#000
     classDef fieldStyle fill:#fafafa,stroke:#bdbdbd,stroke-width:1px,color:#000
 
-    class SP,Msgs,Tools,Overflow fieldStyle
-    class StateFields stateStyle
+    class SP,Msgs,Tools fieldStyle
+    class CtxMsgs,Overflow stateStyle
     class TransformCtx,ConvertLlm,StreamFn consumerStyle
 ```
 
 ---
 
-### L3 — Immutability Strategy
+### L3 — Two-Context Design
 
-- `AgentContext` is constructed at the start of each turn by cloning relevant fields from `AgentState`.
-- The context is passed by shared reference (`&AgentContext`) to `StreamFn` and hooks.
-- Messages produced during the turn (assistant message, tool results) are appended to `AgentState`, not to the context snapshot.
-- This ensures the `StreamFn` and hooks always see a consistent view, even during concurrent tool execution.
+The implementation creates two distinct `AgentContext` instances per turn:
+
+1. **Initial context** — Built in `run_turn` with an empty `messages` vec. Carries `system_prompt` and `tools` so they are available to `stream_with_retry`.
+2. **Call context** — Built inside `stream_with_retry` (and rebuilt on each retry attempt). Populates `messages` with the LLM-filtered messages (`Vec<AgentMessage>` wrapping the `LlmMessage` values produced by `convert_to_llm`). This is the context actually passed to `StreamFn`.
+
+Message transformation and LLM conversion happen *before* either context is constructed — they operate directly on `LoopState.context_messages`.
 
 ---
 
@@ -58,59 +60,58 @@ flowchart TB
 
 ```mermaid
 sequenceDiagram
-    participant State as AgentState
-    participant Ctx as AgentContext
+    participant State as LoopState
     participant Transform as transform_context
     participant Convert as convert_to_llm
+    participant InitCtx as AgentContext (initial)
+    participant CallCtx as AgentContext (call)
     participant Stream as StreamFn
 
     Note over State: — Turn N begins —
-    State->>Ctx: create snapshot<br/>(clone system_prompt, messages, tools, overflow)
 
-    Ctx->>Transform: &mut messages from snapshot
-    Note over Transform: may prune / reorder / inject tokens
+    State->>Transform: &mut context_messages, overflow_signal
+    Note over Transform: may prune / reorder / inject tokens<br/>(synchronous — not async)
 
-    Transform->>Convert: processed messages
+    Note over State: overflow_signal reset to false
+
+    Transform->>Convert: mutated context_messages
     Note over Convert: AgentMessage → Option<LlmMessage><br/>(drops Custom variants, etc.)
 
-    Convert->>Stream: &AgentContext (with mapped messages)
+    Convert->>InitCtx: initial context built<br/>(system_prompt, tools, messages: empty)
+
+    Note over CallCtx: call context built inside stream_with_retry<br/>(system_prompt, tools, messages: LlmMessages)
+    CallCtx->>Stream: &AgentContext with LLM messages
     Note over Stream: streams assistant response
 
-    Stream-->>State: assistant message + tool results<br/>appended to AgentState
+    Stream-->>State: assistant message + tool results<br/>appended to context_messages
 
     Note over State: — Turn N+1 begins —
-    State->>Ctx: new snapshot from updated AgentState
 ```
 
 ---
 
 ### L3 — Overflow Signal
 
-When a `ContextWindowOverflow` error occurs, the harness records this state and uses the next snapshot to communicate the condition to downstream hooks.
+The overflow signal is managed internally in `LoopState` — it is **not** a field on `AgentContext`. It is passed as a plain `bool` parameter to the `transform_context` hook.
 
-- When a `ContextWindowOverflow` error occurs, the harness records this state on `AgentState`.
-- On retry via `continue_loop()`, the new `AgentContext` snapshot carries an `overflow` flag set to `true`.
-- `transform_context` receives this flag and can apply more aggressive pruning (e.g., dropping older tool results, summarising earlier turns).
-- After successful recovery (the next turn completes without overflow), the flag is cleared on `AgentState`, and subsequent snapshots revert to `overflow: false`.
+- When a `ContextWindowOverflow` error is detected, the loop sets `LoopState.overflow_signal = true` and continues to the next inner-loop iteration.
+- At the start of the next turn, `transform_context(&mut context_messages, overflow_signal)` is called. Because `overflow_signal` is `true`, the hook can apply more aggressive pruning (e.g., dropping older tool results, summarising earlier turns).
+- Immediately after the call, `overflow_signal` is reset to `false` — the signal is consumed in a single turn.
+- The signal never flows through `AgentContext`; it exists only in `LoopState` and is passed directly to the hook.
 
 ```mermaid
 sequenceDiagram
-    participant Loop as run_loop
-    participant State as AgentState
-    participant Ctx as AgentContext
+    participant Loop as run_turn
+    participant State as LoopState
     participant Transform as transform_context
 
     Note over Loop: Turn fails with ContextWindowOverflow
-    Loop->>State: set overflow = true
+    Loop->>State: overflow_signal = true
 
-    Note over Loop: continue_loop() called
-    State->>Ctx: create snapshot (overflow: true)
-    Ctx->>Transform: &mut messages, overflow = true
-    Note over Transform: aggressive pruning applied
+    Note over Loop: inner loop continues
+    State->>Transform: &mut context_messages, overflow_signal = true
+    Note over Transform: aggressive pruning applied (sync call)
 
-    Transform->>Loop: pruned messages
-    Note over Loop: turn succeeds
-
-    Loop->>State: set overflow = false
-    Note over State: next snapshot will have overflow: false
+    Transform->>State: overflow_signal reset to false
+    Note over State: subsequent turns see overflow_signal = false
 ```

@@ -1,71 +1,31 @@
 # Agent Harness
 
-A pure-Rust agent harness for running LLM-powered agentic loops. Provider-agnostic core with pluggable streaming, tool execution, and lifecycle events.
-
----
+A pure-Rust library for building LLM-powered agentic loops. Provider-agnostic core with pluggable streaming, concurrent tool execution, and lifecycle events.
 
 ## Workspace
 
-```
-agent-harness/          Core library — types, traits, agent loop, proxy streaming
-adapters/               LLM provider adapters (Ollama, future: Anthropic, OpenAI, …)
-tui/                    Terminal UI binary — interactive chat interface
-```
-
-| Crate | Type | Description |
+| Crate | Type | Purpose |
 |---|---|---|
-| `agent-harness` | lib | Agent loop, tool system, streaming traits, proxy `StreamFn`, retry strategy |
-| `agent-harness-adapters` | lib | Provider-specific `StreamFn` implementations (currently: `OllamaStreamFn`) |
-| `agent-harness-tui` | bin | Full-featured TUI with markdown rendering, syntax highlighting, tool panel |
+| `agent-harness` | lib | Agent loop, tool system, streaming traits, retry, error types |
+| `agent-harness-adapters` | lib | `StreamFn` adapters — Ollama, Anthropic, OpenAI |
+| `agent-harness-tui` | bin | Interactive terminal UI with markdown, syntax highlighting, tool panel |
 
----
+## Key Ideas
 
-## Quick Start
+- **`StreamFn`** is the only provider boundary — implement it to add a new LLM backend.
+- **`AgentTool`** trait + JSON Schema validation for tool definitions.
+- Tools execute concurrently within a turn; steering callbacks can interrupt mid-batch.
+- Errors stay in the message log — the loop keeps running. Typed `HarnessError` variants for callers.
+- Events are push-only (`AgentEvent` stream). No inward mutation through events.
+- No `unsafe` code. No global mutable state.
 
-Requires [Ollama](https://ollama.ai) running locally with a model pulled (default: `llama3.2`).
+## Quick Reference
 
 ```bash
-# Start Ollama (if not already running)
-ollama serve
-
-# Pull a model
-ollama pull llama3.2
-
-# Run the TUI
-cargo run -p agent-harness-tui
+cargo run -p agent-harness-tui     # launch the TUI
+cargo test --workspace             # run all tests
 ```
 
-### Environment Variables
-
-The TUI reads configuration from environment variables. If `LLM_BASE_URL` is set, the TUI uses the proxy `StreamFn` instead of Ollama.
-
-| Variable | Default | Description |
-|---|---|---|
-| `OLLAMA_HOST` | `http://localhost:11434` | Ollama server URL |
-| `OLLAMA_MODEL` | `llama3.2` | Ollama model name |
-| `LLM_BASE_URL` | — | Proxy server URL (overrides Ollama mode) |
-| `LLM_API_KEY` | — | Bearer token for proxy authentication |
-| `LLM_MODEL` | `claude-sonnet-4-20250514` | Model ID when using proxy mode |
-| `LLM_SYSTEM_PROMPT` | — | Custom system prompt |
-
----
-
-## Tests
-
-The core library has 144 tests covering all six implementation phases.
-
-```bash
-# Run all workspace tests
-cargo test --workspace
-
-# Run core library tests only
-cargo test -p agent-harness
-```
-
----
-
-## Architecture
-
-See [`docs/planning/PRD.md`](docs/planning/PRD.md) for the product requirements and [`docs/planning/IMPLEMENTATION_PHASES.md`](docs/planning/IMPLEMENTATION_PHASES.md) for the phased implementation plan.
-
-No `unsafe` code. No global mutable state.
+See [docs/getting_started.md](docs/getting_started.md) for setup and configuration.
+See [docs/architecture/HLD.md](docs/architecture/HLD.md) for system design.
+See [docs/planning/PRD.md](docs/planning/PRD.md) for product requirements.

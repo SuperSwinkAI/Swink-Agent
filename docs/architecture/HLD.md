@@ -24,7 +24,7 @@ flowchart TB
 
     subgraph HarnessSystem["⚙️ Agent Harness (Rust Workspace)"]
         Harness["agent-harness (core)<br/>Agent loop, tool dispatch,<br/>streaming, events, retry"]
-        Adapters["agent-harness-adapters<br/>LLM provider adapters<br/>(OllamaStreamFn)"]
+        Adapters["agent-harness-adapters<br/>LLM provider adapters<br/>(Ollama, Anthropic, OpenAI)"]
     end
 
     subgraph ExternalSystems["🌐 External Systems"]
@@ -59,7 +59,7 @@ flowchart TB
 | Adapters → LLM Provider | Outbound | `OllamaStreamFn` streams inference via Ollama's `/api/chat` endpoint (NDJSON) |
 | Harness → Proxy Server | Outbound | Optional: built-in `ProxyStreamFn` forwards requests to a proxy over SSE |
 | Proxy Server → LLM Provider | Outbound | Proxy handles auth and routes to the actual provider |
-| TUI → Adapters | Internal | TUI uses `OllamaStreamFn` by default, or `ProxyStreamFn` if `LLM_BASE_URL` is set |
+| TUI → Adapters | Internal | TUI selects provider by priority: Proxy (LLM_BASE_URL), OpenAI (OPENAI_API_KEY), Anthropic (ANTHROPIC_API_KEY), Ollama (default) |
 
 ---
 
@@ -95,13 +95,15 @@ flowchart TB
 
     subgraph AdapterLayer["🔌 Adapters Crate"]
         OllamaFn["OllamaStreamFn<br/>(NDJSON streaming)"]
+        AnthropicFn["AnthropicStreamFn<br/>(SSE + thinking blocks)"]
+        OpenAiFn["OpenAiStreamFn<br/>(SSE, multi-provider)"]
     end
 
     subgraph InfraLayer["🏗️ Infrastructure"]
         Events["Event System<br/>(AgentEvent enum)"]
         Retry["Retry Strategy<br/>(exp. back-off + jitter)"]
         Cancel["Cancellation<br/>(CancellationToken)"]
-        Errors["Error Types<br/>(ContextWindowOverflow,<br/>MaxTokensReached)"]
+        Errors["Error Types<br/>(ContextWindowOverflow,<br/>ModelThrottled, StreamError)"]
     end
 
     subgraph TUILayer["🖥️ Terminal UI"]
@@ -127,8 +129,12 @@ flowchart TB
     Loop -->|"call StreamFn"| StreamFn
     StreamFn --> StreamImpl
     OllamaFn -->|"implements"| StreamFn
+    AnthropicFn -->|"implements"| StreamFn
+    OpenAiFn -->|"implements"| StreamFn
     StreamImpl -->|direct| LLMProvider
     OllamaFn -->|"NDJSON"| LLMProvider
+    AnthropicFn -->|"SSE"| LLMProvider
+    OpenAiFn -->|"SSE"| LLMProvider
     ProxyFn -->|SSE| ProxyServer
     ProxyServer --> LLMProvider
     Loop -->|"emit"| Events
@@ -158,7 +164,7 @@ flowchart TB
     class Loop loopStyle
     class Validator,Executor toolStyle
     class StreamFn,ProxyFn streamStyle
-    class OllamaFn adapterStyle
+    class OllamaFn,AnthropicFn,OpenAiFn adapterStyle
     class Events,Retry,Cancel,Errors infraStyle
     class TUIApp,ConvView,InputEditor,ToolPanel,StatusBar tuiStyle
     class LLMProvider,ProxyServer externalStyle
@@ -246,7 +252,7 @@ flowchart TB
     subgraph CoreCrate["📦 agent-harness (core)"]
         subgraph FoundationLayer["🏗️ Foundation"]
             types["types.rs<br/>AgentMessage, ContentBlock,<br/>ModelSpec, AgentResult, Usage"]
-            error["error.rs<br/>HarnessError,<br/>ContextWindowOverflow,<br/>MaxTokensReached"]
+            error["error.rs<br/>HarnessError,<br/>ContextWindowOverflow,<br/>ModelThrottled, StreamError"]
         end
 
         subgraph CoreLayer["⚙️ Core Abstractions"]
@@ -257,6 +263,8 @@ flowchart TB
 
         subgraph ImplLayer["🔧 Implementations"]
             proxy["proxy.rs<br/>ProxyStreamFn,<br/>SSE delta reconstruction"]
+            context["context.rs<br/>sliding_window,<br/>overflow-aware pruning"]
+            builtintools["tools/<br/>BashTool, ReadFileTool,<br/>WriteFileTool"]
         end
 
         subgraph ExecutionLayer["🔄 Execution"]
@@ -272,11 +280,17 @@ flowchart TB
     subgraph AdaptersCrate["🔌 agent-harness-adapters"]
         adapters_lib["lib.rs<br/>re-exports"]
         ollama["ollama.rs<br/>OllamaStreamFn,<br/>NDJSON streaming"]
+        anthropic["anthropic.rs<br/>AnthropicStreamFn,<br/>SSE + thinking blocks"]
+        openai["openai.rs<br/>OpenAiStreamFn,<br/>SSE, multi-provider"]
+        convert["convert.rs<br/>MessageConverter trait"]
     end
 
     subgraph TUICrate["🖥️ agent-harness-tui"]
         tui_main["main.rs<br/>env var config,<br/>provider selection"]
         tui_app["app.rs<br/>event loop, layout"]
+        tui_creds["credentials.rs<br/>keychain integration"]
+        tui_session["session.rs<br/>session persistence"]
+        tui_wizard["wizard.rs<br/>first-run setup"]
     end
 
     types --> tool
@@ -295,7 +309,13 @@ flowchart TB
     types --> lib
 
     stream -->|"StreamFn trait"| ollama
+    stream -->|"StreamFn trait"| anthropic
+    stream -->|"StreamFn trait"| openai
     ollama --> adapters_lib
+    anthropic --> adapters_lib
+    openai --> adapters_lib
+    convert --> ollama
+    convert --> openai
 
     lib -->|"agent-harness dep"| tui_main
     adapters_lib -->|"adapters dep"| tui_main
@@ -311,11 +331,11 @@ flowchart TB
 
     class types,error foundationStyle
     class tool,stream,retry coreStyle
-    class proxy implStyle
+    class proxy,context,builtintools implStyle
     class loop_ execStyle
     class agent,lib apiStyle
-    class adapters_lib,ollama adapterStyle
-    class tui_main,tui_app tuiStyle
+    class adapters_lib,ollama,anthropic,openai,convert adapterStyle
+    class tui_main,tui_app,tui_creds,tui_session,tui_wizard tuiStyle
 ```
 
 ---
@@ -324,7 +344,7 @@ flowchart TB
 
 **Library, not a service.** The harness is a crate, not a daemon. There are no HTTP ports, no config files, no CLI. Callers link it as a dependency and own the runtime.
 
-**StreamFn is the only provider boundary.** All LLM communication flows through a single trait. Direct providers, proxies, mock implementations for testing, and future transports all satisfy the same interface. The harness never holds an API key or SDK client. Two built-in implementations ship with the project: `ProxyStreamFn` (SSE, in core) and `OllamaStreamFn` (NDJSON, in the adapters crate).
+**StreamFn is the only provider boundary.** All LLM communication flows through a single trait. Direct providers, proxies, mock implementations for testing, and future transports all satisfy the same interface. The harness never holds an API key or SDK client. Four built-in implementations ship with the project: `ProxyStreamFn` (SSE, in core), `OllamaStreamFn` (NDJSON), `AnthropicStreamFn` (SSE with thinking blocks), and `OpenAiStreamFn` (SSE, multi-provider compatible) — the latter three in the adapters crate.
 
 **Adapters are a separate crate.** Provider-specific `StreamFn` implementations live in `agent-harness-adapters`, keeping the core harness free of any provider SDK or protocol detail. Adding a new provider means adding a module to the adapters crate — no changes to the core.
 
@@ -338,20 +358,26 @@ flowchart TB
 
 ## TUI Architecture
 
-The TUI is a separate binary crate (`agent-harness-tui`) that depends on both `agent-harness` (core) and `agent-harness-adapters`. It provides an interactive terminal interface for conversing with an LLM agent. The TUI always connects to an LLM provider on startup — Ollama by default, or a custom SSE proxy when configured.
+The TUI is a separate binary crate (`agent-harness-tui`) that depends on both `agent-harness` (core) and `agent-harness-adapters`. It provides an interactive terminal interface for conversing with an LLM agent. The TUI supports four providers (Proxy, OpenAI, Anthropic, Ollama) selected by environment variable priority. It includes a first-run setup wizard for API key configuration, session persistence, and credential management via the system keychain.
 
 ### Provider Configuration
 
-The TUI selects its LLM provider via environment variables. If `LLM_BASE_URL` is set, the TUI uses `ProxyStreamFn` (SSE); otherwise it defaults to `OllamaStreamFn` (NDJSON) targeting `localhost:11434`.
+The TUI selects its LLM provider via environment variables in priority order: Proxy > OpenAI > Anthropic > Ollama. API keys can also be stored in the system keychain via the `#key` command or the first-run setup wizard.
 
 | Variable | Default | Description |
 |---|---|---|
-| `OLLAMA_HOST` | `http://localhost:11434` | Ollama server URL |
-| `OLLAMA_MODEL` | `llama3.2` | Ollama model name |
-| `LLM_BASE_URL` | _(unset)_ | SSE proxy endpoint — takes priority over Ollama if set |
+| `LLM_BASE_URL` | _(unset)_ | SSE proxy endpoint — highest priority if set |
 | `LLM_API_KEY` | _(empty)_ | Bearer token for the proxy |
 | `LLM_MODEL` | `claude-sonnet-4-20250514` | Model identifier for the proxy |
-| `LLM_SYSTEM_PROMPT` | `You are a helpful assistant.` | System prompt (shared across both providers) |
+| `OPENAI_API_KEY` | _(unset)_ | OpenAI API key (or keychain) |
+| `OPENAI_BASE_URL` | `https://api.openai.com` | OpenAI-compatible endpoint |
+| `OPENAI_MODEL` | `gpt-4o` | OpenAI model name |
+| `ANTHROPIC_API_KEY` | _(unset)_ | Anthropic API key (or keychain) |
+| `ANTHROPIC_BASE_URL` | `https://api.anthropic.com` | Anthropic endpoint |
+| `ANTHROPIC_MODEL` | `claude-sonnet-4-20250514` | Anthropic model name |
+| `OLLAMA_HOST` | `http://localhost:11434` | Ollama server URL (default fallback) |
+| `OLLAMA_MODEL` | `llama3.2` | Ollama model name |
+| `LLM_SYSTEM_PROMPT` | `You are a helpful assistant.` | System prompt (shared across all providers) |
 
 ### Component Model
 

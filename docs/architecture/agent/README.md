@@ -18,7 +18,7 @@ flowchart TB
     subgraph AgentLayer["⚙️ Agent Struct"]
         State["AgentState<br/>system_prompt · model · tools<br/>messages · running flag<br/>stream_message · error"]
         Queues["Message Queues<br/>steering_queue<br/>follow_up_queue"]
-        API["Invocation API<br/>prompt_stream()<br/>prompt_async()<br/>prompt_sync()<br/>structured_output()<br/>continue_loop()"]
+        API["Invocation API<br/>prompt_stream() · prompt_async() · prompt_sync()<br/>prompt_text() · prompt_text_with_images() · prompt_text_sync()<br/>structured_output() · structured_output_sync()<br/>structured_output_typed&lt;T&gt;() · structured_output_typed_sync&lt;T&gt;()<br/>continue_loop()"]
         Events["Event Subscriptions<br/>listener registry<br/>subscribe / unsubscribe"]
         Control["Control<br/>abort() · reset()<br/>wait_for_idle()"]
     end
@@ -66,20 +66,20 @@ flowchart LR
     end
 
     subgraph Owned["Owned by Agent (private)"]
-        SteerQ["steering_queue: Vec&lt;AgentMessage&gt;"]
-        FollowQ["follow_up_queue: Vec&lt;AgentMessage&gt;"]
+        SteerQ["steering_queue: Arc&lt;Mutex&lt;Vec&lt;AgentMessage&gt;&gt;&gt;"]
+        FollowQ["follow_up_queue: Arc&lt;Mutex&lt;Vec&lt;AgentMessage&gt;&gt;&gt;"]
         Listeners["listeners: HashMap&lt;SubscriptionId, Box&lt;dyn Fn(&AgentEvent)&gt;&gt;"]
         Cancel["abort_controller: Option&lt;CancellationToken&gt;"]
-        Running2["running_promise: Option&lt;JoinHandle&gt;"]
-        StreamMode["steering_mode: SteeringMode"]
-        FollowMode["follow_up_mode: FollowUpMode"]
+        IdleNotify["idle_notify: Arc&lt;Notify&gt;"]
+        StreamMode["steering_mode: SteeringMode<br/>(default: OneAtATime)"]
+        FollowMode["follow_up_mode: FollowUpMode<br/>(default: OneAtATime)"]
     end
 
     classDef stateStyle fill:#e3f2fd,stroke:#1976d2,stroke-width:2px,color:#000
     classDef ownedStyle fill:#f5f5f5,stroke:#616161,stroke-width:2px,color:#000
 
     class SP,Model,Tools,Messages,Running,StreamMsg,PendingTools,Error stateStyle
-    class SteerQ,FollowQ,Listeners,Cancel,Running2,StreamMode,FollowMode ownedStyle
+    class SteerQ,FollowQ,Listeners,Cancel,IdleNotify,StreamMode,FollowMode ownedStyle
 ```
 
 ---
@@ -100,7 +100,13 @@ flowchart TB
         Streaming["prompt_stream()<br/>→ Stream&lt;AgentEvent&gt;<br/>caller consumes events"]
         Async["prompt_async()<br/>→ Future&lt;AgentResult&gt;<br/>awaits completion"]
         Sync["prompt_sync()<br/>→ AgentResult<br/>blocks calling thread"]
+        PromptText["prompt_text(text)<br/>→ Future&lt;AgentResult&gt;<br/>convenience: String → UserMessage"]
+        PromptTextImages["prompt_text_with_images(text, images)<br/>→ Future&lt;AgentResult&gt;<br/>convenience: String + images"]
+        PromptTextSync["prompt_text_sync(text)<br/>→ AgentResult<br/>blocking convenience"]
         Structured["structured_output(schema)<br/>→ Future&lt;Value&gt;<br/>validates against JSON Schema"]
+        StructuredSync["structured_output_sync(schema)<br/>→ Value<br/>blocking variant"]
+        StructuredTyped["structured_output_typed&lt;T&gt;(schema)<br/>→ Future&lt;T&gt;<br/>validates + deserializes into T"]
+        StructuredTypedSync["structured_output_typed_sync&lt;T&gt;(schema)<br/>→ T<br/>blocking typed variant"]
         Continue["continue_loop()<br/>→ (streaming | async | sync)<br/>resumes from existing context"]
     end
 

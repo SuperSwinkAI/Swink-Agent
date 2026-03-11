@@ -59,7 +59,17 @@ tui/src/
 │                    /thinking, /system, /reset)
 ├── config.rs      — TuiConfig loaded from ~/.config/agent-harness/tui.toml
 │                    Fields: show_thinking, auto_scroll, tick_rate_ms, default_model, theme
-├── event.rs       — AppEvent enum (reserved for future use)
+├── credentials.rs — Cross-platform keychain integration via `keyring` crate.
+│                    Manages API keys for Ollama, OpenAI, Anthropic, and Proxy
+│                    providers. Functions: get_credential(), store_credential(),
+│                    any_key_configured()
+├── session.rs     — Session persistence as JSONL files in
+│                    ~/.config/agent-harness/sessions/. SessionMeta tracks id,
+│                    model, system_prompt, timestamps, message_count.
+│                    Functions: save_session(), load_session(), list_sessions()
+├── wizard.rs      — First-run interactive setup wizard. Triggered when no API
+│                    keys are configured. Walks user through provider selection
+│                    and API key entry
 ├── format.rs      — format_tokens() (human-readable K/M), format_elapsed()
 ├── theme.rs       — Color constants and style helpers
 └── ui/
@@ -178,6 +188,11 @@ Two command prefixes are supported:
 - `#copy` — copy last assistant message to clipboard
 - `#copy all` — copy entire conversation to clipboard
 - `#copy code` — copy last code block to clipboard
+- `#sessions` — list saved sessions
+- `#save` — save current session
+- `#load <id>` — load a saved session
+- `#keys` — show configured API keys
+- `#key <provider> <key>` — set an API key
 
 **Slash commands** (may affect agent state):
 - `/quit` — exit the application
@@ -200,7 +215,7 @@ The TUI loads configuration from `~/.config/agent-harness/tui.toml` via `TuiConf
 | `auto_scroll` | `bool` | Auto-scroll to bottom on new content |
 | `tick_rate_ms` | `u64` | Tick interval for animations |
 | `default_model` | `String` | Default model identifier |
-| `theme` | `String` | Color theme selection |
+| `theme` | `String` | Reserved for future theme switching (loaded but currently unused; colors are hardcoded in theme.rs) |
 
 ---
 
@@ -224,6 +239,12 @@ A panic hook ensures clean terminal restoration even on crashes.
 
 ---
 
+## Logging
+
+The TUI uses `tracing` with `tracing-appender` for file-based logging. Logs are written as daily rolling files to `~/.config/agent-harness/logs/agent-harness.log`. The `tracing-subscriber` layer is configured at startup so that diagnostic output goes to disk rather than interfering with the terminal UI.
+
+---
+
 ## Dependencies
 
 | Crate | Version | Purpose |
@@ -239,3 +260,7 @@ A panic hook ensures clean terminal restoration even on crashes.
 | `toml` | 0.8 | Configuration file parsing |
 | `dirs` | 6 | Platform config directory resolution |
 | `serde` | — | Configuration deserialization |
+| `keyring` | 3 | Cross-platform keychain integration for API key storage |
+| `tracing` | 0.1 | Structured logging facade |
+| `tracing-subscriber` | 0.3 | Log output subscriber layer |
+| `tracing-appender` | 0.2 | Daily rolling file log output |
