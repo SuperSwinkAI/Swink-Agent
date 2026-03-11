@@ -185,9 +185,7 @@ mod tests {
 
     #[test]
     fn preserves_tool_result_pair() {
-        use crate::types::{
-            AssistantMessage, Cost, StopReason, ToolResultMessage, Usage,
-        };
+        use crate::types::{AssistantMessage, Cost, StopReason, ToolResultMessage, Usage};
 
         let compact = sliding_window(300, 100, 1);
 
@@ -225,9 +223,9 @@ mod tests {
         compact(&mut messages, false);
 
         // The tool result and its preceding assistant should stay together.
-        let has_result = messages.iter().any(|m| {
-            matches!(m, AgentMessage::Llm(LlmMessage::ToolResult(_)))
-        });
+        let has_result = messages
+            .iter()
+            .any(|m| matches!(m, AgentMessage::Llm(LlmMessage::ToolResult(_))));
         let has_call = messages.iter().any(|m| {
             matches!(m, AgentMessage::Llm(LlmMessage::Assistant(a))
                 if a.content.iter().any(|b| matches!(b, ContentBlock::ToolCall { .. })))

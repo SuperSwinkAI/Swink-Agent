@@ -12,7 +12,6 @@ use reqwest::Client;
 use serde::Serialize;
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
-
 use tracing::{debug, error, warn};
 
 use agent_harness::ContentBlock;
@@ -26,7 +25,7 @@ use crate::convert::error_event;
 // ─── Request types ──────────────────────────────────────────────────────────
 
 /// A content block in an Anthropic message.
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 #[serde(tag = "type")]
 enum AnthropicContentBlock {
     #[serde(rename = "text")]
@@ -45,14 +44,14 @@ enum AnthropicContentBlock {
 }
 
 /// Message in Anthropic's format.
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 struct AnthropicMessage {
     role: String,
     content: Vec<AnthropicContentBlock>,
 }
 
 /// Tool definition in Anthropic's format.
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 struct AnthropicToolDef {
     name: String,
     description: String,
@@ -60,14 +59,14 @@ struct AnthropicToolDef {
 }
 
 /// Thinking configuration.
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 struct AnthropicThinking {
     r#type: String,
     budget_tokens: u64,
 }
 
 /// Full request body for Anthropic `/v1/messages`.
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 struct AnthropicChatRequest {
     model: String,
     max_tokens: u64,
@@ -128,6 +127,7 @@ impl AnthropicStreamFn {
     ///
     /// * `base_url` - API base URL (e.g. `https://api.anthropic.com`).
     /// * `api_key` - Anthropic API key for `x-api-key` header authentication.
+    #[must_use]
     pub fn new(base_url: impl Into<String>, api_key: impl Into<String>) -> Self {
         Self {
             base_url: base_url.into(),
@@ -185,9 +185,7 @@ fn anthropic_stream<'a>(
             let body = response.text().await.unwrap_or_default();
             warn!(status = code, "Anthropic HTTP error");
             let msg = match code {
-                401 => format!(
-                    "Anthropic auth error (HTTP {code}): check x-api-key — {body}"
-                ),
+                401 => format!("Anthropic auth error (HTTP {code}): check x-api-key — {body}"),
                 429 => format!("Anthropic rate limit (HTTP 429): {body}"),
                 529 => format!("Anthropic overloaded (HTTP 529): {body}"),
                 400..=499 => format!("Anthropic client error (HTTP {code}): {body}"),
@@ -253,10 +251,12 @@ async fn send_request(
         thinking,
     };
 
+    let api_key = options.api_key.as_deref().unwrap_or(&anthropic.api_key);
+
     anthropic
         .client
         .post(&url)
-        .header("x-api-key", &anthropic.api_key)
+        .header("x-api-key", api_key)
         .header("anthropic-version", "2023-06-01")
         .header("content-type", "application/json")
         .json(&body)
@@ -276,15 +276,13 @@ fn resolve_thinking(model: &ModelSpec, max_tokens: u64) -> Option<AnthropicThink
         .thinking_budgets
         .as_ref()
         .and_then(|b| b.get(&model.thinking_level))
-        .unwrap_or_else(|| {
-            match model.thinking_level {
-                ThinkingLevel::Minimal => 1024,
-                ThinkingLevel::Low => 2048,
-                ThinkingLevel::Medium => 5000,
-                ThinkingLevel::High => 10_000,
-                ThinkingLevel::ExtraHigh => 20_000,
-                ThinkingLevel::Off => unreachable!(),
-            }
+        .unwrap_or_else(|| match model.thinking_level {
+            ThinkingLevel::Minimal => 1024,
+            ThinkingLevel::Low => 2048,
+            ThinkingLevel::Medium => 5000,
+            ThinkingLevel::High => 10_000,
+            ThinkingLevel::ExtraHigh => 20_000,
+            ThinkingLevel::Off => unreachable!(),
         });
 
     // Anthropic requires `budget_tokens` to be strictly less than `max_tokens`.
@@ -333,9 +331,7 @@ fn convert_messages(
                     match block {
                         ContentBlock::Text { text } => {
                             if !text.is_empty() {
-                                content.push(AnthropicContentBlock::Text {
-                                    text: text.clone(),
-                                });
+                                content.push(AnthropicContentBlock::Text { text: text.clone() });
                             }
                         }
                         ContentBlock::ToolCall {
@@ -501,7 +497,11 @@ fn process_sse_event(
 
         "content_block_start" => {
             if let Ok(parsed) = serde_json::from_str::<Value>(data) {
-                let index = parsed["index"].as_u64().unwrap_or(0).try_into().unwrap_or(0);
+                let index = parsed["index"]
+                    .as_u64()
+                    .unwrap_or(0)
+                    .try_into()
+                    .unwrap_or(0);
                 let block_type = parsed
                     .pointer("/content_block/type")
                     .and_then(Value::as_str)
@@ -552,7 +552,11 @@ fn process_sse_event(
 
         "content_block_delta" => {
             if let Ok(parsed) = serde_json::from_str::<Value>(data) {
-                let index = parsed["index"].as_u64().unwrap_or(0).try_into().unwrap_or(0);
+                let index = parsed["index"]
+                    .as_u64()
+                    .unwrap_or(0)
+                    .try_into()
+                    .unwrap_or(0);
                 let delta_type = parsed
                     .pointer("/delta/type")
                     .and_then(Value::as_str)
@@ -581,8 +585,9 @@ fn process_sse_event(
                             }
                         }
                         "input_json_delta" => {
-                            if let Some(json) =
-                                parsed.pointer("/delta/partial_json").and_then(Value::as_str)
+                            if let Some(json) = parsed
+                                .pointer("/delta/partial_json")
+                                .and_then(Value::as_str)
                             {
                                 events.push(AssistantMessageEvent::ToolCallDelta {
                                     content_index,
@@ -598,7 +603,11 @@ fn process_sse_event(
 
         "content_block_stop" => {
             if let Ok(parsed) = serde_json::from_str::<Value>(data) {
-                let index = parsed["index"].as_u64().unwrap_or(0).try_into().unwrap_or(0);
+                let index = parsed["index"]
+                    .as_u64()
+                    .unwrap_or(0)
+                    .try_into()
+                    .unwrap_or(0);
 
                 if let Some((block_type, content_index)) = state.active_blocks.remove(&index) {
                     match block_type {
@@ -627,8 +636,7 @@ fn process_sse_event(
         "message_delta" => {
             if let Ok(parsed) = serde_json::from_str::<Value>(data) {
                 // Extract stop reason
-                if let Some(reason) = parsed.pointer("/delta/stop_reason").and_then(Value::as_str)
-                {
+                if let Some(reason) = parsed.pointer("/delta/stop_reason").and_then(Value::as_str) {
                     state.stop_reason = Some(match reason {
                         "tool_use" => StopReason::ToolUse,
                         "max_tokens" => StopReason::Length,
@@ -754,8 +762,9 @@ fn sse_event_lines(
                     if let Some(data) = line.strip_prefix("data: ") {
                         let data = data.trim();
                         if !data.is_empty() {
-                            let event_type =
-                                current_event.take().unwrap_or_else(|| "unknown".to_string());
+                            let event_type = current_event
+                                .take()
+                                .unwrap_or_else(|| "unknown".to_string());
                             return Some((
                                 SseLine::Event {
                                     event_type,

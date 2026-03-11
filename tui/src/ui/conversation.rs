@@ -1,10 +1,10 @@
 //! Scrollable conversation view with role-colored message blocks.
 
+use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
-use ratatui::Frame;
 
 use crate::app::{DisplayMessage, MessageRole};
 use crate::theme;
@@ -90,9 +90,7 @@ impl ConversationView {
                 Span::styled("│ ", Style::default().fg(role_color)),
                 Span::styled(
                     role_label.to_string(),
-                    Style::default()
-                        .fg(role_color)
-                        .add_modifier(Modifier::BOLD),
+                    Style::default().fg(role_color).add_modifier(Modifier::BOLD),
                 ),
             ]));
 
@@ -111,7 +109,8 @@ impl ConversationView {
             }
 
             // Message content with markdown rendering
-            let content_lines = markdown::markdown_to_lines(&msg.content, inner_width.saturating_sub(2));
+            let content_lines =
+                markdown::markdown_to_lines(&msg.content, inner_width.saturating_sub(2));
             for line in content_lines {
                 let mut spans = vec![Span::styled("│ ", Style::default().fg(role_color))];
                 spans.extend(line.spans);

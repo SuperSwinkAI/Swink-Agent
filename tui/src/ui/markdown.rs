@@ -113,11 +113,17 @@ fn wrap_spans(spans: Vec<Span<'static>>, width: usize) -> Vec<Vec<Span<'static>>
                 // Skip leading space on new line
                 let trimmed = word.trim_start();
                 if !trimmed.is_empty() {
-                    lines.last_mut().unwrap().push(Span::styled(trimmed.to_string(), style));
+                    lines
+                        .last_mut()
+                        .unwrap()
+                        .push(Span::styled(trimmed.to_string(), style));
                     col = trimmed.len();
                 }
             } else {
-                lines.last_mut().unwrap().push(Span::styled(word.clone(), style));
+                lines
+                    .last_mut()
+                    .unwrap()
+                    .push(Span::styled(word.clone(), style));
                 col += wlen;
             }
         }
@@ -201,8 +207,14 @@ pub fn markdown_to_lines(text: &str, width: u16) -> Vec<Line<'static>> {
         }
 
         // Bullet list
-        if let Some(rest) = trimmed.strip_prefix("- ").or_else(|| trimmed.strip_prefix("* ")) {
-            let mut spans = vec![Span::styled("  • ".to_string(), Style::default().fg(Color::Cyan))];
+        if let Some(rest) = trimmed
+            .strip_prefix("- ")
+            .or_else(|| trimmed.strip_prefix("* "))
+        {
+            let mut spans = vec![Span::styled(
+                "  • ".to_string(),
+                Style::default().fg(Color::Cyan),
+            )];
             spans.extend(parse_inline(rest, Style::default()));
             for wrapped in wrap_spans(spans, width.saturating_sub(4)) {
                 output.push(Line::from(wrapped));

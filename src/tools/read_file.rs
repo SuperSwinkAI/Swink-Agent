@@ -7,8 +7,8 @@ use serde::Deserialize;
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
-use crate::tool::{AgentTool, AgentToolResult};
 use super::MAX_OUTPUT_BYTES;
+use crate::tool::{AgentTool, AgentToolResult};
 
 /// Built-in tool that reads a file and returns its contents.
 pub struct ReadFileTool {
@@ -89,10 +89,9 @@ impl AgentTool for ReadFileTool {
                     }
                     AgentToolResult::text(content)
                 }
-                Err(e) => AgentToolResult::error(format!(
-                    "failed to read file {}: {e}",
-                    parsed.path
-                )),
+                Err(e) => {
+                    AgentToolResult::error(format!("failed to read file {}: {e}", parsed.path))
+                }
             }
         })
     }

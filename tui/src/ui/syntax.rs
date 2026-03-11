@@ -46,7 +46,9 @@ pub fn highlight_code(code: &str, language: &str) -> Vec<Line<'static>> {
             .map(|line| {
                 Line::from(Span::styled(
                     format!("  {line}"),
-                    Style::default().fg(Color::White).add_modifier(Modifier::DIM),
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::DIM),
                 ))
             })
             .collect();
@@ -60,7 +62,9 @@ pub fn highlight_code(code: &str, language: &str) -> Vec<Line<'static>> {
         let Ok(ranges) = highlighter.highlight_line(line, ss) else {
             lines.push(Line::from(Span::styled(
                 format!("  {}", line.trim_end()),
-                Style::default().fg(Color::White).add_modifier(Modifier::DIM),
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::DIM),
             )));
             continue;
         };

@@ -37,9 +37,7 @@ fn retries_network_error_up_to_max_attempts() {
 #[test]
 fn does_not_retry_context_window_overflow() {
     let strategy = DefaultRetryStrategy::default();
-    let err = HarnessError::ContextWindowOverflow {
-        model: "test-model".into(),
-    };
+    let err = HarnessError::context_overflow("test-model");
 
     assert!(!strategy.should_retry(&err, 1));
 }
@@ -52,13 +50,7 @@ fn does_not_retry_non_retryable_variants() {
     assert!(!strategy.should_retry(&HarnessError::AlreadyRunning, 1));
     assert!(!strategy.should_retry(&HarnessError::NoMessages, 1));
     assert!(!strategy.should_retry(&HarnessError::InvalidContinue, 1));
-    assert!(!strategy.should_retry(
-        &HarnessError::StructuredOutputFailed {
-            attempts: 3,
-            last_error: "bad".into(),
-        },
-        1
-    ));
+    assert!(!strategy.should_retry(&HarnessError::structured_output_failed(3, "bad"), 1));
     assert!(!strategy.should_retry(&HarnessError::stream(io::Error::other("bad data")), 1));
 }
 

@@ -109,6 +109,7 @@ impl ProxyStreamFn {
     ///
     /// * `base_url` - Base URL of the proxy server (without trailing slash).
     /// * `bearer_token` - Bearer token for authentication.
+    #[must_use]
     pub fn new(base_url: impl Into<String>, bearer_token: impl Into<String>) -> Self {
         Self {
             base_url: base_url.into(),
@@ -196,10 +197,12 @@ async fn send_request(
         },
     };
 
+    let bearer_token = options.api_key.as_deref().unwrap_or(&proxy.bearer_token);
+
     proxy
         .client
         .post(&url)
-        .bearer_auth(&proxy.bearer_token)
+        .bearer_auth(bearer_token)
         .json(&body)
         .send()
         .await

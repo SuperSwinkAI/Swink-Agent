@@ -49,4 +49,4 @@
 - **Wizard catches keyring failures gracefully** — `store_credential` errors are caught, user can retry. Handles Linux without secret-service.
 - **Panic hook restores terminal** — `main.rs` installs a panic hook that calls `restore_terminal()` before unwinding. Without this, a panic leaves the terminal in raw mode.
 - **`biased;` in select! matters** — ensures terminal events (user input) are always processed before agent events or ticks. Without it, heavy streaming could starve input handling.
-- **Credentials check order** — `get_credential()` checks env var first, then keychain. Explicit env override always wins.
+- **Credentials check order** — `credential()` checks env var first, then keychain. Explicit env override always wins.

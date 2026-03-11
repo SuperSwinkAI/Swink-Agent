@@ -6,12 +6,12 @@
 use std::io;
 
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
+use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
-use ratatui::Terminal;
 
 use crate::credentials::{self, ProviderInfo};
 
@@ -44,7 +44,7 @@ impl SetupWizard {
             .iter()
             .map(|p| {
                 if p.requires_key {
-                    credentials::get_credential(p).is_some()
+                    credentials::credential(p).is_some()
                 } else {
                     true
                 }
@@ -251,7 +251,7 @@ impl SetupWizard {
             .constraints([
                 Constraint::Length(5), // instructions
                 Constraint::Length(3), // input box
-                Constraint::Min(0),   // remaining
+                Constraint::Min(0),    // remaining
             ])
             .split(inner);
 
@@ -318,21 +318,22 @@ impl SetupWizard {
                 Span::styled("  ✗ ", Style::default().fg(Color::DarkGray))
             };
 
-            lines.push(Line::from(vec![
-                status,
-                Span::raw(provider.name),
-            ]));
+            lines.push(Line::from(vec![status, Span::raw(provider.name)]));
         }
 
         lines.push(Line::from(""));
-        lines.push(Line::from("You can update credentials later with the #key command."));
+        lines.push(Line::from(
+            "You can update credentials later with the #key command.",
+        ));
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
             "Press Enter to continue to Agent Harness.",
             Style::default().add_modifier(Modifier::DIM),
         )));
 
-        let paragraph = Paragraph::new(lines).block(block).wrap(Wrap { trim: false });
+        let paragraph = Paragraph::new(lines)
+            .block(block)
+            .wrap(Wrap { trim: false });
         frame.render_widget(paragraph, area);
     }
 

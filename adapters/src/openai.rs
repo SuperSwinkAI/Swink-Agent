@@ -12,7 +12,6 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
-
 use tracing::{debug, error, warn};
 
 use agent_harness::ContentBlock;
@@ -27,7 +26,7 @@ use crate::convert::{self, MessageConverter, error_event};
 // ─── Request types ──────────────────────────────────────────────────────────
 
 /// Message in OpenAI's chat completions format.
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 struct OpenAiMessage {
     role: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -39,7 +38,7 @@ struct OpenAiMessage {
 }
 
 /// Tool call in the request (assistant message replay).
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 struct OpenAiToolCallRequest {
     id: String,
     r#type: String,
@@ -47,21 +46,21 @@ struct OpenAiToolCallRequest {
 }
 
 /// Function call details in a request tool call.
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 struct OpenAiFunctionCallRequest {
     name: String,
     arguments: String,
 }
 
 /// Tool definition in OpenAI's format.
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 struct OpenAiTool {
     r#type: String,
     function: OpenAiToolDef,
 }
 
 /// Tool function definition.
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 struct OpenAiToolDef {
     name: String,
     description: String,
@@ -69,13 +68,13 @@ struct OpenAiToolDef {
 }
 
 /// Stream options for the request.
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 struct OpenAiStreamOptions {
     include_usage: bool,
 }
 
 /// Full request body for OpenAI `/v1/chat/completions`.
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 struct OpenAiChatRequest {
     model: String,
     messages: Vec<OpenAiMessage>,
@@ -176,6 +175,7 @@ impl OpenAiStreamFn {
     ///
     /// * `base_url` - API base URL (e.g. `https://api.openai.com`).
     /// * `api_key` - Bearer token for authentication.
+    #[must_use]
     pub fn new(base_url: impl Into<String>, api_key: impl Into<String>) -> Self {
         Self {
             base_url: base_url.into(),
@@ -261,7 +261,8 @@ async fn send_request(
         "sending OpenAI request"
     );
 
-    let messages = convert::convert_messages::<OpenAiConverter>(&context.messages, &context.system_prompt);
+    let messages =
+        convert::convert_messages::<OpenAiConverter>(&context.messages, &context.system_prompt);
 
     let tools: Vec<OpenAiTool> = context
         .tools
@@ -295,10 +296,12 @@ async fn send_request(
         tool_choice,
     };
 
+    let api_key = options.api_key.as_deref().unwrap_or(&openai.api_key);
+
     openai
         .client
         .post(&url)
-        .header("Authorization", format!("Bearer {}", openai.api_key))
+        .header("Authorization", format!("Bearer {api_key}"))
         .json(&body)
         .send()
         .await
@@ -589,7 +592,10 @@ fn process_tool_call_delta(
         });
 
         // Append any initial arguments
-        if let Some(args) = tc_delta.function.as_ref().and_then(|f| f.arguments.as_ref())
+        if let Some(args) = tc_delta
+            .function
+            .as_ref()
+            .and_then(|f| f.arguments.as_ref())
             && !args.is_empty()
         {
             let tc_state = state.tool_calls.get_mut(&tc_index).expect("just inserted");
@@ -605,7 +611,10 @@ fn process_tool_call_delta(
             .tool_calls
             .get_mut(&tc_index)
             .expect("entry exists per condition");
-        if let Some(args) = tc_delta.function.as_ref().and_then(|f| f.arguments.as_ref())
+        if let Some(args) = tc_delta
+            .function
+            .as_ref()
+            .and_then(|f| f.arguments.as_ref())
             && !args.is_empty()
         {
             tc_state.arguments.push_str(args);

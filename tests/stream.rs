@@ -201,7 +201,19 @@ fn stream_options_defaults() {
     assert!(opts.temperature.is_none());
     assert!(opts.max_tokens.is_none());
     assert!(opts.session_id.is_none());
+    assert!(opts.api_key.is_none());
     assert_eq!(opts.transport, StreamTransport::Sse);
+}
+
+#[test]
+fn stream_options_debug_redacts_api_key() {
+    let opts = StreamOptions {
+        api_key: Some("secret-key-123".to_string()),
+        ..StreamOptions::default()
+    };
+    let debug = format!("{opts:?}");
+    assert!(debug.contains("[REDACTED]"));
+    assert!(!debug.contains("secret-key-123"));
 }
 
 // ── Additional: StreamTransport serde round-trip ──

@@ -34,7 +34,10 @@ impl SessionManager {
     /// Create a new session manager, ensuring the sessions directory exists.
     pub fn new() -> io::Result<Self> {
         let config_dir = dirs::config_dir().ok_or_else(|| {
-            io::Error::new(io::ErrorKind::NotFound, "could not determine config directory")
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                "could not determine config directory",
+            )
         })?;
         let sessions_dir = config_dir.join("agent-harness").join("sessions");
         std::fs::create_dir_all(&sessions_dir)?;
@@ -133,8 +136,7 @@ impl SessionManager {
         let meta_line = lines
             .next()
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "empty session file"))??;
-        let meta: SessionMeta =
-            serde_json::from_str(&meta_line).map_err(io::Error::other)?;
+        let meta: SessionMeta = serde_json::from_str(&meta_line).map_err(io::Error::other)?;
 
         // Remaining lines: LlmMessages
         let mut messages = Vec::new();
@@ -168,11 +170,11 @@ impl SessionManager {
 
         // Convert Unix timestamp to YYYYMMDD_HHMMSS without chrono.
         // Days from epoch calculation.
-        let days_since_epoch = secs / 86400;
-        let time_of_day = secs % 86400;
+        let days_since_epoch = secs / 86_400;
+        let time_of_day = secs % 86_400;
 
-        let hours = time_of_day / 3600;
-        let minutes = (time_of_day % 3600) / 60;
+        let hours = time_of_day / 3_600;
+        let minutes = (time_of_day % 3_600) / 60;
         let seconds = time_of_day % 60;
 
         let (year, month, day) = days_to_ymd(days_since_epoch);
@@ -187,7 +189,7 @@ const fn days_to_ymd(days: u64) -> (u64, u64, u64) {
     let z = days + 719_468;
     let era = z / 146_097;
     let doe = z - era * 146_097;
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
     let y = yoe + era * 400;
     let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
     let mp = (5 * doy + 2) / 153;

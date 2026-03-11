@@ -11,7 +11,6 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
-
 use tracing::{debug, error, warn};
 
 use agent_harness::ContentBlock;
@@ -26,7 +25,7 @@ use crate::convert::{self, MessageConverter, error_event};
 // ─── Request types ──────────────────────────────────────────────────────────
 
 /// Message in Ollama's format.
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 struct OllamaMessage {
     role: String,
     content: String,
@@ -35,27 +34,27 @@ struct OllamaMessage {
 }
 
 /// Tool call in Ollama's format.
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 struct OllamaToolCall {
     function: OllamaFunctionCall,
 }
 
 /// Function call details.
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 struct OllamaFunctionCall {
     name: String,
     arguments: Value,
 }
 
 /// Tool definition in Ollama's format.
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 struct OllamaTool {
     r#type: String,
     function: OllamaToolDef,
 }
 
 /// Tool function definition.
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 struct OllamaToolDef {
     name: String,
     description: String,
@@ -63,7 +62,7 @@ struct OllamaToolDef {
 }
 
 /// Full request body for Ollama /api/chat.
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 struct OllamaChatRequest {
     model: String,
     messages: Vec<OllamaMessage>,
@@ -77,7 +76,7 @@ struct OllamaChatRequest {
 }
 
 /// Ollama generation options.
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 struct OllamaOptions {
     #[serde(skip_serializing_if = "Option::is_none")]
     temperature: Option<f64>,
@@ -141,6 +140,7 @@ impl OllamaStreamFn {
     /// # Arguments
     ///
     /// * `base_url` - Ollama server URL (e.g. `http://localhost:11434`).
+    #[must_use]
     pub fn new(base_url: impl Into<String>) -> Self {
         Self {
             base_url: base_url.into(),
@@ -165,7 +165,13 @@ impl StreamFn for OllamaStreamFn {
         options: &'a StreamOptions,
         cancellation_token: CancellationToken,
     ) -> Pin<Box<dyn Stream<Item = AssistantMessageEvent> + Send + 'a>> {
-        Box::pin(ollama_stream(self, model, context, options, cancellation_token))
+        Box::pin(ollama_stream(
+            self,
+            model,
+            context,
+            options,
+            cancellation_token,
+        ))
     }
 }
 
@@ -188,10 +194,8 @@ fn ollama_stream<'a>(
             let status = response.status().as_u16();
             let body = response.text().await.unwrap_or_default();
             warn!(status, "Ollama HTTP error");
-            return stream::iter(vec![error_event(&format!(
-                "Ollama HTTP {status}: {body}"
-            ))])
-            .left_stream();
+            return stream::iter(vec![error_event(&format!("Ollama HTTP {status}: {body}"))])
+                .left_stream();
         }
 
         parse_ndjson_stream(response, cancellation_token).right_stream()
@@ -214,7 +218,8 @@ async fn send_request(
         "sending Ollama request"
     );
 
-    let messages = convert::convert_messages::<OllamaConverter>(&context.messages, &context.system_prompt);
+    let messages =
+        convert::convert_messages::<OllamaConverter>(&context.messages, &context.system_prompt);
 
     let tools: Vec<OllamaTool> = context
         .tools

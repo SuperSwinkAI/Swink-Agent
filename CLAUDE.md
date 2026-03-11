@@ -11,6 +11,76 @@ A pure-Rust library for building LLM-powered agentic loops. Provider-agnostic co
 - **Maintainability.** Keep modules small and focused. One concern per file. Traits at boundaries (`StreamFn`, `AgentTool`, `RetryStrategy`). No `unsafe` code (enforced by `#[forbid(unsafe_code)]`).
 - **Lessons learned go in nested CLAUDE.md files.** Each subdirectory with a CLAUDE.md captures key patterns, gotchas, and decisions specific to that area of code. Update them when you discover something non-obvious.
 
+## Style Guide
+
+Follows Rust community conventions (RFC 430, Rust API Guidelines, clippy defaults).
+
+### Naming
+
+| Category | Convention | Examples |
+|---|---|---|
+| Crates/packages | `kebab-case` | `agent-harness-adapters` |
+| Modules/files | `snake_case`; trailing `_` for reserved words | `loop_.rs`, `read_file.rs` |
+| Types (structs, enums, traits) | `PascalCase` | `AgentContext`, `StopReason`, `StreamFn` |
+| Enum variants | `PascalCase` | `StopReason::ToolUse`, `HarnessError::Aborted` |
+| Functions/methods | `snake_case`, imperative verbs | `validate_tool_arguments()` |
+| Constants/statics | `UPPER_SNAKE_CASE`; use `_` digit separators | `DEFAULT_TIMEOUT_MS`, `100_000` |
+| Type aliases (closures) | Suffix with `Fn` | `ConvertToLlmFn`, `GetApiKeyFn` |
+| Constructors | `new()` primary; `with_*()` builder chain | `Agent::new()`, `.with_model()` |
+| Named constructors | Variant-specific shortcuts on the type | `HarnessError::network(err)` |
+| Getters | No `get_` prefix | `state()`, `name()`, `description()` |
+| Predicates | `is_*` / `has_*` prefix | `is_retryable()` |
+
+### File Organization
+
+- One concern per file. Split into a submodule directory when a file exceeds ~1500 lines.
+- `lib.rs` re-exports the public API — consumers never reach into submodules directly.
+- Tools live in `src/tools/`, one file per tool. Adapters live in `adapters/src/`, one file per provider.
+- Shared conversion logic goes in a dedicated utility file (e.g., `convert.rs`).
+
+### Import Order
+
+Group `use` statements in this order, separated by blank lines:
+
+1. `std` library
+2. External crates (alphabetical)
+3. Crate-internal (`crate::`, `super::`)
+
+### Visibility
+
+- Default to private. Only `pub` what belongs in the public API.
+- Use `pub(crate)` for internal shared helpers.
+- Re-export public items from `lib.rs` so the public surface is explicit and auditable.
+
+### Documentation
+
+- `//!` module-level doc comments on every public module.
+- `///` doc comments on all public items — summary line, then detail if non-obvious.
+- `#[must_use]` on constructors and pure functions whose return value shouldn't be ignored.
+- Cross-reference via `` [`name`](Self::method) `` doc-link syntax.
+
+### Error Handling
+
+- One error `enum` per crate (e.g., `HarnessError`).
+- Variants use struct-style fields for context (`NetworkError { source: ... }`).
+- Convenience constructors on the error type (`HarnessError::network(err)`).
+- Implement `std::fmt::Display` and `std::error::Error`.
+
+### Testing
+
+- Integration tests in `/tests/`, one file per module.
+- Unit tests via `#[cfg(test)] mod tests` inside the source file.
+- Mock types prefixed with `Mock` (e.g., `MockStreamFn`).
+- Test names: descriptive `snake_case` without a `test_` prefix (e.g., `agent_starts_idle`).
+- Async tests use `#[tokio::test]`.
+
+### Derives & Attributes
+
+- Standard derives: `Debug, Clone, PartialEq` on data types; add `Eq` when no floats.
+- `Serialize, Deserialize` only on types that cross serialization boundaries.
+- `#[default]` attribute on enum variants instead of manual `Default` impl.
+- `#[forbid(unsafe_code)]` at crate root — no exceptions.
+
 ## Build & Test
 
 ```bash

@@ -73,4 +73,19 @@ impl HarnessError {
             source: Box::new(err),
         }
     }
+
+    /// Convenience constructor for [`HarnessError::ContextWindowOverflow`].
+    pub fn context_overflow(model: impl Into<String>) -> Self {
+        Self::ContextWindowOverflow {
+            model: model.into(),
+        }
+    }
+
+    /// Convenience constructor for [`HarnessError::StructuredOutputFailed`].
+    pub fn structured_output_failed(attempts: usize, last_error: impl Into<String>) -> Self {
+        Self::StructuredOutputFailed {
+            attempts,
+            last_error: last_error.into(),
+        }
+    }
 }

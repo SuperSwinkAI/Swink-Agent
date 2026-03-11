@@ -6,10 +6,7 @@ use std::io;
 #[test]
 fn display_messages() {
     assert_eq!(
-        HarnessError::ContextWindowOverflow {
-            model: "claude-sonnet-4-6".into()
-        }
-        .to_string(),
+        HarnessError::context_overflow("claude-sonnet-4-6").to_string(),
         "context window overflow for model: claude-sonnet-4-6"
     );
     assert_eq!(
@@ -21,11 +18,7 @@ fn display_messages() {
         "network error"
     );
     assert_eq!(
-        HarnessError::StructuredOutputFailed {
-            attempts: 3,
-            last_error: "schema mismatch".into()
-        }
-        .to_string(),
+        HarnessError::structured_output_failed(3, "schema mismatch").to_string(),
         "structured output failed after 3 attempts: schema mismatch"
     );
     assert_eq!(
@@ -79,14 +72,8 @@ fn retryable_classification() {
     assert!(!HarnessError::AlreadyRunning.is_retryable());
     assert!(!HarnessError::NoMessages.is_retryable());
     assert!(!HarnessError::InvalidContinue.is_retryable());
-    assert!(!HarnessError::ContextWindowOverflow { model: "x".into() }.is_retryable());
-    assert!(
-        !HarnessError::StructuredOutputFailed {
-            attempts: 1,
-            last_error: "e".into()
-        }
-        .is_retryable()
-    );
+    assert!(!HarnessError::context_overflow("x").is_retryable());
+    assert!(!HarnessError::structured_output_failed(1, "e").is_retryable());
     assert!(!HarnessError::stream(io::Error::other("x")).is_retryable());
 }
 

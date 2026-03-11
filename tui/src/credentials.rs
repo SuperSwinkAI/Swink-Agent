@@ -63,7 +63,7 @@ pub fn store_credential(provider_key: &str, secret: &str) -> Result<(), String> 
 
 /// Retrieve a credential from the native keychain.
 /// Falls back to the environment variable if keychain lookup fails.
-pub fn get_credential(provider: &ProviderInfo) -> Option<String> {
+pub fn credential(provider: &ProviderInfo) -> Option<String> {
     // Check env var first (explicit env override always wins)
     if let Ok(val) = std::env::var(provider.env_var)
         && !val.is_empty()
@@ -93,7 +93,7 @@ pub fn check_credentials() -> HashMap<String, bool> {
     let mut result = HashMap::new();
     for p in providers() {
         let has_cred = if p.requires_key {
-            get_credential(&p).is_some()
+            credential(&p).is_some()
         } else {
             true // Ollama doesn't need a key
         };
@@ -107,5 +107,5 @@ pub fn any_key_configured() -> bool {
     providers()
         .iter()
         .filter(|p| p.requires_key)
-        .any(|p| get_credential(p).is_some())
+        .any(|p| credential(p).is_some())
 }

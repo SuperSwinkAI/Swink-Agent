@@ -1,10 +1,10 @@
 //! Multi-line input editor widget.
 
+use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
-use ratatui::Frame;
 
 /// Multi-line input editor state.
 pub struct InputEditor {
@@ -42,7 +42,9 @@ impl InputEditor {
     pub fn height(&self) -> u16 {
         let content_height = self.lines.len() + 2; // +2 for borders
         #[allow(clippy::cast_possible_truncation)]
-        { content_height.clamp(3, 10) as u16 }
+        {
+            content_height.clamp(3, 10) as u16
+        }
     }
 
     /// Insert a character at the cursor position.
@@ -271,10 +273,7 @@ impl InputEditor {
             #[allow(clippy::cast_possible_truncation)]
             let cursor_y = area.y + 1 + visible_row as u16;
             if cursor_y < area.y + area.height - 1 {
-                frame.set_cursor_position((
-                    cursor_x.min(area.x + area.width - 2),
-                    cursor_y,
-                ));
+                frame.set_cursor_position((cursor_x.min(area.x + area.width - 2), cursor_y));
             }
         }
     }

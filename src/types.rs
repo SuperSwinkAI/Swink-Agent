@@ -283,6 +283,7 @@ pub struct ModelSpec {
 
 impl ModelSpec {
     /// Create a new `ModelSpec` with thinking disabled and no budgets.
+    #[must_use]
     pub fn new(provider: impl Into<String>, model_id: impl Into<String>) -> Self {
         Self {
             provider: provider.into(),

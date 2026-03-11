@@ -61,7 +61,7 @@ tui/src/
 │                    Fields: show_thinking, auto_scroll, tick_rate_ms, default_model, theme
 ├── credentials.rs — Cross-platform keychain integration via `keyring` crate.
 │                    Manages API keys for Ollama, OpenAI, Anthropic, and Proxy
-│                    providers. Functions: get_credential(), store_credential(),
+│                    providers. Functions: credential(), store_credential(),
 │                    any_key_configured()
 ├── session.rs     — Session persistence as JSONL files in
 │                    ~/.config/agent-harness/sessions/. SessionMeta tracks id,

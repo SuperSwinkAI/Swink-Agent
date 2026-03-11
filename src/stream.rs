@@ -31,7 +31,7 @@ pub enum StreamTransport {
 // ─── StreamOptions ───────────────────────────────────────────────────────────
 
 /// Per-call configuration passed through to the LLM provider.
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct StreamOptions {
     /// Sampling temperature (optional).
     pub temperature: Option<f64>,
@@ -39,8 +39,22 @@ pub struct StreamOptions {
     pub max_tokens: Option<u64>,
     /// Provider-side session identifier for caching (optional).
     pub session_id: Option<String>,
+    /// Dynamically resolved API key for this specific request (optional).
+    pub api_key: Option<String>,
     /// Preferred transport protocol.
     pub transport: StreamTransport,
+}
+
+impl std::fmt::Debug for StreamOptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StreamOptions")
+            .field("temperature", &self.temperature)
+            .field("max_tokens", &self.max_tokens)
+            .field("session_id", &self.session_id)
+            .field("api_key", &self.api_key.as_ref().map(|_| "[REDACTED]"))
+            .field("transport", &self.transport)
+            .finish()
+    }
 }
 
 // ─── AssistantMessageEvent ───────────────────────────────────────────────────
