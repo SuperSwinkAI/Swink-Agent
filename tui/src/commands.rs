@@ -31,8 +31,19 @@ pub enum CommandResult {
     StoreKey { provider: String, key: String },
     /// List configured credentials.
     ListKeys,
+    /// Set tool approval mode.
+    SetApprovalMode(ApprovalModeArg),
+    /// Query current approval mode.
+    QueryApprovalMode,
     /// Input was not a recognized command.
     NotACommand,
+}
+
+/// Parsed approval mode argument.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ApprovalModeArg {
+    On,
+    Off,
 }
 
 /// What to copy to clipboard.
@@ -95,6 +106,12 @@ fn execute_hash_command(cmd: &str) -> CommandResult {
                 CommandResult::Feedback("Usage: #key <provider> <api-key>".to_string())
             }
         }
+        "approve" => CommandResult::QueryApprovalMode,
+        "approve on" => CommandResult::SetApprovalMode(ApprovalModeArg::On),
+        "approve off" => CommandResult::SetApprovalMode(ApprovalModeArg::Off),
+        _ if cmd.starts_with("approve ") => {
+            CommandResult::Feedback("Usage: #approve [on|off]".to_string())
+        }
         _ => CommandResult::Feedback(format!("Unknown command: #{cmd}\nType #help for available commands.")),
     }
 }
@@ -156,6 +173,9 @@ fn help_text() -> String {
 │ #load <id>  Load a saved session        │
 │ #keys       List configured providers   │
 │ #key <p> <k> Store API key for provider │
+│ #approve      Show approval mode         │
+│ #approve on   Enable tool approval       │
+│ #approve off  Disable tool approval      │
 ╰──────────────────────────────────────────╯
 ╭─── / Commands (Agent) ──────────────────╮
 │ /quit       Exit                        │

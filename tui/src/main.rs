@@ -21,8 +21,12 @@ use crossterm::{
 };
 use ratatui::{Terminal, backend::CrosstermBackend};
 
-use agent_harness::{Agent, AgentMessage, AgentOptions, ModelSpec, ProxyStreamFn, StreamFn};
+use agent_harness::{
+    Agent, AgentMessage, AgentOptions, ModelSpec, ProxyStreamFn, StreamFn, ToolApproval,
+    ToolApprovalRequest, selective_approve,
+};
 use agent_harness_adapters::{AnthropicStreamFn, OllamaStreamFn, OpenAiStreamFn};
+use tokio::sync::{mpsc, oneshot};
 
 use crate::app::App;
 use crate::config::TuiConfig;
@@ -90,8 +94,9 @@ fn run(mut terminal: Terminal<CrosstermBackend<io::Stdout>>) -> AppResult<()> {
 
     rt.block_on(async {
         let mut app = App::new(config);
+        let approval_tx = app.approval_sender();
 
-        app.set_agent(create_agent());
+        app.set_agent(create_agent(&approval_tx));
 
         app.run(&mut terminal).await
     })
@@ -123,7 +128,9 @@ fn run(mut terminal: Terminal<CrosstermBackend<io::Stdout>>) -> AppResult<()> {
 /// **Shared:**
 /// - `LLM_SYSTEM_PROMPT` — system prompt (default: "You are a helpful assistant.")
 #[allow(clippy::doc_markdown)] // "OpenAI" is a proper noun, not code.
-fn create_agent() -> Agent {
+fn create_agent(
+    approval_tx: &mpsc::Sender<(ToolApprovalRequest, oneshot::Sender<ToolApproval>)>,
+) -> Agent {
     let system_prompt = std::env::var("LLM_SYSTEM_PROMPT")
         .unwrap_or_else(|_| "You are a helpful assistant.".to_string());
 
@@ -134,27 +141,27 @@ fn create_agent() -> Agent {
             .find(|p| p.key_name == "proxy");
         let api_key = proxy_provider
             .as_ref()
-            .and_then(credentials::get_credential)
+            .and_then(credentials::credential)
             .unwrap_or_default();
         let model_id =
             std::env::var("LLM_MODEL").unwrap_or_else(|_| "claude-sonnet-4-20250514".to_string());
         let proxy: Arc<dyn StreamFn> = Arc::new(ProxyStreamFn::new(&base_url, &api_key));
         let model = ModelSpec::new("proxy", &model_id);
-        return build_agent(system_prompt, model, proxy);
+        return build_agent(system_prompt, model, proxy, approval_tx);
     }
 
     // Check for OpenAI (second priority)
     let openai_provider = credentials::providers()
         .into_iter()
         .find(|p| p.key_name == "openai");
-    let openai_key = openai_provider.as_ref().and_then(credentials::get_credential);
+    let openai_key = openai_provider.as_ref().and_then(credentials::credential);
     if let Some(api_key) = openai_key {
         let base_url = std::env::var("OPENAI_BASE_URL")
             .unwrap_or_else(|_| "https://api.openai.com".to_string());
         let model_id = std::env::var("OPENAI_MODEL").unwrap_or_else(|_| "gpt-4o".to_string());
         let openai: Arc<dyn StreamFn> = Arc::new(OpenAiStreamFn::new(&base_url, &api_key));
         let model = ModelSpec::new("openai", &model_id);
-        return build_agent(system_prompt, model, openai);
+        return build_agent(system_prompt, model, openai, approval_tx);
     }
 
     // Check for Anthropic (third priority)
@@ -163,7 +170,7 @@ fn create_agent() -> Agent {
         .find(|p| p.key_name == "anthropic");
     let anthropic_key = anthropic_provider
         .as_ref()
-        .and_then(credentials::get_credential);
+        .and_then(credentials::credential);
     if let Some(api_key) = anthropic_key {
         let base_url = std::env::var("ANTHROPIC_BASE_URL")
             .unwrap_or_else(|_| "https://api.anthropic.com".to_string());
@@ -172,7 +179,7 @@ fn create_agent() -> Agent {
         let anthropic: Arc<dyn StreamFn> =
             Arc::new(AnthropicStreamFn::new(&base_url, &api_key));
         let model = ModelSpec::new("anthropic", &model_id);
-        return build_agent(system_prompt, model, anthropic);
+        return build_agent(system_prompt, model, anthropic, approval_tx);
     }
 
     // Default: Ollama (lowest priority)
@@ -181,17 +188,33 @@ fn create_agent() -> Agent {
     let model_id = std::env::var("OLLAMA_MODEL").unwrap_or_else(|_| "llama3.2".to_string());
     let ollama: Arc<dyn StreamFn> = Arc::new(OllamaStreamFn::new(&host));
     let model = ModelSpec::new("ollama", &model_id);
-    build_agent(system_prompt, model, ollama)
+    build_agent(system_prompt, model, ollama, approval_tx)
 }
 
-fn build_agent(system_prompt: String, model: ModelSpec, stream_fn: Arc<dyn StreamFn>) -> Agent {
-    Agent::new(AgentOptions::new(
-        system_prompt,
-        model,
-        stream_fn,
-        |msg: &AgentMessage| match msg {
+fn build_agent(
+    system_prompt: String,
+    model: ModelSpec,
+    stream_fn: Arc<dyn StreamFn>,
+    approval_tx: &mpsc::Sender<(ToolApprovalRequest, oneshot::Sender<ToolApproval>)>,
+) -> Agent {
+    let tx = approval_tx.clone();
+    let approve_callback = selective_approve(move |request: ToolApprovalRequest| {
+        let tx = tx.clone();
+        Box::pin(async move {
+            let (resp_tx, resp_rx) = oneshot::channel();
+            if tx.send((request, resp_tx)).await.is_err() {
+                // Channel closed — auto-approve to avoid blocking the agent
+                return ToolApproval::Approved;
+            }
+            resp_rx.await.unwrap_or(ToolApproval::Approved)
+        }) as std::pin::Pin<Box<dyn std::future::Future<Output = ToolApproval> + Send>>
+    });
+
+    Agent::new(
+        AgentOptions::new(system_prompt, model, stream_fn, |msg: &AgentMessage| match msg {
             AgentMessage::Llm(llm) => Some(llm.clone()),
             AgentMessage::Custom(_) => None,
-        },
-    ))
+        })
+        .with_approve_tool(approve_callback),
+    )
 }

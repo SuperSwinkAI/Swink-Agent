@@ -816,7 +816,7 @@ fn build_error_message(model: &ModelSpec, error: &HarnessError) -> AssistantMess
 fn classify_stream_error(error_message: &str, stop_reason: StopReason) -> HarnessError {
     let lower = error_message.to_lowercase();
     if lower.contains("context window") || lower.contains("context_length_exceeded") {
-        return HarnessError::context_overflow("");
+        return HarnessError::ContextWindowOverflow { model: String::new() };
     }
     if lower.contains("rate limit") || lower.contains("429") || lower.contains("throttl") {
         return HarnessError::ModelThrottled;
@@ -1137,7 +1137,10 @@ async fn execute_tools_concurrently(
         if let Some(ref approve_fn) = config.approve_tool
             && config.approval_mode == ApprovalMode::Enabled
         {
-            match check_approval(approve_fn, tc, idx, &results, tx).await {
+            let requires_approval = tool_map
+                .get(tc.name.as_str())
+                .is_some_and(|t| t.requires_approval());
+            match check_approval(approve_fn, tc, idx, requires_approval, &results, tx).await {
                 ApprovalOutcome::Approved => {} // proceed to dispatch
                 ApprovalOutcome::Rejected => continue,
                 ApprovalOutcome::ChannelClosed => return ToolExecOutcome::ChannelClosed,
@@ -1187,6 +1190,7 @@ async fn check_approval(
     approve_fn: &ApproveToolFn,
     tc: &ToolCallInfo,
     idx: usize,
+    requires_approval: bool,
     results: &Arc<tokio::sync::Mutex<Vec<(usize, ToolResultMessage)>>>,
     tx: &mpsc::Sender<AgentEvent>,
 ) -> ApprovalOutcome {
@@ -1207,6 +1211,7 @@ async fn check_approval(
         tool_call_id: tc.id.clone(),
         tool_name: tc.name.clone(),
         arguments: tc.arguments.clone(),
+        requires_approval,
     };
     let decision = approve_fn(request).await;
     let approved = decision == ToolApproval::Approved;

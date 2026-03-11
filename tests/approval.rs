@@ -388,3 +388,152 @@ async fn bypassed_mode_skips_approval_callback() {
         "callback should never be called in Bypassed mode"
     );
 }
+
+// ─── Tests for requires_approval enhancement ────────────────────────────
+
+/// Test 7: Default `requires_approval` is false.
+#[test]
+fn requires_approval_default_is_false() {
+    let tool = MockTool::new("test");
+    assert!(!tool.requires_approval());
+}
+
+/// Test 8: `BashTool` requires approval.
+#[test]
+fn requires_approval_bash_tool() {
+    let tool = agent_harness::BashTool::new();
+    assert!(tool.requires_approval());
+}
+
+/// Test 9: `WriteFileTool` requires approval.
+#[test]
+fn requires_approval_write_file_tool() {
+    let tool = agent_harness::WriteFileTool::new();
+    assert!(tool.requires_approval());
+}
+
+/// Test 10: `ReadFileTool` does not require approval.
+#[test]
+fn requires_approval_read_file_tool_is_false() {
+    let tool = agent_harness::ReadFileTool::new();
+    assert!(!tool.requires_approval());
+}
+
+/// Test 11: `selective_approve` auto-approves tools that don't require approval.
+#[tokio::test]
+async fn selective_approve_skips_non_requiring_tools() {
+    use agent_harness::{ToolApprovalRequest, ToolApproval, selective_approve};
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let inner_called = Arc::new(AtomicBool::new(false));
+    let flag = Arc::clone(&inner_called);
+
+    let wrapped = selective_approve(move |_req| {
+        flag.store(true, Ordering::SeqCst);
+        Box::pin(async { ToolApproval::Rejected }) // would reject if called
+    });
+
+    let req = ToolApprovalRequest {
+        tool_call_id: "tc1".into(),
+        tool_name: "safe_tool".into(),
+        arguments: serde_json::json!({}),
+        requires_approval: false,
+    };
+
+    let result = wrapped(req).await;
+    assert_eq!(result, ToolApproval::Approved);
+    assert!(!inner_called.load(Ordering::SeqCst));
+}
+
+/// Test 12: `selective_approve` delegates to inner callback for requiring tools.
+#[tokio::test]
+async fn selective_approve_calls_inner_for_requiring_tools() {
+    use agent_harness::{ToolApprovalRequest, ToolApproval, selective_approve};
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let inner_called = Arc::new(AtomicBool::new(false));
+    let flag = Arc::clone(&inner_called);
+
+    let wrapped = selective_approve(move |_req| {
+        flag.store(true, Ordering::SeqCst);
+        Box::pin(async { ToolApproval::Rejected })
+    });
+
+    let req = ToolApprovalRequest {
+        tool_call_id: "tc1".into(),
+        tool_name: "bash".into(),
+        arguments: serde_json::json!({}),
+        requires_approval: true,
+    };
+
+    let result = wrapped(req).await;
+    assert_eq!(result, ToolApproval::Rejected);
+    assert!(inner_called.load(Ordering::SeqCst));
+}
+
+/// Test 13: approval request carries `requires_approval` field from tool.
+#[tokio::test]
+async fn approval_request_carries_requires_approval_field() {
+    struct ApprovalRequiredTool {
+        schema: Value,
+    }
+
+    impl ApprovalRequiredTool {
+        fn new() -> Self {
+            Self {
+                schema: json!({
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": true
+                }),
+            }
+        }
+    }
+
+    #[allow(clippy::unnecessary_literal_bound)]
+    impl AgentTool for ApprovalRequiredTool {
+        fn name(&self) -> &str {
+            "danger_tool"
+        }
+
+        fn label(&self) -> &str {
+            "Danger"
+        }
+
+        fn description(&self) -> &str {
+            "A dangerous tool"
+        }
+
+        fn parameters_schema(&self) -> &Value {
+            &self.schema
+        }
+
+        fn requires_approval(&self) -> bool {
+            true
+        }
+
+        fn execute(
+            &self,
+            _tool_call_id: &str,
+            _params: Value,
+            _cancellation_token: CancellationToken,
+            _on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
+        ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>> {
+            Box::pin(async { AgentToolResult::text("done") })
+        }
+    }
+
+    let captured = Arc::new(Mutex::new(None::<bool>));
+    let cap = Arc::clone(&captured);
+
+    let responses = tool_call_then_stop("tc1", "danger_tool", "{}");
+    let options = make_agent(responses, vec![Arc::new(ApprovalRequiredTool::new())])
+        .with_approve_tool(move |req| {
+            *cap.lock().unwrap() = Some(req.requires_approval);
+            Box::pin(async { ToolApproval::Approved })
+        });
+    let mut agent = Agent::new(options);
+    let _ = agent.prompt_async(vec![user_msg("hello")]).await.unwrap();
+
+    assert_eq!(*captured.lock().unwrap(), Some(true));
+}

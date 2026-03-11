@@ -6,15 +6,16 @@ use std::time::{Duration, Instant};
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use futures::StreamExt;
 use ratatui::{Terminal, backend::CrosstermBackend};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 
 use agent_harness::{
-    Agent, AgentEvent, AgentMessage, AssistantMessageDelta, ContentBlock, LlmMessage, UserMessage,
+    Agent, AgentEvent, AgentMessage, ApprovalMode, AssistantMessageDelta, ContentBlock, LlmMessage,
+    ToolApproval, ToolApprovalRequest, UserMessage,
 };
 
 use tracing::{info, warn};
 
-use crate::commands::{self, ClipboardContent, CommandResult};
+use crate::commands::{self, ApprovalModeArg, ClipboardContent, CommandResult};
 use crate::config::TuiConfig;
 use crate::credentials;
 use crate::session::SessionManager;
@@ -105,11 +106,20 @@ pub struct App {
     session_manager: Option<SessionManager>,
     /// Current session ID.
     session_id: String,
+    /// Receiver for tool approval requests from the agent callback.
+    approval_rx: mpsc::Receiver<(ToolApprovalRequest, oneshot::Sender<ToolApproval>)>,
+    /// Sender for tool approval requests (cloned into the approval callback).
+    approval_tx: mpsc::Sender<(ToolApprovalRequest, oneshot::Sender<ToolApproval>)>,
+    /// Currently pending approval request and its response channel.
+    pending_approval: Option<(ToolApprovalRequest, oneshot::Sender<ToolApproval>)>,
+    /// Current approval mode.
+    pub approval_mode: ApprovalMode,
 }
 
 impl App {
     pub fn new(config: TuiConfig) -> Self {
         let (agent_tx, agent_rx) = mpsc::channel(256);
+        let (approval_tx, approval_rx) = mpsc::channel(16);
         let session_manager = SessionManager::new().ok();
         let session_id = SessionManager::new_session_id();
         Self {
@@ -135,6 +145,10 @@ impl App {
             retry_attempt: None,
             session_manager,
             session_id,
+            approval_rx,
+            approval_tx,
+            pending_approval: None,
+            approval_mode: ApprovalMode::default(),
         }
     }
 
@@ -167,6 +181,11 @@ impl App {
                 // Agent events
                 Some(event) = self.agent_rx.recv() => {
                     self.handle_agent_event(event);
+                }
+                // Tool approval requests from the agent callback
+                Some((request, responder)) = self.approval_rx.recv() => {
+                    self.pending_approval = Some((request, responder));
+                    self.dirty = true;
                 }
                 // Tick for animations
                 _ = tick_interval.tick() => {
@@ -205,6 +224,30 @@ impl App {
                 return;
             }
             _ => {}
+        }
+
+        // Handle approval Y/N when a tool is pending approval
+        if self.pending_approval.is_some() {
+            match key.code {
+                KeyCode::Char('y' | 'Y') | KeyCode::Enter => {
+                    if let Some((_req, responder)) = self.pending_approval.take() {
+                        let _ = responder.send(ToolApproval::Approved);
+                    }
+                    self.dirty = true;
+                    return;
+                }
+                KeyCode::Char('n' | 'N') | KeyCode::Esc => {
+                    if let Some((_req, responder)) = self.pending_approval.take() {
+                        let _ = responder.send(ToolApproval::Rejected);
+                    }
+                    self.dirty = true;
+                    return;
+                }
+                _ => {
+                    // Ignore other keys while approval is pending
+                    return;
+                }
+            }
         }
 
         // Conversation-focused keys
@@ -297,6 +340,7 @@ impl App {
         }
     }
 
+    #[allow(clippy::too_many_lines)]
     fn submit_input(&mut self) {
         let Some(text) = self.input.submit() else {
             return;
@@ -377,6 +421,30 @@ impl App {
             }
             CommandResult::ListKeys => {
                 self.list_keys();
+                return;
+            }
+            CommandResult::SetApprovalMode(mode) => {
+                let harness_mode = match mode {
+                    ApprovalModeArg::On => ApprovalMode::Enabled,
+                    ApprovalModeArg::Off => ApprovalMode::Bypassed,
+                };
+                self.approval_mode = harness_mode;
+                if let Some(agent) = &mut self.agent {
+                    agent.set_approval_mode(harness_mode);
+                }
+                let label = match mode {
+                    ApprovalModeArg::On => "enabled",
+                    ApprovalModeArg::Off => "disabled (auto-approve)",
+                };
+                self.push_system_message(format!("Tool approval: {label}"));
+                return;
+            }
+            CommandResult::QueryApprovalMode => {
+                let label = match self.approval_mode {
+                    ApprovalMode::Enabled => "enabled",
+                    ApprovalMode::Bypassed => "disabled (auto-approve)",
+                };
+                self.push_system_message(format!("Tool approval: {label}"));
                 return;
             }
         }
@@ -530,6 +598,16 @@ impl App {
                 self.retry_attempt = None;
                 self.auto_save_session();
             }
+            AgentEvent::ToolApprovalRequested {
+                id,
+                name,
+                arguments,
+            } => {
+                self.tool_panel.set_awaiting_approval(&id, &name, &arguments);
+            }
+            AgentEvent::ToolApprovalResolved { id, approved, .. } => {
+                self.tool_panel.resolve_approval(&id, approved);
+            }
             _ => {}
         }
         self.dirty = true;
@@ -624,6 +702,13 @@ impl App {
     pub fn set_agent(&mut self, agent: Agent) {
         self.model_name.clone_from(&agent.state().model.model_id);
         self.agent = Some(agent);
+    }
+
+    /// Get a clone of the approval request sender for use in the agent callback.
+    pub fn approval_sender(
+        &self,
+    ) -> mpsc::Sender<(ToolApprovalRequest, oneshot::Sender<ToolApproval>)> {
+        self.approval_tx.clone()
     }
 
     /// Approximate visible height of conversation area.

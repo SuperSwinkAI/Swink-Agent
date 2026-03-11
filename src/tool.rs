@@ -70,6 +70,12 @@ pub trait AgentTool: Send + Sync {
     /// JSON Schema describing the tool's input shape, used for validation.
     fn parameters_schema(&self) -> &Value;
 
+    /// Whether this tool requires user approval before execution.
+    /// Default is `false` — tools execute immediately.
+    fn requires_approval(&self) -> bool {
+        false
+    }
+
     /// Execute the tool with validated parameters.
     ///
     /// # Arguments
@@ -147,6 +153,8 @@ pub struct ToolApprovalRequest {
     pub tool_name: String,
     /// The arguments passed to the tool.
     pub arguments: Value,
+    /// Whether the tool itself declared that it requires approval.
+    pub requires_approval: bool,
 }
 
 /// Controls whether the approval gate is active.
@@ -158,6 +166,33 @@ pub enum ApprovalMode {
     /// All tool calls auto-approved — callback is never called.
     /// Use this to temporarily disable approval without removing the callback.
     Bypassed,
+}
+
+// ─── selective_approve ───────────────────────────────────────────────────────
+
+/// Wraps an approval callback so that only tools with `requires_approval == true`
+/// go through the inner callback. All other tools are auto-approved.
+#[allow(clippy::type_complexity)]
+pub fn selective_approve<F>(
+    inner: F,
+) -> Box<
+    dyn Fn(ToolApprovalRequest) -> Pin<Box<dyn Future<Output = ToolApproval> + Send>>
+        + Send
+        + Sync,
+>
+where
+    F: Fn(ToolApprovalRequest) -> Pin<Box<dyn Future<Output = ToolApproval> + Send>>
+        + Send
+        + Sync
+        + 'static,
+{
+    Box::new(move |req: ToolApprovalRequest| {
+        if req.requires_approval {
+            inner(req)
+        } else {
+            Box::pin(async { ToolApproval::Approved })
+        }
+    })
 }
 
 // ─── Compile-time Send + Sync assertions ────────────────────────────────────

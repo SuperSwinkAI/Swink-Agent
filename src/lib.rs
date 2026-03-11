@@ -23,7 +23,7 @@ pub use stream::{
 };
 pub use tool::{
     AgentTool, AgentToolResult, ApprovalMode, ToolApproval, ToolApprovalRequest,
-    unknown_tool_result, validate_tool_arguments, validation_error_result,
+    selective_approve, unknown_tool_result, validate_tool_arguments, validation_error_result,
 };
 pub use tools::{BashTool, ReadFileTool, WriteFileTool};
 pub use types::{

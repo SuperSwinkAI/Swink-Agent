@@ -80,6 +80,10 @@ impl AgentTool for BashTool {
         &self.schema
     }
 
+    fn requires_approval(&self) -> bool {
+        true
+    }
+
     fn execute(
         &self,
         _tool_call_id: &str,
@@ -114,17 +118,17 @@ impl AgentTool for BashTool {
                 }
             };
 
-            // Take stdout/stderr handles before waiting so we can read them
-            // after the process exits without moving `child`.
-            let mut stdout_handle = child.stdout.take();
-            let mut stderr_handle = child.stderr.take();
+            // Spawn concurrent readers for stdout/stderr to prevent deadlocks
+            // when OS pipe buffers fill up on large output.
+            let stdout_task = tokio::spawn(read_stream(child.stdout.take()));
+            let stderr_task = tokio::spawn(read_stream(child.stderr.take()));
 
             tokio::select! {
                 result = child.wait() => {
                     match result {
                         Ok(status) => {
-                            let stdout = read_stream(&mut stdout_handle).await;
-                            let stderr = read_stream(&mut stderr_handle).await;
+                            let stdout = stdout_task.await.unwrap_or_default();
+                            let stderr = stderr_task.await.unwrap_or_default();
                             format_output(status.code(), &stdout, &stderr)
                         }
                         Err(e) => AgentToolResult::error(format!("failed to execute command: {e}")),
@@ -132,10 +136,14 @@ impl AgentTool for BashTool {
                 }
                 () = cancellation_token.cancelled() => {
                     let _ = child.kill().await;
+                    stdout_task.abort();
+                    stderr_task.abort();
                     AgentToolResult::error("cancelled")
                 }
                 () = tokio::time::sleep(timeout) => {
                     let _ = child.kill().await;
+                    stdout_task.abort();
+                    stderr_task.abort();
                     AgentToolResult::error(format!(
                         "failed to complete command: timed out after {}ms",
                         timeout.as_millis()
@@ -146,9 +154,11 @@ impl AgentTool for BashTool {
     }
 }
 
-async fn read_stream<R: tokio::io::AsyncRead + Unpin>(pipe: &mut Option<R>) -> Vec<u8> {
+async fn read_stream<R: tokio::io::AsyncRead + Unpin + Send + 'static>(
+    pipe: Option<R>,
+) -> Vec<u8> {
     use tokio::io::AsyncReadExt;
-    if let Some(p) = pipe {
+    if let Some(mut p) = pipe {
         let mut buf = Vec::new();
         let _ = p.read_to_end(&mut buf).await;
         buf

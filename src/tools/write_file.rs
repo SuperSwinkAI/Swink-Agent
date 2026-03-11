@@ -69,6 +69,10 @@ impl AgentTool for WriteFileTool {
         &self.schema
     }
 
+    fn requires_approval(&self) -> bool {
+        true
+    }
+
     fn execute(
         &self,
         _tool_call_id: &str,

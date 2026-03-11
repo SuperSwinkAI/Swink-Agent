@@ -711,10 +711,10 @@ impl Agent {
         }
 
         self.remove_structured_output_tool();
-        Err(HarnessError::structured_output_failed(
-            max_retries + 1,
+        Err(HarnessError::StructuredOutputFailed {
+            attempts: max_retries + 1,
             last_error,
-        ))
+        })
     }
 
     /// Run a structured output extraction loop, blocking the current thread.
@@ -739,7 +739,7 @@ impl Agent {
     ) -> Result<T, HarnessError> {
         let value = self.structured_output(prompt, schema).await?;
         serde_json::from_value(value).map_err(|e| {
-            HarnessError::structured_output_failed(1, format!("deserialization failed: {e}"))
+            HarnessError::StructuredOutputFailed { attempts: 1, last_error: format!("deserialization failed: {e}") }
         })
     }
 
