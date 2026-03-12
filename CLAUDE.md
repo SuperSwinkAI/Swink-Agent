@@ -2,7 +2,7 @@
 
 ## Project
 
-A pure-Rust library for building LLM-powered agentic loops. Provider-agnostic core with pluggable streaming, concurrent tool execution, and lifecycle events. Three-crate workspace: core (`swink-agent`), adapters (`swink-agent-adapters`), TUI (`swink-agent-tui`).
+A pure-Rust library for building LLM-powered agentic loops. Provider-agnostic core with pluggable streaming, concurrent tool execution, and lifecycle events. Four-crate workspace: core (`swink-agent`), adapters (`swink-agent-adapters`), memory (`swink-agent-memory`), TUI (`swink-agent-tui`).
 
 ## Development Principles
 
@@ -107,6 +107,7 @@ MSRV is **1.88** (edition 2024). `rust-toolchain.toml` pins to stable channel.
 | `src/retry.rs` | §11 | `docs/architecture/error-handling/` | RetryStrategy trait, exponential backoff |
 | `src/tools/` | §4 | `docs/architecture/tool-system/` | BashTool, ReadFileTool, WriteFileTool |
 | `adapters/` | §7, §14.1, §15.1 | `docs/architecture/streaming/` | Ollama, Anthropic, OpenAI StreamFn adapters |
+| `memory/` | §5, §10.1 | `memory/docs/architecture/` | Session persistence, summarizing compaction |
 | `tui/` | §16 | `docs/architecture/tui/` | Terminal UI binary |
 
 ## Core Module Lessons Learned

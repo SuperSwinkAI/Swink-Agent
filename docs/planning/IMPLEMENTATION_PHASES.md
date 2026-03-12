@@ -409,3 +409,9 @@ End-to-end integration tests that exercise the full stack: `Agent` → loop → 
 | 6 — Integration | `tests/integration/` | All | — | Complete |
 
 **Total: 144 tests passing across all phases.**
+
+---
+
+## Memory Crate
+
+Session persistence and memory management are implemented in the `swink-agent-memory` crate (separate from the core phases above). See [`memory/docs/planning/research.md`](../../memory/docs/planning/research.md) for experiment plans and [`memory/docs/architecture/`](../../memory/docs/architecture/README.md) for the multi-layer memory vision.

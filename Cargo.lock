@@ -2253,6 +2253,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "swink-agent-memory"
+version = "0.1.0"
+dependencies = [
+ "dirs",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "swink-agent",
+ "tempfile",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "swink-agent-tui"
 version = "0.1.0"
 dependencies = [
@@ -2267,6 +2281,7 @@ dependencies = [
  "serde_json",
  "swink-agent",
  "swink-agent-adapters",
+ "swink-agent-memory",
  "syntect",
  "tempfile",
  "tokio",

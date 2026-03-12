@@ -20,7 +20,7 @@ use tracing::{info, warn};
 use crate::commands::{self, ApprovalModeArg, ClipboardContent, CommandResult};
 use crate::config::TuiConfig;
 use crate::credentials;
-use crate::session::SessionManager;
+use crate::session::{JsonlSessionStore, SessionStore};
 use crate::theme;
 use crate::ui;
 use crate::ui::conversation::ConversationView;
@@ -137,7 +137,7 @@ pub struct App {
     /// Retry attempt counter for error display.
     pub retry_attempt: Option<u32>,
     /// Session manager for persistence.
-    session_manager: Option<SessionManager>,
+    session_store: Option<JsonlSessionStore>,
     /// Current session ID.
     session_id: String,
     /// Receiver for tool approval requests from the agent callback.
@@ -170,8 +170,11 @@ impl App {
     pub fn new(config: TuiConfig) -> Self {
         let (agent_tx, agent_rx) = mpsc::channel(256);
         let (approval_tx, approval_rx) = mpsc::channel(16);
-        let session_manager = SessionManager::new().ok();
-        let session_id = SessionManager::new_session_id();
+        let session_store = JsonlSessionStore::default_dir()
+            .and_then(|dir| JsonlSessionStore::new(dir).ok());
+        let session_id = session_store
+            .as_ref()
+            .map_or_else(|| "unnamed".to_string(), SessionStore::new_session_id);
 
         // Apply configured color mode.
         let mode = match config.color_mode.as_str() {
@@ -203,7 +206,7 @@ impl App {
             agent_rx,
             config,
             retry_attempt: None,
-            session_manager,
+            session_store,
             session_id,
             approval_rx,
             approval_tx,
@@ -1109,14 +1112,14 @@ impl App {
     // ─── Session persistence ────────────────────────────────────────────
 
     fn auto_save_session(&self) {
-        let Some(ref mgr) = self.session_manager else {
+        let Some(ref store) = self.session_store else {
             return;
         };
         let Some(ref agent) = self.agent else {
             return;
         };
         let state = agent.state();
-        let _ = mgr.save_session(
+        let _ = store.save(
             &self.session_id,
             &self.model_name,
             &state.system_prompt,
@@ -1131,13 +1134,13 @@ impl App {
     }
 
     fn load_session(&mut self, id: &str) {
-        let Some(ref mgr) = self.session_manager else {
+        let Some(ref store) = self.session_store else {
             warn!("session persistence unavailable");
             self.push_system_message("Session persistence unavailable.".to_string());
             return;
         };
         info!(session_id = %id, "loading session");
-        match mgr.load_session(id) {
+        match store.load(id) {
             Ok((meta, messages)) => {
                 // Rebuild display messages from loaded data
                 self.messages.clear();
@@ -1226,11 +1229,11 @@ impl App {
 
     fn list_sessions(&mut self) {
         use std::fmt::Write;
-        let Some(ref mgr) = self.session_manager else {
+        let Some(ref store) = self.session_store else {
             self.push_system_message("Session persistence unavailable.".to_string());
             return;
         };
-        match mgr.list_sessions() {
+        match store.list() {
             Ok(sessions) if sessions.is_empty() => {
                 self.push_system_message("No saved sessions.".to_string());
             }

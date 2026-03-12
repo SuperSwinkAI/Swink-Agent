@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "adapters", "tui"]
+members = [".", "adapters", "memory", "tui"]
 resolver = "2"
 
 [package]

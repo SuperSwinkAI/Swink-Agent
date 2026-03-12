@@ -8,6 +8,7 @@ A pure-Rust library for building LLM-powered agentic loops. Provider-agnostic co
 |---|---|---|
 | `swink-agent` | lib | Agent loop, tool system, streaming traits, retry, error types |
 | `swink-agent-adapters` | lib | `StreamFn` adapters — Ollama, Anthropic, OpenAI |
+| `swink-agent-memory` | lib | Session persistence, summarization compaction, memory research |
 | `swink-agent-tui` | bin | Interactive terminal UI with markdown, syntax highlighting, tool panel |
 
 ## Key Ideas

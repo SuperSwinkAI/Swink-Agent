@@ -70,10 +70,10 @@ tui/src/
 │                    Manages API keys for Ollama, OpenAI, Anthropic, and Proxy
 │                    providers. Functions: credential(), store_credential(),
 │                    any_key_configured()
-├── session.rs     — Session persistence as JSONL files in
-│                    ~/.config/swink-agent/sessions/. SessionMeta tracks id,
-│                    model, system_prompt, timestamps, message_count.
-│                    Functions: save_session(), load_session(), list_sessions()
+├── session.rs     — Re-exports from swink-agent-memory: JsonlSessionStore,
+│                    SessionStore trait. Session persistence (JSONL files in
+│                    ~/.config/swink-agent/sessions/) is implemented in the
+│                    memory crate. See memory/docs/architecture/ for details
 ├── wizard.rs      — First-run interactive setup wizard. Triggered when no API
 │                    keys are configured. Walks user through provider selection
 │                    and API key entry
@@ -280,6 +280,7 @@ The TUI uses `tracing` with `tracing-appender` for file-based logging. Logs are 
 |---|---|---|
 | `swink-agent` | workspace | Core agent library |
 | `swink-agent-adapters` | workspace | LLM provider adapters (Ollama, proxy) |
+| `swink-agent-memory` | workspace | Session persistence, compaction strategies |
 | `ratatui` | 0.29 | Terminal UI framework |
 | `crossterm` | 0.28 | Terminal backend (with `event-stream` feature) |
 | `tokio` | — | Async runtime |

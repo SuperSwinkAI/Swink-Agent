@@ -18,7 +18,7 @@ The implementation leverages Rust's type system, ownership model, and async runt
 
 - No built-in web UI or GUI interface
 - No bundled LLM provider SDK dependencies — provider adapters use direct HTTP calls, not vendor SDKs
-- No research features (memory architecture, compaction) — tracked separately
+- No research features (memory architecture, compaction) in the core crate — managed in `swink-agent-memory` (see `memory/docs/`)
 
 ---
 

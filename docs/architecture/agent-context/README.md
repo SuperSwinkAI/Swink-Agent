@@ -115,3 +115,9 @@ sequenceDiagram
     Transform->>State: overflow_signal reset to false
     Note over State: subsequent turns see overflow_signal = false
 ```
+
+---
+
+## Related: Memory Crate
+
+The `swink-agent-memory` crate builds on the `transform_context` hook to provide higher-level compaction strategies. `SummarizingCompactor` wraps `sliding_window` and injects pre-computed summaries of dropped messages after the anchor. See [`memory/docs/architecture/`](../../../memory/docs/architecture/README.md) for the multi-layer memory vision.

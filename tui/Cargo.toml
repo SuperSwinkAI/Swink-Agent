@@ -21,6 +21,7 @@ path = "src/main.rs"
 [dependencies]
 swink-agent = { path = ".." }
 swink-agent-adapters = { path = "../adapters" }
+swink-agent-memory = { path = "../memory" }
 ratatui = "0.29"
 crossterm = { version = "0.28", features = ["event-stream"] }
 tokio = { version = "1", features = ["full"] }

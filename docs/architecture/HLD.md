@@ -7,7 +7,7 @@
 
 ## System Overview
 
-The Swink Agent is a Rust workspace composed of three crates that provide the core scaffolding for building LLM-powered agentic applications. The **core library** (`swink-agent`) manages the agent loop, message context, tool dispatch, streaming, and lifecycle events. The **adapters crate** (`swink-agent-adapters`) provides ready-made `StreamFn` implementations for specific LLM providers. The **TUI crate** (`swink-agent-tui`) is a binary that provides an interactive terminal interface. All LLM provider access is delegated to a `StreamFn` implementation, keeping the core harness fully provider-agnostic.
+The Swink Agent is a Rust workspace composed of four crates that provide the core scaffolding for building LLM-powered agentic applications. The **core library** (`swink-agent`) manages the agent loop, message context, tool dispatch, streaming, and lifecycle events. The **adapters crate** (`swink-agent-adapters`) provides ready-made `StreamFn` implementations for specific LLM providers. The **memory crate** (`swink-agent-memory`) provides session persistence and summarization-aware context compaction. The **TUI crate** (`swink-agent-tui`) is a binary that provides an interactive terminal interface. All LLM provider access is delegated to a `StreamFn` implementation, keeping the core harness fully provider-agnostic.
 
 ---
 
@@ -25,6 +25,7 @@ flowchart TB
     subgraph HarnessSystem["⚙️ Swink Agent (Rust Workspace)"]
         Harness["swink-agent (core)<br/>Agent loop, tool dispatch,<br/>streaming, events, retry"]
         Adapters["swink-agent-adapters<br/>LLM provider adapters<br/>(Ollama, Anthropic, OpenAI)"]
+        Memory["swink-agent-memory<br/>Session persistence,<br/>summarization compaction"]
     end
 
     subgraph ExternalSystems["🌐 External Systems"]
@@ -36,6 +37,8 @@ flowchart TB
     Harness -->|"AgentEvent stream,<br/>AgentResult"| App
     TUI -->|"Agent API +<br/>event subscription"| Harness
     TUI -->|"Uses adapter"| Adapters
+    TUI -->|"Uses memory"| Memory
+    Memory -->|"Uses core types"| Harness
     Harness -->|"AgentEvent stream"| TUI
     Adapters -->|"Streaming inference<br/>via OllamaStreamFn (NDJSON)"| LLMProvider
     Harness -->|"Streaming inference<br/>via ProxyStreamFn (SSE)"| ProxyServer
@@ -46,7 +49,7 @@ flowchart TB
     classDef externalStyle fill:#e0e0e0,stroke:#424242,stroke-width:2px,color:#000
 
     class App,TUI callerStyle
-    class Harness,Adapters harnessStyle
+    class Harness,Adapters,Memory harnessStyle
     class LLMProvider,ProxyServer externalStyle
 ```
 
@@ -106,6 +109,11 @@ flowchart TB
         Errors["Error Types<br/>(ContextWindowOverflow,<br/>ModelThrottled, StreamError)"]
     end
 
+    subgraph MemoryLayer["🧠 Memory"]
+        SessionStore["SessionStore trait<br/>JsonlSessionStore"]
+        Compactor["SummarizingCompactor<br/>Summary injection,<br/>sliding window wrapper"]
+    end
+
     subgraph TUILayer["🖥️ Terminal UI"]
         TUIApp["TUI App<br/>Event loop, layout,<br/>focus management"]
         ConvView["Conversation View<br/>Message rendering,<br/>markdown, syntax highlighting"]
@@ -142,6 +150,9 @@ flowchart TB
     Loop --> Retry
     Loop --> Cancel
     Loop --> Errors
+    Compactor -->|"wraps"| StreamFn
+    SessionStore -->|"persists"| Events
+    TUIApp -->|"save / load"| SessionStore
     TUIApp -->|"prompt / abort"| Agent
     Events -->|"subscribe"| TUIApp
     TUIApp --> ConvView
@@ -158,6 +169,7 @@ flowchart TB
     classDef infraStyle fill:#f5f5f5,stroke:#616161,stroke-width:2px,color:#000
     classDef externalStyle fill:#e0e0e0,stroke:#424242,stroke-width:2px,color:#000
     classDef tuiStyle fill:#1976d2,stroke:#0d47a1,stroke-width:2px,color:#fff
+    classDef memoryStyle fill:#ce93d8,stroke:#7b1fa2,stroke-width:2px,color:#000
 
     class App,Tools,StreamImpl callerStyle
     class Agent agentStyle
@@ -166,6 +178,7 @@ flowchart TB
     class StreamFn,ProxyFn streamStyle
     class OllamaFn,AnthropicFn,OpenAiFn adapterStyle
     class Events,Retry,Cancel,Errors infraStyle
+    class SessionStore,Compactor memoryStyle
     class TUIApp,ConvView,InputEditor,ToolPanel,StatusBar tuiStyle
     class LLMProvider,ProxyServer externalStyle
 ```
@@ -245,7 +258,7 @@ flowchart LR
 
 ## Workspace Crate Dependencies
 
-This diagram shows how the three workspace crates and their internal modules depend on each other.
+This diagram shows how the four workspace crates and their internal modules depend on each other.
 
 ```mermaid
 flowchart TB
@@ -285,11 +298,19 @@ flowchart TB
         convert["convert.rs<br/>MessageConverter trait"]
     end
 
+    subgraph MemoryCrate["🧠 swink-agent-memory"]
+        mem_lib["lib.rs<br/>re-exports"]
+        mem_store["store.rs<br/>SessionStore trait"]
+        mem_jsonl["jsonl.rs<br/>JsonlSessionStore,<br/>JSONL persistence"]
+        mem_meta["meta.rs<br/>SessionMeta"]
+        mem_compact["compaction.rs<br/>SummarizingCompactor,<br/>summary injection"]
+    end
+
     subgraph TUICrate["🖥️ swink-agent-tui"]
         tui_main["main.rs<br/>env var config,<br/>provider selection"]
         tui_app["app.rs<br/>event loop, layout"]
         tui_creds["credentials.rs<br/>keychain integration"]
-        tui_session["session.rs<br/>session persistence"]
+        tui_session["session.rs<br/>re-exports from memory"]
         tui_wizard["wizard.rs<br/>first-run setup"]
     end
 
@@ -317,8 +338,17 @@ flowchart TB
     convert --> ollama
     convert --> openai
 
+    types -->|"core types"| mem_store
+    types -->|"core types"| mem_compact
+    context -->|"sliding_window"| mem_compact
+    mem_store --> mem_jsonl
+    mem_meta --> mem_jsonl
+    mem_jsonl --> mem_lib
+    mem_compact --> mem_lib
+
     lib -->|"swink-agent dep"| tui_main
     adapters_lib -->|"adapters dep"| tui_main
+    mem_lib -->|"memory dep"| tui_session
     tui_main --> tui_app
 
     classDef foundationStyle fill:#f5f5f5,stroke:#616161,stroke-width:2px,color:#000
@@ -327,6 +357,7 @@ flowchart TB
     classDef execStyle fill:#1976d2,stroke:#0d47a1,stroke-width:2px,color:#fff
     classDef apiStyle fill:#e3f2fd,stroke:#1976d2,stroke-width:2px,color:#000
     classDef adapterStyle fill:#c8e6c9,stroke:#388e3c,stroke-width:2px,color:#000
+    classDef memoryStyle fill:#ce93d8,stroke:#7b1fa2,stroke-width:2px,color:#000
     classDef tuiStyle fill:#1976d2,stroke:#0d47a1,stroke-width:2px,color:#fff
 
     class types,error foundationStyle
@@ -335,6 +366,7 @@ flowchart TB
     class loop_ execStyle
     class agent,lib apiStyle
     class adapters_lib,ollama,anthropic,openai,convert adapterStyle
+    class mem_lib,mem_store,mem_jsonl,mem_meta,mem_compact memoryStyle
     class tui_main,tui_app,tui_creds,tui_session,tui_wizard tuiStyle
 ```
 
@@ -354,11 +386,13 @@ flowchart TB
 
 **Concurrency is scoped to tool execution.** Tool calls within a single turn run concurrently via `tokio::spawn`. Everything else — turns, steering polls, follow-up polls — is sequential. This makes the loop easy to reason about without sacrificing the main performance win of parallel tool execution.
 
-**TUI is a separate crate.** The terminal interface is a binary crate that depends on both the core library and the adapters crate, not a feature-gated module. This keeps the core harness free of terminal dependencies and allows the TUI to evolve independently. The TUI consumes the same public API that any other application would use.
+**Memory is a separate crate.** Session persistence and context compaction strategies live in `swink-agent-memory`, keeping storage dependencies (filesystem, future vector stores) out of the core. The memory crate consumes core's extension hooks (`TransformContextFn`, `ConvertToLlmFn`) without modifying core internals. See `memory/docs/architecture/` for the multi-layer memory vision.
+
+**TUI is a separate crate.** The terminal interface is a binary crate that depends on the core library, adapters crate, and memory crate, not a feature-gated module. This keeps the core harness free of terminal dependencies and allows the TUI to evolve independently. The TUI consumes the same public API that any other application would use.
 
 ## TUI Architecture
 
-The TUI is a separate binary crate (`swink-agent-tui`) that depends on both `swink-agent` (core) and `swink-agent-adapters`. It provides an interactive terminal interface for conversing with an LLM agent. The TUI supports four providers (Proxy, OpenAI, Anthropic, Ollama) selected by environment variable priority. It includes a first-run setup wizard for API key configuration, session persistence, and credential management via the system keychain.
+The TUI is a separate binary crate (`swink-agent-tui`) that depends on `swink-agent` (core), `swink-agent-adapters`, and `swink-agent-memory`. It provides an interactive terminal interface for conversing with an LLM agent. The TUI supports four providers (Proxy, OpenAI, Anthropic, Ollama) selected by environment variable priority. It includes a first-run setup wizard for API key configuration, session persistence (via the memory crate's `SessionStore` trait), and credential management via the system keychain.
 
 ### Provider Configuration
 
