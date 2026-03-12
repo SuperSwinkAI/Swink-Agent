@@ -12,21 +12,21 @@ categories = ["development-tools", "api-bindings", "asynchronous"]
 
 [dependencies]
 swink-agent = { path = ".." }
-reqwest = { version = "0.12", features = ["stream"] }
-tokio = { version = "1", features = ["full"] }
-tokio-util = "0.7"
-futures = "0.3"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+reqwest.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+futures.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+tracing.workspace = true
 bytes = "1"
-uuid = { version = "1", features = ["v4"] }
-tracing = "0.1"
 
 [dev-dependencies]
-tokio = { version = "1", features = ["full", "test-util"] }
-wiremock = "0.6"
-pretty_assertions = "1"
-dotenvy = "0.15"
+tokio = { workspace = true, features = ["full", "test-util"] }
+wiremock.workspace = true
+pretty_assertions.workspace = true
+dotenvy.workspace = true
 
 [lints.rust]
 unsafe_code = "forbid"

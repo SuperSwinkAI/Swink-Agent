@@ -299,6 +299,12 @@ fn resolve_thinking(model: &ModelSpec, max_tokens: u64) -> Option<AnthropicThink
 
 /// Convert harness messages to Anthropic message format.
 ///
+/// This function uses a bespoke conversion instead of the shared
+/// [`MessageConverter`](super::convert::MessageConverter) trait because
+/// the Anthropic API requires the system prompt as a separate top-level
+/// field rather than as a message, and thinking blocks must be filtered
+/// from outgoing requests.
+///
 /// Returns `(system, messages)` — the system prompt is a top-level field in
 /// Anthropic's API, not a message.
 fn convert_messages(

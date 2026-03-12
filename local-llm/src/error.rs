@@ -4,46 +4,30 @@
 //! inference. Transient download/load failures are distinct from runtime
 //! inference errors.
 
-use std::fmt;
-
 /// Errors that can occur during local model operations.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum LocalModelError {
     /// Failed to download model weights from `HuggingFace`.
+    #[error("model download failed: {source}")]
     Download {
+        #[source]
         source: Box<dyn std::error::Error + Send + Sync>,
     },
 
     /// Failed to load model into memory (e.g. GGUF parse error, OOM).
+    #[error("model loading failed: {source}")]
     Loading {
+        #[source]
         source: Box<dyn std::error::Error + Send + Sync>,
     },
 
     /// Inference-time error (generation failure, malformed output).
+    #[error("inference error: {message}")]
     Inference { message: String },
 
     /// Model has not been loaded yet — call `ensure_ready()` first.
+    #[error("model not ready — call ensure_ready() first")]
     NotReady,
-}
-
-impl fmt::Display for LocalModelError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Download { source } => write!(f, "model download failed: {source}"),
-            Self::Loading { source } => write!(f, "model loading failed: {source}"),
-            Self::Inference { message } => write!(f, "inference error: {message}"),
-            Self::NotReady => write!(f, "model not ready — call ensure_ready() first"),
-        }
-    }
-}
-
-impl std::error::Error for LocalModelError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Download { source } | Self::Loading { source } => Some(source.as_ref()),
-            Self::Inference { .. } | Self::NotReady => None,
-        }
-    }
 }
 
 impl LocalModelError {

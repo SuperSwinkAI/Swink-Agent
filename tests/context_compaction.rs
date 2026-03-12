@@ -1,20 +1,21 @@
 //! End-to-end integration tests verifying that context compaction actually
 //! happens after overflow, not just that the overflow flag is passed.
 
-use std::future::Future;
+mod common;
+
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use common::{MockTool, default_model, text_only_events, tool_call_events, user_msg};
 use futures::Stream;
 use futures::stream::StreamExt;
-use serde_json::json;
 use tokio_util::sync::CancellationToken;
 
 use swink_agent::{
-    AgentContext, AgentEvent, AgentLoopConfig, AgentMessage, AgentTool, AgentToolResult,
-    AssistantMessageEvent, ContentBlock, Cost, DefaultRetryStrategy, LlmMessage, ModelSpec,
-    StopReason, StreamFn, StreamOptions, Usage, UserMessage, agent_loop, sliding_window,
+    AgentContext, AgentEvent, AgentLoopConfig, AgentMessage,
+    AssistantMessageEvent, ContentBlock, DefaultRetryStrategy, LlmMessage, ModelSpec,
+    StopReason, StreamFn, StreamOptions, UserMessage, agent_loop, sliding_window,
 };
 
 // ─── ContextCapturingStreamFn ────────────────────────────────────────────
@@ -104,77 +105,7 @@ impl StreamFn for MessageCapturingStreamFn {
     }
 }
 
-// ─── MockTool ────────────────────────────────────────────────────────────
-
-/// A simple mock tool for testing.
-struct MockTool {
-    tool_name: String,
-    schema: serde_json::Value,
-}
-
-impl MockTool {
-    fn new(name: &str) -> Self {
-        Self {
-            tool_name: name.to_string(),
-            schema: json!({
-                "type": "object",
-                "properties": {},
-                "additionalProperties": true
-            }),
-        }
-    }
-}
-
-impl AgentTool for MockTool {
-    fn name(&self) -> &str {
-        &self.tool_name
-    }
-
-    fn label(&self) -> &str {
-        &self.tool_name
-    }
-
-    fn description(&self) -> &'static str {
-        "A mock tool for testing"
-    }
-
-    fn parameters_schema(&self) -> &serde_json::Value {
-        &self.schema
-    }
-
-    fn execute(
-        &self,
-        _tool_call_id: &str,
-        _params: serde_json::Value,
-        _cancellation_token: CancellationToken,
-        _on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
-    ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>> {
-        Box::pin(async { AgentToolResult::text("ok") })
-    }
-}
-
 // ─── Helpers ─────────────────────────────────────────────────────────────
-
-fn default_model() -> ModelSpec {
-    ModelSpec::new("test", "test-model")
-}
-
-fn text_only_events(text: &str) -> Vec<AssistantMessageEvent> {
-    vec![
-        AssistantMessageEvent::Start,
-        AssistantMessageEvent::TextStart { content_index: 0 },
-        AssistantMessageEvent::TextDelta {
-            content_index: 0,
-            delta: text.to_string(),
-        },
-        AssistantMessageEvent::TextEnd { content_index: 0 },
-        AssistantMessageEvent::Done {
-            stop_reason: StopReason::Stop,
-            usage: Usage::default(),
-            cost: Cost::default(),
-        },
-    ]
-}
 
 fn overflow_error_events() -> Vec<AssistantMessageEvent> {
     vec![AssistantMessageEvent::Error {
@@ -182,27 +113,6 @@ fn overflow_error_events() -> Vec<AssistantMessageEvent> {
         error_message: "context_length_exceeded: too many tokens".to_string(),
         usage: None,
     }]
-}
-
-fn tool_call_events(id: &str, name: &str, args: &str) -> Vec<AssistantMessageEvent> {
-    vec![
-        AssistantMessageEvent::Start,
-        AssistantMessageEvent::ToolCallStart {
-            content_index: 0,
-            id: id.to_string(),
-            name: name.to_string(),
-        },
-        AssistantMessageEvent::ToolCallDelta {
-            content_index: 0,
-            delta: args.to_string(),
-        },
-        AssistantMessageEvent::ToolCallEnd { content_index: 0 },
-        AssistantMessageEvent::Done {
-            stop_reason: StopReason::ToolUse,
-            usage: Usage::default(),
-            cost: Cost::default(),
-        },
-    ]
 }
 
 type ConvertToLlmBoxed = Box<dyn Fn(&AgentMessage) -> Option<LlmMessage> + Send + Sync>;
@@ -232,16 +142,6 @@ fn default_config(stream_fn: Arc<dyn StreamFn>) -> AgentLoopConfig {
         approve_tool: None,
         approval_mode: swink_agent::ApprovalMode::default(),
     }
-}
-
-/// Create a user message with the given text.
-fn user_msg(text: &str) -> AgentMessage {
-    AgentMessage::Llm(LlmMessage::User(UserMessage {
-        content: vec![ContentBlock::Text {
-            text: text.to_string(),
-        }],
-        timestamp: 0,
-    }))
 }
 
 /// Create a large user message (~`token_count` estimated tokens).

@@ -18,6 +18,8 @@
 - Setup wizard runs when `!credentials::any_key_configured()`. User can quit from wizard.
 - All paths use `dirs::config_dir()` — cross-platform (macOS, Linux, Windows).
 - Session and log directories are created automatically via `create_dir_all`.
+- `TuiError` enum in `tui/src/error.rs` replaces `Box<dyn Error>` in `main.rs`. Has `#[from]` variants for `io::Error` and `AgentError`.
+- Plan mode logic delegates to `agent.enter_plan_mode()` / `agent.exit_plan_mode()` in core. TUI just manages UI state (saved tools/prompt references, operating mode, system messages).
 
 ## Event Loop
 
@@ -41,6 +43,7 @@
 | `wizard.rs` | First-run setup wizard |
 | `format.rs` | Token/time formatting helpers |
 | `theme.rs` | ColorMode system, color resolution functions, style helpers |
+| `error.rs` | `TuiError` enum, typed error handling |
 | `ui/` | Rendering components (see `tui/src/ui/CLAUDE.md`) |
 
 ## Lessons Learned

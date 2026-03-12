@@ -14,6 +14,8 @@
 - All adapters implement `StreamFn` (Send + Sync, object-safe).
 - `MessageConverter` trait (convert.rs) eliminates per-adapter message format boilerplate. Each adapter implements 4 methods; `convert_messages()` handles iteration.
 - Tests use wiremock to mock provider responses — see `adapters/tests/`.
+- Provider modules (`anthropic`, `ollama`, `openai`) are now private (`mod` not `pub mod`). Public API is re-exports only (`AnthropicStreamFn`, `OllamaStreamFn`, `OpenAiStreamFn`).
+- `error_event()` in `convert.rs` now delegates to `AssistantMessageEvent::error()` from core.
 
 ## Protocols
 
@@ -31,6 +33,7 @@
 - **Ollama has no sentinel line** — unlike SSE adapters, the NDJSON stream ends when the `done` field is `true` in a response object. Parser checks this per-line.
 - **Bearer token auth** — Anthropic uses `x-api-key` header. OpenAI uses `Authorization: Bearer`. Ollama has no auth by default.
 - **convert.rs is private** — `MessageConverter` is `pub(crate)`, not re-exported. It's an internal abstraction, not part of the public API.
+- **Anthropic `convert_messages` is intentionally separate** — does NOT use the shared `MessageConverter` trait because Anthropic's API requires system prompt as a top-level field and thinking blocks must be filtered.
 
 ## Live Tests
 

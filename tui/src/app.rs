@@ -30,8 +30,6 @@ use crate::ui::tool_panel::ToolPanel;
 
 type AppResult<T> = Result<T, Box<dyn std::error::Error>>;
 
-const PLAN_MODE_ADDENDUM: &str = "\n\nYou are in planning mode. Analyze the request and produce a step-by-step plan. Do not make any modifications or execute any write operations.";
-
 /// Seconds before a tool result auto-collapses (unless user-expanded).
 const AUTO_COLLAPSE_SECS: u64 = 10;
 
@@ -1070,21 +1068,9 @@ impl App {
             return;
         };
 
-        // Save current tools
-        let all_tools = agent.state().tools.clone();
-        self.saved_tools = Some(all_tools.clone());
-
-        // Filter to read-only tools (requires_approval == false)
-        let read_only: Vec<Arc<dyn AgentTool>> = all_tools
-            .into_iter()
-            .filter(|t| !t.requires_approval())
-            .collect();
-        agent.set_tools(read_only);
-
-        // Save and modify system prompt
-        let current_prompt = agent.state().system_prompt.clone();
-        self.saved_system_prompt = Some(current_prompt.clone());
-        agent.set_system_prompt(format!("{current_prompt}{PLAN_MODE_ADDENDUM}"));
+        let (saved_tools, saved_prompt) = agent.enter_plan_mode();
+        self.saved_tools = Some(saved_tools);
+        self.saved_system_prompt = Some(saved_prompt);
 
         self.operating_mode = OperatingMode::Plan;
         self.push_system_message("Entered plan mode — read-only tools only.".to_string());
@@ -1095,14 +1081,8 @@ impl App {
             return;
         };
 
-        // Restore tools
-        if let Some(tools) = self.saved_tools.take() {
-            agent.set_tools(tools);
-        }
-
-        // Restore system prompt
-        if let Some(prompt) = self.saved_system_prompt.take() {
-            agent.set_system_prompt(prompt);
+        if let (Some(tools), Some(prompt)) = (self.saved_tools.take(), self.saved_system_prompt.take()) {
+            agent.exit_plan_mode(tools, prompt);
         }
 
         self.operating_mode = OperatingMode::Execute;

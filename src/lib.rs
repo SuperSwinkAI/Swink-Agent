@@ -10,13 +10,16 @@ pub mod stream;
 pub mod tool;
 pub mod tools;
 pub mod types;
+mod util;
 
 // Re-exports
-pub use agent::{Agent, AgentOptions, AgentState, FollowUpMode, SteeringMode, SubscriptionId};
+pub use agent::{
+    Agent, AgentOptions, AgentState, FollowUpMode, SteeringMode, SubscriptionId, default_convert,
+};
 pub use context::sliding_window;
 pub use error::AgentError;
 pub use loop_::{AgentEvent, AgentLoopConfig, agent_loop, agent_loop_continue};
-pub use message_provider::MessageProvider;
+pub use message_provider::{MessageProvider, from_fns};
 pub use proxy::ProxyStreamFn;
 pub use retry::{DefaultRetryStrategy, RetryStrategy};
 pub use stream::{

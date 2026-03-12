@@ -37,6 +37,7 @@ Follows Rust community conventions (RFC 430, Rust API Guidelines, clippy default
 - `lib.rs` re-exports the public API — consumers never reach into submodules directly.
 - Tools live in `src/tools/`, one file per tool. Adapters live in `adapters/src/`, one file per provider.
 - Shared conversion logic goes in a dedicated utility file (e.g., `convert.rs`).
+- `MessageProvider` implementations can use `from_fns()` for simple closure-based providers.
 
 ### Import Order
 
@@ -92,6 +93,8 @@ cargo run -p swink-agent-tui   # launch TUI (.env auto-loaded via dotenvy)
 
 MSRV is **1.88** (edition 2024). `rust-toolchain.toml` pins to stable channel.
 
+Workspace dependencies are centralized in the root `Cargo.toml` under `[workspace.dependencies]`. Subcrates use `dep.workspace = true`.
+
 ## Architecture Quick Reference
 
 | Module | PRD Section | Architecture Doc | Purpose |
@@ -105,6 +108,7 @@ MSRV is **1.88** (edition 2024). `rust-toolchain.toml` pins to stable channel.
 | `src/loop_.rs` | §8, §9, §12 | `docs/architecture/agent-loop/` | Agent loop, events, cancellation |
 | `src/error.rs` | §10 | `docs/architecture/error-handling/` | AgentError variants, retryable classification |
 | `src/retry.rs` | §11 | `docs/architecture/error-handling/` | RetryStrategy trait, exponential backoff |
+| `src/util.rs` | — | — | Shared helpers (`now_timestamp`) |
 | `src/tools/` | §4 | `docs/architecture/tool-system/` | BashTool, ReadFileTool, WriteFileTool |
 | `adapters/` | §7, §14.1, §15.1 | `docs/architecture/streaming/` | Ollama, Anthropic, OpenAI StreamFn adapters |
 | `memory/` | §5, §10.1 | `memory/docs/architecture/` | Session persistence, summarizing compaction |
@@ -119,6 +123,8 @@ MSRV is **1.88** (edition 2024). `rust-toolchain.toml` pins to stable channel.
 - Queues use `Arc<Mutex<>>` with `PoisonError::into_inner()` — never panics on poisoned locks.
 - `idle_notify` uses Tokio `Notify` pattern — `wait_for_idle()` blocks callers until the loop calls `notify_waiters()`.
 - `in_flight_llm_messages` filters out `CustomMessage` variants — they survive context compaction but never reach the provider.
+- `default_convert()` is the standard message converter; `AgentOptions::new_simple()` is a shortcut using it.
+- `enter_plan_mode()` / `exit_plan_mode()` manage plan mode state (tools + system prompt). Previously this logic lived in the TUI.
 
 ### Agent Loop (`src/loop_.rs`) — PRD §8, §9, §12
 
@@ -133,6 +139,7 @@ MSRV is **1.88** (edition 2024). `rust-toolchain.toml` pins to stable channel.
 - `StreamFn` requires `Send + Sync` and is stored as `Arc<dyn StreamFn>`.
 - `accumulate_message` enforces strict event ordering: exactly one Start, indexed content blocks, exactly one terminal event (Done/Error).
 - `partial_json` is consumed on `ToolCallEnd` — parsed exactly once. Empty string becomes `{}`, not null.
+- `AssistantMessageEvent::error()` is the canonical error event constructor. Adapters should use this instead of building the variant manually.
 
 ### Context (`src/context.rs`) — PRD §5
 
@@ -158,6 +165,15 @@ MSRV is **1.88** (edition 2024). `rust-toolchain.toml` pins to stable channel.
 - `AgentTool::execute()` returns `Pin<Box<dyn Future>>` for object safety.
 - `validate_tool_arguments` runs before `execute()` — if validation fails, tool is never executed.
 - `validation_error_result` joins all schema violations with newlines into a single text block.
+- `AgentToolResult.is_error` replaces the old `text.starts_with("error")` heuristic in `loop_.rs`. Use `error()` constructor for errors, `text()` for success.
+
+### Utilities (`src/util.rs`)
+
+- `now_timestamp()` — shared helper, previously duplicated in `agent.rs` and `loop_.rs`.
+
+### Testing (`tests/common/`)
+
+- Shared mocks (`MockStreamFn`, `MockTool`) and helpers (`text_only_events`, `tool_call_events`, etc.) live in `tests/common/mod.rs`. New tests should import from there.
 
 ### Retry (`src/retry.rs`) — PRD §11
 

@@ -13,7 +13,7 @@ use tokio_util::sync::CancellationToken;
 
 use swink_agent::{
     Agent, AgentMessage, AgentOptions, AssistantMessageEvent, ContentBlock, Cost, LlmMessage,
-    ModelSpec, StopReason, StreamFn, StreamOptions, Usage,
+    ModelSpec, StopReason, StreamFn, StreamOptions, Usage, default_convert,
 };
 
 // ─── Mock StreamFn ──────────────────────────────────────────────────────────
@@ -73,14 +73,6 @@ fn text_events(text: &str) -> Vec<AssistantMessageEvent> {
             cost: Cost::default(),
         },
     ]
-}
-
-/// Default message converter: pass LLM messages through, drop custom messages.
-fn default_convert(msg: &AgentMessage) -> Option<LlmMessage> {
-    match msg {
-        AgentMessage::Llm(llm) => Some(llm.clone()),
-        AgentMessage::Custom(_) => None,
-    }
 }
 
 // ─── Main ───────────────────────────────────────────────────────────────────

@@ -13,6 +13,7 @@ mod ui;
 
 pub mod app;
 pub mod config;
+pub mod error;
 
 #[doc(hidden)]
 pub mod credentials;

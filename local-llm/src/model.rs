@@ -122,12 +122,11 @@ impl LocalModel {
     }
 
     /// Builder method: attach a progress callback.
-    #[must_use]
-    pub fn with_progress(mut self, cb: ProgressCallbackFn) -> Self {
-        // Safe: we're the only holder at construction time.
-        Arc::get_mut(&mut self.inner).expect("with_progress called after clone").progress_cb =
-            Some(cb);
-        self
+    pub fn with_progress(mut self, cb: ProgressCallbackFn) -> Result<Self, LocalModelError> {
+        let inner = Arc::get_mut(&mut self.inner)
+            .ok_or_else(|| LocalModelError::inference("with_progress called after clone — Arc is shared"))?;
+        inner.progress_cb = Some(cb);
+        Ok(self)
     }
 
     /// Returns `true` if the model is loaded and ready for inference.

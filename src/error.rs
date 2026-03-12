@@ -89,3 +89,11 @@ impl AgentError {
         }
     }
 }
+
+impl From<std::io::Error> for AgentError {
+    fn from(err: std::io::Error) -> Self {
+        Self::NetworkError {
+            source: Box::new(err),
+        }
+    }
+}

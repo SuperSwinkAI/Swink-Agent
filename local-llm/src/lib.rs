@@ -11,7 +11,7 @@
 //! Both models are designed for `Arc<>` sharing so multiple in-process tasks
 //! can use the loaded models concurrently.
 
-pub mod convert;
+mod convert;
 pub mod embedding;
 pub mod error;
 pub mod model;

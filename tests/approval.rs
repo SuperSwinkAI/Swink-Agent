@@ -1,130 +1,23 @@
 //! Tests for the tool approval gate feature.
 
+mod common;
+
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use futures::Stream;
+use common::{MockStreamFn, MockTool, default_convert, default_model, user_msg};
 use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
 use swink_agent::{
     Agent, AgentEvent, AgentMessage, AgentOptions, AgentTool, AgentToolResult, ApprovalMode,
-    AssistantMessageEvent, ContentBlock, Cost, LlmMessage, ModelSpec, StopReason, StreamFn,
-    StreamOptions, ToolApproval, Usage, UserMessage,
+    AssistantMessageEvent, ContentBlock, Cost, LlmMessage, StopReason,
+    ToolApproval, Usage,
 };
 
-// ─── MockStreamFn ────────────────────────────────────────────────────────
-
-struct MockStreamFn {
-    responses: Mutex<Vec<Vec<AssistantMessageEvent>>>,
-}
-
-impl MockStreamFn {
-    const fn new(responses: Vec<Vec<AssistantMessageEvent>>) -> Self {
-        Self {
-            responses: Mutex::new(responses),
-        }
-    }
-}
-
-impl StreamFn for MockStreamFn {
-    fn stream<'a>(
-        &'a self,
-        _model: &'a ModelSpec,
-        _context: &'a swink_agent::AgentContext,
-        _options: &'a StreamOptions,
-        _cancellation_token: CancellationToken,
-    ) -> Pin<Box<dyn Stream<Item = AssistantMessageEvent> + Send + 'a>> {
-        let events = {
-            let mut responses = self.responses.lock().unwrap();
-            if responses.is_empty() {
-                vec![AssistantMessageEvent::Error {
-                    stop_reason: StopReason::Error,
-                    error_message: "no more scripted responses".to_string(),
-                    usage: None,
-                }]
-            } else {
-                responses.remove(0)
-            }
-        };
-        Box::pin(futures::stream::iter(events))
-    }
-}
-
-// ─── MockTool ────────────────────────────────────────────────────────────
-
-struct MockTool {
-    tool_name: String,
-    schema: Value,
-    executed: AtomicBool,
-    execute_count: AtomicU32,
-}
-
-impl MockTool {
-    fn new(name: &str) -> Self {
-        Self {
-            tool_name: name.to_string(),
-            schema: json!({
-                "type": "object",
-                "properties": {},
-                "additionalProperties": true
-            }),
-            executed: AtomicBool::new(false),
-            execute_count: AtomicU32::new(0),
-        }
-    }
-
-    fn was_executed(&self) -> bool {
-        self.executed.load(Ordering::SeqCst)
-    }
-}
-
-impl AgentTool for MockTool {
-    fn name(&self) -> &str {
-        &self.tool_name
-    }
-
-    fn label(&self) -> &str {
-        &self.tool_name
-    }
-
-    fn description(&self) -> &'static str {
-        "A mock tool for testing"
-    }
-
-    fn parameters_schema(&self) -> &Value {
-        &self.schema
-    }
-
-    fn execute(
-        &self,
-        _tool_call_id: &str,
-        _params: Value,
-        _cancellation_token: CancellationToken,
-        _on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
-    ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>> {
-        self.executed.store(true, Ordering::SeqCst);
-        self.execute_count.fetch_add(1, Ordering::SeqCst);
-        Box::pin(async { AgentToolResult::text("ok") })
-    }
-}
-
 // ─── Helpers ─────────────────────────────────────────────────────────────
-
-fn default_model() -> ModelSpec {
-    ModelSpec::new("test", "test-model")
-}
-
-fn user_msg(text: &str) -> AgentMessage {
-    AgentMessage::Llm(LlmMessage::User(UserMessage {
-        content: vec![ContentBlock::Text {
-            text: text.to_string(),
-        }],
-        timestamp: 0,
-    }))
-}
 
 fn tool_call_then_stop(id: &str, name: &str, args: &str) -> Vec<Vec<AssistantMessageEvent>> {
     vec![
@@ -163,13 +56,6 @@ fn tool_call_then_stop(id: &str, name: &str, args: &str) -> Vec<Vec<AssistantMes
             },
         ],
     ]
-}
-
-fn default_convert(msg: &AgentMessage) -> Option<LlmMessage> {
-    match msg {
-        AgentMessage::Llm(llm) => Some(llm.clone()),
-        AgentMessage::Custom(_) => None,
-    }
 }
 
 fn make_agent(

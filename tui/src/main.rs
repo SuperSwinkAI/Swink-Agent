@@ -3,9 +3,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use swink_agent::{
-    Agent, AgentMessage, AgentOptions, ModelSpec, ProxyStreamFn, StreamFn,
-};
+use swink_agent::{Agent, AgentOptions, ModelSpec, ProxyStreamFn, StreamFn};
 use swink_agent_adapters::{AnthropicStreamFn, OllamaStreamFn, OpenAiStreamFn};
 
 use swink_agent_tui::{
@@ -13,7 +11,7 @@ use swink_agent_tui::{
     setup_terminal, tui_approval_callback, wizard,
 };
 
-type AppResult<T> = Result<T, Box<dyn std::error::Error>>;
+type AppResult<T> = Result<T, swink_agent_tui::error::TuiError>;
 
 fn main() -> AppResult<()> {
     dotenvy::dotenv().ok();
@@ -69,6 +67,7 @@ fn run(
             create_agent(system_prompt, approval_tx)
         })
         .await
+        .map_err(|e| swink_agent_tui::error::TuiError::Other(e.to_string().into()))
     })
 }
 
@@ -175,10 +174,7 @@ fn build_agent(
     approval_tx: &ApprovalSender,
 ) -> Agent {
     Agent::new(
-        AgentOptions::new(system_prompt, model, stream_fn, |msg: &AgentMessage| match msg {
-            AgentMessage::Llm(llm) => Some(llm.clone()),
-            AgentMessage::Custom(_) => None,
-        })
+        AgentOptions::new(system_prompt, model, stream_fn, swink_agent::default_convert)
         .with_approve_tool(tui_approval_callback(approval_tx)),
 
     )

@@ -72,6 +72,7 @@ fn convert_tool_result(messages: TextMessages, result: &ToolResultMessage) -> Te
 /// Each tool's `name()`, `description()`, and `parameters_schema()` are
 /// mapped to the OpenAI-compatible function calling format that mistral.rs
 /// expects.
+#[allow(dead_code)] // Will be used when tool calling is wired into the stream.
 pub fn convert_tools(context: &AgentContext) -> Vec<Tool> {
     context
         .tools
@@ -106,6 +107,7 @@ pub fn convert_tools(context: &AgentContext) -> Vec<Tool> {
 }
 
 /// Serialize tools to JSON strings for the `tool_schemas` parameter.
+#[allow(dead_code)] // Used in tests; will be used in production when tool calling is wired in.
 pub fn tool_schemas_json(context: &AgentContext) -> Vec<String> {
     context
         .tools

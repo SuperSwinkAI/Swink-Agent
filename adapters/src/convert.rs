@@ -7,7 +7,7 @@
 
 use swink_agent::stream::AssistantMessageEvent;
 use swink_agent::types::{
-    AgentMessage, AssistantMessage, LlmMessage, StopReason, ToolResultMessage, UserMessage,
+    AgentMessage, AssistantMessage, LlmMessage, ToolResultMessage, UserMessage,
 };
 
 // ─── MessageConverter trait ─────────────────────────────────────────────────
@@ -71,14 +71,10 @@ pub fn convert_messages<C: MessageConverter>(
 
 /// Create an error event.
 ///
-/// All adapters use the same shape for stream-level errors, so this lives here
-/// to avoid duplication.
+/// Delegates to [`AssistantMessageEvent::error`] — kept for backward
+/// compatibility within the adapters crate.
 pub fn error_event(message: &str) -> AssistantMessageEvent {
-    AssistantMessageEvent::Error {
-        stop_reason: StopReason::Error,
-        error_message: message.to_string(),
-        usage: None,
-    }
+    AssistantMessageEvent::error(message)
 }
 
 #[cfg(test)]

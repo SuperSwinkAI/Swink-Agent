@@ -1,9 +1,9 @@
 #![forbid(unsafe_code)]
-pub mod anthropic;
+mod anthropic;
 mod convert;
-pub mod ollama;
+mod ollama;
 #[allow(clippy::doc_markdown)] // "OpenAI" is a proper noun, not code.
-pub mod openai;
+mod openai;
 
 pub use anthropic::AnthropicStreamFn;
 pub use ollama::OllamaStreamFn;

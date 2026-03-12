@@ -1,9 +1,12 @@
+mod common;
+
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use common::{MockStreamFn, MockTool, default_model, text_only_events, tool_call_events};
 use futures::Stream;
 use futures::stream::StreamExt;
 use serde_json::json;
@@ -15,46 +18,6 @@ use swink_agent::{
     MessageProvider, ModelSpec, StopReason, StreamFn, StreamOptions, ToolResultMessage, Usage,
     UserMessage, agent_loop,
 };
-
-// ─── MockStreamFn ────────────────────────────────────────────────────────
-
-/// A mock `StreamFn` that yields scripted event sequences.
-struct MockStreamFn {
-    /// Each call to `stream()` pops the next sequence from the front.
-    responses: Mutex<Vec<Vec<AssistantMessageEvent>>>,
-}
-
-impl MockStreamFn {
-    const fn new(responses: Vec<Vec<AssistantMessageEvent>>) -> Self {
-        Self {
-            responses: Mutex::new(responses),
-        }
-    }
-}
-
-impl StreamFn for MockStreamFn {
-    fn stream<'a>(
-        &'a self,
-        _model: &'a ModelSpec,
-        _context: &'a AgentContext,
-        _options: &'a StreamOptions,
-        _cancellation_token: CancellationToken,
-    ) -> Pin<Box<dyn Stream<Item = AssistantMessageEvent> + Send + 'a>> {
-        let events = {
-            let mut responses = self.responses.lock().unwrap();
-            if responses.is_empty() {
-                vec![AssistantMessageEvent::Error {
-                    stop_reason: StopReason::Error,
-                    error_message: "no more scripted responses".to_string(),
-                    usage: None,
-                }]
-            } else {
-                responses.remove(0)
-            }
-        };
-        Box::pin(futures::stream::iter(events))
-    }
-}
 
 // ─── ContextCapturingStreamFn ────────────────────────────────────────────
 
@@ -144,16 +107,7 @@ impl StreamFn for ContextCapturingStreamFn {
     }
 }
 
-// ─── MockTool ────────────────────────────────────────────────────────────
-
-/// A configurable mock tool for testing.
-struct MockTool {
-    tool_name: String,
-    schema: serde_json::Value,
-    result: Mutex<Option<AgentToolResult>>,
-    delay: Option<Duration>,
-    executed: AtomicBool,
-}
+// ─── UpdatingTool ─────────────────────────────────────────────────────────
 
 struct UpdatingTool {
     tool_name: String,
@@ -164,83 +118,6 @@ impl UpdatingTool {
         Self {
             tool_name: name.to_string(),
         }
-    }
-}
-
-impl MockTool {
-    fn new(name: &str) -> Self {
-        Self {
-            tool_name: name.to_string(),
-            schema: json!({
-                "type": "object",
-                "properties": {},
-                "additionalProperties": true
-            }),
-            result: Mutex::new(Some(AgentToolResult::text("ok"))),
-            delay: None,
-            executed: AtomicBool::new(false),
-        }
-    }
-
-    fn with_schema(mut self, schema: serde_json::Value) -> Self {
-        self.schema = schema;
-        self
-    }
-
-    #[allow(dead_code)]
-    fn with_result(self, result: AgentToolResult) -> Self {
-        *self.result.lock().unwrap() = Some(result);
-        self
-    }
-
-    const fn with_delay(mut self, delay: Duration) -> Self {
-        self.delay = Some(delay);
-        self
-    }
-
-    fn was_executed(&self) -> bool {
-        self.executed.load(Ordering::SeqCst)
-    }
-}
-
-impl AgentTool for MockTool {
-    fn name(&self) -> &str {
-        &self.tool_name
-    }
-
-    fn label(&self) -> &str {
-        &self.tool_name
-    }
-
-    fn description(&self) -> &'static str {
-        "A mock tool for testing"
-    }
-
-    fn parameters_schema(&self) -> &serde_json::Value {
-        &self.schema
-    }
-
-    fn execute(
-        &self,
-        _tool_call_id: &str,
-        _params: serde_json::Value,
-        _cancellation_token: CancellationToken,
-        _on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
-    ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>> {
-        self.executed.store(true, Ordering::SeqCst);
-        let result = self
-            .result
-            .lock()
-            .unwrap()
-            .clone()
-            .unwrap_or_else(|| AgentToolResult::text("ok"));
-        let delay = self.delay;
-        Box::pin(async move {
-            if let Some(d) = delay {
-                tokio::time::sleep(d).await;
-            }
-            result
-        })
     }
 }
 
@@ -286,48 +163,6 @@ impl AgentTool for UpdatingTool {
 }
 
 // ─── Helper functions ────────────────────────────────────────────────────
-
-fn default_model() -> ModelSpec {
-    ModelSpec::new("test", "test-model")
-}
-
-fn text_only_events(text: &str) -> Vec<AssistantMessageEvent> {
-    vec![
-        AssistantMessageEvent::Start,
-        AssistantMessageEvent::TextStart { content_index: 0 },
-        AssistantMessageEvent::TextDelta {
-            content_index: 0,
-            delta: text.to_string(),
-        },
-        AssistantMessageEvent::TextEnd { content_index: 0 },
-        AssistantMessageEvent::Done {
-            stop_reason: StopReason::Stop,
-            usage: Usage::default(),
-            cost: Cost::default(),
-        },
-    ]
-}
-
-fn tool_call_events(id: &str, name: &str, args: &str) -> Vec<AssistantMessageEvent> {
-    vec![
-        AssistantMessageEvent::Start,
-        AssistantMessageEvent::ToolCallStart {
-            content_index: 0,
-            id: id.to_string(),
-            name: name.to_string(),
-        },
-        AssistantMessageEvent::ToolCallDelta {
-            content_index: 0,
-            delta: args.to_string(),
-        },
-        AssistantMessageEvent::ToolCallEnd { content_index: 0 },
-        AssistantMessageEvent::Done {
-            stop_reason: StopReason::ToolUse,
-            usage: Usage::default(),
-            cost: Cost::default(),
-        },
-    ]
-}
 
 /// Test helper that delegates to closures for steering/follow-up.
 struct MockMessageProvider {

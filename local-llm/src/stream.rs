@@ -75,7 +75,7 @@ fn local_stream<'a>(
     stream::once(async move {
         // Step 1: Ensure model is downloaded and loaded.
         if let Err(e) = local_model.ensure_ready().await {
-            return stream::iter(vec![error_event(&format!(
+            return stream::iter(vec![AssistantMessageEvent::error(format!(
                 "local model not ready: {e}"
             ))])
             .left_stream();
@@ -96,7 +96,7 @@ fn local_stream<'a>(
         let state_guard = match local_model.runner().await {
             Ok(guard) => guard,
             Err(e) => {
-                return stream::iter(vec![error_event(&format!(
+                return stream::iter(vec![AssistantMessageEvent::error(format!(
                     "model runner unavailable: {e}"
                 ))])
                 .left_stream();
@@ -104,7 +104,7 @@ fn local_stream<'a>(
         };
 
         let ModelState::Ready { runner } = &*state_guard else {
-            return stream::iter(vec![error_event("model in unexpected state")])
+            return stream::iter(vec![AssistantMessageEvent::error("model in unexpected state")])
                 .left_stream();
         };
 
@@ -115,7 +115,7 @@ fn local_stream<'a>(
             Ok(resp) => resp,
             Err(e) => {
                 error!(error = %e, "local inference failed");
-                return stream::iter(vec![error_event(&format!(
+                return stream::iter(vec![AssistantMessageEvent::error(format!(
                     "local inference error: {e}"
                 ))])
                 .left_stream();
@@ -148,7 +148,7 @@ fn response_to_events(
 
     // Extract the first choice.
     let Some(choice) = response.choices.first() else {
-        events.push(error_event("no choices in response"));
+        events.push(AssistantMessageEvent::error("no choices in response"));
         return events;
     };
 
@@ -278,13 +278,6 @@ fn extract_thinking(content: &str) -> (Option<String>, String) {
     (None, content.to_string())
 }
 
-fn error_event(message: &str) -> AssistantMessageEvent {
-    AssistantMessageEvent::Error {
-        stop_reason: StopReason::Error,
-        error_message: message.to_string(),
-        usage: None,
-    }
-}
 
 // ─── Compile-time assertions ────────────────────────────────────────────────
 

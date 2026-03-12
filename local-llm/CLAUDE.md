@@ -16,6 +16,8 @@
 - `ModelState` lifecycle: `Unloaded → Downloading → Loading → Ready { runner }` (or `Failed { error }`). State transitions serialized by `RwLock`.
 - `Notify` pattern for `wait_until_ready()` — same as `agent.rs::idle_notify`.
 - `forbid(unsafe_code)` at crate root. If mistralrs macros ever conflict, downgrade to `deny(unsafe_code)` and document here.
+- `convert` module is now private (`mod` not `pub mod`) — internal implementation detail.
+- Error types use `#[derive(thiserror::Error)]` — convenience constructors (`download()`, `loading()`, `inference()`) are preserved.
 
 ## Lessons Learned
 
@@ -25,6 +27,8 @@
 - **Cost is always zero** — Local inference has no per-token cost. `Cost` fields are all 0.0.
 - **mistralrs version pin** — Pin to a specific minor version to avoid breaking API changes. The mistralrs API is actively evolving and not yet stable.
 - **Embedding model uses `EmbeddingModelBuilder`** — mistral.rs has a dedicated builder for embedding models, separate from `GgufModelBuilder`/`TextModelBuilder`. The `send_embedding_request` method returns vectors directly.
+- **`with_progress` returns `Result`** — `LocalModel::with_progress()` and `EmbeddingModel::with_progress()` return `Result<Self, LocalModelError>` instead of panicking on shared `Arc`. Call before cloning.
+- **Use `AssistantMessageEvent::error()`** — local stream uses the core constructor instead of a local `error_event` function.
 
 ## Live Tests
 

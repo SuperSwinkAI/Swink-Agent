@@ -10,8 +10,8 @@
 use std::sync::Arc;
 
 use swink_agent::{
-    Agent, AgentMessage, AgentOptions, AgentTool, BashTool, ModelSpec, ReadFileTool, StreamFn,
-    WriteFileTool,
+    Agent, AgentOptions, AgentTool, BashTool, ModelSpec, ReadFileTool, StreamFn, WriteFileTool,
+    default_convert,
 };
 use swink_agent_adapters::AnthropicStreamFn;
 use swink_agent_tui::{
@@ -49,10 +49,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "You are a helpful coding assistant.",
             model,
             stream_fn,
-            |msg: &AgentMessage| match msg {
-                AgentMessage::Llm(llm) => Some(llm.clone()),
-                AgentMessage::Custom(_) => None,
-            },
+            default_convert,
         )
         .with_tools(tools)
         .with_approve_tool(tui_approval_callback(approval_tx));

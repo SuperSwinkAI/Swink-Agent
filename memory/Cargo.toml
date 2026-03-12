@@ -12,16 +12,16 @@ categories = ["development-tools", "data-structures"]
 
 [dependencies]
 swink-agent = { path = ".." }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-tokio = { version = "1", features = ["sync"] }
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
 dirs = "6"
-tracing = "0.1"
+tracing.workspace = true
 
 [dev-dependencies]
-tempfile = "3"
-tokio = { version = "1", features = ["full", "test-util"] }
-pretty_assertions = "1"
+tempfile.workspace = true
+tokio = { workspace = true, features = ["full", "test-util"] }
+pretty_assertions.workspace = true
 
 [lints.rust]
 unsafe_code = "forbid"

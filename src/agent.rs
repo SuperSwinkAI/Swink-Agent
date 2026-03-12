@@ -19,6 +19,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use crate::error::AgentError;
+use crate::util::now_timestamp;
 use crate::loop_::ApproveToolFn;
 use crate::loop_::{AgentEvent, AgentLoopConfig, agent_loop, agent_loop_continue};
 use crate::message_provider::MessageProvider;
@@ -73,6 +74,9 @@ type GetApiKeyFn =
     Arc<dyn Fn(&str) -> Pin<Box<dyn Future<Output = Option<String>> + Send>> + Send + Sync>;
 type ListenerFn = Box<dyn Fn(&AgentEvent) + Send + Sync>;
 type ApproveToolArc = Arc<ApproveToolFn>;
+
+/// System prompt addendum appended in plan mode.
+const PLAN_MODE_ADDENDUM: &str = "\n\nYou are in planning mode. Analyze the request and produce a step-by-step plan. Do not make any modifications or execute any write operations.";
 
 // ─── AgentState ──────────────────────────────────────────────────────────────
 
@@ -172,6 +176,18 @@ impl AgentOptions {
         }
     }
 
+    /// Simplified constructor using [`default_convert`] and sensible defaults.
+    ///
+    /// Equivalent to `AgentOptions::new(system_prompt, model, stream_fn, default_convert)`.
+    #[must_use]
+    pub fn new_simple(
+        system_prompt: impl Into<String>,
+        model: ModelSpec,
+        stream_fn: Arc<dyn StreamFn>,
+    ) -> Self {
+        Self::new(system_prompt, model, stream_fn, default_convert)
+    }
+
     /// Set the available tools.
     #[must_use]
     pub fn with_tools(mut self, tools: Vec<Arc<dyn AgentTool>>) -> Self {
@@ -252,6 +268,19 @@ impl AgentOptions {
     pub const fn with_approval_mode(mut self, mode: ApprovalMode) -> Self {
         self.approval_mode = mode;
         self
+    }
+}
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+/// Default message converter: pass LLM messages through, drop custom messages.
+///
+/// This is the standard converter for most use cases. Custom messages are
+/// filtered out since they are not meant to be sent to the LLM provider.
+pub fn default_convert(msg: &AgentMessage) -> Option<LlmMessage> {
+    match msg {
+        AgentMessage::Llm(llm) => Some(llm.clone()),
+        AgentMessage::Custom(_) => None,
     }
 }
 
@@ -367,6 +396,38 @@ impl Agent {
     /// Clear the message history.
     pub fn clear_messages(&mut self) {
         self.state.messages.clear();
+    }
+
+    // ── Plan Mode ───────────────────────────────────────────────────────
+
+    /// Enter plan mode: restrict to read-only tools and append plan instructions.
+    ///
+    /// Saves the current tools and system prompt so they can be restored by
+    /// [`exit_plan_mode`](Self::exit_plan_mode). Read-only tools are those where
+    /// `requires_approval() == false`.
+    pub fn enter_plan_mode(&mut self) -> (Vec<Arc<dyn AgentTool>>, String) {
+        let state = &mut self.state;
+        let saved_tools = state.tools.clone();
+        let saved_prompt = state.system_prompt.clone();
+
+        // Filter to read-only tools
+        let read_only: Vec<Arc<dyn AgentTool>> = saved_tools
+            .iter()
+            .filter(|t| !t.requires_approval())
+            .cloned()
+            .collect();
+        state.tools = read_only;
+
+        // Append plan mode addendum
+        state.system_prompt = format!("{}{PLAN_MODE_ADDENDUM}", state.system_prompt);
+
+        (saved_tools, saved_prompt)
+    }
+
+    /// Exit plan mode: restore previously saved tools and system prompt.
+    pub fn exit_plan_mode(&mut self, saved_tools: Vec<Arc<dyn AgentTool>>, saved_prompt: String) {
+        self.state.tools = saved_tools;
+        self.state.system_prompt = saved_prompt;
     }
 
     // ── Queue Management ─────────────────────────────────────────────────
@@ -1181,9 +1242,3 @@ fn find_structured_output_call_id(result: &AgentResult) -> Option<String> {
     None
 }
 
-/// Get the current Unix timestamp in seconds.
-fn now_timestamp() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs())
-}

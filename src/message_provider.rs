@@ -25,3 +25,49 @@ pub trait MessageProvider: Send + Sync {
     /// Returning a non-empty vec triggers another outer-loop iteration.
     fn poll_follow_up(&self) -> Vec<AgentMessage>;
 }
+
+/// A [`MessageProvider`] built from two closures.
+///
+/// Created via [`from_fns`].
+pub struct FnMessageProvider<S, F>
+where
+    S: Fn() -> Vec<AgentMessage> + Send + Sync,
+    F: Fn() -> Vec<AgentMessage> + Send + Sync,
+{
+    steering: S,
+    follow_up: F,
+}
+
+impl<S, F> MessageProvider for FnMessageProvider<S, F>
+where
+    S: Fn() -> Vec<AgentMessage> + Send + Sync,
+    F: Fn() -> Vec<AgentMessage> + Send + Sync,
+{
+    fn poll_steering(&self) -> Vec<AgentMessage> {
+        (self.steering)()
+    }
+
+    fn poll_follow_up(&self) -> Vec<AgentMessage> {
+        (self.follow_up)()
+    }
+}
+
+/// Create a [`MessageProvider`] from two closures.
+///
+/// # Example
+///
+/// ```
+/// use swink_agent::message_provider::from_fns;
+///
+/// let provider = from_fns(
+///     || vec![],  // no steering messages
+///     || vec![],  // no follow-up messages
+/// );
+/// ```
+pub const fn from_fns<S, F>(steering: S, follow_up: F) -> FnMessageProvider<S, F>
+where
+    S: Fn() -> Vec<AgentMessage> + Send + Sync,
+    F: Fn() -> Vec<AgentMessage> + Send + Sync,
+{
+    FnMessageProvider { steering, follow_up }
+}

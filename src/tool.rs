@@ -27,6 +27,8 @@ pub struct AgentToolResult {
     pub content: Vec<ContentBlock>,
     /// Structured data for logging and display; not sent to the LLM.
     pub details: Value,
+    /// Whether this result represents an error condition.
+    pub is_error: bool,
 }
 
 impl AgentToolResult {
@@ -35,6 +37,7 @@ impl AgentToolResult {
         Self {
             content: vec![ContentBlock::Text { text: text.into() }],
             details: Value::Null,
+            is_error: false,
         }
     }
 
@@ -49,6 +52,7 @@ impl AgentToolResult {
                 text: message.into(),
             }],
             details: Value::Null,
+            is_error: true,
         }
     }
 }

@@ -18,6 +18,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, debug, error, info, info_span, warn};
 
 use crate::error::AgentError;
+use crate::util::now_timestamp;
 use crate::retry::RetryStrategy;
 use crate::stream::{
     AssistantMessageDelta, AssistantMessageEvent, StreamFn, StreamOptions, accumulate_message,
@@ -789,12 +790,6 @@ enum ToolExecOutcome {
     ChannelClosed,
 }
 
-/// Get the current Unix timestamp in seconds.
-fn now_timestamp() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs())
-}
 
 /// Build an aborted `AssistantMessage`.
 fn build_abort_message(model: &ModelSpec) -> AssistantMessage {
@@ -1340,10 +1335,7 @@ async fn dispatch_single_tool(
                 let result = tool
                     .execute(&tool_call_id, arguments, child_token, Some(on_update))
                     .await;
-                let is_error = result
-                    .content
-                    .iter()
-                    .any(|b| matches!(b, ContentBlock::Text { text } if text.starts_with("error")));
+                let is_error = result.is_error;
                 (result, is_error)
             };
             debug!(tool = %tool_name, id = %tool_call_id, is_error, "tool execution finished");

@@ -13,7 +13,7 @@ use tokio_util::sync::CancellationToken;
 use swink_agent::{
     Agent, AgentMessage, AgentOptions, AssistantMessageEvent, BashTool, ContentBlock, Cost,
     LlmMessage, ModelSpec, ReadFileTool, StopReason, StreamFn, StreamOptions, ToolApproval,
-    ToolApprovalRequest, Usage, WriteFileTool,
+    ToolApprovalRequest, Usage, WriteFileTool, default_convert,
 };
 
 // ─── Mock StreamFn ──────────────────────────────────────────────────────────
@@ -72,13 +72,6 @@ fn text_events(text: &str) -> Vec<AssistantMessageEvent> {
             cost: Cost::default(),
         },
     ]
-}
-
-fn default_convert(msg: &AgentMessage) -> Option<LlmMessage> {
-    match msg {
-        AgentMessage::Llm(llm) => Some(llm.clone()),
-        AgentMessage::Custom(_) => None,
-    }
 }
 
 // ─── Main ───────────────────────────────────────────────────────────────────

@@ -114,6 +114,20 @@ pub enum AssistantMessageEvent {
     },
 }
 
+impl AssistantMessageEvent {
+    /// Create a stream error event.
+    ///
+    /// Convenience constructor used by adapters when the stream encounters
+    /// an error condition.
+    pub fn error(message: impl Into<String>) -> Self {
+        Self::Error {
+            stop_reason: StopReason::Error,
+            error_message: message.into(),
+            usage: None,
+        }
+    }
+}
+
 // ─── AssistantMessageDelta ───────────────────────────────────────────────────
 
 /// A typed incremental update during streaming, used in `MessageUpdate` events.
