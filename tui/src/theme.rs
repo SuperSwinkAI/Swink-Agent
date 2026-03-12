@@ -187,6 +187,46 @@ pub fn heading_color() -> Color {
 }
 
 // ---------------------------------------------------------------------------
+// Contrast helpers (bypass `resolve()` to guarantee fg ≠ bg)
+// ---------------------------------------------------------------------------
+
+/// Foreground for monochrome badge text.
+#[allow(dead_code)]
+pub fn mono_fg() -> Color {
+    match color_mode() {
+        ColorMode::Custom | ColorMode::MonoWhite => Color::White,
+        ColorMode::MonoBlack => Color::Black,
+    }
+}
+
+/// Background for monochrome badges.
+#[allow(dead_code)]
+pub fn mono_bg() -> Color {
+    match color_mode() {
+        ColorMode::Custom => Color::DarkGray,
+        ColorMode::MonoWhite => Color::Black,
+        ColorMode::MonoBlack => Color::White,
+    }
+}
+
+/// Status bar background.
+pub fn bar_bg() -> Color {
+    match color_mode() {
+        ColorMode::Custom => Color::DarkGray,
+        ColorMode::MonoWhite => Color::Black,
+        ColorMode::MonoBlack => Color::White,
+    }
+}
+
+/// Status bar foreground.
+pub fn bar_fg() -> Color {
+    match color_mode() {
+        ColorMode::Custom | ColorMode::MonoWhite => Color::White,
+        ColorMode::MonoBlack => Color::Black,
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Style helpers
 // ---------------------------------------------------------------------------
 
@@ -272,6 +312,16 @@ mod tests {
         assert_eq!(status_idle(), Color::Black);
         assert_eq!(border_color(), Color::Black);
         assert_eq!(heading_color(), Color::Black);
+        reset();
+    }
+
+    #[test]
+    fn bar_colors_have_contrast_in_all_modes() {
+        for mode in [ColorMode::Custom, ColorMode::MonoWhite, ColorMode::MonoBlack] {
+            set_color_mode(mode);
+            assert_ne!(bar_fg(), bar_bg(), "bar_fg == bar_bg in {mode:?}");
+            assert_ne!(mono_fg(), mono_bg(), "mono_fg == mono_bg in {mode:?}");
+        }
         reset();
     }
 

@@ -3,7 +3,7 @@
 use ratatui::{
     Frame,
     layout::Rect,
-    style::{Color, Style},
+    style::Style,
     text::{Line, Span},
     widgets::Paragraph,
 };
@@ -30,7 +30,7 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         Span::styled(
             format!(" {status_text} "),
             Style::default()
-                .fg(Color::Black)
+                .fg(theme::bar_bg())
                 .bg(status_color),
         ),
     ];
@@ -40,7 +40,7 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         spans.push(Span::styled(
             " PLAN ",
             Style::default()
-                .fg(Color::White)
+                .fg(theme::bar_bg())
                 .bg(theme::plan_color()),
         ));
     }
@@ -56,8 +56,8 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         spans.push(Span::styled(
             label,
             Style::default()
-                .fg(Color::Black)
-                .bg(Color::White),
+                .fg(theme::bar_bg())
+                .bg(theme::bar_fg()),
         ));
     }
 
@@ -97,6 +97,6 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
     }
 
     let status = Line::from(spans);
-    let bar = Paragraph::new(status).style(Style::default().bg(theme::border_color()));
+    let bar = Paragraph::new(status).style(Style::default().bg(theme::bar_bg()).fg(theme::bar_fg()));
     frame.render_widget(bar, area);
 }
