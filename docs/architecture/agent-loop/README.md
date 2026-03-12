@@ -146,33 +146,33 @@ Every event emitted during a normal two-turn run with one tool call per turn.
 
 ```mermaid
 sequenceDiagram
-    participant Loop as run_loop
+    participant RunLoop as run_loop
     participant Sub as Subscriber
 
-    Loop->>Sub: AgentStart
+    RunLoop->>Sub: AgentStart
 
-    Note over Loop: — Turn 1 —
-    Loop->>Sub: TurnStart
-    Loop->>Sub: MessageStart (assistant)
+    Note over RunLoop: — Turn 1 —
+    RunLoop->>Sub: TurnStart
+    RunLoop->>Sub: MessageStart (assistant)
     loop streaming
-        Loop->>Sub: MessageUpdate (delta)
+        RunLoop->>Sub: MessageUpdate (delta)
     end
-    Loop->>Sub: MessageEnd (assistant)
-    Loop->>Sub: ToolExecutionStart (tool_call_id, name, args)
+    RunLoop->>Sub: MessageEnd (assistant)
+    RunLoop->>Sub: ToolExecutionStart (tool_call_id, name, args)
     Note right of Sub: ToolExecutionUpdate is reserved<br/>for future use (never emitted today)
-    Loop->>Sub: ToolExecutionEnd (result, is_error)
-    Loop->>Sub: TurnEnd (assistant message + tool results)
+    RunLoop->>Sub: ToolExecutionEnd (result, is_error)
+    RunLoop->>Sub: TurnEnd (assistant message + tool results)
 
-    Note over Loop: — Turn 2 —
-    Loop->>Sub: TurnStart
-    Loop->>Sub: MessageStart (assistant)
+    Note over RunLoop: — Turn 2 —
+    RunLoop->>Sub: TurnStart
+    RunLoop->>Sub: MessageStart (assistant)
     loop streaming
-        Loop->>Sub: MessageUpdate (delta)
+        RunLoop->>Sub: MessageUpdate (delta)
     end
-    Loop->>Sub: MessageEnd (assistant)
-    Loop->>Sub: TurnEnd (assistant message, no tool results)
+    RunLoop->>Sub: MessageEnd (assistant)
+    RunLoop->>Sub: TurnEnd (assistant message, no tool results)
 
-    Loop->>Sub: AgentEnd (all new messages)
+    RunLoop->>Sub: AgentEnd (all new messages)
 ```
 
 ---
@@ -185,23 +185,23 @@ Steering messages cause the loop to abandon remaining tools in the current batch
 sequenceDiagram
     participant App as Application
     participant Agent as Agent Struct
-    participant Loop as run_loop
+    participant RunLoop as run_loop
     participant Tools as Tool Executor
 
-    Note over Loop: executing tool batch [A, B, C]...
-    Loop->>Tools: execute tool A
-    Tools-->>Loop: result A
-    Loop->>Agent: poll get_steering_messages()
+    Note over RunLoop: executing tool batch [A, B, C]...
+    RunLoop->>Tools: execute tool A
+    Tools-->>RunLoop: result A
+    RunLoop->>Agent: poll get_steering_messages()
     Note over App: App calls agent.steer(msg)
-    Agent-->>Loop: [steering message]
+    Agent-->>RunLoop: [steering message]
 
-    Note over Loop: cancel tools B and C via CancellationToken
-    Loop->>Loop: emit ToolExecutionEnd(error: "tool call cancelled: user requested steering interrupt") for B, C
-    Loop->>Loop: emit TurnEnd
-    Loop->>Loop: push steering message to pending
-    Loop->>Loop: new TurnStart
-    Loop->>Loop: inject steering message into context
-    Note over Loop: continues with next assistant turn
+    Note over RunLoop: cancel tools B and C via CancellationToken
+    RunLoop->>RunLoop: emit ToolExecutionEnd(error: "tool call cancelled: user requested steering interrupt") for B, C
+    RunLoop->>RunLoop: emit TurnEnd
+    RunLoop->>RunLoop: push steering message to pending
+    RunLoop->>RunLoop: new TurnStart
+    RunLoop->>RunLoop: inject steering message into context
+    Note over RunLoop: continues with next assistant turn
 ```
 
 ---

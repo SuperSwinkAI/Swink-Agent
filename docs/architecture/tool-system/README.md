@@ -263,29 +263,29 @@ Structured output is implemented as a synthetic tool injected alongside the call
 sequenceDiagram
     participant App as Application
     participant Agent as Agent Struct
-    participant Loop as run_loop
+    participant RunLoop as run_loop
     participant LLM as LLM Provider
     participant Validator as Schema Validator
 
     App->>Agent: structured_output(prompt, schema)
     Agent->>Agent: create StructuredOutputTool from schema
     Agent->>Agent: inject into tool registry for this call
-    Agent->>Loop: launch loop with modified system prompt<br/>("you must call structured_output as your final action")
+    Agent->>RunLoop: launch loop with modified system prompt<br/>("you must call structured_output as your final action")
 
-    Loop->>LLM: stream turn
-    LLM-->>Loop: AssistantMessage with ToolCall(structured_output, data)
+    RunLoop->>LLM: stream turn
+    LLM-->>RunLoop: AssistantMessage with ToolCall(structured_output, data)
 
-    Loop->>Validator: validate data against schema
+    RunLoop->>Validator: validate data against schema
     alt valid
-        Validator-->>Loop: Ok(Value)
-        Loop-->>Agent: AgentResult with structured_output: Value
+        Validator-->>RunLoop: Ok(Value)
+        RunLoop-->>Agent: AgentResult with structured_output: Value
         Agent-->>App: Ok(typed result)
     else invalid, retries remaining
-        Validator-->>Loop: Err(field errors)
-        Loop->>Loop: inject validation error as user message
-        Loop->>LLM: retry turn
+        Validator-->>RunLoop: Err(field errors)
+        RunLoop->>RunLoop: inject validation error as user message
+        RunLoop->>LLM: retry turn
     else max retries exceeded
-        Loop-->>Agent: Err(StructuredOutputFailed)
+        RunLoop-->>Agent: Err(StructuredOutputFailed)
         Agent-->>App: Err
     end
 ```

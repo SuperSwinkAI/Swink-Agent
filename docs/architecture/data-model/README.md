@@ -179,24 +179,24 @@ This sequence shows how an `AgentMessage` is created, mutated during streaming, 
 
 ```mermaid
 sequenceDiagram
-    participant Loop as Agent Loop
+    participant RunLoop as Agent Loop
     participant Stream as StreamFn
     participant Msg as AgentMessage
 
-    Loop->>Stream: call StreamFn
-    Stream-->>Loop: AssistantMessageEvent::Start
-    Loop->>Msg: create AssistantMessage (empty content)
+    RunLoop->>Stream: call StreamFn
+    Stream-->>RunLoop: AssistantMessageEvent::Start
+    RunLoop->>Msg: create AssistantMessage (empty content)
 
     loop streaming deltas
-        Stream-->>Loop: AssistantMessageEvent::Delta(TextDelta | ThinkingDelta | ToolCallDelta)
-        Loop->>Msg: append fragment to ContentBlock
+        Stream-->>RunLoop: AssistantMessageEvent::Delta(TextDelta | ThinkingDelta | ToolCallDelta)
+        RunLoop->>Msg: append fragment to ContentBlock
     end
 
-    Stream-->>Loop: AssistantMessageEvent::Done(usage, stop_reason)
-    Loop->>Msg: set usage, stop_reason, timestamp
+    Stream-->>RunLoop: AssistantMessageEvent::Done(usage, stop_reason)
+    RunLoop->>Msg: set usage, stop_reason, timestamp
     Note over Msg: Message is now immutable
-    Loop->>Msg: wrap in AgentMessage::Llm(LlmMessage::Assistant)
-    Loop->>Loop: push to context.messages
+    RunLoop->>Msg: wrap in AgentMessage::Llm(LlmMessage::Assistant)
+    RunLoop->>RunLoop: push to context.messages
 ```
 
 ---

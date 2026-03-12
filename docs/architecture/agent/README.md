@@ -152,7 +152,7 @@ stateDiagram-v2
 
     Idle --> Running : prompt() / continue_loop()
     Running --> Idle : loop completes (AgentEnd)
-    Running --> Idle : abort() → StopReason::Aborted
+    Running --> Idle : abort() returns StopReason Aborted
     Running --> Idle : unrecoverable error
 
     Idle --> Idle : steer() [queued, no effect until next run]
@@ -161,7 +161,7 @@ stateDiagram-v2
     Running --> Running : follow_up() [enqueued, drained when loop would stop]
 
     Idle --> Idle : reset() [clears state + queues]
-    Running --> Running : ERROR — prompt() rejected, returns Err
+    Running --> Running : ERROR - prompt() rejected, returns Err
 ```
 
 ---
@@ -172,25 +172,25 @@ stateDiagram-v2
 sequenceDiagram
     participant App as Application
     participant Agent as Agent Struct
-    participant Loop as run_loop
+    participant RunLoop as run_loop
 
     App->>Agent: prompt("do something")
-    Agent->>Loop: launch with get_steering_messages callback
+    Agent->>RunLoop: launch with steering callback
 
-    Note over Loop: executing tool calls...
+    Note over RunLoop: executing tool calls...
 
     App->>Agent: steer(message)
     Note over Agent: pushed to steering_queue
 
-    Loop->>Agent: poll get_steering_messages()
-    Agent-->>Loop: [steering message]
-    Note over Loop: skip remaining tools,<br/>inject steering msg,<br/>start new turn
+    RunLoop->>Agent: poll get_steering_messages()
+    Agent-->>RunLoop: [steering message]
+    Note over RunLoop: skip remaining tools,<br/>inject steering msg,<br/>start new turn
 
-    Note over Loop: agent reaches natural stop...
+    Note over RunLoop: agent reaches natural stop...
 
-    Loop->>Agent: poll get_follow_up_messages()
-    Agent-->>Loop: [] (empty)
-    Loop-->>Agent: AgentEnd
+    RunLoop->>Agent: poll get_follow_up_messages()
+    Agent-->>RunLoop: [] (empty)
+    RunLoop-->>Agent: AgentEnd
     Agent-->>App: AgentResult
 ```
 

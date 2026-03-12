@@ -148,29 +148,29 @@ flowchart TB
 ```mermaid
 sequenceDiagram
     participant Caller as Caller
-    participant Loop as run_loop
+    participant RunLoop as run_loop
     participant Hook as transform_context hook
     participant StreamFn as StreamFn
     participant LLM as LLM Provider
 
-    Loop->>Hook: transform_context(messages, overflow=false)
-    Hook-->>Loop: messages (unchanged or lightly pruned)
-    Loop->>StreamFn: call stream()
+    RunLoop->>Hook: transform_context(messages, overflow=false)
+    Hook-->>RunLoop: messages (unchanged or lightly pruned)
+    RunLoop->>StreamFn: call stream()
     StreamFn->>LLM: POST inference request
     LLM-->>StreamFn: 400 / context_length_exceeded
-    StreamFn-->>Loop: AgentError::ContextWindowOverflow
+    StreamFn-->>RunLoop: AgentError::ContextWindowOverflow
 
-    Note over Loop: does NOT append error message to history
-    Note over Loop: history is intact — caller can reduce and retry
+    Note over RunLoop: does NOT append error message to history
+    Note over RunLoop: history is intact — caller can reduce and retry
 
-    Loop-->>Caller: Err(ContextWindowOverflow)
+    RunLoop-->>Caller: Err(ContextWindowOverflow)
 
     Note over Caller: caller decides to retry
-    Caller->>Loop: agent.continue_loop()
-    Loop->>Hook: transform_context(messages, overflow=true)
+    Caller->>RunLoop: agent.continue_loop()
+    RunLoop->>Hook: transform_context(messages, overflow=true)
     Note over Hook: overflow signal triggers more aggressive pruning
-    Hook-->>Loop: reduced messages
-    Loop->>StreamFn: call stream()
+    Hook-->>RunLoop: reduced messages
+    RunLoop->>StreamFn: call stream()
     StreamFn->>LLM: POST inference request (smaller context)
     LLM-->>StreamFn: 200 OK — stream begins
 ```
@@ -185,21 +185,21 @@ sequenceDiagram
 sequenceDiagram
     participant LLM as LLM Provider
     participant Stream as StreamFn
-    participant Loop as run_loop
+    participant RunLoop as run_loop
 
     LLM-->>Stream: … ToolCallDelta (partial JSON) …
     LLM-->>Stream: Done(stop_reason=length, usage)
-    Stream-->>Loop: MessageEnd (AssistantMessage, stop_reason=length)
+    Stream-->>RunLoop: MessageEnd (AssistantMessage, stop_reason=length)
 
-    Note over Loop: detect stop_reason == length
+    Note over RunLoop: detect stop_reason == length
 
-    Loop->>Loop: inspect content blocks for incomplete ToolCalls
-    Note over Loop: ToolCall "search" has partial_json — arguments incomplete
+    RunLoop->>RunLoop: inspect content blocks for incomplete ToolCalls
+    Note over RunLoop: ToolCall "search" has partial_json — arguments incomplete
 
-    Loop->>Loop: replace incomplete ToolCall with error ToolResultMessage:<br/>"tool call incomplete — max output tokens reached"
+    RunLoop->>RunLoop: replace incomplete ToolCall with error ToolResultMessage:<br/>"tool call incomplete — max output tokens reached"
 
-    Note over Loop: context now has valid tool use / tool result pair
-    Loop->>Loop: emit TurnEnd
-    Loop->>Stream: call StreamFn for next turn
-    Note over Loop: LLM receives coherent history and can continue
+    Note over RunLoop: context now has valid tool use / tool result pair
+    RunLoop->>RunLoop: emit TurnEnd
+    RunLoop->>Stream: call StreamFn for next turn
+    Note over RunLoop: LLM receives coherent history and can continue
 ```

@@ -101,14 +101,14 @@ The overflow signal is managed internally in `LoopState` — it is **not** a fie
 
 ```mermaid
 sequenceDiagram
-    participant Loop as run_turn
+    participant RunLoop as run_turn
     participant State as LoopState
     participant Transform as transform_context
 
-    Note over Loop: Turn fails with ContextWindowOverflow
-    Loop->>State: overflow_signal = true
+    Note over RunLoop: Turn fails with ContextWindowOverflow
+    RunLoop->>State: overflow_signal = true
 
-    Note over Loop: inner loop continues
+    Note over RunLoop: inner loop continues
     State->>Transform: &mut context_messages, overflow_signal = true
     Note over Transform: aggressive pruning applied (sync call)
 

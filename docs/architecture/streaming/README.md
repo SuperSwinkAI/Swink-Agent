@@ -433,26 +433,26 @@ This sequence shows how the harness reconstructs a complete `AssistantMessage` f
 sequenceDiagram
     participant Provider as LLM Provider / Proxy
     participant Stream as ProxyStreamFn / StreamFn
-    participant Loop as run_loop
+    participant RunLoop as run_loop
 
     Provider-->>Stream: Start
-    Stream->>Loop: emit MessageStart (empty AssistantMessage)
+    Stream->>RunLoop: emit MessageStart (empty AssistantMessage)
 
     Provider-->>Stream: TextStart(index=0)
     Provider-->>Stream: TextDelta(index=0, "Hello")
     Provider-->>Stream: TextDelta(index=0, " world")
     Provider-->>Stream: TextEnd(index=0)
-    Stream->>Loop: emit MessageUpdate(TextDelta×3)
+    Stream->>RunLoop: emit MessageUpdate(TextDelta×3)
 
     Provider-->>Stream: ToolCallStart(index=1, id="c1", name="search")
     Provider-->>Stream: ToolCallDelta(index=1, '{"q":')
     Provider-->>Stream: ToolCallDelta(index=1, '"rust"}')
     Provider-->>Stream: ToolCallEnd(index=1)
-    Stream->>Loop: emit MessageUpdate(ToolCallDelta×2)
+    Stream->>RunLoop: emit MessageUpdate(ToolCallDelta×2)
 
     Provider-->>Stream: Done(stop_reason=tool_use, usage={…})
-    Stream->>Loop: emit MessageEnd (finalised AssistantMessage)
-    Note over Loop: message.content = [Text("Hello world"), ToolCall("search", {q:"rust"})]
+    Stream->>RunLoop: emit MessageEnd (finalised AssistantMessage)
+    Note over RunLoop: message.content = [Text("Hello world"), ToolCall("search", {q:"rust"})]
 ```
 
 ---
