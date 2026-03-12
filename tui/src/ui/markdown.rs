@@ -5,10 +5,11 @@
 //! - Block: ATX headers, fenced code blocks, bullet/numbered lists
 //! - Word-wrapping to a given width
 
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 
 use super::syntax;
+use crate::theme;
 
 /// Parse inline markdown within a single line of text, producing styled spans.
 fn parse_inline(text: &str, base_style: Style) -> Vec<Span<'static>> {
@@ -35,7 +36,7 @@ fn parse_inline(text: &str, base_style: Style) -> Vec<Span<'static>> {
                     chars.next();
                 }
                 let code_style = Style::default()
-                    .fg(Color::Yellow)
+                    .fg(theme::inline_code_color())
                     .add_modifier(Modifier::BOLD);
                 spans.push(Span::styled(code, code_style));
             }
@@ -200,7 +201,7 @@ pub fn markdown_to_lines(text: &str, width: u16) -> Vec<Line<'static>> {
             })
         {
             let style = Style::default()
-                .fg(Color::Cyan)
+                .fg(theme::heading_color())
                 .add_modifier(Modifier::BOLD | extra);
             output.push(Line::from(Span::styled(header_text.to_string(), style)));
             continue;
@@ -213,7 +214,7 @@ pub fn markdown_to_lines(text: &str, width: u16) -> Vec<Line<'static>> {
         {
             let mut spans = vec![Span::styled(
                 "  \u{2022} ".to_string(),
-                Style::default().fg(Color::Cyan),
+                Style::default().fg(theme::heading_color()),
             )];
             spans.extend(parse_inline(rest, Style::default()));
             for wrapped in wrap_spans(spans, width.saturating_sub(4)) {
@@ -229,7 +230,7 @@ pub fn markdown_to_lines(text: &str, width: u16) -> Vec<Line<'static>> {
                 let rest = &trimmed[pos + 2..];
                 let mut spans = vec![Span::styled(
                     format!("  {prefix}. "),
-                    Style::default().fg(Color::Cyan),
+                    Style::default().fg(theme::heading_color()),
                 )];
                 spans.extend(parse_inline(rest, Style::default()));
                 for wrapped in wrap_spans(spans, width.saturating_sub(4)) {
@@ -264,6 +265,7 @@ pub fn markdown_to_lines(text: &str, width: u16) -> Vec<Line<'static>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ratatui::style::Color;
 
     // --- parse_inline ---
 

@@ -191,6 +191,7 @@ mod tests {
             }],
             is_error: false,
             timestamp: 0,
+            details: serde_json::Value::Null,
         }))
     }
 

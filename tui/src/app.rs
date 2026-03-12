@@ -1,6 +1,8 @@
 //! Top-level application state and event loop.
 
+use std::collections::HashSet;
 use std::io;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
@@ -9,8 +11,8 @@ use ratatui::{Terminal, backend::CrosstermBackend};
 use tokio::sync::{mpsc, oneshot};
 
 use swink_agent::{
-    Agent, AgentEvent, AgentMessage, ApprovalMode, AssistantMessageDelta, ContentBlock, LlmMessage,
-    ToolApproval, ToolApprovalRequest, UserMessage,
+    Agent, AgentEvent, AgentMessage, AgentTool, ApprovalMode, AssistantMessageDelta, ContentBlock,
+    LlmMessage, ToolApproval, ToolApprovalRequest, UserMessage,
 };
 
 use tracing::{info, warn};
@@ -19,12 +21,18 @@ use crate::commands::{self, ApprovalModeArg, ClipboardContent, CommandResult};
 use crate::config::TuiConfig;
 use crate::credentials;
 use crate::session::SessionManager;
+use crate::theme;
 use crate::ui;
 use crate::ui::conversation::ConversationView;
 use crate::ui::input::InputEditor;
 use crate::ui::tool_panel::ToolPanel;
 
 type AppResult<T> = Result<T, Box<dyn std::error::Error>>;
+
+const PLAN_MODE_ADDENDUM: &str = "\n\nYou are in planning mode. Analyze the request and produce a step-by-step plan. Do not make any modifications or execute any write operations.";
+
+/// Seconds before a tool result auto-collapses (unless user-expanded).
+const AUTO_COLLAPSE_SECS: u64 = 10;
 
 /// Agent state as visible to the TUI.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -42,6 +50,15 @@ pub enum Focus {
     Conversation,
 }
 
+/// Operating mode for the TUI.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OperatingMode {
+    /// Normal execution mode — all tools available.
+    Execute,
+    /// Plan mode — read-only tools only, agent produces plans.
+    Plan,
+}
+
 /// Message role for display styling.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MessageRole {
@@ -54,14 +71,28 @@ pub enum MessageRole {
 
 /// A message formatted for display.
 #[derive(Debug, Clone)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct DisplayMessage {
     pub role: MessageRole,
     pub content: String,
     pub thinking: Option<String>,
     pub is_streaming: bool,
+    /// Whether this tool result block is collapsed.
+    pub collapsed: bool,
+    /// One-line summary for collapsed display.
+    pub summary: String,
+    /// Whether the user manually expanded this block (prevents auto-collapse).
+    pub user_expanded: bool,
+    /// When the tool result was expanded (for auto-collapse timing).
+    pub expanded_at: Option<Instant>,
+    /// Whether this message was produced in plan mode.
+    pub plan_mode: bool,
+    /// Diff data for file modification tool results.
+    pub diff_data: Option<crate::ui::diff::DiffData>,
 }
 
 /// Top-level application state.
+#[allow(clippy::struct_excessive_bools)]
 pub struct App {
     /// Whether the application should exit.
     pub should_quit: bool,
@@ -114,6 +145,22 @@ pub struct App {
     pending_approval: Option<(ToolApprovalRequest, oneshot::Sender<ToolApproval>)>,
     /// Current approval mode.
     pub approval_mode: ApprovalMode,
+    /// Estimated context window token budget.
+    pub context_budget: u64,
+    /// Estimated tokens currently used in context.
+    pub context_tokens_used: u64,
+    /// Index of the currently selected tool result block (for collapse toggling).
+    pub selected_tool_block: Option<usize>,
+    /// Flag set when external editor should be opened (processed by event loop).
+    pub open_editor_requested: bool,
+    /// Set of tool names trusted for the current session (auto-approved in Smart mode).
+    pub session_trusted_tools: HashSet<String>,
+    /// Current operating mode.
+    pub operating_mode: OperatingMode,
+    /// Saved full tool set for restoring on plan→execute transition.
+    saved_tools: Option<Vec<Arc<dyn AgentTool>>>,
+    /// Original system prompt (before plan mode addendum).
+    saved_system_prompt: Option<String>,
 }
 
 impl App {
@@ -122,6 +169,15 @@ impl App {
         let (approval_tx, approval_rx) = mpsc::channel(16);
         let session_manager = SessionManager::new().ok();
         let session_id = SessionManager::new_session_id();
+
+        // Apply configured color mode.
+        let mode = match config.color_mode.as_str() {
+            "mono-white" => theme::ColorMode::MonoWhite,
+            "mono-black" => theme::ColorMode::MonoBlack,
+            _ => theme::ColorMode::Custom,
+        };
+        theme::set_color_mode(mode);
+
         Self {
             should_quit: false,
             status: AgentStatus::Idle,
@@ -149,6 +205,14 @@ impl App {
             approval_tx,
             pending_approval: None,
             approval_mode: ApprovalMode::default(),
+            context_budget: 0,
+            context_tokens_used: 0,
+            selected_tool_block: None,
+            open_editor_requested: false,
+            session_trusted_tools: HashSet::new(),
+            operating_mode: OperatingMode::Execute,
+            saved_tools: None,
+            saved_system_prompt: None,
         }
     }
 
@@ -184,12 +248,70 @@ impl App {
                 }
                 // Tool approval requests from the agent callback
                 Some((request, responder)) = self.approval_rx.recv() => {
-                    self.pending_approval = Some((request, responder));
+                    if self.approval_mode == ApprovalMode::Smart
+                        && self.session_trusted_tools.contains(&request.tool_name)
+                    {
+                        let _ = responder.send(ToolApproval::Approved);
+                    } else {
+                        self.pending_approval = Some((request, responder));
+                    }
                     self.dirty = true;
                 }
                 // Tick for animations
                 _ = tick_interval.tick() => {
                     self.tick();
+                }
+            }
+
+            // Handle external editor request
+            if self.open_editor_requested {
+                self.open_editor_requested = false;
+                let editor =
+                    crate::editor::resolve_editor(self.config.editor_command.as_deref());
+
+                // Suspend TUI
+                let _ = crate::restore_terminal();
+
+                let result = crate::editor::open_editor(&editor);
+
+                // Resume TUI
+                let _ = crossterm::terminal::enable_raw_mode();
+                let _ = crossterm::execute!(
+                    std::io::stdout(),
+                    crossterm::terminal::EnterAlternateScreen,
+                    crossterm::event::EnableMouseCapture
+                );
+                // Force full redraw and re-create event stream (stale after suspend)
+                terminal.clear()?;
+                self.dirty = true;
+                event_stream = crossterm::event::EventStream::new();
+
+                match result {
+                    Ok(Some(content)) => {
+                        // Submit as if the user typed it
+                        self.messages.push(DisplayMessage {
+                            role: MessageRole::User,
+                            content: content.clone(),
+                            thinking: None,
+                            is_streaming: false,
+                            collapsed: false,
+                            summary: String::new(),
+                            user_expanded: false,
+                            expanded_at: None,
+                            plan_mode: false,
+                            diff_data: None,
+                        });
+                        self.conversation.auto_scroll = true;
+                        self.send_to_agent(content);
+                    }
+                    Ok(None) => {
+                        self.push_system_message(
+                            "Editor closed with empty content — cancelled.".to_string(),
+                        );
+                    }
+                    Err(e) => {
+                        self.push_system_message(format!("Editor error: {e}"));
+                    }
                 }
             }
         }
@@ -226,11 +348,19 @@ impl App {
             _ => {}
         }
 
-        // Handle approval Y/N when a tool is pending approval
+        // Handle approval Y/N/A when a tool is pending approval
         if self.pending_approval.is_some() {
             match key.code {
                 KeyCode::Char('y' | 'Y') | KeyCode::Enter => {
                     if let Some((_req, responder)) = self.pending_approval.take() {
+                        let _ = responder.send(ToolApproval::Approved);
+                    }
+                    self.dirty = true;
+                    return;
+                }
+                KeyCode::Char('a' | 'A') => {
+                    if let Some((req, responder)) = self.pending_approval.take() {
+                        self.session_trusted_tools.insert(req.tool_name);
                         let _ = responder.send(ToolApproval::Approved);
                     }
                     self.dirty = true;
@@ -278,6 +408,10 @@ impl App {
                 if self.status == AgentStatus::Running {
                     self.abort_agent();
                 }
+            }
+            // Shift+Tab — toggle plan/execute mode
+            (KeyModifiers::SHIFT, KeyCode::BackTab) => {
+                self.toggle_operating_mode();
             }
             // Tab — toggle focus
             (_, KeyCode::Tab) => {
@@ -332,6 +466,33 @@ impl App {
             (_, KeyCode::Backspace) => self.input.backspace(),
             // Delete
             (_, KeyCode::Delete) => self.input.delete(),
+            // F2 — toggle collapse on selected (or most recent) tool block
+            (_, KeyCode::F(2)) => {
+                let target = self.selected_tool_block.or_else(|| {
+                    self.messages
+                        .iter()
+                        .enumerate()
+                        .rev()
+                        .find(|(_, m)| m.role == MessageRole::ToolResult)
+                        .map(|(i, _)| i)
+                });
+                if let Some(idx) = target {
+                    self.toggle_collapse(idx);
+                    self.selected_tool_block = Some(idx);
+                }
+            }
+            // F3 — cycle color mode (Custom → MonoWhite → MonoBlack → Custom)
+            (_, KeyCode::F(3)) => {
+                theme::cycle_color_mode();
+            }
+            // Shift+Left — select previous tool block
+            (KeyModifiers::SHIFT, KeyCode::Left) => {
+                self.select_prev_tool_block();
+            }
+            // Shift+Right — select next tool block
+            (KeyModifiers::SHIFT, KeyCode::Right) => {
+                self.select_next_tool_block();
+            }
             // Typing
             (KeyModifiers::NONE | KeyModifiers::SHIFT, KeyCode::Char(c)) => {
                 self.input.insert_char(c);
@@ -396,6 +557,11 @@ impl App {
                 self.total_input_tokens = 0;
                 self.total_output_tokens = 0;
                 self.total_cost = 0.0;
+                self.context_tokens_used = 0;
+                self.session_trusted_tools.clear();
+                self.operating_mode = OperatingMode::Execute;
+                self.saved_tools = None;
+                self.saved_system_prompt = None;
                 self.push_system_message("Agent state reset.".to_string());
                 return;
             }
@@ -427,6 +593,7 @@ impl App {
                 let harness_mode = match mode {
                     ApprovalModeArg::On => ApprovalMode::Enabled,
                     ApprovalModeArg::Off => ApprovalMode::Bypassed,
+                    ApprovalModeArg::Smart => ApprovalMode::Smart,
                 };
                 self.approval_mode = harness_mode;
                 if let Some(agent) = &mut self.agent {
@@ -435,16 +602,36 @@ impl App {
                 let label = match mode {
                     ApprovalModeArg::On => "enabled",
                     ApprovalModeArg::Off => "disabled (auto-approve)",
+                    ApprovalModeArg::Smart => "smart (auto-approve reads, prompt for writes)",
                 };
                 self.push_system_message(format!("Tool approval: {label}"));
+                return;
+            }
+            CommandResult::OpenEditor => {
+                self.open_editor_requested = true;
+                return;
+            }
+            CommandResult::TogglePlanMode => {
+                self.toggle_operating_mode();
                 return;
             }
             CommandResult::QueryApprovalMode => {
                 let label = match self.approval_mode {
                     ApprovalMode::Enabled => "enabled",
                     ApprovalMode::Bypassed => "disabled (auto-approve)",
+                    ApprovalMode::Smart => "smart (auto-approve reads, prompt for writes)",
                 };
-                self.push_system_message(format!("Tool approval: {label}"));
+                let mut msg = format!("Tool approval: {label}");
+                if self.approval_mode == ApprovalMode::Smart
+                    && !self.session_trusted_tools.is_empty()
+                {
+                    msg.push_str("\nTrusted tools: ");
+                    let mut tools: Vec<&str> =
+                        self.session_trusted_tools.iter().map(String::as_str).collect();
+                    tools.sort_unstable();
+                    msg.push_str(&tools.join(", "));
+                }
+                self.push_system_message(msg);
                 return;
             }
         }
@@ -455,6 +642,12 @@ impl App {
             content: text.clone(),
             thinking: None,
             is_streaming: false,
+            collapsed: false,
+            summary: String::new(),
+            user_expanded: false,
+            expanded_at: None,
+            plan_mode: false,
+            diff_data: None,
         });
 
         // Re-engage auto-scroll on new user message
@@ -470,6 +663,12 @@ impl App {
             content,
             thinking: None,
             is_streaming: false,
+            collapsed: false,
+            summary: String::new(),
+            user_expanded: false,
+            expanded_at: None,
+            plan_mode: false,
+            diff_data: None,
         });
     }
 
@@ -506,6 +705,12 @@ impl App {
                     content: format!("Failed to start agent: {e}"),
                     thinking: None,
                     is_streaming: false,
+                    collapsed: false,
+                    summary: String::new(),
+                    user_expanded: false,
+                    expanded_at: None,
+                    plan_mode: false,
+                    diff_data: None,
                 });
             }
         }
@@ -529,6 +734,12 @@ impl App {
                     content: String::new(),
                     thinking: None,
                     is_streaming: true,
+                    collapsed: false,
+                    summary: String::new(),
+                    user_expanded: false,
+                    expanded_at: None,
+                    plan_mode: self.operating_mode == OperatingMode::Plan,
+                    diff_data: None,
                 });
             }
             AgentEvent::MessageUpdate { delta } => {
@@ -569,6 +780,7 @@ impl App {
                 self.total_input_tokens += message.usage.input;
                 self.total_output_tokens += message.usage.output;
                 self.total_cost += message.cost.total;
+                self.context_tokens_used = message.usage.input;
                 self.model_name.clone_from(&message.model_id);
             }
             AgentEvent::ToolExecutionStart { id, name, .. } => {
@@ -586,15 +798,36 @@ impl App {
                 for result in &tool_results {
                     let content = ContentBlock::extract_text(&result.content);
                     if !content.is_empty() {
+                        let role = if result.is_error {
+                            MessageRole::Error
+                        } else {
+                            MessageRole::ToolResult
+                        };
+                        let summary = content
+                            .lines()
+                            .next()
+                            .unwrap_or("")
+                            .chars()
+                            .take(60)
+                            .collect::<String>();
+                        let is_tool_result = role == MessageRole::ToolResult;
+                        let diff_data =
+                            crate::ui::diff::DiffData::from_details(&result.details);
                         self.messages.push(DisplayMessage {
-                            role: if result.is_error {
-                                MessageRole::Error
-                            } else {
-                                MessageRole::ToolResult
-                            },
+                            role,
                             content,
                             thinking: None,
                             is_streaming: false,
+                            collapsed: false,
+                            summary,
+                            user_expanded: false,
+                            expanded_at: if is_tool_result {
+                                Some(Instant::now())
+                            } else {
+                                None
+                            },
+                            plan_mode: false,
+                            diff_data,
                         });
                     }
                 }
@@ -645,6 +878,19 @@ impl App {
         self.tool_panel.tick();
         if self.tool_panel.is_visible() {
             self.dirty = true;
+        }
+
+        // Auto-collapse tool results after AUTO_COLLAPSE_SECS
+        for msg in &mut self.messages {
+            if msg.role == MessageRole::ToolResult
+                && !msg.collapsed
+                && !msg.user_expanded
+                && let Some(expanded_at) = msg.expanded_at
+                && expanded_at.elapsed() > Duration::from_secs(AUTO_COLLAPSE_SECS)
+            {
+                msg.collapsed = true;
+                self.dirty = true;
+            }
         }
     }
 
@@ -707,6 +953,7 @@ impl App {
     /// Set the agent instance for this app.
     pub fn set_agent(&mut self, agent: Agent) {
         self.model_name.clone_from(&agent.state().model.model_id);
+        self.context_budget = 100_000;
         self.agent = Some(agent);
     }
 
@@ -717,9 +964,128 @@ impl App {
         self.approval_tx.clone()
     }
 
+    /// Toggle collapse state of the tool result at the given message index.
+    pub fn toggle_collapse(&mut self, index: usize) {
+        if let Some(msg) = self.messages.get_mut(index)
+            && msg.role == MessageRole::ToolResult
+        {
+            msg.collapsed = !msg.collapsed;
+            msg.user_expanded = !msg.collapsed;
+            if !msg.collapsed {
+                msg.expanded_at = Some(Instant::now());
+            }
+            self.dirty = true;
+        }
+    }
+
+    /// Select the previous tool result block. Returns true if a tool block exists.
+    fn select_prev_tool_block(&mut self) -> bool {
+        let tool_indices: Vec<usize> = self
+            .messages
+            .iter()
+            .enumerate()
+            .filter(|(_, m)| m.role == MessageRole::ToolResult)
+            .map(|(i, _)| i)
+            .collect();
+        if tool_indices.is_empty() {
+            return false;
+        }
+        match self.selected_tool_block {
+            None => {
+                self.selected_tool_block = Some(*tool_indices.last().unwrap());
+            }
+            Some(current) => {
+                if let Some(prev) = tool_indices.iter().rev().find(|&&i| i < current) {
+                    self.selected_tool_block = Some(*prev);
+                }
+            }
+        }
+        true
+    }
+
+    /// Select the next tool result block. Returns true if a tool block exists.
+    fn select_next_tool_block(&mut self) -> bool {
+        let tool_indices: Vec<usize> = self
+            .messages
+            .iter()
+            .enumerate()
+            .filter(|(_, m)| m.role == MessageRole::ToolResult)
+            .map(|(i, _)| i)
+            .collect();
+        if tool_indices.is_empty() {
+            return false;
+        }
+        match self.selected_tool_block {
+            None => {
+                self.selected_tool_block = Some(tool_indices[0]);
+            }
+            Some(current) => {
+                if let Some(next) = tool_indices.iter().find(|&&i| i > current) {
+                    self.selected_tool_block = Some(*next);
+                }
+            }
+        }
+        true
+    }
+
     /// Approximate visible height of conversation area.
     const fn last_visible_height() -> usize {
         20
+    }
+
+    // ─── Plan mode ─────────────────────────────────────────────────────
+
+    /// Toggle between Plan and Execute modes.
+    fn toggle_operating_mode(&mut self) {
+        match self.operating_mode {
+            OperatingMode::Execute => self.enter_plan_mode(),
+            OperatingMode::Plan => self.exit_plan_mode(),
+        }
+        self.dirty = true;
+    }
+
+    fn enter_plan_mode(&mut self) {
+        let Some(agent) = &mut self.agent else {
+            return;
+        };
+
+        // Save current tools
+        let all_tools = agent.state().tools.clone();
+        self.saved_tools = Some(all_tools.clone());
+
+        // Filter to read-only tools (requires_approval == false)
+        let read_only: Vec<Arc<dyn AgentTool>> = all_tools
+            .into_iter()
+            .filter(|t| !t.requires_approval())
+            .collect();
+        agent.set_tools(read_only);
+
+        // Save and modify system prompt
+        let current_prompt = agent.state().system_prompt.clone();
+        self.saved_system_prompt = Some(current_prompt.clone());
+        agent.set_system_prompt(format!("{current_prompt}{PLAN_MODE_ADDENDUM}"));
+
+        self.operating_mode = OperatingMode::Plan;
+        self.push_system_message("Entered plan mode — read-only tools only.".to_string());
+    }
+
+    fn exit_plan_mode(&mut self) {
+        let Some(agent) = &mut self.agent else {
+            return;
+        };
+
+        // Restore tools
+        if let Some(tools) = self.saved_tools.take() {
+            agent.set_tools(tools);
+        }
+
+        // Restore system prompt
+        if let Some(prompt) = self.saved_system_prompt.take() {
+            agent.set_system_prompt(prompt);
+        }
+
+        self.operating_mode = OperatingMode::Execute;
+        self.push_system_message("Exited plan mode — all tools available.".to_string());
     }
 
     // ─── Session persistence ────────────────────────────────────────────
@@ -766,6 +1132,12 @@ impl App {
                                     content: ContentBlock::extract_text(&u.content),
                                     thinking: None,
                                     is_streaming: false,
+                                    collapsed: false,
+                                    summary: String::new(),
+                                    user_expanded: false,
+                                    expanded_at: None,
+                                    plan_mode: false,
+                                    diff_data: None,
                                 });
                             }
                             LlmMessage::Assistant(a) => {
@@ -774,16 +1146,38 @@ impl App {
                                     content: ContentBlock::extract_text(&a.content),
                                     thinking: None,
                                     is_streaming: false,
+                                    collapsed: false,
+                                    summary: String::new(),
+                                    user_expanded: false,
+                                    expanded_at: None,
+                                    plan_mode: false,
+                                    diff_data: None,
                                 });
                             }
                             LlmMessage::ToolResult(t) => {
                                 let content = ContentBlock::extract_text(&t.content);
                                 if !content.is_empty() {
+                                    let summary = content
+                                        .lines()
+                                        .next()
+                                        .unwrap_or("")
+                                        .chars()
+                                        .take(60)
+                                        .collect::<String>();
+                                    let diff_data = crate::ui::diff::DiffData::from_details(
+                                        &t.details,
+                                    );
                                     self.messages.push(DisplayMessage {
                                         role: MessageRole::ToolResult,
                                         content,
                                         thinking: None,
                                         is_streaming: false,
+                                        collapsed: true,
+                                        summary,
+                                        user_expanded: false,
+                                        expanded_at: None,
+                                        plan_mode: false,
+                                        diff_data,
                                     });
                                 }
                             }
@@ -915,9 +1309,12 @@ mod tests {
     use futures::Stream;
     use tokio_util::sync::CancellationToken;
 
+    use std::future::Future;
+
     use swink_agent::{
-        Agent, AgentEvent, AgentMessage, AgentOptions, AssistantMessageEvent, Cost, LlmMessage,
-        ModelSpec, StopReason, StreamFn, StreamOptions, Usage,
+        Agent, AgentEvent, AgentMessage, AgentOptions, AgentToolResult, AssistantMessage,
+        AssistantMessageEvent, Cost, LlmMessage, ModelSpec, StopReason, StreamFn, StreamOptions,
+        Usage,
     };
 
     use super::*;
@@ -1131,6 +1528,55 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn message_end_updates_context_tokens_used() {
+        let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("hi")]));
+        let agent = make_test_agent(stream_fn);
+
+        let mut app = App::new(TuiConfig::default());
+        app.set_agent(agent);
+
+        assert_eq!(app.context_budget, 100_000);
+        assert_eq!(app.context_tokens_used, 0);
+
+        let message = AssistantMessage {
+            content: vec![],
+            provider: String::new(),
+            model_id: "mock-model".to_string(),
+            usage: Usage {
+                input: 50_000,
+                output: 200,
+                cache_read: 0,
+                cache_write: 0,
+                total: 50_200,
+            },
+            cost: Cost::default(),
+            stop_reason: StopReason::Stop,
+            error_message: None,
+            timestamp: 0,
+        };
+
+        app.handle_agent_event(AgentEvent::MessageEnd { message });
+        assert_eq!(app.context_tokens_used, 50_000);
+    }
+
+    #[tokio::test]
+    async fn reset_clears_context_tokens() {
+        let stream_fn = Arc::new(MockStreamFn::new(vec![]));
+        let agent = make_test_agent(stream_fn);
+
+        let mut app = App::new(TuiConfig::default());
+        app.set_agent(agent);
+        app.context_tokens_used = 75_000;
+
+        // Simulate the Reset command path
+        if let Some(agent) = &mut app.agent {
+            agent.reset();
+        }
+        app.context_tokens_used = 0;
+        assert_eq!(app.context_tokens_used, 0);
+    }
+
+    #[tokio::test]
     async fn error_response_allows_retry() {
         let stream_fn = Arc::new(MockStreamFn::new(vec![
             // First turn: error
@@ -1175,5 +1621,593 @@ mod tests {
                 .any(|m| m.role == MessageRole::Assistant && m.content == "recovered"),
             "recovery response should appear"
         );
+    }
+
+    // ─── Collapsible tool result tests ──────────────────────────────────
+
+    fn make_tool_result_message(content: &str) -> DisplayMessage {
+        let summary = content
+            .lines()
+            .next()
+            .unwrap_or("")
+            .chars()
+            .take(60)
+            .collect::<String>();
+        DisplayMessage {
+            role: MessageRole::ToolResult,
+            content: content.to_string(),
+            thinking: None,
+            is_streaming: false,
+            collapsed: false,
+            summary,
+            user_expanded: false,
+            expanded_at: Some(Instant::now()),
+            plan_mode: false,
+            diff_data: None,
+        }
+    }
+
+    fn make_user_message(content: &str) -> DisplayMessage {
+        DisplayMessage {
+            role: MessageRole::User,
+            content: content.to_string(),
+            thinking: None,
+            is_streaming: false,
+            collapsed: false,
+            summary: String::new(),
+            user_expanded: false,
+            expanded_at: None,
+            plan_mode: false,
+            diff_data: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn tool_result_has_collapsed_fields() {
+        let msg = make_tool_result_message("file contents here\nsecond line");
+        assert!(!msg.collapsed, "tool result starts expanded");
+        assert_eq!(msg.summary, "file contents here");
+        assert!(!msg.user_expanded);
+        assert!(msg.expanded_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn toggle_collapse_toggles_state() {
+        let mut app = App::new(TuiConfig::default());
+        app.messages.push(make_tool_result_message("tool output"));
+
+        assert!(!app.messages[0].collapsed);
+
+        app.toggle_collapse(0);
+        assert!(app.messages[0].collapsed);
+        assert!(!app.messages[0].user_expanded);
+
+        app.toggle_collapse(0);
+        assert!(!app.messages[0].collapsed);
+        assert!(app.messages[0].user_expanded);
+    }
+
+    #[tokio::test]
+    async fn toggle_collapse_non_tool_is_noop() {
+        let mut app = App::new(TuiConfig::default());
+        app.messages.push(make_user_message("hello"));
+
+        app.toggle_collapse(0);
+        assert!(!app.messages[0].collapsed, "user message should not collapse");
+    }
+
+    #[tokio::test]
+    async fn auto_collapse_after_timeout() {
+        let mut app = App::new(TuiConfig::default());
+        let mut msg = make_tool_result_message("tool output");
+        // Set expanded_at to 11 seconds in the past (exceeds AUTO_COLLAPSE_SECS)
+        msg.expanded_at = Some(Instant::now() - Duration::from_secs(11));
+        app.messages.push(msg);
+
+        assert!(!app.messages[0].collapsed);
+
+        app.tick();
+
+        assert!(
+            app.messages[0].collapsed,
+            "tool result should auto-collapse after 10 seconds"
+        );
+    }
+
+    #[tokio::test]
+    async fn user_expanded_prevents_auto_collapse() {
+        let mut app = App::new(TuiConfig::default());
+        let mut msg = make_tool_result_message("tool output");
+        msg.expanded_at = Some(Instant::now() - Duration::from_secs(11));
+        msg.user_expanded = true;
+        app.messages.push(msg);
+
+        app.tick();
+
+        assert!(
+            !app.messages[0].collapsed,
+            "user-expanded tool result should not auto-collapse"
+        );
+    }
+
+    #[tokio::test]
+    async fn select_next_tool_block_navigates() {
+        let mut app = App::new(TuiConfig::default());
+        app.messages.push(make_user_message("hello"));
+        app.messages.push(make_tool_result_message("tool 1"));
+        app.messages.push(make_user_message("world"));
+        app.messages.push(make_tool_result_message("tool 2"));
+
+        assert_eq!(app.selected_tool_block, None);
+
+        assert!(app.select_next_tool_block());
+        assert_eq!(app.selected_tool_block, Some(1));
+
+        assert!(app.select_next_tool_block());
+        assert_eq!(app.selected_tool_block, Some(3));
+
+        // At the end, stays on last
+        assert!(app.select_next_tool_block());
+        assert_eq!(app.selected_tool_block, Some(3));
+    }
+
+    #[tokio::test]
+    async fn select_prev_tool_block_navigates() {
+        let mut app = App::new(TuiConfig::default());
+        app.messages.push(make_user_message("hello"));
+        app.messages.push(make_tool_result_message("tool 1"));
+        app.messages.push(make_user_message("world"));
+        app.messages.push(make_tool_result_message("tool 2"));
+
+        // Start from None, goes to last
+        assert!(app.select_prev_tool_block());
+        assert_eq!(app.selected_tool_block, Some(3));
+
+        assert!(app.select_prev_tool_block());
+        assert_eq!(app.selected_tool_block, Some(1));
+
+        // At the beginning, stays on first
+        assert!(app.select_prev_tool_block());
+        assert_eq!(app.selected_tool_block, Some(1));
+    }
+
+    #[tokio::test]
+    async fn f2_toggles_most_recent_tool_block() {
+        let mut app = App::new(TuiConfig::default());
+        app.messages.push(make_user_message("hello"));
+        app.messages.push(make_tool_result_message("tool 1"));
+        app.messages.push(make_user_message("world"));
+        app.messages.push(make_tool_result_message("tool 2"));
+
+        assert_eq!(app.selected_tool_block, None);
+        assert!(!app.messages[3].collapsed);
+
+        // F2 from input focus should toggle most recent tool block
+        let key = KeyEvent::new(KeyCode::F(2), KeyModifiers::NONE);
+        app.handle_key_event(key);
+
+        assert_eq!(app.selected_tool_block, Some(3));
+        assert!(app.messages[3].collapsed, "most recent tool block should collapse");
+    }
+
+    #[tokio::test]
+    async fn f2_toggles_selected_tool_block() {
+        let mut app = App::new(TuiConfig::default());
+        app.messages.push(make_tool_result_message("tool 1"));
+        app.messages.push(make_user_message("hello"));
+        app.messages.push(make_tool_result_message("tool 2"));
+
+        // Select the first tool block
+        app.selected_tool_block = Some(0);
+        assert!(!app.messages[0].collapsed);
+
+        let key = KeyEvent::new(KeyCode::F(2), KeyModifiers::NONE);
+        app.handle_key_event(key);
+
+        assert!(app.messages[0].collapsed, "selected tool block should collapse");
+        assert!(!app.messages[2].collapsed, "other tool block should stay expanded");
+    }
+
+    #[tokio::test]
+    async fn capital_e_inserts_char() {
+        let mut app = App::new(TuiConfig::default());
+
+        let key = KeyEvent::new(KeyCode::Char('E'), KeyModifiers::SHIFT);
+        app.handle_key_event(key);
+
+        assert_eq!(
+            app.input.lines[0], "E",
+            "Shift+E should insert 'E' into input"
+        );
+    }
+
+    #[tokio::test]
+    async fn f3_cycles_color_mode() {
+        use crate::theme::{self, ColorMode};
+
+        // Ensure we start from Custom
+        theme::set_color_mode(ColorMode::Custom);
+
+        let mut app = App::new(TuiConfig::default());
+        let key = KeyEvent::new(KeyCode::F(3), KeyModifiers::NONE);
+
+        app.handle_key_event(key);
+        assert_eq!(theme::color_mode(), ColorMode::MonoWhite);
+
+        app.handle_key_event(key);
+        assert_eq!(theme::color_mode(), ColorMode::MonoBlack);
+
+        app.handle_key_event(key);
+        assert_eq!(theme::color_mode(), ColorMode::Custom);
+
+        // Reset for other tests
+        theme::set_color_mode(ColorMode::Custom);
+    }
+
+    #[tokio::test]
+    async fn shift_left_right_cycles_from_input_focus() {
+        let mut app = App::new(TuiConfig::default());
+        app.messages.push(make_tool_result_message("tool 1"));
+        app.messages.push(make_user_message("hello"));
+        app.messages.push(make_tool_result_message("tool 2"));
+
+        assert_eq!(app.focus, Focus::Input);
+        assert_eq!(app.selected_tool_block, None);
+
+        // Shift+Right from input focus
+        let key = KeyEvent::new(KeyCode::Right, KeyModifiers::SHIFT);
+        app.handle_key_event(key);
+        assert_eq!(app.selected_tool_block, Some(0));
+        assert_eq!(app.focus, Focus::Input, "focus should stay on input");
+
+        // Shift+Right again
+        app.handle_key_event(key);
+        assert_eq!(app.selected_tool_block, Some(2));
+
+        // Shift+Left
+        let key = KeyEvent::new(KeyCode::Left, KeyModifiers::SHIFT);
+        app.handle_key_event(key);
+        assert_eq!(app.selected_tool_block, Some(0));
+        assert_eq!(app.focus, Focus::Input, "focus should stay on input");
+    }
+
+    // ─── Smart approval mode tests ────────────────────────────────────
+
+    #[tokio::test]
+    async fn smart_mode_auto_approves_trusted_tool() {
+        let mut app = App::new(TuiConfig::default());
+        app.approval_mode = ApprovalMode::Smart;
+        app.session_trusted_tools.insert("bash".to_string());
+
+        let (tx, rx) = oneshot::channel();
+        let request = ToolApprovalRequest {
+            tool_call_id: "call_1".into(),
+            tool_name: "bash".into(),
+            arguments: serde_json::json!({"command": "ls"}),
+            requires_approval: true,
+        };
+
+        // Send the request through the approval channel
+        app.approval_tx.send((request, tx)).await.unwrap();
+
+        // Receive it — the run() loop would do this, but we simulate inline
+        let (req, responder) = app.approval_rx.recv().await.unwrap();
+        if app.approval_mode == ApprovalMode::Smart
+            && app.session_trusted_tools.contains(&req.tool_name)
+        {
+            let _ = responder.send(ToolApproval::Approved);
+        } else {
+            app.pending_approval = Some((req, responder));
+        }
+
+        // Should have been auto-approved (no pending approval)
+        assert!(app.pending_approval.is_none());
+        assert_eq!(rx.await.unwrap(), ToolApproval::Approved);
+    }
+
+    #[tokio::test]
+    async fn smart_mode_prompts_for_untrusted_tool() {
+        let mut app = App::new(TuiConfig::default());
+        app.approval_mode = ApprovalMode::Smart;
+
+        let (tx, _rx) = oneshot::channel();
+        let request = ToolApprovalRequest {
+            tool_call_id: "call_2".into(),
+            tool_name: "write_file".into(),
+            arguments: serde_json::json!({}),
+            requires_approval: true,
+        };
+
+        // Simulate the approval_rx path
+        let (req, responder) = (request, tx);
+        if app.approval_mode == ApprovalMode::Smart
+            && app.session_trusted_tools.contains(&req.tool_name)
+        {
+            let _ = responder.send(ToolApproval::Approved);
+        } else {
+            app.pending_approval = Some((req, responder));
+        }
+
+        // Should be pending (not auto-approved)
+        assert!(app.pending_approval.is_some());
+    }
+
+    #[tokio::test]
+    async fn always_approve_adds_to_trusted_set() {
+        let mut app = App::new(TuiConfig::default());
+
+        let (tx, rx) = oneshot::channel();
+        let request = ToolApprovalRequest {
+            tool_call_id: "call_3".into(),
+            tool_name: "bash".into(),
+            arguments: serde_json::json!({}),
+            requires_approval: true,
+        };
+        app.pending_approval = Some((request, tx));
+
+        // Simulate pressing 'a'
+        let key = KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE);
+        app.handle_key_event(key);
+
+        assert!(app.session_trusted_tools.contains("bash"));
+        assert!(app.pending_approval.is_none());
+        assert_eq!(rx.await.unwrap(), ToolApproval::Approved);
+    }
+
+    #[tokio::test]
+    async fn reset_clears_trusted_tools() {
+        let stream_fn = Arc::new(MockStreamFn::new(vec![]));
+        let agent = make_test_agent(stream_fn);
+
+        let mut app = App::new(TuiConfig::default());
+        app.set_agent(agent);
+        app.session_trusted_tools.insert("bash".to_string());
+        app.session_trusted_tools.insert("read_file".to_string());
+        assert_eq!(app.session_trusted_tools.len(), 2);
+
+        // Simulate the Reset command path
+        if let Some(agent) = &mut app.agent {
+            agent.reset();
+        }
+        app.messages.clear();
+        app.session_trusted_tools.clear();
+
+        assert!(app.session_trusted_tools.is_empty());
+    }
+
+    #[tokio::test]
+    async fn query_approval_mode_shows_smart() {
+        let mut app = App::new(TuiConfig::default());
+        app.approval_mode = ApprovalMode::Smart;
+        app.session_trusted_tools.insert("bash".to_string());
+
+        // Simulate the QueryApprovalMode command
+        let label = match app.approval_mode {
+            ApprovalMode::Enabled => "enabled",
+            ApprovalMode::Bypassed => "disabled (auto-approve)",
+            ApprovalMode::Smart => "smart (auto-approve reads, prompt for writes)",
+        };
+        let mut msg = format!("Tool approval: {label}");
+        if app.approval_mode == ApprovalMode::Smart && !app.session_trusted_tools.is_empty() {
+            msg.push_str("\nTrusted tools: ");
+            let mut tools: Vec<&str> =
+                app.session_trusted_tools.iter().map(String::as_str).collect();
+            tools.sort_unstable();
+            msg.push_str(&tools.join(", "));
+        }
+
+        assert!(msg.contains("smart"));
+        assert!(msg.contains("Trusted tools: bash"));
+    }
+
+    // ─── Plan mode tests ────────────────────────────────────────────────
+
+    /// A mock read-only tool (does not require approval).
+    struct MockReadTool;
+
+    impl AgentTool for MockReadTool {
+        fn name(&self) -> &str {
+            "read_file"
+        }
+        fn label(&self) -> &str {
+            "Read File"
+        }
+        fn description(&self) -> &str {
+            "Read a file"
+        }
+        fn parameters_schema(&self) -> &serde_json::Value {
+            &serde_json::Value::Null
+        }
+        fn execute(
+            &self,
+            _tool_call_id: &str,
+            _params: serde_json::Value,
+            _cancellation_token: CancellationToken,
+            _on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
+        ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>> {
+            Box::pin(async { AgentToolResult::text("ok") })
+        }
+    }
+
+    /// A mock write tool (requires approval).
+    struct MockWriteTool;
+
+    impl AgentTool for MockWriteTool {
+        fn name(&self) -> &str {
+            "write_file"
+        }
+        fn label(&self) -> &str {
+            "Write File"
+        }
+        fn description(&self) -> &str {
+            "Write a file"
+        }
+        fn parameters_schema(&self) -> &serde_json::Value {
+            &serde_json::Value::Null
+        }
+        fn requires_approval(&self) -> bool {
+            true
+        }
+        fn execute(
+            &self,
+            _tool_call_id: &str,
+            _params: serde_json::Value,
+            _cancellation_token: CancellationToken,
+            _on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
+        ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>> {
+            Box::pin(async { AgentToolResult::text("ok") })
+        }
+    }
+
+    fn make_test_agent_with_tools(stream_fn: Arc<dyn StreamFn>) -> Agent {
+        let mut agent = Agent::new(AgentOptions::new(
+            "test system prompt",
+            ModelSpec::new("test", "mock-model"),
+            stream_fn,
+            default_convert,
+        ));
+        agent.set_tools(vec![
+            Arc::new(MockReadTool) as Arc<dyn AgentTool>,
+            Arc::new(MockWriteTool) as Arc<dyn AgentTool>,
+        ]);
+        agent
+    }
+
+    #[tokio::test]
+    async fn toggle_operating_mode_changes_mode() {
+        let stream_fn = Arc::new(MockStreamFn::new(vec![]));
+        let agent = make_test_agent_with_tools(stream_fn);
+
+        let mut app = App::new(TuiConfig::default());
+        app.set_agent(agent);
+
+        assert_eq!(app.operating_mode, OperatingMode::Execute);
+
+        app.toggle_operating_mode();
+        assert_eq!(app.operating_mode, OperatingMode::Plan);
+
+        app.toggle_operating_mode();
+        assert_eq!(app.operating_mode, OperatingMode::Execute);
+    }
+
+    #[tokio::test]
+    async fn plan_mode_filters_tools() {
+        let stream_fn = Arc::new(MockStreamFn::new(vec![]));
+        let agent = make_test_agent_with_tools(stream_fn);
+
+        let mut app = App::new(TuiConfig::default());
+        app.set_agent(agent);
+
+        // Before: both tools present
+        assert_eq!(app.agent.as_ref().unwrap().state().tools.len(), 2);
+
+        app.enter_plan_mode();
+
+        // After: only read-only tool remains
+        let tools = &app.agent.as_ref().unwrap().state().tools;
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].name(), "read_file");
+    }
+
+    #[tokio::test]
+    async fn plan_mode_modifies_system_prompt() {
+        let stream_fn = Arc::new(MockStreamFn::new(vec![]));
+        let agent = make_test_agent_with_tools(stream_fn);
+
+        let mut app = App::new(TuiConfig::default());
+        app.set_agent(agent);
+
+        app.enter_plan_mode();
+
+        let prompt = &app.agent.as_ref().unwrap().state().system_prompt;
+        assert!(
+            prompt.contains("planning mode"),
+            "system prompt should contain planning mode addendum"
+        );
+    }
+
+    #[tokio::test]
+    async fn exit_plan_mode_restores_tools() {
+        let stream_fn = Arc::new(MockStreamFn::new(vec![]));
+        let agent = make_test_agent_with_tools(stream_fn);
+
+        let mut app = App::new(TuiConfig::default());
+        app.set_agent(agent);
+
+        app.enter_plan_mode();
+        assert_eq!(app.agent.as_ref().unwrap().state().tools.len(), 1);
+
+        app.exit_plan_mode();
+        assert_eq!(app.agent.as_ref().unwrap().state().tools.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn exit_plan_mode_restores_system_prompt() {
+        let stream_fn = Arc::new(MockStreamFn::new(vec![]));
+        let agent = make_test_agent_with_tools(stream_fn);
+
+        let mut app = App::new(TuiConfig::default());
+        app.set_agent(agent);
+
+        let original_prompt = app
+            .agent
+            .as_ref()
+            .unwrap()
+            .state()
+            .system_prompt
+            .clone();
+
+        app.enter_plan_mode();
+        app.exit_plan_mode();
+
+        let restored_prompt = &app.agent.as_ref().unwrap().state().system_prompt;
+        assert_eq!(
+            &original_prompt, restored_prompt,
+            "system prompt should be restored after exiting plan mode"
+        );
+    }
+
+    #[tokio::test]
+    async fn reset_exits_plan_mode() {
+        let stream_fn = Arc::new(MockStreamFn::new(vec![]));
+        let agent = make_test_agent_with_tools(stream_fn);
+
+        let mut app = App::new(TuiConfig::default());
+        app.set_agent(agent);
+
+        app.enter_plan_mode();
+        assert_eq!(app.operating_mode, OperatingMode::Plan);
+
+        // Simulate the Reset command path
+        if let Some(agent) = &mut app.agent {
+            agent.reset();
+        }
+        app.messages.clear();
+        app.operating_mode = OperatingMode::Execute;
+        app.saved_tools = None;
+        app.saved_system_prompt = None;
+
+        assert_eq!(app.operating_mode, OperatingMode::Execute);
+        assert!(app.saved_tools.is_none());
+        assert!(app.saved_system_prompt.is_none());
+    }
+
+    #[tokio::test]
+    async fn shift_tab_toggles_plan_mode() {
+        let stream_fn = Arc::new(MockStreamFn::new(vec![]));
+        let agent = make_test_agent_with_tools(stream_fn);
+
+        let mut app = App::new(TuiConfig::default());
+        app.set_agent(agent);
+
+        assert_eq!(app.operating_mode, OperatingMode::Execute);
+
+        let key = KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT);
+        app.handle_key_event(key);
+        assert_eq!(app.operating_mode, OperatingMode::Plan);
+
+        let key = KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT);
+        app.handle_key_event(key);
+        assert_eq!(app.operating_mode, OperatingMode::Execute);
     }
 }

@@ -32,7 +32,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let stream_fn: Arc<dyn StreamFn> = Arc::new(AnthropicStreamFn::new(&base_url, &api_key));
 
     // 3. Choose a model.
-    let model = ModelSpec::new("anthropic", "claude-sonnet-4-20250514");
+    let model = ModelSpec::new("anthropic", "claude-sonnet-4-6");
 
     // 4. Register tools.
     let tools: Vec<Arc<dyn AgentTool>> = vec![

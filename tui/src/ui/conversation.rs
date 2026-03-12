@@ -2,7 +2,7 @@
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 
@@ -56,6 +56,7 @@ impl ConversationView {
     }
 
     /// Render the conversation view.
+    #[allow(clippy::too_many_lines)]
     pub fn render(
         &mut self,
         frame: &mut Frame,
@@ -63,11 +64,12 @@ impl ConversationView {
         messages: &[DisplayMessage],
         focused: bool,
         blink_on: bool,
+        selected_tool_block: Option<usize>,
     ) {
         let border_color = if focused {
-            Color::White
+            theme::border_focused_color()
         } else {
-            Color::DarkGray
+            theme::border_color()
         };
 
         let inner_width = area.width.saturating_sub(2); // account for borders
@@ -76,30 +78,82 @@ impl ConversationView {
         // Build all lines from messages
         let mut all_lines: Vec<Line<'static>> = Vec::new();
 
-        for msg in messages {
+        for (msg_idx, msg) in messages.iter().enumerate() {
             let (role_label, role_color) = match msg.role {
-                MessageRole::User => ("You", theme::USER_COLOR),
-                MessageRole::Assistant => ("Assistant", theme::ASSISTANT_COLOR),
-                MessageRole::ToolResult => ("Tool", theme::TOOL_COLOR),
-                MessageRole::Error => ("Error", theme::ERROR_COLOR),
-                MessageRole::System => ("System", Color::Magenta),
+                MessageRole::User => ("You", theme::user_color()),
+                MessageRole::Assistant => {
+                    if msg.plan_mode {
+                        ("Plan", theme::plan_color())
+                    } else {
+                        ("Assistant", theme::assistant_color())
+                    }
+                }
+                MessageRole::ToolResult => ("Tool", theme::tool_color()),
+                MessageRole::Error => ("Error", theme::error_color()),
+                MessageRole::System => ("System", theme::system_color()),
+            };
+
+            // Collapsed tool result: show one-line summary
+            if msg.role == MessageRole::ToolResult && msg.collapsed {
+                let is_selected = selected_tool_block == Some(msg_idx);
+                let select_style = if is_selected {
+                    Style::default()
+                        .fg(role_color)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(role_color)
+                };
+                all_lines.push(Line::from(vec![
+                    Span::styled("│ ", Style::default().fg(role_color)),
+                    Span::styled("▶ ", select_style),
+                    Span::styled(
+                        role_label.to_string(),
+                        Style::default()
+                            .fg(role_color)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled("  ", Style::default()),
+                    Span::styled(msg.summary.clone(), theme::dim()),
+                    Span::styled(" [F2]", theme::dim()),
+                ]));
+                all_lines.push(Line::from(""));
+                continue;
+            }
+
+            // Expanded tool result: show ▼ indicator
+            let indicator = if msg.role == MessageRole::ToolResult {
+                let is_selected = selected_tool_block == Some(msg_idx);
+                let select_style = if is_selected {
+                    Style::default()
+                        .fg(role_color)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(role_color)
+                };
+                Some(Span::styled("▼ ", select_style))
+            } else {
+                None
             };
 
             // Role header line with colored left border
-            all_lines.push(Line::from(vec![
+            let mut header_spans = vec![
                 Span::styled("│ ", Style::default().fg(role_color)),
-                Span::styled(
-                    role_label.to_string(),
-                    Style::default().fg(role_color).add_modifier(Modifier::BOLD),
-                ),
-            ]));
+            ];
+            if let Some(ind) = indicator {
+                header_spans.push(ind);
+            }
+            header_spans.push(Span::styled(
+                role_label.to_string(),
+                Style::default().fg(role_color).add_modifier(Modifier::BOLD),
+            ));
+            all_lines.push(Line::from(header_spans));
 
             // Thinking section (dimmed, collapsed)
             if let Some(thinking) = &msg.thinking
                 && !thinking.is_empty()
             {
                 let thinking_style = Style::default()
-                    .fg(theme::THINKING_COLOR)
+                    .fg(theme::thinking_color())
                     .add_modifier(Modifier::DIM);
                 all_lines.push(Line::from(vec![
                     Span::styled("│ ", Style::default().fg(role_color)),
@@ -115,6 +169,20 @@ impl ConversationView {
                 let mut spans = vec![Span::styled("│ ", Style::default().fg(role_color))];
                 spans.extend(line.spans);
                 all_lines.push(Line::from(spans));
+            }
+
+            // Render diff view for file modifications
+            if msg.role == MessageRole::ToolResult
+                && let Some(ref diff) = msg.diff_data
+            {
+                let diff_lines =
+                    crate::ui::diff::render_diff_lines(diff, inner_width);
+                for line in diff_lines {
+                    let mut spans =
+                        vec![Span::styled("│ ", Style::default().fg(role_color))];
+                    spans.extend(line.spans);
+                    all_lines.push(Line::from(spans));
+                }
             }
 
             // Streaming cursor

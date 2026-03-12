@@ -40,6 +40,24 @@ pub fn format_elapsed(start: Instant) -> String {
     }
 }
 
+/// Format a context window gauge as a 10-character bar with percentage.
+///
+/// Returns a tuple of (bar string, fill percentage) where the bar looks like
+/// `[████████░░]` and the percentage is 0.0 to 100.0+.
+#[must_use]
+pub fn format_context_gauge(tokens_used: u64, budget: u64) -> (String, f32) {
+    if budget == 0 {
+        return ("[ no limit ]".to_string(), 0.0);
+    }
+    #[allow(clippy::cast_precision_loss)]
+    let pct = (tokens_used as f32 / budget as f32) * 100.0;
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let filled = ((pct / 100.0) * 10.0).round().min(10.0) as usize;
+    let empty = 10 - filled;
+    let bar = format!("[{}{}]", "█".repeat(filled), "░".repeat(empty));
+    (bar, pct)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -117,5 +135,75 @@ mod tests {
         } else {
             format!("{mins:02}:{secs:02}")
         }
+    }
+
+    #[test]
+    fn context_gauge_zero_percent() {
+        let (bar, pct) = format_context_gauge(0, 100_000);
+        assert_eq!(bar, "[░░░░░░░░░░]");
+        assert!((pct - 0.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn context_gauge_fifty_percent() {
+        let (bar, pct) = format_context_gauge(50_000, 100_000);
+        assert_eq!(bar, "[█████░░░░░]");
+        assert!((pct - 50.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn context_gauge_full() {
+        let (bar, pct) = format_context_gauge(100_000, 100_000);
+        assert_eq!(bar, "[██████████]");
+        assert!((pct - 100.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn context_gauge_over_budget_capped() {
+        let (bar, pct) = format_context_gauge(120_000, 100_000);
+        assert_eq!(bar, "[██████████]");
+        assert!(pct > 100.0);
+    }
+
+    #[test]
+    fn context_gauge_zero_budget() {
+        let (bar, pct) = format_context_gauge(5_000, 0);
+        assert_eq!(bar, "[ no limit ]");
+        assert!((pct - 0.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn context_gauge_boundary_59_percent() {
+        let (bar, pct) = format_context_gauge(59_000, 100_000);
+        // 59% → 5.9 blocks → rounds to 6
+        assert_eq!(bar, "[██████░░░░]");
+        assert!((pct - 59.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn context_gauge_boundary_60_percent() {
+        let (bar, pct) = format_context_gauge(60_000, 100_000);
+        // 60% → 6.0 blocks → rounds to 6
+        assert_eq!(bar, "[██████░░░░]");
+        assert!((pct - 60.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn context_gauge_boundary_85_percent() {
+        let (bar, pct) = format_context_gauge(85_000, 100_000);
+        // 85% → 8.5 blocks → rounds to 9 (note: .round() on 8.5 rounds to 8 in Rust)
+        let filled = ((85.0_f32 / 100.0) * 10.0).round() as usize;
+        let empty = 10 - filled;
+        let expected = format!("[{}{}]", "█".repeat(filled), "░".repeat(empty));
+        assert_eq!(bar, expected);
+        assert!((pct - 85.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn context_gauge_boundary_86_percent() {
+        let (bar, pct) = format_context_gauge(86_000, 100_000);
+        // 86% → 8.6 blocks → rounds to 9
+        assert_eq!(bar, "[█████████░]");
+        assert!((pct - 86.0).abs() < 0.01);
     }
 }

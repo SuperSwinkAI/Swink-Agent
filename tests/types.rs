@@ -86,6 +86,7 @@ fn llm_message_tool_result() {
         content: vec![ContentBlock::Text { text: "ok".into() }],
         is_error: false,
         timestamp: 3,
+        details: serde_json::Value::Null,
     });
     assert!(matches!(msg, LlmMessage::ToolResult(_)));
 }

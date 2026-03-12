@@ -477,6 +477,59 @@ Key rendering features:
 | `syntect` | Syntax highlighting for code blocks |
 | `tokio` | Async runtime (shared with swink agent) |
 
+### 16.6 Inline Diff View
+
+When the agent modifies a file, the TUI displays the change as a syntax-highlighted inline diff rather than raw tool output. Users review modifications in context before they are finalized.
+
+- Unified diff as the default view; side-by-side layout available when terminal width exceeds a threshold (e.g., 160 columns)
+- Per-hunk approve/reject — each changed hunk is an independent decision point. Approved hunks are applied; rejected hunks are reverted and communicated back to the agent as a tool result
+- Syntax highlighting uses the same `syntect` pipeline as code blocks
+- Diffs for new files show all lines as additions; diffs for deleted files show all lines as deletions
+
+### 16.7 Context Window Progress Bar
+
+The status bar includes a visual gauge showing the estimated context window fill percentage. This gives the user awareness of how much conversation history remains before context compaction or overflow occurs.
+
+- Gauge color transitions from green (<60%) to yellow (60–85%) to red (>85%)
+- Percentage is computed from the same `estimate_tokens` heuristic used by the sliding window compactor, relative to the model's context window size
+- Updates after every turn (not per-delta, to avoid flicker)
+
+### 16.8 External Editor Mode
+
+Users can compose complex, multi-line prompts in their preferred external editor. The TUI opens the editor specified by `$EDITOR` (falling back to `$VISUAL`, then `vi`), waits for it to close, and submits the resulting text as the user prompt.
+
+- Triggered via `/editor` command
+- TUI suspends (leaves alternate screen, restores terminal mode) while the editor is open, then resumes
+- Empty file on close is treated as cancellation — no message is sent
+- Temporary file is created in the OS temp directory and deleted after submission
+
+### 16.9 Plan Mode
+
+Plan mode is a read-only operating mode where the agent analyzes the user's request and produces a structured plan but does not execute any write or destructive tools. The user reviews the proposed plan, then switches to execute mode to carry it out.
+
+- Toggled via `Shift+Tab` keybinding or `/plan` slash command. A status bar indicator shows the current mode (Plan / Execute)
+- In plan mode, the agent's tool set is restricted to read-only tools (e.g., `ReadFileTool`). Write tools (`WriteFileTool`, `BashTool`) are temporarily removed from the agent context
+- Switching to execute mode re-registers all tools and optionally re-sends the plan as a follow-up message so the agent can act on it
+- Plan mode output is styled distinctly (e.g., a different border color or a "PLAN" label) to avoid confusion with executed results
+
+### 16.10 Collapsible Tool Result Blocks
+
+Each tool invocation and its result are rendered as a discrete, collapsible block in the conversation view. This reduces visual clutter when the agent makes many tool calls in a single turn.
+
+- Default state is collapsed — shows a one-line summary (tool name, status badge, truncated first line of output)
+- Expand/collapse toggled with `F2` key; `Shift+←`/`Shift+→` cycles selection across tool blocks
+- When the agent is streaming and tool results arrive, new blocks start expanded, then auto-collapse after 3 seconds (matching the existing tool panel fade behavior)
+- Expanded view shows the full tool output with syntax highlighting where applicable
+
+### 16.11 Tiered Approval Modes
+
+Extends the existing binary approval system (`#approve on` / `#approve off`) with a third `Smart` mode. Smart mode auto-approves read-only tools and prompts only for tools that could modify state.
+
+- Three modes: `Enabled` (prompt for all), `Smart` (auto-approve reads, prompt for writes/deletes/commands), `Bypassed` (auto-approve all)
+- Classification uses the existing `requires_approval()` trait method — tools that return `false` are always auto-approved regardless of mode
+- Per-tool session trust: after approving a specific tool once in Smart mode, the user can choose "always approve this tool for this session." Trusted tools are auto-approved for the remainder of the session
+- Configurable via `#approve smart`, `#approve on`, `#approve off` commands. `Smart` is the new default
+
 ---
 
 ## 17. Acceptance Criteria
@@ -503,3 +556,13 @@ Key rendering features:
 | 18 | Cancel via Escape/Ctrl+C aborts the running agent and shows aborted state |
 | 19 | Tool execution panel shows active tools and their results |
 | 20 | TUI adapts layout to terminal resize events |
+| 21 | Inline diff view renders file modifications as syntax-highlighted unified diffs with per-hunk approve/reject |
+| 22 | Inline diff view switches to side-by-side layout when terminal width exceeds the configured threshold |
+| 23 | Context window progress bar displays estimated fill percentage with green/yellow/red color transitions |
+| 24 | External editor opens `$EDITOR`, suspends the TUI, and submits the file content on close |
+| 25 | External editor treats an empty file on close as cancellation — no message is sent |
+| 26 | Plan mode restricts the agent to read-only tools and labels output distinctly |
+| 27 | Switching from plan mode to execute mode re-registers write tools and continues with the plan |
+| 28 | Tool result blocks default to collapsed with a one-line summary and expand on user interaction |
+| 29 | Smart approval mode auto-approves tools where `requires_approval()` returns false and prompts for all others |
+| 30 | Per-tool session trust persists approved tool names for the session duration in Smart mode |

@@ -976,6 +976,7 @@ async fn test_continue_from_tool_result() {
         }],
         is_error: false,
         timestamp: 0,
+        details: serde_json::Value::Null,
     }));
 
     agent.set_messages(vec![user, assistant, tool_result]);
@@ -1043,6 +1044,7 @@ async fn test_continue_does_not_reemit_existing_messages() {
         }],
         is_error: false,
         timestamp: 0,
+        details: serde_json::Value::Null,
     }));
     agent.set_messages(vec![user, assistant, tool_result]);
 

@@ -749,6 +749,7 @@ fn recover_incomplete_tool_calls(
                     }],
                     is_error: true,
                     timestamp: now_timestamp(),
+                    details: serde_json::Value::Null,
                 });
             } else {
                 remaining.push(tc);
@@ -1162,7 +1163,7 @@ async fn execute_tools_concurrently(
 
         // ── Approval gate ──
         if let Some(ref approve_fn) = config.approve_tool
-            && config.approval_mode == ApprovalMode::Enabled
+            && config.approval_mode != ApprovalMode::Bypassed
         {
             let requires_approval = tool_map
                 .get(tc.name.as_str())
@@ -1277,6 +1278,7 @@ async fn check_approval(
             content: rejection_result.content,
             is_error: true,
             timestamp: now_timestamp(),
+            details: serde_json::Value::Null,
         };
         results.lock().await.push((idx, tool_result_msg));
         return ApprovalOutcome::Rejected;
@@ -1360,6 +1362,7 @@ async fn dispatch_single_tool(
                 content: result.content,
                 is_error,
                 timestamp: now_timestamp(),
+                details: result.details,
             };
 
             results_clone.lock().await.push((idx, tool_result_msg));
@@ -1390,6 +1393,7 @@ async fn dispatch_single_tool(
             content: error_result.content,
             is_error: true,
             timestamp: now_timestamp(),
+            details: serde_json::Value::Null,
         };
         results.lock().await.push((idx, tool_result_msg));
         DispatchResult::Inline
@@ -1437,6 +1441,7 @@ async fn collect_tool_results(
                 }],
                 is_error: true,
                 timestamp: now_timestamp(),
+                details: serde_json::Value::Null,
             };
             results.lock().await.push((idx, panic_result));
             continue;
@@ -1466,6 +1471,7 @@ async fn collect_tool_results(
                         }],
                         is_error: true,
                         timestamp: now_timestamp(),
+                        details: serde_json::Value::Null,
                     });
                 }
             }

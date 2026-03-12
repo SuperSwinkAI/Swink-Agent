@@ -2,9 +2,11 @@
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
+
+use crate::theme;
 
 /// Multi-line input editor state.
 pub struct InputEditor {
@@ -220,9 +222,9 @@ impl InputEditor {
     /// Render the input editor.
     pub fn render(&self, frame: &mut Frame, area: Rect, focused: bool, status_hint: &str) {
         let border_color = if focused {
-            Color::Cyan
+            theme::assistant_color()
         } else {
-            Color::DarkGray
+            theme::border_color()
         };
 
         let title = if status_hint.is_empty() {
@@ -246,7 +248,7 @@ impl InputEditor {
                         Span::styled(
                             format!("{:>2} ", i + 1),
                             Style::default()
-                                .fg(Color::DarkGray)
+                                .fg(theme::border_color())
                                 .add_modifier(Modifier::DIM),
                         ),
                         Span::raw(line.clone()),

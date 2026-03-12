@@ -179,6 +179,9 @@ pub enum ApprovalMode {
     /// Every tool call goes through the approval callback.
     #[default]
     Enabled,
+    /// Auto-approve read-only tools (where `requires_approval()` returns false);
+    /// prompt for all others. Supports per-tool session trust.
+    Smart,
     /// All tool calls auto-approved — callback is never called.
     /// Use this to temporarily disable approval without removing the callback.
     Bypassed,
@@ -476,5 +479,19 @@ mod tests {
         let val = json!({"a": null, "b": 42, "c": 2.72});
         let redacted = redact_sensitive_values(&val);
         assert_eq!(redacted, val);
+    }
+
+    // ─── ApprovalMode ─────────────────────────────────────────────────────
+
+    #[test]
+    fn approval_mode_default_is_enabled() {
+        assert_eq!(ApprovalMode::default(), ApprovalMode::Enabled);
+    }
+
+    #[test]
+    fn approval_mode_variants_are_distinct() {
+        assert_ne!(ApprovalMode::Enabled, ApprovalMode::Smart);
+        assert_ne!(ApprovalMode::Smart, ApprovalMode::Bypassed);
+        assert_ne!(ApprovalMode::Enabled, ApprovalMode::Bypassed);
     }
 }

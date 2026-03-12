@@ -36,6 +36,10 @@ pub enum CommandResult {
     SetApprovalMode(ApprovalModeArg),
     /// Query current approval mode.
     QueryApprovalMode,
+    /// Open external editor for prompt composition.
+    OpenEditor,
+    /// Toggle plan mode.
+    TogglePlanMode,
     /// Input was not a recognized command.
     NotACommand,
 }
@@ -45,6 +49,7 @@ pub enum CommandResult {
 pub enum ApprovalModeArg {
     On,
     Off,
+    Smart,
 }
 
 /// What to copy to clipboard.
@@ -110,8 +115,9 @@ fn execute_hash_command(cmd: &str) -> CommandResult {
         "approve" => CommandResult::QueryApprovalMode,
         "approve on" => CommandResult::SetApprovalMode(ApprovalModeArg::On),
         "approve off" => CommandResult::SetApprovalMode(ApprovalModeArg::Off),
+        "approve smart" => CommandResult::SetApprovalMode(ApprovalModeArg::Smart),
         _ if cmd.starts_with("approve ") => {
-            CommandResult::Feedback("Usage: #approve [on|off]".to_string())
+            CommandResult::Feedback("Usage: #approve [on|off|smart]".to_string())
         }
         _ => CommandResult::Feedback(format!(
             "Unknown command: #{cmd}\nType #help for available commands."
@@ -147,6 +153,8 @@ fn execute_slash_command(cmd: &str) -> CommandResult {
             }
         }
         "reset" => CommandResult::Reset,
+        "editor" => CommandResult::OpenEditor,
+        "plan" => CommandResult::TogglePlanMode,
         _ => CommandResult::Feedback(format!(
             "Unknown command: /{name}\nType #help for available commands."
         )),
@@ -161,10 +169,14 @@ fn help_text() -> String {
 │ Ctrl+Q         Quit                      │
 │ Ctrl+C         Quit (idle) / Abort (run) │
 │ Tab            Toggle focus              │
+│ Shift+Tab      Toggle plan mode         │
 │ Up/Down        Scroll / History          │
 │ PageUp/Down    Scroll page               │
 │ Home/Ctrl+A    Start of line             │
 │ End/Ctrl+E     End of line               │
+│ F2             Expand/collapse tool       │
+│ F3             Cycle color mode          │
+│ Shift+←/→      Cycle tool blocks         │
 ╰──────────────────────────────────────────╯
 ╭─── # Commands (TUI) ───────────────────╮
 │ #help       Show this help              │
@@ -178,9 +190,10 @@ fn help_text() -> String {
 │ #load <id>  Load a saved session        │
 │ #keys       List configured providers   │
 │ #key <p> <k> Store API key for provider │
-│ #approve      Show approval mode         │
-│ #approve on   Enable tool approval       │
-│ #approve off  Disable tool approval      │
+│ #approve        Show approval mode        │
+│ #approve on     Enable tool approval     │
+│ #approve off    Disable tool approval    │
+│ #approve smart  Smart mode (auto reads)  │
 ╰──────────────────────────────────────────╯
 ╭─── / Commands (Agent) ──────────────────╮
 │ /quit       Exit                        │
@@ -188,6 +201,8 @@ fn help_text() -> String {
 │ /thinking   Set thinking level          │
 │ /system     Update system prompt        │
 │ /reset      Reset agent state           │
+│ /editor     Compose in external editor  │
+│ /plan       Toggle plan mode           │
 ╰──────────────────────────────────────────╯"
         .to_string()
 }
@@ -340,9 +355,20 @@ mod tests {
     }
 
     #[test]
+    fn hash_approve_smart() {
+        assert!(matches!(
+            execute_command("#approve smart"),
+            CommandResult::SetApprovalMode(ApprovalModeArg::Smart)
+        ));
+    }
+
+    #[test]
     fn hash_approve_invalid_arg_returns_usage() {
         match execute_command("#approve maybe") {
-            CommandResult::Feedback(msg) => assert!(msg.contains("Usage")),
+            CommandResult::Feedback(msg) => {
+                assert!(msg.contains("Usage"));
+                assert!(msg.contains("smart"));
+            }
             other => panic!("expected Feedback with usage, got {other:?}"),
         }
     }
@@ -421,6 +447,22 @@ mod tests {
     #[test]
     fn slash_reset() {
         assert!(matches!(execute_command("/reset"), CommandResult::Reset));
+    }
+
+    #[test]
+    fn slash_editor() {
+        assert!(matches!(
+            execute_command("/editor"),
+            CommandResult::OpenEditor
+        ));
+    }
+
+    #[test]
+    fn slash_plan() {
+        assert!(matches!(
+            execute_command("/plan"),
+            CommandResult::TogglePlanMode
+        ));
     }
 
     #[test]

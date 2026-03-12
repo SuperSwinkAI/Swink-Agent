@@ -1,6 +1,7 @@
 //! UI layout and rendering.
 
 pub mod conversation;
+pub mod diff;
 pub mod input;
 pub mod markdown;
 mod status_bar;
@@ -59,6 +60,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         &app.messages,
         app.focus == Focus::Conversation,
         app.blink_on,
+        app.selected_tool_block,
     );
 
     // Render tool panel

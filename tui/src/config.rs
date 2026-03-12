@@ -18,6 +18,10 @@ pub struct TuiConfig {
     pub theme: String,
     /// Optional system prompt override.
     pub system_prompt: Option<String>,
+    /// Override for external editor command (defaults to `$EDITOR` / `$VISUAL` / `vi`).
+    pub editor_command: Option<String>,
+    /// Color mode: `"custom"`, `"mono-white"`, or `"mono-black"`.
+    pub color_mode: String,
 }
 
 impl Default for TuiConfig {
@@ -29,6 +33,8 @@ impl Default for TuiConfig {
             default_model: "not connected".to_string(),
             theme: "default".to_string(),
             system_prompt: None,
+            editor_command: None,
+            color_mode: "custom".to_string(),
         }
     }
 }
@@ -80,6 +86,7 @@ mod tests {
             tick_rate_ms = 200
             default_model = "gpt-4o"
             theme = "dark"
+            color_mode = "mono-white"
         "#;
         let config = TuiConfig::from_toml(toml);
         assert!(!config.show_thinking);
@@ -87,6 +94,7 @@ mod tests {
         assert_eq!(config.tick_rate_ms, 200);
         assert_eq!(config.default_model, "gpt-4o");
         assert_eq!(config.theme, "dark");
+        assert_eq!(config.color_mode, "mono-white");
     }
 
     #[test]
@@ -116,6 +124,13 @@ mod tests {
         let config = TuiConfig::from_toml("this is not valid toml {{{{");
         assert!(config.show_thinking);
         assert_eq!(config.tick_rate_ms, 100);
+    }
+
+    #[test]
+    fn from_toml_editor_command() {
+        let toml = r#"editor_command = "nano""#;
+        let config = TuiConfig::from_toml(toml);
+        assert_eq!(config.editor_command.as_deref(), Some("nano"));
     }
 
     #[test]

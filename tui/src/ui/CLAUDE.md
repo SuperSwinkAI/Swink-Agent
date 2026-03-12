@@ -25,12 +25,12 @@
 | `tool_panel.rs` | ToolPanel | Braille spinner, checkmark/cross badges, 3s auto-fade |
 | `status_bar.rs` | StatusBar | Tokens (K/M format), elapsed time, cost, retry indicator |
 | `markdown.rs` | (rendering helper) | Line-by-line state machine parser |
-| `syntax.rs` | (rendering helper) | syntect-based highlighting with OnceLock caching |
+| `syntax.rs` | (rendering helper) | syntect-based highlighting with OnceLock caching; monochrome early-return |
 
 ## Lessons Learned
 
 - **Markdown is parsed line-by-line** — `in_code_block` flag tracks fenced blocks. Inline parsing (`parse_inline`) uses `char_indices().peekable()` to detect backticks, asterisks for code/italic/bold. Word-wrap preserves style across line breaks by splitting text within spans.
-- **syntect caches are static `OnceLock`** — `SyntaxSet` and `ThemeSet` load once on first `highlight_code` call, zero-copy after. Theme is hardcoded to `base16-ocean.dark`.
+- **syntect caches are static `OnceLock`** — `SyntaxSet` and `ThemeSet` load once on first `highlight_code` call, zero-copy after. Theme is hardcoded to `base16-ocean.dark`. In monochrome modes (`MonoWhite`/`MonoBlack`), syntect is skipped entirely and code renders as plain DIM text.
 - **Tool panel auto-fade** — `tick()` retains completed tools for 3 seconds. `height()` returns 0 when nothing is visible, causing the layout to reclaim the space. Panel caps at 8 lines max.
 - **Auto-scroll disengages on manual scroll** — `scroll_up()` sets `auto_scroll = false`. `scroll_down()` re-engages it when user scrolls to bottom. Title shows "scroll to bottom" hint when disengaged.
 - **Thinking sections are dimmed, not collapsible** — rendered with dimmed style. No expand/collapse toggle exists. This was a QA finding — docs previously claimed "collapsible" but code never implemented it.

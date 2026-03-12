@@ -4,11 +4,13 @@ use std::time::Instant;
 
 use swink_agent::redact_sensitive_values;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Frame;
 use serde_json::Value;
+
+use crate::theme;
 
 /// Braille spinner frames for active tool display.
 const SPINNER: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
@@ -147,7 +149,7 @@ impl ToolPanel {
         let block = Block::default()
             .borders(Borders::ALL)
             .title(" Tools ")
-            .border_style(Style::default().fg(Color::Yellow));
+            .border_style(Style::default().fg(theme::tool_color()));
 
         let mut lines: Vec<Line> = Vec::new();
 
@@ -157,7 +159,7 @@ impl ToolPanel {
                 Span::styled(
                     " \u{26a0} ",
                     Style::default()
-                        .fg(Color::Yellow)
+                        .fg(theme::tool_color())
                         .add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(
@@ -166,12 +168,12 @@ impl ToolPanel {
                 ),
                 Span::styled(
                     format!(": {}", approval.arguments_summary),
-                    Style::default().fg(Color::White),
+                    Style::default().fg(theme::border_focused_color()),
                 ),
                 Span::styled(
                     " \u{2014} Approve? [Y/n]",
                     Style::default()
-                        .fg(Color::Yellow)
+                        .fg(theme::tool_color())
                         .add_modifier(Modifier::BOLD),
                 ),
             ]));
@@ -180,9 +182,9 @@ impl ToolPanel {
         // Recently resolved approvals
         for resolved in &self.resolved_approvals {
             let (icon, label, color) = if resolved.approved {
-                ("\u{2713}", "Approved", Color::Green)
+                ("\u{2713}", "Approved", theme::success_color())
             } else {
-                ("\u{2717}", "Rejected", Color::Red)
+                ("\u{2717}", "Rejected", theme::failure_color())
             };
             lines.push(Line::from(vec![
                 Span::styled(format!(" {icon} "), Style::default().fg(color)),
@@ -200,7 +202,7 @@ impl ToolPanel {
             lines.push(Line::from(vec![
                 Span::styled(
                     format!(" {spinner} "),
-                    Style::default().fg(Color::Yellow),
+                    Style::default().fg(theme::tool_color()),
                 ),
                 Span::styled(
                     tool.name.clone(),
@@ -209,7 +211,7 @@ impl ToolPanel {
                 Span::styled(
                     format!("  {elapsed}s"),
                     Style::default()
-                        .fg(Color::DarkGray)
+                        .fg(theme::border_color())
                         .add_modifier(Modifier::DIM),
                 ),
             ]));
@@ -221,9 +223,9 @@ impl ToolPanel {
                 .completed_at
                 .map_or(0, |end| end.duration_since(tool.started_at).as_millis());
             let (icon, color) = if tool.is_error {
-                ("\u{2717}", Color::Red)
+                ("\u{2717}", theme::failure_color())
             } else {
-                ("\u{2713}", Color::Green)
+                ("\u{2713}", theme::success_color())
             };
             lines.push(Line::from(vec![
                 Span::styled(format!(" {icon} "), Style::default().fg(color)),
@@ -234,7 +236,7 @@ impl ToolPanel {
                 Span::styled(
                     format!("  {duration}ms"),
                     Style::default()
-                        .fg(Color::DarkGray)
+                        .fg(theme::border_color())
                         .add_modifier(Modifier::DIM),
                 ),
             ]));

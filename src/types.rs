@@ -99,6 +99,9 @@ pub struct ToolResultMessage {
     pub content: Vec<ContentBlock>,
     pub is_error: bool,
     pub timestamp: u64,
+    /// Structured data for display — not sent to the LLM.
+    #[serde(default)]
+    pub details: serde_json::Value,
 }
 
 /// A discriminated union of the three LLM message roles.

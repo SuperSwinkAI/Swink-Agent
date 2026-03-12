@@ -8,6 +8,7 @@ use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
 use crate::tool::{AgentTool, AgentToolResult};
+use crate::types::ContentBlock;
 
 /// Built-in tool that writes content to a file, creating parent directories as
 /// needed.
@@ -92,6 +93,9 @@ impl AgentTool for WriteFileTool {
 
             let path = std::path::Path::new(&parsed.path);
 
+            // Read existing content for diff (empty string if file doesn't exist)
+            let old_content = tokio::fs::read_to_string(path).await.unwrap_or_default();
+
             if let Some(parent) = path.parent()
                 && let Err(e) = tokio::fs::create_dir_all(parent).await
             {
@@ -103,10 +107,21 @@ impl AgentTool for WriteFileTool {
 
             let bytes_written = parsed.content.len();
             match tokio::fs::write(path, &parsed.content).await {
-                Ok(()) => AgentToolResult::text(format!(
-                    "Successfully wrote {bytes_written} bytes to {}",
-                    parsed.path
-                )),
+                Ok(()) => AgentToolResult {
+                    content: vec![ContentBlock::Text {
+                        text: format!(
+                            "Successfully wrote {bytes_written} bytes to {}",
+                            parsed.path
+                        ),
+                    }],
+                    details: serde_json::json!({
+                        "path": parsed.path,
+                        "bytes_written": bytes_written,
+                        "is_new_file": old_content.is_empty(),
+                        "old_content": old_content,
+                        "new_content": parsed.content,
+                    }),
+                },
                 Err(e) => AgentToolResult::error(format!(
                     "failed to write file {}: {e}",
                     parsed.path

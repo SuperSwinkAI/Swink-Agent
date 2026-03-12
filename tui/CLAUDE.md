@@ -40,7 +40,7 @@
 | `session.rs` | JSONL session persistence |
 | `wizard.rs` | First-run setup wizard |
 | `format.rs` | Token/time formatting helpers |
-| `theme.rs` | Color constants |
+| `theme.rs` | ColorMode system, color resolution functions, style helpers |
 | `ui/` | Rendering components (see `tui/src/ui/CLAUDE.md`) |
 
 ## Lessons Learned

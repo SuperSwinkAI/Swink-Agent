@@ -703,6 +703,7 @@ impl Agent {
                                 }],
                                 is_error: true,
                                 timestamp: now_timestamp(),
+                                details: serde_json::Value::Null,
                             },
                         ));
                         self.state.messages.push(feedback);

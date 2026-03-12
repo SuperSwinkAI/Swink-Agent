@@ -5,6 +5,7 @@
 //! in your own binary or example.
 
 mod commands;
+mod editor;
 mod format;
 mod session;
 mod theme;
