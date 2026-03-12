@@ -7,10 +7,10 @@ The streaming interface is the single boundary between the harness and LLM provi
 
 | Implementation | Crate | Transport | Endpoint |
 |---|---|---|---|
-| `ProxyStreamFn` | `agent-harness` (core) | **SSE** (Server-Sent Events via `eventsource-stream`) | `POST /v1/stream` on a caller-managed proxy |
-| `OllamaStreamFn` | `agent-harness-adapters` | **NDJSON** (newline-delimited JSON over chunked HTTP) | `POST /api/chat` on an Ollama server |
-| `AnthropicStreamFn` | `agent-harness-adapters` | **SSE** (Server-Sent Events) | `POST /v1/messages` on the Anthropic Messages API |
-| `OpenAiStreamFn` | `agent-harness-adapters` | **SSE** (Server-Sent Events) | `POST /v1/chat/completions` on any OpenAI-compatible API |
+| `ProxyStreamFn` | `swink-agent` (core) | **SSE** (Server-Sent Events via `eventsource-stream`) | `POST /v1/stream` on a caller-managed proxy |
+| `OllamaStreamFn` | `swink-agent-adapters` | **NDJSON** (newline-delimited JSON over chunked HTTP) | `POST /api/chat` on an Ollama server |
+| `AnthropicStreamFn` | `swink-agent-adapters` | **SSE** (Server-Sent Events) | `POST /v1/messages` on the Anthropic Messages API |
+| `OpenAiStreamFn` | `swink-agent-adapters` | **SSE** (Server-Sent Events) | `POST /v1/chat/completions` on any OpenAI-compatible API |
 
 All implementations produce the same `Stream<AssistantMessageEvent>` output. The transport difference is internal: `ProxyStreamFn` parses SSE frames with named event types, `OllamaStreamFn` splits raw newline-delimited JSON lines and maps Ollama's response schema into harness events, `AnthropicStreamFn` connects directly to the Anthropic Messages API, and `OpenAiStreamFn` connects to any OpenAI-compatible endpoint. Callers can also supply a fully custom `StreamFn` for any other provider.
 
@@ -459,16 +459,16 @@ sequenceDiagram
 
 ## L4 — Proxy Error Handling
 
-Proxy failures are classified into `HarnessError` variants based on the nature of the failure. This determines whether the harness will retry the request (via `RetryStrategy`) or surface the error immediately to the caller.
+Proxy failures are classified into `AgentError` variants based on the nature of the failure. This determines whether the harness will retry the request (via `RetryStrategy`) or surface the error immediately to the caller.
 
-| Failure mode | HarnessError variant | Retryable? | Notes |
+| Failure mode | AgentError variant | Retryable? | Notes |
 |---|---|---|---|
-| **Connection failure** (proxy unreachable, DNS failure, TCP timeout) | `HarnessError::NetworkError` | Yes | Retryable via `RetryStrategy`. |
-| **Authentication failure** (invalid/expired bearer token, 401/403 response) | `HarnessError::StreamError` | No | Not retryable — caller must fix credentials. |
-| **SSE stream drop** (connection lost mid-stream) | `HarnessError::NetworkError` | Yes | The harness does not attempt partial message recovery — the entire turn is retried. |
-| **Proxy timeout** (proxy returns 504 or similar gateway timeout) | `HarnessError::NetworkError` | Yes | Retryable via `RetryStrategy`. |
-| **Malformed SSE event** (unparseable JSON in event data) | `HarnessError::StreamError` | No | Not retryable — indicates a proxy bug. |
-| **Rate limiting from proxy** (429 response from the proxy itself) | `HarnessError::ModelThrottled` | Yes | Retryable via `RetryStrategy`. |
+| **Connection failure** (proxy unreachable, DNS failure, TCP timeout) | `AgentError::NetworkError` | Yes | Retryable via `RetryStrategy`. |
+| **Authentication failure** (invalid/expired bearer token, 401/403 response) | `AgentError::StreamError` | No | Not retryable — caller must fix credentials. |
+| **SSE stream drop** (connection lost mid-stream) | `AgentError::NetworkError` | Yes | The harness does not attempt partial message recovery — the entire turn is retried. |
+| **Proxy timeout** (proxy returns 504 or similar gateway timeout) | `AgentError::NetworkError` | Yes | Retryable via `RetryStrategy`. |
+| **Malformed SSE event** (unparseable JSON in event data) | `AgentError::StreamError` | No | Not retryable — indicates a proxy bug. |
+| **Rate limiting from proxy** (429 response from the proxy itself) | `AgentError::ModelThrottled` | Yes | Retryable via `RetryStrategy`. |
 
 ```mermaid
 flowchart TB
@@ -481,7 +481,7 @@ flowchart TB
         RateLimit["Rate Limited<br/>(429 from proxy)"]
     end
 
-    subgraph ErrorTypes["⚠️ HarnessError Mapping"]
+    subgraph ErrorTypes["⚠️ AgentError Mapping"]
         NetErr["NetworkError<br/>(retryable)"]
         StreamErr["StreamError<br/>(not retryable)"]
         Throttled["ModelThrottled<br/>(retryable)"]

@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use agent_harness::{
+use swink_agent::{
     AgentContext, AgentMessage, AssistantMessage, ContentBlock, Cost, CustomMessage, ImageSource,
     LlmMessage, ModelSpec, StopReason, ThinkingBudgets, ThinkingLevel, ToolResultMessage, Usage,
     UserMessage,

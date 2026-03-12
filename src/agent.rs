@@ -18,7 +18,7 @@ use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
-use crate::error::HarnessError;
+use crate::error::AgentError;
 use crate::loop_::ApproveToolFn;
 use crate::loop_::{AgentEvent, AgentLoopConfig, agent_loop, agent_loop_continue};
 use crate::message_provider::MessageProvider;
@@ -502,11 +502,11 @@ impl Agent {
     ///
     /// # Errors
     ///
-    /// Returns [`HarnessError::AlreadyRunning`] if the agent is already running.
+    /// Returns [`AgentError::AlreadyRunning`] if the agent is already running.
     pub fn prompt_stream(
         &mut self,
         input: Vec<AgentMessage>,
-    ) -> Result<Pin<Box<dyn Stream<Item = AgentEvent> + Send>>, HarnessError> {
+    ) -> Result<Pin<Box<dyn Stream<Item = AgentEvent> + Send>>, AgentError> {
         if let Err(e) = self.check_not_running() {
             warn!("prompt_stream called while agent is already running");
             return Err(e);
@@ -523,11 +523,11 @@ impl Agent {
     ///
     /// # Errors
     ///
-    /// Returns [`HarnessError::AlreadyRunning`] if the agent is already running.
+    /// Returns [`AgentError::AlreadyRunning`] if the agent is already running.
     pub async fn prompt_async(
         &mut self,
         input: Vec<AgentMessage>,
-    ) -> Result<AgentResult, HarnessError> {
+    ) -> Result<AgentResult, AgentError> {
         info!(
             model = %self.state.model.model_id,
             input_messages = input.len(),
@@ -541,8 +541,8 @@ impl Agent {
     ///
     /// # Errors
     ///
-    /// Returns [`HarnessError::AlreadyRunning`] if the agent is already running.
-    pub fn prompt_sync(&mut self, input: Vec<AgentMessage>) -> Result<AgentResult, HarnessError> {
+    /// Returns [`AgentError::AlreadyRunning`] if the agent is already running.
+    pub fn prompt_sync(&mut self, input: Vec<AgentMessage>) -> Result<AgentResult, AgentError> {
         self.check_not_running()?;
         let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
         rt.block_on(async {
@@ -559,7 +559,7 @@ impl Agent {
     pub async fn prompt_text(
         &mut self,
         text: impl Into<String>,
-    ) -> Result<AgentResult, HarnessError> {
+    ) -> Result<AgentResult, AgentError> {
         let msg = AgentMessage::Llm(LlmMessage::User(crate::types::UserMessage {
             content: vec![ContentBlock::Text { text: text.into() }],
             timestamp: now_timestamp(),
@@ -574,7 +574,7 @@ impl Agent {
         &mut self,
         text: impl Into<String>,
         images: Vec<crate::types::ImageSource>,
-    ) -> Result<AgentResult, HarnessError> {
+    ) -> Result<AgentResult, AgentError> {
         let mut content = vec![ContentBlock::Text { text: text.into() }];
         for source in images {
             content.push(ContentBlock::Image { source });
@@ -592,7 +592,7 @@ impl Agent {
     pub fn prompt_text_sync(
         &mut self,
         text: impl Into<String>,
-    ) -> Result<AgentResult, HarnessError> {
+    ) -> Result<AgentResult, AgentError> {
         let msg = AgentMessage::Llm(LlmMessage::User(crate::types::UserMessage {
             content: vec![ContentBlock::Text { text: text.into() }],
             timestamp: now_timestamp(),
@@ -606,11 +606,11 @@ impl Agent {
     ///
     /// # Errors
     ///
-    /// Returns [`HarnessError::AlreadyRunning`], [`HarnessError::NoMessages`],
-    /// or [`HarnessError::InvalidContinue`].
+    /// Returns [`AgentError::AlreadyRunning`], [`AgentError::NoMessages`],
+    /// or [`AgentError::InvalidContinue`].
     pub fn continue_stream(
         &mut self,
-    ) -> Result<Pin<Box<dyn Stream<Item = AgentEvent> + Send>>, HarnessError> {
+    ) -> Result<Pin<Box<dyn Stream<Item = AgentEvent> + Send>>, AgentError> {
         self.check_not_running()?;
         self.validate_continue()?;
         self.start_loop(Vec::new(), true)
@@ -620,9 +620,9 @@ impl Agent {
     ///
     /// # Errors
     ///
-    /// Returns [`HarnessError::AlreadyRunning`], [`HarnessError::NoMessages`],
-    /// or [`HarnessError::InvalidContinue`].
-    pub async fn continue_async(&mut self) -> Result<AgentResult, HarnessError> {
+    /// Returns [`AgentError::AlreadyRunning`], [`AgentError::NoMessages`],
+    /// or [`AgentError::InvalidContinue`].
+    pub async fn continue_async(&mut self) -> Result<AgentResult, AgentError> {
         let stream = self.continue_stream()?;
         self.collect_stream(stream).await
     }
@@ -631,9 +631,9 @@ impl Agent {
     ///
     /// # Errors
     ///
-    /// Returns [`HarnessError::AlreadyRunning`], [`HarnessError::NoMessages`],
-    /// or [`HarnessError::InvalidContinue`].
-    pub fn continue_sync(&mut self) -> Result<AgentResult, HarnessError> {
+    /// Returns [`AgentError::AlreadyRunning`], [`AgentError::NoMessages`],
+    /// or [`AgentError::InvalidContinue`].
+    pub fn continue_sync(&mut self) -> Result<AgentResult, AgentError> {
         self.check_not_running()?;
         self.validate_continue()?;
         let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
@@ -653,13 +653,13 @@ impl Agent {
     ///
     /// # Errors
     ///
-    /// Returns [`HarnessError::StructuredOutputFailed`] if validation fails
+    /// Returns [`AgentError::StructuredOutputFailed`] if validation fails
     /// after all retries, or any error from the underlying loop.
     pub async fn structured_output(
         &mut self,
         prompt: String,
         schema: Value,
-    ) -> Result<Value, HarnessError> {
+    ) -> Result<Value, AgentError> {
         let tool = Arc::new(StructuredOutputTool {
             schema: schema.clone(),
         });
@@ -712,7 +712,7 @@ impl Agent {
         }
 
         self.remove_structured_output_tool();
-        Err(HarnessError::StructuredOutputFailed {
+        Err(AgentError::StructuredOutputFailed {
             attempts: max_retries + 1,
             last_error,
         })
@@ -725,7 +725,7 @@ impl Agent {
         &mut self,
         prompt: String,
         schema: Value,
-    ) -> Result<Value, HarnessError> {
+    ) -> Result<Value, AgentError> {
         let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
         rt.block_on(self.structured_output(prompt, schema))
     }
@@ -737,10 +737,10 @@ impl Agent {
         &mut self,
         prompt: String,
         schema: Value,
-    ) -> Result<T, HarnessError> {
+    ) -> Result<T, AgentError> {
         let value = self.structured_output(prompt, schema).await?;
         serde_json::from_value(value).map_err(|e| {
-            HarnessError::StructuredOutputFailed { attempts: 1, last_error: format!("deserialization failed: {e}") }
+            AgentError::StructuredOutputFailed { attempts: 1, last_error: format!("deserialization failed: {e}") }
         })
     }
 
@@ -751,28 +751,28 @@ impl Agent {
         &mut self,
         prompt: String,
         schema: Value,
-    ) -> Result<T, HarnessError> {
+    ) -> Result<T, AgentError> {
         let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
         rt.block_on(self.structured_output_typed(prompt, schema))
     }
 
     // ── Private Helpers ──────────────────────────────────────────────────
 
-    const fn check_not_running(&self) -> Result<(), HarnessError> {
+    const fn check_not_running(&self) -> Result<(), AgentError> {
         if self.state.is_running {
-            return Err(HarnessError::AlreadyRunning);
+            return Err(AgentError::AlreadyRunning);
         }
         Ok(())
     }
 
-    fn validate_continue(&self) -> Result<(), HarnessError> {
+    fn validate_continue(&self) -> Result<(), AgentError> {
         if self.state.messages.is_empty() {
-            return Err(HarnessError::NoMessages);
+            return Err(AgentError::NoMessages);
         }
         if let Some(AgentMessage::Llm(LlmMessage::Assistant(_))) = self.state.messages.last()
             && !self.has_pending_messages()
         {
-            return Err(HarnessError::InvalidContinue);
+            return Err(AgentError::InvalidContinue);
         }
         Ok(())
     }
@@ -789,7 +789,7 @@ impl Agent {
         &mut self,
         input: Vec<AgentMessage>,
         is_continue: bool,
-    ) -> Result<Pin<Box<dyn Stream<Item = AgentEvent> + Send>>, HarnessError> {
+    ) -> Result<Pin<Box<dyn Stream<Item = AgentEvent> + Send>>, AgentError> {
         self.state.is_running = true;
         self.state.error = None;
 
@@ -890,7 +890,7 @@ impl Agent {
     async fn collect_stream(
         &mut self,
         mut stream: Pin<Box<dyn Stream<Item = AgentEvent> + Send>>,
-    ) -> Result<AgentResult, HarnessError> {
+    ) -> Result<AgentResult, AgentError> {
         let mut all_messages: Vec<AgentMessage> = Vec::new();
         let mut state_messages = self.in_flight_llm_messages.take().unwrap_or_default();
         let mut received_full_context = false;
@@ -951,6 +951,46 @@ impl Agent {
         })
     }
 
+    /// Notify the agent of a stream event from an externally consumed stream.
+    ///
+    /// When you use [`prompt_stream`](Self::prompt_stream) and consume the
+    /// stream yourself (instead of using [`prompt_async`](Self::prompt_async)),
+    /// call this method for every event so the agent can update its internal
+    /// state — tracking messages, clearing `is_running` on
+    /// [`AgentEnd`](AgentEvent::AgentEnd), and dispatching to subscribers.
+    pub fn handle_stream_event(&mut self, event: &AgentEvent) {
+        self.dispatch_event(event);
+        self.update_state_from_event(event);
+
+        match event {
+            AgentEvent::TurnEnd {
+                assistant_message,
+                tool_results,
+            } => {
+                // Accumulate messages into in-flight state, mirroring collect_stream.
+                let msgs = self.in_flight_llm_messages.get_or_insert_with(Vec::new);
+                msgs.push(AgentMessage::Llm(LlmMessage::Assistant(
+                    assistant_message.clone(),
+                )));
+                for tr in tool_results {
+                    msgs.push(AgentMessage::Llm(LlmMessage::ToolResult(tr.clone())));
+                }
+            }
+            AgentEvent::AgentEnd { messages } => {
+                // The loop returns the full context. Try to take ownership;
+                // fall back to the accumulated in-flight messages.
+                if let Ok(returned) = Arc::try_unwrap(messages.clone()) {
+                    self.state.messages = returned;
+                } else if let Some(msgs) = self.in_flight_llm_messages.take() {
+                    self.state.messages = msgs;
+                }
+                self.state.error = None;
+                self.idle_notify.notify_waiters();
+            }
+            _ => {}
+        }
+    }
+
     /// Update internal tracking state from an event.
     fn update_state_from_event(&mut self, event: &AgentEvent) {
         match event {
@@ -1005,7 +1045,7 @@ impl std::fmt::Debug for Agent {
 struct SharedRetryStrategy(Arc<dyn RetryStrategy>);
 
 impl RetryStrategy for SharedRetryStrategy {
-    fn should_retry(&self, error: &HarnessError, attempt: u32) -> bool {
+    fn should_retry(&self, error: &AgentError, attempt: u32) -> bool {
         self.0.should_retry(error, attempt)
     }
 

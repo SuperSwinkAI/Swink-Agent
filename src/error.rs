@@ -1,14 +1,14 @@
-//! Error types for the agent harness.
+//! Error types for the swink agent.
 //!
 //! All error conditions surfaced to the caller are represented as variants of
-//! [`HarnessError`]. Transient failures (`ModelThrottled`, `NetworkError`) are
+//! [`AgentError`]. Transient failures (`ModelThrottled`, `NetworkError`) are
 //! retryable; all other variants are terminal for the current operation.
 
-/// The top-level error type for the agent harness.
+/// The top-level error type for the swink agent.
 ///
 /// Each variant maps to a specific failure mode described in PRD section 10.3.
 #[derive(Debug, thiserror::Error)]
-pub enum HarnessError {
+pub enum AgentError {
     /// Provider rejected the request because input exceeds the model's context window.
     #[error("context window overflow for model: {model}")]
     ContextWindowOverflow { model: String },
@@ -52,7 +52,7 @@ pub enum HarnessError {
     Aborted,
 }
 
-impl HarnessError {
+impl AgentError {
     /// Returns `true` for error variants that are safe to retry
     /// (`ModelThrottled` and `NetworkError`).
     #[must_use]
@@ -60,28 +60,28 @@ impl HarnessError {
         matches!(self, Self::ModelThrottled | Self::NetworkError { .. })
     }
 
-    /// Convenience constructor for [`HarnessError::NetworkError`].
+    /// Convenience constructor for [`AgentError::NetworkError`].
     pub fn network(err: impl std::error::Error + Send + Sync + 'static) -> Self {
         Self::NetworkError {
             source: Box::new(err),
         }
     }
 
-    /// Convenience constructor for [`HarnessError::StreamError`].
+    /// Convenience constructor for [`AgentError::StreamError`].
     pub fn stream(err: impl std::error::Error + Send + Sync + 'static) -> Self {
         Self::StreamError {
             source: Box::new(err),
         }
     }
 
-    /// Convenience constructor for [`HarnessError::ContextWindowOverflow`].
+    /// Convenience constructor for [`AgentError::ContextWindowOverflow`].
     pub fn context_overflow(model: impl Into<String>) -> Self {
         Self::ContextWindowOverflow {
             model: model.into(),
         }
     }
 
-    /// Convenience constructor for [`HarnessError::StructuredOutputFailed`].
+    /// Convenience constructor for [`AgentError::StructuredOutputFailed`].
     pub fn structured_output_failed(attempts: usize, last_error: impl Into<String>) -> Self {
         Self::StructuredOutputFailed {
             attempts,

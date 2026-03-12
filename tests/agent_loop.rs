@@ -9,7 +9,7 @@ use futures::stream::StreamExt;
 use serde_json::json;
 use tokio_util::sync::CancellationToken;
 
-use agent_harness::{
+use swink_agent::{
     AgentContext, AgentEvent, AgentLoopConfig, AgentMessage, AgentTool, AgentToolResult,
     AssistantMessageEvent, ContentBlock, Cost, CustomMessage, DefaultRetryStrategy, LlmMessage,
     MessageProvider, ModelSpec, StopReason, StreamFn, StreamOptions, ToolResultMessage, Usage,
@@ -386,7 +386,7 @@ fn default_config(stream_fn: Arc<dyn StreamFn>) -> AgentLoopConfig {
         get_api_key: None,
         message_provider: None,
         approve_tool: None,
-        approval_mode: agent_harness::ApprovalMode::default(),
+        approval_mode: swink_agent::ApprovalMode::default(),
     }
 }
 

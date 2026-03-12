@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use futures::Stream;
 use tokio_util::sync::CancellationToken;
 
-use agent_harness::{
+use swink_agent::{
     Agent, AgentMessage, AgentOptions, AssistantMessageEvent, BashTool, ContentBlock, Cost,
     LlmMessage, ModelSpec, ReadFileTool, StopReason, StreamFn, StreamOptions, ToolApproval,
     ToolApprovalRequest, Usage, WriteFileTool,
@@ -35,7 +35,7 @@ impl StreamFn for MockStreamFn {
     fn stream<'a>(
         &'a self,
         _model: &'a ModelSpec,
-        _context: &'a agent_harness::AgentContext,
+        _context: &'a swink_agent::AgentContext,
         _options: &'a StreamOptions,
         _cancellation_token: CancellationToken,
     ) -> Pin<Box<dyn Stream<Item = AssistantMessageEvent> + Send + 'a>> {
@@ -86,9 +86,9 @@ fn default_convert(msg: &AgentMessage) -> Option<LlmMessage> {
 #[tokio::main]
 async fn main() {
     // Step 1: Create tools. Each tool implements `AgentTool`.
-    let bash = Arc::new(BashTool::new()) as Arc<dyn agent_harness::AgentTool>;
-    let read = Arc::new(ReadFileTool::new()) as Arc<dyn agent_harness::AgentTool>;
-    let write = Arc::new(WriteFileTool::new()) as Arc<dyn agent_harness::AgentTool>;
+    let bash = Arc::new(BashTool::new()) as Arc<dyn swink_agent::AgentTool>;
+    let read = Arc::new(ReadFileTool::new()) as Arc<dyn swink_agent::AgentTool>;
+    let write = Arc::new(WriteFileTool::new()) as Arc<dyn swink_agent::AgentTool>;
 
     let tools = vec![bash, read, write];
 
@@ -111,7 +111,7 @@ async fn main() {
         default_convert,
     )
     .with_tools(tools)
-    .with_approve_tool(agent_harness::selective_approve(
+    .with_approve_tool(swink_agent::selective_approve(
         |req: ToolApprovalRequest| -> Pin<Box<dyn std::future::Future<Output = ToolApproval> + Send>> {
             Box::pin(async move {
                 // In a real application you would prompt the user here.

@@ -9,7 +9,7 @@
 
 ## Overview
 
-The TUI (`agent-harness-tui`) is a separate binary crate that provides an interactive terminal interface for the agent harness. It renders streaming conversations, tool executions, and agent state in a full-screen terminal application.
+The TUI (`swink-agent-tui`) is a separate binary crate that provides an interactive terminal interface for the swink agent. It renders streaming conversations, tool executions, and agent state in a full-screen terminal application.
 
 The implementation uses `ratatui` for rendering and `crossterm` for terminal I/O, following an immediate-mode rendering pattern where the entire UI is redrawn each frame from current state. The async event loop uses `crossterm::EventStream` with `tokio::select!` and a dirty flag to avoid unnecessary redraws.
 
@@ -57,14 +57,14 @@ tui/src/
 ├── commands.rs    — Command parsing: hash commands (#help, #clear, #info, #copy,
 │                    #copy all, #copy code) and slash commands (/quit, /model,
 │                    /thinking, /system, /reset)
-├── config.rs      — TuiConfig loaded from ~/.config/agent-harness/tui.toml
+├── config.rs      — TuiConfig loaded from ~/.config/swink-agent/tui.toml
 │                    Fields: show_thinking, auto_scroll, tick_rate_ms, default_model, theme
 ├── credentials.rs — Cross-platform keychain integration via `keyring` crate.
 │                    Manages API keys for Ollama, OpenAI, Anthropic, and Proxy
 │                    providers. Functions: credential(), store_credential(),
 │                    any_key_configured()
 ├── session.rs     — Session persistence as JSONL files in
-│                    ~/.config/agent-harness/sessions/. SessionMeta tracks id,
+│                    ~/.config/swink-agent/sessions/. SessionMeta tracks id,
 │                    model, system_prompt, timestamps, message_count.
 │                    Functions: save_session(), load_session(), list_sessions()
 ├── wizard.rs      — First-run interactive setup wizard. Triggered when no API
@@ -207,7 +207,7 @@ Clipboard operations use the `arboard` crate.
 
 ## Configuration
 
-The TUI loads configuration from `~/.config/agent-harness/tui.toml` via `TuiConfig`:
+The TUI loads configuration from `~/.config/swink-agent/tui.toml` via `TuiConfig`:
 
 | Field | Type | Description |
 |---|---|---|
@@ -241,7 +241,7 @@ A panic hook ensures clean terminal restoration even on crashes.
 
 ## Logging
 
-The TUI uses `tracing` with `tracing-appender` for file-based logging. Logs are written as daily rolling files to `~/.config/agent-harness/logs/agent-harness.log`. The `tracing-subscriber` layer is configured at startup so that diagnostic output goes to disk rather than interfering with the terminal UI.
+The TUI uses `tracing` with `tracing-appender` for file-based logging. Logs are written as daily rolling files to `~/.config/swink-agent/logs/swink-agent.log`. The `tracing-subscriber` layer is configured at startup so that diagnostic output goes to disk rather than interfering with the terminal UI.
 
 ---
 
@@ -249,8 +249,8 @@ The TUI uses `tracing` with `tracing-appender` for file-based logging. Logs are 
 
 | Crate | Version | Purpose |
 |---|---|---|
-| `agent-harness` | workspace | Core agent library |
-| `agent-harness-adapters` | workspace | LLM provider adapters (Ollama, proxy) |
+| `swink-agent` | workspace | Core agent library |
+| `swink-agent-adapters` | workspace | LLM provider adapters (Ollama, proxy) |
 | `ratatui` | 0.29 | Terminal UI framework |
 | `crossterm` | 0.28 | Terminal backend (with `event-stream` feature) |
 | `tokio` | — | Async runtime |

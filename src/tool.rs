@@ -1,4 +1,4 @@
-//! Tool system traits and validation for the agent harness.
+//! Tool system traits and validation for the swink agent.
 //!
 //! This module defines the [`AgentTool`] trait that all tools must implement,
 //! the [`AgentToolResult`] type returned by tool execution, and the

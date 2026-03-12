@@ -17,7 +17,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, debug, error, info, info_span, warn};
 
-use crate::error::HarnessError;
+use crate::error::AgentError;
 use crate::retry::RetryStrategy;
 use crate::stream::{
     AssistantMessageDelta, AssistantMessageEvent, StreamFn, StreamOptions, accumulate_message,
@@ -809,8 +809,8 @@ fn build_abort_message(model: &ModelSpec) -> AssistantMessage {
     }
 }
 
-/// Build an error `AssistantMessage` from a `HarnessError`.
-fn build_error_message(model: &ModelSpec, error: &HarnessError) -> AssistantMessage {
+/// Build an error `AssistantMessage` from a `AgentError`.
+fn build_error_message(model: &ModelSpec, error: &AgentError) -> AssistantMessage {
     AssistantMessage {
         content: vec![],
         provider: model.provider.clone(),
@@ -823,19 +823,19 @@ fn build_error_message(model: &ModelSpec, error: &HarnessError) -> AssistantMess
     }
 }
 
-/// Classify an `AssistantMessageEvent::Error` into a `HarnessError`.
-fn classify_stream_error(error_message: &str, stop_reason: StopReason) -> HarnessError {
+/// Classify an `AssistantMessageEvent::Error` into a `AgentError`.
+fn classify_stream_error(error_message: &str, stop_reason: StopReason) -> AgentError {
     let lower = error_message.to_lowercase();
     if lower.contains("context window") || lower.contains("context_length_exceeded") {
-        return HarnessError::ContextWindowOverflow { model: String::new() };
+        return AgentError::ContextWindowOverflow { model: String::new() };
     }
     if lower.contains("rate limit") || lower.contains("429") || lower.contains("throttl") {
-        return HarnessError::ModelThrottled;
+        return AgentError::ModelThrottled;
     }
     if stop_reason == StopReason::Aborted {
-        return HarnessError::Aborted;
+        return AgentError::Aborted;
     }
-    HarnessError::StreamError {
+    AgentError::StreamError {
         source: Box::new(std::io::Error::other(error_message.to_string())),
     }
 }
@@ -1034,7 +1034,7 @@ async fn handle_stream_error(
     let harness_error = classify_stream_error(error_message, *stop_reason);
 
     // Context window overflow — signal and retry
-    if matches!(harness_error, HarnessError::ContextWindowOverflow { .. }) {
+    if matches!(harness_error, AgentError::ContextWindowOverflow { .. }) {
         warn!("context window overflow, signaling prune");
         let _ = emit(
             tx,
@@ -1078,7 +1078,7 @@ async fn finalize_stream_message(
     let message = match accumulate_message(events, &config.model.provider, &config.model.model_id) {
         Ok(msg) => msg,
         Err(e) => {
-            let err = HarnessError::StreamError {
+            let err = AgentError::StreamError {
                 source: Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, e)),
             };
             let error_msg = build_error_message(&config.model, &err);

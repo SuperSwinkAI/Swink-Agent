@@ -3,13 +3,13 @@ members = [".", "adapters", "tui"]
 resolver = "2"
 
 [package]
-name = "agent-harness"
+name = "swink-agent"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.88"
 description = "Core scaffolding for running LLM-powered agentic loops"
 license = "MIT"
-repository = "https://github.com/anthropics/agent-harness"
+repository = "https://github.com/SuperSwinkAI/Swink-Agent"
 readme = "README.md"
 keywords = ["llm", "agent", "ai", "streaming", "tools"]
 categories = ["development-tools", "api-bindings", "asynchronous"]
@@ -31,6 +31,9 @@ eventsource-stream = "0.2"
 tracing = "0.1"
 
 [dev-dependencies]
+swink-agent-adapters = { path = "adapters" }
+swink-agent-tui = { path = "tui" }
+dotenvy = "0.15"
 pretty_assertions = "1"
 tempfile = "3"
 tokio = { version = "1", features = ["full", "test-util"] }

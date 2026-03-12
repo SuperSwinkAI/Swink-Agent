@@ -14,9 +14,9 @@ use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, warn};
 
-use agent_harness::ContentBlock;
-use agent_harness::stream::{AssistantMessageEvent, StreamFn, StreamOptions};
-use agent_harness::types::{
+use swink_agent::ContentBlock;
+use swink_agent::stream::{AssistantMessageEvent, StreamFn, StreamOptions};
+use swink_agent::types::{
     AgentContext, AssistantMessage as HarnessAssistantMessage, Cost, ModelSpec, StopReason,
     ToolResultMessage, Usage, UserMessage,
 };

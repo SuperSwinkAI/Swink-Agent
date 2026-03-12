@@ -1,17 +1,17 @@
 [package]
-name = "agent-harness-adapters"
+name = "swink-agent-adapters"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.88"
-description = "LLM provider adapters for agent-harness"
+description = "LLM provider adapters for swink-agent"
 license = "MIT"
-repository = "https://github.com/anthropics/agent-harness"
+repository = "https://github.com/SuperSwinkAI/Swink-Agent"
 readme = "../README.md"
 keywords = ["llm", "anthropic", "openai", "adapter", "streaming"]
 categories = ["development-tools", "api-bindings", "asynchronous"]
 
 [dependencies]
-agent-harness = { path = ".." }
+swink-agent = { path = ".." }
 reqwest = { version = "0.12", features = ["stream"] }
 tokio = { version = "1", features = ["full"] }
 tokio-util = "0.7"

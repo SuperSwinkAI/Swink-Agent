@@ -1,22 +1,26 @@
 [package]
-name = "agent-harness-tui"
+name = "swink-agent-tui"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.88"
-description = "Interactive terminal UI for agent-harness"
+description = "Interactive terminal UI for swink-agent"
 license = "MIT"
-repository = "https://github.com/anthropics/agent-harness"
+repository = "https://github.com/SuperSwinkAI/Swink-Agent"
 readme = "../README.md"
 keywords = ["tui", "terminal", "llm", "agent", "chat"]
 categories = ["command-line-utilities", "development-tools"]
 
+[lib]
+name = "swink_agent_tui"
+path = "src/lib.rs"
+
 [[bin]]
-name = "agent-tui"
+name = "swink"
 path = "src/main.rs"
 
 [dependencies]
-agent-harness = { path = ".." }
-agent-harness-adapters = { path = "../adapters" }
+swink-agent = { path = ".." }
+swink-agent-adapters = { path = "../adapters" }
 ratatui = "0.29"
 crossterm = { version = "0.28", features = ["event-stream"] }
 tokio = { version = "1", features = ["full"] }
@@ -35,6 +39,7 @@ dotenvy = "0.15"
 
 [dev-dependencies]
 tempfile = "3"
+tokio-util = "0.7"
 
 [lints.rust]
 unsafe_code = "forbid"

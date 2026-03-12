@@ -1,40 +1,19 @@
-//! Agent Harness TUI — interactive terminal interface for LLM agents.
+//! Swink Agent TUI — interactive terminal interface for LLM agents.
 
-mod app;
-mod commands;
-mod config;
-mod credentials;
-mod format;
-mod session;
-mod theme;
-mod ui;
-mod wizard;
-
-use std::io;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crossterm::{
-    event::{DisableMouseCapture, EnableMouseCapture},
-    execute,
-    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
+use swink_agent::{
+    Agent, AgentMessage, AgentOptions, ModelSpec, ProxyStreamFn, StreamFn,
 };
-use ratatui::{Terminal, backend::CrosstermBackend};
+use swink_agent_adapters::{AnthropicStreamFn, OllamaStreamFn, OpenAiStreamFn};
 
-use agent_harness::{
-    Agent, AgentMessage, AgentOptions, ModelSpec, ProxyStreamFn, StreamFn, ToolApproval,
-    ToolApprovalRequest, selective_approve,
+use swink_agent_tui::{
+    ApprovalSender, TuiConfig, credentials, launch, resolve_system_prompt, restore_terminal,
+    setup_terminal, tui_approval_callback, wizard,
 };
-use agent_harness_adapters::{AnthropicStreamFn, OllamaStreamFn, OpenAiStreamFn};
-use tokio::sync::{mpsc, oneshot};
-
-use crate::app::App;
-use crate::config::TuiConfig;
 
 type AppResult<T> = Result<T, Box<dyn std::error::Error>>;
-
-/// Default system prompt used when no explicit prompt, env var, or config is provided.
-const DEFAULT_SYSTEM_PROMPT: &str = "You are a helpful assistant.";
 
 fn main() -> AppResult<()> {
     dotenvy::dotenv().ok();
@@ -42,15 +21,15 @@ fn main() -> AppResult<()> {
     // Initialize file-based tracing (TUI owns stdout, so we log to a file).
     let log_dir = dirs::config_dir()
         .unwrap_or_else(|| PathBuf::from("."))
-        .join("agent-harness")
+        .join("swink-agent")
         .join("logs");
-    let file_appender = tracing_appender::rolling::daily(log_dir, "agent-harness.log");
+    let file_appender = tracing_appender::rolling::daily(log_dir, "swink-agent.log");
     let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
 
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::from_default_env()
-                .add_directive("agent_harness=info".parse().unwrap()),
+                .add_directive("swink_agent=info".parse().unwrap()),
         )
         .with_writer(non_blocking)
         .with_ansi(false)
@@ -63,31 +42,19 @@ fn main() -> AppResult<()> {
         original_hook(info);
     }));
 
-    let terminal = setup_terminal()?;
-    let result = run(terminal);
+    let mut terminal = setup_terminal()?;
+    let result = run(&mut terminal);
     restore_terminal()?;
     result
 }
 
-fn setup_terminal() -> io::Result<Terminal<CrosstermBackend<io::Stdout>>> {
-    enable_raw_mode()?;
-    let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
-    let backend = CrosstermBackend::new(stdout);
-    Terminal::new(backend)
-}
-
-fn restore_terminal() -> io::Result<()> {
-    disable_raw_mode()?;
-    execute!(io::stdout(), LeaveAlternateScreen, DisableMouseCapture)?;
-    Ok(())
-}
-
-fn run(mut terminal: Terminal<CrosstermBackend<io::Stdout>>) -> AppResult<()> {
+fn run(
+    terminal: &mut ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io::Stdout>>,
+) -> AppResult<()> {
     // Run setup wizard on first launch if no API keys are configured
     if !credentials::any_key_configured() {
         let mut wiz = wizard::SetupWizard::new();
-        if !wiz.run(&mut terminal)? {
+        if !wiz.run(terminal)? {
             return Ok(()); // User chose to quit from wizard
         }
     }
@@ -97,23 +64,12 @@ fn run(mut terminal: Terminal<CrosstermBackend<io::Stdout>>) -> AppResult<()> {
 
     rt.block_on(async {
         let system_prompt = resolve_system_prompt(None, &config);
-        let mut app = App::new(config);
-        let approval_tx = app.approval_sender();
 
-        app.set_agent(create_agent(system_prompt, &approval_tx));
-
-        app.run(&mut terminal).await
+        launch(config, terminal, |approval_tx| {
+            create_agent(system_prompt, approval_tx)
+        })
+        .await
     })
-}
-
-/// Resolve the system prompt from multiple sources.
-///
-/// Priority: explicit parameter > `LLM_SYSTEM_PROMPT` env var > config file > default constant.
-fn resolve_system_prompt(explicit: Option<String>, config: &TuiConfig) -> String {
-    explicit
-        .or_else(|| std::env::var("LLM_SYSTEM_PROMPT").ok())
-        .or_else(|| config.system_prompt.clone())
-        .unwrap_or_else(|| DEFAULT_SYSTEM_PROMPT.to_string())
 }
 
 /// Create an agent from environment variables.
@@ -139,11 +95,7 @@ fn resolve_system_prompt(explicit: Option<String>, config: &TuiConfig) -> String
 /// - `OLLAMA_HOST` — Ollama server URL (default: `http://localhost:11434`)
 /// - `OLLAMA_MODEL` — model name (default: `llama3.2`)
 #[allow(clippy::doc_markdown)] // "OpenAI" is a proper noun, not code.
-fn create_agent(
-    system_prompt: String,
-    approval_tx: &mpsc::Sender<(ToolApprovalRequest, oneshot::Sender<ToolApproval>)>,
-) -> Agent {
-
+fn create_agent(system_prompt: String, approval_tx: &ApprovalSender) -> Agent {
     // Check for proxy mode first (highest priority)
     if let Ok(base_url) = std::env::var("LLM_BASE_URL") {
         let proxy_provider = credentials::providers()
@@ -205,26 +157,14 @@ fn build_agent(
     system_prompt: String,
     model: ModelSpec,
     stream_fn: Arc<dyn StreamFn>,
-    approval_tx: &mpsc::Sender<(ToolApprovalRequest, oneshot::Sender<ToolApproval>)>,
+    approval_tx: &ApprovalSender,
 ) -> Agent {
-    let tx = approval_tx.clone();
-    let approve_callback = selective_approve(move |request: ToolApprovalRequest| {
-        let tx = tx.clone();
-        Box::pin(async move {
-            let (resp_tx, resp_rx) = oneshot::channel();
-            if tx.send((request, resp_tx)).await.is_err() {
-                // Channel closed — auto-approve to avoid blocking the agent
-                return ToolApproval::Approved;
-            }
-            resp_rx.await.unwrap_or(ToolApproval::Approved)
-        }) as std::pin::Pin<Box<dyn std::future::Future<Output = ToolApproval> + Send>>
-    });
-
     Agent::new(
         AgentOptions::new(system_prompt, model, stream_fn, |msg: &AgentMessage| match msg {
             AgentMessage::Llm(llm) => Some(llm.clone()),
             AgentMessage::Custom(_) => None,
         })
-        .with_approve_tool(approve_callback),
+        .with_approve_tool(tui_approval_callback(approval_tx)),
+
     )
 }

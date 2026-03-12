@@ -21,13 +21,13 @@ flowchart TB
     end
 
     subgraph Category3["🔁 Transient Failures (Retry)"]
-        Throttle["HarnessError::ModelThrottled<br/>rate limit / 429 from provider"]
-        Network["HarnessError::NetworkError<br/>transient IO / connection failure"]
+        Throttle["AgentError::ModelThrottled<br/>rate limit / 429 from provider"]
+        Network["AgentError::NetworkError<br/>transient IO / connection failure"]
         Retry["→ RetryStrategy<br/>exponential back-off + jitter"]
     end
 
     subgraph Category4["💥 Fatal Errors"]
-        Fatal["Unrecoverable<br/>(bad config, logic bugs)<br/>→ HarnessError returned to caller<br/>loop exits cleanly"]
+        Fatal["Unrecoverable<br/>(bad config, logic bugs)<br/>→ AgentError returned to caller<br/>loop exits cleanly"]
     end
 
     classDef msgStyle fill:#e3f2fd,stroke:#1976d2,stroke-width:2px,color:#000
@@ -45,9 +45,9 @@ flowchart TB
 
 ## L3 — Error Classification from Stream Events
 
-When the stream produces an `AssistantMessageEvent::Error`, the loop classifies the `error_message` string into a `HarnessError` variant via pattern matching in `classify_stream_error` (`src/loop_.rs`):
+When the stream produces an `AssistantMessageEvent::Error`, the loop classifies the `error_message` string into a `AgentError` variant via pattern matching in `classify_stream_error` (`src/loop_.rs`):
 
-| Pattern in `error_message` (case-insensitive) | HarnessError variant |
+| Pattern in `error_message` (case-insensitive) | AgentError variant |
 |---|---|
 | `"context window"` or `"context_length_exceeded"` | `ContextWindowOverflow` |
 | `"rate limit"`, `"429"`, or `"throttl"` | `ModelThrottled` |
@@ -56,15 +56,15 @@ When the stream produces an `AssistantMessageEvent::Error`, the loop classifies 
 
 This classification determines whether the error is retryable (`ModelThrottled` triggers the retry strategy), triggers overflow recovery (`ContextWindowOverflow`), or is treated as a non-retryable failure (`StreamError`).
 
-> **StreamError vs in-message errors.** `StreamError` is a non-retryable `HarnessError` produced when the `StreamFn` itself fails or when `classify_stream_error` cannot match the error to a more specific variant. In-message errors are a distinct path: the provider returns an `AssistantMessageEvent::Error` event that the loop captures and classifies. If the classified result is non-retryable, the loop builds an `AssistantMessage` with `stop_reason: Error` and emits it as a `MessageEnd` agent event. The two paths share the `StreamError` variant name but originate from different failure points.
+> **StreamError vs in-message errors.** `StreamError` is a non-retryable `AgentError` produced when the `StreamFn` itself fails or when `classify_stream_error` cannot match the error to a more specific variant. In-message errors are a distinct path: the provider returns an `AssistantMessageEvent::Error` event that the loop captures and classifies. If the classified result is non-retryable, the loop builds an `AssistantMessage` with `stop_reason: Error` and emits it as a `MessageEnd` agent event. The two paths share the `StreamError` variant name but originate from different failure points.
 
 ---
 
-## L3 — HarnessError Taxonomy
+## L3 — AgentError Taxonomy
 
 ```mermaid
 flowchart LR
-    subgraph HarnessError["HarnessError (enum)"]
+    subgraph AgentError["AgentError (enum)"]
         CWO["ContextWindowOverflow<br/>{ model: String }"]
         ModelThrottled["ModelThrottled"]
         NetErr["NetworkError<br/>{ source: Box&lt;dyn Error&gt; }"]
@@ -112,7 +112,7 @@ flowchart LR
 ```mermaid
 flowchart TB
     subgraph Trait["RetryStrategy (trait)"]
-        ShouldRetry["should_retry(<br/>  error: &HarnessError,<br/>  attempt: u32<br/>) → bool"]
+        ShouldRetry["should_retry(<br/>  error: &AgentError,<br/>  attempt: u32<br/>) → bool"]
         Delay["delay(<br/>  attempt: u32<br/>) → Duration"]
     end
 
@@ -158,7 +158,7 @@ sequenceDiagram
     Loop->>StreamFn: call stream()
     StreamFn->>LLM: POST inference request
     LLM-->>StreamFn: 400 / context_length_exceeded
-    StreamFn-->>Loop: HarnessError::ContextWindowOverflow
+    StreamFn-->>Loop: AgentError::ContextWindowOverflow
 
     Note over Loop: does NOT append error message to history
     Note over Loop: history is intact — caller can reduce and retry
@@ -179,7 +179,7 @@ sequenceDiagram
 
 ## L4 — Max Tokens Recovery Flow
 
-> **Note:** This recovery is handled internally by the loop. `MaxTokensReached` is not surfaced as a `HarnessError` to the caller.
+> **Note:** This recovery is handled internally by the loop. `MaxTokensReached` is not surfaced as a `AgentError` to the caller.
 
 ```mermaid
 sequenceDiagram

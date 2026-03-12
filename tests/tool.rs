@@ -1,4 +1,4 @@
-use agent_harness::{
+use swink_agent::{
     AgentTool, AgentToolResult, ContentBlock, unknown_tool_result, validate_tool_arguments,
     validation_error_result,
 };

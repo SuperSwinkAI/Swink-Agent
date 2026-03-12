@@ -1,4 +1,4 @@
-use agent_harness::{
+use swink_agent::{
     AssistantMessageEvent, ContentBlock, Cost, StopReason, StreamOptions, StreamTransport, Usage,
     accumulate_message,
 };

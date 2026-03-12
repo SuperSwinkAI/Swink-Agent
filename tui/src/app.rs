@@ -8,7 +8,7 @@ use futures::StreamExt;
 use ratatui::{Terminal, backend::CrosstermBackend};
 use tokio::sync::{mpsc, oneshot};
 
-use agent_harness::{
+use swink_agent::{
     Agent, AgentEvent, AgentMessage, ApprovalMode, AssistantMessageDelta, ContentBlock, LlmMessage,
     ToolApproval, ToolApprovalRequest, UserMessage,
 };
@@ -370,7 +370,7 @@ impl App {
             CommandResult::SetModel(model) => {
                 self.model_name.clone_from(&model);
                 if let Some(agent) = &mut self.agent {
-                    agent.set_model(agent_harness::ModelSpec::new("", &model));
+                    agent.set_model(swink_agent::ModelSpec::new("", &model));
                 }
                 let msg = format!("Model set to: {}", self.model_name);
                 self.push_system_message(msg);
@@ -513,6 +513,12 @@ impl App {
 
     #[allow(clippy::too_many_lines)]
     fn handle_agent_event(&mut self, event: AgentEvent) {
+        // Feed the event back to the agent so it can update internal state
+        // (e.g. clear is_running on AgentEnd). Without this, prompt_stream
+        // consumers leave the agent stuck in the "running" state.
+        if let Some(agent) = &mut self.agent {
+            agent.handle_stream_event(&event);
+        }
         match event {
             AgentEvent::AgentStart => {
                 self.status = AgentStatus::Running;
@@ -899,4 +905,275 @@ fn timestamp_now() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::pin::Pin;
+    use std::sync::{Arc, Mutex};
+
+    use futures::Stream;
+    use tokio_util::sync::CancellationToken;
+
+    use swink_agent::{
+        Agent, AgentEvent, AgentMessage, AgentOptions, AssistantMessageEvent, Cost, LlmMessage,
+        ModelSpec, StopReason, StreamFn, StreamOptions, Usage,
+    };
+
+    use super::*;
+
+    // ─── Mock StreamFn ────────────────────────────────────────────────────
+
+    struct MockStreamFn {
+        responses: Mutex<Vec<Vec<AssistantMessageEvent>>>,
+    }
+
+    impl MockStreamFn {
+        const fn new(responses: Vec<Vec<AssistantMessageEvent>>) -> Self {
+            Self {
+                responses: Mutex::new(responses),
+            }
+        }
+    }
+
+    impl StreamFn for MockStreamFn {
+        fn stream<'a>(
+            &'a self,
+            _model: &'a ModelSpec,
+            _context: &'a swink_agent::AgentContext,
+            _options: &'a StreamOptions,
+            _cancellation_token: CancellationToken,
+        ) -> Pin<Box<dyn Stream<Item = AssistantMessageEvent> + Send + 'a>> {
+            let events = {
+                let mut responses = self.responses.lock().unwrap();
+                if responses.is_empty() {
+                    vec![AssistantMessageEvent::Error {
+                        stop_reason: StopReason::Error,
+                        error_message: "no more scripted responses".to_string(),
+                        usage: None,
+                    }]
+                } else {
+                    responses.remove(0)
+                }
+            };
+            Box::pin(futures::stream::iter(events))
+        }
+    }
+
+    fn text_only_events(text: &str) -> Vec<AssistantMessageEvent> {
+        vec![
+            AssistantMessageEvent::Start,
+            AssistantMessageEvent::TextStart { content_index: 0 },
+            AssistantMessageEvent::TextDelta {
+                content_index: 0,
+                delta: text.to_string(),
+            },
+            AssistantMessageEvent::TextEnd { content_index: 0 },
+            AssistantMessageEvent::Done {
+                stop_reason: StopReason::Stop,
+                usage: Usage::default(),
+                cost: Cost::default(),
+            },
+        ]
+    }
+
+    fn default_convert(msg: &AgentMessage) -> Option<LlmMessage> {
+        match msg {
+            AgentMessage::Llm(llm) => Some(llm.clone()),
+            AgentMessage::Custom(_) => None,
+        }
+    }
+
+    fn make_test_agent(stream_fn: Arc<dyn StreamFn>) -> Agent {
+        Agent::new(AgentOptions::new(
+            "test system prompt",
+            ModelSpec::new("test", "mock-model"),
+            stream_fn,
+            default_convert,
+        ))
+    }
+
+    /// Drain all pending agent events from the channel, feeding them back
+    /// to the app (which in turn calls `agent.handle_stream_event`).
+    fn drain_agent_events(app: &mut App) {
+        while let Ok(event) = app.agent_rx.try_recv() {
+            app.handle_agent_event(event);
+        }
+    }
+
+    // ─── Tests ────────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn multi_turn_send_and_receive() {
+        let stream_fn = Arc::new(MockStreamFn::new(vec![
+            text_only_events("first response"),
+            text_only_events("second response"),
+        ]));
+        let agent = make_test_agent(stream_fn);
+
+        let mut app = App::new(TuiConfig::default());
+        app.set_agent(agent);
+
+        // Turn 1
+        app.send_to_agent("hello".to_string());
+        assert_eq!(app.status, AgentStatus::Running);
+
+        // Let the spawned task forward events through the channel.
+        tokio::task::yield_now().await;
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        drain_agent_events(&mut app);
+
+        assert_eq!(
+            app.status,
+            AgentStatus::Idle,
+            "app should be idle after first turn"
+        );
+        assert!(
+            app.messages
+                .iter()
+                .any(|m| m.role == MessageRole::Assistant && m.content == "first response"),
+            "first response should appear in display messages"
+        );
+
+        // Turn 2 — should NOT produce "already running" error.
+        app.send_to_agent("follow up".to_string());
+        assert_eq!(app.status, AgentStatus::Running);
+
+        tokio::task::yield_now().await;
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        drain_agent_events(&mut app);
+
+        assert_eq!(
+            app.status,
+            AgentStatus::Idle,
+            "app should be idle after second turn"
+        );
+        assert!(
+            app.messages
+                .iter()
+                .any(|m| m.role == MessageRole::Assistant && m.content == "second response"),
+            "second response should appear in display messages"
+        );
+        // No error messages should be present.
+        assert!(
+            !app.messages.iter().any(|m| m.role == MessageRole::Error),
+            "no error messages should appear during multi-turn"
+        );
+    }
+
+    #[tokio::test]
+    async fn agent_state_transitions_through_events() {
+        let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("hello")]));
+        let agent = make_test_agent(stream_fn);
+
+        let mut app = App::new(TuiConfig::default());
+        app.set_agent(agent);
+
+        assert_eq!(app.status, AgentStatus::Idle);
+
+        // Simulate the event sequence directly.
+        app.handle_agent_event(AgentEvent::AgentStart);
+        assert_eq!(app.status, AgentStatus::Running);
+
+        app.handle_agent_event(AgentEvent::AgentEnd {
+            messages: Arc::new(Vec::new()),
+        });
+        assert_eq!(app.status, AgentStatus::Idle);
+
+        // Agent's internal state should also be idle.
+        let agent_ref = app.agent.as_ref().unwrap();
+        assert!(
+            !agent_ref.state().is_running,
+            "agent internal is_running should be false after AgentEnd"
+        );
+    }
+
+    #[tokio::test]
+    async fn three_turn_conversation() {
+        let stream_fn = Arc::new(MockStreamFn::new(vec![
+            text_only_events("response one"),
+            text_only_events("response two"),
+            text_only_events("response three"),
+        ]));
+        let agent = make_test_agent(stream_fn);
+
+        let mut app = App::new(TuiConfig::default());
+        app.set_agent(agent);
+
+        for (i, prompt) in ["first", "second", "third"].iter().enumerate() {
+            app.send_to_agent(prompt.to_string());
+            tokio::task::yield_now().await;
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            drain_agent_events(&mut app);
+
+            assert_eq!(
+                app.status,
+                AgentStatus::Idle,
+                "should be idle after turn {}",
+                i + 1
+            );
+        }
+
+        let assistant_msgs: Vec<&str> = app
+            .messages
+            .iter()
+            .filter(|m| m.role == MessageRole::Assistant)
+            .map(|m| m.content.as_str())
+            .collect();
+        assert_eq!(
+            assistant_msgs,
+            vec!["response one", "response two", "response three"]
+        );
+        assert!(
+            !app.messages.iter().any(|m| m.role == MessageRole::Error),
+            "no errors across three turns"
+        );
+    }
+
+    #[tokio::test]
+    async fn error_response_allows_retry() {
+        let stream_fn = Arc::new(MockStreamFn::new(vec![
+            // First turn: error
+            vec![
+                AssistantMessageEvent::Start,
+                AssistantMessageEvent::Error {
+                    stop_reason: StopReason::Error,
+                    error_message: "something broke".to_string(),
+                    usage: None,
+                },
+            ],
+            // Second turn: success
+            text_only_events("recovered"),
+        ]));
+        let agent = make_test_agent(stream_fn);
+
+        let mut app = App::new(TuiConfig::default());
+        app.set_agent(agent);
+
+        // Turn 1: produces an error event but the agent loop still completes.
+        app.send_to_agent("hello".to_string());
+        tokio::task::yield_now().await;
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        drain_agent_events(&mut app);
+
+        assert_eq!(
+            app.status,
+            AgentStatus::Idle,
+            "should return to idle even after an error response"
+        );
+
+        // Turn 2: should succeed.
+        app.send_to_agent("try again".to_string());
+        tokio::task::yield_now().await;
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        drain_agent_events(&mut app);
+
+        assert_eq!(app.status, AgentStatus::Idle);
+        assert!(
+            app.messages
+                .iter()
+                .any(|m| m.role == MessageRole::Assistant && m.content == "recovered"),
+            "recovery response should appear"
+        );
+    }
 }

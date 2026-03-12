@@ -2,7 +2,7 @@
 
 ## Scope
 
-`tui/` — Interactive terminal binary (`agent-tui`). Uses ratatui + crossterm for rendering, connects to LLM providers via adapters crate.
+`tui/` — Interactive terminal binary (`swink`). Uses ratatui + crossterm for rendering, connects to LLM providers via adapters crate.
 
 ## References
 
@@ -11,7 +11,7 @@
 
 ## Key Facts
 
-- Binary name is `agent-tui` (defined in `tui/Cargo.toml`).
+- Binary name is `swink` (defined in `tui/Cargo.toml`).
 - `dotenvy::dotenv().ok()` runs first in `main()` — `.env` loads automatically before any env var reads.
 - Provider priority: Proxy (`LLM_BASE_URL`) > OpenAI (`OPENAI_API_KEY`) > Anthropic (`ANTHROPIC_API_KEY`) > Ollama (default). Each branch returns early.
 - If no provider is configured, falls back to Ollama. Error shows on first message if Ollama isn't running — app doesn't crash.
@@ -35,7 +35,7 @@
 | `main.rs` | Entry point, provider selection, terminal setup/teardown |
 | `app.rs` | Event loop, state management, agent integration |
 | `commands.rs` | Hash (#) and slash (/) command parsing |
-| `config.rs` | TuiConfig from TOML (~/.config/agent-harness/tui.toml) |
+| `config.rs` | TuiConfig from TOML (~/.config/swink-agent/tui.toml) |
 | `credentials.rs` | OS keychain via keyring crate |
 | `session.rs` | JSONL session persistence |
 | `wizard.rs` | First-run setup wizard |

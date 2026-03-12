@@ -14,7 +14,7 @@ pub mod types;
 // Re-exports
 pub use agent::{Agent, AgentOptions, AgentState, FollowUpMode, SteeringMode, SubscriptionId};
 pub use context::sliding_window;
-pub use error::HarnessError;
+pub use error::AgentError;
 pub use loop_::{AgentEvent, AgentLoopConfig, agent_loop, agent_loop_continue};
 pub use message_provider::MessageProvider;
 pub use proxy::ProxyStreamFn;

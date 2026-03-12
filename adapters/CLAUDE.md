@@ -39,13 +39,13 @@ Live tests hit real provider APIs and are isolated from normal `cargo test` runs
 **Running:**
 ```bash
 # All live tests (reads keys from .env via dotenvy)
-cargo test -p agent-harness-adapters -- --ignored
+cargo test -p swink-agent-adapters -- --ignored
 
 # Just Anthropic
-cargo test -p agent-harness-adapters --test anthropic_live -- --ignored
+cargo test -p swink-agent-adapters --test anthropic_live -- --ignored
 
 # Just OpenAI
-cargo test -p agent-harness-adapters --test openai_live -- --ignored
+cargo test -p swink-agent-adapters --test openai_live -- --ignored
 ```
 
 **Conventions:**

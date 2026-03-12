@@ -11,7 +11,7 @@ use std::sync::Arc;
 use futures::Stream;
 use tokio_util::sync::CancellationToken;
 
-use agent_harness::{
+use swink_agent::{
     Agent, AgentContext, AgentMessage, AgentOptions, AssistantMessageEvent, ContentBlock, Cost,
     LlmMessage, ModelSpec, StopReason, StreamFn, StreamOptions, Usage,
 };

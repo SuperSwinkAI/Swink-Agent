@@ -12,7 +12,7 @@
 ## Build
 
 ```bash
-git clone <repo-url> && cd agent-harness
+git clone <repo-url> && cd swink-agent
 cargo build --workspace
 ```
 
@@ -77,7 +77,7 @@ Keys can also be stored in the OS keychain instead of env vars — the first-run
 ## Run the TUI
 
 ```bash
-cargo run -p agent-harness-tui
+cargo run -p swink-agent-tui
 ```
 
 The TUI auto-loads `.env` via dotenvy — no need to source it manually.
@@ -87,7 +87,7 @@ For Ollama with no other config:
 ```bash
 ollama serve &
 ollama pull llama3.2
-cargo run -p agent-harness-tui
+cargo run -p swink-agent-tui
 ```
 
 On first launch with no keys configured, the setup wizard walks you through provider selection and key entry.
@@ -114,7 +114,7 @@ On first launch with no keys configured, the setup wizard walks you through prov
 ## Use as a Library
 
 ```rust
-use agent_harness::{Agent, AgentOptions, ModelSpec, AgentMessage, LlmMessage};
+use swink_agent::{Agent, AgentOptions, ModelSpec, AgentMessage, LlmMessage};
 use std::sync::Arc;
 
 let agent = Agent::new(AgentOptions::new(
@@ -139,7 +139,7 @@ let result = agent.prompt_async(messages).await?;
 
 ```bash
 cargo test --workspace          # all tests
-cargo test -p agent-harness     # core library only
+cargo test -p swink-agent     # core library only
 ```
 
 ## Further Reading

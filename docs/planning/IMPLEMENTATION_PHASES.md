@@ -1,4 +1,4 @@
-# Agent Harness — Implementation Phases
+# Swink Agent — Implementation Phases
 
 **Related Documents:**
 - [PRD](./PRD.md)
@@ -40,7 +40,7 @@ Note: Phases 3 and 5 are independent of each other and can run in parallel once 
 
 **Files:** `src/types.rs`, `src/error.rs`
 **Depends on:** nothing
-**Architecture docs:** [Data Model](../architecture/data-model/README.md), [Error Handling](../architecture/error-handling/README.md) (L3 HarnessError taxonomy only), [Agent Context](../architecture/agent-context/README.md) (struct definition only)
+**Architecture docs:** [Data Model](../architecture/data-model/README.md), [Error Handling](../architecture/error-handling/README.md) (L3 AgentError taxonomy only), [Agent Context](../architecture/agent-context/README.md) (struct definition only)
 
 ### Scope
 
@@ -67,7 +67,7 @@ All core data types that every other module depends on. No async code, no busine
 - All public types must be `Send + Sync`
 
 **`src/error.rs`**
-- `HarnessError` enum with all variants from PRD §10.3:
+- `AgentError` enum with all variants from PRD §10.3:
   - `ContextWindowOverflow { model: String }`
   - `ModelThrottled`
   - `NetworkError`
@@ -90,8 +90,8 @@ All core data types that every other module depends on. No async code, no busine
 | 1.5 | `Usage` and `Cost` aggregate correctly (add/merge operations) |
 | 1.6 | `StopReason` and `ThinkingLevel` round-trip through serde |
 | 1.7 | `ModelSpec` constructs with defaults (thinking off, no budgets) |
-| 1.8 | `HarnessError` variants display meaningful messages |
-| 1.9 | `HarnessError` implements `std::error::Error` |
+| 1.8 | `AgentError` variants display meaningful messages |
+| 1.9 | `AgentError` implements `std::error::Error` |
 | 1.10 | `AgentContext` holds `Vec<AgentMessage>` and `Vec<Arc<dyn AgentTool>>` (type compiles with forward-declared trait) |
 
 ### Dependencies (Cargo.toml)
@@ -137,7 +137,7 @@ The three trait definitions that form the pluggable boundaries of the harness: t
 - Delta accumulation logic: function that takes an `AssistantMessageEvent` stream and produces a finalized `AssistantMessage` (used by the loop and by proxy reconstruction)
 
 **`src/retry.rs`**
-- `RetryStrategy` trait — `should_retry(&self, error: &HarnessError, attempt: u32) -> bool`, `delay(&self, attempt: u32) -> Duration`
+- `RetryStrategy` trait — `should_retry(&self, error: &AgentError, attempt: u32) -> bool`, `delay(&self, attempt: u32) -> Duration`
 - `DefaultRetryStrategy` struct — max_attempts (default 3), base_delay (default 1s), max_delay (default 60s), multiplier (default 2.0), jitter (default true)
 - Retries on: `ModelThrottled`, `NetworkError`
 - Never retries: `ContextWindowOverflow`, `Aborted`, `AlreadyRunning`, `StructuredOutputFailed`, `StreamError`
@@ -261,10 +261,10 @@ The stateful public API wrapper. Owns conversation history, manages steering/fol
   - Abort controller (`Option<CancellationToken>`), running handle
   - Steering mode, follow-up mode
 - **State mutation API:** set_system_prompt, set_model, set_thinking_level, set_tools, set_messages, append_messages, clear_messages
-- **Prompt — streaming:** `prompt_stream(input) -> Result<impl Stream<Item = AgentEvent>, HarnessError>` — returns `AlreadyRunning` if active
-- **Prompt — async:** `prompt_async(input) -> Result<AgentResult, HarnessError>` — collects stream to completion
-- **Prompt — sync:** `prompt_sync(input) -> Result<AgentResult, HarnessError>` — blocks via `tokio::runtime::Runtime`
-- **Structured output:** `structured_output(prompt, schema) -> Result<Value, HarnessError>` — injects synthetic tool, validates response, retries via `continue_loop()` up to configurable max
+- **Prompt — streaming:** `prompt_stream(input) -> Result<impl Stream<Item = AgentEvent>, AgentError>` — returns `AlreadyRunning` if active
+- **Prompt — async:** `prompt_async(input) -> Result<AgentResult, AgentError>` — collects stream to completion
+- **Prompt — sync:** `prompt_sync(input) -> Result<AgentResult, AgentError>` — blocks via `tokio::runtime::Runtime`
+- **Structured output:** `structured_output(prompt, schema) -> Result<Value, AgentError>` — injects synthetic tool, validates response, retries via `continue_loop()` up to configurable max
 - **Continue:** `continue_stream`, `continue_async`, `continue_sync` — resume from existing context
 - **Queues:** `steer(message)`, `follow_up(message)`, `clear_steering`, `clear_follow_up`, `clear_queues`, `has_pending_messages`
 - **Control:** `abort()`, `wait_for_idle()`, `reset()`
@@ -283,7 +283,7 @@ The stateful public API wrapper. Owns conversation history, manages steering/fol
 | 4.1 | `prompt_async` with a mock `StreamFn` returns correct `AgentResult` |
 | 4.2 | `prompt_sync` blocks and returns the same result as async |
 | 4.3 | `prompt_stream` yields events in correct order |
-| 4.4 | Calling `prompt_*` while running returns `HarnessError::AlreadyRunning` |
+| 4.4 | Calling `prompt_*` while running returns `AgentError::AlreadyRunning` |
 | 4.5 | `abort()` causes the active run to exit with `StopReason::Aborted` |
 | 4.6 | `steer()` during a run causes steering interrupt on next tool completion |
 | 4.7 | `follow_up()` causes the agent to continue after natural stop |
@@ -296,7 +296,7 @@ The stateful public API wrapper. Owns conversation history, manages steering/fol
 | 4.14 | `structured_output` validates response against schema and returns typed value |
 | 4.15 | `structured_output` retries on invalid response up to configured maximum |
 | 4.16 | `structured_output` returns `StructuredOutputFailed` after max retries |
-| 4.17 | `continue_async` with empty messages returns `HarnessError::NoMessages` |
+| 4.17 | `continue_async` with empty messages returns `AgentError::NoMessages` |
 | 4.18 | Steering mode `All` delivers all queued messages at once; `OneAtATime` delivers one per turn |
 | 4.19 | `AgentContext` snapshot is immutable — messages added during a turn do not appear in the snapshot |
 
@@ -325,12 +325,12 @@ The built-in `ProxyStreamFn` that forwards LLM calls to an HTTP proxy server ove
 - Delta accumulation: reconstructs `AssistantMessage` from stripped delta events
 - Emits `AssistantMessageEvent` stream to the harness
 - Error classification:
-  - Connection failure, TCP timeout, DNS failure → `HarnessError::NetworkError` (retryable)
-  - 401/403 authentication failure → `HarnessError::StreamError` (not retryable)
-  - SSE stream drop mid-response → `HarnessError::NetworkError` (retryable, full turn retry)
-  - 504 gateway timeout → `HarnessError::NetworkError` (retryable)
-  - Malformed SSE event (unparseable JSON) → `HarnessError::StreamError` (not retryable)
-  - 429 rate limit from proxy → `HarnessError::ModelThrottled` (retryable)
+  - Connection failure, TCP timeout, DNS failure → `AgentError::NetworkError` (retryable)
+  - 401/403 authentication failure → `AgentError::StreamError` (not retryable)
+  - SSE stream drop mid-response → `AgentError::NetworkError` (retryable, full turn retry)
+  - 504 gateway timeout → `AgentError::NetworkError` (retryable)
+  - Malformed SSE event (unparseable JSON) → `AgentError::StreamError` (not retryable)
+  - 429 rate limit from proxy → `AgentError::ModelThrottled` (retryable)
 - Cancellation: respects `CancellationToken` — drops the HTTP connection and yields `Aborted`
 
 ### Test Criteria

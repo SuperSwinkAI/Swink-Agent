@@ -1,4 +1,4 @@
-# Agent Harness — Product Requirements Document
+# Swink Agent — Product Requirements Document
 
 **Version:** 0.1
 **Language:** Rust (stable toolchain)
@@ -8,7 +8,7 @@
 
 ## 1. Overview
 
-A pure-Rust agent harness that provides the core scaffolding for running LLM-powered agentic loops. The harness manages message context, tool execution, streaming responses, and lifecycle events. It is provider-agnostic — LLM backends are swapped via a pluggable stream function interface.
+A pure-Rust swink agent that provides the core scaffolding for running LLM-powered agentic loops. The harness manages message context, tool execution, streaming responses, and lifecycle events. It is provider-agnostic — LLM backends are swapped via a pluggable stream function interface.
 
 The implementation leverages Rust's type system, ownership model, and async runtime (Tokio) for correctness and performance.
 
@@ -193,11 +193,11 @@ When the provider rejects a request because the input exceeds the model's contex
 
 When the model stops mid-response because it hit the output token limit (`stop_reason: length`) and there are incomplete tool calls in the response, the harness replaces each incomplete tool call with an informative error tool result before continuing the loop. This prevents the next model turn from receiving a broken tool call / tool result pair.
 
-This is purely internal recovery — it is not surfaced as a `HarnessError` to the caller. The harness repairs incomplete tool calls and continues the loop silently.
+This is purely internal recovery — it is not surfaced as a `AgentError` to the caller. The harness repairs incomplete tool calls and continues the loop silently.
 
-### 10.3 HarnessError Variants
+### 10.3 AgentError Variants
 
-The `HarnessError` enum defines all error conditions surfaced to the caller:
+The `AgentError` enum defines all error conditions surfaced to the caller:
 
 - **`ContextWindowOverflow { model: String }`** — provider rejects request because input exceeds context window
 - **`ModelThrottled`** — rate limit / 429 from provider
@@ -355,7 +355,7 @@ No `unsafe` code. No global mutable state.
 
 | Crate | Purpose |
 |---|---|
-| `agent-harness` | Core types and `StreamFn` trait |
+| `swink-agent` | Core types and `StreamFn` trait |
 | `reqwest` | HTTP client for provider APIs |
 | `bytes` | Byte buffer handling for NDJSON parsing |
 
@@ -363,8 +363,8 @@ No `unsafe` code. No global mutable state.
 
 | Crate | Purpose |
 |---|---|
-| `agent-harness` | Core types and agent API |
-| `agent-harness-adapters` | Provider adapters (Ollama by default) |
+| `swink-agent` | Core types and agent API |
+| `swink-agent-adapters` | Provider adapters (Ollama by default) |
 | `ratatui` | Terminal UI framework |
 | `crossterm` | Terminal backend |
 | `syntect` | Syntax highlighting |
@@ -378,7 +378,7 @@ No `unsafe` code. No global mutable state.
 The project is a 3-crate Cargo workspace:
 
 ```
-agent-harness/              Workspace root + core library
+swink-agent/              Workspace root + core library
   Cargo.toml
   src/
     lib.rs          — public re-exports
@@ -386,7 +386,7 @@ agent-harness/              Workspace root + core library
     tool.rs         — AgentTool trait, AgentToolResult, argument validation
     stream.rs       — StreamFn trait, StreamOptions, AssistantMessageEvent, AssistantMessageDelta
     proxy.rs        — ProxyStreamFn implementation
-    error.rs        — HarnessError, ContextWindowOverflow, MaxTokensReached
+    error.rs        — AgentError, ContextWindowOverflow, MaxTokensReached
     retry.rs        — RetryStrategy trait and default implementation
     loop_.rs        — agent_loop, agent_loop_continue, run_loop, AgentLoopConfig
     agent.rs        — Agent struct
@@ -412,7 +412,7 @@ tui/                        Terminal UI binary
 
 ### 15.1 Adapters Crate
 
-The `agent-harness-adapters` crate provides concrete `StreamFn` implementations for specific LLM providers. Each adapter translates between the provider's native streaming protocol and the harness's `AssistantMessageEvent` stream.
+The `swink-agent-adapters` crate provides concrete `StreamFn` implementations for specific LLM providers. Each adapter translates between the provider's native streaming protocol and the harness's `AssistantMessageEvent` stream.
 
 Current adapters:
 
@@ -427,7 +427,7 @@ Future adapters (planned):
 
 ## 16. Terminal User Interface (TUI)
 
-The TUI is a terminal-based interactive interface for the agent harness, provided as a separate binary crate within the workspace. It renders the agent conversation, tool execution, and streaming responses directly in the terminal.
+The TUI is a terminal-based interactive interface for the swink agent, provided as a separate binary crate within the workspace. It renders the agent conversation, tool execution, and streaming responses directly in the terminal.
 
 ### 16.1 Architecture
 
@@ -475,7 +475,7 @@ Key rendering features:
 | `ratatui` | Terminal UI framework (immediate-mode rendering) |
 | `crossterm` | Cross-platform terminal backend (input, raw mode, alternate screen) |
 | `syntect` | Syntax highlighting for code blocks |
-| `tokio` | Async runtime (shared with agent harness) |
+| `tokio` | Async runtime (shared with swink agent) |
 
 ---
 

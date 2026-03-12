@@ -2,7 +2,7 @@
 //! and print the result.
 //!
 //! This demonstrates the core API without any real LLM provider. In production
-//! you would replace `MockStreamFn` with an adapter from `agent-harness-adapters`
+//! you would replace `MockStreamFn` with an adapter from `swink-agent-adapters`
 //! (e.g. `AnthropicStreamFn`, `OpenAiStreamFn`, `OllamaStreamFn`).
 
 use std::pin::Pin;
@@ -11,7 +11,7 @@ use std::sync::Mutex;
 use futures::Stream;
 use tokio_util::sync::CancellationToken;
 
-use agent_harness::{
+use swink_agent::{
     Agent, AgentMessage, AgentOptions, AssistantMessageEvent, ContentBlock, Cost, LlmMessage,
     ModelSpec, StopReason, StreamFn, StreamOptions, Usage,
 };
@@ -35,7 +35,7 @@ impl StreamFn for MockStreamFn {
     fn stream<'a>(
         &'a self,
         _model: &'a ModelSpec,
-        _context: &'a agent_harness::AgentContext,
+        _context: &'a swink_agent::AgentContext,
         _options: &'a StreamOptions,
         _cancellation_token: CancellationToken,
     ) -> Pin<Box<dyn Stream<Item = AssistantMessageEvent> + Send + 'a>> {

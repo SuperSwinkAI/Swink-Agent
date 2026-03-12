@@ -92,7 +92,7 @@ Leave variables commented out to skip that provider. The TUI auto-selects by pri
 ## 6. Launch the TUI
 
 ```bash
-cargo run -p agent-harness-tui
+cargo run -p swink-agent-tui
 ```
 
 The TUI auto-loads `.env` via dotenvy — no need to source it manually. If no API keys are found (env or keychain), the first-run wizard prompts for provider selection and key entry.
@@ -148,7 +148,7 @@ Explain why the sky is blue
 If something goes wrong, check the log file:
 
 ```bash
-cat ~/.config/agent-harness/logs/agent-harness.log
+cat ~/.config/swink-agent/logs/swink-agent.log
 ```
 
 Logs are daily rolling files with tracing output. Look for `ERROR` or `WARN` entries.
@@ -158,7 +158,7 @@ Logs are daily rolling files with tracing output. Look for `ERROR` or `WARN` ent
 API keys stored in the OS keychain persist across sessions. To remove them:
 
 ```bash
-# macOS — delete from Keychain Access app, search "agent-harness"
+# macOS — delete from Keychain Access app, search "swink-agent"
 # Or from inside the TUI:
 #keys            # see what's stored
 ```
@@ -166,5 +166,5 @@ API keys stored in the OS keychain persist across sessions. To remove them:
 To remove local config and sessions:
 
 ```bash
-rm -rf ~/.config/agent-harness/
+rm -rf ~/.config/swink-agent/
 ```

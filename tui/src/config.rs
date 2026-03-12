@@ -1,4 +1,4 @@
-//! TUI configuration loaded from `~/.config/agent-harness/tui.toml`.
+//! TUI configuration loaded from `~/.config/swink-agent/tui.toml`.
 
 use serde::Deserialize;
 
@@ -41,7 +41,7 @@ impl TuiConfig {
             return Self::default();
         };
 
-        let config_path = config_dir.join("agent-harness").join("tui.toml");
+        let config_path = config_dir.join("swink-agent").join("tui.toml");
 
         let Ok(contents) = std::fs::read_to_string(&config_path) else {
             return Self::default();

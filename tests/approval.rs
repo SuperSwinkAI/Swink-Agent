@@ -9,7 +9,7 @@ use futures::Stream;
 use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
-use agent_harness::{
+use swink_agent::{
     Agent, AgentEvent, AgentMessage, AgentOptions, AgentTool, AgentToolResult, ApprovalMode,
     AssistantMessageEvent, ContentBlock, Cost, LlmMessage, ModelSpec, StopReason, StreamFn,
     StreamOptions, ToolApproval, Usage, UserMessage,
@@ -33,7 +33,7 @@ impl StreamFn for MockStreamFn {
     fn stream<'a>(
         &'a self,
         _model: &'a ModelSpec,
-        _context: &'a agent_harness::AgentContext,
+        _context: &'a swink_agent::AgentContext,
         _options: &'a StreamOptions,
         _cancellation_token: CancellationToken,
     ) -> Pin<Box<dyn Stream<Item = AssistantMessageEvent> + Send + 'a>> {
@@ -401,28 +401,28 @@ fn requires_approval_default_is_false() {
 /// Test 8: `BashTool` requires approval.
 #[test]
 fn requires_approval_bash_tool() {
-    let tool = agent_harness::BashTool::new();
+    let tool = swink_agent::BashTool::new();
     assert!(tool.requires_approval());
 }
 
 /// Test 9: `WriteFileTool` requires approval.
 #[test]
 fn requires_approval_write_file_tool() {
-    let tool = agent_harness::WriteFileTool::new();
+    let tool = swink_agent::WriteFileTool::new();
     assert!(tool.requires_approval());
 }
 
 /// Test 10: `ReadFileTool` does not require approval.
 #[test]
 fn requires_approval_read_file_tool_is_false() {
-    let tool = agent_harness::ReadFileTool::new();
+    let tool = swink_agent::ReadFileTool::new();
     assert!(!tool.requires_approval());
 }
 
 /// Test 11: `selective_approve` auto-approves tools that don't require approval.
 #[tokio::test]
 async fn selective_approve_skips_non_requiring_tools() {
-    use agent_harness::{ToolApprovalRequest, ToolApproval, selective_approve};
+    use swink_agent::{ToolApprovalRequest, ToolApproval, selective_approve};
     use std::sync::atomic::{AtomicBool, Ordering};
 
     let inner_called = Arc::new(AtomicBool::new(false));
@@ -448,7 +448,7 @@ async fn selective_approve_skips_non_requiring_tools() {
 /// Test 12: `selective_approve` delegates to inner callback for requiring tools.
 #[tokio::test]
 async fn selective_approve_calls_inner_for_requiring_tools() {
-    use agent_harness::{ToolApprovalRequest, ToolApproval, selective_approve};
+    use swink_agent::{ToolApprovalRequest, ToolApproval, selective_approve};
     use std::sync::atomic::{AtomicBool, Ordering};
 
     let inner_called = Arc::new(AtomicBool::new(false));

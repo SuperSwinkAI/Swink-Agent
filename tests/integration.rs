@@ -13,9 +13,9 @@ use futures::stream::StreamExt;
 use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
-use agent_harness::{
+use swink_agent::{
     Agent, AgentEvent, AgentMessage, AgentOptions, AgentTool, AgentToolResult,
-    AssistantMessageEvent, ContentBlock, Cost, DefaultRetryStrategy, HarnessError, LlmMessage,
+    AssistantMessageEvent, ContentBlock, Cost, DefaultRetryStrategy, AgentError, LlmMessage,
     ModelSpec, StopReason, StreamFn, StreamOptions, Usage, UserMessage,
 };
 
@@ -38,7 +38,7 @@ impl StreamFn for MockStreamFn {
     fn stream<'a>(
         &'a self,
         _model: &'a ModelSpec,
-        _context: &'a agent_harness::AgentContext,
+        _context: &'a swink_agent::AgentContext,
         _options: &'a StreamOptions,
         _cancellation_token: CancellationToken,
     ) -> Pin<Box<dyn Stream<Item = AssistantMessageEvent> + Send + 'a>> {
@@ -79,7 +79,7 @@ impl StreamFn for TransformTrackingStreamFn {
     fn stream<'a>(
         &'a self,
         _model: &'a ModelSpec,
-        context: &'a agent_harness::AgentContext,
+        context: &'a swink_agent::AgentContext,
         _options: &'a StreamOptions,
         _cancellation_token: CancellationToken,
     ) -> Pin<Box<dyn Stream<Item = AssistantMessageEvent> + Send + 'a>> {
@@ -664,13 +664,13 @@ async fn test_6_8_prompt_while_running_returns_already_running() {
     // All three invocation modes should fail.
     let err_stream = agent.prompt_stream(vec![user_msg("second")]);
     assert!(
-        matches!(err_stream, Err(HarnessError::AlreadyRunning)),
+        matches!(err_stream, Err(AgentError::AlreadyRunning)),
         "prompt_stream should return AlreadyRunning"
     );
 
     let err_sync = agent.prompt_sync(vec![user_msg("third")]);
     assert!(
-        matches!(err_sync, Err(HarnessError::AlreadyRunning)),
+        matches!(err_sync, Err(AgentError::AlreadyRunning)),
         "prompt_sync should return AlreadyRunning"
     );
 }
@@ -731,28 +731,28 @@ fn test_6_10_public_types_are_send_sync() {
         const fn assert_send_sync<T: Send + Sync>() {}
 
         assert_send_sync::<ContentBlock>();
-        assert_send_sync::<agent_harness::ImageSource>();
+        assert_send_sync::<swink_agent::ImageSource>();
         assert_send_sync::<UserMessage>();
-        assert_send_sync::<agent_harness::AssistantMessage>();
-        assert_send_sync::<agent_harness::ToolResultMessage>();
+        assert_send_sync::<swink_agent::AssistantMessage>();
+        assert_send_sync::<swink_agent::ToolResultMessage>();
         assert_send_sync::<LlmMessage>();
         assert_send_sync::<AgentMessage>();
         assert_send_sync::<Usage>();
         assert_send_sync::<Cost>();
         assert_send_sync::<StopReason>();
-        assert_send_sync::<agent_harness::ThinkingLevel>();
-        assert_send_sync::<agent_harness::ThinkingBudgets>();
+        assert_send_sync::<swink_agent::ThinkingLevel>();
+        assert_send_sync::<swink_agent::ThinkingBudgets>();
         assert_send_sync::<ModelSpec>();
-        assert_send_sync::<agent_harness::AgentResult>();
-        assert_send_sync::<agent_harness::AgentContext>();
+        assert_send_sync::<swink_agent::AgentResult>();
+        assert_send_sync::<swink_agent::AgentContext>();
         assert_send_sync::<AssistantMessageEvent>();
-        assert_send_sync::<agent_harness::AssistantMessageDelta>();
-        assert_send_sync::<agent_harness::StreamTransport>();
+        assert_send_sync::<swink_agent::AssistantMessageDelta>();
+        assert_send_sync::<swink_agent::StreamTransport>();
         assert_send_sync::<StreamOptions>();
         assert_send_sync::<AgentToolResult>();
-        assert_send_sync::<HarnessError>();
+        assert_send_sync::<AgentError>();
         assert_send_sync::<DefaultRetryStrategy>();
-        assert_send_sync::<agent_harness::SubscriptionId>();
+        assert_send_sync::<swink_agent::SubscriptionId>();
     };
 }
 
@@ -916,7 +916,7 @@ async fn test_6_13_incomplete_tool_calls_get_error_results() {
 
 #[test]
 fn test_6_14_retry_strategy_exponential_backoff() {
-    use agent_harness::RetryStrategy;
+    use swink_agent::RetryStrategy;
 
     let strategy = DefaultRetryStrategy::default()
         .with_max_attempts(5)
@@ -946,19 +946,19 @@ fn test_6_14_retry_strategy_exponential_backoff() {
     assert_eq!(d5, Duration::from_secs(10), "attempt 5 capped at max_delay");
 
     // should_retry: retryable error within max_attempts
-    let retryable = HarnessError::ModelThrottled;
+    let retryable = AgentError::ModelThrottled;
     assert!(strategy.should_retry(&retryable, 1));
     assert!(strategy.should_retry(&retryable, 4));
     assert!(!strategy.should_retry(&retryable, 5), "at max_attempts");
 
     // Non-retryable error should not retry.
-    let non_retryable = HarnessError::AlreadyRunning;
+    let non_retryable = AgentError::AlreadyRunning;
     assert!(!strategy.should_retry(&non_retryable, 1));
 }
 
 #[test]
 fn test_6_14_retry_strategy_jitter_bounded() {
-    use agent_harness::RetryStrategy;
+    use swink_agent::RetryStrategy;
 
     let strategy = DefaultRetryStrategy::default()
         .with_base_delay(Duration::from_secs(1))

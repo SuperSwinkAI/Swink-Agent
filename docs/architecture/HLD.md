@@ -1,4 +1,4 @@
-# Agent Harness — High Level Design
+# Swink Agent — High Level Design
 
 **Related Documents:**
 - Product Requirements: [PRD.md](../planning/PRD.md)
@@ -7,13 +7,13 @@
 
 ## System Overview
 
-The Agent Harness is a Rust workspace composed of three crates that provide the core scaffolding for building LLM-powered agentic applications. The **core library** (`agent-harness`) manages the agent loop, message context, tool dispatch, streaming, and lifecycle events. The **adapters crate** (`agent-harness-adapters`) provides ready-made `StreamFn` implementations for specific LLM providers. The **TUI crate** (`agent-harness-tui`) is a binary that provides an interactive terminal interface. All LLM provider access is delegated to a `StreamFn` implementation, keeping the core harness fully provider-agnostic.
+The Swink Agent is a Rust workspace composed of three crates that provide the core scaffolding for building LLM-powered agentic applications. The **core library** (`swink-agent`) manages the agent loop, message context, tool dispatch, streaming, and lifecycle events. The **adapters crate** (`swink-agent-adapters`) provides ready-made `StreamFn` implementations for specific LLM providers. The **TUI crate** (`swink-agent-tui`) is a binary that provides an interactive terminal interface. All LLM provider access is delegated to a `StreamFn` implementation, keeping the core harness fully provider-agnostic.
 
 ---
 
 ## C4 Level 1 — System Context
 
-This diagram shows the agent harness as a single system and the external actors and systems it interacts with.
+This diagram shows the swink agent as a single system and the external actors and systems it interacts with.
 
 ```mermaid
 flowchart TB
@@ -22,9 +22,9 @@ flowchart TB
         TUI["Terminal UI<br/>(ratatui + crossterm)"]
     end
 
-    subgraph HarnessSystem["⚙️ Agent Harness (Rust Workspace)"]
-        Harness["agent-harness (core)<br/>Agent loop, tool dispatch,<br/>streaming, events, retry"]
-        Adapters["agent-harness-adapters<br/>LLM provider adapters<br/>(Ollama, Anthropic, OpenAI)"]
+    subgraph HarnessSystem["⚙️ Swink Agent (Rust Workspace)"]
+        Harness["swink-agent (core)<br/>Agent loop, tool dispatch,<br/>streaming, events, retry"]
+        Adapters["swink-agent-adapters<br/>LLM provider adapters<br/>(Ollama, Anthropic, OpenAI)"]
     end
 
     subgraph ExternalSystems["🌐 External Systems"]
@@ -249,10 +249,10 @@ This diagram shows how the three workspace crates and their internal modules dep
 
 ```mermaid
 flowchart TB
-    subgraph CoreCrate["📦 agent-harness (core)"]
+    subgraph CoreCrate["📦 swink-agent (core)"]
         subgraph FoundationLayer["🏗️ Foundation"]
             types["types.rs<br/>AgentMessage, ContentBlock,<br/>ModelSpec, AgentResult, Usage"]
-            error["error.rs<br/>HarnessError,<br/>ContextWindowOverflow,<br/>ModelThrottled, StreamError"]
+            error["error.rs<br/>AgentError,<br/>ContextWindowOverflow,<br/>ModelThrottled, StreamError"]
         end
 
         subgraph CoreLayer["⚙️ Core Abstractions"]
@@ -277,7 +277,7 @@ flowchart TB
         end
     end
 
-    subgraph AdaptersCrate["🔌 agent-harness-adapters"]
+    subgraph AdaptersCrate["🔌 swink-agent-adapters"]
         adapters_lib["lib.rs<br/>re-exports"]
         ollama["ollama.rs<br/>OllamaStreamFn,<br/>NDJSON streaming"]
         anthropic["anthropic.rs<br/>AnthropicStreamFn,<br/>SSE + thinking blocks"]
@@ -285,7 +285,7 @@ flowchart TB
         convert["convert.rs<br/>MessageConverter trait"]
     end
 
-    subgraph TUICrate["🖥️ agent-harness-tui"]
+    subgraph TUICrate["🖥️ swink-agent-tui"]
         tui_main["main.rs<br/>env var config,<br/>provider selection"]
         tui_app["app.rs<br/>event loop, layout"]
         tui_creds["credentials.rs<br/>keychain integration"]
@@ -317,7 +317,7 @@ flowchart TB
     convert --> ollama
     convert --> openai
 
-    lib -->|"agent-harness dep"| tui_main
+    lib -->|"swink-agent dep"| tui_main
     adapters_lib -->|"adapters dep"| tui_main
     tui_main --> tui_app
 
@@ -346,7 +346,7 @@ flowchart TB
 
 **StreamFn is the only provider boundary.** All LLM communication flows through a single trait. Direct providers, proxies, mock implementations for testing, and future transports all satisfy the same interface. The harness never holds an API key or SDK client. Four built-in implementations ship with the project: `ProxyStreamFn` (SSE, in core), `OllamaStreamFn` (NDJSON), `AnthropicStreamFn` (SSE with thinking blocks), and `OpenAiStreamFn` (SSE, multi-provider compatible) — the latter three in the adapters crate.
 
-**Adapters are a separate crate.** Provider-specific `StreamFn` implementations live in `agent-harness-adapters`, keeping the core harness free of any provider SDK or protocol detail. Adding a new provider means adding a module to the adapters crate — no changes to the core.
+**Adapters are a separate crate.** Provider-specific `StreamFn` implementations live in `swink-agent-adapters`, keeping the core harness free of any provider SDK or protocol detail. Adding a new provider means adding a module to the adapters crate — no changes to the core.
 
 **Events are outward-only.** The event system is a push channel from the harness to the caller. Hooks that mutate execution (cancel a tool, retry a call) are expressed as callbacks in `AgentLoopConfig`, not as event responses. This avoids re-entrant state.
 
@@ -358,7 +358,7 @@ flowchart TB
 
 ## TUI Architecture
 
-The TUI is a separate binary crate (`agent-harness-tui`) that depends on both `agent-harness` (core) and `agent-harness-adapters`. It provides an interactive terminal interface for conversing with an LLM agent. The TUI supports four providers (Proxy, OpenAI, Anthropic, Ollama) selected by environment variable priority. It includes a first-run setup wizard for API key configuration, session persistence, and credential management via the system keychain.
+The TUI is a separate binary crate (`swink-agent-tui`) that depends on both `swink-agent` (core) and `swink-agent-adapters`. It provides an interactive terminal interface for conversing with an LLM agent. The TUI supports four providers (Proxy, OpenAI, Anthropic, Ollama) selected by environment variable priority. It includes a first-run setup wizard for API key configuration, session persistence, and credential management via the system keychain.
 
 ### Provider Configuration
 
@@ -421,7 +421,7 @@ flowchart LR
         Renderer["ratatui Renderer"]
     end
 
-    subgraph Harness["Agent Harness"]
+    subgraph Harness["Swink Agent"]
         Agent["Agent"]
         Events["AgentEvent Stream"]
     end

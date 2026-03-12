@@ -1,8 +1,8 @@
-# CLAUDE.md — Agent Harness
+# CLAUDE.md — Swink Agent
 
 ## Project
 
-A pure-Rust library for building LLM-powered agentic loops. Provider-agnostic core with pluggable streaming, concurrent tool execution, and lifecycle events. Three-crate workspace: core (`agent-harness`), adapters (`agent-harness-adapters`), TUI (`agent-harness-tui`).
+A pure-Rust library for building LLM-powered agentic loops. Provider-agnostic core with pluggable streaming, concurrent tool execution, and lifecycle events. Three-crate workspace: core (`swink-agent`), adapters (`swink-agent-adapters`), TUI (`swink-agent-tui`).
 
 ## Development Principles
 
@@ -19,15 +19,15 @@ Follows Rust community conventions (RFC 430, Rust API Guidelines, clippy default
 
 | Category | Convention | Examples |
 |---|---|---|
-| Crates/packages | `kebab-case` | `agent-harness-adapters` |
+| Crates/packages | `kebab-case` | `swink-agent-adapters` |
 | Modules/files | `snake_case`; trailing `_` for reserved words | `loop_.rs`, `read_file.rs` |
 | Types (structs, enums, traits) | `PascalCase` | `AgentContext`, `StopReason`, `StreamFn` |
-| Enum variants | `PascalCase` | `StopReason::ToolUse`, `HarnessError::Aborted` |
+| Enum variants | `PascalCase` | `StopReason::ToolUse`, `AgentError::Aborted` |
 | Functions/methods | `snake_case`, imperative verbs | `validate_tool_arguments()` |
 | Constants/statics | `UPPER_SNAKE_CASE`; use `_` digit separators | `DEFAULT_TIMEOUT_MS`, `100_000` |
 | Type aliases (closures) | Suffix with `Fn` | `ConvertToLlmFn`, `GetApiKeyFn` |
 | Constructors | `new()` primary; `with_*()` builder chain | `Agent::new()`, `.with_model()` |
-| Named constructors | Variant-specific shortcuts on the type | `HarnessError::network(err)` |
+| Named constructors | Variant-specific shortcuts on the type | `AgentError::network(err)` |
 | Getters | No `get_` prefix | `state()`, `name()`, `description()` |
 | Predicates | `is_*` / `has_*` prefix | `is_retryable()` |
 
@@ -61,9 +61,9 @@ Group `use` statements in this order, separated by blank lines:
 
 ### Error Handling
 
-- One error `enum` per crate (e.g., `HarnessError`).
+- One error `enum` per crate (e.g., `AgentError`).
 - Variants use struct-style fields for context (`NetworkError { source: ... }`).
-- Convenience constructors on the error type (`HarnessError::network(err)`).
+- Convenience constructors on the error type (`AgentError::network(err)`).
 - Implement `std::fmt::Display` and `std::error::Error`.
 
 ### Testing
@@ -87,7 +87,7 @@ Group `use` statements in this order, separated by blank lines:
 cargo build --workspace          # compile all crates
 cargo test --workspace           # run all tests
 cargo clippy --workspace -- -D warnings  # lint (zero warnings policy)
-cargo run -p agent-harness-tui   # launch TUI (.env auto-loaded via dotenvy)
+cargo run -p swink-agent-tui   # launch TUI (.env auto-loaded via dotenvy)
 ```
 
 MSRV is **1.88** (edition 2024). `rust-toolchain.toml` pins to stable channel.
@@ -103,7 +103,7 @@ MSRV is **1.88** (edition 2024). `rust-toolchain.toml` pins to stable channel.
 | `src/stream.rs` | §7 | `docs/architecture/streaming/` | StreamFn trait, AssistantMessageEvent protocol |
 | `src/proxy.rs` | §7.4 | `docs/architecture/streaming/` | ProxyStreamFn (SSE) |
 | `src/loop_.rs` | §8, §9, §12 | `docs/architecture/agent-loop/` | Agent loop, events, cancellation |
-| `src/error.rs` | §10 | `docs/architecture/error-handling/` | HarnessError variants, retryable classification |
+| `src/error.rs` | §10 | `docs/architecture/error-handling/` | AgentError variants, retryable classification |
 | `src/retry.rs` | §11 | `docs/architecture/error-handling/` | RetryStrategy trait, exponential backoff |
 | `src/tools/` | §4 | `docs/architecture/tool-system/` | BashTool, ReadFileTool, WriteFileTool |
 | `adapters/` | §7, §14.1, §15.1 | `docs/architecture/streaming/` | Ollama, Anthropic, OpenAI StreamFn adapters |

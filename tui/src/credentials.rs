@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 
-const SERVICE_NAME: &str = "agent-harness";
+const SERVICE_NAME: &str = "swink-agent";
 
 /// Known provider configurations.
 #[derive(Debug, Clone)]

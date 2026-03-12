@@ -2,7 +2,7 @@
 
 use std::time::Instant;
 
-use agent_harness::redact_sensitive_values;
+use swink_agent::redact_sensitive_values;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};

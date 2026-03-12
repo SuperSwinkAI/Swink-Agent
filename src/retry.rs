@@ -7,7 +7,7 @@
 
 use std::time::Duration;
 
-use crate::error::HarnessError;
+use crate::error::AgentError;
 
 // ---------------------------------------------------------------------------
 // Trait
@@ -21,7 +21,7 @@ use crate::error::HarnessError;
 pub trait RetryStrategy: Send + Sync {
     /// Returns `true` if `error` on the given `attempt` number should be
     /// retried. Attempt numbering starts at 1.
-    fn should_retry(&self, error: &HarnessError, attempt: u32) -> bool;
+    fn should_retry(&self, error: &AgentError, attempt: u32) -> bool;
 
     /// Returns the duration to wait before attempt number `attempt`.
     /// Attempt numbering starts at 1.
@@ -34,8 +34,8 @@ pub trait RetryStrategy: Send + Sync {
 
 /// Exponential back-off retry strategy with optional jitter.
 ///
-/// Only transient errors ([`HarnessError::ModelThrottled`] and
-/// [`HarnessError::NetworkError`]) are retried. All other error variants are
+/// Only transient errors ([`AgentError::ModelThrottled`] and
+/// [`AgentError::NetworkError`]) are retried. All other error variants are
 /// considered non-retryable and cause an immediate exit.
 ///
 /// # Defaults
@@ -118,7 +118,7 @@ impl DefaultRetryStrategy {
 }
 
 impl RetryStrategy for DefaultRetryStrategy {
-    fn should_retry(&self, error: &HarnessError, attempt: u32) -> bool {
+    fn should_retry(&self, error: &AgentError, attempt: u32) -> bool {
         if attempt >= self.max_attempts {
             return false;
         }

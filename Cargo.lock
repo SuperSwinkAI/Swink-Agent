@@ -9,72 +9,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
-name = "agent-harness"
-version = "0.1.0"
-dependencies = [
- "eventsource-stream",
- "futures",
- "jsonschema",
- "pretty_assertions",
- "rand",
- "regex",
- "reqwest",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror",
- "tokio",
- "tokio-stream",
- "tokio-util",
- "tracing",
- "uuid",
- "wiremock",
-]
-
-[[package]]
-name = "agent-harness-adapters"
-version = "0.1.0"
-dependencies = [
- "agent-harness",
- "bytes",
- "dotenvy",
- "futures",
- "pretty_assertions",
- "reqwest",
- "serde",
- "serde_json",
- "tokio",
- "tokio-util",
- "tracing",
- "uuid",
- "wiremock",
-]
-
-[[package]]
-name = "agent-harness-tui"
-version = "0.1.0"
-dependencies = [
- "agent-harness",
- "agent-harness-adapters",
- "arboard",
- "crossterm",
- "dirs",
- "dotenvy",
- "futures",
- "keyring",
- "ratatui",
- "serde",
- "serde_json",
- "syntect",
- "tempfile",
- "tokio",
- "toml",
- "tracing",
- "tracing-appender",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "ahash"
 version = "0.8.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2272,6 +2206,76 @@ name = "subtle"
 version = "2.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
+
+[[package]]
+name = "swink-agent"
+version = "0.1.0"
+dependencies = [
+ "dotenvy",
+ "eventsource-stream",
+ "futures",
+ "jsonschema",
+ "pretty_assertions",
+ "rand",
+ "regex",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "swink-agent-adapters",
+ "swink-agent-tui",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tokio-stream",
+ "tokio-util",
+ "tracing",
+ "uuid",
+ "wiremock",
+]
+
+[[package]]
+name = "swink-agent-adapters"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "dotenvy",
+ "futures",
+ "pretty_assertions",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "swink-agent",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "uuid",
+ "wiremock",
+]
+
+[[package]]
+name = "swink-agent-tui"
+version = "0.1.0"
+dependencies = [
+ "arboard",
+ "crossterm",
+ "dirs",
+ "dotenvy",
+ "futures",
+ "keyring",
+ "ratatui",
+ "serde",
+ "serde_json",
+ "swink-agent",
+ "swink-agent-adapters",
+ "syntect",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+ "toml",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
+]
 
 [[package]]
 name = "syn"

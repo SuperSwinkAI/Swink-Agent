@@ -1,7 +1,7 @@
 //! Live API tests for `OpenAiStreamFn`.
 //!
 //! These tests hit the real `OpenAI` API and are skipped by default.
-//! Run with: `cargo test -p agent-harness-adapters --test openai_live -- --ignored`
+//! Run with: `cargo test -p swink-agent-adapters --test openai_live -- --ignored`
 //! Requires `OPENAI_API_KEY` in `.env` or environment.
 
 use std::sync::Arc;
@@ -12,12 +12,12 @@ use serde_json::json;
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 
-use agent_harness::{
+use swink_agent::{
     AgentContext, AgentMessage, AgentTool, AgentToolResult, AssistantMessage, AssistantMessageEvent,
     ContentBlock, Cost, LlmMessage, ModelSpec, StopReason, StreamFn, StreamOptions, Usage,
     UserMessage,
 };
-use agent_harness_adapters::OpenAiStreamFn;
+use swink_agent_adapters::OpenAiStreamFn;
 
 // ── Constants ────────────────────────────────────────────────────────────────
 

@@ -5,8 +5,8 @@
 //! function handles the common iteration and pattern matching over
 //! [`AgentMessage`] / [`LlmMessage`] variants.
 
-use agent_harness::stream::AssistantMessageEvent;
-use agent_harness::types::{
+use swink_agent::stream::AssistantMessageEvent;
+use swink_agent::types::{
     AgentMessage, AssistantMessage, LlmMessage, StopReason, ToolResultMessage, UserMessage,
 };
 
@@ -84,7 +84,7 @@ pub fn error_event(message: &str) -> AssistantMessageEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agent_harness::types::{
+    use swink_agent::types::{
         AgentMessage, AssistantMessage, ContentBlock, Cost, LlmMessage, StopReason,
         ToolResultMessage, Usage, UserMessage,
     };
@@ -297,7 +297,7 @@ mod tests {
 
         #[derive(Debug)]
         struct MyCustom;
-        impl agent_harness::types::CustomMessage for MyCustom {
+        impl swink_agent::types::CustomMessage for MyCustom {
             fn as_any(&self) -> &dyn Any {
                 self
             }

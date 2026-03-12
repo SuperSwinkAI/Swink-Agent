@@ -1,9 +1,9 @@
 use serde_json::json;
 use tokio_util::sync::CancellationToken;
 
-use agent_harness::ContentBlock;
-use agent_harness::tool::AgentTool;
-use agent_harness::tools::{BashTool, ReadFileTool, WriteFileTool};
+use swink_agent::ContentBlock;
+use swink_agent::tool::AgentTool;
+use swink_agent::tools::{BashTool, ReadFileTool, WriteFileTool};
 
 // ═══════════════════════════════════════════════════════════════════════════
 // BashTool
@@ -274,7 +274,7 @@ async fn read_file_not_found() {
     let result = tool
         .execute(
             "tc_2",
-            json!({"path": "/tmp/nonexistent_agent_harness_test_file_xyz"}),
+            json!({"path": "/tmp/nonexistent_swink_agent_test_file_xyz"}),
             token,
             None,
         )

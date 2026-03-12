@@ -37,6 +37,12 @@ pub struct SetupWizard {
     should_continue: bool,
 }
 
+impl Default for SetupWizard {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SetupWizard {
     pub fn new() -> Self {
         let providers = credentials::providers();
@@ -105,13 +111,13 @@ impl SetupWizard {
     fn render_welcome(&self, frame: &mut ratatui::Frame, area: Rect) {
         let block = Block::default()
             .borders(Borders::ALL)
-            .title(" Agent Harness — Setup ")
+            .title(" Swink Agent — Setup ")
             .border_style(Style::default().fg(Color::Cyan));
 
         let text = vec![
             Line::from(""),
             Line::from(Span::styled(
-                "Welcome to Agent Harness!",
+                "Welcome to Swink Agent!",
                 Style::default()
                     .fg(Color::Cyan)
                     .add_modifier(Modifier::BOLD),
@@ -327,7 +333,7 @@ impl SetupWizard {
         ));
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
-            "Press Enter to continue to Agent Harness.",
+            "Press Enter to continue to Swink Agent.",
             Style::default().add_modifier(Modifier::DIM),
         )));
 

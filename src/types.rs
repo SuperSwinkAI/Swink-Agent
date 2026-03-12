@@ -1,4 +1,4 @@
-//! Foundation types for the agent harness.
+//! Foundation types for the swink agent.
 //!
 //! This module defines every type that crosses a public boundary in the harness.
 //! All other modules depend on it; it depends on nothing else in the crate.

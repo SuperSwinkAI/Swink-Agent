@@ -1,4 +1,4 @@
-use agent_harness::{DefaultRetryStrategy, HarnessError, RetryStrategy};
+use swink_agent::{DefaultRetryStrategy, AgentError, RetryStrategy};
 use std::io;
 use std::time::Duration;
 
@@ -17,15 +17,15 @@ fn trait_object_is_send_sync() {
 fn retries_model_throttled_up_to_max_attempts() {
     let strategy = DefaultRetryStrategy::default().with_max_attempts(3);
 
-    assert!(strategy.should_retry(&HarnessError::ModelThrottled, 1));
-    assert!(strategy.should_retry(&HarnessError::ModelThrottled, 2));
-    assert!(!strategy.should_retry(&HarnessError::ModelThrottled, 3));
+    assert!(strategy.should_retry(&AgentError::ModelThrottled, 1));
+    assert!(strategy.should_retry(&AgentError::ModelThrottled, 2));
+    assert!(!strategy.should_retry(&AgentError::ModelThrottled, 3));
 }
 
 #[test]
 fn retries_network_error_up_to_max_attempts() {
     let strategy = DefaultRetryStrategy::default().with_max_attempts(3);
-    let err = HarnessError::network(io::Error::other("timeout"));
+    let err = AgentError::network(io::Error::other("timeout"));
 
     assert!(strategy.should_retry(&err, 1));
     assert!(strategy.should_retry(&err, 2));
@@ -37,7 +37,7 @@ fn retries_network_error_up_to_max_attempts() {
 #[test]
 fn does_not_retry_context_window_overflow() {
     let strategy = DefaultRetryStrategy::default();
-    let err = HarnessError::context_overflow("test-model");
+    let err = AgentError::context_overflow("test-model");
 
     assert!(!strategy.should_retry(&err, 1));
 }
@@ -46,12 +46,12 @@ fn does_not_retry_context_window_overflow() {
 fn does_not_retry_non_retryable_variants() {
     let strategy = DefaultRetryStrategy::default();
 
-    assert!(!strategy.should_retry(&HarnessError::Aborted, 1));
-    assert!(!strategy.should_retry(&HarnessError::AlreadyRunning, 1));
-    assert!(!strategy.should_retry(&HarnessError::NoMessages, 1));
-    assert!(!strategy.should_retry(&HarnessError::InvalidContinue, 1));
-    assert!(!strategy.should_retry(&HarnessError::structured_output_failed(3, "bad"), 1));
-    assert!(!strategy.should_retry(&HarnessError::stream(io::Error::other("bad data")), 1));
+    assert!(!strategy.should_retry(&AgentError::Aborted, 1));
+    assert!(!strategy.should_retry(&AgentError::AlreadyRunning, 1));
+    assert!(!strategy.should_retry(&AgentError::NoMessages, 1));
+    assert!(!strategy.should_retry(&AgentError::InvalidContinue, 1));
+    assert!(!strategy.should_retry(&AgentError::structured_output_failed(3, "bad"), 1));
+    assert!(!strategy.should_retry(&AgentError::stream(io::Error::other("bad data")), 1));
 }
 
 // -- 2.9: Delay increases exponentially and caps at max_delay -----------

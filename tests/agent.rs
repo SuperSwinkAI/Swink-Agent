@@ -11,9 +11,9 @@ use futures::stream::StreamExt;
 use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
-use agent_harness::{
+use swink_agent::{
     Agent, AgentEvent, AgentMessage, AgentOptions, AgentTool, AgentToolResult,
-    AssistantMessageEvent, ContentBlock, Cost, DefaultRetryStrategy, HarnessError, LlmMessage,
+    AssistantMessageEvent, ContentBlock, Cost, DefaultRetryStrategy, AgentError, LlmMessage,
     ModelSpec, SteeringMode, StopReason, StreamFn, StreamOptions, ToolResultMessage, Usage,
     UserMessage,
 };
@@ -37,7 +37,7 @@ impl StreamFn for MockStreamFn {
     fn stream<'a>(
         &'a self,
         _model: &'a ModelSpec,
-        _context: &'a agent_harness::AgentContext,
+        _context: &'a swink_agent::AgentContext,
         _options: &'a StreamOptions,
         _cancellation_token: CancellationToken,
     ) -> Pin<Box<dyn Stream<Item = AssistantMessageEvent> + Send + 'a>> {
@@ -78,7 +78,7 @@ impl StreamFn for ContextCapturingStreamFn {
     fn stream<'a>(
         &'a self,
         _model: &'a ModelSpec,
-        context: &'a agent_harness::AgentContext,
+        context: &'a swink_agent::AgentContext,
         _options: &'a StreamOptions,
         _cancellation_token: CancellationToken,
     ) -> Pin<Box<dyn Stream<Item = AssistantMessageEvent> + Send + 'a>> {
@@ -366,7 +366,7 @@ async fn test_4_4_already_running_error() {
     let result = agent.prompt_stream(vec![user_msg("second")]);
     let err = result.err().expect("should be an error");
     assert!(
-        matches!(err, HarnessError::AlreadyRunning),
+        matches!(err, AgentError::AlreadyRunning),
         "expected AlreadyRunning, got {err:?}"
     );
 }
@@ -741,7 +741,7 @@ async fn test_4_16_structured_output_fails_after_max_retries() {
         .unwrap_err();
 
     assert!(
-        matches!(err, HarnessError::StructuredOutputFailed { attempts, .. } if attempts == 3),
+        matches!(err, AgentError::StructuredOutputFailed { attempts, .. } if attempts == 3),
         "expected StructuredOutputFailed with 3 attempts, got {err:?}"
     );
 }
@@ -756,7 +756,7 @@ async fn test_4_17_continue_async_no_messages() {
     // No messages in the agent — continue should fail.
     let err = agent.continue_async().await.unwrap_err();
     assert!(
-        matches!(err, HarnessError::NoMessages),
+        matches!(err, AgentError::NoMessages),
         "expected NoMessages, got {err:?}"
     );
 }
@@ -890,10 +890,10 @@ async fn test_state_mutators() {
     assert_eq!(agent.state().model.model_id, "other-model");
 
     // set_thinking_level
-    agent.set_thinking_level(agent_harness::ThinkingLevel::High);
+    agent.set_thinking_level(swink_agent::ThinkingLevel::High);
     assert_eq!(
         agent.state().model.thinking_level,
-        agent_harness::ThinkingLevel::High
+        swink_agent::ThinkingLevel::High
     );
 
     // set_messages / clear_messages
@@ -954,7 +954,7 @@ async fn test_continue_from_tool_result() {
         }],
         timestamp: 0,
     }));
-    let assistant = AgentMessage::Llm(LlmMessage::Assistant(agent_harness::AssistantMessage {
+    let assistant = AgentMessage::Llm(LlmMessage::Assistant(swink_agent::AssistantMessage {
         content: vec![ContentBlock::ToolCall {
             id: "tc_1".to_string(),
             name: "my_tool".to_string(),
@@ -1002,7 +1002,7 @@ async fn test_continue_drains_queues_from_assistant_tail() {
 
     // Without queued messages, continue should fail
     let err = agent.continue_async().await;
-    assert!(matches!(err, Err(HarnessError::InvalidContinue)));
+    assert!(matches!(err, Err(AgentError::InvalidContinue)));
 
     // Queue a steering message, then continue should succeed
     agent.steer(user_msg("steering message"));
@@ -1021,7 +1021,7 @@ async fn test_continue_does_not_reemit_existing_messages() {
         }],
         timestamp: 0,
     }));
-    let assistant = AgentMessage::Llm(LlmMessage::Assistant(agent_harness::AssistantMessage {
+    let assistant = AgentMessage::Llm(LlmMessage::Assistant(swink_agent::AssistantMessage {
         content: vec![ContentBlock::ToolCall {
             id: "tc_1".to_string(),
             name: "tool".to_string(),
@@ -1078,7 +1078,7 @@ async fn test_session_id_forwarding() {
         fn stream<'a>(
             &'a self,
             _model: &'a ModelSpec,
-            _context: &'a agent_harness::AgentContext,
+            _context: &'a swink_agent::AgentContext,
             options: &'a StreamOptions,
             _cancellation_token: CancellationToken,
         ) -> Pin<Box<dyn futures::Stream<Item = AssistantMessageEvent> + Send + 'a>> {
@@ -1155,7 +1155,7 @@ async fn test_get_api_key_forwarding() {
         fn stream<'a>(
             &'a self,
             _model: &'a ModelSpec,
-            _context: &'a agent_harness::AgentContext,
+            _context: &'a swink_agent::AgentContext,
             options: &'a StreamOptions,
             _cancellation_token: CancellationToken,
         ) -> Pin<Box<dyn futures::Stream<Item = AssistantMessageEvent> + Send + 'a>> {
@@ -1280,6 +1280,115 @@ async fn test_error_sets_state_error() {
     let state_error = agent.state().error.as_ref();
     assert!(state_error.is_some(), "agent state should have error set");
     assert_eq!(state_error, result.error.as_ref());
+}
+
+// ─── Multi-turn via prompt_stream + handle_stream_event ───────────────────
+
+/// Regression test: when consuming `prompt_stream` externally (as the TUI does),
+/// `handle_stream_event` must clear `is_running` so subsequent prompts succeed.
+#[tokio::test]
+async fn multi_turn_via_prompt_stream_and_handle_stream_event() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![
+        text_only_events("first response"),
+        text_only_events("second response"),
+    ]));
+    let mut agent = make_agent(stream_fn);
+
+    // Turn 1: consume stream externally, feeding events back via handle_stream_event.
+    {
+        let stream = agent.prompt_stream(vec![user_msg("hello")]).unwrap();
+        let mut stream = std::pin::pin!(stream);
+        while let Some(event) = stream.next().await {
+            agent.handle_stream_event(&event);
+        }
+    }
+
+    assert!(
+        !agent.state().is_running,
+        "agent should be idle after stream is fully consumed"
+    );
+    assert!(
+        !agent.state().messages.is_empty(),
+        "agent state should have messages after first turn"
+    );
+
+    // Turn 2: should succeed without AlreadyRunning.
+    {
+        let stream = agent
+            .prompt_stream(vec![user_msg("follow up")])
+            .expect("second prompt_stream should not return AlreadyRunning");
+        let mut stream = std::pin::pin!(stream);
+        while let Some(event) = stream.next().await {
+            agent.handle_stream_event(&event);
+        }
+    }
+
+    assert!(
+        !agent.state().is_running,
+        "agent should be idle after second turn"
+    );
+    assert!(
+        agent.state().messages.len() >= 4,
+        "state should have messages from both turns (2 user + 2 assistant), got {}",
+        agent.state().messages.len()
+    );
+}
+
+/// Verify that `handle_stream_event` dispatches to subscribers.
+#[tokio::test]
+async fn handle_stream_event_dispatches_to_subscribers() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("hello")]));
+    let mut agent = make_agent(stream_fn);
+
+    let event_names: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let names_clone = Arc::clone(&event_names);
+    let _id = agent.subscribe(move |event| {
+        let name = format!("{event:?}");
+        let prefix = name.split([' ', '{', '(']).next().unwrap_or("").to_string();
+        names_clone.lock().unwrap().push(prefix);
+    });
+
+    let stream = agent.prompt_stream(vec![user_msg("hi")]).unwrap();
+    let mut stream = std::pin::pin!(stream);
+    while let Some(event) = stream.next().await {
+        agent.handle_stream_event(&event);
+    }
+
+    let collected = event_names.lock().unwrap().clone();
+    assert!(
+        collected.contains(&"AgentStart".to_string()),
+        "subscriber should receive AgentStart"
+    );
+    assert!(
+        collected.contains(&"AgentEnd".to_string()),
+        "subscriber should receive AgentEnd"
+    );
+}
+
+/// Confirm that without `handle_stream_event`, the second `prompt_stream` fails.
+#[tokio::test]
+async fn prompt_stream_without_handle_stream_event_stays_running() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![
+        text_only_events("first"),
+        text_only_events("second"),
+    ]));
+    let mut agent = make_agent(stream_fn);
+
+    // Consume stream without calling handle_stream_event.
+    let stream = agent.prompt_stream(vec![user_msg("hello")]).unwrap();
+    let mut stream = std::pin::pin!(stream);
+    while let Some(_event) = stream.next().await {}
+
+    assert!(
+        agent.state().is_running,
+        "agent should still think it is running"
+    );
+
+    let err = agent.prompt_stream(vec![user_msg("follow up")]);
+    assert!(
+        matches!(err, Err(AgentError::AlreadyRunning)),
+        "second prompt should fail with AlreadyRunning"
+    );
 }
 
 // ─── Multi-instance independence ──────────────────────────────────────────

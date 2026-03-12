@@ -6,7 +6,7 @@ use std::time::SystemTime;
 
 use serde::{Deserialize, Serialize};
 
-use agent_harness::{AgentMessage, LlmMessage};
+use swink_agent::{AgentMessage, LlmMessage};
 
 /// Metadata stored as the first line of a session JSONL file.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -39,7 +39,7 @@ impl SessionManager {
                 "could not determine config directory",
             )
         })?;
-        let sessions_dir = config_dir.join("agent-harness").join("sessions");
+        let sessions_dir = config_dir.join("swink-agent").join("sessions");
         std::fs::create_dir_all(&sessions_dir)?;
         Ok(Self { sessions_dir })
     }

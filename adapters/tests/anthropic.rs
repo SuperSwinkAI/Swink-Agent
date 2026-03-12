@@ -5,10 +5,10 @@ use tokio_util::sync::CancellationToken;
 use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-use agent_harness::{
+use swink_agent::{
     AgentContext, AssistantMessageEvent, ModelSpec, StopReason, StreamFn, StreamOptions,
 };
-use agent_harness_adapters::AnthropicStreamFn;
+use swink_agent_adapters::AnthropicStreamFn;
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
