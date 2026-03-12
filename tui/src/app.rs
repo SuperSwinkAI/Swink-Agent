@@ -25,6 +25,7 @@ use crate::theme;
 use crate::ui;
 use crate::ui::conversation::ConversationView;
 use crate::ui::input::InputEditor;
+use crate::ui::help_panel::HelpPanel;
 use crate::ui::tool_panel::ToolPanel;
 
 type AppResult<T> = Result<T, Box<dyn std::error::Error>>;
@@ -106,6 +107,8 @@ pub struct App {
     pub conversation: ConversationView,
     /// Tool execution panel.
     pub tool_panel: ToolPanel,
+    /// Help side panel (F1).
+    pub help_panel: HelpPanel,
     /// Which component has focus.
     pub focus: Focus,
     /// Model identifier string.
@@ -185,6 +188,7 @@ impl App {
             messages: Vec::new(),
             conversation: ConversationView::new(),
             tool_panel: ToolPanel::new(),
+            help_panel: HelpPanel::new(),
             focus: Focus::Input,
             model_name: config.default_model.clone(),
             total_input_tokens: 0,
@@ -224,6 +228,10 @@ impl App {
         let tick_rate = Duration::from_millis(self.config.tick_rate_ms);
         let mut tick_interval = tokio::time::interval(tick_rate);
         let mut event_stream = crossterm::event::EventStream::new();
+
+        if self.messages.is_empty() {
+            self.push_system_message("Press F1 for help.".to_string());
+        }
 
         loop {
             if self.dirty {
@@ -388,6 +396,7 @@ impl App {
                 KeyCode::Down => self.conversation.scroll_down(1, page),
                 KeyCode::PageUp => self.conversation.scroll_up(page),
                 KeyCode::PageDown => self.conversation.scroll_down(page, page),
+                KeyCode::F(1) => self.help_panel.toggle(),
                 // Tab and any other key switches to input focus and falls through
                 _ => self.focus = Focus::Input,
             }
@@ -466,6 +475,10 @@ impl App {
             (_, KeyCode::Backspace) => self.input.backspace(),
             // Delete
             (_, KeyCode::Delete) => self.input.delete(),
+            // F1 — toggle help panel
+            (_, KeyCode::F(1)) => {
+                self.help_panel.toggle();
+            }
             // F2 — toggle collapse on selected (or most recent) tool block
             (_, KeyCode::F(2)) => {
                 let target = self.selected_tool_block.or_else(|| {
@@ -517,6 +530,11 @@ impl App {
             CommandResult::Clear => {
                 self.messages.clear();
                 self.conversation = ConversationView::new();
+                return;
+            }
+            CommandResult::ToggleHelp => {
+                self.help_panel.toggle();
+                self.dirty = true;
                 return;
             }
             CommandResult::Feedback(msg) => {
@@ -2209,5 +2227,48 @@ mod tests {
         let key = KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT);
         app.handle_key_event(key);
         assert_eq!(app.operating_mode, OperatingMode::Execute);
+    }
+
+    // ─── Help panel tests ────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn f1_toggles_help_panel() {
+        let mut app = App::new(TuiConfig::default());
+        assert!(!app.help_panel.visible);
+
+        let key = KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE);
+        app.handle_key_event(key);
+        assert!(app.help_panel.visible);
+
+        app.handle_key_event(key);
+        assert!(!app.help_panel.visible);
+    }
+
+    #[tokio::test]
+    async fn f1_works_from_conversation_focus() {
+        let mut app = App::new(TuiConfig::default());
+        app.focus = Focus::Conversation;
+
+        let key = KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE);
+        app.handle_key_event(key);
+
+        assert!(app.help_panel.visible);
+        // F1 should not switch focus away from conversation
+        assert_eq!(app.focus, Focus::Conversation);
+    }
+
+    #[tokio::test]
+    async fn hash_help_toggles_panel() {
+        let mut app = App::new(TuiConfig::default());
+        assert!(!app.help_panel.visible);
+
+        app.input.insert_char('#');
+        app.input.insert_char('h');
+        app.input.insert_char('e');
+        app.input.insert_char('l');
+        app.input.insert_char('p');
+        app.submit_input();
+
+        assert!(app.help_panel.visible);
     }
 }

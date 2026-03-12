@@ -36,6 +36,10 @@ App
 │   │   └── Red left border
 │   └── System Block
 │       └── Magenta left border
+├── Help Panel (F1 toggle, right side, fixed 34-col width)
+│   ├── Key bindings reference
+│   ├── # Commands reference
+│   └── / Commands reference
 ├── Tool Panel (conditional, shown during tool execution)
 │   ├── Active tool: name, braille spinner, elapsed time
 │   └── Completed tool: name, ✓/✗ badge, auto-fades after 3s
@@ -83,6 +87,9 @@ tui/src/
     ├── input.rs         — InputEditor: multi-line editor with cursor navigation,
     │                      Shift+Enter newlines, input history (Up/Down recall),
     │                      dynamic height 3–10, line number gutter
+    ├── help_panel.rs    — HelpPanel: F1-toggled side panel with key bindings and
+    │                      commands reference. Fixed 34-col width, hidden by default.
+    │                      Startup hint ("Press F1 for help.") shown on first launch.
     ├── conversation.rs  — ConversationView: role-colored left borders, auto-scroll,
     │                      manual scroll with "↓ scroll to bottom" indicator,
     │                      markdown rendering, thinking sections, streaming cursor
@@ -148,6 +155,7 @@ Agent integration uses `prompt_stream()` with an mpsc forwarder task that sends 
 | `End` / `Ctrl+E` | Move cursor to end of line |
 | `Tab` | Cycle focus between Input and Conversation |
 | `Shift+Tab` | Toggle between Plan and Execute mode |
+| `F1` | Toggle help side panel |
 | `F2` | Expand/collapse selected tool result block |
 | `F3` | Cycle color mode (Custom → MonoWhite → MonoBlack) |
 | `Shift+←` / `Shift+→` | Select previous/next tool block |
@@ -197,7 +205,7 @@ The conversation view auto-scrolls to bottom during streaming unless the user ha
 Two command prefixes are supported:
 
 **Hash commands** (processed locally):
-- `#help` — show available commands
+- `#help` — toggle help side panel
 - `#clear` — clear conversation history
 - `#info` — show session info
 - `#copy` — copy last assistant message to clipboard

@@ -2,6 +2,7 @@
 
 pub mod conversation;
 pub mod diff;
+pub mod help_panel;
 pub mod input;
 pub mod markdown;
 mod status_bar;
@@ -12,6 +13,7 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout};
 
 use crate::app::{App, Focus};
+use crate::ui::help_panel::MIN_CONV_WIDTH;
 
 /// Render the complete UI into the given frame.
 pub fn render(frame: &mut Frame, app: &mut App) {
@@ -33,9 +35,24 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     let mut idx = 0;
 
-    // Conversation
-    let conv_area = chunks[idx];
+    // Conversation — optionally split horizontally for help panel
+    let full_conv_area = chunks[idx];
     idx += 1;
+
+    let help_width = app.help_panel.width();
+    let (conv_area, help_area) =
+        if help_width > 0 && full_conv_area.width >= help_width + MIN_CONV_WIDTH {
+            let h_chunks = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([
+                    Constraint::Min(MIN_CONV_WIDTH),
+                    Constraint::Length(help_width),
+                ])
+                .split(full_conv_area);
+            (h_chunks[0], Some(h_chunks[1]))
+        } else {
+            (full_conv_area, None)
+        };
 
     // Tool panel (conditional)
     let tool_area = if tool_height > 0 {
@@ -62,6 +79,11 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         app.blink_on,
         app.selected_tool_block,
     );
+
+    // Render help panel
+    if let Some(area) = help_area {
+        app.help_panel.render(frame, area);
+    }
 
     // Render tool panel
     if let Some(area) = tool_area {

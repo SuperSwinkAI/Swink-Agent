@@ -20,6 +20,7 @@
 
 | File | Widget | Key behavior |
 |---|---|---|
+| `help_panel.rs` | HelpPanel | F1-toggled side panel (34-col), key bindings + commands reference |
 | `conversation.rs` | ConversationView | Scrollable message history, role-colored borders, auto-scroll |
 | `input.rs` | InputEditor | Multi-line (3–10 lines), cursor, history, gutter |
 | `tool_panel.rs` | ToolPanel | Braille spinner, checkmark/cross badges, 3s auto-fade |
@@ -35,3 +36,4 @@
 - **Auto-scroll disengages on manual scroll** — `scroll_up()` sets `auto_scroll = false`. `scroll_down()` re-engages it when user scrolls to bottom. Title shows "scroll to bottom" hint when disengaged.
 - **Thinking sections are dimmed, not collapsible** — rendered with dimmed style. No expand/collapse toggle exists. This was a QA finding — docs previously claimed "collapsible" but code never implemented it.
 - **Input height is dynamic** — expands from 3 to 10 lines based on content. `height()` method returns the clamped value, which mod.rs uses for layout constraints.
+- **Help panel gracefully degrades on narrow terminals** — when `conv_area.width < HELP_PANEL_WIDTH + MIN_CONV_WIDTH`, the panel simply doesn't render even if `visible` is true. The flag stays set so the panel reappears when the terminal widens. `#help` command now toggles the panel instead of dumping text into conversation.

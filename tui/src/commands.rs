@@ -40,6 +40,8 @@ pub enum CommandResult {
     OpenEditor,
     /// Toggle plan mode.
     TogglePlanMode,
+    /// Toggle the help side panel.
+    ToggleHelp,
     /// Input was not a recognized command.
     NotACommand,
 }
@@ -84,7 +86,7 @@ pub fn execute_command(input: &str) -> CommandResult {
 
 fn execute_hash_command(cmd: &str) -> CommandResult {
     match cmd {
-        "help" => CommandResult::Feedback(help_text()),
+        "help" => CommandResult::ToggleHelp,
         "clear" => CommandResult::Clear,
         "info" => CommandResult::Feedback(String::new()), // Caller fills in session info
         "copy" => CommandResult::CopyToClipboard(ClipboardContent::Last),
@@ -161,52 +163,6 @@ fn execute_slash_command(cmd: &str) -> CommandResult {
     }
 }
 
-fn help_text() -> String {
-    "\
-╭─── Key Bindings ────────────────────────╮
-│ Enter          Submit message            │
-│ Shift+Enter    New line                  │
-│ Ctrl+Q         Quit                      │
-│ Ctrl+C         Quit (idle) / Abort (run) │
-│ Tab            Toggle focus              │
-│ Shift+Tab      Toggle plan mode         │
-│ Up/Down        Scroll / History          │
-│ PageUp/Down    Scroll page               │
-│ Home/Ctrl+A    Start of line             │
-│ End/Ctrl+E     End of line               │
-│ F2             Expand/collapse tool       │
-│ F3             Cycle color mode          │
-│ Shift+←/→      Cycle tool blocks         │
-╰──────────────────────────────────────────╯
-╭─── # Commands (TUI) ───────────────────╮
-│ #help       Show this help              │
-│ #clear      Clear conversation          │
-│ #info       Session info                │
-│ #copy       Copy last response          │
-│ #copy all   Copy full conversation      │
-│ #copy code  Copy last code block        │
-│ #sessions   List saved sessions         │
-│ #save       Save current session        │
-│ #load <id>  Load a saved session        │
-│ #keys       List configured providers   │
-│ #key <p> <k> Store API key for provider │
-│ #approve        Show approval mode        │
-│ #approve on     Enable tool approval     │
-│ #approve off    Disable tool approval    │
-│ #approve smart  Smart mode (auto reads)  │
-╰──────────────────────────────────────────╯
-╭─── / Commands (Agent) ──────────────────╮
-│ /quit       Exit                        │
-│ /model <id> Switch model                │
-│ /thinking   Set thinking level          │
-│ /system     Update system prompt        │
-│ /reset      Reset agent state           │
-│ /editor     Compose in external editor  │
-│ /plan       Toggle plan mode           │
-╰──────────────────────────────────────────╯"
-        .to_string()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -237,10 +193,10 @@ mod tests {
     // --- Hash commands ---
 
     #[test]
-    fn hash_help_returns_feedback() {
+    fn hash_help_toggles_panel() {
         assert!(matches!(
             execute_command("#help"),
-            CommandResult::Feedback(_)
+            CommandResult::ToggleHelp
         ));
     }
 
