@@ -22,6 +22,7 @@ path = "src/main.rs"
 swink-agent = { path = ".." }
 swink-agent-adapters = { path = "../adapters" }
 swink-agent-memory = { path = "../memory" }
+swink-agent-local-llm = { path = "../local-llm", optional = true }
 ratatui = "0.29"
 crossterm = { version = "0.28", features = ["event-stream"] }
 tokio = { version = "1", features = ["full"] }
@@ -37,6 +38,10 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"
 dotenvy = "0.15"
+
+[features]
+default = ["local"]
+local = ["dep:swink-agent-local-llm"]
 
 [dev-dependencies]
 tempfile = "3"

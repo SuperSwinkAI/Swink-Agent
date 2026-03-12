@@ -144,13 +144,28 @@ fn create_agent(system_prompt: String, approval_tx: &ApprovalSender) -> Agent {
         return build_agent(system_prompt, model, anthropic, approval_tx);
     }
 
-    // Default: Ollama (lowest priority)
-    let host =
-        std::env::var("OLLAMA_HOST").unwrap_or_else(|_| "http://localhost:11434".to_string());
-    let model_id = std::env::var("OLLAMA_MODEL").unwrap_or_else(|_| "llama3.2".to_string());
-    let ollama: Arc<dyn StreamFn> = Arc::new(OllamaStreamFn::new(&host));
-    let model = ModelSpec::new("ollama", &model_id);
-    build_agent(system_prompt, model, ollama, approval_tx)
+    // Local model (fourth priority — before Ollama fallback)
+    #[cfg(feature = "local")]
+    {
+        let config = swink_agent_local_llm::ModelConfig::default();
+        let local_model = swink_agent_local_llm::LocalModel::new(config);
+        let local: Arc<dyn StreamFn> = Arc::new(swink_agent_local_llm::LocalStreamFn::new(
+            Arc::new(local_model),
+        ));
+        let model = ModelSpec::new("local", "SmolLM3-3B-Q4_K_M");
+        return build_agent(system_prompt, model, local, approval_tx);
+    }
+
+    // Default: Ollama (lowest priority — only when `local` feature is disabled)
+    #[allow(unreachable_code)]
+    {
+        let host =
+            std::env::var("OLLAMA_HOST").unwrap_or_else(|_| "http://localhost:11434".to_string());
+        let model_id = std::env::var("OLLAMA_MODEL").unwrap_or_else(|_| "llama3.2".to_string());
+        let ollama: Arc<dyn StreamFn> = Arc::new(OllamaStreamFn::new(&host));
+        let model = ModelSpec::new("ollama", &model_id);
+        build_agent(system_prompt, model, ollama, approval_tx)
+    }
 }
 
 fn build_agent(
