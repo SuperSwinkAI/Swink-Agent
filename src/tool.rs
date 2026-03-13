@@ -101,6 +101,21 @@ pub trait AgentTool: Send + Sync {
 
 // ─── Validation ──────────────────────────────────────────────────────────────
 
+/// Validate that a JSON value is a valid JSON Schema document.
+///
+/// This checks the schema itself for correctness (e.g., valid `type` values,
+/// proper structure). Distinct from [`validate_tool_arguments`], which validates
+/// data *against* a schema.
+///
+/// # Errors
+///
+/// Returns `Err(String)` when the schema document is invalid, with a
+/// human-readable description of the problem.
+pub fn validate_schema(schema: &Value) -> Result<(), String> {
+    jsonschema::validator_for(schema).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 /// Validate tool call arguments against a JSON Schema.
 ///
 /// Returns `Ok(())` when the arguments are valid, or `Err` with a list of
@@ -483,6 +498,37 @@ mod tests {
         let val = json!({"a": null, "b": 42, "c": 2.72});
         let redacted = redact_sensitive_values(&val);
         assert_eq!(redacted, val);
+    }
+
+    // ─── validate_schema ──────────────────────────────────────────────────
+
+    #[test]
+    fn valid_schema_passes() {
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "name": { "type": "string" }
+            },
+            "required": ["name"]
+        });
+        assert!(validate_schema(&schema).is_ok());
+    }
+
+    #[test]
+    fn invalid_schema_returns_error() {
+        let schema = json!({
+            "type": "not_a_real_type"
+        });
+        assert!(validate_schema(&schema).is_err());
+    }
+
+    #[test]
+    fn empty_object_schema_is_valid() {
+        let schema = json!({
+            "type": "object",
+            "properties": {}
+        });
+        assert!(validate_schema(&schema).is_ok());
     }
 
     // ─── ApprovalMode ─────────────────────────────────────────────────────

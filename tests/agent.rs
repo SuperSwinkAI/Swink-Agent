@@ -1272,3 +1272,63 @@ async fn multiple_agents_independent_state() {
         "agent B should be unaffected by mutation of agent A"
     );
 }
+
+// ─── add_tool / remove_tool ─────────────────────────────────────────────
+
+#[test]
+fn add_tool_appends() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("hi")]));
+    let mut agent = make_agent(stream_fn);
+    assert_eq!(agent.state().tools.len(), 0);
+
+    let tool = Arc::new(MockTool::new("alpha"));
+    agent.add_tool(tool);
+    assert_eq!(agent.state().tools.len(), 1);
+    assert_eq!(agent.state().tools[0].name(), "alpha");
+}
+
+#[test]
+fn add_tool_replaces_by_name() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("hi")]));
+    let mut agent = make_agent(stream_fn);
+
+    agent.add_tool(Arc::new(MockTool::new("alpha")));
+    agent.add_tool(Arc::new(MockTool::new("beta")));
+    assert_eq!(agent.state().tools.len(), 2);
+
+    // Adding another "alpha" should replace, not duplicate.
+    agent.add_tool(Arc::new(MockTool::new("alpha")));
+    assert_eq!(agent.state().tools.len(), 2);
+}
+
+#[test]
+fn remove_tool_found() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("hi")]));
+    let mut agent = make_agent(stream_fn);
+
+    agent.add_tool(Arc::new(MockTool::new("alpha")));
+    assert!(agent.remove_tool("alpha"));
+    assert_eq!(agent.state().tools.len(), 0);
+}
+
+#[test]
+fn remove_tool_not_found() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("hi")]));
+    let mut agent = make_agent(stream_fn);
+    assert!(!agent.remove_tool("nonexistent"));
+}
+
+#[test]
+fn remove_tool_preserves_others() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("hi")]));
+    let mut agent = make_agent(stream_fn);
+
+    agent.add_tool(Arc::new(MockTool::new("alpha")));
+    agent.add_tool(Arc::new(MockTool::new("beta")));
+    agent.add_tool(Arc::new(MockTool::new("gamma")));
+
+    agent.remove_tool("beta");
+
+    let names: Vec<&str> = agent.state().tools.iter().map(|t| t.name()).collect();
+    assert_eq!(names, vec!["alpha", "gamma"]);
+}

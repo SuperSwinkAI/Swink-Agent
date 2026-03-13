@@ -3,11 +3,13 @@
 use std::future::Future;
 use std::pin::Pin;
 
+use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
-use crate::tool::{AgentTool, AgentToolResult};
+use crate::schema::schema_for;
+use crate::tool::{AgentTool, AgentToolResult, validate_schema};
 use crate::types::ContentBlock;
 
 /// Built-in tool that writes content to a file, creating parent directories as
@@ -20,23 +22,9 @@ impl WriteFileTool {
     /// Create a new `WriteFileTool`.
     #[must_use]
     pub fn new() -> Self {
-        Self {
-            schema: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "path": {
-                        "type": "string",
-                        "description": "Absolute path to write"
-                    },
-                    "content": {
-                        "type": "string",
-                        "description": "Content to write to the file"
-                    }
-                },
-                "required": ["path", "content"],
-                "additionalProperties": false
-            }),
-        }
+        let schema = schema_for::<Params>();
+        debug_assert!(validate_schema(&schema).is_ok());
+        Self { schema }
     }
 }
 
@@ -46,9 +34,12 @@ impl Default for WriteFileTool {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
 struct Params {
+    /// Absolute path to write.
     path: String,
+    /// Content to write to the file.
     content: String,
 }
 

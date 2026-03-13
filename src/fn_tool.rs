@@ -1,0 +1,291 @@
+//! Closure-based tool builder that implements [`AgentTool`] without requiring
+//! a custom struct or trait implementation.
+//!
+//! # Example
+//!
+//! ```
+//! use schemars::JsonSchema;
+//! use serde::Deserialize;
+//! use swink_agent::{AgentToolResult, FnTool};
+//!
+//! #[derive(Deserialize, JsonSchema)]
+//! struct Params { city: String }
+//!
+//! let tool = FnTool::new("get_weather", "Weather", "Get weather for a city.")
+//!     .with_schema_for::<Params>()
+//!     .with_execute_simple(|params, _cancel| async move {
+//!         let city = params["city"].as_str().unwrap_or("unknown");
+//!         AgentToolResult::text(format!("72F in {city}"))
+//!     });
+//!
+//! assert_eq!(swink_agent::AgentTool::name(&tool), "get_weather");
+//! ```
+
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::Arc;
+
+use serde_json::Value;
+use tokio_util::sync::CancellationToken;
+
+use crate::schema::schema_for;
+use crate::tool::{AgentTool, AgentToolResult, validate_schema};
+
+// ─── Type aliases for stored closures ───────────────────────────────────────
+
+type ExecuteFn = Arc<
+    dyn Fn(
+            String,
+            Value,
+            CancellationToken,
+            Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
+        ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send>>
+        + Send
+        + Sync,
+>;
+
+// ─── FnTool ─────────────────────────────────────────────────────────────────
+
+/// A tool built entirely from closures and configuration, implementing
+/// [`AgentTool`] without requiring a custom struct.
+///
+/// Use the builder methods to configure the tool's schema, approval
+/// requirements, and execution logic.
+pub struct FnTool {
+    name: String,
+    label: String,
+    description: String,
+    schema: Value,
+    requires_approval: bool,
+    execute_fn: ExecuteFn,
+}
+
+impl FnTool {
+    /// Create a new `FnTool` with the given name, label, and description.
+    ///
+    /// The default schema accepts any object and the default execute returns
+    /// an error indicating the tool is not implemented.
+    #[must_use]
+    pub fn new(
+        name: impl Into<String>,
+        label: impl Into<String>,
+        description: impl Into<String>,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            label: label.into(),
+            description: description.into(),
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {},
+                "additionalProperties": true
+            }),
+            requires_approval: false,
+            execute_fn: Arc::new(|_, _, _, _| {
+                Box::pin(async { AgentToolResult::error("not implemented") })
+            }),
+        }
+    }
+
+    /// Set the parameters schema from a type implementing
+    /// [`JsonSchema`](schemars::JsonSchema).
+    #[must_use]
+    pub fn with_schema_for<T: schemars::JsonSchema>(mut self) -> Self {
+        self.schema = schema_for::<T>();
+        debug_assert!(validate_schema(&self.schema).is_ok());
+        self
+    }
+
+    /// Set the parameters schema from a raw JSON value.
+    #[must_use]
+    pub fn with_schema(mut self, schema: Value) -> Self {
+        debug_assert!(validate_schema(&schema).is_ok());
+        self.schema = schema;
+        self
+    }
+
+    /// Set whether this tool requires user approval before execution.
+    #[must_use]
+    pub const fn with_requires_approval(mut self, requires: bool) -> Self {
+        self.requires_approval = requires;
+        self
+    }
+
+    /// Set the execution function using the full signature.
+    ///
+    /// The closure receives `(tool_call_id, params, cancellation_token, on_update)`.
+    #[must_use]
+    pub fn with_execute<F, Fut>(mut self, f: F) -> Self
+    where
+        F: Fn(
+                String,
+                Value,
+                CancellationToken,
+                Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
+            ) -> Fut
+            + Send
+            + Sync
+            + 'static,
+        Fut: Future<Output = AgentToolResult> + Send + 'static,
+    {
+        self.execute_fn = Arc::new(move |id, params, cancel, on_update| {
+            Box::pin(f(id, params, cancel, on_update))
+        });
+        self
+    }
+
+    /// Set the execution function using a simplified signature.
+    ///
+    /// The closure receives only `(params, cancellation_token)`, ignoring the
+    /// tool call ID and update callback.
+    #[must_use]
+    pub fn with_execute_simple<F, Fut>(mut self, f: F) -> Self
+    where
+        F: Fn(Value, CancellationToken) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = AgentToolResult> + Send + 'static,
+    {
+        self.execute_fn = Arc::new(move |_id, params, cancel, _on_update| {
+            Box::pin(f(params, cancel))
+        });
+        self
+    }
+}
+
+impl AgentTool for FnTool {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn label(&self) -> &str {
+        &self.label
+    }
+
+    fn description(&self) -> &str {
+        &self.description
+    }
+
+    fn parameters_schema(&self) -> &Value {
+        &self.schema
+    }
+
+    fn requires_approval(&self) -> bool {
+        self.requires_approval
+    }
+
+    fn execute(
+        &self,
+        tool_call_id: &str,
+        params: Value,
+        cancellation_token: CancellationToken,
+        on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
+    ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>> {
+        let fut = (self.execute_fn)(
+            tool_call_id.to_owned(),
+            params,
+            cancellation_token,
+            on_update,
+        );
+        Box::pin(fut)
+    }
+}
+
+impl std::fmt::Debug for FnTool {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FnTool")
+            .field("name", &self.name)
+            .field("label", &self.label)
+            .field("description", &self.description)
+            .field("requires_approval", &self.requires_approval)
+            .finish_non_exhaustive()
+    }
+}
+
+// ─── Compile-time Send + Sync assertion ─────────────────────────────────────
+
+const _: () = {
+    const fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<FnTool>();
+};
+
+#[cfg(test)]
+mod tests {
+    use schemars::JsonSchema;
+    use serde::Deserialize;
+    use serde_json::json;
+    use tokio_util::sync::CancellationToken;
+
+    use super::*;
+
+    fn sample_tool() -> FnTool {
+        FnTool::new("test", "Test", "A test tool.")
+    }
+
+    #[test]
+    fn metadata_matches_constructor() {
+        let tool = sample_tool();
+        assert_eq!(tool.name(), "test");
+        assert_eq!(tool.label(), "Test");
+        assert_eq!(tool.description(), "A test tool.");
+        assert!(!tool.requires_approval());
+    }
+
+    #[tokio::test]
+    async fn default_execute_returns_error() {
+        let tool = sample_tool();
+        let result = tool
+            .execute("{}", json!({}), CancellationToken::new(), None)
+            .await;
+        assert!(result.is_error);
+    }
+
+    #[tokio::test]
+    async fn simple_execute_receives_params() {
+        let tool = FnTool::new("echo", "Echo", "Echo params.")
+            .with_execute_simple(|params, _cancel| async move {
+                let msg = params["msg"].as_str().unwrap_or("none").to_owned();
+                AgentToolResult::text(msg)
+            });
+
+        let result = tool
+            .execute("id", json!({"msg": "hello"}), CancellationToken::new(), None)
+            .await;
+        assert!(!result.is_error);
+        assert_eq!(result.content.len(), 1);
+    }
+
+    #[derive(Deserialize, JsonSchema)]
+    #[allow(dead_code)]
+    struct TestParams {
+        city: String,
+    }
+
+    #[test]
+    fn with_schema_for_sets_schema() {
+        let tool = sample_tool().with_schema_for::<TestParams>();
+        let schema = tool.parameters_schema();
+        assert_eq!(schema["type"], "object");
+        assert!(schema["required"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("city")));
+    }
+
+    #[test]
+    fn approval_flag_is_configurable() {
+        let tool = sample_tool().with_requires_approval(true);
+        assert!(tool.requires_approval());
+    }
+
+    #[tokio::test]
+    async fn full_execute_receives_all_args() {
+        let tool = FnTool::new("full", "Full", "Full signature.")
+            .with_execute(|id, _params, _cancel, _on_update| async move {
+                AgentToolResult::text(format!("id={id}"))
+            });
+
+        let result = tool
+            .execute("call_42", json!({}), CancellationToken::new(), None)
+            .await;
+        assert!(!result.is_error);
+    }
+}

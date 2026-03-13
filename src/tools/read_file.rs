@@ -3,12 +3,14 @@
 use std::future::Future;
 use std::pin::Pin;
 
+use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
 use super::MAX_OUTPUT_BYTES;
-use crate::tool::{AgentTool, AgentToolResult};
+use crate::schema::schema_for;
+use crate::tool::{AgentTool, AgentToolResult, validate_schema};
 
 /// Built-in tool that reads a file and returns its contents.
 pub struct ReadFileTool {
@@ -19,19 +21,9 @@ impl ReadFileTool {
     /// Create a new `ReadFileTool`.
     #[must_use]
     pub fn new() -> Self {
-        Self {
-            schema: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "path": {
-                        "type": "string",
-                        "description": "Absolute path to the file to read"
-                    }
-                },
-                "required": ["path"],
-                "additionalProperties": false
-            }),
-        }
+        let schema = schema_for::<Params>();
+        debug_assert!(validate_schema(&schema).is_ok());
+        Self { schema }
     }
 }
 
@@ -41,8 +33,10 @@ impl Default for ReadFileTool {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
 struct Params {
+    /// Absolute path to the file to read.
     path: String,
 }
 

@@ -14,6 +14,7 @@ uuid = { version = "1", features = ["v4"] }
 reqwest = { version = "0.12", features = ["stream"] }
 thiserror = "2"
 rand = "0.8"
+schemars = "1"
 dotenvy = "0.15"
 pretty_assertions = "1"
 tempfile = "3"
@@ -40,6 +41,7 @@ tokio-util.workspace = true
 futures.workspace = true
 tokio-stream.workspace = true
 jsonschema = "0.28"
+schemars.workspace = true
 regex = "1"
 uuid.workspace = true
 rand.workspace = true

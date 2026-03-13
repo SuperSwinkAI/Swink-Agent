@@ -378,6 +378,20 @@ impl Agent {
         self.state.tools = tools;
     }
 
+    /// Add a tool, replacing any existing tool with the same name.
+    pub fn add_tool(&mut self, tool: Arc<dyn AgentTool>) {
+        let name = tool.name();
+        self.state.tools.retain(|t| t.name() != name);
+        self.state.tools.push(tool);
+    }
+
+    /// Remove a tool by name. Returns `true` if a tool was found and removed.
+    pub fn remove_tool(&mut self, name: &str) -> bool {
+        let before = self.state.tools.len();
+        self.state.tools.retain(|t| t.name() != name);
+        self.state.tools.len() < before
+    }
+
     /// Set the approval mode at runtime.
     pub const fn set_approval_mode(&mut self, mode: ApprovalMode) {
         self.approval_mode = mode;

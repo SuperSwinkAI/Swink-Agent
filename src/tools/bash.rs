@@ -4,12 +4,14 @@ use std::future::Future;
 use std::pin::Pin;
 use std::time::Duration;
 
+use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::Value;
 use tokio::process::Command;
 use tokio_util::sync::CancellationToken;
 
-use crate::tool::{AgentTool, AgentToolResult};
+use crate::schema::schema_for;
+use crate::tool::{AgentTool, AgentToolResult, validate_schema};
 use super::MAX_OUTPUT_BYTES;
 
 /// Default timeout in milliseconds.
@@ -30,23 +32,9 @@ impl BashTool {
     /// Create a new `BashTool`.
     #[must_use]
     pub fn new() -> Self {
-        Self {
-            schema: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "command": {
-                        "type": "string",
-                        "description": "Shell command to execute"
-                    },
-                    "timeout_ms": {
-                        "type": "integer",
-                        "description": "Timeout in milliseconds (default 30000)"
-                    }
-                },
-                "required": ["command"],
-                "additionalProperties": false
-            }),
-        }
+        let schema = schema_for::<Params>();
+        debug_assert!(validate_schema(&schema).is_ok());
+        Self { schema }
     }
 }
 
@@ -56,9 +44,12 @@ impl Default for BashTool {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
 struct Params {
+    /// Shell command to execute.
     command: String,
+    /// Timeout in milliseconds (default 30000).
     timeout_ms: Option<u64>,
 }
 
