@@ -62,6 +62,16 @@ impl FsEvalStore {
         self.sets_dir().join(format!("{id}.json"))
     }
 
+    #[cfg(feature = "yaml")]
+    fn set_path_yaml(&self, id: &str) -> PathBuf {
+        self.sets_dir().join(format!("{id}.yaml"))
+    }
+
+    #[cfg(feature = "yaml")]
+    fn set_path_yml(&self, id: &str) -> PathBuf {
+        self.sets_dir().join(format!("{id}.yml"))
+    }
+
     fn result_path(&self, eval_set_id: &str, timestamp: u64) -> PathBuf {
         self.results_dir(eval_set_id)
             .join(format!("{timestamp}.json"))
@@ -84,6 +94,16 @@ impl EvalStore for FsEvalStore {
     }
 
     fn load_set(&self, id: &str) -> Result<EvalSet, EvalError> {
+        #[cfg(feature = "yaml")]
+        {
+            for path in [self.set_path_yaml(id), self.set_path_yml(id)] {
+                if path.exists() {
+                    let contents = fs::read_to_string(path)?;
+                    return Ok(serde_yml::from_str(&contents)?);
+                }
+            }
+        }
+
         let path = self.set_path(id);
         if !path.exists() {
             return Err(EvalError::SetNotFound { id: id.to_string() });

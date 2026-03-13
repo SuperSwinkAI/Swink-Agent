@@ -11,7 +11,7 @@ use swink_agent::{Agent, ContentBlock, Cost, Usage, UserMessage};
 use crate::error::EvalError;
 use crate::evaluator::EvaluatorRegistry;
 use crate::score::Verdict;
-use crate::trajectory::TrajectoryCollector;
+use crate::trajectory::{BudgetGuard, TrajectoryCollector};
 use crate::types::{EvalCase, EvalCaseResult, EvalSet, EvalSetResult, EvalSummary};
 
 /// Factory that creates a configured [`Agent`] for each eval case.
@@ -49,7 +49,7 @@ impl EvalRunner {
     ) -> Result<EvalCaseResult, EvalError> {
         info!(case_id = %case.id, case_name = %case.name, "running eval case");
 
-        let (mut agent, _token) = factory.create_agent(case)?;
+        let (mut agent, cancel) = factory.create_agent(case)?;
 
         // Build user messages from the case.
         let messages: Vec<_> = case
@@ -63,9 +63,10 @@ impl EvalRunner {
             })
             .collect();
 
-        // Run the agent and collect the trajectory.
+        // Run the agent and collect the trajectory with budget guarding.
         let stream = agent.prompt_stream(messages)?;
-        let invocation = TrajectoryCollector::collect_from_stream(stream).await;
+        let guard = BudgetGuard::from_case(case, cancel);
+        let invocation = TrajectoryCollector::collect_with_guard(stream, guard).await;
 
         // Score.
         let metric_results = self.registry.evaluate(case, &invocation);

@@ -35,6 +35,14 @@ pub enum EvalError {
         #[source]
         source: serde_json::Error,
     },
+
+    /// YAML deserialization failure.
+    #[cfg(feature = "yaml")]
+    #[error("yaml error")]
+    Yaml {
+        #[source]
+        source: serde_yml::Error,
+    },
 }
 
 impl EvalError {
@@ -66,5 +74,12 @@ impl From<serde_json::Error> for EvalError {
 impl From<swink_agent::AgentError> for EvalError {
     fn from(source: swink_agent::AgentError) -> Self {
         Self::Agent { source }
+    }
+}
+
+#[cfg(feature = "yaml")]
+impl From<serde_yml::Error> for EvalError {
+    fn from(source: serde_yml::Error) -> Self {
+        Self::Yaml { source }
     }
 }

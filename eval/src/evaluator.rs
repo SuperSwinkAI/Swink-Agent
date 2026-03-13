@@ -57,14 +57,16 @@ impl EvaluatorRegistry {
 
     /// Create a registry pre-loaded with the built-in evaluators:
     /// [`TrajectoryMatcher`](crate::TrajectoryMatcher) (in-order),
-    /// [`BudgetEvaluator`](crate::BudgetEvaluator), and
-    /// [`ResponseMatcher`](crate::ResponseMatcher).
+    /// [`BudgetEvaluator`](crate::BudgetEvaluator),
+    /// [`ResponseMatcher`](crate::ResponseMatcher), and
+    /// [`EfficiencyEvaluator`](crate::EfficiencyEvaluator).
     #[must_use]
     pub fn with_defaults() -> Self {
         let mut registry = Self::new();
         registry.register(crate::match_::TrajectoryMatcher::in_order());
         registry.register(crate::budget::BudgetEvaluator);
         registry.register(crate::response::ResponseMatcher);
+        registry.register(crate::efficiency::EfficiencyEvaluator::new());
         registry
     }
 

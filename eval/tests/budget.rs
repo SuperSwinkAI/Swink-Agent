@@ -1,10 +1,18 @@
-//! Integration tests for budget evaluator.
+//! Integration tests for budget evaluator and budget guard.
 
 mod common;
 
 use std::time::Duration;
 
-use swink_agent_eval::{BudgetConstraints, BudgetEvaluator, Evaluator, Verdict};
+use std::sync::Arc;
+
+use swink_agent::{
+    AgentEvent, AssistantMessage, ContentBlock, Cost, StopReason, TurnEndReason, Usage,
+};
+use swink_agent_eval::{
+    BudgetConstraints, BudgetEvaluator, BudgetGuard, Evaluator, TrajectoryCollector, Verdict,
+};
+use tokio_util::sync::CancellationToken;
 
 use common::{case_with_budget, mock_invocation};
 
@@ -47,4 +55,82 @@ fn fails_on_token_exceeded() {
     let result = BudgetEvaluator.evaluate(&case, &invocation).unwrap();
     assert_eq!(result.score.verdict(), Verdict::Fail);
     assert!(result.details.unwrap().contains("tokens"));
+}
+
+// ─── BudgetGuard integration tests ──────────────────────────────────────────
+
+fn turn_events(cost: f64, tokens: u64) -> Vec<AgentEvent> {
+    vec![
+        AgentEvent::TurnStart,
+        AgentEvent::TurnEnd {
+            assistant_message: AssistantMessage {
+                content: vec![ContentBlock::Text {
+                    text: "ok".to_string(),
+                }],
+                provider: "test".to_string(),
+                model_id: "test-model".to_string(),
+                usage: Usage {
+                    total: tokens,
+                    ..Default::default()
+                },
+                cost: Cost {
+                    total: cost,
+                    ..Default::default()
+                },
+                stop_reason: StopReason::Stop,
+                error_message: None,
+                timestamp: 0,
+            },
+            tool_results: vec![],
+            reason: TurnEndReason::Complete,
+        },
+    ]
+}
+
+#[tokio::test]
+async fn guard_cancels_on_cost_exceeded() {
+    let cancel = CancellationToken::new();
+    let guard = BudgetGuard::new(cancel.clone()).with_max_cost(1.0);
+
+    // 3 turns at $0.5 each → $1.5 total, exceeds $1.0 max
+    let mut events = Vec::new();
+    events.push(AgentEvent::AgentStart);
+    for _ in 0..3 {
+        events.extend(turn_events(0.5, 100));
+    }
+    events.push(AgentEvent::AgentEnd {
+        messages: Arc::new(vec![]),
+    });
+
+    let stream = futures::stream::iter(events);
+    let _invocation = TrajectoryCollector::collect_with_guard(stream, Some(guard)).await;
+
+    assert!(
+        cancel.is_cancelled(),
+        "guard should have cancelled the token"
+    );
+}
+
+#[tokio::test]
+async fn guard_does_not_cancel_within_budget() {
+    let cancel = CancellationToken::new();
+    let guard = BudgetGuard::new(cancel.clone())
+        .with_max_cost(10.0)
+        .with_max_tokens(10000)
+        .with_max_turns(10);
+
+    let mut events = Vec::new();
+    events.push(AgentEvent::AgentStart);
+    events.extend(turn_events(0.1, 50));
+    events.push(AgentEvent::AgentEnd {
+        messages: Arc::new(vec![]),
+    });
+
+    let stream = futures::stream::iter(events);
+    let _invocation = TrajectoryCollector::collect_with_guard(stream, Some(guard)).await;
+
+    assert!(
+        !cancel.is_cancelled(),
+        "guard should not cancel within budget"
+    );
 }

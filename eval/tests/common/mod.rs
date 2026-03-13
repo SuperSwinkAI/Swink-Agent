@@ -10,6 +10,7 @@ use swink_agent_eval::{
 };
 
 /// Build a minimal `Invocation` with the given tool call names and final response.
+#[allow(dead_code)]
 pub fn mock_invocation(
     tool_names: &[&str],
     final_response: Option<&str>,
@@ -103,6 +104,53 @@ pub fn case_with_response(criteria: ResponseCriteria) -> EvalCase {
         budget: None,
         evaluators: vec![],
         metadata: serde_json::Value::Null,
+    }
+}
+
+/// Build a multi-turn `Invocation` where each inner slice defines tool calls
+/// for one turn, with custom arguments.
+#[allow(dead_code)]
+pub fn mock_invocation_multi_turn(turns: &[&[(&str, serde_json::Value)]]) -> Invocation {
+    let turn_records: Vec<TurnRecord> = turns
+        .iter()
+        .enumerate()
+        .map(|(i, calls)| {
+            let tool_calls = calls
+                .iter()
+                .enumerate()
+                .map(|(j, (name, args))| RecordedToolCall {
+                    id: format!("call_{i}_{j}"),
+                    name: (*name).to_string(),
+                    arguments: args.clone(),
+                })
+                .collect();
+            TurnRecord {
+                turn_index: i,
+                assistant_message: AssistantMessage {
+                    content: vec![],
+                    provider: "test".to_string(),
+                    model_id: "test-model".to_string(),
+                    usage: Usage::default(),
+                    cost: Cost::default(),
+                    stop_reason: StopReason::Stop,
+                    error_message: None,
+                    timestamp: 0,
+                },
+                tool_calls,
+                tool_results: vec![],
+                duration: Duration::from_millis(50),
+            }
+        })
+        .collect();
+
+    Invocation {
+        turns: turn_records,
+        total_usage: Usage::default(),
+        total_cost: Cost::default(),
+        total_duration: Duration::from_millis(100),
+        final_response: None,
+        stop_reason: StopReason::Stop,
+        model: ModelSpec::new("test", "test-model"),
     }
 }
 
