@@ -204,7 +204,7 @@ async fn openai_usage_captured() {
     let events = collect_events(&sf).await;
 
     let usage = events.iter().find_map(|e| match e {
-        AssistantMessageEvent::Done { usage, .. } => Some(*usage),
+        AssistantMessageEvent::Done { usage, .. } => Some(usage.clone()),
         _ => None,
     });
     let usage = usage.expect("missing Done event");
@@ -243,16 +243,17 @@ async fn openai_usage_in_separate_chunk() {
         .iter()
         .find_map(|e| match e {
             AssistantMessageEvent::Done {
-                stop_reason,
-                usage,
-                ..
-            } => Some((*stop_reason, *usage)),
+                stop_reason, usage, ..
+            } => Some((*stop_reason, usage.clone())),
             _ => None,
         })
         .expect("missing Done event");
 
     assert_eq!(stop_reason, StopReason::Stop);
-    assert_eq!(usage.input, 100, "expected input tokens from separate chunk");
+    assert_eq!(
+        usage.input, 100,
+        "expected input tokens from separate chunk"
+    );
     assert_eq!(
         usage.output, 25,
         "expected output tokens from separate chunk"
@@ -763,7 +764,10 @@ async fn openai_empty_response_body() {
     // Empty SSE body means stream ends immediately without [DONE].
     // Adapter should emit Start then an error about unexpected stream end.
     let types: Vec<&str> = events.iter().map(|e| event_name(e)).collect();
-    assert!(types.contains(&"Start"), "should still emit Start: {types:?}");
+    assert!(
+        types.contains(&"Start"),
+        "should still emit Start: {types:?}"
+    );
 
     let err = find_error_message(&events).expect("expected error event");
     assert!(

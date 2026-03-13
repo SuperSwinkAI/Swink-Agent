@@ -5,11 +5,12 @@
 //! requests and reconstructs `AssistantMessageEvent` streams from SSE
 //! responses.
 
-use swink_agent::{
-    AgentContext, AssistantMessageEvent, ContentBlock, ModelSpec, ProxyStreamFn, StopReason,
-    StreamFn, StreamOptions, accumulate_message,
-};
 use futures::StreamExt;
+use swink_agent::{
+    AgentContext, AssistantMessageEvent, ContentBlock, ModelSpec, StopReason, StreamFn,
+    StreamOptions, accumulate_message,
+};
+use swink_agent_adapters::ProxyStreamFn;
 use tokio_util::sync::CancellationToken;
 use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};

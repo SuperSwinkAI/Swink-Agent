@@ -42,6 +42,14 @@ pub enum ContentBlock {
 
     /// Image data from a supported source type.
     Image { source: ImageSource },
+
+    /// An extension content block for plugin-defined types.
+    ///
+    /// Allows multimodal plugins to pass structured data without flattening to `Text`.
+    Extension {
+        type_name: String,
+        data: serde_json::Value,
+    },
 }
 
 impl ContentBlock {
@@ -127,6 +135,7 @@ pub trait CustomMessage: Send + Sync + fmt::Debug + std::any::Any {
 
 /// The top-level message type that wraps either an LLM message or a custom
 /// application-defined message.
+#[allow(clippy::large_enum_variant)]
 pub enum AgentMessage {
     /// A standard LLM message (user, assistant, or tool result).
     Llm(LlmMessage),
@@ -147,67 +156,87 @@ impl fmt::Debug for AgentMessage {
 // ─── Usage & Cost ───────────────────────────────────────────────────────────
 
 /// Token usage counters for an LLM response.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct Usage {
     pub input: u64,
     pub output: u64,
     pub cache_read: u64,
     pub cache_write: u64,
     pub total: u64,
+    /// Provider-specific extra metrics (reasoning tokens, search tokens, etc.).
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub extra: HashMap<String, u64>,
 }
 
 impl Usage {
     /// Merge another `Usage` into this one by summing all fields.
-    pub const fn merge(&mut self, other: &Self) {
+    pub fn merge(&mut self, other: &Self) {
         self.input += other.input;
         self.output += other.output;
         self.cache_read += other.cache_read;
         self.cache_write += other.cache_write;
         self.total += other.total;
+        for (k, v) in &other.extra {
+            *self.extra.entry(k.clone()).or_insert(0) += v;
+        }
     }
 }
 
 impl Add for Usage {
     type Output = Self;
 
-    fn add(self, rhs: Self) -> Self::Output {
-        Self {
-            input: self.input + rhs.input,
-            output: self.output + rhs.output,
-            cache_read: self.cache_read + rhs.cache_read,
-            cache_write: self.cache_write + rhs.cache_write,
-            total: self.total + rhs.total,
+    fn add(mut self, rhs: Self) -> Self::Output {
+        self.input += rhs.input;
+        self.output += rhs.output;
+        self.cache_read += rhs.cache_read;
+        self.cache_write += rhs.cache_write;
+        self.total += rhs.total;
+        for (k, v) in rhs.extra {
+            *self.extra.entry(k).or_insert(0) += v;
         }
+        self
     }
 }
 
 impl AddAssign for Usage {
     fn add_assign(&mut self, rhs: Self) {
-        self.merge(&rhs);
+        self.input += rhs.input;
+        self.output += rhs.output;
+        self.cache_read += rhs.cache_read;
+        self.cache_write += rhs.cache_write;
+        self.total += rhs.total;
+        for (k, v) in rhs.extra {
+            *self.extra.entry(k).or_insert(0) += v;
+        }
     }
 }
 
 /// Per-category and total cost breakdown (floating-point currency values).
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Cost {
     pub input: f64,
     pub output: f64,
     pub cache_read: f64,
     pub cache_write: f64,
     pub total: f64,
+    /// Provider-specific extra cost categories.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub extra: HashMap<String, f64>,
 }
 
 impl Add for Cost {
     type Output = Self;
 
-    fn add(self, rhs: Self) -> Self::Output {
-        Self {
-            input: self.input + rhs.input,
-            output: self.output + rhs.output,
-            cache_read: self.cache_read + rhs.cache_read,
-            cache_write: self.cache_write + rhs.cache_write,
-            total: self.total + rhs.total,
+    fn add(mut self, rhs: Self) -> Self::Output {
+        self.input += rhs.input;
+        self.output += rhs.output;
+        self.cache_read += rhs.cache_read;
+        self.cache_write += rhs.cache_write;
+        self.total += rhs.total;
+        for (k, v) in rhs.extra {
+            *self.extra.entry(k).or_insert(0.0) += v;
         }
+        self
     }
 }
 
@@ -218,6 +247,9 @@ impl AddAssign for Cost {
         self.cache_read += rhs.cache_read;
         self.cache_write += rhs.cache_write;
         self.total += rhs.total;
+        for (k, v) in rhs.extra {
+            *self.extra.entry(k).or_insert(0.0) += v;
+        }
     }
 }
 
@@ -276,12 +308,16 @@ impl ThinkingBudgets {
 }
 
 /// Identifies the target model for a request.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
 pub struct ModelSpec {
     pub provider: String,
     pub model_id: String,
     pub thinking_level: ThinkingLevel,
     pub thinking_budgets: Option<ThinkingBudgets>,
+    /// Provider-specific configuration (thinking, parameters, etc.).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_config: Option<serde_json::Value>,
 }
 
 impl ModelSpec {
@@ -293,6 +329,7 @@ impl ModelSpec {
             model_id: model_id.into(),
             thinking_level: ThinkingLevel::Off,
             thinking_budgets: None,
+            provider_config: None,
         }
     }
 
@@ -308,6 +345,21 @@ impl ModelSpec {
     pub fn with_thinking_budgets(mut self, budgets: ThinkingBudgets) -> Self {
         self.thinking_budgets = Some(budgets);
         self
+    }
+
+    /// Set provider-specific configuration.
+    #[must_use]
+    pub fn with_provider_config(mut self, config: serde_json::Value) -> Self {
+        self.provider_config = Some(config);
+        self
+    }
+
+    /// Get a typed provider config, deserializing from the stored JSON.
+    #[must_use]
+    pub fn provider_config_as<T: serde::de::DeserializeOwned>(&self) -> Option<T> {
+        self.provider_config
+            .as_ref()
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
     }
 }
 
@@ -384,3 +436,127 @@ const _: () = {
     assert_send_sync::<AgentResult>();
     assert_send_sync::<AgentContext>();
 };
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn content_block_extension_serde_roundtrip() {
+        let block = ContentBlock::Extension {
+            type_name: "audio_clip".into(),
+            data: serde_json::json!({"duration_ms": 1500, "codec": "opus"}),
+        };
+        let json = serde_json::to_string(&block).unwrap();
+        let parsed: ContentBlock = serde_json::from_str(&json).unwrap();
+        assert_eq!(block, parsed);
+    }
+
+    #[test]
+    fn extract_text_ignores_extension() {
+        let blocks = vec![
+            ContentBlock::Text {
+                text: "hello ".into(),
+            },
+            ContentBlock::Extension {
+                type_name: "image".into(),
+                data: serde_json::json!({"url": "https://example.com/img.png"}),
+            },
+            ContentBlock::Text {
+                text: "world".into(),
+            },
+        ];
+        assert_eq!(ContentBlock::extract_text(&blocks), "hello world");
+    }
+
+    #[test]
+    fn usage_extra_add_merges_maps() {
+        let a = Usage {
+            input: 10,
+            output: 5,
+            extra: HashMap::from([
+                ("reasoning_tokens".into(), 100),
+                ("search_tokens".into(), 50),
+            ]),
+            ..Default::default()
+        };
+        let b = Usage {
+            input: 20,
+            output: 10,
+            extra: HashMap::from([("reasoning_tokens".into(), 200), ("new_metric".into(), 30)]),
+            ..Default::default()
+        };
+        let c = a + b;
+        assert_eq!(c.input, 30);
+        assert_eq!(c.output, 15);
+        assert_eq!(c.extra["reasoning_tokens"], 300);
+        assert_eq!(c.extra["search_tokens"], 50);
+        assert_eq!(c.extra["new_metric"], 30);
+    }
+
+    #[test]
+    fn cost_extra_add_merges_maps() {
+        let a = Cost {
+            input: 0.01,
+            output: 0.02,
+            extra: HashMap::from([("reasoning_cost".into(), 0.05)]),
+            ..Default::default()
+        };
+        let b = Cost {
+            input: 0.03,
+            output: 0.04,
+            extra: HashMap::from([
+                ("reasoning_cost".into(), 0.10),
+                ("search_cost".into(), 0.02),
+            ]),
+            ..Default::default()
+        };
+        let c = a + b;
+        assert!((c.input - 0.04).abs() < f64::EPSILON);
+        assert!((c.output - 0.06).abs() < f64::EPSILON);
+        assert!((c.extra["reasoning_cost"] - 0.15).abs() < f64::EPSILON);
+        assert!((c.extra["search_cost"] - 0.02).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn model_spec_with_provider_config() {
+        let config = serde_json::json!({
+            "temperature": 0.7,
+            "top_p": 0.9,
+        });
+
+        let spec = ModelSpec::new("anthropic", "claude-3").with_provider_config(config.clone());
+
+        assert_eq!(spec.provider_config, Some(config));
+        assert_eq!(spec.provider, "anthropic");
+        assert_eq!(spec.model_id, "claude-3");
+    }
+
+    #[test]
+    fn provider_config_as_typed() {
+        #[derive(Debug, Deserialize, PartialEq)]
+        struct MyConfig {
+            temperature: f64,
+            max_tokens: u32,
+        }
+
+        let spec = ModelSpec::new("openai", "gpt-4").with_provider_config(serde_json::json!({
+            "temperature": 0.5,
+            "max_tokens": 1024,
+        }));
+
+        let config: Option<MyConfig> = spec.provider_config_as();
+        assert_eq!(
+            config,
+            Some(MyConfig {
+                temperature: 0.5,
+                max_tokens: 1024,
+            })
+        );
+
+        // None when no provider_config is set.
+        let spec_none = ModelSpec::new("openai", "gpt-4");
+        let config_none: Option<MyConfig> = spec_none.provider_config_as();
+        assert!(config_none.is_none());
+    }
+}

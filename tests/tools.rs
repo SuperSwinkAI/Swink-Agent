@@ -1,3 +1,5 @@
+#![cfg(feature = "builtin-tools")]
+
 use serde_json::json;
 use tokio_util::sync::CancellationToken;
 
@@ -21,7 +23,10 @@ fn bash_tool_metadata() {
         .as_array()
         .expect("required should be an array");
     assert!(
-        required.iter().filter_map(|v| v.as_str()).any(|x| x == "command"),
+        required
+            .iter()
+            .filter_map(|v| v.as_str())
+            .any(|x| x == "command"),
         "schema must require 'command'"
     );
 }

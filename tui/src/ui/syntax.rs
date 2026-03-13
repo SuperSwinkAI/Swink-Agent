@@ -42,9 +42,7 @@ pub fn highlight_code(code: &str, language: &str) -> Vec<Line<'static>> {
             .map(|line| {
                 Line::from(Span::styled(
                     format!("  {line}"),
-                    Style::default()
-                        .fg(mono)
-                        .add_modifier(Modifier::DIM),
+                    Style::default().fg(mono).add_modifier(Modifier::DIM),
                 ))
             })
             .collect();

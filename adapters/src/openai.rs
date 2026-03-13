@@ -21,7 +21,10 @@ use swink_agent::types::{
     ToolResultMessage, Usage, UserMessage,
 };
 
-use crate::convert::{self, MessageConverter, error_event};
+use crate::convert::{
+    self, MessageConverter, error_event, error_event_auth, error_event_network,
+    error_event_throttled, extract_tool_schemas,
+};
 
 // ─── Request types ──────────────────────────────────────────────────────────
 
@@ -232,13 +235,15 @@ fn openai_stream<'a>(
             let code = status.as_u16();
             let body = response.text().await.unwrap_or_default();
             warn!(status = code, "OpenAI HTTP error");
-            let msg = match code {
-                401 | 403 => format!("OpenAI auth error (HTTP {code}): {body}"),
-                429 => format!("OpenAI rate limit (HTTP 429): {body}"),
-                500..=599 => format!("OpenAI server error (HTTP {code}): {body}"),
-                _ => format!("OpenAI HTTP {code}: {body}"),
+            let event = match code {
+                401 | 403 => error_event_auth(&format!("OpenAI auth error (HTTP {code}): {body}")),
+                429 => error_event_throttled(&format!("OpenAI rate limit (HTTP 429): {body}")),
+                500..=599 => {
+                    error_event_network(&format!("OpenAI server error (HTTP {code}): {body}"))
+                }
+                _ => error_event(&format!("OpenAI HTTP {code}: {body}")),
             };
-            return stream::iter(vec![error_event(&msg)]).left_stream();
+            return stream::iter(vec![event]).left_stream();
         }
 
         parse_sse_stream(response, cancellation_token).right_stream()
@@ -264,15 +269,14 @@ async fn send_request(
     let messages =
         convert::convert_messages::<OpenAiConverter>(&context.messages, &context.system_prompt);
 
-    let tools: Vec<OpenAiTool> = context
-        .tools
-        .iter()
-        .map(|t| OpenAiTool {
+    let tools: Vec<OpenAiTool> = extract_tool_schemas(&context.tools)
+        .into_iter()
+        .map(|s| OpenAiTool {
             r#type: "function".to_string(),
             function: OpenAiToolDef {
-                name: t.name().to_string(),
-                description: t.description().to_string(),
-                parameters: t.parameters_schema().clone(),
+                name: s.name,
+                description: s.description,
+                parameters: s.parameters,
             },
         })
         .collect();
@@ -305,7 +309,7 @@ async fn send_request(
         .json(&body)
         .send()
         .await
-        .map_err(|e| error_event(&format!("OpenAI connection error: {e}")))
+        .map_err(|e| error_event_network(&format!("OpenAI connection error: {e}")))
 }
 
 // ─── MessageConverter impl ──────────────────────────────────────────────────
@@ -432,6 +436,7 @@ fn parse_sse_stream(
                         stop_reason: StopReason::Aborted,
                         error_message: "operation cancelled".to_string(),
                         usage: None,
+                        error_kind: None,
                     });
                     done = true;
                     Some((events, (lines, token, state, done, false)))
@@ -492,6 +497,7 @@ fn parse_sse_stream(
                                     cache_read: 0,
                                     cache_write: 0,
                                     total: u.prompt_tokens + u.completion_tokens,
+                                    extra: HashMap::new(),
                                 });
                             }
 

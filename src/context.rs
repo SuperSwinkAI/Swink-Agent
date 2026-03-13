@@ -7,7 +7,7 @@ use crate::types::{AgentMessage, ContentBlock, LlmMessage};
 /// Uses a simple heuristic: count characters in all text content blocks of
 /// `LlmMessage` variants and divide by 4. `CustomMessage` variants count as
 /// 100 tokens each.
-fn estimate_tokens(msg: &AgentMessage) -> usize {
+pub fn estimate_tokens(msg: &AgentMessage) -> usize {
     match msg {
         AgentMessage::Llm(llm) => {
             let chars: usize = content_blocks(llm)
@@ -17,6 +17,7 @@ fn estimate_tokens(msg: &AgentMessage) -> usize {
                     ContentBlock::Thinking { thinking, .. } => thinking.len(),
                     ContentBlock::ToolCall { arguments, .. } => arguments.to_string().len(),
                     ContentBlock::Image { .. } => 0,
+                    ContentBlock::Extension { data, .. } => data.to_string().len(),
                 })
                 .sum();
             chars / 4
@@ -165,9 +166,7 @@ mod tests {
     fn tool_result_message(id: &str, text: &str) -> AgentMessage {
         AgentMessage::Llm(LlmMessage::ToolResult(ToolResultMessage {
             tool_call_id: id.into(),
-            content: vec![ContentBlock::Text {
-                text: text.into(),
-            }],
+            content: vec![ContentBlock::Text { text: text.into() }],
             is_error: false,
             timestamp: 0,
             details: serde_json::Value::Null,
@@ -319,9 +318,9 @@ mod tests {
         // With preservation, both the assistant (tool call) and result are kept.
         let compact = sliding_window(250, 100, 1);
         let mut messages = vec![
-            text_message(&body),             // anchor (100 tokens)
-            text_message(&body),             // middle, will be removed
-            tool_call_message("tc1"),        // assistant with tool call
+            text_message(&body),               // anchor (100 tokens)
+            text_message(&body),               // middle, will be removed
+            tool_call_message("tc1"),          // assistant with tool call
             tool_result_message("tc1", &body), // tool result (100 tokens)
         ];
         compact(&mut messages, false);
@@ -346,12 +345,12 @@ mod tests {
         let body = "x".repeat(400); // 100 tokens each
 
         let mut messages = vec![
-            text_message(&body),                // anchor
-            text_message(&body),                // middle filler
-            tool_call_message("tc1"),           // pair 1
-            tool_result_message("tc1", "r1"),   // pair 1
-            tool_call_message("tc2"),           // pair 2
-            tool_result_message("tc2", "r2"),   // pair 2
+            text_message(&body),              // anchor
+            text_message(&body),              // middle filler
+            tool_call_message("tc1"),         // pair 1
+            tool_result_message("tc1", "r1"), // pair 1
+            tool_call_message("tc2"),         // pair 2
+            tool_result_message("tc2", "r2"), // pair 2
         ];
         compact(&mut messages, false);
 

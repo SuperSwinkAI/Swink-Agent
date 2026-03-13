@@ -5,6 +5,11 @@
 //! function handles the common iteration and pattern matching over
 //! [`AgentMessage`] / [`LlmMessage`] variants.
 
+use std::sync::Arc;
+
+use serde_json::Value;
+
+use swink_agent::AgentTool;
 use swink_agent::stream::AssistantMessageEvent;
 use swink_agent::types::{
     AgentMessage, AssistantMessage, LlmMessage, ToolResultMessage, UserMessage,
@@ -67,14 +72,59 @@ pub fn convert_messages<C: MessageConverter>(
     result
 }
 
-// ─── Shared error_event helper ──────────────────────────────────────────────
+// ─── Tool schema extraction ─────────────────────────────────────────────────
 
-/// Create an error event.
+/// Common tool metadata extracted from [`AgentTool`] instances.
+///
+/// Used by adapters to avoid duplicating the `name` / `description` /
+/// `parameters` mapping before wrapping in provider-specific types.
+pub struct ToolSchema {
+    pub name: String,
+    pub description: String,
+    pub parameters: Value,
+}
+
+/// Extract tool metadata from a slice of [`AgentTool`] trait objects.
+pub fn extract_tool_schemas(tools: &[Arc<dyn AgentTool>]) -> Vec<ToolSchema> {
+    tools
+        .iter()
+        .map(|t| ToolSchema {
+            name: t.name().to_string(),
+            description: t.description().to_string(),
+            parameters: t.parameters_schema().clone(),
+        })
+        .collect()
+}
+
+// ─── Shared error_event helpers ─────────────────────────────────────────────
+
+/// Create an error event with no structured classification.
 ///
 /// Delegates to [`AssistantMessageEvent::error`] — kept for backward
 /// compatibility within the adapters crate.
 pub fn error_event(message: &str) -> AssistantMessageEvent {
     AssistantMessageEvent::error(message)
+}
+
+/// Create a throttle/rate-limit error event.
+///
+/// Delegates to [`AssistantMessageEvent::error_throttled`].
+pub fn error_event_throttled(message: &str) -> AssistantMessageEvent {
+    AssistantMessageEvent::error_throttled(message)
+}
+
+/// Create an authentication error event.
+///
+/// Delegates to [`AssistantMessageEvent::error_auth`].
+pub fn error_event_auth(message: &str) -> AssistantMessageEvent {
+    AssistantMessageEvent::error_auth(message)
+}
+
+/// Create a network/server error event.
+///
+/// Delegates to [`AssistantMessageEvent::error_network`].
+pub fn error_event_network(message: &str) -> AssistantMessageEvent {
+    AssistantMessageEvent::error_network(message)
 }
 
 #[cfg(test)]
@@ -201,6 +251,7 @@ mod tests {
                 stop_reason,
                 error_message,
                 usage,
+                ..
             } => {
                 assert_eq!(stop_reason, StopReason::Error);
                 assert_eq!(error_message, "something went wrong");

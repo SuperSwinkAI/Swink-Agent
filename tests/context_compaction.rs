@@ -13,9 +13,9 @@ use futures::stream::StreamExt;
 use tokio_util::sync::CancellationToken;
 
 use swink_agent::{
-    AgentContext, AgentEvent, AgentLoopConfig, AgentMessage,
-    AssistantMessageEvent, ContentBlock, DefaultRetryStrategy, LlmMessage, ModelSpec,
-    StopReason, StreamFn, StreamOptions, UserMessage, agent_loop, sliding_window,
+    AgentContext, AgentEvent, AgentLoopConfig, AgentMessage, AssistantMessageEvent, ContentBlock,
+    DefaultRetryStrategy, LlmMessage, ModelSpec, StopReason, StreamFn, StreamOptions, UserMessage,
+    agent_loop, sliding_window,
 };
 
 // ─── ContextCapturingStreamFn ────────────────────────────────────────────
@@ -54,6 +54,7 @@ impl StreamFn for ContextCapturingStreamFn {
                     stop_reason: StopReason::Error,
                     error_message: "no more scripted responses".to_string(),
                     usage: None,
+                    error_kind: None,
                 }]
             } else {
                 responses.remove(0)
@@ -96,6 +97,7 @@ impl StreamFn for MessageCapturingStreamFn {
                     stop_reason: StopReason::Error,
                     error_message: "no more scripted responses".to_string(),
                     usage: None,
+                    error_kind: None,
                 }]
             } else {
                 responses.remove(0)
@@ -112,6 +114,7 @@ fn overflow_error_events() -> Vec<AssistantMessageEvent> {
         stop_reason: StopReason::Error,
         error_message: "context_length_exceeded: too many tokens".to_string(),
         usage: None,
+        error_kind: None,
     }]
 }
 
@@ -141,6 +144,9 @@ fn default_config(stream_fn: Arc<dyn StreamFn>) -> AgentLoopConfig {
         message_provider: None,
         approve_tool: None,
         approval_mode: swink_agent::ApprovalMode::default(),
+        tool_validator: None,
+        loop_policy: None,
+        tool_call_transformer: None,
     }
 }
 
@@ -188,10 +194,12 @@ async fn overflow_triggers_compaction() {
     // Use sliding_window with a budget that forces compaction on overflow.
     // Normal budget: 10000 (generous), overflow budget: 200 (tight).
     let compact = sliding_window(10_000, 200, 1);
-    config.transform_context = Some(Box::new(move |msgs, overflow| {
-        flags_clone.lock().unwrap().push(overflow);
-        compact(msgs, overflow);
-    }));
+    config.transform_context = Some(Arc::new(
+        move |msgs: &mut Vec<AgentMessage>, overflow: bool| {
+            flags_clone.lock().unwrap().push(overflow);
+            compact(msgs, overflow);
+        },
+    ));
 
     // Provide many large messages so that overflow compaction has work to do.
     // Each message is ~100 tokens (400 chars / 4).
@@ -217,11 +225,7 @@ async fn overflow_triggers_compaction() {
     assert!(flags[1], "second call should have overflow=true");
 
     // Verify context was actually smaller on the second stream call
-    let counts: Vec<usize> = capturing_fn
-        .captured_message_counts
-        .lock()
-        .unwrap()
-        .clone();
+    let counts: Vec<usize> = capturing_fn.captured_message_counts.lock().unwrap().clone();
     assert!(
         counts.len() >= 2,
         "stream should be called at least twice, got {}",
@@ -252,9 +256,11 @@ async fn compacted_context_preserves_anchors() {
     let compact = sliding_window(10_000, 300, anchor_count);
 
     let mut config = default_config(stream_fn as Arc<dyn StreamFn>);
-    config.transform_context = Some(Box::new(move |msgs, overflow| {
-        compact(msgs, overflow);
-    }));
+    config.transform_context = Some(Arc::new(
+        move |msgs: &mut Vec<AgentMessage>, overflow: bool| {
+            compact(msgs, overflow);
+        },
+    ));
 
     // Create messages: first two are anchors, rest are filler.
     let mut initial_messages = vec![user_msg("ANCHOR_ONE"), user_msg("ANCHOR_TWO")];
@@ -338,9 +344,11 @@ async fn compacted_context_preserves_tool_pairs() {
 
     let mut config = default_config(stream_fn as Arc<dyn StreamFn>);
     config.tools = vec![tool];
-    config.transform_context = Some(Box::new(move |msgs, overflow| {
-        compact(msgs, overflow);
-    }));
+    config.transform_context = Some(Arc::new(
+        move |msgs: &mut Vec<AgentMessage>, overflow: bool| {
+            compact(msgs, overflow);
+        },
+    ));
 
     // Start with filler + the prompt. The loop will add an assistant (tool call)
     // and a tool result, then on the second turn, trigger overflow.
@@ -408,23 +416,25 @@ async fn multiple_overflows_progressively_shrink() {
     let overflow_clone = Arc::clone(&overflow_count);
 
     let mut config = default_config(stream_fn);
-    config.transform_context = Some(Box::new(move |msgs, overflow| {
-        if overflow {
-            let n = {
-                let mut count = overflow_clone.lock().unwrap();
-                *count += 1;
-                *count
-            };
-            // Each overflow removes progressively more: keep only the last
-            // (msgs.len() - n * 2) messages, minimum 1.
-            let keep = msgs.len().saturating_sub(n * 2).max(1);
-            if keep < msgs.len() {
-                let tail: Vec<AgentMessage> = msgs.drain(keep..).collect();
-                msgs.clear();
-                msgs.extend(tail);
+    config.transform_context = Some(Arc::new(
+        move |msgs: &mut Vec<AgentMessage>, overflow: bool| {
+            if overflow {
+                let n = {
+                    let mut count = overflow_clone.lock().unwrap();
+                    *count += 1;
+                    *count
+                };
+                // Each overflow removes progressively more: keep only the last
+                // (msgs.len() - n * 2) messages, minimum 1.
+                let keep = msgs.len().saturating_sub(n * 2).max(1);
+                if keep < msgs.len() {
+                    let tail: Vec<AgentMessage> = msgs.drain(keep..).collect();
+                    msgs.clear();
+                    msgs.extend(tail);
+                }
             }
-        }
-    }));
+        },
+    ));
 
     // Start with many messages
     let mut initial_messages = Vec::new();
@@ -442,11 +452,7 @@ async fn multiple_overflows_progressively_shrink() {
 
     assert!(has_event(&events, "AgentEnd"));
 
-    let counts: Vec<usize> = capturing_fn
-        .captured_message_counts
-        .lock()
-        .unwrap()
-        .clone();
+    let counts: Vec<usize> = capturing_fn.captured_message_counts.lock().unwrap().clone();
     assert!(
         counts.len() >= 3,
         "should have at least 3 stream calls, got {}",
@@ -487,9 +493,11 @@ async fn overflow_with_single_large_message() {
     let compact = sliding_window(10_000, 10, 1);
 
     let mut config = default_config(stream_fn);
-    config.transform_context = Some(Box::new(move |msgs, overflow| {
-        compact(msgs, overflow);
-    }));
+    config.transform_context = Some(Arc::new(
+        move |msgs: &mut Vec<AgentMessage>, overflow: bool| {
+            compact(msgs, overflow);
+        },
+    ));
 
     // One large message (~500 tokens, well above the 10-token overflow budget).
     let initial_messages = vec![large_user_msg("huge", 500)];

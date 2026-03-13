@@ -21,6 +21,11 @@ use crate::error::AgentError;
 pub trait RetryStrategy: Send + Sync {
     /// Returns `true` if `error` on the given `attempt` number should be
     /// retried. Attempt numbering starts at 1.
+    ///
+    /// This is the **sole decision point** for retryability — the agent loop
+    /// delegates entirely to this method. Custom implementations can retry
+    /// any error variant (e.g., [`AgentError::Plugin`]) without being gated
+    /// by [`AgentError::is_retryable()`].
     fn should_retry(&self, error: &AgentError, attempt: u32) -> bool;
 
     /// Returns the duration to wait before attempt number `attempt`.

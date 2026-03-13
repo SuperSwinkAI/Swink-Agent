@@ -18,7 +18,6 @@ use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, debug, error, info, info_span, warn};
 
 use crate::error::AgentError;
-use crate::util::now_timestamp;
 use crate::retry::RetryStrategy;
 use crate::stream::{
     AssistantMessageDelta, AssistantMessageEvent, StreamFn, StreamOptions, accumulate_message,
@@ -31,6 +30,7 @@ use crate::types::{
     AgentContext, AgentMessage, AssistantMessage, ContentBlock, LlmMessage, ModelSpec, StopReason,
     ToolResultMessage,
 };
+use crate::util::now_timestamp;
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -47,9 +47,6 @@ const EVENT_CHANNEL_CAPACITY: usize = 256;
 /// Converts an `AgentMessage` to an optional `LlmMessage` for the provider.
 type ConvertToLlmFn = dyn Fn(&AgentMessage) -> Option<LlmMessage> + Send + Sync;
 
-/// Context transformation hook with overflow signal.
-type TransformContextFn = dyn Fn(&mut Vec<AgentMessage>, bool) + Send + Sync;
-
 /// Async API key resolution callback.
 type GetApiKeyFn =
     dyn Fn(&str) -> Pin<Box<dyn Future<Output = Option<String>> + Send>> + Send + Sync;
@@ -60,6 +57,25 @@ use crate::message_provider::MessageProvider;
 /// Async callback for approving or rejecting individual tool calls.
 pub type ApproveToolFn =
     dyn Fn(ToolApprovalRequest) -> Pin<Box<dyn Future<Output = ToolApproval> + Send>> + Send + Sync;
+
+// ─── TurnEndReason ───────────────────────────────────────────────────────────
+
+/// Why a turn ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TurnEndReason {
+    /// Assistant completed without requesting tool calls.
+    Complete,
+    /// Tools were executed (loop continues).
+    ToolsExecuted,
+    /// Turn was interrupted by a steering message during tool execution.
+    SteeringInterrupt,
+    /// LLM returned an error stop reason.
+    Error,
+    /// External cancellation via `CancellationToken`.
+    Cancelled,
+    /// Stream was aborted mid-generation.
+    Aborted,
+}
 
 // ─── AgentEvent ──────────────────────────────────────────────────────────────
 
@@ -83,6 +99,15 @@ pub enum AgentEvent {
     TurnEnd {
         assistant_message: AssistantMessage,
         tool_results: Vec<ToolResultMessage>,
+        reason: TurnEndReason,
+    },
+
+    /// Emitted after context transform, before the LLM streaming call.
+    /// Allows plugins to observe/log the final prompt.
+    BeforeLlmCall {
+        system_prompt: String,
+        messages: Vec<LlmMessage>,
+        model: ModelSpec,
     },
 
     /// Emitted when a message begins streaming.
@@ -123,6 +148,11 @@ pub enum AgentEvent {
         result: AgentToolResult,
         is_error: bool,
     },
+
+    /// Emitted when context compaction drops messages.
+    ContextCompacted {
+        report: crate::context_transformer::CompactionReport,
+    },
 }
 
 // ─── AgentLoopConfig ─────────────────────────────────────────────────────────
@@ -153,9 +183,9 @@ pub struct AgentLoopConfig {
 
     /// Optional hook called before `convert_to_llm`; used for context pruning,
     /// token budget enforcement, or external context injection.
-    /// The second parameter is the overflow signal — when true, the hook should
-    /// prune more aggressively.
-    pub transform_context: Option<Box<TransformContextFn>>,
+    /// When the overflow signal is set, the transformer should prune more
+    /// aggressively.
+    pub transform_context: Option<Arc<dyn crate::context_transformer::ContextTransformer>>,
 
     /// Optional async callback for dynamic API key resolution.
     pub get_api_key: Option<Box<GetApiKeyFn>>,
@@ -173,6 +203,19 @@ pub struct AgentLoopConfig {
 
     /// Controls whether the approval gate is active. Defaults to `Enabled`.
     pub approval_mode: ApprovalMode,
+
+    /// Optional custom validation hook invoked after JSON Schema validation
+    /// but before tool execution.
+    pub tool_validator: Option<Arc<dyn crate::tool_validator::ToolValidator>>,
+
+    /// Optional loop policy to control agent loop continuation.
+    pub loop_policy: Option<Arc<dyn crate::loop_policy::LoopPolicy>>,
+
+    /// Optional pre-execution argument transformer.
+    ///
+    /// Runs after approval but before validation, allowing programmatic
+    /// argument rewriting (sandboxing, path rewrites, etc.).
+    pub tool_call_transformer: Option<Arc<dyn crate::tool_call_transformer::ToolCallTransformer>>,
 }
 
 impl std::fmt::Debug for AgentLoopConfig {
@@ -181,6 +224,14 @@ impl std::fmt::Debug for AgentLoopConfig {
             .field("model", &self.model)
             .field("stream_options", &self.stream_options)
             .field("tools", &format_args!("[{} tool(s)]", self.tools.len()))
+            .field(
+                "tool_validator",
+                &self.tool_validator.as_ref().map(|_| "..."),
+            )
+            .field(
+                "tool_call_transformer",
+                &self.tool_call_transformer.as_ref().map(|_| "..."),
+            )
             .finish_non_exhaustive()
     }
 }
@@ -253,6 +304,11 @@ struct LoopState {
     context_messages: Vec<AgentMessage>,
     pending_messages: Vec<AgentMessage>,
     overflow_signal: bool,
+    turn_index: usize,
+    accumulated_usage: crate::types::Usage,
+    accumulated_cost: crate::types::Cost,
+    /// The last assistant message from a completed turn (for policy checks).
+    last_assistant_message: Option<AssistantMessage>,
 }
 
 // ─── run_loop_inner ──────────────────────────────────────────────────────────
@@ -274,64 +330,88 @@ async fn run_loop_inner(
         message_count = initial_messages.len(),
     );
     async {
-    info!(
-        model = %config.model.model_id,
-        provider = %config.model.provider,
-        tools = config.tools.len(),
-        "starting agent loop"
-    );
-    let mut state = LoopState {
-        context_messages: initial_messages,
-        pending_messages: Vec::new(),
-        overflow_signal: false,
-    };
+        info!(
+            model = %config.model.model_id,
+            provider = %config.model.provider,
+            tools = config.tools.len(),
+            "starting agent loop"
+        );
+        let mut state = LoopState {
+            context_messages: initial_messages,
+            pending_messages: Vec::new(),
+            overflow_signal: false,
+            turn_index: 0,
+            accumulated_usage: crate::types::Usage::default(),
+            accumulated_cost: crate::types::Cost::default(),
+            last_assistant_message: None,
+        };
 
-    // 1. Emit AgentStart
-    if !emit(&tx, AgentEvent::AgentStart).await {
-        return;
-    }
+        // 1. Emit AgentStart
+        if !emit(&tx, AgentEvent::AgentStart).await {
+            return;
+        }
 
-    // 2. Outer loop (follow-up phase)
-    'outer: loop {
-        // Inner loop (turn + tool phase)
-        'inner: loop {
-            let turn_result = run_single_turn(
-                &config,
-                &mut state,
-                &system_prompt,
-                &cancellation_token,
+        // 2. Outer loop (follow-up phase)
+        'outer: loop {
+            // Inner loop (turn + tool phase)
+            'inner: loop {
+                let turn_result = run_single_turn(
+                    &config,
+                    &mut state,
+                    &system_prompt,
+                    &cancellation_token,
+                    &tx,
+                )
+                .await;
+
+                match turn_result {
+                    TurnOutcome::ContinueInner => {
+                        // Update turn tracking and check loop policy
+                        state.turn_index += 1;
+                        if let Some(ref policy) = config.loop_policy
+                            && let Some(ref msg) = state.last_assistant_message
+                        {
+                            let ctx = crate::loop_policy::PolicyContext {
+                                turn_index: state.turn_index,
+                                accumulated_usage: state.accumulated_usage.clone(),
+                                accumulated_cost: state.accumulated_cost.clone(),
+                                assistant_message: msg,
+                                stop_reason: msg.stop_reason,
+                            };
+                            if !policy.should_continue(&ctx) {
+                                info!("loop policy stopped agent after turn {}", state.turn_index);
+                                break 'inner;
+                            }
+                        }
+                    }
+                    TurnOutcome::BreakInner => break 'inner,
+                    TurnOutcome::Return => return,
+                }
+            }
+
+            // Outer loop: poll follow-up messages
+            if let Some(ref provider) = config.message_provider {
+                let msgs = provider.poll_follow_up();
+                if !msgs.is_empty() {
+                    state.pending_messages.extend(msgs);
+                    continue 'outer;
+                }
+            }
+
+            // No follow-up → emit AgentEnd and exit
+            let _ = emit(
                 &tx,
+                AgentEvent::AgentEnd {
+                    messages: Arc::new(state.context_messages),
+                },
             )
             .await;
-
-            match turn_result {
-                TurnOutcome::ContinueInner => {}
-                TurnOutcome::BreakInner => break 'inner,
-                TurnOutcome::Return => return,
-            }
+            info!("agent loop finished");
+            return;
         }
-
-        // Outer loop: poll follow-up messages
-        if let Some(ref provider) = config.message_provider {
-            let msgs = provider.poll_follow_up();
-            if !msgs.is_empty() {
-                state.pending_messages.extend(msgs);
-                continue 'outer;
-            }
-        }
-
-        // No follow-up → emit AgentEnd and exit
-        let _ = emit(
-            &tx,
-            AgentEvent::AgentEnd {
-                messages: Arc::new(state.context_messages),
-            },
-        )
-        .await;
-        info!("agent loop finished");
-        return;
     }
-    }.instrument(span).await;
+    .instrument(span)
+    .await;
 }
 
 /// Outcome of a single turn execution within the inner loop.
@@ -374,9 +454,12 @@ async fn run_single_turn(
         return TurnOutcome::Return;
     }
 
-    // ii. Call transform_context if set
-    if let Some(ref transform) = config.transform_context {
-        transform(&mut state.context_messages, state.overflow_signal);
+    // ii. Call context transformer if set
+    if let Some(ref transformer) = config.transform_context
+        && let Some(report) =
+            transformer.transform(&mut state.context_messages, state.overflow_signal)
+    {
+        let _ = emit(tx, AgentEvent::ContextCompacted { report }).await;
     }
     // Reset overflow after it's been signaled
     state.overflow_signal = false;
@@ -401,6 +484,20 @@ async fn run_single_turn(
         messages: Vec::new(),
         tools: config.tools.clone(),
     };
+
+    // Emit BeforeLlmCall
+    if !emit(
+        tx,
+        AgentEvent::BeforeLlmCall {
+            system_prompt: system_prompt.to_string(),
+            messages: llm_messages.clone(),
+            model: config.model.clone(),
+        },
+    )
+    .await
+    {
+        return TurnOutcome::Return;
+    }
 
     let stream_result = stream_with_retry(
         config,
@@ -488,6 +585,7 @@ async fn handle_cancellation(
         AgentEvent::TurnEnd {
             assistant_message: abort_msg_clone,
             tool_results: vec![],
+            reason: TurnEndReason::Cancelled,
         },
     )
     .await
@@ -538,6 +636,7 @@ async fn handle_stream_result(
                 AgentEvent::TurnEnd {
                     assistant_message: abort_msg_clone,
                     tool_results: vec![],
+                    reason: TurnEndReason::Aborted,
                 },
             )
             .await
@@ -577,6 +676,7 @@ async fn handle_error_stop(
         AgentEvent::TurnEnd {
             assistant_message: msg_clone,
             tool_results: vec![],
+            reason: TurnEndReason::Error,
         },
     )
     .await
@@ -626,6 +726,11 @@ async fn handle_no_tool_calls(
     state: &mut LoopState,
     tx: &mpsc::Sender<AgentEvent>,
 ) -> TurnOutcome {
+    // Update accumulated usage/cost for policy tracking.
+    state.accumulated_usage += assistant_message.usage.clone();
+    state.accumulated_cost += assistant_message.cost.clone();
+    state.last_assistant_message = Some(assistant_message.clone());
+
     // Clone twice: once for all_new_messages, once for TurnEnd event.
     // The original goes to context_messages.
     let msg_for_event = assistant_message.clone();
@@ -637,6 +742,7 @@ async fn handle_no_tool_calls(
         AgentEvent::TurnEnd {
             assistant_message: msg_for_event,
             tool_results: vec![],
+            reason: TurnEndReason::Complete,
         },
     )
     .await
@@ -656,6 +762,11 @@ async fn handle_tool_calls(
     cancellation_token: &CancellationToken,
     tx: &mpsc::Sender<AgentEvent>,
 ) -> TurnOutcome {
+    // Update accumulated usage/cost for policy tracking.
+    state.accumulated_usage += assistant_message.usage.clone();
+    state.accumulated_cost += assistant_message.cost.clone();
+    state.last_assistant_message = Some(assistant_message.clone());
+
     // Clone twice: once for all_new_messages, once for TurnEnd event.
     // The original goes to context_messages.
     let msg_for_turn_end = assistant_message.clone();
@@ -713,6 +824,11 @@ async fn handle_tool_calls(
         AgentEvent::TurnEnd {
             assistant_message: msg_for_turn_end,
             tool_results,
+            reason: if steering_interrupted {
+                TurnEndReason::SteeringInterrupt
+            } else {
+                TurnEndReason::ToolsExecuted
+            },
         },
     )
     .await
@@ -772,6 +888,7 @@ struct ToolCallInfo {
 }
 
 /// Result of streaming an assistant response.
+#[allow(clippy::large_enum_variant)]
 enum StreamResult {
     Message(AssistantMessage),
     ContextOverflow,
@@ -789,7 +906,6 @@ enum ToolExecOutcome {
     },
     ChannelClosed,
 }
-
 
 /// Build an aborted `AssistantMessage`.
 fn build_abort_message(model: &ModelSpec) -> AssistantMessage {
@@ -823,7 +939,9 @@ fn build_error_message(model: &ModelSpec, error: &AgentError) -> AssistantMessag
 fn classify_stream_error(error_message: &str, stop_reason: StopReason) -> AgentError {
     let lower = error_message.to_lowercase();
     if lower.contains("context window") || lower.contains("context_length_exceeded") {
-        return AgentError::ContextWindowOverflow { model: String::new() };
+        return AgentError::ContextWindowOverflow {
+            model: String::new(),
+        };
     }
     if lower.contains("rate limit") || lower.contains("429") || lower.contains("throttl") {
         return AgentError::ModelThrottled;
@@ -914,6 +1032,7 @@ async fn stream_with_retry(
 // ─── stream_with_retry helpers ───────────────────────────────────────────────
 
 /// Possible outcomes when handling a stream error.
+#[allow(clippy::large_enum_variant)]
 enum StreamErrorAction {
     ContextOverflow,
     Retry(std::time::Duration),
@@ -966,9 +1085,10 @@ async fn stream_single_attempt(
             stop_reason,
             error_message,
             usage,
+            ..
         } = &event
         {
-            had_error = Some((*stop_reason, error_message.clone(), *usage));
+            had_error = Some((*stop_reason, error_message.clone(), usage.clone()));
         }
 
         events.push(event);
@@ -1042,8 +1162,8 @@ async fn handle_stream_error(
         return StreamErrorAction::ContextOverflow;
     }
 
-    // Check if retryable
-    if harness_error.is_retryable() && config.retry_strategy.should_retry(&harness_error, attempt) {
+    // Check if retryable — RetryStrategy is the sole decision point
+    if config.retry_strategy.should_retry(&harness_error, attempt) {
         let delay = config.retry_strategy.delay(attempt);
         warn!(attempt, ?delay, error = %harness_error, "retrying after transient error");
         return StreamErrorAction::Retry(delay);
@@ -1157,6 +1277,7 @@ async fn execute_tools_concurrently(
         }
 
         // ── Approval gate ──
+        let mut arguments_override: Option<serde_json::Value> = None;
         if let Some(ref approve_fn) = config.approve_tool
             && config.approval_mode != ApprovalMode::Bypassed
         {
@@ -1165,15 +1286,54 @@ async fn execute_tools_concurrently(
                 .is_some_and(|t| t.requires_approval());
             match check_approval(approve_fn, tc, idx, requires_approval, &results, tx).await {
                 ApprovalOutcome::Approved => {} // proceed to dispatch
+                ApprovalOutcome::ApprovedWith(new_params) => {
+                    arguments_override = Some(new_params);
+                }
                 ApprovalOutcome::Rejected => continue,
                 ApprovalOutcome::ChannelClosed => return ToolExecOutcome::ChannelClosed,
             }
+        }
+
+        // Resolve effective arguments (may be overridden by ApprovedWith)
+        let mut effective_arguments = arguments_override.unwrap_or_else(|| tc.arguments.clone());
+
+        // ── Tool call transformer ──
+        if let Some(ref transformer) = config.tool_call_transformer {
+            transformer.transform(&tc.name, &mut effective_arguments);
+        }
+
+        // ── Custom validator check ──
+        if let Some(ref validator) = config.tool_validator
+            && let Err(msg) = validator.validate(&tc.name, &effective_arguments)
+        {
+            let tool_result_msg = ToolResultMessage {
+                tool_call_id: tc.id.clone(),
+                content: vec![ContentBlock::Text { text: msg }],
+                is_error: true,
+                timestamp: now_timestamp(),
+                details: serde_json::Value::Null,
+            };
+            let _ = emit(
+                tx,
+                AgentEvent::ToolExecutionEnd {
+                    result: AgentToolResult {
+                        content: tool_result_msg.content.clone(),
+                        details: serde_json::Value::Null,
+                        is_error: true,
+                    },
+                    is_error: true,
+                },
+            )
+            .await;
+            results.lock().await.push((idx, tool_result_msg));
+            continue;
         }
 
         let handle = dispatch_single_tool(
             &tool_map,
             config,
             tc,
+            &effective_arguments,
             idx,
             &batch_token,
             &results,
@@ -1204,6 +1364,8 @@ async fn execute_tools_concurrently(
 /// Result of checking the approval gate for a single tool call.
 enum ApprovalOutcome {
     Approved,
+    /// Approved with modified parameters.
+    ApprovedWith(serde_json::Value),
     Rejected,
     ChannelClosed,
 }
@@ -1237,7 +1399,7 @@ async fn check_approval(
         requires_approval,
     };
     let decision = approve_fn(request).await;
-    let approved = decision == ToolApproval::Approved;
+    let approved = !matches!(decision, ToolApproval::Rejected);
 
     if !emit(
         tx,
@@ -1252,34 +1414,36 @@ async fn check_approval(
         return ApprovalOutcome::ChannelClosed;
     }
 
-    if !approved {
-        let rejection_result = AgentToolResult::error(format!(
-            "Tool call '{}' was rejected by the approval gate.",
-            tc.name
-        ));
-        if !emit(
-            tx,
-            AgentEvent::ToolExecutionEnd {
-                result: rejection_result.clone(),
+    match decision {
+        ToolApproval::Approved => ApprovalOutcome::Approved,
+        ToolApproval::ApprovedWith(new_params) => ApprovalOutcome::ApprovedWith(new_params),
+        ToolApproval::Rejected => {
+            let rejection_result = AgentToolResult::error(format!(
+                "Tool call '{}' was rejected by the approval gate.",
+                tc.name
+            ));
+            if !emit(
+                tx,
+                AgentEvent::ToolExecutionEnd {
+                    result: rejection_result.clone(),
+                    is_error: true,
+                },
+            )
+            .await
+            {
+                return ApprovalOutcome::ChannelClosed;
+            }
+            let tool_result_msg = ToolResultMessage {
+                tool_call_id: tc.id.clone(),
+                content: rejection_result.content,
                 is_error: true,
-            },
-        )
-        .await
-        {
-            return ApprovalOutcome::ChannelClosed;
+                timestamp: now_timestamp(),
+                details: serde_json::Value::Null,
+            };
+            results.lock().await.push((idx, tool_result_msg));
+            ApprovalOutcome::Rejected
         }
-        let tool_result_msg = ToolResultMessage {
-            tool_call_id: tc.id.clone(),
-            content: rejection_result.content,
-            is_error: true,
-            timestamp: now_timestamp(),
-            details: serde_json::Value::Null,
-        };
-        results.lock().await.push((idx, tool_result_msg));
-        return ApprovalOutcome::Rejected;
     }
-
-    ApprovalOutcome::Approved
 }
 
 /// Result of dispatching a single tool call.
@@ -1296,6 +1460,7 @@ async fn dispatch_single_tool(
     tool_map: &HashMap<&str, &Arc<dyn AgentTool>>,
     config: &Arc<AgentLoopConfig>,
     tc: &ToolCallInfo,
+    effective_arguments: &serde_json::Value,
     idx: usize,
     batch_token: &CancellationToken,
     results: &Arc<tokio::sync::Mutex<Vec<(usize, ToolResultMessage)>>>,
@@ -1306,7 +1471,7 @@ async fn dispatch_single_tool(
 
     let tool_call_id = tc.id.clone();
     let tool_name = tc.name.clone();
-    let arguments = tc.arguments.clone();
+    let arguments = effective_arguments.clone();
 
     if let Some(tool) = tool {
         let tool = Arc::clone(tool);
@@ -1324,48 +1489,51 @@ async fn dispatch_single_tool(
             tool_name = %tool_name,
             tool_call_id = %tool_call_id,
         );
-        let handle = tokio::spawn(async move {
-            debug!(tool = %tool_name, id = %tool_call_id, "tool execution starting");
-            let (result, is_error) = if let Err(errors) = validation {
-                (validation_error_result(&errors), true)
-            } else {
-                let on_update = Box::new(move |partial: AgentToolResult| {
-                    let _ = on_update_tx.try_send(AgentEvent::ToolExecutionUpdate { partial });
-                });
-                let result = tool
-                    .execute(&tool_call_id, arguments, child_token, Some(on_update))
-                    .await;
-                let is_error = result.is_error;
-                (result, is_error)
-            };
-            debug!(tool = %tool_name, id = %tool_call_id, is_error, "tool execution finished");
+        let handle = tokio::spawn(
+            async move {
+                debug!(tool = %tool_name, id = %tool_call_id, "tool execution starting");
+                let (result, is_error) = if let Err(errors) = validation {
+                    (validation_error_result(&errors), true)
+                } else {
+                    let on_update = Box::new(move |partial: AgentToolResult| {
+                        let _ = on_update_tx.try_send(AgentEvent::ToolExecutionUpdate { partial });
+                    });
+                    let result = tool
+                        .execute(&tool_call_id, arguments, child_token, Some(on_update))
+                        .await;
+                    let is_error = result.is_error;
+                    (result, is_error)
+                };
+                debug!(tool = %tool_name, id = %tool_call_id, is_error, "tool execution finished");
 
-            let _ = emit(
-                &tx_clone,
-                AgentEvent::ToolExecutionEnd {
-                    result: result.clone(),
+                let _ = emit(
+                    &tx_clone,
+                    AgentEvent::ToolExecutionEnd {
+                        result: result.clone(),
+                        is_error,
+                    },
+                )
+                .await;
+
+                let tool_result_msg = ToolResultMessage {
+                    tool_call_id: tool_call_id.clone(),
+                    content: result.content,
                     is_error,
-                },
-            )
-            .await;
+                    timestamp: now_timestamp(),
+                    details: result.details,
+                };
 
-            let tool_result_msg = ToolResultMessage {
-                tool_call_id: tool_call_id.clone(),
-                content: result.content,
-                is_error,
-                timestamp: now_timestamp(),
-                details: result.details,
-            };
+                results_clone.lock().await.push((idx, tool_result_msg));
 
-            results_clone.lock().await.push((idx, tool_result_msg));
-
-            if let Some(ref provider) = config_clone.message_provider {
-                let msgs = provider.poll_steering();
-                if !msgs.is_empty() {
-                    steering_clone.store(true, std::sync::atomic::Ordering::SeqCst);
+                if let Some(ref provider) = config_clone.message_provider {
+                    let msgs = provider.poll_steering();
+                    if !msgs.is_empty() {
+                        steering_clone.store(true, std::sync::atomic::Ordering::SeqCst);
+                    }
                 }
             }
-        }.instrument(tool_span));
+            .instrument(tool_span),
+        );
 
         DispatchResult::Spawned(handle)
     } else {

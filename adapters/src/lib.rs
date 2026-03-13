@@ -1,4 +1,8 @@
 #![forbid(unsafe_code)]
+pub mod classify;
+mod proxy;
+pub mod sse;
+
 mod anthropic;
 mod convert;
 mod ollama;
@@ -8,3 +12,4 @@ mod openai;
 pub use anthropic::AnthropicStreamFn;
 pub use ollama::OllamaStreamFn;
 pub use openai::OpenAiStreamFn;
+pub use proxy::ProxyStreamFn;

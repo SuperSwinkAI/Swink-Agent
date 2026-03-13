@@ -162,13 +162,13 @@ mod tests {
     }
 
     impl AgentTool for MockTool {
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             "mock_tool"
         }
-        fn label(&self) -> &str {
+        fn label(&self) -> &'static str {
             "Mock Tool"
         }
-        fn description(&self) -> &str {
+        fn description(&self) -> &'static str {
             "A mock tool for testing"
         }
         fn parameters_schema(&self) -> &Value {
@@ -293,7 +293,11 @@ mod tests {
 
     #[test]
     fn tool_schemas_generated() {
-        let ctx = make_context("", vec![], vec![Arc::new(MockTool::new()) as Arc<dyn AgentTool>]);
+        let ctx = make_context(
+            "",
+            vec![],
+            vec![Arc::new(MockTool::new()) as Arc<dyn AgentTool>],
+        );
         let schemas = tool_schemas_json(&ctx);
         assert_eq!(schemas.len(), 1);
         let schema: Value = serde_json::from_str(&schemas[0]).unwrap();

@@ -26,22 +26,16 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
     let input_tokens = format::format_tokens(app.total_input_tokens);
     let output_tokens = format::format_tokens(app.total_output_tokens);
 
-    let mut spans = vec![
-        Span::styled(
-            format!(" {status_text} "),
-            Style::default()
-                .fg(theme::bar_bg())
-                .bg(status_color),
-        ),
-    ];
+    let mut spans = vec![Span::styled(
+        format!(" {status_text} "),
+        Style::default().fg(theme::bar_bg()).bg(status_color),
+    )];
 
     // Operating mode badge (only in Plan mode)
     if app.operating_mode == OperatingMode::Plan {
         spans.push(Span::styled(
             " PLAN ",
-            Style::default()
-                .fg(theme::bar_bg())
-                .bg(theme::plan_color()),
+            Style::default().fg(theme::bar_bg()).bg(theme::plan_color()),
         ));
     }
 
@@ -55,9 +49,7 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         };
         spans.push(Span::styled(
             label,
-            Style::default()
-                .fg(theme::bar_bg())
-                .bg(theme::bar_fg()),
+            Style::default().fg(theme::bar_bg()).bg(theme::bar_fg()),
         ));
     }
 
@@ -74,7 +66,8 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
 
     // Context window gauge
     if app.context_budget > 0 {
-        let (gauge, pct) = format::format_context_gauge(app.context_tokens_used, app.context_budget);
+        let (gauge, pct) =
+            format::format_context_gauge(app.context_tokens_used, app.context_budget);
         let gauge_color = if pct < 60.0 {
             theme::context_green()
         } else if pct < 85.0 {
@@ -97,6 +90,7 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
     }
 
     let status = Line::from(spans);
-    let bar = Paragraph::new(status).style(Style::default().bg(theme::bar_bg()).fg(theme::bar_fg()));
+    let bar =
+        Paragraph::new(status).style(Style::default().bg(theme::bar_bg()).fg(theme::bar_fg()));
     frame.render_widget(bar, area);
 }

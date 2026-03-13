@@ -71,6 +71,8 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     let status_area = chunks[idx];
 
     // Render conversation
+    app.conversation_area = conv_area;
+    app.conversation_visible_height = conv_area.height.saturating_sub(2) as usize;
     app.conversation.render(
         frame,
         conv_area,

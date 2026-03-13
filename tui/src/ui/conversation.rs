@@ -45,6 +45,19 @@ impl ConversationView {
         }
     }
 
+    /// Clamp the current scroll offset to the rendered content.
+    pub const fn clamp_scroll_offset(&mut self, visible_height: usize) {
+        let max = self.rendered_lines.saturating_sub(visible_height);
+        if self.scroll_offset > max {
+            self.scroll_offset = max;
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn set_rendered_lines_for_test(&mut self, rendered_lines: usize) {
+        self.rendered_lines = rendered_lines;
+    }
+
     /// Scroll to bottom and re-engage auto-scroll.
     ///
     /// Reserved for future use by keyboard shortcut (e.g. Ctrl+End).
@@ -97,9 +110,7 @@ impl ConversationView {
             if msg.role == MessageRole::ToolResult && msg.collapsed {
                 let is_selected = selected_tool_block == Some(msg_idx);
                 let select_style = if is_selected {
-                    Style::default()
-                        .fg(role_color)
-                        .add_modifier(Modifier::BOLD)
+                    Style::default().fg(role_color).add_modifier(Modifier::BOLD)
                 } else {
                     Style::default().fg(role_color)
                 };
@@ -108,9 +119,7 @@ impl ConversationView {
                     Span::styled("▶ ", select_style),
                     Span::styled(
                         role_label.to_string(),
-                        Style::default()
-                            .fg(role_color)
-                            .add_modifier(Modifier::BOLD),
+                        Style::default().fg(role_color).add_modifier(Modifier::BOLD),
                     ),
                     Span::styled("  ", Style::default()),
                     Span::styled(msg.summary.clone(), theme::dim()),
@@ -124,9 +133,7 @@ impl ConversationView {
             let indicator = if msg.role == MessageRole::ToolResult {
                 let is_selected = selected_tool_block == Some(msg_idx);
                 let select_style = if is_selected {
-                    Style::default()
-                        .fg(role_color)
-                        .add_modifier(Modifier::BOLD)
+                    Style::default().fg(role_color).add_modifier(Modifier::BOLD)
                 } else {
                     Style::default().fg(role_color)
                 };
@@ -136,9 +143,7 @@ impl ConversationView {
             };
 
             // Role header line with colored left border
-            let mut header_spans = vec![
-                Span::styled("│ ", Style::default().fg(role_color)),
-            ];
+            let mut header_spans = vec![Span::styled("│ ", Style::default().fg(role_color))];
             if let Some(ind) = indicator {
                 header_spans.push(ind);
             }
@@ -175,11 +180,9 @@ impl ConversationView {
             if msg.role == MessageRole::ToolResult
                 && let Some(ref diff) = msg.diff_data
             {
-                let diff_lines =
-                    crate::ui::diff::render_diff_lines(diff, inner_width);
+                let diff_lines = crate::ui::diff::render_diff_lines(diff, inner_width);
                 for line in diff_lines {
-                    let mut spans =
-                        vec![Span::styled("│ ", Style::default().fg(role_color))];
+                    let mut spans = vec![Span::styled("│ ", Style::default().fg(role_color))];
                     spans.extend(line.spans);
                     all_lines.push(Line::from(spans));
                 }
@@ -207,7 +210,7 @@ impl ConversationView {
 
         // Clamp scroll offset
         let max_scroll = self.rendered_lines.saturating_sub(inner_height);
-        self.scroll_offset = self.scroll_offset.min(max_scroll);
+        self.clamp_scroll_offset(inner_height);
 
         // Build title with scroll indicator
         let title = if !self.auto_scroll && self.scroll_offset < max_scroll {
@@ -227,5 +230,44 @@ impl ConversationView {
             .scroll((u16::try_from(self.scroll_offset).unwrap_or(u16::MAX), 0));
 
         frame.render_widget(paragraph, area);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ConversationView;
+
+    #[test]
+    fn scroll_up_disengages_auto_scroll() {
+        let mut view = ConversationView::new();
+        view.scroll_offset = 5;
+        view.scroll_up(2);
+
+        assert_eq!(view.scroll_offset, 3);
+        assert!(!view.auto_scroll);
+    }
+
+    #[test]
+    fn scroll_down_to_bottom_reengages_auto_scroll() {
+        let mut view = ConversationView::new();
+        view.set_rendered_lines_for_test(30);
+        view.scroll_offset = 20;
+        view.auto_scroll = false;
+
+        view.scroll_down(10, 10);
+
+        assert_eq!(view.scroll_offset, 20);
+        assert!(view.auto_scroll);
+    }
+
+    #[test]
+    fn clamp_scroll_offset_uses_visible_height() {
+        let mut view = ConversationView::new();
+        view.set_rendered_lines_for_test(25);
+        view.scroll_offset = 99;
+
+        view.clamp_scroll_offset(8);
+
+        assert_eq!(view.scroll_offset, 17);
     }
 }

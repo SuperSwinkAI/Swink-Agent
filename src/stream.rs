@@ -5,13 +5,11 @@
 //! delta-accumulation function that reconstructs a finalized `AssistantMessage`
 //! from a collected sequence of events.
 
-use std::borrow::Cow;
-use std::pin::Pin;
-use std::time::SystemTime;
-
 use futures::Stream;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::borrow::Cow;
+use std::pin::Pin;
 use tokio_util::sync::CancellationToken;
 
 use crate::types::{
@@ -56,6 +54,24 @@ impl std::fmt::Debug for StreamOptions {
             .field("transport", &self.transport)
             .finish()
     }
+}
+
+// ─── StreamErrorKind ─────────────────────────────────────────────────────────
+
+/// Structured classification of stream errors.
+///
+/// Adapters can attach a `StreamErrorKind` to an `Error` event so the agent
+/// loop can classify errors structurally instead of relying on string matching.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StreamErrorKind {
+    /// The provider throttled the request (HTTP 429 / rate limit).
+    Throttled,
+    /// The request exceeded the model's context window.
+    ContextWindowExceeded,
+    /// Authentication or authorization failure (HTTP 401/403).
+    Auth,
+    /// Transient network or server error (connection drop, 5xx, etc.).
+    Network,
 }
 
 // ─── AssistantMessageEvent ───────────────────────────────────────────────────
@@ -111,19 +127,78 @@ pub enum AssistantMessageEvent {
         stop_reason: StopReason,
         error_message: String,
         usage: Option<Usage>,
+        /// Optional structured error classification.
+        ///
+        /// When set, the agent loop uses this to classify the error without
+        /// falling back to string matching on `error_message`.
+        error_kind: Option<StreamErrorKind>,
     },
 }
 
 impl AssistantMessageEvent {
-    /// Create a stream error event.
+    /// Create a stream error event with no structured classification.
     ///
     /// Convenience constructor used by adapters when the stream encounters
-    /// an error condition.
+    /// an error condition. The `error_kind` is set to `None`, so the agent
+    /// loop will fall back to string-based classification.
     pub fn error(message: impl Into<String>) -> Self {
         Self::Error {
             stop_reason: StopReason::Error,
             error_message: message.into(),
             usage: None,
+            error_kind: None,
+        }
+    }
+
+    /// Create a throttle/rate-limit error event.
+    ///
+    /// Sets [`StreamErrorKind::Throttled`] so the agent loop can classify
+    /// the error structurally.
+    pub fn error_throttled(message: impl Into<String>) -> Self {
+        Self::Error {
+            stop_reason: StopReason::Error,
+            error_message: message.into(),
+            usage: None,
+            error_kind: Some(StreamErrorKind::Throttled),
+        }
+    }
+
+    /// Create a context-window overflow error event.
+    ///
+    /// Sets [`StreamErrorKind::ContextWindowExceeded`] so the agent loop
+    /// can trigger context compaction.
+    pub fn error_context_overflow(message: impl Into<String>) -> Self {
+        Self::Error {
+            stop_reason: StopReason::Error,
+            error_message: message.into(),
+            usage: None,
+            error_kind: Some(StreamErrorKind::ContextWindowExceeded),
+        }
+    }
+
+    /// Create an authentication error event.
+    ///
+    /// Sets [`StreamErrorKind::Auth`] so the agent loop can treat this as
+    /// a non-retryable failure.
+    pub fn error_auth(message: impl Into<String>) -> Self {
+        Self::Error {
+            stop_reason: StopReason::Error,
+            error_message: message.into(),
+            usage: None,
+            error_kind: Some(StreamErrorKind::Auth),
+        }
+    }
+
+    /// Create a network/server error event.
+    ///
+    /// Sets [`StreamErrorKind::Network`] so the agent loop can classify
+    /// the error as retryable.
+    pub fn error_network(message: impl Into<String>) -> Self {
+        Self::Error {
+            stop_reason: StopReason::Error,
+            error_message: message.into(),
+            usage: None,
+            error_kind: Some(StreamErrorKind::Network),
         }
     }
 }
@@ -392,6 +467,7 @@ pub fn accumulate_message(
                 stop_reason: sr,
                 error_message: em,
                 usage: u,
+                error_kind: _,
             } => {
                 stop_reason = Some(sr);
                 error_message = Some(em);
@@ -405,9 +481,7 @@ pub fn accumulate_message(
     let content = content.ok_or("no Start event found")?;
     let stop_reason = stop_reason.ok_or("no terminal event (Done or Error) found")?;
 
-    let timestamp = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs());
+    let timestamp = crate::util::now_timestamp();
 
     Ok(AssistantMessage {
         content,
@@ -426,8 +500,74 @@ pub fn accumulate_message(
 const _: () = {
     const fn assert_send_sync<T: Send + Sync>() {}
 
+    assert_send_sync::<StreamErrorKind>();
     assert_send_sync::<StreamTransport>();
     assert_send_sync::<StreamOptions>();
     assert_send_sync::<AssistantMessageEvent>();
     assert_send_sync::<AssistantMessageDelta>();
 };
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn error_constructor_sets_kind_none() {
+        let event = AssistantMessageEvent::error("boom");
+        match event {
+            AssistantMessageEvent::Error { error_kind, .. } => {
+                assert_eq!(error_kind, None);
+            }
+            other => panic!("expected Error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn error_throttled_constructor_sets_kind() {
+        let event = AssistantMessageEvent::error_throttled("rate limited");
+        match event {
+            AssistantMessageEvent::Error {
+                error_kind,
+                error_message,
+                ..
+            } => {
+                assert_eq!(error_kind, Some(StreamErrorKind::Throttled));
+                assert_eq!(error_message, "rate limited");
+            }
+            other => panic!("expected Error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn error_context_overflow_constructor_sets_kind() {
+        let event = AssistantMessageEvent::error_context_overflow("too long");
+        match event {
+            AssistantMessageEvent::Error { error_kind, .. } => {
+                assert_eq!(error_kind, Some(StreamErrorKind::ContextWindowExceeded));
+            }
+            other => panic!("expected Error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn error_auth_constructor_sets_kind() {
+        let event = AssistantMessageEvent::error_auth("bad key");
+        match event {
+            AssistantMessageEvent::Error { error_kind, .. } => {
+                assert_eq!(error_kind, Some(StreamErrorKind::Auth));
+            }
+            other => panic!("expected Error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn error_network_constructor_sets_kind() {
+        let event = AssistantMessageEvent::error_network("timeout");
+        match event {
+            AssistantMessageEvent::Error { error_kind, .. } => {
+                assert_eq!(error_kind, Some(StreamErrorKind::Network));
+            }
+            other => panic!("expected Error, got {other:?}"),
+        }
+    }
+}

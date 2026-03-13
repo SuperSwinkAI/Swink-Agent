@@ -127,7 +127,10 @@ fn display_all_variants_non_empty() {
 
     for v in &variants {
         let display = v.to_string();
-        assert!(!display.is_empty(), "variant {v:?} has empty display string");
+        assert!(
+            !display.is_empty(),
+            "variant {v:?} has empty display string"
+        );
     }
 }
 

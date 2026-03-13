@@ -5163,13 +5163,11 @@ name = "swink-agent"
 version = "0.1.0"
 dependencies = [
  "dotenvy",
- "eventsource-stream",
  "futures",
  "jsonschema",
  "pretty_assertions",
  "rand 0.8.5",
  "regex",
- "reqwest 0.12.28",
  "schemars 1.2.1",
  "serde",
  "serde_json",
@@ -5191,6 +5189,7 @@ version = "0.1.0"
 dependencies = [
  "bytes",
  "dotenvy",
+ "eventsource-stream",
  "futures",
  "pretty_assertions",
  "reqwest 0.12.28",
@@ -5202,6 +5201,24 @@ dependencies = [
  "tracing",
  "uuid 1.22.0",
  "wiremock",
+]
+
+[[package]]
+name = "swink-agent-eval"
+version = "0.1.0"
+dependencies = [
+ "futures",
+ "pretty_assertions",
+ "regex",
+ "serde",
+ "serde_json",
+ "swink-agent",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "uuid 1.22.0",
 ]
 
 [[package]]

@@ -94,7 +94,7 @@ mod tests {
     fn source_chaining() {
         use std::error::Error as _;
 
-        let inner = std::io::Error::new(std::io::ErrorKind::Other, "inner");
+        let inner = std::io::Error::other("inner");
         let err = LocalModelError::download(inner);
         assert!(err.source().is_some());
 

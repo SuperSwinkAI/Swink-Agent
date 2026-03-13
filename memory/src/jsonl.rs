@@ -75,6 +75,7 @@ impl SessionStore for JsonlSessionStore {
             created_at,
             updated_at: unix_now(),
             message_count: llm_messages.len(),
+            custom: serde_json::Value::Null,
         };
 
         let file = std::fs::File::create(&path)?;

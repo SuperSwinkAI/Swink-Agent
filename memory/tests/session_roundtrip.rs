@@ -38,9 +38,7 @@ fn save_empty_session() {
     let store = JsonlSessionStore::new(tmp.path().to_path_buf()).unwrap();
 
     let messages: Vec<AgentMessage> = Vec::new();
-    store
-        .save("empty", "model", "prompt", &messages)
-        .unwrap();
+    store.save("empty", "model", "prompt", &messages).unwrap();
 
     let (meta, loaded) = store.load("empty").unwrap();
     assert_eq!(meta.message_count, 0);
@@ -65,6 +63,7 @@ fn list_sessions_sorted_by_updated_at() {
         created_at: 9_999_999_999,
         updated_at: 9_999_999_999,
         message_count: 0,
+        custom: serde_json::Value::Null,
     };
     let path2 = tmp.path().join("session_new.jsonl");
     let content = serde_json::to_string(&meta2).unwrap() + "\n";
@@ -103,7 +102,9 @@ fn save_preserves_created_at_on_overwrite() {
     let created_at = meta1.created_at;
 
     // Save again — created_at should be preserved.
-    store.save("rewrite", "model-v2", "new prompt", &messages).unwrap();
+    store
+        .save("rewrite", "model-v2", "new prompt", &messages)
+        .unwrap();
 
     let (meta2, _) = store.load("rewrite").unwrap();
     assert_eq!(meta2.created_at, created_at);

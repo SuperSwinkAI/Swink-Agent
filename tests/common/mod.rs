@@ -2,8 +2,8 @@
 
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::Duration;
 
 use futures::Stream;
@@ -47,6 +47,7 @@ impl StreamFn for MockStreamFn {
                     stop_reason: StopReason::Error,
                     error_message: "no more scripted responses".to_string(),
                     usage: None,
+                    error_kind: None,
                 }]
             } else {
                 responses.remove(0)

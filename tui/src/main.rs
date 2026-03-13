@@ -3,8 +3,8 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use swink_agent::{Agent, AgentOptions, ModelSpec, ProxyStreamFn, StreamFn};
-use swink_agent_adapters::{AnthropicStreamFn, OllamaStreamFn, OpenAiStreamFn};
+use swink_agent::{Agent, AgentOptions, ModelSpec, StreamFn};
+use swink_agent_adapters::{AnthropicStreamFn, OllamaStreamFn, OpenAiStreamFn, ProxyStreamFn};
 
 use swink_agent_tui::{
     ApprovalSender, TuiConfig, credentials, launch, resolve_system_prompt, restore_terminal,
@@ -108,7 +108,8 @@ fn create_agent(system_prompt: String, approval_tx: &ApprovalSender) -> Agent {
             std::env::var("LLM_MODEL").unwrap_or_else(|_| "claude-sonnet-4-20250514".to_string());
         let proxy: Arc<dyn StreamFn> = Arc::new(ProxyStreamFn::new(&base_url, &api_key));
         let model = ModelSpec::new("proxy", &model_id);
-        return build_agent(system_prompt, model, proxy, approval_tx);
+        let extra = build_extra_models(&model_id);
+        return build_agent(system_prompt, model, proxy, extra, approval_tx);
     }
 
     // Check for OpenAI (second priority)
@@ -122,7 +123,9 @@ fn create_agent(system_prompt: String, approval_tx: &ApprovalSender) -> Agent {
         let model_id = std::env::var("OPENAI_MODEL").unwrap_or_else(|_| "gpt-4o".to_string());
         let openai: Arc<dyn StreamFn> = Arc::new(OpenAiStreamFn::new(&base_url, &api_key));
         let model = ModelSpec::new("openai", &model_id);
-        return build_agent(system_prompt, model, openai, approval_tx);
+        let mut extra = openai_extra_models(&model_id, &openai);
+        append_local_model(&mut extra);
+        return build_agent(system_prompt, model, openai, extra, approval_tx);
     }
 
     // Check for Anthropic (third priority)
@@ -137,10 +140,11 @@ fn create_agent(system_prompt: String, approval_tx: &ApprovalSender) -> Agent {
             .unwrap_or_else(|_| "https://api.anthropic.com".to_string());
         let model_id = std::env::var("ANTHROPIC_MODEL")
             .unwrap_or_else(|_| "claude-sonnet-4-20250514".to_string());
-        let anthropic: Arc<dyn StreamFn> =
-            Arc::new(AnthropicStreamFn::new(&base_url, &api_key));
+        let anthropic: Arc<dyn StreamFn> = Arc::new(AnthropicStreamFn::new(&base_url, &api_key));
         let model = ModelSpec::new("anthropic", &model_id);
-        return build_agent(system_prompt, model, anthropic, approval_tx);
+        let mut extra = anthropic_extra_models(&model_id, &anthropic);
+        append_local_model(&mut extra);
+        return build_agent(system_prompt, model, anthropic, extra, approval_tx);
     }
 
     // Local model (fourth priority — before Ollama fallback)
@@ -151,8 +155,8 @@ fn create_agent(system_prompt: String, approval_tx: &ApprovalSender) -> Agent {
         let local: Arc<dyn StreamFn> = Arc::new(swink_agent_local_llm::LocalStreamFn::new(
             Arc::new(local_model),
         ));
-        let model = ModelSpec::new("local", "SmolLM3-3B-Q4_K_M");
-        return build_agent(system_prompt, model, local, approval_tx);
+        let model = ModelSpec::new("local", "SmolLM2-135M-Instruct-Q4_K_M");
+        return build_agent(system_prompt, model, local, Vec::new(), approval_tx);
     }
 
     // Default: Ollama (lowest priority — only when `local` feature is disabled)
@@ -163,7 +167,9 @@ fn create_agent(system_prompt: String, approval_tx: &ApprovalSender) -> Agent {
         let model_id = std::env::var("OLLAMA_MODEL").unwrap_or_else(|_| "llama3.2".to_string());
         let ollama: Arc<dyn StreamFn> = Arc::new(OllamaStreamFn::new(&host));
         let model = ModelSpec::new("ollama", &model_id);
-        build_agent(system_prompt, model, ollama, approval_tx)
+        let mut extra = ollama_extra_models(&model_id, &ollama);
+        append_local_model(&mut extra);
+        build_agent(system_prompt, model, ollama, extra, approval_tx)
     }
 }
 
@@ -171,11 +177,83 @@ fn build_agent(
     system_prompt: String,
     model: ModelSpec,
     stream_fn: Arc<dyn StreamFn>,
+    extra_models: Vec<(ModelSpec, Arc<dyn StreamFn>)>,
     approval_tx: &ApprovalSender,
 ) -> Agent {
     Agent::new(
-        AgentOptions::new(system_prompt, model, stream_fn, swink_agent::default_convert)
+        AgentOptions::new(
+            system_prompt,
+            model,
+            stream_fn,
+            swink_agent::default_convert,
+        )
+        .with_available_models(extra_models)
         .with_approve_tool(tui_approval_callback(approval_tx)),
-
     )
+}
+
+/// Build extra Anthropic models for cycling, excluding the primary model.
+fn anthropic_extra_models(
+    primary_id: &str,
+    stream_fn: &Arc<dyn StreamFn>,
+) -> Vec<(ModelSpec, Arc<dyn StreamFn>)> {
+    let candidates = [
+        "claude-sonnet-4-20250514",
+        "claude-opus-4-20250514",
+        "claude-haiku-3-5-20241022",
+    ];
+    candidates
+        .into_iter()
+        .filter(|id| *id != primary_id)
+        .map(|id| (ModelSpec::new("anthropic", id), Arc::clone(stream_fn)))
+        .collect()
+}
+
+#[allow(clippy::doc_markdown)]
+/// Build extra OpenAI models for cycling, excluding the primary model.
+fn openai_extra_models(
+    primary_id: &str,
+    stream_fn: &Arc<dyn StreamFn>,
+) -> Vec<(ModelSpec, Arc<dyn StreamFn>)> {
+    let candidates = ["gpt-4o", "gpt-4o-mini", "o3-mini"];
+    candidates
+        .into_iter()
+        .filter(|id| *id != primary_id)
+        .map(|id| (ModelSpec::new("openai", id), Arc::clone(stream_fn)))
+        .collect()
+}
+
+/// Build extra Ollama models for cycling, excluding the primary model.
+fn ollama_extra_models(
+    primary_id: &str,
+    stream_fn: &Arc<dyn StreamFn>,
+) -> Vec<(ModelSpec, Arc<dyn StreamFn>)> {
+    let candidates = ["llama3.2"];
+    candidates
+        .into_iter()
+        .filter(|id| *id != primary_id)
+        .map(|id| (ModelSpec::new("ollama", id), Arc::clone(stream_fn)))
+        .collect()
+}
+
+/// Build extra models for proxy mode (no cycling — we don't know the provider).
+fn build_extra_models(_primary_id: &str) -> Vec<(ModelSpec, Arc<dyn StreamFn>)> {
+    Vec::new()
+}
+
+/// Append local model to extra models list when the `local` feature is enabled.
+#[allow(unused_variables)]
+fn append_local_model(extra: &mut Vec<(ModelSpec, Arc<dyn StreamFn>)>) {
+    #[cfg(feature = "local")]
+    {
+        let config = swink_agent_local_llm::ModelConfig::default();
+        let local_model = swink_agent_local_llm::LocalModel::new(config);
+        let local_sfn: Arc<dyn StreamFn> = Arc::new(swink_agent_local_llm::LocalStreamFn::new(
+            Arc::new(local_model),
+        ));
+        extra.push((
+            ModelSpec::new("local", "SmolLM2-135M-Instruct-Q4_K_M"),
+            local_sfn,
+        ));
+    }
 }

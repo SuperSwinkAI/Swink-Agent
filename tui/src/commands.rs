@@ -12,8 +12,6 @@ pub enum CommandResult {
     Quit,
     /// Command requests clearing conversation.
     Clear,
-    /// Command requests model change.
-    SetModel(String),
     /// Command requests thinking level change.
     SetThinking(String),
     /// Command requests system prompt change.
@@ -133,13 +131,6 @@ fn execute_slash_command(cmd: &str) -> CommandResult {
 
     match name {
         "quit" | "q" => CommandResult::Quit,
-        "model" => {
-            if args.is_empty() {
-                CommandResult::Feedback("Usage: /model <model-id>".to_string())
-            } else {
-                CommandResult::SetModel(args.to_string())
-            }
-        }
         "thinking" => {
             if args.is_empty() {
                 CommandResult::Feedback("Usage: /thinking <off|low|medium|high>".to_string())
@@ -184,10 +175,7 @@ mod tests {
 
     #[test]
     fn whitespace_only_is_not_a_command() {
-        assert!(matches!(
-            execute_command("   "),
-            CommandResult::NotACommand
-        ));
+        assert!(matches!(execute_command("   "), CommandResult::NotACommand));
     }
 
     // --- Hash commands ---
@@ -353,18 +341,10 @@ mod tests {
     }
 
     #[test]
-    fn slash_model_with_arg() {
+    fn slash_model_is_unknown_command() {
         match execute_command("/model gpt-4o") {
-            CommandResult::SetModel(m) => assert_eq!(m, "gpt-4o"),
-            other => panic!("expected SetModel, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn slash_model_without_arg_returns_usage() {
-        match execute_command("/model") {
-            CommandResult::Feedback(msg) => assert!(msg.contains("Usage")),
-            other => panic!("expected Feedback, got {other:?}"),
+            CommandResult::Feedback(msg) => assert!(msg.contains("Unknown command")),
+            other => panic!("expected Feedback (unknown command), got {other:?}"),
         }
     }
 

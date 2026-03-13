@@ -246,7 +246,7 @@ async fn anthropic_usage_tracked() {
     let events = collect_events(&sf).await;
 
     let usage = events.iter().find_map(|e| match e {
-        AssistantMessageEvent::Done { usage, .. } => Some(*usage),
+        AssistantMessageEvent::Done { usage, .. } => Some(usage.clone()),
         _ => None,
     });
     let usage = usage.expect("missing Done event");
@@ -290,7 +290,7 @@ async fn anthropic_cache_tokens() {
     let events = collect_events(&sf).await;
 
     let usage = events.iter().find_map(|e| match e {
-        AssistantMessageEvent::Done { usage, .. } => Some(*usage),
+        AssistantMessageEvent::Done { usage, .. } => Some(usage.clone()),
         _ => None,
     });
     let usage = usage.expect("missing Done event");
@@ -723,7 +723,11 @@ async fn anthropic_multiple_text_blocks() {
             _ => None,
         })
         .collect();
-    assert_eq!(text_starts, vec![0, 1], "expected two TextStart at indices 0 and 1");
+    assert_eq!(
+        text_starts,
+        vec![0, 1],
+        "expected two TextStart at indices 0 and 1"
+    );
 
     let text_ends: Vec<usize> = events
         .iter()
@@ -732,7 +736,11 @@ async fn anthropic_multiple_text_blocks() {
             _ => None,
         })
         .collect();
-    assert_eq!(text_ends, vec![0, 1], "expected two TextEnd at indices 0 and 1");
+    assert_eq!(
+        text_ends,
+        vec![0, 1],
+        "expected two TextEnd at indices 0 and 1"
+    );
 
     // Verify ordering: first block ends before second block starts
     let first_end = types.iter().position(|&t| t == "TextEnd").unwrap();
@@ -804,7 +812,11 @@ async fn anthropic_text_then_tool_call() {
         AssistantMessageEvent::TextStart { content_index } => Some(*content_index),
         _ => None,
     });
-    assert_eq!(text_start, Some(0), "text block should be at content_index 0");
+    assert_eq!(
+        text_start,
+        Some(0),
+        "text block should be at content_index 0"
+    );
 
     let tool_start = events.iter().find_map(|e| match e {
         AssistantMessageEvent::ToolCallStart {
@@ -884,9 +896,7 @@ async fn anthropic_http_500_server_error() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/v1/messages"))
-        .respond_with(
-            ResponseTemplate::new(500).set_body_string("Internal Server Error"),
-        )
+        .respond_with(ResponseTemplate::new(500).set_body_string("Internal Server Error"))
         .mount(&server)
         .await;
 
@@ -919,7 +929,10 @@ async fn anthropic_empty_response_body() {
     // An empty SSE body means the stream ends immediately without message_stop.
     // The adapter should emit Start then an error about unexpected stream end.
     let types: Vec<&str> = events.iter().map(|e| event_name(e)).collect();
-    assert!(types.contains(&"Start"), "should still emit Start: {types:?}");
+    assert!(
+        types.contains(&"Start"),
+        "should still emit Start: {types:?}"
+    );
 
     let err = find_error_message(&events).expect("expected error event");
     assert!(

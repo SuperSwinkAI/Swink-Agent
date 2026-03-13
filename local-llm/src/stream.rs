@@ -5,7 +5,7 @@
 //! mistral.rs inference engine. Follows the same stream state machine
 //! pattern as the Ollama adapter.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::pin::Pin;
 use std::sync::Arc;
 
@@ -81,6 +81,19 @@ fn local_stream<'a>(
             .left_stream();
         }
 
+        // Check for early cancellation before inference.
+        if cancellation_token.is_cancelled() {
+            return stream::iter(vec![
+                AssistantMessageEvent::Start,
+                AssistantMessageEvent::Done {
+                    stop_reason: StopReason::Stop,
+                    usage: Usage::default(),
+                    cost: Cost::default(),
+                },
+            ])
+            .left_stream();
+        }
+
         // Step 2: Convert context to mistral.rs format.
         let messages = crate::convert::convert_messages(context);
 
@@ -104,8 +117,10 @@ fn local_stream<'a>(
         };
 
         let ModelState::Ready { runner } = &*state_guard else {
-            return stream::iter(vec![AssistantMessageEvent::error("model in unexpected state")])
-                .left_stream();
+            return stream::iter(vec![AssistantMessageEvent::error(
+                "model in unexpected state",
+            )])
+            .left_stream();
         };
 
         // Use non-streaming request and convert to events.
@@ -231,6 +246,7 @@ fn response_to_events(
         cache_read: 0,
         cache_write: 0,
         total: u64::try_from(response.usage.total_tokens).unwrap_or(0),
+        extra: HashMap::new(),
     };
 
     events.push(AssistantMessageEvent::Done {
@@ -243,6 +259,7 @@ fn response_to_events(
             cache_read: 0.0,
             cache_write: 0.0,
             total: 0.0,
+            extra: HashMap::new(),
         },
     });
 
@@ -260,8 +277,9 @@ fn extract_thinking(content: &str) -> (Option<String>, String) {
     if let Some(start_idx) = content.find(think_start)
         && let Some(end_idx) = content.find(think_end)
     {
-        let thinking =
-            content[start_idx + think_start.len()..end_idx].trim().to_string();
+        let thinking = content[start_idx + think_start.len()..end_idx]
+            .trim()
+            .to_string();
         let before = &content[..start_idx];
         let after = &content[end_idx + think_end.len()..];
         let text = format!("{before}{after}").trim().to_string();
@@ -277,7 +295,6 @@ fn extract_thinking(content: &str) -> (Option<String>, String) {
 
     (None, content.to_string())
 }
-
 
 // ─── Compile-time assertions ────────────────────────────────────────────────
 
@@ -301,10 +318,7 @@ mod tests {
     fn extract_thinking_with_tags() {
         let input = "<think>I need to reason about this.</think>The answer is 42.";
         let (thinking, text) = extract_thinking(input);
-        assert_eq!(
-            thinking.as_deref(),
-            Some("I need to reason about this.")
-        );
+        assert_eq!(thinking.as_deref(), Some("I need to reason about this."));
         assert_eq!(text, "The answer is 42.");
     }
 

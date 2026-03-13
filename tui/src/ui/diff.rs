@@ -109,9 +109,7 @@ pub fn render_diff_lines(diff: &DiffData, max_width: u16) -> Vec<Line<'static>> 
             lcs_idx += 1;
         } else {
             // Removed lines
-            while old_idx < old_lines.len()
-                && (lcs_idx >= lcs.len() || old_idx < lcs[lcs_idx].0)
-            {
+            while old_idx < old_lines.len() && (lcs_idx >= lcs.len() || old_idx < lcs[lcs_idx].0) {
                 let display = truncate_line(old_lines[old_idx], width.saturating_sub(4));
                 lines.push(Line::from(vec![Span::styled(
                     format!("  - {display}"),
@@ -120,9 +118,7 @@ pub fn render_diff_lines(diff: &DiffData, max_width: u16) -> Vec<Line<'static>> 
                 old_idx += 1;
             }
             // Added lines
-            while new_idx < new_lines.len()
-                && (lcs_idx >= lcs.len() || new_idx < lcs[lcs_idx].1)
-            {
+            while new_idx < new_lines.len() && (lcs_idx >= lcs.len() || new_idx < lcs[lcs_idx].1) {
                 let display = truncate_line(new_lines[new_idx], width.saturating_sub(4));
                 lines.push(Line::from(vec![Span::styled(
                     format!("  + {display}"),

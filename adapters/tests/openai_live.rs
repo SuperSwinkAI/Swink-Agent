@@ -13,9 +13,9 @@ use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 
 use swink_agent::{
-    AgentContext, AgentMessage, AgentTool, AgentToolResult, AssistantMessage, AssistantMessageEvent,
-    ContentBlock, Cost, LlmMessage, ModelSpec, StopReason, StreamFn, StreamOptions, Usage,
-    UserMessage,
+    AgentContext, AgentMessage, AgentTool, AgentToolResult, AssistantMessage,
+    AssistantMessageEvent, ContentBlock, Cost, LlmMessage, ModelSpec, StopReason, StreamFn,
+    StreamOptions, Usage, UserMessage,
 };
 use swink_agent_adapters::OpenAiStreamFn;
 
@@ -27,14 +27,12 @@ const TIMEOUT: Duration = Duration::from_secs(30);
 
 fn openai_key() -> String {
     dotenvy::dotenv().ok();
-    std::env::var("OPENAI_API_KEY")
-        .expect("OPENAI_API_KEY must be set to run live tests")
+    std::env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY must be set to run live tests")
 }
 
 fn cheap_model() -> ModelSpec {
     dotenvy::dotenv().ok();
-    let model_id =
-        std::env::var("OPENAI_MODEL").unwrap_or_else(|_| "gpt-4.1-nano".to_string());
+    let model_id = std::env::var("OPENAI_MODEL").unwrap_or_else(|_| "gpt-4.1-nano".to_string());
     ModelSpec::new("openai", &model_id)
 }
 
@@ -171,7 +169,7 @@ async fn live_usage_and_cost() {
     let usage = events
         .iter()
         .find_map(|e| match e {
-            AssistantMessageEvent::Done { usage, .. } => Some(*usage),
+            AssistantMessageEvent::Done { usage, .. } => Some(usage.clone()),
             _ => None,
         })
         .expect("missing Done event");
@@ -280,7 +278,10 @@ async fn live_multi_turn_context() {
         .expect("timed out on second turn");
 
     let types: Vec<&str> = events.iter().map(|e| event_name(e)).collect();
-    assert!(types.contains(&"Done"), "missing Done on second turn: {types:?}");
+    assert!(
+        types.contains(&"Done"),
+        "missing Done on second turn: {types:?}"
+    );
 
     let reply: String = events
         .iter()

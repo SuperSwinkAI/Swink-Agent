@@ -3,7 +3,7 @@
 //! Implements [`StreamFn`] for the Ollama `/api/chat` endpoint.
 //! Ollama streams newline-delimited JSON (NDJSON), not SSE.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::pin::Pin;
 
 use futures::stream::{self, Stream, StreamExt as _};
@@ -20,7 +20,9 @@ use swink_agent::types::{
     ToolResultMessage, Usage, UserMessage,
 };
 
-use crate::convert::{self, MessageConverter, error_event};
+use crate::convert::{
+    self, MessageConverter, error_event, error_event_network, extract_tool_schemas,
+};
 
 // ─── Request types ──────────────────────────────────────────────────────────
 
@@ -194,8 +196,10 @@ fn ollama_stream<'a>(
             let status = response.status().as_u16();
             let body = response.text().await.unwrap_or_default();
             warn!(status, "Ollama HTTP error");
-            return stream::iter(vec![error_event(&format!("Ollama HTTP {status}: {body}"))])
-                .left_stream();
+            return stream::iter(vec![error_event_network(&format!(
+                "Ollama HTTP {status}: {body}"
+            ))])
+            .left_stream();
         }
 
         parse_ndjson_stream(response, cancellation_token).right_stream()
@@ -221,15 +225,14 @@ async fn send_request(
     let messages =
         convert::convert_messages::<OllamaConverter>(&context.messages, &context.system_prompt);
 
-    let tools: Vec<OllamaTool> = context
-        .tools
-        .iter()
-        .map(|t| OllamaTool {
+    let tools: Vec<OllamaTool> = extract_tool_schemas(&context.tools)
+        .into_iter()
+        .map(|s| OllamaTool {
             r#type: "function".to_string(),
             function: OllamaToolDef {
-                name: t.name().to_string(),
-                description: t.description().to_string(),
-                parameters: t.parameters_schema().clone(),
+                name: s.name,
+                description: s.description,
+                parameters: s.parameters,
             },
         })
         .collect();
@@ -252,7 +255,7 @@ async fn send_request(
         .json(&body)
         .send()
         .await
-        .map_err(|e| error_event(&format!("Ollama connection error: {e}")))
+        .map_err(|e| error_event_network(&format!("Ollama connection error: {e}")))
 }
 
 // ─── MessageConverter impl ──────────────────────────────────────────────────
@@ -359,6 +362,7 @@ fn parse_ndjson_stream(
                         stop_reason: StopReason::Aborted,
                         error_message: "operation cancelled".to_string(),
                         usage: None,
+                        error_kind: None,
                     });
                     done = true;
                     Some((events, (lines, token, state, done, false)))
@@ -478,6 +482,7 @@ fn parse_ndjson_stream(
                                         cache_read: 0,
                                         cache_write: 0,
                                         total: input_tokens + output_tokens,
+                                        extra: HashMap::new(),
                                     },
                                     // Ollama is free / local — no cost
                                     cost: Cost {
@@ -486,6 +491,7 @@ fn parse_ndjson_stream(
                                         cache_read: 0.0,
                                         cache_write: 0.0,
                                         total: 0.0,
+                                        extra: HashMap::new(),
                                     },
                                 });
                             }

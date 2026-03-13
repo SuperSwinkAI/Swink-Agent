@@ -68,21 +68,13 @@ impl StreamFn for DummyStreamFn {
                     cache_read: 0,
                     cache_write: 0,
                     total: 15,
+                    ..Default::default()
                 },
                 cost: Cost::default(),
             },
         ];
 
         Box::pin(futures::stream::iter(events))
-    }
-}
-
-// ─── Helpers ────────────────────────────────────────────────────────────────
-
-fn default_convert(msg: &AgentMessage) -> Option<LlmMessage> {
-    match msg {
-        AgentMessage::Llm(llm) => Some(llm.clone()),
-        AgentMessage::Custom(_) => None,
     }
 }
 
@@ -95,12 +87,7 @@ async fn main() {
 
     // Step 2: Configure and create the agent.
     let model = ModelSpec::new("dummy", "echo-v1");
-    let options = AgentOptions::new(
-        "You are an echo bot.",
-        model,
-        stream_fn,
-        default_convert,
-    );
+    let options = AgentOptions::new_simple("You are an echo bot.", model, stream_fn);
     let mut agent = Agent::new(options);
 
     // Step 3: Send a prompt.

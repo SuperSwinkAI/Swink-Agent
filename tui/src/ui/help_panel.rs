@@ -36,11 +36,7 @@ impl HelpPanel {
     /// Width consumed by the panel (0 when hidden).
     #[must_use]
     pub const fn width(&self) -> u16 {
-        if self.visible {
-            HELP_PANEL_WIDTH
-        } else {
-            0
-        }
+        if self.visible { HELP_PANEL_WIDTH } else { 0 }
     }
 
     /// Render the help panel into the given area.
@@ -64,10 +60,7 @@ pub fn help_lines() -> Vec<Line<'static>> {
     let dim = Style::default().fg(theme::border_color());
     let normal = Style::default();
 
-    let divider = Line::from(Span::styled(
-        " ──────────────────────────────",
-        dim,
-    ));
+    let divider = Line::from(Span::styled(" ──────────────────────────────", dim));
 
     vec![
         Line::from(Span::styled(" Key Bindings", bold)),
@@ -80,49 +73,30 @@ pub fn help_lines() -> Vec<Line<'static>> {
         key_line("Shift+Tab", "Plan mode", normal),
         key_line("Up/Down", "Scroll / History", normal),
         key_line("PgUp/PgDn", "Page scroll", normal),
+        key_line("Mouse wheel", "Chat scroll", normal),
         key_line("F1", "Toggle help", normal),
         key_line("F2", "Collapse tool", normal),
         key_line("F3", "Color mode", normal),
+        key_line("F4", "Cycle model", normal),
         key_line("Shift+\u{2190}/\u{2192}", "Cycle tools", normal),
         Line::from(""),
         Line::from(Span::styled(" # Commands", bold)),
         divider.clone(),
-        Line::from(Span::styled(
-            " #clear #info #copy #copy all",
-            normal,
-        )),
-        Line::from(Span::styled(
-            " #copy code #sessions #save",
-            normal,
-        )),
-        Line::from(Span::styled(
-            " #load <id> #keys #key <p> <k>",
-            normal,
-        )),
-        Line::from(Span::styled(
-            " #approve [on|off|smart]",
-            normal,
-        )),
+        Line::from(Span::styled(" #clear #info #copy #copy all", normal)),
+        Line::from(Span::styled(" #copy code #sessions #save", normal)),
+        Line::from(Span::styled(" #load <id> #keys #key <p> <k>", normal)),
+        Line::from(Span::styled(" #approve [on|off|smart]", normal)),
         Line::from(""),
         Line::from(Span::styled(" / Commands", bold)),
         divider,
-        Line::from(Span::styled(
-            " /quit /model /thinking",
-            normal,
-        )),
-        Line::from(Span::styled(
-            " /system /reset /editor /plan",
-            normal,
-        )),
+        Line::from(Span::styled(" /quit /thinking /system", normal)),
+        Line::from(Span::styled(" /reset /editor /plan", normal)),
     ]
 }
 
 /// Format a single key-binding line with aligned columns.
 fn key_line<'a>(key: &'a str, desc: &'a str, style: Style) -> Line<'a> {
-    Line::from(Span::styled(
-        format!(" {key:<14}{desc}"),
-        style,
-    ))
+    Line::from(Span::styled(format!(" {key:<14}{desc}"), style))
 }
 
 #[cfg(test)]

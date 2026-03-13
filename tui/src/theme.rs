@@ -247,7 +247,13 @@ mod tests {
     #[test]
     fn role_colors_are_distinct() {
         reset();
-        let colors = [user_color(), assistant_color(), tool_color(), error_color(), thinking_color()];
+        let colors = [
+            user_color(),
+            assistant_color(),
+            tool_color(),
+            error_color(),
+            thinking_color(),
+        ];
         for (i, a) in colors.iter().enumerate() {
             for (j, b) in colors.iter().enumerate() {
                 if i != j {
@@ -260,7 +266,12 @@ mod tests {
     #[test]
     fn status_colors_are_distinct() {
         reset();
-        let colors = [status_idle(), status_running(), status_error(), status_aborted()];
+        let colors = [
+            status_idle(),
+            status_running(),
+            status_error(),
+            status_aborted(),
+        ];
         for (i, a) in colors.iter().enumerate() {
             for (j, b) in colors.iter().enumerate() {
                 if i != j {
@@ -317,7 +328,11 @@ mod tests {
 
     #[test]
     fn bar_colors_have_contrast_in_all_modes() {
-        for mode in [ColorMode::Custom, ColorMode::MonoWhite, ColorMode::MonoBlack] {
+        for mode in [
+            ColorMode::Custom,
+            ColorMode::MonoWhite,
+            ColorMode::MonoBlack,
+        ] {
             set_color_mode(mode);
             assert_ne!(bar_fg(), bar_bg(), "bar_fg == bar_bg in {mode:?}");
             assert_ne!(mono_fg(), mono_bg(), "mono_fg == mono_bg in {mode:?}");

@@ -50,6 +50,13 @@ pub enum AgentError {
     /// The operation was cancelled via a `CancellationToken`.
     #[error("operation aborted via cancellation token")]
     Aborted,
+
+    /// An error from a plugin or extension.
+    #[error("plugin error ({name})")]
+    Plugin {
+        name: String,
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
 }
 
 impl AgentError {
@@ -88,6 +95,17 @@ impl AgentError {
             last_error: last_error.into(),
         }
     }
+
+    /// Convenience constructor for [`AgentError::Plugin`].
+    pub fn plugin(
+        name: impl Into<String>,
+        source: impl std::error::Error + Send + Sync + 'static,
+    ) -> Self {
+        Self::Plugin {
+            name: name.into(),
+            source: Box::new(source),
+        }
+    }
 }
 
 impl From<std::io::Error> for AgentError {
@@ -95,5 +113,23 @@ impl From<std::io::Error> for AgentError {
         Self::NetworkError {
             source: Box::new(err),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn agent_error_plugin_display() {
+        let err = AgentError::plugin("my-plugin", std::io::Error::other("boom"));
+        let msg = format!("{err}");
+        assert_eq!(msg, "plugin error (my-plugin)");
+    }
+
+    #[test]
+    fn plugin_error_not_retryable() {
+        let err = AgentError::plugin("test", std::io::Error::other("fail"));
+        assert!(!err.is_retryable());
     }
 }

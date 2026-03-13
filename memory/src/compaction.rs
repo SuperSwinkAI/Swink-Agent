@@ -71,22 +71,22 @@ impl SummarizingCompactor {
 
             // If messages were dropped and we have a stored summary, inject it.
             if len_after < len_before {
-                let guard = summary.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                let guard = summary
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 if let Some(ref text) = *guard {
-                    let summary_msg = AgentMessage::Llm(LlmMessage::Assistant(
-                        AssistantMessage {
-                            content: vec![ContentBlock::Text {
-                                text: format!("[Context summary of earlier conversation]\n{text}"),
-                            }],
-                            provider: String::new(),
-                            model_id: String::new(),
-                            usage: Usage::default(),
-                            cost: Cost::default(),
-                            stop_reason: StopReason::Stop,
-                            error_message: None,
-                            timestamp: 0,
-                        },
-                    ));
+                    let summary_msg = AgentMessage::Llm(LlmMessage::Assistant(AssistantMessage {
+                        content: vec![ContentBlock::Text {
+                            text: format!("[Context summary of earlier conversation]\n{text}"),
+                        }],
+                        provider: String::new(),
+                        model_id: String::new(),
+                        usage: Usage::default(),
+                        cost: Cost::default(),
+                        stop_reason: StopReason::Stop,
+                        error_message: None,
+                        timestamp: 0,
+                    }));
 
                     // Insert after anchor messages.
                     let insert_pos = anchor.min(messages.len());
@@ -103,19 +103,28 @@ impl SummarizingCompactor {
     /// this will be generated via an LLM call; for now callers provide the
     /// text directly.
     pub fn set_summary(&self, text: impl Into<String>) {
-        let mut guard = self.summary.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut guard = self
+            .summary
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         *guard = Some(text.into());
     }
 
     /// Clear the stored summary.
     pub fn clear_summary(&self) {
-        let mut guard = self.summary.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut guard = self
+            .summary
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         *guard = None;
     }
 
     /// Returns true if a summary is currently stored.
     pub fn has_summary(&self) -> bool {
-        let guard = self.summary.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let guard = self
+            .summary
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         guard.is_some()
     }
 }

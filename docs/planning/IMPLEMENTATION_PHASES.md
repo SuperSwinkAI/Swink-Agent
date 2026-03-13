@@ -304,19 +304,19 @@ The stateful public API wrapper. Owns conversation history, manages steering/fol
 
 ## Phase 5 — Proxy StreamFn ✅
 
-**Files:** `src/proxy.rs`
+**Files:** `adapters/src/proxy.rs` (moved from `src/proxy.rs`)
 **Depends on:** Phase 1, Phase 2
 **Architecture docs:** [Streaming](../architecture/streaming/README.md) (proxy sections + error handling)
 
-**Note:** This phase is independent of Phases 3 and 4. It can run in parallel with Phase 3 once Phase 2 is complete.
+**Note:** This phase is independent of Phases 3 and 4. It can run in parallel with Phase 3 once Phase 2 is complete. `ProxyStreamFn` was moved from the core crate to the adapters crate to remove `reqwest`/`eventsource-stream` from the core dependency tree.
 
 ### Scope
 
-The built-in `ProxyStreamFn` that forwards LLM calls to an HTTP proxy server over SSE. Implements delta reconstruction, authentication, and error classification.
+The `ProxyStreamFn` that forwards LLM calls to an HTTP proxy server over SSE. Implements delta reconstruction, authentication, and error classification. Lives in the adapters crate alongside other provider implementations.
 
 ### Deliverables
 
-**`src/proxy.rs`**
+**`adapters/src/proxy.rs`**
 - `ProxyStreamFn` struct — holds base URL and bearer token
 - Implements `StreamFn` trait
 - HTTP POST to proxy endpoint with model, context, and options as JSON body
@@ -350,11 +350,11 @@ All tests use a mock HTTP server (e.g., `wiremock` or `axum` test server).
 | 5.9 | Mid-stream disconnect produces `NetworkError` |
 | 5.10 | `CancellationToken` cancellation drops connection and yields `Aborted` |
 
-### Additional Dependencies
+### Additional Dependencies (in adapters crate)
 
 ```toml
-reqwest = { version = "0.12", features = ["stream"] }
 eventsource-stream = "0.2"
+# reqwest was already a dependency of the adapters crate
 ```
 
 ---
@@ -405,7 +405,7 @@ End-to-end integration tests that exercise the full stack: `Agent` → loop → 
 | 2 — Core Traits | `tool.rs`, `stream.rs`, `retry.rs` | Phase 1 | — | Complete |
 | 3 — Agent Loop | `loop_.rs` | Phase 1, 2 | Phase 5 | Complete |
 | 4 — Agent Struct | `agent.rs`, `lib.rs` | Phase 1, 2, 3 | Phase 5 | Complete |
-| 5 — Proxy StreamFn | `proxy.rs` | Phase 1, 2 | Phase 3, 4 | Complete |
+| 5 — Proxy StreamFn | `adapters/src/proxy.rs` | Phase 1, 2 | Phase 3, 4 | Complete |
 | 6 — Integration | `tests/integration/` | All | — | Complete |
 
 **Total: 144 tests passing across all phases.**
@@ -414,4 +414,8 @@ End-to-end integration tests that exercise the full stack: `Agent` → loop → 
 
 ## Memory Crate
 
-Session persistence and memory management are implemented in the `swink-agent-memory` crate (separate from the core phases above). See [`memory/docs/planning/research.md`](../../memory/docs/planning/research.md) for experiment plans and [`memory/docs/architecture/`](../../memory/docs/architecture/README.md) for the multi-layer memory vision.
+Session persistence and memory management are implemented in the `swink-agent-memory` crate (separate from the core phases above). See [`memory/docs/architecture/`](../../memory/docs/architecture/README.md) for architecture details.
+
+## Evaluation Crate
+
+Trajectory tracing, golden path verification, response matching, and cost/latency governance are implemented in the `swink-agent-eval` crate (separate from the core phases above). The eval crate depends only on `swink-agent` core and consumes the `AgentEvent` stream for trajectory capture. See [`docs/architecture/eval/`](../architecture/eval/README.md) for architecture details and [EVAL.md](./EVAL.md) for the evaluation feature roadmap.

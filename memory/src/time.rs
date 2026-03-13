@@ -1,7 +1,5 @@
 //! Time utilities for session management.
 
-use std::time::SystemTime;
-
 /// Convert days since Unix epoch to (year, month, day).
 ///
 /// Uses the civil calendar algorithm from Howard Hinnant.
@@ -20,11 +18,10 @@ pub const fn days_to_ymd(days: u64) -> (u64, u64, u64) {
 }
 
 /// Current Unix timestamp in seconds.
+///
+/// Thin wrapper around [`swink_agent::now_timestamp`] for internal use.
 pub fn unix_now() -> u64 {
-    SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
+    swink_agent::now_timestamp()
 }
 
 #[cfg(test)]

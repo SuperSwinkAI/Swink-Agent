@@ -32,8 +32,7 @@ impl Default for EmbeddingConfig {
         Self {
             repo_id: std::env::var("LOCAL_EMBED_REPO")
                 .unwrap_or_else(|_| "google/gemma-embedding-300m".to_string()),
-            filename: std::env::var("LOCAL_EMBED_FILE")
-                .unwrap_or_else(|_| String::new()),
+            filename: std::env::var("LOCAL_EMBED_FILE").unwrap_or_else(|_| String::new()),
             dimensions: std::env::var("LOCAL_EMBED_DIMS")
                 .ok()
                 .and_then(|v| v.parse().ok())
@@ -107,8 +106,9 @@ impl EmbeddingModel {
 
     /// Builder method: attach a progress callback.
     pub fn with_progress(mut self, cb: ProgressCallbackFn) -> Result<Self, LocalModelError> {
-        let inner = Arc::get_mut(&mut self.inner)
-            .ok_or_else(|| LocalModelError::inference("with_progress called after clone — Arc is shared"))?;
+        let inner = Arc::get_mut(&mut self.inner).ok_or_else(|| {
+            LocalModelError::inference("with_progress called after clone — Arc is shared")
+        })?;
         inner.progress_cb = Some(cb);
         Ok(self)
     }
@@ -176,23 +176,19 @@ impl EmbeddingModel {
         *state = EmbeddingModelState::Loading;
         self.notify_progress(ModelProgress::Loading);
 
-        let runner = mistralrs::EmbeddingModelBuilder::new(
-            self.inner.config.repo_id.clone(),
-        )
-        .build()
-        .await
-        .map_err(|e| {
-            let msg = format!("embedding model loading failed: {e}");
-            error!(%msg);
-            self.notify_progress(ModelProgress::Failed {
-                message: msg.clone(),
-            });
-            *state = EmbeddingModelState::Failed { error: msg.clone() };
-            self.inner.ready_notify.notify_waiters();
-            LocalModelError::Loading {
-                source: msg.into(),
-            }
-        })?;
+        let runner = mistralrs::EmbeddingModelBuilder::new(self.inner.config.repo_id.clone())
+            .build()
+            .await
+            .map_err(|e| {
+                let msg = format!("embedding model loading failed: {e}");
+                error!(%msg);
+                self.notify_progress(ModelProgress::Failed {
+                    message: msg.clone(),
+                });
+                *state = EmbeddingModelState::Failed { error: msg.clone() };
+                self.inner.ready_notify.notify_waiters();
+                LocalModelError::Loading { source: msg.into() }
+            })?;
 
         info!("embedding model ready");
         *state = EmbeddingModelState::Ready { runner };
@@ -298,5 +294,4 @@ mod tests {
         let model = EmbeddingModel::new(EmbeddingConfig::default());
         assert!(!model.is_ready().await);
     }
-
 }

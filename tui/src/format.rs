@@ -191,11 +191,8 @@ mod tests {
     #[test]
     fn context_gauge_boundary_85_percent() {
         let (bar, pct) = format_context_gauge(85_000, 100_000);
-        // 85% → 8.5 blocks → rounds to 9 (note: .round() on 8.5 rounds to 8 in Rust)
-        let filled = ((85.0_f32 / 100.0) * 10.0).round() as usize;
-        let empty = 10 - filled;
-        let expected = format!("[{}{}]", "█".repeat(filled), "░".repeat(empty));
-        assert_eq!(bar, expected);
+        // 85% → 8.5 blocks → rounds to 9
+        assert_eq!(bar, "[█████████░]");
         assert!((pct - 85.0).abs() < 0.01);
     }
 

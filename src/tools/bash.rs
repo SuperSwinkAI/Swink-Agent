@@ -10,9 +10,9 @@ use serde_json::Value;
 use tokio::process::Command;
 use tokio_util::sync::CancellationToken;
 
+use super::MAX_OUTPUT_BYTES;
 use crate::schema::schema_for;
 use crate::tool::{AgentTool, AgentToolResult, validate_schema};
-use super::MAX_OUTPUT_BYTES;
 
 /// Default timeout in milliseconds.
 const DEFAULT_TIMEOUT_MS: u64 = 30_000;
@@ -92,9 +92,7 @@ impl AgentTool for BashTool {
                 return AgentToolResult::error("cancelled");
             }
 
-            let timeout = Duration::from_millis(
-                parsed.timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS),
-            );
+            let timeout = Duration::from_millis(parsed.timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS));
 
             let mut child = match Command::new("sh")
                 .arg("-c")
@@ -145,9 +143,7 @@ impl AgentTool for BashTool {
     }
 }
 
-async fn read_stream<R: tokio::io::AsyncRead + Unpin + Send + 'static>(
-    pipe: Option<R>,
-) -> Vec<u8> {
+async fn read_stream<R: tokio::io::AsyncRead + Unpin + Send + 'static>(pipe: Option<R>) -> Vec<u8> {
     use tokio::io::AsyncReadExt;
     if let Some(mut p) = pipe {
         let mut buf = Vec::new();
@@ -159,8 +155,7 @@ async fn read_stream<R: tokio::io::AsyncRead + Unpin + Send + 'static>(
 }
 
 fn format_output(exit_code: Option<i32>, stdout: &[u8], stderr: &[u8]) -> AgentToolResult {
-    let code_str = exit_code
-        .map_or_else(|| "unknown".to_owned(), |c| c.to_string());
+    let code_str = exit_code.map_or_else(|| "unknown".to_owned(), |c| c.to_string());
 
     let mut stdout_text = String::from_utf8_lossy(stdout).into_owned();
     let mut stderr_text = String::from_utf8_lossy(stderr).into_owned();

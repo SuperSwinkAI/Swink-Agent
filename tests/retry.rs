@@ -1,6 +1,6 @@
-use swink_agent::{DefaultRetryStrategy, AgentError, RetryStrategy};
 use std::io;
 use std::time::Duration;
+use swink_agent::{AgentError, DefaultRetryStrategy, RetryStrategy};
 
 // -- Send + Sync compile-time assertions --------------------------------
 

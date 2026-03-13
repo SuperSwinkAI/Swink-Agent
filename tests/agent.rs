@@ -17,9 +17,9 @@ use serde_json::json;
 use tokio_util::sync::CancellationToken;
 
 use swink_agent::{
-    Agent, AgentEvent, AgentMessage, AgentOptions, AgentTool, AgentError, LlmMessage,
-    ModelSpec, SteeringMode, StopReason, StreamFn, StreamOptions, ToolResultMessage, Usage,
-    UserMessage, AssistantMessageEvent, ContentBlock, Cost, DefaultRetryStrategy,
+    Agent, AgentError, AgentEvent, AgentMessage, AgentOptions, AgentTool, AssistantMessageEvent,
+    ContentBlock, Cost, DefaultRetryStrategy, LlmMessage, ModelSpec, SteeringMode, StopReason,
+    StreamFn, StreamOptions, ToolResultMessage, Usage, UserMessage,
 };
 
 // ─── ContextCapturingStreamFn ────────────────────────────────────────────
@@ -58,6 +58,7 @@ impl StreamFn for ContextCapturingStreamFn {
                     stop_reason: StopReason::Error,
                     error_message: "no more scripted responses".to_string(),
                     usage: None,
+                    error_kind: None,
                 }]
             } else {
                 responses.remove(0)
@@ -927,6 +928,7 @@ async fn test_session_id_forwarding() {
                         stop_reason: StopReason::Error,
                         error_message: "no more responses".to_string(),
                         usage: None,
+                        error_kind: None,
                     }]
                 } else {
                     responses.remove(0)
@@ -1000,6 +1002,7 @@ async fn test_get_api_key_forwarding() {
                         stop_reason: StopReason::Error,
                         error_message: "no more responses".to_string(),
                         usage: None,
+                        error_kind: None,
                     }]
                 } else {
                     responses.remove(0)
@@ -1100,6 +1103,7 @@ async fn test_error_sets_state_error() {
             stop_reason: StopReason::Error,
             error_message: "something went wrong".to_string(),
             usage: None,
+            error_kind: None,
         },
     ]]));
     let mut agent = make_agent(stream_fn);
@@ -1261,14 +1265,23 @@ async fn multiple_agents_independent_state() {
     assert_eq!(result_b.stop_reason, StopReason::Stop);
 
     // Messages should not cross between agents.
-    assert_eq!(agent_a.state().messages.len(), 2, "agent A: user + assistant");
-    assert_eq!(agent_b.state().messages.len(), 2, "agent B: user + assistant");
+    assert_eq!(
+        agent_a.state().messages.len(),
+        2,
+        "agent A: user + assistant"
+    );
+    assert_eq!(
+        agent_b.state().messages.len(),
+        2,
+        "agent B: user + assistant"
+    );
 
     // Mutating one agent does not affect the other.
     agent_a.set_system_prompt("mutated A");
     assert_eq!(agent_a.state().system_prompt, "mutated A");
     assert_eq!(
-        agent_b.state().system_prompt, "You are Agent B",
+        agent_b.state().system_prompt,
+        "You are Agent B",
         "agent B should be unaffected by mutation of agent A"
     );
 }
@@ -1331,4 +1344,110 @@ fn remove_tool_preserves_others() {
 
     let names: Vec<&str> = agent.state().tools.iter().map(|t| t.name()).collect();
     assert_eq!(names, vec!["alpha", "gamma"]);
+}
+
+// ─── available_models / set_model stream_fn swap ────────────────────────
+
+#[test]
+fn available_models_includes_primary_at_index_zero() {
+    let primary_sfn = Arc::new(MockStreamFn::new(vec![]));
+    let extra_sfn = Arc::new(MockStreamFn::new(vec![]));
+
+    let primary = ModelSpec::new("test", "primary-model");
+    let extra = ModelSpec::new("test", "extra-model");
+
+    let agent = Agent::new(
+        AgentOptions::new(
+            "sys",
+            primary.clone(),
+            primary_sfn as Arc<dyn StreamFn>,
+            default_convert,
+        )
+        .with_available_models(vec![(extra.clone(), extra_sfn as Arc<dyn StreamFn>)]),
+    );
+
+    let models = &agent.state().available_models;
+    assert_eq!(models.len(), 2);
+    assert_eq!(models[0], primary, "primary model should be at index 0");
+    assert_eq!(models[1], extra);
+}
+
+#[test]
+fn available_models_empty_when_none_configured() {
+    let sfn = Arc::new(MockStreamFn::new(vec![]));
+    let agent = Agent::new(AgentOptions::new(
+        "sys",
+        default_model(),
+        sfn as Arc<dyn StreamFn>,
+        default_convert,
+    ));
+
+    let models = &agent.state().available_models;
+    assert_eq!(models.len(), 1, "should contain only the primary model");
+    assert_eq!(models[0], default_model());
+}
+
+#[tokio::test]
+async fn set_model_swaps_stream_fn_for_known_model() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    /// A stream function that sets a flag when called.
+    struct FlagStreamFn {
+        called: AtomicBool,
+        responses: std::sync::Mutex<Vec<Vec<AssistantMessageEvent>>>,
+    }
+
+    impl StreamFn for FlagStreamFn {
+        fn stream<'a>(
+            &'a self,
+            _model: &'a ModelSpec,
+            _context: &'a swink_agent::AgentContext,
+            _options: &'a StreamOptions,
+            _cancellation_token: CancellationToken,
+        ) -> Pin<Box<dyn Stream<Item = AssistantMessageEvent> + Send + 'a>> {
+            self.called.store(true, Ordering::SeqCst);
+            let events = {
+                let mut responses = self.responses.lock().unwrap();
+                if responses.is_empty() {
+                    text_only_events("fallback")
+                } else {
+                    responses.remove(0)
+                }
+            };
+            Box::pin(futures::stream::iter(events))
+        }
+    }
+
+    let primary_sfn = Arc::new(MockStreamFn::new(vec![text_only_events("from primary")]));
+    let extra_sfn = Arc::new(FlagStreamFn {
+        called: AtomicBool::new(false),
+        responses: std::sync::Mutex::new(vec![text_only_events("from extra")]),
+    });
+
+    let primary = ModelSpec::new("test", "primary-model");
+    let extra = ModelSpec::new("other", "extra-model");
+
+    let mut agent = Agent::new(
+        AgentOptions::new(
+            "sys",
+            primary,
+            primary_sfn as Arc<dyn StreamFn>,
+            default_convert,
+        )
+        .with_available_models(vec![(
+            extra.clone(),
+            extra_sfn.clone() as Arc<dyn StreamFn>,
+        )]),
+    );
+
+    // Switch to extra model.
+    agent.set_model(extra.clone());
+    assert_eq!(agent.state().model, extra);
+
+    // Prompt — should use the extra stream_fn.
+    let _result = agent.prompt_async(vec![user_msg("hi")]).await.unwrap();
+    assert!(
+        extra_sfn.called.load(Ordering::SeqCst),
+        "extra stream_fn should have been called after set_model"
+    );
 }

@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "adapters", "local-llm", "memory", "tui"]
+members = [".", "adapters", "eval", "local-llm", "memory", "tui"]
 resolver = "2"
 
 [workspace.dependencies]
@@ -32,6 +32,10 @@ readme = "README.md"
 keywords = ["llm", "agent", "ai", "streaming", "tools"]
 categories = ["development-tools", "api-bindings", "asynchronous"]
 
+[features]
+default = ["builtin-tools"]
+builtin-tools = []
+
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
@@ -45,8 +49,6 @@ schemars.workspace = true
 regex = "1"
 uuid.workspace = true
 rand.workspace = true
-reqwest.workspace = true
-eventsource-stream = "0.2"
 tracing.workspace = true
 
 [dev-dependencies]

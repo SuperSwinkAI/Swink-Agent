@@ -17,7 +17,7 @@ use crate::progress::{ModelProgress, ProgressCallbackFn};
 /// Configuration for a local GGUF model.
 #[derive(Debug, Clone)]
 pub struct ModelConfig {
-    /// `HuggingFace` repository ID (e.g. `ggml-org/SmolLM3-3B-GGUF`).
+    /// `HuggingFace` repository ID (e.g. `bartowski/SmolLM2-135M-Instruct-GGUF`).
     pub repo_id: String,
 
     /// GGUF filename within the repository.
@@ -34,9 +34,9 @@ impl Default for ModelConfig {
     fn default() -> Self {
         Self {
             repo_id: std::env::var("LOCAL_MODEL_REPO")
-                .unwrap_or_else(|_| "ggml-org/SmolLM3-3B-GGUF".to_string()),
+                .unwrap_or_else(|_| "bartowski/SmolLM2-135M-Instruct-GGUF".to_string()),
             filename: std::env::var("LOCAL_MODEL_FILE")
-                .unwrap_or_else(|_| "SmolLM3-3B-Q4_K_M.gguf".to_string()),
+                .unwrap_or_else(|_| "SmolLM2-135M-Instruct-Q4_K_M.gguf".to_string()),
             gpu_layers: std::env::var("LOCAL_GPU_LAYERS")
                 .ok()
                 .and_then(|v| v.parse().ok())
@@ -123,8 +123,9 @@ impl LocalModel {
 
     /// Builder method: attach a progress callback.
     pub fn with_progress(mut self, cb: ProgressCallbackFn) -> Result<Self, LocalModelError> {
-        let inner = Arc::get_mut(&mut self.inner)
-            .ok_or_else(|| LocalModelError::inference("with_progress called after clone — Arc is shared"))?;
+        let inner = Arc::get_mut(&mut self.inner).ok_or_else(|| {
+            LocalModelError::inference("with_progress called after clone — Arc is shared")
+        })?;
         inner.progress_cb = Some(cb);
         Ok(self)
     }
@@ -150,6 +151,7 @@ impl LocalModel {
     ///
     /// Concurrent callers serialize on the `RwLock` — only the first caller
     /// triggers the download/load sequence; others wait for completion.
+    #[allow(clippy::too_many_lines)]
     pub async fn ensure_ready(&self) -> Result<(), LocalModelError> {
         // Fast path: already ready.
         {
@@ -208,7 +210,9 @@ impl LocalModel {
         let api = hf_hub::api::tokio::Api::new().map_err(|e| {
             let msg = format!("HuggingFace API init failed: {e}");
             error!(%msg);
-            self.notify_progress(ModelProgress::Failed { message: msg.clone() });
+            self.notify_progress(ModelProgress::Failed {
+                message: msg.clone(),
+            });
             *state = ModelState::Failed { error: msg };
             self.inner.ready_notify.notify_waiters();
             LocalModelError::download(e)
@@ -218,7 +222,9 @@ impl LocalModel {
         let model_path = repo.get(&self.inner.config.filename).await.map_err(|e| {
             let msg = format!("model download failed: {e}");
             error!(%msg);
-            self.notify_progress(ModelProgress::Failed { message: msg.clone() });
+            self.notify_progress(ModelProgress::Failed {
+                message: msg.clone(),
+            });
             *state = ModelState::Failed { error: msg };
             self.inner.ready_notify.notify_waiters();
             LocalModelError::download(e)
@@ -230,22 +236,40 @@ impl LocalModel {
         self.notify_progress(ModelProgress::Loading);
 
         // Build the GGUF model via mistral.rs.
-        let runner = mistralrs::GgufModelBuilder::new(
-            self.inner.config.repo_id.clone(),
-            vec![self.inner.config.filename.clone()],
-        )
-        .build()
-        .await
-        .map_err(|e| {
-            let msg = format!("model loading failed: {e}");
-            error!(%msg);
-            self.notify_progress(ModelProgress::Failed { message: msg.clone() });
-            *state = ModelState::Failed { error: msg.clone() };
-            self.inner.ready_notify.notify_waiters();
-            LocalModelError::Loading {
-                source: msg.into(),
+        // Spawn in a blocking-safe task so that panics inside the builder
+        // (e.g. unsupported architecture) are converted to errors.
+        let repo_id = self.inner.config.repo_id.clone();
+        let filename = self.inner.config.filename.clone();
+        let build_result = tokio::task::spawn(async move {
+            mistralrs::GgufModelBuilder::new(repo_id, vec![filename])
+                .build()
+                .await
+        })
+        .await;
+
+        let runner = match build_result {
+            Ok(Ok(runner)) => runner,
+            Ok(Err(e)) => {
+                let msg = format!("model loading failed: {e}");
+                error!(%msg);
+                self.notify_progress(ModelProgress::Failed {
+                    message: msg.clone(),
+                });
+                *state = ModelState::Failed { error: msg.clone() };
+                self.inner.ready_notify.notify_waiters();
+                return Err(LocalModelError::Loading { source: msg.into() });
             }
-        })?;
+            Err(join_err) => {
+                let msg = format!("model loading panicked: {join_err}");
+                error!(%msg);
+                self.notify_progress(ModelProgress::Failed {
+                    message: msg.clone(),
+                });
+                *state = ModelState::Failed { error: msg.clone() };
+                self.inner.ready_notify.notify_waiters();
+                return Err(LocalModelError::Loading { source: msg.into() });
+            }
+        };
 
         info!("local model ready");
         *state = ModelState::Ready { runner };
@@ -318,8 +342,7 @@ mod tests {
     #[tokio::test]
     async fn runner_returns_not_ready_when_unloaded() {
         let model = LocalModel::new(ModelConfig::default());
-        let result = model.runner().await;
-        assert!(result.is_err());
+        assert!(model.runner().await.is_err());
     }
 
     #[test]

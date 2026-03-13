@@ -186,13 +186,13 @@ mod tests {
     struct DummyTool;
 
     impl AgentTool for DummyTool {
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             "dummy"
         }
-        fn label(&self) -> &str {
+        fn label(&self) -> &'static str {
             "Dummy"
         }
-        fn description(&self) -> &str {
+        fn description(&self) -> &'static str {
             "A dummy tool."
         }
         fn parameters_schema(&self) -> &Value {
@@ -264,13 +264,13 @@ mod tests {
         /// A tool that sleeps forever.
         struct SlowTool;
         impl AgentTool for SlowTool {
-            fn name(&self) -> &str {
+            fn name(&self) -> &'static str {
                 "slow"
             }
-            fn label(&self) -> &str {
+            fn label(&self) -> &'static str {
                 "Slow"
             }
-            fn description(&self) -> &str {
+            fn description(&self) -> &'static str {
                 "Sleeps."
             }
             fn parameters_schema(&self) -> &Value {

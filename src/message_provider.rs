@@ -69,5 +69,8 @@ where
     S: Fn() -> Vec<AgentMessage> + Send + Sync,
     F: Fn() -> Vec<AgentMessage> + Send + Sync,
 {
-    FnMessageProvider { steering, follow_up }
+    FnMessageProvider {
+        steering,
+        follow_up,
+    }
 }

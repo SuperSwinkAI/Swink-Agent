@@ -13,9 +13,9 @@ use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 
 use swink_agent::{
-    AgentContext, AgentMessage, AgentTool, AgentToolResult, AssistantMessage, AssistantMessageEvent,
-    ContentBlock, Cost, LlmMessage, ModelSpec, StopReason, StreamFn, StreamOptions, ThinkingLevel,
-    Usage, UserMessage,
+    AgentContext, AgentMessage, AgentTool, AgentToolResult, AssistantMessage,
+    AssistantMessageEvent, ContentBlock, Cost, LlmMessage, ModelSpec, StopReason, StreamFn,
+    StreamOptions, ThinkingLevel, Usage, UserMessage,
 };
 use swink_agent_adapters::AnthropicStreamFn;
 
@@ -27,8 +27,7 @@ const TIMEOUT: Duration = Duration::from_secs(30);
 
 fn anthropic_key() -> String {
     dotenvy::dotenv().ok();
-    std::env::var("ANTHROPIC_API_KEY")
-        .expect("ANTHROPIC_API_KEY must be set to run live tests")
+    std::env::var("ANTHROPIC_API_KEY").expect("ANTHROPIC_API_KEY must be set to run live tests")
 }
 
 fn cheap_model() -> ModelSpec {
@@ -51,7 +50,10 @@ fn simple_context(prompt: &str) -> AgentContext {
     }
 }
 
-async fn collect_events(sf: &AnthropicStreamFn, context: &AgentContext) -> Vec<AssistantMessageEvent> {
+async fn collect_events(
+    sf: &AnthropicStreamFn,
+    context: &AgentContext,
+) -> Vec<AssistantMessageEvent> {
     let model = cheap_model();
     let options = StreamOptions::default();
     let token = CancellationToken::new();
@@ -174,10 +176,8 @@ async fn live_usage_and_cost() {
         .iter()
         .find_map(|e| match e {
             AssistantMessageEvent::Done {
-                stop_reason,
-                usage,
-                ..
-            } => Some((*stop_reason, *usage)),
+                stop_reason, usage, ..
+            } => Some((*stop_reason, usage.clone())),
             _ => None,
         })
         .expect("missing Done event");
@@ -335,7 +335,10 @@ async fn live_multi_turn_context() {
         .expect("timed out on second turn");
 
     let types: Vec<&str> = events.iter().map(|e| event_name(e)).collect();
-    assert!(types.contains(&"Done"), "missing Done on second turn: {types:?}");
+    assert!(
+        types.contains(&"Done"),
+        "missing Done on second turn: {types:?}"
+    );
 
     let reply: String = events
         .iter()

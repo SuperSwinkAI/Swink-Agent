@@ -2,13 +2,13 @@
 
 use std::time::Instant;
 
-use swink_agent::redact_sensitive_values;
+use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
-use ratatui::Frame;
 use serde_json::Value;
+use swink_agent::redact_sensitive_values;
 
 use crate::theme;
 
@@ -141,7 +141,9 @@ impl ToolPanel {
             + self.resolved_approvals.len()
             + 2;
         #[allow(clippy::cast_possible_truncation)]
-        { total.min(10) as u16 }
+        {
+            total.min(10) as u16
+        }
     }
 
     /// Render the tool panel.
@@ -271,7 +273,11 @@ fn summarize_arguments(args: &Value) -> String {
         }
         Value::Object(map) => {
             let keys: Vec<&String> = map.keys().take(3).collect();
-            let summary = keys.iter().map(|k| k.as_str()).collect::<Vec<_>>().join(", ");
+            let summary = keys
+                .iter()
+                .map(|k| k.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
             if map.len() > 3 {
                 format!("{{{summary}, ...}}")
             } else {

@@ -20,14 +20,14 @@ pub mod credentials;
 #[doc(hidden)]
 pub mod wizard;
 
-use std::io;
-use std::pin::Pin;
 use crossterm::{
     event::{DisableMouseCapture, EnableMouseCapture},
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use ratatui::{Terminal, backend::CrosstermBackend};
+use std::io;
+use std::pin::Pin;
 use tokio::sync::{mpsc, oneshot};
 
 use swink_agent::{Agent, ToolApproval, ToolApprovalRequest, selective_approve};

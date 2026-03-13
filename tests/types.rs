@@ -130,6 +130,7 @@ fn usage_add() {
         cache_read: 5,
         cache_write: 3,
         total: 38,
+        ..Default::default()
     };
     let b = Usage {
         input: 1,
@@ -137,6 +138,7 @@ fn usage_add() {
         cache_read: 3,
         cache_write: 4,
         total: 10,
+        ..Default::default()
     };
     let c = a + b;
     assert_eq!(c.input, 11);
@@ -155,8 +157,9 @@ fn usage_add_assign() {
         cache_read: 1,
         cache_write: 2,
         total: 18,
+        ..Default::default()
     };
-    a += b;
+    a += b.clone();
     assert_eq!(a, b);
 }
 
@@ -168,6 +171,7 @@ fn usage_merge() {
         cache_read: 1,
         cache_write: 1,
         total: 4,
+        ..Default::default()
     };
     let b = Usage {
         input: 2,
@@ -175,6 +179,7 @@ fn usage_merge() {
         cache_read: 2,
         cache_write: 2,
         total: 8,
+        ..Default::default()
     };
     a.merge(&b);
     assert_eq!(a.input, 3);
@@ -189,6 +194,7 @@ fn cost_add() {
         cache_read: 0.005,
         cache_write: 0.003,
         total: 0.038,
+        ..Default::default()
     };
     let b = Cost {
         input: 0.01,
@@ -196,6 +202,7 @@ fn cost_add() {
         cache_read: 0.005,
         cache_write: 0.003,
         total: 0.038,
+        ..Default::default()
     };
     let c = a + b;
     assert!((c.input - 0.02).abs() < f64::EPSILON);
@@ -211,6 +218,7 @@ fn cost_add_assign() {
         cache_read: 0.0,
         cache_write: 0.0,
         total: 0.3,
+        ..Default::default()
     };
     a += b;
     assert!((a.total - 0.3).abs() < f64::EPSILON);
@@ -264,8 +272,8 @@ fn model_spec_defaults() {
 
 #[test]
 fn model_spec_with_thinking_level() {
-    let spec = ModelSpec::new("anthropic", "claude-sonnet-4-6")
-        .with_thinking_level(ThinkingLevel::High);
+    let spec =
+        ModelSpec::new("anthropic", "claude-sonnet-4-6").with_thinking_level(ThinkingLevel::High);
     assert_eq!(spec.thinking_level, ThinkingLevel::High);
 }
 
@@ -275,8 +283,7 @@ fn model_spec_with_thinking_budgets() {
     map.insert(ThinkingLevel::High, 10_000);
     let budgets = ThinkingBudgets::new(map);
 
-    let spec = ModelSpec::new("anthropic", "claude-sonnet-4-6")
-        .with_thinking_budgets(budgets);
+    let spec = ModelSpec::new("anthropic", "claude-sonnet-4-6").with_thinking_budgets(budgets);
     assert!(spec.thinking_budgets.is_some());
     assert_eq!(
         spec.thinking_budgets.unwrap().get(&ThinkingLevel::High),

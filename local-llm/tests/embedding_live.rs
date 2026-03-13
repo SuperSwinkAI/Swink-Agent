@@ -1,17 +1,38 @@
 //! Live integration tests for embedding model.
 //!
 //! All tests are `#[ignore]` — they download ~200 MB on first run.
+//! The model (`google/gemma-embedding-300m`) is gated and requires `HF_TOKEN`.
+//! Tests skip gracefully when the token is missing or invalid.
+//!
 //! Run with: `cargo test -p swink-agent-local-llm --test embedding_live -- --ignored`
 
 use std::sync::Arc;
 
-use swink_agent_local_llm::{EmbeddingConfig, EmbeddingModel};
+use swink_agent_local_llm::{EmbeddingConfig, EmbeddingModel, LocalModelError};
+
+/// Try to load the embedding model, returning `None` if authentication fails
+/// (missing or invalid `HF_TOKEN` for the gated model).
+async fn ready_model_or_skip() -> Option<EmbeddingModel> {
+    let model = EmbeddingModel::new(EmbeddingConfig::default());
+    match model.ensure_ready().await {
+        Ok(()) => Some(model),
+        Err(
+            LocalModelError::Loading { ref source, .. }
+            | LocalModelError::Download { ref source, .. },
+        ) if source.to_string().contains("401") => {
+            eprintln!("skipping: HF_TOKEN not set or invalid (HTTP 401)");
+            None
+        }
+        Err(e) => panic!("unexpected error loading embedding model: {e}"),
+    }
+}
 
 #[tokio::test]
-#[ignore]
+#[ignore = "downloads gated embedding model artifacts"]
 async fn single_embedding() {
-    let model = EmbeddingModel::new(EmbeddingConfig::default());
-    model.ensure_ready().await.unwrap();
+    let Some(model) = ready_model_or_skip().await else {
+        return;
+    };
 
     let embedding = model.embed_single("Hello, world!").await.unwrap();
     assert!(!embedding.is_empty(), "embedding should not be empty");
@@ -19,10 +40,11 @@ async fn single_embedding() {
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "downloads gated embedding model artifacts"]
 async fn batch_embedding() {
-    let model = EmbeddingModel::new(EmbeddingConfig::default());
-    model.ensure_ready().await.unwrap();
+    let Some(model) = ready_model_or_skip().await else {
+        return;
+    };
 
     let texts = &["Hello", "World", "Rust is great"];
     let embeddings = model.embed(texts).await.unwrap();
@@ -34,10 +56,11 @@ async fn batch_embedding() {
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "downloads gated embedding model artifacts"]
 async fn concurrent_embedding() {
-    let model = EmbeddingModel::new(EmbeddingConfig::default());
-    model.ensure_ready().await.unwrap();
+    let Some(model) = ready_model_or_skip().await else {
+        return;
+    };
 
     let model = Arc::new(model);
     let mut handles = vec![];
@@ -57,10 +80,11 @@ async fn concurrent_embedding() {
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "downloads gated embedding model artifacts"]
 async fn unload_and_reload() {
-    let model = EmbeddingModel::new(EmbeddingConfig::default());
-    model.ensure_ready().await.unwrap();
+    let Some(model) = ready_model_or_skip().await else {
+        return;
+    };
     assert!(model.is_ready().await);
 
     model.unload().await;

@@ -3,17 +3,21 @@
 //! Demonstrates how to wire up `BashTool` and `ReadFileTool`, configure the
 //! `selective_approve` middleware so only tools that declare
 //! `requires_approval = true` go through the approval gate, and run a prompt.
+//!
+//! Also shows how to create a custom tool with [`FnTool`] using closures
+//! instead of implementing the [`AgentTool`] trait manually.
 
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
 use futures::Stream;
+use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
 
 use swink_agent::{
-    Agent, AgentMessage, AgentOptions, AssistantMessageEvent, BashTool, ContentBlock, Cost,
-    LlmMessage, ModelSpec, ReadFileTool, StopReason, StreamFn, StreamOptions, ToolApproval,
-    ToolApprovalRequest, Usage, WriteFileTool, default_convert,
+    Agent, AgentMessage, AgentOptions, AgentToolResult, AssistantMessageEvent, BashTool,
+    ContentBlock, Cost, FnTool, JsonSchema, LlmMessage, ModelSpec, ReadFileTool, StopReason,
+    StreamFn, StreamOptions, ToolApproval, ToolApprovalRequest, Usage, WriteFileTool,
 };
 
 // ─── Mock StreamFn ──────────────────────────────────────────────────────────
@@ -46,6 +50,7 @@ impl StreamFn for MockStreamFn {
                     stop_reason: StopReason::Error,
                     error_message: "no more scripted responses".to_string(),
                     usage: None,
+                    error_kind: None,
                 }]
             } else {
                 responses.remove(0)
@@ -74,16 +79,41 @@ fn text_events(text: &str) -> Vec<AssistantMessageEvent> {
     ]
 }
 
+// ─── Custom tool params ─────────────────────────────────────────────────────
+
+/// Parameters for the `get_weather` custom tool.
+#[derive(Deserialize, JsonSchema)]
+#[allow(dead_code)]
+struct GetWeatherParams {
+    /// The city to look up weather for (e.g. "San Francisco").
+    city: String,
+}
+
 // ─── Main ───────────────────────────────────────────────────────────────────
 
 #[tokio::main]
 async fn main() {
-    // Step 1: Create tools. Each tool implements `AgentTool`.
+    // Step 1a: Create built-in tools. Each tool implements `AgentTool`.
     let bash = Arc::new(BashTool::new()) as Arc<dyn swink_agent::AgentTool>;
     let read = Arc::new(ReadFileTool::new()) as Arc<dyn swink_agent::AgentTool>;
     let write = Arc::new(WriteFileTool::new()) as Arc<dyn swink_agent::AgentTool>;
 
-    let tools = vec![bash, read, write];
+    // Step 1b: Create a custom tool using `FnTool` — no need to implement `AgentTool` manually.
+    let weather = Arc::new(
+        FnTool::new(
+            "get_weather",
+            "Weather",
+            "Get the current weather for a city.",
+        )
+        .with_schema_for::<GetWeatherParams>()
+        .with_execute_simple(|params, _cancel| async move {
+            let city = params["city"].as_str().unwrap_or("unknown");
+            // In a real application this would call a weather API.
+            AgentToolResult::text(format!("72°F and sunny in {city}"))
+        }),
+    ) as Arc<dyn swink_agent::AgentTool>;
+
+    let tools = vec![bash, read, write, weather];
 
     // Step 2: Set up a mock stream function (replace with a real adapter).
     let stream_fn = Arc::new(MockStreamFn::new(vec![text_events(
@@ -97,11 +127,10 @@ async fn main() {
     // `selective_approve` wraps the inner callback so that only tools with
     // `requires_approval() == true` are sent through. BashTool and WriteFileTool
     // require approval; ReadFileTool does not.
-    let options = AgentOptions::new(
+    let options = AgentOptions::new_simple(
         "You are a helpful coding assistant with access to shell and file tools.",
         model,
         stream_fn,
-        default_convert,
     )
     .with_tools(tools)
     .with_approve_tool(swink_agent::selective_approve(

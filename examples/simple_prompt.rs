@@ -13,7 +13,7 @@ use tokio_util::sync::CancellationToken;
 
 use swink_agent::{
     Agent, AgentMessage, AgentOptions, AssistantMessageEvent, ContentBlock, Cost, LlmMessage,
-    ModelSpec, StopReason, StreamFn, StreamOptions, Usage, default_convert,
+    ModelSpec, StopReason, StreamFn, StreamOptions, Usage,
 };
 
 // ─── Mock StreamFn ──────────────────────────────────────────────────────────
@@ -46,6 +46,7 @@ impl StreamFn for MockStreamFn {
                     stop_reason: StopReason::Error,
                     error_message: "no more scripted responses".to_string(),
                     usage: None,
+                    error_kind: None,
                 }]
             } else {
                 responses.remove(0)
@@ -88,12 +89,7 @@ async fn main() {
     let model = ModelSpec::new("mock", "mock-model-v1");
 
     // Step 3: Build agent options with defaults.
-    let options = AgentOptions::new(
-        "You are a helpful assistant.",
-        model,
-        stream_fn,
-        default_convert,
-    );
+    let options = AgentOptions::new_simple("You are a helpful assistant.", model, stream_fn);
 
     // Step 4: Create the agent.
     let mut agent = Agent::new(options);

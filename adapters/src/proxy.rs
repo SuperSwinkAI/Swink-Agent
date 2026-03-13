@@ -12,8 +12,10 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
-use crate::stream::{AssistantMessageEvent, StreamFn, StreamOptions};
-use crate::types::{AgentContext, Cost, LlmMessage, ModelSpec, StopReason, Usage};
+use swink_agent::stream::{AssistantMessageEvent, StreamFn, StreamOptions};
+use swink_agent::types::{AgentContext, Cost, LlmMessage, ModelSpec, StopReason, Usage};
+
+use crate::classify::{HttpErrorKind, classify_http_status};
 
 // ─── Request types ──────────────────────────────────────────────────────────
 
@@ -160,7 +162,7 @@ fn proxy_stream<'a>(
             Err(event) => return stream::iter(vec![event]).left_stream(),
         };
 
-        classify_http_status(&response).map_or_else(
+        classify_response_status(&response).map_or_else(
             || parse_sse_stream(response, cancellation_token).right_stream(),
             |event| stream::iter(vec![event]).left_stream(),
         )
@@ -181,8 +183,8 @@ async fn send_request(
         .messages
         .iter()
         .filter_map(|msg| match msg {
-            crate::types::AgentMessage::Llm(llm) => Some(llm),
-            crate::types::AgentMessage::Custom(_) => None,
+            swink_agent::types::AgentMessage::Llm(llm) => Some(llm),
+            swink_agent::types::AgentMessage::Custom(_) => None,
         })
         .collect();
 
@@ -210,17 +212,21 @@ async fn send_request(
 }
 
 /// Check the HTTP status code and return an error event for non-2xx responses.
-fn classify_http_status(response: &reqwest::Response) -> Option<AssistantMessageEvent> {
+///
+/// Delegates to [`classify_http_status`] from the shared classify module.
+fn classify_response_status(response: &reqwest::Response) -> Option<AssistantMessageEvent> {
     let status = response.status();
     if status.is_success() {
         return None;
     }
 
-    Some(match status.as_u16() {
-        401 | 403 => auth_error_event(status.as_u16()),
-        429 => rate_limit_error_event(),
-        504 => network_error_event("gateway timeout (504)"),
-        code => network_error_event(&format!("HTTP {code}")),
+    let kind = classify_http_status(status.as_u16());
+    Some(match kind {
+        Some(HttpErrorKind::Auth) => auth_error_event(status.as_u16()),
+        Some(HttpErrorKind::Throttled) => rate_limit_error_event(),
+        Some(HttpErrorKind::Network) | None => {
+            network_error_event(&format!("HTTP {}", status.as_u16()))
+        }
     })
 }
 
@@ -289,6 +295,7 @@ fn parse_sse_event_data(data: &str) -> AssistantMessageEvent {
             stop_reason: StopReason::Error,
             error_message: format!("malformed SSE event JSON: {e}"),
             usage: None,
+            error_kind: None,
         },
     }
 }
@@ -361,6 +368,7 @@ fn convert_sse_event(event: SseEventData) -> AssistantMessageEvent {
             stop_reason,
             error_message,
             usage,
+            error_kind: None,
         },
     }
 }
@@ -377,29 +385,17 @@ const fn is_terminal_event(event: &AssistantMessageEvent) -> bool {
 
 /// Create a network error event (retryable).
 fn network_error_event(detail: &str) -> AssistantMessageEvent {
-    AssistantMessageEvent::Error {
-        stop_reason: StopReason::Error,
-        error_message: format!("network error: {detail}"),
-        usage: None,
-    }
+    AssistantMessageEvent::error_network(format!("network error: {detail}"))
 }
 
 /// Create an authentication error event (not retryable).
 fn auth_error_event(status: u16) -> AssistantMessageEvent {
-    AssistantMessageEvent::Error {
-        stop_reason: StopReason::Error,
-        error_message: format!("authentication failure ({status})"),
-        usage: None,
-    }
+    AssistantMessageEvent::error_auth(format!("authentication failure ({status})"))
 }
 
 /// Create a rate limit error event (retryable via `ModelThrottled`).
 fn rate_limit_error_event() -> AssistantMessageEvent {
-    AssistantMessageEvent::Error {
-        stop_reason: StopReason::Error,
-        error_message: "rate limit (429)".to_owned(),
-        usage: None,
-    }
+    AssistantMessageEvent::error_throttled("rate limit (429)")
 }
 
 /// Create an aborted event for cancellation.
@@ -408,6 +404,7 @@ fn aborted_event() -> AssistantMessageEvent {
         stop_reason: StopReason::Aborted,
         error_message: "operation cancelled".to_owned(),
         usage: None,
+        error_kind: None,
     }
 }
 
@@ -514,6 +511,7 @@ mod tests {
                 stop_reason,
                 error_message,
                 usage,
+                ..
             } => {
                 assert_eq!(stop_reason, StopReason::Error);
                 assert_eq!(error_message, "boom");
@@ -599,6 +597,7 @@ mod tests {
             stop_reason: StopReason::Error,
             error_message: "test".to_owned(),
             usage: None,
+            error_kind: None,
         };
         assert!(is_terminal_event(&error));
 

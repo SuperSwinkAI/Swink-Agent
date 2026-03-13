@@ -157,12 +157,14 @@ pub fn validation_error_result(errors: &[String]) -> AgentToolResult {
 // ─── Tool Approval ──────────────────────────────────────────────────────────
 
 /// Result of the approval gate for a tool call.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ToolApproval {
     /// The tool call is approved and should proceed.
     Approved,
     /// The tool call is rejected and should not execute.
     Rejected,
+    /// Approved with modified parameters (constrain scope or sanitize input).
+    ApprovedWith(serde_json::Value),
 }
 
 /// Information about a tool call pending approval.
@@ -214,9 +216,7 @@ pub enum ApprovalMode {
 pub fn selective_approve<F>(
     inner: F,
 ) -> Box<
-    dyn Fn(ToolApprovalRequest) -> Pin<Box<dyn Future<Output = ToolApproval> + Send>>
-        + Send
-        + Sync,
+    dyn Fn(ToolApprovalRequest) -> Pin<Box<dyn Future<Output = ToolApproval> + Send>> + Send + Sync,
 >
 where
     F: Fn(ToolApprovalRequest) -> Pin<Box<dyn Future<Output = ToolApproval> + Send>>
@@ -271,9 +271,7 @@ pub fn redact_sensitive_values(value: &Value) -> Value {
 fn redact_value(value: &Value, parent_key: Option<&str>) -> Value {
     // If the parent key is sensitive, redact the entire value regardless of type.
     if let Some(key) = parent_key
-        && SENSITIVE_KEYS
-            .iter()
-            .any(|&s| key.eq_ignore_ascii_case(s))
+        && SENSITIVE_KEYS.iter().any(|&s| key.eq_ignore_ascii_case(s))
     {
         return Value::String(REDACTED.to_string());
     }
@@ -286,9 +284,7 @@ fn redact_value(value: &Value, parent_key: Option<&str>) -> Value {
                 value.clone()
             }
         }
-        Value::Array(arr) => {
-            Value::Array(arr.iter().map(|v| redact_value(v, None)).collect())
-        }
+        Value::Array(arr) => Value::Array(arr.iter().map(|v| redact_value(v, None)).collect()),
         Value::Object(map) => {
             let redacted = map
                 .iter()
@@ -487,10 +483,7 @@ mod tests {
     fn redacts_values_in_arrays() {
         let val = json!(["normal", "sk-secret", "also normal"]);
         let redacted = redact_sensitive_values(&val);
-        assert_eq!(
-            redacted,
-            json!(["normal", "[REDACTED]", "also normal"])
-        );
+        assert_eq!(redacted, json!(["normal", "[REDACTED]", "also normal"]));
     }
 
     #[test]

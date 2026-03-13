@@ -1,11 +1,13 @@
-//! Integration test: run an FnTool through the agent loop with MockStreamFn.
+//! Integration test: run an `FnTool` through the agent loop with `MockStreamFn`.
 
 mod common;
 
 use std::sync::Arc;
 use std::time::Duration;
 
-use common::{MockStreamFn, default_convert, default_model, text_only_events, tool_call_events, user_msg};
+use common::{
+    MockStreamFn, default_convert, default_model, text_only_events, tool_call_events, user_msg,
+};
 use serde_json::json;
 
 use swink_agent::{Agent, AgentOptions, AgentToolResult, DefaultRetryStrategy, FnTool};

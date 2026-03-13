@@ -20,9 +20,11 @@ pub mod compaction;
 pub mod jsonl;
 pub mod meta;
 pub mod store;
+pub mod store_async;
 mod time;
 
 pub use compaction::SummarizingCompactor;
 pub use jsonl::JsonlSessionStore;
 pub use meta::SessionMeta;
-pub use store::SessionStore;
+pub use store::{SessionFilter, SessionStore};
+pub use store_async::{BlockingSessionStore, SessionStoreAsync};

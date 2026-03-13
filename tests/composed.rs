@@ -19,8 +19,8 @@ use serde_json::json;
 
 use swink_agent::{
     Agent, AgentEvent, AgentMessage, AgentOptions, AgentTool, AgentToolResult,
-    AssistantMessageEvent, ContentBlock, Cost, DefaultRetryStrategy, LlmMessage,
-    StopReason, ToolApproval, Usage, selective_approve,
+    AssistantMessageEvent, ContentBlock, Cost, DefaultRetryStrategy, LlmMessage, StopReason,
+    ToolApproval, Usage, selective_approve,
 };
 
 // ─── Helpers ─────────────────────────────────────────────────────────────
@@ -102,9 +102,8 @@ async fn approval_with_steering_interrupt() {
         text_only_events("after steering"),
     ];
 
-    let options = make_options(responses, vec![tool]).with_approve_tool(|_req| {
-        Box::pin(async { ToolApproval::Approved })
-    });
+    let options = make_options(responses, vec![tool])
+        .with_approve_tool(|_req| Box::pin(async { ToolApproval::Approved }));
     let mut agent = Agent::new(options);
 
     // Queue a steering message before the run so it is consumed during execution.
@@ -206,15 +205,18 @@ async fn follow_up_after_tool_error() {
     // Queue a follow-up so the loop continues after the error turn.
     agent.follow_up(user_msg("what happened?"));
 
-    let result = agent.prompt_async(vec![user_msg("run the tool")]).await.unwrap();
+    let result = agent
+        .prompt_async(vec![user_msg("run the tool")])
+        .await
+        .unwrap();
     assert!(result.error.is_none(), "run should complete without error");
 
     // Verify the error was sent back to the LLM as a tool result.
     let has_error_result = result.messages.iter().any(|msg| {
         if let AgentMessage::Llm(LlmMessage::ToolResult(tr)) = msg {
-            tr.content
-                .iter()
-                .any(|b| matches!(b, ContentBlock::Text { text } if text.contains("tool failed badly")))
+            tr.content.iter().any(
+                |b| matches!(b, ContentBlock::Text { text } if text.contains("tool failed badly")),
+            )
         } else {
             false
         }
@@ -258,9 +260,8 @@ async fn abort_during_tool_execution_with_approval() {
         text_only_events("should not reach"),
     ];
 
-    let options = make_options(responses, vec![tool]).with_approve_tool(|_req| {
-        Box::pin(async { ToolApproval::Approved })
-    });
+    let options = make_options(responses, vec![tool])
+        .with_approve_tool(|_req| Box::pin(async { ToolApproval::Approved }));
     let mut agent = Agent::new(options);
 
     let mut stream = agent.prompt_stream(vec![user_msg("go")]).unwrap();
@@ -311,6 +312,7 @@ async fn context_overflow_triggers_retry_with_tools() {
                 stop_reason: StopReason::Error,
                 error_message: "context window exceeded".to_string(),
                 usage: None,
+                error_kind: None,
             },
         ],
         tool_call_events("tc2", "my_tool", "{}"),
@@ -369,12 +371,13 @@ async fn structured_output_with_tool_calls() {
     ]));
 
     let mut agent = Agent::new(
-        AgentOptions::new("test", default_model(), stream_fn, default_convert)
-            .with_retry_strategy(Box::new(
+        AgentOptions::new("test", default_model(), stream_fn, default_convert).with_retry_strategy(
+            Box::new(
                 DefaultRetryStrategy::default()
                     .with_jitter(false)
                     .with_base_delay(Duration::from_millis(1)),
-            )),
+            ),
+        ),
     );
 
     let value = agent
@@ -401,9 +404,8 @@ async fn subscriber_receives_approval_events() {
         text_only_events("done"),
     ];
 
-    let options = make_options(responses, vec![tool]).with_approve_tool(|_req| {
-        Box::pin(async { ToolApproval::Approved })
-    });
+    let options = make_options(responses, vec![tool])
+        .with_approve_tool(|_req| Box::pin(async { ToolApproval::Approved }));
     let mut agent = Agent::new(options);
 
     let log = Arc::clone(&events_log);
@@ -434,7 +436,8 @@ async fn subscriber_receives_approval_events() {
     let agent_start = find("AgentStart").expect("should have AgentStart");
     let turn_start = find("TurnStart").expect("should have TurnStart");
     let tool_start = find("ToolExecutionStart").expect("should have ToolExecutionStart");
-    let approval_requested = find("ToolApprovalRequested").expect("should have ToolApprovalRequested");
+    let approval_requested =
+        find("ToolApprovalRequested").expect("should have ToolApprovalRequested");
     let approval_resolved = find("ToolApprovalResolved").expect("should have ToolApprovalResolved");
     let tool_end = find("ToolExecutionEnd").expect("should have ToolExecutionEnd");
     let agent_end = find("AgentEnd").expect("should have AgentEnd");

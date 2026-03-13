@@ -70,6 +70,7 @@ impl StreamFn for ApiKeyCapturingStreamFn {
                     stop_reason: StopReason::Error,
                     error_message: "no more scripted responses".to_string(),
                     usage: None,
+                    error_kind: None,
                 }]
             } else {
                 responses.remove(0)
@@ -98,6 +99,7 @@ impl StreamFn for ContextCapturingStreamFn {
                     stop_reason: StopReason::Error,
                     error_message: "no more scripted responses".to_string(),
                     usage: None,
+                    error_kind: None,
                 }]
             } else {
                 responses.remove(0)
@@ -222,6 +224,9 @@ fn default_config(stream_fn: Arc<dyn StreamFn>) -> AgentLoopConfig {
         message_provider: None,
         approve_tool: None,
         approval_mode: swink_agent::ApprovalMode::default(),
+        tool_validator: None,
+        loop_policy: None,
+        tool_call_transformer: None,
     }
 }
 
@@ -355,9 +360,11 @@ async fn test_3_4_transform_context_ordering() {
     let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("ok")]));
     let mut config = default_config(stream_fn);
 
-    config.transform_context = Some(Box::new(move |_msgs, _overflow| {
-        counter_transform.fetch_add(1, Ordering::SeqCst);
-    }));
+    config.transform_context = Some(Arc::new(
+        move |_msgs: &mut Vec<AgentMessage>, _overflow: bool| {
+            counter_transform.fetch_add(1, Ordering::SeqCst);
+        },
+    ));
 
     config.convert_to_llm = Box::new(move |msg: &AgentMessage| {
         let val = counter_convert.load(Ordering::SeqCst);
@@ -707,6 +714,7 @@ async fn test_3_9_error_exit_no_follow_up() {
             stop_reason: StopReason::Error,
             error_message: "fatal stream error".to_string(),
             usage: None,
+            error_kind: None,
         },
     ]]));
 
@@ -782,6 +790,7 @@ async fn test_3_11_retry_success() {
                 stop_reason: StopReason::Error,
                 error_message: "rate limit exceeded (429)".to_string(),
                 usage: None,
+                error_kind: None,
             },
         ],
         text_only_events("retried successfully"),
@@ -824,6 +833,7 @@ async fn test_3_12_non_retryable_error() {
                 stop_reason: StopReason::Error,
                 error_message: "fatal stream error".to_string(),
                 usage: None,
+                error_kind: None,
             },
         ],
         text_only_events("should not reach"),
@@ -956,15 +966,18 @@ async fn test_3_15_overflow_signal() {
                 stop_reason: StopReason::Error,
                 error_message: "context window exceeded".to_string(),
                 usage: None,
+                error_kind: None,
             },
         ],
         text_only_events("recovered"),
     ]));
 
     let mut config = default_config(stream_fn);
-    config.transform_context = Some(Box::new(move |_msgs, overflow| {
-        flags_clone.lock().unwrap().push(overflow);
-    }));
+    config.transform_context = Some(Arc::new(
+        move |_msgs: &mut Vec<AgentMessage>, overflow: bool| {
+            flags_clone.lock().unwrap().push(overflow);
+        },
+    ));
 
     let events = collect_events(agent_loop(
         vec![],
@@ -1107,7 +1120,10 @@ async fn panicking_tool_produces_error_result() {
         text_only_events("after panic"),
     ]));
 
-    let tool = Arc::new(PanickingTool::new("panicking_tool", "deliberate test panic"));
+    let tool = Arc::new(PanickingTool::new(
+        "panicking_tool",
+        "deliberate test panic",
+    ));
     let mut config = default_config(stream_fn);
     config.tools = vec![tool];
 

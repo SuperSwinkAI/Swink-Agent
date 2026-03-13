@@ -41,6 +41,7 @@ fn accumulate_text_and_tool_call() {
                 cache_read: 0,
                 cache_write: 0,
                 total: 150,
+                ..Default::default()
             },
             cost: Cost {
                 input: 0.01,
@@ -48,6 +49,7 @@ fn accumulate_text_and_tool_call() {
                 cache_read: 0.0,
                 cache_write: 0.0,
                 total: 0.03,
+                ..Default::default()
             },
         },
     ];
@@ -138,6 +140,7 @@ fn accumulate_interleaved_text_and_tool_calls() {
                 cache_read: 10,
                 cache_write: 5,
                 total: 315,
+                ..Default::default()
             },
             cost: Cost::default(),
         },
@@ -248,7 +251,9 @@ fn accumulate_error_event() {
                 cache_read: 0,
                 cache_write: 0,
                 total: 60,
+                ..Default::default()
             }),
+            error_kind: None,
         },
     ];
 
@@ -337,6 +342,7 @@ fn accumulate_error_event_without_usage() {
             stop_reason: StopReason::Error,
             error_message: "fatal".into(),
             usage: None,
+            error_kind: None,
         },
     ];
 

@@ -7,7 +7,7 @@
 
 ## System Overview
 
-The Swink Agent is a Rust workspace composed of four crates that provide the core scaffolding for building LLM-powered agentic applications. The **core library** (`swink-agent`) manages the agent loop, message context, tool dispatch, streaming, and lifecycle events. The **adapters crate** (`swink-agent-adapters`) provides ready-made `StreamFn` implementations for specific LLM providers. The **memory crate** (`swink-agent-memory`) provides session persistence and summarization-aware context compaction. The **TUI crate** (`swink-agent-tui`) is a binary that provides an interactive terminal interface. All LLM provider access is delegated to a `StreamFn` implementation, keeping the core harness fully provider-agnostic.
+The Swink Agent is a Rust workspace composed of five crates that provide the core scaffolding for building LLM-powered agentic applications. The **core library** (`swink-agent`) manages the agent loop, message context, tool dispatch, streaming, and lifecycle events. The **adapters crate** (`swink-agent-adapters`) provides ready-made `StreamFn` implementations for specific LLM providers. The **memory crate** (`swink-agent-memory`) provides session persistence and summarization-aware context compaction. The **eval crate** (`swink-agent-eval`) provides trajectory tracing, golden path verification, response matching, and cost/latency governance for agent evaluation. The **TUI crate** (`swink-agent-tui`) is a binary that provides an interactive terminal interface. All LLM provider access is delegated to a `StreamFn` implementation, keeping the core harness fully provider-agnostic.
 
 ---
 
@@ -24,8 +24,9 @@ flowchart TB
 
     subgraph HarnessSystem["⚙️ Swink Agent (Rust Workspace)"]
         Harness["swink-agent (core)<br/>Agent loop, tool dispatch,<br/>streaming, events, retry"]
-        Adapters["swink-agent-adapters<br/>LLM provider adapters<br/>(Ollama, Anthropic, OpenAI)"]
+        Adapters["swink-agent-adapters<br/>LLM provider adapters<br/>(Ollama, Anthropic, OpenAI, Proxy)"]
         Memory["swink-agent-memory<br/>Session persistence,<br/>summarization compaction"]
+        Eval["swink-agent-eval<br/>Trajectory tracing,<br/>golden path verification,<br/>cost governance"]
     end
 
     subgraph ExternalSystems["🌐 External Systems"]
@@ -39,9 +40,10 @@ flowchart TB
     TUI -->|"Uses adapter"| Adapters
     TUI -->|"Uses memory"| Memory
     Memory -->|"Uses core types"| Harness
+    Eval -->|"Consumes AgentEvent stream,<br/>uses core types"| Harness
     Harness -->|"AgentEvent stream"| TUI
     Adapters -->|"Streaming inference<br/>via OllamaStreamFn (NDJSON)"| LLMProvider
-    Harness -->|"Streaming inference<br/>via ProxyStreamFn (SSE)"| ProxyServer
+    Adapters -->|"Streaming inference<br/>via ProxyStreamFn (SSE)"| ProxyServer
     ProxyServer -->|"Proxied request"| LLMProvider
 
     classDef callerStyle fill:#e3f2fd,stroke:#1976d2,stroke-width:2px,color:#000
@@ -49,7 +51,7 @@ flowchart TB
     classDef externalStyle fill:#e0e0e0,stroke:#424242,stroke-width:2px,color:#000
 
     class App,TUI callerStyle
-    class Harness,Adapters,Memory harnessStyle
+    class Harness,Adapters,Memory,Eval harnessStyle
     class LLMProvider,ProxyServer externalStyle
 ```
 
@@ -60,8 +62,9 @@ flowchart TB
 | App → Harness | Inbound | Caller constructs an `Agent`, registers tools, supplies a `StreamFn`, and invokes prompts |
 | Harness → App | Outbound | Harness emits `AgentEvent` values and returns `AgentResult` on completion |
 | Adapters → LLM Provider | Outbound | `OllamaStreamFn` streams inference via Ollama's `/api/chat` endpoint (NDJSON) |
-| Harness → Proxy Server | Outbound | Optional: built-in `ProxyStreamFn` forwards requests to a proxy over SSE |
+| Adapters → Proxy Server | Outbound | Optional: `ProxyStreamFn` (in adapters crate) forwards requests to a proxy over SSE |
 | Proxy Server → LLM Provider | Outbound | Proxy handles auth and routes to the actual provider |
+| Eval → Harness | Internal | Eval consumes `AgentEvent` stream via `TrajectoryCollector`, uses core types (`Usage`, `Cost`, `AssistantMessage`) for invocation traces |
 | TUI → Adapters | Internal | TUI selects provider by priority: Proxy (LLM_BASE_URL), OpenAI (OPENAI_API_KEY), Anthropic (ANTHROPIC_API_KEY), Ollama (default) |
 
 ---
@@ -93,13 +96,13 @@ flowchart TB
 
     subgraph StreamLayer["📡 Streaming Interface"]
         StreamFn["StreamFn Trait<br/>(provider-agnostic)"]
-        ProxyFn["ProxyStreamFn<br/>(SSE + delta reconstruction)"]
     end
 
     subgraph AdapterLayer["🔌 Adapters Crate"]
         OllamaFn["OllamaStreamFn<br/>(NDJSON streaming)"]
         AnthropicFn["AnthropicStreamFn<br/>(SSE + thinking blocks)"]
         OpenAiFn["OpenAiStreamFn<br/>(SSE, multi-provider)"]
+        ProxyFn["ProxyStreamFn<br/>(SSE + delta reconstruction)"]
     end
 
     subgraph InfraLayer["🏗️ Infrastructure"]
@@ -107,6 +110,13 @@ flowchart TB
         Retry["Retry Strategy<br/>(exp. back-off + jitter)"]
         Cancel["Cancellation<br/>(CancellationToken)"]
         Errors["Error Types<br/>(ContextWindowOverflow,<br/>ModelThrottled, StreamError)"]
+    end
+
+    subgraph EvalLayer["📊 Evaluation"]
+        EvalRunner["EvalRunner<br/>Orchestration pipeline"]
+        TrajectoryCollector["TrajectoryCollector<br/>AgentEvent → Invocation"]
+        EvalRegistry["EvaluatorRegistry<br/>TrajectoryMatcher,<br/>BudgetEvaluator,<br/>ResponseMatcher"]
+        EvalStore["EvalStore<br/>FsEvalStore (JSON)"]
     end
 
     subgraph MemoryLayer["🧠 Memory"]
@@ -150,6 +160,10 @@ flowchart TB
     Loop --> Retry
     Loop --> Cancel
     Loop --> Errors
+    EvalRunner -->|"create_agent"| Agent
+    Events -->|"subscribe"| TrajectoryCollector
+    TrajectoryCollector -->|"Invocation"| EvalRegistry
+    EvalRegistry -->|"EvalSetResult"| EvalStore
     Compactor -->|"wraps"| StreamFn
     SessionStore -->|"persists"| Events
     TUIApp -->|"save / load"| SessionStore
@@ -170,15 +184,17 @@ flowchart TB
     classDef externalStyle fill:#e0e0e0,stroke:#424242,stroke-width:2px,color:#000
     classDef tuiStyle fill:#1976d2,stroke:#0d47a1,stroke-width:2px,color:#fff
     classDef memoryStyle fill:#ce93d8,stroke:#7b1fa2,stroke-width:2px,color:#000
+    classDef evalStyle fill:#a5d6a7,stroke:#2e7d32,stroke-width:2px,color:#000
 
     class App,Tools,StreamImpl callerStyle
     class Agent agentStyle
     class Loop loopStyle
     class Validator,Executor toolStyle
-    class StreamFn,ProxyFn streamStyle
-    class OllamaFn,AnthropicFn,OpenAiFn adapterStyle
+    class StreamFn streamStyle
+    class OllamaFn,AnthropicFn,OpenAiFn,ProxyFn adapterStyle
     class Events,Retry,Cancel,Errors infraStyle
     class SessionStore,Compactor memoryStyle
+    class EvalRunner,TrajectoryCollector,EvalRegistry,EvalStore evalStyle
     class TUIApp,ConvView,InputEditor,ToolPanel,StatusBar tuiStyle
     class LLMProvider,ProxyServer externalStyle
 ```
@@ -275,9 +291,9 @@ flowchart TB
         end
 
         subgraph ImplLayer["🔧 Implementations"]
-            proxy["proxy.rs<br/>ProxyStreamFn,<br/>SSE delta reconstruction"]
             context["context.rs<br/>sliding_window,<br/>overflow-aware pruning"]
-            builtintools["tools/<br/>BashTool, ReadFileTool,<br/>WriteFileTool"]
+            builtintools["tools/<br/>BashTool, ReadFileTool,<br/>WriteFileTool<br/>(feature-gated)"]
+            transformer["tool_call_transformer.rs<br/>ToolCallTransformer trait"]
         end
 
         subgraph ExecutionLayer["🔄 Execution"]
@@ -295,6 +311,7 @@ flowchart TB
         ollama["ollama.rs<br/>OllamaStreamFn,<br/>NDJSON streaming"]
         anthropic["anthropic.rs<br/>AnthropicStreamFn,<br/>SSE + thinking blocks"]
         openai["openai.rs<br/>OpenAiStreamFn,<br/>SSE, multi-provider"]
+        proxy["proxy.rs<br/>ProxyStreamFn,<br/>SSE delta reconstruction"]
         convert["convert.rs<br/>MessageConverter trait"]
     end
 
@@ -304,6 +321,15 @@ flowchart TB
         mem_jsonl["jsonl.rs<br/>JsonlSessionStore,<br/>JSONL persistence"]
         mem_meta["meta.rs<br/>SessionMeta"]
         mem_compact["compaction.rs<br/>SummarizingCompactor,<br/>summary injection"]
+    end
+
+    subgraph EvalCrate["📊 swink-agent-eval"]
+        eval_lib["lib.rs<br/>re-exports"]
+        eval_trajectory["trajectory.rs<br/>TrajectoryCollector,<br/>AgentEvent → Invocation"]
+        eval_evaluator["evaluator.rs<br/>Evaluator trait,<br/>EvaluatorRegistry"]
+        eval_runner["runner.rs<br/>EvalRunner,<br/>AgentFactory trait"]
+        eval_builtins["match_.rs, budget.rs,<br/>response.rs<br/>Built-in evaluators"]
+        eval_store["store.rs<br/>EvalStore trait,<br/>FsEvalStore"]
     end
 
     subgraph TUICrate["🖥️ swink-agent-tui"]
@@ -321,10 +347,8 @@ flowchart TB
     error --> loop_
     tool --> loop_
     stream --> loop_
-    stream --> proxy
     retry --> loop_
     loop_ --> agent
-    proxy --> agent
     agent --> lib
     loop_ --> lib
     types --> lib
@@ -332,9 +356,11 @@ flowchart TB
     stream -->|"StreamFn trait"| ollama
     stream -->|"StreamFn trait"| anthropic
     stream -->|"StreamFn trait"| openai
+    stream -->|"StreamFn trait"| proxy
     ollama --> adapters_lib
     anthropic --> adapters_lib
     openai --> adapters_lib
+    proxy --> adapters_lib
     convert --> ollama
     convert --> openai
 
@@ -345,6 +371,17 @@ flowchart TB
     mem_meta --> mem_jsonl
     mem_jsonl --> mem_lib
     mem_compact --> mem_lib
+
+    lib -->|"swink-agent dep"| eval_trajectory
+    lib -->|"swink-agent dep"| eval_runner
+    eval_trajectory --> eval_evaluator
+    eval_evaluator --> eval_builtins
+    eval_runner --> eval_trajectory
+    eval_runner --> eval_evaluator
+    eval_builtins --> eval_lib
+    eval_evaluator --> eval_lib
+    eval_runner --> eval_lib
+    eval_store --> eval_lib
 
     lib -->|"swink-agent dep"| tui_main
     adapters_lib -->|"adapters dep"| tui_main
@@ -358,15 +395,17 @@ flowchart TB
     classDef apiStyle fill:#e3f2fd,stroke:#1976d2,stroke-width:2px,color:#000
     classDef adapterStyle fill:#c8e6c9,stroke:#388e3c,stroke-width:2px,color:#000
     classDef memoryStyle fill:#ce93d8,stroke:#7b1fa2,stroke-width:2px,color:#000
+    classDef evalStyle fill:#a5d6a7,stroke:#2e7d32,stroke-width:2px,color:#000
     classDef tuiStyle fill:#1976d2,stroke:#0d47a1,stroke-width:2px,color:#fff
 
     class types,error foundationStyle
     class tool,stream,retry coreStyle
-    class proxy,context,builtintools implStyle
+    class context,builtintools,transformer implStyle
     class loop_ execStyle
     class agent,lib apiStyle
-    class adapters_lib,ollama,anthropic,openai,convert adapterStyle
+    class adapters_lib,ollama,anthropic,openai,proxy,convert adapterStyle
     class mem_lib,mem_store,mem_jsonl,mem_meta,mem_compact memoryStyle
+    class eval_lib,eval_trajectory,eval_evaluator,eval_runner,eval_builtins,eval_store evalStyle
     class tui_main,tui_app,tui_creds,tui_session,tui_wizard tuiStyle
 ```
 
@@ -376,7 +415,7 @@ flowchart TB
 
 **Library, not a service.** The harness is a crate, not a daemon. There are no HTTP ports, no config files, no CLI. Callers link it as a dependency and own the runtime.
 
-**StreamFn is the only provider boundary.** All LLM communication flows through a single trait. Direct providers, proxies, mock implementations for testing, and future transports all satisfy the same interface. The harness never holds an API key or SDK client. Four built-in implementations ship with the project: `ProxyStreamFn` (SSE, in core), `OllamaStreamFn` (NDJSON), `AnthropicStreamFn` (SSE with thinking blocks), and `OpenAiStreamFn` (SSE, multi-provider compatible) — the latter three in the adapters crate.
+**StreamFn is the only provider boundary.** All LLM communication flows through a single trait. Direct providers, proxies, mock implementations for testing, and future transports all satisfy the same interface. The harness never holds an API key or SDK client. Four built-in implementations ship in the adapters crate: `ProxyStreamFn` (SSE), `OllamaStreamFn` (NDJSON), `AnthropicStreamFn` (SSE with thinking blocks), and `OpenAiStreamFn` (SSE, multi-provider compatible).
 
 **Adapters are a separate crate.** Provider-specific `StreamFn` implementations live in `swink-agent-adapters`, keeping the core harness free of any provider SDK or protocol detail. Adding a new provider means adding a module to the adapters crate — no changes to the core.
 
@@ -386,7 +425,9 @@ flowchart TB
 
 **Concurrency is scoped to tool execution.** Tool calls within a single turn run concurrently via `tokio::spawn`. Everything else — turns, steering polls, follow-up polls — is sequential. This makes the loop easy to reason about without sacrificing the main performance win of parallel tool execution.
 
-**Memory is a separate crate.** Session persistence and context compaction strategies live in `swink-agent-memory`, keeping storage dependencies (filesystem, future vector stores) out of the core. The memory crate consumes core's extension hooks (`TransformContextFn`, `ConvertToLlmFn`) without modifying core internals. See `memory/docs/architecture/` for the multi-layer memory vision.
+**Memory is a separate crate.** Session persistence and context compaction strategies live in `swink-agent-memory`, keeping storage dependencies (filesystem, future vector stores) out of the core. The memory crate consumes core's extension hooks (`TransformContextFn`, `ConvertToLlmFn`) without modifying core internals. See `memory/docs/architecture/` for the compaction architecture. Advanced memory research (RAG, explicit memory tools) lives in a separate repository.
+
+**Evaluation is a separate crate.** The evaluation framework lives in `swink-agent-eval`, keeping test/benchmark dependencies out of the core. It consumes the `AgentEvent` stream via `TrajectoryCollector` — the same subscription mechanism available to any caller. The eval crate depends only on `swink-agent` core, not on adapters or memory. The `Evaluator` trait and `EvaluatorRegistry` pattern enables custom scoring metrics without modifying the framework. Full `Invocation` traces are stored per result to support future comparative analysis across models and configurations.
 
 **TUI is a separate crate.** The terminal interface is a binary crate that depends on the core library, adapters crate, and memory crate, not a feature-gated module. This keeps the core harness free of terminal dependencies and allows the TUI to evolve independently. The TUI consumes the same public API that any other application would use.
 

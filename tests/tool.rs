@@ -1,11 +1,11 @@
-use swink_agent::{
-    AgentTool, AgentToolResult, ContentBlock, unknown_tool_result, validate_tool_arguments,
-    validation_error_result,
-};
 use serde_json::{Value, json};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
+use swink_agent::{
+    AgentTool, AgentToolResult, ContentBlock, unknown_tool_result, validate_tool_arguments,
+    validation_error_result,
+};
 use tokio_util::sync::CancellationToken;
 
 // ── Helper: sample JSON Schema ──

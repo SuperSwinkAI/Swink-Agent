@@ -13,8 +13,7 @@ use tokio_util::sync::CancellationToken;
 
 use swink_agent::{
     Agent, AgentEvent, AgentMessage, AgentOptions, AgentTool, AgentToolResult, ApprovalMode,
-    AssistantMessageEvent, ContentBlock, Cost, LlmMessage, StopReason,
-    ToolApproval, Usage,
+    AssistantMessageEvent, ContentBlock, Cost, LlmMessage, StopReason, ToolApproval, Usage,
 };
 
 // ─── Helpers ─────────────────────────────────────────────────────────────
@@ -308,8 +307,8 @@ fn requires_approval_read_file_tool_is_false() {
 /// Test 11: `selective_approve` auto-approves tools that don't require approval.
 #[tokio::test]
 async fn selective_approve_skips_non_requiring_tools() {
-    use swink_agent::{ToolApprovalRequest, ToolApproval, selective_approve};
     use std::sync::atomic::{AtomicBool, Ordering};
+    use swink_agent::{ToolApproval, ToolApprovalRequest, selective_approve};
 
     let inner_called = Arc::new(AtomicBool::new(false));
     let flag = Arc::clone(&inner_called);
@@ -334,8 +333,8 @@ async fn selective_approve_skips_non_requiring_tools() {
 /// Test 12: `selective_approve` delegates to inner callback for requiring tools.
 #[tokio::test]
 async fn selective_approve_calls_inner_for_requiring_tools() {
-    use swink_agent::{ToolApprovalRequest, ToolApproval, selective_approve};
     use std::sync::atomic::{AtomicBool, Ordering};
+    use swink_agent::{ToolApproval, ToolApprovalRequest, selective_approve};
 
     let inner_called = Arc::new(AtomicBool::new(false));
     let flag = Arc::clone(&inner_called);

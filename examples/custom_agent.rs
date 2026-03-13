@@ -11,12 +11,9 @@ use std::sync::Arc;
 
 use swink_agent::{
     Agent, AgentOptions, AgentTool, BashTool, ModelSpec, ReadFileTool, StreamFn, WriteFileTool,
-    default_convert,
 };
 use swink_agent_adapters::AnthropicStreamFn;
-use swink_agent_tui::{
-    TuiConfig, launch, restore_terminal, setup_terminal, tui_approval_callback,
-};
+use swink_agent_tui::{TuiConfig, launch, restore_terminal, setup_terminal, tui_approval_callback};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -45,14 +42,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut terminal = setup_terminal()?;
 
     let result = launch(TuiConfig::default(), &mut terminal, |approval_tx| {
-        let options = AgentOptions::new(
-            "You are a helpful coding assistant.",
-            model,
-            stream_fn,
-            default_convert,
-        )
-        .with_tools(tools)
-        .with_approve_tool(tui_approval_callback(approval_tx));
+        let options =
+            AgentOptions::new_simple("You are a helpful coding assistant.", model, stream_fn)
+                .with_tools(tools)
+                .with_approve_tool(tui_approval_callback(approval_tx));
 
         Agent::new(options)
     })

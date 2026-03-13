@@ -19,7 +19,6 @@ use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use crate::error::AgentError;
-use crate::util::now_timestamp;
 use crate::loop_::ApproveToolFn;
 use crate::loop_::{AgentEvent, AgentLoopConfig, agent_loop, agent_loop_continue};
 use crate::message_provider::MessageProvider;
@@ -30,6 +29,7 @@ use crate::types::{
     AgentMessage, AgentResult, ContentBlock, Cost, LlmMessage, ModelSpec, StopReason,
     ThinkingLevel, Usage,
 };
+use crate::util::now_timestamp;
 
 // ─── SubscriptionId ──────────────────────────────────────────────────────────
 
@@ -69,7 +69,7 @@ pub enum FollowUpMode {
 // ─── Type Aliases ────────────────────────────────────────────────────────────
 
 type ConvertToLlmFn = Arc<dyn Fn(&AgentMessage) -> Option<LlmMessage> + Send + Sync>;
-type TransformContextFn = Arc<dyn Fn(&mut Vec<AgentMessage>, bool) + Send + Sync>;
+type TransformContextArc = Arc<dyn crate::context_transformer::ContextTransformer>;
 type GetApiKeyFn =
     Arc<dyn Fn(&str) -> Pin<Box<dyn Future<Output = Option<String>> + Send>> + Send + Sync>;
 type ListenerFn = Box<dyn Fn(&AgentEvent) + Send + Sync>;
@@ -98,6 +98,8 @@ pub struct AgentState {
     pub pending_tool_calls: HashSet<String>,
     /// Last error from a run, if any.
     pub error: Option<String>,
+    /// Available model specifications for model cycling.
+    pub available_models: Vec<ModelSpec>,
 }
 
 impl std::fmt::Debug for AgentState {
@@ -111,6 +113,7 @@ impl std::fmt::Debug for AgentState {
             .field("stream_message", &self.stream_message)
             .field("pending_tool_calls", &self.pending_tool_calls)
             .field("error", &self.error)
+            .field("available_models", &self.available_models)
             .finish()
     }
 }
@@ -129,8 +132,8 @@ pub struct AgentOptions {
     pub stream_fn: Arc<dyn StreamFn>,
     /// Converts agent messages to LLM messages (filter custom messages).
     pub convert_to_llm: ConvertToLlmFn,
-    /// Optional context transformation hook.
-    pub transform_context: Option<TransformContextFn>,
+    /// Optional context transformer.
+    pub transform_context: Option<TransformContextArc>,
     /// Optional async API key resolver.
     pub get_api_key: Option<GetApiKeyFn>,
     /// Retry strategy for transient failures.
@@ -147,6 +150,14 @@ pub struct AgentOptions {
     pub approve_tool: Option<ApproveToolArc>,
     /// Controls whether the approval gate is active. Defaults to `Enabled`.
     pub approval_mode: ApprovalMode,
+    /// Optional custom validation hook.
+    pub tool_validator: Option<Arc<dyn crate::tool_validator::ToolValidator>>,
+    /// Additional model specs for model cycling (each with its own stream function).
+    pub available_models: Vec<(ModelSpec, Arc<dyn StreamFn>)>,
+    /// Optional loop policy.
+    pub loop_policy: Option<Arc<dyn crate::loop_policy::LoopPolicy>>,
+    /// Optional pre-execution argument transformer.
+    pub tool_call_transformer: Option<Arc<dyn crate::tool_call_transformer::ToolCallTransformer>>,
 }
 
 impl AgentOptions {
@@ -164,7 +175,9 @@ impl AgentOptions {
             tools: Vec::new(),
             stream_fn,
             convert_to_llm: Arc::new(convert_to_llm),
-            transform_context: Some(Arc::new(crate::context::sliding_window(100_000, 50_000, 2))),
+            transform_context: Some(Arc::new(
+                crate::context_transformer::SlidingWindowTransformer::new(100_000, 50_000, 2),
+            )),
             get_api_key: None,
             retry_strategy: Box::new(DefaultRetryStrategy::default()),
             stream_options: StreamOptions::default(),
@@ -173,6 +186,10 @@ impl AgentOptions {
             structured_output_max_retries: 3,
             approve_tool: None,
             approval_mode: ApprovalMode::default(),
+            tool_validator: None,
+            available_models: Vec::new(),
+            loop_policy: None,
+            tool_call_transformer: None,
         }
     }
 
@@ -209,9 +226,22 @@ impl AgentOptions {
         self
     }
 
-    /// Set the context transform hook.
+    /// Set the context transformer.
     #[must_use]
     pub fn with_transform_context(
+        mut self,
+        transformer: impl crate::context_transformer::ContextTransformer + 'static,
+    ) -> Self {
+        self.transform_context = Some(Arc::new(transformer));
+        self
+    }
+
+    /// Set the context transform hook using a closure.
+    ///
+    /// Backward-compatible with the old closure-based API. The closure
+    /// receives `(&mut Vec<AgentMessage>, bool)` where the bool is the overflow signal.
+    #[must_use]
+    pub fn with_transform_context_fn(
         mut self,
         f: impl Fn(&mut Vec<AgentMessage>, bool) + Send + Sync + 'static,
     ) -> Self {
@@ -269,6 +299,43 @@ impl AgentOptions {
         self.approval_mode = mode;
         self
     }
+
+    /// Set the custom tool validator.
+    #[must_use]
+    pub fn with_tool_validator(
+        mut self,
+        validator: impl crate::tool_validator::ToolValidator + 'static,
+    ) -> Self {
+        self.tool_validator = Some(Arc::new(validator));
+        self
+    }
+
+    /// Set additional models for model cycling.
+    #[must_use]
+    pub fn with_available_models(mut self, models: Vec<(ModelSpec, Arc<dyn StreamFn>)>) -> Self {
+        self.available_models = models;
+        self
+    }
+
+    /// Set the pre-execution tool-call argument transformer.
+    #[must_use]
+    pub fn with_tool_call_transformer(
+        mut self,
+        transformer: impl crate::tool_call_transformer::ToolCallTransformer + 'static,
+    ) -> Self {
+        self.tool_call_transformer = Some(Arc::new(transformer));
+        self
+    }
+
+    /// Set the loop policy for controlling agent loop continuation.
+    #[must_use]
+    pub fn with_loop_policy(
+        mut self,
+        policy: impl crate::loop_policy::LoopPolicy + 'static,
+    ) -> Self {
+        self.loop_policy = Some(Arc::new(policy));
+        self
+    }
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -304,7 +371,7 @@ pub struct Agent {
     follow_up_mode: FollowUpMode,
     stream_fn: Arc<dyn StreamFn>,
     convert_to_llm: ConvertToLlmFn,
-    transform_context: Option<TransformContextFn>,
+    transform_context: Option<TransformContextArc>,
     get_api_key: Option<GetApiKeyFn>,
     retry_strategy: Arc<dyn RetryStrategy>,
     stream_options: StreamOptions,
@@ -313,12 +380,20 @@ pub struct Agent {
     in_flight_llm_messages: Option<Vec<AgentMessage>>,
     approve_tool: Option<ApproveToolArc>,
     approval_mode: ApprovalMode,
+    tool_validator: Option<Arc<dyn crate::tool_validator::ToolValidator>>,
+    loop_policy: Option<Arc<dyn crate::loop_policy::LoopPolicy>>,
+    tool_call_transformer: Option<Arc<dyn crate::tool_call_transformer::ToolCallTransformer>>,
+    /// Extra `model/stream_fn` pairs for model cycling.
+    model_stream_fns: Vec<(ModelSpec, Arc<dyn StreamFn>)>,
 }
 
 impl Agent {
     /// Create a new agent from the given options.
     #[must_use]
     pub fn new(options: AgentOptions) -> Self {
+        let mut available_models = vec![options.model.clone()];
+        available_models.extend(options.available_models.iter().map(|(m, _)| m.clone()));
+
         Self {
             state: AgentState {
                 system_prompt: options.system_prompt,
@@ -329,6 +404,7 @@ impl Agent {
                 stream_message: None,
                 pending_tool_calls: HashSet::new(),
                 error: None,
+                available_models,
             },
             steering_queue: Arc::new(Mutex::new(Vec::new())),
             follow_up_queue: Arc::new(Mutex::new(Vec::new())),
@@ -347,6 +423,10 @@ impl Agent {
             in_flight_llm_messages: None,
             approve_tool: options.approve_tool,
             approval_mode: options.approval_mode,
+            tool_validator: options.tool_validator,
+            loop_policy: options.loop_policy,
+            tool_call_transformer: options.tool_call_transformer,
+            model_stream_fns: options.available_models,
         }
     }
 
@@ -363,8 +443,12 @@ impl Agent {
         self.state.system_prompt = prompt.into();
     }
 
-    /// Set the model specification.
+    /// Set the model specification, swapping the stream function if a matching
+    /// model was registered via [`with_available_models`](AgentOptions::with_available_models).
     pub fn set_model(&mut self, model: ModelSpec) {
+        if let Some((_, sfn)) = self.model_stream_fns.iter().find(|(m, _)| *m == model) {
+            self.stream_fn = Arc::clone(sfn);
+        }
         self.state.model = model;
     }
 
@@ -395,6 +479,27 @@ impl Agent {
     /// Set the approval mode at runtime.
     pub const fn set_approval_mode(&mut self, mode: ApprovalMode) {
         self.approval_mode = mode;
+    }
+
+    // ── Tool Discovery ────────────────────────────────────────────────────
+
+    /// Find a tool by name.
+    #[must_use]
+    pub fn find_tool(&self, name: &str) -> Option<&Arc<dyn AgentTool>> {
+        self.state.tools.iter().find(|t| t.name() == name)
+    }
+
+    /// Return tools matching a predicate.
+    #[must_use]
+    pub fn tools_matching(
+        &self,
+        predicate: impl Fn(&dyn AgentTool) -> bool,
+    ) -> Vec<&Arc<dyn AgentTool>> {
+        self.state
+            .tools
+            .iter()
+            .filter(|t| predicate(t.as_ref()))
+            .collect()
     }
 
     /// Replace the entire message history.
@@ -664,10 +769,7 @@ impl Agent {
     /// Start a new loop from a plain text string, blocking the current thread.
     ///
     /// Convenience wrapper that builds a `UserMessage` from the string.
-    pub fn prompt_text_sync(
-        &mut self,
-        text: impl Into<String>,
-    ) -> Result<AgentResult, AgentError> {
+    pub fn prompt_text_sync(&mut self, text: impl Into<String>) -> Result<AgentResult, AgentError> {
         let msg = AgentMessage::Llm(LlmMessage::User(crate::types::UserMessage {
             content: vec![ContentBlock::Text { text: text.into() }],
             timestamp: now_timestamp(),
@@ -815,8 +917,9 @@ impl Agent {
         schema: Value,
     ) -> Result<T, AgentError> {
         let value = self.structured_output(prompt, schema).await?;
-        serde_json::from_value(value).map_err(|e| {
-            AgentError::StructuredOutputFailed { attempts: 1, last_error: format!("deserialization failed: {e}") }
+        serde_json::from_value(value).map_err(|e| AgentError::StructuredOutputFailed {
+            attempts: 1,
+            last_error: format!("deserialization failed: {e}"),
         })
     }
 
@@ -921,12 +1024,7 @@ impl Agent {
         let convert_box: Box<dyn Fn(&AgentMessage) -> Option<LlmMessage> + Send + Sync> =
             Box::new(move |msg| convert(msg));
 
-        let transform_box = self.transform_context.as_ref().map(|t| {
-            let t = Arc::clone(t);
-            let b: Box<dyn Fn(&mut Vec<AgentMessage>, bool) + Send + Sync> =
-                Box::new(move |msgs, overflow| t(msgs, overflow));
-            b
-        });
+        let transform = self.transform_context.as_ref().map(Arc::clone);
 
         let api_key_box = self.get_api_key.as_ref().map(|k| {
             let k = Arc::clone(k);
@@ -950,7 +1048,7 @@ impl Agent {
             stream_fn: Arc::clone(&self.stream_fn),
             tools: self.state.tools.clone(),
             convert_to_llm: convert_box,
-            transform_context: transform_box,
+            transform_context: transform,
             get_api_key: api_key_box,
             message_provider: Some(message_provider),
             approve_tool: self.approve_tool.as_ref().map(|a| {
@@ -959,6 +1057,9 @@ impl Agent {
                 b
             }),
             approval_mode: self.approval_mode,
+            tool_validator: self.tool_validator.clone(),
+            loop_policy: self.loop_policy.clone(),
+            tool_call_transformer: self.tool_call_transformer.clone(),
         }
     }
 
@@ -983,10 +1084,11 @@ impl Agent {
                 AgentEvent::TurnEnd {
                     assistant_message,
                     tool_results,
+                    reason: _,
                 } => {
                     stop_reason = assistant_message.stop_reason;
-                    usage += assistant_message.usage;
-                    cost += assistant_message.cost;
+                    usage += assistant_message.usage.clone();
+                    cost += assistant_message.cost.clone();
                     if let Some(ref err) = assistant_message.error_message {
                         error = Some(err.clone());
                     }
@@ -1042,6 +1144,7 @@ impl Agent {
             AgentEvent::TurnEnd {
                 assistant_message,
                 tool_results,
+                reason: _,
             } => {
                 // Accumulate messages into in-flight state, mirroring collect_stream.
                 let msgs = self.in_flight_llm_messages.get_or_insert_with(Vec::new);
@@ -1255,4 +1358,3 @@ fn find_structured_output_call_id(result: &AgentResult) -> Option<String> {
     }
     None
 }
-

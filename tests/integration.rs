@@ -19,9 +19,9 @@ use serde_json::json;
 use tokio_util::sync::CancellationToken;
 
 use swink_agent::{
-    Agent, AgentEvent, AgentMessage, AgentOptions, AgentTool, AgentToolResult,
-    AssistantMessageEvent, ContentBlock, Cost, DefaultRetryStrategy, AgentError, LlmMessage,
-    ModelSpec, StopReason, StreamFn, StreamOptions, Usage, UserMessage,
+    Agent, AgentError, AgentEvent, AgentMessage, AgentOptions, AgentTool, AgentToolResult,
+    AssistantMessageEvent, ContentBlock, Cost, DefaultRetryStrategy, LlmMessage, ModelSpec,
+    StopReason, StreamFn, StreamOptions, Usage, UserMessage,
 };
 
 // ─── TransformTrackingStreamFn ───────────────────────────────────────────
@@ -60,6 +60,7 @@ impl StreamFn for TransformTrackingStreamFn {
                     stop_reason: StopReason::Error,
                     error_message: "no more scripted responses".to_string(),
                     usage: None,
+                    error_kind: None,
                 }]
             } else {
                 responses.remove(0)
@@ -116,6 +117,8 @@ fn event_variant_name(event: &AgentEvent) -> String {
         AgentEvent::ToolExecutionEnd { .. } => "ToolExecutionEnd".into(),
         AgentEvent::ToolApprovalRequested { .. } => "ToolApprovalRequested".into(),
         AgentEvent::ToolApprovalResolved { .. } => "ToolApprovalResolved".into(),
+        AgentEvent::BeforeLlmCall { .. } => "BeforeLlmCall".into(),
+        AgentEvent::ContextCompacted { .. } => "ContextCompacted".into(),
     }
 }
 
@@ -427,6 +430,7 @@ async fn test_6_7_accumulates_text_and_tool_call_deltas() {
                 cache_read: 0,
                 cache_write: 0,
                 total: 30,
+                ..Default::default()
             },
             cost: Cost::default(),
         },
@@ -509,7 +513,7 @@ async fn test_6_9_transform_context_called_before_convert() {
     let mut agent = Agent::new(
         AgentOptions::new("test", default_model(), stream_fn, default_convert)
             .with_tools(vec![tool])
-            .with_transform_context(move |_msgs, _overflow| {
+            .with_transform_context(move |_msgs: &mut Vec<AgentMessage>, _overflow: bool| {
                 transform_clone.fetch_add(1, Ordering::SeqCst);
             })
             .with_retry_strategy(Box::new(
@@ -630,6 +634,7 @@ async fn test_6_12_context_window_overflow_error() {
         stop_reason: StopReason::Error,
         error_message: "context_length_exceeded: too many tokens".to_string(),
         usage: None,
+        error_kind: None,
     }];
 
     let overflow_seen = Arc::new(AtomicBool::new(false));
@@ -642,7 +647,7 @@ async fn test_6_12_context_window_overflow_error() {
 
     let mut agent = Agent::new(
         AgentOptions::new("test", default_model(), stream_fn, default_convert)
-            .with_transform_context(move |_msgs, overflow| {
+            .with_transform_context(move |_msgs: &mut Vec<AgentMessage>, overflow: bool| {
                 if overflow {
                     overflow_clone.store(true, Ordering::SeqCst);
                 }

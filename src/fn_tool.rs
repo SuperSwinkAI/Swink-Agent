@@ -144,9 +144,8 @@ impl FnTool {
         F: Fn(Value, CancellationToken) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = AgentToolResult> + Send + 'static,
     {
-        self.execute_fn = Arc::new(move |_id, params, cancel, _on_update| {
-            Box::pin(f(params, cancel))
-        });
+        self.execute_fn =
+            Arc::new(move |_id, params, cancel, _on_update| Box::pin(f(params, cancel)));
         self
     }
 }
@@ -240,14 +239,20 @@ mod tests {
 
     #[tokio::test]
     async fn simple_execute_receives_params() {
-        let tool = FnTool::new("echo", "Echo", "Echo params.")
-            .with_execute_simple(|params, _cancel| async move {
+        let tool = FnTool::new("echo", "Echo", "Echo params.").with_execute_simple(
+            |params, _cancel| async move {
                 let msg = params["msg"].as_str().unwrap_or("none").to_owned();
                 AgentToolResult::text(msg)
-            });
+            },
+        );
 
         let result = tool
-            .execute("id", json!({"msg": "hello"}), CancellationToken::new(), None)
+            .execute(
+                "id",
+                json!({"msg": "hello"}),
+                CancellationToken::new(),
+                None,
+            )
             .await;
         assert!(!result.is_error);
         assert_eq!(result.content.len(), 1);
@@ -264,10 +269,12 @@ mod tests {
         let tool = sample_tool().with_schema_for::<TestParams>();
         let schema = tool.parameters_schema();
         assert_eq!(schema["type"], "object");
-        assert!(schema["required"]
-            .as_array()
-            .unwrap()
-            .contains(&json!("city")));
+        assert!(
+            schema["required"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("city"))
+        );
     }
 
     #[test]
@@ -278,10 +285,12 @@ mod tests {
 
     #[tokio::test]
     async fn full_execute_receives_all_args() {
-        let tool = FnTool::new("full", "Full", "Full signature.")
-            .with_execute(|id, _params, _cancel, _on_update| async move {
-                AgentToolResult::text(format!("id={id}"))
-            });
+        let tool =
+            FnTool::new("full", "Full", "Full signature.").with_execute(
+                |id, _params, _cancel, _on_update| async move {
+                    AgentToolResult::text(format!("id={id}"))
+                },
+            );
 
         let result = tool
             .execute("call_42", json!({}), CancellationToken::new(), None)

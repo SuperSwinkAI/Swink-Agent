@@ -20,7 +20,9 @@ use swink_agent::types::{
     AgentContext, AgentMessage, Cost, LlmMessage, ModelSpec, StopReason, ThinkingLevel, Usage,
 };
 
-use crate::convert::error_event;
+use crate::convert::{
+    error_event, error_event_auth, error_event_network, error_event_throttled, extract_tool_schemas,
+};
 
 // ─── Request types ──────────────────────────────────────────────────────────
 
@@ -184,15 +186,22 @@ fn anthropic_stream<'a>(
             let code = status.as_u16();
             let body = response.text().await.unwrap_or_default();
             warn!(status = code, "Anthropic HTTP error");
-            let msg = match code {
-                401 => format!("Anthropic auth error (HTTP {code}): check x-api-key — {body}"),
-                429 => format!("Anthropic rate limit (HTTP 429): {body}"),
-                529 => format!("Anthropic overloaded (HTTP 529): {body}"),
-                400..=499 => format!("Anthropic client error (HTTP {code}): {body}"),
-                500..=599 => format!("Anthropic server error (HTTP {code}): {body}"),
-                _ => format!("Anthropic HTTP {code}: {body}"),
+            let event = match code {
+                401 => error_event_auth(&format!(
+                    "Anthropic auth error (HTTP {code}): check x-api-key — {body}"
+                )),
+                429 => error_event_throttled(&format!("Anthropic rate limit (HTTP 429): {body}")),
+                529 => error_event_network(&format!("Anthropic overloaded (HTTP 529): {body}")),
+                504 => {
+                    error_event_network(&format!("Anthropic gateway timeout (HTTP 504): {body}"))
+                }
+                400..=499 => error_event(&format!("Anthropic client error (HTTP {code}): {body}")),
+                500..=599 => {
+                    error_event_network(&format!("Anthropic server error (HTTP {code}): {body}"))
+                }
+                _ => error_event(&format!("Anthropic HTTP {code}: {body}")),
             };
-            return stream::iter(vec![error_event(&msg)]).left_stream();
+            return stream::iter(vec![event]).left_stream();
         }
 
         parse_sse_stream(response, cancellation_token).right_stream()
@@ -217,13 +226,12 @@ async fn send_request(
 
     let (system, messages) = convert_messages(&context.messages, &context.system_prompt);
 
-    let tools: Vec<AnthropicToolDef> = context
-        .tools
-        .iter()
-        .map(|t| AnthropicToolDef {
-            name: t.name().to_string(),
-            description: t.description().to_string(),
-            input_schema: t.parameters_schema().clone(),
+    let tools: Vec<AnthropicToolDef> = extract_tool_schemas(&context.tools)
+        .into_iter()
+        .map(|s| AnthropicToolDef {
+            name: s.name,
+            description: s.description,
+            input_schema: s.parameters,
         })
         .collect();
 
@@ -262,7 +270,7 @@ async fn send_request(
         .json(&body)
         .send()
         .await
-        .map_err(|e| error_event(&format!("Anthropic connection error: {e}")))
+        .map_err(|e| error_event_network(&format!("Anthropic connection error: {e}")))
 }
 
 /// Resolve thinking configuration from the model spec.
@@ -436,6 +444,7 @@ fn parse_sse_stream(
                         stop_reason: StopReason::Aborted,
                         error_message: "operation cancelled".to_string(),
                         usage: None,
+                        error_kind: None,
                     });
                     done = true;
                     Some((events, (lines, token, state, done, false)))
@@ -672,7 +681,7 @@ fn process_sse_event(
 
             events.push(AssistantMessageEvent::Done {
                 stop_reason,
-                usage: state.usage,
+                usage: state.usage.clone(),
                 cost: Cost::default(),
             });
         }
