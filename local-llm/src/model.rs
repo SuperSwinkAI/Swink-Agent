@@ -17,7 +17,7 @@ use crate::progress::{ModelProgress, ProgressCallbackFn};
 /// Configuration for a local GGUF model.
 #[derive(Debug, Clone)]
 pub struct ModelConfig {
-    /// `HuggingFace` repository ID (e.g. `bartowski/SmolLM2-135M-Instruct-GGUF`).
+    /// `HuggingFace` repository ID (e.g. `bartowski/SmolLM3-3B-GGUF`).
     pub repo_id: String,
 
     /// GGUF filename within the repository.
@@ -34,9 +34,9 @@ impl Default for ModelConfig {
     fn default() -> Self {
         Self {
             repo_id: std::env::var("LOCAL_MODEL_REPO")
-                .unwrap_or_else(|_| "bartowski/SmolLM2-135M-Instruct-GGUF".to_string()),
+                .unwrap_or_else(|_| "bartowski/SmolLM3-3B-GGUF".to_string()),
             filename: std::env::var("LOCAL_MODEL_FILE")
-                .unwrap_or_else(|_| "SmolLM2-135M-Instruct-Q4_K_M.gguf".to_string()),
+                .unwrap_or_else(|_| "SmolLM3-3B-Q4_K_M.gguf".to_string()),
             gpu_layers: std::env::var("LOCAL_GPU_LAYERS")
                 .ok()
                 .and_then(|v| v.parse().ok())

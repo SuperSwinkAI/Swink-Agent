@@ -5172,6 +5172,7 @@ dependencies = [
  "serde",
  "serde_json",
  "swink-agent-adapters",
+ "swink-agent-local-llm",
  "swink-agent-tui",
  "tempfile",
  "thiserror 2.0.18",

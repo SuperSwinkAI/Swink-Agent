@@ -53,6 +53,7 @@ tracing.workspace = true
 
 [dev-dependencies]
 swink-agent-adapters = { path = "adapters" }
+swink-agent-local-llm = { path = "local-llm" }
 swink-agent-tui = { path = "tui" }
 dotenvy.workspace = true
 pretty_assertions.workspace = true

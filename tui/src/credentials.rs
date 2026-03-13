@@ -50,7 +50,7 @@ pub fn providers() -> Vec<ProviderInfo> {
             requires_key: true,
         },
         ProviderInfo {
-            name: "Local (SmolLM2)",
+            name: "Local (SmolLM3-3B)",
             key_name: "local",
             env_var: "LOCAL_MODEL_REPO",
             description: "Local on-device inference (no API key needed)",

@@ -114,6 +114,10 @@ impl App {
                     }
                     if !text_parts.is_empty() {
                         msg.content = text_parts.join("");
+                    } else if message.stop_reason == swink_agent::StopReason::Error
+                        && let Some(error_message) = &message.error_message
+                    {
+                        msg.content.clone_from(error_message);
                     }
                     if !thinking_parts.is_empty() {
                         msg.thinking = Some(thinking_parts.join(""));

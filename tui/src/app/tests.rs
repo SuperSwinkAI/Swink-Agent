@@ -298,6 +298,12 @@ async fn error_response_allows_retry() {
         AgentStatus::Idle,
         "should return to idle even after an error response"
     );
+    assert!(
+        app.messages
+            .iter()
+            .any(|m| m.content.contains("something broke")),
+        "error response should be visible in the conversation"
+    );
 
     app.send_to_agent("try again".to_string());
     tokio::task::yield_now().await;

@@ -56,7 +56,7 @@ async fn stream_produces_valid_event_sequence() {
     };
     let stream_fn = LocalStreamFn::new(local_model);
 
-    let model = ModelSpec::new("local", "SmolLM2-135M-Instruct-Q4_K_M");
+    let model = ModelSpec::new("local", "SmolLM3-3B-Q4_K_M");
     let context = simple_context("What is 2 + 2? Answer with just the number.");
     let options = StreamOptions::default();
     let token = CancellationToken::new();
@@ -78,8 +78,7 @@ async fn stream_produces_valid_event_sequence() {
 
     // Accumulate and verify the message.
     let msg =
-        swink_agent::stream::accumulate_message(events, "local", "SmolLM2-135M-Instruct-Q4_K_M")
-            .unwrap();
+        swink_agent::stream::accumulate_message(events, "local", "SmolLM3-3B-Q4_K_M").unwrap();
     let text = ContentBlock::extract_text(&msg.content);
     assert!(!text.is_empty(), "response should contain text");
 }
@@ -92,7 +91,7 @@ async fn cancellation_stops_stream() {
     };
     let stream_fn = LocalStreamFn::new(local_model);
 
-    let model = ModelSpec::new("local", "SmolLM2-135M-Instruct-Q4_K_M");
+    let model = ModelSpec::new("local", "SmolLM3-3B-Q4_K_M");
     let context = simple_context("Write a very long essay about the history of computing.");
     let options = StreamOptions::default();
     let token = CancellationToken::new();
@@ -131,7 +130,7 @@ async fn concurrent_sharing() {
         let model = Arc::clone(&local_model);
         handles.push(tokio::spawn(async move {
             let stream_fn = LocalStreamFn::new(model);
-            let spec = ModelSpec::new("local", "SmolLM2-135M-Instruct-Q4_K_M");
+            let spec = ModelSpec::new("local", "SmolLM3-3B-Q4_K_M");
             let context = simple_context(&format!("Say the number {i}."));
             let options = StreamOptions::default();
             let token = CancellationToken::new();

@@ -155,7 +155,7 @@ fn create_agent(system_prompt: String, approval_tx: &ApprovalSender) -> Agent {
         let local: Arc<dyn StreamFn> = Arc::new(swink_agent_local_llm::LocalStreamFn::new(
             Arc::new(local_model),
         ));
-        let model = ModelSpec::new("local", "SmolLM2-135M-Instruct-Q4_K_M");
+        let model = ModelSpec::new("local", "SmolLM3-3B-Q4_K_M");
         return build_agent(system_prompt, model, local, Vec::new(), approval_tx);
     }
 
@@ -251,9 +251,6 @@ fn append_local_model(extra: &mut Vec<(ModelSpec, Arc<dyn StreamFn>)>) {
         let local_sfn: Arc<dyn StreamFn> = Arc::new(swink_agent_local_llm::LocalStreamFn::new(
             Arc::new(local_model),
         ));
-        extra.push((
-            ModelSpec::new("local", "SmolLM2-135M-Instruct-Q4_K_M"),
-            local_sfn,
-        ));
+        extra.push((ModelSpec::new("local", "SmolLM3-3B-Q4_K_M"), local_sfn));
     }
 }
