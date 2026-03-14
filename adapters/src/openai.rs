@@ -9,155 +9,18 @@ use std::pin::Pin;
 
 use futures::stream::{self, Stream, StreamExt as _};
 use reqwest::Client;
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, warn};
 
-use swink_agent::ContentBlock;
 use swink_agent::stream::{AssistantMessageEvent, StreamFn, StreamOptions};
-use swink_agent::types::{
-    AgentContext, AssistantMessage as HarnessAssistantMessage, Cost, ModelSpec, StopReason,
-    ToolResultMessage, Usage, UserMessage,
+use swink_agent::types::{AgentContext, Cost, ModelSpec, StopReason, Usage};
+
+use crate::convert;
+use crate::openai_compat::{
+    OaiChatRequest, OaiChunk, OaiConverter, OaiStreamOptions, OaiToolCallDelta, ToolCallState,
+    build_oai_tools,
 };
-
-use crate::convert::{
-    self, MessageConverter, error_event, error_event_auth, error_event_network,
-    error_event_throttled, extract_tool_schemas,
-};
-
-// ─── Request types ──────────────────────────────────────────────────────────
-
-/// Message in OpenAI's chat completions format.
-#[derive(Debug, Serialize)]
-struct OpenAiMessage {
-    role: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    content: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    tool_calls: Option<Vec<OpenAiToolCallRequest>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    tool_call_id: Option<String>,
-}
-
-/// Tool call in the request (assistant message replay).
-#[derive(Debug, Serialize)]
-struct OpenAiToolCallRequest {
-    id: String,
-    r#type: String,
-    function: OpenAiFunctionCallRequest,
-}
-
-/// Function call details in a request tool call.
-#[derive(Debug, Serialize)]
-struct OpenAiFunctionCallRequest {
-    name: String,
-    arguments: String,
-}
-
-/// Tool definition in OpenAI's format.
-#[derive(Debug, Serialize)]
-struct OpenAiTool {
-    r#type: String,
-    function: OpenAiToolDef,
-}
-
-/// Tool function definition.
-#[derive(Debug, Serialize)]
-struct OpenAiToolDef {
-    name: String,
-    description: String,
-    parameters: Value,
-}
-
-/// Stream options for the request.
-#[derive(Debug, Serialize)]
-struct OpenAiStreamOptions {
-    include_usage: bool,
-}
-
-/// Full request body for OpenAI `/v1/chat/completions`.
-#[derive(Debug, Serialize)]
-struct OpenAiChatRequest {
-    model: String,
-    messages: Vec<OpenAiMessage>,
-    stream: bool,
-    stream_options: OpenAiStreamOptions,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    temperature: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    max_tokens: Option<u64>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    tools: Vec<OpenAiTool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    tool_choice: Option<String>,
-}
-
-// ─── Response types ─────────────────────────────────────────────────────────
-
-/// A single SSE chunk from OpenAI's streaming response.
-#[derive(Deserialize)]
-struct OpenAiChunk {
-    #[serde(default)]
-    choices: Vec<OpenAiChoice>,
-    #[serde(default)]
-    usage: Option<OpenAiUsage>,
-}
-
-/// A choice in a streaming chunk.
-#[derive(Deserialize)]
-struct OpenAiChoice {
-    #[serde(default)]
-    delta: OpenAiDelta,
-    #[serde(default)]
-    finish_reason: Option<String>,
-}
-
-/// The delta portion of a streaming choice.
-#[derive(Default, Deserialize)]
-struct OpenAiDelta {
-    #[serde(default)]
-    content: Option<String>,
-    #[serde(default)]
-    tool_calls: Option<Vec<OpenAiToolCallDelta>>,
-}
-
-/// A tool call delta in a streaming response.
-#[derive(Deserialize)]
-struct OpenAiToolCallDelta {
-    index: usize,
-    #[serde(default)]
-    id: Option<String>,
-    #[serde(default)]
-    function: Option<OpenAiFunctionDelta>,
-}
-
-/// Function delta in a tool call.
-#[derive(Deserialize)]
-struct OpenAiFunctionDelta {
-    #[serde(default)]
-    name: Option<String>,
-    #[serde(default)]
-    arguments: Option<String>,
-}
-
-/// Usage information in the response.
-#[derive(Deserialize)]
-struct OpenAiUsage {
-    #[serde(default)]
-    prompt_tokens: u64,
-    #[serde(default)]
-    completion_tokens: u64,
-}
-
-// ─── Tool call state tracking ───────────────────────────────────────────────
-
-/// Tracks the accumulated state of a single tool call during streaming.
-struct ToolCallState {
-    arguments: String,
-    started: bool,
-    content_index: usize,
-}
+use crate::sse::{SseLine, sse_data_lines};
 
 // ─── OpenAiStreamFn ─────────────────────────────────────────────────────────
 
@@ -236,12 +99,12 @@ fn openai_stream<'a>(
             let body = response.text().await.unwrap_or_default();
             warn!(status = code, "OpenAI HTTP error");
             let event = match code {
-                401 | 403 => error_event_auth(&format!("OpenAI auth error (HTTP {code}): {body}")),
-                429 => error_event_throttled(&format!("OpenAI rate limit (HTTP 429): {body}")),
+                401 | 403 => AssistantMessageEvent::error_auth(format!("OpenAI auth error (HTTP {code}): {body}")),
+                429 => AssistantMessageEvent::error_throttled(format!("OpenAI rate limit (HTTP 429): {body}")),
                 500..=599 => {
-                    error_event_network(&format!("OpenAI server error (HTTP {code}): {body}"))
+                    AssistantMessageEvent::error_network(format!("OpenAI server error (HTTP {code}): {body}"))
                 }
-                _ => error_event(&format!("OpenAI HTTP {code}: {body}")),
+                _ => AssistantMessageEvent::error(format!("OpenAI HTTP {code}: {body}")),
             };
             return stream::iter(vec![event]).left_stream();
         }
@@ -267,31 +130,15 @@ async fn send_request(
     );
 
     let messages =
-        convert::convert_messages::<OpenAiConverter>(&context.messages, &context.system_prompt);
+        convert::convert_messages::<OaiConverter>(&context.messages, &context.system_prompt);
 
-    let tools: Vec<OpenAiTool> = extract_tool_schemas(&context.tools)
-        .into_iter()
-        .map(|s| OpenAiTool {
-            r#type: "function".to_string(),
-            function: OpenAiToolDef {
-                name: s.name,
-                description: s.description,
-                parameters: s.parameters,
-            },
-        })
-        .collect();
+    let (tools, tool_choice) = build_oai_tools(&context.tools);
 
-    let tool_choice = if tools.is_empty() {
-        None
-    } else {
-        Some("auto".to_string())
-    };
-
-    let body = OpenAiChatRequest {
+    let body = OaiChatRequest {
         model: model.model_id.clone(),
         messages,
         stream: true,
-        stream_options: OpenAiStreamOptions {
+        stream_options: OaiStreamOptions {
             include_usage: true,
         },
         temperature: options.temperature,
@@ -309,87 +156,7 @@ async fn send_request(
         .json(&body)
         .send()
         .await
-        .map_err(|e| error_event_network(&format!("OpenAI connection error: {e}")))
-}
-
-// ─── MessageConverter impl ──────────────────────────────────────────────────
-
-/// Marker type for OpenAI-specific message conversion.
-struct OpenAiConverter;
-
-impl MessageConverter for OpenAiConverter {
-    type Message = OpenAiMessage;
-
-    fn system_message(system_prompt: &str) -> Option<OpenAiMessage> {
-        Some(OpenAiMessage {
-            role: "system".to_string(),
-            content: Some(system_prompt.to_string()),
-            tool_calls: None,
-            tool_call_id: None,
-        })
-    }
-
-    fn user_message(user: &UserMessage) -> OpenAiMessage {
-        let content = ContentBlock::extract_text(&user.content);
-        OpenAiMessage {
-            role: "user".to_string(),
-            content: Some(content),
-            tool_calls: None,
-            tool_call_id: None,
-        }
-    }
-
-    fn assistant_message(assistant: &HarnessAssistantMessage) -> OpenAiMessage {
-        let mut content = String::new();
-        let mut tool_calls = Vec::new();
-        for block in &assistant.content {
-            match block {
-                ContentBlock::Text { text } => {
-                    content.push_str(text);
-                }
-                ContentBlock::ToolCall {
-                    id,
-                    name,
-                    arguments,
-                    ..
-                } => {
-                    tool_calls.push(OpenAiToolCallRequest {
-                        id: id.clone(),
-                        r#type: "function".to_string(),
-                        function: OpenAiFunctionCallRequest {
-                            name: name.clone(),
-                            arguments: arguments.to_string(),
-                        },
-                    });
-                }
-                _ => {}
-            }
-        }
-        OpenAiMessage {
-            role: "assistant".to_string(),
-            content: if content.is_empty() {
-                None
-            } else {
-                Some(content)
-            },
-            tool_calls: if tool_calls.is_empty() {
-                None
-            } else {
-                Some(tool_calls)
-            },
-            tool_call_id: None,
-        }
-    }
-
-    fn tool_result_message(result: &ToolResultMessage) -> OpenAiMessage {
-        let content = ContentBlock::extract_text(&result.content);
-        OpenAiMessage {
-            role: "tool".to_string(),
-            content: Some(content),
-            tool_calls: None,
-            tool_call_id: Some(result.tool_call_id.clone()),
-        }
-    }
+        .map_err(|e| AssistantMessageEvent::error_network(format!("OpenAI connection error: {e}")))
 }
 
 /// Parse OpenAI's SSE streaming response into `AssistantMessageEvent` values.
@@ -431,7 +198,7 @@ fn parse_sse_stream(
             tokio::select! {
                 biased;
                 () = token.cancelled() => {
-                    let mut events = finalize_blocks(&mut state);
+                    let mut events = crate::finalize::finalize_blocks(&mut state);
                     events.push(AssistantMessageEvent::Error {
                         stop_reason: StopReason::Aborted,
                         error_message: "operation cancelled".to_string(),
@@ -446,7 +213,7 @@ fn parse_sse_stream(
                         None => {
                             // Stream ended without [DONE]
                             done = true;
-                            let mut events = finalize_blocks(&mut state);
+                            let mut events = crate::finalize::finalize_blocks(&mut state);
                             if let Some(stop_reason) = state.stop_reason.take() {
                                 // Had a finish_reason but no [DONE] — still valid
                                 let usage = state.usage.take();
@@ -456,13 +223,13 @@ fn parse_sse_stream(
                                     cost: Cost::default(),
                                 });
                             } else {
-                                events.push(error_event("OpenAI stream ended unexpectedly"));
+                                events.push(AssistantMessageEvent::error("OpenAI stream ended unexpectedly"));
                             }
                             Some((events, (lines, token, state, done, false)))
                         }
                         Some(SseLine::Done) => {
                             done = true;
-                            let mut events = finalize_blocks(&mut state);
+                            let mut events = crate::finalize::finalize_blocks(&mut state);
                             let stop_reason = state.stop_reason.take()
                                 .unwrap_or(StopReason::Stop);
                             let usage = state.usage.take();
@@ -474,13 +241,13 @@ fn parse_sse_stream(
                             Some((events, (lines, token, state, done, false)))
                         }
                         Some(SseLine::Data(data)) => {
-                            let chunk: OpenAiChunk = match serde_json::from_str(&data) {
+                            let chunk: OaiChunk = match serde_json::from_str(&data) {
                                 Ok(c) => c,
                                 Err(e) => {
                                     error!(error = %e, "OpenAI JSON parse error");
                                     done = true;
-                                    let mut events = finalize_blocks(&mut state);
-                                    events.push(error_event(&format!(
+                                    let mut events = crate::finalize::finalize_blocks(&mut state);
+                                    events.push(AssistantMessageEvent::error(format!(
                                         "OpenAI JSON parse error: {e}"
                                     )));
                                     return Some((events, (lines, token, state, done, false)));
@@ -550,7 +317,7 @@ fn parse_sse_stream(
                                     };
 
                                     // Finalize all open blocks
-                                    events.extend(finalize_blocks(&mut state));
+                                    events.extend(crate::finalize::finalize_blocks(&mut state));
 
                                     state.stop_reason = Some(stop_reason);
                                 }
@@ -562,6 +329,9 @@ fn parse_sse_stream(
                                 Some((events, (lines, token, state, done, false)))
                             }
                         }
+                        Some(_) => {
+                            Some((vec![], (lines, token, state, done, false)))
+                        }
                     }
                 }
             }
@@ -572,7 +342,7 @@ fn parse_sse_stream(
 
 /// Process a single tool call delta, updating state and emitting events.
 fn process_tool_call_delta(
-    tc_delta: &OpenAiToolCallDelta,
+    tc_delta: &OaiToolCallDelta,
     state: &mut SseStreamState,
     events: &mut Vec<AssistantMessageEvent>,
 ) {
@@ -639,32 +409,33 @@ fn process_tool_call_delta(
     }
 }
 
-/// Close any open content blocks.
-fn finalize_blocks(state: &mut SseStreamState) -> Vec<AssistantMessageEvent> {
-    let mut events = Vec::new();
+impl crate::finalize::StreamFinalize for SseStreamState {
+    fn drain_open_blocks(&mut self) -> Vec<crate::finalize::OpenBlock> {
+        let mut blocks = Vec::new();
 
-    if state.text_started {
-        events.push(AssistantMessageEvent::TextEnd {
-            content_index: state.content_index,
-        });
-        state.text_started = false;
-        state.content_index += 1;
-    }
-
-    // Finalize all pending tool calls
-    let mut indices: Vec<usize> = state.tool_calls.keys().copied().collect();
-    indices.sort_unstable();
-    for idx in indices {
-        if let Some(tc) = state.tool_calls.remove(&idx)
-            && tc.started
-        {
-            events.push(AssistantMessageEvent::ToolCallEnd {
-                content_index: tc.content_index,
+        if self.text_started {
+            blocks.push(crate::finalize::OpenBlock::Text {
+                content_index: self.content_index,
             });
+            self.text_started = false;
+            self.content_index += 1;
         }
-    }
 
-    events
+        // Finalize all pending tool calls
+        let mut indices: Vec<usize> = self.tool_calls.keys().copied().collect();
+        indices.sort_unstable();
+        for idx in indices {
+            if let Some(tc) = self.tool_calls.remove(&idx)
+                && tc.started
+            {
+                blocks.push(crate::finalize::OpenBlock::ToolCall {
+                    content_index: tc.content_index,
+                });
+            }
+        }
+
+        blocks
+    }
 }
 
 /// State machine tracking SSE streaming progress.
@@ -675,79 +446,6 @@ struct SseStreamState {
     usage: Option<Usage>,
     /// Saved stop reason from `finish_reason`; emitted with `Done` on `[DONE]`.
     stop_reason: Option<StopReason>,
-}
-
-/// Parsed SSE line.
-enum SseLine {
-    /// A `data: [DONE]` signal.
-    Done,
-    /// A `data: {json}` payload.
-    Data(String),
-}
-
-/// Convert a byte stream into a stream of parsed SSE data lines.
-fn sse_data_lines(
-    byte_stream: impl Stream<Item = Result<bytes::Bytes, reqwest::Error>> + Send + 'static,
-) -> Pin<Box<dyn Stream<Item = SseLine> + Send + 'static>> {
-    Box::pin(stream::unfold(
-        (Box::pin(byte_stream), String::new()),
-        |(mut stream, mut buf)| async move {
-            loop {
-                // Check if we have a complete line in the buffer
-                if let Some(pos) = buf.find('\n') {
-                    let line_end = if pos > 0 && buf.as_bytes().get(pos - 1) == Some(&b'\r') {
-                        pos - 1
-                    } else {
-                        pos
-                    };
-                    let line: String = buf[..line_end].to_string();
-                    buf.drain(..=pos);
-
-                    // Skip empty lines (SSE event separators)
-                    if line.is_empty() {
-                        continue;
-                    }
-
-                    // Only process data lines
-                    if let Some(data) = line.strip_prefix("data: ") {
-                        let data = data.trim();
-                        if data == "[DONE]" {
-                            return Some((SseLine::Done, (stream, buf)));
-                        }
-                        if !data.is_empty() {
-                            return Some((SseLine::Data(data.to_string()), (stream, buf)));
-                        }
-                    }
-                    // Skip non-data lines (e.g. `event:`, `id:`, comments)
-                    continue;
-                }
-
-                // Need more data
-                if let Some(Ok(bytes)) = stream.next().await {
-                    match std::str::from_utf8(&bytes) {
-                        Ok(s) => buf.push_str(s),
-                        Err(_) => buf.push_str(&String::from_utf8_lossy(&bytes)),
-                    }
-                } else {
-                    // Stream ended — flush remaining buffer
-                    let remaining = buf.trim().to_string();
-                    buf.clear();
-                    if !remaining.is_empty()
-                        && let Some(data) = remaining.strip_prefix("data: ")
-                    {
-                        let data = data.trim();
-                        if data == "[DONE]" {
-                            return Some((SseLine::Done, (stream, buf)));
-                        }
-                        if !data.is_empty() {
-                            return Some((SseLine::Data(data.to_string()), (stream, buf)));
-                        }
-                    }
-                    return None;
-                }
-            }
-        },
-    ))
 }
 
 // ─── Compile-time assertions ────────────────────────────────────────────────

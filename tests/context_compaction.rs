@@ -147,6 +147,12 @@ fn default_config(stream_fn: Arc<dyn StreamFn>) -> AgentLoopConfig {
         tool_validator: None,
         loop_policy: None,
         tool_call_transformer: None,
+        post_turn_hook: None,
+        async_transform_context: None,
+        metrics_collector: None,
+        fallback: None,
+        budget_guard: None,
+        tool_execution_policy: swink_agent::ToolExecutionPolicy::default(),
     }
 }
 

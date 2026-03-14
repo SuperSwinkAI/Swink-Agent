@@ -18,6 +18,8 @@ use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
+use crate::async_context_transformer::AsyncContextTransformer;
+use crate::checkpoint::{Checkpoint, CheckpointStore};
 use crate::error::AgentError;
 use crate::loop_::ApproveToolFn;
 use crate::loop_::{AgentEvent, AgentLoopConfig, agent_loop, agent_loop_continue};
@@ -71,6 +73,8 @@ pub enum FollowUpMode {
 
 type ConvertToLlmFn = Arc<dyn Fn(&AgentMessage) -> Option<LlmMessage> + Send + Sync>;
 type TransformContextArc = Arc<dyn crate::context_transformer::ContextTransformer>;
+type AsyncTransformContextArc = Arc<dyn AsyncContextTransformer>;
+type CheckpointStoreArc = Arc<dyn CheckpointStore>;
 type GetApiKeyFn =
     Arc<dyn Fn(&str) -> Pin<Box<dyn Future<Output = Option<String>> + Send>> + Send + Sync>;
 type ListenerFn = Box<dyn Fn(&AgentEvent) + Send + Sync>;
@@ -159,8 +163,41 @@ pub struct AgentOptions {
     pub loop_policy: Option<Arc<dyn crate::loop_policy::LoopPolicy>>,
     /// Optional pre-execution argument transformer.
     pub tool_call_transformer: Option<Arc<dyn crate::tool_call_transformer::ToolCallTransformer>>,
+    /// Optional post-turn lifecycle hook.
+    pub post_turn_hook: Option<Arc<dyn crate::post_turn_hook::PostTurnHook>>,
     /// Event forwarders that receive all dispatched events.
     pub event_forwarders: Vec<crate::event_forwarder::EventForwarderFn>,
+    /// Optional async context transformer (runs before the sync transformer).
+    pub async_transform_context: Option<AsyncTransformContextArc>,
+    /// Optional checkpoint store for persisting agent state.
+    pub checkpoint_store: Option<CheckpointStoreArc>,
+    /// Optional metrics collector for per-turn observability.
+    pub metrics_collector: Option<Arc<dyn crate::metrics::MetricsCollector>>,
+    /// Optional custom token counter for context compaction.
+    ///
+    /// When set, the default [`SlidingWindowTransformer`](crate::SlidingWindowTransformer)
+    /// uses this counter instead of the `chars / 4` heuristic. Has no effect if a
+    /// custom `transform_context` is provided (use
+    /// [`SlidingWindowTransformer::with_token_counter`](crate::SlidingWindowTransformer::with_token_counter)
+    /// directly in that case).
+    pub token_counter: Option<Arc<dyn crate::context::TokenCounter>>,
+    /// Optional model fallback chain tried when the primary model exhausts
+    /// its retry budget on a retryable error.
+    pub fallback: Option<crate::fallback::ModelFallback>,
+    /// Optional external message provider composed with the internal queues.
+    ///
+    /// Set via [`with_message_channel`](Self::with_message_channel) or
+    /// [`with_external_message_provider`](Self::with_external_message_provider).
+    pub external_message_provider: Option<Arc<dyn MessageProvider>>,
+    /// Optional pre-call budget guard for mid-turn cost/token gating.
+    ///
+    /// Checked before each LLM call. Complements [`CostCapPolicy`](crate::CostCapPolicy)
+    /// which only checks after turns.
+    pub budget_guard: Option<crate::budget_guard::BudgetGuard>,
+    /// Controls how tool calls within a turn are dispatched.
+    ///
+    /// Defaults to [`ToolExecutionPolicy::Concurrent`].
+    pub tool_execution_policy: crate::tool_execution_policy::ToolExecutionPolicy,
 }
 
 impl AgentOptions {
@@ -193,7 +230,16 @@ impl AgentOptions {
             available_models: Vec::new(),
             loop_policy: None,
             tool_call_transformer: None,
+            post_turn_hook: None,
             event_forwarders: Vec::new(),
+            async_transform_context: None,
+            checkpoint_store: None,
+            metrics_collector: None,
+            token_counter: None,
+            fallback: None,
+            external_message_provider: None,
+            budget_guard: None,
+            tool_execution_policy: crate::tool_execution_policy::ToolExecutionPolicy::default(),
         }
     }
 
@@ -207,6 +253,21 @@ impl AgentOptions {
         stream_fn: Arc<dyn StreamFn>,
     ) -> Self {
         Self::new(system_prompt, model, stream_fn, default_convert)
+    }
+
+    /// Build options directly from a [`ModelConnections`] bundle.
+    ///
+    /// This avoids the manual `into_parts()` decomposition. The primary model
+    /// and stream function are extracted, and any extra models are set as
+    /// available models for cycling.
+    #[must_use]
+    pub fn from_connections(
+        system_prompt: impl Into<String>,
+        connections: crate::model_presets::ModelConnections,
+    ) -> Self {
+        let (model, stream_fn, extra_models) = connections.into_parts();
+        Self::new_simple(system_prompt, model, stream_fn)
+            .with_available_models(extra_models)
     }
 
     /// Set the available tools.
@@ -341,10 +402,145 @@ impl AgentOptions {
         self
     }
 
+    /// Set the post-turn lifecycle hook.
+    #[must_use]
+    pub fn with_post_turn_hook(
+        mut self,
+        hook: impl crate::post_turn_hook::PostTurnHook + 'static,
+    ) -> Self {
+        self.post_turn_hook = Some(Arc::new(hook));
+        self
+    }
+
     /// Add an event forwarder that receives all events dispatched by this agent.
     #[must_use]
     pub fn with_event_forwarder(mut self, f: impl Fn(AgentEvent) + Send + Sync + 'static) -> Self {
         self.event_forwarders.push(Arc::new(f));
+        self
+    }
+
+    /// Set the async context transformer (runs before the sync transformer).
+    #[must_use]
+    pub fn with_async_transform_context(
+        mut self,
+        transformer: impl AsyncContextTransformer + 'static,
+    ) -> Self {
+        self.async_transform_context = Some(Arc::new(transformer));
+        self
+    }
+
+    /// Set the checkpoint store for persisting agent state.
+    #[must_use]
+    pub fn with_checkpoint_store(mut self, store: impl CheckpointStore + 'static) -> Self {
+        self.checkpoint_store = Some(Arc::new(store));
+        self
+    }
+
+    /// Set the metrics collector for per-turn observability.
+    #[must_use]
+    pub fn with_metrics_collector(
+        mut self,
+        collector: impl crate::metrics::MetricsCollector + 'static,
+    ) -> Self {
+        self.metrics_collector = Some(Arc::new(collector));
+        self
+    }
+
+    /// Set a custom token counter for context compaction.
+    ///
+    /// Replaces the default `chars / 4` heuristic used by the built-in
+    /// [`SlidingWindowTransformer`](crate::SlidingWindowTransformer). Supply a
+    /// tiktoken or provider-native tokenizer for accurate budget enforcement.
+    #[must_use]
+    pub fn with_token_counter(
+        mut self,
+        counter: impl crate::context::TokenCounter + 'static,
+    ) -> Self {
+        self.token_counter = Some(Arc::new(counter));
+        self
+    }
+
+    /// Set the model fallback chain.
+    ///
+    /// When the primary model exhausts its retry budget on a retryable error,
+    /// each fallback model is tried in order (with a fresh retry budget)
+    /// before the error is surfaced.
+    #[must_use]
+    pub fn with_model_fallback(mut self, fallback: crate::fallback::ModelFallback) -> Self {
+        self.fallback = Some(fallback);
+        self
+    }
+
+    /// Attach a push-based message channel and return the sender handle.
+    ///
+    /// Creates a [`ChannelMessageProvider`](crate::ChannelMessageProvider) that
+    /// is composed with the agent's internal steering/follow-up queues. External
+    /// code can push messages via the returned [`MessageSender`](crate::MessageSender).
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let mut opts = AgentOptions::new_simple("prompt", model, stream_fn);
+    /// let sender = opts.with_message_channel();
+    /// // later, from another task:
+    /// sender.send(user_msg("follow-up directive"));
+    /// ```
+    pub fn with_message_channel(&mut self) -> crate::message_provider::MessageSender {
+        let (provider, sender) = crate::message_provider::message_channel();
+        self.external_message_provider = Some(Arc::new(provider));
+        sender
+    }
+
+    /// Set an external [`MessageProvider`] to compose with the internal queues.
+    ///
+    /// For push-based messaging, prefer [`with_message_channel`](Self::with_message_channel).
+    #[must_use]
+    pub fn with_external_message_provider(
+        mut self,
+        provider: impl MessageProvider + 'static,
+    ) -> Self {
+        self.external_message_provider = Some(Arc::new(provider));
+        self
+    }
+
+    /// Set a pre-call budget guard for mid-turn cost/token gating.
+    ///
+    /// The guard is checked before each LLM call. If accumulated cost or
+    /// token usage exceeds the configured limits, the loop stops gracefully.
+    /// This complements [`CostCapPolicy`](crate::CostCapPolicy) which only
+    /// checks after turns complete.
+    #[must_use]
+    pub const fn with_budget_guard(mut self, guard: crate::budget_guard::BudgetGuard) -> Self {
+        self.budget_guard = Some(guard);
+        self
+    }
+
+    /// Convenience: set a maximum cost limit (creates a [`BudgetGuard`](crate::BudgetGuard)).
+    ///
+    /// Equivalent to `with_budget_guard(BudgetGuard::new().with_max_cost(max_cost))`.
+    #[must_use]
+    pub const fn with_cost_limit(self, max_cost: f64) -> Self {
+        self.with_budget_guard(crate::budget_guard::BudgetGuard::new().with_max_cost(max_cost))
+    }
+
+    /// Convenience: set a maximum token limit (creates a [`BudgetGuard`](crate::BudgetGuard)).
+    ///
+    /// Equivalent to `with_budget_guard(BudgetGuard::new().with_max_tokens(max_tokens))`.
+    #[must_use]
+    pub const fn with_token_limit(self, max_tokens: u64) -> Self {
+        self.with_budget_guard(crate::budget_guard::BudgetGuard::new().with_max_tokens(max_tokens))
+    }
+
+    /// Set the tool execution policy.
+    ///
+    /// Controls whether tool calls are dispatched concurrently (default),
+    /// sequentially, by priority, or via a fully custom strategy.
+    #[must_use]
+    pub fn with_tool_execution_policy(
+        mut self,
+        policy: crate::tool_execution_policy::ToolExecutionPolicy,
+    ) -> Self {
+        self.tool_execution_policy = policy;
         self
     }
 }
@@ -397,10 +593,25 @@ pub struct Agent {
     tool_validator: Option<Arc<dyn crate::tool_validator::ToolValidator>>,
     loop_policy: Option<Arc<dyn crate::loop_policy::LoopPolicy>>,
     tool_call_transformer: Option<Arc<dyn crate::tool_call_transformer::ToolCallTransformer>>,
+    post_turn_hook: Option<Arc<dyn crate::post_turn_hook::PostTurnHook>>,
     /// Extra `model/stream_fn` pairs for model cycling.
     model_stream_fns: Vec<(ModelSpec, Arc<dyn StreamFn>)>,
     /// Event forwarders that receive cloned events after listener dispatch.
     event_forwarders: Vec<crate::event_forwarder::EventForwarderFn>,
+    /// Optional async context transformer.
+    async_transform_context: Option<AsyncTransformContextArc>,
+    /// Optional checkpoint store.
+    checkpoint_store: Option<CheckpointStoreArc>,
+    /// Optional metrics collector.
+    metrics_collector: Option<Arc<dyn crate::metrics::MetricsCollector>>,
+    /// Optional model fallback chain.
+    fallback: Option<crate::fallback::ModelFallback>,
+    /// Optional external message provider.
+    external_message_provider: Option<Arc<dyn MessageProvider>>,
+    /// Optional budget guard.
+    budget_guard: Option<crate::budget_guard::BudgetGuard>,
+    /// Tool execution policy.
+    tool_execution_policy: crate::tool_execution_policy::ToolExecutionPolicy,
 }
 
 impl Agent {
@@ -418,6 +629,16 @@ impl Agent {
                 .iter()
                 .map(|(model, stream_fn)| (model.clone(), Arc::clone(stream_fn))),
         );
+
+        // If a custom token counter is provided and no custom transform_context
+        // was set, rebuild the default SlidingWindowTransformer with the counter.
+        let transform_context = match (options.token_counter, options.transform_context) {
+            (Some(counter), None) => Some(Arc::new(
+                crate::context_transformer::SlidingWindowTransformer::new(100_000, 50_000, 2)
+                    .with_token_counter(counter),
+            ) as TransformContextArc),
+            (_, tc) => tc,
+        };
 
         Self {
             id: AgentId::next(),
@@ -440,7 +661,7 @@ impl Agent {
             follow_up_mode: options.follow_up_mode,
             stream_fn: options.stream_fn,
             convert_to_llm: options.convert_to_llm,
-            transform_context: options.transform_context,
+            transform_context,
             get_api_key: options.get_api_key,
             retry_strategy: Arc::from(options.retry_strategy),
             stream_options: options.stream_options,
@@ -452,8 +673,16 @@ impl Agent {
             tool_validator: options.tool_validator,
             loop_policy: options.loop_policy,
             tool_call_transformer: options.tool_call_transformer,
+            post_turn_hook: options.post_turn_hook,
             model_stream_fns,
             event_forwarders: options.event_forwarders,
+            async_transform_context: options.async_transform_context,
+            checkpoint_store: options.checkpoint_store,
+            metrics_collector: options.metrics_collector,
+            fallback: options.fallback,
+            external_message_provider: options.external_message_provider,
+            budget_guard: options.budget_guard,
+            tool_execution_policy: options.tool_execution_policy,
         }
     }
 
@@ -535,6 +764,22 @@ impl Agent {
             .collect()
     }
 
+    /// Return tools belonging to the given namespace.
+    ///
+    /// Tools with no metadata or a different namespace are excluded.
+    #[must_use]
+    pub fn tools_in_namespace(&self, namespace: &str) -> Vec<&Arc<dyn AgentTool>> {
+        self.state
+            .tools
+            .iter()
+            .filter(|t| {
+                t.metadata()
+                    .and_then(|m| m.namespace)
+                    .is_some_and(|ns| ns == namespace)
+            })
+            .collect()
+    }
+
     /// Replace the entire message history.
     pub fn set_messages(&mut self, messages: Vec<AgentMessage>) {
         self.state.messages = messages;
@@ -548,6 +793,65 @@ impl Agent {
     /// Clear the message history.
     pub fn clear_messages(&mut self) {
         self.state.messages.clear();
+    }
+
+    // ── Checkpointing ────────────────────────────────────────────────────
+
+    /// Create a checkpoint of the current agent state.
+    ///
+    /// If a [`CheckpointStore`] is configured, the checkpoint is also persisted.
+    /// Returns the checkpoint regardless of whether a store is configured.
+    pub async fn save_checkpoint(
+        &self,
+        id: impl Into<String>,
+    ) -> Result<Checkpoint, std::io::Error> {
+        let checkpoint = Checkpoint::new(
+            id,
+            &self.state.system_prompt,
+            &self.state.model.provider,
+            &self.state.model.model_id,
+            &self.state.messages,
+        );
+
+        if let Some(ref store) = self.checkpoint_store {
+            store.save_checkpoint(&checkpoint).await?;
+        }
+
+        Ok(checkpoint)
+    }
+
+    /// Restore agent message history from a checkpoint.
+    ///
+    /// Replaces the current messages with those from the checkpoint and
+    /// updates the system prompt to match.
+    pub fn restore_from_checkpoint(&mut self, checkpoint: &Checkpoint) {
+        self.state.messages = checkpoint.restore_messages();
+        self.state.system_prompt.clone_from(&checkpoint.system_prompt);
+    }
+
+    /// Load a checkpoint from the configured store and restore state from it.
+    ///
+    /// Returns the loaded checkpoint, or `None` if not found.
+    /// Returns an error if no checkpoint store is configured.
+    pub async fn load_and_restore_checkpoint(
+        &mut self,
+        id: &str,
+    ) -> Result<Option<Checkpoint>, std::io::Error> {
+        let store = self.checkpoint_store.as_ref().ok_or_else(|| {
+            std::io::Error::other("no checkpoint store configured")
+        })?;
+
+        let maybe = store.load_checkpoint(id).await?;
+        if let Some(ref checkpoint) = maybe {
+            self.restore_from_checkpoint(checkpoint);
+        }
+        Ok(maybe)
+    }
+
+    /// Access the checkpoint store, if configured.
+    #[must_use]
+    pub fn checkpoint_store(&self) -> Option<&dyn CheckpointStore> {
+        self.checkpoint_store.as_deref()
     }
 
     // ── Plan Mode ───────────────────────────────────────────────────────
@@ -646,6 +950,105 @@ impl Agent {
             info!("aborting agent loop");
             token.cancel();
         }
+    }
+
+    /// Pause the currently running loop and capture its state as a [`LoopCheckpoint`].
+    ///
+    /// Signals the loop to stop via the cancellation token and snapshots the
+    /// agent's messages, system prompt, and model into a serializable
+    /// checkpoint. The checkpoint can later be passed to [`resume`](Self::resume)
+    /// to continue the loop from where it left off.
+    ///
+    /// Returns `None` if the agent is not currently running.
+    pub fn pause(&mut self) -> Option<crate::checkpoint::LoopCheckpoint> {
+        if !self.state.is_running {
+            return None;
+        }
+
+        // Signal the loop to stop
+        if let Some(ref token) = self.abort_controller {
+            info!("pausing agent loop");
+            token.cancel();
+        }
+
+        // Build the loop checkpoint from current state
+        let checkpoint = crate::checkpoint::LoopCheckpoint::new(
+            &self.state.system_prompt,
+            &self.state.model.provider,
+            &self.state.model.model_id,
+            &self.state.messages,
+        );
+
+        self.state.is_running = false;
+        self.abort_controller = None;
+        self.idle_notify.notify_waiters();
+
+        Some(checkpoint)
+    }
+
+    /// Resume the agent loop from a previously captured [`LoopCheckpoint`].
+    ///
+    /// Restores the message history, system prompt, and accumulated
+    /// usage/cost from the checkpoint, then continues the loop via
+    /// [`continue_async`](Self::continue_async).
+    ///
+    /// Any pending messages stored in the checkpoint are injected into the
+    /// follow-up queue before resuming.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AgentError::AlreadyRunning`] if the agent is already running,
+    /// or [`AgentError::NoMessages`] if the checkpoint contains no messages.
+    pub async fn resume(
+        &mut self,
+        checkpoint: &crate::checkpoint::LoopCheckpoint,
+    ) -> Result<AgentResult, AgentError> {
+        self.check_not_running()?;
+        self.restore_from_loop_checkpoint(checkpoint)?;
+        self.continue_async().await
+    }
+
+    /// Resume the agent loop from a checkpoint, returning an event stream.
+    ///
+    /// Streaming variant of [`resume`](Self::resume).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AgentError::AlreadyRunning`] if the agent is already running,
+    /// or [`AgentError::NoMessages`] if the checkpoint contains no messages.
+    pub fn resume_stream(
+        &mut self,
+        checkpoint: &crate::checkpoint::LoopCheckpoint,
+    ) -> Result<Pin<Box<dyn Stream<Item = AgentEvent> + Send>>, AgentError> {
+        self.check_not_running()?;
+        self.restore_from_loop_checkpoint(checkpoint)?;
+        self.continue_stream()
+    }
+
+    /// Internal helper: restore agent state from a loop checkpoint.
+    fn restore_from_loop_checkpoint(
+        &mut self,
+        checkpoint: &crate::checkpoint::LoopCheckpoint,
+    ) -> Result<(), AgentError> {
+        self.state.messages = checkpoint.restore_messages();
+        self.state.system_prompt.clone_from(&checkpoint.system_prompt);
+
+        if self.state.messages.is_empty() {
+            return Err(AgentError::NoMessages);
+        }
+
+        // Inject pending messages into the follow-up queue
+        for msg in checkpoint.restore_pending_messages() {
+            self.follow_up(msg);
+        }
+
+        info!(
+            turn_index = checkpoint.turn_index,
+            messages = self.state.messages.len(),
+            "resuming agent loop from checkpoint"
+        );
+
+        Ok(())
     }
 
     /// Reset the agent to its initial state, clearing messages, queues, and error.
@@ -1090,12 +1493,22 @@ impl Agent {
             b
         });
 
-        let message_provider: Arc<dyn MessageProvider> = Arc::new(QueueMessageProvider {
+        let queue_provider: Arc<dyn MessageProvider> = Arc::new(QueueMessageProvider {
             steering_queue: Arc::clone(&self.steering_queue),
             follow_up_queue: Arc::clone(&self.follow_up_queue),
             steering_mode: self.steering_mode,
             follow_up_mode: self.follow_up_mode,
         });
+
+        let message_provider: Arc<dyn MessageProvider> =
+            if let Some(ref external) = self.external_message_provider {
+                Arc::new(crate::message_provider::ComposedMessageProvider::new(
+                    queue_provider,
+                    Arc::clone(external),
+                ))
+            } else {
+                queue_provider
+            };
 
         AgentLoopConfig {
             model: self.state.model.clone(),
@@ -1116,6 +1529,12 @@ impl Agent {
             tool_validator: self.tool_validator.clone(),
             loop_policy: self.loop_policy.clone(),
             tool_call_transformer: self.tool_call_transformer.clone(),
+            post_turn_hook: self.post_turn_hook.clone(),
+            async_transform_context: self.async_transform_context.as_ref().map(Arc::clone),
+            metrics_collector: self.metrics_collector.as_ref().map(Arc::clone),
+            fallback: self.fallback.clone(),
+            budget_guard: self.budget_guard.clone(),
+            tool_execution_policy: self.tool_execution_policy.clone(),
         }
     }
 
@@ -1140,7 +1559,7 @@ impl Agent {
                 AgentEvent::TurnEnd {
                     assistant_message,
                     tool_results,
-                    reason: _,
+                    ..
                 } => {
                     stop_reason = assistant_message.stop_reason;
                     usage += assistant_message.usage.clone();
@@ -1200,7 +1619,7 @@ impl Agent {
             AgentEvent::TurnEnd {
                 assistant_message,
                 tool_results,
-                reason: _,
+                ..
             } => {
                 // Accumulate messages into in-flight state, mirroring collect_stream.
                 let msgs = self.in_flight_llm_messages.get_or_insert_with(Vec::new);
@@ -1286,6 +1705,10 @@ impl RetryStrategy for SharedRetryStrategy {
 
     fn delay(&self, attempt: u32) -> std::time::Duration {
         self.0.delay(attempt)
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 

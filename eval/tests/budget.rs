@@ -7,7 +7,8 @@ use std::time::Duration;
 use std::sync::Arc;
 
 use swink_agent::{
-    AgentEvent, AssistantMessage, ContentBlock, Cost, StopReason, TurnEndReason, Usage,
+    AgentEvent, AssistantMessage, ContentBlock, Cost, LlmMessage, StopReason, TurnEndReason,
+    TurnSnapshot, Usage,
 };
 use swink_agent_eval::{
     BudgetConstraints, BudgetEvaluator, BudgetGuard, Evaluator, TrajectoryCollector, Verdict,
@@ -83,6 +84,19 @@ fn turn_events(cost: f64, tokens: u64) -> Vec<AgentEvent> {
             },
             tool_results: vec![],
             reason: TurnEndReason::Complete,
+            snapshot: TurnSnapshot {
+                turn_index: 0,
+                messages: Arc::new(vec![]),
+                usage: Usage {
+                    total: tokens,
+                    ..Default::default()
+                },
+                cost: Cost {
+                    total: cost,
+                    ..Default::default()
+                },
+                stop_reason: StopReason::Stop,
+            },
         },
     ]
 }

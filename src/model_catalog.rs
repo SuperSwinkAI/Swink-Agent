@@ -2,6 +2,7 @@ use std::sync::OnceLock;
 
 use serde::Deserialize;
 
+use crate::types::ModelCapabilities;
 use crate::ModelSpec;
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -33,6 +34,8 @@ pub enum PresetCapability {
     Tools,
     Thinking,
     ImagesIn,
+    Streaming,
+    StructuredOutput,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -53,6 +56,7 @@ pub struct PresetCatalog {
     pub capabilities: Vec<PresetCapability>,
     pub status: Option<PresetStatus>,
     pub context_window_tokens: Option<u64>,
+    pub max_output_tokens: Option<u64>,
     #[serde(default)]
     pub include_by_default: bool,
     pub repo_id: Option<String>,
@@ -112,6 +116,7 @@ impl ModelCatalog {
             capabilities: preset.capabilities.clone(),
             status: preset.status.clone(),
             context_window_tokens: preset.context_window_tokens,
+            max_output_tokens: preset.max_output_tokens,
             auth_mode: provider.auth_mode.clone(),
             credential_env_var: provider.credential_env_var.clone(),
             base_url_env_var: provider.base_url_env_var.clone(),
@@ -138,6 +143,7 @@ pub struct CatalogPreset {
     pub capabilities: Vec<PresetCapability>,
     pub status: Option<PresetStatus>,
     pub context_window_tokens: Option<u64>,
+    pub max_output_tokens: Option<u64>,
     pub auth_mode: Option<AuthMode>,
     pub credential_env_var: Option<String>,
     pub base_url_env_var: Option<String>,
@@ -150,9 +156,27 @@ pub struct CatalogPreset {
 }
 
 impl CatalogPreset {
+    /// Build a [`ModelCapabilities`] from the catalog's capability list and
+    /// token limits.
+    #[must_use]
+    pub fn model_capabilities(&self) -> ModelCapabilities {
+        let has = |cap: &PresetCapability| self.capabilities.contains(cap);
+        ModelCapabilities {
+            supports_thinking: has(&PresetCapability::Thinking),
+            supports_vision: has(&PresetCapability::ImagesIn),
+            supports_tool_use: has(&PresetCapability::Tools),
+            supports_streaming: has(&PresetCapability::Streaming),
+            supports_structured_output: has(&PresetCapability::StructuredOutput),
+            max_context_window: self.context_window_tokens,
+            max_output_tokens: self.max_output_tokens,
+        }
+    }
+
+    /// Create a [`ModelSpec`] pre-populated with capabilities from the catalog.
     #[must_use]
     pub fn model_spec(&self) -> ModelSpec {
         ModelSpec::new(&self.provider_key, &self.model_id)
+            .with_capabilities(self.model_capabilities())
     }
 }
 
@@ -213,9 +237,12 @@ mod tests {
                 PresetCapability::Tools,
                 PresetCapability::Thinking,
                 PresetCapability::ImagesIn,
+                PresetCapability::Streaming,
+                PresetCapability::StructuredOutput,
             ]
         );
         assert_eq!(preset.context_window_tokens, Some(1_000_000));
+        assert_eq!(preset.max_output_tokens, Some(65536));
         assert_eq!(preset.credential_env_var.as_deref(), Some("GEMINI_API_KEY"));
         assert_eq!(preset.base_url_env_var.as_deref(), Some("GEMINI_BASE_URL"));
     }
@@ -233,5 +260,81 @@ mod tests {
         assert_eq!(bedrock.auth_mode, Some(AuthMode::AwsSigv4));
         assert_eq!(bedrock.region_env_var.as_deref(), Some("AWS_REGION"));
         assert_eq!(bedrock.group.as_deref(), Some("anthropic"));
+    }
+
+    #[test]
+    fn anthropic_preset_model_capabilities() {
+        let preset = model_catalog().preset("anthropic", "sonnet_46").unwrap();
+        let caps = preset.model_capabilities();
+        assert!(caps.supports_thinking);
+        assert!(caps.supports_vision);
+        assert!(caps.supports_tool_use);
+        assert!(caps.supports_streaming);
+        assert!(caps.supports_structured_output);
+        assert_eq!(caps.max_context_window, Some(200_000));
+        assert_eq!(caps.max_output_tokens, Some(16384));
+    }
+
+    #[test]
+    fn model_spec_carries_capabilities_from_preset() {
+        let preset = model_catalog().preset("anthropic", "opus_46").unwrap();
+        let spec = preset.model_spec();
+        let caps = spec.capabilities();
+        assert!(caps.supports_thinking);
+        assert!(caps.supports_vision);
+        assert!(caps.supports_tool_use);
+        assert_eq!(caps.max_context_window, Some(200_000));
+        assert_eq!(caps.max_output_tokens, Some(32768));
+    }
+
+    #[test]
+    fn openai_preset_no_thinking() {
+        let preset = model_catalog().preset("openai", "gpt_5_2").unwrap();
+        let caps = preset.model_capabilities();
+        assert!(!caps.supports_thinking);
+        assert!(caps.supports_tool_use);
+        assert!(caps.supports_vision);
+        assert!(caps.supports_streaming);
+        assert!(caps.supports_structured_output);
+        assert_eq!(caps.max_context_window, Some(128_000));
+    }
+
+    #[test]
+    fn local_preset_minimal_capabilities() {
+        let preset = model_catalog().preset("local", "smollm3_3b").unwrap();
+        let caps = preset.model_capabilities();
+        assert!(!caps.supports_thinking);
+        assert!(!caps.supports_vision);
+        assert!(!caps.supports_tool_use);
+        assert!(caps.supports_streaming);
+        assert!(!caps.supports_structured_output);
+        assert_eq!(caps.max_context_window, Some(8192));
+        assert_eq!(caps.max_output_tokens, Some(2048));
+    }
+
+    #[test]
+    fn bedrock_preset_capabilities() {
+        let preset = model_catalog()
+            .preset("bedrock", "anthropic_claude_sonnet_45")
+            .unwrap();
+        let caps = preset.model_capabilities();
+        assert!(caps.supports_thinking);
+        assert!(caps.supports_vision);
+        assert!(caps.supports_tool_use);
+        assert!(caps.supports_streaming);
+        assert!(!caps.supports_structured_output);
+    }
+
+    #[test]
+    fn manual_model_spec_defaults_to_no_capabilities() {
+        let spec = crate::ModelSpec::new("custom", "my-model");
+        let caps = spec.capabilities();
+        assert!(!caps.supports_thinking);
+        assert!(!caps.supports_vision);
+        assert!(!caps.supports_tool_use);
+        assert!(!caps.supports_streaming);
+        assert!(!caps.supports_structured_output);
+        assert_eq!(caps.max_context_window, None);
+        assert_eq!(caps.max_output_tokens, None);
     }
 }

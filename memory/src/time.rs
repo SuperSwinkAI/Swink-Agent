@@ -17,13 +17,6 @@ pub const fn days_to_ymd(days: u64) -> (u64, u64, u64) {
     (y, m, d)
 }
 
-/// Current Unix timestamp in seconds.
-///
-/// Thin wrapper around [`swink_agent::now_timestamp`] for internal use.
-pub fn unix_now() -> u64 {
-    swink_agent::now_timestamp()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

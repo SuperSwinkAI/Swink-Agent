@@ -25,6 +25,7 @@ tracing.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+swink-agent = { path = "..", features = ["test-helpers"] }
 tokio = { workspace = true, features = ["full", "test-util"] }
 pretty_assertions.workspace = true
 

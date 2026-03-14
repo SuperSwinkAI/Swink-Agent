@@ -208,7 +208,7 @@ async fn send_request(
         .json(&body)
         .send()
         .await
-        .map_err(|e| network_error_event(&e.to_string()))
+        .map_err(|e| AssistantMessageEvent::error_network(format!("network error: {e}")))
 }
 
 /// Check the HTTP status code and return an error event for non-2xx responses.
@@ -222,10 +222,14 @@ fn classify_response_status(response: &reqwest::Response) -> Option<AssistantMes
 
     let kind = classify_http_status(status.as_u16());
     Some(match kind {
-        Some(HttpErrorKind::Auth) => auth_error_event(status.as_u16()),
-        Some(HttpErrorKind::Throttled) => rate_limit_error_event(),
+        Some(HttpErrorKind::Auth) => {
+            AssistantMessageEvent::error_auth(format!("authentication failure ({})", status.as_u16()))
+        }
+        Some(HttpErrorKind::Throttled) => {
+            AssistantMessageEvent::error_throttled("rate limit (429)")
+        }
         Some(HttpErrorKind::Network) | None => {
-            network_error_event(&format!("HTTP {}", status.as_u16()))
+            AssistantMessageEvent::error_network(format!("network error: HTTP {}", status.as_u16()))
         }
     })
 }
@@ -252,7 +256,12 @@ fn parse_sse_stream(
             tokio::select! {
                 biased;
                 () = token.cancelled() => {
-                    Some((aborted_event(), (sse, token, true)))
+                    Some((AssistantMessageEvent::Error {
+                        stop_reason: StopReason::Aborted,
+                        error_message: "operation cancelled".to_owned(),
+                        usage: None,
+                        error_kind: None,
+                    }, (sse, token, true)))
                 }
                 item = sse.next() => {
                     match item {
@@ -261,7 +270,7 @@ fn parse_sse_stream(
                             // connection drop.
                             done = true;
                             Some((
-                                network_error_event("SSE stream ended unexpectedly"),
+                                AssistantMessageEvent::error_network("network error: SSE stream ended unexpectedly"),
                                 (sse, token, done),
                             ))
                         }
@@ -276,7 +285,7 @@ fn parse_sse_stream(
                         Some(Err(e)) => {
                             done = true;
                             Some((
-                                network_error_event(&format!("SSE stream error: {e}")),
+                                AssistantMessageEvent::error_network(format!("network error: SSE stream error: {e}")),
                                 (sse, token, done),
                             ))
                         }
@@ -379,33 +388,6 @@ const fn is_terminal_event(event: &AssistantMessageEvent) -> bool {
         event,
         AssistantMessageEvent::Done { .. } | AssistantMessageEvent::Error { .. }
     )
-}
-
-// ─── Error event constructors ───────────────────────────────────────────────
-
-/// Create a network error event (retryable).
-fn network_error_event(detail: &str) -> AssistantMessageEvent {
-    AssistantMessageEvent::error_network(format!("network error: {detail}"))
-}
-
-/// Create an authentication error event (not retryable).
-fn auth_error_event(status: u16) -> AssistantMessageEvent {
-    AssistantMessageEvent::error_auth(format!("authentication failure ({status})"))
-}
-
-/// Create a rate limit error event (retryable via `ModelThrottled`).
-fn rate_limit_error_event() -> AssistantMessageEvent {
-    AssistantMessageEvent::error_throttled("rate limit (429)")
-}
-
-/// Create an aborted event for cancellation.
-fn aborted_event() -> AssistantMessageEvent {
-    AssistantMessageEvent::Error {
-        stop_reason: StopReason::Aborted,
-        error_message: "operation cancelled".to_owned(),
-        usage: None,
-        error_kind: None,
-    }
 }
 
 // ─── Compile-time Send + Sync assertions ────────────────────────────────────
@@ -537,10 +519,8 @@ mod tests {
     }
 
     #[test]
-    fn classify_success_returns_none() {
-        // We can't easily construct a reqwest::Response, so we test the
-        // error constructors directly instead.
-        let event = network_error_event("timeout");
+    fn network_error_uses_canonical_constructor() {
+        let event = AssistantMessageEvent::error_network("network error: timeout");
         match event {
             AssistantMessageEvent::Error { error_message, .. } => {
                 assert!(error_message.contains("network error"));
@@ -551,7 +531,7 @@ mod tests {
 
     #[test]
     fn auth_error_contains_status() {
-        let event = auth_error_event(401);
+        let event = AssistantMessageEvent::error_auth("authentication failure (401)");
         match event {
             AssistantMessageEvent::Error { error_message, .. } => {
                 assert!(error_message.contains("401"));
@@ -563,7 +543,7 @@ mod tests {
 
     #[test]
     fn rate_limit_error_contains_429() {
-        let event = rate_limit_error_event();
+        let event = AssistantMessageEvent::error_throttled("rate limit (429)");
         match event {
             AssistantMessageEvent::Error { error_message, .. } => {
                 assert!(error_message.contains("429"));
@@ -575,7 +555,12 @@ mod tests {
 
     #[test]
     fn aborted_has_correct_stop_reason() {
-        let event = aborted_event();
+        let event = AssistantMessageEvent::Error {
+            stop_reason: StopReason::Aborted,
+            error_message: "operation cancelled".to_owned(),
+            usage: None,
+            error_kind: None,
+        };
         match event {
             AssistantMessageEvent::Error { stop_reason, .. } => {
                 assert_eq!(stop_reason, StopReason::Aborted);

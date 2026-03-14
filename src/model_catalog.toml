@@ -12,18 +12,30 @@ id = "sonnet_46"
 display_name = "Anthropic Sonnet 4.6"
 group = "sonnet"
 model_id = "claude-sonnet-4-6"
+capabilities = ["text", "tools", "thinking", "images_in", "streaming", "structured_output"]
+status = "ga"
+context_window_tokens = 200000
+max_output_tokens = 16384
 
 [[providers.presets]]
 id = "opus_46"
 display_name = "Anthropic Opus 4.6"
 group = "opus"
 model_id = "claude-opus-4-6"
+capabilities = ["text", "tools", "thinking", "images_in", "streaming", "structured_output"]
+status = "ga"
+context_window_tokens = 200000
+max_output_tokens = 32768
 
 [[providers.presets]]
 id = "haiku_45"
 display_name = "Anthropic Haiku 4.5"
 group = "haiku"
 model_id = "claude-haiku-4-5-20251001"
+capabilities = ["text", "tools", "thinking", "images_in", "streaming", "structured_output"]
+status = "ga"
+context_window_tokens = 200000
+max_output_tokens = 8192
 
 [[providers]]
 key = "openai"
@@ -39,36 +51,60 @@ id = "gpt_5_2"
 display_name = "OpenAI GPT-5.2"
 group = "gpt_5"
 model_id = "gpt-5.2"
+capabilities = ["text", "tools", "images_in", "streaming", "structured_output"]
+status = "ga"
+context_window_tokens = 128000
+max_output_tokens = 16384
 
 [[providers.presets]]
 id = "gpt_5_4"
 display_name = "OpenAI GPT-5.4"
 group = "gpt_5"
 model_id = "gpt-5.4"
+capabilities = ["text", "tools", "thinking", "images_in", "streaming", "structured_output"]
+status = "ga"
+context_window_tokens = 128000
+max_output_tokens = 16384
 
 [[providers.presets]]
 id = "gpt_5_1"
 display_name = "OpenAI GPT-5.1"
 group = "gpt_5"
 model_id = "gpt-5.1"
+capabilities = ["text", "tools", "images_in", "streaming", "structured_output"]
+status = "ga"
+context_window_tokens = 128000
+max_output_tokens = 16384
 
 [[providers.presets]]
 id = "gpt_5_3_chat_latest"
 display_name = "OpenAI GPT-5.3 Chat Latest"
 group = "gpt_5_chat"
 model_id = "gpt-5.3-chat-latest"
+capabilities = ["text", "tools", "images_in", "streaming", "structured_output"]
+status = "ga"
+context_window_tokens = 128000
+max_output_tokens = 16384
 
 [[providers.presets]]
 id = "gpt_5_2_chat_latest"
 display_name = "OpenAI GPT-5.2 Chat Latest"
 group = "gpt_5_chat"
 model_id = "gpt-5.2-chat-latest"
+capabilities = ["text", "tools", "images_in", "streaming", "structured_output"]
+status = "ga"
+context_window_tokens = 128000
+max_output_tokens = 16384
 
 [[providers.presets]]
 id = "gpt_5_1_chat_latest"
 display_name = "OpenAI GPT-5.1 Chat Latest"
 group = "gpt_5_chat"
 model_id = "gpt-5.1-chat-latest"
+capabilities = ["text", "tools", "images_in", "streaming", "structured_output"]
+status = "ga"
+context_window_tokens = 128000
+max_output_tokens = 16384
 
 [[providers]]
 key = "local"
@@ -80,9 +116,12 @@ id = "smollm3_3b"
 display_name = "Local SmolLM3-3B"
 group = "default"
 model_id = "SmolLM3-3B-Q4_K_M"
+capabilities = ["text", "streaming"]
 include_by_default = true
 repo_id = "bartowski/SmolLM3-3B-GGUF"
 filename = "SmolLM3-3B-Q4_K_M.gguf"
+context_window_tokens = 8192
+max_output_tokens = 2048
 
 [[providers]]
 key = "google"
@@ -99,9 +138,10 @@ display_name = "Google Gemini 3.1 Pro"
 group = "gemini_3_1"
 model_id = "gemini-3.1-pro-preview"
 api_version = "v1beta"
-capabilities = ["text", "tools", "thinking", "images_in"]
+capabilities = ["text", "tools", "thinking", "images_in", "streaming", "structured_output"]
 status = "preview"
 context_window_tokens = 1000000
+max_output_tokens = 65536
 
 [[providers.presets]]
 id = "gemini_3_1_deep_think"
@@ -109,9 +149,10 @@ display_name = "Google Gemini 3.1 Deep Think"
 group = "gemini_3_1"
 model_id = "gemini-3.1-deep-think-preview"
 api_version = "v1beta"
-capabilities = ["text", "tools", "thinking", "images_in"]
+capabilities = ["text", "tools", "thinking", "images_in", "streaming"]
 status = "preview"
 context_window_tokens = 1000000
+max_output_tokens = 65536
 
 [[providers.presets]]
 id = "gemini_3_flash"
@@ -119,9 +160,10 @@ display_name = "Google Gemini 3 Flash"
 group = "gemini_3"
 model_id = "gemini-3-flash-preview"
 api_version = "v1beta"
-capabilities = ["text", "tools", "thinking", "images_in"]
+capabilities = ["text", "tools", "thinking", "images_in", "streaming", "structured_output"]
 status = "preview"
 context_window_tokens = 1000000
+max_output_tokens = 65536
 
 [[providers.presets]]
 id = "gemini_3_1_flash_lite"
@@ -129,9 +171,10 @@ display_name = "Google Gemini 3.1 Flash-Lite"
 group = "gemini_3_1"
 model_id = "gemini-3.1-flash-lite-preview"
 api_version = "v1beta"
-capabilities = ["text", "tools", "thinking", "images_in"]
+capabilities = ["text", "tools", "thinking", "images_in", "streaming"]
 status = "preview"
 context_window_tokens = 1000000
+max_output_tokens = 65536
 
 [[providers]]
 key = "azure"
@@ -148,8 +191,10 @@ display_name = "Azure GPT-5.4"
 group = "openai"
 model_id = "gpt-5.4"
 api_version = "v1"
-capabilities = ["text", "tools"]
+capabilities = ["text", "tools", "images_in", "streaming", "structured_output"]
 status = "ga"
+context_window_tokens = 128000
+max_output_tokens = 16384
 
 [[providers.presets]]
 id = "gpt_5_2"
@@ -157,8 +202,10 @@ display_name = "Azure GPT-5.2"
 group = "openai"
 model_id = "gpt-5.2"
 api_version = "v1"
-capabilities = ["text", "tools"]
+capabilities = ["text", "tools", "images_in", "streaming", "structured_output"]
 status = "ga"
+context_window_tokens = 128000
+max_output_tokens = 16384
 
 [[providers.presets]]
 id = "phi_4"
@@ -166,8 +213,10 @@ display_name = "Azure Phi-4"
 group = "foundry"
 model_id = "Phi-4"
 api_version = "v1"
-capabilities = ["text", "tools"]
+capabilities = ["text", "tools", "streaming"]
 status = "ga"
+context_window_tokens = 16384
+max_output_tokens = 4096
 
 [[providers]]
 key = "xai"
@@ -184,8 +233,10 @@ display_name = "xAI Grok 3"
 group = "grok"
 model_id = "grok-3"
 api_version = "v1"
-capabilities = ["text", "tools"]
+capabilities = ["text", "tools", "images_in", "streaming"]
 status = "ga"
+context_window_tokens = 131072
+max_output_tokens = 16384
 
 [[providers.presets]]
 id = "grok_3_fast"
@@ -193,8 +244,10 @@ display_name = "xAI Grok 3 Fast"
 group = "grok"
 model_id = "grok-3-fast"
 api_version = "v1"
-capabilities = ["text", "tools"]
+capabilities = ["text", "tools", "images_in", "streaming"]
 status = "ga"
+context_window_tokens = 131072
+max_output_tokens = 16384
 
 [[providers]]
 key = "mistral"
@@ -211,8 +264,10 @@ display_name = "Mistral Medium"
 group = "mistral"
 model_id = "mistral-medium-latest"
 api_version = "v1"
-capabilities = ["text", "tools"]
+capabilities = ["text", "tools", "images_in", "streaming", "structured_output"]
 status = "ga"
+context_window_tokens = 128000
+max_output_tokens = 8192
 
 [[providers.presets]]
 id = "mistral_small"
@@ -220,8 +275,10 @@ display_name = "Mistral Small"
 group = "mistral"
 model_id = "mistral-small-latest"
 api_version = "v1"
-capabilities = ["text", "tools"]
+capabilities = ["text", "tools", "streaming", "structured_output"]
 status = "ga"
+context_window_tokens = 128000
+max_output_tokens = 8192
 
 [[providers.presets]]
 id = "codestral"
@@ -229,8 +286,10 @@ display_name = "Codestral"
 group = "codestral"
 model_id = "codestral-latest"
 api_version = "v1"
-capabilities = ["text", "tools"]
+capabilities = ["text", "tools", "streaming"]
 status = "ga"
+context_window_tokens = 256000
+max_output_tokens = 8192
 
 [[providers]]
 key = "bedrock"
@@ -244,37 +303,47 @@ id = "anthropic_claude_sonnet_45"
 display_name = "Bedrock Claude Sonnet 4.5"
 group = "anthropic"
 model_id = "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
-capabilities = ["text", "tools"]
+capabilities = ["text", "tools", "thinking", "images_in", "streaming"]
 status = "ga"
+context_window_tokens = 200000
+max_output_tokens = 8192
 
 [[providers.presets]]
 id = "meta_llama_4_maverick"
 display_name = "Bedrock Llama 4 Maverick"
 group = "meta"
 model_id = "us.meta.llama4-maverick-17b-instruct-v1:0"
-capabilities = ["text", "tools"]
+capabilities = ["text", "tools", "streaming"]
 status = "ga"
+context_window_tokens = 128000
+max_output_tokens = 4096
 
 [[providers.presets]]
 id = "mistral_pixtral_large"
 display_name = "Bedrock Pixtral Large"
 group = "mistral"
 model_id = "mistral.pixtral-large-2502-v1:0"
-capabilities = ["text", "tools"]
+capabilities = ["text", "tools", "images_in", "streaming"]
 status = "ga"
+context_window_tokens = 128000
+max_output_tokens = 8192
 
 [[providers.presets]]
 id = "amazon_nova_pro"
 display_name = "Bedrock Nova Pro"
 group = "amazon"
 model_id = "amazon.nova-pro-v1:0"
-capabilities = ["text", "tools"]
+capabilities = ["text", "tools", "images_in", "streaming"]
 status = "ga"
+context_window_tokens = 300000
+max_output_tokens = 5120
 
 [[providers.presets]]
 id = "ai21_jamba_1_5_large"
 display_name = "Bedrock Jamba 1.5 Large"
 group = "ai21"
 model_id = "ai21.jamba-1-5-large-v1:0"
-capabilities = ["text", "tools"]
+capabilities = ["text", "tools", "streaming"]
 status = "ga"
+context_window_tokens = 256000
+max_output_tokens = 4096

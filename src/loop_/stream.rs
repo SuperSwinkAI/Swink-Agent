@@ -8,17 +8,139 @@ use tracing::{debug, error, info, warn};
 
 use crate::error::AgentError;
 use crate::stream::{
-    AssistantMessageDelta, AssistantMessageEvent, StreamOptions, accumulate_message,
+    AssistantMessageDelta, AssistantMessageEvent, StreamFn, StreamOptions, accumulate_message,
 };
-use crate::types::{AgentContext, AgentMessage, LlmMessage, StopReason};
+use crate::types::{
+    AgentContext, AgentMessage, LlmMessage, ModelSpec, StopReason, ThinkingLevel,
+};
 
 use super::{
     AgentEvent, AgentLoopConfig, StreamResult, build_abort_message, build_error_message,
     classify_stream_error, emit,
 };
 
-/// Stream an assistant response with retry logic, emitting message events.
+/// Stream an assistant response with retry logic and optional model fallback,
+/// emitting message events.
+///
+/// When the primary model exhausts its retry budget on a retryable error and a
+/// [`ModelFallback`](crate::fallback::ModelFallback) chain is configured, each
+/// fallback model is tried in order (with its own fresh retry budget) before
+/// the error is surfaced.
 pub async fn stream_with_retry(
+    config: &Arc<AgentLoopConfig>,
+    agent_context: &AgentContext,
+    llm_messages: &[LlmMessage],
+    system_prompt: &str,
+    api_key: Option<String>,
+    cancellation_token: &CancellationToken,
+    tx: &mpsc::Sender<AgentEvent>,
+) -> StreamResult {
+    // Try the primary model first.
+    let primary_result = stream_with_retry_single(
+        &config.model,
+        &config.stream_fn,
+        config,
+        agent_context,
+        llm_messages,
+        system_prompt,
+        api_key.clone(),
+        cancellation_token,
+        tx,
+    )
+    .await;
+
+    // If the primary model succeeded or hit a non-fallback-eligible condition,
+    // return immediately.
+    let last_error_msg = match &primary_result {
+        StreamResult::Message(msg)
+            if msg.stop_reason != StopReason::Error
+                || !is_fallback_eligible_error(msg.error_message.as_deref()) =>
+        {
+            return primary_result;
+        }
+        StreamResult::ContextOverflow | StreamResult::Aborted | StreamResult::ChannelClosed => {
+            return primary_result;
+        }
+        StreamResult::Message(msg) => msg.clone(),
+    };
+
+    // Try each fallback model in order.
+    let fallback = match config.fallback {
+        Some(ref fb) if !fb.is_empty() => fb,
+        _ => return StreamResult::Message(last_error_msg),
+    };
+
+    let mut last_result = StreamResult::Message(last_error_msg);
+
+    for (fb_model, fb_stream_fn) in fallback.models() {
+        // Emit the fallback event.
+        if !emit(
+            tx,
+            AgentEvent::ModelFallback {
+                from_model: config.model.clone(),
+                to_model: fb_model.clone(),
+            },
+        )
+        .await
+        {
+            return StreamResult::ChannelClosed;
+        }
+
+        warn!(
+            from = %config.model.model_id,
+            to = %fb_model.model_id,
+            "falling back to alternate model"
+        );
+
+        let fb_result = stream_with_retry_single(
+            fb_model,
+            fb_stream_fn,
+            config,
+            agent_context,
+            llm_messages,
+            system_prompt,
+            api_key.clone(),
+            cancellation_token,
+            tx,
+        )
+        .await;
+
+        match &fb_result {
+            StreamResult::Message(msg)
+                if msg.stop_reason != StopReason::Error
+                    || !is_fallback_eligible_error(msg.error_message.as_deref()) =>
+            {
+                return fb_result;
+            }
+            StreamResult::ContextOverflow | StreamResult::Aborted | StreamResult::ChannelClosed => {
+                return fb_result;
+            }
+            StreamResult::Message(_) => {
+                // This fallback also failed with a retryable error; try next.
+                last_result = fb_result;
+            }
+        }
+    }
+
+    // All fallbacks exhausted.
+    last_result
+}
+
+/// Returns `true` if the error message indicates a retryable failure that
+/// should trigger model fallback (throttled or network errors).
+fn is_fallback_eligible_error(error_message: Option<&str>) -> bool {
+    let Some(msg) = error_message else {
+        return false;
+    };
+    let harness_error = classify_stream_error(msg, StopReason::Error);
+    harness_error.is_retryable()
+}
+
+/// Run the retry loop for a single model/stream-fn pair.
+#[allow(clippy::too_many_arguments)]
+async fn stream_with_retry_single(
+    model: &ModelSpec,
+    stream_fn: &Arc<dyn StreamFn>,
     config: &Arc<AgentLoopConfig>,
     agent_context: &AgentContext,
     llm_messages: &[LlmMessage],
@@ -31,7 +153,7 @@ pub async fn stream_with_retry(
 
     loop {
         attempt += 1;
-        debug!(attempt, model_id = %config.model.model_id, "starting stream attempt");
+        debug!(attempt, model_id = %model.model_id, "starting stream attempt");
 
         // Check cancellation before each attempt
         if cancellation_token.is_cancelled() {
@@ -57,7 +179,8 @@ pub async fn stream_with_retry(
 
         // Stream from the provider and collect events + emit deltas
         let attempt_result = stream_single_attempt(
-            config,
+            model,
+            stream_fn,
             &call_context,
             &stream_options,
             cancellation_token,
@@ -73,7 +196,8 @@ pub async fn stream_with_retry(
         // Handle error events
         if let Some((stop_reason, error_message, _usage)) = had_error {
             let retry_result =
-                handle_stream_error(config, &stop_reason, &error_message, attempt, tx).await;
+                handle_stream_error(model, config, &stop_reason, &error_message, attempt, tx)
+                    .await;
             match retry_result {
                 StreamErrorAction::ContextOverflow => return StreamResult::ContextOverflow,
                 StreamErrorAction::Retry(delay) => {
@@ -86,7 +210,7 @@ pub async fn stream_with_retry(
         }
 
         // Success: accumulate and emit
-        return finalize_stream_message(config, events, tx).await;
+        return finalize_stream_message(model, events, tx).await;
     }
 }
 
@@ -115,14 +239,19 @@ enum StreamAttemptResult {
 /// Stream a single attempt from the provider, emitting delta events.
 /// Collects all events and captures any error info for the caller.
 async fn stream_single_attempt(
-    config: &Arc<AgentLoopConfig>,
+    model: &ModelSpec,
+    stream_fn: &Arc<dyn StreamFn>,
     call_context: &AgentContext,
     stream_options: &StreamOptions,
     cancellation_token: &CancellationToken,
     tx: &mpsc::Sender<AgentEvent>,
 ) -> StreamAttemptResult {
-    let mut stream = config.stream_fn.stream(
-        &config.model,
+    // Apply capability overrides (e.g. disable thinking for models that
+    // don't support it) before handing the spec to the provider.
+    let effective_model = apply_capability_overrides(model);
+
+    let mut stream = stream_fn.stream(
+        &effective_model,
         call_context,
         stream_options,
         cancellation_token.clone(),
@@ -133,7 +262,7 @@ async fn stream_single_attempt(
 
     while let Some(event) = stream.next().await {
         if cancellation_token.is_cancelled() {
-            let abort_msg = build_abort_message(&config.model);
+            let abort_msg = build_abort_message(model);
             let _ = emit(tx, AgentEvent::MessageEnd { message: abort_msg }).await;
             return StreamAttemptResult::EarlyExit(StreamResult::Aborted);
         }
@@ -202,6 +331,7 @@ async fn emit_delta_event(
 
 /// Handle a stream error: classify it, check retryability, return action.
 async fn handle_stream_error(
+    model: &ModelSpec,
     config: &Arc<AgentLoopConfig>,
     stop_reason: &StopReason,
     error_message: &str,
@@ -216,7 +346,7 @@ async fn handle_stream_error(
         let _ = emit(
             tx,
             AgentEvent::MessageEnd {
-                message: build_error_message(&config.model, &harness_error),
+                message: build_error_message(model, &harness_error),
             },
         )
         .await;
@@ -232,7 +362,7 @@ async fn handle_stream_error(
 
     // Non-retryable error
     error!(error = %harness_error, "non-retryable stream error");
-    let error_msg = build_error_message(&config.model, &harness_error);
+    let error_msg = build_error_message(model, &harness_error);
     if !emit(
         tx,
         AgentEvent::MessageEnd {
@@ -246,19 +376,73 @@ async fn handle_stream_error(
     StreamErrorAction::FatalError(StreamResult::Message(error_msg))
 }
 
+/// Return a model spec with capability-based overrides applied.
+///
+/// When the model declares capabilities, this enforces them:
+/// - If `supports_thinking` is false, `thinking_level` is forced to `Off`.
+///
+/// When no capabilities are set (manual `ModelSpec::new`), the spec is passed
+/// through unchanged — the caller opted out of capability gating.
+fn apply_capability_overrides(model: &ModelSpec) -> Cow<'_, ModelSpec> {
+    let Some(ref caps) = model.capabilities else {
+        return Cow::Borrowed(model);
+    };
+
+    let mut changed = false;
+    let mut overridden = model.clone();
+
+    if !caps.supports_thinking && overridden.thinking_level != ThinkingLevel::Off {
+        debug!(
+            model_id = %model.model_id,
+            "model does not support thinking — forcing thinking_level to Off"
+        );
+        overridden.thinking_level = ThinkingLevel::Off;
+        changed = true;
+    }
+
+    if changed {
+        Cow::Owned(overridden)
+    } else {
+        Cow::Borrowed(model)
+    }
+}
+
+/// Filter the tool list based on model capabilities.
+///
+/// When `supports_tool_use` is explicitly false, returns an empty list so the
+/// provider is not offered any tool schemas. When capabilities are absent
+/// (manual `ModelSpec`), tools pass through unchanged.
+pub fn capability_filter_tools(
+    model: &ModelSpec,
+    tools: &[Arc<dyn crate::tool::AgentTool>],
+) -> Vec<Arc<dyn crate::tool::AgentTool>> {
+    if let Some(ref caps) = model.capabilities
+        && !caps.supports_tool_use
+        && !tools.is_empty()
+    {
+        debug!(
+            model_id = %model.model_id,
+            tool_count = tools.len(),
+            "model does not support tool use — stripping tools from context"
+        );
+        return Vec::new();
+    }
+    tools.to_vec()
+}
+
 /// Accumulate collected stream events into a final message and emit `MessageEnd`.
 async fn finalize_stream_message(
-    config: &Arc<AgentLoopConfig>,
+    model: &ModelSpec,
     events: Vec<AssistantMessageEvent>,
     tx: &mpsc::Sender<AgentEvent>,
 ) -> StreamResult {
-    let message = match accumulate_message(events, &config.model.provider, &config.model.model_id) {
+    let message = match accumulate_message(events, &model.provider, &model.model_id) {
         Ok(msg) => msg,
         Err(e) => {
             let err = AgentError::StreamError {
                 source: Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, e)),
             };
-            let error_msg = build_error_message(&config.model, &err);
+            let error_msg = build_error_message(model, &err);
             let _ = emit(
                 tx,
                 AgentEvent::MessageEnd {

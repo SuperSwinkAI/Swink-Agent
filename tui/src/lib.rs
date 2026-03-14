@@ -99,19 +99,18 @@ pub fn tui_approval_callback(approval_tx: &ApprovalSender) -> ApprovalCallbackFn
 
 /// High-level convenience: create an [`App`], wire up an agent, and run the event loop.
 ///
-/// The `agent_factory` closure receives the [`ApprovalSender`] so it can build
-/// the [`Agent`] with the correct approval callback before the loop starts.
-pub async fn launch<F>(
+/// The approval callback is wired automatically — callers should **not** set
+/// `with_approve_tool` on the supplied [`swink_agent::AgentOptions`].
+pub async fn launch(
     config: TuiConfig,
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-    agent_factory: F,
-) -> Result<(), Box<dyn std::error::Error>>
-where
-    F: FnOnce(&ApprovalSender) -> Agent,
-{
+    options: swink_agent::AgentOptions,
+) -> Result<(), Box<dyn std::error::Error>> {
+    dotenvy::dotenv().ok();
     let mut app = App::new(config);
     let approval_tx = app.approval_sender();
-    app.set_agent(agent_factory(&approval_tx));
+    let options = options.with_approve_tool(tui_approval_callback(&approval_tx));
+    app.set_agent(Agent::new(options));
     app.run(terminal).await
 }
 

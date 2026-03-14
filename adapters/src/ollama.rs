@@ -20,9 +20,7 @@ use swink_agent::types::{
     ToolResultMessage, Usage, UserMessage,
 };
 
-use crate::convert::{
-    self, MessageConverter, error_event, error_event_network, extract_tool_schemas,
-};
+use crate::convert::{self, MessageConverter, extract_tool_schemas};
 
 // ─── Request types ──────────────────────────────────────────────────────────
 
@@ -196,7 +194,7 @@ fn ollama_stream<'a>(
             let status = response.status().as_u16();
             let body = response.text().await.unwrap_or_default();
             warn!(status, "Ollama HTTP error");
-            return stream::iter(vec![error_event_network(&format!(
+            return stream::iter(vec![AssistantMessageEvent::error_network(format!(
                 "Ollama HTTP {status}: {body}"
             ))])
             .left_stream();
@@ -255,7 +253,7 @@ async fn send_request(
         .json(&body)
         .send()
         .await
-        .map_err(|e| error_event_network(&format!("Ollama connection error: {e}")))
+        .map_err(|e| AssistantMessageEvent::error_network(format!("Ollama connection error: {e}")))
 }
 
 // ─── MessageConverter impl ──────────────────────────────────────────────────
@@ -357,7 +355,7 @@ fn parse_ndjson_stream(
             tokio::select! {
                 biased;
                 () = token.cancelled() => {
-                    let mut events = finalize_blocks(&mut state);
+                    let mut events = crate::finalize::finalize_blocks(&mut state);
                     events.push(AssistantMessageEvent::Error {
                         stop_reason: StopReason::Aborted,
                         error_message: "operation cancelled".to_string(),
@@ -372,8 +370,8 @@ fn parse_ndjson_stream(
                         None => {
                             // Stream ended without done=true
                             done = true;
-                            let mut events = finalize_blocks(&mut state);
-                            events.push(error_event("Ollama stream ended unexpectedly"));
+                            let mut events = crate::finalize::finalize_blocks(&mut state);
+                            events.push(AssistantMessageEvent::error("Ollama stream ended unexpectedly"));
                             Some((events, (lines, token, state, done, false)))
                         }
                         Some(line) => {
@@ -382,8 +380,8 @@ fn parse_ndjson_stream(
                                 Err(e) => {
                                     error!(error = %e, "Ollama JSON parse error");
                                     done = true;
-                                    let mut events = finalize_blocks(&mut state);
-                                    events.push(error_event(&format!("Ollama JSON parse error: {e}")));
+                                    let mut events = crate::finalize::finalize_blocks(&mut state);
+                                    events.push(AssistantMessageEvent::error(format!("Ollama JSON parse error: {e}")));
                                     return Some((events, (lines, token, state, done, false)));
                                 }
                             };
@@ -463,7 +461,7 @@ fn parse_ndjson_stream(
                             // Handle done
                             if chunk.done {
                                 done = true;
-                                events.extend(finalize_blocks(&mut state));
+                                events.extend(crate::finalize::finalize_blocks(&mut state));
 
                                 let stop_reason = match chunk.done_reason.as_deref() {
                                     Some("tool_calls") => StopReason::ToolUse,
@@ -511,25 +509,26 @@ fn parse_ndjson_stream(
     .flat_map(stream::iter)
 }
 
-/// Close any open content blocks.
-fn finalize_blocks(state: &mut StreamState) -> Vec<AssistantMessageEvent> {
-    let mut events = Vec::new();
-    if state.thinking_started {
-        events.push(AssistantMessageEvent::ThinkingEnd {
-            content_index: state.content_index,
-            signature: None,
-        });
-        state.thinking_started = false;
-        state.content_index += 1;
+impl crate::finalize::StreamFinalize for StreamState {
+    fn drain_open_blocks(&mut self) -> Vec<crate::finalize::OpenBlock> {
+        let mut blocks = Vec::new();
+        if self.thinking_started {
+            blocks.push(crate::finalize::OpenBlock::Thinking {
+                content_index: self.content_index,
+                signature: None,
+            });
+            self.thinking_started = false;
+            self.content_index += 1;
+        }
+        if self.text_started {
+            blocks.push(crate::finalize::OpenBlock::Text {
+                content_index: self.content_index,
+            });
+            self.text_started = false;
+            self.content_index += 1;
+        }
+        blocks
     }
-    if state.text_started {
-        events.push(AssistantMessageEvent::TextEnd {
-            content_index: state.content_index,
-        });
-        state.text_started = false;
-        state.content_index += 1;
-    }
-    events
 }
 
 /// State machine tracking which content blocks have been started.

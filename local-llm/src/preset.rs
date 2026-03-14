@@ -68,9 +68,8 @@ mod tests {
     #[test]
     fn default_local_connection_does_not_require_api_key() {
         let connection = default_local_connection().unwrap();
-        assert_eq!(
-            connection.model_spec(),
-            &ModelSpec::new("local", "SmolLM3-3B-Q4_K_M")
-        );
+        let spec = connection.model_spec();
+        assert_eq!(spec.provider, "local");
+        assert_eq!(spec.model_id, "SmolLM3-3B-Q4_K_M");
     }
 }

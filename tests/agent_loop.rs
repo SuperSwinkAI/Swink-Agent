@@ -15,8 +15,8 @@ use tokio_util::sync::CancellationToken;
 use swink_agent::{
     AgentContext, AgentEvent, AgentLoopConfig, AgentMessage, AgentTool, AgentToolResult,
     AssistantMessageEvent, ContentBlock, Cost, CustomMessage, DefaultRetryStrategy, LlmMessage,
-    MessageProvider, ModelSpec, StopReason, StreamFn, StreamOptions, ToolResultMessage, Usage,
-    UserMessage, agent_loop,
+    MessageProvider, ModelSpec, StopReason, StreamFn, StreamOptions, ToolResultMessage,
+    TurnSnapshot, Usage, UserMessage, agent_loop,
 };
 
 // ─── ContextCapturingStreamFn ────────────────────────────────────────────
@@ -227,6 +227,12 @@ fn default_config(stream_fn: Arc<dyn StreamFn>) -> AgentLoopConfig {
         tool_validator: None,
         loop_policy: None,
         tool_call_transformer: None,
+        post_turn_hook: None,
+        async_transform_context: None,
+        metrics_collector: None,
+        fallback: None,
+        budget_guard: None,
+        tool_execution_policy: swink_agent::ToolExecutionPolicy::default(),
     }
 }
 
@@ -1164,4 +1170,107 @@ async fn panicking_tool_produces_error_result() {
         text.contains("deliberate test panic"),
         "error message should contain the panic payload: {text}"
     );
+}
+
+// ─── Turn snapshot tests ─────────────────────────────────────────────────
+
+#[tokio::test]
+async fn turn_end_carries_snapshot_with_messages() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("Hello!")]));
+    let config = default_config(stream_fn);
+
+    let events = collect_events(agent_loop(
+        vec![common::user_msg("hi")],
+        "system".to_string(),
+        config,
+        CancellationToken::new(),
+    ))
+    .await;
+
+    let snapshot = events.iter().find_map(|e| match e {
+        AgentEvent::TurnEnd { snapshot, .. } => Some(snapshot.clone()),
+        _ => None,
+    });
+
+    let snapshot = snapshot.expect("TurnEnd should carry a snapshot");
+    assert_eq!(snapshot.turn_index, 0);
+    assert_eq!(snapshot.stop_reason, StopReason::Stop);
+    // Should contain the user message + the assistant message
+    assert!(
+        snapshot.messages.len() >= 2,
+        "snapshot should contain at least user + assistant messages, got {}",
+        snapshot.messages.len()
+    );
+}
+
+#[tokio::test]
+async fn turn_snapshot_accumulates_across_tool_turns() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![
+        tool_call_events("tc_1", "my_tool", "{}"),
+        text_only_events("Done!"),
+    ]));
+
+    let tool = Arc::new(MockTool::new("my_tool"));
+    let mut config = default_config(stream_fn);
+    config.tools = vec![tool];
+
+    let events = collect_events(agent_loop(
+        vec![common::user_msg("do something")],
+        "system".to_string(),
+        config,
+        CancellationToken::new(),
+    ))
+    .await;
+
+    let snapshots: Vec<TurnSnapshot> = events
+        .iter()
+        .filter_map(|e| match e {
+            AgentEvent::TurnEnd { snapshot, .. } => Some(snapshot.clone()),
+            _ => None,
+        })
+        .collect();
+
+    assert_eq!(snapshots.len(), 2, "should have two TurnEnd events");
+
+    // First snapshot (tool turn): user + assistant
+    assert_eq!(snapshots[0].turn_index, 0);
+    assert_eq!(snapshots[0].stop_reason, StopReason::ToolUse);
+
+    // Second snapshot (final turn): user + assistant + tool_result + assistant
+    // turn_index is incremented after the first turn completes
+    assert!(snapshots[1].turn_index >= snapshots[0].turn_index);
+    assert_eq!(snapshots[1].stop_reason, StopReason::Stop);
+    assert!(
+        snapshots[1].messages.len() > snapshots[0].messages.len(),
+        "second snapshot should have more messages than first"
+    );
+}
+
+#[tokio::test]
+async fn turn_snapshot_serializes_to_json() {
+    let snapshot = TurnSnapshot {
+        turn_index: 3,
+        messages: Arc::new(vec![]),
+        usage: Usage {
+            input: 100,
+            output: 50,
+            ..Default::default()
+        },
+        cost: Cost {
+            total: 0.05,
+            ..Default::default()
+        },
+        stop_reason: StopReason::Stop,
+    };
+
+    let json = serde_json::to_string(&snapshot).expect("TurnSnapshot should serialize");
+    let parsed: TurnSnapshot =
+        serde_json::from_str(&json).expect("TurnSnapshot should deserialize");
+
+    assert_eq!(parsed.turn_index, 3);
+    assert_eq!(parsed.usage.input, 100);
+    assert_eq!(parsed.usage.output, 50);
+    assert!((parsed.cost.total - 0.05).abs() < f64::EPSILON);
+    assert_eq!(parsed.stop_reason, StopReason::Stop);
+    assert!(parsed.messages.is_empty());
 }

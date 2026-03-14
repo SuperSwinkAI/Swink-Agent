@@ -57,6 +57,38 @@ impl AgentToolResult {
     }
 }
 
+// ─── Tool Metadata ──────────────────────────────────────────────────────────
+
+/// Optional organizational metadata for an [`AgentTool`].
+///
+/// Groups tools by namespace and tracks version. Existing tools default to
+/// no namespace and no version.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ToolMetadata {
+    /// Logical grouping such as `"filesystem"`, `"git"`, or `"code_analysis"`.
+    pub namespace: Option<String>,
+    /// Semver-style version string for the tool (e.g. `"1.0.0"`).
+    pub version: Option<String>,
+}
+
+impl ToolMetadata {
+    /// Create metadata with a namespace.
+    #[must_use]
+    pub fn with_namespace(namespace: impl Into<String>) -> Self {
+        Self {
+            namespace: Some(namespace.into()),
+            version: None,
+        }
+    }
+
+    /// Set the version on this metadata.
+    #[must_use]
+    pub fn with_version(mut self, version: impl Into<String>) -> Self {
+        self.version = Some(version.into());
+        self
+    }
+}
+
 // ─── AgentTool Trait ─────────────────────────────────────────────────────────
 
 /// A tool that can be invoked by the agent loop.
@@ -80,6 +112,13 @@ pub trait AgentTool: Send + Sync {
     /// Default is `false` — tools execute immediately.
     fn requires_approval(&self) -> bool {
         false
+    }
+
+    /// Optional organizational metadata (namespace, version).
+    ///
+    /// Returns `None` by default for backward compatibility.
+    fn metadata(&self) -> Option<ToolMetadata> {
+        None
     }
 
     /// Execute the tool with validated parameters.
@@ -536,5 +575,49 @@ mod tests {
         assert_ne!(ApprovalMode::Enabled, ApprovalMode::Smart);
         assert_ne!(ApprovalMode::Smart, ApprovalMode::Bypassed);
         assert_ne!(ApprovalMode::Enabled, ApprovalMode::Bypassed);
+    }
+
+    // ─── ToolMetadata ────────────────────────────────────────────────────
+
+    #[test]
+    fn tool_metadata_default_is_empty() {
+        let meta = ToolMetadata::default();
+        assert_eq!(meta.namespace, None);
+        assert_eq!(meta.version, None);
+    }
+
+    #[test]
+    fn tool_metadata_builder() {
+        let meta = ToolMetadata::with_namespace("filesystem").with_version("1.2.0");
+        assert_eq!(meta.namespace.as_deref(), Some("filesystem"));
+        assert_eq!(meta.version.as_deref(), Some("1.2.0"));
+    }
+
+    #[test]
+    fn agent_tool_metadata_defaults_to_none() {
+        use std::future::Future;
+        use std::pin::Pin;
+        use tokio_util::sync::CancellationToken;
+
+        struct MinimalTool;
+
+        impl AgentTool for MinimalTool {
+            fn name(&self) -> &str { "minimal" }
+            fn label(&self) -> &str { "Minimal" }
+            fn description(&self) -> &str { "A minimal tool" }
+            fn parameters_schema(&self) -> &Value { &Value::Null }
+            fn execute(
+                &self,
+                _tool_call_id: &str,
+                _params: Value,
+                _ct: CancellationToken,
+                _on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
+            ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>> {
+                Box::pin(async { AgentToolResult::text("ok") })
+            }
+        }
+
+        let tool = MinimalTool;
+        assert!(tool.metadata().is_none());
     }
 }

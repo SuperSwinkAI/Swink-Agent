@@ -3,12 +3,12 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use swink_agent::{Agent, AgentOptions, ModelSpec, StreamFn};
+use swink_agent::{AgentOptions, ModelSpec, StreamFn};
 use swink_agent_adapters::{AnthropicStreamFn, OllamaStreamFn, OpenAiStreamFn, ProxyStreamFn};
 
 use swink_agent_tui::{
-    ApprovalSender, TuiConfig, credentials, launch, resolve_system_prompt, restore_terminal,
-    setup_terminal, tui_approval_callback, wizard,
+    TuiConfig, credentials, launch, resolve_system_prompt, restore_terminal, setup_terminal,
+    wizard,
 };
 
 type AppResult<T> = Result<T, swink_agent_tui::error::TuiError>;
@@ -63,15 +63,13 @@ fn run(
     rt.block_on(async {
         let system_prompt = resolve_system_prompt(None, &config);
 
-        launch(config, terminal, |approval_tx| {
-            create_agent(system_prompt, approval_tx)
-        })
-        .await
+        launch(config, terminal, create_options(system_prompt))
+            .await
         .map_err(|e| swink_agent_tui::error::TuiError::Other(e.to_string().into()))
     })
 }
 
-/// Create an agent from environment variables.
+/// Build agent options from environment variables.
 ///
 /// Supports four providers (checked in priority order):
 ///
@@ -94,7 +92,7 @@ fn run(
 /// - `OLLAMA_HOST` — Ollama server URL (default: `http://localhost:11434`)
 /// - `OLLAMA_MODEL` — model name (default: `llama3.2`)
 #[allow(clippy::doc_markdown)] // "OpenAI" is a proper noun, not code.
-fn create_agent(system_prompt: String, approval_tx: &ApprovalSender) -> Agent {
+fn create_options(system_prompt: String) -> AgentOptions {
     // Check for proxy mode first (highest priority)
     if let Ok(base_url) = std::env::var("LLM_BASE_URL") {
         let proxy_provider = credentials::providers()
@@ -109,7 +107,7 @@ fn create_agent(system_prompt: String, approval_tx: &ApprovalSender) -> Agent {
         let proxy: Arc<dyn StreamFn> = Arc::new(ProxyStreamFn::new(&base_url, &api_key));
         let model = ModelSpec::new("proxy", &model_id);
         let extra = build_extra_models(&model_id);
-        return build_agent(system_prompt, model, proxy, extra, approval_tx);
+        return build_options(system_prompt, model, proxy, extra);
     }
 
     // Check for OpenAI (second priority)
@@ -125,7 +123,7 @@ fn create_agent(system_prompt: String, approval_tx: &ApprovalSender) -> Agent {
         let model = ModelSpec::new("openai", &model_id);
         let mut extra = openai_extra_models(&model_id, &openai);
         append_local_model(&mut extra);
-        return build_agent(system_prompt, model, openai, extra, approval_tx);
+        return build_options(system_prompt, model, openai, extra);
     }
 
     // Check for Anthropic (third priority)
@@ -144,7 +142,7 @@ fn create_agent(system_prompt: String, approval_tx: &ApprovalSender) -> Agent {
         let model = ModelSpec::new("anthropic", &model_id);
         let mut extra = anthropic_extra_models(&model_id, &anthropic);
         append_local_model(&mut extra);
-        return build_agent(system_prompt, model, anthropic, extra, approval_tx);
+        return build_options(system_prompt, model, anthropic, extra);
     }
 
     // Local model (fourth priority — before Ollama fallback)
@@ -156,7 +154,7 @@ fn create_agent(system_prompt: String, approval_tx: &ApprovalSender) -> Agent {
             Arc::new(local_model),
         ));
         let model = ModelSpec::new("local", "SmolLM3-3B-Q4_K_M");
-        return build_agent(system_prompt, model, local, Vec::new(), approval_tx);
+        return build_options(system_prompt, model, local, Vec::new());
     }
 
     // Default: Ollama (lowest priority — only when `local` feature is disabled)
@@ -169,27 +167,23 @@ fn create_agent(system_prompt: String, approval_tx: &ApprovalSender) -> Agent {
         let model = ModelSpec::new("ollama", &model_id);
         let mut extra = ollama_extra_models(&model_id, &ollama);
         append_local_model(&mut extra);
-        build_agent(system_prompt, model, ollama, extra, approval_tx)
+        build_options(system_prompt, model, ollama, extra)
     }
 }
 
-fn build_agent(
+fn build_options(
     system_prompt: String,
     model: ModelSpec,
     stream_fn: Arc<dyn StreamFn>,
     extra_models: Vec<(ModelSpec, Arc<dyn StreamFn>)>,
-    approval_tx: &ApprovalSender,
-) -> Agent {
-    Agent::new(
-        AgentOptions::new(
-            system_prompt,
-            model,
-            stream_fn,
-            swink_agent::default_convert,
-        )
-        .with_available_models(extra_models)
-        .with_approve_tool(tui_approval_callback(approval_tx)),
+) -> AgentOptions {
+    AgentOptions::new(
+        system_prompt,
+        model,
+        stream_fn,
+        swink_agent::default_convert,
     )
+    .with_available_models(extra_models)
 }
 
 /// Build extra Anthropic models for cycling, excluding the primary model.

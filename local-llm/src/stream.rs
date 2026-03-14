@@ -95,7 +95,7 @@ fn local_stream<'a>(
         }
 
         // Step 2: Convert context to mistral.rs format.
-        let messages = crate::convert::convert_messages(context);
+        let messages = crate::convert::convert_context_messages(context);
 
         debug!(
             provider = %model.provider,

@@ -1,71 +1,79 @@
 //! Message conversion from swink-agent types to mistral.rs types.
 //!
-//! Standalone conversion (not using adapters' `MessageConverter` — different
-//! crate). Converts [`AgentContext`] messages and tools into mistral.rs
-//! [`TextMessages`] and [`Tool`] definitions.
+//! Implements core's [`MessageConverter`] trait so the shared
+//! [`convert_messages`](swink_agent::convert_messages) function handles
+//! iteration / pattern-matching, while this module supplies the
+//! mistral.rs-specific construction.
 
 use mistralrs::{TextMessageRole, TextMessages, Tool};
 
+use swink_agent::convert::{MessageConverter, convert_messages, extract_tool_schemas};
 use swink_agent::types::{
-    AgentContext, AgentMessage, AssistantMessage, ContentBlock, LlmMessage, ToolResultMessage,
-    UserMessage,
+    AgentContext, AssistantMessage, ContentBlock, ToolResultMessage, UserMessage,
 };
 
-// ─── Message Conversion ─────────────────────────────────────────────────────
+// ─── Intermediate message type ──────────────────────────────────────────────
 
-/// Convert an [`AgentContext`] into mistral.rs [`TextMessages`].
-///
-/// Mapping:
-/// - `system_prompt` → `System` role
-/// - [`UserMessage`] → `User` role
-/// - [`AssistantMessage`] → `Assistant` role
-/// - [`ToolResultMessage`] → `Tool` role (with `tool_call_id`)
-/// - `CustomMessage` → skipped
-pub fn convert_messages(context: &AgentContext) -> TextMessages {
-    let mut messages = TextMessages::new();
+/// A role + content pair that can be folded into mistral.rs [`TextMessages`].
+struct LocalMessage {
+    role: TextMessageRole,
+    content: String,
+}
 
-    if !context.system_prompt.is_empty() {
-        messages = messages.add_message(TextMessageRole::System, &context.system_prompt);
+// ─── MessageConverter impl ──────────────────────────────────────────────────
+
+struct LocalConverter;
+
+impl MessageConverter for LocalConverter {
+    type Message = LocalMessage;
+
+    fn system_message(system_prompt: &str) -> Option<Self::Message> {
+        Some(LocalMessage {
+            role: TextMessageRole::System,
+            content: system_prompt.to_string(),
+        })
     }
 
-    for msg in &context.messages {
-        let AgentMessage::Llm(llm) = msg else {
-            continue;
-        };
-        match llm {
-            LlmMessage::User(user) => {
-                messages = convert_user(messages, user);
-            }
-            LlmMessage::Assistant(assistant) => {
-                messages = convert_assistant(messages, assistant);
-            }
-            LlmMessage::ToolResult(result) => {
-                messages = convert_tool_result(messages, result);
-            }
+    fn user_message(user: &UserMessage) -> Self::Message {
+        LocalMessage {
+            role: TextMessageRole::User,
+            content: ContentBlock::extract_text(&user.content),
         }
     }
 
+    fn assistant_message(assistant: &AssistantMessage) -> Self::Message {
+        LocalMessage {
+            role: TextMessageRole::Assistant,
+            content: ContentBlock::extract_text(&assistant.content),
+        }
+    }
+
+    fn tool_result_message(result: &ToolResultMessage) -> Self::Message {
+        let text = ContentBlock::extract_text(&result.content);
+        // Tool results include the tool_call_id for matching.
+        let content = format!("[tool_call_id: {}]\n{text}", result.tool_call_id);
+        LocalMessage {
+            role: TextMessageRole::Tool,
+            content,
+        }
+    }
+}
+
+// ─── Public API ─────────────────────────────────────────────────────────────
+
+/// Convert an [`AgentContext`] into mistral.rs [`TextMessages`].
+///
+/// Delegates to core's generic [`convert_messages`] with [`LocalConverter`],
+/// then folds the intermediate messages into the mistral.rs builder.
+pub fn convert_context_messages(context: &AgentContext) -> TextMessages {
+    let converted = convert_messages::<LocalConverter>(&context.messages, &context.system_prompt);
+
+    let mut messages = TextMessages::new();
+    for msg in converted {
+        messages = messages.add_message(msg.role, msg.content);
+    }
     messages
 }
-
-fn convert_user(messages: TextMessages, user: &UserMessage) -> TextMessages {
-    let text = ContentBlock::extract_text(&user.content);
-    messages.add_message(TextMessageRole::User, text)
-}
-
-fn convert_assistant(messages: TextMessages, assistant: &AssistantMessage) -> TextMessages {
-    let text = ContentBlock::extract_text(&assistant.content);
-    messages.add_message(TextMessageRole::Assistant, text)
-}
-
-fn convert_tool_result(messages: TextMessages, result: &ToolResultMessage) -> TextMessages {
-    let text = ContentBlock::extract_text(&result.content);
-    // Tool results include the tool_call_id for matching.
-    let content = format!("[tool_call_id: {}]\n{text}", result.tool_call_id);
-    messages.add_message(TextMessageRole::Tool, content)
-}
-
-// ─── Tool Conversion ────────────────────────────────────────────────────────
 
 /// Convert agent tools into mistral.rs [`Tool`] definitions.
 ///
@@ -74,29 +82,28 @@ fn convert_tool_result(messages: TextMessages, result: &ToolResultMessage) -> Te
 /// expects.
 #[allow(dead_code)] // Will be used when tool calling is wired into the stream.
 pub fn convert_tools(context: &AgentContext) -> Vec<Tool> {
-    context
-        .tools
-        .iter()
-        .map(|t| {
+    extract_tool_schemas(&context.tools)
+        .into_iter()
+        .map(|schema| {
             let function = serde_json::json!({
                 "type": "function",
                 "function": {
-                    "name": t.name(),
-                    "description": t.description(),
-                    "parameters": t.parameters_schema(),
+                    "name": schema.name,
+                    "description": schema.description,
+                    "parameters": schema.parameters,
                 }
             });
             serde_json::from_value::<Tool>(function).unwrap_or_else(|e| {
                 tracing::warn!(
-                    tool = t.name(),
+                    tool = %schema.name,
                     error = %e,
                     "failed to convert tool schema, using empty"
                 );
                 serde_json::from_value::<Tool>(serde_json::json!({
                     "type": "function",
                     "function": {
-                        "name": t.name(),
-                        "description": t.description(),
+                        "name": schema.name,
+                        "description": schema.description,
                         "parameters": {"type": "object", "properties": {}}
                     }
                 }))
@@ -109,16 +116,15 @@ pub fn convert_tools(context: &AgentContext) -> Vec<Tool> {
 /// Serialize tools to JSON strings for the `tool_schemas` parameter.
 #[allow(dead_code)] // Used in tests; will be used in production when tool calling is wired in.
 pub fn tool_schemas_json(context: &AgentContext) -> Vec<String> {
-    context
-        .tools
-        .iter()
-        .map(|t| {
+    extract_tool_schemas(&context.tools)
+        .into_iter()
+        .map(|schema| {
             serde_json::json!({
                 "type": "function",
                 "function": {
-                    "name": t.name(),
-                    "description": t.description(),
-                    "parameters": t.parameters_schema(),
+                    "name": schema.name,
+                    "description": schema.description,
+                    "parameters": schema.parameters,
                 }
             })
             .to_string()
@@ -135,9 +141,10 @@ mod tests {
 
     use serde_json::{Value, json};
     use swink_agent::tool::{AgentTool, AgentToolResult};
+    use swink_agent::testing::{assistant_msg, tool_result_msg, user_msg};
     use swink_agent::types::{
         AgentMessage, AssistantMessage, ContentBlock, Cost, LlmMessage, StopReason,
-        ToolResultMessage, Usage, UserMessage,
+        ToolResultMessage, Usage,
     };
     use tokio_util::sync::CancellationToken;
 
@@ -199,55 +206,19 @@ mod tests {
         }
     }
 
-    fn user_msg(text: &str) -> AgentMessage {
-        AgentMessage::Llm(LlmMessage::User(UserMessage {
-            content: vec![ContentBlock::Text {
-                text: text.to_string(),
-            }],
-            timestamp: 0,
-        }))
-    }
-
-    fn assistant_msg(text: &str) -> AgentMessage {
-        AgentMessage::Llm(LlmMessage::Assistant(AssistantMessage {
-            content: vec![ContentBlock::Text {
-                text: text.to_string(),
-            }],
-            provider: String::new(),
-            model_id: String::new(),
-            usage: Usage::default(),
-            cost: Cost::default(),
-            stop_reason: StopReason::Stop,
-            error_message: None,
-            timestamp: 0,
-        }))
-    }
-
-    fn tool_result_msg(id: &str, text: &str) -> AgentMessage {
-        AgentMessage::Llm(LlmMessage::ToolResult(ToolResultMessage {
-            tool_call_id: id.to_string(),
-            content: vec![ContentBlock::Text {
-                text: text.to_string(),
-            }],
-            is_error: false,
-            timestamp: 0,
-            details: serde_json::Value::Null,
-        }))
-    }
-
     // ── Tests ─────────────────────────────────────────────────────────────
 
     #[test]
     fn empty_context_produces_empty_messages() {
         let ctx = make_context("", vec![], vec![]);
-        let _msgs = convert_messages(&ctx);
+        let _msgs = convert_context_messages(&ctx);
         // TextMessages doesn't expose length, but it shouldn't panic.
     }
 
     #[test]
     fn system_prompt_is_included() {
         let ctx = make_context("You are helpful.", vec![], vec![]);
-        let _msgs = convert_messages(&ctx);
+        let _msgs = convert_context_messages(&ctx);
         // System prompt is set — no panic.
     }
 
@@ -262,7 +233,7 @@ mod tests {
             ],
             vec![],
         );
-        let _msgs = convert_messages(&ctx);
+        let _msgs = convert_context_messages(&ctx);
         // All message types handled — no panic.
     }
 
@@ -287,7 +258,7 @@ mod tests {
             ],
             vec![],
         );
-        let _msgs = convert_messages(&ctx);
+        let _msgs = convert_context_messages(&ctx);
         // Custom skipped — no panic.
     }
 
@@ -317,7 +288,7 @@ mod tests {
             timestamp: 0,
         }));
         let ctx = make_context("", vec![msg], vec![]);
-        let _msgs = convert_messages(&ctx);
+        let _msgs = convert_context_messages(&ctx);
         // Empty content blocks produce empty text — no panic.
     }
 
@@ -326,7 +297,7 @@ mod tests {
         // Verify the tool_call_id is embedded in the converted message content.
         let ctx = make_context("", vec![tool_result_msg("tc-42", "file contents")], vec![]);
         // Conversion should not panic; the tool_call_id is formatted into the text.
-        let _msgs = convert_messages(&ctx);
+        let _msgs = convert_context_messages(&ctx);
     }
 
     #[test]
@@ -343,7 +314,7 @@ mod tests {
             timestamp: 0,
         }));
         let ctx = make_context("", vec![msg], vec![]);
-        let _msgs = convert_messages(&ctx);
+        let _msgs = convert_context_messages(&ctx);
         // Multiple text blocks concatenated — no panic.
     }
 
@@ -369,7 +340,7 @@ mod tests {
         }));
         let ctx = make_context("", vec![msg], vec![]);
         // Only Text blocks are extracted — others silently ignored.
-        let _msgs = convert_messages(&ctx);
+        let _msgs = convert_context_messages(&ctx);
     }
 
     #[test]
@@ -402,7 +373,7 @@ mod tests {
             details: serde_json::Value::Null,
         }));
         let ctx = make_context("", vec![msg], vec![]);
-        let _msgs = convert_messages(&ctx);
+        let _msgs = convert_context_messages(&ctx);
         // Error tool results convert without panic.
     }
 }

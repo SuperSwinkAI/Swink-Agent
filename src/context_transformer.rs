@@ -3,8 +3,10 @@
 //! Replaces the bare `TransformContextFn` closure with a trait that supports
 //! both transformation and compaction reporting.
 
-use crate::context::estimate_tokens;
-use crate::types::{AgentMessage, LlmMessage};
+use std::sync::Arc;
+
+use crate::context::{TokenCounter, compact_sliding_window_with};
+use crate::types::AgentMessage;
 
 /// Result of a context transformation pass.
 #[derive(Debug, Clone)]
@@ -64,10 +66,14 @@ impl<F: Fn(&mut Vec<AgentMessage>, bool) + Send + Sync> ContextTransformer for F
 ///
 /// Wraps the same logic as [`sliding_window`](crate::sliding_window) but
 /// captures compaction metrics for reporting.
+///
+/// Accepts an optional [`TokenCounter`] for pluggable token estimation.
+/// When none is provided, the default `chars / 4` heuristic is used.
 pub struct SlidingWindowTransformer {
     normal_budget: usize,
     overflow_budget: usize,
     anchor: usize,
+    token_counter: Option<Arc<dyn TokenCounter>>,
 }
 
 impl SlidingWindowTransformer {
@@ -79,21 +85,21 @@ impl SlidingWindowTransformer {
     /// * `overflow_budget` - Smaller token budget used when overflow is signaled.
     /// * `anchor` - Number of messages at the start to always preserve.
     #[must_use]
-    pub const fn new(normal_budget: usize, overflow_budget: usize, anchor: usize) -> Self {
+    pub fn new(normal_budget: usize, overflow_budget: usize, anchor: usize) -> Self {
         Self {
             normal_budget,
             overflow_budget,
             anchor,
+            token_counter: None,
         }
     }
-}
 
-/// Returns true if the message at `idx` is a tool result.
-fn is_tool_result(messages: &[AgentMessage], idx: usize) -> bool {
-    matches!(
-        messages.get(idx),
-        Some(AgentMessage::Llm(LlmMessage::ToolResult(_)))
-    )
+    /// Set a custom token counter for this transformer.
+    #[must_use]
+    pub fn with_token_counter(mut self, counter: Arc<dyn TokenCounter>) -> Self {
+        self.token_counter = Some(counter);
+        self
+    }
 }
 
 impl ContextTransformer for SlidingWindowTransformer {
@@ -108,63 +114,13 @@ impl ContextTransformer for SlidingWindowTransformer {
             self.normal_budget
         };
 
-        let tokens_before: usize = messages.iter().map(estimate_tokens).sum();
-        if tokens_before <= budget {
-            return None;
-        }
-
-        let len = messages.len();
-        let effective_anchor = self.anchor.min(len);
-
-        // Calculate tokens used by anchor messages.
-        let anchor_tokens: usize = messages[..effective_anchor]
-            .iter()
-            .map(estimate_tokens)
-            .sum();
-
-        let remaining_budget = budget.saturating_sub(anchor_tokens);
-
-        // Walk backwards from the end, accumulating messages that fit.
-        let mut tail_tokens = 0;
-        let mut tail_start = len;
-
-        for i in (effective_anchor..len).rev() {
-            let msg_tokens = estimate_tokens(&messages[i]);
-            if tail_tokens + msg_tokens > remaining_budget {
-                break;
-            }
-            tail_tokens += msg_tokens;
-            tail_start = i;
-        }
-
-        // Adjust tail_start forward to avoid splitting tool-call / tool-result
-        // pairs. If tail_start lands on a tool-result, we need the preceding
-        // assistant message too.
-        while tail_start > effective_anchor
-            && tail_start < len
-            && is_tool_result(messages, tail_start)
-        {
-            tail_start -= 1;
-        }
-
-        // If nothing would be removed, bail out.
-        if tail_start <= effective_anchor {
-            return None;
-        }
-
-        let dropped_count = tail_start - effective_anchor;
-
-        // Build the compacted list: anchor messages + tail messages.
-        let tail: Vec<AgentMessage> = messages.drain(tail_start..).collect();
-        messages.truncate(effective_anchor);
-        messages.extend(tail);
-
-        let tokens_after: usize = messages.iter().map(estimate_tokens).sum();
+        let counter_ref = self.token_counter.as_deref();
+        let result = compact_sliding_window_with(messages, budget, self.anchor, counter_ref)?;
 
         Some(CompactionReport {
-            dropped_count,
-            tokens_before,
-            tokens_after,
+            dropped_count: result.dropped_count,
+            tokens_before: result.tokens_before,
+            tokens_after: result.tokens_after,
             overflow,
         })
     }
@@ -262,6 +218,65 @@ mod tests {
         assert!(report.is_some());
         let report = report.unwrap();
         assert!(report.overflow);
+        assert!(messages.len() < 4);
+    }
+
+    #[test]
+    fn sliding_window_transformer_with_custom_counter() {
+        use crate::context::TokenCounter;
+
+        /// Counts every character as one token (4x the default heuristic).
+        struct CharCounter;
+
+        impl TokenCounter for CharCounter {
+            fn count_tokens(&self, message: &AgentMessage) -> usize {
+                match message {
+                    AgentMessage::Llm(llm) => {
+                        let blocks = match llm {
+                            LlmMessage::User(m) => &m.content,
+                            _ => return 0,
+                        };
+                        blocks
+                            .iter()
+                            .map(|b| match b {
+                                ContentBlock::Text { text } => text.len(),
+                                _ => 0,
+                            })
+                            .sum()
+                    }
+                    AgentMessage::Custom(_) => 50,
+                }
+            }
+        }
+
+        // Each message: 400 chars.
+        // Default counter: 400/4 = 100 tokens each.
+        // CharCounter: 400 tokens each.
+        let body = "x".repeat(400);
+
+        // With default counter, 4 * 100 = 400 tokens. Budget 500 => no trim.
+        let default_transformer = SlidingWindowTransformer::new(500, 250, 1);
+        let mut messages = vec![
+            text_message(&body),
+            text_message(&body),
+            text_message(&body),
+            text_message(&body),
+        ];
+        let report = default_transformer.transform(&mut messages, false);
+        assert!(report.is_none(), "default counter should not trim at budget 500");
+        assert_eq!(messages.len(), 4);
+
+        // With CharCounter, 4 * 400 = 1600 tokens. Budget 500 => trims.
+        let custom_transformer = SlidingWindowTransformer::new(500, 250, 1)
+            .with_token_counter(Arc::new(CharCounter));
+        let mut messages = vec![
+            text_message(&body),
+            text_message(&body),
+            text_message(&body),
+            text_message(&body),
+        ];
+        let report = custom_transformer.transform(&mut messages, false);
+        assert!(report.is_some(), "char counter should trim at budget 500");
         assert!(messages.len() < 4);
     }
 }

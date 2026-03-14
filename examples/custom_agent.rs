@@ -10,12 +10,10 @@
 
 use std::sync::Arc;
 
-use swink_agent::{
-    Agent, AgentOptions, AgentTool, BashTool, ModelConnections, ReadFileTool, WriteFileTool,
-};
+use swink_agent::{AgentOptions, AgentTool, BashTool, ModelConnections, ReadFileTool, WriteFileTool};
 use swink_agent_adapters::{build_remote_connection, remote_preset_keys};
 use swink_agent_local_llm::default_local_connection;
-use swink_agent_tui::{TuiConfig, launch, restore_terminal, setup_terminal, tui_approval_callback};
+use swink_agent_tui::{TuiConfig, launch, restore_terminal, setup_terminal};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -29,7 +27,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             default_local_connection()?,
         ],
     );
-    let (model, stream_fn, extra_models) = connections.into_parts();
 
     // 2. Register tools.
     let tools: Vec<Arc<dyn AgentTool>> = vec![
@@ -38,20 +35,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Arc::new(WriteFileTool::new()),
     ];
 
-    // 3. Set up terminal and launch the TUI.
+    // 3. Build options directly from connections — no manual decomposition needed.
+    let options =
+        AgentOptions::from_connections("You are a helpful coding assistant.", connections)
+            .with_tools(tools);
+
+    // 4. Set up terminal and launch the TUI.
     let mut terminal = setup_terminal()?;
-
-    let result = launch(TuiConfig::default(), &mut terminal, |approval_tx| {
-        // F4 changes the selected model, and the next send applies that selection.
-        let options =
-            AgentOptions::new_simple("You are a helpful coding assistant.", model, stream_fn)
-                .with_available_models(extra_models)
-                .with_tools(tools)
-                .with_approve_tool(tui_approval_callback(approval_tx));
-
-        Agent::new(options)
-    })
-    .await;
+    let result = launch(TuiConfig::default(), &mut terminal, options).await;
 
     restore_terminal()?;
     result

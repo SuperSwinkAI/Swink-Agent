@@ -3,7 +3,7 @@ members = [".", "adapters", "eval", "local-llm", "memory", "tui"]
 resolver = "2"
 
 [workspace.dependencies]
-serde = { version = "1", features = ["derive"] }
+serde = { version = "1", features = ["derive", "rc"] }
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }
 tokio-util = "0.7"
@@ -38,6 +38,7 @@ categories = ["development-tools", "api-bindings", "asynchronous"]
 [features]
 default = ["builtin-tools"]
 builtin-tools = []
+test-helpers = []
 
 [dependencies]
 serde.workspace = true

@@ -19,7 +19,9 @@ use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, info, info_span};
 
+use crate::async_context_transformer::AsyncContextTransformer;
 use crate::error::AgentError;
+use crate::fallback::ModelFallback;
 use crate::retry::RetryStrategy;
 use crate::stream::{AssistantMessageDelta, StreamFn, StreamOptions};
 use crate::tool::{
@@ -32,6 +34,7 @@ use crate::types::{
 use crate::message_provider::MessageProvider;
 use crate::util::now_timestamp;
 use crate::tool::AgentTool;
+use crate::tool_execution_policy::ToolExecutionPolicy;
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -83,6 +86,7 @@ pub enum TurnEndReason {
 /// logging. The harness never calls back into application logic for display
 /// concerns.
 #[derive(Debug, Clone)]
+#[allow(clippy::large_enum_variant)]
 pub enum AgentEvent {
     /// Emitted once when the loop begins.
     AgentStart,
@@ -98,6 +102,8 @@ pub enum AgentEvent {
         assistant_message: AssistantMessage,
         tool_results: Vec<ToolResultMessage>,
         reason: TurnEndReason,
+        /// Full context snapshot at the turn boundary for replay/auditing.
+        snapshot: crate::types::TurnSnapshot,
     },
 
     /// Emitted after context transform, before the LLM streaming call.
@@ -150,6 +156,13 @@ pub enum AgentEvent {
     /// Emitted when context compaction drops messages.
     ContextCompacted {
         report: crate::context_transformer::CompactionReport,
+    },
+
+    /// Emitted when the agent falls back to a different model after exhausting
+    /// retries on the current one.
+    ModelFallback {
+        from_model: ModelSpec,
+        to_model: ModelSpec,
     },
 
     /// A custom event emitted via [`Agent::emit`].
@@ -217,6 +230,39 @@ pub struct AgentLoopConfig {
     /// Runs after approval but before validation, allowing programmatic
     /// argument rewriting (sandboxing, path rewrites, etc.).
     pub tool_call_transformer: Option<Arc<dyn crate::tool_call_transformer::ToolCallTransformer>>,
+
+    /// Optional post-turn lifecycle hook invoked after each completed turn.
+    ///
+    /// Runs after the `TurnEnd` event is emitted, before the loop decides
+    /// whether to continue. Enables memory persistence, metrics flush, or
+    /// dynamic steering between turns.
+    pub post_turn_hook: Option<Arc<dyn crate::post_turn_hook::PostTurnHook>>,
+
+    /// Optional async context transformer (runs before the sync transformer).
+    ///
+    /// Enables async operations like fetching summaries or RAG retrieval
+    /// before context compaction.
+    pub async_transform_context: Option<Arc<dyn AsyncContextTransformer>>,
+
+    /// Optional metrics collector invoked at the end of each turn with
+    /// per-turn timing, token usage, and cost data.
+    pub metrics_collector: Option<Arc<dyn crate::metrics::MetricsCollector>>,
+
+    /// Optional model fallback chain tried when the primary model exhausts
+    /// its retry budget on a retryable error.
+    pub fallback: Option<ModelFallback>,
+
+    /// Optional pre-call budget guard checked before each LLM call.
+    ///
+    /// When set, the loop compares accumulated cost/tokens against the
+    /// configured limits and stops gracefully if the budget is exceeded.
+    pub budget_guard: Option<crate::budget_guard::BudgetGuard>,
+
+    /// Controls how tool calls within a turn are dispatched.
+    ///
+    /// Defaults to [`ToolExecutionPolicy::Concurrent`] for backward
+    /// compatibility.
+    pub tool_execution_policy: ToolExecutionPolicy,
 }
 
 impl std::fmt::Debug for AgentLoopConfig {
@@ -233,6 +279,11 @@ impl std::fmt::Debug for AgentLoopConfig {
                 "tool_call_transformer",
                 &self.tool_call_transformer.as_ref().map(|_| "..."),
             )
+            .field(
+                "post_turn_hook",
+                &self.post_turn_hook.as_ref().map(|_| "..."),
+            )
+            .field("tool_execution_policy", &self.tool_execution_policy)
             .finish_non_exhaustive()
     }
 }
@@ -310,11 +361,14 @@ pub struct LoopState {
     pub accumulated_cost: crate::types::Cost,
     /// The last assistant message from a completed turn (for policy checks).
     pub last_assistant_message: Option<AssistantMessage>,
+    /// Tool results from the last completed turn (for post-turn hook).
+    pub last_tool_results: Vec<ToolResultMessage>,
 }
 
 // ─── run_loop_inner ──────────────────────────────────────────────────────────
 
 /// The actual loop logic running inside the spawned task.
+#[allow(clippy::too_many_lines)]
 async fn run_loop_inner(
     initial_messages: Vec<AgentMessage>,
     system_prompt: String,
@@ -345,6 +399,7 @@ async fn run_loop_inner(
             accumulated_usage: crate::types::Usage::default(),
             accumulated_cost: crate::types::Cost::default(),
             last_assistant_message: None,
+            last_tool_results: Vec::new(),
         };
 
         // 1. Emit AgentStart
@@ -365,7 +420,7 @@ async fn run_loop_inner(
                 )
                 .await;
 
-                match turn_result {
+                let should_break = match turn_result {
                     TurnOutcome::ContinueInner => {
                         // Update turn tracking and check loop policy
                         state.turn_index += 1;
@@ -379,14 +434,27 @@ async fn run_loop_inner(
                                 assistant_message: msg,
                                 stop_reason: msg.stop_reason,
                             };
-                            if !policy.should_continue(&ctx) {
+                            if policy.should_continue(&ctx) {
+                                false
+                            } else {
                                 info!("loop policy stopped agent after turn {}", state.turn_index);
-                                break 'inner;
+                                true
                             }
+                        } else {
+                            false
                         }
                     }
-                    TurnOutcome::BreakInner => break 'inner,
+                    TurnOutcome::BreakInner => true,
                     TurnOutcome::Return => return,
+                };
+
+                // Post-turn hook: invoke after each completed turn
+                if invoke_post_turn_hook(&config, &mut state).await {
+                    break 'inner;
+                }
+
+                if should_break {
+                    break 'inner;
                 }
             }
 
@@ -425,6 +493,39 @@ pub enum TurnOutcome {
     Return,
 }
 
+/// Invoke the post-turn hook if configured. Returns `true` if the loop should break.
+async fn invoke_post_turn_hook(config: &AgentLoopConfig, state: &mut LoopState) -> bool {
+    let Some(ref hook) = config.post_turn_hook else {
+        return false;
+    };
+    let Some(ref msg) = state.last_assistant_message else {
+        return false;
+    };
+    let hook_ctx = crate::post_turn_hook::PostTurnContext {
+        turn_index: state.turn_index,
+        assistant_message: msg,
+        tool_results: &state.last_tool_results,
+        accumulated_usage: &state.accumulated_usage,
+        accumulated_cost: &state.accumulated_cost,
+        messages: &state.context_messages,
+    };
+    match hook.on_turn_end(&hook_ctx).await {
+        crate::post_turn_hook::PostTurnAction::Continue => false,
+        crate::post_turn_hook::PostTurnAction::Stop(reason) => {
+            if let Some(ref r) = reason {
+                info!("post-turn hook stopped agent: {}", r);
+            } else {
+                info!("post-turn hook stopped agent");
+            }
+            true
+        }
+        crate::post_turn_hook::PostTurnAction::InjectMessages(msgs) => {
+            state.pending_messages.extend(msgs);
+            false
+        }
+    }
+}
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 /// Info about a tool call extracted from the assistant message.
@@ -446,11 +547,15 @@ pub enum StreamResult {
 
 /// Outcome of concurrent tool execution.
 pub enum ToolExecOutcome {
-    Completed(Vec<ToolResultMessage>),
+    Completed {
+        results: Vec<ToolResultMessage>,
+        tool_metrics: Vec<crate::metrics::ToolExecMetrics>,
+    },
     SteeringInterrupt {
         completed: Vec<ToolResultMessage>,
         cancelled: Vec<ToolResultMessage>,
         steering_messages: Vec<AgentMessage>,
+        tool_metrics: Vec<crate::metrics::ToolExecMetrics>,
     },
     ChannelClosed,
 }

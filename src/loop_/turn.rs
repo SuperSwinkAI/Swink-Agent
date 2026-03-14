@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -6,7 +7,7 @@ use tracing::{debug, error};
 
 use crate::types::{
     AgentContext, AgentMessage, AssistantMessage, ContentBlock, LlmMessage, StopReason,
-    ToolResultMessage,
+    ToolResultMessage, TurnSnapshot,
 };
 use crate::util::now_timestamp;
 
@@ -14,11 +15,12 @@ use super::{
     AgentEvent, AgentLoopConfig, LoopState, StreamResult, ToolCallInfo, ToolExecOutcome,
     TurnEndReason, TurnOutcome, CONTEXT_OVERFLOW_SENTINEL, build_abort_message, emit,
 };
-use super::stream::stream_with_retry;
+use super::stream::{capability_filter_tools, stream_with_retry};
 use super::tool_dispatch::execute_tools_concurrently;
 
 /// Run a single turn of the inner loop: inject pending messages, transform
 /// context, stream the assistant response, handle tool calls, and emit events.
+#[allow(clippy::too_many_lines)]
 pub async fn run_single_turn(
     config: &Arc<AgentLoopConfig>,
     state: &mut LoopState,
@@ -47,7 +49,16 @@ pub async fn run_single_turn(
         return TurnOutcome::Return;
     }
 
-    // ii. Call context transformer if set
+    // ii-a. Call async context transformer if set (runs before sync)
+    if let Some(ref async_transformer) = config.async_transform_context
+        && let Some(report) = async_transformer
+            .transform(&mut state.context_messages, state.overflow_signal)
+            .await
+    {
+        let _ = emit(tx, AgentEvent::ContextCompacted { report }).await;
+    }
+
+    // ii-b. Call sync context transformer if set
     if let Some(ref transformer) = config.transform_context
         && let Some(report) =
             transformer.transform(&mut state.context_messages, state.overflow_signal)
@@ -71,11 +82,23 @@ pub async fn run_single_turn(
         None
     };
 
-    // v. Build context and call StreamFn with retry logic
+    // v-pre. Budget guard: check accumulated cost/tokens before calling the LLM
+    if let Some(ref guard) = config.budget_guard
+        && let Err(exceeded) = guard.check(&state.accumulated_usage, &state.accumulated_cost)
+    {
+        let error = crate::error::AgentError::BudgetExceeded(exceeded);
+        let error_msg = super::build_error_message(&config.model, &error);
+        return handle_error_stop(error_msg, state, tx).await;
+    }
+
+    // v. Build context and call StreamFn with retry logic.
+    // Filter tools based on model capabilities (strip tools if the model
+    // does not support tool use).
+    let effective_tools = capability_filter_tools(&config.model, &config.tools);
     let agent_context = AgentContext {
         system_prompt: system_prompt.to_string(),
         messages: Vec::new(),
-        tools: config.tools.clone(),
+        tools: effective_tools,
     };
 
     // Emit BeforeLlmCall
@@ -92,6 +115,8 @@ pub async fn run_single_turn(
         return TurnOutcome::Return;
     }
 
+    let turn_start = Instant::now();
+    let llm_start = Instant::now();
     let stream_result = stream_with_retry(
         config,
         &agent_context,
@@ -102,6 +127,7 @@ pub async fn run_single_turn(
         tx,
     )
     .await;
+    let llm_call_duration = llm_start.elapsed();
 
     let Some(assistant_message) = handle_stream_result(stream_result, config, state, tx).await
     else {
@@ -129,7 +155,15 @@ pub async fn run_single_turn(
 
     // ix. If no tool calls: emit TurnEnd, exit inner loop
     if tool_calls.is_empty() {
-        return handle_no_tool_calls(assistant_message, state, tx).await;
+        return handle_no_tool_calls(
+            assistant_message,
+            state,
+            config,
+            llm_call_duration,
+            turn_start,
+            tx,
+        )
+        .await;
     }
 
     // x–xiii. Process tool calls
@@ -138,10 +172,36 @@ pub async fn run_single_turn(
         state,
         assistant_message,
         tool_calls,
+        llm_call_duration,
+        turn_start,
         cancellation_token,
         tx,
     )
     .await
+}
+
+// ─── Snapshot builder ────────────────────────────────────────────────────
+
+/// Build a `TurnSnapshot` from current loop state.
+///
+/// Extracts LLM messages from `context_messages`, using the accumulated
+/// usage/cost and the given stop reason.
+fn build_snapshot(state: &LoopState, stop_reason: StopReason) -> TurnSnapshot {
+    let llm_messages: Vec<LlmMessage> = state
+        .context_messages
+        .iter()
+        .filter_map(|m| match m {
+            AgentMessage::Llm(llm) => Some(llm.clone()),
+            AgentMessage::Custom(_) => None,
+        })
+        .collect();
+    TurnSnapshot {
+        turn_index: state.turn_index,
+        messages: Arc::new(llm_messages),
+        usage: state.accumulated_usage.clone(),
+        cost: state.accumulated_cost.clone(),
+        stop_reason,
+    }
 }
 
 // ─── run_single_turn helpers ─────────────────────────────────────────────────
@@ -173,12 +233,14 @@ async fn handle_cancellation(
     {
         return TurnOutcome::Return;
     }
+    let snapshot = build_snapshot(state, StopReason::Aborted);
     if !emit(
         tx,
         AgentEvent::TurnEnd {
             assistant_message: abort_msg_clone,
             tool_results: vec![],
             reason: TurnEndReason::Cancelled,
+            snapshot,
         },
     )
     .await
@@ -224,12 +286,14 @@ async fn handle_stream_result(
             state
                 .context_messages
                 .push(AgentMessage::Llm(LlmMessage::Assistant(abort_msg)));
+            let snapshot = build_snapshot(state, StopReason::Aborted);
             if !emit(
                 tx,
                 AgentEvent::TurnEnd {
                     assistant_message: abort_msg_clone,
                     tool_results: vec![],
                     reason: TurnEndReason::Aborted,
+                    snapshot,
                 },
             )
             .await
@@ -261,15 +325,18 @@ async fn handle_error_stop(
         "agent loop stopping due to error/abort"
     );
     let msg_clone = assistant_message.clone();
+    let stop = assistant_message.stop_reason;
     state
         .context_messages
         .push(AgentMessage::Llm(LlmMessage::Assistant(assistant_message)));
+    let snapshot = build_snapshot(state, stop);
     if !emit(
         tx,
         AgentEvent::TurnEnd {
             assistant_message: msg_clone,
             tool_results: vec![],
             reason: TurnEndReason::Error,
+            snapshot,
         },
     )
     .await
@@ -314,9 +381,13 @@ fn extract_tool_calls(message: &AssistantMessage) -> Vec<ToolCallInfo> {
 }
 
 /// Handle the case where no tool calls are present: emit `TurnEnd`, break inner.
+#[allow(clippy::too_many_arguments)]
 async fn handle_no_tool_calls(
     assistant_message: AssistantMessage,
     state: &mut LoopState,
+    config: &Arc<AgentLoopConfig>,
+    llm_call_duration: Duration,
+    turn_start: Instant,
     tx: &mpsc::Sender<AgentEvent>,
 ) -> TurnOutcome {
     // Update accumulated usage/cost for policy tracking.
@@ -324,18 +395,37 @@ async fn handle_no_tool_calls(
     state.accumulated_cost += assistant_message.cost.clone();
     state.last_assistant_message = Some(assistant_message.clone());
 
+    // Clear last tool results (no tools this turn).
+    state.last_tool_results = vec![];
+
+    // Emit metrics if collector is configured.
+    if let Some(ref collector) = config.metrics_collector {
+        let metrics = crate::metrics::TurnMetrics {
+            turn_index: state.turn_index,
+            llm_call_duration,
+            tool_executions: vec![],
+            usage: assistant_message.usage.clone(),
+            cost: assistant_message.cost.clone(),
+            turn_duration: turn_start.elapsed(),
+        };
+        collector.on_metrics(&metrics).await;
+    }
+
     // Clone twice: once for all_new_messages, once for TurnEnd event.
     // The original goes to context_messages.
     let msg_for_event = assistant_message.clone();
+    let stop = assistant_message.stop_reason;
     state
         .context_messages
         .push(AgentMessage::Llm(LlmMessage::Assistant(assistant_message)));
+    let snapshot = build_snapshot(state, stop);
     if !emit(
         tx,
         AgentEvent::TurnEnd {
             assistant_message: msg_for_event,
             tool_results: vec![],
             reason: TurnEndReason::Complete,
+            snapshot,
         },
     )
     .await
@@ -347,11 +437,14 @@ async fn handle_no_tool_calls(
 
 /// Handle tool calls: separate incomplete ones, execute the rest, collect results,
 /// emit `TurnEnd`, and poll steering.
+#[allow(clippy::too_many_arguments)]
 async fn handle_tool_calls(
     config: &Arc<AgentLoopConfig>,
     state: &mut LoopState,
     assistant_message: AssistantMessage,
     mut tool_call_data: Vec<ToolCallInfo>,
+    llm_call_duration: Duration,
+    turn_start: Instant,
     cancellation_token: &CancellationToken,
     tx: &mpsc::Sender<AgentEvent>,
 ) -> TurnOutcome {
@@ -381,27 +474,47 @@ async fn handle_tool_calls(
     // xi. Execute tool calls concurrently
     let mut tool_results: Vec<ToolResultMessage> = max_token_results;
     let mut steering_interrupted = false;
+    let mut collected_tool_metrics: Vec<crate::metrics::ToolExecMetrics> = Vec::new();
 
     if !tool_call_data.is_empty() {
         let exec_results =
             execute_tools_concurrently(config, &tool_call_data, cancellation_token, tx).await;
 
         match exec_results {
-            ToolExecOutcome::Completed(results) => {
+            ToolExecOutcome::Completed {
+                results,
+                tool_metrics,
+            } => {
                 tool_results.extend(results);
+                collected_tool_metrics = tool_metrics;
             }
             ToolExecOutcome::SteeringInterrupt {
                 completed,
                 cancelled,
                 steering_messages,
+                tool_metrics,
             } => {
                 tool_results.extend(completed);
                 tool_results.extend(cancelled);
                 steering_interrupted = true;
+                collected_tool_metrics = tool_metrics;
                 state.pending_messages.extend(steering_messages);
             }
             ToolExecOutcome::ChannelClosed => return TurnOutcome::Return,
         }
+    }
+
+    // Emit metrics if collector is configured.
+    if let Some(ref collector) = config.metrics_collector {
+        let metrics = crate::metrics::TurnMetrics {
+            turn_index: state.turn_index,
+            llm_call_duration,
+            tool_executions: collected_tool_metrics,
+            usage: msg_for_turn_end.usage.clone(),
+            cost: msg_for_turn_end.cost.clone(),
+            turn_duration: turn_start.elapsed(),
+        };
+        collector.on_metrics(&metrics).await;
     }
 
     // xii. Add tool result messages to context
@@ -411,7 +524,11 @@ async fn handle_tool_calls(
             .push(AgentMessage::Llm(LlmMessage::ToolResult(tr.clone())));
     }
 
+    // Store tool results for post-turn hook access
+    state.last_tool_results.clone_from(&tool_results);
+
     // xiii. Emit TurnEnd
+    let snapshot = build_snapshot(state, msg_for_turn_end.stop_reason);
     if !emit(
         tx,
         AgentEvent::TurnEnd {
@@ -422,6 +539,7 @@ async fn handle_tool_calls(
             } else {
                 TurnEndReason::ToolsExecuted
             },
+            snapshot,
         },
     )
     .await

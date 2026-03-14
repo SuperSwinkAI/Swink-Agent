@@ -31,6 +31,12 @@ pub trait RetryStrategy: Send + Sync {
     /// Returns the duration to wait before attempt number `attempt`.
     /// Attempt numbering starts at 1.
     fn delay(&self, attempt: u32) -> Duration;
+
+    /// Downcast helper for type-safe access to concrete strategy types.
+    ///
+    /// Used by [`AgentOptions::to_config`](crate::AgentOptions::to_config) to
+    /// extract serializable parameters from [`DefaultRetryStrategy`].
+    fn as_any(&self) -> &dyn std::any::Any;
 }
 
 // ---------------------------------------------------------------------------
@@ -128,6 +134,10 @@ impl RetryStrategy for DefaultRetryStrategy {
             return false;
         }
         error.is_retryable()
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 
     fn delay(&self, attempt: u32) -> Duration {

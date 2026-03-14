@@ -265,6 +265,18 @@ fn build_remote_connection_from_values(
     Ok(ModelConnection::new(preset.model_spec(), stream_fn))
 }
 
+/// Looks up a remote preset by its `model_id` (e.g. `"claude-sonnet-4-6"`).
+///
+/// This is a convenience shorthand so callers can write
+/// `preset("claude-sonnet-4-6")` instead of navigating
+/// `remote_preset_keys::anthropic::SONNET_46` and the catalog manually.
+#[must_use]
+pub fn preset(model_id: &str) -> Option<CatalogPreset> {
+    remote_presets(None)
+        .into_iter()
+        .find(|p| p.model_id == model_id)
+}
+
 fn required_catalog_preset(
     key: RemotePresetKey,
 ) -> Result<CatalogPreset, RemoteModelConnectionError> {
@@ -417,6 +429,18 @@ mod tests {
             gemini_31_flash_lite.model_id,
             "gemini-3.1-flash-lite-preview"
         );
+    }
+
+    #[test]
+    fn preset_finds_by_model_id() {
+        let sonnet = preset("claude-sonnet-4-6").expect("sonnet preset should exist");
+        assert_eq!(sonnet.provider_key, "anthropic");
+        assert_eq!(sonnet.preset_id, "sonnet_46");
+
+        let gpt = preset("gpt-5.4").expect("gpt-5.4 preset should exist");
+        assert_eq!(gpt.provider_key, "openai");
+
+        assert!(preset("nonexistent-model-xyz").is_none());
     }
 
     #[test]

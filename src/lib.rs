@@ -1,18 +1,28 @@
 #![forbid(unsafe_code)]
 mod agent;
+mod async_context_transformer;
+mod budget_guard;
+mod checkpoint;
+mod config;
 mod context;
 mod context_transformer;
+mod context_version;
+pub mod convert;
 mod emit;
 mod error;
 mod event_forwarder;
+mod fallback;
 mod fn_tool;
 mod handle;
 mod loop_;
 mod loop_policy;
+pub mod metrics;
 pub mod message_provider;
+mod post_turn_hook;
 mod messaging;
 mod model_catalog;
 mod model_presets;
+mod orchestrator;
 mod registry;
 mod retry;
 mod schema;
@@ -21,11 +31,15 @@ mod stream_middleware;
 mod sub_agent;
 pub mod tool;
 mod tool_call_transformer;
+mod tool_execution_policy;
 mod tool_middleware;
 mod tool_validator;
 pub mod tools;
 pub mod types;
 mod util;
+
+#[cfg(feature = "test-helpers")]
+pub mod testing;
 
 pub mod prelude;
 
@@ -33,22 +47,44 @@ pub mod prelude;
 pub use agent::{
     Agent, AgentOptions, AgentState, FollowUpMode, SteeringMode, SubscriptionId, default_convert,
 };
-pub use context::sliding_window;
+pub use async_context_transformer::AsyncContextTransformer;
+pub use budget_guard::{BudgetExceeded, BudgetGuard};
+pub use checkpoint::{Checkpoint, CheckpointStore, LoopCheckpoint};
+pub use config::{
+    AgentConfig, ApprovalModeConfig, BudgetGuardConfig, FollowUpModeConfig, RetryConfig,
+    SteeringModeConfig, StreamOptionsConfig,
+};
+pub use context::{DefaultTokenCounter, TokenCounter, estimate_tokens, sliding_window};
+pub use convert::{MessageConverter, ToolSchema, convert_messages, extract_tool_schemas};
 pub use context_transformer::{CompactionReport, ContextTransformer, SlidingWindowTransformer};
+pub use context_version::{
+    ContextSummarizer, ContextVersion, ContextVersionMeta, ContextVersionStore,
+    InMemoryVersionStore, VersioningTransformer,
+};
 pub use emit::Emission;
 pub use error::AgentError;
 pub use event_forwarder::EventForwarderFn;
+pub use fallback::ModelFallback;
 pub use fn_tool::FnTool;
 pub use handle::{AgentHandle, AgentStatus};
 pub use loop_::{AgentEvent, AgentLoopConfig, TurnEndReason, agent_loop, agent_loop_continue};
 pub use loop_policy::{ComposedPolicy, CostCapPolicy, LoopPolicy, MaxTurnsPolicy, PolicyContext};
-pub use message_provider::{MessageProvider, from_fns};
+pub use message_provider::{
+    ChannelMessageProvider, ComposedMessageProvider, MessageProvider, MessageSender, from_fns,
+    message_channel,
+};
+pub use metrics::{MetricsCollector, ToolExecMetrics, TurnMetrics};
+pub use post_turn_hook::{PostTurnAction, PostTurnContext, PostTurnHook};
 pub use messaging::{AgentMailbox, send_to};
 pub use model_catalog::{
     ApiVersion, AuthMode, CatalogPreset, ModelCatalog, PresetCapability, PresetCatalog,
     PresetStatus, ProviderCatalog, ProviderKind, model_catalog,
 };
 pub use model_presets::{ModelConnection, ModelConnections};
+pub use orchestrator::{
+    AgentOrchestrator, AgentRequest, DefaultSupervisor, OrchestratedHandle, SupervisorAction,
+    SupervisorPolicy,
+};
 pub use registry::{AgentId, AgentRef, AgentRegistry};
 pub use retry::{DefaultRetryStrategy, RetryStrategy};
 pub use schema::schema_for;
@@ -60,18 +96,22 @@ pub use stream::{
 pub use stream_middleware::StreamMiddleware;
 pub use sub_agent::SubAgent;
 pub use tool::{
-    AgentTool, AgentToolResult, ApprovalMode, ToolApproval, ToolApprovalRequest,
+    AgentTool, AgentToolResult, ApprovalMode, ToolApproval, ToolApprovalRequest, ToolMetadata,
     redact_sensitive_values, selective_approve, unknown_tool_result, validate_schema,
     validate_tool_arguments, validation_error_result,
 };
 pub use tool_call_transformer::ToolCallTransformer;
+pub use tool_execution_policy::{
+    PriorityFn, ToolCallSummary, ToolExecutionPolicy, ToolExecutionStrategy,
+};
 pub use tool_middleware::ToolMiddleware;
 pub use tool_validator::ToolValidator;
 #[cfg(feature = "builtin-tools")]
-pub use tools::{BashTool, ReadFileTool, WriteFileTool};
+pub use tools::{BashTool, ReadFileTool, WriteFileTool, builtin_tools};
 pub use types::{
     AgentContext, AgentMessage, AgentResult, AssistantMessage, ContentBlock, Cost, CustomMessage,
-    ImageSource, LlmMessage, ModelSpec, StopReason, ThinkingBudgets, ThinkingLevel,
-    ToolResultMessage, Usage, UserMessage,
+    CustomMessageRegistry, ImageSource, LlmMessage, ModelCapabilities, ModelSpec, StopReason,
+    ThinkingBudgets, ThinkingLevel, ToolResultMessage, TurnSnapshot, Usage, UserMessage,
+    deserialize_custom_message, serialize_custom_message,
 };
 pub use util::now_timestamp;

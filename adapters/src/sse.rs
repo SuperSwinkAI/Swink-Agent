@@ -1,7 +1,11 @@
 //! Shared SSE (Server-Sent Events) stream parser.
 //!
-//! Provides a reusable byte-buffer parser that both Anthropic and `OpenAI`
-//! adapters can use instead of duplicating SSE line parsing logic.
+//! Provides a reusable byte-buffer parser that Anthropic, `OpenAI`, Azure, and
+//! Google adapters use instead of duplicating SSE line parsing logic.
+
+use std::pin::Pin;
+
+use futures::stream::{self, Stream, StreamExt as _};
 
 /// Parsed SSE line.
 #[derive(Debug, PartialEq, Eq)]
@@ -107,6 +111,51 @@ impl Default for SseStreamParser {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Convert a byte stream into a stream of parsed SSE data lines.
+///
+/// Buffers incoming bytes through [`SseStreamParser`], filters to only
+/// [`SseLine::Data`] and [`SseLine::Done`] variants (skipping events,
+/// comments, and empty lines), and flushes any remaining buffer when
+/// the byte stream ends.
+pub fn sse_data_lines(
+    byte_stream: impl Stream<Item = Result<bytes::Bytes, reqwest::Error>> + Send + 'static,
+) -> Pin<Box<dyn Stream<Item = SseLine> + Send + 'static>> {
+    Box::pin(stream::unfold(
+        (
+            Box::pin(byte_stream),
+            SseStreamParser::new(),
+            Vec::<SseLine>::new(),
+        ),
+        |(mut stream, mut parser, mut pending)| async move {
+            loop {
+                // Drain any pending parsed lines, yielding only Data/Done.
+                while let Some(line) = pending.first() {
+                    if matches!(line, SseLine::Data(_) | SseLine::Done) {
+                        return Some((pending.remove(0), (stream, parser, pending)));
+                    }
+                    pending.remove(0);
+                }
+
+                // Pull more bytes from the underlying stream.
+                if let Some(result) = stream.next().await {
+                    if let Ok(bytes) = result {
+                        pending.extend(parser.feed(&bytes));
+                    }
+                    // On Err, skip the chunk and try the next one.
+                    continue;
+                }
+
+                // Stream ended — flush remaining buffer.
+                pending.extend(parser.flush());
+                if pending.is_empty() {
+                    return None;
+                }
+                // Loop back to drain the flushed lines.
+            }
+        },
+    ))
 }
 
 #[cfg(test)]

@@ -128,9 +128,157 @@ pub enum LlmMessage {
 /// Allows downstream code to attach application-specific message types
 /// (e.g. notifications, artifacts) to the message history without modifying
 /// the harness.
+///
+/// ## Serialization
+///
+/// To support store/load of conversations containing custom messages, implement
+/// [`type_name`](Self::type_name) and [`to_json`](Self::to_json), then register
+/// a deserializer with [`CustomMessageRegistry`].
 pub trait CustomMessage: Send + Sync + fmt::Debug + std::any::Any {
     /// Downcast helper. Returns `self` as `&dyn Any` for type-safe downcasting.
     fn as_any(&self) -> &dyn std::any::Any;
+
+    /// A unique, stable identifier for this custom message type.
+    ///
+    /// Used as the discriminator when serializing. Must match the key
+    /// registered in [`CustomMessageRegistry`]. Returns `None` if
+    /// serialization is not supported.
+    fn type_name(&self) -> Option<&str> {
+        None
+    }
+
+    /// Serialize this custom message to a JSON value.
+    ///
+    /// Returns `None` if serialization is not supported (the default).
+    fn to_json(&self) -> Option<serde_json::Value> {
+        None
+    }
+}
+
+/// A function that deserializes a JSON value into a boxed [`CustomMessage`].
+pub type CustomMessageDeserializer =
+    Box<dyn Fn(serde_json::Value) -> Result<Box<dyn CustomMessage>, String> + Send + Sync>;
+
+/// Registry for deserializing [`CustomMessage`] types from JSON.
+///
+/// Each custom message type that supports serialization must register a
+/// deserializer keyed by its [`CustomMessage::type_name`].
+pub struct CustomMessageRegistry {
+    deserializers: HashMap<String, CustomMessageDeserializer>,
+}
+
+impl CustomMessageRegistry {
+    /// Create an empty registry.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            deserializers: HashMap::new(),
+        }
+    }
+
+    /// Register a deserializer for a custom message type.
+    ///
+    /// The `type_name` must match the value returned by the corresponding
+    /// [`CustomMessage::type_name`] implementation.
+    pub fn register(
+        &mut self,
+        type_name: impl Into<String>,
+        deserializer: CustomMessageDeserializer,
+    ) {
+        self.deserializers.insert(type_name.into(), deserializer);
+    }
+
+    /// Convenience method: register a type that implements `serde::Deserialize`.
+    ///
+    /// Equivalent to calling [`register`](Self::register) with a closure that
+    /// deserializes via `serde_json::from_value`.
+    pub fn register_type<T>(&mut self, type_name: impl Into<String>)
+    where
+        T: CustomMessage + serde::de::DeserializeOwned + 'static,
+    {
+        self.deserializers.insert(
+            type_name.into(),
+            Box::new(|value| {
+                serde_json::from_value::<T>(value)
+                    .map(|v| Box::new(v) as Box<dyn CustomMessage>)
+                    .map_err(|e| e.to_string())
+            }),
+        );
+    }
+
+    /// Deserialize a custom message from its type name and JSON payload.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if no deserializer is registered for `type_name` or if
+    /// deserialization fails.
+    pub fn deserialize(
+        &self,
+        type_name: &str,
+        value: serde_json::Value,
+    ) -> Result<Box<dyn CustomMessage>, String> {
+        let deser = self
+            .deserializers
+            .get(type_name)
+            .ok_or_else(|| format!("no deserializer registered for custom message type: {type_name}"))?;
+        deser(value)
+    }
+
+    /// Returns `true` if a deserializer is registered for `type_name`.
+    #[must_use]
+    pub fn contains(&self, type_name: &str) -> bool {
+        self.deserializers.contains_key(type_name)
+    }
+}
+
+impl Default for CustomMessageRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl fmt::Debug for CustomMessageRegistry {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CustomMessageRegistry")
+            .field("registered_types", &self.deserializers.keys().collect::<Vec<_>>())
+            .finish()
+    }
+}
+
+/// Serialize a [`CustomMessage`] into a portable JSON envelope.
+///
+/// Returns `None` if the message does not support serialization (i.e.
+/// `type_name()` or `to_json()` returns `None`).
+#[must_use]
+pub fn serialize_custom_message(msg: &dyn CustomMessage) -> Option<serde_json::Value> {
+    let type_name = msg.type_name()?;
+    let payload = msg.to_json()?;
+    Some(serde_json::json!({
+        "type": type_name,
+        "data": payload,
+    }))
+}
+
+/// Deserialize a [`CustomMessage`] from a JSON envelope produced by
+/// [`serialize_custom_message`].
+///
+/// # Errors
+///
+/// Returns `Err` if the envelope is malformed, the type is unknown, or
+/// deserialization fails.
+pub fn deserialize_custom_message(
+    registry: &CustomMessageRegistry,
+    envelope: &serde_json::Value,
+) -> Result<Box<dyn CustomMessage>, String> {
+    let type_name = envelope
+        .get("type")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "missing 'type' field in custom message envelope".to_string())?;
+    let data = envelope
+        .get("data")
+        .cloned()
+        .ok_or_else(|| "missing 'data' field in custom message envelope".to_string())?;
+    registry.deserialize(type_name, data)
 }
 
 /// The top-level message type that wraps either an LLM message or a custom
@@ -271,6 +419,89 @@ pub enum StopReason {
     Error,
 }
 
+// ─── Model Capabilities ─────────────────────────────────────────────────────
+
+/// Per-model capability flags and limits.
+///
+/// Populated from the model catalog or set manually. The agent loop can
+/// inspect these before enabling provider-specific features (e.g. skip
+/// thinking blocks when `supports_thinking` is false).
+#[allow(clippy::struct_excessive_bools)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct ModelCapabilities {
+    /// Whether the model supports extended-thinking / chain-of-thought blocks.
+    pub supports_thinking: bool,
+    /// Whether the model accepts image content blocks.
+    pub supports_vision: bool,
+    /// Whether the model can invoke tools.
+    pub supports_tool_use: bool,
+    /// Whether the model supports streaming responses.
+    pub supports_streaming: bool,
+    /// Whether the model supports structured (JSON schema) output.
+    pub supports_structured_output: bool,
+    /// Maximum input context window in tokens, if known.
+    pub max_context_window: Option<u64>,
+    /// Maximum output tokens per response, if known.
+    pub max_output_tokens: Option<u64>,
+}
+
+impl ModelCapabilities {
+    /// Create capabilities with all flags set to false and no limits.
+    #[must_use]
+    pub fn none() -> Self {
+        Self::default()
+    }
+
+    /// Set `supports_thinking`.
+    #[must_use]
+    pub const fn with_thinking(mut self, val: bool) -> Self {
+        self.supports_thinking = val;
+        self
+    }
+
+    /// Set `supports_vision`.
+    #[must_use]
+    pub const fn with_vision(mut self, val: bool) -> Self {
+        self.supports_vision = val;
+        self
+    }
+
+    /// Set `supports_tool_use`.
+    #[must_use]
+    pub const fn with_tool_use(mut self, val: bool) -> Self {
+        self.supports_tool_use = val;
+        self
+    }
+
+    /// Set `supports_streaming`.
+    #[must_use]
+    pub const fn with_streaming(mut self, val: bool) -> Self {
+        self.supports_streaming = val;
+        self
+    }
+
+    /// Set `supports_structured_output`.
+    #[must_use]
+    pub const fn with_structured_output(mut self, val: bool) -> Self {
+        self.supports_structured_output = val;
+        self
+    }
+
+    /// Set `max_context_window`.
+    #[must_use]
+    pub const fn with_max_context_window(mut self, tokens: u64) -> Self {
+        self.max_context_window = Some(tokens);
+        self
+    }
+
+    /// Set `max_output_tokens`.
+    #[must_use]
+    pub const fn with_max_output_tokens(mut self, tokens: u64) -> Self {
+        self.max_output_tokens = Some(tokens);
+        self
+    }
+}
+
 // ─── Model Specification ────────────────────────────────────────────────────
 
 /// Reasoning depth for models that support configurable thinking.
@@ -318,6 +549,9 @@ pub struct ModelSpec {
     /// Provider-specific configuration (thinking, parameters, etc.).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider_config: Option<serde_json::Value>,
+    /// Per-model capability flags and limits.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capabilities: Option<ModelCapabilities>,
 }
 
 impl ModelSpec {
@@ -330,6 +564,7 @@ impl ModelSpec {
             thinking_level: ThinkingLevel::Off,
             thinking_budgets: None,
             provider_config: None,
+            capabilities: None,
         }
     }
 
@@ -352,6 +587,20 @@ impl ModelSpec {
     pub fn with_provider_config(mut self, config: serde_json::Value) -> Self {
         self.provider_config = Some(config);
         self
+    }
+
+    /// Set model capabilities.
+    #[must_use]
+    pub const fn with_capabilities(mut self, capabilities: ModelCapabilities) -> Self {
+        self.capabilities = Some(capabilities);
+        self
+    }
+
+    /// Returns the model capabilities, or a default (all-false) set if none
+    /// were provided.
+    #[must_use]
+    pub fn capabilities(&self) -> ModelCapabilities {
+        self.capabilities.clone().unwrap_or_default()
     }
 
     /// Get a typed provider config, deserializing from the stored JSON.
@@ -415,6 +664,52 @@ impl fmt::Debug for AgentContext {
     }
 }
 
+// ─── Serde Helpers ──────────────────────────────────────────────────────
+
+fn serialize_arc_vec<S, T>(value: &Arc<Vec<T>>, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+    T: Serialize,
+{
+    value.as_ref().serialize(serializer)
+}
+
+fn deserialize_arc_vec<'de, D, T>(deserializer: D) -> Result<Arc<Vec<T>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    let v = Vec::<T>::deserialize(deserializer)?;
+    Ok(Arc::new(v))
+}
+
+// ─── Turn Snapshot ──────────────────────────────────────────────────────
+
+/// A point-in-time snapshot of agent state at a turn boundary.
+///
+/// Emitted as part of `TurnEnd` events to support external replay, auditing,
+/// and debugging. Contains the full context at the moment the turn completed.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TurnSnapshot {
+    /// Zero-based index of this turn within the current agent loop run.
+    pub turn_index: usize,
+    /// The LLM messages present in the context at the turn boundary.
+    ///
+    /// Wrapped in `Arc` to avoid cloning the full message list when the
+    /// snapshot is forwarded to multiple subscribers.
+    #[serde(
+        serialize_with = "serialize_arc_vec",
+        deserialize_with = "deserialize_arc_vec"
+    )]
+    pub messages: Arc<Vec<LlmMessage>>,
+    /// Accumulated token usage up to and including this turn.
+    pub usage: Usage,
+    /// Accumulated cost up to and including this turn.
+    pub cost: Cost,
+    /// Stop reason from the assistant message that ended this turn.
+    pub stop_reason: StopReason,
+}
+
 // ─── Compile-time Send + Sync assertions ────────────────────────────────────
 
 const _: () = {
@@ -432,9 +727,12 @@ const _: () = {
     assert_send_sync::<StopReason>();
     assert_send_sync::<ThinkingLevel>();
     assert_send_sync::<ThinkingBudgets>();
+    assert_send_sync::<ModelCapabilities>();
     assert_send_sync::<ModelSpec>();
     assert_send_sync::<AgentResult>();
     assert_send_sync::<AgentContext>();
+    assert_send_sync::<TurnSnapshot>();
+    assert_send_sync::<CustomMessageRegistry>();
 };
 
 #[cfg(test)]
@@ -558,5 +856,143 @@ mod tests {
         let spec_none = ModelSpec::new("openai", "gpt-4");
         let config_none: Option<MyConfig> = spec_none.provider_config_as();
         assert!(config_none.is_none());
+    }
+
+    #[test]
+    fn model_capabilities_builder_chain() {
+        let caps = ModelCapabilities::none()
+            .with_thinking(true)
+            .with_vision(true)
+            .with_tool_use(true)
+            .with_streaming(true)
+            .with_structured_output(true)
+            .with_max_context_window(200_000)
+            .with_max_output_tokens(16384);
+
+        assert!(caps.supports_thinking);
+        assert!(caps.supports_vision);
+        assert!(caps.supports_tool_use);
+        assert!(caps.supports_streaming);
+        assert!(caps.supports_structured_output);
+        assert_eq!(caps.max_context_window, Some(200_000));
+        assert_eq!(caps.max_output_tokens, Some(16384));
+    }
+
+    #[test]
+    fn model_capabilities_serde_roundtrip() {
+        let caps = ModelCapabilities::none()
+            .with_thinking(true)
+            .with_tool_use(true)
+            .with_max_context_window(128_000);
+        let json = serde_json::to_string(&caps).unwrap();
+        let parsed: ModelCapabilities = serde_json::from_str(&json).unwrap();
+        assert_eq!(caps, parsed);
+    }
+
+    #[test]
+    fn model_spec_with_capabilities() {
+        let caps = ModelCapabilities::none()
+            .with_thinking(true)
+            .with_streaming(true);
+        let spec = ModelSpec::new("test", "model-1").with_capabilities(caps.clone());
+        assert_eq!(spec.capabilities, Some(caps.clone()));
+        assert_eq!(spec.capabilities(), caps);
+    }
+
+    #[test]
+    fn model_spec_capabilities_defaults_when_none() {
+        let spec = ModelSpec::new("test", "model-1");
+        assert!(spec.capabilities.is_none());
+        let caps = spec.capabilities();
+        assert!(!caps.supports_thinking);
+        assert_eq!(caps.max_context_window, None);
+    }
+
+    // ─── Custom Message Serialization ────────────────────────────────────
+
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+    struct MockNotification {
+        title: String,
+        body: String,
+    }
+
+    impl CustomMessage for MockNotification {
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+
+        fn type_name(&self) -> Option<&str> {
+            Some("mock_notification")
+        }
+
+        fn to_json(&self) -> Option<serde_json::Value> {
+            serde_json::to_value(self).ok()
+        }
+    }
+
+    #[test]
+    fn custom_message_serialize_roundtrip() {
+        let msg = MockNotification {
+            title: "Hello".into(),
+            body: "World".into(),
+        };
+
+        let envelope = serialize_custom_message(&msg).expect("serialization supported");
+        assert_eq!(envelope["type"], "mock_notification");
+        assert_eq!(envelope["data"]["title"], "Hello");
+
+        let mut registry = CustomMessageRegistry::new();
+        registry.register_type::<MockNotification>("mock_notification");
+
+        let restored = deserialize_custom_message(&registry, &envelope).unwrap();
+        let downcasted = restored.as_any().downcast_ref::<MockNotification>().unwrap();
+        assert_eq!(downcasted, &msg);
+    }
+
+    #[test]
+    fn custom_message_default_returns_none() {
+        #[derive(Debug)]
+        struct Bare;
+        impl CustomMessage for Bare {
+            fn as_any(&self) -> &dyn std::any::Any {
+                self
+            }
+        }
+        let bare = Bare;
+        assert!(bare.type_name().is_none());
+        assert!(bare.to_json().is_none());
+        assert!(serialize_custom_message(&bare).is_none());
+    }
+
+    #[test]
+    fn registry_unknown_type_returns_error() {
+        let registry = CustomMessageRegistry::new();
+        let envelope = serde_json::json!({"type": "unknown", "data": {}});
+        let result = deserialize_custom_message(&registry, &envelope);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("no deserializer registered"));
+    }
+
+    #[test]
+    fn registry_contains_check() {
+        let mut registry = CustomMessageRegistry::new();
+        assert!(!registry.contains("mock_notification"));
+        registry.register_type::<MockNotification>("mock_notification");
+        assert!(registry.contains("mock_notification"));
+    }
+
+    #[test]
+    fn deserialize_custom_message_missing_fields() {
+        let registry = CustomMessageRegistry::new();
+
+        let no_type = serde_json::json!({"data": {}});
+        assert!(deserialize_custom_message(&registry, &no_type)
+            .unwrap_err()
+            .contains("missing 'type'"));
+
+        let no_data = serde_json::json!({"type": "foo"});
+        assert!(deserialize_custom_message(&registry, &no_data)
+            .unwrap_err()
+            .contains("missing 'data'"));
     }
 }

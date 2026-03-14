@@ -7,11 +7,11 @@ use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
 use std::time::SystemTime;
 
-use swink_agent::{AgentMessage, LlmMessage};
+use swink_agent::{AgentMessage, LlmMessage, now_timestamp};
 
 use crate::meta::SessionMeta;
 use crate::store::SessionStore;
-use crate::time::{days_to_ymd, unix_now};
+use crate::time::days_to_ymd;
 
 /// JSONL file-based session store.
 ///
@@ -57,7 +57,7 @@ impl SessionStore for JsonlSessionStore {
             })
             .and_then(Result::ok)
             .and_then(|line| serde_json::from_str::<SessionMeta>(&line).ok())
-            .map_or_else(unix_now, |meta| meta.created_at);
+            .map_or_else(now_timestamp, |meta| meta.created_at);
 
         // Collect only Llm variants.
         let llm_messages: Vec<&LlmMessage> = messages
@@ -73,7 +73,7 @@ impl SessionStore for JsonlSessionStore {
             model: model.to_string(),
             system_prompt: system_prompt.to_string(),
             created_at,
-            updated_at: unix_now(),
+            updated_at: now_timestamp(),
             message_count: llm_messages.len(),
             custom: serde_json::Value::Null,
         };

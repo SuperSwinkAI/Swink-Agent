@@ -20,9 +20,7 @@ use swink_agent::types::{
     AgentContext, AgentMessage, ContentBlock, Cost, LlmMessage, ModelSpec, StopReason, Usage,
 };
 
-use crate::convert::{
-    error_event, error_event_auth, error_event_network, error_event_throttled, extract_tool_schemas,
-};
+use crate::convert::extract_tool_schemas;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -245,7 +243,7 @@ impl BedrockStreamFn {
     ) -> Result<Vec<AssistantMessageEvent>, AssistantMessageEvent> {
         let body = build_request(context, options);
         let body_json = serde_json::to_vec(&body)
-            .map_err(|e| error_event(&format!("Bedrock JSON error: {e}")))?;
+            .map_err(|e| AssistantMessageEvent::error(format!("Bedrock JSON error: {e}")))?;
         let path = format!("/model/{}/converse", model.model_id);
         let url = format!("{}{}", self.base_url, path);
         debug!(%url, model = %model.model_id, "sending Bedrock converse request");
@@ -299,7 +297,7 @@ impl BedrockStreamFn {
         let response = request
             .send()
             .await
-            .map_err(|e| error_event_network(&format!("Bedrock connection error: {e}")))?;
+            .map_err(|e| AssistantMessageEvent::error_network(format!("Bedrock connection error: {e}")))?;
 
         let status = response.status();
         if !status.is_success() {
@@ -307,21 +305,21 @@ impl BedrockStreamFn {
             let body = response.text().await.unwrap_or_default();
             warn!(status = code, "Bedrock HTTP error");
             return Err(match code {
-                401 | 403 => error_event_auth(&format!("Bedrock auth error (HTTP {code}): {body}")),
-                429 => error_event_throttled(&format!("Bedrock rate limit (HTTP 429): {body}")),
+                401 | 403 => AssistantMessageEvent::error_auth(format!("Bedrock auth error (HTTP {code}): {body}")),
+                429 => AssistantMessageEvent::error_throttled(format!("Bedrock rate limit (HTTP 429): {body}")),
                 500..=599 => {
-                    error_event_network(&format!("Bedrock server error (HTTP {code}): {body}"))
+                    AssistantMessageEvent::error_network(format!("Bedrock server error (HTTP {code}): {body}"))
                 }
-                _ => error_event(&format!("Bedrock HTTP {code}: {body}")),
+                _ => AssistantMessageEvent::error(format!("Bedrock HTTP {code}: {body}")),
             });
         }
 
         let body = response
             .text()
             .await
-            .map_err(|e| error_event_network(&format!("Bedrock response read error: {e}")))?;
+            .map_err(|e| AssistantMessageEvent::error_network(format!("Bedrock response read error: {e}")))?;
         let parsed: BedrockResponse = serde_json::from_str(&body)
-            .map_err(|e| error_event(&format!("Bedrock JSON parse error: {e}")))?;
+            .map_err(|e| AssistantMessageEvent::error(format!("Bedrock JSON parse error: {e}")))?;
 
         Ok(response_to_events(parsed))
     }

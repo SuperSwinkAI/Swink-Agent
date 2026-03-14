@@ -20,9 +20,7 @@ use swink_agent::types::{
     AgentContext, AgentMessage, Cost, LlmMessage, ModelSpec, StopReason, ThinkingLevel, Usage,
 };
 
-use crate::convert::{
-    error_event, error_event_auth, error_event_network, error_event_throttled, extract_tool_schemas,
-};
+use crate::convert::extract_tool_schemas;
 
 // ─── Request types ──────────────────────────────────────────────────────────
 
@@ -187,19 +185,19 @@ fn anthropic_stream<'a>(
             let body = response.text().await.unwrap_or_default();
             warn!(status = code, "Anthropic HTTP error");
             let event = match code {
-                401 => error_event_auth(&format!(
+                401 => AssistantMessageEvent::error_auth(format!(
                     "Anthropic auth error (HTTP {code}): check x-api-key — {body}"
                 )),
-                429 => error_event_throttled(&format!("Anthropic rate limit (HTTP 429): {body}")),
-                529 => error_event_network(&format!("Anthropic overloaded (HTTP 529): {body}")),
+                429 => AssistantMessageEvent::error_throttled(format!("Anthropic rate limit (HTTP 429): {body}")),
+                529 => AssistantMessageEvent::error_network(format!("Anthropic overloaded (HTTP 529): {body}")),
                 504 => {
-                    error_event_network(&format!("Anthropic gateway timeout (HTTP 504): {body}"))
+                    AssistantMessageEvent::error_network(format!("Anthropic gateway timeout (HTTP 504): {body}"))
                 }
-                400..=499 => error_event(&format!("Anthropic client error (HTTP {code}): {body}")),
+                400..=499 => AssistantMessageEvent::error(format!("Anthropic client error (HTTP {code}): {body}")),
                 500..=599 => {
-                    error_event_network(&format!("Anthropic server error (HTTP {code}): {body}"))
+                    AssistantMessageEvent::error_network(format!("Anthropic server error (HTTP {code}): {body}"))
                 }
-                _ => error_event(&format!("Anthropic HTTP {code}: {body}")),
+                _ => AssistantMessageEvent::error(format!("Anthropic HTTP {code}: {body}")),
             };
             return stream::iter(vec![event]).left_stream();
         }
@@ -270,7 +268,7 @@ async fn send_request(
         .json(&body)
         .send()
         .await
-        .map_err(|e| error_event_network(&format!("Anthropic connection error: {e}")))
+        .map_err(|e| AssistantMessageEvent::error_network(format!("Anthropic connection error: {e}")))
 }
 
 /// Resolve thinking configuration from the model spec.
@@ -439,7 +437,7 @@ fn parse_sse_stream(
             tokio::select! {
                 biased;
                 () = token.cancelled() => {
-                    let mut events = finalize_blocks(&mut state);
+                    let mut events = crate::finalize::finalize_blocks(&mut state);
                     events.push(AssistantMessageEvent::Error {
                         stop_reason: StopReason::Aborted,
                         error_message: "operation cancelled".to_string(),
@@ -454,8 +452,8 @@ fn parse_sse_stream(
                         None => {
                             // Stream ended unexpectedly
                             done = true;
-                            let mut events = finalize_blocks(&mut state);
-                            events.push(error_event("Anthropic stream ended unexpectedly"));
+                            let mut events = crate::finalize::finalize_blocks(&mut state);
+                            events.push(AssistantMessageEvent::error("Anthropic stream ended unexpectedly"));
                             Some((events, (lines, token, state, done, false)))
                         }
                         Some(SseLine::Event { event_type, data }) => {
@@ -671,7 +669,7 @@ fn process_sse_event(
 
         "message_stop" => {
             *done = true;
-            events.extend(finalize_blocks(state));
+            events.extend(crate::finalize::finalize_blocks(state));
 
             let stop_reason = state.stop_reason.unwrap_or(StopReason::Stop);
             state.usage.total = state.usage.input
@@ -688,7 +686,7 @@ fn process_sse_event(
 
         "error" => {
             *done = true;
-            events.extend(finalize_blocks(state));
+            events.extend(crate::finalize::finalize_blocks(state));
 
             let msg = serde_json::from_str::<Value>(data)
                 .ok()
@@ -700,7 +698,7 @@ fn process_sse_event(
                 .unwrap_or_else(|| format!("Anthropic stream error: {data}"));
 
             error!(error = %msg, "Anthropic stream error");
-            events.push(error_event(&msg));
+            events.push(AssistantMessageEvent::error(&msg));
         }
 
         // Ignore ping and other unknown event types
@@ -710,34 +708,27 @@ fn process_sse_event(
     events
 }
 
-/// Close any open content blocks.
-fn finalize_blocks(state: &mut SseStreamState) -> Vec<AssistantMessageEvent> {
-    let mut events = Vec::new();
+impl crate::finalize::StreamFinalize for SseStreamState {
+    fn drain_open_blocks(&mut self) -> Vec<crate::finalize::OpenBlock> {
+        let mut indices: Vec<usize> = self.active_blocks.keys().copied().collect();
+        indices.sort_unstable();
 
-    // Sort by index to close in order
-    let mut indices: Vec<usize> = state.active_blocks.keys().copied().collect();
-    indices.sort_unstable();
-
-    for idx in indices {
-        if let Some((block_type, content_index)) = state.active_blocks.remove(&idx) {
-            match block_type {
-                BlockType::Text => {
-                    events.push(AssistantMessageEvent::TextEnd { content_index });
-                }
-                BlockType::Thinking => {
-                    events.push(AssistantMessageEvent::ThinkingEnd {
+        let mut blocks = Vec::new();
+        for idx in indices {
+            if let Some((block_type, content_index)) = self.active_blocks.remove(&idx) {
+                blocks.push(match block_type {
+                    BlockType::Text => crate::finalize::OpenBlock::Text { content_index },
+                    BlockType::Thinking => crate::finalize::OpenBlock::Thinking {
                         content_index,
                         signature: None,
-                    });
-                }
-                BlockType::ToolUse => {
-                    events.push(AssistantMessageEvent::ToolCallEnd { content_index });
-                }
+                    },
+                    BlockType::ToolUse => crate::finalize::OpenBlock::ToolCall { content_index },
+                });
             }
         }
-    }
 
-    events
+        blocks
+    }
 }
 
 /// Convert a byte stream into a stream of parsed SSE event+data pairs.

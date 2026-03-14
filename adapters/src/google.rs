@@ -6,7 +6,6 @@
 use std::collections::HashMap;
 use std::pin::Pin;
 
-use bytes::Bytes;
 use futures::stream::{self, Stream, StreamExt as _};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -21,10 +20,8 @@ use swink_agent::types::{
     ImageSource, LlmMessage, ModelSpec, StopReason, ToolResultMessage, Usage,
 };
 
-use crate::convert::{
-    error_event, error_event_auth, error_event_network, error_event_throttled, extract_tool_schemas,
-};
-use crate::sse::{SseLine, SseStreamParser};
+use crate::convert::extract_tool_schemas;
+use crate::sse::{SseLine, sse_data_lines};
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -287,12 +284,12 @@ fn gemini_stream<'a>(
             let body = response.text().await.unwrap_or_default();
             warn!(status = code, "Google Gemini HTTP error");
             let event = match code {
-                401 | 403 => error_event_auth(&format!("Google auth error (HTTP {code}): {body}")),
-                429 => error_event_throttled(&format!("Google rate limit (HTTP 429): {body}")),
+                401 | 403 => AssistantMessageEvent::error_auth(format!("Google auth error (HTTP {code}): {body}")),
+                429 => AssistantMessageEvent::error_throttled(format!("Google rate limit (HTTP 429): {body}")),
                 500..=599 => {
-                    error_event_network(&format!("Google server error (HTTP {code}): {body}"))
+                    AssistantMessageEvent::error_network(format!("Google server error (HTTP {code}): {body}"))
                 }
-                _ => error_event(&format!("Google HTTP {code}: {body}")),
+                _ => AssistantMessageEvent::error(format!("Google HTTP {code}: {body}")),
             };
             return stream::iter(vec![event]).left_stream();
         }
@@ -331,7 +328,7 @@ async fn send_request(
         .json(&body)
         .send()
         .await
-        .map_err(|error| error_event_network(&format!("Google connection error: {error}")))
+        .map_err(|error| AssistantMessageEvent::error_network(format!("Google connection error: {error}")))
 }
 
 fn convert_request(context: &AgentContext, options: &StreamOptions) -> GeminiRequest {
@@ -580,7 +577,7 @@ fn parse_sse_stream(
             tokio::select! {
                 biased;
                 () = token.cancelled() => {
-                    let mut events = finalize_blocks(&mut state);
+                    let mut events = crate::finalize::finalize_blocks(&mut state);
                     events.push(AssistantMessageEvent::error_network("Google request cancelled"));
                     done = true;
                     Some((events, (lines, token, state, done, false)))
@@ -588,9 +585,9 @@ fn parse_sse_stream(
                 maybe_line = lines.next() => {
                     match maybe_line {
                         None => {
-                            let mut events = finalize_blocks(&mut state);
+                            let mut events = crate::finalize::finalize_blocks(&mut state);
                             if state.stop_reason.is_none() {
-                                events.push(error_event("Google stream ended unexpectedly"));
+                                events.push(AssistantMessageEvent::error("Google stream ended unexpectedly"));
                             } else {
                                 events.push(AssistantMessageEvent::Done {
                                     stop_reason: state.stop_reason.unwrap_or(StopReason::Stop),
@@ -602,7 +599,7 @@ fn parse_sse_stream(
                             Some((events, (lines, token, state, done, false)))
                         }
                         Some(SseLine::Done) => {
-                            let mut events = finalize_blocks(&mut state);
+                            let mut events = crate::finalize::finalize_blocks(&mut state);
                             events.push(AssistantMessageEvent::Done {
                                 stop_reason: state.stop_reason.unwrap_or({
                                     if state.saw_tool_call {
@@ -625,7 +622,7 @@ fn parse_sse_stream(
                                 }
                                 Err(parse_error) => {
                                     error!(error = %parse_error, "Google Gemini JSON parse error");
-                                    events.push(error_event(&format!(
+                                    events.push(AssistantMessageEvent::error(format!(
                                         "Google JSON parse error: {parse_error}"
                                     )));
                                     done = true;
@@ -797,71 +794,34 @@ fn close_thinking_block(state: &mut GeminiStreamState, events: &mut Vec<Assistan
     }
 }
 
-fn finalize_blocks(state: &mut GeminiStreamState) -> Vec<AssistantMessageEvent> {
-    let mut events = Vec::new();
-    close_text_block(state, &mut events);
-    close_thinking_block(state, &mut events);
+impl crate::finalize::StreamFinalize for GeminiStreamState {
+    fn drain_open_blocks(&mut self) -> Vec<crate::finalize::OpenBlock> {
+        let mut blocks = Vec::new();
 
-    let mut tool_calls: Vec<_> = state.tool_calls.values().collect();
-    tool_calls.sort_by_key(|tool_call| tool_call.content_index);
-    for tool_call in tool_calls {
-        events.push(AssistantMessageEvent::ToolCallEnd {
-            content_index: tool_call.content_index,
-        });
+        if let Some(content_index) = self.text_content_index.take() {
+            blocks.push(crate::finalize::OpenBlock::Text { content_index });
+            self.text_started = false;
+        }
+
+        if let Some(content_index) = self.thinking_content_index.take() {
+            blocks.push(crate::finalize::OpenBlock::Thinking {
+                content_index,
+                signature: self.thinking_signature.take(),
+            });
+            self.thinking_started = false;
+        }
+
+        let mut tool_calls: Vec<_> = self.tool_calls.values().collect();
+        tool_calls.sort_by_key(|tool_call| tool_call.content_index);
+        for tool_call in tool_calls {
+            blocks.push(crate::finalize::OpenBlock::ToolCall {
+                content_index: tool_call.content_index,
+            });
+        }
+        self.tool_calls.clear();
+
+        blocks
     }
-    state.tool_calls.clear();
-
-    events
-}
-
-fn sse_data_lines(
-    byte_stream: impl Stream<Item = Result<Bytes, reqwest::Error>> + Send + 'static,
-) -> Pin<Box<dyn Stream<Item = SseLine> + Send + 'static>> {
-    Box::pin(stream::unfold(
-        (
-            Box::pin(byte_stream),
-            SseStreamParser::new(),
-            Vec::<SseLine>::new(),
-        ),
-        |(mut stream, mut parser, mut pending)| async move {
-            loop {
-                if !pending.is_empty() {
-                    let line = pending.remove(0);
-                    if matches!(line, SseLine::Data(_) | SseLine::Done) {
-                        return Some((line, (stream, parser, pending)));
-                    }
-                    continue;
-                }
-
-                if let Some(next) = stream.next().await {
-                    match next {
-                        Ok(bytes) => {
-                            pending.extend(parser.feed(&bytes));
-                        }
-                        Err(error) => {
-                            return Some((
-                                SseLine::Data(
-                                    serde_json::to_string(&json!({
-                                        "candidates": [],
-                                        "usageMetadata": {},
-                                        "streamError": error.to_string(),
-                                    }))
-                                    .expect("json serialization must succeed"),
-                                ),
-                                (stream, parser, pending),
-                            ));
-                        }
-                    }
-                    continue;
-                }
-
-                pending.extend(parser.flush());
-                if pending.is_empty() {
-                    return None;
-                }
-            }
-        },
-    ))
 }
 
 const _: () = {
