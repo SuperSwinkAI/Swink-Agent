@@ -153,7 +153,7 @@ impl ConversationView {
             ));
             all_lines.push(Line::from(header_spans));
 
-            // Thinking section (dimmed, collapsed)
+            // Thinking section (dimmed, not collapsible)
             if let Some(thinking) = &msg.thinking
                 && !thinking.is_empty()
             {

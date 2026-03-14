@@ -1,0 +1,519 @@
+//! Core agent loop execution engine.
+//!
+//! Implements the nested inner/outer loop, tool dispatch, steering/follow-up
+//! injection, event emission, retry integration, error/abort handling, and max
+//! tokens recovery. Stateless — all state is passed in via [`AgentLoopConfig`].
+
+mod stream;
+mod tool_dispatch;
+mod turn;
+
+use std::error::Error as _;
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::Arc;
+
+use futures::Stream;
+use tokio::sync::mpsc;
+use tokio_stream::wrappers::ReceiverStream;
+use tokio_util::sync::CancellationToken;
+use tracing::{Instrument, info, info_span};
+
+use crate::error::AgentError;
+use crate::retry::RetryStrategy;
+use crate::stream::{AssistantMessageDelta, StreamFn, StreamOptions};
+use crate::tool::{
+    AgentToolResult, ApprovalMode, ToolApproval, ToolApprovalRequest,
+};
+use crate::types::{
+    AgentMessage, AssistantMessage, LlmMessage, ModelSpec, StopReason,
+    ToolResultMessage,
+};
+use crate::message_provider::MessageProvider;
+use crate::util::now_timestamp;
+use crate::tool::AgentTool;
+
+// ─── Constants ───────────────────────────────────────────────────────────────
+
+/// Sentinel value used to signal context overflow between `handle_stream_result`
+/// and `run_single_turn`.
+pub const CONTEXT_OVERFLOW_SENTINEL: &str = "__context_overflow__";
+
+/// Channel capacity for agent events. Sized to handle burst streaming
+/// without backpressure under normal operation.
+const EVENT_CHANNEL_CAPACITY: usize = 256;
+
+// ─── Type Aliases ────────────────────────────────────────────────────────────
+
+/// Converts an `AgentMessage` to an optional `LlmMessage` for the provider.
+type ConvertToLlmFn = dyn Fn(&AgentMessage) -> Option<LlmMessage> + Send + Sync;
+
+/// Async API key resolution callback.
+type GetApiKeyFn =
+    dyn Fn(&str) -> Pin<Box<dyn Future<Output = Option<String>> + Send>> + Send + Sync;
+
+/// Async callback for approving or rejecting individual tool calls.
+pub type ApproveToolFn =
+    dyn Fn(ToolApprovalRequest) -> Pin<Box<dyn Future<Output = ToolApproval> + Send>> + Send + Sync;
+
+// ─── TurnEndReason ───────────────────────────────────────────────────────────
+
+/// Why a turn ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TurnEndReason {
+    /// Assistant completed without requesting tool calls.
+    Complete,
+    /// Tools were executed (loop continues).
+    ToolsExecuted,
+    /// Turn was interrupted by a steering message during tool execution.
+    SteeringInterrupt,
+    /// LLM returned an error stop reason.
+    Error,
+    /// External cancellation via `CancellationToken`.
+    Cancelled,
+    /// Stream was aborted mid-generation.
+    Aborted,
+}
+
+// ─── AgentEvent ──────────────────────────────────────────────────────────────
+
+/// Fine-grained lifecycle event emitted by the agent loop.
+///
+/// Consumers subscribe to these events for observability, UI updates, and
+/// logging. The harness never calls back into application logic for display
+/// concerns.
+#[derive(Debug, Clone)]
+pub enum AgentEvent {
+    /// Emitted once when the loop begins.
+    AgentStart,
+
+    /// Emitted once when the loop exits, carrying the final message context.
+    AgentEnd { messages: Arc<Vec<AgentMessage>> },
+
+    /// Emitted at the beginning of each assistant turn.
+    TurnStart,
+
+    /// Emitted at the end of each turn with the assistant message and tool results.
+    TurnEnd {
+        assistant_message: AssistantMessage,
+        tool_results: Vec<ToolResultMessage>,
+        reason: TurnEndReason,
+    },
+
+    /// Emitted after context transform, before the LLM streaming call.
+    /// Allows plugins to observe/log the final prompt.
+    BeforeLlmCall {
+        system_prompt: String,
+        messages: Vec<LlmMessage>,
+        model: ModelSpec,
+    },
+
+    /// Emitted when a message begins streaming.
+    MessageStart,
+
+    /// Emitted for each incremental delta during assistant streaming.
+    MessageUpdate { delta: AssistantMessageDelta },
+
+    /// Emitted when a message is complete.
+    MessageEnd { message: AssistantMessage },
+
+    /// Emitted when a tool call begins execution.
+    ToolExecutionStart {
+        id: String,
+        name: String,
+        arguments: serde_json::Value,
+    },
+
+    /// Emitted for intermediate partial results from a streaming tool.
+    ToolExecutionUpdate { partial: AgentToolResult },
+
+    /// Emitted when a tool call is pending approval.
+    ToolApprovalRequested {
+        id: String,
+        name: String,
+        arguments: serde_json::Value,
+    },
+
+    /// Emitted when a tool call approval decision is made.
+    ToolApprovalResolved {
+        id: String,
+        name: String,
+        approved: bool,
+    },
+
+    /// Emitted when a tool call completes.
+    ToolExecutionEnd {
+        result: AgentToolResult,
+        is_error: bool,
+    },
+
+    /// Emitted when context compaction drops messages.
+    ContextCompacted {
+        report: crate::context_transformer::CompactionReport,
+    },
+
+    /// A custom event emitted via [`Agent::emit`].
+    Custom(crate::emit::Emission),
+}
+
+// ─── AgentLoopConfig ─────────────────────────────────────────────────────────
+
+/// Configuration for the agent loop.
+///
+/// Carries the model spec, stream options, retry strategy, stream function,
+/// tools, and all the hooks that the loop calls at various points.
+pub struct AgentLoopConfig {
+    /// Model specification passed through to `StreamFn`.
+    pub model: ModelSpec,
+
+    /// Stream options passed through to `StreamFn`.
+    pub stream_options: StreamOptions,
+
+    /// Retry strategy applied to model calls.
+    pub retry_strategy: Box<dyn RetryStrategy>,
+
+    /// The pluggable streaming function that calls the LLM provider.
+    pub stream_fn: Arc<dyn StreamFn>,
+
+    /// Available tools for the agent to call.
+    pub tools: Vec<Arc<dyn AgentTool>>,
+
+    /// Converts an `AgentMessage` to an `LlmMessage` for the provider.
+    /// Returns `None` to filter out custom or UI-only messages.
+    pub convert_to_llm: Box<ConvertToLlmFn>,
+
+    /// Optional hook called before `convert_to_llm`; used for context pruning,
+    /// token budget enforcement, or external context injection.
+    /// When the overflow signal is set, the transformer should prune more
+    /// aggressively.
+    pub transform_context: Option<Arc<dyn crate::context_transformer::ContextTransformer>>,
+
+    /// Optional async callback for dynamic API key resolution.
+    pub get_api_key: Option<Box<GetApiKeyFn>>,
+
+    /// Optional provider polled for steering and follow-up messages.
+    ///
+    /// [`MessageProvider::poll_steering`] is called after each tool execution batch.
+    /// [`MessageProvider::poll_follow_up`] is called when the agent would otherwise stop.
+    pub message_provider: Option<Arc<dyn MessageProvider>>,
+
+    /// Optional async callback for approving/rejecting tool calls before execution.
+    /// When `Some` and `approval_mode` is `Enabled`, each tool call is sent through
+    /// this callback before dispatch. Rejected tools return an error result to the LLM.
+    pub approve_tool: Option<Box<ApproveToolFn>>,
+
+    /// Controls whether the approval gate is active. Defaults to `Enabled`.
+    pub approval_mode: ApprovalMode,
+
+    /// Optional custom validation hook invoked after JSON Schema validation
+    /// but before tool execution.
+    pub tool_validator: Option<Arc<dyn crate::tool_validator::ToolValidator>>,
+
+    /// Optional loop policy to control agent loop continuation.
+    pub loop_policy: Option<Arc<dyn crate::loop_policy::LoopPolicy>>,
+
+    /// Optional pre-execution argument transformer.
+    ///
+    /// Runs after approval but before validation, allowing programmatic
+    /// argument rewriting (sandboxing, path rewrites, etc.).
+    pub tool_call_transformer: Option<Arc<dyn crate::tool_call_transformer::ToolCallTransformer>>,
+}
+
+impl std::fmt::Debug for AgentLoopConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AgentLoopConfig")
+            .field("model", &self.model)
+            .field("stream_options", &self.stream_options)
+            .field("tools", &format_args!("[{} tool(s)]", self.tools.len()))
+            .field(
+                "tool_validator",
+                &self.tool_validator.as_ref().map(|_| "..."),
+            )
+            .field(
+                "tool_call_transformer",
+                &self.tool_call_transformer.as_ref().map(|_| "..."),
+            )
+            .finish_non_exhaustive()
+    }
+}
+
+// ─── Entry Points ────────────────────────────────────────────────────────────
+
+/// Start a new agent loop with prompt messages.
+///
+/// Creates an initial context with the prompt messages, then runs the loop.
+/// Returns a stream of `AgentEvent` values.
+#[must_use]
+pub fn agent_loop(
+    prompt_messages: Vec<AgentMessage>,
+    system_prompt: String,
+    config: AgentLoopConfig,
+    cancellation_token: CancellationToken,
+) -> Pin<Box<dyn Stream<Item = AgentEvent> + Send>> {
+    run_loop(prompt_messages, system_prompt, config, cancellation_token)
+}
+
+/// Resume an agent loop from existing messages.
+///
+/// Resumes from existing messages (no new prompt), calls the loop.
+/// Returns a stream of `AgentEvent` values.
+#[must_use]
+pub fn agent_loop_continue(
+    messages: Vec<AgentMessage>,
+    system_prompt: String,
+    config: AgentLoopConfig,
+    cancellation_token: CancellationToken,
+) -> Pin<Box<dyn Stream<Item = AgentEvent> + Send>> {
+    run_loop(messages, system_prompt, config, cancellation_token)
+}
+
+// ─── Internal Loop ───────────────────────────────────────────────────────────
+
+/// The core loop implementation. Spawns a task that drives the loop and sends
+/// events through an mpsc channel, returning a stream of events.
+fn run_loop(
+    initial_messages: Vec<AgentMessage>,
+    system_prompt: String,
+    config: AgentLoopConfig,
+    cancellation_token: CancellationToken,
+) -> Pin<Box<dyn Stream<Item = AgentEvent> + Send>> {
+    let (tx, rx) = mpsc::channel::<AgentEvent>(EVENT_CHANNEL_CAPACITY);
+
+    tokio::spawn(async move {
+        run_loop_inner(
+            initial_messages,
+            system_prompt,
+            config,
+            cancellation_token,
+            tx,
+        )
+        .await;
+    });
+
+    Box::pin(ReceiverStream::new(rx))
+}
+
+/// Send an event through the channel. Returns false if the receiver is dropped.
+pub async fn emit(tx: &mpsc::Sender<AgentEvent>, event: AgentEvent) -> bool {
+    tx.send(event).await.is_ok()
+}
+
+// ─── Loop State ──────────────────────────────────────────────────────────────
+
+/// Mutable state threaded through the loop iterations.
+pub struct LoopState {
+    pub context_messages: Vec<AgentMessage>,
+    pub pending_messages: Vec<AgentMessage>,
+    pub overflow_signal: bool,
+    pub turn_index: usize,
+    pub accumulated_usage: crate::types::Usage,
+    pub accumulated_cost: crate::types::Cost,
+    /// The last assistant message from a completed turn (for policy checks).
+    pub last_assistant_message: Option<AssistantMessage>,
+}
+
+// ─── run_loop_inner ──────────────────────────────────────────────────────────
+
+/// The actual loop logic running inside the spawned task.
+async fn run_loop_inner(
+    initial_messages: Vec<AgentMessage>,
+    system_prompt: String,
+    config: AgentLoopConfig,
+    cancellation_token: CancellationToken,
+    tx: mpsc::Sender<AgentEvent>,
+) {
+    let config = Arc::new(config);
+    let span = info_span!(
+        "agent_loop",
+        model_id = %config.model.model_id,
+        provider = %config.model.provider,
+        tool_count = config.tools.len(),
+        message_count = initial_messages.len(),
+    );
+    async {
+        info!(
+            model = %config.model.model_id,
+            provider = %config.model.provider,
+            tools = config.tools.len(),
+            "starting agent loop"
+        );
+        let mut state = LoopState {
+            context_messages: initial_messages,
+            pending_messages: Vec::new(),
+            overflow_signal: false,
+            turn_index: 0,
+            accumulated_usage: crate::types::Usage::default(),
+            accumulated_cost: crate::types::Cost::default(),
+            last_assistant_message: None,
+        };
+
+        // 1. Emit AgentStart
+        if !emit(&tx, AgentEvent::AgentStart).await {
+            return;
+        }
+
+        // 2. Outer loop (follow-up phase)
+        'outer: loop {
+            // Inner loop (turn + tool phase)
+            'inner: loop {
+                let turn_result = turn::run_single_turn(
+                    &config,
+                    &mut state,
+                    &system_prompt,
+                    &cancellation_token,
+                    &tx,
+                )
+                .await;
+
+                match turn_result {
+                    TurnOutcome::ContinueInner => {
+                        // Update turn tracking and check loop policy
+                        state.turn_index += 1;
+                        if let Some(ref policy) = config.loop_policy
+                            && let Some(ref msg) = state.last_assistant_message
+                        {
+                            let ctx = crate::loop_policy::PolicyContext {
+                                turn_index: state.turn_index,
+                                accumulated_usage: state.accumulated_usage.clone(),
+                                accumulated_cost: state.accumulated_cost.clone(),
+                                assistant_message: msg,
+                                stop_reason: msg.stop_reason,
+                            };
+                            if !policy.should_continue(&ctx) {
+                                info!("loop policy stopped agent after turn {}", state.turn_index);
+                                break 'inner;
+                            }
+                        }
+                    }
+                    TurnOutcome::BreakInner => break 'inner,
+                    TurnOutcome::Return => return,
+                }
+            }
+
+            // Outer loop: poll follow-up messages
+            if let Some(ref provider) = config.message_provider {
+                let msgs = provider.poll_follow_up();
+                if !msgs.is_empty() {
+                    state.pending_messages.extend(msgs);
+                    continue 'outer;
+                }
+            }
+
+            // No follow-up → emit AgentEnd and exit
+            let _ = emit(
+                &tx,
+                AgentEvent::AgentEnd {
+                    messages: Arc::new(state.context_messages),
+                },
+            )
+            .await;
+            info!("agent loop finished");
+            return;
+        }
+    }
+    .instrument(span)
+    .await;
+}
+
+/// Outcome of a single turn execution within the inner loop.
+pub enum TurnOutcome {
+    /// Continue to the next inner-loop iteration (tool results need processing).
+    ContinueInner,
+    /// Break out of the inner loop (no tool calls, check follow-ups).
+    BreakInner,
+    /// Return from the entire loop (channel closed, error, or abort).
+    Return,
+}
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+/// Info about a tool call extracted from the assistant message.
+pub struct ToolCallInfo {
+    pub id: String,
+    pub name: String,
+    pub arguments: serde_json::Value,
+    pub is_incomplete: bool,
+}
+
+/// Result of streaming an assistant response.
+#[allow(clippy::large_enum_variant)]
+pub enum StreamResult {
+    Message(AssistantMessage),
+    ContextOverflow,
+    Aborted,
+    ChannelClosed,
+}
+
+/// Outcome of concurrent tool execution.
+pub enum ToolExecOutcome {
+    Completed(Vec<ToolResultMessage>),
+    SteeringInterrupt {
+        completed: Vec<ToolResultMessage>,
+        cancelled: Vec<ToolResultMessage>,
+        steering_messages: Vec<AgentMessage>,
+    },
+    ChannelClosed,
+}
+
+/// Build an aborted `AssistantMessage`.
+pub fn build_abort_message(model: &ModelSpec) -> AssistantMessage {
+    AssistantMessage {
+        content: vec![],
+        provider: model.provider.clone(),
+        model_id: model.model_id.clone(),
+        usage: crate::types::Usage::default(),
+        cost: crate::types::Cost::default(),
+        stop_reason: StopReason::Aborted,
+        error_message: Some("operation aborted via cancellation token".to_string()),
+        timestamp: now_timestamp(),
+    }
+}
+
+/// Build an error `AssistantMessage` from a `AgentError`.
+pub fn build_error_message(model: &ModelSpec, error: &AgentError) -> AssistantMessage {
+    AssistantMessage {
+        content: vec![],
+        provider: model.provider.clone(),
+        model_id: model.model_id.clone(),
+        usage: crate::types::Usage::default(),
+        cost: crate::types::Cost::default(),
+        stop_reason: StopReason::Error,
+        error_message: Some(format_error_with_sources(error)),
+        timestamp: now_timestamp(),
+    }
+}
+
+pub fn format_error_with_sources(error: &AgentError) -> String {
+    let mut message = error.to_string();
+    let mut source = error.source();
+
+    while let Some(err) = source {
+        let source_message = err.to_string();
+        if !source_message.is_empty() && !message.contains(&source_message) {
+            message.push_str(": ");
+            message.push_str(&source_message);
+        }
+        source = err.source();
+    }
+
+    message
+}
+
+/// Classify an `AssistantMessageEvent::Error` into a `AgentError`.
+pub fn classify_stream_error(error_message: &str, stop_reason: StopReason) -> AgentError {
+    let lower = error_message.to_lowercase();
+    if lower.contains("context window") || lower.contains("context_length_exceeded") {
+        return AgentError::ContextWindowOverflow {
+            model: String::new(),
+        };
+    }
+    if lower.contains("rate limit") || lower.contains("429") || lower.contains("throttl") {
+        return AgentError::ModelThrottled;
+    }
+    if stop_reason == StopReason::Aborted {
+        return AgentError::Aborted;
+    }
+    AgentError::StreamError {
+        source: Box::new(std::io::Error::other(error_message.to_string())),
+    }
+}

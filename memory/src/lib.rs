@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! Session persistence and memory management for swink-agent.
 //!
 //! This crate provides pluggable session storage and context compaction
