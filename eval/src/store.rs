@@ -99,7 +99,7 @@ impl EvalStore for FsEvalStore {
             for path in [self.set_path_yaml(id), self.set_path_yml(id)] {
                 if path.exists() {
                     let contents = fs::read_to_string(path)?;
-                    return Ok(serde_yml::from_str(&contents)?);
+                    return Ok(serde_yaml::from_str(&contents)?);
                 }
             }
         }

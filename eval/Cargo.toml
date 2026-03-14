@@ -26,10 +26,10 @@ tokio-util.workspace = true
 uuid.workspace = true
 regex = "1"
 sha2.workspace = true
-serde_yml = { workspace = true, optional = true }
+serde_yaml = { workspace = true, optional = true }
 
 [features]
-yaml = ["serde_yml"]
+yaml = ["serde_yaml"]
 
 [dev-dependencies]
 tempfile.workspace = true

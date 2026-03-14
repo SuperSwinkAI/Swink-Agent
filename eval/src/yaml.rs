@@ -12,5 +12,5 @@ use crate::types::EvalSet;
 /// are supported — `Custom` requires programmatic construction.
 pub fn load_eval_set_yaml(path: &Path) -> Result<EvalSet, EvalError> {
     let contents = fs::read_to_string(path)?;
-    Ok(serde_yml::from_str(&contents)?)
+    Ok(serde_yaml::from_str(&contents)?)
 }
