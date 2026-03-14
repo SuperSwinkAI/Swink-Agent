@@ -15,6 +15,37 @@ use swink_agent::{
     LlmMessage, ModelSpec, StopReason, StreamFn, StreamOptions, Usage, UserMessage,
 };
 
+// ─── FlagStreamFn ─────────────────────────────────────────────────────────
+
+/// A stream function that sets a flag when called — useful for verifying
+/// which `StreamFn` was invoked.
+#[allow(dead_code)]
+pub struct FlagStreamFn {
+    pub called: AtomicBool,
+    pub responses: Mutex<Vec<Vec<AssistantMessageEvent>>>,
+}
+
+impl StreamFn for FlagStreamFn {
+    fn stream<'a>(
+        &'a self,
+        _model: &'a ModelSpec,
+        _context: &'a swink_agent::AgentContext,
+        _options: &'a StreamOptions,
+        _cancellation_token: CancellationToken,
+    ) -> Pin<Box<dyn Stream<Item = AssistantMessageEvent> + Send + 'a>> {
+        self.called.store(true, Ordering::SeqCst);
+        let events = {
+            let mut responses = self.responses.lock().unwrap();
+            if responses.is_empty() {
+                text_only_events("fallback")
+            } else {
+                responses.remove(0)
+            }
+        };
+        Box::pin(futures::stream::iter(events))
+    }
+}
+
 // ─── MockStreamFn ────────────────────────────────────────────────────────
 
 /// A mock `StreamFn` that yields scripted event sequences.

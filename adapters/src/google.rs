@@ -474,6 +474,7 @@ fn user_parts(blocks: &[ContentBlock]) -> Vec<GeminiPart> {
                     }),
                     ..GeminiPart::default()
                 }),
+                _ => {}
             },
             _ => {}
         }

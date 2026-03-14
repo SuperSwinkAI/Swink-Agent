@@ -10,6 +10,10 @@ readme = "../README.md"
 keywords = ["llm", "agent", "memory", "session", "context"]
 categories = ["development-tools", "data-structures"]
 
+[package.metadata.docs_rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
 [dependencies]
 swink-agent = { path = ".." }
 serde.workspace = true

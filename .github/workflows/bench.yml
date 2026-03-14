@@ -1,0 +1,43 @@
+name: Benchmarks
+
+on:
+  pull_request:
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: cargo-bins/cargo-binstall@main
+
+      - run: cargo binstall --no-confirm critcmp
+
+      - name: Bench PR
+        run: cargo bench --workspace -- --save-baseline pr
+
+      - name: Checkout base
+        run: git checkout ${{ github.base_ref }}
+
+      - name: Bench base
+        run: cargo bench --workspace -- --save-baseline base
+
+      - name: Compare
+        run: critcmp base pr | tee bench-diff.txt
+
+      - name: Post comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const diff = fs.readFileSync('bench-diff.txt', 'utf8');
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: '## Benchmark comparison\n```\n' + diff + '\n```'
+            });

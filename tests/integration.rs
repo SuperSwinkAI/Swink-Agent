@@ -121,6 +121,7 @@ fn event_variant_name(event: &AgentEvent) -> String {
         AgentEvent::ContextCompacted { .. } => "ContextCompacted".into(),
         AgentEvent::Custom(emission) => format!("Custom({})", emission.name),
         AgentEvent::ModelFallback { .. } => "ModelFallback".into(),
+        _ => "Unknown".into(),
     }
 }
 

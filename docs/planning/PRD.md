@@ -1,3 +1,7 @@
+> **Archived** — All phases complete as of 2026-03-14. Kept for historical reference.
+
+---
+
 # Swink Agent — Product Requirements Document
 
 **Version:** 0.1

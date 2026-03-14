@@ -2,71 +2,19 @@
 
 mod common;
 
-use std::pin::Pin;
-use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
 use common::{
     MockStreamFn, MockTool, default_convert, default_model, text_only_events, tool_call_events,
     user_msg,
 };
-use futures::Stream;
 use futures::stream::StreamExt;
-use serde_json::json;
-use tokio_util::sync::CancellationToken;
 
 use swink_agent::{
     Agent, AgentError, AgentEvent, AgentMessage, AgentOptions, AgentTool, AssistantMessageEvent,
-    ContentBlock, Cost, DefaultRetryStrategy, LlmMessage, ModelSpec, SteeringMode, StopReason,
-    StreamFn, StreamOptions, ToolResultMessage, Usage, UserMessage,
+    ContentBlock, DefaultRetryStrategy, LlmMessage, ModelSpec, StopReason, StreamFn,
 };
-
-// ─── ContextCapturingStreamFn ────────────────────────────────────────────
-
-/// A mock `StreamFn` that captures context message counts.
-struct ContextCapturingStreamFn {
-    responses: Mutex<Vec<Vec<AssistantMessageEvent>>>,
-    captured_message_counts: Mutex<Vec<usize>>,
-}
-
-impl ContextCapturingStreamFn {
-    const fn new(responses: Vec<Vec<AssistantMessageEvent>>) -> Self {
-        Self {
-            responses: Mutex::new(responses),
-            captured_message_counts: Mutex::new(Vec::new()),
-        }
-    }
-}
-
-impl StreamFn for ContextCapturingStreamFn {
-    fn stream<'a>(
-        &'a self,
-        _model: &'a ModelSpec,
-        context: &'a swink_agent::AgentContext,
-        _options: &'a StreamOptions,
-        _cancellation_token: CancellationToken,
-    ) -> Pin<Box<dyn Stream<Item = AssistantMessageEvent> + Send + 'a>> {
-        self.captured_message_counts
-            .lock()
-            .unwrap()
-            .push(context.messages.len());
-        let events = {
-            let mut responses = self.responses.lock().unwrap();
-            if responses.is_empty() {
-                vec![AssistantMessageEvent::Error {
-                    stop_reason: StopReason::Error,
-                    error_message: "no more scripted responses".to_string(),
-                    usage: None,
-                    error_kind: None,
-                }]
-            } else {
-                responses.remove(0)
-            }
-        };
-        Box::pin(futures::stream::iter(events))
-    }
-}
 
 // ─── Helpers ─────────────────────────────────────────────────────────────
 

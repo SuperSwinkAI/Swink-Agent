@@ -50,6 +50,7 @@ impl SubscriptionId {
 // ─── Enums ───────────────────────────────────────────────────────────────────
 
 /// Controls how steering messages are drained from the queue.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SteeringMode {
     /// Drain all pending steering messages at once.
@@ -60,6 +61,7 @@ pub enum SteeringMode {
 }
 
 /// Controls how follow-up messages are drained from the queue.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FollowUpMode {
     /// Drain all pending follow-up messages at once.

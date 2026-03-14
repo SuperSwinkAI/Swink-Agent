@@ -1,0 +1,19 @@
+# bacon watch-mode configuration
+# Run: bacon test    →  watch tests
+#      bacon clippy  →  watch lints
+#      bacon doc     →  watch docs
+
+[jobs.test]
+command = ["cargo", "nextest", "run", "--workspace"]
+need_stdout = true
+
+[jobs.clippy]
+command = ["cargo", "clippy", "--workspace", "--", "-D", "warnings"]
+need_stdout = false
+
+[jobs.doc]
+command = ["cargo", "doc", "--no-deps", "--workspace"]
+need_stdout = false
+
+[default_job]
+name = "clippy"

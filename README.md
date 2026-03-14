@@ -1,5 +1,9 @@
 # Swink Agent
 
+[![CI](https://github.com/SuperSwinkAI/Swink-Agent/actions/workflows/ci.yml/badge.svg)](https://github.com/SuperSwinkAI/Swink-Agent/actions/workflows/ci.yml)
+[![MSRV](https://img.shields.io/badge/rustc-1.88+-blue.svg)](https://blog.rust-lang.org/2025/06/05/Rust-1.88.0/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+
 A pure-Rust library for building LLM-powered agentic loops. Provider-agnostic core with pluggable streaming, concurrent tool execution, and lifecycle events.
 
 ## Workspace
@@ -36,12 +40,10 @@ Wire up an LLM provider, register tools, and launch the interactive TUI — all 
 ```rust
 use std::sync::Arc;
 
-use swink_agent::{Agent, AgentOptions, AgentTool, BashTool, ModelConnections, ReadFileTool, WriteFileTool};
+use swink_agent::{AgentOptions, AgentTool, BashTool, ModelConnections, ReadFileTool, WriteFileTool};
 use swink_agent_adapters::{build_remote_connection, remote_preset_keys};
 use swink_agent_local_llm::default_local_connection;
-use swink_agent_tui::{
-    TuiConfig, launch, restore_terminal, setup_terminal, tui_approval_callback,
-};
+use swink_agent_tui::{TuiConfig, launch, restore_terminal, setup_terminal};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -50,7 +52,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let connections = ModelConnections::new(
         build_remote_connection(remote_preset_keys::anthropic::SONNET_46)?,
         vec![
-            build_remote_connection(remote_preset_keys::openai::GPT_5_2)?,
+            build_remote_connection(remote_preset_keys::openai::GPT_4_1)?,
             default_local_connection()?,
         ],
     );
@@ -63,20 +65,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut terminal = setup_terminal()?;
 
-    let result = launch(TuiConfig::default(), &mut terminal, |approval_tx| {
-        let options = AgentOptions::new(
+    let options = AgentOptions::new(
             "You are a helpful coding assistant.",
             model,
             stream_fn,
             swink_agent::default_convert,
         )
         .with_available_models(extra_models)
-        .with_tools(tools)
-        .with_approve_tool(tui_approval_callback(approval_tx));
+        .with_tools(tools);
 
-        Agent::new(options)
-    })
-    .await;
+    let result = launch(TuiConfig::default(), &mut terminal, options).await;
 
     restore_terminal()?;
     result

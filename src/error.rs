@@ -7,6 +7,7 @@
 /// The top-level error type for the swink agent.
 ///
 /// Each variant maps to a specific failure mode described in PRD section 10.3.
+#[non_exhaustive]
 #[derive(Debug, thiserror::Error)]
 pub enum AgentError {
     /// Provider rejected the request because input exceeds the model's context window.

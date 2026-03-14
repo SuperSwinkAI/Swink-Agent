@@ -429,6 +429,61 @@ Set on `AgentLoopConfig` as `tool_validator: Option<Arc<dyn ToolValidator>>`. Wh
 
 ---
 
+## L3 — ToolMetadata: Organizational Grouping
+
+**Source file:** `src/tool.rs`
+**Re-exported as:** `swink_agent::ToolMetadata`
+
+`ToolMetadata` provides optional organizational metadata for tools — a namespace and version. Tools return it via the `metadata()` method on `AgentTool` (defaults to `None` for backward compatibility).
+
+### Fields
+
+| Field | Type | Description |
+|---|---|---|
+| `namespace` | `Option<String>` | Logical grouping such as `"filesystem"`, `"git"`, or `"code_analysis"`. |
+| `version` | `Option<String>` | Semver-style version string (e.g. `"1.0.0"`). |
+
+### Builder
+
+```rust
+let meta = ToolMetadata::with_namespace("filesystem").with_version("1.2.0");
+```
+
+---
+
+## L3 — ToolExecutionPolicy: Dispatch Ordering
+
+**Source file:** `src/tool_execution_policy.rs`
+**Re-exported as:** `swink_agent::ToolExecutionPolicy`
+
+`ToolExecutionPolicy` controls how tool calls within a single turn are dispatched. The default is `Concurrent`, which spawns all calls at once via `tokio::spawn`.
+
+### Variants
+
+| Variant | Behavior |
+|---|---|
+| `Concurrent` (default) | All tool calls execute concurrently via `tokio::spawn`. |
+| `Sequential` | Tool calls execute one at a time, in the order the model returned them. |
+| `Priority(Arc<PriorityFn>)` | Tool calls are sorted by priority (higher first). Calls with the same priority execute concurrently; groups run sequentially from highest to lowest. |
+| `Custom(Arc<dyn ToolExecutionStrategy>)` | Fully custom execution strategy. The strategy partitions tool calls into sequential execution groups. |
+
+### Configuration
+
+Set on `AgentLoopConfig` as `tool_execution_policy: ToolExecutionPolicy`. Defaults to `Concurrent`.
+
+---
+
+## L3 — Schema Generation
+
+**Source file:** `src/schema.rs`
+**Re-exported as:** `swink_agent::schema_for`
+
+The `schema_for` function generates a JSON Schema from any type implementing `schemars::JsonSchema`. This is used by `FnTool::with_schema_for::<T>()` and can be called directly when constructing tool schemas programmatically.
+
+The `validate_schema` function (`src/tool.rs`) validates that a JSON value is a well-formed JSON Schema document, distinct from `validate_tool_arguments` which validates data *against* a schema.
+
+---
+
 ## L2 — Tool Dispatch Pipeline
 
 **Source file:** `src/loop_/tool_dispatch.rs`

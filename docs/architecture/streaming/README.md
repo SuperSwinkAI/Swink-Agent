@@ -1,16 +1,22 @@
 # Streaming Interface
 
-**Source files:** `src/stream.rs`, `src/proxy.rs`, `adapters/src/ollama.rs`, `adapters/src/anthropic.rs`, `adapters/src/openai.rs`, `adapters/src/convert.rs`
+**Source files:** `src/stream.rs`, `adapters/src/proxy.rs`, `adapters/src/ollama.rs`, `adapters/src/anthropic.rs`, `adapters/src/openai.rs`, `adapters/src/convert.rs`
 **Related:** [PRD §7](../../planning/PRD.md#7-streaming-interface)
 
-The streaming interface is the single boundary between the harness and LLM providers. The harness never holds provider credentials or SDK clients. All inference flows through a `StreamFn` implementation. Four implementations ship with the project:
+The streaming interface is the single boundary between the harness and LLM providers. The harness never holds provider credentials or SDK clients. All inference flows through a `StreamFn` implementation. Nine remote implementations ship in the adapters crate, plus `LocalStreamFn` in the local-llm crate:
 
 | Implementation | Crate | Transport | Endpoint |
 |---|---|---|---|
-| `ProxyStreamFn` | `swink-agent` (core) | **SSE** (Server-Sent Events via `eventsource-stream`) | `POST /v1/stream` on a caller-managed proxy |
+| `ProxyStreamFn` | `swink-agent-adapters` | **SSE** (Server-Sent Events via `eventsource-stream`) | `POST /v1/stream` on a caller-managed proxy |
 | `OllamaStreamFn` | `swink-agent-adapters` | **NDJSON** (newline-delimited JSON over chunked HTTP) | `POST /api/chat` on an Ollama server |
 | `AnthropicStreamFn` | `swink-agent-adapters` | **SSE** (Server-Sent Events) | `POST /v1/messages` on the Anthropic Messages API |
 | `OpenAiStreamFn` | `swink-agent-adapters` | **SSE** (Server-Sent Events) | `POST /v1/chat/completions` on any OpenAI-compatible API |
+| `AzureStreamFn` | `swink-agent-adapters` | **SSE** | Azure OpenAI endpoint |
+| `BedrockStreamFn` | `swink-agent-adapters` | **SSE** (+ AWS SigV4) | AWS Bedrock endpoint |
+| `GeminiStreamFn` | `swink-agent-adapters` | **SSE** | Google Gemini API |
+| `MistralStreamFn` | `swink-agent-adapters` | **SSE** | Mistral API |
+| `XAiStreamFn` | `swink-agent-adapters` | **SSE** | xAI API |
+| `LocalStreamFn` | `swink-agent-local-llm` | Local inference | On-device (SmolLM3-3B) |
 
 All implementations produce the same `Stream<AssistantMessageEvent>` output. The transport difference is internal: `ProxyStreamFn` parses SSE frames with named event types, `OllamaStreamFn` splits raw newline-delimited JSON lines and maps Ollama's response schema into harness events, `AnthropicStreamFn` connects directly to the Anthropic Messages API, and `OpenAiStreamFn` connects to any OpenAI-compatible endpoint. Callers can also supply a fully custom `StreamFn` for any other provider.
 
@@ -33,7 +39,7 @@ flowchart TB
         Delta["AssistantMessageDelta<br/>TextDelta · ThinkingDelta · ToolCallDelta"]
     end
 
-    subgraph ProxyLayer["🔀 Proxy StreamFn (core)"]
+    subgraph ProxyLayer["🔀 Proxy StreamFn (adapters crate)"]
         ProxyStreamFn["ProxyStreamFn"]
         SSEParser["SSE Parser<br/>(eventsource-stream)"]
         Reconstructor["Message Reconstructor<br/>(delta → partial AssistantMessage)"]
@@ -210,7 +216,7 @@ flowchart TB
     subgraph ProxyClient["🔀 ProxyStreamFn (harness)"]
         HTTPPost["POST /v1/stream<br/>(model + context + options)"]
         SSERead["Read SSE stream<br/>(eventsource-stream)"]
-        ParseEvent["Parse ProxyEvent JSON"]
+        ParseEvent["Parse SseEventData JSON"]
         Accumulate["Accumulate into<br/>partial: AssistantMessage"]
         EmitEvent["Emit AssistantMessageEvent<br/>(with partial attached)"]
     end

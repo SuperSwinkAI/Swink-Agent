@@ -1,3 +1,7 @@
+> **Archived** — All phases complete as of 2026-03-14. Kept for historical reference.
+
+---
+
 # Swink Agent — Evaluation Feature Roadmap
 
 **Scope:** This document tracks the evaluation features in `swink-agent-eval`. Items marked `[C]` are complete, `[P]` are partially implemented, and `[ ]` are planned but not yet started.

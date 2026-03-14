@@ -7,8 +7,8 @@ use std::time::Duration;
 use std::sync::Arc;
 
 use swink_agent::{
-    AgentEvent, AssistantMessage, ContentBlock, Cost, LlmMessage, StopReason, TurnEndReason,
-    TurnSnapshot, Usage,
+    AgentEvent, AssistantMessage, ContentBlock, Cost, StopReason, TurnEndReason, TurnSnapshot,
+    Usage,
 };
 use swink_agent_eval::{
     BudgetConstraints, BudgetEvaluator, BudgetGuard, Evaluator, TrajectoryCollector, Verdict,

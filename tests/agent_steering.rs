@@ -14,8 +14,8 @@ use futures::Stream;
 use tokio_util::sync::CancellationToken;
 
 use swink_agent::{
-    Agent, AgentOptions, AgentTool, AssistantMessageEvent, ContentBlock, Cost, DefaultRetryStrategy,
-    LlmMessage, ModelSpec, SteeringMode, StopReason, StreamFn, StreamOptions, Usage,
+    Agent, AgentOptions, AgentTool, AssistantMessageEvent, DefaultRetryStrategy, ModelSpec,
+    SteeringMode, StopReason, StreamFn, StreamOptions,
 };
 
 // ─── ContextCapturingStreamFn ────────────────────────────────────────────

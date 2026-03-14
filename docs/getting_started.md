@@ -37,12 +37,10 @@ The TUI picks the first available provider in this order:
 | 1 | Custom SSE Proxy | `LLM_BASE_URL` is set |
 | 2 | OpenAI | `OPENAI_API_KEY` is set |
 | 3 | Anthropic | `ANTHROPIC_API_KEY` is set |
-| 4 | Google Gemini | `GOOGLE_API_KEY` is set |
-| 5 | Azure OpenAI | `AZURE_OPENAI_API_KEY` is set |
-| 6 | xAI | `XAI_API_KEY` is set |
-| 7 | Mistral | `MISTRAL_API_KEY` is set |
-| 8 | Bedrock | AWS credentials are set |
-| 9 | Ollama | Always available (local) |
+| 4 | Local (SmolLM3) | `local` feature enabled, no remote keys set |
+| 5 | Ollama | Always available (fallback) |
+
+> **Note:** The adapters crate supports additional providers (Google Gemini, Azure OpenAI, xAI, Mistral, Bedrock) for use as a library, but the TUI binary currently only supports the providers listed above.
 
 Keys can also be stored in the OS keychain instead of env vars — the first-run wizard will prompt you, or use `#key <provider> <value>` inside the TUI.
 

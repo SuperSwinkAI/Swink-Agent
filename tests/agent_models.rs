@@ -2,19 +2,12 @@
 
 mod common;
 
-use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
 use common::{MockStreamFn, MockTool, default_convert, default_model, text_only_events, user_msg};
-use futures::Stream;
-use futures::stream::StreamExt;
-use tokio_util::sync::CancellationToken;
 
-use swink_agent::{
-    Agent, AgentOptions, AgentTool, AssistantMessageEvent, ContentBlock, Cost,
-    DefaultRetryStrategy, LlmMessage, ModelSpec, StopReason, StreamFn, StreamOptions, Usage,
-};
+use swink_agent::{Agent, AgentOptions, DefaultRetryStrategy, ModelSpec, StopReason, StreamFn};
 
 // ─── Helpers ─────────────────────────────────────────────────────────────
 
@@ -26,23 +19,6 @@ fn make_agent(stream_fn: Arc<dyn StreamFn>) -> Agent {
             stream_fn,
             default_convert,
         )
-        .with_retry_strategy(Box::new(
-            DefaultRetryStrategy::default()
-                .with_jitter(false)
-                .with_base_delay(Duration::from_millis(1)),
-        )),
-    )
-}
-
-fn make_agent_with_tools(stream_fn: Arc<dyn StreamFn>, tools: Vec<Arc<dyn AgentTool>>) -> Agent {
-    Agent::new(
-        AgentOptions::new(
-            "test system prompt",
-            default_model(),
-            stream_fn,
-            default_convert,
-        )
-        .with_tools(tools)
         .with_retry_strategy(Box::new(
             DefaultRetryStrategy::default()
                 .with_jitter(false)
@@ -217,32 +193,7 @@ fn available_models_empty_when_none_configured() {
 async fn set_model_swaps_stream_fn_for_known_model() {
     use std::sync::atomic::{AtomicBool, Ordering};
 
-    /// A stream function that sets a flag when called.
-    struct FlagStreamFn {
-        called: AtomicBool,
-        responses: std::sync::Mutex<Vec<Vec<AssistantMessageEvent>>>,
-    }
-
-    impl StreamFn for FlagStreamFn {
-        fn stream<'a>(
-            &'a self,
-            _model: &'a ModelSpec,
-            _context: &'a swink_agent::AgentContext,
-            _options: &'a StreamOptions,
-            _cancellation_token: CancellationToken,
-        ) -> Pin<Box<dyn Stream<Item = AssistantMessageEvent> + Send + 'a>> {
-            self.called.store(true, Ordering::SeqCst);
-            let events = {
-                let mut responses = self.responses.lock().unwrap();
-                if responses.is_empty() {
-                    text_only_events("fallback")
-                } else {
-                    responses.remove(0)
-                }
-            };
-            Box::pin(futures::stream::iter(events))
-        }
-    }
+    use common::FlagStreamFn;
 
     let primary_sfn = Arc::new(MockStreamFn::new(vec![text_only_events("from primary")]));
     let extra_sfn = Arc::new(FlagStreamFn {
@@ -282,29 +233,7 @@ async fn set_model_swaps_stream_fn_for_known_model() {
 async fn set_model_restores_primary_stream_fn_when_switching_back() {
     use std::sync::atomic::{AtomicBool, Ordering};
 
-    struct FlagStreamFn {
-        called: AtomicBool,
-        responses: std::sync::Mutex<Vec<Vec<AssistantMessageEvent>>>,
-    }
-
-    impl StreamFn for FlagStreamFn {
-        fn stream<'a>(
-            &'a self,
-            _model: &'a ModelSpec,
-            _context: &'a swink_agent::AgentContext,
-            _options: &'a StreamOptions,
-            _cancellation_token: CancellationToken,
-        ) -> Pin<Box<dyn Stream<Item = AssistantMessageEvent> + Send + 'a>> {
-            self.called.store(true, Ordering::SeqCst);
-            let events = self
-                .responses
-                .lock()
-                .unwrap()
-                .pop()
-                .unwrap_or_else(|| text_only_events("fallback"));
-            Box::pin(futures::stream::iter(events))
-        }
-    }
+    use common::FlagStreamFn;
 
     let primary_sfn = Arc::new(FlagStreamFn {
         called: AtomicBool::new(false),

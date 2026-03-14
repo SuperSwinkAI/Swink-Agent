@@ -11,6 +11,13 @@
 - Dirty flag optimization: frame redraws only when `dirty = true`.
 - Plan mode delegates to `agent.enter_plan_mode()`/`exit_plan_mode()` in core; TUI just manages UI state.
 
+## Keybindings
+
+- **F1** — Toggle help panel.
+- **F2** — Inspect selected tool block.
+- **F3** — Cycle color mode.
+- **F4** — Cycle model (applied on next send).
+
 ## Lessons Learned
 
 - **`/model` changes model ID, not provider** — to switch providers, update `.env` and restart.

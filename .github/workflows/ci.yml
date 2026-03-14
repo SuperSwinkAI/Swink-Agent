@@ -7,7 +7,10 @@ on:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
@@ -19,11 +22,64 @@ jobs:
 
       - run: cargo fmt --check
 
+      - name: Spell check
+        uses: crate-ci/typos-action@v1
+
       - run: cargo clippy --workspace -- -D warnings
 
-      - run: cargo test --workspace
+      - uses: cargo-bins/cargo-binstall@main
+
+      - run: cargo binstall --no-confirm cargo-nextest
+
+      - run: cargo nextest run --workspace
+
+      - run: cargo build --examples --workspace
+
+      - run: cargo test --workspace --doc
 
       - run: cargo test -p swink-agent --no-default-features
+
+      - name: Check docs
+        run: RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --workspace
+        env:
+          RUSTDOCFLAGS: "-D warnings"
+
+  features:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: cargo-bins/cargo-binstall@main
+
+      - run: cargo binstall --no-confirm cargo-hack
+
+      - run: cargo hack check --workspace --each-feature --no-dev-deps
+
+  deny:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: EmbarkStudios/cargo-deny-action@v2
+
+  semver:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: cargo-bins/cargo-binstall@main
+
+      - run: cargo binstall --no-confirm cargo-semver-checks
+
+      - run: cargo semver-checks --workspace
 
   msrv:
     runs-on: ubuntu-latest

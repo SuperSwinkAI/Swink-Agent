@@ -234,6 +234,7 @@ impl fmt::Debug for ToolApprovalRequest {
 }
 
 /// Controls whether the approval gate is active.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum ApprovalMode {
     /// Every tool call goes through the approval callback.

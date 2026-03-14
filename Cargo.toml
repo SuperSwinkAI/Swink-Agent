@@ -23,6 +23,7 @@ wiremock = "0.6"
 serde_yml = "0.0"
 sha2 = "0.10"
 toml = "0.8"
+proptest = { version = "1", default-features = false, features = ["std"] }
 
 [package]
 name = "swink-agent"
@@ -83,6 +84,7 @@ tempfile.workspace = true
 criterion.workspace = true
 tokio = { workspace = true, features = ["full", "test-util"] }
 wiremock.workspace = true
+proptest.workspace = true
 
 [lints.rust]
 unsafe_code = "forbid"

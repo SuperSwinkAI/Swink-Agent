@@ -918,6 +918,7 @@ async fn query_approval_mode_shows_smart() {
         ApprovalMode::Enabled => "enabled",
         ApprovalMode::Bypassed => "disabled (auto-approve)",
         ApprovalMode::Smart => "smart (auto-approve reads, prompt for writes)",
+        _ => "unknown",
     };
     let mut msg = format!("Tool approval: {label}");
     if app.approval_mode == ApprovalMode::Smart && !app.session_trusted_tools.is_empty() {

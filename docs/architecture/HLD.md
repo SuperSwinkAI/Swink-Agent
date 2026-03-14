@@ -7,7 +7,7 @@
 
 ## System Overview
 
-The Swink Agent is a Rust workspace composed of six crates that provide the core scaffolding for building LLM-powered agentic applications. The **core library** (`swink-agent`) manages the agent loop, message context, tool dispatch, streaming, lifecycle events, model catalogs, agent registries, loop policies, middleware, and inter-agent messaging. The **adapters crate** (`swink-agent-adapters`) provides ready-made `StreamFn` implementations for nine LLM providers: Anthropic, Azure, AWS Bedrock, Google Gemini, Mistral, Ollama, OpenAI (multi-provider compatible), Proxy, and xAI. The **memory crate** (`swink-agent-memory`) provides session persistence and summarization-aware context compaction. The **local-llm crate** (`swink-agent-local-llm`) provides on-device inference via mistral.rs with SmolLM3-3B for text/tool generation and EmbeddingGemma-300M for embeddings. The **eval crate** (`swink-agent-eval`) provides trajectory tracing, golden path verification, response matching, and cost/latency governance for agent evaluation. The **TUI crate** (`swink-agent-tui`) is a binary that provides an interactive terminal interface. All LLM provider access is delegated to a `StreamFn` implementation, keeping the core harness fully provider-agnostic.
+The Swink Agent is a Rust workspace composed of seven crates that provide the core scaffolding for building LLM-powered agentic applications. The **core library** (`swink-agent`) manages the agent loop, message context, tool dispatch, streaming, lifecycle events, model catalogs, agent registries, loop policies, middleware, and inter-agent messaging. The **adapters crate** (`swink-agent-adapters`) provides ready-made `StreamFn` implementations for nine LLM providers: Anthropic, Azure, AWS Bedrock, Google Gemini, Mistral, Ollama, OpenAI (multi-provider compatible), Proxy, and xAI. The **memory crate** (`swink-agent-memory`) provides session persistence and summarization-aware context compaction. The **local-llm crate** (`swink-agent-local-llm`) provides on-device inference via mistral.rs with SmolLM3-3B for text/tool generation and EmbeddingGemma-300M for embeddings. The **eval crate** (`swink-agent-eval`) provides trajectory tracing, golden path verification, response matching, and cost/latency governance for agent evaluation. The **TUI crate** (`swink-agent-tui`) is a binary that provides an interactive terminal interface. All LLM provider access is delegated to a `StreamFn` implementation, keeping the core harness fully provider-agnostic.
 
 ---
 
@@ -135,6 +135,15 @@ flowchart TB
         Policy["LoopPolicy<br/>(MaxTurns, CostCap,<br/>ComposedPolicy)"]
         StreamMW["StreamMiddleware<br/>(intercept output stream)"]
         Emission["Emission<br/>(structured event payloads)"]
+        Orchestrator["AgentOrchestrator<br/>(multi-agent supervision)"]
+        Checkpoint["Checkpoint<br/>(loop state snapshots)"]
+        BudgetGuard["BudgetGuard<br/>(cost/token limits)"]
+        Fallback["ModelFallback<br/>(automatic model failover)"]
+        CtxTransformer["ContextTransformer<br/>(sync context rewriting)"]
+        CtxVersion["ContextVersion<br/>(versioned context history)"]
+        ToolExecPolicy["ToolExecutionPolicy<br/>(Concurrent/Sequential/Priority)"]
+        PostTurnHook["PostTurnHook<br/>(per-turn callbacks)"]
+        Metrics["MetricsCollector<br/>(turn + tool execution metrics)"]
     end
 
     subgraph EvalLayer["📊 Evaluation"]
@@ -231,7 +240,7 @@ flowchart TB
     class StreamFn streamStyle
     class AnthropicFn,AzureFn,BedrockFn,GeminiFn,MistralFn,OllamaFn,OpenAiFn,XAiFn,ProxyFn,RemotePresets,Classify adapterStyle
     class LocalStream,LocalModel,EmbeddingModel localStyle
-    class Events,Retry,Cancel,Errors,Catalog,Registry,Mailbox,Policy,StreamMW,Emission infraStyle
+    class Events,Retry,Cancel,Errors,Catalog,Registry,Mailbox,Policy,StreamMW,Emission,Orchestrator,Checkpoint,BudgetGuard,Fallback,CtxTransformer,CtxVersion,ToolExecPolicy,PostTurnHook,Metrics infraStyle
     class SessionStore,Compactor memoryStyle
     class EvalRunner,TrajectoryCollector,EvalRegistry,EvalStore evalStyle
     class TUIApp,ConvView,InputEditor,ToolPanel,StatusBar tuiStyle
@@ -313,7 +322,7 @@ flowchart LR
 
 ## Workspace Crate Dependencies
 
-This diagram shows how the six workspace crates and their internal modules depend on each other.
+This diagram shows how the seven workspace crates and their internal modules depend on each other.
 
 ```mermaid
 flowchart TB
@@ -529,6 +538,8 @@ flowchart TB
 **Evaluation is a separate crate.** The evaluation framework lives in `swink-agent-eval`, keeping test/benchmark dependencies out of the core. It consumes the `AgentEvent` stream via `TrajectoryCollector` — the same subscription mechanism available to any caller. The eval crate depends only on `swink-agent` core, not on adapters or memory. The `Evaluator` trait and `EvaluatorRegistry` pattern enables custom scoring metrics without modifying the framework. Full `Invocation` traces are stored per result to support future comparative analysis across models and configurations.
 
 **TUI is a separate crate.** The terminal interface is a binary crate that depends on the core library, adapters crate, and memory crate, not a feature-gated module. This keeps the core harness free of terminal dependencies and allows the TUI to evolve independently. The TUI consumes the same public API that any other application would use.
+
+**xtask is a workspace member.** The `xtask` crate provides developer workflow commands (e.g., `cargo xtask verify-catalog`) without adding dev-only dependencies to the core crates.
 
 ## TUI Architecture
 

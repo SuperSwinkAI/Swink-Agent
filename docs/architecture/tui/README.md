@@ -158,6 +158,7 @@ Agent integration uses `prompt_stream()` with an mpsc forwarder task that sends 
 | `F1` | Toggle help side panel |
 | `F2` | Expand/collapse selected tool result block |
 | `F3` | Cycle color mode (Custom → MonoWhite → MonoBlack) |
+| `F4` | Cycle model (applied on next send) |
 | `Shift+←` / `Shift+→` | Select previous/next tool block |
 | `y` / `n` (in diff view) | Approve/reject individual diff hunk |
 | `a` (in diff view) | Approve all remaining diff hunks |
@@ -439,13 +440,12 @@ enum OperatingMode {
 
 ### Tool Filtering
 
-When `operating_mode == Plan`:
-- `App::send_prompt()` calls `agent.set_tools()` with only the subset of tools where `tool.requires_approval() == false` (read-only tools)
-- A system prompt addendum is prepended: "You are in planning mode. Analyze the request and produce a step-by-step plan. Do not make any modifications."
+When entering plan mode:
+- `App::enter_plan_mode()` calls `agent.enter_plan_mode()`, which returns the saved tools and system prompt, filters to read-only tools, and appends a planning addendum to the system prompt.
 
 When switching back to `Execute`:
-- Full tool set is restored via `agent.set_tools()`
-- The last plan message is enqueued as a follow-up message so the agent can reference it
+- `App::exit_plan_mode()` calls `agent.exit_plan_mode(saved_tools, saved_prompt)` to restore the full tool set and original system prompt.
+- The last plan message is enqueued as a follow-up message so the agent can reference it.
 
 ### UI Indicators
 

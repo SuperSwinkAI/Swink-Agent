@@ -63,6 +63,7 @@ flowchart LR
         StreamMsg["stream_message: Option&lt;AgentMessage&gt;"]
         PendingTools["pending_tool_calls: HashSet&lt;String&gt;"]
         Error["error: Option&lt;String&gt;"]
+        AvailModels["available_models: Vec&lt;ModelSpec&gt;"]
     end
 
     subgraph Owned["Owned by Agent (private)"]
@@ -78,7 +79,7 @@ flowchart LR
     classDef stateStyle fill:#e3f2fd,stroke:#1976d2,stroke-width:2px,color:#000
     classDef ownedStyle fill:#f5f5f5,stroke:#616161,stroke-width:2px,color:#000
 
-    class SP,Model,Tools,Messages,Running,StreamMsg,PendingTools,Error stateStyle
+    class SP,Model,Tools,Messages,Running,StreamMsg,PendingTools,Error,AvailModels stateStyle
     class SteerQ,FollowQ,Listeners,Cancel,IdleNotify,StreamMode,FollowMode ownedStyle
 ```
 

@@ -10,6 +10,10 @@ readme = "../README.md"
 keywords = ["llm", "anthropic", "openai", "adapter", "streaming"]
 categories = ["development-tools", "api-bindings", "asynchronous"]
 
+[package.metadata.docs_rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
 [dependencies]
 swink-agent = { path = ".." }
 reqwest.workspace = true

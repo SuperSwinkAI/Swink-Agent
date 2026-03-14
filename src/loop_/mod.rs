@@ -62,6 +62,7 @@ pub type ApproveToolFn =
 // ─── TurnEndReason ───────────────────────────────────────────────────────────
 
 /// Why a turn ended.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TurnEndReason {
     /// Assistant completed without requesting tool calls.
@@ -85,6 +86,7 @@ pub enum TurnEndReason {
 /// Consumers subscribe to these events for observability, UI updates, and
 /// logging. The harness never calls back into application logic for display
 /// concerns.
+#[non_exhaustive]
 #[derive(Debug, Clone)]
 #[allow(clippy::large_enum_variant)]
 pub enum AgentEvent {

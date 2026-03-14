@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 /// - `Thinking`: assistant only
 /// - `ToolCall`: assistant only
 /// - `Image`: user, tool result
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ContentBlock {
@@ -68,6 +69,7 @@ impl ContentBlock {
 }
 
 /// Source for image data.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ImageSource {
@@ -404,6 +406,7 @@ impl AddAssign for Cost {
 // ─── Stop Reason ────────────────────────────────────────────────────────────
 
 /// Indicates why assistant generation ended.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StopReason {

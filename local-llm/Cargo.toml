@@ -10,6 +10,10 @@ readme = "../README.md"
 keywords = ["llm", "local", "inference", "gguf", "embedding"]
 categories = ["development-tools", "machine-learning"]
 
+[package.metadata.docs_rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
 [dependencies]
 swink-agent = { path = ".." }
 mistralrs = "0.7"

@@ -62,6 +62,7 @@ impl std::fmt::Debug for StreamOptions {
 ///
 /// Adapters can attach a `StreamErrorKind` to an `Error` event so the agent
 /// loop can classify errors structurally instead of relying on string matching.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StreamErrorKind {
     /// The provider throttled the request (HTTP 429 / rate limit).
@@ -81,6 +82,7 @@ pub enum StreamErrorKind {
 /// Events follow a strict start/delta/end protocol per content block. Each
 /// block carries a `content_index` that identifies its position in the final
 /// message's content vec.
+#[non_exhaustive]
 #[derive(Debug, Clone)]
 pub enum AssistantMessageEvent {
     /// The stream has opened.

@@ -419,6 +419,7 @@ impl App {
                     ApprovalMode::Enabled => "enabled",
                     ApprovalMode::Bypassed => "disabled (auto-approve)",
                     ApprovalMode::Smart => "smart (auto-approve reads, prompt for writes)",
+                    _ => "unknown",
                 };
                 let mut msg = format!("Tool approval: {label}");
                 if self.approval_mode == ApprovalMode::Smart

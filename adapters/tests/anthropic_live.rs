@@ -75,6 +75,7 @@ const fn event_name(event: &AssistantMessageEvent) -> &'static str {
         AssistantMessageEvent::ToolCallEnd { .. } => "ToolCallEnd",
         AssistantMessageEvent::Done { .. } => "Done",
         AssistantMessageEvent::Error { .. } => "Error",
+        _ => "Unknown",
     }
 }
 
