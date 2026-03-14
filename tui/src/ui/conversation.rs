@@ -270,4 +270,103 @@ mod tests {
 
         assert_eq!(view.scroll_offset, 17);
     }
+
+    #[test]
+    fn auto_scroll_disengages_on_manual_scroll_up() {
+        let mut view = ConversationView::new();
+        assert!(view.auto_scroll, "auto_scroll should start true");
+
+        view.scroll_offset = 10;
+        view.scroll_up(3);
+
+        assert_eq!(view.scroll_offset, 7);
+        assert!(!view.auto_scroll, "auto_scroll should disengage on manual scroll up");
+    }
+
+    #[test]
+    fn auto_scroll_reengages_at_bottom() {
+        let mut view = ConversationView::new();
+        view.set_rendered_lines_for_test(50);
+        view.auto_scroll = false;
+        view.scroll_offset = 35;
+
+        // Scroll down enough to reach the bottom (max = 50 - 10 = 40)
+        view.scroll_down(10, 10);
+
+        assert_eq!(view.scroll_offset, 40);
+        assert!(view.auto_scroll, "auto_scroll should re-engage when scrolled to bottom");
+    }
+
+    #[test]
+    fn clamp_scroll_prevents_negative() {
+        let mut view = ConversationView::new();
+        view.scroll_offset = 2;
+
+        // Scroll up more than the current offset
+        view.scroll_up(10);
+
+        assert_eq!(view.scroll_offset, 0, "scroll offset should clamp at 0");
+        assert!(!view.auto_scroll);
+    }
+
+    #[test]
+    fn scroll_down_past_content_clamps() {
+        let mut view = ConversationView::new();
+        view.set_rendered_lines_for_test(20);
+        view.auto_scroll = false;
+        view.scroll_offset = 5;
+
+        // visible_height = 10, max = 20 - 10 = 10
+        // scroll_offset = 5 + 100 = 105, clamped to 10
+        view.scroll_down(100, 10);
+
+        assert_eq!(view.scroll_offset, 10, "scroll offset should clamp to max");
+        assert!(view.auto_scroll, "auto_scroll should re-engage at bottom");
+    }
+
+    #[test]
+    fn scroll_to_bottom_sets_max_and_reengages() {
+        let mut view = ConversationView::new();
+        view.set_rendered_lines_for_test(30);
+        view.auto_scroll = false;
+        view.scroll_offset = 0;
+
+        view.scroll_to_bottom(10);
+
+        assert_eq!(view.scroll_offset, 20);
+        assert!(view.auto_scroll);
+    }
+
+    #[test]
+    fn new_view_starts_with_auto_scroll_at_zero() {
+        let view = ConversationView::new();
+        assert_eq!(view.scroll_offset, 0);
+        assert!(view.auto_scroll);
+    }
+
+    #[test]
+    fn clamp_noop_when_within_bounds() {
+        let mut view = ConversationView::new();
+        view.set_rendered_lines_for_test(30);
+        view.scroll_offset = 5;
+
+        view.clamp_scroll_offset(10);
+
+        // max = 30 - 10 = 20, offset 5 is within bounds
+        assert_eq!(view.scroll_offset, 5, "should not change when within bounds");
+    }
+
+    #[test]
+    fn scroll_down_not_at_bottom_does_not_reengage() {
+        let mut view = ConversationView::new();
+        view.set_rendered_lines_for_test(50);
+        view.auto_scroll = false;
+        view.scroll_offset = 0;
+
+        // max = 50 - 10 = 40, scroll to 5 which is not at bottom
+        view.scroll_down(5, 10);
+
+        assert_eq!(view.scroll_offset, 5);
+        assert!(!view.auto_scroll, "should not re-engage when not at bottom");
+    }
 }

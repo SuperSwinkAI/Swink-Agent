@@ -280,3 +280,191 @@ impl InputEditor {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_editor_is_empty() {
+        let editor = InputEditor::new();
+        assert_eq!(editor.lines, vec![String::new()]);
+        assert_eq!(editor.cursor_row, 0);
+        assert_eq!(editor.cursor_col, 0);
+        assert!(editor.is_empty());
+    }
+
+    #[test]
+    fn insert_char_at_start() {
+        let mut editor = InputEditor::new();
+        editor.insert_char('a');
+        assert_eq!(editor.lines, vec!["a".to_string()]);
+        assert_eq!(editor.cursor_col, 1);
+    }
+
+    #[test]
+    fn insert_char_at_end() {
+        let mut editor = InputEditor::new();
+        editor.insert_char('a');
+        editor.insert_char('b');
+        assert_eq!(editor.lines, vec!["ab".to_string()]);
+        assert_eq!(editor.cursor_col, 2);
+    }
+
+    #[test]
+    fn backspace_at_start_does_nothing() {
+        let mut editor = InputEditor::new();
+        editor.backspace();
+        assert_eq!(editor.lines, vec![String::new()]);
+        assert_eq!(editor.cursor_row, 0);
+        assert_eq!(editor.cursor_col, 0);
+    }
+
+    #[test]
+    fn backspace_merges_lines() {
+        let mut editor = InputEditor::new();
+        editor.insert_char('a');
+        editor.insert_newline();
+        editor.insert_char('b');
+        assert_eq!(editor.lines.len(), 2);
+        // Move cursor to start of line 2
+        editor.move_home();
+        editor.backspace();
+        assert_eq!(editor.lines, vec!["ab".to_string()]);
+        assert_eq!(editor.cursor_row, 0);
+        assert_eq!(editor.cursor_col, 1);
+    }
+
+    #[test]
+    fn delete_at_end_does_nothing() {
+        let mut editor = InputEditor::new();
+        editor.insert_char('a');
+        editor.delete();
+        assert_eq!(editor.lines, vec!["a".to_string()]);
+    }
+
+    #[test]
+    fn delete_merges_with_next_line() {
+        let mut editor = InputEditor::new();
+        editor.insert_char('a');
+        editor.insert_newline();
+        editor.insert_char('b');
+        // Move cursor to end of first line
+        editor.cursor_row = 0;
+        editor.cursor_col = 1;
+        editor.delete();
+        assert_eq!(editor.lines, vec!["ab".to_string()]);
+    }
+
+    #[test]
+    fn insert_newline_splits_line() {
+        let mut editor = InputEditor::new();
+        editor.insert_char('a');
+        editor.insert_char('b');
+        // Move cursor between a and b
+        editor.cursor_col = 1;
+        editor.insert_newline();
+        assert_eq!(editor.lines, vec!["a".to_string(), "b".to_string()]);
+        assert_eq!(editor.cursor_row, 1);
+        assert_eq!(editor.cursor_col, 0);
+    }
+
+    #[test]
+    fn move_left_at_start_wraps_to_previous_line() {
+        let mut editor = InputEditor::new();
+        editor.insert_char('a');
+        editor.insert_newline();
+        // Cursor is at (1, 0)
+        editor.move_left();
+        assert_eq!(editor.cursor_row, 0);
+        assert_eq!(editor.cursor_col, 1); // end of "a"
+    }
+
+    #[test]
+    fn move_right_at_end_wraps_to_next_line() {
+        let mut editor = InputEditor::new();
+        editor.insert_char('a');
+        editor.insert_newline();
+        editor.insert_char('b');
+        // Move to end of first line
+        editor.cursor_row = 0;
+        editor.cursor_col = 1;
+        editor.move_right();
+        assert_eq!(editor.cursor_row, 1);
+        assert_eq!(editor.cursor_col, 0);
+    }
+
+    #[test]
+    fn move_up_at_top_stays() {
+        let mut editor = InputEditor::new();
+        editor.insert_char('a');
+        editor.move_up();
+        assert_eq!(editor.cursor_row, 0);
+    }
+
+    #[test]
+    fn move_down_at_bottom_stays() {
+        let mut editor = InputEditor::new();
+        editor.insert_char('a');
+        editor.move_down();
+        assert_eq!(editor.cursor_row, 0);
+    }
+
+    #[test]
+    fn history_prev_and_next() {
+        let mut editor = InputEditor::new();
+        // Submit "first"
+        editor.insert_char('f');
+        editor.insert_char('i');
+        editor.insert_char('r');
+        editor.insert_char('s');
+        editor.insert_char('t');
+        editor.submit();
+        // Submit "second"
+        editor.insert_char('s');
+        editor.insert_char('e');
+        editor.insert_char('c');
+        editor.insert_char('o');
+        editor.insert_char('n');
+        editor.insert_char('d');
+        editor.submit();
+        // Navigate backwards
+        editor.history_prev();
+        assert_eq!(editor.lines, vec!["second".to_string()]);
+        editor.history_prev();
+        assert_eq!(editor.lines, vec!["first".to_string()]);
+        // Navigate forward
+        editor.history_next();
+        assert_eq!(editor.lines, vec!["second".to_string()]);
+        editor.history_next();
+        // Should restore to empty (saved input)
+        assert_eq!(editor.lines, vec![String::new()]);
+    }
+
+    #[test]
+    fn submit_clears_and_returns_text() {
+        let mut editor = InputEditor::new();
+        editor.insert_char('h');
+        editor.insert_char('i');
+        let result = editor.submit();
+        assert_eq!(result, Some("hi".to_string()));
+        assert_eq!(editor.lines, vec![String::new()]);
+        assert_eq!(editor.cursor_row, 0);
+        assert_eq!(editor.cursor_col, 0);
+        assert_eq!(editor.history.len(), 1);
+    }
+
+    #[test]
+    fn height_clamps_between_min_max() {
+        let editor = InputEditor::new();
+        // 1 line + 2 borders = 3, clamped to min 3
+        assert_eq!(editor.height(), 3);
+
+        let mut editor = InputEditor::new();
+        // Add 20 lines to exceed max
+        for _ in 0..20 {
+            editor.insert_newline();
+        }
+        assert_eq!(editor.height(), 10);
+    }
+}

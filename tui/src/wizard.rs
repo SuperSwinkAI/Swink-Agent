@@ -452,4 +452,285 @@ impl SetupWizard {
             _ => {}
         }
     }
+
+    /// Test-only constructor that bypasses keychain lookups.
+    #[cfg(test)]
+    fn new_for_test() -> Self {
+        let providers = credentials::providers();
+        let configured = vec![false; providers.len()];
+        Self {
+            step: WizardStep::Welcome,
+            providers,
+            configured,
+            selected: 0,
+            should_quit: false,
+            should_continue: false,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    use super::*;
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    #[test]
+    fn initial_state_is_welcome() {
+        let wizard = SetupWizard::new_for_test();
+        assert!(matches!(wizard.step, WizardStep::Welcome));
+    }
+
+    #[test]
+    fn enter_on_welcome_goes_to_provider_list() {
+        let mut wizard = SetupWizard::new_for_test();
+        wizard.handle_key(key(KeyCode::Enter));
+        assert!(matches!(wizard.step, WizardStep::ProviderList));
+    }
+
+    #[test]
+    fn enter_on_provider_list_goes_to_key_entry() {
+        let mut wizard = SetupWizard::new_for_test();
+        wizard.step = WizardStep::ProviderList;
+
+        // Find a provider that requires a key
+        let key_provider_idx = wizard
+            .providers
+            .iter()
+            .position(|p| p.requires_key)
+            .expect("should have at least one provider requiring a key");
+        wizard.selected = key_provider_idx;
+
+        wizard.handle_key(key(KeyCode::Enter));
+
+        match &wizard.step {
+            WizardStep::KeyEntry {
+                provider_index,
+                input,
+                cursor,
+            } => {
+                assert_eq!(*provider_index, key_provider_idx);
+                assert!(input.is_empty());
+                assert_eq!(*cursor, 0);
+            }
+            other => panic!(
+                "expected KeyEntry step, got {:?}",
+                std::mem::discriminant(other)
+            ),
+        }
+    }
+
+    #[test]
+    fn esc_on_welcome_sets_quit() {
+        let mut wizard = SetupWizard::new_for_test();
+        wizard.handle_key(key(KeyCode::Esc));
+        assert!(wizard.should_quit);
+    }
+
+    #[test]
+    fn esc_on_provider_list_sets_quit() {
+        let mut wizard = SetupWizard::new_for_test();
+        wizard.step = WizardStep::ProviderList;
+        wizard.handle_key(key(KeyCode::Esc));
+        assert!(wizard.should_quit);
+    }
+
+    #[test]
+    fn navigation_clamps_in_provider_list() {
+        let mut wizard = SetupWizard::new_for_test();
+        wizard.step = WizardStep::ProviderList;
+        let max_index = wizard.providers.len(); // includes "Continue" item
+
+        // At top, pressing Up should stay at 0
+        wizard.selected = 0;
+        wizard.handle_key(key(KeyCode::Up));
+        assert_eq!(wizard.selected, 0);
+
+        // At bottom, pressing Down should stay at max
+        wizard.selected = max_index;
+        wizard.handle_key(key(KeyCode::Down));
+        assert_eq!(wizard.selected, max_index);
+    }
+
+    #[test]
+    fn navigation_moves_up_and_down() {
+        let mut wizard = SetupWizard::new_for_test();
+        wizard.step = WizardStep::ProviderList;
+        wizard.selected = 1;
+
+        wizard.handle_key(key(KeyCode::Down));
+        assert_eq!(wizard.selected, 2);
+
+        wizard.handle_key(key(KeyCode::Up));
+        assert_eq!(wizard.selected, 1);
+    }
+
+    #[test]
+    fn key_entry_accepts_input() {
+        let mut wizard = SetupWizard::new_for_test();
+        wizard.step = WizardStep::KeyEntry {
+            provider_index: 1,
+            input: String::new(),
+            cursor: 0,
+        };
+
+        wizard.handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE));
+        wizard.handle_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE));
+        wizard.handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE));
+
+        match &wizard.step {
+            WizardStep::KeyEntry { input, cursor, .. } => {
+                assert_eq!(input, "abc");
+                assert_eq!(*cursor, 3);
+            }
+            _ => panic!("should still be in KeyEntry"),
+        }
+    }
+
+    #[test]
+    fn backspace_in_key_entry_removes_char() {
+        let mut wizard = SetupWizard::new_for_test();
+        wizard.step = WizardStep::KeyEntry {
+            provider_index: 1,
+            input: "abc".to_string(),
+            cursor: 3,
+        };
+
+        wizard.handle_key(key(KeyCode::Backspace));
+
+        match &wizard.step {
+            WizardStep::KeyEntry { input, cursor, .. } => {
+                assert_eq!(input, "ab");
+                assert_eq!(*cursor, 2);
+            }
+            _ => panic!("should still be in KeyEntry"),
+        }
+    }
+
+    #[test]
+    fn backspace_at_start_is_noop() {
+        let mut wizard = SetupWizard::new_for_test();
+        wizard.step = WizardStep::KeyEntry {
+            provider_index: 1,
+            input: "abc".to_string(),
+            cursor: 0,
+        };
+
+        wizard.handle_key(key(KeyCode::Backspace));
+
+        match &wizard.step {
+            WizardStep::KeyEntry { input, cursor, .. } => {
+                assert_eq!(input, "abc");
+                assert_eq!(*cursor, 0);
+            }
+            _ => panic!("should still be in KeyEntry"),
+        }
+    }
+
+    #[test]
+    fn esc_in_key_entry_returns_to_provider_list() {
+        let mut wizard = SetupWizard::new_for_test();
+        wizard.step = WizardStep::KeyEntry {
+            provider_index: 1,
+            input: "some-key".to_string(),
+            cursor: 8,
+        };
+
+        wizard.handle_key(key(KeyCode::Esc));
+
+        assert!(matches!(wizard.step, WizardStep::ProviderList));
+    }
+
+    #[test]
+    fn continue_option_goes_to_done() {
+        let mut wizard = SetupWizard::new_for_test();
+        wizard.step = WizardStep::ProviderList;
+        wizard.selected = wizard.providers.len(); // "Continue" item
+
+        wizard.handle_key(key(KeyCode::Enter));
+
+        assert!(matches!(wizard.step, WizardStep::Done));
+    }
+
+    #[test]
+    fn s_key_skips_to_done() {
+        let mut wizard = SetupWizard::new_for_test();
+        wizard.step = WizardStep::ProviderList;
+
+        wizard.handle_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE));
+
+        assert!(matches!(wizard.step, WizardStep::Done));
+    }
+
+    #[test]
+    fn enter_on_done_sets_continue() {
+        let mut wizard = SetupWizard::new_for_test();
+        wizard.step = WizardStep::Done;
+
+        wizard.handle_key(key(KeyCode::Enter));
+
+        assert!(wizard.should_continue);
+        assert!(!wizard.should_quit);
+    }
+
+    #[test]
+    fn esc_on_done_sets_quit() {
+        let mut wizard = SetupWizard::new_for_test();
+        wizard.step = WizardStep::Done;
+
+        wizard.handle_key(key(KeyCode::Esc));
+
+        assert!(wizard.should_quit);
+        assert!(!wizard.should_continue);
+    }
+
+    #[test]
+    fn shift_char_in_key_entry_inserts() {
+        let mut wizard = SetupWizard::new_for_test();
+        wizard.step = WizardStep::KeyEntry {
+            provider_index: 1,
+            input: String::new(),
+            cursor: 0,
+        };
+
+        wizard.handle_key(KeyEvent::new(KeyCode::Char('A'), KeyModifiers::SHIFT));
+
+        match &wizard.step {
+            WizardStep::KeyEntry { input, cursor, .. } => {
+                assert_eq!(input, "A");
+                assert_eq!(*cursor, 1);
+            }
+            _ => panic!("should still be in KeyEntry"),
+        }
+    }
+
+    #[test]
+    fn q_on_welcome_sets_quit() {
+        let mut wizard = SetupWizard::new_for_test();
+        wizard.handle_key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE));
+        assert!(wizard.should_quit);
+    }
+
+    #[test]
+    fn enter_on_no_key_provider_is_noop() {
+        let mut wizard = SetupWizard::new_for_test();
+        wizard.step = WizardStep::ProviderList;
+
+        // Find Ollama (no key required)
+        let ollama_idx = wizard
+            .providers
+            .iter()
+            .position(|p| !p.requires_key)
+            .expect("should have a no-key provider");
+        wizard.selected = ollama_idx;
+
+        wizard.handle_key(key(KeyCode::Enter));
+
+        // Should remain on ProviderList since Ollama doesn't need a key
+        assert!(matches!(wizard.step, WizardStep::ProviderList));
+    }
 }

@@ -112,6 +112,66 @@ mod tests {
     }
 
     #[test]
+    fn into_parts_returns_correct_values() {
+        let primary_model = ModelSpec::new("anthropic", "claude-sonnet-4-6");
+        let extra_model = ModelSpec::new("openai", "gpt-5.2");
+
+        let connections = ModelConnections::new(
+            ModelConnection::new(primary_model.clone(), dummy_stream()),
+            vec![ModelConnection::new(extra_model.clone(), dummy_stream())],
+        );
+
+        let (model, _stream_fn, extras) = connections.into_parts();
+        assert_eq!(model, primary_model);
+        assert_eq!(extras.len(), 1);
+        assert_eq!(extras[0].0, extra_model);
+    }
+
+    #[test]
+    fn model_connection_getters() {
+        let model = ModelSpec::new("test", "test-model");
+        let stream = dummy_stream();
+        let conn = ModelConnection::new(model.clone(), Arc::clone(&stream));
+
+        assert_eq!(conn.model_spec(), &model);
+        // stream_fn() returns a clone of the Arc
+        let sf = conn.stream_fn();
+        assert!(Arc::ptr_eq(&sf, &stream));
+    }
+
+    #[test]
+    fn empty_extras() {
+        let connections = ModelConnections::new(
+            ModelConnection::new(
+                ModelSpec::new("anthropic", "claude-sonnet-4-6"),
+                dummy_stream(),
+            ),
+            vec![],
+        );
+
+        assert_eq!(connections.extra_models().len(), 0);
+        assert_eq!(
+            connections.primary_model(),
+            &ModelSpec::new("anthropic", "claude-sonnet-4-6")
+        );
+    }
+
+    #[test]
+    fn all_extras_are_duplicates_of_primary() {
+        let primary = ModelSpec::new("anthropic", "claude-sonnet-4-6");
+        let connections = ModelConnections::new(
+            ModelConnection::new(primary.clone(), dummy_stream()),
+            vec![
+                ModelConnection::new(primary.clone(), dummy_stream()),
+                ModelConnection::new(primary, dummy_stream()),
+            ],
+        );
+
+        // All extras match primary, so they should be filtered out
+        assert_eq!(connections.extra_models().len(), 0);
+    }
+
+    #[test]
     fn model_connections_keep_primary_first_and_deduplicate_extras() {
         let connections = ModelConnections::new(
             ModelConnection::new(

@@ -114,3 +114,71 @@ where
     app.set_agent(agent_factory(&approval_tx));
     app.run(terminal).await
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn explicit_param_wins_over_config() {
+        let config = TuiConfig {
+            system_prompt: Some("from config".to_string()),
+            ..TuiConfig::default()
+        };
+        let result = resolve_system_prompt(Some("explicit".to_string()), &config);
+        assert_eq!(result, "explicit");
+    }
+
+    #[test]
+    fn explicit_param_wins_with_no_config() {
+        let config = TuiConfig::default();
+        let result = resolve_system_prompt(Some("explicit".to_string()), &config);
+        assert_eq!(result, "explicit");
+    }
+
+    #[test]
+    fn config_used_when_no_explicit_param() {
+        // This test is valid regardless of env var state because explicit=Some always
+        // wins. When explicit=None and env var is unset, config should win.
+        // If LLM_SYSTEM_PROMPT happens to be set in the environment, the env var
+        // will win over config -- that is the correct priority order.
+        let config = TuiConfig {
+            system_prompt: Some("from config".to_string()),
+            ..TuiConfig::default()
+        };
+        let result = resolve_system_prompt(None, &config);
+        // Result is either "from config" (no env var) or env var value (env var set).
+        // We verify it is NOT the default, which proves the fallback chain works.
+        assert_ne!(result, DEFAULT_SYSTEM_PROMPT);
+    }
+
+    #[test]
+    fn default_fallback_when_nothing_set() {
+        // When no explicit param AND no config system_prompt AND no LLM_SYSTEM_PROMPT
+        // env var, should return the default constant.
+        // Note: if LLM_SYSTEM_PROMPT is set in the test environment, this test
+        // verifies that the env var path is taken instead (which is correct behavior).
+        let config = TuiConfig::default();
+        assert!(config.system_prompt.is_none());
+        let result = resolve_system_prompt(None, &config);
+        // Either the default constant or the env var -- both are valid outcomes
+        if std::env::var("LLM_SYSTEM_PROMPT").is_err() {
+            assert_eq!(result, DEFAULT_SYSTEM_PROMPT);
+        }
+    }
+
+    #[test]
+    fn explicit_empty_string_still_wins() {
+        let config = TuiConfig {
+            system_prompt: Some("from config".to_string()),
+            ..TuiConfig::default()
+        };
+        let result = resolve_system_prompt(Some(String::new()), &config);
+        assert_eq!(result, "", "explicit empty string should still be used");
+    }
+
+    #[test]
+    fn default_system_prompt_is_not_empty() {
+        assert!(!DEFAULT_SYSTEM_PROMPT.is_empty());
+    }
+}

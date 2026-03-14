@@ -294,3 +294,79 @@ fn summarize_arguments(args: &Value) -> String {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn start_tool_adds_to_active() {
+        let mut panel = ToolPanel::new();
+        panel.start_tool("t1".into(), "bash".into());
+        assert_eq!(panel.active.len(), 1);
+        assert_eq!(panel.active[0].id, "t1");
+        assert_eq!(panel.active[0].name, "bash");
+    }
+
+    #[test]
+    fn end_tool_moves_to_completed() {
+        let mut panel = ToolPanel::new();
+        panel.start_tool("t1".into(), "bash".into());
+        panel.end_tool("t1", false);
+        assert!(panel.active.is_empty());
+        assert_eq!(panel.completed.len(), 1);
+        assert_eq!(panel.completed[0].id, "t1");
+        assert!(!panel.completed[0].is_error);
+    }
+
+    #[test]
+    fn set_awaiting_approval_adds_to_pending() {
+        let mut panel = ToolPanel::new();
+        let args = serde_json::json!({"command": "rm -rf /"});
+        panel.set_awaiting_approval("t1", "bash", &args);
+        assert_eq!(panel.pending_approvals.len(), 1);
+        assert_eq!(panel.pending_approvals[0].name, "bash");
+    }
+
+    #[test]
+    fn resolve_approval_moves_to_resolved() {
+        let mut panel = ToolPanel::new();
+        let args = serde_json::json!({"command": "ls"});
+        panel.set_awaiting_approval("t1", "bash", &args);
+        panel.resolve_approval("t1", true);
+        assert!(panel.pending_approvals.is_empty());
+        assert_eq!(panel.resolved_approvals.len(), 1);
+        assert!(panel.resolved_approvals[0].approved);
+    }
+
+    #[test]
+    fn is_visible_when_has_active_tools() {
+        let mut panel = ToolPanel::new();
+        assert!(!panel.is_visible());
+        panel.start_tool("t1".into(), "bash".into());
+        assert!(panel.is_visible());
+    }
+
+    #[test]
+    fn is_visible_when_has_completed_tools() {
+        let mut panel = ToolPanel::new();
+        panel.start_tool("t1".into(), "bash".into());
+        panel.end_tool("t1", false);
+        assert!(panel.is_visible());
+    }
+
+    #[test]
+    fn not_visible_when_empty() {
+        let panel = ToolPanel::new();
+        assert!(!panel.is_visible());
+    }
+
+    #[test]
+    fn height_capped_at_max() {
+        let mut panel = ToolPanel::new();
+        for i in 0..20 {
+            panel.start_tool(format!("t{i}"), "tool".into());
+        }
+        assert!(panel.height() <= 10);
+    }
+}

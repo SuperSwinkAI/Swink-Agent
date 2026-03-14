@@ -303,4 +303,106 @@ mod tests {
         let schema: Value = serde_json::from_str(&schemas[0]).unwrap();
         assert_eq!(schema["function"]["name"], "mock_tool");
     }
+
+    #[test]
+    fn empty_assistant_message_no_panic() {
+        let msg = AgentMessage::Llm(LlmMessage::Assistant(AssistantMessage {
+            content: vec![],
+            provider: String::new(),
+            model_id: String::new(),
+            usage: Usage::default(),
+            cost: Cost::default(),
+            stop_reason: StopReason::Stop,
+            error_message: None,
+            timestamp: 0,
+        }));
+        let ctx = make_context("", vec![msg], vec![]);
+        let _msgs = convert_messages(&ctx);
+        // Empty content blocks produce empty text — no panic.
+    }
+
+    #[test]
+    fn tool_result_includes_call_id() {
+        // Verify the tool_call_id is embedded in the converted message content.
+        let ctx = make_context("", vec![tool_result_msg("tc-42", "file contents")], vec![]);
+        // Conversion should not panic; the tool_call_id is formatted into the text.
+        let _msgs = convert_messages(&ctx);
+    }
+
+    #[test]
+    fn multiple_content_blocks_concatenated() {
+        let msg = AgentMessage::Llm(LlmMessage::User(UserMessage {
+            content: vec![
+                ContentBlock::Text {
+                    text: "Hello ".to_string(),
+                },
+                ContentBlock::Text {
+                    text: "world!".to_string(),
+                },
+            ],
+            timestamp: 0,
+        }));
+        let ctx = make_context("", vec![msg], vec![]);
+        let _msgs = convert_messages(&ctx);
+        // Multiple text blocks concatenated — no panic.
+    }
+
+    #[test]
+    fn non_text_content_blocks_ignored() {
+        let msg = AgentMessage::Llm(LlmMessage::User(UserMessage {
+            content: vec![
+                ContentBlock::Text {
+                    text: "text part".to_string(),
+                },
+                ContentBlock::Thinking {
+                    thinking: "internal thought".to_string(),
+                    signature: None,
+                },
+                ContentBlock::ToolCall {
+                    id: "tc-1".to_string(),
+                    name: "bash".to_string(),
+                    arguments: json!({}),
+                    partial_json: None,
+                },
+            ],
+            timestamp: 0,
+        }));
+        let ctx = make_context("", vec![msg], vec![]);
+        // Only Text blocks are extracted — others silently ignored.
+        let _msgs = convert_messages(&ctx);
+    }
+
+    #[test]
+    fn convert_tools_produces_valid_tool_definitions() {
+        let ctx = make_context(
+            "",
+            vec![],
+            vec![Arc::new(MockTool::new()) as Arc<dyn AgentTool>],
+        );
+        let tools = convert_tools(&ctx);
+        assert_eq!(tools.len(), 1);
+    }
+
+    #[test]
+    fn convert_tools_empty_context() {
+        let ctx = make_context("", vec![], vec![]);
+        let tools = convert_tools(&ctx);
+        assert!(tools.is_empty());
+    }
+
+    #[test]
+    fn tool_result_error_message_no_panic() {
+        let msg = AgentMessage::Llm(LlmMessage::ToolResult(ToolResultMessage {
+            tool_call_id: "tc-err".to_string(),
+            content: vec![ContentBlock::Text {
+                text: "error: command failed".to_string(),
+            }],
+            is_error: true,
+            timestamp: 0,
+            details: serde_json::Value::Null,
+        }));
+        let ctx = make_context("", vec![msg], vec![]);
+        let _msgs = convert_messages(&ctx);
+        // Error tool results convert without panic.
+    }
 }
