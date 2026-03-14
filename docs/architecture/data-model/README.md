@@ -14,7 +14,7 @@ The types are organised into five cohesive groups. Every other module in the har
 ```mermaid
 flowchart TB
     subgraph ContentLayer["📄 Content"]
-        ContentBlock["ContentBlock<br/>Text · Thinking · ToolCall · Image"]
+        ContentBlock["ContentBlock<br/>Text · Thinking · ToolCall · Image · Extension"]
     end
 
     subgraph MessageLayer["💬 Messages"]
@@ -27,7 +27,7 @@ flowchart TB
 
     subgraph ModelLayer["🤖 Model"]
         ModelSpec["ModelSpec<br/>provider · model_id · thinking_level · budgets"]
-        ThinkingLevel["ThinkingLevel<br/>Off · Minimal · Low · Medium · High · XHigh"]
+        ThinkingLevel["ThinkingLevel<br/>Off · Minimal · Low · Medium · High · ExtraHigh"]
         ThinkingBudgets["ThinkingBudgets<br/>per-level token overrides"]
     end
 
@@ -100,6 +100,7 @@ flowchart TB
         TR_content["content: Vec&lt;ContentBlock&gt;<br/>(Text | Image only)"]
         TR_err["is_error: bool"]
         TR_ts["timestamp: u64"]
+        TR_details["details: Value<br/>(display-only, not sent to LLM)"]
     end
 
     subgraph LlmMsg["LlmMessage (enum)"]
@@ -130,7 +131,7 @@ flowchart TB
 
     class UM_content,UM_ts fieldStyle
     class AM_content,AM_provider,AM_model,AM_usage,AM_cost,AM_stop,AM_err,AM_ts fieldStyle
-    class TR_id,TR_content,TR_err,TR_ts fieldStyle
+    class TR_id,TR_content,TR_err,TR_ts,TR_details fieldStyle
     class LLM_user,LLM_asst,LLM_tool enumStyle
     class AM_llm,AM_custom enumStyle
 ```
@@ -148,6 +149,7 @@ flowchart LR
         Thinking["Thinking<br/>thinking: String<br/>signature: Option&lt;String&gt;"]
         ToolCall["ToolCall<br/>id: String<br/>name: String<br/>arguments: Value<br/>partial_json: Option&lt;String&gt;"]
         Image["Image<br/>source: ImageSource"]
+        Extension["Extension<br/>type_name: String<br/>data: Value"]
     end
 
     subgraph Permitted["Permitted in…"]
@@ -167,7 +169,7 @@ flowchart LR
     classDef blockStyle fill:#fff3e0,stroke:#f57c00,stroke-width:2px,color:#000
     classDef msgStyle fill:#e3f2fd,stroke:#1976d2,stroke-width:2px,color:#000
 
-    class Text,Thinking,ToolCall,Image blockStyle
+    class Text,Thinking,ToolCall,Image,Extension blockStyle
     class InUser,InAssistant,InToolResult msgStyle
 ```
 

@@ -148,8 +148,8 @@ flowchart LR
             ToolEnd["ToolCallEnd(content_index)"]
         end
 
-        Done["Done(stop_reason, usage)"]
-        Error["Error(stop_reason, error_message, partial_usage)"]
+        Done["Done(stop_reason, usage, cost)"]
+        Error["Error(stop_reason, error_message,<br/>usage: Option&lt;Usage&gt;, error_kind: Option&lt;StreamErrorKind&gt;)"]
     end
 
     Start --> TextBlock
@@ -168,6 +168,29 @@ flowchart LR
     class Start,TextStart,TextDelta,TextEnd,ThinkStart,ThinkDelta,ThinkEnd,ToolStart,ToolDelta,ToolEnd eventStyle
     class Done,Error termStyle
 ```
+
+### StreamErrorKind
+
+Adapters can attach a `StreamErrorKind` to an `Error` event so the agent loop can classify errors structurally instead of relying on string matching on `error_message`.
+
+| Variant | Meaning |
+|---|---|
+| `Throttled` | The provider throttled the request (HTTP 429 / rate limit). |
+| `ContextWindowExceeded` | The request exceeded the model's context window. |
+| `Auth` | Authentication or authorization failure (HTTP 401/403). |
+| `Network` | Transient network or server error (connection drop, 5xx, etc.). |
+
+### Error Constructor Helpers
+
+`AssistantMessageEvent` provides five constructor helpers for adapters. All set `stop_reason: StopReason::Error` and `usage: None`.
+
+| Constructor | `error_kind` | Use case |
+|---|---|---|
+| `error(message)` | `None` | Generic error; agent loop falls back to string-based classification. |
+| `error_throttled(message)` | `Some(Throttled)` | Rate-limit / HTTP 429 errors. |
+| `error_context_overflow(message)` | `Some(ContextWindowExceeded)` | Context window exceeded; triggers context compaction. |
+| `error_auth(message)` | `Some(Auth)` | Authentication failure; non-retryable. |
+| `error_network(message)` | `Some(Network)` | Transient network/server error; retryable. |
 
 ---
 
