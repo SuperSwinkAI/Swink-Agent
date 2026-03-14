@@ -23,7 +23,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let connections = ModelConnections::new(
         build_remote_connection(remote_preset_keys::anthropic::SONNET_46)?,
         vec![
-            build_remote_connection(remote_preset_keys::openai::GPT_5_2)?,
+            build_remote_connection(remote_preset_keys::openai::GPT_4_1)?,
             default_local_connection()?,
         ],
     );
@@ -37,7 +37,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 3. Build options directly from connections — no manual decomposition needed.
     let options =
-        AgentOptions::from_connections("You are a helpful coding assistant.", connections)
+        AgentOptions::from_connections("You are a helpful assistant.", connections)
             .with_tools(tools);
 
     // 4. Set up terminal and launch the TUI.

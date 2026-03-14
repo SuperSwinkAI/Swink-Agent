@@ -215,9 +215,9 @@ mod tests {
 
     #[test]
     fn preset_lookup_returns_provider_metadata() {
-        let preset = model_catalog().preset("openai", "gpt_5_2").unwrap();
-        assert_eq!(preset.display_name, "OpenAI GPT-5.2");
-        assert_eq!(preset.model_id, "gpt-5.2");
+        let preset = model_catalog().preset("openai", "gpt_4o").unwrap();
+        assert_eq!(preset.display_name, "OpenAI GPT-4o");
+        assert_eq!(preset.model_id, "gpt-4o");
         assert_eq!(preset.credential_env_var.as_deref(), Some("OPENAI_API_KEY"));
         assert_eq!(preset.base_url_env_var.as_deref(), Some("OPENAI_BASE_URL"));
         assert_eq!(preset.auth_mode, Some(AuthMode::Bearer));
@@ -249,7 +249,7 @@ mod tests {
 
     #[test]
     fn azure_and_bedrock_presets_expose_provider_specific_metadata() {
-        let azure = model_catalog().preset("azure", "gpt_5_4").unwrap();
+        let azure = model_catalog().preset("azure", "gpt_4o").unwrap();
         assert_eq!(azure.auth_mode, Some(AuthMode::ApiKeyHeader));
         assert!(azure.requires_base_url);
         assert_eq!(azure.base_url_env_var.as_deref(), Some("AZURE_BASE_URL"));
@@ -289,7 +289,7 @@ mod tests {
 
     #[test]
     fn openai_preset_no_thinking() {
-        let preset = model_catalog().preset("openai", "gpt_5_2").unwrap();
+        let preset = model_catalog().preset("openai", "gpt_4o").unwrap();
         let caps = preset.model_capabilities();
         assert!(!caps.supports_thinking);
         assert!(caps.supports_tool_use);

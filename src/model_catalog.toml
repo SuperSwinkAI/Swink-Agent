@@ -47,64 +47,64 @@ base_url_env_var = "OPENAI_BASE_URL"
 default_base_url = "https://api.openai.com"
 
 [[providers.presets]]
-id = "gpt_5_2"
-display_name = "OpenAI GPT-5.2"
-group = "gpt_5"
-model_id = "gpt-5.2"
+id = "gpt_4o"
+display_name = "OpenAI GPT-4o"
+group = "gpt4o"
+model_id = "gpt-4o"
 capabilities = ["text", "tools", "images_in", "streaming", "structured_output"]
 status = "ga"
 context_window_tokens = 128000
 max_output_tokens = 16384
 
 [[providers.presets]]
-id = "gpt_5_4"
-display_name = "OpenAI GPT-5.4"
-group = "gpt_5"
-model_id = "gpt-5.4"
-capabilities = ["text", "tools", "thinking", "images_in", "streaming", "structured_output"]
+id = "gpt_4_1"
+display_name = "OpenAI GPT-4.1"
+group = "gpt41"
+model_id = "gpt-4.1"
+capabilities = ["text", "tools", "images_in", "streaming", "structured_output"]
 status = "ga"
-context_window_tokens = 128000
-max_output_tokens = 16384
+context_window_tokens = 1000000
+max_output_tokens = 32768
 
 [[providers.presets]]
-id = "gpt_5_1"
-display_name = "OpenAI GPT-5.1"
-group = "gpt_5"
-model_id = "gpt-5.1"
+id = "gpt_4o_mini"
+display_name = "OpenAI GPT-4o Mini"
+group = "gpt4o"
+model_id = "gpt-4o-mini"
 capabilities = ["text", "tools", "images_in", "streaming", "structured_output"]
 status = "ga"
 context_window_tokens = 128000
 max_output_tokens = 16384
 
 [[providers.presets]]
-id = "gpt_5_3_chat_latest"
-display_name = "OpenAI GPT-5.3 Chat Latest"
-group = "gpt_5_chat"
-model_id = "gpt-5.3-chat-latest"
+id = "gpt_4_1_mini"
+display_name = "OpenAI GPT-4.1 Mini"
+group = "gpt41"
+model_id = "gpt-4.1-mini"
 capabilities = ["text", "tools", "images_in", "streaming", "structured_output"]
 status = "ga"
-context_window_tokens = 128000
-max_output_tokens = 16384
+context_window_tokens = 1000000
+max_output_tokens = 32768
 
 [[providers.presets]]
-id = "gpt_5_2_chat_latest"
-display_name = "OpenAI GPT-5.2 Chat Latest"
-group = "gpt_5_chat"
-model_id = "gpt-5.2-chat-latest"
-capabilities = ["text", "tools", "images_in", "streaming", "structured_output"]
+id = "o3_mini"
+display_name = "OpenAI o3-mini"
+group = "o3"
+model_id = "o3-mini"
+capabilities = ["text", "tools", "streaming", "structured_output"]
 status = "ga"
-context_window_tokens = 128000
-max_output_tokens = 16384
+context_window_tokens = 200000
+max_output_tokens = 100000
 
 [[providers.presets]]
-id = "gpt_5_1_chat_latest"
-display_name = "OpenAI GPT-5.1 Chat Latest"
-group = "gpt_5_chat"
-model_id = "gpt-5.1-chat-latest"
+id = "o1"
+display_name = "OpenAI o1"
+group = "o1"
+model_id = "o1"
 capabilities = ["text", "tools", "images_in", "streaming", "structured_output"]
 status = "ga"
-context_window_tokens = 128000
-max_output_tokens = 16384
+context_window_tokens = 200000
+max_output_tokens = 100000
 
 [[providers]]
 key = "local"
@@ -186,22 +186,20 @@ base_url_env_var = "AZURE_BASE_URL"
 requires_base_url = true
 
 [[providers.presets]]
-id = "gpt_5_4"
-display_name = "Azure GPT-5.4"
+id = "gpt_4o"
+display_name = "Azure GPT-4o"
 group = "openai"
-model_id = "gpt-5.4"
-api_version = "v1"
+model_id = "gpt-4o"
 capabilities = ["text", "tools", "images_in", "streaming", "structured_output"]
 status = "ga"
 context_window_tokens = 128000
 max_output_tokens = 16384
 
 [[providers.presets]]
-id = "gpt_5_2"
-display_name = "Azure GPT-5.2"
+id = "gpt_4o_mini"
+display_name = "Azure GPT-4o Mini"
 group = "openai"
-model_id = "gpt-5.2"
-api_version = "v1"
+model_id = "gpt-4o-mini"
 capabilities = ["text", "tools", "images_in", "streaming", "structured_output"]
 status = "ga"
 context_window_tokens = 128000
@@ -212,7 +210,6 @@ id = "phi_4"
 display_name = "Azure Phi-4"
 group = "foundry"
 model_id = "Phi-4"
-api_version = "v1"
 capabilities = ["text", "tools", "streaming"]
 status = "ga"
 context_window_tokens = 16384

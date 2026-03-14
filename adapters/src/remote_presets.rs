@@ -40,15 +40,12 @@ pub mod remote_preset_keys {
     pub mod openai {
         use super::RemotePresetKey;
 
-        pub const GPT_5_4: RemotePresetKey = RemotePresetKey::new("openai", "gpt_5_4");
-        pub const GPT_5_2: RemotePresetKey = RemotePresetKey::new("openai", "gpt_5_2");
-        pub const GPT_5_1: RemotePresetKey = RemotePresetKey::new("openai", "gpt_5_1");
-        pub const GPT_5_3_CHAT_LATEST: RemotePresetKey =
-            RemotePresetKey::new("openai", "gpt_5_3_chat_latest");
-        pub const GPT_5_2_CHAT_LATEST: RemotePresetKey =
-            RemotePresetKey::new("openai", "gpt_5_2_chat_latest");
-        pub const GPT_5_1_CHAT_LATEST: RemotePresetKey =
-            RemotePresetKey::new("openai", "gpt_5_1_chat_latest");
+        pub const GPT_4O: RemotePresetKey = RemotePresetKey::new("openai", "gpt_4o");
+        pub const GPT_4_1: RemotePresetKey = RemotePresetKey::new("openai", "gpt_4_1");
+        pub const GPT_4O_MINI: RemotePresetKey = RemotePresetKey::new("openai", "gpt_4o_mini");
+        pub const GPT_4_1_MINI: RemotePresetKey = RemotePresetKey::new("openai", "gpt_4_1_mini");
+        pub const O3_MINI: RemotePresetKey = RemotePresetKey::new("openai", "o3_mini");
+        pub const O1: RemotePresetKey = RemotePresetKey::new("openai", "o1");
     }
 
     pub mod google {
@@ -67,8 +64,8 @@ pub mod remote_preset_keys {
     pub mod azure {
         use super::RemotePresetKey;
 
-        pub const GPT_5_4: RemotePresetKey = RemotePresetKey::new("azure", "gpt_5_4");
-        pub const GPT_5_2: RemotePresetKey = RemotePresetKey::new("azure", "gpt_5_2");
+        pub const GPT_4O: RemotePresetKey = RemotePresetKey::new("azure", "gpt_4o");
+        pub const GPT_4O_MINI: RemotePresetKey = RemotePresetKey::new("azure", "gpt_4o_mini");
         pub const PHI_4: RemotePresetKey = RemotePresetKey::new("azure", "phi_4");
     }
 
@@ -310,12 +307,12 @@ mod tests {
             .map(|preset| preset.preset_id.as_str())
             .collect();
         assert_eq!(openai.len(), 6);
-        assert!(ids.contains(&"gpt_5_4"));
-        assert!(ids.contains(&"gpt_5_2"));
-        assert!(ids.contains(&"gpt_5_1"));
-        assert!(ids.contains(&"gpt_5_3_chat_latest"));
-        assert!(ids.contains(&"gpt_5_2_chat_latest"));
-        assert!(ids.contains(&"gpt_5_1_chat_latest"));
+        assert!(ids.contains(&"gpt_4o"));
+        assert!(ids.contains(&"gpt_4_1"));
+        assert!(ids.contains(&"gpt_4o_mini"));
+        assert!(ids.contains(&"gpt_4_1_mini"));
+        assert!(ids.contains(&"o3_mini"));
+        assert!(ids.contains(&"o1"));
 
         let google = remote_presets(Some("google"));
         let ids: Vec<_> = google
@@ -372,14 +369,14 @@ mod tests {
     #[test]
     fn remote_preset_requires_key() {
         let Err(error) =
-            build_remote_connection_from_values(remote_preset_keys::openai::GPT_5_2, None, None)
+            build_remote_connection_from_values(remote_preset_keys::openai::GPT_4O, None, None)
         else {
             panic!("expected missing credential error");
         };
         assert_eq!(
             error,
             RemoteModelConnectionError::MissingCredential {
-                preset: "OpenAI GPT-5.2".to_string(),
+                preset: "OpenAI GPT-4o".to_string(),
                 env_var: "OPENAI_API_KEY".to_string(),
             }
         );
@@ -387,23 +384,25 @@ mod tests {
 
     #[test]
     fn added_openai_presets_map_to_catalog_models() {
-        let gpt_54 = required_catalog_preset(remote_preset_keys::openai::GPT_5_4).unwrap();
-        assert_eq!(gpt_54.model_id, "gpt-5.4");
+        let gpt_4o = required_catalog_preset(remote_preset_keys::openai::GPT_4O).unwrap();
+        assert_eq!(gpt_4o.model_id, "gpt-4o");
 
-        let gpt_51 = required_catalog_preset(remote_preset_keys::openai::GPT_5_1).unwrap();
-        assert_eq!(gpt_51.model_id, "gpt-5.1");
+        let gpt_4_1 = required_catalog_preset(remote_preset_keys::openai::GPT_4_1).unwrap();
+        assert_eq!(gpt_4_1.model_id, "gpt-4.1");
 
-        let gpt_53_chat =
-            required_catalog_preset(remote_preset_keys::openai::GPT_5_3_CHAT_LATEST).unwrap();
-        assert_eq!(gpt_53_chat.model_id, "gpt-5.3-chat-latest");
+        let gpt_4o_mini =
+            required_catalog_preset(remote_preset_keys::openai::GPT_4O_MINI).unwrap();
+        assert_eq!(gpt_4o_mini.model_id, "gpt-4o-mini");
 
-        let gpt_52_chat =
-            required_catalog_preset(remote_preset_keys::openai::GPT_5_2_CHAT_LATEST).unwrap();
-        assert_eq!(gpt_52_chat.model_id, "gpt-5.2-chat-latest");
+        let gpt_4_1_mini =
+            required_catalog_preset(remote_preset_keys::openai::GPT_4_1_MINI).unwrap();
+        assert_eq!(gpt_4_1_mini.model_id, "gpt-4.1-mini");
 
-        let gpt_51_chat =
-            required_catalog_preset(remote_preset_keys::openai::GPT_5_1_CHAT_LATEST).unwrap();
-        assert_eq!(gpt_51_chat.model_id, "gpt-5.1-chat-latest");
+        let o3_mini = required_catalog_preset(remote_preset_keys::openai::O3_MINI).unwrap();
+        assert_eq!(o3_mini.model_id, "o3-mini");
+
+        let o1 = required_catalog_preset(remote_preset_keys::openai::O1).unwrap();
+        assert_eq!(o1.model_id, "o1");
     }
 
     #[test]
@@ -437,7 +436,7 @@ mod tests {
         assert_eq!(sonnet.provider_key, "anthropic");
         assert_eq!(sonnet.preset_id, "sonnet_46");
 
-        let gpt = preset("gpt-5.4").expect("gpt-5.4 preset should exist");
+        let gpt = preset("gpt-4o").expect("gpt-4o preset should exist");
         assert_eq!(gpt.provider_key, "openai");
 
         assert!(preset("nonexistent-model-xyz").is_none());
@@ -446,10 +445,10 @@ mod tests {
     #[test]
     fn added_provider_presets_map_to_catalog_models() {
         assert_eq!(
-            required_catalog_preset(remote_preset_keys::azure::GPT_5_4)
+            required_catalog_preset(remote_preset_keys::azure::GPT_4O)
                 .unwrap()
                 .model_id,
-            "gpt-5.4"
+            "gpt-4o"
         );
         assert_eq!(
             required_catalog_preset(remote_preset_keys::xai::GROK_3)
