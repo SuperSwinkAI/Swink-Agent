@@ -7,7 +7,7 @@
 
 **Principle:** Each phase produces a compilable, runnable artifact. Phases build on each other incrementally.
 
-**Status:** All phases complete. The TUI is fully implemented and wired to a real LLM provider (Ollama by default, proxy mode via env vars).
+**Status:** Phases T1–T4 complete. Phase T5 tracks planned features not yet implemented. The TUI is wired to real LLM providers (priority: Proxy > OpenAI > Anthropic > Ollama).
 
 ---
 
@@ -153,23 +153,49 @@ Wire up the swink agent to the TUI: send messages from the input editor, stream 
 
 ## Phase T4 — Polish + Features ✅
 
-**Files:** `tui/src/config.rs`, `tui/src/commands.rs`, `tui/src/format.rs`, various refinements
+**Files:** `tui/src/config.rs`, `tui/src/commands.rs`, `tui/src/format.rs`, `tui/src/editor.rs`, `tui/src/credentials.rs`, `tui/src/session.rs`, `tui/src/wizard.rs`, various refinements
 **Depends on:** Phase T3
 
 ### Scope
 
-UX polish, configuration, command system, and quality-of-life features.
+UX polish, configuration, command system, inline diffs, external editor, plan mode, approval modes, collapsible tool blocks, context window gauge, and quality-of-life features.
 
 ### What was built
 
 - `config.rs` — `TuiConfig` loaded from `~/.config/swink-agent/tui.toml`:
-  - Fields: `show_thinking`, `auto_scroll`, `tick_rate_ms`, `default_model`, `theme`
+  - Fields: `show_thinking`, `auto_scroll`, `tick_rate_ms`, `default_model`, `theme`, `editor`
   - Deserialized via `serde` + `toml`
   - Platform directory resolution via `dirs`
 - `commands.rs` — dual command system:
-  - Hash commands: `#help`, `#clear`, `#info`, `#copy`, `#copy all`, `#copy code`
-  - Slash commands: `/quit`, `/model`, `/thinking`, `/system`, `/reset`
-- `format.rs` — `format_tokens()` (human-readable K/M format), `format_elapsed()`
+  - Hash commands: `#help`, `#clear`, `#info`, `#copy`, `#copy all`, `#copy code`, `#approve on/off/smart`
+  - Slash commands: `/quit`, `/model`, `/thinking`, `/system`, `/reset`, `/plan`, `/editor`
+- `editor.rs` — external editor integration:
+  - Resolves editor from config override > `$EDITOR` > `$VISUAL` > `vi`
+  - TUI suspends while editor is open, submits content on close
+  - Empty file on close treated as cancellation
+- `ui/diff.rs` — inline diff view:
+  - Unified diff rendering with LCS-based computation
+  - Syntax-highlighted additions (green) and removals (red), context lines dimmed
+  - New files shown as all-additions; large diffs truncated at 50 lines
+- Collapsible tool result blocks:
+  - Tool results start expanded, auto-collapse after 10 seconds
+  - F2 key toggles collapse; user-expanded blocks resist auto-collapse
+  - Collapsed view shows one-line summary
+- Plan mode:
+  - Toggled via Shift+Tab or `/plan` command
+  - Restricts agent to read-only tools; plan output styled distinctly
+  - Switching to execute mode re-registers write tools
+- Tiered approval modes:
+  - Three modes: Enabled (prompt for all), Smart (auto-approve reads, prompt for writes), Bypassed (auto-approve all)
+  - Per-tool session trust: "always approve this tool" persists for session duration
+  - Configurable via `#approve smart/on/off` commands
+- Context window progress bar:
+  - 10-character gauge in status bar showing estimated fill percentage
+  - Color transitions: green (<60%) to yellow (60–85%) to red (>85%)
+- `format.rs` — `format_tokens()` (human-readable K/M format), `format_elapsed()`, `format_context_gauge()`
+- `credentials.rs` — credential resolution (env vars, keychain)
+- `session.rs` — session persistence
+- `wizard.rs` — first-run setup wizard
 - Terminal resize handling — re-layout all components on resize event
 - Focus management — Tab cycles Input/Conversation, typing auto-focuses input, focused component gets brighter border
 - Input history — Up/Down arrow recalls previous messages
@@ -187,6 +213,35 @@ UX polish, configuration, command system, and quality-of-life features.
 | T4.4 | `/quit` exits the application | ✅ |
 | T4.5 | `#clear` clears the conversation history | ✅ |
 | T4.6 | Status bar shows running cost total | ✅ |
+| T4.7 | Inline diff renders file modifications as syntax-highlighted unified diffs | ✅ |
+| T4.8 | External editor opens `$EDITOR`, submits content, empty file = cancellation | ✅ |
+| T4.9 | Plan mode restricts agent to read-only tools and labels output distinctly | ✅ |
+| T4.10 | Tool result blocks default to expanded, auto-collapse after timeout, toggle with F2 | ✅ |
+| T4.11 | Smart approval mode auto-approves reads and prompts for writes | ✅ |
+| T4.12 | Per-tool session trust persists for session duration | ✅ |
+| T4.13 | Context window gauge displays fill percentage with color transitions | ✅ |
+
+---
+
+## Phase T5 — Planned Features
+
+**Status:** Not started.
+
+### Scope
+
+Features described in PRD §16 that are not yet implemented.
+
+### Planned Deliverables
+
+- **Per-hunk approve/reject** — each changed hunk in the inline diff view becomes an independent decision point. Approved hunks are applied; rejected hunks are reverted and communicated back to the agent as a tool result
+- **Side-by-side diff layout** — when terminal width exceeds a threshold (e.g., 160 columns), switch from unified to side-by-side diff rendering
+
+### Acceptance Criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| T5.1 | Per-hunk approve/reject in inline diff view | Planned |
+| T5.2 | Side-by-side diff layout when terminal width exceeds threshold | Planned |
 
 ---
 
@@ -197,4 +252,5 @@ UX polish, configuration, command system, and quality-of-life features.
 | T1 — Scaffold | Binary crate, event loop, terminal setup, status bar | ✅ Complete |
 | T2 — Input + Conversation | Text editor, message display, markdown, scrolling | ✅ Complete |
 | T3 — Streaming + Tools | Agent integration, streaming display, tool panel, syntax highlighting | ✅ Complete |
-| T4 — Polish | Config, commands, focus, history, clipboard, formatting | ✅ Complete |
+| T4 — Polish | Config, commands, diffs, editor, plan mode, approval, collapse, context gauge | ✅ Complete |
+| T5 — Planned | Per-hunk approve/reject, side-by-side diffs | Not started |

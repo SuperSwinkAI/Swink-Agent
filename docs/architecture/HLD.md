@@ -7,7 +7,7 @@
 
 ## System Overview
 
-The Swink Agent is a Rust workspace composed of five crates that provide the core scaffolding for building LLM-powered agentic applications. The **core library** (`swink-agent`) manages the agent loop, message context, tool dispatch, streaming, and lifecycle events. The **adapters crate** (`swink-agent-adapters`) provides ready-made `StreamFn` implementations for specific LLM providers. The **memory crate** (`swink-agent-memory`) provides session persistence and summarization-aware context compaction. The **eval crate** (`swink-agent-eval`) provides trajectory tracing, golden path verification, response matching, and cost/latency governance for agent evaluation. The **TUI crate** (`swink-agent-tui`) is a binary that provides an interactive terminal interface. All LLM provider access is delegated to a `StreamFn` implementation, keeping the core harness fully provider-agnostic.
+The Swink Agent is a Rust workspace composed of six crates that provide the core scaffolding for building LLM-powered agentic applications. The **core library** (`swink-agent`) manages the agent loop, message context, tool dispatch, streaming, lifecycle events, model catalogs, agent registries, loop policies, middleware, and inter-agent messaging. The **adapters crate** (`swink-agent-adapters`) provides ready-made `StreamFn` implementations for nine LLM providers: Anthropic, Azure, AWS Bedrock, Google Gemini, Mistral, Ollama, OpenAI (multi-provider compatible), Proxy, and xAI. The **memory crate** (`swink-agent-memory`) provides session persistence and summarization-aware context compaction. The **local-llm crate** (`swink-agent-local-llm`) provides on-device inference via mistral.rs with SmolLM3-3B for text/tool generation and EmbeddingGemma-300M for embeddings. The **eval crate** (`swink-agent-eval`) provides trajectory tracing, golden path verification, response matching, and cost/latency governance for agent evaluation. The **TUI crate** (`swink-agent-tui`) is a binary that provides an interactive terminal interface. All LLM provider access is delegated to a `StreamFn` implementation, keeping the core harness fully provider-agnostic.
 
 ---
 
@@ -24,8 +24,9 @@ flowchart TB
 
     subgraph HarnessSystem["⚙️ Swink Agent (Rust Workspace)"]
         Harness["swink-agent (core)<br/>Agent loop, tool dispatch,<br/>streaming, events, retry"]
-        Adapters["swink-agent-adapters<br/>LLM provider adapters<br/>(Ollama, Anthropic, OpenAI, Proxy)"]
+        Adapters["swink-agent-adapters<br/>LLM provider adapters<br/>(Anthropic, Azure, Bedrock,<br/>Gemini, Mistral, Ollama,<br/>OpenAI, Proxy, xAI)"]
         Memory["swink-agent-memory<br/>Session persistence,<br/>summarization compaction"]
+        LocalLLM["swink-agent-local-llm<br/>On-device inference<br/>(SmolLM3-3B, EmbeddingGemma-300M)"]
         Eval["swink-agent-eval<br/>Trajectory tracing,<br/>golden path verification,<br/>cost governance"]
     end
 
@@ -39,7 +40,9 @@ flowchart TB
     TUI -->|"Agent API +<br/>event subscription"| Harness
     TUI -->|"Uses adapter"| Adapters
     TUI -->|"Uses memory"| Memory
+    TUI -->|"Uses local-llm"| LocalLLM
     Memory -->|"Uses core types"| Harness
+    LocalLLM -->|"Implements StreamFn,<br/>uses core types"| Harness
     Eval -->|"Consumes AgentEvent stream,<br/>uses core types"| Harness
     Harness -->|"AgentEvent stream"| TUI
     Adapters -->|"Streaming inference<br/>via OllamaStreamFn (NDJSON)"| LLMProvider
@@ -51,7 +54,7 @@ flowchart TB
     classDef externalStyle fill:#e0e0e0,stroke:#424242,stroke-width:2px,color:#000
 
     class App,TUI callerStyle
-    class Harness,Adapters,Memory,Eval harnessStyle
+    class Harness,Adapters,Memory,LocalLLM,Eval harnessStyle
     class LLMProvider,ProxyServer externalStyle
 ```
 
@@ -61,11 +64,12 @@ flowchart TB
 |---|---|---|
 | App → Harness | Inbound | Caller constructs an `Agent`, registers tools, supplies a `StreamFn`, and invokes prompts |
 | Harness → App | Outbound | Harness emits `AgentEvent` values and returns `AgentResult` on completion |
-| Adapters → LLM Provider | Outbound | `OllamaStreamFn` streams inference via Ollama's `/api/chat` endpoint (NDJSON) |
+| Adapters → LLM Provider | Outbound | Nine adapters stream inference to their respective providers: `AnthropicStreamFn` (SSE), `AzureStreamFn` (SSE), `BedrockStreamFn` (SSE), `GeminiStreamFn` (SSE), `MistralStreamFn` (SSE), `OllamaStreamFn` (NDJSON), `OpenAiStreamFn` (SSE, multi-provider), `XAiStreamFn` (SSE) |
 | Adapters → Proxy Server | Outbound | Optional: `ProxyStreamFn` (in adapters crate) forwards requests to a proxy over SSE |
 | Proxy Server → LLM Provider | Outbound | Proxy handles auth and routes to the actual provider |
+| LocalLLM → Harness | Internal | Implements `StreamFn` via `LocalStreamFn` for on-device inference (SmolLM3-3B); provides `EmbeddingModel` for text vectorization |
 | Eval → Harness | Internal | Eval consumes `AgentEvent` stream via `TrajectoryCollector`, uses core types (`Usage`, `Cost`, `AssistantMessage`) for invocation traces |
-| TUI → Adapters | Internal | TUI selects provider by priority: Proxy (LLM_BASE_URL), OpenAI (OPENAI_API_KEY), Anthropic (ANTHROPIC_API_KEY), Ollama (default) |
+| TUI → Adapters | Internal | TUI selects provider via catalog presets and environment variables; supports all nine remote adapters plus local-llm fallback |
 
 ---
 
@@ -92,6 +96,8 @@ flowchart TB
     subgraph ToolLayer["🔧 Tool System"]
         Validator["Argument Validator<br/>(JSON Schema)"]
         Executor["Concurrent Executor<br/>(tokio::spawn per call)"]
+        ToolMW["ToolMiddleware<br/>(intercept execute)"]
+        SubAgentTool["SubAgent<br/>(multi-agent composition)"]
     end
 
     subgraph StreamLayer["📡 Streaming Interface"]
@@ -99,10 +105,23 @@ flowchart TB
     end
 
     subgraph AdapterLayer["🔌 Adapters Crate"]
-        OllamaFn["OllamaStreamFn<br/>(NDJSON streaming)"]
         AnthropicFn["AnthropicStreamFn<br/>(SSE + thinking blocks)"]
+        AzureFn["AzureStreamFn<br/>(SSE)"]
+        BedrockFn["BedrockStreamFn<br/>(SSE + AWS SigV4)"]
+        GeminiFn["GeminiStreamFn<br/>(SSE)"]
+        MistralFn["MistralStreamFn<br/>(SSE)"]
+        OllamaFn["OllamaStreamFn<br/>(NDJSON streaming)"]
         OpenAiFn["OpenAiStreamFn<br/>(SSE, multi-provider)"]
+        XAiFn["XAiStreamFn<br/>(SSE)"]
         ProxyFn["ProxyStreamFn<br/>(SSE + delta reconstruction)"]
+        RemotePresets["RemotePresets<br/>(catalog-driven connections)"]
+        Classify["HttpErrorClassifier<br/>(status code mapping)"]
+    end
+
+    subgraph LocalLLMLayer["🧠 Local LLM Crate"]
+        LocalStream["LocalStreamFn<br/>(on-device inference)"]
+        LocalModel["LocalModel<br/>(SmolLM3-3B, GGUF Q4_K_M)"]
+        EmbeddingModel["EmbeddingModel<br/>(EmbeddingGemma-300M)"]
     end
 
     subgraph InfraLayer["🏗️ Infrastructure"]
@@ -110,6 +129,12 @@ flowchart TB
         Retry["Retry Strategy<br/>(exp. back-off + jitter)"]
         Cancel["Cancellation<br/>(CancellationToken)"]
         Errors["Error Types<br/>(ContextWindowOverflow,<br/>ModelThrottled, StreamError)"]
+        Catalog["ModelCatalog<br/>(TOML-driven provider/<br/>preset registry)"]
+        Registry["AgentRegistry<br/>(named agent lookup)"]
+        Mailbox["AgentMailbox<br/>(inter-agent messaging)"]
+        Policy["LoopPolicy<br/>(MaxTurns, CostCap,<br/>ComposedPolicy)"]
+        StreamMW["StreamMiddleware<br/>(intercept output stream)"]
+        Emission["Emission<br/>(structured event payloads)"]
     end
 
     subgraph EvalLayer["📊 Evaluation"]
@@ -146,13 +171,25 @@ flowchart TB
     Executor --> Tools
     Loop -->|"call StreamFn"| StreamFn
     StreamFn --> StreamImpl
-    OllamaFn -->|"implements"| StreamFn
     AnthropicFn -->|"implements"| StreamFn
+    AzureFn -->|"implements"| StreamFn
+    BedrockFn -->|"implements"| StreamFn
+    GeminiFn -->|"implements"| StreamFn
+    MistralFn -->|"implements"| StreamFn
+    OllamaFn -->|"implements"| StreamFn
     OpenAiFn -->|"implements"| StreamFn
+    XAiFn -->|"implements"| StreamFn
+    LocalStream -->|"implements"| StreamFn
     StreamImpl -->|direct| LLMProvider
-    OllamaFn -->|"NDJSON"| LLMProvider
     AnthropicFn -->|"SSE"| LLMProvider
+    AzureFn -->|"SSE"| LLMProvider
+    BedrockFn -->|"SSE"| LLMProvider
+    GeminiFn -->|"SSE"| LLMProvider
+    MistralFn -->|"SSE"| LLMProvider
+    OllamaFn -->|"NDJSON"| LLMProvider
     OpenAiFn -->|"SSE"| LLMProvider
+    XAiFn -->|"SSE"| LLMProvider
+    LocalStream -->|"local inference"| LocalModel
     ProxyFn -->|SSE| ProxyServer
     ProxyServer --> LLMProvider
     Loop -->|"emit"| Events
@@ -185,14 +222,16 @@ flowchart TB
     classDef tuiStyle fill:#1976d2,stroke:#0d47a1,stroke-width:2px,color:#fff
     classDef memoryStyle fill:#ce93d8,stroke:#7b1fa2,stroke-width:2px,color:#000
     classDef evalStyle fill:#a5d6a7,stroke:#2e7d32,stroke-width:2px,color:#000
+    classDef localStyle fill:#ffcc80,stroke:#e65100,stroke-width:2px,color:#000
 
     class App,Tools,StreamImpl callerStyle
     class Agent agentStyle
     class Loop loopStyle
-    class Validator,Executor toolStyle
+    class Validator,Executor,ToolMW,SubAgentTool toolStyle
     class StreamFn streamStyle
-    class OllamaFn,AnthropicFn,OpenAiFn,ProxyFn adapterStyle
-    class Events,Retry,Cancel,Errors infraStyle
+    class AnthropicFn,AzureFn,BedrockFn,GeminiFn,MistralFn,OllamaFn,OpenAiFn,XAiFn,ProxyFn,RemotePresets,Classify adapterStyle
+    class LocalStream,LocalModel,EmbeddingModel localStyle
+    class Events,Retry,Cancel,Errors,Catalog,Registry,Mailbox,Policy,StreamMW,Emission infraStyle
     class SessionStore,Compactor memoryStyle
     class EvalRunner,TrajectoryCollector,EvalRegistry,EvalStore evalStyle
     class TUIApp,ConvView,InputEditor,ToolPanel,StatusBar tuiStyle
@@ -274,7 +313,7 @@ flowchart LR
 
 ## Workspace Crate Dependencies
 
-This diagram shows how the four workspace crates and their internal modules depend on each other.
+This diagram shows how the six workspace crates and their internal modules depend on each other.
 
 ```mermaid
 flowchart TB
@@ -294,6 +333,17 @@ flowchart TB
             context["context.rs<br/>sliding_window,<br/>overflow-aware pruning"]
             builtintools["tools/<br/>BashTool, ReadFileTool,<br/>WriteFileTool<br/>(feature-gated)"]
             transformer["tool_call_transformer.rs<br/>ToolCallTransformer trait"]
+            tool_mw["tool_middleware.rs<br/>ToolMiddleware"]
+            stream_mw["stream_middleware.rs<br/>StreamMiddleware"]
+            sub_agent["sub_agent.rs<br/>SubAgent (multi-agent tool)"]
+        end
+
+        subgraph CatalogLayer["📋 Catalogs & Registries"]
+            catalog["model_catalog.rs<br/>ModelCatalog, PresetCatalog,<br/>ProviderCatalog (TOML-driven)"]
+            presets["model_presets.rs<br/>ModelConnection,<br/>ModelConnections"]
+            registry_mod["registry.rs<br/>AgentRegistry,<br/>AgentId, AgentRef"]
+            messaging_mod["messaging.rs<br/>AgentMailbox, send_to"]
+            policy["loop_policy.rs<br/>LoopPolicy, MaxTurnsPolicy,<br/>CostCapPolicy, ComposedPolicy"]
         end
 
         subgraph ExecutionLayer["🔄 Execution"]
@@ -308,11 +358,28 @@ flowchart TB
 
     subgraph AdaptersCrate["🔌 swink-agent-adapters"]
         adapters_lib["lib.rs<br/>re-exports"]
-        ollama["ollama.rs<br/>OllamaStreamFn,<br/>NDJSON streaming"]
         anthropic["anthropic.rs<br/>AnthropicStreamFn,<br/>SSE + thinking blocks"]
+        azure["azure.rs<br/>AzureStreamFn,<br/>SSE"]
+        bedrock["bedrock.rs<br/>BedrockStreamFn,<br/>SSE + AWS SigV4"]
+        google["google.rs<br/>GeminiStreamFn,<br/>SSE"]
+        mistral["mistral.rs<br/>MistralStreamFn,<br/>SSE"]
+        ollama["ollama.rs<br/>OllamaStreamFn,<br/>NDJSON streaming"]
         openai["openai.rs<br/>OpenAiStreamFn,<br/>SSE, multi-provider"]
+        xai["xai.rs<br/>XAiStreamFn,<br/>SSE"]
         proxy["proxy.rs<br/>ProxyStreamFn,<br/>SSE delta reconstruction"]
         convert["convert.rs<br/>MessageConverter trait"]
+        classify_mod["classify.rs<br/>HttpErrorClassifier"]
+        remote_presets_mod["remote_presets.rs<br/>Catalog-driven connections"]
+    end
+
+    subgraph LocalLLMCrate["🧠 swink-agent-local-llm"]
+        local_lib["lib.rs<br/>re-exports"]
+        local_model["model.rs<br/>LocalModel,<br/>SmolLM3-3B (GGUF Q4_K_M)"]
+        local_stream["stream.rs<br/>LocalStreamFn"]
+        local_embedding["embedding.rs<br/>EmbeddingModel,<br/>EmbeddingGemma-300M"]
+        local_preset["preset.rs<br/>default_local_connection"]
+        local_convert["convert.rs<br/>message conversion"]
+        local_progress["progress.rs<br/>ProgressCallbackFn"]
     end
 
     subgraph MemoryCrate["🧠 swink-agent-memory"]
@@ -353,16 +420,35 @@ flowchart TB
     loop_ --> lib
     types --> lib
 
-    stream -->|"StreamFn trait"| ollama
     stream -->|"StreamFn trait"| anthropic
+    stream -->|"StreamFn trait"| azure
+    stream -->|"StreamFn trait"| bedrock
+    stream -->|"StreamFn trait"| google
+    stream -->|"StreamFn trait"| mistral
+    stream -->|"StreamFn trait"| ollama
     stream -->|"StreamFn trait"| openai
+    stream -->|"StreamFn trait"| xai
     stream -->|"StreamFn trait"| proxy
-    ollama --> adapters_lib
+    stream -->|"StreamFn trait"| local_stream
     anthropic --> adapters_lib
+    azure --> adapters_lib
+    bedrock --> adapters_lib
+    google --> adapters_lib
+    mistral --> adapters_lib
+    ollama --> adapters_lib
     openai --> adapters_lib
+    xai --> adapters_lib
     proxy --> adapters_lib
+    classify_mod --> adapters_lib
+    remote_presets_mod --> adapters_lib
     convert --> ollama
     convert --> openai
+
+    local_stream --> local_lib
+    local_model --> local_lib
+    local_embedding --> local_lib
+    local_preset --> local_lib
+    local_convert --> local_stream
 
     types -->|"core types"| mem_store
     types -->|"core types"| mem_compact
@@ -385,6 +471,7 @@ flowchart TB
 
     lib -->|"swink-agent dep"| tui_main
     adapters_lib -->|"adapters dep"| tui_main
+    local_lib -->|"local-llm dep"| tui_main
     mem_lib -->|"memory dep"| tui_session
     tui_main --> tui_app
 
@@ -394,16 +481,20 @@ flowchart TB
     classDef execStyle fill:#1976d2,stroke:#0d47a1,stroke-width:2px,color:#fff
     classDef apiStyle fill:#e3f2fd,stroke:#1976d2,stroke-width:2px,color:#000
     classDef adapterStyle fill:#c8e6c9,stroke:#388e3c,stroke-width:2px,color:#000
+    classDef localStyle fill:#ffcc80,stroke:#e65100,stroke-width:2px,color:#000
     classDef memoryStyle fill:#ce93d8,stroke:#7b1fa2,stroke-width:2px,color:#000
     classDef evalStyle fill:#a5d6a7,stroke:#2e7d32,stroke-width:2px,color:#000
     classDef tuiStyle fill:#1976d2,stroke:#0d47a1,stroke-width:2px,color:#fff
+    classDef catalogStyle fill:#fff9c4,stroke:#f9a825,stroke-width:2px,color:#000
 
     class types,error foundationStyle
     class tool,stream,retry coreStyle
-    class context,builtintools,transformer implStyle
+    class context,builtintools,transformer,tool_mw,stream_mw,sub_agent implStyle
+    class catalog,presets,registry_mod,messaging_mod,policy catalogStyle
     class loop_ execStyle
     class agent,lib apiStyle
-    class adapters_lib,ollama,anthropic,openai,proxy,convert adapterStyle
+    class adapters_lib,anthropic,azure,bedrock,google,mistral,ollama,openai,xai,proxy,convert,classify_mod,remote_presets_mod adapterStyle
+    class local_lib,local_model,local_stream,local_embedding,local_preset,local_convert,local_progress localStyle
     class mem_lib,mem_store,mem_jsonl,mem_meta,mem_compact memoryStyle
     class eval_lib,eval_trajectory,eval_evaluator,eval_runner,eval_builtins,eval_store evalStyle
     class tui_main,tui_app,tui_creds,tui_session,tui_wizard tuiStyle
@@ -415,9 +506,17 @@ flowchart TB
 
 **Library, not a service.** The harness is a crate, not a daemon. There are no HTTP ports, no config files, no CLI. Callers link it as a dependency and own the runtime.
 
-**StreamFn is the only provider boundary.** All LLM communication flows through a single trait. Direct providers, proxies, mock implementations for testing, and future transports all satisfy the same interface. The harness never holds an API key or SDK client. Four built-in implementations ship in the adapters crate: `ProxyStreamFn` (SSE), `OllamaStreamFn` (NDJSON), `AnthropicStreamFn` (SSE with thinking blocks), and `OpenAiStreamFn` (SSE, multi-provider compatible).
+**StreamFn is the only provider boundary.** All LLM communication flows through a single trait. Direct providers, proxies, mock implementations for testing, local on-device models, and future transports all satisfy the same interface. The harness never holds an API key or SDK client. Nine built-in remote implementations ship in the adapters crate: `AnthropicStreamFn`, `AzureStreamFn`, `BedrockStreamFn`, `GeminiStreamFn`, `MistralStreamFn`, `OllamaStreamFn`, `OpenAiStreamFn`, `ProxyStreamFn`, and `XAiStreamFn`. A tenth implementation, `LocalStreamFn`, ships in the local-llm crate for on-device inference.
 
 **Adapters are a separate crate.** Provider-specific `StreamFn` implementations live in `swink-agent-adapters`, keeping the core harness free of any provider SDK or protocol detail. Adding a new provider means adding a module to the adapters crate — no changes to the core.
+
+**Local-llm is a separate crate.** On-device inference via mistral.rs lives in `swink-agent-local-llm`, keeping the heavy native dependencies (GGUF runtime, HuggingFace model downloads) out of the core and adapters crates. It provides `LocalStreamFn` (text generation with SmolLM3-3B) and `EmbeddingModel` (text vectorization with EmbeddingGemma-300M). Models are lazily downloaded and cached. This crate serves as the default fallback when no cloud API credentials are configured.
+
+**Catalogs and registries are core concerns.** `ModelCatalog` loads provider and preset metadata from an embedded TOML file, enabling catalog-driven provider selection without hardcoding model details. `AgentRegistry` provides thread-safe named agent lookup for multi-agent systems. `AgentMailbox` enables asynchronous inter-agent messaging. These subsystems live in the core crate because they define coordination primitives that any agent-based application may need.
+
+**Policies control loop termination.** The `LoopPolicy` trait replaces ad-hoc turn limits with composable policies (`MaxTurnsPolicy`, `CostCapPolicy`, `ComposedPolicy`). Closures also implement `LoopPolicy` for simple cases. This keeps loop governance extensible without modifying loop internals.
+
+**Middleware wraps both tools and streams.** `ToolMiddleware` intercepts `execute()` on any `AgentTool`, and `StreamMiddleware` intercepts the output stream from any `StreamFn`. Both follow the decorator pattern — callers compose them without touching inner implementations. This enables cross-cutting concerns like logging, metrics, and access control.
 
 **Events are outward-only.** The event system is a push channel from the harness to the caller. Hooks that mutate execution (cancel a tool, retry a call) are expressed as callbacks in `AgentLoopConfig`, not as event responses. This avoids re-entrant state.
 
@@ -433,7 +532,7 @@ flowchart TB
 
 ## TUI Architecture
 
-The TUI is a separate binary crate (`swink-agent-tui`) that depends on `swink-agent` (core), `swink-agent-adapters`, and `swink-agent-memory`. It provides an interactive terminal interface for conversing with an LLM agent. The TUI supports four providers (Proxy, OpenAI, Anthropic, Ollama) selected by environment variable priority. It includes a first-run setup wizard for API key configuration, session persistence (via the memory crate's `SessionStore` trait), and credential management via the system keychain.
+The TUI is a separate binary crate (`swink-agent-tui`) that depends on `swink-agent` (core), `swink-agent-adapters`, `swink-agent-local-llm`, and `swink-agent-memory`. It provides an interactive terminal interface for conversing with an LLM agent. The TUI supports all nine remote adapters (via catalog-driven preset selection) plus local-llm as a fallback when no cloud credentials are configured. It includes a first-run setup wizard for API key configuration, session persistence (via the memory crate's `SessionStore` trait), and credential management via the system keychain.
 
 ### Provider Configuration
 

@@ -7,8 +7,10 @@ A pure-Rust library for building LLM-powered agentic loops. Provider-agnostic co
 | Crate | Type | Purpose |
 |---|---|---|
 | `swink-agent` | lib | Agent loop, tool system, streaming traits, retry, error types |
-| `swink-agent-adapters` | lib | `StreamFn` adapters — Ollama, Anthropic, OpenAI, Google Gemini |
+| `swink-agent-adapters` | lib | `StreamFn` adapters — Anthropic, OpenAI, Google Gemini, Ollama, Azure, xAI, Mistral, Bedrock |
 | `swink-agent-memory` | lib | Session persistence, summarization compaction |
+| `swink-agent-local-llm` | lib | On-device inference via SmolLM3-3B (text/tools) and EmbeddingGemma-300M (embeddings) |
+| `swink-agent-eval` | lib | Evaluation harness — efficiency scoring, budget guards, gate checks, audit trails |
 | `swink-agent-tui` | bin | Interactive terminal UI with markdown, syntax highlighting, tool panel |
 
 ## Key Ideas

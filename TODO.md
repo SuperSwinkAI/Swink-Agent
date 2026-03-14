@@ -19,14 +19,14 @@ All P0 items completed in commit `94e9b47` (2026-03-13).
 
 | Severity | Area | Item | Effort | File(s) |
 |----------|------|------|--------|---------|
-| HIGH | HLD | Update HLD.md — missing `local-llm` crate entirely, only lists 4/9 adapters, missing subsystems (catalogs, registries, policies, middleware, messaging) | M | `docs/architecture/HLD.md` |
+| ~~HIGH~~ | ~~HLD~~ | ~~Update HLD.md — missing `local-llm` crate entirely, only lists 4/9 adapters, missing subsystems (catalogs, registries, policies, middleware, messaging)~~ | ~~M~~ | ~~`docs/architecture/HLD.md`~~ |
 | ~~HIGH~~ | ~~Data Model~~ | ~~Fix `ThinkingLevel::XHigh` → `ExtraHigh`; add undocumented `ContentBlock::Extension` variant; add `ToolResultMessage.details` field~~ | ~~S~~ | ~~`docs/architecture/data-model/README.md`~~ |
 | ~~HIGH~~ | ~~Streaming~~ | ~~Add `StreamErrorKind` enum documentation; add `Cost` field to Done/Error events; fix incomplete event signatures~~ | ~~S~~ | ~~`docs/architecture/streaming/README.md`~~ |
 | ~~HIGH~~ | ~~Error Handling~~ | ~~Add missing `Plugin` error variant to taxonomy diagram; complete retryability list (add Plugin, NoMessages, InvalidContinue)~~ | ~~S~~ | ~~`docs/architecture/error-handling/README.md`~~ |
-| HIGH | Tool System | Add documentation for FnTool, ToolMiddleware, ToolValidator, ToolCallTransformer — 4 major public APIs completely undocumented. Add complete dispatch pipeline diagram | M | `docs/architecture/tool-system/README.md` |
+| ~~HIGH~~ | ~~Tool System~~ | ~~Add documentation for FnTool, ToolMiddleware, ToolValidator, ToolCallTransformer — 4 major public APIs completely undocumented. Add complete dispatch pipeline diagram~~ | ~~M~~ | ~~`docs/architecture/tool-system/README.md`~~ |
 | ~~MEDIUM~~ | ~~Agent~~ | ~~Update `continue_loop()` references → `continue_stream/async/sync()` (3 concrete methods)~~ | ~~S~~ | ~~`docs/architecture/agent/README.md`~~ |
-| MEDIUM | Agent Loop | Add note that `transform_context` is synchronous (not async) | S | `docs/architecture/agent-loop/README.md` |
-| MEDIUM | Agent Context | Fix source file reference (should reference both `types.rs` and `context.rs`, not just `types.rs`) | S | `docs/architecture/agent-context/README.md` |
+| ~~MEDIUM~~ | ~~Agent Loop~~ | ~~Add note that `transform_context` is synchronous (not async)~~ | ~~S~~ | ~~`docs/architecture/agent-loop/README.md`~~ |
+| ~~MEDIUM~~ | ~~Agent Context~~ | ~~Fix source file reference (should reference both `types.rs` and `context.rs`, not just `types.rs`)~~ | ~~S~~ | ~~`docs/architecture/agent-context/README.md`~~ |
 | ~~MEDIUM~~ | ~~Eval~~ | ~~Add `EfficiencyEvaluator` to `with_defaults()` evaluator list (currently lists 3, should list 4)~~ | ~~S~~ | ~~`docs/architecture/eval/README.md`~~ |
 | ~~MEDIUM~~ | ~~TUI~~ | ~~Fix auto-collapse timing (doc says 3s, actual is 10s); remove `/model` command (doesn't exist, use F4); remove `default_approval_mode` config field (doesn't exist)~~ | ~~S~~ | ~~`docs/architecture/tui/README.md`~~ |
 
@@ -34,18 +34,18 @@ All P0 items completed in commit `94e9b47` (2026-03-13).
 
 | Severity | Area | Item | Effort | File(s) |
 |----------|------|------|--------|---------|
-| MEDIUM | README | Add `swink-agent-local-llm` and `swink-agent-eval` to workspace table; update adapter list (add Azure, xAI, Mistral, Bedrock) | S | `README.md` |
-| MEDIUM | Getting Started | Fix model version inconsistencies (`claude-sonnet-4-20250514` → `claude-sonnet-4-6`); expand provider list | S | `docs/getting_started.md` |
-| MEDIUM | Testing Setup | Fix model version; add local-llm setup instructions; clarify thinking mode availability per provider | S | `docs/testing_setup.md` |
+| ~~MEDIUM~~ | ~~README~~ | ~~Add `swink-agent-local-llm` and `swink-agent-eval` to workspace table; update adapter list (add Azure, xAI, Mistral, Bedrock)~~ | ~~S~~ | ~~`README.md`~~ |
+| ~~MEDIUM~~ | ~~Getting Started~~ | ~~Fix model version inconsistencies (`claude-sonnet-4-20250514` → `claude-sonnet-4-6`); expand provider list~~ | ~~S~~ | ~~`docs/getting_started.md`~~ |
+| ~~MEDIUM~~ | ~~Testing Setup~~ | ~~Fix model version; add local-llm setup instructions; clarify thinking mode availability per provider~~ | ~~S~~ | ~~`docs/testing_setup.md`~~ |
 
 ### Planning Docs
 
 | Severity | Area | Item | Effort | File(s) |
 |----------|------|------|--------|---------|
-| MEDIUM | PRD | Update crate structure (3 → 6 crates); update adapter list; downgrade unimplemented TUI features (per-hunk diff, external editor, collapsible blocks, session trust) | M | `docs/planning/PRD.md` |
-| MEDIUM | Impl Phases | Add post-phase sections for memory, local-llm, eval crates and adapter expansion | S | `docs/planning/IMPLEMENTATION_PHASES.md` |
-| MEDIUM | Eval Plan | Fix unreliable status markers; clarify scope (active roadmap vs historical reference) | S | `docs/planning/EVAL.md` |
-| MEDIUM | TUI Phases | Add Phase T5 for unimplemented features; fix acceptance criteria that claim completion for unbuilt features (AC-21/22/24/26/28/29/30) | M | `docs/planning/TUI_PHASES.md` |
+| ~~MEDIUM~~ | ~~PRD~~ | ~~Update crate structure (3 → 6 crates); update adapter list; downgrade unimplemented TUI features (per-hunk diff, external editor, collapsible blocks, session trust)~~ | ~~M~~ | ~~`docs/planning/PRD.md`~~ |
+| ~~MEDIUM~~ | ~~Impl Phases~~ | ~~Add post-phase sections for memory, local-llm, eval crates and adapter expansion~~ | ~~S~~ | ~~`docs/planning/IMPLEMENTATION_PHASES.md`~~ |
+| ~~MEDIUM~~ | ~~Eval Plan~~ | ~~Fix unreliable status markers; clarify scope (active roadmap vs historical reference)~~ | ~~S~~ | ~~`docs/planning/EVAL.md`~~ |
+| ~~MEDIUM~~ | ~~TUI Phases~~ | ~~Add Phase T5 for unimplemented features; fix acceptance criteria that claim completion for unbuilt features (AC-21/22/24/26/28/29/30)~~ | ~~M~~ | ~~`docs/planning/TUI_PHASES.md`~~ |
 
 ---
 

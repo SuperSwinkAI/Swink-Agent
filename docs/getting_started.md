@@ -7,7 +7,13 @@
   - [Ollama](https://ollama.ai) running locally (no key required)
   - An Anthropic API key
   - An OpenAI API key
+  - A Google Gemini API key
+  - An Azure OpenAI endpoint and key
+  - An xAI API key
+  - A Mistral API key
+  - AWS credentials for Bedrock
   - Any OpenAI-compatible proxy endpoint
+  - Local on-device inference via `swink-agent-local-llm` (no key required)
 
 ## Build
 
@@ -31,7 +37,12 @@ The TUI picks the first available provider in this order:
 | 1 | Custom SSE Proxy | `LLM_BASE_URL` is set |
 | 2 | OpenAI | `OPENAI_API_KEY` is set |
 | 3 | Anthropic | `ANTHROPIC_API_KEY` is set |
-| 4 | Ollama | Always available (local) |
+| 4 | Google Gemini | `GOOGLE_API_KEY` is set |
+| 5 | Azure OpenAI | `AZURE_OPENAI_API_KEY` is set |
+| 6 | xAI | `XAI_API_KEY` is set |
+| 7 | Mistral | `MISTRAL_API_KEY` is set |
+| 8 | Bedrock | AWS credentials are set |
+| 9 | Ollama | Always available (local) |
 
 Keys can also be stored in the OS keychain instead of env vars — the first-run wizard will prompt you, or use `#key <provider> <value>` inside the TUI.
 
@@ -49,7 +60,7 @@ Keys can also be stored in the OS keychain instead of env vars — the first-run
 |---|---|
 | `ANTHROPIC_API_KEY` | — |
 | `ANTHROPIC_BASE_URL` | `https://api.anthropic.com` |
-| `ANTHROPIC_MODEL` | `claude-sonnet-4-20250514` |
+| `ANTHROPIC_MODEL` | `claude-sonnet-4-6` |
 
 **OpenAI**
 
@@ -65,7 +76,7 @@ Keys can also be stored in the OS keychain instead of env vars — the first-run
 |---|---|
 | `LLM_BASE_URL` | — |
 | `LLM_API_KEY` | — |
-| `LLM_MODEL` | `claude-sonnet-4-20250514` |
+| `LLM_MODEL` | `claude-sonnet-4-6` |
 
 **Ollama**
 

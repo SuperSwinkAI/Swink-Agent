@@ -412,10 +412,32 @@ End-to-end integration tests that exercise the full stack: `Agent` → loop → 
 
 ---
 
-## Memory Crate
+## Post-Phase Crates
 
-Session persistence and memory management are implemented in the `swink-agent-memory` crate (separate from the core phases above). See [`memory/docs/architecture/`](../../memory/docs/architecture/README.md) for architecture details.
+The following crates were added after the core 6-phase implementation was complete. Each depends only on `swink-agent` core and operates independently.
 
-## Evaluation Crate
+### Memory Crate (`swink-agent-memory`)
 
-Trajectory tracing, golden path verification, response matching, and cost/latency governance are implemented in the `swink-agent-eval` crate (separate from the core phases above). The eval crate depends only on `swink-agent` core and consumes the `AgentEvent` stream for trajectory capture. See [`docs/architecture/eval/`](../architecture/eval/README.md) for architecture details and [EVAL.md](./EVAL.md) for the evaluation feature roadmap.
+Session persistence and memory management. Provides synchronous and async session stores, JSONL message serialization, context compaction strategies, and session metadata tracking.
+
+**Key modules:** `store.rs` (sync store), `store_async.rs` (async store), `compaction.rs` (compaction strategies), `jsonl.rs` (JSONL format), `meta.rs` (session metadata), `time.rs` (timestamps).
+
+See [`memory/docs/architecture/`](../../memory/docs/architecture/README.md) for architecture details.
+
+### Local LLM Crate (`swink-agent-local-llm`)
+
+On-device LLM inference via a `StreamFn` implementation for locally loaded models. Supports model loading, download progress reporting, embedding models, and local model presets.
+
+**Key modules:** `model.rs` (model loading), `stream.rs` (local StreamFn), `convert.rs` (message conversion), `embedding.rs` (embeddings), `preset.rs` (model presets), `progress.rs` (download/load progress).
+
+### Evaluation Crate (`swink-agent-eval`)
+
+Trajectory tracing, golden path verification, response matching, efficiency scoring, and cost/latency governance. Consumes the `AgentEvent` stream for trajectory capture.
+
+**Key modules:** `trajectory.rs` (TrajectoryCollector), `match_.rs` (golden path comparison), `efficiency.rs` (EfficiencyEvaluator), `budget.rs` (BudgetGuard + BudgetEvaluator), `gate.rs` (CI/CD gating), `audit.rs` (audit trails), `runner.rs` (EvalRunner), `yaml.rs` (YAML eval case definitions).
+
+See [`docs/architecture/eval/`](../architecture/eval/README.md) for architecture details and [EVAL.md](./EVAL.md) for the evaluation feature roadmap.
+
+### Adapter Expansion
+
+The adapters crate expanded from the initial Ollama + Proxy implementations to include Anthropic, OpenAI, Google Gemini, Azure, xAI, Mistral, and Bedrock adapters, plus a shared `MessageConverter` trait, model classification utilities, and remote preset catalog.

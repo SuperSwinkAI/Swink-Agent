@@ -1,6 +1,6 @@
 # Agent Context
 
-**Source file:** `src/types.rs`
+**Source files:** `src/types.rs`, `src/context_transformer.rs`
 **Related:** [PRD §5](../../planning/PRD.md#5-agent-context)
 
 The agent context is the immutable snapshot passed into each loop turn. It contains the system prompt, the current message history, and the list of available tools. The loop never mutates a context in place — each turn produces a new snapshot.

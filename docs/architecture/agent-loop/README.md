@@ -22,7 +22,7 @@ flowchart TB
         Retry["retry_strategy: RetryStrategy"]
         StreamFnField["stream_fn: Arc&lt;dyn StreamFn&gt;"]
         ConvertFn["convert_to_llm: Fn(&amp;AgentMessage) → Option&lt;LlmMessage&gt;"]
-        TransformFn["transform_context: async Fn(messages) → messages"]
+        TransformFn["transform_context: Fn(&amp;mut messages, overflow) → Option&lt;CompactionReport&gt;<br/>(synchronous — not async)"]
         ApiKey["get_api_key: async Fn(provider) → Option&lt;String&gt;"]
         SteerFn["get_steering_messages: Fn() → Vec&lt;AgentMessage&gt;"]
         FollowFn["get_follow_up_messages: Fn() → Vec&lt;AgentMessage&gt;"]

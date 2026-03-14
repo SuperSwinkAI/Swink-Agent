@@ -18,7 +18,7 @@ The implementation leverages Rust's type system, ownership model, and async runt
 
 - No built-in web UI or GUI interface
 - No bundled LLM provider SDK dependencies — provider adapters use direct HTTP calls, not vendor SDKs
-- No experimental memory features (RAG, tool-aware compaction, explicit memory tools) in this workspace — planned for a separate research repository
+- No experimental memory features (RAG, tool-aware compaction, explicit memory tools) in this workspace — session persistence and memory management live in the `swink-agent-memory` crate
 
 ---
 
@@ -358,6 +358,8 @@ No `unsafe` code. No global mutable state.
 | `swink-agent` | Core types and `StreamFn` trait |
 | `reqwest` | HTTP client for provider APIs |
 | `bytes` | Byte buffer handling for NDJSON parsing |
+| `serde` / `serde_json` | JSON serialization for provider payloads |
+| `sha2` | Content hashing for caching |
 
 ### 14.2 TUI Crate Dependencies
 
@@ -375,7 +377,7 @@ No `unsafe` code. No global mutable state.
 
 ## 15. Crate Structure
 
-The project is a 3-crate Cargo workspace:
+The project is a 6-crate Cargo workspace:
 
 ```
 swink-agent/              Workspace root + core library
@@ -385,8 +387,7 @@ swink-agent/              Workspace root + core library
     types.rs        — AgentMessage, AgentEvent, AgentResult, ContentBlock, Usage, ModelSpec, …
     tool.rs         — AgentTool trait, AgentToolResult, argument validation
     stream.rs       — StreamFn trait, StreamOptions, AssistantMessageEvent, AssistantMessageDelta
-    proxy.rs        — ProxyStreamFn implementation
-    error.rs        — AgentError, ContextWindowOverflow, MaxTokensReached
+    error.rs        — AgentError, ContextWindowOverflow
     retry.rs        — RetryStrategy trait and default implementation
     loop_.rs        — agent_loop, agent_loop_continue, run_loop, AgentLoopConfig
     agent.rs        — Agent struct
@@ -395,19 +396,76 @@ adapters/                   LLM provider adapters
   Cargo.toml
   src/
     lib.rs          — public re-exports
-    ollama.rs       — OllamaStreamFn for Ollama's /api/chat NDJSON streaming endpoint
+    anthropic.rs    — AnthropicStreamFn for Anthropic Messages API (SSE)
+    openai.rs       — OpenAiStreamFn for OpenAI-compatible /v1/chat/completions (SSE)
+    ollama.rs       — OllamaStreamFn for Ollama /api/chat (NDJSON)
+    google.rs       — GeminiStreamFn for Google Gemini API
+    azure.rs        — AzureStreamFn for Azure OpenAI
+    xai.rs          — XAiStreamFn for xAI (Grok)
+    mistral.rs      — MistralStreamFn for Mistral API
+    bedrock.rs      — BedrockStreamFn for AWS Bedrock
+    proxy.rs        — ProxyStreamFn for HTTP proxy forwarding (SSE)
+    convert.rs      — MessageConverter trait (shared across adapters)
+    classify.rs     — model classification utilities
+    sse.rs          — shared SSE parsing helpers
+    remote_presets.rs — catalog presets for remote model connections
+
+memory/                     Session persistence and memory management
+  Cargo.toml
+  src/
+    lib.rs          — public re-exports
+    store.rs        — synchronous session store
+    store_async.rs  — async session store
+    compaction.rs   — context compaction strategies
+    jsonl.rs        — JSONL serialization for message logs
+    meta.rs         — session metadata
+    time.rs         — timestamp utilities
+
+local-llm/                  On-device LLM inference
+  Cargo.toml
+  src/
+    lib.rs          — public re-exports
+    model.rs        — local model loading and management
+    stream.rs       — StreamFn implementation for local models
+    convert.rs      — message conversion for local inference
+    embedding.rs    — embedding model support
+    preset.rs       — local model presets
+    progress.rs     — download/load progress reporting
+    error.rs        — local-llm error types
+
+eval/                       Evaluation and benchmarking
+  Cargo.toml
+  src/
+    lib.rs          — public re-exports
+    trajectory.rs   — TrajectoryCollector for capturing agent execution traces
+    match_.rs       — golden path comparison
+    efficiency.rs   — EfficiencyEvaluator (duplicate ratio, step ratio scoring)
+    budget.rs       — BudgetGuard (real-time cost/token/turn monitoring) + BudgetEvaluator
+    gate.rs         — CI/CD gating support
+    audit.rs        — deterministic audit trail generation
+    response.rs     — ResponseCriteria and response matching
+    evaluator.rs    — Evaluator trait and EvaluatorRegistry
+    runner.rs       — EvalRunner for executing evaluation cases
+    score.rs        — Score types and aggregation
+    store.rs        — evaluation result persistence
+    types.rs        — shared eval types (EvalCase, etc.)
+    yaml.rs         — YAML-based eval case definitions
+    error.rs        — eval error types
 
 tui/                        Terminal UI binary
   Cargo.toml
   src/
     main.rs         — entry point, agent setup from env vars
-    app.rs          — top-level App state machine
-    event.rs        — async event loop (terminal + agent events)
-    commands.rs     — slash-command system
+    app/            — top-level App state machine, event loop, lifecycle, agent bridge
+    commands.rs     — slash-command and hash-command system
     config.rs       — TOML config file support
-    format.rs       — markdown and message formatting
+    credentials.rs  — credential resolution (env vars, keychain)
+    editor.rs       — external editor integration
+    format.rs       — token, elapsed, and context gauge formatting
+    session.rs      — session persistence
     theme.rs        — color theme definitions
-    ui/             — UI components (conversation, input, tool panel, status bar)
+    wizard.rs       — first-run setup wizard
+    ui/             — UI components (conversation, input, tool panel, status bar, diff, help, markdown, syntax)
 ```
 
 ### 15.1 Adapters Crate
@@ -416,12 +474,15 @@ The `swink-agent-adapters` crate provides concrete `StreamFn` implementations fo
 
 Current adapters:
 
-- **`OllamaStreamFn`** — connects to Ollama's `/api/chat` endpoint, parses NDJSON streaming responses, and emits `AssistantMessageEvent` values. Supports tool calls via Ollama's native tool-calling protocol.
-
-Future adapters (planned):
-
-- Anthropic Messages API
-- OpenAI Chat Completions API
+- **`AnthropicStreamFn`** — connects to Anthropic's `/v1/messages` endpoint via SSE. Supports thinking blocks with budget control
+- **`OpenAiStreamFn`** — connects to any OpenAI-compatible `/v1/chat/completions` endpoint via SSE (also works with vLLM, LM Studio, Groq, Together, etc.)
+- **`OllamaStreamFn`** — connects to Ollama's `/api/chat` endpoint, parses NDJSON streaming responses. Supports tool calls via Ollama's native tool-calling protocol
+- **`GeminiStreamFn`** — connects to Google's Gemini API
+- **`AzureStreamFn`** — connects to Azure OpenAI endpoints
+- **`XAiStreamFn`** — connects to xAI (Grok) API
+- **`MistralStreamFn`** — connects to Mistral API
+- **`BedrockStreamFn`** — connects to AWS Bedrock
+- **`ProxyStreamFn`** — forwards LLM calls to an HTTP proxy server over SSE
 
 ---
 
@@ -481,8 +542,7 @@ Key rendering features:
 
 When the agent modifies a file, the TUI displays the change as a syntax-highlighted inline diff rather than raw tool output. Users review modifications in context before they are finalized.
 
-- Unified diff as the default view; side-by-side layout available when terminal width exceeds a threshold (e.g., 160 columns)
-- Per-hunk approve/reject — each changed hunk is an independent decision point. Approved hunks are applied; rejected hunks are reverted and communicated back to the agent as a tool result
+- Unified diff as the default view
 - Syntax highlighting uses the same `syntect` pipeline as code blocks
 - Diffs for new files show all lines as additions; diffs for deleted files show all lines as deletions
 
@@ -556,8 +616,8 @@ Extends the existing binary approval system (`#approve on` / `#approve off`) wit
 | 18 | Cancel via Escape/Ctrl+C aborts the running agent and shows aborted state |
 | 19 | Tool execution panel shows active tools and their results |
 | 20 | TUI adapts layout to terminal resize events |
-| 21 | Inline diff view renders file modifications as syntax-highlighted unified diffs with per-hunk approve/reject |
-| 22 | Inline diff view switches to side-by-side layout when terminal width exceeds the configured threshold |
+| 21 | Inline diff view renders file modifications as syntax-highlighted unified diffs |
+| ~~22~~ | ~~Inline diff view switches to side-by-side layout when terminal width exceeds the configured threshold~~ — planned, not yet implemented |
 | 23 | Context window progress bar displays estimated fill percentage with green/yellow/red color transitions |
 | 24 | External editor opens `$EDITOR`, suspends the TUI, and submits the file content on close |
 | 25 | External editor treats an empty file on close as cancellation — no message is sent |

@@ -18,7 +18,7 @@ rustc --version   # should print 1.88.0 or later
 cargo build --workspace
 ```
 
-This compiles all three crates: core library, adapters, and TUI. First build pulls dependencies and takes a few minutes.
+This compiles all workspace crates: core library, adapters, local-llm, memory, eval, and TUI. First build pulls dependencies and takes a few minutes.
 
 ## 3. Run Unit Tests
 
@@ -67,6 +67,53 @@ ollama pull llama3.2
 
 Ollama runs entirely on your machine — no account, no API key, no cost.
 
+### Local On-Device (swink-agent-local-llm)
+
+No API key needed. Models are lazily downloaded from HuggingFace on first use and cached in `~/.cache/huggingface/hub/`.
+
+- **SmolLM3-3B** (GGUF Q4_K_M, ~1.92 GB) — text generation, tool use, reasoning
+- **EmbeddingGemma-300M** (<200 MB) — text vectorization/embeddings
+
+Context is capped at 8192 tokens by default; override with the `LOCAL_CONTEXT_LENGTH` env var. First run downloads ~2.1 GB of model weights.
+
+```rust
+use swink_agent_local_llm::default_local_connection;
+
+let local_connection = default_local_connection()?;
+```
+
+### Google Gemini
+
+1. Go to https://aistudio.google.com/
+2. Sign up or log in
+3. Navigate to **API Keys**
+4. Create a key, copy it
+
+### Azure OpenAI
+
+1. Go to https://portal.azure.com/
+2. Create an Azure OpenAI resource
+3. Deploy a model and note the endpoint URL
+4. Copy the API key from the resource's **Keys and Endpoint** section
+
+### xAI (Grok)
+
+1. Go to https://console.x.ai/
+2. Sign up or log in
+3. Navigate to **API Keys**, create and copy a key
+
+### Mistral
+
+1. Go to https://console.mistral.ai/
+2. Sign up or log in
+3. Navigate to **API Keys**, create and copy a key
+
+### AWS Bedrock
+
+1. Configure AWS credentials (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and optionally `AWS_SESSION_TOKEN`)
+2. Set `AWS_REGION` to a region with Bedrock access (e.g. `us-east-1`)
+3. Ensure your IAM role has `bedrock:InvokeModelWithResponseStream` permission
+
 ## 5. Configure Environment
 
 ```bash
@@ -108,7 +155,7 @@ Once the TUI is running, test each configured provider:
 
 **Switch model within the current provider:**
 ```
-/model claude-sonnet-4-20250514
+/model claude-sonnet-4-6
 ```
 Note: `/model` changes the model ID on the active provider. To test a different provider, update `.env` and restart the TUI.
 
@@ -122,11 +169,20 @@ What is 2 + 2?
 List the files in the current directory
 ```
 
-**Test thinking mode (Anthropic only):**
+**Test thinking mode (Anthropic, Google Gemini, Ollama with supported models):**
 ```
 /thinking medium
 Explain why the sky is blue
 ```
+Thinking mode availability by provider:
+
+| Provider | Thinking support |
+|---|---|
+| Anthropic | Full (`/thinking` levels: minimal, low, medium, high, extra-high) |
+| Google Gemini | Supported on deep-think models |
+| Ollama | Supported on models that emit `<think>` tags (e.g. DeepSeek) |
+| Local (SmolLM3) | Emits `<think>` tags, parsed into thinking events |
+| OpenAI, Azure, xAI, Mistral, Bedrock | Not supported |
 
 ## 8. Test Scenarios Checklist
 

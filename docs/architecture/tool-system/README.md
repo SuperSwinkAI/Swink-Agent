@@ -1,6 +1,6 @@
 # Tool System
 
-**Source files:** `src/tool.rs`, `src/tools/`
+**Source files:** `src/tool.rs`, `src/tools/`, `src/fn_tool.rs`, `src/tool_middleware.rs`, `src/tool_validator.rs`, `src/tool_call_transformer.rs`, `src/loop_/tool_dispatch.rs`
 **Related:** [PRD §4](../../planning/PRD.md#4-tool-system)
 
 The tool system defines how tools are declared, validated, executed, and how their results are returned to the LLM. It also covers the structured output mechanism, which is implemented as a synthetic tool injected by the harness.
@@ -250,6 +250,276 @@ flowchart TB
     class S1,S2,S3 steerStyle
     class CancelBC,CancelC,Continue1,Continue2,Done skipStyle
 ```
+
+---
+
+## L3 — FnTool: Closure-Based Tool Builder
+
+**Source file:** `src/fn_tool.rs`
+**Re-exported as:** `swink_agent::FnTool`
+
+`FnTool` implements [`AgentTool`] entirely from closures and configuration, eliminating the need for a custom struct and trait impl. It follows the `new()` + `with_*()` builder pattern.
+
+### Builder API
+
+| Method | Purpose |
+|---|---|
+| `FnTool::new(name, label, description)` | Create with metadata. Default schema accepts any object; default execute returns an error. |
+| `.with_schema_for::<T>()` | Derive JSON Schema from a type implementing `schemars::JsonSchema`. Validated at construction (`debug_assert!`). |
+| `.with_schema(Value)` | Set a raw JSON Schema value. |
+| `.with_requires_approval(bool)` | Mark the tool as requiring user approval before execution. |
+| `.with_execute(closure)` | Full signature: `(tool_call_id, params, cancel, on_update) -> Future<AgentToolResult>`. |
+| `.with_execute_simple(closure)` | Simplified: `(params, cancel) -> Future<AgentToolResult>`. Ignores tool call ID and update callback. |
+
+### Example
+
+```rust
+use schemars::JsonSchema;
+use serde::Deserialize;
+use swink_agent::{AgentToolResult, FnTool};
+
+#[derive(Deserialize, JsonSchema)]
+struct Params { city: String }
+
+let tool = FnTool::new("get_weather", "Weather", "Get weather for a city.")
+    .with_schema_for::<Params>()
+    .with_execute_simple(|params, _cancel| async move {
+        let city = params["city"].as_str().unwrap_or("unknown");
+        AgentToolResult::text(format!("72F in {city}"))
+    });
+```
+
+### Design notes
+
+- The execute closure is stored as `Arc<dyn Fn(...) -> Pin<Box<dyn Future>>>`, making `FnTool` both `Send + Sync` and cloneable behind `Arc`.
+- `Debug` implementation omits the closure, printing only metadata fields.
+
+---
+
+## L3 — ToolMiddleware: Execution Interceptor
+
+**Source file:** `src/tool_middleware.rs`
+**Re-exported as:** `swink_agent::ToolMiddleware`
+
+`ToolMiddleware` wraps an existing `Arc<dyn AgentTool>` and intercepts `execute()` while delegating all metadata methods (`name`, `label`, `description`, `parameters_schema`, `requires_approval`) to the inner tool. This is the decorator pattern applied to tool execution.
+
+### Constructor
+
+```rust
+ToolMiddleware::new(inner: Arc<dyn AgentTool>, f: F) -> Self
+```
+
+The closure `f` receives `(inner_tool, tool_call_id, params, cancel, on_update)` and can call through to the inner tool's `execute()` at any point, or skip it entirely.
+
+### Built-in middleware constructors
+
+| Constructor | Behaviour |
+|---|---|
+| `ToolMiddleware::with_timeout(inner, Duration)` | Races `execute()` against a timeout. On timeout, cancels the inner tool and returns an error result. |
+| `ToolMiddleware::with_logging(inner, callback)` | Calls `callback(tool_name, tool_call_id, is_start)` before and after execution. |
+
+### Example
+
+```rust
+use std::sync::Arc;
+use swink_agent::{AgentTool, AgentToolResult, BashTool, ToolMiddleware};
+
+let tool = Arc::new(BashTool::new());
+let logged = ToolMiddleware::new(tool, |inner, id, params, cancel, on_update| {
+    Box::pin(async move {
+        println!("before");
+        let result = inner.execute(&id, params, cancel, on_update).await;
+        println!("after");
+        result
+    })
+});
+
+assert_eq!(logged.name(), "bash"); // metadata delegates to inner
+```
+
+### Design notes
+
+- `ToolMiddleware` itself implements `AgentTool`, so middleware instances can be registered directly in the tool registry and can be stacked (middleware wrapping middleware).
+- The inner tool is held as `Arc<dyn AgentTool>`, so multiple middleware instances can share the same underlying tool.
+
+---
+
+## L3 — ToolCallTransformer: Argument Rewriting
+
+**Source file:** `src/tool_call_transformer.rs`
+**Re-exported as:** `swink_agent::ToolCallTransformer`
+
+`ToolCallTransformer` is a trait for pre-execution argument rewriting. It runs **unconditionally** (not gated by approval mode) and mutates arguments in place. Typical use cases: sandboxing file paths, injecting default values, normalizing argument formats.
+
+### Trait
+
+```rust
+pub trait ToolCallTransformer: Send + Sync {
+    fn transform(&self, tool_name: &str, arguments: &mut Value);
+}
+```
+
+A blanket impl exists for closures matching `Fn(&str, &mut Value) + Send + Sync`, so a closure can be used directly:
+
+```rust
+let transformer = |name: &str, args: &mut Value| {
+    if name == "bash" {
+        if let Some(cmd) = args.get("command").and_then(Value::as_str) {
+            args["command"] = Value::String(format!("sandbox {cmd}"));
+        }
+    }
+};
+```
+
+### Configuration
+
+Set on `AgentLoopConfig` as `tool_call_transformer: Option<Arc<dyn ToolCallTransformer>>`. When `None`, the transformer step is skipped.
+
+### Execution order
+
+The transformer runs **after** the approval gate and **before** the validator and schema validation. See the [Dispatch Pipeline](#l2--tool-dispatch-pipeline) diagram below for the complete ordering.
+
+---
+
+## L3 — ToolValidator: Pre-Execution Validation Hook
+
+**Source file:** `src/tool_validator.rs`
+**Re-exported as:** `swink_agent::ToolValidator`
+
+`ToolValidator` is a trait for application-specific validation that runs **after** `ToolCallTransformer` and **before** JSON Schema validation. Use it for constraints that cannot be expressed in JSON Schema, such as file path allowlists, command blocklists, or cross-field business rules.
+
+### Trait
+
+```rust
+pub trait ToolValidator: Send + Sync {
+    fn validate(&self, tool_name: &str, arguments: &Value) -> Result<(), String>;
+}
+```
+
+- Return `Ok(())` to proceed to schema validation and execution.
+- Return `Err(message)` to reject the call. The error message is returned to the LLM as an error `ToolResultMessage` with `is_error: true`. The tool's `execute()` is never called.
+
+A blanket impl exists for closures matching `Fn(&str, &Value) -> Result<(), String> + Send + Sync`:
+
+```rust
+let validator = |name: &str, args: &Value| -> Result<(), String> {
+    if name == "bash" {
+        if let Some(cmd) = args.get("command").and_then(Value::as_str) {
+            if cmd.contains("rm -rf") {
+                return Err("destructive commands are not allowed".into());
+            }
+        }
+    }
+    Ok(())
+};
+```
+
+### Configuration
+
+Set on `AgentLoopConfig` as `tool_validator: Option<Arc<dyn ToolValidator>>`. When `None`, the validator step is skipped.
+
+### Distinction from ToolCallTransformer
+
+| | ToolCallTransformer | ToolValidator |
+|---|---|---|
+| **Purpose** | Rewrite arguments | Accept or reject arguments |
+| **Mutation** | Mutates `&mut Value` in place | Read-only `&Value` |
+| **On failure** | N/A (cannot fail) | Error result returned to LLM |
+| **Runs** | After approval, before validator | After transformer, before schema validation |
+
+---
+
+## L2 — Tool Dispatch Pipeline
+
+**Source file:** `src/loop_/tool_dispatch.rs`
+
+The complete dispatch pipeline for each tool call, showing the exact order enforced by `execute_tools_concurrently`. Each stage can short-circuit the pipeline by producing an error result.
+
+```mermaid
+flowchart TB
+    subgraph Input["📥 Tool Call"]
+        TC["ToolCall<br/>(id, name, arguments)"]
+    end
+
+    subgraph Stage1["1️⃣ Approval Gate"]
+        ApprovalCheck{"approval mode<br/>+ approve_fn?"}
+        Approved["Approved"]
+        ApprovedWith["ApprovedWith(new_params)<br/>overrides arguments"]
+        Rejected["Rejected → error result"]
+    end
+
+    subgraph Stage2["2️⃣ ToolCallTransformer"]
+        Transform["transformer.transform(<br/>  tool_name, &mut arguments<br/>)<br/>mutates in place"]
+    end
+
+    subgraph Stage3["3️⃣ ToolValidator"]
+        CustomValidate{"validator.validate(<br/>  tool_name, &arguments<br/>)?"}
+        ValidatorErr["Err(msg) → error result"]
+    end
+
+    subgraph Stage4["4️⃣ Schema Validation"]
+        SchemaCheck{"validate_tool_arguments(<br/>  schema, &arguments<br/>)?"}
+        SchemaErr["Err(errors) → error result"]
+    end
+
+    subgraph Stage5["5️⃣ Execution"]
+        Spawn["tokio::spawn<br/>tool.execute()"]
+        Result["AgentToolResult"]
+    end
+
+    subgraph Output["📤 Output"]
+        TRM["ToolResultMessage<br/>(appended to context)"]
+    end
+
+    TC --> ApprovalCheck
+    ApprovalCheck -->|"Bypassed / no callback"| Transform
+    ApprovalCheck -->|"callback returns"| Approved
+    ApprovalCheck -->|"callback returns"| ApprovedWith
+    ApprovalCheck -->|"callback returns"| Rejected
+    Approved --> Transform
+    ApprovedWith --> Transform
+    Rejected --> TRM
+
+    Transform --> CustomValidate
+    CustomValidate -->|"Ok"| SchemaCheck
+    CustomValidate -->|"Err"| ValidatorErr
+    ValidatorErr --> TRM
+
+    SchemaCheck -->|"valid"| Spawn
+    SchemaCheck -->|"invalid"| SchemaErr
+    SchemaErr --> TRM
+
+    Spawn --> Result
+    Result --> TRM
+
+    classDef inputStyle fill:#e3f2fd,stroke:#1976d2,stroke-width:2px,color:#000
+    classDef approvalStyle fill:#fff3e0,stroke:#f57c00,stroke-width:2px,color:#000
+    classDef transformStyle fill:#e8f5e9,stroke:#388e3c,stroke-width:2px,color:#000
+    classDef validStyle fill:#ff9800,stroke:#e65100,stroke-width:2px,color:#000
+    classDef errorStyle fill:#e0e0e0,stroke:#424242,stroke-width:2px,color:#000
+    classDef execStyle fill:#1976d2,stroke:#0d47a1,stroke-width:2px,color:#fff
+    classDef outputStyle fill:#f5f5f5,stroke:#616161,stroke-width:2px,color:#000
+
+    class TC inputStyle
+    class ApprovalCheck,Approved,ApprovedWith approvalStyle
+    class Rejected,ValidatorErr,SchemaErr errorStyle
+    class Transform transformStyle
+    class CustomValidate,SchemaCheck validStyle
+    class Spawn,Result execStyle
+    class TRM outputStyle
+```
+
+### Pipeline stages summary
+
+| Stage | Component | Skip condition | Short-circuit |
+|---|---|---|---|
+| 1. Approval | `approve_tool` callback | `ApprovalMode::Bypassed` or no callback set | `Rejected` → error result, skip remaining |
+| 2. Transform | `ToolCallTransformer` | `tool_call_transformer` is `None` | Cannot fail |
+| 3. Validate | `ToolValidator` | `tool_validator` is `None` | `Err(msg)` → error result, skip remaining |
+| 4. Schema | `validate_tool_arguments` | Never skipped | Invalid → error result, skip execute |
+| 5. Execute | `tool.execute()` | Never skipped (if reached) | N/A — always produces result |
+
+> **Note:** `ApprovedWith(new_params)` from the approval gate overrides the original arguments **before** the transformer runs. The transformer then operates on the already-overridden arguments.
 
 ---
 
