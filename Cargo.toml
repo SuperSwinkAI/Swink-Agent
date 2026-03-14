@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "adapters", "eval", "local-llm", "memory", "tui"]
+members = [".", "adapters", "eval", "local-llm", "memory", "tui", "xtask"]
 resolver = "2"
 
 [workspace.dependencies]
@@ -17,6 +17,7 @@ rand = "0.8"
 schemars = "1"
 dotenvy = "0.15"
 pretty_assertions = "1"
+criterion = { version = "0.5", features = ["html_reports"] }
 tempfile = "3"
 wiremock = "0.6"
 serde_yml = "0.0"
@@ -34,6 +35,18 @@ repository = "https://github.com/SuperSwinkAI/Swink-Agent"
 readme = "README.md"
 keywords = ["llm", "agent", "ai", "streaming", "tools"]
 categories = ["development-tools", "api-bindings", "asynchronous"]
+
+[profile.dev]
+# Faster incremental builds for contributors (especially on macOS).
+split-debuginfo = "unpacked"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+
+[package.metadata.docs_rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
 default = ["builtin-tools"]
@@ -56,6 +69,10 @@ rand.workspace = true
 tracing.workspace = true
 toml.workspace = true
 
+[[bench]]
+name = "context"
+harness = false
+
 [dev-dependencies]
 swink-agent-adapters = { path = "adapters" }
 swink-agent-local-llm = { path = "local-llm" }
@@ -63,6 +80,7 @@ swink-agent-tui = { path = "tui" }
 dotenvy.workspace = true
 pretty_assertions.workspace = true
 tempfile.workspace = true
+criterion.workspace = true
 tokio = { workspace = true, features = ["full", "test-util"] }
 wiremock.workspace = true
 
