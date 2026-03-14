@@ -227,7 +227,7 @@ flowchart TB
     class Case,Inv,Results ioStyle
 ```
 
-`EvaluatorRegistry::with_defaults()` pre-loads: `TrajectoryMatcher::in_order()`, `BudgetEvaluator`, `ResponseMatcher`.
+`EvaluatorRegistry::with_defaults()` pre-loads: `TrajectoryMatcher::in_order()`, `BudgetEvaluator`, `ResponseMatcher`, `EfficiencyEvaluator`.
 
 ---
 

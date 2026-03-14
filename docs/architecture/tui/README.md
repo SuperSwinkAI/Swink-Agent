@@ -42,7 +42,7 @@ App
 │   └── / Commands reference
 ├── Tool Panel (conditional, shown during tool execution)
 │   ├── Active tool: name, braille spinner, elapsed time
-│   └── Completed tool: name, ✓/✗ badge, auto-fades after 3s
+│   └── Completed tool: name, ✓/✗ badge, auto-fades after 10s
 ├── Input Editor (multi-line, dynamic height 3–10 lines)
 │   └── Line number gutter, cursor, Shift+Enter newlines, input history
 └── Status Bar
@@ -61,7 +61,7 @@ tui/src/
 ├── main.rs        — Entry point, terminal setup/teardown, agent creation from env vars
 ├── app.rs         — App state, async event loop, key handling, agent dispatch
 ├── commands.rs    — Command parsing: hash commands (#help, #clear, #info, #copy,
-│                    #copy all, #copy code) and slash commands (/quit, /model,
+│                    #copy all, #copy code) and slash commands (/quit,
 │                    /thinking, /system, /reset)
 ├── config.rs      — TuiConfig loaded from ~/.config/swink-agent/tui.toml
 │                    Fields: show_thinking, auto_scroll, tick_rate_ms, default_model,
@@ -101,7 +101,7 @@ tui/src/
     │                      monochrome early-return skips syntect in mono modes
     ├── status_bar.rs    — Status bar: formatted tokens, elapsed time, cost, retry
     ├── tool_panel.rs    — ToolPanel: braille spinner for active tools, ✓/✗ for
-    │                      completed, auto-fade after 3s
+    │                      completed, auto-fade after 10s
     └── diff.rs          — DiffView: syntax-highlighted unified/side-by-side diffs
                            with per-hunk approve/reject for file modifications
 ```
@@ -194,7 +194,7 @@ During assistant response streaming:
 - `MessageUpdate(ToolCallDelta)` — append to tool call argument preview
 - `MessageEnd` — finalize the message block, remove streaming cursor
 - `ToolExecutionStart` — show tool in tool panel with braille spinner
-- `ToolExecutionEnd` — update tool panel with ✓/✗ badge, auto-fade after 3s
+- `ToolExecutionEnd` — update tool panel with ✓/✗ badge, auto-fade after 10s
 
 The conversation view auto-scrolls to bottom during streaming unless the user has manually scrolled up. When scrolled up, a "↓ scroll to bottom" indicator appears.
 
@@ -220,7 +220,6 @@ Two command prefixes are supported:
 
 **Slash commands** (may affect agent state):
 - `/quit` — exit the application
-- `/model` — show or change the current model
 - `/thinking` — toggle thinking display
 - `/system` — set the system prompt
 - `/reset` — reset the conversation
@@ -243,7 +242,6 @@ The TUI loads configuration from `~/.config/swink-agent/tui.toml` via `TuiConfig
 | `default_model` | `String` | Default model identifier |
 | `theme` | `String` | Reserved for future theme switching |
 | `color_mode` | `String` | Color mode: `"custom"` (default), `"mono-white"`, or `"mono-black"`. Can be cycled at runtime with F3 |
-| `default_approval_mode` | `String` | Default approval mode: "enabled", "smart", or "bypassed" |
 | `editor_command` | `Option<String>` | Override for external editor (defaults to `$EDITOR` / `$VISUAL` / `vi`) |
 
 ---
@@ -498,7 +496,7 @@ From any focus:
 ### Auto-Collapse Behavior
 
 - New tool results start expanded during streaming
-- `tick()` checks for tool result messages that have been expanded for > 3 seconds and collapses them
+- `tick()` checks for tool result messages that have been expanded for > 10 seconds and collapses them
 - Exception: if `user_expanded == true`, the block stays expanded until the user manually collapses it
 
 ---

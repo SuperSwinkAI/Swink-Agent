@@ -9,21 +9,7 @@ QA audit findings from 2026-03-13. Organized by priority with severity levels.
 
 ## P0 — Fix Now
 
-### Code Fixes
-
-| Severity | Area | Item | Effort | File(s) |
-|----------|------|------|--------|---------|
-| CRITICAL | Safety | Add `#![forbid(unsafe_code)]` to memory crate root — all other 5 crates have it | S | `memory/src/lib.rs:1` |
-| HIGH | Style | Split `loop_.rs` (1686 lines) — exceeds 1500-line threshold. Factor out turn execution, tool dispatch, stream handling | M | `src/loop_.rs` |
-| MEDIUM | Style | Fix import order in `loop_.rs` — `use crate::message_provider::MessageProvider` separated from main crate import block | S | `src/loop_.rs:56` |
-| MEDIUM | Style | Split `tests/agent.rs` (1532 lines) into agent_construction, agent_streaming, agent_tools, agent_control | S | `tests/agent.rs` |
-
-### CLAUDE.md Fixes
-
-| Severity | Area | Item | Effort | File(s) |
-|----------|------|------|--------|---------|
-| HIGH | Accuracy | Remove or fix `biased;` lesson in TUI CLAUDE.md — TUI event loop does NOT use `biased;` in `tokio::select!` | S | `tui/CLAUDE.md` |
-| MEDIUM | Accuracy | Fix conversation.rs comment from "collapsed" to "dimmed" to match TUI UI CLAUDE.md lesson | S | `tui/src/ui/conversation.rs` |
+All P0 items completed in commit `94e9b47` (2026-03-13).
 
 ---
 
@@ -34,15 +20,15 @@ QA audit findings from 2026-03-13. Organized by priority with severity levels.
 | Severity | Area | Item | Effort | File(s) |
 |----------|------|------|--------|---------|
 | HIGH | HLD | Update HLD.md — missing `local-llm` crate entirely, only lists 4/9 adapters, missing subsystems (catalogs, registries, policies, middleware, messaging) | M | `docs/architecture/HLD.md` |
-| HIGH | Data Model | Fix `ThinkingLevel::XHigh` → `ExtraHigh`; add undocumented `ContentBlock::Extension` variant; add `ToolResultMessage.details` field | S | `docs/architecture/data-model/README.md` |
-| HIGH | Streaming | Add `StreamErrorKind` enum documentation; add `Cost` field to Done/Error events; fix incomplete event signatures | S | `docs/architecture/streaming/README.md` |
-| HIGH | Error Handling | Add missing `Plugin` error variant to taxonomy diagram; complete retryability list (add Plugin, NoMessages, InvalidContinue) | S | `docs/architecture/error-handling/README.md` |
+| ~~HIGH~~ | ~~Data Model~~ | ~~Fix `ThinkingLevel::XHigh` → `ExtraHigh`; add undocumented `ContentBlock::Extension` variant; add `ToolResultMessage.details` field~~ | ~~S~~ | ~~`docs/architecture/data-model/README.md`~~ |
+| ~~HIGH~~ | ~~Streaming~~ | ~~Add `StreamErrorKind` enum documentation; add `Cost` field to Done/Error events; fix incomplete event signatures~~ | ~~S~~ | ~~`docs/architecture/streaming/README.md`~~ |
+| ~~HIGH~~ | ~~Error Handling~~ | ~~Add missing `Plugin` error variant to taxonomy diagram; complete retryability list (add Plugin, NoMessages, InvalidContinue)~~ | ~~S~~ | ~~`docs/architecture/error-handling/README.md`~~ |
 | HIGH | Tool System | Add documentation for FnTool, ToolMiddleware, ToolValidator, ToolCallTransformer — 4 major public APIs completely undocumented. Add complete dispatch pipeline diagram | M | `docs/architecture/tool-system/README.md` |
-| MEDIUM | Agent | Update `continue_loop()` references → `continue_stream/async/sync()` (3 concrete methods) | S | `docs/architecture/agent/README.md` |
+| ~~MEDIUM~~ | ~~Agent~~ | ~~Update `continue_loop()` references → `continue_stream/async/sync()` (3 concrete methods)~~ | ~~S~~ | ~~`docs/architecture/agent/README.md`~~ |
 | MEDIUM | Agent Loop | Add note that `transform_context` is synchronous (not async) | S | `docs/architecture/agent-loop/README.md` |
 | MEDIUM | Agent Context | Fix source file reference (should reference both `types.rs` and `context.rs`, not just `types.rs`) | S | `docs/architecture/agent-context/README.md` |
-| MEDIUM | Eval | Add `EfficiencyEvaluator` to `with_defaults()` evaluator list (currently lists 3, should list 4) | S | `docs/architecture/eval/README.md` |
-| MEDIUM | TUI | Fix auto-collapse timing (doc says 3s, actual is 10s); remove `/model` command (doesn't exist, use F4); remove `default_approval_mode` config field (doesn't exist) | S | `docs/architecture/tui/README.md` |
+| ~~MEDIUM~~ | ~~Eval~~ | ~~Add `EfficiencyEvaluator` to `with_defaults()` evaluator list (currently lists 3, should list 4)~~ | ~~S~~ | ~~`docs/architecture/eval/README.md`~~ |
+| ~~MEDIUM~~ | ~~TUI~~ | ~~Fix auto-collapse timing (doc says 3s, actual is 10s); remove `/model` command (doesn't exist, use F4); remove `default_approval_mode` config field (doesn't exist)~~ | ~~S~~ | ~~`docs/architecture/tui/README.md`~~ |
 
 ### User-Facing Docs
 
@@ -155,6 +141,15 @@ Previously planned items that have been implemented.
 - [x] **Tool discovery methods** — `find_tool(name)` and `tools_matching(predicate)` on `Agent`
 - [x] **Streaming on_update docs** — Documented callback pattern; used in `BashTool` for streaming stdout
 - [x] **Adapter authoring example** — Template example + checklist for building new provider adapters
+
+### P0 QA Fixes (Completed — 94e9b47)
+
+- [x] **`#![forbid(unsafe_code)]` in memory crate** — Added missing safety directive to `memory/src/lib.rs`
+- [x] **Split `loop_.rs`** — 1686-line file → `src/loop_/` directory with mod.rs (519), turn.rs (471), stream.rs (294), tool_dispatch.rs (449)
+- [x] **Split `tests/agent.rs`** — 1532-line file → 5 focused files: agent.rs (366), agent_steering.rs (266), agent_continuation.rs (457), agent_structured.rs (357), agent_models.rs (358)
+- [x] **Fix import order in `loop_.rs`** — Moved `MessageProvider` import into main crate import block
+- [x] **Fix TUI CLAUDE.md `biased;` lesson** — Removed inaccurate lesson about `biased;` in `tokio::select!`
+- [x] **Fix conversation.rs comment** — Changed "collapsed" → "not collapsible" to match actual behavior
 
 ### Tier 1 Extensibility (Completed)
 

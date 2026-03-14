@@ -18,7 +18,7 @@ flowchart TB
     subgraph AgentLayer["⚙️ Agent Struct"]
         State["AgentState<br/>system_prompt · model · tools<br/>messages · running flag<br/>stream_message · error"]
         Queues["Message Queues<br/>steering_queue<br/>follow_up_queue"]
-        API["Invocation API<br/>prompt_stream() · prompt_async() · prompt_sync()<br/>prompt_text() · prompt_text_with_images() · prompt_text_sync()<br/>structured_output() · structured_output_sync()<br/>structured_output_typed&lt;T&gt;() · structured_output_typed_sync&lt;T&gt;()<br/>continue_loop()"]
+        API["Invocation API<br/>prompt_stream() · prompt_async() · prompt_sync()<br/>prompt_text() · prompt_text_with_images() · prompt_text_sync()<br/>structured_output() · structured_output_sync()<br/>structured_output_typed&lt;T&gt;() · structured_output_typed_sync&lt;T&gt;()<br/>continue_stream() · continue_async() · continue_sync()"]
         Events["Event Subscriptions<br/>listener registry<br/>subscribe / unsubscribe"]
         Control["Control<br/>abort() · reset()<br/>wait_for_idle()"]
     end
@@ -107,7 +107,7 @@ flowchart TB
         StructuredSync["structured_output_sync(schema)<br/>→ Value<br/>blocking variant"]
         StructuredTyped["structured_output_typed&lt;T&gt;(schema)<br/>→ Future&lt;T&gt;<br/>validates + deserializes into T"]
         StructuredTypedSync["structured_output_typed_sync&lt;T&gt;(schema)<br/>→ T<br/>blocking typed variant"]
-        Continue["continue_loop()<br/>→ (streaming | async | sync)<br/>resumes from existing context"]
+        Continue["continue_stream() · continue_async() · continue_sync()<br/>resumes from existing context"]
     end
 
     subgraph Core["🔄 Core"]
@@ -138,7 +138,7 @@ flowchart TB
     class Loop coreStyle
 ```
 
-> **Note — Structured output** is owned by the `Agent` struct. The `Agent` injects a synthetic tool, runs the loop, validates the result against the JSON Schema, and retries via `continue_loop()` if invalid — up to a configurable maximum. The loop itself has no structured output awareness.
+> **Note — Structured output** is owned by the `Agent` struct. The `Agent` injects a synthetic tool, runs the loop, validates the result against the JSON Schema, and retries via `continue_stream()`, `continue_async()`, or `continue_sync()` if invalid — up to a configurable maximum. The loop itself has no structured output awareness.
 
 ---
 
@@ -150,7 +150,7 @@ The `Agent` permits only one active invocation at a time. This state machine gov
 stateDiagram-v2
     [*] --> Idle : constructed
 
-    Idle --> Running : prompt() / continue_loop()
+    Idle --> Running : prompt() / continue_stream() / continue_async() / continue_sync()
     Running --> Idle : loop completes (AgentEnd)
     Running --> Idle : abort() returns StopReason Aborted
     Running --> Idle : unrecoverable error
