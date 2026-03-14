@@ -1451,3 +1451,82 @@ async fn set_model_swaps_stream_fn_for_known_model() {
         "extra stream_fn should have been called after set_model"
     );
 }
+
+#[tokio::test]
+async fn set_model_restores_primary_stream_fn_when_switching_back() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    struct FlagStreamFn {
+        called: AtomicBool,
+        responses: std::sync::Mutex<Vec<Vec<AssistantMessageEvent>>>,
+    }
+
+    impl StreamFn for FlagStreamFn {
+        fn stream<'a>(
+            &'a self,
+            _model: &'a ModelSpec,
+            _context: &'a swink_agent::AgentContext,
+            _options: &'a StreamOptions,
+            _cancellation_token: CancellationToken,
+        ) -> Pin<Box<dyn Stream<Item = AssistantMessageEvent> + Send + 'a>> {
+            self.called.store(true, Ordering::SeqCst);
+            let events = self
+                .responses
+                .lock()
+                .unwrap()
+                .pop()
+                .unwrap_or_else(|| text_only_events("fallback"));
+            Box::pin(futures::stream::iter(events))
+        }
+    }
+
+    let primary_sfn = Arc::new(FlagStreamFn {
+        called: AtomicBool::new(false),
+        responses: std::sync::Mutex::new(vec![text_only_events("from primary")]),
+    });
+    let extra_sfn = Arc::new(FlagStreamFn {
+        called: AtomicBool::new(false),
+        responses: std::sync::Mutex::new(vec![text_only_events("from extra")]),
+    });
+
+    let primary = ModelSpec::new("test", "primary-model");
+    let extra = ModelSpec::new("other", "extra-model");
+
+    let mut agent = Agent::new(
+        AgentOptions::new(
+            "sys",
+            primary.clone(),
+            primary_sfn.clone() as Arc<dyn StreamFn>,
+            default_convert,
+        )
+        .with_available_models(vec![(
+            extra.clone(),
+            extra_sfn.clone() as Arc<dyn StreamFn>,
+        )]),
+    );
+
+    agent.set_model(extra);
+    let _ = agent
+        .prompt_async(vec![user_msg("use extra")])
+        .await
+        .unwrap();
+    assert!(extra_sfn.called.load(Ordering::SeqCst));
+    assert!(!primary_sfn.called.load(Ordering::SeqCst));
+
+    primary_sfn.called.store(false, Ordering::SeqCst);
+    extra_sfn.called.store(false, Ordering::SeqCst);
+
+    agent.set_model(primary);
+    let _ = agent
+        .prompt_async(vec![user_msg("use primary")])
+        .await
+        .unwrap();
+    assert!(
+        primary_sfn.called.load(Ordering::SeqCst),
+        "primary stream_fn should be restored when switching back"
+    );
+    assert!(
+        !extra_sfn.called.load(Ordering::SeqCst),
+        "extra stream_fn should not remain active after restoring primary"
+    );
+}

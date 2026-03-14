@@ -22,6 +22,7 @@ use crate::error::AgentError;
 use crate::loop_::ApproveToolFn;
 use crate::loop_::{AgentEvent, AgentLoopConfig, agent_loop, agent_loop_continue};
 use crate::message_provider::MessageProvider;
+use crate::registry::AgentId;
 use crate::retry::{DefaultRetryStrategy, RetryStrategy};
 use crate::stream::{StreamFn, StreamOptions};
 use crate::tool::{AgentTool, ApprovalMode, ToolApproval, ToolApprovalRequest};
@@ -158,6 +159,8 @@ pub struct AgentOptions {
     pub loop_policy: Option<Arc<dyn crate::loop_policy::LoopPolicy>>,
     /// Optional pre-execution argument transformer.
     pub tool_call_transformer: Option<Arc<dyn crate::tool_call_transformer::ToolCallTransformer>>,
+    /// Event forwarders that receive all dispatched events.
+    pub event_forwarders: Vec<crate::event_forwarder::EventForwarderFn>,
 }
 
 impl AgentOptions {
@@ -190,6 +193,7 @@ impl AgentOptions {
             available_models: Vec::new(),
             loop_policy: None,
             tool_call_transformer: None,
+            event_forwarders: Vec::new(),
         }
     }
 
@@ -336,6 +340,13 @@ impl AgentOptions {
         self.loop_policy = Some(Arc::new(policy));
         self
     }
+
+    /// Add an event forwarder that receives all events dispatched by this agent.
+    #[must_use]
+    pub fn with_event_forwarder(mut self, f: impl Fn(AgentEvent) + Send + Sync + 'static) -> Self {
+        self.event_forwarders.push(Arc::new(f));
+        self
+    }
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -359,6 +370,9 @@ pub fn default_convert(msg: &AgentMessage) -> Option<LlmMessage> {
 /// subscriber callbacks. Provides prompt, continue, and structured output
 /// invocation modes.
 pub struct Agent {
+    // ── Identity ──
+    id: AgentId,
+
     // ── Public-facing state ──
     state: AgentState,
 
@@ -385,16 +399,28 @@ pub struct Agent {
     tool_call_transformer: Option<Arc<dyn crate::tool_call_transformer::ToolCallTransformer>>,
     /// Extra `model/stream_fn` pairs for model cycling.
     model_stream_fns: Vec<(ModelSpec, Arc<dyn StreamFn>)>,
+    /// Event forwarders that receive cloned events after listener dispatch.
+    event_forwarders: Vec<crate::event_forwarder::EventForwarderFn>,
 }
 
 impl Agent {
     /// Create a new agent from the given options.
     #[must_use]
     pub fn new(options: AgentOptions) -> Self {
+        let primary_model = options.model.clone();
+        let primary_stream_fn = Arc::clone(&options.stream_fn);
         let mut available_models = vec![options.model.clone()];
         available_models.extend(options.available_models.iter().map(|(m, _)| m.clone()));
+        let mut model_stream_fns = vec![(primary_model, primary_stream_fn)];
+        model_stream_fns.extend(
+            options
+                .available_models
+                .iter()
+                .map(|(model, stream_fn)| (model.clone(), Arc::clone(stream_fn))),
+        );
 
         Self {
+            id: AgentId::next(),
             state: AgentState {
                 system_prompt: options.system_prompt,
                 model: options.model,
@@ -426,8 +452,15 @@ impl Agent {
             tool_validator: options.tool_validator,
             loop_policy: options.loop_policy,
             tool_call_transformer: options.tool_call_transformer,
-            model_stream_fns: options.available_models,
+            model_stream_fns,
+            event_forwarders: options.event_forwarders,
         }
+    }
+
+    /// Returns this agent's unique identifier.
+    #[must_use]
+    pub const fn id(&self) -> AgentId {
+        self.id
     }
 
     /// Access the current agent state.
@@ -674,6 +707,29 @@ impl Agent {
             self.listeners.remove(&id);
             warn!("removed panicking listener {id:?}");
         }
+
+        // Forward to event forwarders
+        for forwarder in &self.event_forwarders {
+            forwarder(event.clone());
+        }
+    }
+
+    /// Add an event forwarder at runtime.
+    pub fn add_event_forwarder(&mut self, f: impl Fn(AgentEvent) + Send + Sync + 'static) {
+        self.event_forwarders.push(Arc::new(f));
+    }
+
+    /// Dispatch an external event to all listeners and forwarders.
+    ///
+    /// Used for cross-agent event forwarding.
+    pub fn forward_event(&mut self, event: &AgentEvent) {
+        self.dispatch_event(event);
+    }
+
+    /// Emit a custom named event to all subscribers and forwarders.
+    pub fn emit(&mut self, name: impl Into<String>, payload: serde_json::Value) {
+        let event = AgentEvent::Custom(crate::emit::Emission::new(name, payload));
+        self.dispatch_event(&event);
     }
 
     // ── Invocation: prompt ────────────────────────────────────────────────

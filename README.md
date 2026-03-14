@@ -7,7 +7,7 @@ A pure-Rust library for building LLM-powered agentic loops. Provider-agnostic co
 | Crate | Type | Purpose |
 |---|---|---|
 | `swink-agent` | lib | Agent loop, tool system, streaming traits, retry, error types |
-| `swink-agent-adapters` | lib | `StreamFn` adapters — Ollama, Anthropic, OpenAI |
+| `swink-agent-adapters` | lib | `StreamFn` adapters — Ollama, Anthropic, OpenAI, Google Gemini |
 | `swink-agent-memory` | lib | Session persistence, summarization compaction |
 | `swink-agent-tui` | bin | Interactive terminal UI with markdown, syntax highlighting, tool panel |
 
@@ -34,11 +34,9 @@ Wire up an LLM provider, register tools, and launch the interactive TUI — all 
 ```rust
 use std::sync::Arc;
 
-use swink_agent::{
-    Agent, AgentMessage, AgentOptions, AgentTool, BashTool, ModelSpec,
-    ReadFileTool, StreamFn, WriteFileTool,
-};
-use swink_agent_adapters::AnthropicStreamFn;
+use swink_agent::{Agent, AgentOptions, AgentTool, BashTool, ModelConnections, ReadFileTool, WriteFileTool};
+use swink_agent_adapters::{build_remote_connection, remote_preset_keys};
+use swink_agent_local_llm::default_local_connection;
 use swink_agent_tui::{
     TuiConfig, launch, restore_terminal, setup_terminal, tui_approval_callback,
 };
@@ -47,14 +45,14 @@ use swink_agent_tui::{
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenvy::dotenv().ok();
 
-    let api_key =
-        std::env::var("ANTHROPIC_API_KEY").expect("set ANTHROPIC_API_KEY");
-    let base_url = std::env::var("ANTHROPIC_BASE_URL")
-        .unwrap_or_else(|_| "https://api.anthropic.com".to_string());
-
-    let stream_fn: Arc<dyn StreamFn> =
-        Arc::new(AnthropicStreamFn::new(&base_url, &api_key));
-    let model = ModelSpec::new("anthropic", "claude-sonnet-4-6");
+    let connections = ModelConnections::new(
+        build_remote_connection(remote_preset_keys::anthropic::SONNET_46)?,
+        vec![
+            build_remote_connection(remote_preset_keys::openai::GPT_5_2)?,
+            default_local_connection()?,
+        ],
+    );
+    let (model, stream_fn, extra_models) = connections.into_parts();
     let tools: Vec<Arc<dyn AgentTool>> = vec![
         Arc::new(BashTool::new()),
         Arc::new(ReadFileTool::new()),
@@ -68,11 +66,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "You are a helpful coding assistant.",
             model,
             stream_fn,
-            |msg: &AgentMessage| match msg {
-                AgentMessage::Llm(llm) => Some(llm.clone()),
-                AgentMessage::Custom(_) => None,
-            },
+            swink_agent::default_convert,
         )
+        .with_available_models(extra_models)
         .with_tools(tools)
         .with_approve_tool(tui_approval_callback(approval_tx));
 

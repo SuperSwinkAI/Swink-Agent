@@ -6,10 +6,12 @@
 
 use std::sync::Arc;
 
+use swink_agent::model_catalog;
 use tokio::sync::{Notify, RwLock};
 use tracing::{debug, error, info};
 
 use crate::error::LocalModelError;
+use crate::preset::DEFAULT_LOCAL_PRESET_ID;
 use crate::progress::{ModelProgress, ProgressCallbackFn};
 
 // ─── ModelConfig ────────────────────────────────────────────────────────────
@@ -32,11 +34,20 @@ pub struct ModelConfig {
 
 impl Default for ModelConfig {
     fn default() -> Self {
+        let preset = model_catalog()
+            .preset("local", DEFAULT_LOCAL_PRESET_ID)
+            .expect("local default preset must exist in src/model_catalog.toml");
         Self {
-            repo_id: std::env::var("LOCAL_MODEL_REPO")
-                .unwrap_or_else(|_| "bartowski/SmolLM3-3B-GGUF".to_string()),
-            filename: std::env::var("LOCAL_MODEL_FILE")
-                .unwrap_or_else(|_| "SmolLM3-3B-Q4_K_M.gguf".to_string()),
+            repo_id: std::env::var("LOCAL_MODEL_REPO").unwrap_or_else(|_| {
+                preset
+                    .repo_id
+                    .expect("local default preset must define repo_id")
+            }),
+            filename: std::env::var("LOCAL_MODEL_FILE").unwrap_or_else(|_| {
+                preset
+                    .filename
+                    .expect("local default preset must define filename")
+            }),
             gpu_layers: std::env::var("LOCAL_GPU_LAYERS")
                 .ok()
                 .and_then(|v| v.parse().ok())

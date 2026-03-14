@@ -6,6 +6,7 @@
 
 use std::borrow::Cow;
 use std::collections::HashMap;
+use std::error::Error as _;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -84,7 +85,7 @@ pub enum TurnEndReason {
 /// Consumers subscribe to these events for observability, UI updates, and
 /// logging. The harness never calls back into application logic for display
 /// concerns.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum AgentEvent {
     /// Emitted once when the loop begins.
     AgentStart,
@@ -153,6 +154,9 @@ pub enum AgentEvent {
     ContextCompacted {
         report: crate::context_transformer::CompactionReport,
     },
+
+    /// A custom event emitted via [`Agent::emit`].
+    Custom(crate::emit::Emission),
 }
 
 // ─── AgentLoopConfig ─────────────────────────────────────────────────────────
@@ -930,9 +934,25 @@ fn build_error_message(model: &ModelSpec, error: &AgentError) -> AssistantMessag
         usage: crate::types::Usage::default(),
         cost: crate::types::Cost::default(),
         stop_reason: StopReason::Error,
-        error_message: Some(error.to_string()),
+        error_message: Some(format_error_with_sources(error)),
         timestamp: now_timestamp(),
     }
+}
+
+fn format_error_with_sources(error: &AgentError) -> String {
+    let mut message = error.to_string();
+    let mut source = error.source();
+
+    while let Some(err) = source {
+        let source_message = err.to_string();
+        if !source_message.is_empty() && !message.contains(&source_message) {
+            message.push_str(": ");
+            message.push_str(&source_message);
+        }
+        source = err.source();
+    }
+
+    message
 }
 
 /// Classify an `AssistantMessageEvent::Error` into a `AgentError`.

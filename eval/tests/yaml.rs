@@ -7,7 +7,7 @@ use std::io::Write;
 
 use tempfile::{NamedTempFile, TempDir};
 
-use swink_agent_eval::{load_eval_set_yaml, EvalStore, FsEvalStore};
+use swink_agent_eval::{EvalStore, FsEvalStore, load_eval_set_yaml};
 
 #[test]
 fn load_yaml_eval_set() {
@@ -79,5 +79,8 @@ fn yaml_parse_error_returns_yaml_variant() {
 
     let err = load_eval_set_yaml(file.path()).unwrap_err();
     let msg = format!("{err}");
-    assert!(msg.contains("yaml"), "expected 'yaml' in error message, got: {msg}");
+    assert!(
+        msg.contains("yaml"),
+        "expected 'yaml' in error message, got: {msg}"
+    );
 }

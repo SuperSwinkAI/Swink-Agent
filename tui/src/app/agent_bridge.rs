@@ -99,29 +99,57 @@ impl App {
                 }
             }
             AgentEvent::MessageEnd { message } => {
-                if let Some(msg) = self.messages.last_mut() {
-                    msg.is_streaming = false;
-                    let mut text_parts = Vec::new();
-                    let mut thinking_parts = Vec::new();
-                    for block in &message.content {
-                        match block {
-                            ContentBlock::Text { text } => text_parts.push(text.as_str()),
-                            ContentBlock::Thinking { thinking, .. } => {
-                                thinking_parts.push(thinking.as_str());
-                            }
-                            _ => {}
+                let mut text_parts = Vec::new();
+                let mut thinking_parts = Vec::new();
+                for block in &message.content {
+                    match block {
+                        ContentBlock::Text { text } => text_parts.push(text.as_str()),
+                        ContentBlock::Thinking { thinking, .. } => {
+                            thinking_parts.push(thinking.as_str());
                         }
+                        _ => {}
                     }
-                    if !text_parts.is_empty() {
-                        msg.content = text_parts.join("");
-                    } else if message.stop_reason == swink_agent::StopReason::Error
-                        && let Some(error_message) = &message.error_message
-                    {
-                        msg.content.clone_from(error_message);
-                    }
-                    if !thinking_parts.is_empty() {
-                        msg.thinking = Some(thinking_parts.join(""));
-                    }
+                }
+
+                let content = if !text_parts.is_empty() {
+                    text_parts.join("")
+                } else if message.stop_reason == swink_agent::StopReason::Error {
+                    message.error_message.clone().unwrap_or_default()
+                } else {
+                    String::new()
+                };
+
+                let thinking = if thinking_parts.is_empty() {
+                    None
+                } else {
+                    Some(thinking_parts.join(""))
+                };
+
+                if let Some(msg) = self
+                    .messages
+                    .last_mut()
+                    .filter(|msg| msg.is_streaming && msg.role == MessageRole::Assistant)
+                {
+                    msg.is_streaming = false;
+                    msg.content = content;
+                    msg.thinking = thinking;
+                } else if !content.is_empty() || thinking.is_some() {
+                    self.messages.push(DisplayMessage {
+                        role: if message.stop_reason == swink_agent::StopReason::Error {
+                            MessageRole::Error
+                        } else {
+                            MessageRole::Assistant
+                        },
+                        content,
+                        thinking,
+                        is_streaming: false,
+                        collapsed: false,
+                        summary: String::new(),
+                        user_expanded: false,
+                        expanded_at: None,
+                        plan_mode: self.operating_mode == OperatingMode::Plan,
+                        diff_data: None,
+                    });
                 }
                 self.total_input_tokens += message.usage.input;
                 self.total_output_tokens += message.usage.output;

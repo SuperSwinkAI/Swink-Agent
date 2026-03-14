@@ -199,9 +199,7 @@ mod tests {
     #[test]
     fn multiple_failures_reported() {
         let result = make_result(5, 5, 10.0, Duration::from_secs(5));
-        let config = GateConfig::new()
-            .with_min_pass_rate(0.9)
-            .with_max_cost(1.0);
+        let config = GateConfig::new().with_min_pass_rate(0.9).with_max_cost(1.0);
         let gate = check_gate(&result, &config);
         assert!(!gate.passed);
         assert!(gate.summary.contains("pass rate"));

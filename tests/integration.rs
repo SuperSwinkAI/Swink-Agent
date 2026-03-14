@@ -119,6 +119,7 @@ fn event_variant_name(event: &AgentEvent) -> String {
         AgentEvent::ToolApprovalResolved { .. } => "ToolApprovalResolved".into(),
         AgentEvent::BeforeLlmCall { .. } => "BeforeLlmCall".into(),
         AgentEvent::ContextCompacted { .. } => "ContextCompacted".into(),
+        AgentEvent::Custom(emission) => format!("Custom({})", emission.name),
     }
 }
 

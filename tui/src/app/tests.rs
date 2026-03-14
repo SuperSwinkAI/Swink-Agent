@@ -91,6 +91,22 @@ fn make_test_agent(stream_fn: Arc<dyn StreamFn>) -> Agent {
     ))
 }
 
+fn make_test_agent_with_models(
+    primary_model: ModelSpec,
+    primary_stream_fn: Arc<dyn StreamFn>,
+    extra_models: Vec<(ModelSpec, Arc<dyn StreamFn>)>,
+) -> Agent {
+    Agent::new(
+        AgentOptions::new(
+            "test system prompt",
+            primary_model,
+            primary_stream_fn,
+            default_convert,
+        )
+        .with_available_models(extra_models),
+    )
+}
+
 /// Drain all pending agent events from the channel, feeding them back
 /// to the app (which in turn calls `agent.handle_stream_event`).
 fn drain_agent_events(app: &mut App) {
@@ -317,6 +333,61 @@ async fn error_response_allows_retry() {
             .any(|m| m.role == MessageRole::Assistant && m.content == "recovered"),
         "recovery response should appear"
     );
+}
+
+#[tokio::test]
+async fn cycle_model_applies_and_restores_provider_binding_on_send() {
+    let primary_model = ModelSpec::new("anthropic", "primary-model");
+    let extra_model = ModelSpec::new("openai", "extra-model");
+
+    let primary_stream = Arc::new(MockStreamFn::new(vec![
+        text_only_events("from primary after restore"),
+        text_only_events("from primary"),
+    ]));
+    let extra_stream = Arc::new(MockStreamFn::new(vec![text_only_events("from extra")]));
+
+    let agent = make_test_agent_with_models(
+        primary_model.clone(),
+        primary_stream as Arc<dyn StreamFn>,
+        vec![(extra_model.clone(), extra_stream as Arc<dyn StreamFn>)],
+    );
+
+    let mut app = App::new(TuiConfig::default());
+    app.set_agent(agent);
+
+    assert_eq!(app.model_name, primary_model.model_id);
+
+    app.cycle_model();
+    assert_eq!(app.model_name, extra_model.model_id);
+    assert_eq!(app.pending_model, Some(extra_model.clone()));
+
+    app.send_to_agent("hello extra".to_string());
+    tokio::task::yield_now().await;
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    drain_agent_events(&mut app);
+
+    assert!(
+        app.messages
+            .iter()
+            .any(|m| m.role == MessageRole::Assistant && m.content == "from extra")
+    );
+    assert_eq!(app.model_name, extra_model.model_id);
+
+    app.cycle_model();
+    assert_eq!(app.model_name, primary_model.model_id);
+    assert_eq!(app.pending_model, Some(primary_model.clone()));
+
+    app.send_to_agent("hello primary".to_string());
+    tokio::task::yield_now().await;
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    drain_agent_events(&mut app);
+
+    assert!(
+        app.messages
+            .iter()
+            .any(|m| m.role == MessageRole::Assistant && m.content == "from primary after restore")
+    );
+    assert_eq!(app.model_name, primary_model.model_id);
 }
 
 fn make_tool_result_message(content: &str) -> DisplayMessage {

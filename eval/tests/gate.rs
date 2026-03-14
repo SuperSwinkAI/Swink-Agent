@@ -5,7 +5,7 @@ use std::time::Duration;
 use swink_agent::{Cost, Usage};
 
 use swink_agent_eval::{
-    check_gate, EvalCaseResult, EvalSetResult, EvalSummary, GateConfig, Verdict,
+    EvalCaseResult, EvalSetResult, EvalSummary, GateConfig, Verdict, check_gate,
 };
 
 use common::mock_invocation;
@@ -50,9 +50,7 @@ fn make_eval_set_result(passed: usize, failed: usize, cost: f64) -> EvalSetResul
 #[test]
 fn gate_integration_pass() {
     let result = make_eval_set_result(9, 1, 0.5);
-    let config = GateConfig::new()
-        .with_min_pass_rate(0.8)
-        .with_max_cost(1.0);
+    let config = GateConfig::new().with_min_pass_rate(0.8).with_max_cost(1.0);
     let gate = check_gate(&result, &config);
     assert!(gate.passed);
     assert_eq!(gate.exit_code, 0);

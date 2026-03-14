@@ -1,0 +1,280 @@
+[[providers]]
+key = "anthropic"
+display_name = "Anthropic"
+kind = "remote"
+auth_mode = "bearer"
+credential_env_var = "ANTHROPIC_API_KEY"
+base_url_env_var = "ANTHROPIC_BASE_URL"
+default_base_url = "https://api.anthropic.com"
+
+[[providers.presets]]
+id = "sonnet_46"
+display_name = "Anthropic Sonnet 4.6"
+group = "sonnet"
+model_id = "claude-sonnet-4-6"
+
+[[providers.presets]]
+id = "opus_46"
+display_name = "Anthropic Opus 4.6"
+group = "opus"
+model_id = "claude-opus-4-6"
+
+[[providers.presets]]
+id = "haiku_45"
+display_name = "Anthropic Haiku 4.5"
+group = "haiku"
+model_id = "claude-haiku-4-5-20251001"
+
+[[providers]]
+key = "openai"
+display_name = "OpenAI"
+kind = "remote"
+auth_mode = "bearer"
+credential_env_var = "OPENAI_API_KEY"
+base_url_env_var = "OPENAI_BASE_URL"
+default_base_url = "https://api.openai.com"
+
+[[providers.presets]]
+id = "gpt_5_2"
+display_name = "OpenAI GPT-5.2"
+group = "gpt_5"
+model_id = "gpt-5.2"
+
+[[providers.presets]]
+id = "gpt_5_4"
+display_name = "OpenAI GPT-5.4"
+group = "gpt_5"
+model_id = "gpt-5.4"
+
+[[providers.presets]]
+id = "gpt_5_1"
+display_name = "OpenAI GPT-5.1"
+group = "gpt_5"
+model_id = "gpt-5.1"
+
+[[providers.presets]]
+id = "gpt_5_3_chat_latest"
+display_name = "OpenAI GPT-5.3 Chat Latest"
+group = "gpt_5_chat"
+model_id = "gpt-5.3-chat-latest"
+
+[[providers.presets]]
+id = "gpt_5_2_chat_latest"
+display_name = "OpenAI GPT-5.2 Chat Latest"
+group = "gpt_5_chat"
+model_id = "gpt-5.2-chat-latest"
+
+[[providers.presets]]
+id = "gpt_5_1_chat_latest"
+display_name = "OpenAI GPT-5.1 Chat Latest"
+group = "gpt_5_chat"
+model_id = "gpt-5.1-chat-latest"
+
+[[providers]]
+key = "local"
+display_name = "Local"
+kind = "local"
+
+[[providers.presets]]
+id = "smollm3_3b"
+display_name = "Local SmolLM3-3B"
+group = "default"
+model_id = "SmolLM3-3B-Q4_K_M"
+include_by_default = true
+repo_id = "bartowski/SmolLM3-3B-GGUF"
+filename = "SmolLM3-3B-Q4_K_M.gguf"
+
+[[providers]]
+key = "google"
+display_name = "Google"
+kind = "remote"
+auth_mode = "api_key_header"
+credential_env_var = "GEMINI_API_KEY"
+base_url_env_var = "GEMINI_BASE_URL"
+default_base_url = "https://generativelanguage.googleapis.com"
+
+[[providers.presets]]
+id = "gemini_3_1_pro"
+display_name = "Google Gemini 3.1 Pro"
+group = "gemini_3_1"
+model_id = "gemini-3.1-pro-preview"
+api_version = "v1beta"
+capabilities = ["text", "tools", "thinking", "images_in"]
+status = "preview"
+context_window_tokens = 1000000
+
+[[providers.presets]]
+id = "gemini_3_1_deep_think"
+display_name = "Google Gemini 3.1 Deep Think"
+group = "gemini_3_1"
+model_id = "gemini-3.1-deep-think-preview"
+api_version = "v1beta"
+capabilities = ["text", "tools", "thinking", "images_in"]
+status = "preview"
+context_window_tokens = 1000000
+
+[[providers.presets]]
+id = "gemini_3_flash"
+display_name = "Google Gemini 3 Flash"
+group = "gemini_3"
+model_id = "gemini-3-flash-preview"
+api_version = "v1beta"
+capabilities = ["text", "tools", "thinking", "images_in"]
+status = "preview"
+context_window_tokens = 1000000
+
+[[providers.presets]]
+id = "gemini_3_1_flash_lite"
+display_name = "Google Gemini 3.1 Flash-Lite"
+group = "gemini_3_1"
+model_id = "gemini-3.1-flash-lite-preview"
+api_version = "v1beta"
+capabilities = ["text", "tools", "thinking", "images_in"]
+status = "preview"
+context_window_tokens = 1000000
+
+[[providers]]
+key = "azure"
+display_name = "Azure"
+kind = "remote"
+auth_mode = "api_key_header"
+credential_env_var = "AZURE_API_KEY"
+base_url_env_var = "AZURE_BASE_URL"
+requires_base_url = true
+
+[[providers.presets]]
+id = "gpt_5_4"
+display_name = "Azure GPT-5.4"
+group = "openai"
+model_id = "gpt-5.4"
+api_version = "v1"
+capabilities = ["text", "tools"]
+status = "ga"
+
+[[providers.presets]]
+id = "gpt_5_2"
+display_name = "Azure GPT-5.2"
+group = "openai"
+model_id = "gpt-5.2"
+api_version = "v1"
+capabilities = ["text", "tools"]
+status = "ga"
+
+[[providers.presets]]
+id = "phi_4"
+display_name = "Azure Phi-4"
+group = "foundry"
+model_id = "Phi-4"
+api_version = "v1"
+capabilities = ["text", "tools"]
+status = "ga"
+
+[[providers]]
+key = "xai"
+display_name = "xAI"
+kind = "remote"
+auth_mode = "bearer"
+credential_env_var = "XAI_API_KEY"
+base_url_env_var = "XAI_BASE_URL"
+default_base_url = "https://api.x.ai"
+
+[[providers.presets]]
+id = "grok_3"
+display_name = "xAI Grok 3"
+group = "grok"
+model_id = "grok-3"
+api_version = "v1"
+capabilities = ["text", "tools"]
+status = "ga"
+
+[[providers.presets]]
+id = "grok_3_fast"
+display_name = "xAI Grok 3 Fast"
+group = "grok"
+model_id = "grok-3-fast"
+api_version = "v1"
+capabilities = ["text", "tools"]
+status = "ga"
+
+[[providers]]
+key = "mistral"
+display_name = "Mistral"
+kind = "remote"
+auth_mode = "bearer"
+credential_env_var = "MISTRAL_API_KEY"
+base_url_env_var = "MISTRAL_BASE_URL"
+default_base_url = "https://api.mistral.ai"
+
+[[providers.presets]]
+id = "mistral_medium"
+display_name = "Mistral Medium"
+group = "mistral"
+model_id = "mistral-medium-latest"
+api_version = "v1"
+capabilities = ["text", "tools"]
+status = "ga"
+
+[[providers.presets]]
+id = "mistral_small"
+display_name = "Mistral Small"
+group = "mistral"
+model_id = "mistral-small-latest"
+api_version = "v1"
+capabilities = ["text", "tools"]
+status = "ga"
+
+[[providers.presets]]
+id = "codestral"
+display_name = "Codestral"
+group = "codestral"
+model_id = "codestral-latest"
+api_version = "v1"
+capabilities = ["text", "tools"]
+status = "ga"
+
+[[providers]]
+key = "bedrock"
+display_name = "AWS Bedrock"
+kind = "remote"
+auth_mode = "aws_sigv4"
+region_env_var = "AWS_REGION"
+
+[[providers.presets]]
+id = "anthropic_claude_sonnet_45"
+display_name = "Bedrock Claude Sonnet 4.5"
+group = "anthropic"
+model_id = "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
+capabilities = ["text", "tools"]
+status = "ga"
+
+[[providers.presets]]
+id = "meta_llama_4_maverick"
+display_name = "Bedrock Llama 4 Maverick"
+group = "meta"
+model_id = "us.meta.llama4-maverick-17b-instruct-v1:0"
+capabilities = ["text", "tools"]
+status = "ga"
+
+[[providers.presets]]
+id = "mistral_pixtral_large"
+display_name = "Bedrock Pixtral Large"
+group = "mistral"
+model_id = "mistral.pixtral-large-2502-v1:0"
+capabilities = ["text", "tools"]
+status = "ga"
+
+[[providers.presets]]
+id = "amazon_nova_pro"
+display_name = "Bedrock Nova Pro"
+group = "amazon"
+model_id = "amazon.nova-pro-v1:0"
+capabilities = ["text", "tools"]
+status = "ga"
+
+[[providers.presets]]
+id = "ai21_jamba_1_5_large"
+display_name = "Bedrock Jamba 1.5 Large"
+group = "ai21"
+model_id = "ai21.jamba-1-5-large-v1:0"
+capabilities = ["text", "tools"]
+status = "ga"

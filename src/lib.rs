@@ -2,11 +2,18 @@
 mod agent;
 mod context;
 mod context_transformer;
+mod emit;
 mod error;
+mod event_forwarder;
 mod fn_tool;
+mod handle;
 mod loop_;
 mod loop_policy;
 pub mod message_provider;
+mod messaging;
+mod model_catalog;
+mod model_presets;
+mod registry;
 mod retry;
 mod schema;
 pub mod stream;
@@ -28,11 +35,21 @@ pub use agent::{
 };
 pub use context::sliding_window;
 pub use context_transformer::{CompactionReport, ContextTransformer, SlidingWindowTransformer};
+pub use emit::Emission;
 pub use error::AgentError;
+pub use event_forwarder::EventForwarderFn;
 pub use fn_tool::FnTool;
+pub use handle::{AgentHandle, AgentStatus};
 pub use loop_::{AgentEvent, AgentLoopConfig, TurnEndReason, agent_loop, agent_loop_continue};
 pub use loop_policy::{ComposedPolicy, CostCapPolicy, LoopPolicy, MaxTurnsPolicy, PolicyContext};
 pub use message_provider::{MessageProvider, from_fns};
+pub use messaging::{AgentMailbox, send_to};
+pub use model_catalog::{
+    ApiVersion, AuthMode, CatalogPreset, ModelCatalog, PresetCapability, PresetCatalog,
+    PresetStatus, ProviderCatalog, ProviderKind, model_catalog,
+};
+pub use model_presets::{ModelConnection, ModelConnections};
+pub use registry::{AgentId, AgentRef, AgentRegistry};
 pub use retry::{DefaultRetryStrategy, RetryStrategy};
 pub use schema::schema_for;
 pub use schemars::JsonSchema;

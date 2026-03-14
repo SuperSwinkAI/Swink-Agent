@@ -15,6 +15,7 @@ mod convert;
 pub mod embedding;
 pub mod error;
 pub mod model;
+mod preset;
 pub mod progress;
 pub mod stream;
 
@@ -22,5 +23,6 @@ pub mod stream;
 pub use embedding::{EmbeddingConfig, EmbeddingModel};
 pub use error::LocalModelError;
 pub use model::{LocalModel, ModelConfig};
+pub use preset::{DEFAULT_LOCAL_PRESET_ID, LocalPresetError, default_local_connection};
 pub use progress::{ModelProgress, ProgressCallbackFn};
 pub use stream::LocalStreamFn;
