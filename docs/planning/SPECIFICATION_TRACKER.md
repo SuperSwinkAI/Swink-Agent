@@ -7,7 +7,7 @@
 - Provider Roadmap: [PROVIDER_EXPANSION_ROADMAP.md](PROVIDER_EXPANSION_ROADMAP.md)
 - Eval Roadmap: [EVAL.md](EVAL.md)
 
-**Current Focus:** All 30 specs defined, all at Specify stage. Next: review cycle then `/speckit.plan` starting with Phase 0 foundation specs.
+**Current Focus:** 5/30 specs have plans (001–005), 1/30 has tasks (001). Next: `/speckit.tasks` for 002–005, then `/speckit.plan` for Phase 2+ specs.
 
 > **Numbering System:** Spec numbers (001–030) are sequential identifiers that
 > never change. Phase numbers represent execution order and can be reassigned
@@ -21,24 +21,24 @@
 other crate and module depends on — the data model, error taxonomy, and
 pluggable trait boundaries.
 
-**Status:** 0/3 specs planned, 3/3 specs defined
+**Status:** 3/3 specs planned, 1/3 has tasks, 3/3 specs defined
 
 ### Implementation Checklist
 
 - [ ] **0.1** Workspace & Cargo Scaffold — 7-crate workspace, centralized deps, feature flags, MSRV/edition, toolchain config (§15)
   - Spec: `specs/001-workspace-scaffold/spec.md`
   - Branch: `001-workspace-scaffold`
-  - Status: Specify complete — needs plan + tasks
+  - Status: Ready for implementation (0/24 tasks)
   - Depends on: —
 - [ ] **0.2** Foundation Types & Errors — ContentBlock, LlmMessage, AgentMessage, Usage, Cost, StopReason, ModelSpec, AgentError (§3, §10.3)
   - Spec: `specs/002-foundation-types-errors/spec.md`
   - Branch: `002-foundation-types-errors`
-  - Status: Specify complete — needs plan + tasks
+  - Status: Plan complete — needs tasks
   - Depends on: 0.1
 - [ ] **0.3** Core Traits — AgentTool, StreamFn, RetryStrategy, JSON Schema validation, delta accumulation (§4, §7, §11)
   - Spec: `specs/003-core-traits/spec.md`
   - Branch: `003-core-traits`
-  - Status: Specify complete — needs plan + tasks
+  - Status: Plan complete — needs tasks
   - Depends on: 0.2
 
 ---
@@ -48,19 +48,19 @@ pluggable trait boundaries.
 **Goal:** The agent loop execution engine and its public API wrapper —
 the two central verticals that make the agent functional.
 
-**Status:** 0/2 specs planned, 2/2 specs defined
+**Status:** 2/2 specs planned, 0/2 has tasks, 2/2 specs defined
 
 ### Implementation Checklist
 
 - [ ] **1.1** Agent Loop — Nested inner/outer loop, concurrent tool dispatch, steering/follow-up, retry, overflow recovery (§8, §9, §12)
   - Spec: `specs/004-agent-loop/spec.md`
   - Branch: `004-agent-loop`
-  - Status: Specify complete — needs plan + tasks
+  - Status: Plan complete — needs tasks
   - Depends on: 0.2, 0.3
 - [ ] **1.2** Agent Struct & Public API — Stateful wrapper, streaming/async/sync API, structured output, queues, subscriptions (§13)
   - Spec: `specs/005-agent-struct/spec.md`
   - Branch: `005-agent-struct`
-  - Status: Specify complete — needs plan + tasks
+  - Status: Plan complete — needs tasks
   - Depends on: 1.1
 
 ---
