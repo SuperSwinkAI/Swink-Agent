@@ -97,11 +97,21 @@ A developer modifies the agent's state between runs: changing the system prompt,
 
 ### Edge Cases
 
-- What happens when prompt is called while the agent is already running — does it return an error?
-- What happens when continue is called with empty conversation history — does it return an error?
-- What happens when continue is called and the last message is an assistant message — does it return an error?
-- How does the agent handle a subscriber that is registered and unregistered during a run?
-- What happens when the steering queue is cleared while the agent is running?
+- What happens when prompt is called while the agent is already running — `check_not_running()` returns `Err(AgentError::AlreadyRunning)`.
+- What happens when continue is called with empty conversation history — `validate_continue()` returns `Err(AgentError::NoMessages)`.
+- What happens when continue is called and the last message is an assistant message — `validate_continue()` returns `Err(AgentError::InvalidContinue)` when the last message is an assistant message AND there are no pending messages in the steering/follow-up queues. If there are pending messages, continue is allowed because the queued messages will be injected.
+- How does the agent handle a subscriber that is registered and unregistered during a run? — `subscribe` returns a `SubscriptionId`; calling `unsubscribe` with that ID removes the callback immediately and no further events are delivered to it. This is safe to call at any time because the `ListenerRegistry` manages dispatch with panic isolation.
+- What happens when the steering queue is cleared while the agent is running? — `clear_steering()` uses `Arc<Mutex<>>` with poison recovery, so it is safe to call concurrently. Clearing removes any undelivered messages from the shared queue; the `QueueMessageProvider` will see an empty queue on its next `poll_steering` call.
+
+## Clarifications
+
+### Session 2026-03-20
+
+- Q: What happens when prompt is called while the agent is already running? → A: `check_not_running()` (line 956) checks `self.state.is_running` and returns `Err(AgentError::AlreadyRunning)` immediately.
+- Q: What happens when continue is called with empty conversation history? → A: `validate_continue()` (line 964) returns `Err(AgentError::NoMessages)` when `self.state.messages.is_empty()`.
+- Q: What happens when continue is called and the last message is an assistant message? → A: `validate_continue()` (line 967) returns `Err(AgentError::InvalidContinue)` when the last message is `LlmMessage::Assistant` AND there are no pending steering/follow-up messages. If pending messages exist, continue is permitted because queued messages will be injected into the next turn.
+- Q: How does the agent handle a subscriber that is registered and unregistered during a run? → A: `unsubscribe(id)` removes the callback from the `ListenerRegistry` immediately. No further events are delivered to it. This is safe to call at any time; the registry handles concurrent dispatch with panic isolation (via `catch_unwind`).
+- Q: What happens when the steering queue is cleared while the agent is running? → A: `clear_steering()` acquires the `Arc<Mutex<>>` lock (with poison recovery) and clears the Vec. The `QueueMessageProvider` shares the same Arc, so its next `poll_steering` call will see an empty queue and return no messages.
 
 ## Requirements *(mandatory)*
 
