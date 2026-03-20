@@ -84,6 +84,8 @@ MSRV **1.88** (edition 2024). Workspace deps centralized in root `Cargo.toml`.
 ## Active Technologies
 - Rust 1.88 (edition 2024) + serde, serde_json, tokio, futures, thiserror, uuid, reqwest, jsonschema, schemars, rand, tracing, toml (all centralized in workspace `[workspace.dependencies]`) (001-workspace-scaffold)
 - N/A (scaffold only) (001-workspace-scaffold)
+- Rust 1.88 (edition 2024) + serde, serde_json, thiserror, uuid, schemars (all workspace deps) (002-foundation-types-errors)
+- N/A (in-memory types only) (002-foundation-types-errors)
 
 ## Recent Changes
 - 001-workspace-scaffold: Added Rust 1.88 (edition 2024) + serde, serde_json, tokio, futures, thiserror, uuid, reqwest, jsonschema, schemars, rand, tracing, toml (all centralized in workspace `[workspace.dependencies]`)
