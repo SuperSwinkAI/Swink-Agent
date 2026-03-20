@@ -73,11 +73,11 @@ A developer encounters various error conditions when communicating with the Olla
 
 ### Edge Cases
 
-- What happens when the Ollama instance is not running — is the connection error surfaced clearly?
-- How does the adapter handle a model that does not support tool calling when tools are provided?
-- What happens when NDJSON lines arrive with unexpected fields or missing expected fields?
-- How does the adapter handle an Ollama response that reports an error mid-stream (e.g., out of memory)?
-- What happens when the model name does not exist on the Ollama instance?
+- What happens when the Ollama instance is not running — `error_network("Ollama connection error: ...")` with the reqwest error details.
+- How does the adapter handle a model that does not support tool calling — tools are passed in the request; if the model ignores them, response has no tool_calls and adapter streams text normally.
+- What happens when NDJSON lines arrive with unexpected/missing fields — all optional fields use `#[serde(default)]`; missing fields default to None/empty. No crash.
+- How does the adapter handle an Ollama error mid-stream — non-success HTTP status maps to `error_network`. NDJSON parse errors surface as stream errors.
+- What happens when the model name does not exist — Ollama returns an HTTP error; adapter maps it to `error_network("Ollama HTTP {status}: {body}")`.
 
 ## Requirements *(mandatory)*
 
@@ -103,6 +103,16 @@ A developer encounters various error conditions when communicating with the Olla
 - **SC-002**: Tool calls produce valid, parseable JSON arguments upon completion.
 - **SC-003**: The NDJSON parser correctly handles partial lines, the done flag, and malformed lines without panics.
 - **SC-004**: All Ollama error conditions map to the correct agent error types consistently.
+
+## Clarifications
+
+### Session 2026-03-20
+
+- Q: Ollama not running? → A: `error_network` with reqwest connection error details.
+- Q: Model doesn't support tools? → A: Adapter streams text normally; no tool_calls in response.
+- Q: Unexpected/missing NDJSON fields? → A: `#[serde(default)]` on all optional fields; no crash.
+- Q: Mid-stream Ollama error? → A: Non-success HTTP → `error_network`; parse errors → stream error.
+- Q: Model name not found? → A: HTTP error mapped to `error_network`.
 
 ## Assumptions
 
