@@ -228,7 +228,7 @@ impl CustomMessageRegistry {
 
     /// Returns `true` if a deserializer is registered for `type_name`.
     #[must_use]
-    pub fn contains(&self, type_name: &str) -> bool {
+    pub fn has_type_name(&self, type_name: &str) -> bool {
         self.deserializers.contains_key(type_name)
     }
 }
@@ -979,9 +979,9 @@ mod tests {
     #[test]
     fn registry_contains_check() {
         let mut registry = CustomMessageRegistry::new();
-        assert!(!registry.contains("mock_notification"));
+        assert!(!registry.has_type_name("mock_notification"));
         registry.register_type::<MockNotification>("mock_notification");
-        assert!(registry.contains("mock_notification"));
+        assert!(registry.has_type_name("mock_notification"));
     }
 
     #[test]

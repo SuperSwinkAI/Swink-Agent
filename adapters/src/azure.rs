@@ -6,13 +6,13 @@ use std::collections::HashMap;
 use std::pin::Pin;
 
 use futures::stream::{self, Stream, StreamExt as _};
-use reqwest::Client;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, warn};
 
 use swink_agent::stream::{AssistantMessageEvent, StreamFn, StreamOptions};
 use swink_agent::types::{AgentContext, Cost, ModelSpec, StopReason, Usage};
 
+use crate::base::AdapterBase;
 use crate::convert;
 use crate::openai_compat::{
     OaiChatRequest, OaiChunk, OaiConverter, OaiStreamOptions, OaiToolCallDelta, ToolCallState,
@@ -21,18 +21,17 @@ use crate::openai_compat::{
 use crate::sse::{SseLine, sse_data_lines};
 
 pub struct AzureStreamFn {
-    base_url: String,
-    api_key: String,
-    client: Client,
+    base: AdapterBase,
 }
 
 impl AzureStreamFn {
     #[must_use]
     pub fn new(base_url: impl Into<String>, api_key: impl Into<String>) -> Self {
         Self {
-            base_url: base_url.into().trim_end_matches('/').to_string(),
-            api_key: api_key.into(),
-            client: Client::new(),
+            base: AdapterBase::new(
+                base_url.into().trim_end_matches('/').to_string(),
+                api_key,
+            ),
         }
     }
 }
@@ -40,7 +39,7 @@ impl AzureStreamFn {
 impl std::fmt::Debug for AzureStreamFn {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AzureStreamFn")
-            .field("base_url", &self.base_url)
+            .field("base_url", &self.base.base_url)
             .field("api_key", &"[REDACTED]")
             .finish_non_exhaustive()
     }
@@ -104,7 +103,7 @@ async fn send_request(
     context: &AgentContext,
     options: &StreamOptions,
 ) -> Result<reqwest::Response, AssistantMessageEvent> {
-    let url = format!("{}/chat/completions", azure.base_url);
+    let url = format!("{}/chat/completions", azure.base.base_url);
     debug!(
         %url,
         model = %model.model_id,
@@ -130,9 +129,10 @@ async fn send_request(
         tool_choice,
     };
 
-    let api_key = options.api_key.as_deref().unwrap_or(&azure.api_key);
+    let api_key = options.api_key.as_deref().unwrap_or(&azure.base.api_key);
 
     azure
+        .base
         .client
         .post(&url)
         .header("api-key", api_key)

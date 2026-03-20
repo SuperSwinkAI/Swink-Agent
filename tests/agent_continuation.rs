@@ -6,8 +6,10 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use common::{MockStreamFn, default_convert, default_model, text_only_events, user_msg};
-use futures::Stream;
+use common::{
+    ContextCapturingStreamFn, MockStreamFn, default_convert, default_model, text_only_events,
+    user_msg,
+};
 use tokio_util::sync::CancellationToken;
 
 use swink_agent::{
@@ -15,52 +17,6 @@ use swink_agent::{
     Cost, DefaultRetryStrategy, LlmMessage, ModelSpec, StopReason, StreamFn, StreamOptions,
     ToolResultMessage, Usage, UserMessage,
 };
-
-// ─── ContextCapturingStreamFn ────────────────────────────────────────────
-
-/// A mock `StreamFn` that captures context message counts.
-struct ContextCapturingStreamFn {
-    responses: Mutex<Vec<Vec<AssistantMessageEvent>>>,
-    captured_message_counts: Mutex<Vec<usize>>,
-}
-
-impl ContextCapturingStreamFn {
-    const fn new(responses: Vec<Vec<AssistantMessageEvent>>) -> Self {
-        Self {
-            responses: Mutex::new(responses),
-            captured_message_counts: Mutex::new(Vec::new()),
-        }
-    }
-}
-
-impl StreamFn for ContextCapturingStreamFn {
-    fn stream<'a>(
-        &'a self,
-        _model: &'a ModelSpec,
-        context: &'a swink_agent::AgentContext,
-        _options: &'a StreamOptions,
-        _cancellation_token: CancellationToken,
-    ) -> Pin<Box<dyn Stream<Item = AssistantMessageEvent> + Send + 'a>> {
-        self.captured_message_counts
-            .lock()
-            .unwrap()
-            .push(context.messages.len());
-        let events = {
-            let mut responses = self.responses.lock().unwrap();
-            if responses.is_empty() {
-                vec![AssistantMessageEvent::Error {
-                    stop_reason: StopReason::Error,
-                    error_message: "no more scripted responses".to_string(),
-                    usage: None,
-                    error_kind: None,
-                }]
-            } else {
-                responses.remove(0)
-            }
-        };
-        Box::pin(futures::stream::iter(events))
-    }
-}
 
 // ─── Helpers ─────────────────────────────────────────────────────────────
 
@@ -83,7 +39,7 @@ fn make_agent(stream_fn: Arc<dyn StreamFn>) -> Agent {
 // ─── 4.17: continue_async with empty messages returns NoMessages ─────────
 
 #[tokio::test]
-async fn test_4_17_continue_async_no_messages() {
+async fn continue_async_no_messages() {
     let stream_fn = Arc::new(MockStreamFn::new(vec![]));
     let mut agent = make_agent(stream_fn);
 
@@ -98,7 +54,7 @@ async fn test_4_17_continue_async_no_messages() {
 // ─── Gap tests: multi-turn, continue scenarios ───────────────────────────
 
 #[tokio::test]
-async fn test_multi_turn_across_separate_prompts() {
+async fn multi_turn_across_separate_prompts() {
     let stream_fn = Arc::new(MockStreamFn::new(vec![
         text_only_events("first response"),
         text_only_events("second response"),
@@ -132,7 +88,7 @@ async fn test_multi_turn_across_separate_prompts() {
 }
 
 #[tokio::test]
-async fn test_continue_from_tool_result() {
+async fn continue_from_tool_result() {
     let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events(
         "continued response",
     )]));
@@ -176,7 +132,7 @@ async fn test_continue_from_tool_result() {
 }
 
 #[tokio::test]
-async fn test_continue_drains_queues_from_assistant_tail() {
+async fn continue_drains_queues_from_assistant_tail() {
     let stream_fn = Arc::new(MockStreamFn::new(vec![
         text_only_events("first"),
         text_only_events("after steering"),
@@ -202,7 +158,7 @@ async fn test_continue_drains_queues_from_assistant_tail() {
 }
 
 #[tokio::test]
-async fn test_continue_does_not_reemit_existing_messages() {
+async fn continue_does_not_reemit_existing_messages() {
     let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("continued")]));
     let mut agent = make_agent(stream_fn);
 
@@ -257,7 +213,7 @@ async fn test_continue_does_not_reemit_existing_messages() {
 }
 
 #[tokio::test]
-async fn test_session_id_forwarding() {
+async fn session_id_forwarding() {
     use std::sync::Mutex as StdMutex;
 
     struct SessionCapturingStreamFn {
@@ -336,7 +292,7 @@ async fn test_session_id_forwarding() {
 }
 
 #[tokio::test]
-async fn test_get_api_key_forwarding() {
+async fn get_api_key_forwarding() {
     use std::sync::Mutex as StdMutex;
 
     struct ApiKeyCapturingStreamFn {
@@ -402,7 +358,7 @@ async fn test_get_api_key_forwarding() {
 }
 
 #[tokio::test]
-async fn test_agent_end_subscriber_retaining_messages_does_not_lose_history() {
+async fn agent_end_subscriber_retaining_messages_does_not_lose_history() {
     let stream_fn = Arc::new(ContextCapturingStreamFn::new(vec![
         text_only_events("first response"),
         text_only_events("continued response"),

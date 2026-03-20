@@ -2,67 +2,17 @@
 
 mod common;
 
-use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use common::{
-    MockStreamFn, MockTool, default_convert, default_model, text_only_events, tool_call_events,
-    user_msg,
+    ContextCapturingStreamFn, MockStreamFn, MockTool, default_convert, default_model,
+    text_only_events, tool_call_events, user_msg,
 };
-use futures::Stream;
-use tokio_util::sync::CancellationToken;
 
 use swink_agent::{
-    Agent, AgentOptions, AgentTool, AssistantMessageEvent, DefaultRetryStrategy, ModelSpec,
-    SteeringMode, StopReason, StreamFn, StreamOptions,
+    Agent, AgentOptions, AgentTool, DefaultRetryStrategy, SteeringMode, StreamFn,
 };
-
-// ─── ContextCapturingStreamFn ────────────────────────────────────────────
-
-/// A mock `StreamFn` that captures context message counts.
-struct ContextCapturingStreamFn {
-    responses: Mutex<Vec<Vec<AssistantMessageEvent>>>,
-    captured_message_counts: Mutex<Vec<usize>>,
-}
-
-impl ContextCapturingStreamFn {
-    const fn new(responses: Vec<Vec<AssistantMessageEvent>>) -> Self {
-        Self {
-            responses: Mutex::new(responses),
-            captured_message_counts: Mutex::new(Vec::new()),
-        }
-    }
-}
-
-impl StreamFn for ContextCapturingStreamFn {
-    fn stream<'a>(
-        &'a self,
-        _model: &'a ModelSpec,
-        context: &'a swink_agent::AgentContext,
-        _options: &'a StreamOptions,
-        _cancellation_token: CancellationToken,
-    ) -> Pin<Box<dyn Stream<Item = AssistantMessageEvent> + Send + 'a>> {
-        self.captured_message_counts
-            .lock()
-            .unwrap()
-            .push(context.messages.len());
-        let events = {
-            let mut responses = self.responses.lock().unwrap();
-            if responses.is_empty() {
-                vec![AssistantMessageEvent::Error {
-                    stop_reason: StopReason::Error,
-                    error_message: "no more scripted responses".to_string(),
-                    usage: None,
-                    error_kind: None,
-                }]
-            } else {
-                responses.remove(0)
-            }
-        };
-        Box::pin(futures::stream::iter(events))
-    }
-}
 
 // ─── Helpers ─────────────────────────────────────────────────────────────
 
@@ -102,7 +52,7 @@ fn make_agent_with_tools(stream_fn: Arc<dyn StreamFn>, tools: Vec<Arc<dyn AgentT
 // ─── 4.6: steer() during a run causes steering interrupt ─────────────────
 
 #[tokio::test]
-async fn test_4_6_steer_during_run() {
+async fn steer_during_run() {
     // Two turns: first triggers a tool call, second is the final response.
     // We steer after seeing the tool execution start.
     let stream_fn = Arc::new(MockStreamFn::new(vec![
@@ -124,7 +74,7 @@ async fn test_4_6_steer_during_run() {
 // ─── 4.7: follow_up() causes continuation after natural stop ─────────────
 
 #[tokio::test]
-async fn test_4_7_follow_up_continues() {
+async fn follow_up_continues() {
     let stream_fn = Arc::new(MockStreamFn::new(vec![
         text_only_events("first response"),
         text_only_events("second response"),
@@ -148,7 +98,7 @@ async fn test_4_7_follow_up_continues() {
 // ─── 4.8: steer() while idle queues for next run ─────────────────────────
 
 #[tokio::test]
-async fn test_4_8_steer_while_idle_queues() {
+async fn steer_while_idle_queues() {
     let stream_fn = Arc::new(MockStreamFn::new(vec![
         text_only_events("first"),
         text_only_events("with steering"),
@@ -170,7 +120,7 @@ async fn test_4_8_steer_while_idle_queues() {
 // ─── 4.18: Steering mode All vs OneAtATime ───────────────────────────────
 
 #[tokio::test]
-async fn test_4_18_steering_mode_all_delivers_all() {
+async fn steering_mode_all_delivers_all() {
     // With SteeringMode::All (default), all queued steering messages should be
     // delivered in one batch.
     let stream_fn = Arc::new(MockStreamFn::new(vec![
@@ -204,7 +154,7 @@ async fn test_4_18_steering_mode_all_delivers_all() {
 }
 
 #[tokio::test]
-async fn test_4_18_steering_mode_one_at_a_time() {
+async fn steering_mode_one_at_a_time() {
     // With SteeringMode::OneAtATime and multiple tool calls, only one steering
     // message should be drained per poll.
     let stream_fn = Arc::new(MockStreamFn::new(vec![
@@ -235,7 +185,7 @@ async fn test_4_18_steering_mode_one_at_a_time() {
 // ─── 4.19: AgentContext snapshot is immutable during a turn ──────────────
 
 #[tokio::test]
-async fn test_4_19_context_snapshot_immutable() {
+async fn context_snapshot_immutable() {
     // The context passed to StreamFn should not reflect messages added during
     // the same turn. We verify by capturing context message counts: the first
     // call should see only the user message, the second call (after tool result)

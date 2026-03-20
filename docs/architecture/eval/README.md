@@ -27,6 +27,7 @@ flowchart TB
         Traj["TrajectoryMatcher<br/>(Exact / InOrder / AnyOrder)"]
         Budget["BudgetEvaluator<br/>(cost, tokens, turns, duration)"]
         Response["ResponseMatcher<br/>(exact / contains / regex / custom)"]
+        Efficiency["EfficiencyEvaluator<br/>(duplicate ratio + step ratio)"]
     end
 
     subgraph AgentHarness["⚙️ swink-agent (core)"]
@@ -43,6 +44,7 @@ flowchart TB
     Traj --> Registry
     Budget --> Registry
     Response --> Registry
+    Efficiency --> Registry
     Registry -->|"EvalCaseResult"| Runner
     Runner -->|"EvalSetResult"| Store
 
@@ -53,7 +55,7 @@ flowchart TB
 
     class Factory,CustomEval callerStyle
     class Runner,Collector,Registry,Store evalStyle
-    class Traj,Budget,Response builtinStyle
+    class Traj,Budget,Response,Efficiency builtinStyle
     class Agent,Events harnessStyle
 ```
 
@@ -189,6 +191,20 @@ Scores the agent's final response text against expected criteria.
 | `Contains` | `actual.contains(substring)` |
 | `Regex` | `regex::Regex::new(pattern).is_match(actual)` |
 | `Custom` | User-supplied `Arc<dyn Fn(&str) -> Score>` (not serializable) |
+
+### EfficiencyEvaluator
+
+Measures token and turn efficiency relative to a reference baseline. Loaded automatically by `EvaluatorRegistry::with_defaults()`. Source: `eval/src/efficiency.rs`.
+
+Scores: composite of two weighted ratios. Returns `None` when the invocation has zero tool calls.
+
+| Metric | Weight | Formula |
+|---|---|---|
+| Duplicate ratio | 0.6 | `unique_calls / total_calls` — penalises repeated identical tool calls |
+| Step ratio | 0.4 | `min(ideal_turns, actual_turns) / actual_turns` — penalises excess turns relative to an ideal; ideal defaults to `budget.max_turns` if set, otherwise the unique tool call count |
+| **Composite score** | — | `0.6 * duplicate_ratio + 0.4 * step_ratio` |
+
+Default pass threshold: **0.5**. Customise with `EfficiencyEvaluator::with_threshold(f64)`.
 
 ---
 

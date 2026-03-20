@@ -6,15 +6,14 @@ use std::time::Duration;
 use futures::{Stream, StreamExt};
 use std::pin::Pin;
 use swink_agent::{
-    AgentEvent, AgentLoopConfig, AgentMessage, AssistantMessageEvent,
-    ContentBlock, DefaultRetryStrategy, LlmMessage, ModelFallback, ModelSpec,
-    StopReason, StreamFn, StreamOptions, UserMessage, agent_loop,
+    AgentEvent, AgentLoopConfig, AgentMessage, AssistantMessageEvent, DefaultRetryStrategy,
+    LlmMessage, ModelFallback, ModelSpec, StopReason, StreamFn, StreamOptions, agent_loop,
 };
 use tokio_util::sync::CancellationToken;
 
-use common::{MockStreamFn, text_only_events};
+use common::{MockStreamFn, text_only_events, user_msg};
 
-fn default_model() -> ModelSpec {
+fn primary_model() -> ModelSpec {
     ModelSpec::new("test", "primary-model")
 }
 
@@ -27,15 +26,6 @@ fn default_convert_to_llm() -> Box<dyn Fn(&AgentMessage) -> Option<LlmMessage> +
         AgentMessage::Llm(llm) => Some(llm.clone()),
         AgentMessage::Custom(_) => None,
     })
-}
-
-fn user_msg(text: &str) -> AgentMessage {
-    AgentMessage::Llm(LlmMessage::User(UserMessage {
-        content: vec![ContentBlock::Text {
-            text: text.to_string(),
-        }],
-        timestamp: 0,
-    }))
 }
 
 fn error_events(error_message: &str) -> Vec<AssistantMessageEvent> {
@@ -55,7 +45,7 @@ fn default_config(
     fallback: Option<ModelFallback>,
 ) -> AgentLoopConfig {
     AgentLoopConfig {
-        model: default_model(),
+        model: primary_model(),
         stream_options: StreamOptions::default(),
         retry_strategy: Box::new(
             DefaultRetryStrategy::default()

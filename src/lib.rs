@@ -1,5 +1,7 @@
 #![forbid(unsafe_code)]
 mod agent;
+pub mod agent_options;
+pub(crate) mod agent_subscriptions;
 mod async_context_transformer;
 mod budget_guard;
 mod checkpoint;
@@ -45,7 +47,8 @@ pub mod prelude;
 
 // Re-exports
 pub use agent::{
-    Agent, AgentOptions, AgentState, FollowUpMode, SteeringMode, SubscriptionId, default_convert,
+    Agent, AgentOptions, AgentState, DEFAULT_PLAN_MODE_ADDENDUM, FollowUpMode, SteeringMode,
+    SubscriptionId, default_convert,
 };
 pub use async_context_transformer::AsyncContextTransformer;
 pub use budget_guard::{BudgetExceeded, BudgetGuard};

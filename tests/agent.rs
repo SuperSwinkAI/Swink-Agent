@@ -54,7 +54,7 @@ fn make_agent_with_tools(stream_fn: Arc<dyn StreamFn>, tools: Vec<Arc<dyn AgentT
 // ─── 4.1: prompt_async returns correct AgentResult ───────────────────────
 
 #[tokio::test]
-async fn test_4_1_prompt_async_returns_correct_result() {
+async fn prompt_async_returns_correct_result() {
     let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("Hello world")]));
     let mut agent = make_agent(stream_fn);
 
@@ -78,7 +78,7 @@ async fn test_4_1_prompt_async_returns_correct_result() {
 // ─── 4.2: prompt_sync blocks and returns same result as async ────────────
 
 #[test]
-fn test_4_2_prompt_sync_returns_result() {
+fn prompt_sync_returns_result() {
     let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("sync result")]));
     let mut agent = make_agent(stream_fn);
 
@@ -98,7 +98,7 @@ fn test_4_2_prompt_sync_returns_result() {
 // ─── 4.3: prompt_stream yields events in correct order ───────────────────
 
 #[tokio::test]
-async fn test_4_3_prompt_stream_yields_events_in_order() {
+async fn prompt_stream_yields_events_in_order() {
     let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("streamed")]));
     let mut agent = make_agent(stream_fn);
 
@@ -130,7 +130,7 @@ async fn test_4_3_prompt_stream_yields_events_in_order() {
 // ─── 4.4: prompt_* while running returns AlreadyRunning ──────────────────
 
 #[tokio::test]
-async fn test_4_4_already_running_error() {
+async fn already_running_error() {
     // prompt_stream sets is_running = true and returns immediately. While the
     // stream is not yet consumed, calling prompt again should fail.
     let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("first")]));
@@ -151,7 +151,7 @@ async fn test_4_4_already_running_error() {
 // ─── 4.5: abort() causes StopReason::Aborted ────────────────────────────
 
 #[tokio::test]
-async fn test_4_5_abort_causes_aborted_stop() {
+async fn abort_causes_aborted_stop() {
     // Use a tool with a long delay so we can abort mid-run.
     let stream_fn = Arc::new(MockStreamFn::new(vec![
         tool_call_events("tc_1", "slow_tool", "{}"),
@@ -190,7 +190,7 @@ async fn test_4_5_abort_causes_aborted_stop() {
 // ─── 4.12: reset() clears state ──────────────────────────────────────────
 
 #[tokio::test]
-async fn test_4_12_reset_clears_state() {
+async fn reset_clears_state() {
     let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("before reset")]));
     let mut agent = make_agent(stream_fn);
 
@@ -230,7 +230,7 @@ async fn test_4_12_reset_clears_state() {
 // ─── 4.13: wait_for_idle() resolves when run completes ───────────────────
 
 #[tokio::test]
-async fn test_4_13_wait_for_idle_resolves_immediately_when_idle() {
+async fn wait_for_idle_resolves_immediately_when_idle() {
     let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("done")]));
     let mut agent = make_agent(stream_fn);
 
@@ -247,7 +247,7 @@ async fn test_4_13_wait_for_idle_resolves_immediately_when_idle() {
 // ─── Gap tests: default state, mutators, error state ─────────────────────
 
 #[test]
-fn test_default_state_initialization() {
+fn default_state_initialization() {
     let stream_fn = Arc::new(MockStreamFn::new(vec![]));
     let agent = make_agent(stream_fn);
     let s = agent.state();
@@ -260,7 +260,7 @@ fn test_default_state_initialization() {
 }
 
 #[tokio::test]
-async fn test_state_mutators() {
+async fn state_mutators() {
     let stream_fn = Arc::new(MockStreamFn::new(vec![]));
     let mut agent = make_agent(stream_fn);
 
@@ -293,7 +293,7 @@ async fn test_state_mutators() {
 }
 
 #[tokio::test]
-async fn test_error_sets_state_error() {
+async fn error_sets_state_error() {
     let stream_fn = Arc::new(MockStreamFn::new(vec![vec![
         AssistantMessageEvent::Start,
         AssistantMessageEvent::Error {

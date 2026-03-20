@@ -6,7 +6,10 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use common::{MockStreamFn, MockTool, default_model, text_only_events, tool_call_events};
+use common::{
+    ApiKeyCapturingStreamFn, ContextCapturingStreamFn, MockStreamFn, MockTool, default_model,
+    text_only_events, tool_call_events,
+};
 use futures::Stream;
 use futures::stream::StreamExt;
 use serde_json::json;
@@ -18,96 +21,6 @@ use swink_agent::{
     MessageProvider, ModelSpec, StopReason, StreamFn, StreamOptions, ToolResultMessage,
     TurnSnapshot, Usage, UserMessage, agent_loop,
 };
-
-// ─── ContextCapturingStreamFn ────────────────────────────────────────────
-
-/// A mock `StreamFn` that captures the messages passed in the context.
-struct ContextCapturingStreamFn {
-    responses: Mutex<Vec<Vec<AssistantMessageEvent>>>,
-    captured_message_counts: Mutex<Vec<usize>>,
-}
-
-impl ContextCapturingStreamFn {
-    const fn new(responses: Vec<Vec<AssistantMessageEvent>>) -> Self {
-        Self {
-            responses: Mutex::new(responses),
-            captured_message_counts: Mutex::new(Vec::new()),
-        }
-    }
-}
-
-/// A mock `StreamFn` that captures resolved API keys from stream options.
-struct ApiKeyCapturingStreamFn {
-    responses: Mutex<Vec<Vec<AssistantMessageEvent>>>,
-    captured_api_keys: Mutex<Vec<Option<String>>>,
-}
-
-impl ApiKeyCapturingStreamFn {
-    const fn new(responses: Vec<Vec<AssistantMessageEvent>>) -> Self {
-        Self {
-            responses: Mutex::new(responses),
-            captured_api_keys: Mutex::new(Vec::new()),
-        }
-    }
-}
-
-impl StreamFn for ApiKeyCapturingStreamFn {
-    fn stream<'a>(
-        &'a self,
-        _model: &'a ModelSpec,
-        _context: &'a AgentContext,
-        options: &'a StreamOptions,
-        _cancellation_token: CancellationToken,
-    ) -> Pin<Box<dyn Stream<Item = AssistantMessageEvent> + Send + 'a>> {
-        self.captured_api_keys
-            .lock()
-            .unwrap()
-            .push(options.api_key.clone());
-        let events = {
-            let mut responses = self.responses.lock().unwrap();
-            if responses.is_empty() {
-                vec![AssistantMessageEvent::Error {
-                    stop_reason: StopReason::Error,
-                    error_message: "no more scripted responses".to_string(),
-                    usage: None,
-                    error_kind: None,
-                }]
-            } else {
-                responses.remove(0)
-            }
-        };
-        Box::pin(futures::stream::iter(events))
-    }
-}
-
-impl StreamFn for ContextCapturingStreamFn {
-    fn stream<'a>(
-        &'a self,
-        _model: &'a ModelSpec,
-        context: &'a AgentContext,
-        _options: &'a StreamOptions,
-        _cancellation_token: CancellationToken,
-    ) -> Pin<Box<dyn Stream<Item = AssistantMessageEvent> + Send + 'a>> {
-        self.captured_message_counts
-            .lock()
-            .unwrap()
-            .push(context.messages.len());
-        let events = {
-            let mut responses = self.responses.lock().unwrap();
-            if responses.is_empty() {
-                vec![AssistantMessageEvent::Error {
-                    stop_reason: StopReason::Error,
-                    error_message: "no more scripted responses".to_string(),
-                    usage: None,
-                    error_kind: None,
-                }]
-            } else {
-                responses.remove(0)
-            }
-        };
-        Box::pin(futures::stream::iter(events))
-    }
-}
 
 // ─── UpdatingTool ─────────────────────────────────────────────────────────
 
@@ -256,7 +169,7 @@ fn count_events(events: &[AgentEvent], name: &str) -> usize {
 // ─── 3.1: Single-turn no-tool ────────────────────────────────────────────
 
 #[tokio::test]
-async fn test_3_1_single_turn_no_tool() {
+async fn single_turn_no_tool() {
     let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("Hello!")]));
     let config = default_config(stream_fn);
 
@@ -303,7 +216,7 @@ async fn test_3_1_single_turn_no_tool() {
 // ─── 3.2: Single-turn with tool call ─────────────────────────────────────
 
 #[tokio::test]
-async fn test_3_2_single_turn_with_tool_call() {
+async fn single_turn_with_tool_call() {
     let stream_fn = Arc::new(MockStreamFn::new(vec![
         tool_call_events("tc_1", "read_file", r#"{"path": "/tmp"}"#),
         text_only_events("Done!"),
@@ -330,7 +243,7 @@ async fn test_3_2_single_turn_with_tool_call() {
 // ─── 3.3: Multi-turn ────────────────────────────────────────────────────
 
 #[tokio::test]
-async fn test_3_3_multi_turn() {
+async fn multi_turn() {
     let stream_fn = Arc::new(MockStreamFn::new(vec![
         tool_call_events("tc_1", "tool_a", "{}"),
         tool_call_events("tc_2", "tool_b", "{}"),
@@ -358,7 +271,7 @@ async fn test_3_3_multi_turn() {
 // ─── 3.4: transform_context ordering ─────────────────────────────────────
 
 #[tokio::test]
-async fn test_3_4_transform_context_ordering() {
+async fn transform_context_ordering() {
     let counter = Arc::new(AtomicU32::new(0));
     let counter_transform = Arc::clone(&counter);
     let counter_convert = Arc::clone(&counter);
@@ -399,7 +312,7 @@ async fn test_3_4_transform_context_ordering() {
 // ─── 3.5: get_api_key ────────────────────────────────────────────────────
 
 #[tokio::test]
-async fn test_3_5_get_api_key() {
+async fn get_api_key() {
     let calls: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
     let calls_clone = Arc::clone(&calls);
 
@@ -450,7 +363,7 @@ async fn test_3_5_get_api_key() {
 }
 
 #[tokio::test]
-async fn test_3_5b_tool_execution_update_events() {
+async fn tool_execution_update_events() {
     let stream_fn = Arc::new(MockStreamFn::new(vec![
         tool_call_events("tc_1", "updating_tool", "{}"),
         text_only_events("done"),
@@ -529,7 +442,7 @@ async fn test_3_5b_tool_execution_update_events() {
 // ─── 3.6: Concurrent execution ──────────────────────────────────────────
 
 #[tokio::test]
-async fn test_3_6_concurrent_execution() {
+async fn concurrent_execution() {
     let events_with_3_tools = vec![
         AssistantMessageEvent::Start,
         AssistantMessageEvent::ToolCallStart {
@@ -602,7 +515,7 @@ async fn test_3_6_concurrent_execution() {
 // ─── 3.7: Steering interrupt ─────────────────────────────────────────────
 
 #[tokio::test]
-async fn test_3_7_steering_interrupt() {
+async fn steering_interrupt() {
     let events_with_2_tools = vec![
         AssistantMessageEvent::Start,
         AssistantMessageEvent::ToolCallStart {
@@ -674,7 +587,7 @@ async fn test_3_7_steering_interrupt() {
 // ─── 3.8: Follow-up ─────────────────────────────────────────────────────
 
 #[tokio::test]
-async fn test_3_8_follow_up() {
+async fn follow_up() {
     let stream_fn = Arc::new(MockStreamFn::new(vec![
         text_only_events("first response"),
         text_only_events("second response"),
@@ -713,7 +626,7 @@ async fn test_3_8_follow_up() {
 // ─── 3.9: Error exit ─────────────────────────────────────────────────────
 
 #[tokio::test]
-async fn test_3_9_error_exit_no_follow_up() {
+async fn error_exit_no_follow_up() {
     let stream_fn = Arc::new(MockStreamFn::new(vec![vec![
         AssistantMessageEvent::Start,
         AssistantMessageEvent::Error {
@@ -751,7 +664,7 @@ async fn test_3_9_error_exit_no_follow_up() {
 // ─── 3.10: Abort via CancellationToken ───────────────────────────────────
 
 #[tokio::test]
-async fn test_3_10_abort() {
+async fn abort() {
     let token = CancellationToken::new();
     let token_clone = token.clone();
 
@@ -788,7 +701,7 @@ async fn test_3_10_abort() {
 // ─── 3.11: Retry success ─────────────────────────────────────────────────
 
 #[tokio::test]
-async fn test_3_11_retry_success() {
+async fn retry_success() {
     let stream_fn = Arc::new(MockStreamFn::new(vec![
         vec![
             AssistantMessageEvent::Start,
@@ -831,7 +744,7 @@ async fn test_3_11_retry_success() {
 // ─── 3.12: Non-retryable error ──────────────────────────────────────────
 
 #[tokio::test]
-async fn test_3_12_non_retryable_error() {
+async fn non_retryable_error() {
     let stream_fn = Arc::new(MockStreamFn::new(vec![
         vec![
             AssistantMessageEvent::Start,
@@ -865,7 +778,7 @@ async fn test_3_12_non_retryable_error() {
 // ─── 3.13: Max tokens recovery ──────────────────────────────────────────
 
 #[tokio::test]
-async fn test_3_13_max_tokens_recovery() {
+async fn max_tokens_recovery() {
     let events_with_incomplete = vec![
         AssistantMessageEvent::Start,
         AssistantMessageEvent::ToolCallStart {
@@ -912,7 +825,7 @@ async fn test_3_13_max_tokens_recovery() {
 // ─── 3.14: convert_to_llm filter ────────────────────────────────────────
 
 #[tokio::test]
-async fn test_3_14_convert_to_llm_filter() {
+async fn convert_to_llm_filter() {
     #[derive(Debug)]
     struct CustomMsg;
     impl CustomMessage for CustomMsg {
@@ -961,7 +874,7 @@ async fn test_3_14_convert_to_llm_filter() {
 // ─── 3.15: Overflow signal ───────────────────────────────────────────────
 
 #[tokio::test]
-async fn test_3_15_overflow_signal() {
+async fn overflow_signal() {
     let overflow_flags: Arc<Mutex<Vec<bool>>> = Arc::new(Mutex::new(Vec::new()));
     let flags_clone = Arc::clone(&overflow_flags);
 
@@ -1007,7 +920,7 @@ async fn test_3_15_overflow_signal() {
 // ─── 3.16: No tool calls ─────────────────────────────────────────────────
 
 #[tokio::test]
-async fn test_3_16_no_tool_calls() {
+async fn no_tool_calls() {
     let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("Just text")]));
     let config = default_config(stream_fn);
 
@@ -1027,7 +940,7 @@ async fn test_3_16_no_tool_calls() {
 // ─── 3.17: Validation failure ────────────────────────────────────────────
 
 #[tokio::test]
-async fn test_3_17_validation_failure() {
+async fn validation_failure() {
     let stream_fn = Arc::new(MockStreamFn::new(vec![
         tool_call_events("tc_1", "strict_tool", "{}"),
         text_only_events("after validation error"),

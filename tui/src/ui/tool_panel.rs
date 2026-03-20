@@ -112,11 +112,11 @@ impl ToolPanel {
         !self.pending_approvals.is_empty()
     }
 
-    /// Advance the spinner and prune old completed tools (>3s) and resolved approvals (>2s).
+    /// Advance the spinner and prune old completed tools (>10s) and resolved approvals (>2s).
     pub fn tick(&mut self) {
         self.spinner_frame = (self.spinner_frame + 1) % SPINNER.len();
         self.completed
-            .retain(|t| t.completed_at.is_none_or(|at| at.elapsed().as_secs() < 3));
+            .retain(|t| t.completed_at.is_none_or(|at| at.elapsed().as_secs() < 10));
         self.resolved_approvals
             .retain(|r| r.resolved_at.elapsed().as_secs() < 2);
     }

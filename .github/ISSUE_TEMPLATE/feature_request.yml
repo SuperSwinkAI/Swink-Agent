@@ -1,0 +1,50 @@
+name: Feature Request
+description: Propose a new feature or improvement
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before submitting, check open issues and PRs to see if this has already been proposed.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Describe the use case or limitation you're running into.
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: What would you like to see? API sketches or examples are helpful.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Any other approaches you thought about and why you ruled them out.
+
+  - type: dropdown
+    id: crate
+    attributes:
+      label: Affected crate
+      multiple: true
+      options:
+        - swink-agent (core)
+        - swink-agent-adapters
+        - swink-agent-memory
+        - swink-agent-eval
+        - swink-agent-local-llm
+        - swink-agent-tui
+        - new crate
+        - unsure
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context

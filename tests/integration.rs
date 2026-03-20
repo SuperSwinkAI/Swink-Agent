@@ -156,7 +156,7 @@ fn make_agent_with_tools(stream_fn: Arc<dyn StreamFn>, tools: Vec<Arc<dyn AgentT
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[tokio::test]
-async fn test_6_1_lifecycle_events_order_single_turn() {
+async fn lifecycle_events_order_single_turn() {
     let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("hello")]));
     let mut agent = make_agent(stream_fn);
 
@@ -191,7 +191,7 @@ async fn test_6_1_lifecycle_events_order_single_turn() {
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[tokio::test]
-async fn test_6_2_invalid_tool_args_produce_error_without_execute() {
+async fn invalid_tool_args_produce_error_without_execute() {
     let strict_schema = json!({
         "type": "object",
         "properties": {
@@ -233,7 +233,7 @@ async fn test_6_2_invalid_tool_args_produce_error_without_execute() {
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[tokio::test]
-async fn test_6_3_tools_execute_concurrently() {
+async fn tools_execute_concurrently() {
     let delay = Duration::from_millis(200);
     let tool_a = Arc::new(MockTool::new("tool_a").with_delay(delay));
     let tool_b = Arc::new(MockTool::new("tool_b").with_delay(delay));
@@ -291,7 +291,7 @@ async fn test_6_3_tools_execute_concurrently() {
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[tokio::test]
-async fn test_6_4_steering_interrupts_tool_execution() {
+async fn steering_interrupts_tool_execution() {
     let slow_tool = Arc::new(MockTool::new("slow").with_delay(Duration::from_secs(5)));
 
     let stream_fn = Arc::new(MockStreamFn::new(vec![
@@ -315,7 +315,7 @@ async fn test_6_4_steering_interrupts_tool_execution() {
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[tokio::test]
-async fn test_6_5_follow_up_continues_after_stop() {
+async fn follow_up_continues_after_stop() {
     let stream_fn = Arc::new(MockStreamFn::new(vec![
         text_only_events("first answer"),
         text_only_events("follow-up answer"),
@@ -345,7 +345,7 @@ async fn test_6_5_follow_up_continues_after_stop() {
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[tokio::test]
-async fn test_6_6_abort_produces_aborted_stop_reason() {
+async fn abort_produces_aborted_stop_reason() {
     let stream_fn = Arc::new(MockStreamFn::new(vec![
         tool_call_events("tc_1", "slow_tool", "{}"),
         text_only_events("unreachable"),
@@ -389,7 +389,7 @@ async fn test_6_6_abort_produces_aborted_stop_reason() {
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[tokio::test]
-async fn test_6_7_accumulates_text_and_tool_call_deltas() {
+async fn accumulates_text_and_tool_call_deltas() {
     let tool = Arc::new(MockTool::new("greet"));
 
     // Build events with text + tool call, using multiple deltas for both.
@@ -475,7 +475,7 @@ async fn test_6_7_accumulates_text_and_tool_call_deltas() {
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[tokio::test]
-async fn test_6_8_prompt_while_running_returns_already_running() {
+async fn prompt_while_running_returns_already_running() {
     let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("first")]));
     let mut agent = make_agent(stream_fn);
 
@@ -502,7 +502,7 @@ async fn test_6_8_prompt_while_running_returns_already_running() {
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[tokio::test]
-async fn test_6_9_transform_context_called_before_convert() {
+async fn transform_context_called_before_convert() {
     let transform_count = Arc::new(AtomicU32::new(0));
     let transform_clone = Arc::clone(&transform_count);
 
@@ -548,7 +548,7 @@ async fn test_6_9_transform_context_called_before_convert() {
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[test]
-fn test_6_10_public_types_are_send_sync() {
+fn public_types_are_send_sync() {
     const _: () = {
         const fn assert_send_sync<T: Send + Sync>() {}
 
@@ -583,7 +583,7 @@ fn test_6_10_public_types_are_send_sync() {
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[tokio::test]
-async fn test_6_11_structured_output_retries_on_invalid() {
+async fn structured_output_retries_on_invalid() {
     let schema = json!({
         "type": "object",
         "properties": {
@@ -628,7 +628,7 @@ async fn test_6_11_structured_output_retries_on_invalid() {
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[tokio::test]
-async fn test_6_12_context_window_overflow_error() {
+async fn context_window_overflow_error() {
     // The loop classifies errors containing "context window" or
     // "context_length_exceeded" as ContextWindowOverflow. When detected,
     // the loop sets an overflow signal and retries the turn with
@@ -684,7 +684,7 @@ async fn test_6_12_context_window_overflow_error() {
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[tokio::test]
-async fn test_6_13_incomplete_tool_calls_get_error_results() {
+async fn incomplete_tool_calls_get_error_results() {
     let tool = Arc::new(MockTool::new("my_tool"));
 
     // Simulate a truncated tool call: no ToolCallEnd, stop_reason = Length.
@@ -738,7 +738,7 @@ async fn test_6_13_incomplete_tool_calls_get_error_results() {
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[test]
-fn test_6_14_retry_strategy_exponential_backoff() {
+fn retry_strategy_exponential_backoff() {
     use swink_agent::RetryStrategy;
 
     let strategy = DefaultRetryStrategy::default()
@@ -780,7 +780,7 @@ fn test_6_14_retry_strategy_exponential_backoff() {
 }
 
 #[test]
-fn test_6_14_retry_strategy_jitter_bounded() {
+fn retry_strategy_jitter_bounded() {
     use swink_agent::RetryStrategy;
 
     let strategy = DefaultRetryStrategy::default()
@@ -807,7 +807,7 @@ fn test_6_14_retry_strategy_jitter_bounded() {
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[test]
-fn test_6_15_prompt_sync_blocks_until_completion() {
+fn prompt_sync_blocks_until_completion() {
     let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("sync hello")]));
     let mut agent = make_agent(stream_fn);
 

@@ -6,7 +6,7 @@
 
 ## Key Facts
 
-- Provider priority: Proxy (`LLM_BASE_URL`) > OpenAI (`OPENAI_API_KEY`) > Anthropic (`ANTHROPIC_API_KEY`) > Ollama (default fallback).
+- Provider configuration depends on the specific agent setup; `credentials::providers()` enumerates available credentials but there is no fixed priority — the active model is determined by agent configuration.
 - Event loop (`app.rs`): `tokio::select!` — terminal events, agent events, approval events, then tick.
 - Dirty flag optimization: frame redraws only when `dirty = true`.
 - Plan mode delegates to `agent.enter_plan_mode()`/`exit_plan_mode()` in core; TUI just manages UI state.

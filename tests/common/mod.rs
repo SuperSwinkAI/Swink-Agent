@@ -11,8 +11,8 @@ use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
 use swink_agent::{
-    AgentMessage, AgentTool, AgentToolResult, AssistantMessageEvent, ContentBlock, Cost,
-    LlmMessage, ModelSpec, StopReason, StreamFn, StreamOptions, Usage, UserMessage,
+    AgentContext, AgentMessage, AgentTool, AgentToolResult, AssistantMessageEvent, ContentBlock,
+    Cost, LlmMessage, ModelSpec, StopReason, StreamFn, StreamOptions, Usage, UserMessage,
 };
 
 // ─── FlagStreamFn ─────────────────────────────────────────────────────────
@@ -71,6 +71,102 @@ impl StreamFn for MockStreamFn {
         _options: &'a StreamOptions,
         _cancellation_token: CancellationToken,
     ) -> Pin<Box<dyn Stream<Item = AssistantMessageEvent> + Send + 'a>> {
+        let events = {
+            let mut responses = self.responses.lock().unwrap();
+            if responses.is_empty() {
+                vec![AssistantMessageEvent::Error {
+                    stop_reason: StopReason::Error,
+                    error_message: "no more scripted responses".to_string(),
+                    usage: None,
+                    error_kind: None,
+                }]
+            } else {
+                responses.remove(0)
+            }
+        };
+        Box::pin(futures::stream::iter(events))
+    }
+}
+
+// ─── ContextCapturingStreamFn ─────────────────────────────────────────────
+
+/// A mock `StreamFn` that captures the number of messages passed in each call.
+#[allow(dead_code)]
+pub struct ContextCapturingStreamFn {
+    pub responses: Mutex<Vec<Vec<AssistantMessageEvent>>>,
+    pub captured_message_counts: Mutex<Vec<usize>>,
+}
+
+#[allow(dead_code)]
+impl ContextCapturingStreamFn {
+    pub const fn new(responses: Vec<Vec<AssistantMessageEvent>>) -> Self {
+        Self {
+            responses: Mutex::new(responses),
+            captured_message_counts: Mutex::new(Vec::new()),
+        }
+    }
+}
+
+impl StreamFn for ContextCapturingStreamFn {
+    fn stream<'a>(
+        &'a self,
+        _model: &'a ModelSpec,
+        context: &'a AgentContext,
+        _options: &'a StreamOptions,
+        _cancellation_token: CancellationToken,
+    ) -> Pin<Box<dyn futures::Stream<Item = AssistantMessageEvent> + Send + 'a>> {
+        self.captured_message_counts
+            .lock()
+            .unwrap()
+            .push(context.messages.len());
+        let events = {
+            let mut responses = self.responses.lock().unwrap();
+            if responses.is_empty() {
+                vec![AssistantMessageEvent::Error {
+                    stop_reason: StopReason::Error,
+                    error_message: "no more scripted responses".to_string(),
+                    usage: None,
+                    error_kind: None,
+                }]
+            } else {
+                responses.remove(0)
+            }
+        };
+        Box::pin(futures::stream::iter(events))
+    }
+}
+
+// ─── ApiKeyCapturingStreamFn ──────────────────────────────────────────────
+
+/// A mock `StreamFn` that captures resolved API keys from stream options.
+#[allow(dead_code)]
+pub struct ApiKeyCapturingStreamFn {
+    pub responses: Mutex<Vec<Vec<AssistantMessageEvent>>>,
+    pub captured_api_keys: Mutex<Vec<Option<String>>>,
+}
+
+#[allow(dead_code)]
+impl ApiKeyCapturingStreamFn {
+    pub const fn new(responses: Vec<Vec<AssistantMessageEvent>>) -> Self {
+        Self {
+            responses: Mutex::new(responses),
+            captured_api_keys: Mutex::new(Vec::new()),
+        }
+    }
+}
+
+impl StreamFn for ApiKeyCapturingStreamFn {
+    fn stream<'a>(
+        &'a self,
+        _model: &'a ModelSpec,
+        _context: &'a AgentContext,
+        options: &'a StreamOptions,
+        _cancellation_token: CancellationToken,
+    ) -> Pin<Box<dyn futures::Stream<Item = AssistantMessageEvent> + Send + 'a>> {
+        self.captured_api_keys
+            .lock()
+            .unwrap()
+            .push(options.api_key.clone());
         let events = {
             let mut responses = self.responses.lock().unwrap();
             if responses.is_empty() {

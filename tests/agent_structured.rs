@@ -39,7 +39,7 @@ fn make_agent(stream_fn: Arc<dyn StreamFn>) -> Agent {
 // ─── 4.9: subscribe returns SubscriptionId; callback receives events ─────
 
 #[tokio::test]
-async fn test_4_9_subscribe_receives_events() {
+async fn subscribe_receives_events() {
     let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("subscribed")]));
     let mut agent = make_agent(stream_fn);
 
@@ -65,7 +65,7 @@ async fn test_4_9_subscribe_receives_events() {
 // ─── 4.10: unsubscribe removes listener ──────────────────────────────────
 
 #[tokio::test]
-async fn test_4_10_unsubscribe_removes_listener() {
+async fn unsubscribe_removes_listener() {
     let stream_fn = Arc::new(MockStreamFn::new(vec![
         text_only_events("first"),
         text_only_events("second"),
@@ -98,7 +98,7 @@ async fn test_4_10_unsubscribe_removes_listener() {
 // ─── 4.11: subscriber panic does not crash; panicker is auto-unsubscribed ─
 
 #[tokio::test]
-async fn test_4_11_subscriber_panic_does_not_crash() {
+async fn subscriber_panic_does_not_crash() {
     let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("safe")]));
     let mut agent = make_agent(stream_fn);
 
@@ -132,7 +132,7 @@ async fn test_4_11_subscriber_panic_does_not_crash() {
 // ─── 4.14: structured_output validates and returns typed value ───────────
 
 #[tokio::test]
-async fn test_4_14_structured_output_valid() {
+async fn structured_output_valid() {
     let schema = json!({
         "type": "object",
         "properties": {
@@ -166,7 +166,7 @@ async fn test_4_14_structured_output_valid() {
 // ─── 4.15: structured_output retries on invalid response ─────────────────
 
 #[tokio::test]
-async fn test_4_15_structured_output_retries() {
+async fn structured_output_retries() {
     let schema = json!({
         "type": "object",
         "properties": {
@@ -207,7 +207,7 @@ async fn test_4_15_structured_output_retries() {
 // ─── 4.16: structured_output fails after max retries ─────────────────────
 
 #[tokio::test]
-async fn test_4_16_structured_output_fails_after_max_retries() {
+async fn structured_output_fails_after_max_retries() {
     let schema = json!({
         "type": "object",
         "properties": {

@@ -1,6 +1,6 @@
 # Agent Loop
 
-**Source files:** `src/loop_.rs`
+**Source files:** `src/loop_/` module (`mod.rs`, `stream.rs`, `tool_dispatch.rs`, `turn.rs`)
 **Related:** [PRD §12](../../planning/PRD.md#12-agent-loop), [PRD §8](../../planning/PRD.md#8-event-system)
 
 The agent loop is the core execution engine of the harness. It drives turns, dispatches tool calls, manages steering and follow-up message injection, emits all lifecycle events, and handles error and abort conditions. The `Agent` struct is a stateful wrapper over it; the loop itself is stateless and pure.

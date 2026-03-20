@@ -167,6 +167,12 @@ stateDiagram-v2
 
 ---
 
+### Event Forwarders
+
+In addition to synchronous listeners, the agent supports async event forwarders (`event_forwarders: Vec<EventForwarderFn>`). Add them via `AgentOptions::with_event_forwarder()` or `Agent::add_event_forwarder()`. Forwarders run after all synchronous subscribers complete and are suitable for async side effects — writing to a log store, forwarding to a metrics sink, etc.
+
+---
+
 ## L4 — Steering and Follow-up Queue Draining
 
 ```mermaid

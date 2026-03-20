@@ -132,7 +132,13 @@ impl LocalModel {
         }
     }
 
-    /// Builder method: attach a progress callback.
+    /// Attaches a progress callback for model download/load reporting.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if this instance has already been cloned (the internal `Arc` is
+    /// shared). **Must be called before cloning the model** — i.e., before passing it
+    /// to a second thread or storing it in shared state.
     pub fn with_progress(mut self, cb: ProgressCallbackFn) -> Result<Self, LocalModelError> {
         let inner = Arc::get_mut(&mut self.inner).ok_or_else(|| {
             LocalModelError::inference("with_progress called after clone — Arc is shared")

@@ -167,6 +167,13 @@ pub enum AgentEvent {
         to_model: ModelSpec,
     },
 
+    /// Emitted when the agent switches to a different model during a retry cycle.
+    ModelCycled {
+        old: ModelSpec,
+        new: ModelSpec,
+        reason: String,
+    },
+
     /// A custom event emitted via [`Agent::emit`].
     Custom(crate::emit::Emission),
 }

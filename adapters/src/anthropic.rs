@@ -8,7 +8,6 @@ use std::collections::HashMap;
 use std::pin::Pin;
 
 use futures::stream::{self, Stream, StreamExt as _};
-use reqwest::Client;
 use serde::Serialize;
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
@@ -20,6 +19,7 @@ use swink_agent::types::{
     AgentContext, AgentMessage, Cost, LlmMessage, ModelSpec, StopReason, ThinkingLevel, Usage,
 };
 
+use crate::base::AdapterBase;
 use crate::convert::extract_tool_schemas;
 
 // ─── Request types ──────────────────────────────────────────────────────────
@@ -115,9 +115,7 @@ enum SseLine {
 /// responses as `AssistantMessageEvent` values. Supports text, thinking,
 /// and tool-use content blocks.
 pub struct AnthropicStreamFn {
-    base_url: String,
-    api_key: String,
-    client: Client,
+    base: AdapterBase,
 }
 
 impl AnthropicStreamFn {
@@ -130,9 +128,7 @@ impl AnthropicStreamFn {
     #[must_use]
     pub fn new(base_url: impl Into<String>, api_key: impl Into<String>) -> Self {
         Self {
-            base_url: base_url.into(),
-            api_key: api_key.into(),
-            client: Client::new(),
+            base: AdapterBase::new(base_url, api_key),
         }
     }
 }
@@ -140,7 +136,7 @@ impl AnthropicStreamFn {
 impl std::fmt::Debug for AnthropicStreamFn {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AnthropicStreamFn")
-            .field("base_url", &self.base_url)
+            .field("base_url", &self.base.base_url)
             .field("api_key", &"[REDACTED]")
             .finish_non_exhaustive()
     }
@@ -214,7 +210,7 @@ async fn send_request(
     context: &AgentContext,
     options: &StreamOptions,
 ) -> Result<reqwest::Response, AssistantMessageEvent> {
-    let url = format!("{}/v1/messages", anthropic.base_url);
+    let url = format!("{}/v1/messages", anthropic.base.base_url);
     debug!(
         %url,
         model = %model.model_id,
@@ -257,9 +253,10 @@ async fn send_request(
         thinking,
     };
 
-    let api_key = options.api_key.as_deref().unwrap_or(&anthropic.api_key);
+    let api_key = options.api_key.as_deref().unwrap_or(&anthropic.base.api_key);
 
     anthropic
+        .base
         .client
         .post(&url)
         .header("x-api-key", api_key)

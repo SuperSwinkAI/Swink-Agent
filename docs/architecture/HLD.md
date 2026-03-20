@@ -64,8 +64,7 @@ flowchart TB
 |---|---|---|
 | App → Harness | Inbound | Caller constructs an `Agent`, registers tools, supplies a `StreamFn`, and invokes prompts |
 | Harness → App | Outbound | Harness emits `AgentEvent` values and returns `AgentResult` on completion |
-| Adapters → LLM Provider | Outbound | Nine adapters stream inference to their respective providers: `AnthropicStreamFn` (SSE), `AzureStreamFn` (SSE), `BedrockStreamFn` (SSE), `GeminiStreamFn` (SSE), `MistralStreamFn` (SSE), `OllamaStreamFn` (NDJSON), `OpenAiStreamFn` (SSE, multi-provider), `XAiStreamFn` (SSE) |
-| Adapters → Proxy Server | Outbound | Optional: `ProxyStreamFn` (in adapters crate) forwards requests to a proxy over SSE |
+| Adapters → LLM Provider / Proxy | Outbound | Nine adapters stream inference to their respective providers: `AnthropicStreamFn` (SSE), `AzureStreamFn` (SSE), `BedrockStreamFn` (SSE), `GeminiStreamFn` (SSE), `MistralStreamFn` (SSE), `OllamaStreamFn` (NDJSON), `OpenAiStreamFn` (SSE, multi-provider), `ProxyStreamFn` (SSE, forwards to proxy), `XAiStreamFn` (SSE) |
 | Proxy Server → LLM Provider | Outbound | Proxy handles auth and routes to the actual provider |
 | LocalLLM → Harness | Internal | Implements `StreamFn` via `LocalStreamFn` for on-device inference (SmolLM3-3B); provides `EmbeddingModel` for text vectorization |
 | Eval → Harness | Internal | Eval consumes `AgentEvent` stream via `TrajectoryCollector`, uses core types (`Usage`, `Cost`, `AssistantMessage`) for invocation traces |
@@ -356,7 +355,7 @@ flowchart TB
         end
 
         subgraph ExecutionLayer["🔄 Execution"]
-            loop_["loop_.rs<br/>agent_loop,<br/>agent_loop_continue,<br/>run_loop,<br/>AgentLoopConfig"]
+            loop_["loop_/ (module)<br/>mod.rs · stream.rs<br/>tool_dispatch.rs · turn.rs"]
         end
 
         subgraph APILayer["📦 Public API"]

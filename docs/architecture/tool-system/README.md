@@ -107,6 +107,8 @@ All built-in tools follow the same cancellation contract:
 
 The `on_update` callback parameter in `execute()` is designed for tools that produce streaming partial results (e.g., long-running commands emitting incremental output). `ToolExecutionUpdate` events are defined in the event model but **currently reserved for future use** — the agent loop always passes `None` for the callback. Built-in tools accept but ignore the parameter.
 
+**Implementation note:** Always guard the callback: `if let Some(f) = on_update { f(...) }`. The agent loop currently always passes `None` for this parameter — code that invokes it unconditionally may cause issues. Custom tools should implement the guard pattern to be forward-compatible when streaming tool results are enabled.
+
 ---
 
 ## L3 — AgentTool Trait Contract

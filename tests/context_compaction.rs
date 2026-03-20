@@ -7,7 +7,7 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use common::{MockTool, default_model, text_only_events, tool_call_events, user_msg};
+use common::{ContextCapturingStreamFn, MockTool, default_model, text_only_events, tool_call_events, user_msg};
 use futures::Stream;
 use futures::stream::StreamExt;
 use tokio_util::sync::CancellationToken;
@@ -17,52 +17,6 @@ use swink_agent::{
     DefaultRetryStrategy, LlmMessage, ModelSpec, StopReason, StreamFn, StreamOptions, UserMessage,
     agent_loop, sliding_window,
 };
-
-// ─── ContextCapturingStreamFn ────────────────────────────────────────────
-
-/// A `StreamFn` that captures the LLM message count on each call.
-struct ContextCapturingStreamFn {
-    responses: Mutex<Vec<Vec<AssistantMessageEvent>>>,
-    captured_message_counts: Mutex<Vec<usize>>,
-}
-
-impl ContextCapturingStreamFn {
-    const fn new(responses: Vec<Vec<AssistantMessageEvent>>) -> Self {
-        Self {
-            responses: Mutex::new(responses),
-            captured_message_counts: Mutex::new(Vec::new()),
-        }
-    }
-}
-
-impl StreamFn for ContextCapturingStreamFn {
-    fn stream<'a>(
-        &'a self,
-        _model: &'a ModelSpec,
-        context: &'a AgentContext,
-        _options: &'a StreamOptions,
-        _cancellation_token: CancellationToken,
-    ) -> Pin<Box<dyn Stream<Item = AssistantMessageEvent> + Send + 'a>> {
-        self.captured_message_counts
-            .lock()
-            .unwrap()
-            .push(context.messages.len());
-        let events = {
-            let mut responses = self.responses.lock().unwrap();
-            if responses.is_empty() {
-                vec![AssistantMessageEvent::Error {
-                    stop_reason: StopReason::Error,
-                    error_message: "no more scripted responses".to_string(),
-                    usage: None,
-                    error_kind: None,
-                }]
-            } else {
-                responses.remove(0)
-            }
-        };
-        Box::pin(futures::stream::iter(events))
-    }
-}
 
 // ─── MessageCapturingStreamFn ────────────────────────────────────────────
 

@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 pub mod classify;
+mod base;
 mod proxy;
 mod remote_presets;
 pub mod sse;

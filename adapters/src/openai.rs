@@ -8,13 +8,13 @@ use std::collections::HashMap;
 use std::pin::Pin;
 
 use futures::stream::{self, Stream, StreamExt as _};
-use reqwest::Client;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, warn};
 
 use swink_agent::stream::{AssistantMessageEvent, StreamFn, StreamOptions};
 use swink_agent::types::{AgentContext, Cost, ModelSpec, StopReason, Usage};
 
+use crate::base::AdapterBase;
 use crate::convert;
 use crate::openai_compat::{
     OaiChatRequest, OaiChunk, OaiConverter, OaiStreamOptions, OaiToolCallDelta, ToolCallState,
@@ -29,9 +29,7 @@ use crate::sse::{SseLine, sse_data_lines};
 /// Works with OpenAI, vLLM, LM Studio, Groq, Together, and any other provider
 /// that implements the OpenAI chat completions SSE streaming format.
 pub struct OpenAiStreamFn {
-    base_url: String,
-    api_key: String,
-    client: Client,
+    pub(crate) base: AdapterBase,
 }
 
 impl OpenAiStreamFn {
@@ -44,9 +42,7 @@ impl OpenAiStreamFn {
     #[must_use]
     pub fn new(base_url: impl Into<String>, api_key: impl Into<String>) -> Self {
         Self {
-            base_url: base_url.into(),
-            api_key: api_key.into(),
-            client: Client::new(),
+            base: AdapterBase::new(base_url, api_key),
         }
     }
 }
@@ -54,7 +50,7 @@ impl OpenAiStreamFn {
 impl std::fmt::Debug for OpenAiStreamFn {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("OpenAiStreamFn")
-            .field("base_url", &self.base_url)
+            .field("base_url", &self.base.base_url)
             .field("api_key", &"[REDACTED]")
             .finish_non_exhaustive()
     }
@@ -121,7 +117,7 @@ async fn send_request(
     context: &AgentContext,
     options: &StreamOptions,
 ) -> Result<reqwest::Response, AssistantMessageEvent> {
-    let url = format!("{}/v1/chat/completions", openai.base_url);
+    let url = format!("{}/v1/chat/completions", openai.base.base_url);
     debug!(
         %url,
         model = %model.model_id,
@@ -147,9 +143,10 @@ async fn send_request(
         tool_choice,
     };
 
-    let api_key = options.api_key.as_deref().unwrap_or(&openai.api_key);
+    let api_key = options.api_key.as_deref().unwrap_or(&openai.base.api_key);
 
     openai
+        .base
         .client
         .post(&url)
         .header("Authorization", format!("Bearer {api_key}"))

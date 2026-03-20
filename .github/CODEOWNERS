@@ -1,0 +1,12 @@
+# Default: repo owner reviews everything
+* @jwesleye
+
+# Crate-specific ownership — update as team grows
+/adapters/   @jwesleye
+/eval/       @jwesleye
+/memory/     @jwesleye
+/local-llm/  @jwesleye
+/tui/        @jwesleye
+
+# CI and project config
+/.github/    @jwesleye

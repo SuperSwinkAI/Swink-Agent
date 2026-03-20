@@ -28,14 +28,19 @@ impl GateConfig {
 
     /// Set the minimum pass rate threshold.
     #[must_use]
-    pub const fn with_min_pass_rate(mut self, rate: f64) -> Self {
+    pub fn with_min_pass_rate(mut self, rate: f64) -> Self {
+        assert!(
+            (0.0..=1.0).contains(&rate),
+            "pass rate must be in [0.0, 1.0], got {rate}"
+        );
         self.min_pass_rate = Some(rate);
         self
     }
 
     /// Set the maximum allowed cost in dollars.
     #[must_use]
-    pub const fn with_max_cost(mut self, cost: f64) -> Self {
+    pub fn with_max_cost(mut self, cost: f64) -> Self {
+        assert!(cost >= 0.0, "cost must be non-negative, got {cost}");
         self.max_cost = Some(cost);
         self
     }

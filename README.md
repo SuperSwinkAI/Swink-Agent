@@ -56,24 +56,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             default_local_connection()?,
         ],
     );
-    let (model, stream_fn, extra_models) = connections.into_parts();
     let tools: Vec<Arc<dyn AgentTool>> = vec![
         Arc::new(BashTool::new()),
         Arc::new(ReadFileTool::new()),
         Arc::new(WriteFileTool::new()),
     ];
 
+    let options =
+        AgentOptions::from_connections("You are a helpful assistant.", connections)
+            .with_tools(tools);
+
     let mut terminal = setup_terminal()?;
-
-    let options = AgentOptions::new(
-            "You are a helpful coding assistant.",
-            model,
-            stream_fn,
-            swink_agent::default_convert,
-        )
-        .with_available_models(extra_models)
-        .with_tools(tools);
-
     let result = launch(TuiConfig::default(), &mut terminal, options).await;
 
     restore_terminal()?;

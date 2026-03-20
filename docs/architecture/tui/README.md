@@ -244,6 +244,7 @@ The TUI loads configuration from `~/.config/swink-agent/tui.toml` via `TuiConfig
 | `theme` | `String` | Reserved for future theme switching |
 | `color_mode` | `String` | Color mode: `"custom"` (default), `"mono-white"`, or `"mono-black"`. Can be cycled at runtime with F3 |
 | `editor_command` | `Option<String>` | Override for external editor (defaults to `$EDITOR` / `$VISUAL` / `vi`) |
+| `system_prompt` | `Option<String>` | Override the system prompt passed to the agent. If `None`, the agent uses its built-in default. |
 
 ---
 
@@ -299,6 +300,8 @@ The TUI uses `tracing` with `tracing-appender` for file-based logging. Logs are 
 ## Inline Diff View
 
 **Related:** [PRD §16.6](../../planning/PRD.md#166-inline-diff-view)
+
+> **Status: Not yet implemented (Phase T5).** The interaction model described below is the intended design. The keybindings, hunk navigation, and approval flow are planned but not present in the current codebase.
 
 When the agent modifies a file via `WriteFileTool`, the TUI renders the change as a syntax-highlighted diff instead of displaying raw tool output. Users can approve or reject individual hunks before changes are finalized.
 
