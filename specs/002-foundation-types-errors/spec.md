@@ -37,7 +37,7 @@ A developer needs to compose message content from multiple block types: plain te
 1. **Given** the content block types, **When** a text block is created, **Then** it contains a plain text string.
 2. **Given** the content block types, **When** a thinking block is created, **Then** it contains a reasoning string and an optional verification signature.
 3. **Given** the content block types, **When** a tool call block is created, **Then** it contains a call ID, tool name, parsed arguments, and an optional partial argument buffer for streaming.
-4. **Given** the content block types, **When** an image block is created, **Then** it contains image data from a supported source type.
+4. **Given** the content block types, **When** an image block is created, **Then** it contains image data from one of three supported source types: base64 inline data (with media type), URL reference (with media type), or local file path (with media type).
 
 ---
 
@@ -91,10 +91,10 @@ An application developer needs to attach custom message types (e.g., notificatio
 
 ### Edge Cases
 
-- What happens when a usage record has all zero counters — is this valid or treated as empty?
+- What happens when a usage record has all zero counters — valid; zero counters are a normal value with no separate "empty" concept.
 - How does the system handle a content block with an empty text string?
-- What happens when a tool call block has an empty argument object — is it treated as valid empty arguments or an error?
-- How does the system behave when a custom message type fails to downcast — does it return a typed failure or a silent None?
+- What happens when a tool call block has an empty argument object — `{}` is valid; schema validation decides if the arguments satisfy the tool's parameter schema.
+- How does the system behave when a custom message type fails to downcast — returns a `Result<&T, DowncastError>` with expected vs actual type information for debugging.
 
 ## Requirements *(mandatory)*
 
@@ -142,6 +142,15 @@ An application developer needs to attach custom message types (e.g., notificatio
 - **SC-006**: Custom messages can be wrapped, stored, and downcast without modifying core types.
 - **SC-007**: Model specification supports all six reasoning depth levels and optional per-level budget overrides.
 - **SC-008**: Agent result correctly aggregates messages, stop reason, usage, and error from a multi-turn run.
+
+## Clarifications
+
+### Session 2026-03-20
+
+- Q: What image source types should the image content block support? → A: Base64 inline data, URL reference, and local file path — all with media type.
+- Q: Should an empty argument object `{}` on a tool call be valid? → A: Yes — `{}` is accepted; schema validation decides correctness.
+- Q: What should a failed custom message downcast return? → A: `Result<&T, DowncastError>` with expected vs actual type info.
+- Q: Should a usage record with all zero counters be valid? → A: Yes — zero counters are a normal value; no "empty" concept needed.
 
 ## Assumptions
 
