@@ -73,10 +73,10 @@ A developer needs to track how the context evolves across turns for debugging or
 
 ### Edge Cases
 
-- What happens when the token budget is smaller than the anchor + one recent message — does the system preserve minimum viable context?
-- How does the system estimate tokens for custom messages that have no text content?
-- What happens when the transformation hook adds messages that push the context over budget — is the sliding window reapplied?
-- How does the system handle an empty conversation history — does it pass an empty list to the provider?
+- What happens when the token budget is smaller than the anchor + one recent message — anchor messages are always preserved even if they exceed the budget. Correctness > token count.
+- How does the system estimate tokens for custom messages that have no text content — custom messages are estimated at 100 tokens flat.
+- What happens when the transformation hook adds messages that push the context over budget — the sliding window and the transform hook are independent; the hook is responsible for its own budget management. The sliding window is itself a type of transform hook.
+- How does the system handle an empty conversation history — the sliding window returns no compaction (no-op). The agent validates empty history at the entry point level, returning `AgentError::NoMessages`.
 
 ## Requirements *(mandatory)*
 
@@ -111,6 +111,15 @@ A developer needs to track how the context evolves across turns for debugging or
 - **SC-004**: The overflow signal is correctly propagated to the transformation hook after a context overflow error.
 - **SC-005**: Custom messages are filtered out by the conversion pipeline and never reach the provider.
 - **SC-006**: Token estimation produces consistent results for the same message content.
+
+## Clarifications
+
+### Session 2026-03-20
+
+- Q: What happens when budget is smaller than anchor messages? → A: Anchor messages always preserved even if they exceed budget. Correctness > token count.
+- Q: How are custom messages estimated for tokens? → A: 100 tokens flat, regardless of content.
+- Q: What if transform hook adds messages pushing over budget? → A: Sliding window and transform hook are independent; hook manages its own budget.
+- Q: How does empty conversation history behave? → A: Sliding window is a no-op; agent returns `AgentError::NoMessages` at entry point.
 
 ## Assumptions
 

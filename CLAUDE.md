@@ -92,6 +92,8 @@ MSRV **1.88** (edition 2024). Workspace deps centralized in root `Cargo.toml`.
 - N/A (traits and types only) (003-core-traits)
 - Rust 1.88 (edition 2024) + okio, tokio-util (CancellationToken), futures (Stream), serde_json (Value), tracing (005-agent-struct)
 - N/A (in-memory state; optional CheckpointStore trait for persistence) (005-agent-struct)
+- Rust 1.88 (edition 2024) + okio (async runtime), serde_json (Value for tool arguments/extensions), tracing (006-context-management)
+- N/A (in-memory `InMemoryVersionStore`; pluggable `ContextVersionStore` trait for persistence) (006-context-management)
 
 ## Recent Changes
 - 001-workspace-scaffold: Added Rust 1.88 (edition 2024) + serde, serde_json, tokio, futures, thiserror, uuid, reqwest, jsonschema, schemars, rand, tracing, toml (all centralized in workspace `[workspace.dependencies]`)
