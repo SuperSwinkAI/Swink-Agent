@@ -73,12 +73,12 @@ A developer encounters various error conditions when communicating through the p
 
 ### Edge Cases
 
-- What happens when the proxy strips partial_message from some events but not others within the same stream?
-- How does the adapter handle a proxy that silently drops events (gaps in the sequence)?
-- What happens when the proxy returns a non-SSE response (e.g., an HTML error page)?
-- How does delta reconstruction handle a reset in the cumulative state (e.g., the proxy restarts mid-stream)?
-- What happens when the proxy adds latency that causes the connection to appear timed out?
-- How does the adapter distinguish between a proxy authentication failure and an upstream provider authentication failure?
+- What happens when the proxy strips partial_message inconsistently — the proxy adapter uses typed SSE events (TextDelta, ToolCallDelta, etc.) not partial_message fields. Stripping is not applicable to this protocol.
+- How does the adapter handle silently dropped events — events are processed as-they-come; gaps manifest as missing content but are not detected at the protocol level.
+- What happens when the proxy returns a non-SSE response — eventsource parser fails; adapter emits `error_network("SSE stream error: ...")`.
+- How does delta reconstruction handle state resets — not applicable; the adapter uses discrete delta events, not cumulative state diffing.
+- What happens when proxy latency causes timeout — caught as network error by reqwest at the connection level.
+- How does the adapter distinguish proxy vs upstream auth failure — both 401s map to the same `error_auth`; not distinguished.
 
 ## Requirements *(mandatory)*
 
@@ -106,6 +106,17 @@ A developer encounters various error conditions when communicating through the p
 - **SC-002**: Delta reconstruction produces identical event sequences whether or not the proxy strips partial_message fields.
 - **SC-003**: All four error categories (connection, auth, rate-limit, malformed) are correctly classified.
 - **SC-004**: Bearer token authentication is included in every request to the proxy.
+
+## Clarifications
+
+### Session 2026-03-20
+
+- Q: Inconsistent partial_message stripping? → A: Not applicable; adapter uses typed SSE events, not partial_message.
+- Q: Silently dropped events? → A: Processed as-they-come; gaps not detected at protocol level.
+- Q: Non-SSE response? → A: Eventsource parser fails → `error_network`.
+- Q: Delta reconstruction state reset? → A: Not applicable; discrete delta events, not cumulative diffing.
+- Q: Proxy timeout? → A: Caught as network error by reqwest.
+- Q: Proxy vs upstream auth? → A: Both 401 → same `error_auth`; not distinguished.
 
 ## Assumptions
 
