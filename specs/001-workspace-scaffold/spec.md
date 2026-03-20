@@ -73,7 +73,7 @@ A contributor working on a different machine checks out the repository and gets 
 ### Edge Cases
 
 - What happens when a developer builds a single crate in isolation (e.g., targeting a single crate by name) — does it resolve workspace dependencies correctly?
-- How does the workspace handle a contributor using a Rust version older than the MSRV — does it produce a clear error message?
+- How does the workspace handle a contributor using a Rust version older than the MSRV — Cargo's built-in `rust-version` field produces a clear compile-time error; no custom build script check needed.
 - What happens when the `builtin-tools` feature is disabled on the core crate — do crates that depend on core still compile?
 
 ## Requirements *(mandatory)*
@@ -90,7 +90,7 @@ A contributor working on a different machine checks out the repository and gets 
 - **FR-008**: The workspace MUST include formatter configuration for consistent code style.
 - **FR-009**: The workspace MUST include a toolchain configuration file that pins the Rust version for automatic selection.
 - **FR-010**: Inter-crate dependencies MUST follow the defined dependency chain: adapters and memory depend on core; local-llm depends on core; eval depends on core; TUI depends on core, adapters, memory, and local-llm. No reverse dependencies.
-- **FR-011**: The core crate MUST forbid unsafe code at the crate root.
+- **FR-011**: All library crates MUST forbid unsafe code at the crate root via `#[forbid(unsafe_code)]`.
 - **FR-012**: All library crates MUST produce no business logic in this scaffold — only structural definitions and empty or stub re-exports.
 
 ### Key Entities
@@ -102,7 +102,7 @@ A contributor working on a different machine checks out the repository and gets 
 - **Local LLM Crate**: On-device inference, depends only on core.
 - **Eval Crate**: Evaluation framework, depends only on core.
 - **TUI Crate**: Terminal UI binary, depends on core, adapters, memory, and local-llm.
-- **Xtask Crate**: Developer workflow commands, workspace member with no production dependencies.
+- **Xtask Crate**: Developer workflow commands, workspace member with no production dependencies. Contains an empty `main()` in this scaffold — subcommands are deferred to later features.
 
 ## Success Criteria *(mandatory)*
 
@@ -116,6 +116,14 @@ A contributor working on a different machine checks out the repository and gets 
 - **SC-006**: A downstream project depending only on the core crate does not transitively pull in provider, UI, or evaluation dependencies.
 - **SC-007**: The toolchain configuration file, when present, causes the correct Rust version to be automatically selected.
 - **SC-008**: The formatter produces identical output across different contributor environments when run against the same source.
+
+## Clarifications
+
+### Session 2026-03-20
+
+- Q: What should the xtask crate contain in this scaffold? → A: Empty `main()` with no subcommands — purely structural.
+- Q: How should the workspace handle pre-MSRV Rust versions? → A: Rely on Cargo's built-in `rust-version` field — no custom check needed.
+- Q: Should all library crates forbid unsafe code, or only core? → A: All library crates forbid unsafe code via `#[forbid(unsafe_code)]`.
 
 ## Assumptions
 
