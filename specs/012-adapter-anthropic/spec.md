@@ -74,11 +74,11 @@ A developer encounters various error conditions when communicating with the Anth
 
 ### Edge Cases
 
-- What happens when the Anthropic API returns an `overloaded_error` (529) — is it classified as retryable?
-- How does the adapter handle a thinking block that exceeds the specified budget?
-- What happens when the stream is interrupted mid-thinking-block?
-- How are empty tool call arguments handled (model calls a tool with no parameters)?
-- What happens when the API returns a content block type the adapter does not recognize?
+- What happens when the Anthropic API returns an `overloaded_error` (529) — classified as `error_network` (retryable).
+- How does the adapter handle a thinking block that exceeds the specified budget — budget is set in the request; the provider enforces it. Adapter passes through whatever content arrives.
+- What happens when the stream is interrupted mid-thinking-block — same as any interrupted stream; accumulation returns "no terminal event found" error.
+- How are empty tool call arguments handled — empty partial JSON string becomes `{}` (per core stream accumulation rules).
+- What happens when the API returns a content block type the adapter does not recognize — silently skipped (`_ => {}` match arm).
 
 ## Requirements *(mandatory)*
 
@@ -105,6 +105,16 @@ A developer encounters various error conditions when communicating with the Anth
 - **SC-002**: Tool calls produce valid, parseable JSON arguments upon completion.
 - **SC-003**: Thinking blocks are emitted as events distinct from text content when thinking is enabled.
 - **SC-004**: All Anthropic error codes map to the correct agent error types consistently.
+
+## Clarifications
+
+### Session 2026-03-20
+
+- Q: Is 529 overloaded retryable? → A: Yes, classified as `error_network` (retryable).
+- Q: Thinking block exceeds budget? → A: Provider enforces budget; adapter passes through.
+- Q: Stream interrupted mid-thinking? → A: Accumulation returns "no terminal event" error.
+- Q: Empty tool call arguments? → A: Empty string → `{}` per core rules.
+- Q: Unrecognized content block type? → A: Silently skipped.
 
 ## Assumptions
 
