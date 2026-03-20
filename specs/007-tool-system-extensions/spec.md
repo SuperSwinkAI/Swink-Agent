@@ -104,10 +104,10 @@ A developer enables the built-in tools feature to get pre-made tools for shell c
 
 ### Edge Cases
 
-- What happens when a transformer rewrites a tool name to one that doesn't exist — does the validator catch it?
-- What happens when middleware modifies the tool result — does the loop see the modified result?
-- How does the system handle a closure-based tool that panics — is it caught like any other tool?
-- What happens when the execution policy is sequential but a steering interrupt arrives — are remaining sequential tools skipped?
+- What happens when a transformer rewrites a tool name to one that doesn't exist — the transformer only modifies arguments, not the tool name. Unknown tools produce an error result via `unknown_tool_result()`.
+- What happens when middleware modifies the tool result — yes, the loop sees the modified result since middleware wraps `execute()`.
+- How does the system handle a closure-based tool that panics — panics in spawned tool tasks are caught via join error handling and converted to error results.
+- What happens when the execution policy is sequential but a steering interrupt arrives — remaining sequential tools are skipped; the `steering_detected` atomic flag causes cancellation between groups.
 
 ## Requirements *(mandatory)*
 
@@ -147,6 +147,15 @@ A developer enables the built-in tools feature to get pre-made tools for shell c
 - **SC-005**: Execution policies correctly control concurrency: concurrent runs in parallel, sequential runs in order.
 - **SC-006**: Closure-based tools implement the tool trait and execute correctly when invoked.
 - **SC-007**: Built-in tools are available when the feature flag is enabled and absent when disabled.
+
+## Clarifications
+
+### Session 2026-03-20
+
+- Q: Can transformers rewrite tool names to nonexistent tools? → A: Transformers only modify arguments, not tool names. Unknown tools get error results.
+- Q: Does middleware-modified result reach the loop? → A: Yes, middleware wraps execute(), so the loop sees modified results.
+- Q: Are closure tool panics caught? → A: Yes, panics in spawned tasks are caught and converted to error results.
+- Q: Does steering skip remaining sequential tools? → A: Yes, the steering_detected flag causes remaining groups to be cancelled.
 
 ## Assumptions
 
