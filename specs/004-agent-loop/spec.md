@@ -120,8 +120,8 @@ When the provider stops mid-response because it hit the output token limit and t
 
 ### Edge Cases
 
-- What happens when the context transformation hook is not provided — does the loop skip transformation or use an identity transform?
-- What happens when steering messages arrive but no tools are currently executing — are they queued for the next turn?
+- What happens when the context transformation hook is not provided — the loop uses an identity transform (context passes through unchanged).
+- What happens when steering messages arrive but no tools are currently executing — they are queued as pending messages and processed before the next provider call.
 - How does the loop handle a provider that returns zero content blocks (empty response)?
 - What happens when all tool calls in a batch are cancelled by steering — does the loop still emit turn end?
 - What happens when the cancellation token is triggered during the provider call — does the loop emit an aborted stop reason?
@@ -168,6 +168,13 @@ When the provider stops mid-response because it hit the output token limit and t
 - **SC-009**: Incomplete tool calls from max tokens are replaced with error results and the loop continues.
 - **SC-010**: Cancellation produces a clean shutdown with aborted stop reason.
 - **SC-011**: The transformation hook is called before the convert-to-LLM function on every turn.
+
+## Clarifications
+
+### Session 2026-03-20
+
+- Q: How should the loop behave when no context transformation hook is provided? → A: Use an identity transform — context passes through unchanged.
+- Q: How should steering messages be handled when no tools are executing? → A: Queued as pending messages, processed before the next provider call.
 
 ## Assumptions
 
