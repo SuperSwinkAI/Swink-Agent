@@ -64,10 +64,10 @@ An operator configures retry behavior for their agent so that transient failures
 ### Edge Cases
 
 - What happens when a tool's parameter schema is empty (no parameters) — are empty arguments accepted?
-- What happens when a streaming implementation emits events out of order (e.g., delta before start)?
+- What happens when a streaming implementation emits events out of order (e.g., delta before start) — accumulation returns an error event and terminates the stream (strict enforcement).
 - How does the system handle a tool call delta with an empty partial JSON string — is it treated as empty arguments `{}`?
 - What happens when the retry strategy's delay exceeds the maximum cap — is it clamped?
-- How does the system handle a streaming implementation that emits no events at all?
+- How does the system handle a streaming implementation that emits no events at all — treated as a stream error (no start event received).
 
 ## Requirements *(mandatory)*
 
@@ -112,6 +112,13 @@ An operator configures retry behavior for their agent so that transient failures
 - **SC-005**: Jitter produces varying delays for the same attempt number within the configured range.
 - **SC-006**: Tool argument validation catches all schema violations (missing fields, wrong types, extra fields per schema rules) and reports field-level errors.
 - **SC-007**: Delta accumulation handles interleaved text and tool call blocks in a single stream without data loss or ordering errors.
+
+## Clarifications
+
+### Session 2026-03-20
+
+- Q: How should delta accumulation handle out-of-order events? → A: Return an error event and terminate the stream (strict enforcement).
+- Q: What should happen when a stream emits zero events? → A: Treated as a stream error (no start event received).
 
 ## Assumptions
 
