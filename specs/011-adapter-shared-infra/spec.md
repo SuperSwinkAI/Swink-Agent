@@ -73,9 +73,9 @@ A developer selects a model from the catalog and the system constructs a fully c
 
 ### Edge Cases
 
-- What happens when an HTTP response has no status code (connection reset) — how is it classified?
-- How does SSE parsing handle events with no data field?
-- What happens when a preset references a provider not supported by any installed adapter?
+- What happens when an HTTP response has no status code (connection reset) — the status code classifier only handles HTTP status codes. Connection-level errors (resets, timeouts) are mapped to `NetworkError` at the adapter level by reqwest error handling.
+- How does SSE parsing handle events with no data field — events without data are valid SSE (comment lines, event-type-only lines) and are parsed normally as their respective line types.
+- What happens when a preset references a provider not supported by any installed adapter — the connection factory returns None/error; the caller handles it (e.g., TUI shows available providers).
 
 ## Requirements *(mandatory)*
 
@@ -105,6 +105,14 @@ A developer selects a model from the catalog and the system constructs a fully c
 - **SC-002**: HTTP error classification is consistent: same status code always maps to the same error type.
 - **SC-003**: SSE parsing correctly extracts event data from valid streams and reports errors for malformed streams.
 - **SC-004**: Catalog presets resolve to correctly configured remote connections with appropriate credentials and endpoints.
+
+## Clarifications
+
+### Session 2026-03-20
+
+- Q: How are connection resets (no HTTP status) classified? → A: Adapter-level reqwest error handling maps them to NetworkError. The status classifier only handles HTTP codes.
+- Q: How does SSE parsing handle events with no data field? → A: Valid SSE; parsed normally as their respective line types.
+- Q: What if a preset references an unsupported provider? → A: Connection factory returns None/error; caller handles it.
 
 ## Assumptions
 
