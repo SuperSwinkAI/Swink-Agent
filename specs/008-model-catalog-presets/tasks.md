@@ -17,10 +17,10 @@
 
 **Purpose**: Workspace dependency wiring and file scaffolding
 
-- [ ] T001 Add `toml` and `serde` workspace dependencies to `Cargo.toml` if not already present
-- [ ] T002 [P] Create empty source files `src/model_catalog.rs`, `src/model_presets.rs`, `src/fallback.rs` if not already present
-- [ ] T003 [P] Create the embedded TOML data file `src/model_catalog.toml` with the initial provider/preset schema structure (empty `[[providers]]` array)
-- [ ] T004 Add `mod model_catalog;`, `mod model_presets;`, `mod fallback;` declarations and public re-exports to `src/lib.rs`
+- [x] T001 Add `toml` and `serde` workspace dependencies to `Cargo.toml` if not already present
+- [x] T002 [P] Create empty source files `src/model_catalog.rs`, `src/model_presets.rs`, `src/fallback.rs` if not already present
+- [x] T003 [P] Create the embedded TOML data file `src/model_catalog.toml` with the initial provider/preset schema structure (empty `[[providers]]` array)
+- [x] T004 Add `mod model_catalog;`, `mod model_presets;`, `mod fallback;` declarations and public re-exports to `src/lib.rs`
 
 ---
 
@@ -30,10 +30,10 @@
 
 **CRITICAL**: No user story work can begin until this phase is complete
 
-- [ ] T005 [P] Implement enums `ProviderKind`, `AuthMode`, `ApiVersion`, `PresetCapability`, `PresetStatus` with serde derives and `rename_all = "snake_case"` in `src/model_catalog.rs` per contracts/public-api.md
-- [ ] T006 [P] Implement `PresetCatalog` struct with all fields (id, display_name, group, model_id, api_version, capabilities, status, context_window_tokens, max_output_tokens, include_by_default, repo_id, filename) and serde derives with `#[serde(default)]` on capabilities, include_by_default in `src/model_catalog.rs`
-- [ ] T007 Implement `ProviderCatalog` struct with all fields (key, display_name, kind, auth_mode, credential_env_var, base_url_env_var, default_base_url, requires_base_url, region_env_var, presets) and `preset(&self, preset_id) -> Option<&PresetCatalog>` method in `src/model_catalog.rs`
-- [ ] T008 Implement `ModelCatalog` struct with `providers: Vec<ProviderCatalog>` and `provider(&self, provider_key) -> Option<&ProviderCatalog>` method in `src/model_catalog.rs`
+- [x] T005 [P] Implement enums `ProviderKind`, `AuthMode`, `ApiVersion`, `PresetCapability`, `PresetStatus` with serde derives and `rename_all = "snake_case"` in `src/model_catalog.rs` per contracts/public-api.md
+- [x] T006 [P] Implement `PresetCatalog` struct with all fields (id, display_name, group, model_id, api_version, capabilities, status, context_window_tokens, max_output_tokens, include_by_default, repo_id, filename) and serde derives with `#[serde(default)]` on capabilities, include_by_default in `src/model_catalog.rs`
+- [x] T007 Implement `ProviderCatalog` struct with all fields (key, display_name, kind, auth_mode, credential_env_var, base_url_env_var, default_base_url, requires_base_url, region_env_var, presets) and `preset(&self, preset_id) -> Option<&PresetCatalog>` method in `src/model_catalog.rs`
+- [x] T008 Implement `ModelCatalog` struct with `providers: Vec<ProviderCatalog>` and `provider(&self, provider_key) -> Option<&ProviderCatalog>` method in `src/model_catalog.rs`
 
 **Checkpoint**: Foundation ready — all catalog structs and enums defined, user story implementation can begin
 
@@ -49,19 +49,19 @@
 
 > **NOTE: Write these tests FIRST, ensure they FAIL before implementation (Constitution Principle II: TDD)**
 
-- [ ] T009 [US1] Write unit tests in `src/model_catalog.rs` `#[cfg(test)]` module: catalog loads successfully, provider lookup by key, preset lookup with flattened fields, model_capabilities conversion, model_spec creation, unknown provider returns None
+- [x] T009 [US1] Write unit tests in `src/model_catalog.rs` `#[cfg(test)]` module: catalog loads successfully, provider lookup by key, preset lookup with flattened fields, model_capabilities conversion, model_spec creation, unknown provider returns None
 
 ### Implementation for User Story 1
 
-- [ ] T010 [P] [US1] Populate `src/model_catalog.toml` with Anthropic provider (credential_env_var, base_url, auth_mode, presets: opus_46, sonnet_46, haiku_45) per quickstart.md examples
-- [ ] T011 [P] [US1] Populate `src/model_catalog.toml` with OpenAI provider (credential_env_var, base_url, auth_mode, presets: gpt_4o, gpt_4o_mini, o3, o4_mini) with capabilities and context windows
-- [ ] T012 [P] [US1] Populate `src/model_catalog.toml` with Google provider (credential_env_var, base_url, auth_mode, presets: gemini_25_pro, gemini_25_flash) with api_version overrides
-- [ ] T013 [P] [US1] Populate `src/model_catalog.toml` with local provider (kind = "local", presets with repo_id and filename fields for HuggingFace models)
-- [ ] T014 [US1] Implement `model_catalog()` singleton function using `OnceLock` and `include_str!("model_catalog.toml")` with `toml::from_str` deserialization and panic on malformed TOML in `src/model_catalog.rs`
-- [ ] T015 [US1] Implement `CatalogPreset` struct with all flattened fields (provider + preset metadata) in `src/model_catalog.rs` per data-model.md
-- [ ] T016 [US1] Implement `ModelCatalog::preset(&self, provider_key, preset_id) -> Option<CatalogPreset>` that constructs flattened view by combining provider and preset fields in `src/model_catalog.rs`
-- [ ] T017 [US1] Implement `CatalogPreset::model_capabilities(&self) -> ModelCapabilities` converting `Vec<PresetCapability>` to the existing `ModelCapabilities` struct (mapping Text, Tools, Thinking, ImagesIn to supports_tool_use, supports_vision, supports_thinking, max_context_window) in `src/model_catalog.rs`
-- [ ] T018 [US1] Implement `CatalogPreset::model_spec(&self) -> ModelSpec` creating a `ModelSpec` with provider, model_id, and capabilities pre-populated in `src/model_catalog.rs`
+- [x] T010 [P] [US1] Populate `src/model_catalog.toml` with Anthropic provider (credential_env_var, base_url, auth_mode, presets: opus_46, sonnet_46, haiku_45) per quickstart.md examples
+- [x] T011 [P] [US1] Populate `src/model_catalog.toml` with OpenAI provider (credential_env_var, base_url, auth_mode, presets: gpt_4o, gpt_4o_mini, o3, o4_mini) with capabilities and context windows
+- [x] T012 [P] [US1] Populate `src/model_catalog.toml` with Google provider (credential_env_var, base_url, auth_mode, presets: gemini_25_pro, gemini_25_flash) with api_version overrides
+- [x] T013 [P] [US1] Populate `src/model_catalog.toml` with local provider (kind = "local", presets with repo_id and filename fields for HuggingFace models)
+- [x] T014 [US1] Implement `model_catalog()` singleton function using `OnceLock` and `include_str!("model_catalog.toml")` with `toml::from_str` deserialization and panic on malformed TOML in `src/model_catalog.rs`
+- [x] T015 [US1] Implement `CatalogPreset` struct with all flattened fields (provider + preset metadata) in `src/model_catalog.rs` per data-model.md
+- [x] T016 [US1] Implement `ModelCatalog::preset(&self, provider_key, preset_id) -> Option<CatalogPreset>` that constructs flattened view by combining provider and preset fields in `src/model_catalog.rs`
+- [x] T017 [US1] Implement `CatalogPreset::model_capabilities(&self) -> ModelCapabilities` converting `Vec<PresetCapability>` to the existing `ModelCapabilities` struct (mapping Text, Tools, Thinking, ImagesIn to supports_tool_use, supports_vision, supports_thinking, max_context_window) in `src/model_catalog.rs`
+- [x] T018 [US1] Implement `CatalogPreset::model_spec(&self) -> ModelSpec` creating a `ModelSpec` with provider, model_id, and capabilities pre-populated in `src/model_catalog.rs`
 
 **Checkpoint**: User Story 1 complete — catalog browsing, preset lookup, and capability conversion all functional
 
@@ -77,14 +77,14 @@
 
 > **NOTE: Write these tests FIRST, ensure they FAIL before implementation (Constitution Principle II: TDD)**
 
-- [ ] T019 [US2] Write unit tests in `src/model_presets.rs` `#[cfg(test)]` module: ModelConnection creation and accessors, ModelConnections deduplication (extras matching primary dropped, duplicate extras dropped), into_parts destructuring, empty extras list
+- [x] T019 [US2] Write unit tests in `src/model_presets.rs` `#[cfg(test)]` module: ModelConnection creation and accessors, ModelConnections deduplication (extras matching primary dropped, duplicate extras dropped), into_parts destructuring, empty extras list
 
 ### Implementation for User Story 2
 
-- [ ] T020 [P] [US2] Implement `ModelConnection` struct with `model: ModelSpec` and `stream_fn: Arc<dyn StreamFn>`, plus `new()`, `model_spec()`, `stream_fn()` methods in `src/model_presets.rs`
-- [ ] T021 [US2] Implement `ModelConnections` struct with `primary_model`, `primary_stream_fn`, `extra_models` fields in `src/model_presets.rs`
-- [ ] T022 [US2] Implement `ModelConnections::new(primary, extras)` with deduplication logic — drop extras matching primary `ModelSpec` and drop duplicate extras against each other in `src/model_presets.rs`
-- [ ] T023 [US2] Implement `ModelConnections` accessor methods: `primary_model()`, `primary_stream_fn()`, `extra_models()`, `into_parts()` in `src/model_presets.rs`
+- [x] T020 [P] [US2] Implement `ModelConnection` struct with `model: ModelSpec` and `stream_fn: Arc<dyn StreamFn>`, plus `new()`, `model_spec()`, `stream_fn()` methods in `src/model_presets.rs`
+- [x] T021 [US2] Implement `ModelConnections` struct with `primary_model`, `primary_stream_fn`, `extra_models` fields in `src/model_presets.rs`
+- [x] T022 [US2] Implement `ModelConnections::new(primary, extras)` with deduplication logic — drop extras matching primary `ModelSpec` and drop duplicate extras against each other in `src/model_presets.rs`
+- [x] T023 [US2] Implement `ModelConnections` accessor methods: `primary_model()`, `primary_stream_fn()`, `extra_models()`, `into_parts()` in `src/model_presets.rs`
 
 **Checkpoint**: User Story 2 complete — connections can be created and deduplicated
 
@@ -100,12 +100,12 @@
 
 > **NOTE: Write these tests FIRST, ensure they FAIL before implementation (Constitution Principle II: TDD)**
 
-- [ ] T024 [US3] Write unit tests in `src/fallback.rs` `#[cfg(test)]` module: creation with multiple models, len/is_empty on empty and non-empty chains, single-model chain behaves like no fallback, models accessor returns correct order, Debug output format
+- [x] T024 [US3] Write unit tests in `src/fallback.rs` `#[cfg(test)]` module: creation with multiple models, len/is_empty on empty and non-empty chains, single-model chain behaves like no fallback, models accessor returns correct order, Debug output format
 
 ### Implementation for User Story 3
 
-- [ ] T025 [P] [US3] Implement `ModelFallback` struct with `models: Vec<(ModelSpec, Arc<dyn StreamFn>)>` and `new()`, `models()`, `is_empty()`, `len()` methods in `src/fallback.rs`
-- [ ] T026 [US3] Implement custom `Debug` for `ModelFallback` that displays `"provider:model_id"` for each entry without printing stream functions in `src/fallback.rs`
+- [x] T025 [P] [US3] Implement `ModelFallback` struct with `models: Vec<(ModelSpec, Arc<dyn StreamFn>)>` and `new()`, `models()`, `is_empty()`, `len()` methods in `src/fallback.rs`
+- [x] T026 [US3] Implement custom `Debug` for `ModelFallback` that displays `"provider:model_id"` for each entry without printing stream functions in `src/fallback.rs`
 
 **Checkpoint**: User Story 3 complete — fallback chain can be configured and inspected
 
@@ -115,10 +115,10 @@
 
 **Purpose**: Re-exports, final validation, and cleanup
 
-- [ ] T027 [P] Verify all public types are re-exported from `src/lib.rs` per contracts/public-api.md: ModelFallback, ApiVersion, AuthMode, CatalogPreset, ModelCatalog, PresetCapability, PresetCatalog, PresetStatus, ProviderCatalog, ProviderKind, model_catalog, ModelConnection, ModelConnections
-- [ ] T028 [P] Run `cargo clippy --workspace -- -D warnings` and fix any warnings
-- [ ] T029 Run `cargo test --workspace` to verify all tests pass
-- [ ] T030 Run quickstart.md validation — verify all code examples compile conceptually against the implemented API
+- [x] T027 [P] Verify all public types are re-exported from `src/lib.rs` per contracts/public-api.md: ModelFallback, ApiVersion, AuthMode, CatalogPreset, ModelCatalog, PresetCapability, PresetCatalog, PresetStatus, ProviderCatalog, ProviderKind, model_catalog, ModelConnection, ModelConnections
+- [x] T028 [P] Run `cargo clippy --workspace -- -D warnings` and fix any warnings
+- [x] T029 Run `cargo test --workspace` to verify all tests pass
+- [x] T030 Run quickstart.md validation — verify all code examples compile conceptually against the implemented API
 
 ---
 

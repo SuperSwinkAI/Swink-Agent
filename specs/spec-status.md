@@ -1,5 +1,5 @@
 # Spec-Driven Development Status
-<!-- spec-status: project=worktree-008-model-catalog-presets commit=907150996888b234167a5d766d7ef11b700e929b updated=2026-03-21T20:12:24Z -->
+<!-- spec-status: project=worktree-008-model-catalog-presets commit=6b89ee25d392e0454855818e4d1a4fed0159ee36 updated=2026-03-21T21:16:31Z -->
 
 | Feature                         | Specify | Plan | Tasks | Implement |
 |---------------------------------|---------|------|-------|-----------|
@@ -10,7 +10,7 @@
 | 005-agent-struct                | ✓     | ✓  | ✓   | ✓ Complete |
 | 006-context-management          | ✓     | ✓  | ✓   | ✓ Complete |
 | 007-tool-system-extensions      | ✓     | ✓  | ✓   | ✓ Complete |
-| 008-model-catalog-presets       | ✓     | ✓  | ✓   | ● 0/30 (0%) |
+| 008-model-catalog-presets       | ✓     | ✓  | ✓   | ✓ Complete |
 | 009-multi-agent-system          | ✓     | ✓  | -     | -         |
 | 010-loop-policies-observability | ✓     | ✓  | -     | -         |
 | 011-adapter-shared-infra        | ✓     | ✓  | ✓   | ✓ Complete |
@@ -41,7 +41,7 @@
 <!-- feature: 005-agent-struct has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=78 tasks_completed=78 checklist_files=requirements.md -->
 <!-- feature: 006-context-management has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=46 tasks_completed=46 checklist_files=requirements.md -->
 <!-- feature: 007-tool-system-extensions has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=64 tasks_completed=64 checklist_files=requirements.md -->
-<!-- feature: 008-model-catalog-presets has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=30 tasks_completed=0 checklist_files=requirements.md -->
+<!-- feature: 008-model-catalog-presets has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=30 tasks_completed=30 checklist_files=requirements.md -->
 <!-- feature: 009-multi-agent-system has_spec=true has_plan=true has_tasks=false has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=0 tasks_completed=0 checklist_files=requirements.md -->
 <!-- feature: 010-loop-policies-observability has_spec=true has_plan=true has_tasks=false has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=0 tasks_completed=0 checklist_files=requirements.md -->
 <!-- feature: 011-adapter-shared-infra has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=40 tasks_completed=40 checklist_files=requirements.md -->
