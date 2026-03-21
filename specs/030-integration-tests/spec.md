@@ -116,14 +116,14 @@ A library consumer needs confidence that TUI components render correctly with ag
 
 ### Edge Cases
 
-- What happens when a mock stream emits events out of order (e.g., content before start)?
-- How do tests handle non-deterministic timing in concurrent tool execution assertions?
-- What happens when a test registers the same tool name twice?
-- How do tests verify retry backoff timing without making tests slow?
-- What happens when a mock tool panics during execution?
-- How do tests ensure event subscriber assertions are complete (no missed events)?
-- What happens when structured output schema validation encounters an edge case (empty object, deeply nested)?
-- How do tests handle platform-specific differences in clipboard or editor behavior?
+- What happens when a mock stream emits events out of order — accumulation enforces strict ordering; out-of-order events produce an error (per 003 clarification).
+- How do tests handle non-deterministic timing in concurrent tool execution — tests use `Instant` timestamps and event ordering, not wall-clock durations.
+- What happens when a test registers the same tool name twice — tool registry uses HashMap; second registration overwrites the first.
+- How do tests verify retry backoff timing without slow tests — tests assert on `Duration` and `Instant` values, not actual sleep delays.
+- What happens when a mock tool panics — tool execution is spawned; panics are caught via join error handling and converted to error results.
+- How do tests ensure event subscriber assertions are complete — `EventCollector` stores all events; assertions check against the full collected list.
+- What about structured output edge cases (empty object, deeply nested) — serde handles both natively; schema validation via jsonschema covers edge cases.
+- How do tests handle platform-specific clipboard/editor differences — tests use abstractions; platform-specific behavior tested separately or behind cfg attributes.
 
 ## Requirements *(mandatory)*
 
@@ -168,6 +168,19 @@ A library consumer needs confidence that TUI components render correctly with ag
 - **SC-004**: The mock stream, mock tool, and event collector are reusable — at least 80% of tests share common helper infrastructure.
 - **SC-005**: Adding a new test for a future acceptance criterion requires only writing the test, not new infrastructure.
 - **SC-006**: No test depends on execution order — all tests are independent and can run in any order or in parallel.
+
+## Clarifications
+
+### Session 2026-03-20
+
+- Q: Out-of-order mock stream events? → A: Accumulation enforces strict ordering; produces error.
+- Q: Non-deterministic timing in concurrent tests? → A: Use Instant timestamps, not wall-clock durations.
+- Q: Same tool registered twice? → A: HashMap overwrites; second registration wins.
+- Q: Retry timing without slow tests? → A: Assert on Duration/Instant values, not actual sleeps.
+- Q: Mock tool panics? → A: Caught via join error handling; converted to error results.
+- Q: Complete event assertions? → A: EventCollector captures all; assertions check full list.
+- Q: Structured output edge cases? → A: Serde + jsonschema handle empty objects and deep nesting.
+- Q: Platform differences in tests? → A: Abstractions + cfg attributes for platform-specific tests.
 
 ## Assumptions
 
