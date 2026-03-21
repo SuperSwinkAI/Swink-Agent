@@ -103,6 +103,18 @@ MSRV **1.88** (edition 2024). Workspace deps centralized in root `Cargo.toml`.
 - Rust 1.88 (edition 2024) + `swink-agent` (core), `reqwest`, `futures`, `serde`/`serde_json`, `eventsource-stream`, `tokio`, `tokio-util` (020-adapter-proxy)
 - Rust 1.88 (edition 2024) + `ratatui` 0.30, `crossterm` 0.29 (event-stream), `syntect` 5 (syntax highlighting), `swink-agent` (core types) (026-tui-input-conversation)
 - N/A (input history is per-session, in-memory) (026-tui-input-conversation)
+- Rust 1.88 (edition 2024) + `ratatui` 0.30, `crossterm` 0.29 (event-stream), `arboard` (clipboard), `swink-agent` (core types), `swink-agent-memory` (`SessionStore`, `JsonlSessionStore`, `SessionMeta`) (028-tui-commands-editor-session)
+- JSONL files via `swink-agent-memory` `JsonlSessionStore` (line 1 = `SessionMeta`, lines 2+ = `AgentMessage`) (028-tui-commands-editor-session)
+- Rust 1.88, edition 2024 + `swink-agent` (core), `swink-agent-adapters` (proxy), `swink-agent-tui` (headless rendering), `tokio` (async runtime), `serde_json` (mock data), `futures` (stream combinators) (030-integration-tests)
+- N/A — all state is in-memory mocks (030-integration-tests)
+- Rust 1.88 (edition 2024) + okio (spawn, mpsc, oneshot, select!), tokio-util (CancellationToken), serde_json (Value), tracing (info, warn) (009-multi-agent-system)
+- N/A (in-memory state only) (009-multi-agent-system)
+- Rust 1.88 (edition 2024) + okio (async runtime), tokio-util (CancellationToken), futures (Stream, StreamExt), serde / serde_json (serialization), tracing (diagnostics) (010-loop-policies-observability)
+- N/A (in-memory by default; `CheckpointStore` trait abstracts persistence) (010-loop-policies-observability)
+- Rust 1.88 (edition 2024) + `serde`, `serde_json`, `tokio` (fs), `chrono` (timestamps), `tracing` (warning on corrupted lines) (021-memory-crate)
+- Local filesystem via JSONL files (one file per session) (021-memory-crate)
+- Rust 1.88 (edition 2024) + `mistralrs` (0.7, GGUF inference engine), `hf-hub` (HuggingFace model download with ETag/SHA verification), `tokio`, `tokio-stream`, `futures`, `serde`/`serde_json`, `thiserror`, `tracing`, `uuid` (022-local-llm-crate)
+- Model weights cached in `~/.cache/huggingface/hub/` (managed by `hf-hub`) (022-local-llm-crate)
 
 ## Recent Changes
 - 001-workspace-scaffold: Added Rust 1.88 (edition 2024) + serde, serde_json, tokio, futures, thiserror, uuid, reqwest, jsonschema, schemars, rand, tracing, toml (all centralized in workspace `[workspace.dependencies]`)

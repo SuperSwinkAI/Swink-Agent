@@ -100,14 +100,14 @@ A developer wants to share or save parts of the conversation by copying them to 
 
 ### Edge Cases
 
-- What happens when the external editor crashes or is killed by a signal?
-- How does the TUI handle a session file that is corrupted or from an incompatible version?
-- What happens when the clipboard is unavailable (e.g., headless server, Wayland without clipboard daemon)?
-- How does the command parser handle commands with extra whitespace or mixed case?
-- What happens when /model is invoked during an active agent response?
-- How does session save handle very large conversations (thousands of messages)?
-- What happens when the external editor specified in config or EDITOR does not exist on the system?
-- How does #copy code behave when the response contains no code blocks?
+- What happens when the external editor crashes or is killed — TUI waits for process exit; temp file cleaned up on restart. No crash propagation.
+- How does TUI handle corrupted/incompatible session file — JSONL error handling; corrupted files produce load error, TUI starts with empty history.
+- What happens when clipboard unavailable — ClipboardBridge abstracts platform; unavailability shows informative error, no crash.
+- How does command parser handle extra whitespace/mixed case — `trim()` and exact string matching; whitespace handled, case is exact.
+- What happens when /model invoked during active response — model change is config update; applies on next turn, not mid-response.
+- How does session save handle thousands of messages — streaming JSONL write line-by-line; no full buffering.
+- What if editor binary doesn't exist — falls back: `$EDITOR` → `$VISUAL` → `vi`.
+- How does #copy code behave with no code blocks — extracts zero blocks; shows feedback message.
 
 ## Requirements *(mandatory)*
 
@@ -148,6 +148,19 @@ A developer wants to share or save parts of the conversation by copying them to 
 - **SC-004**: A saved session can be loaded on a subsequent TUI launch with full conversation history intact.
 - **SC-005**: Clipboard copy operations place the correct content on the system clipboard on all supported platforms.
 - **SC-006**: The external editor fallback chain resolves to a working editor on a standard system.
+
+## Clarifications
+
+### Session 2026-03-20
+
+- Q: Editor crash/kill behavior? → A: TUI waits for exit; temp file cleaned up on restart.
+- Q: Corrupted session file? → A: JSONL error → starts with empty history.
+- Q: Clipboard unavailable? → A: Shows informative error; no crash.
+- Q: Extra whitespace/case in commands? → A: `trim()` + exact match.
+- Q: /model during active response? → A: Config update; applies next turn.
+- Q: Session save with thousands of messages? → A: Streaming JSONL, line-by-line.
+- Q: Editor binary missing? → A: Fallback chain `$EDITOR` → `$VISUAL` → `vi`.
+- Q: #copy code with no code blocks? → A: Shows "nothing to copy" feedback.
 
 ## Assumptions
 

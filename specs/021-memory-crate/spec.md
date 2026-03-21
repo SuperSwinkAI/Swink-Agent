@@ -91,13 +91,13 @@ A developer wants session data stored in a human-readable, line-delimited format
 
 ### Edge Cases
 
-- What happens when two processes attempt to save to the same session simultaneously?
-- How does the store handle a session file that is completely empty (zero bytes)?
-- What happens when the compactor receives a conversation with only one message?
-- How does the store behave when the underlying storage medium is full?
-- What happens when a session file contains lines in an unrecognized format (e.g., after a version upgrade)?
-- How does the compactor handle messages that contain the summary marker (to avoid confusion with injected summaries)?
-- What happens when the session identifier contains filesystem-unsafe characters?
+- What happens when two processes attempt to save to the same session simultaneously — last-writer-wins; no file locking. Single-writer assumption is documented. Concurrent writes may corrupt the file.
+- How does the store handle a session file that is completely empty (zero bytes) — returns `InvalidData` error ("empty session file").
+- What happens when the compactor receives a conversation with only one message — within any budget; no compaction occurs (returned unchanged).
+- How does the store behave when the underlying storage medium is full — OS `io::Error` propagates through `io::Result`; caller handles.
+- What happens when a session file contains lines in an unrecognized format — corrupted/unrecognized lines are skipped with a warning logged; remaining messages are loaded successfully. Partial recovery over total failure.
+- How does the compactor handle messages that contain the summary marker — summaries are injected as regular `AssistantMessage` values, not specially marked. No collision issue; summary is just a message in the conversation.
+- What happens when the session identifier contains filesystem-unsafe characters — IDs are validated; unsafe characters (`/`, `\`, `..`, null bytes) are rejected with an error. Auto-generated IDs use safe `YYYYMMDD_HHMMSS` format.
 
 ## Requirements *(mandatory)*
 
@@ -130,6 +130,18 @@ A developer wants session data stored in a human-readable, line-delimited format
 - **SC-003**: Async store operations do not block the calling thread.
 - **SC-004**: Partial file corruption results in partial recovery, not total data loss.
 - **SC-005**: Session metadata (title, timestamps) is preserved across save/load cycles.
+
+## Clarifications
+
+### Session 2026-03-20
+
+- Q: How should concurrent session saves be handled? → A: Last-writer-wins; no file locking. Single-writer assumption documented.
+- Q: Should user-provided session IDs be sanitized? → A: Yes — reject unsafe characters (`/`, `\`, `..`, null bytes) with an error.
+- Q: Should corrupted JSONL lines fail the load or be skipped? → A: Skip bad lines, log warning, continue loading (partial recovery).
+- Q: Empty session file? → A: Returns `InvalidData` error.
+- Q: Compactor with one message? → A: No compaction; returned unchanged.
+- Q: Storage medium full? → A: OS io::Error propagates; caller handles.
+- Q: Summary marker collision? → A: No issue; summaries are regular AssistantMessage values.
 
 ## Assumptions
 
