@@ -7,7 +7,7 @@
 - Provider Roadmap: [PROVIDER_EXPANSION_ROADMAP.md](PROVIDER_EXPANSION_ROADMAP.md)
 - Eval Roadmap: [EVAL.md](EVAL.md)
 
-**Current Focus:** 20/30 specs have plans, 6/30 have tasks (001–004, 011 complete; 005 ready for implementation at 0/78). Next: `/speckit.implement` for 005, then `/speckit.tasks` for 006, 012–013 (adapter implementations unblocked by 011).
+**Current Focus:** 20/30 specs have plans, 6/30 have tasks (001–005, 011 complete). Next: `/speckit.tasks` for 006, 007, 008, 012–013 (adapter implementations unblocked by 011). 005 Agent Struct is now complete (78/78 tasks), unblocking 009 Multi-Agent, 025 TUI Scaffold, and 030 Integration Tests.
 
 > **Numbering System:** Spec numbers (001–030) are sequential identifiers that
 > never change. Phase numbers represent execution order and can be reassigned
@@ -48,7 +48,7 @@ pluggable trait boundaries.
 **Goal:** The agent loop execution engine and its public API wrapper —
 the two central verticals that make the agent functional.
 
-**Status:** 2/2 specs planned, 2/2 have tasks, 1/2 complete, 2/2 specs defined
+**Status:** 2/2 specs planned, 2/2 have tasks, 2/2 complete, 2/2 specs defined
 
 ### Implementation Checklist
 
@@ -57,10 +57,10 @@ the two central verticals that make the agent functional.
   - Branch: `004-agent-loop`
   - Status: Complete (65/65 tasks, merged to main)
   - Depends on: 0.2, 0.3
-- [ ] **1.2** Agent Struct & Public API — Stateful wrapper, streaming/async/sync API, structured output, queues, subscriptions (§13)
+- [x] **1.2** Agent Struct & Public API — Stateful wrapper, streaming/async/sync API, structured output, queues, subscriptions (§13)
   - Spec: `specs/005-agent-struct/spec.md`
   - Branch: `005-agent-struct`
-  - Status: Ready for implementation (0/78 tasks)
+  - Status: Complete (78/78 tasks, merged to main)
   - Depends on: 1.1
 
 ---
@@ -334,7 +334,7 @@ graph TD
     style B fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
     style C fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
     style D fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
-    style E fill:#fff,color:#000,stroke:#6b7280,stroke-width:2px
+    style E fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
     style F fill:#fff,color:#000,stroke:#6b7280,stroke-width:2px
     style G fill:#fff,color:#000,stroke:#6b7280,stroke-width:2px
     style H fill:#fff,color:#000,stroke:#6b7280,stroke-width:2px

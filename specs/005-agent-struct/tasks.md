@@ -23,9 +23,9 @@
 
 **Purpose**: Project initialization and shared types that all user stories depend on
 
-- [ ] T001 Verify workspace dependencies are declared for tokio, tokio-util, futures, serde_json, tracing in root `Cargo.toml`
-- [ ] T002 [P] Create `src/agent_options.rs` with `AgentOptions` struct and constructors (`new`, `new_simple`, `from_connections`) plus all `with_*()` builder methods
-- [ ] T003 [P] Create `src/agent_subscriptions.rs` with `ListenerRegistry` struct and `SubscriptionId` type
+- [x] T001 Verify workspace dependencies are declared for tokio, tokio-util, futures, serde_json, tracing in root `Cargo.toml`
+- [x] T002 [P] Create `src/agent_options.rs` with `AgentOptions` struct and constructors (`new`, `new_simple`, `from_connections`) plus all `with_*()` builder methods
+- [x] T003 [P] Create `src/agent_subscriptions.rs` with `ListenerRegistry` struct and `SubscriptionId` type
 
 ---
 
@@ -35,13 +35,13 @@
 
 **CRITICAL**: No user story work can begin until this phase is complete
 
-- [ ] T004 Create `src/agent.rs` with `Agent` struct definition containing all fields from data-model.md (id, state, queues, listeners, abort_controller, modes, stream_fn, hooks, policies)
-- [ ] T005 [P] Implement `AgentState` struct in `src/agent.rs` with fields: system_prompt, model, tools, messages, is_running, stream_message, pending_tool_calls, error, available_models
-- [ ] T006 [P] Implement `Agent::new(options: AgentOptions) -> Agent` constructor that consumes `AgentOptions` and initializes all fields
-- [ ] T007 Implement `agent.id() -> AgentId` and `agent.state() -> &AgentState` accessors in `src/agent.rs`
-- [ ] T008 Implement `check_not_running()` guard in `src/agent.rs` returning `Err(AgentError::AlreadyRunning)` when `state.is_running` is true
-- [ ] T009 [P] Add `AgentError::AlreadyRunning`, `AgentError::NoMessages`, `AgentError::InvalidContinue`, and `AgentError::StructuredOutputFailed` variants to `src/error.rs`
-- [ ] T010 Update `src/lib.rs` to re-export all public types: Agent, AgentOptions, AgentState, AgentId, SubscriptionId, SteeringMode, FollowUpMode, AgentHandle
+- [x] T004 Create `src/agent.rs` with `Agent` struct definition containing all fields from data-model.md (id, state, queues, listeners, abort_controller, modes, stream_fn, hooks, policies)
+- [x] T005 [P] Implement `AgentState` struct in `src/agent.rs` with fields: system_prompt, model, tools, messages, is_running, stream_message, pending_tool_calls, error, available_models
+- [x] T006 [P] Implement `Agent::new(options: AgentOptions) -> Agent` constructor that consumes `AgentOptions` and initializes all fields
+- [x] T007 Implement `agent.id() -> AgentId` and `agent.state() -> &AgentState` accessors in `src/agent.rs`
+- [x] T008 Implement `check_not_running()` guard in `src/agent.rs` returning `Err(AgentError::AlreadyRunning)` when `state.is_running` is true
+- [x] T009 [P] Add `AgentError::AlreadyRunning`, `AgentError::NoMessages`, `AgentError::InvalidContinue`, and `AgentError::StructuredOutputFailed` variants to `src/error.rs`
+- [x] T010 Update `src/lib.rs` to re-export all public types: Agent, AgentOptions, AgentState, AgentId, SubscriptionId, SteeringMode, FollowUpMode, AgentHandle
 
 **Checkpoint**: Foundation ready - user story implementation can now begin in parallel
 
@@ -57,21 +57,21 @@
 
 > **NOTE: Write these tests FIRST, ensure they FAIL before implementation**
 
-- [ ] T011 [P] [US1] Create test helpers in `tests/common/mod.rs` (MockStreamFn, MockTool, text_only_events, tool_call_events)
-- [ ] T012 [P] [US1] Write async prompt test in `tests/agent.rs` verifying result contains messages, stop_reason, and usage
-- [ ] T013 [P] [US1] Write streaming prompt test in `tests/agent.rs` verifying event stream yields lifecycle events in correct order
-- [ ] T014 [P] [US1] Write sync prompt test in `tests/agent.rs` verifying blocking call returns same result as async
-- [ ] T015 [P] [US1] Write text-with-images prompt test in `tests/agent.rs` verifying both text and image content blocks are included
-- [ ] T016 [P] [US1] Write concurrency guard test in `tests/agent.rs` verifying second prompt call returns `AgentError::AlreadyRunning`
+- [x] T011 [P] [US1] Create test helpers in `tests/common/mod.rs` (MockStreamFn, MockTool, text_only_events, tool_call_events)
+- [x] T012 [P] [US1] Write async prompt test in `tests/agent.rs` verifying result contains messages, stop_reason, and usage
+- [x] T013 [P] [US1] Write streaming prompt test in `tests/agent.rs` verifying event stream yields lifecycle events in correct order
+- [x] T014 [P] [US1] Write sync prompt test in `tests/agent.rs` verifying blocking call returns same result as async
+- [x] T015 [P] [US1] Write text-with-images prompt test in `tests/agent.rs` verifying both text and image content blocks are included
+- [x] T016 [P] [US1] Write concurrency guard test in `tests/agent.rs` verifying second prompt call returns `AgentError::AlreadyRunning`
 
 ### Implementation for User Story 1
 
-- [ ] T017 [US1] Implement `start_loop()` private method in `src/agent.rs` that sets `is_running`, creates CancellationToken, builds AgentContext, calls `agent_loop()`, and returns `Pin<Box<dyn Stream<Item = AgentEvent>>>`
-- [ ] T018 [US1] Implement `prompt_stream(input: Vec<AgentMessage>)` in `src/agent.rs` that wraps user input as messages, calls `check_not_running()`, and delegates to `start_loop()`
-- [ ] T019 [US1] Implement `prompt_async(input)` in `src/agent.rs` that calls `prompt_stream()` and collects the stream into `AgentResult`
-- [ ] T020 [US1] Implement `prompt_sync(input)` in `src/agent.rs` that creates a fresh tokio Runtime and blocks on `prompt_async()`
-- [ ] T021 [P] [US1] Implement convenience methods `prompt_text(text)`, `prompt_text_with_images(text, images)`, and `prompt_text_sync(text)` in `src/agent.rs`
-- [ ] T022 [US1] Implement `handle_stream_event(event)` in `src/agent.rs` for manual stream processing (updates state from events)
+- [x] T017 [US1] Implement `start_loop()` private method in `src/agent.rs` that sets `is_running`, creates CancellationToken, builds AgentContext, calls `agent_loop()`, and returns `Pin<Box<dyn Stream<Item = AgentEvent>>>`
+- [x] T018 [US1] Implement `prompt_stream(input: Vec<AgentMessage>)` in `src/agent.rs` that wraps user input as messages, calls `check_not_running()`, and delegates to `start_loop()`
+- [x] T019 [US1] Implement `prompt_async(input)` in `src/agent.rs` that calls `prompt_stream()` and collects the stream into `AgentResult`
+- [x] T020 [US1] Implement `prompt_sync(input)` in `src/agent.rs` that creates a fresh tokio Runtime and blocks on `prompt_async()`
+- [x] T021 [P] [US1] Implement convenience methods `prompt_text(text)`, `prompt_text_with_images(text, images)`, and `prompt_text_sync(text)` in `src/agent.rs`
+- [x] T022 [US1] Implement `handle_stream_event(event)` in `src/agent.rs` for manual stream processing (updates state from events)
 
 **Checkpoint**: At this point, User Story 1 should be fully functional and testable independently
 
@@ -85,19 +85,19 @@
 
 ### Tests for User Story 2
 
-- [ ] T023 [P] [US2] Write subscriber receives events test in `tests/agent.rs` verifying callback gets all lifecycle events
-- [ ] T024 [P] [US2] Write unsubscribe test in `tests/agent.rs` verifying no further events after unsubscribe
-- [ ] T025 [P] [US2] Write panic isolation test in `tests/agent.rs` verifying panicking subscriber is auto-removed and agent continues
-- [ ] T026 [P] [US2] Write multiple subscribers test in `tests/agent.rs` verifying other subscribers unaffected by one panic
+- [x] T023 [P] [US2] Write subscriber receives events test in `tests/agent.rs` verifying callback gets all lifecycle events
+- [x] T024 [P] [US2] Write unsubscribe test in `tests/agent.rs` verifying no further events after unsubscribe
+- [x] T025 [P] [US2] Write panic isolation test in `tests/agent.rs` verifying panicking subscriber is auto-removed and agent continues
+- [x] T026 [P] [US2] Write multiple subscribers test in `tests/agent.rs` verifying other subscribers unaffected by one panic
 
 ### Implementation for User Story 2
 
-- [ ] T027 [US2] Implement `subscribe(callback) -> SubscriptionId` in `src/agent_subscriptions.rs` using monotonic counter for IDs
-- [ ] T028 [US2] Implement `unsubscribe(id) -> bool` in `src/agent_subscriptions.rs` that removes callback by ID
-- [ ] T029 [US2] Implement `dispatch_event(event)` in `src/agent_subscriptions.rs` with `catch_unwind` panic isolation and auto-removal of panicking subscribers
-- [ ] T030 [US2] Wire `Agent::subscribe()` and `Agent::unsubscribe()` delegation methods in `src/agent.rs`
-- [ ] T031 [P] [US2] Implement `add_event_forwarder(f)` and `forward_event(event)` in `src/agent.rs` for event forwarding
-- [ ] T032 [P] [US2] Implement `emit(name, payload)` custom event emission in `src/agent.rs`
+- [x] T027 [US2] Implement `subscribe(callback) -> SubscriptionId` in `src/agent_subscriptions.rs` using monotonic counter for IDs
+- [x] T028 [US2] Implement `unsubscribe(id) -> bool` in `src/agent_subscriptions.rs` that removes callback by ID
+- [x] T029 [US2] Implement `dispatch_event(event)` in `src/agent_subscriptions.rs` with `catch_unwind` panic isolation and auto-removal of panicking subscribers
+- [x] T030 [US2] Wire `Agent::subscribe()` and `Agent::unsubscribe()` delegation methods in `src/agent.rs`
+- [x] T031 [P] [US2] Implement `add_event_forwarder(f)` and `forward_event(event)` in `src/agent.rs` for event forwarding
+- [x] T032 [P] [US2] Implement `emit(name, payload)` custom event emission in `src/agent.rs`
 
 **Checkpoint**: At this point, User Stories 1 AND 2 should both work independently
 
@@ -111,17 +111,17 @@
 
 ### Tests for User Story 3
 
-- [ ] T033 [P] [US3] Write steering during tool execution test in `tests/agent_steering.rs` verifying remaining tools cancelled and message processed next turn
-- [ ] T034 [P] [US3] Write idle steering test in `tests/agent_steering.rs` verifying message queued for next run
-- [ ] T035 [P] [US3] Write all-at-once delivery mode test in `tests/agent_steering.rs` verifying multiple messages delivered together
-- [ ] T036 [P] [US3] Write one-at-a-time delivery mode test in `tests/agent_steering.rs` verifying single message per turn
+- [x] T033 [P] [US3] Write steering during tool execution test in `tests/agent_steering.rs` verifying remaining tools cancelled and message processed next turn
+- [x] T034 [P] [US3] Write idle steering test in `tests/agent_steering.rs` verifying message queued for next run
+- [x] T035 [P] [US3] Write all-at-once delivery mode test in `tests/agent_steering.rs` verifying multiple messages delivered together
+- [x] T036 [P] [US3] Write one-at-a-time delivery mode test in `tests/agent_steering.rs` verifying single message per turn
 
 ### Implementation for User Story 3
 
-- [ ] T037 [US3] Implement `steer(message)` in `src/agent.rs` using `Arc<Mutex<Vec<AgentMessage>>>` with poison recovery
-- [ ] T038 [US3] Implement `follow_up(message)` in `src/agent.rs` using `Arc<Mutex<Vec<AgentMessage>>>` with poison recovery
-- [ ] T039 [P] [US3] Implement `clear_steering()`, `clear_follow_up()`, `clear_queues()`, and `has_pending_messages()` in `src/agent.rs`
-- [ ] T040 [US3] Implement `QueueMessageProvider` that shares Arc references and drains based on `SteeringMode`/`FollowUpMode`
+- [x] T037 [US3] Implement `steer(message)` in `src/agent.rs` using `Arc<Mutex<Vec<AgentMessage>>>` with poison recovery
+- [x] T038 [US3] Implement `follow_up(message)` in `src/agent.rs` using `Arc<Mutex<Vec<AgentMessage>>>` with poison recovery
+- [x] T039 [P] [US3] Implement `clear_steering()`, `clear_follow_up()`, `clear_queues()`, and `has_pending_messages()` in `src/agent.rs`
+- [x] T040 [US3] Implement `QueueMessageProvider` that shares Arc references and drains based on `SteeringMode`/`FollowUpMode`
 
 **Checkpoint**: At this point, User Stories 1, 2, AND 3 should all work independently
 
@@ -135,16 +135,16 @@
 
 ### Tests for User Story 4
 
-- [ ] T041 [P] [US4] Write valid structured output test in `tests/agent_structured.rs` verifying response matches schema
-- [ ] T042 [P] [US4] Write invalid-then-valid retry test in `tests/agent_structured.rs` verifying retry via continue
-- [ ] T043 [P] [US4] Write retries exhausted test in `tests/agent_structured.rs` verifying `StructuredOutputFailed` error with attempt count
-- [ ] T044 [P] [US4] Write typed deserialization test in `tests/agent_structured.rs` verifying `structured_output_typed` returns deserialized struct
+- [x] T041 [P] [US4] Write valid structured output test in `tests/agent_structured.rs` verifying response matches schema
+- [x] T042 [P] [US4] Write invalid-then-valid retry test in `tests/agent_structured.rs` verifying retry via continue
+- [x] T043 [P] [US4] Write retries exhausted test in `tests/agent_structured.rs` verifying `StructuredOutputFailed` error with attempt count
+- [x] T044 [P] [US4] Write typed deserialization test in `tests/agent_structured.rs` verifying `structured_output_typed` returns deserialized struct
 
 ### Implementation for User Story 4
 
-- [ ] T045 [US4] Implement `structured_output(prompt, schema) -> Result<Value, AgentError>` in `src/agent.rs` that injects `__structured_output` synthetic tool, runs prompt, validates response, and retries on invalid
-- [ ] T046 [US4] Implement `structured_output_typed<T>(prompt, schema) -> Result<T, AgentError>` in `src/agent.rs` that deserializes validated output
-- [ ] T047 [P] [US4] Implement `structured_output_sync(prompt, schema)` and `structured_output_typed_sync<T>(prompt, schema)` blocking variants in `src/agent.rs`
+- [x] T045 [US4] Implement `structured_output(prompt, schema) -> Result<Value, AgentError>` in `src/agent.rs` that injects `__structured_output` synthetic tool, runs prompt, validates response, and retries on invalid
+- [x] T046 [US4] Implement `structured_output_typed<T>(prompt, schema) -> Result<T, AgentError>` in `src/agent.rs` that deserializes validated output
+- [x] T047 [P] [US4] Implement `structured_output_sync(prompt, schema)` and `structured_output_typed_sync<T>(prompt, schema)` blocking variants in `src/agent.rs`
 
 **Checkpoint**: At this point, User Stories 1-4 should all work independently
 
@@ -158,21 +158,21 @@
 
 ### Tests for User Story 5
 
-- [ ] T048 [P] [US5] Write set system prompt test in `tests/agent.rs` verifying next prompt uses new system prompt
-- [ ] T049 [P] [US5] Write set model test in `tests/agent_models.rs` verifying next prompt targets new model
-- [ ] T050 [P] [US5] Write set tools test in `tests/agent.rs` verifying next prompt uses new tool set
-- [ ] T051 [P] [US5] Write abort test in `tests/handle.rs` verifying running agent exits with aborted stop reason
-- [ ] T052 [P] [US5] Write wait-for-idle test in `tests/handle.rs` verifying it resolves when run finishes
-- [ ] T053 [P] [US5] Write reset test in `tests/agent.rs` verifying all state returns to initial values
+- [x] T048 [P] [US5] Write set system prompt test in `tests/agent.rs` verifying next prompt uses new system prompt
+- [x] T049 [P] [US5] Write set model test in `tests/agent_models.rs` verifying next prompt targets new model
+- [x] T050 [P] [US5] Write set tools test in `tests/agent.rs` verifying next prompt uses new tool set
+- [x] T051 [P] [US5] Write abort test in `tests/handle.rs` verifying running agent exits with aborted stop reason
+- [x] T052 [P] [US5] Write wait-for-idle test in `tests/handle.rs` verifying it resolves when run finishes
+- [x] T053 [P] [US5] Write reset test in `tests/agent.rs` verifying all state returns to initial values
 
 ### Implementation for User Story 5
 
-- [ ] T054 [P] [US5] Implement state mutation methods in `src/agent.rs`: `set_system_prompt`, `set_model`, `set_thinking_level`, `set_tools`, `add_tool`, `remove_tool`
-- [ ] T055 [P] [US5] Implement message mutation methods in `src/agent.rs`: `set_messages`, `append_messages`, `clear_messages`
-- [ ] T056 [P] [US5] Implement `set_approval_mode(mode)` in `src/agent.rs`
-- [ ] T057 [US5] Implement `abort()` in `src/agent.rs` that cancels the CancellationToken
-- [ ] T058 [US5] Implement `wait_for_idle()` in `src/agent.rs` using `Arc<Notify>` that resolves when `is_running` becomes false
-- [ ] T059 [US5] Implement `reset()` in `src/agent.rs` that clears all state (messages, queues, error) to initial values
+- [x] T054 [P] [US5] Implement state mutation methods in `src/agent.rs`: `set_system_prompt`, `set_model`, `set_thinking_level`, `set_tools`, `add_tool`, `remove_tool`
+- [x] T055 [P] [US5] Implement message mutation methods in `src/agent.rs`: `set_messages`, `append_messages`, `clear_messages`
+- [x] T056 [P] [US5] Implement `set_approval_mode(mode)` in `src/agent.rs`
+- [x] T057 [US5] Implement `abort()` in `src/agent.rs` that cancels the CancellationToken
+- [x] T058 [US5] Implement `wait_for_idle()` in `src/agent.rs` using `Arc<Notify>` that resolves when `is_running` becomes false
+- [x] T059 [US5] Implement `reset()` in `src/agent.rs` that clears all state (messages, queues, error) to initial values
 
 **Checkpoint**: At this point, all user stories should be independently functional
 
@@ -184,15 +184,15 @@
 
 ### Tests
 
-- [ ] T060 [P] [US1] Write continue async test in `tests/agent_continuation.rs` verifying resume from existing context
-- [ ] T061 [P] [US1] Write continue with empty history test in `tests/agent_continuation.rs` verifying `NoMessages` error
-- [ ] T062 [P] [US1] Write continue with assistant last message and no queue test in `tests/agent_continuation.rs` verifying `InvalidContinue` error
-- [ ] T063 [P] [US1] Write continue with pending queue messages test in `tests/agent_continuation.rs` verifying continue is allowed
+- [x] T060 [P] [US1] Write continue async test in `tests/agent_continuation.rs` verifying resume from existing context
+- [x] T061 [P] [US1] Write continue with empty history test in `tests/agent_continuation.rs` verifying `NoMessages` error
+- [x] T062 [P] [US1] Write continue with assistant last message and no queue test in `tests/agent_continuation.rs` verifying `InvalidContinue` error
+- [x] T063 [P] [US1] Write continue with pending queue messages test in `tests/agent_continuation.rs` verifying continue is allowed
 
 ### Implementation
 
-- [ ] T064 [US1] Implement `validate_continue()` in `src/agent.rs` returning `NoMessages` for empty history, `InvalidContinue` for assistant-last with no pending queue messages
-- [ ] T065 [US1] Implement `continue_stream()`, `continue_async()`, and `continue_sync()` in `src/agent.rs` using `agent_loop_continue()`
+- [x] T064 [US1] Implement `validate_continue()` in `src/agent.rs` returning `NoMessages` for empty history, `InvalidContinue` for assistant-last with no pending queue messages
+- [x] T065 [US1] Implement `continue_stream()`, `continue_async()`, and `continue_sync()` in `src/agent.rs` using `agent_loop_continue()`
 
 **Checkpoint**: Continue invocations work correctly with proper validation
 
@@ -204,13 +204,13 @@
 
 ### Tests
 
-- [ ] T066 [P] Write spawn and await result test in `tests/handle.rs` verifying background execution completes
-- [ ] T067 [P] Write cancel spawned agent test in `tests/handle.rs` verifying cancellation works
+- [x] T066 [P] Write spawn and await result test in `tests/handle.rs` verifying background execution completes
+- [x] T067 [P] Write cancel spawned agent test in `tests/handle.rs` verifying cancellation works
 
 ### Implementation
 
-- [ ] T068 Implement `AgentHandle` struct in `src/handle.rs` with `spawn(agent, messages)` that moves agent into `tokio::spawn`
-- [ ] T069 Implement `await_result()` and cancellation on `AgentHandle` in `src/handle.rs`
+- [x] T068 Implement `AgentHandle` struct in `src/handle.rs` with `spawn(agent, messages)` that moves agent into `tokio::spawn`
+- [x] T069 Implement `await_result()` and cancellation on `AgentHandle` in `src/handle.rs`
 
 ---
 
@@ -218,8 +218,8 @@
 
 **Purpose**: Tool querying helpers and plan mode entry/exit
 
-- [ ] T070 [P] Implement `find_tool(name)`, `tools_matching(predicate)`, `tools_in_namespace(namespace)` in `src/agent.rs`
-- [ ] T071 [P] Implement `enter_plan_mode()` and `exit_plan_mode(saved_tools, saved_prompt)` in `src/agent.rs`
+- [x] T070 [P] Implement `find_tool(name)`, `tools_matching(predicate)`, `tools_in_namespace(namespace)` in `src/agent.rs`
+- [x] T071 [P] Implement `enter_plan_mode()` and `exit_plan_mode(saved_tools, saved_prompt)` in `src/agent.rs`
 
 ---
 
@@ -227,7 +227,7 @@
 
 **Purpose**: Optional persistence via CheckpointStore trait
 
-- [ ] T072 [P] Implement `save_checkpoint(id)`, `restore_from_checkpoint(checkpoint)`, `load_and_restore_checkpoint(id)`, and `checkpoint_store()` in `src/agent.rs`
+- [x] T072 [P] Implement `save_checkpoint(id)`, `restore_from_checkpoint(checkpoint)`, `load_and_restore_checkpoint(id)`, and `checkpoint_store()` in `src/agent.rs`
 
 ---
 
@@ -235,12 +235,12 @@
 
 **Purpose**: Improvements that affect multiple user stories
 
-- [ ] T073 [P] Write public API surface test in `tests/public_api.rs` verifying all types re-exported through `src/lib.rs`
-- [ ] T074 Verify `src/lib.rs` re-exports are complete per contracts/public-api.md
-- [ ] T075 Run `cargo clippy --workspace -- -D warnings` and fix any warnings
-- [ ] T076 Run `cargo test --workspace` and verify all tests pass
-- [ ] T077 Run `cargo test -p swink-agent --no-default-features` to verify builtin-tools feature gate
-- [ ] T078 Run quickstart.md validation: verify all code examples compile
+- [x] T073 [P] Write public API surface test in `tests/public_api.rs` verifying all types re-exported through `src/lib.rs`
+- [x] T074 Verify `src/lib.rs` re-exports are complete per contracts/public-api.md
+- [x] T075 Run `cargo clippy --workspace -- -D warnings` and fix any warnings
+- [x] T076 Run `cargo test --workspace` and verify all tests pass
+- [x] T077 Run `cargo test -p swink-agent --no-default-features` to verify builtin-tools feature gate
+- [x] T078 Run quickstart.md validation: verify all code examples compile
 
 ---
 
