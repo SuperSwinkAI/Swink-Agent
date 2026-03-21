@@ -122,9 +122,9 @@ When the provider stops mid-response because it hit the output token limit and t
 
 - What happens when the context transformation hook is not provided — the loop uses an identity transform (context passes through unchanged).
 - What happens when steering messages arrive but no tools are currently executing — they are queued as pending messages and processed before the next provider call.
-- How does the loop handle a provider that returns zero content blocks (empty response)?
-- What happens when all tool calls in a batch are cancelled by steering — does the loop still emit turn end?
-- What happens when the cancellation token is triggered during the provider call — does the loop emit an aborted stop reason?
+- How does the loop handle a provider that returns zero content blocks (empty response)? → Treat as natural stop with empty assistant message; emit `TurnEnd` with `Complete` reason.
+- What happens when all tool calls in a batch are cancelled by steering — does the loop still emit turn end? → Yes, emit `TurnEnd` with `SteeringInterrupt` reason.
+- What happens when the cancellation token is triggered during the provider call — does the loop emit an aborted stop reason? → Yes, cancellation during provider call emits `TurnEnd` with `Aborted` reason followed by `AgentEnd`.
 
 ## Requirements *(mandatory)*
 
