@@ -417,9 +417,7 @@ mod tests {
         ));
         match &events[4] {
             AssistantMessageEvent::Done {
-                stop_reason,
-                usage,
-                ..
+                stop_reason, usage, ..
             } => {
                 assert_eq!(*stop_reason, StopReason::Stop);
                 assert_eq!(usage.input, 10);
@@ -544,9 +542,7 @@ mod tests {
         assert_eq!(events.len(), 2);
         assert!(matches!(events[0], AssistantMessageEvent::Start));
         match &events[1] {
-            AssistantMessageEvent::Error {
-                error_message, ..
-            } => {
+            AssistantMessageEvent::Error { error_message, .. } => {
                 assert!(error_message.contains("no choices"));
             }
             other => panic!("expected Error, got {other:?}"),
@@ -591,10 +587,7 @@ mod tests {
 
     #[test]
     fn response_with_usage() {
-        let response = make_response(
-            vec![text_choice("hi", "stop")],
-            make_usage(42, 13),
-        );
+        let response = make_response(vec![text_choice("hi", "stop")], make_usage(42, 13));
         let token = CancellationToken::new();
         let events = response_to_events(&response, token);
 
@@ -672,9 +665,7 @@ mod tests {
         // First tool call at content_index 0.
         match &events[1] {
             AssistantMessageEvent::ToolCallStart {
-                content_index,
-                id,
-                ..
+                content_index, id, ..
             } => {
                 assert_eq!(*content_index, 0);
                 assert_eq!(id, "call-a");
@@ -685,9 +676,7 @@ mod tests {
         // Second tool call at content_index 1.
         match &events[4] {
             AssistantMessageEvent::ToolCallStart {
-                content_index,
-                id,
-                ..
+                content_index, id, ..
             } => {
                 assert_eq!(*content_index, 1);
                 assert_eq!(id, "call-b");

@@ -135,9 +135,8 @@ async fn default_map_result_with_error_and_no_message() {
     let stream_fn2: Arc<dyn StreamFn> = Arc::new(MockStreamFn::new(vec![error_events]));
     let sfn2 = Arc::clone(&stream_fn2);
 
-    let sub2 = SubAgent::new("err", "Err", "errors").with_options(move || {
-        AgentOptions::new_simple("sys", test_model(), Arc::clone(&sfn2))
-    });
+    let sub2 = SubAgent::new("err", "Err", "errors")
+        .with_options(move || AgentOptions::new_simple("sys", test_model(), Arc::clone(&sfn2)));
 
     let ct = CancellationToken::new();
     let result = sub2.execute("c1", json!({"prompt": "go"}), ct, None).await;
@@ -160,15 +159,14 @@ async fn default_map_result_with_no_assistant_messages() {
     let sfn = Arc::clone(&stream_fn);
 
     let sub = SubAgent::new("t", "T", "test")
-        .with_options(move || {
-            AgentOptions::new_simple("sys", test_model(), Arc::clone(&sfn))
-        })
+        .with_options(move || AgentOptions::new_simple("sys", test_model(), Arc::clone(&sfn)))
         .with_map_result(move |result| {
             *called_clone.lock().unwrap() = true;
             // Simulate default_map_result behavior for only-user-messages
-            let has_assistant = result.messages.iter().any(|m| {
-                matches!(m, AgentMessage::Llm(LlmMessage::Assistant(_)))
-            });
+            let has_assistant = result
+                .messages
+                .iter()
+                .any(|m| matches!(m, AgentMessage::Llm(LlmMessage::Assistant(_))));
             if has_assistant {
                 AgentToolResult::text("found assistant")
             } else {
@@ -177,7 +175,9 @@ async fn default_map_result_with_no_assistant_messages() {
         });
 
     let ct = CancellationToken::new();
-    let result = sub.execute("c1", json!({"prompt": "hello"}), ct, None).await;
+    let result = sub
+        .execute("c1", json!({"prompt": "hello"}), ct, None)
+        .await;
 
     assert!(*called.lock().unwrap());
     // The agent will have assistant messages from the stream, so it should find them
@@ -187,15 +187,12 @@ async fn default_map_result_with_no_assistant_messages() {
 
 #[tokio::test]
 async fn custom_map_result() {
-    let stream_fn: Arc<dyn StreamFn> = Arc::new(MockStreamFn::new(vec![text_only_events(
-        "original output",
-    )]));
+    let stream_fn: Arc<dyn StreamFn> =
+        Arc::new(MockStreamFn::new(vec![text_only_events("original output")]));
     let sfn = Arc::clone(&stream_fn);
 
     let sub = SubAgent::new("custom", "Custom", "custom mapper")
-        .with_options(move || {
-            AgentOptions::new_simple("sys", test_model(), Arc::clone(&sfn))
-        })
+        .with_options(move || AgentOptions::new_simple("sys", test_model(), Arc::clone(&sfn)))
         .with_map_result(|_result| AgentToolResult::text("custom mapped"));
 
     let ct = CancellationToken::new();
@@ -217,8 +214,7 @@ fn with_custom_schema() {
         "required": ["query"]
     });
 
-    let sub = SubAgent::new("s", "S", "schema test")
-        .with_schema(custom_schema.clone());
+    let sub = SubAgent::new("s", "S", "schema test").with_schema(custom_schema.clone());
 
     assert_eq!(sub.parameters_schema(), &custom_schema);
 }
@@ -230,9 +226,8 @@ async fn execute_with_empty_prompt() {
     )]));
     let sfn = Arc::clone(&stream_fn);
 
-    let sub = SubAgent::new("ep", "EP", "empty prompt").with_options(move || {
-        AgentOptions::new_simple("sys", test_model(), Arc::clone(&sfn))
-    });
+    let sub = SubAgent::new("ep", "EP", "empty prompt")
+        .with_options(move || AgentOptions::new_simple("sys", test_model(), Arc::clone(&sfn)));
 
     let ct = CancellationToken::new();
     let result = sub.execute("c1", json!({"prompt": ""}), ct, None).await;
@@ -249,9 +244,8 @@ async fn execute_with_missing_prompt_param() {
     )]));
     let sfn = Arc::clone(&stream_fn);
 
-    let sub = SubAgent::new("np", "NP", "no prompt").with_options(move || {
-        AgentOptions::new_simple("sys", test_model(), Arc::clone(&sfn))
-    });
+    let sub = SubAgent::new("np", "NP", "no prompt")
+        .with_options(move || AgentOptions::new_simple("sys", test_model(), Arc::clone(&sfn)));
 
     let ct = CancellationToken::new();
     // params has no "prompt" key — as_str() returns None, unwrap_or("") kicks in

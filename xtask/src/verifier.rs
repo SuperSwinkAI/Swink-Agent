@@ -85,7 +85,9 @@ fn check_membership(tasks: Vec<VerifyTask>, ids: &HashSet<String>) -> Vec<Verify
             let result = if ids.contains(&task.model_id) {
                 PresetResult::Pass
             } else {
-                PresetResult::Fail { available_count: ids.len() }
+                PresetResult::Fail {
+                    available_count: ids.len(),
+                }
             };
             VerifyRow { task, result }
         })
@@ -97,7 +99,9 @@ fn error_rows(tasks: Vec<VerifyTask>, err: &str) -> Vec<VerifyRow> {
         .into_iter()
         .map(|task| VerifyRow {
             task,
-            result: PresetResult::NetworkError { error: err.to_owned() },
+            result: PresetResult::NetworkError {
+                error: err.to_owned(),
+            },
         })
         .collect()
 }

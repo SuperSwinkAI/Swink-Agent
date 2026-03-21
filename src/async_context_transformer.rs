@@ -37,7 +37,6 @@ pub trait AsyncContextTransformer: Send + Sync {
     ) -> Pin<Box<dyn Future<Output = Option<CompactionReport>> + Send + 'a>>;
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -82,11 +81,7 @@ mod tests {
         let transformer = OverflowTruncator;
 
         // No overflow — no change
-        let mut messages = vec![
-            text_message("a"),
-            text_message("b"),
-            text_message("c"),
-        ];
+        let mut messages = vec![text_message("a"), text_message("b"), text_message("c")];
         let report = transformer.transform(&mut messages, false).await;
         assert!(report.is_none());
         assert_eq!(messages.len(), 3);

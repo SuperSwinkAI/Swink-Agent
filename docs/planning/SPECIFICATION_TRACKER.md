@@ -7,7 +7,7 @@
 - Provider Roadmap: [PROVIDER_EXPANSION_ROADMAP.md](PROVIDER_EXPANSION_ROADMAP.md)
 - Eval Roadmap: [EVAL.md](EVAL.md)
 
-**Current Focus:** 5/30 specs have plans (001–005), 1/30 has tasks (001). Next: `/speckit.tasks` for 002–005, then `/speckit.plan` for Phase 2+ specs.
+**Current Focus:** 16/30 specs have plans, 1/30 has tasks (001 — complete). 001-workspace-scaffold is done. Next: `/speckit.tasks` for 002–005, then implement Phase 0 foundation.
 
 > **Numbering System:** Spec numbers (001–030) are sequential identifiers that
 > never change. Phase numbers represent execution order and can be reassigned
@@ -21,14 +21,14 @@
 other crate and module depends on — the data model, error taxonomy, and
 pluggable trait boundaries.
 
-**Status:** 3/3 specs planned, 1/3 has tasks, 3/3 specs defined
+**Status:** 3/3 specs planned, 1/3 has tasks, 1/3 complete, 3/3 specs defined
 
 ### Implementation Checklist
 
-- [ ] **0.1** Workspace & Cargo Scaffold — 7-crate workspace, centralized deps, feature flags, MSRV/edition, toolchain config (§15)
+- [x] **0.1** Workspace & Cargo Scaffold — 7-crate workspace, centralized deps, feature flags, MSRV/edition, toolchain config (§15)
   - Spec: `specs/001-workspace-scaffold/spec.md`
   - Branch: `001-workspace-scaffold`
-  - Status: Ready for implementation (0/24 tasks)
+  - Status: Complete (24/24 tasks, merged to main)
   - Depends on: —
 - [ ] **0.2** Foundation Types & Errors — ContentBlock, LlmMessage, AgentMessage, Usage, Cost, StopReason, ModelSpec, AgentError (§3, §10.3)
   - Spec: `specs/002-foundation-types-errors/spec.md`
@@ -70,24 +70,24 @@ the two central verticals that make the agent functional.
 **Goal:** Context management, tool system extensions, model catalog, multi-agent
 primitives, and loop governance — capabilities that enhance the core engine.
 
-**Status:** 0/5 specs planned, 5/5 specs defined
+**Status:** 3/5 specs planned, 5/5 specs defined
 
 ### Implementation Checklist
 
 - [ ] **2.1** Context Management — Sliding window pruning, transform hooks (sync/async), versioned history, convert_to_llm pipeline (§5, §10.1)
   - Spec: `specs/006-context-management/spec.md`
   - Branch: `006-context-management`
-  - Status: Specify complete — needs plan + tasks
+  - Status: Plan complete — needs tasks
   - Depends on: 0.2
 - [ ] **2.2** Tool System Extensions — Transformer, validator, middleware, execution policies, FnTool, builtin tools (§4)
   - Spec: `specs/007-tool-system-extensions/spec.md`
   - Branch: `007-tool-system-extensions`
-  - Status: Specify complete — needs plan + tasks
+  - Status: Plan complete — needs tasks
   - Depends on: 0.3
 - [ ] **2.3** Model Catalog, Presets & Fallback — TOML-driven catalog, preset-to-connection resolution, automatic fallback chain
   - Spec: `specs/008-model-catalog-presets/spec.md`
   - Branch: `008-model-catalog-presets`
-  - Status: Specify complete — needs plan + tasks
+  - Status: Plan complete — needs tasks
   - Depends on: 0.3
 - [ ] **2.4** Multi-Agent System — AgentRegistry, AgentMailbox, AgentOrchestrator, SubAgent tool wrapper
   - Spec: `specs/009-multi-agent-system/spec.md`
@@ -107,29 +107,29 @@ primitives, and loop governance — capabilities that enhance the core engine.
 **Goal:** LLM provider adapters — shared infrastructure and one adapter per
 provider. Each adapter implements StreamFn for its provider's streaming protocol.
 
-**Status:** 0/10 specs planned, 10/10 specs defined
+**Status:** 5/10 specs planned, 10/10 specs defined
 
 ### Implementation Checklist
 
 - [ ] **3.1** Adapter Shared Infrastructure — MessageConverter trait, HttpErrorClassifier, SSE parsing, remote preset construction (§15.1)
   - Spec: `specs/011-adapter-shared-infra/spec.md`
   - Branch: `011-adapter-shared-infra`
-  - Status: Specify complete — needs plan + tasks
+  - Status: Plan complete — needs tasks
   - Depends on: 0.3
 - [ ] **3.2** Adapter: Anthropic — AnthropicStreamFn, /v1/messages SSE, thinking blocks with budget control (§15.1)
   - Spec: `specs/012-adapter-anthropic/spec.md`
   - Branch: `012-adapter-anthropic`
-  - Status: Specify complete — needs plan + tasks
+  - Status: Plan complete — needs tasks
   - Depends on: 3.1
 - [ ] **3.3** Adapter: OpenAI — OpenAiStreamFn, /v1/chat/completions SSE, multi-provider compatible (§15.1)
   - Spec: `specs/013-adapter-openai/spec.md`
   - Branch: `013-adapter-openai`
-  - Status: Specify complete — needs plan + tasks
+  - Status: Plan complete — needs tasks
   - Depends on: 3.1
 - [ ] **3.4** Adapter: Ollama — OllamaStreamFn, /api/chat NDJSON, native tool-calling (§15.1)
   - Spec: `specs/014-adapter-ollama/spec.md`
   - Branch: `014-adapter-ollama`
-  - Status: Specify complete — needs plan + tasks
+  - Status: Plan complete — needs tasks
   - Depends on: 3.1
 - [ ] **3.5** Adapter: Google Gemini — GeminiStreamFn, Gemini API SSE (§15.1)
   - Spec: `specs/015-adapter-gemini/spec.md`
@@ -159,7 +159,7 @@ provider. Each adapter implements StreamFn for its provider's streaming protocol
 - [ ] **3.10** Adapter: Proxy — ProxyStreamFn, SSE, bearer auth, delta reconstruction (§7.4, §15.1)
   - Spec: `specs/020-adapter-proxy/spec.md`
   - Branch: `020-adapter-proxy`
-  - Status: Specify complete — needs plan + tasks
+  - Status: Plan complete — needs tasks
   - Depends on: 3.1
 
 ### Parallel Opportunities
@@ -205,7 +205,7 @@ evaluation — each depends only on the core library.
 **Goal:** Interactive terminal interface — the binary crate that demonstrates
 the full agent library in a usable application.
 
-**Status:** 0/5 specs planned, 5/5 specs defined
+**Status:** 1/5 specs planned, 5/5 specs defined
 
 ### Implementation Checklist
 
@@ -217,7 +217,7 @@ the full agent library in a usable application.
 - [ ] **5.2** TUI: Input & Conversation — Multi-line editor, scrollable conversation, markdown, syntax highlighting (§16.2–16.3)
   - Spec: `specs/026-tui-input-conversation/spec.md`
   - Branch: `026-tui-input-conversation`
-  - Status: Specify complete — needs plan + tasks
+  - Status: Plan complete — needs tasks
   - Depends on: 5.1
 - [ ] **5.3** TUI: Tool Panel, Diffs & Status Bar — Tool panel, collapsible blocks, inline diffs, status bar, context gauge (§16.6–16.7, §16.10)
   - Spec: `specs/027-tui-tools-diffs-status/spec.md`

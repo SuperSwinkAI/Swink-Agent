@@ -13,10 +13,9 @@ use serde_json::json;
 use tokio_util::sync::CancellationToken;
 
 use swink_agent::{
-    AgentEvent, AgentLoopConfig, AgentMessage, AgentToolResult, AssistantMessageEvent,
-    ContentBlock, Cost, DefaultRetryStrategy, LlmMessage, StopReason, StreamFn,
-    StreamOptions, ToolExecutionPolicy, ToolExecutionStrategy, ToolCallSummary, Usage,
-    UserMessage, AgentTool,
+    AgentEvent, AgentLoopConfig, AgentMessage, AgentTool, AgentToolResult, AssistantMessageEvent,
+    ContentBlock, Cost, DefaultRetryStrategy, LlmMessage, StopReason, StreamFn, StreamOptions,
+    ToolCallSummary, ToolExecutionPolicy, ToolExecutionStrategy, Usage, UserMessage,
 };
 
 use common::{MockStreamFn, default_model, text_only_events};
@@ -184,9 +183,7 @@ fn three_tool_call_events() -> Vec<Vec<AssistantMessageEvent>> {
     ]
 }
 
-async fn collect_events(
-    stream: Pin<Box<dyn Stream<Item = AgentEvent> + Send>>,
-) -> Vec<AgentEvent> {
+async fn collect_events(stream: Pin<Box<dyn Stream<Item = AgentEvent> + Send>>) -> Vec<AgentEvent> {
     stream.collect().await
 }
 
@@ -229,12 +226,8 @@ async fn sequential_policy_executes_tools_in_order() {
         timestamp: 0,
     }))];
 
-    let stream = swink_agent::agent_loop(
-        prompt,
-        "test".to_string(),
-        config,
-        CancellationToken::new(),
-    );
+    let stream =
+        swink_agent::agent_loop(prompt, "test".to_string(), config, CancellationToken::new());
     let _ = collect_events(stream).await;
 
     // In sequential mode, tool_a should execute first (order 0), then
@@ -294,12 +287,8 @@ async fn priority_policy_executes_higher_priority_first() {
         timestamp: 0,
     }))];
 
-    let stream = swink_agent::agent_loop(
-        prompt,
-        "test".to_string(),
-        config,
-        CancellationToken::new(),
-    );
+    let stream =
+        swink_agent::agent_loop(prompt, "test".to_string(), config, CancellationToken::new());
     let _ = collect_events(stream).await;
 
     let a = order_a.lock().unwrap()[0];
@@ -307,8 +296,14 @@ async fn priority_policy_executes_higher_priority_first() {
     let c = order_c.lock().unwrap()[0];
 
     // tool_c (priority 10) should go first, then tool_a (5), then tool_b (1)
-    assert!(c < a, "tool_c (pri=10) should run before tool_a (pri=5): c={c}, a={a}");
-    assert!(a < b, "tool_a (pri=5) should run before tool_b (pri=1): a={a}, b={b}");
+    assert!(
+        c < a,
+        "tool_c (pri=10) should run before tool_a (pri=5): c={c}, a={a}"
+    );
+    assert!(
+        a < b,
+        "tool_a (pri=5) should run before tool_b (pri=1): a={a}, b={b}"
+    );
 }
 
 #[tokio::test]
@@ -375,17 +370,19 @@ async fn concurrent_policy_is_default_and_spawns_all() {
         timestamp: 0,
     }))];
 
-    let stream = swink_agent::agent_loop(
-        prompt,
-        "test".to_string(),
-        config,
-        CancellationToken::new(),
-    );
+    let stream =
+        swink_agent::agent_loop(prompt, "test".to_string(), config, CancellationToken::new());
     let _ = collect_events(stream).await;
 
     // Both tools should have executed.
-    assert!(!order_a.lock().unwrap().is_empty(), "tool_a should have executed");
-    assert!(!order_b.lock().unwrap().is_empty(), "tool_b should have executed");
+    assert!(
+        !order_a.lock().unwrap().is_empty(),
+        "tool_a should have executed"
+    );
+    assert!(
+        !order_b.lock().unwrap().is_empty(),
+        "tool_b should have executed"
+    );
 }
 
 #[tokio::test]
@@ -400,9 +397,7 @@ async fn custom_strategy_controls_grouping() {
             tool_calls: &[ToolCallSummary<'_>],
         ) -> Pin<Box<dyn std::future::Future<Output = Vec<Vec<usize>>> + Send + '_>> {
             let count = tool_calls.len();
-            Box::pin(async move {
-                (0..count).rev().map(|i| vec![i]).collect()
-            })
+            Box::pin(async move { (0..count).rev().map(|i| vec![i]).collect() })
         }
     }
 
@@ -441,12 +436,8 @@ async fn custom_strategy_controls_grouping() {
         timestamp: 0,
     }))];
 
-    let stream = swink_agent::agent_loop(
-        prompt,
-        "test".to_string(),
-        config,
-        CancellationToken::new(),
-    );
+    let stream =
+        swink_agent::agent_loop(prompt, "test".to_string(), config, CancellationToken::new());
     let _ = collect_events(stream).await;
 
     let a = order_a.lock().unwrap()[0];
@@ -504,12 +495,8 @@ async fn priority_groups_with_equal_priority_run_concurrently() {
         timestamp: 0,
     }))];
 
-    let stream = swink_agent::agent_loop(
-        prompt,
-        "test".to_string(),
-        config,
-        CancellationToken::new(),
-    );
+    let stream =
+        swink_agent::agent_loop(prompt, "test".to_string(), config, CancellationToken::new());
     let _ = collect_events(stream).await;
 
     let a = order_a.lock().unwrap()[0];
@@ -517,6 +504,12 @@ async fn priority_groups_with_equal_priority_run_concurrently() {
     let c = order_c.lock().unwrap()[0];
 
     // tool_a and tool_b (priority 10) should both run before tool_c (priority 1).
-    assert!(a < c, "tool_a (pri=10) should run before tool_c (pri=1): a={a}, c={c}");
-    assert!(b < c, "tool_b (pri=10) should run before tool_c (pri=1): b={b}, c={c}");
+    assert!(
+        a < c,
+        "tool_a (pri=10) should run before tool_c (pri=1): a={a}, c={c}"
+    );
+    assert!(
+        b < c,
+        "tool_b (pri=10) should run before tool_c (pri=1): b={b}, c={c}"
+    );
 }

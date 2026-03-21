@@ -39,20 +39,34 @@ pub fn build_verify_tasks(provider_filter: Option<&str>) -> Vec<VerifyTask> {
 
 fn resolve_endpoint(provider: &ProviderCatalog) -> ProviderEndpoint {
     if provider.kind == ProviderKind::Local {
-        return ProviderEndpoint::Skipped { reason: "local provider" };
+        return ProviderEndpoint::Skipped {
+            reason: "local provider",
+        };
     }
     if provider.requires_base_url {
-        return ProviderEndpoint::Skipped { reason: "requires_base_url" };
+        return ProviderEndpoint::Skipped {
+            reason: "requires_base_url",
+        };
     }
     if provider.auth_mode == Some(AuthMode::AwsSigv4) {
-        return ProviderEndpoint::Skipped { reason: "aws_sigv4 auth" };
+        return ProviderEndpoint::Skipped {
+            reason: "aws_sigv4 auth",
+        };
     }
     let api_key = match &provider.credential_env_var {
         Some(env_var) => match std::env::var(env_var) {
             Ok(key) if !key.trim().is_empty() => key,
-            _ => return ProviderEndpoint::Skipped { reason: "missing credential" },
+            _ => {
+                return ProviderEndpoint::Skipped {
+                    reason: "missing credential",
+                };
+            }
         },
-        None => return ProviderEndpoint::Skipped { reason: "no credential_env_var" },
+        None => {
+            return ProviderEndpoint::Skipped {
+                reason: "no credential_env_var",
+            };
+        }
     };
     let base_url = provider.default_base_url.clone().unwrap_or_default();
     match provider.key.as_str() {

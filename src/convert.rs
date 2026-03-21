@@ -10,9 +10,7 @@ use std::sync::Arc;
 use serde_json::Value;
 
 use crate::AgentTool;
-use crate::types::{
-    AgentMessage, AssistantMessage, LlmMessage, ToolResultMessage, UserMessage,
-};
+use crate::types::{AgentMessage, AssistantMessage, LlmMessage, ToolResultMessage, UserMessage};
 
 // ─── MessageConverter trait ─────────────────────────────────────────────────
 

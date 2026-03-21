@@ -19,10 +19,8 @@ use crate::types::{AgentMessage, LlmMessage, ModelSpec};
 
 // ─── Type aliases (module-local) ─────────────────────────────────────────────
 
-pub(crate) type ConvertToLlmFn =
-    Arc<dyn Fn(&AgentMessage) -> Option<LlmMessage> + Send + Sync>;
-pub(crate) type TransformContextArc =
-    Arc<dyn crate::context_transformer::ContextTransformer>;
+pub(crate) type ConvertToLlmFn = Arc<dyn Fn(&AgentMessage) -> Option<LlmMessage> + Send + Sync>;
+pub(crate) type TransformContextArc = Arc<dyn crate::context_transformer::ContextTransformer>;
 pub(crate) type AsyncTransformContextArc = Arc<dyn AsyncContextTransformer>;
 pub(crate) type CheckpointStoreArc = Arc<dyn CheckpointStore>;
 pub(crate) type GetApiKeyFn =
@@ -168,7 +166,12 @@ impl AgentOptions {
         model: ModelSpec,
         stream_fn: Arc<dyn StreamFn>,
     ) -> Self {
-        Self::new(system_prompt, model, stream_fn, crate::agent::default_convert)
+        Self::new(
+            system_prompt,
+            model,
+            stream_fn,
+            crate::agent::default_convert,
+        )
     }
 
     /// Build options directly from a [`ModelConnections`](crate::ModelConnections) bundle.
@@ -182,8 +185,7 @@ impl AgentOptions {
         connections: crate::model_presets::ModelConnections,
     ) -> Self {
         let (model, stream_fn, extra_models) = connections.into_parts();
-        Self::new_simple(system_prompt, model, stream_fn)
-            .with_available_models(extra_models)
+        Self::new_simple(system_prompt, model, stream_fn).with_available_models(extra_models)
     }
 
     /// Set the available tools.
@@ -234,10 +236,7 @@ impl AgentOptions {
     #[must_use]
     pub fn with_get_api_key(
         mut self,
-        f: impl Fn(&str) -> Pin<Box<dyn Future<Output = Option<String>> + Send>>
-        + Send
-        + Sync
-        + 'static,
+        f: impl Fn(&str) -> Pin<Box<dyn Future<Output = Option<String>> + Send>> + Send + Sync + 'static,
     ) -> Self {
         self.get_api_key = Some(Arc::new(f));
         self

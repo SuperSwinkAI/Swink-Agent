@@ -47,9 +47,7 @@ pub fn finalize_blocks(state: &mut impl StreamFinalize) -> Vec<AssistantMessageE
         .drain_open_blocks()
         .into_iter()
         .map(|block| match block {
-            OpenBlock::Text { content_index } => {
-                AssistantMessageEvent::TextEnd { content_index }
-            }
+            OpenBlock::Text { content_index } => AssistantMessageEvent::TextEnd { content_index },
             OpenBlock::Thinking {
                 content_index,
                 signature,

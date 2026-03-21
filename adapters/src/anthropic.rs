@@ -184,15 +184,21 @@ fn anthropic_stream<'a>(
                 401 => AssistantMessageEvent::error_auth(format!(
                     "Anthropic auth error (HTTP {code}): check x-api-key — {body}"
                 )),
-                429 => AssistantMessageEvent::error_throttled(format!("Anthropic rate limit (HTTP 429): {body}")),
-                529 => AssistantMessageEvent::error_network(format!("Anthropic overloaded (HTTP 529): {body}")),
-                504 => {
-                    AssistantMessageEvent::error_network(format!("Anthropic gateway timeout (HTTP 504): {body}"))
-                }
-                400..=499 => AssistantMessageEvent::error(format!("Anthropic client error (HTTP {code}): {body}")),
-                500..=599 => {
-                    AssistantMessageEvent::error_network(format!("Anthropic server error (HTTP {code}): {body}"))
-                }
+                429 => AssistantMessageEvent::error_throttled(format!(
+                    "Anthropic rate limit (HTTP 429): {body}"
+                )),
+                529 => AssistantMessageEvent::error_network(format!(
+                    "Anthropic overloaded (HTTP 529): {body}"
+                )),
+                504 => AssistantMessageEvent::error_network(format!(
+                    "Anthropic gateway timeout (HTTP 504): {body}"
+                )),
+                400..=499 => AssistantMessageEvent::error(format!(
+                    "Anthropic client error (HTTP {code}): {body}"
+                )),
+                500..=599 => AssistantMessageEvent::error_network(format!(
+                    "Anthropic server error (HTTP {code}): {body}"
+                )),
                 _ => AssistantMessageEvent::error(format!("Anthropic HTTP {code}: {body}")),
             };
             return stream::iter(vec![event]).left_stream();
@@ -253,7 +259,10 @@ async fn send_request(
         thinking,
     };
 
-    let api_key = options.api_key.as_deref().unwrap_or(&anthropic.base.api_key);
+    let api_key = options
+        .api_key
+        .as_deref()
+        .unwrap_or(&anthropic.base.api_key);
 
     anthropic
         .base
@@ -265,7 +274,9 @@ async fn send_request(
         .json(&body)
         .send()
         .await
-        .map_err(|e| AssistantMessageEvent::error_network(format!("Anthropic connection error: {e}")))
+        .map_err(|e| {
+            AssistantMessageEvent::error_network(format!("Anthropic connection error: {e}"))
+        })
 }
 
 /// Resolve thinking configuration from the model spec.

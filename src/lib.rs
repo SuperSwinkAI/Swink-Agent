@@ -18,13 +18,13 @@ mod fn_tool;
 mod handle;
 mod loop_;
 mod loop_policy;
-pub mod metrics;
 pub mod message_provider;
-mod post_turn_hook;
 mod messaging;
+pub mod metrics;
 mod model_catalog;
 mod model_presets;
 mod orchestrator;
+mod post_turn_hook;
 mod registry;
 mod retry;
 mod schema;
@@ -58,12 +58,12 @@ pub use config::{
     SteeringModeConfig, StreamOptionsConfig,
 };
 pub use context::{DefaultTokenCounter, TokenCounter, estimate_tokens, sliding_window};
-pub use convert::{MessageConverter, ToolSchema, convert_messages, extract_tool_schemas};
 pub use context_transformer::{CompactionReport, ContextTransformer, SlidingWindowTransformer};
 pub use context_version::{
     ContextSummarizer, ContextVersion, ContextVersionMeta, ContextVersionStore,
     InMemoryVersionStore, VersioningTransformer,
 };
+pub use convert::{MessageConverter, ToolSchema, convert_messages, extract_tool_schemas};
 pub use emit::Emission;
 pub use error::AgentError;
 pub use event_forwarder::EventForwarderFn;
@@ -76,9 +76,8 @@ pub use message_provider::{
     ChannelMessageProvider, ComposedMessageProvider, MessageProvider, MessageSender, from_fns,
     message_channel,
 };
-pub use metrics::{MetricsCollector, ToolExecMetrics, TurnMetrics};
-pub use post_turn_hook::{PostTurnAction, PostTurnContext, PostTurnHook};
 pub use messaging::{AgentMailbox, send_to};
+pub use metrics::{MetricsCollector, ToolExecMetrics, TurnMetrics};
 pub use model_catalog::{
     ApiVersion, AuthMode, CatalogPreset, ModelCatalog, PresetCapability, PresetCatalog,
     PresetStatus, ProviderCatalog, ProviderKind, model_catalog,
@@ -88,6 +87,7 @@ pub use orchestrator::{
     AgentOrchestrator, AgentRequest, DefaultSupervisor, OrchestratedHandle, SupervisorAction,
     SupervisorPolicy,
 };
+pub use post_turn_hook::{PostTurnAction, PostTurnContext, PostTurnHook};
 pub use registry::{AgentId, AgentRef, AgentRegistry};
 pub use retry::{DefaultRetryStrategy, RetryStrategy};
 pub use schema::schema_for;

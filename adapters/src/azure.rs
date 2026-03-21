@@ -28,10 +28,7 @@ impl AzureStreamFn {
     #[must_use]
     pub fn new(base_url: impl Into<String>, api_key: impl Into<String>) -> Self {
         Self {
-            base: AdapterBase::new(
-                base_url.into().trim_end_matches('/').to_string(),
-                api_key,
-            ),
+            base: AdapterBase::new(base_url.into().trim_end_matches('/').to_string(), api_key),
         }
     }
 }
@@ -82,11 +79,15 @@ fn azure_stream<'a>(
             let body = response.text().await.unwrap_or_default();
             warn!(status = code, "Azure HTTP error");
             let event = match code {
-                401 | 403 => AssistantMessageEvent::error_auth(format!("Azure auth error (HTTP {code}): {body}")),
-                429 => AssistantMessageEvent::error_throttled(format!("Azure rate limit (HTTP 429): {body}")),
-                500..=599 => {
-                    AssistantMessageEvent::error_network(format!("Azure server error (HTTP {code}): {body}"))
-                }
+                401 | 403 => AssistantMessageEvent::error_auth(format!(
+                    "Azure auth error (HTTP {code}): {body}"
+                )),
+                429 => AssistantMessageEvent::error_throttled(format!(
+                    "Azure rate limit (HTTP 429): {body}"
+                )),
+                500..=599 => AssistantMessageEvent::error_network(format!(
+                    "Azure server error (HTTP {code}): {body}"
+                )),
                 _ => AssistantMessageEvent::error(format!("Azure HTTP {code}: {body}")),
             };
             return stream::iter(vec![event]).left_stream();

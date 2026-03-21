@@ -16,9 +16,7 @@ use tracing::{info, warn};
 use crate::agent::{Agent, AgentOptions};
 use crate::error::AgentError;
 use crate::handle::AgentStatus;
-use crate::types::{
-    AgentMessage, AgentResult, ContentBlock, LlmMessage, UserMessage,
-};
+use crate::types::{AgentMessage, AgentResult, ContentBlock, LlmMessage, UserMessage};
 use crate::util::now_timestamp;
 
 // ─── Type aliases ───────────────────────────────────────────────────────────
@@ -128,10 +126,7 @@ impl OrchestratedHandle {
     }
 
     /// Send a text message to the running agent and await its response.
-    pub async fn send_message(
-        &self,
-        text: impl Into<String>,
-    ) -> Result<AgentResult, AgentError> {
+    pub async fn send_message(&self, text: impl Into<String>) -> Result<AgentResult, AgentError> {
         let msg = AgentMessage::Llm(LlmMessage::User(UserMessage {
             content: vec![ContentBlock::Text { text: text.into() }],
             timestamp: now_timestamp(),
@@ -149,21 +144,15 @@ impl OrchestratedHandle {
             messages,
             reply: reply_tx,
         };
-        self.request_tx
-            .send(request)
-            .await
-            .map_err(|_| {
-                AgentError::plugin(
-                    "orchestrator",
-                    std::io::Error::other("agent channel closed"),
-                )
-            })?;
-
-        reply_rx.await.map_err(|_| {
+        self.request_tx.send(request).await.map_err(|_| {
             AgentError::plugin(
                 "orchestrator",
-                std::io::Error::other("agent reply dropped"),
+                std::io::Error::other("agent channel closed"),
             )
+        })?;
+
+        reply_rx.await.map_err(|_| {
+            AgentError::plugin("orchestrator", std::io::Error::other("agent reply dropped"))
         })?
     }
 
@@ -321,9 +310,7 @@ impl AgentOrchestrator {
     /// Get the parent name for a registered agent.
     #[must_use]
     pub fn parent_of(&self, name: &str) -> Option<&str> {
-        self.entries
-            .get(name)
-            .and_then(|e| e.parent.as_deref())
+        self.entries.get(name).and_then(|e| e.parent.as_deref())
     }
 
     /// Get the child names for a registered agent.

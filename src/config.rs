@@ -35,7 +35,11 @@ impl Default for RetryConfig {
         let default = crate::retry::DefaultRetryStrategy::default();
         Self {
             max_attempts: default.max_attempts,
-            base_delay_ms: default.base_delay.as_millis().try_into().unwrap_or(u64::MAX),
+            base_delay_ms: default
+                .base_delay
+                .as_millis()
+                .try_into()
+                .unwrap_or(u64::MAX),
             max_delay_ms: default.max_delay.as_millis().try_into().unwrap_or(u64::MAX),
             multiplier: default.multiplier,
             jitter: default.jitter,
@@ -329,9 +333,9 @@ impl AgentConfig {
         self,
         stream_fn: std::sync::Arc<dyn crate::stream::StreamFn>,
         convert_to_llm: impl Fn(&crate::types::AgentMessage) -> Option<crate::types::LlmMessage>
-            + Send
-            + Sync
-            + 'static,
+        + Send
+        + Sync
+        + 'static,
     ) -> crate::agent::AgentOptions {
         let mut opts = crate::agent::AgentOptions::new(
             self.system_prompt,
@@ -410,9 +414,9 @@ impl crate::agent::AgentOptions {
         config: AgentConfig,
         stream_fn: std::sync::Arc<dyn crate::stream::StreamFn>,
         convert_to_llm: impl Fn(&crate::types::AgentMessage) -> Option<crate::types::LlmMessage>
-            + Send
-            + Sync
-            + 'static,
+        + Send
+        + Sync
+        + 'static,
     ) -> Self {
         config.into_agent_options(stream_fn, convert_to_llm)
     }
@@ -559,12 +563,8 @@ mod tests {
             follow_up_mode: FollowUpModeConfig::All,
             structured_output_max_retries: 5,
             approval_mode: ApprovalModeConfig::Smart,
-            available_models: vec![
-                ModelSpec::new("openai", "gpt-4o"),
-            ],
-            fallback_models: vec![
-                ModelSpec::new("openai", "gpt-4o-mini"),
-            ],
+            available_models: vec![ModelSpec::new("openai", "gpt-4o")],
+            fallback_models: vec![ModelSpec::new("openai", "gpt-4o-mini")],
             budget_guard: Some(BudgetGuardConfig {
                 max_cost: Some(10.0),
                 max_tokens: None,

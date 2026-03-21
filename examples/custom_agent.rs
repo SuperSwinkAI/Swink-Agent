@@ -10,7 +10,9 @@
 
 use std::sync::Arc;
 
-use swink_agent::{AgentOptions, AgentTool, BashTool, ModelConnections, ReadFileTool, WriteFileTool};
+use swink_agent::{
+    AgentOptions, AgentTool, BashTool, ModelConnections, ReadFileTool, WriteFileTool,
+};
 use swink_agent_adapters::{build_remote_connection, remote_preset_keys};
 use swink_agent_local_llm::default_local_connection;
 use swink_agent_tui::{TuiConfig, launch, restore_terminal, setup_terminal};
@@ -36,9 +38,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     ];
 
     // 3. Build options directly from connections — no manual decomposition needed.
-    let options =
-        AgentOptions::from_connections("You are a helpful assistant.", connections)
-            .with_tools(tools);
+    let options = AgentOptions::from_connections("You are a helpful assistant.", connections)
+        .with_tools(tools);
 
     // 4. Set up terminal and launch the TUI.
     let mut terminal = setup_terminal()?;

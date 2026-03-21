@@ -139,9 +139,7 @@ impl ChannelMessageProvider {
     fn drain_receiver(
         rx: &Mutex<tokio::sync::mpsc::UnboundedReceiver<AgentMessage>>,
     ) -> Vec<AgentMessage> {
-        let mut guard = rx
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut guard = rx.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut messages = Vec::new();
         while let Ok(msg) = guard.try_recv() {
             messages.push(msg);

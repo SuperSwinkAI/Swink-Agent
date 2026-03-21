@@ -11,12 +11,12 @@ use crate::types::{
 };
 use crate::util::now_timestamp;
 
-use super::{
-    AgentEvent, AgentLoopConfig, LoopState, StreamResult, ToolCallInfo, ToolExecOutcome,
-    TurnEndReason, TurnOutcome, CONTEXT_OVERFLOW_SENTINEL, build_abort_message, emit,
-};
 use super::stream::{capability_filter_tools, stream_with_retry};
 use super::tool_dispatch::execute_tools_concurrently;
+use super::{
+    AgentEvent, AgentLoopConfig, CONTEXT_OVERFLOW_SENTINEL, LoopState, StreamResult, ToolCallInfo,
+    ToolExecOutcome, TurnEndReason, TurnOutcome, build_abort_message, emit,
+};
 
 /// Run a single turn of the inner loop: inject pending messages, transform
 /// context, stream the assistant response, handle tool calls, and emit events.

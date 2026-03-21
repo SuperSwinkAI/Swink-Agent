@@ -140,8 +140,8 @@ mod tests {
     use std::sync::Arc;
 
     use serde_json::{Value, json};
-    use swink_agent::tool::{AgentTool, AgentToolResult};
     use swink_agent::testing::{assistant_msg, tool_result_msg, user_msg};
+    use swink_agent::tool::{AgentTool, AgentToolResult};
     use swink_agent::types::{
         AgentMessage, AssistantMessage, ContentBlock, Cost, LlmMessage, StopReason,
         ToolResultMessage, Usage,

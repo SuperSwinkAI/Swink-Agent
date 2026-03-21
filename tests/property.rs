@@ -3,9 +3,9 @@
 use proptest::prelude::*;
 use std::time::Duration;
 use swink_agent::{
-    accumulate_message, estimate_tokens, sliding_window, AgentMessage, AssistantMessageEvent,
-    ContentBlock, Cost, DefaultRetryStrategy, LlmMessage, RetryStrategy, StopReason, Usage,
-    UserMessage,
+    AgentMessage, AssistantMessageEvent, ContentBlock, Cost, DefaultRetryStrategy, LlmMessage,
+    RetryStrategy, StopReason, Usage, UserMessage, accumulate_message, estimate_tokens,
+    sliding_window,
 };
 
 // ─── Helpers ────────────────────────────────────────────────────────────────

@@ -5,9 +5,7 @@ mod common;
 use std::sync::Arc;
 
 use common::{MockStreamFn, default_model, text_only_events, user_msg};
-use swink_agent::{
-    Agent, AgentOptions, LoopCheckpoint, default_convert,
-};
+use swink_agent::{Agent, AgentOptions, LoopCheckpoint, default_convert};
 
 fn simple_agent(responses: Vec<Vec<swink_agent::AssistantMessageEvent>>) -> Agent {
     let stream_fn = Arc::new(MockStreamFn::new(responses));
@@ -43,7 +41,12 @@ async fn resume_restores_messages_and_continues() {
         text_only_events("resumed response"),
         text_only_events("follow-up response"),
     ]));
-    let options = AgentOptions::new("Be helpful.", default_model(), stream_fn.clone(), default_convert);
+    let options = AgentOptions::new(
+        "Be helpful.",
+        default_model(),
+        stream_fn.clone(),
+        default_convert,
+    );
     let mut agent = Agent::new(options);
 
     let result = agent.prompt_text("hello").await.unwrap();
@@ -74,10 +77,7 @@ async fn resume_restores_messages_and_continues() {
 
 #[tokio::test]
 async fn resume_stream_returns_event_stream() {
-    let mut agent = simple_agent(vec![
-        text_only_events("first"),
-        text_only_events("second"),
-    ]);
+    let mut agent = simple_agent(vec![text_only_events("first"), text_only_events("second")]);
 
     // Run once to populate messages
     let _ = agent.prompt_text("hi").await.unwrap();
@@ -110,12 +110,7 @@ async fn resume_while_running_returns_already_running() {
     let _stream = agent.prompt_stream(vec![user_msg("hi")]).unwrap();
 
     // Agent is now "running"
-    let checkpoint = LoopCheckpoint::new(
-        "prompt",
-        "test",
-        "test-model",
-        &[user_msg("hi")],
-    );
+    let checkpoint = LoopCheckpoint::new("prompt", "test", "test-model", &[user_msg("hi")]);
     let result = agent.resume(&checkpoint).await;
     assert!(result.is_err());
     assert!(matches!(

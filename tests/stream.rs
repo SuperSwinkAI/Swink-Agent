@@ -356,10 +356,7 @@ fn accumulate_error_event_without_usage() {
 
 #[test]
 fn duplicate_start_event_errors() {
-    let events = vec![
-        AssistantMessageEvent::Start,
-        AssistantMessageEvent::Start,
-    ];
+    let events = vec![AssistantMessageEvent::Start, AssistantMessageEvent::Start];
     let result = accumulate_message(events, "p", "m");
     assert!(result.is_err());
     assert!(result.unwrap_err().contains("duplicate Start"));

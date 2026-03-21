@@ -407,18 +407,15 @@ mod tests {
     #[test]
     fn restore_messages_wraps_in_agent_message() {
         let messages = sample_messages();
-        let checkpoint = Checkpoint::new(
-            "cp-restore",
-            "prompt",
-            "p",
-            "m",
-            &messages,
-        )
-        .with_turn_count(1);
+        let checkpoint =
+            Checkpoint::new("cp-restore", "prompt", "p", "m", &messages).with_turn_count(1);
 
         let restored = checkpoint.restore_messages();
         assert_eq!(restored.len(), 2);
-        assert!(matches!(restored[0], AgentMessage::Llm(LlmMessage::User(_))));
+        assert!(matches!(
+            restored[0],
+            AgentMessage::Llm(LlmMessage::User(_))
+        ));
         assert!(matches!(
             restored[1],
             AgentMessage::Llm(LlmMessage::Assistant(_))
@@ -427,15 +424,9 @@ mod tests {
 
     #[test]
     fn checkpoint_with_metadata_builder() {
-        let checkpoint = Checkpoint::new(
-            "cp-meta",
-            "p",
-            "p",
-            "m",
-            &[],
-        )
-        .with_metadata("key1", serde_json::json!("value1"))
-        .with_metadata("key2", serde_json::json!(42));
+        let checkpoint = Checkpoint::new("cp-meta", "p", "p", "m", &[])
+            .with_metadata("key1", serde_json::json!("value1"))
+            .with_metadata("key2", serde_json::json!(42));
 
         assert_eq!(checkpoint.metadata.len(), 2);
         assert_eq!(checkpoint.metadata["key1"], "value1");
@@ -631,7 +622,10 @@ mod tests {
 
         let restored = cp.restore_messages();
         assert_eq!(restored.len(), 2);
-        assert!(matches!(restored[0], AgentMessage::Llm(LlmMessage::User(_))));
+        assert!(matches!(
+            restored[0],
+            AgentMessage::Llm(LlmMessage::User(_))
+        ));
         assert!(matches!(
             restored[1],
             AgentMessage::Llm(LlmMessage::Assistant(_))
@@ -693,8 +687,8 @@ mod tests {
             timestamp: 300,
         };
 
-        let cp = LoopCheckpoint::new("p", "p", "m", &[])
-            .with_last_assistant_message(assistant.clone());
+        let cp =
+            LoopCheckpoint::new("p", "p", "m", &[]).with_last_assistant_message(assistant.clone());
 
         assert!(cp.last_assistant_message.is_some());
         assert_eq!(cp.last_assistant_message.as_ref().unwrap().timestamp, 300);

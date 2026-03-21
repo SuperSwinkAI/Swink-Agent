@@ -263,12 +263,15 @@ mod tests {
             text_message(&body),
         ];
         let report = default_transformer.transform(&mut messages, false);
-        assert!(report.is_none(), "default counter should not trim at budget 500");
+        assert!(
+            report.is_none(),
+            "default counter should not trim at budget 500"
+        );
         assert_eq!(messages.len(), 4);
 
         // With CharCounter, 4 * 400 = 1600 tokens. Budget 500 => trims.
-        let custom_transformer = SlidingWindowTransformer::new(500, 250, 1)
-            .with_token_counter(Arc::new(CharCounter));
+        let custom_transformer =
+            SlidingWindowTransformer::new(500, 250, 1).with_token_counter(Arc::new(CharCounter));
         let mut messages = vec![
             text_message(&body),
             text_message(&body),

@@ -219,10 +219,9 @@ impl CustomMessageRegistry {
         type_name: &str,
         value: serde_json::Value,
     ) -> Result<Box<dyn CustomMessage>, String> {
-        let deser = self
-            .deserializers
-            .get(type_name)
-            .ok_or_else(|| format!("no deserializer registered for custom message type: {type_name}"))?;
+        let deser = self.deserializers.get(type_name).ok_or_else(|| {
+            format!("no deserializer registered for custom message type: {type_name}")
+        })?;
         deser(value)
     }
 
@@ -242,7 +241,10 @@ impl Default for CustomMessageRegistry {
 impl fmt::Debug for CustomMessageRegistry {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("CustomMessageRegistry")
-            .field("registered_types", &self.deserializers.keys().collect::<Vec<_>>())
+            .field(
+                "registered_types",
+                &self.deserializers.keys().collect::<Vec<_>>(),
+            )
             .finish()
     }
 }
@@ -948,7 +950,10 @@ mod tests {
         registry.register_type::<MockNotification>("mock_notification");
 
         let restored = deserialize_custom_message(&registry, &envelope).unwrap();
-        let downcasted = restored.as_any().downcast_ref::<MockNotification>().unwrap();
+        let downcasted = restored
+            .as_any()
+            .downcast_ref::<MockNotification>()
+            .unwrap();
         assert_eq!(downcasted, &msg);
     }
 
@@ -989,13 +994,17 @@ mod tests {
         let registry = CustomMessageRegistry::new();
 
         let no_type = serde_json::json!({"data": {}});
-        assert!(deserialize_custom_message(&registry, &no_type)
-            .unwrap_err()
-            .contains("missing 'type'"));
+        assert!(
+            deserialize_custom_message(&registry, &no_type)
+                .unwrap_err()
+                .contains("missing 'type'")
+        );
 
         let no_data = serde_json::json!({"type": "foo"});
-        assert!(deserialize_custom_message(&registry, &no_data)
-            .unwrap_err()
-            .contains("missing 'data'"));
+        assert!(
+            deserialize_custom_message(&registry, &no_data)
+                .unwrap_err()
+                .contains("missing 'data'")
+        );
     }
 }

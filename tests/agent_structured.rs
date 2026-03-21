@@ -7,7 +7,9 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use common::{MockStreamFn, default_convert, default_model, text_only_events, tool_call_events, user_msg};
+use common::{
+    MockStreamFn, default_convert, default_model, text_only_events, tool_call_events, user_msg,
+};
 use futures::Stream;
 use futures::stream::StreamExt;
 use serde_json::json;

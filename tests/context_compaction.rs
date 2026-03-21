@@ -7,7 +7,9 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use common::{ContextCapturingStreamFn, MockTool, default_model, text_only_events, tool_call_events, user_msg};
+use common::{
+    ContextCapturingStreamFn, MockTool, default_model, text_only_events, tool_call_events, user_msg,
+};
 use futures::Stream;
 use futures::stream::StreamExt;
 use tokio_util::sync::CancellationToken;
