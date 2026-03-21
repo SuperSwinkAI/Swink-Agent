@@ -1,45 +1,45 @@
 # Spec-Driven Development Status
-<!-- spec-status: project=worktree-005-agent-struct commit=add41e498640db3a938e802d9a4b784fddd2e846 updated=2026-03-21T12:19:52Z -->
+<!-- spec-status: project=worktree-006-context-management commit=8f4bdfa5c842f9738e09151be20e09bfe271df62 updated=2026-03-21T13:17:06Z -->
 
 | Feature                         | Specify | Plan | Tasks | Implement |
 |---------------------------------|---------|------|-------|-----------|
-| 001-workspace-scaffold          | ✓       | ✓    | ✓     | ✓ Complete |
-| 002-foundation-types-errors     | ✓       | ✓    | ✓     | ✓ Complete |
-| 003-core-traits                 | ✓       | ✓    | ✓     | ✓ Complete |
-| 004-agent-loop                  | ✓       | ✓    | ✓     | ✓ Complete |
-| 005-agent-struct                | ✓       | ✓    | ✓     | ✓ Complete |
-| 006-context-management          | ✓       | ✓    | ○     | -         |
-| 007-tool-system-extensions      | ✓       | ✓    | ○     | -         |
-| 008-model-catalog-presets       | ✓       | ✓    | ○     | -         |
-| 009-multi-agent-system          | ✓       | ✓    | ○     | -         |
-| 010-loop-policies-observability | ✓       | ✓    | ○     | -         |
-| 011-adapter-shared-infra        | ✓       | ✓    | ✓     | ✓ Complete |
-| 012-adapter-anthropic           | ✓       | ✓    | ○     | -         |
-| 013-adapter-openai              | ✓       | ✓    | ○     | -         |
-| 014-adapter-ollama              | ✓       | ✓    | ○     | -         |
-| 015-adapter-gemini              | ✓       | ○    | -     | -         |
-| 016-adapter-azure               | ✓       | ○    | -     | -         |
-| 017-adapter-xai                 | ✓       | ○    | -     | -         |
-| 018-adapter-mistral             | ✓       | ○    | -     | -         |
-| 019-adapter-bedrock             | ✓       | ○    | -     | -         |
-| 020-adapter-proxy               | ✓       | ✓    | ○     | -         |
-| 021-memory-crate                | ✓       | ✓    | ○     | -         |
-| 022-local-llm-crate             | ✓       | ✓    | ○     | -         |
-| 023-eval-trajectory-matching    | ✓       | ○    | -     | -         |
-| 024-eval-runner-governance      | ✓       | ○    | -     | -         |
-| 025-tui-scaffold-config         | ✓       | ○    | -     | -         |
-| 026-tui-input-conversation      | ✓       | ✓    | ○     | -         |
-| 027-tui-tools-diffs-status      | ✓       | ○    | -     | -         |
-| 028-tui-commands-editor-session | ✓       | ✓    | ○     | -         |
-| 029-tui-plan-mode-approval      | ✓       | ○    | -     | -         |
-| 030-integration-tests           | ✓       | ✓    | ○     | -         |
+| 001-workspace-scaffold          | ✓     | ✓  | ✓   | ✓ Complete |
+| 002-foundation-types-errors     | ✓     | ✓  | ✓   | ✓ Complete |
+| 003-core-traits                 | ✓     | ✓  | ✓   | ✓ Complete |
+| 004-agent-loop                  | ✓     | ✓  | ✓   | ✓ Complete |
+| 005-agent-struct                | ✓     | ✓  | ✓   | ✓ Complete |
+| 006-context-management          | ✓     | ✓  | ✓   | ● 0/46 (0%) |
+| 007-tool-system-extensions      | ✓     | ✓  | -     | -         |
+| 008-model-catalog-presets       | ✓     | ✓  | -     | -         |
+| 009-multi-agent-system          | ✓     | ✓  | -     | -         |
+| 010-loop-policies-observability | ✓     | ✓  | -     | -         |
+| 011-adapter-shared-infra        | ✓     | ✓  | ✓   | ✓ Complete |
+| 012-adapter-anthropic           | ✓     | ✓  | -     | -         |
+| 013-adapter-openai              | ✓     | ✓  | -     | -         |
+| 014-adapter-ollama              | ✓     | ✓  | -     | -         |
+| 015-adapter-gemini              | ✓     | -    | -     | -         |
+| 016-adapter-azure               | ✓     | -    | -     | -         |
+| 017-adapter-xai                 | ✓     | -    | -     | -         |
+| 018-adapter-mistral             | ✓     | -    | -     | -         |
+| 019-adapter-bedrock             | ✓     | -    | -     | -         |
+| 020-adapter-proxy               | ✓     | ✓  | -     | -         |
+| 021-memory-crate                | ✓     | ✓  | -     | -         |
+| 022-local-llm-crate             | ✓     | ✓  | -     | -         |
+| 023-eval-trajectory-matching    | ✓     | -    | -     | -         |
+| 024-eval-runner-governance      | ✓     | -    | -     | -         |
+| 025-tui-scaffold-config         | ✓     | -    | -     | -         |
+| 026-tui-input-conversation      | ✓     | ✓  | -     | -         |
+| 027-tui-tools-diffs-status      | ✓     | -    | -     | -         |
+| 028-tui-commands-editor-session | ✓     | ✓  | -     | -         |
+| 029-tui-plan-mode-approval      | ✓     | -    | -     | -         |
+| 030-integration-tests           | ✓     | ✓  | -     | -         |
 
 <!-- feature: 001-workspace-scaffold has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=false has_checklists=true tasks_total=24 tasks_completed=24 checklist_files=requirements.md -->
 <!-- feature: 002-foundation-types-errors has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=63 tasks_completed=63 checklist_files=requirements.md -->
 <!-- feature: 003-core-traits has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=47 tasks_completed=47 checklist_files=requirements.md -->
 <!-- feature: 004-agent-loop has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=65 tasks_completed=65 checklist_files=requirements.md -->
 <!-- feature: 005-agent-struct has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=78 tasks_completed=78 checklist_files=requirements.md -->
-<!-- feature: 006-context-management has_spec=true has_plan=true has_tasks=false has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=0 tasks_completed=0 checklist_files=requirements.md -->
+<!-- feature: 006-context-management has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=46 tasks_completed=0 checklist_files=requirements.md -->
 <!-- feature: 007-tool-system-extensions has_spec=true has_plan=true has_tasks=false has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=0 tasks_completed=0 checklist_files=requirements.md -->
 <!-- feature: 008-model-catalog-presets has_spec=true has_plan=true has_tasks=false has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=0 tasks_completed=0 checklist_files=requirements.md -->
 <!-- feature: 009-multi-agent-system has_spec=true has_plan=true has_tasks=false has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=0 tasks_completed=0 checklist_files=requirements.md -->
