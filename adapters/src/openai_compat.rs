@@ -236,9 +236,7 @@ impl MessageConverter for OaiConverter {
 // ─── Shared helpers ─────────────────────────────────────────────────────────
 
 /// Build the `tools` vec and `tool_choice` from the agent context's tool list.
-pub fn build_oai_tools(
-    tools: &[Arc<dyn AgentTool>],
-) -> (Vec<OaiTool>, Option<String>) {
+pub fn build_oai_tools(tools: &[Arc<dyn AgentTool>]) -> (Vec<OaiTool>, Option<String>) {
     let oai_tools: Vec<OaiTool> = extract_tool_schemas(tools)
         .into_iter()
         .map(|s| OaiTool {

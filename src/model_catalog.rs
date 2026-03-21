@@ -2,8 +2,8 @@ use std::sync::OnceLock;
 
 use serde::Deserialize;
 
-use crate::types::ModelCapabilities;
 use crate::ModelSpec;
+use crate::types::ModelCapabilities;
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]

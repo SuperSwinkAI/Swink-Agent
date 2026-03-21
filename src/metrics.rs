@@ -90,8 +90,8 @@ const _: () = {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     struct CountingCollector {
         count: AtomicUsize,
@@ -151,13 +151,11 @@ mod tests {
         let metrics = TurnMetrics {
             turn_index: 2,
             llm_call_duration: Duration::from_secs(1),
-            tool_executions: vec![
-                ToolExecMetrics {
-                    tool_name: "bash".into(),
-                    duration: Duration::from_millis(500),
-                    success: true,
-                },
-            ],
+            tool_executions: vec![ToolExecMetrics {
+                tool_name: "bash".into(),
+                duration: Duration::from_millis(500),
+                success: true,
+            }],
             usage: Usage::default(),
             cost: Cost::default(),
             turn_duration: Duration::from_millis(1500),

@@ -280,7 +280,10 @@ mod tests {
         view.scroll_up(3);
 
         assert_eq!(view.scroll_offset, 7);
-        assert!(!view.auto_scroll, "auto_scroll should disengage on manual scroll up");
+        assert!(
+            !view.auto_scroll,
+            "auto_scroll should disengage on manual scroll up"
+        );
     }
 
     #[test]
@@ -294,7 +297,10 @@ mod tests {
         view.scroll_down(10, 10);
 
         assert_eq!(view.scroll_offset, 40);
-        assert!(view.auto_scroll, "auto_scroll should re-engage when scrolled to bottom");
+        assert!(
+            view.auto_scroll,
+            "auto_scroll should re-engage when scrolled to bottom"
+        );
     }
 
     #[test]
@@ -353,7 +359,10 @@ mod tests {
         view.clamp_scroll_offset(10);
 
         // max = 30 - 10 = 20, offset 5 is within bounds
-        assert_eq!(view.scroll_offset, 5, "should not change when within bounds");
+        assert_eq!(
+            view.scroll_offset, 5,
+            "should not change when within bounds"
+        );
     }
 
     #[test]

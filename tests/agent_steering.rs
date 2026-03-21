@@ -10,9 +10,7 @@ use common::{
     text_only_events, tool_call_events, user_msg,
 };
 
-use swink_agent::{
-    Agent, AgentOptions, AgentTool, DefaultRetryStrategy, SteeringMode, StreamFn,
-};
+use swink_agent::{Agent, AgentOptions, AgentTool, DefaultRetryStrategy, SteeringMode, StreamFn};
 
 // ─── Helpers ─────────────────────────────────────────────────────────────
 

@@ -70,8 +70,7 @@ impl ListenerRegistry {
     pub fn dispatch(&mut self, event: &AgentEvent) {
         let mut panicked = Vec::new();
         for (id, listener) in &self.listeners {
-            let result =
-                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| listener(event)));
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| listener(event)));
             if let Err(e) = result {
                 eprintln!("listener panic: {e:?}");
                 panicked.push(*id);
@@ -87,5 +86,4 @@ impl ListenerRegistry {
     pub fn len(&self) -> usize {
         self.listeners.len()
     }
-
 }

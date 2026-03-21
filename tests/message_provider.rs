@@ -2,18 +2,13 @@ mod common;
 
 use std::sync::{Arc, Mutex};
 
-use swink_agent::{
-    ComposedMessageProvider, MessageProvider, from_fns, message_channel,
-};
+use swink_agent::{ComposedMessageProvider, MessageProvider, from_fns, message_channel};
 
 use common::user_msg;
 
 #[test]
 fn from_fns_creates_working_provider() {
-    let provider = from_fns(
-        || vec![user_msg("steer")],
-        || vec![user_msg("follow")],
-    );
+    let provider = from_fns(|| vec![user_msg("steer")], || vec![user_msg("follow")]);
 
     let steering = provider.poll_steering();
     assert_eq!(steering.len(), 1);
@@ -47,13 +42,10 @@ fn stateful_follow_up_closure() {
     let call_log = Arc::new(Mutex::new(Vec::<String>::new()));
     let log = Arc::clone(&call_log);
 
-    let provider = from_fns(
-        Vec::new,
-        move || {
-            log.lock().unwrap().push("called".to_owned());
-            vec![user_msg("follow")]
-        },
-    );
+    let provider = from_fns(Vec::new, move || {
+        log.lock().unwrap().push("called".to_owned());
+        vec![user_msg("follow")]
+    });
 
     provider.poll_follow_up();
     provider.poll_follow_up();

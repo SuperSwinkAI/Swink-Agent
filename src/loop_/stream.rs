@@ -10,9 +10,7 @@ use crate::error::AgentError;
 use crate::stream::{
     AssistantMessageDelta, AssistantMessageEvent, StreamFn, StreamOptions, accumulate_message,
 };
-use crate::types::{
-    AgentContext, AgentMessage, LlmMessage, ModelSpec, StopReason, ThinkingLevel,
-};
+use crate::types::{AgentContext, AgentMessage, LlmMessage, ModelSpec, StopReason, ThinkingLevel};
 
 use super::{
     AgentEvent, AgentLoopConfig, StreamResult, build_abort_message, build_error_message,
@@ -196,8 +194,7 @@ async fn stream_with_retry_single(
         // Handle error events
         if let Some((stop_reason, error_message, _usage)) = had_error {
             let retry_result =
-                handle_stream_error(model, config, &stop_reason, &error_message, attempt, tx)
-                    .await;
+                handle_stream_error(model, config, &stop_reason, &error_message, attempt, tx).await;
             match retry_result {
                 StreamErrorAction::ContextOverflow => return StreamResult::ContextOverflow,
                 StreamErrorAction::Retry(delay) => {

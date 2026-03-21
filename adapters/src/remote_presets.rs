@@ -390,8 +390,7 @@ mod tests {
         let gpt_4_1 = required_catalog_preset(remote_preset_keys::openai::GPT_4_1).unwrap();
         assert_eq!(gpt_4_1.model_id, "gpt-4.1");
 
-        let gpt_4o_mini =
-            required_catalog_preset(remote_preset_keys::openai::GPT_4O_MINI).unwrap();
+        let gpt_4o_mini = required_catalog_preset(remote_preset_keys::openai::GPT_4O_MINI).unwrap();
         assert_eq!(gpt_4o_mini.model_id, "gpt-4o-mini");
 
         let gpt_4_1_mini =

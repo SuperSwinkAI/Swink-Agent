@@ -294,10 +294,9 @@ impl BedrockStreamFn {
             request = request.header("x-amz-security-token", token);
         }
 
-        let response = request
-            .send()
-            .await
-            .map_err(|e| AssistantMessageEvent::error_network(format!("Bedrock connection error: {e}")))?;
+        let response = request.send().await.map_err(|e| {
+            AssistantMessageEvent::error_network(format!("Bedrock connection error: {e}"))
+        })?;
 
         let status = response.status();
         if !status.is_success() {
@@ -305,19 +304,22 @@ impl BedrockStreamFn {
             let body = response.text().await.unwrap_or_default();
             warn!(status = code, "Bedrock HTTP error");
             return Err(match code {
-                401 | 403 => AssistantMessageEvent::error_auth(format!("Bedrock auth error (HTTP {code}): {body}")),
-                429 => AssistantMessageEvent::error_throttled(format!("Bedrock rate limit (HTTP 429): {body}")),
-                500..=599 => {
-                    AssistantMessageEvent::error_network(format!("Bedrock server error (HTTP {code}): {body}"))
-                }
+                401 | 403 => AssistantMessageEvent::error_auth(format!(
+                    "Bedrock auth error (HTTP {code}): {body}"
+                )),
+                429 => AssistantMessageEvent::error_throttled(format!(
+                    "Bedrock rate limit (HTTP 429): {body}"
+                )),
+                500..=599 => AssistantMessageEvent::error_network(format!(
+                    "Bedrock server error (HTTP {code}): {body}"
+                )),
                 _ => AssistantMessageEvent::error(format!("Bedrock HTTP {code}: {body}")),
             });
         }
 
-        let body = response
-            .text()
-            .await
-            .map_err(|e| AssistantMessageEvent::error_network(format!("Bedrock response read error: {e}")))?;
+        let body = response.text().await.map_err(|e| {
+            AssistantMessageEvent::error_network(format!("Bedrock response read error: {e}"))
+        })?;
         let parsed: BedrockResponse = serde_json::from_str(&body)
             .map_err(|e| AssistantMessageEvent::error(format!("Bedrock JSON parse error: {e}")))?;
 

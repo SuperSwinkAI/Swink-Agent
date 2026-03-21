@@ -222,9 +222,10 @@ fn classify_response_status(response: &reqwest::Response) -> Option<AssistantMes
 
     let kind = classify_http_status(status.as_u16());
     Some(match kind {
-        Some(HttpErrorKind::Auth) => {
-            AssistantMessageEvent::error_auth(format!("authentication failure ({})", status.as_u16()))
-        }
+        Some(HttpErrorKind::Auth) => AssistantMessageEvent::error_auth(format!(
+            "authentication failure ({})",
+            status.as_u16()
+        )),
         Some(HttpErrorKind::Throttled) => {
             AssistantMessageEvent::error_throttled("rate limit (429)")
         }

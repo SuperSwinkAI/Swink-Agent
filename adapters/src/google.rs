@@ -284,11 +284,15 @@ fn gemini_stream<'a>(
             let body = response.text().await.unwrap_or_default();
             warn!(status = code, "Google Gemini HTTP error");
             let event = match code {
-                401 | 403 => AssistantMessageEvent::error_auth(format!("Google auth error (HTTP {code}): {body}")),
-                429 => AssistantMessageEvent::error_throttled(format!("Google rate limit (HTTP 429): {body}")),
-                500..=599 => {
-                    AssistantMessageEvent::error_network(format!("Google server error (HTTP {code}): {body}"))
-                }
+                401 | 403 => AssistantMessageEvent::error_auth(format!(
+                    "Google auth error (HTTP {code}): {body}"
+                )),
+                429 => AssistantMessageEvent::error_throttled(format!(
+                    "Google rate limit (HTTP 429): {body}"
+                )),
+                500..=599 => AssistantMessageEvent::error_network(format!(
+                    "Google server error (HTTP {code}): {body}"
+                )),
                 _ => AssistantMessageEvent::error(format!("Google HTTP {code}: {body}")),
             };
             return stream::iter(vec![event]).left_stream();
@@ -328,7 +332,9 @@ async fn send_request(
         .json(&body)
         .send()
         .await
-        .map_err(|error| AssistantMessageEvent::error_network(format!("Google connection error: {error}")))
+        .map_err(|error| {
+            AssistantMessageEvent::error_network(format!("Google connection error: {error}"))
+        })
 }
 
 fn convert_request(context: &AgentContext, options: &StreamOptions) -> GeminiRequest {

@@ -3,15 +3,15 @@
 //! Gated behind the `test-helpers` feature so downstream crates can
 //! reuse them in their own test suites without duplicating constructors.
 
+use crate::stream::{AssistantMessageEvent, StreamFn, StreamOptions};
+use crate::types::{AgentContext, ModelSpec};
 use crate::types::{
     AgentMessage, AssistantMessage, ContentBlock, Cost, LlmMessage, StopReason, ToolResultMessage,
     Usage, UserMessage,
 };
-use crate::stream::{AssistantMessageEvent, StreamFn, StreamOptions};
-use crate::types::{AgentContext, ModelSpec};
+use futures::Stream;
 use std::pin::Pin;
 use std::sync::Arc;
-use futures::Stream;
 use tokio_util::sync::CancellationToken;
 
 // ─── MockStreamFn ─────────────────────────────────────────────────────────

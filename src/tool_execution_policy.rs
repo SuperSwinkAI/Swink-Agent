@@ -92,7 +92,6 @@ impl Clone for ToolExecutionPolicy {
     }
 }
 
-
 impl std::fmt::Debug for ToolExecutionPolicy {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -105,7 +104,6 @@ impl std::fmt::Debug for ToolExecutionPolicy {
 }
 
 // ─── Compile-time Send + Sync assertions ─────────────────────────────────────
-
 
 #[cfg(test)]
 mod tests {
@@ -121,8 +119,14 @@ mod tests {
 
     #[test]
     fn debug_formatting() {
-        assert_eq!(format!("{:?}", ToolExecutionPolicy::Concurrent), "Concurrent");
-        assert_eq!(format!("{:?}", ToolExecutionPolicy::Sequential), "Sequential");
+        assert_eq!(
+            format!("{:?}", ToolExecutionPolicy::Concurrent),
+            "Concurrent"
+        );
+        assert_eq!(
+            format!("{:?}", ToolExecutionPolicy::Sequential),
+            "Sequential"
+        );
 
         let pf: Arc<PriorityFn> = Arc::new(|_| 0);
         assert_eq!(

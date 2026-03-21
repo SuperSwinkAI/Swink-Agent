@@ -185,8 +185,12 @@ impl Agent {
         let primary_model = options.model.clone();
         let primary_stream_fn = Arc::clone(&options.stream_fn);
         let mut available_models = vec![options.model.clone()];
-        available_models
-            .extend(options.available_models.iter().map(|(m, _): &(ModelSpec, _)| m.clone()));
+        available_models.extend(
+            options
+                .available_models
+                .iter()
+                .map(|(m, _): &(ModelSpec, _)| m.clone()),
+        );
         let mut model_stream_fns = vec![(primary_model, primary_stream_fn)];
         model_stream_fns.extend(
             options
@@ -392,7 +396,9 @@ impl Agent {
     /// updates the system prompt to match.
     pub fn restore_from_checkpoint(&mut self, checkpoint: &Checkpoint) {
         self.state.messages = checkpoint.restore_messages();
-        self.state.system_prompt.clone_from(&checkpoint.system_prompt);
+        self.state
+            .system_prompt
+            .clone_from(&checkpoint.system_prompt);
     }
 
     /// Load a checkpoint from the configured store and restore state from it.
@@ -602,7 +608,9 @@ impl Agent {
         checkpoint: &crate::checkpoint::LoopCheckpoint,
     ) -> Result<(), AgentError> {
         self.state.messages = checkpoint.restore_messages();
-        self.state.system_prompt.clone_from(&checkpoint.system_prompt);
+        self.state
+            .system_prompt
+            .clone_from(&checkpoint.system_prompt);
 
         if self.state.messages.is_empty() {
             return Err(AgentError::NoMessages);
@@ -1045,9 +1053,7 @@ impl Agent {
         let api_key_box = self.get_api_key.as_ref().map(|k| {
             let k = Arc::clone(k);
             let b: Box<
-                dyn Fn(&str) -> Pin<Box<dyn Future<Output = Option<String>> + Send>>
-                    + Send
-                    + Sync,
+                dyn Fn(&str) -> Pin<Box<dyn Future<Output = Option<String>> + Send>> + Send + Sync,
             > = Box::new(move |provider| k(provider));
             b
         });
@@ -1126,16 +1132,14 @@ impl Agent {
                     if let Some(ref err) = assistant_message.error_message {
                         error = Some(err.clone());
                     }
-                    let assistant_msg =
-                        AgentMessage::Llm(LlmMessage::Assistant(assistant_message));
+                    let assistant_msg = AgentMessage::Llm(LlmMessage::Assistant(assistant_message));
                     state_messages.push(match &assistant_msg {
                         AgentMessage::Llm(msg) => AgentMessage::Llm(msg.clone()),
                         AgentMessage::Custom(_) => unreachable!(),
                     });
                     all_messages.push(assistant_msg);
                     for tr in tool_results {
-                        state_messages
-                            .push(AgentMessage::Llm(LlmMessage::ToolResult(tr.clone())));
+                        state_messages.push(AgentMessage::Llm(LlmMessage::ToolResult(tr.clone())));
                         all_messages.push(AgentMessage::Llm(LlmMessage::ToolResult(tr)));
                     }
                 }

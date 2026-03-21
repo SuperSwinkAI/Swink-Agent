@@ -95,11 +95,15 @@ fn openai_stream<'a>(
             let body = response.text().await.unwrap_or_default();
             warn!(status = code, "OpenAI HTTP error");
             let event = match code {
-                401 | 403 => AssistantMessageEvent::error_auth(format!("OpenAI auth error (HTTP {code}): {body}")),
-                429 => AssistantMessageEvent::error_throttled(format!("OpenAI rate limit (HTTP 429): {body}")),
-                500..=599 => {
-                    AssistantMessageEvent::error_network(format!("OpenAI server error (HTTP {code}): {body}"))
-                }
+                401 | 403 => AssistantMessageEvent::error_auth(format!(
+                    "OpenAI auth error (HTTP {code}): {body}"
+                )),
+                429 => AssistantMessageEvent::error_throttled(format!(
+                    "OpenAI rate limit (HTTP 429): {body}"
+                )),
+                500..=599 => AssistantMessageEvent::error_network(format!(
+                    "OpenAI server error (HTTP {code}): {body}"
+                )),
                 _ => AssistantMessageEvent::error(format!("OpenAI HTTP {code}: {body}")),
             };
             return stream::iter(vec![event]).left_stream();

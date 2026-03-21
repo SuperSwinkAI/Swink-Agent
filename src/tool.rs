@@ -603,10 +603,18 @@ mod tests {
         struct MinimalTool;
 
         impl AgentTool for MinimalTool {
-            fn name(&self) -> &str { "minimal" }
-            fn label(&self) -> &str { "Minimal" }
-            fn description(&self) -> &str { "A minimal tool" }
-            fn parameters_schema(&self) -> &Value { &Value::Null }
+            fn name(&self) -> &str {
+                "minimal"
+            }
+            fn label(&self) -> &str {
+                "Minimal"
+            }
+            fn description(&self) -> &str {
+                "A minimal tool"
+            }
+            fn parameters_schema(&self) -> &Value {
+                &Value::Null
+            }
             fn execute(
                 &self,
                 _tool_call_id: &str,

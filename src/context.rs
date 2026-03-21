@@ -140,9 +140,7 @@ pub fn compact_sliding_window_with(
     // Adjust tail_start backward to avoid splitting tool-call / tool-result
     // pairs. If tail_start lands on a tool-result, include the preceding
     // assistant message too (correctness > token count).
-    while tail_start > effective_anchor
-        && tail_start < len
-        && is_tool_result(messages, tail_start)
+    while tail_start > effective_anchor && tail_start < len && is_tool_result(messages, tail_start)
     {
         tail_start -= 1;
     }
@@ -498,7 +496,10 @@ mod tests {
     #[test]
     fn default_token_counter_matches_estimate_tokens() {
         let msg = text_message(&"x".repeat(400));
-        assert_eq!(DefaultTokenCounter.count_tokens(&msg), estimate_tokens(&msg));
+        assert_eq!(
+            DefaultTokenCounter.count_tokens(&msg),
+            estimate_tokens(&msg)
+        );
         assert_eq!(DefaultTokenCounter.count_tokens(&msg), 100);
     }
 
@@ -545,8 +546,7 @@ mod tests {
             text_message(&body),
         ];
 
-        let result =
-            compact_sliding_window_with(&mut messages, 500, 1, Some(&CharCounter));
+        let result = compact_sliding_window_with(&mut messages, 500, 1, Some(&CharCounter));
         assert!(result.is_some());
         // Only anchor kept; remaining budget (100) cannot fit any 400-token message.
         assert_eq!(messages.len(), 1);
@@ -561,8 +561,7 @@ mod tests {
         let body = "x".repeat(100);
         let mut messages = vec![text_message(&body), text_message(&body)];
 
-        let result =
-            compact_sliding_window_with(&mut messages, 500, 1, Some(&CharCounter));
+        let result = compact_sliding_window_with(&mut messages, 500, 1, Some(&CharCounter));
         assert!(result.is_none());
         assert_eq!(messages.len(), 2);
     }

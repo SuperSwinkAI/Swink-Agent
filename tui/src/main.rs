@@ -7,8 +7,7 @@ use swink_agent::{AgentOptions, ModelSpec, StreamFn};
 use swink_agent_adapters::{AnthropicStreamFn, OllamaStreamFn, OpenAiStreamFn, ProxyStreamFn};
 
 use swink_agent_tui::{
-    TuiConfig, credentials, launch, resolve_system_prompt, restore_terminal, setup_terminal,
-    wizard,
+    TuiConfig, credentials, launch, resolve_system_prompt, restore_terminal, setup_terminal, wizard,
 };
 
 type AppResult<T> = Result<T, swink_agent_tui::error::TuiError>;
@@ -65,7 +64,7 @@ fn run(
 
         launch(config, terminal, create_options(system_prompt))
             .await
-        .map_err(|e| swink_agent_tui::error::TuiError::Other(e.to_string().into()))
+            .map_err(|e| swink_agent_tui::error::TuiError::Other(e.to_string().into()))
     })
 }
 

@@ -14,9 +14,7 @@ use crate::tool_execution_policy::{ToolCallSummary, ToolExecutionPolicy};
 use crate::types::{ContentBlock, ToolResultMessage};
 use crate::util::now_timestamp;
 
-use super::{
-    AgentEvent, AgentLoopConfig, ApproveToolFn, ToolCallInfo, ToolExecOutcome, emit,
-};
+use super::{AgentEvent, AgentLoopConfig, ApproveToolFn, ToolCallInfo, ToolExecOutcome, emit};
 
 // ─── Pre-processed tool call ─────────────────────────────────────────────────
 
@@ -147,7 +145,8 @@ pub async fn execute_tools_concurrently(
     }
 
     // Phase 2: Compute execution groups based on policy.
-    let groups = compute_execution_groups(&config.tool_execution_policy, tool_calls, &prepared).await;
+    let groups =
+        compute_execution_groups(&config.tool_execution_policy, tool_calls, &prepared).await;
 
     // Phase 3: Execute each group. Within a group, tools run concurrently.
     // Groups run sequentially.
@@ -191,13 +190,7 @@ pub async fn execute_tools_concurrently(
         match group_outcome {
             GroupOutcome::Continue => {}
             GroupOutcome::SteeringInterrupt => {
-                return build_steering_outcome(
-                    config,
-                    tool_calls,
-                    results,
-                    tool_timings,
-                )
-                .await;
+                return build_steering_outcome(config, tool_calls, results, tool_timings).await;
             }
         }
     }
@@ -563,11 +556,14 @@ async fn dispatch_single_tool(
                 let exec_duration = exec_start.elapsed();
                 debug!(tool = %tool_name, id = %tool_call_id, is_error, "tool execution finished");
 
-                timings_clone.lock().await.push(crate::metrics::ToolExecMetrics {
-                    tool_name: timing_tool_name,
-                    duration: exec_duration,
-                    success: !is_error,
-                });
+                timings_clone
+                    .lock()
+                    .await
+                    .push(crate::metrics::ToolExecMetrics {
+                        tool_name: timing_tool_name,
+                        duration: exec_duration,
+                        success: !is_error,
+                    });
 
                 let _ = emit(
                     &tx_clone,

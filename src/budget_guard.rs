@@ -116,10 +116,7 @@ impl std::fmt::Display for BudgetExceeded {
                 )
             }
             Self::Tokens { limit, actual } => {
-                write!(
-                    f,
-                    "budget exceeded: {actual} tokens exceeds limit {limit}"
-                )
+                write!(f, "budget exceeded: {actual} tokens exceeds limit {limit}")
             }
         }
     }
@@ -140,8 +137,14 @@ mod tests {
     #[test]
     fn no_limits_always_passes() {
         let guard = BudgetGuard::new();
-        let usage = Usage { total: 999_999, ..Default::default() };
-        let cost = Cost { total: 999.0, ..Default::default() };
+        let usage = Usage {
+            total: 999_999,
+            ..Default::default()
+        };
+        let cost = Cost {
+            total: 999.0,
+            ..Default::default()
+        };
         assert!(guard.check(&usage, &cost).is_ok());
     }
 
@@ -149,7 +152,10 @@ mod tests {
     fn cost_under_limit_passes() {
         let guard = BudgetGuard::new().with_max_cost(5.0);
         let usage = Usage::default();
-        let cost = Cost { total: 3.0, ..Default::default() };
+        let cost = Cost {
+            total: 3.0,
+            ..Default::default()
+        };
         assert!(guard.check(&usage, &cost).is_ok());
     }
 
@@ -157,23 +163,34 @@ mod tests {
     fn cost_over_limit_fails() {
         let guard = BudgetGuard::new().with_max_cost(5.0);
         let usage = Usage::default();
-        let cost = Cost { total: 5.01, ..Default::default() };
+        let cost = Cost {
+            total: 5.01,
+            ..Default::default()
+        };
         let err = guard.check(&usage, &cost).unwrap_err();
-        assert!(matches!(err, BudgetExceeded::Cost { limit, actual } if limit == 5.0 && actual == 5.01));
+        assert!(
+            matches!(err, BudgetExceeded::Cost { limit, actual } if limit == 5.0 && actual == 5.01)
+        );
     }
 
     #[test]
     fn cost_at_limit_passes() {
         let guard = BudgetGuard::new().with_max_cost(5.0);
         let usage = Usage::default();
-        let cost = Cost { total: 5.0, ..Default::default() };
+        let cost = Cost {
+            total: 5.0,
+            ..Default::default()
+        };
         assert!(guard.check(&usage, &cost).is_ok());
     }
 
     #[test]
     fn tokens_under_limit_passes() {
         let guard = BudgetGuard::new().with_max_tokens(100_000);
-        let usage = Usage { total: 50_000, ..Default::default() };
+        let usage = Usage {
+            total: 50_000,
+            ..Default::default()
+        };
         let cost = Cost::default();
         assert!(guard.check(&usage, &cost).is_ok());
     }
@@ -181,25 +198,41 @@ mod tests {
     #[test]
     fn tokens_over_limit_fails() {
         let guard = BudgetGuard::new().with_max_tokens(100_000);
-        let usage = Usage { total: 100_001, ..Default::default() };
+        let usage = Usage {
+            total: 100_001,
+            ..Default::default()
+        };
         let cost = Cost::default();
         let err = guard.check(&usage, &cost).unwrap_err();
-        assert!(matches!(err, BudgetExceeded::Tokens { limit, actual } if limit == 100_000 && actual == 100_001));
+        assert!(
+            matches!(err, BudgetExceeded::Tokens { limit, actual } if limit == 100_000 && actual == 100_001)
+        );
     }
 
     #[test]
     fn tokens_at_limit_passes() {
         let guard = BudgetGuard::new().with_max_tokens(100_000);
-        let usage = Usage { total: 100_000, ..Default::default() };
+        let usage = Usage {
+            total: 100_000,
+            ..Default::default()
+        };
         let cost = Cost::default();
         assert!(guard.check(&usage, &cost).is_ok());
     }
 
     #[test]
     fn both_limits_cost_exceeds_first() {
-        let guard = BudgetGuard::new().with_max_cost(1.0).with_max_tokens(100_000);
-        let usage = Usage { total: 50_000, ..Default::default() };
-        let cost = Cost { total: 1.5, ..Default::default() };
+        let guard = BudgetGuard::new()
+            .with_max_cost(1.0)
+            .with_max_tokens(100_000);
+        let usage = Usage {
+            total: 50_000,
+            ..Default::default()
+        };
+        let cost = Cost {
+            total: 1.5,
+            ..Default::default()
+        };
         let err = guard.check(&usage, &cost).unwrap_err();
         assert!(matches!(err, BudgetExceeded::Cost { .. }));
     }
@@ -207,30 +240,50 @@ mod tests {
     #[test]
     fn both_limits_tokens_exceeds_when_cost_ok() {
         let guard = BudgetGuard::new().with_max_cost(10.0).with_max_tokens(100);
-        let usage = Usage { total: 200, ..Default::default() };
-        let cost = Cost { total: 1.0, ..Default::default() };
+        let usage = Usage {
+            total: 200,
+            ..Default::default()
+        };
+        let cost = Cost {
+            total: 1.0,
+            ..Default::default()
+        };
         let err = guard.check(&usage, &cost).unwrap_err();
         assert!(matches!(err, BudgetExceeded::Tokens { .. }));
     }
 
     #[test]
     fn both_limits_both_ok() {
-        let guard = BudgetGuard::new().with_max_cost(10.0).with_max_tokens(100_000);
-        let usage = Usage { total: 50_000, ..Default::default() };
-        let cost = Cost { total: 5.0, ..Default::default() };
+        let guard = BudgetGuard::new()
+            .with_max_cost(10.0)
+            .with_max_tokens(100_000);
+        let usage = Usage {
+            total: 50_000,
+            ..Default::default()
+        };
+        let cost = Cost {
+            total: 5.0,
+            ..Default::default()
+        };
         assert!(guard.check(&usage, &cost).is_ok());
     }
 
     #[test]
     fn display_cost_exceeded() {
-        let err = BudgetExceeded::Cost { limit: 5.0, actual: 5.5 };
+        let err = BudgetExceeded::Cost {
+            limit: 5.0,
+            actual: 5.5,
+        };
         assert!(err.to_string().contains("cost"));
         assert!(err.to_string().contains("5.5"));
     }
 
     #[test]
     fn display_tokens_exceeded() {
-        let err = BudgetExceeded::Tokens { limit: 100, actual: 200 };
+        let err = BudgetExceeded::Tokens {
+            limit: 100,
+            actual: 200,
+        };
         assert!(err.to_string().contains("200 tokens"));
     }
 

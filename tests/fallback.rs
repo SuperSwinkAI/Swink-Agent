@@ -84,16 +84,17 @@ async fn fallback_triggers_on_retryable_error() {
     // Primary model returns rate limit error (retryable).
     // With max_attempts=1, retries exhaust immediately.
     // Fallback model succeeds.
-    let primary_stream = Arc::new(MockStreamFn::new(vec![
-        error_events("rate limit exceeded 429"),
-    ]));
-    let fallback_stream = Arc::new(MockStreamFn::new(vec![
-        text_only_events("fallback response"),
-    ]));
+    let primary_stream = Arc::new(MockStreamFn::new(vec![error_events(
+        "rate limit exceeded 429",
+    )]));
+    let fallback_stream = Arc::new(MockStreamFn::new(vec![text_only_events(
+        "fallback response",
+    )]));
 
-    let fallback = ModelFallback::new(vec![
-        (fallback_model(), fallback_stream as Arc<dyn StreamFn>),
-    ]);
+    let fallback = ModelFallback::new(vec![(
+        fallback_model(),
+        fallback_stream as Arc<dyn StreamFn>,
+    )]);
 
     let config = default_config(primary_stream, Some(fallback));
     let stream = agent_loop(
@@ -106,7 +107,9 @@ async fn fallback_triggers_on_retryable_error() {
     let events = collect_events(stream).await;
 
     // Should have a ModelFallback event
-    let has_fallback = events.iter().any(|e| matches!(e, AgentEvent::ModelFallback { .. }));
+    let has_fallback = events
+        .iter()
+        .any(|e| matches!(e, AgentEvent::ModelFallback { .. }));
     assert!(has_fallback, "expected ModelFallback event");
 
     // Should have a successful message from fallback
@@ -117,23 +120,27 @@ async fn fallback_triggers_on_retryable_error() {
             false
         }
     });
-    assert!(has_message_end, "expected successful MessageEnd from fallback model");
+    assert!(
+        has_message_end,
+        "expected successful MessageEnd from fallback model"
+    );
 }
 
 #[tokio::test]
 async fn no_fallback_on_non_retryable_error() {
     // Primary model returns a non-retryable error (stream error, not throttled).
     // Even with fallback configured, non-retryable errors should NOT trigger fallback.
-    let primary_stream = Arc::new(MockStreamFn::new(vec![
-        error_events("some internal server error"),
-    ]));
-    let fallback_stream = Arc::new(MockStreamFn::new(vec![
-        text_only_events("fallback response"),
-    ]));
+    let primary_stream = Arc::new(MockStreamFn::new(vec![error_events(
+        "some internal server error",
+    )]));
+    let fallback_stream = Arc::new(MockStreamFn::new(vec![text_only_events(
+        "fallback response",
+    )]));
 
-    let fallback = ModelFallback::new(vec![
-        (fallback_model(), fallback_stream as Arc<dyn StreamFn>),
-    ]);
+    let fallback = ModelFallback::new(vec![(
+        fallback_model(),
+        fallback_stream as Arc<dyn StreamFn>,
+    )]);
 
     let config = default_config(primary_stream, Some(fallback));
     let stream = agent_loop(
@@ -146,16 +153,18 @@ async fn no_fallback_on_non_retryable_error() {
     let events = collect_events(stream).await;
 
     // Should NOT have a ModelFallback event
-    let has_fallback = events.iter().any(|e| matches!(e, AgentEvent::ModelFallback { .. }));
+    let has_fallback = events
+        .iter()
+        .any(|e| matches!(e, AgentEvent::ModelFallback { .. }));
     assert!(!has_fallback, "should not fallback on non-retryable error");
 }
 
 #[tokio::test]
 async fn no_fallback_when_none_configured() {
     // Primary model returns retryable error, but no fallback is configured.
-    let primary_stream = Arc::new(MockStreamFn::new(vec![
-        error_events("rate limit exceeded 429"),
-    ]));
+    let primary_stream = Arc::new(MockStreamFn::new(vec![error_events(
+        "rate limit exceeded 429",
+    )]));
 
     let config = default_config(primary_stream, None);
     let stream = agent_loop(
@@ -167,8 +176,13 @@ async fn no_fallback_when_none_configured() {
 
     let events = collect_events(stream).await;
 
-    let has_fallback = events.iter().any(|e| matches!(e, AgentEvent::ModelFallback { .. }));
-    assert!(!has_fallback, "should not emit fallback event when none configured");
+    let has_fallback = events
+        .iter()
+        .any(|e| matches!(e, AgentEvent::ModelFallback { .. }));
+    assert!(
+        !has_fallback,
+        "should not emit fallback event when none configured"
+    );
 
     // Should still get an error result
     let has_error = events.iter().any(|e| {
@@ -184,15 +198,15 @@ async fn no_fallback_when_none_configured() {
 #[tokio::test]
 async fn fallback_chain_tries_multiple_models() {
     // Primary fails, first fallback also fails, second fallback succeeds.
-    let primary_stream = Arc::new(MockStreamFn::new(vec![
-        error_events("rate limit exceeded 429"),
-    ]));
-    let fallback1_stream = Arc::new(MockStreamFn::new(vec![
-        error_events("rate limit exceeded 429"),
-    ]));
-    let fallback2_stream = Arc::new(MockStreamFn::new(vec![
-        text_only_events("second fallback response"),
-    ]));
+    let primary_stream = Arc::new(MockStreamFn::new(vec![error_events(
+        "rate limit exceeded 429",
+    )]));
+    let fallback1_stream = Arc::new(MockStreamFn::new(vec![error_events(
+        "rate limit exceeded 429",
+    )]));
+    let fallback2_stream = Arc::new(MockStreamFn::new(vec![text_only_events(
+        "second fallback response",
+    )]));
 
     let fb_model1 = ModelSpec::new("test", "fallback-1");
     let fb_model2 = ModelSpec::new("test", "fallback-2");
@@ -227,22 +241,24 @@ async fn fallback_chain_tries_multiple_models() {
             false
         }
     });
-    assert!(has_success, "expected successful response from second fallback");
+    assert!(
+        has_success,
+        "expected successful response from second fallback"
+    );
 }
 
 #[tokio::test]
 async fn fallback_event_carries_model_info() {
-    let primary_stream = Arc::new(MockStreamFn::new(vec![
-        error_events("rate limit exceeded 429"),
-    ]));
-    let fallback_stream = Arc::new(MockStreamFn::new(vec![
-        text_only_events("ok"),
-    ]));
+    let primary_stream = Arc::new(MockStreamFn::new(vec![error_events(
+        "rate limit exceeded 429",
+    )]));
+    let fallback_stream = Arc::new(MockStreamFn::new(vec![text_only_events("ok")]));
 
     let fb_model = fallback_model();
-    let fallback = ModelFallback::new(vec![
-        (fb_model.clone(), fallback_stream as Arc<dyn StreamFn>),
-    ]);
+    let fallback = ModelFallback::new(vec![(
+        fb_model.clone(),
+        fallback_stream as Arc<dyn StreamFn>,
+    )]);
 
     let config = default_config(primary_stream, Some(fallback));
     let stream = agent_loop(
@@ -274,16 +290,17 @@ async fn fallback_event_carries_model_info() {
 #[tokio::test]
 async fn all_fallbacks_exhausted_returns_error() {
     // Primary and all fallbacks fail with retryable errors.
-    let primary_stream = Arc::new(MockStreamFn::new(vec![
-        error_events("rate limit exceeded 429"),
-    ]));
-    let fallback_stream = Arc::new(MockStreamFn::new(vec![
-        error_events("rate limit exceeded 429"),
-    ]));
+    let primary_stream = Arc::new(MockStreamFn::new(vec![error_events(
+        "rate limit exceeded 429",
+    )]));
+    let fallback_stream = Arc::new(MockStreamFn::new(vec![error_events(
+        "rate limit exceeded 429",
+    )]));
 
-    let fallback = ModelFallback::new(vec![
-        (fallback_model(), fallback_stream as Arc<dyn StreamFn>),
-    ]);
+    let fallback = ModelFallback::new(vec![(
+        fallback_model(),
+        fallback_stream as Arc<dyn StreamFn>,
+    )]);
 
     let config = default_config(primary_stream, Some(fallback));
     let stream = agent_loop(

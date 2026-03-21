@@ -7,7 +7,10 @@ mod verifier;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "xtask", about = "Developer tasks for the Swink Agent workspace")]
+#[command(
+    name = "xtask",
+    about = "Developer tasks for the Swink Agent workspace"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
