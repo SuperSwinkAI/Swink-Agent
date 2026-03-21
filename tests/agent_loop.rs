@@ -16,9 +16,9 @@ use serde_json::json;
 use tokio_util::sync::CancellationToken;
 
 use swink_agent::{
-    AgentContext, AgentEvent, AgentLoopConfig, AgentMessage, AgentTool, AgentToolResult,
+    AgentEvent, AgentLoopConfig, AgentMessage, AgentTool, AgentToolResult,
     AssistantMessageEvent, ContentBlock, Cost, CustomMessage, DefaultRetryStrategy, LlmMessage,
-    MessageProvider, ModelSpec, StopReason, StreamFn, StreamOptions, ToolResultMessage,
+    MessageProvider, StopReason, StreamFn, StreamOptions, ToolResultMessage,
     TurnSnapshot, Usage, UserMessage, agent_loop,
 };
 

@@ -17,10 +17,10 @@
 
 **Purpose**: Project initialization — create the module structure, types, and event emission infrastructure shared by all user stories.
 
-- [ ] T001 [P] Create loop module directory structure with `src/loop_/mod.rs` defining `AgentLoopConfig`, `LoopState`, `TurnEndReason`, `AgentEvent` types, and module declarations for `turn`, `stream`, `tool_dispatch`
-- [ ] T002 [P] Define callback type aliases (`ConvertToLlmFn`, `TransformContextFn`, `GetApiKeyFn`, `GetSteeringMessagesFn`, `GetFollowUpMessagesFn`) in `src/loop_/mod.rs`
-- [ ] T003 Implement event emission helper using `tokio::mpsc` channel in `src/emit.rs` — send `AgentEvent` values to the stream consumer
-- [ ] T004 Update `src/lib.rs` to re-export public API: `agent_loop`, `agent_loop_continue`, `AgentLoopConfig`, `AgentEvent`, `TurnEndReason`, and all callback type aliases
+- [x] T001 [P] Create loop module directory structure with `src/loop_/mod.rs` defining `AgentLoopConfig`, `LoopState`, `TurnEndReason`, `AgentEvent` types, and module declarations for `turn`, `stream`, `tool_dispatch`
+- [x] T002 [P] Define callback type aliases (`ConvertToLlmFn`, `TransformContextFn`, `GetApiKeyFn`, `GetSteeringMessagesFn`, `GetFollowUpMessagesFn`) in `src/loop_/mod.rs`
+- [x] T003 Implement event emission helper using `tokio::mpsc` channel in `src/emit.rs` — send `AgentEvent` values to the stream consumer
+- [x] T004 Update `src/lib.rs` to re-export public API: `agent_loop`, `agent_loop_continue`, `AgentLoopConfig`, `AgentEvent`, `TurnEndReason`, and all callback type aliases
 
 ---
 
@@ -30,11 +30,11 @@
 
 **CRITICAL**: No user story work can begin until this phase is complete.
 
-- [ ] T005 Implement `agent_loop` entry point in `src/loop_/mod.rs` — prepend prompt messages, validate context (NoMessages check), emit `AgentStart`, spawn inner loop, return `impl Stream<Item = AgentEvent>`
-- [ ] T006 Implement `agent_loop_continue` entry point in `src/loop_/mod.rs` — validate last message is not assistant (InvalidContinue check), validate non-empty, delegate to shared loop body
-- [ ] T007 Implement outer loop skeleton in `src/loop_/mod.rs` — create the outer/inner loop structure with placeholders; `AgentEnd` emission is wired in T016
-- [ ] T008 Implement single-turn skeleton in `src/loop_/turn.rs` — create function signatures and control flow structure (`TurnStart`/`TurnEnd` emission) that compiles but delegates to placeholder calls; real logic wired in T013–T015
-- [ ] T009 Implement stream invocation in `src/loop_/stream.rs` — call `StreamFn` with converted messages, accumulate `AssistantMessage` from stream events, emit `MessageStart`/`MessageUpdate`/`MessageEnd`
+- [x] T005 Implement `agent_loop` entry point in `src/loop_/mod.rs` — prepend prompt messages, validate context (NoMessages check), emit `AgentStart`, spawn inner loop, return `impl Stream<Item = AgentEvent>`
+- [x] T006 Implement `agent_loop_continue` entry point in `src/loop_/mod.rs` — validate last message is not assistant (InvalidContinue check), validate non-empty, delegate to shared loop body
+- [x] T007 Implement outer loop skeleton in `src/loop_/mod.rs` — create the outer/inner loop structure with placeholders; `AgentEnd` emission is wired in T016
+- [x] T008 Implement single-turn skeleton in `src/loop_/turn.rs` — create function signatures and control flow structure (`TurnStart`/`TurnEnd` emission) that compiles but delegates to placeholder calls; real logic wired in T013–T015
+- [x] T009 Implement stream invocation in `src/loop_/stream.rs` — call `StreamFn` with converted messages, accumulate `AssistantMessage` from stream events, emit `MessageStart`/`MessageUpdate`/`MessageEnd`
 
 **Checkpoint**: Foundation ready — loop can execute a single turn with mock provider returning text only
 
@@ -50,18 +50,18 @@
 
 > **NOTE: Write these tests FIRST, ensure they FAIL before implementation**
 
-- [ ] T010 [P] [US1] Write test for lifecycle event ordering (AgentStart → TurnStart → MessageStart → MessageUpdate(s) → MessageEnd → TurnEnd → AgentEnd) in `tests/loop_single_turn.rs`
-- [ ] T011 [P] [US1] Write test verifying `AgentEnd` carries produced messages in `tests/loop_single_turn.rs`
-- [ ] T012 [P] [US1] Write test verifying `TurnEnd` carries assistant message with `TurnEndReason::Complete` on natural stop in `tests/loop_single_turn.rs`
-- [ ] T012a [P] [US1] Write test verifying `ConvertToLlmFn` returning `None` for a custom message correctly filters it from the provider call (FR-016) in `tests/loop_single_turn.rs`
-- [ ] T012b [P] [US1] Write test verifying `get_api_key` is called before each `StreamFn` invocation and the resolved key is passed through (FR-006) in `tests/loop_single_turn.rs`
+- [x] T010 [P] [US1] Write test for lifecycle event ordering (AgentStart → TurnStart → MessageStart → MessageUpdate(s) → MessageEnd → TurnEnd → AgentEnd) in `tests/loop_single_turn.rs`
+- [x] T011 [P] [US1] Write test verifying `AgentEnd` carries produced messages in `tests/loop_single_turn.rs`
+- [x] T012 [P] [US1] Write test verifying `TurnEnd` carries assistant message with `TurnEndReason::Complete` on natural stop in `tests/loop_single_turn.rs`
+- [x] T012a [P] [US1] Write test verifying `ConvertToLlmFn` returning `None` for a custom message correctly filters it from the provider call (FR-016) in `tests/loop_single_turn.rs`
+- [x] T012b [P] [US1] Write test verifying `get_api_key` is called before each `StreamFn` invocation and the resolved key is passed through (FR-006) in `tests/loop_single_turn.rs`
 
 ### Implementation for User Story 1
 
-- [ ] T013 [US1] Implement complete single-turn flow in `src/loop_/turn.rs` — wire `transform_context` → `convert_to_llm` → `get_api_key` → `StreamFn` → accumulate → emit lifecycle events in correct order
-- [ ] T014 [US1] Implement identity transform behavior when `transform_context` is `None` in `src/loop_/turn.rs`
-- [ ] T015 [US1] Wire `TurnEnd` event with `TurnEndReason::Complete` and assistant message when no tool calls in `src/loop_/turn.rs`
-- [ ] T016 [US1] Wire `AgentEnd` event with all produced messages in `src/loop_/mod.rs`
+- [x] T013 [US1] Implement complete single-turn flow in `src/loop_/turn.rs` — wire `transform_context` → `convert_to_llm` → `get_api_key` → `StreamFn` → accumulate → emit lifecycle events in correct order
+- [x] T014 [US1] Implement identity transform behavior when `transform_context` is `None` in `src/loop_/turn.rs`
+- [x] T015 [US1] Wire `TurnEnd` event with `TurnEndReason::Complete` and assistant message when no tool calls in `src/loop_/turn.rs`
+- [x] T016 [US1] Wire `AgentEnd` event with all produced messages in `src/loop_/mod.rs`
 
 **Checkpoint**: Single-turn no-tool conversation emits all lifecycle events in correct order (SC-001)
 
@@ -77,18 +77,18 @@
 
 > **NOTE: Write these tests FIRST, ensure they FAIL before implementation**
 
-- [ ] T017 [P] [US2] Write test for tool execution events (ToolExecutionStart, ToolExecutionEnd) emitted for each tool call in `tests/loop_tool_execution.rs`
-- [ ] T018 [P] [US2] Write test verifying concurrent tool execution (not sequential) and each tool receives a distinct child `CancellationToken` (FR-008) in `tests/loop_tool_execution.rs`
-- [ ] T019 [P] [US2] Write test verifying tool results are injected into context and provider is called again in `tests/loop_tool_execution.rs`
-- [ ] T020 [P] [US2] Write test verifying loop exits normally when provider stops requesting tools in `tests/loop_tool_execution.rs`
+- [x] T017 [P] [US2] Write test for tool execution events (ToolExecutionStart, ToolExecutionEnd) emitted for each tool call in `tests/loop_tool_execution.rs`
+- [x] T018 [P] [US2] Write test verifying concurrent tool execution (not sequential) and each tool receives a distinct child `CancellationToken` (FR-008) in `tests/loop_tool_execution.rs`
+- [x] T019 [P] [US2] Write test verifying tool results are injected into context and provider is called again in `tests/loop_tool_execution.rs`
+- [x] T020 [P] [US2] Write test verifying loop exits normally when provider stops requesting tools in `tests/loop_tool_execution.rs`
 
 ### Implementation for User Story 2
 
-- [ ] T021 [US2] Implement tool call detection in `src/loop_/turn.rs` — extract tool calls from accumulated assistant message after stream completes
-- [ ] T022 [US2] Implement concurrent tool dispatch in `src/loop_/tool_dispatch.rs` — `tokio::spawn` per tool call with per-tool child `CancellationToken`, emit `ToolExecutionStart`/`ToolExecutionEnd` events
-- [ ] T023 [US2] Implement tool result collection and context injection in `src/loop_/tool_dispatch.rs` — collect all results, create `ToolResultMessage` entries, append to context messages
-- [ ] T024 [US2] Wire inner loop continuation in `src/loop_/mod.rs` — when tools executed, set `TurnEndReason::ToolsExecuted` and loop back for next turn
-- [ ] T025 [US2] Implement `ToolExecutionUpdate` event emission for intermediate tool output in `src/loop_/tool_dispatch.rs`
+- [x] T021 [US2] Implement tool call detection in `src/loop_/turn.rs` — extract tool calls from accumulated assistant message after stream completes
+- [x] T022 [US2] Implement concurrent tool dispatch in `src/loop_/tool_dispatch.rs` — `tokio::spawn` per tool call with per-tool child `CancellationToken`, emit `ToolExecutionStart`/`ToolExecutionEnd` events
+- [x] T023 [US2] Implement tool result collection and context injection in `src/loop_/tool_dispatch.rs` — collect all results, create `ToolResultMessage` entries, append to context messages
+- [x] T024 [US2] Wire inner loop continuation in `src/loop_/mod.rs` — when tools executed, set `TurnEndReason::ToolsExecuted` and loop back for next turn
+- [x] T025 [US2] Implement `ToolExecutionUpdate` event emission for intermediate tool output in `src/loop_/tool_dispatch.rs`
 
 **Checkpoint**: Multi-turn tool cycles work — concurrent execution verified (SC-002)
 
@@ -104,17 +104,17 @@
 
 > **NOTE: Write these tests FIRST, ensure they FAIL before implementation**
 
-- [ ] T026 [P] [US3] Write test verifying steering cancels remaining in-flight tools via cancellation tokens in `tests/loop_steering.rs`
-- [ ] T027 [P] [US3] Write test verifying cancelled tools get error results indicating steering interrupt in `tests/loop_steering.rs`
-- [ ] T028 [P] [US3] Write test verifying steering message is processed on next turn in `tests/loop_steering.rs`
+- [x] T026 [P] [US3] Write test verifying steering cancels remaining in-flight tools via cancellation tokens in `tests/loop_steering.rs`
+- [x] T027 [P] [US3] Write test verifying cancelled tools get error results indicating steering interrupt in `tests/loop_steering.rs`
+- [x] T028 [P] [US3] Write test verifying steering message is processed on next turn in `tests/loop_steering.rs`
 
 ### Implementation for User Story 3
 
-- [ ] T029 [US3] Implement steering message polling after each tool completion in `src/loop_/tool_dispatch.rs` — call `get_steering_messages` callback after each tool finishes
-- [ ] T030 [US3] Implement tool cancellation on steering arrival in `src/loop_/tool_dispatch.rs` — cancel remaining child tokens, inject error result for each cancelled tool
-- [ ] T031 [US3] Implement steering message queuing in `src/loop_/mod.rs` — add steering messages to `LoopState.pending_messages`, process as pending before next provider call
-- [ ] T032 [US3] Wire `TurnEndReason::SteeringInterrupt` in `src/loop_/turn.rs` when steering interrupt occurs
-- [ ] T033 [US3] Handle steering messages when no tools are executing — queue as pending messages in `LoopState` for next turn in `src/loop_/turn.rs`
+- [x] T029 [US3] Implement steering message polling after each tool completion in `src/loop_/tool_dispatch.rs` — call `get_steering_messages` callback after each tool finishes
+- [x] T030 [US3] Implement tool cancellation on steering arrival in `src/loop_/tool_dispatch.rs` — cancel remaining child tokens, inject error result for each cancelled tool
+- [x] T031 [US3] Implement steering message queuing in `src/loop_/mod.rs` — add steering messages to `LoopState.pending_messages`, process as pending before next provider call
+- [x] T032 [US3] Wire `TurnEndReason::SteeringInterrupt` in `src/loop_/turn.rs` when steering interrupt occurs
+- [x] T033 [US3] Handle steering messages when no tools are executing — queue as pending messages in `LoopState` for next turn in `src/loop_/turn.rs`
 
 **Checkpoint**: Steering interrupts cancel remaining tools and redirect agent (SC-003)
 
@@ -130,15 +130,15 @@
 
 > **NOTE: Write these tests FIRST, ensure they FAIL before implementation**
 
-- [ ] T034 [P] [US4] Write test verifying follow-up messages cause loop continuation in `tests/loop_follow_up.rs`
-- [ ] T035 [P] [US4] Write test verifying loop emits `AgentEnd` when no follow-up messages in `tests/loop_follow_up.rs`
-- [ ] T036 [P] [US4] Write test verifying error/abort exits skip follow-up polling in `tests/loop_follow_up.rs`
+- [x] T034 [P] [US4] Write test verifying follow-up messages cause loop continuation in `tests/loop_follow_up.rs`
+- [x] T035 [P] [US4] Write test verifying loop emits `AgentEnd` when no follow-up messages in `tests/loop_follow_up.rs`
+- [x] T036 [P] [US4] Write test verifying error/abort exits skip follow-up polling in `tests/loop_follow_up.rs`
 
 ### Implementation for User Story 4
 
-- [ ] T037 [US4] Implement follow-up polling in outer loop in `src/loop_/mod.rs` — call `get_follow_up_messages` when inner loop exits normally (Complete)
-- [ ] T038 [US4] Implement follow-up message injection in `src/loop_/mod.rs` — add follow-up messages to context, re-enter inner loop
-- [ ] T039 [US4] Implement error/abort guard in outer loop in `src/loop_/mod.rs` — skip follow-up polling on Error or Aborted exit, emit `AgentEnd` immediately (FR-011)
+- [x] T037 [US4] Implement follow-up polling in outer loop in `src/loop_/mod.rs` — call `get_follow_up_messages` when inner loop exits normally (Complete)
+- [x] T038 [US4] Implement follow-up message injection in `src/loop_/mod.rs` — add follow-up messages to context, re-enter inner loop
+- [x] T039 [US4] Implement error/abort guard in outer loop in `src/loop_/mod.rs` — skip follow-up polling on Error or Aborted exit, emit `AgentEnd` immediately (FR-011)
 
 **Checkpoint**: Follow-up continuation works; error/abort exits skip follow-up (SC-004, SC-005)
 
@@ -154,15 +154,15 @@
 
 > **NOTE: Write these tests FIRST, ensure they FAIL before implementation**
 
-- [ ] T040 [P] [US5] Write test verifying retryable error triggers retry with delay in `tests/loop_retry.rs`
-- [ ] T041 [P] [US5] Write test verifying exhausted retries surface error and exit in `tests/loop_retry.rs`
-- [ ] T042 [P] [US5] Write test verifying non-retryable error causes immediate exit in `tests/loop_retry.rs`
+- [x] T040 [P] [US5] Write test verifying retryable error triggers retry with delay in `tests/loop_retry.rs`
+- [x] T041 [P] [US5] Write test verifying exhausted retries surface error and exit in `tests/loop_retry.rs`
+- [x] T042 [P] [US5] Write test verifying non-retryable error causes immediate exit in `tests/loop_retry.rs`
 
 ### Implementation for User Story 5
 
-- [ ] T043 [US5] Implement retry integration in `src/loop_/stream.rs` — on retryable error, call `RetryStrategy::should_retry()`, compute delay with jitter, re-invoke `StreamFn`
-- [ ] T044 [US5] Implement retry exhaustion handling in `src/loop_/stream.rs` — when retries exhausted, surface error via `AgentEvent::TurnEnd` with `TurnEndReason::Error`
-- [ ] T045 [US5] Implement non-retryable error fast path in `src/loop_/stream.rs` — exit immediately without consulting retry strategy
+- [x] T043 [US5] Implement retry integration in `src/loop_/stream.rs` — on retryable error, call `RetryStrategy::should_retry()`, compute delay with jitter, re-invoke `StreamFn`
+- [x] T044 [US5] Implement retry exhaustion handling in `src/loop_/stream.rs` — when retries exhausted, surface error via `AgentEvent::TurnEnd` with `TurnEndReason::Error`
+- [x] T045 [US5] Implement non-retryable error fast path in `src/loop_/stream.rs` — exit immediately without consulting retry strategy
 
 **Checkpoint**: Retry integration works for transient failures (SC-006, SC-007)
 
@@ -178,14 +178,14 @@
 
 > **NOTE: Write these tests FIRST, ensure they FAIL before implementation**
 
-- [ ] T046 [P] [US6] Write test verifying overflow error sets `overflow_signal = true` on `LoopState` in `tests/loop_overflow.rs`
-- [ ] T047 [P] [US6] Write test verifying `transform_context` receives overflow signal and reduced context is used on retry in `tests/loop_overflow.rs`
+- [x] T046 [P] [US6] Write test verifying overflow error sets `overflow_signal = true` on `LoopState` in `tests/loop_overflow.rs`
+- [x] T047 [P] [US6] Write test verifying `transform_context` receives overflow signal and reduced context is used on retry in `tests/loop_overflow.rs`
 
 ### Implementation for User Story 6
 
-- [ ] T048 [US6] Implement overflow detection in `src/loop_/stream.rs` — detect `CONTEXT_OVERFLOW_SENTINEL` from provider error, set `LoopState.overflow_signal = true`
-- [ ] T049 [US6] Implement overflow signal passing in `src/loop_/turn.rs` — pass `overflow_signal` to `transform_context`, reset to `false` after call; when `transform_context` returns `Some(report)`, emit `ContextCompacted` event
-- [ ] T050 [US6] Implement overflow retry loop in `src/loop_/mod.rs` — when overflow detected, re-enter turn with overflow signal set (not a retry strategy error, a loop control signal)
+- [x] T048 [US6] Implement overflow detection in `src/loop_/stream.rs` — detect `CONTEXT_OVERFLOW_SENTINEL` from provider error, set `LoopState.overflow_signal = true`
+- [x] T049 [US6] Implement overflow signal passing in `src/loop_/turn.rs` — pass `overflow_signal` to `transform_context`, reset to `false` after call; when `transform_context` returns `Some(report)`, emit `ContextCompacted` event
+- [x] T050 [US6] Implement overflow retry loop in `src/loop_/mod.rs` — when overflow detected, re-enter turn with overflow signal set (not a retry strategy error, a loop control signal)
 
 **Checkpoint**: Context overflow triggers transformation hook with overflow signal (SC-008)
 
@@ -201,14 +201,14 @@
 
 > **NOTE: Write these tests FIRST, ensure they FAIL before implementation**
 
-- [ ] T051 [P] [US7] Write test verifying incomplete tool calls are replaced with error results on stop reason "length" in `tests/loop_max_tokens.rs`
-- [ ] T052 [P] [US7] Write test verifying loop continues after max tokens recovery in `tests/loop_max_tokens.rs`
+- [x] T051 [P] [US7] Write test verifying incomplete tool calls are replaced with error results on stop reason "length" in `tests/loop_max_tokens.rs`
+- [x] T052 [P] [US7] Write test verifying loop continues after max tokens recovery in `tests/loop_max_tokens.rs`
 
 ### Implementation for User Story 7
 
-- [ ] T053 [US7] Implement max tokens detection in `src/loop_/turn.rs` — detect stop reason "length" with incomplete tool calls from accumulated message
-- [ ] T054 [US7] Implement incomplete tool call replacement in `src/loop_/turn.rs` — replace each incomplete tool call with an error `AgentToolResult` containing informative message
-- [ ] T055 [US7] Wire max tokens recovery into inner loop in `src/loop_/mod.rs` — after replacement, continue loop so agent sees error results and can adjust
+- [x] T053 [US7] Implement max tokens detection in `src/loop_/turn.rs` — detect stop reason "length" with incomplete tool calls from accumulated message
+- [x] T054 [US7] Implement incomplete tool call replacement in `src/loop_/turn.rs` — replace each incomplete tool call with an error `AgentToolResult` containing informative message
+- [x] T055 [US7] Wire max tokens recovery into inner loop in `src/loop_/mod.rs` — after replacement, continue loop so agent sees error results and can adjust
 
 **Checkpoint**: Incomplete tool calls from max tokens are replaced and loop continues (SC-009)
 
@@ -218,14 +218,14 @@
 
 **Purpose**: Cancellation support, edge cases, and cross-cutting improvements.
 
-- [ ] T056 Write cancellation test verifying clean shutdown with `TurnEndReason::Aborted` in `tests/loop_cancellation.rs`
-- [ ] T057 Implement cooperative cancellation via `CancellationToken` in `src/loop_/mod.rs` and `src/loop_/turn.rs` — check token at turn boundaries and during stream, emit `Aborted` stop reason (SC-010)
-- [ ] T058 Handle edge case: provider returns zero content blocks (empty response) in `src/loop_/turn.rs` — treat as natural stop with empty assistant message
-- [ ] T059 Handle edge case: all tool calls cancelled by steering in `src/loop_/tool_dispatch.rs` — ensure `TurnEnd` is still emitted with `SteeringInterrupt` reason
-- [ ] T060 Verify `transform_context` is called before `convert_to_llm` on every turn (SC-011) — add assertion test in `tests/loop_single_turn.rs`
-- [ ] T061 Run `cargo clippy -p swink-agent -- -D warnings` and fix any warnings across all new files
-- [ ] T062 Run `cargo test -p swink-agent` and verify all tests pass
-- [ ] T063 Run quickstart.md verification checklist — verify all 9 items pass
+- [x] T056 Write cancellation test verifying clean shutdown with `TurnEndReason::Aborted` in `tests/loop_cancellation.rs`
+- [x] T057 Implement cooperative cancellation via `CancellationToken` in `src/loop_/mod.rs` and `src/loop_/turn.rs` — check token at turn boundaries and during stream, emit `Aborted` stop reason (SC-010)
+- [x] T058 Handle edge case: provider returns zero content blocks (empty response) in `src/loop_/turn.rs` — treat as natural stop with empty assistant message
+- [x] T059 Handle edge case: all tool calls cancelled by steering in `src/loop_/tool_dispatch.rs` — ensure `TurnEnd` is still emitted with `SteeringInterrupt` reason
+- [x] T060 Verify `transform_context` is called before `convert_to_llm` on every turn (SC-011) — add assertion test in `tests/loop_single_turn.rs`
+- [x] T061 Run `cargo clippy -p swink-agent -- -D warnings` and fix any warnings across all new files
+- [x] T062 Run `cargo test -p swink-agent` and verify all tests pass
+- [x] T063 Run quickstart.md verification checklist — verify all 9 items pass
 
 ---
 
