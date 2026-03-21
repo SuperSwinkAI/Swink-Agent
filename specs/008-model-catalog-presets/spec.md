@@ -102,6 +102,9 @@ A developer configures a primary model with one or more fallback models. When th
 - Q: What if provider credentials are missing? → A: Resolution indicates missing credentials; callers handle (e.g., setup wizard).
 - Q: Single-model fallback behavior? → A: Identical to no fallback; single model tried, errors propagate.
 - Q: Duplicate preset IDs across providers? → A: First-match via find(); TOML structure prevents duplicates per provider.
+- Q: How does FR-004 filtering by group/capability/status work? → A: The catalog exposes `providers` and their `presets` as public fields. Callers filter by iterating over presets and matching on group, capability, or status fields directly. The core catalog provides lookup by provider key and preset ID; advanced filtering is a caller concern.
+- Q: Does FR-006 (preset-to-connection resolution via env vars) live in core? → A: No. The core crate provides `ModelConnection` as a provider-agnostic container. Actual env-var resolution is an adapter-layer responsibility per Constitution Principle V (Provider Agnosticism).
+- Q: Does FR-008 (fallback execution) live in this feature? → A: No. `ModelFallback` is configuration only. The agent loop (spec 004) consumes it to implement failover execution.
 
 ## Assumptions
 

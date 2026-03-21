@@ -7,7 +7,7 @@
 - Provider Roadmap: [PROVIDER_EXPANSION_ROADMAP.md](PROVIDER_EXPANSION_ROADMAP.md)
 - Eval Roadmap: [EVAL.md](EVAL.md)
 
-**Current Focus:** 20/30 specs have plans, 8/30 have tasks, 8/30 complete (001–007, 011). Phase 0 + Phase 1 done, Phase 2 in progress (006 + 007 complete, 008–010 need tasks). Next: `/speckit.tasks` for remaining Phase 2 extensions (008–010) and adapters (012–014, 020). 10 specs need plans (015–019, 023–025, 027, 029).
+**Current Focus:** 20/30 specs have plans, 10/30 have tasks, 8/30 complete (001–007, 011). Phase 0 + Phase 1 done, Phase 2 in progress (006 + 007 complete, 008 has tasks, 009–010 need tasks). Next: `/speckit.implement` for 008, `/speckit.tasks` for remaining Phase 2 extensions (009–010) and adapters (012–014, 020). 10 specs need plans (015–019, 023–025, 027, 029).
 
 > **Numbering System:** Spec numbers (001–030) are sequential identifiers that
 > never change. Phase numbers represent execution order and can be reassigned
@@ -70,7 +70,7 @@ the two central verticals that make the agent functional.
 **Goal:** Context management, tool system extensions, model catalog, multi-agent
 primitives, and loop governance — capabilities that enhance the core engine.
 
-**Status:** 5/5 specs planned, 2/5 have tasks, 2/5 complete, 5/5 specs defined
+**Status:** 5/5 specs planned, 3/5 have tasks, 2/5 complete, 5/5 specs defined
 
 ### Implementation Checklist
 
@@ -87,7 +87,7 @@ primitives, and loop governance — capabilities that enhance the core engine.
 - [ ] **2.3** Model Catalog, Presets & Fallback — TOML-driven catalog, preset-to-connection resolution, automatic fallback chain
   - Spec: `specs/008-model-catalog-presets/spec.md`
   - Branch: `008-model-catalog-presets`
-  - Status: Plan complete — needs tasks
+  - Status: Ready for implementation (0/30 tasks)
   - Depends on: 0.3
 - [ ] **2.4** Multi-Agent System — AgentRegistry, AgentMailbox, AgentOrchestrator, SubAgent tool wrapper
   - Spec: `specs/009-multi-agent-system/spec.md`
@@ -205,7 +205,7 @@ evaluation — each depends only on the core library.
 **Goal:** Interactive terminal interface — the binary crate that demonstrates
 the full agent library in a usable application.
 
-**Status:** 2/5 specs planned, 0/5 have tasks, 5/5 specs defined
+**Status:** 2/5 specs planned, 1/5 have tasks, 5/5 specs defined
 
 ### Implementation Checklist
 
@@ -217,7 +217,7 @@ the full agent library in a usable application.
 - [ ] **5.2** TUI: Input & Conversation — Multi-line editor, scrollable conversation, markdown, syntax highlighting (§16.2–16.3)
   - Spec: `specs/026-tui-input-conversation/spec.md`
   - Branch: `026-tui-input-conversation`
-  - Status: Plan complete — needs tasks
+  - Status: Ready for implementation (0/69 tasks)
   - Depends on: 5.1
 - [ ] **5.3** TUI: Tool Panel, Diffs & Status Bar — Tool panel, collapsible blocks, inline diffs, status bar, context gauge (§16.6–16.7, §16.10)
   - Spec: `specs/027-tui-tools-diffs-status/spec.md`
