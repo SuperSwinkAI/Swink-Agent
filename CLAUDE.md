@@ -105,6 +105,8 @@ MSRV **1.88** (edition 2024). Workspace deps centralized in root `Cargo.toml`.
 - N/A (input history is per-session, in-memory) (026-tui-input-conversation)
 - Rust 1.88 (edition 2024) + `ratatui` 0.30, `crossterm` 0.29 (event-stream), `arboard` (clipboard), `swink-agent` (core types), `swink-agent-memory` (`SessionStore`, `JsonlSessionStore`, `SessionMeta`) (028-tui-commands-editor-session)
 - JSONL files via `swink-agent-memory` `JsonlSessionStore` (line 1 = `SessionMeta`, lines 2+ = `AgentMessage`) (028-tui-commands-editor-session)
+- Rust 1.88, edition 2024 + `swink-agent` (core), `swink-agent-adapters` (proxy), `swink-agent-tui` (headless rendering), `tokio` (async runtime), `serde_json` (mock data), `futures` (stream combinators) (030-integration-tests)
+- N/A — all state is in-memory mocks (030-integration-tests)
 
 ## Recent Changes
 - 001-workspace-scaffold: Added Rust 1.88 (edition 2024) + serde, serde_json, tokio, futures, thiserror, uuid, reqwest, jsonschema, schemars, rand, tracing, toml (all centralized in workspace `[workspace.dependencies]`)
