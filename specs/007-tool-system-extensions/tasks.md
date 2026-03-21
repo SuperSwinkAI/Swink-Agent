@@ -19,9 +19,9 @@
 
 **Purpose**: Feature flag configuration and shared type preparation
 
-- [ ] T001 Add `builtin-tools` feature flag (default-enabled) to `Cargo.toml` with `tokio/process` dep gated behind it
-- [ ] T002 [P] Add `regex` workspace dependency to root `Cargo.toml` for sensitive value pattern matching
-- [ ] T003 [P] Create `src/tools/` directory with `src/tools/mod.rs` for feature-gated built-in tool re-exports
+- [x] T001 Add `builtin-tools` feature flag (default-enabled) to `Cargo.toml` with `tokio/process` dep gated behind it
+- [x] T002 [P] Add `regex` workspace dependency to root `Cargo.toml` for sensitive value pattern matching
+- [x] T003 [P] Create `src/tools/` directory with `src/tools/mod.rs` for feature-gated built-in tool re-exports
 
 ---
 
@@ -31,15 +31,15 @@
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete
 
-- [ ] T004 Implement `ToolMetadata` struct with `namespace`/`version` fields and `with_namespace()`/`with_version()` builders in `src/tool.rs`
-- [ ] T005 Implement `ToolApproval` enum (`Approved`, `Rejected`, `ApprovedWith(Value)`) in `src/tool.rs`
-- [ ] T006 Implement `ToolApprovalRequest` struct with redacted `Debug` impl in `src/tool.rs`
-- [ ] T007 Implement `ApprovalMode` enum (`Enabled`, `Smart`, `Bypassed`) with `Default` derive in `src/tool.rs`
-- [ ] T008 Implement `validate_schema()` and `validate_tool_arguments()` functions using `jsonschema` crate in `src/tool.rs`
-- [ ] T009 [P] Implement `unknown_tool_result()` and `validation_error_result()` helper constructors in `src/tool.rs`
-- [ ] T010 [P] Implement `redact_sensitive_values()` with regex-based pattern matching for keys (password, secret, token, api_key) and value prefixes (sk-, key-, bearer) in `src/tool.rs`
-- [ ] T011 Implement `selective_approve()` helper that wraps an approval callback with `ApprovalMode` filtering in `src/tool.rs`
-- [ ] T012 Add `AgentTool` trait methods `requires_approval()` (default false) and `metadata()` (default None) to `src/tool.rs`
+- [x] T004 Implement `ToolMetadata` struct with `namespace`/`version` fields and `with_namespace()`/`with_version()` builders in `src/tool.rs`
+- [x] T005 Implement `ToolApproval` enum (`Approved`, `Rejected`, `ApprovedWith(Value)`) in `src/tool.rs`
+- [x] T006 Implement `ToolApprovalRequest` struct with redacted `Debug` impl in `src/tool.rs`
+- [x] T007 Implement `ApprovalMode` enum (`Enabled`, `Smart`, `Bypassed`) with `Default` derive in `src/tool.rs`
+- [x] T008 Implement `validate_schema()` and `validate_tool_arguments()` functions using `jsonschema` crate in `src/tool.rs`
+- [x] T009 [P] Implement `unknown_tool_result()` and `validation_error_result()` helper constructors in `src/tool.rs`
+- [x] T010 [P] Implement `redact_sensitive_values()` with regex-based pattern matching for keys (password, secret, token, api_key) and value prefixes (sk-, key-, bearer) in `src/tool.rs`
+- [x] T011 Implement `selective_approve()` helper that wraps an approval callback with `ApprovalMode` filtering in `src/tool.rs`
+- [x] T012 Add `AgentTool` trait methods `requires_approval()` (default false) and `metadata()` (default None) to `src/tool.rs`
 
 **Checkpoint**: Foundation ready — tool system types available for all user stories
 
@@ -53,12 +53,12 @@
 
 ### Implementation for User Story 1
 
-- [ ] T013 [US1] Define `ToolCallTransformer` trait with `transform(&self, tool_name: &str, arguments: &mut Value)` method in `src/tool_call_transformer.rs`
-- [ ] T014 [US1] Implement blanket impl of `ToolCallTransformer` for `Fn(&str, &mut Value) + Send + Sync` closures in `src/tool_call_transformer.rs`
-- [ ] T015 [US1] Add `tool_call_transformer: Option<Arc<dyn ToolCallTransformer>>` field to `AgentLoopConfig` in `src/loop_/mod.rs`
-- [ ] T016 [US1] Integrate transformer into tool dispatch pipeline (after approval, before validator) in `src/loop_/tool_dispatch.rs`
-- [ ] T017 [US1] Add unit tests: transformer modifies args, no transformer passes through, closure blanket impl works in `src/tool_call_transformer.rs`
-- [ ] T018 [US1] Re-export `ToolCallTransformer` from `src/lib.rs`
+- [x] T013 [US1] Define `ToolCallTransformer` trait with `transform(&self, tool_name: &str, arguments: &mut Value)` method in `src/tool_call_transformer.rs`
+- [x] T014 [US1] Implement blanket impl of `ToolCallTransformer` for `Fn(&str, &mut Value) + Send + Sync` closures in `src/tool_call_transformer.rs`
+- [x] T015 [US1] Add `tool_call_transformer: Option<Arc<dyn ToolCallTransformer>>` field to `AgentLoopConfig` in `src/loop_/mod.rs`
+- [x] T016 [US1] Integrate transformer into tool dispatch pipeline (after approval, before validator) in `src/loop_/tool_dispatch.rs`
+- [x] T017 [US1] Add unit tests: transformer modifies args, no transformer passes through, closure blanket impl works in `src/tool_call_transformer.rs`
+- [x] T018 [US1] Re-export `ToolCallTransformer` from `src/lib.rs`
 
 **Checkpoint**: Transformer pipeline functional — arguments can be rewritten before validation
 
@@ -72,12 +72,12 @@
 
 ### Implementation for User Story 2
 
-- [ ] T019 [US2] Define `ToolValidator` trait with `validate(&self, tool_name: &str, arguments: &Value) -> Result<(), String>` method in `src/tool_validator.rs`
-- [ ] T020 [US2] Implement blanket impl of `ToolValidator` for `Fn(&str, &Value) -> Result<(), String> + Send + Sync` closures in `src/tool_validator.rs`
-- [ ] T021 [US2] Add `tool_validator: Option<Arc<dyn ToolValidator>>` field to `AgentLoopConfig` in `src/loop_/mod.rs`
-- [ ] T022 [US2] Integrate validator into tool dispatch pipeline (after transformer, before schema validation) in `src/loop_/tool_dispatch.rs`
-- [ ] T023 [US2] Add unit tests: validator accepts, validator rejects with error result, closure blanket impl works in `src/tool_validator.rs`
-- [ ] T024 [US2] Re-export `ToolValidator` from `src/lib.rs`
+- [x] T019 [US2] Define `ToolValidator` trait with `validate(&self, tool_name: &str, arguments: &Value) -> Result<(), String>` method in `src/tool_validator.rs`
+- [x] T020 [US2] Implement blanket impl of `ToolValidator` for `Fn(&str, &Value) -> Result<(), String> + Send + Sync` closures in `src/tool_validator.rs`
+- [x] T021 [US2] Add `tool_validator: Option<Arc<dyn ToolValidator>>` field to `AgentLoopConfig` in `src/loop_/mod.rs`
+- [x] T022 [US2] Integrate validator into tool dispatch pipeline (after transformer, before schema validation) in `src/loop_/tool_dispatch.rs`
+- [x] T023 [US2] Add unit tests: validator accepts, validator rejects with error result, closure blanket impl works in `src/tool_validator.rs`
+- [x] T024 [US2] Re-export `ToolValidator` from `src/lib.rs`
 
 **Checkpoint**: Validator pipeline functional — tool calls can be rejected before execution
 
@@ -91,14 +91,14 @@
 
 ### Implementation for User Story 3
 
-- [ ] T025 [US3] Define `MiddlewareFn` type alias for the middleware closure signature in `src/tool_middleware.rs`
-- [ ] T026 [US3] Implement `ToolMiddleware` struct with `inner: Arc<dyn AgentTool>` and `middleware_fn: Arc<MiddlewareFn>` fields in `src/tool_middleware.rs`
-- [ ] T027 [US3] Implement `ToolMiddleware::new()` constructor accepting inner tool and closure in `src/tool_middleware.rs`
-- [ ] T028 [US3] Implement `AgentTool` for `ToolMiddleware` — delegate metadata methods to inner, intercept `execute()` in `src/tool_middleware.rs`
-- [ ] T029 [P] [US3] Implement `ToolMiddleware::with_timeout()` factory method using `tokio::time::timeout` in `src/tool_middleware.rs`
-- [ ] T030 [P] [US3] Implement `ToolMiddleware::with_logging()` factory method calling callback with (name, id, is_start) in `src/tool_middleware.rs`
-- [ ] T031 [US3] Add unit tests: middleware intercepts execute, metadata delegates to inner, with_timeout enforces limit, with_logging calls callback in `src/tool_middleware.rs`
-- [ ] T032 [US3] Re-export `ToolMiddleware` from `src/lib.rs`
+- [x] T025 [US3] Define `MiddlewareFn` type alias for the middleware closure signature in `src/tool_middleware.rs`
+- [x] T026 [US3] Implement `ToolMiddleware` struct with `inner: Arc<dyn AgentTool>` and `middleware_fn: Arc<MiddlewareFn>` fields in `src/tool_middleware.rs`
+- [x] T027 [US3] Implement `ToolMiddleware::new()` constructor accepting inner tool and closure in `src/tool_middleware.rs`
+- [x] T028 [US3] Implement `AgentTool` for `ToolMiddleware` — delegate metadata methods to inner, intercept `execute()` in `src/tool_middleware.rs`
+- [x] T029 [P] [US3] Implement `ToolMiddleware::with_timeout()` factory method using `tokio::time::timeout` in `src/tool_middleware.rs`
+- [x] T030 [P] [US3] Implement `ToolMiddleware::with_logging()` factory method calling callback with (name, id, is_start) in `src/tool_middleware.rs`
+- [x] T031 [US3] Add unit tests: middleware intercepts execute, metadata delegates to inner, with_timeout enforces limit, with_logging calls callback in `src/tool_middleware.rs`
+- [x] T032 [US3] Re-export `ToolMiddleware` from `src/lib.rs`
 
 **Checkpoint**: Middleware functional — tools can be decorated with composable wrappers
 
@@ -112,15 +112,15 @@
 
 ### Implementation for User Story 4
 
-- [ ] T033 [US4] Define `ToolCallSummary<'a>` borrowed view struct with `id`, `name`, `arguments` fields in `src/tool_execution_policy.rs`
-- [ ] T034 [US4] Define `PriorityFn` type alias (`dyn Fn(&ToolCallSummary) -> i32 + Send + Sync`) in `src/tool_execution_policy.rs`
-- [ ] T035 [US4] Define `ToolExecutionStrategy` trait with async `partition()` method returning `Vec<Vec<usize>>` in `src/tool_execution_policy.rs`
-- [ ] T036 [US4] Implement `ToolExecutionPolicy` enum with `Concurrent`, `Sequential`, `Priority`, `Custom` variants in `src/tool_execution_policy.rs`
-- [ ] T037 [US4] Implement `Clone` and `Debug` manually for `ToolExecutionPolicy` (Arc fields require manual impls) in `src/tool_execution_policy.rs`
-- [ ] T038 [US4] Add `tool_execution_policy: ToolExecutionPolicy` field to `AgentLoopConfig` in `src/loop_/mod.rs`
-- [ ] T039 [US4] Integrate execution policy into tool dispatch — compute groups from policy, execute groups sequentially with concurrent within-group in `src/loop_/tool_dispatch.rs`
-- [ ] T040 [US4] Add unit tests: concurrent runs all at once, sequential runs in order, priority groups by value, custom strategy partitions in `src/tool_execution_policy.rs`
-- [ ] T041 [US4] Re-export `ToolCallSummary`, `PriorityFn`, `ToolExecutionPolicy`, `ToolExecutionStrategy` from `src/lib.rs`
+- [x] T033 [US4] Define `ToolCallSummary<'a>` borrowed view struct with `id`, `name`, `arguments` fields in `src/tool_execution_policy.rs`
+- [x] T034 [US4] Define `PriorityFn` type alias (`dyn Fn(&ToolCallSummary) -> i32 + Send + Sync`) in `src/tool_execution_policy.rs`
+- [x] T035 [US4] Define `ToolExecutionStrategy` trait with async `partition()` method returning `Vec<Vec<usize>>` in `src/tool_execution_policy.rs`
+- [x] T036 [US4] Implement `ToolExecutionPolicy` enum with `Concurrent`, `Sequential`, `Priority`, `Custom` variants in `src/tool_execution_policy.rs`
+- [x] T037 [US4] Implement `Clone` and `Debug` manually for `ToolExecutionPolicy` (Arc fields require manual impls) in `src/tool_execution_policy.rs`
+- [x] T038 [US4] Add `tool_execution_policy: ToolExecutionPolicy` field to `AgentLoopConfig` in `src/loop_/mod.rs`
+- [x] T039 [US4] Integrate execution policy into tool dispatch — compute groups from policy, execute groups sequentially with concurrent within-group in `src/loop_/tool_dispatch.rs`
+- [x] T040 [US4] Add unit tests: concurrent runs all at once, sequential runs in order, priority groups by value, custom strategy partitions in `src/tool_execution_policy.rs`
+- [x] T041 [US4] Re-export `ToolCallSummary`, `PriorityFn`, `ToolExecutionPolicy`, `ToolExecutionStrategy` from `src/lib.rs`
 
 **Checkpoint**: Execution policies functional — tool dispatch order is configurable
 
@@ -134,15 +134,15 @@
 
 ### Implementation for User Story 5
 
-- [ ] T042 [US5] Define `ExecuteFn` type alias for the stored execution closure in `src/fn_tool.rs`
-- [ ] T043 [US5] Implement `FnTool` struct with `name`, `label`, `description`, `schema`, `requires_approval`, `execute_fn` fields in `src/fn_tool.rs`
-- [ ] T044 [US5] Implement `FnTool::new()` constructor with default schema (accepts any object) and stub execute in `src/fn_tool.rs`
-- [ ] T045 [US5] Implement builder methods `with_schema_for::<T: JsonSchema>()`, `with_schema(Value)`, `with_requires_approval(bool)` in `src/fn_tool.rs`
-- [ ] T046 [US5] Implement `with_execute()` (full signature) and `with_execute_simple()` (params + cancel only) builder methods in `src/fn_tool.rs`
-- [ ] T047 [US5] Implement `AgentTool` for `FnTool` — delegate to stored fields and closure in `src/fn_tool.rs`
-- [ ] T048 [US5] Implement `Debug` for `FnTool` (closure fields use opaque display) in `src/fn_tool.rs`
-- [ ] T049 [US5] Add unit tests: FnTool executes closure, with_schema_for derives schema, with_execute_simple works, trait methods delegate correctly in `src/fn_tool.rs`
-- [ ] T050 [US5] Re-export `FnTool` from `src/lib.rs`
+- [x] T042 [US5] Define `ExecuteFn` type alias for the stored execution closure in `src/fn_tool.rs`
+- [x] T043 [US5] Implement `FnTool` struct with `name`, `label`, `description`, `schema`, `requires_approval`, `execute_fn` fields in `src/fn_tool.rs`
+- [x] T044 [US5] Implement `FnTool::new()` constructor with default schema (accepts any object) and stub execute in `src/fn_tool.rs`
+- [x] T045 [US5] Implement builder methods `with_schema_for::<T: JsonSchema>()`, `with_schema(Value)`, `with_requires_approval(bool)` in `src/fn_tool.rs`
+- [x] T046 [US5] Implement `with_execute()` (full signature) and `with_execute_simple()` (params + cancel only) builder methods in `src/fn_tool.rs`
+- [x] T047 [US5] Implement `AgentTool` for `FnTool` — delegate to stored fields and closure in `src/fn_tool.rs`
+- [x] T048 [US5] Implement `Debug` for `FnTool` (closure fields use opaque display) in `src/fn_tool.rs`
+- [x] T049 [US5] Add unit tests: FnTool executes closure, with_schema_for derives schema, with_execute_simple works, trait methods delegate correctly in `src/fn_tool.rs`
+- [x] T050 [US5] Re-export `FnTool` from `src/lib.rs`
 
 **Checkpoint**: FnTool functional — tools can be created from closures with zero boilerplate
 
@@ -156,15 +156,15 @@
 
 ### Implementation for User Story 6
 
-- [ ] T051 [US6] Implement `BashTool` struct with pre-computed JSON Schema, `new()`/`Default`, and `AgentTool` impl (name: "bash", requires_approval: true) using `tokio::process::Command` in `src/tools/bash.rs`
-- [ ] T052 [P] [US6] Implement `ReadFileTool` struct with JSON Schema, `new()`/`Default`, and `AgentTool` impl (name: "read_file", requires_approval: false) using `tokio::fs::read_to_string` in `src/tools/read_file.rs`
-- [ ] T053 [P] [US6] Implement `WriteFileTool` struct with JSON Schema, `new()`/`Default`, and `AgentTool` impl (name: "write_file", requires_approval: true) using `tokio::fs::write` in `src/tools/write_file.rs`
-- [ ] T054 [US6] Implement `builtin_tools()` convenience function returning `Vec<Arc<dyn AgentTool>>` with all three tools in `src/tools/mod.rs`
-- [ ] T055 [US6] Add `MAX_OUTPUT_BYTES` constant (100KB) and output truncation logic shared across built-in tools in `src/tools/mod.rs`
-- [ ] T056 [US6] Ensure all built-in tools check `CancellationToken` before I/O operations for cooperative cancellation in `src/tools/bash.rs`, `src/tools/read_file.rs`, `src/tools/write_file.rs`
-- [ ] T057 [US6] Add feature-gated re-exports (`BashTool`, `ReadFileTool`, `WriteFileTool`, `builtin_tools`) in `src/lib.rs` under `#[cfg(feature = "builtin-tools")]`
-- [ ] T058 [US6] Add unit tests: BashTool executes command, ReadFileTool reads file, WriteFileTool writes file, builtin_tools() returns all three, cancellation token respected in `src/tools/bash.rs`, `src/tools/read_file.rs`, `src/tools/write_file.rs`
-- [ ] T059 [US6] Verify crate compiles with `--no-default-features` (built-in tools excluded) via `cargo test -p swink-agent --no-default-features`
+- [x] T051 [US6] Implement `BashTool` struct with pre-computed JSON Schema, `new()`/`Default`, and `AgentTool` impl (name: "bash", requires_approval: true) using `tokio::process::Command` in `src/tools/bash.rs`
+- [x] T052 [P] [US6] Implement `ReadFileTool` struct with JSON Schema, `new()`/`Default`, and `AgentTool` impl (name: "read_file", requires_approval: false) using `tokio::fs::read_to_string` in `src/tools/read_file.rs`
+- [x] T053 [P] [US6] Implement `WriteFileTool` struct with JSON Schema, `new()`/`Default`, and `AgentTool` impl (name: "write_file", requires_approval: true) using `tokio::fs::write` in `src/tools/write_file.rs`
+- [x] T054 [US6] Implement `builtin_tools()` convenience function returning `Vec<Arc<dyn AgentTool>>` with all three tools in `src/tools/mod.rs`
+- [x] T055 [US6] Add `MAX_OUTPUT_BYTES` constant (100KB) and output truncation logic shared across built-in tools in `src/tools/mod.rs`
+- [x] T056 [US6] Ensure all built-in tools check `CancellationToken` before I/O operations for cooperative cancellation in `src/tools/bash.rs`, `src/tools/read_file.rs`, `src/tools/write_file.rs`
+- [x] T057 [US6] Add feature-gated re-exports (`BashTool`, `ReadFileTool`, `WriteFileTool`, `builtin_tools`) in `src/lib.rs` under `#[cfg(feature = "builtin-tools")]`
+- [x] T058 [US6] Add unit tests: BashTool executes command, ReadFileTool reads file, WriteFileTool writes file, builtin_tools() returns all three, cancellation token respected in `src/tools/bash.rs`, `src/tools/read_file.rs`, `src/tools/write_file.rs`
+- [x] T059 [US6] Verify crate compiles with `--no-default-features` (built-in tools excluded) via `cargo test -p swink-agent --no-default-features`
 
 **Checkpoint**: Built-in tools functional and feature-gated — shell and file access available when enabled
 
@@ -174,11 +174,11 @@
 
 **Purpose**: Final integration validation and cross-cutting quality checks
 
-- [ ] T060 Verify full tool dispatch pipeline order (approval → transformer → validator → schema → execute) with integration test in `src/loop_/tool_dispatch.rs`
-- [ ] T061 [P] Run `cargo clippy --workspace -- -D warnings` and fix any warnings
-- [ ] T062 [P] Run `cargo test --workspace` and verify all tests pass
-- [ ] T063 [P] Run `cargo test -p swink-agent --no-default-features` and verify feature-gated compilation
-- [ ] T064 Validate quickstart.md examples compile and match public API in `specs/007-tool-system-extensions/quickstart.md`
+- [x] T060 Verify full tool dispatch pipeline order (approval → transformer → validator → schema → execute) with integration test in `src/loop_/tool_dispatch.rs`
+- [x] T061 [P] Run `cargo clippy --workspace -- -D warnings` and fix any warnings
+- [x] T062 [P] Run `cargo test --workspace` and verify all tests pass
+- [x] T063 [P] Run `cargo test -p swink-agent --no-default-features` and verify feature-gated compilation
+- [x] T064 Validate quickstart.md examples compile and match public API in `specs/007-tool-system-extensions/quickstart.md`
 
 ---
 

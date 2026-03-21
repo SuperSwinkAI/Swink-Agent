@@ -7,7 +7,7 @@
 - Provider Roadmap: [PROVIDER_EXPANSION_ROADMAP.md](PROVIDER_EXPANSION_ROADMAP.md)
 - Eval Roadmap: [EVAL.md](EVAL.md)
 
-**Current Focus:** 20/30 specs have plans, 9/30 have tasks, 7/30 complete (001–006, 011). Phase 0 + Phase 1 done, Phase 2 in progress (006 complete, 007 has tasks ready for implementation). Phase 5 in progress (026 has tasks ready for implementation). Next: `/speckit.implement` for 007 and 026, then `/speckit.tasks` for remaining Phase 2 extensions (008–010) and adapters (012–014, 020). 10 specs need plans (015–019, 023–025, 027, 029).
+**Current Focus:** 20/30 specs have plans, 8/30 have tasks, 8/30 complete (001–007, 011). Phase 0 + Phase 1 done, Phase 2 in progress (006 + 007 complete, 008–010 need tasks). Next: `/speckit.tasks` for remaining Phase 2 extensions (008–010) and adapters (012–014, 020). 10 specs need plans (015–019, 023–025, 027, 029).
 
 > **Numbering System:** Spec numbers (001–030) are sequential identifiers that
 > never change. Phase numbers represent execution order and can be reassigned
@@ -70,7 +70,7 @@ the two central verticals that make the agent functional.
 **Goal:** Context management, tool system extensions, model catalog, multi-agent
 primitives, and loop governance — capabilities that enhance the core engine.
 
-**Status:** 5/5 specs planned, 2/5 have tasks, 1/5 complete, 5/5 specs defined
+**Status:** 5/5 specs planned, 2/5 have tasks, 2/5 complete, 5/5 specs defined
 
 ### Implementation Checklist
 
@@ -79,10 +79,10 @@ primitives, and loop governance — capabilities that enhance the core engine.
   - Branch: `006-context-management`
   - Status: Complete (46/46 tasks, merged to main)
   - Depends on: 0.2
-- [ ] **2.2** Tool System Extensions — Transformer, validator, middleware, execution policies, FnTool, builtin tools (§4)
+- [x] **2.2** Tool System Extensions — Transformer, validator, middleware, execution policies, FnTool, builtin tools (§4)
   - Spec: `specs/007-tool-system-extensions/spec.md`
   - Branch: `007-tool-system-extensions`
-  - Status: Ready for implementation (0/64 tasks)
+  - Status: Complete (64/64 tasks, merged to main)
   - Depends on: 0.3
 - [ ] **2.3** Model Catalog, Presets & Fallback — TOML-driven catalog, preset-to-connection resolution, automatic fallback chain
   - Spec: `specs/008-model-catalog-presets/spec.md`
@@ -205,7 +205,7 @@ evaluation — each depends only on the core library.
 **Goal:** Interactive terminal interface — the binary crate that demonstrates
 the full agent library in a usable application.
 
-**Status:** 2/5 specs planned, 1/5 have tasks, 5/5 specs defined
+**Status:** 2/5 specs planned, 0/5 have tasks, 5/5 specs defined
 
 ### Implementation Checklist
 
@@ -217,7 +217,7 @@ the full agent library in a usable application.
 - [ ] **5.2** TUI: Input & Conversation — Multi-line editor, scrollable conversation, markdown, syntax highlighting (§16.2–16.3)
   - Spec: `specs/026-tui-input-conversation/spec.md`
   - Branch: `026-tui-input-conversation`
-  - Status: Ready for implementation (0/69 tasks)
+  - Status: Plan complete — needs tasks
   - Depends on: 5.1
 - [ ] **5.3** TUI: Tool Panel, Diffs & Status Bar — Tool panel, collapsible blocks, inline diffs, status bar, context gauge (§16.6–16.7, §16.10)
   - Spec: `specs/027-tui-tools-diffs-status/spec.md`
@@ -336,7 +336,7 @@ graph TD
     style D fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
     style E fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
     style F fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
-    style G fill:#fff,color:#000,stroke:#6b7280,stroke-width:2px
+    style G fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
     style H fill:#fff,color:#000,stroke:#6b7280,stroke-width:2px
     style I fill:#fff,color:#000,stroke:#6b7280,stroke-width:2px
     style J fill:#fff,color:#000,stroke:#6b7280,stroke-width:2px

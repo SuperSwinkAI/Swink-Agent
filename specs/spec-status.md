@@ -1,5 +1,5 @@
 # Spec-Driven Development Status
-<!-- spec-status: project=worktree-026-tui-input-conversation commit=a566e44cb442087497806a5a7392cf011db31f55 updated=2026-03-21T17:13:38Z -->
+<!-- spec-status: project=Swink-Agent commit=9bc90f45d337b634781cf40418fb95d1f0c7e43b updated=2026-03-21T17:18:29Z -->
 
 | Feature                         | Specify | Plan | Tasks | Implement |
 |---------------------------------|---------|------|-------|-----------|
@@ -9,7 +9,7 @@
 | 004-agent-loop                  | ✓     | ✓  | ✓   | ✓ Complete |
 | 005-agent-struct                | ✓     | ✓  | ✓   | ✓ Complete |
 | 006-context-management          | ✓     | ✓  | ✓   | ✓ Complete |
-| 007-tool-system-extensions      | ✓     | ✓  | ✓   | ● 0/64 (0%) |
+| 007-tool-system-extensions      | ✓     | ✓  | ✓   | ✓ Complete |
 | 008-model-catalog-presets       | ✓     | ✓  | -     | -         |
 | 009-multi-agent-system          | ✓     | ✓  | -     | -         |
 | 010-loop-policies-observability | ✓     | ✓  | -     | -         |
@@ -40,7 +40,7 @@
 <!-- feature: 004-agent-loop has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=65 tasks_completed=65 checklist_files=requirements.md -->
 <!-- feature: 005-agent-struct has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=78 tasks_completed=78 checklist_files=requirements.md -->
 <!-- feature: 006-context-management has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=46 tasks_completed=46 checklist_files=requirements.md -->
-<!-- feature: 007-tool-system-extensions has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=64 tasks_completed=0 checklist_files=requirements.md -->
+<!-- feature: 007-tool-system-extensions has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=64 tasks_completed=64 checklist_files=requirements.md -->
 <!-- feature: 008-model-catalog-presets has_spec=true has_plan=true has_tasks=false has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=0 tasks_completed=0 checklist_files=requirements.md -->
 <!-- feature: 009-multi-agent-system has_spec=true has_plan=true has_tasks=false has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=0 tasks_completed=0 checklist_files=requirements.md -->
 <!-- feature: 010-loop-policies-observability has_spec=true has_plan=true has_tasks=false has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=0 tasks_completed=0 checklist_files=requirements.md -->
