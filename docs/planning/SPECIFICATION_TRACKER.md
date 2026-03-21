@@ -7,7 +7,7 @@
 - Provider Roadmap: [PROVIDER_EXPANSION_ROADMAP.md](PROVIDER_EXPANSION_ROADMAP.md)
 - Eval Roadmap: [EVAL.md](EVAL.md)
 
-**Current Focus:** 21/30 specs have plans, 7/30 complete (001–006, 011). Phase 0 + Phase 1 done, Phase 2 started (006 complete). Next: `/speckit.tasks` for remaining Phase 2 extensions (007–010) and adapters (012–014, 020). 9 specs need clarification (015–019, 023–025, 027, 029).
+**Current Focus:** 21/30 specs have plans, 8/30 have tasks, 7/30 complete (001–006, 011). Phase 0 + Phase 1 done, Phase 2 in progress (006 complete, 007 has tasks ready for implementation). Next: `/speckit.tasks` for remaining Phase 2 extensions (008–010) and adapters (012–014, 020). 9 specs need clarification (015–019, 023–025, 027, 029).
 
 > **Numbering System:** Spec numbers (001–030) are sequential identifiers that
 > never change. Phase numbers represent execution order and can be reassigned
@@ -70,7 +70,7 @@ the two central verticals that make the agent functional.
 **Goal:** Context management, tool system extensions, model catalog, multi-agent
 primitives, and loop governance — capabilities that enhance the core engine.
 
-**Status:** 5/5 specs planned, 1/5 have tasks, 1/5 complete, 5/5 specs defined
+**Status:** 5/5 specs planned, 2/5 have tasks, 1/5 complete, 5/5 specs defined
 
 ### Implementation Checklist
 
@@ -82,7 +82,7 @@ primitives, and loop governance — capabilities that enhance the core engine.
 - [ ] **2.2** Tool System Extensions — Transformer, validator, middleware, execution policies, FnTool, builtin tools (§4)
   - Spec: `specs/007-tool-system-extensions/spec.md`
   - Branch: `007-tool-system-extensions`
-  - Status: Plan complete — needs tasks
+  - Status: Ready for implementation (0/64 tasks)
   - Depends on: 0.3
 - [ ] **2.3** Model Catalog, Presets & Fallback — TOML-driven catalog, preset-to-connection resolution, automatic fallback chain
   - Spec: `specs/008-model-catalog-presets/spec.md`

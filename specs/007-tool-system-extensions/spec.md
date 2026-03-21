@@ -9,7 +9,7 @@
 
 ### User Story 1 - Rewrite Tool Calls Before Execution (Priority: P1)
 
-A developer registers a tool call transformer that rewrites tool calls before they are executed. The transformer can modify arguments, rename tools, or inject additional parameters. It runs unconditionally on every tool call — before validation and before execution — enabling cross-cutting argument manipulation.
+A developer registers a tool call transformer that rewrites tool calls before they are executed. The transformer can modify arguments or inject additional parameters. It runs unconditionally on every tool call — before validation and before execution — enabling cross-cutting argument manipulation. Note: the transformer receives the tool name as a read-only reference (`&str`) and cannot rename tools.
 
 **Why this priority**: Transformers enable critical use cases like parameter injection (adding session IDs), argument sanitization, and tool aliasing without modifying individual tool implementations.
 
