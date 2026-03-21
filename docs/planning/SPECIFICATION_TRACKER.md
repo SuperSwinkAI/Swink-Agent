@@ -7,7 +7,7 @@
 - Provider Roadmap: [PROVIDER_EXPANSION_ROADMAP.md](PROVIDER_EXPANSION_ROADMAP.md)
 - Eval Roadmap: [EVAL.md](EVAL.md)
 
-**Current Focus:** 20/30 specs have plans, 6/30 have tasks (001–005, 011 complete). Next: `/speckit.tasks` for 006, 007, 008, 012–013 (adapter implementations unblocked by 011). 005 Agent Struct is now complete (78/78 tasks), unblocking 009 Multi-Agent, 025 TUI Scaffold, and 030 Integration Tests.
+**Current Focus:** 21/30 specs have plans, 6/30 complete (001–005, 011). Phase 0 + Phase 1 done. Next: `/speckit.tasks` for Phase 2 extensions (006–010) and remaining adapters (012–014, 020). 9 specs need clarification (015–019, 023–025, 027, 029).
 
 > **Numbering System:** Spec numbers (001–030) are sequential identifiers that
 > never change. Phase numbers represent execution order and can be reassigned
