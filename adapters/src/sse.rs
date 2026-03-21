@@ -12,7 +12,8 @@ use futures::stream::{self, Stream, StreamExt as _};
 pub enum SseLine {
     /// An event type label (e.g., `event: message_start`).
     Event(String),
-    /// A data payload.
+    /// A data payload (successive `data:` lines are concatenated with `\n`
+    /// per the SSE specification).
     Data(String),
     /// End-of-stream signal (`data: [DONE]`).
     Done,
@@ -24,8 +25,12 @@ pub enum SseLine {
 ///
 /// Handles partial UTF-8 chunks and splits on newline boundaries,
 /// producing [`SseLine`] values as complete lines become available.
+/// Successive `data:` fields are concatenated with `\n` per the SSE
+/// specification (FR-006).
 pub struct SseStreamParser {
     buffer: String,
+    /// Accumulates successive `data:` lines for multi-line concatenation.
+    pending_data: Option<String>,
 }
 
 impl SseStreamParser {
@@ -34,6 +39,7 @@ impl SseStreamParser {
     pub const fn new() -> Self {
         Self {
             buffer: String::new(),
+            pending_data: None,
         }
     }
 
@@ -48,18 +54,21 @@ impl SseStreamParser {
 
     /// Flush remaining buffer at stream end.
     pub fn flush(&mut self) -> Vec<SseLine> {
-        if self.buffer.trim().is_empty() {
-            self.buffer.clear();
-            return vec![];
-        }
-        // Process any remaining content as a final line
-        let remaining = std::mem::take(&mut self.buffer);
         let mut lines = vec![];
-        for line in remaining.lines() {
-            if let Some(parsed) = Self::parse_line(line) {
-                lines.push(parsed);
+
+        if !self.buffer.trim().is_empty() {
+            let remaining = std::mem::take(&mut self.buffer);
+            for line in remaining.lines() {
+                self.process_raw_line(line, &mut lines);
             }
         }
+        self.buffer.clear();
+
+        // Emit any remaining pending data
+        if let Some(data) = self.pending_data.take() {
+            lines.push(SseLine::Data(data));
+        }
+
         lines
     }
 
@@ -73,37 +82,59 @@ impl SseStreamParser {
             };
             let line = self.buffer[..line_end].to_string();
             self.buffer.drain(..=pos);
-
-            if let Some(parsed) = Self::parse_line(&line) {
-                lines.push(parsed);
-            }
+            self.process_raw_line(&line, &mut lines);
         }
         lines
     }
 
-    fn parse_line(line: &str) -> Option<SseLine> {
+    /// Process a single raw line, accumulating successive `data:` fields
+    /// and flushing pending data when a non-data line is encountered.
+    fn process_raw_line(&mut self, line: &str, output: &mut Vec<SseLine>) {
         if line.is_empty() {
-            return Some(SseLine::Empty);
+            // Empty line = event separator. Flush pending data first.
+            if let Some(data) = self.pending_data.take() {
+                output.push(SseLine::Data(data));
+            }
+            output.push(SseLine::Empty);
+            return;
         }
         if line.starts_with(':') {
-            // SSE comment, skip
-            return None;
+            // SSE comment — skip, but don't flush pending data
+            return;
         }
         if let Some(event_type) = line.strip_prefix("event: ") {
-            return Some(SseLine::Event(event_type.trim().to_string()));
+            // Flush any pending data before yielding the event
+            if let Some(data) = self.pending_data.take() {
+                output.push(SseLine::Data(data));
+            }
+            output.push(SseLine::Event(event_type.trim().to_string()));
+            return;
         }
         if let Some(data) = line.strip_prefix("data: ") {
             let data = data.trim();
             if data == "[DONE]" {
-                return Some(SseLine::Done);
+                // Flush pending data, then yield Done
+                if let Some(pending) = self.pending_data.take() {
+                    output.push(SseLine::Data(pending));
+                }
+                output.push(SseLine::Done);
+                return;
             }
             if !data.is_empty() {
-                return Some(SseLine::Data(data.to_string()));
+                // Accumulate into pending_data for multi-line concatenation
+                if let Some(ref mut pending) = self.pending_data {
+                    pending.push('\n');
+                    pending.push_str(data);
+                } else {
+                    self.pending_data = Some(data.to_string());
+                }
             }
-            return None;
+            return;
         }
-        // Unknown line type, skip
-        None
+        // Unknown line type — flush pending data, skip the line
+        if let Some(data) = self.pending_data.take() {
+            output.push(SseLine::Data(data));
+        }
     }
 }
 
@@ -177,7 +208,7 @@ mod tests {
     }
 
     #[test]
-    fn sse_parser_multiline_data() {
+    fn sse_parser_partial_chunk_buffering() {
         let mut parser = SseStreamParser::new();
         // First feed — partial, no newline yet at end
         let lines1 = parser.feed(b"event: content");
@@ -226,5 +257,89 @@ mod tests {
         // Flush should yield the remaining buffered line
         let flushed = parser.flush();
         assert_eq!(flushed, vec![SseLine::Data("{\"final\":true}".to_string())]);
+    }
+
+    #[test]
+    fn sse_parser_multiline_data_concatenation() {
+        // Per SSE spec, successive `data:` lines are joined with `\n`
+        let mut parser = SseStreamParser::new();
+        let lines = parser.feed(b"data: line1\ndata: line2\ndata: line3\n\n");
+        assert_eq!(
+            lines,
+            vec![
+                SseLine::Data("line1\nline2\nline3".to_string()),
+                SseLine::Empty,
+            ]
+        );
+    }
+
+    #[test]
+    fn sse_parser_multiline_data_flushed_on_event() {
+        // Data lines should be flushed when a non-data line arrives
+        let mut parser = SseStreamParser::new();
+        let lines = parser.feed(b"data: part1\ndata: part2\nevent: next\n");
+        assert_eq!(
+            lines,
+            vec![
+                SseLine::Data("part1\npart2".to_string()),
+                SseLine::Event("next".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn sse_parser_multiline_data_across_feeds() {
+        // Multi-line data split across feed() calls
+        let mut parser = SseStreamParser::new();
+        let lines1 = parser.feed(b"data: first\n");
+        assert!(lines1.is_empty(), "pending data not emitted without separator");
+
+        let lines2 = parser.feed(b"data: second\n\n");
+        assert_eq!(
+            lines2,
+            vec![
+                SseLine::Data("first\nsecond".to_string()),
+                SseLine::Empty,
+            ]
+        );
+    }
+
+    #[test]
+    fn sse_parser_single_data_emitted_on_empty_line() {
+        // Single data line followed by empty line
+        let mut parser = SseStreamParser::new();
+        let lines = parser.feed(b"data: single\n\n");
+        assert_eq!(
+            lines,
+            vec![
+                SseLine::Data("single".to_string()),
+                SseLine::Empty,
+            ]
+        );
+    }
+
+    #[test]
+    fn sse_parser_pending_data_flushed_at_end() {
+        // Data without a trailing empty line should be flushed
+        let mut parser = SseStreamParser::new();
+        let lines = parser.feed(b"data: orphan\n");
+        assert!(lines.is_empty());
+
+        let flushed = parser.flush();
+        assert_eq!(flushed, vec![SseLine::Data("orphan".to_string())]);
+    }
+
+    #[test]
+    fn sse_parser_done_flushes_pending_data() {
+        // data: [DONE] should flush any pending data first
+        let mut parser = SseStreamParser::new();
+        let lines = parser.feed(b"data: last\ndata: [DONE]\n");
+        assert_eq!(
+            lines,
+            vec![
+                SseLine::Data("last".to_string()),
+                SseLine::Done,
+            ]
+        );
     }
 }

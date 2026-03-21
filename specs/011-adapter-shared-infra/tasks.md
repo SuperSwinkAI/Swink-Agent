@@ -19,9 +19,9 @@
 
 **Purpose**: Verify project structure, dependencies, and crate wiring before implementing modules
 
-- [ ] T001 Verify adapters crate dependencies in `adapters/Cargo.toml` include `reqwest`, `futures`, `bytes`, `serde_json`, `thiserror`, `tokio` and path dep on `swink-agent`
-- [ ] T002 Verify `adapters/src/lib.rs` has `#![forbid(unsafe_code)]` and module declarations for `convert`, `classify`, `sse`, `remote_presets`
-- [ ] T003 Verify `src/convert.rs` exists in core (`swink-agent`) with the `MessageConverter` trait definition site
+- [x] T001 Verify adapters crate dependencies in `adapters/Cargo.toml` include `reqwest`, `futures`, `bytes`, `serde_json`, `thiserror`, `tokio` and path dep on `swink-agent`
+- [x] T002 Verify `adapters/src/lib.rs` has `#![forbid(unsafe_code)]` and module declarations for `convert`, `classify`, `sse`, `remote_presets`
+- [x] T003 Verify `src/convert.rs` exists in core (`swink-agent`) with the `MessageConverter` trait definition site
 
 ---
 
@@ -31,10 +31,10 @@
 
 **CRITICAL**: No user story work can begin until this phase is complete
 
-- [ ] T004 Define the `MessageConverter` trait in `src/convert.rs` (core) with methods for system prompt extraction, message-level conversion, and content-block-level conversion per the public API contract
-- [ ] T005 Implement the generic `convert_messages<C: MessageConverter>()` driver function in `src/convert.rs` (core) that iterates agent messages and delegates to the converter
-- [ ] T006 Implement `extract_tool_schemas()` function in `src/convert.rs` (core) that extracts JSON schemas from `Arc<dyn AgentTool>` for provider tool-use payloads
-- [ ] T007 Re-export `MessageConverter`, `convert_messages`, and `extract_tool_schemas` from `src/lib.rs` (core) public API
+- [x] T004 Define the `MessageConverter` trait in `src/convert.rs` (core) with methods for system prompt extraction, message-level conversion, and content-block-level conversion per the public API contract
+- [x] T005 Implement the generic `convert_messages<C: MessageConverter>()` driver function in `src/convert.rs` (core) that iterates agent messages and delegates to the converter
+- [x] T006 Implement `extract_tool_schemas()` function in `src/convert.rs` (core) that extracts JSON schemas from `Arc<dyn AgentTool>` for provider tool-use payloads
+- [x] T007 Re-export `MessageConverter`, `convert_messages`, and `extract_tool_schemas` from `src/lib.rs` (core) public API
 
 **Checkpoint**: Foundation ready — `swink-agent` core exposes the conversion trait; user story implementation can now begin in parallel
 
@@ -50,12 +50,12 @@
 
 > **NOTE: Write these tests FIRST, ensure they FAIL before implementation**
 
-- [ ] T008 [P] [US1] Write unit tests for `MessageConverter` trait with a mock converter verifying all message types convert correctly in `src/convert.rs` (core, `#[cfg(test)]` module)
+- [x] T008 [P] [US1] Write unit tests for `MessageConverter` trait with a mock converter verifying all message types convert correctly in `src/convert.rs` (core, `#[cfg(test)]` module)
 
 ### Implementation for User Story 1
 
-- [ ] T009 [US1] Implement `adapters/src/convert.rs` re-exporting `MessageConverter`, `convert_messages`, and `extract_tool_schemas` from core
-- [ ] T010 [US1] Add `convert` module re-exports to `adapters/src/lib.rs` public API
+- [x] T009 [US1] Implement `adapters/src/convert.rs` re-exporting `MessageConverter`, `convert_messages`, and `extract_tool_schemas` from core
+- [x] T010 [US1] Add `convert` module re-exports to `adapters/src/lib.rs` public API
 
 **Checkpoint**: User Story 1 complete — adapters can import `MessageConverter` from either core or the adapters crate and convert messages generically
 
@@ -71,15 +71,15 @@
 
 > **NOTE: Write these tests FIRST, ensure they FAIL before implementation**
 
-- [ ] T011 [P] [US2] Write unit tests for `classify_http_status` verifying: 429 -> Throttled, 401/403 -> Auth, 500-599 -> Network, 200 -> None in `adapters/src/classify.rs` (`#[cfg(test)]` module). Note: connection-level timeouts are NOT classified here — they are mapped to `NetworkError` at the adapter level by reqwest error handling (see spec edge cases section).
-- [ ] T012 [P] [US2] Write unit tests for `classify_with_overrides` verifying overrides take precedence over defaults in `adapters/src/classify.rs` (`#[cfg(test)]` module)
+- [x] T011 [P] [US2] Write unit tests for `classify_http_status` verifying: 429 -> Throttled, 401/403 -> Auth, 500-599 -> Network, 200 -> None in `adapters/src/classify.rs` (`#[cfg(test)]` module). Note: connection-level timeouts are NOT classified here — they are mapped to `NetworkError` at the adapter level by reqwest error handling (see spec edge cases section).
+- [x] T012 [P] [US2] Write unit tests for `classify_with_overrides` verifying overrides take precedence over defaults in `adapters/src/classify.rs` (`#[cfg(test)]` module)
 
 ### Implementation for User Story 2
 
-- [ ] T013 [P] [US2] Define `HttpErrorKind` enum with `Auth`, `Throttled`, `Network` variants (derives: `Debug, Clone, PartialEq, Eq`) in `adapters/src/classify.rs`
-- [ ] T014 [US2] Implement `classify_http_status` as `const fn(u16) -> Option<HttpErrorKind>` with default mappings (429=Throttled, 401/403=Auth, 500-599=Network) in `adapters/src/classify.rs`
-- [ ] T015 [US2] Implement `classify_with_overrides` function that checks override slice before falling back to `classify_http_status` in `adapters/src/classify.rs`
-- [ ] T016 [US2] Add `classify` module re-exports to `adapters/src/lib.rs` public API
+- [x] T013 [P] [US2] Define `HttpErrorKind` enum with `Auth`, `Throttled`, `Network` variants (derives: `Debug, Clone, PartialEq, Eq`) in `adapters/src/classify.rs`
+- [x] T014 [US2] Implement `classify_http_status` as `const fn(u16) -> Option<HttpErrorKind>` with default mappings (429=Throttled, 401/403=Auth, 500-599=Network) in `adapters/src/classify.rs`
+- [x] T015 [US2] Implement `classify_with_overrides` function that checks override slice before falling back to `classify_http_status` in `adapters/src/classify.rs`
+- [x] T016 [US2] Add `classify` module re-exports to `adapters/src/lib.rs` public API
 
 **Checkpoint**: User Story 2 complete — adapters can classify HTTP errors consistently with optional provider overrides
 
@@ -95,18 +95,18 @@
 
 > **NOTE: Write these tests FIRST, ensure they FAIL before implementation**
 
-- [ ] T017 [P] [US3] Write unit tests for `SseStreamParser::feed()` verifying: data lines, event lines, empty lines, comment skipping, `data: [DONE]` -> Done variant, and multi-line `data:` field concatenation (successive `data:` lines joined with `\n` per SSE spec) in `adapters/src/sse.rs` (`#[cfg(test)]` module)
-- [ ] T018 [P] [US3] Write unit tests for `SseStreamParser` partial chunk buffering: split a complete SSE event across multiple `feed()` calls and verify correct reassembly in `adapters/src/sse.rs` (`#[cfg(test)]` module)
-- [ ] T019 [P] [US3] Write unit tests for `SseStreamParser::flush()` verifying remaining buffer is drained at stream end in `adapters/src/sse.rs` (`#[cfg(test)]` module)
+- [x] T017 [P] [US3] Write unit tests for `SseStreamParser::feed()` verifying: data lines, event lines, empty lines, comment skipping, `data: [DONE]` -> Done variant, and multi-line `data:` field concatenation (successive `data:` lines joined with `\n` per SSE spec) in `adapters/src/sse.rs` (`#[cfg(test)]` module)
+- [x] T018 [P] [US3] Write unit tests for `SseStreamParser` partial chunk buffering: split a complete SSE event across multiple `feed()` calls and verify correct reassembly in `adapters/src/sse.rs` (`#[cfg(test)]` module)
+- [x] T019 [P] [US3] Write unit tests for `SseStreamParser::flush()` verifying remaining buffer is drained at stream end in `adapters/src/sse.rs` (`#[cfg(test)]` module)
 
 ### Implementation for User Story 3
 
-- [ ] T020 [P] [US3] Define `SseLine` enum with `Event(String)`, `Data(String)`, `Done`, `Empty` variants (derives: `Debug, PartialEq, Eq`) in `adapters/src/sse.rs`
-- [ ] T021 [US3] Implement `SseStreamParser` struct with `buffer: String` field, `new()` as `const fn`, and `Default` impl delegating to `new()` in `adapters/src/sse.rs`
-- [ ] T022 [US3] Implement `SseStreamParser::feed(&mut self, &[u8]) -> Vec<SseLine>` that accumulates bytes, splits on newlines, parses prefixes (`data:`, `event:`, `:` comments), concatenates successive `data:` lines with `\n` per SSE spec (FR-006), and yields complete lines in `adapters/src/sse.rs`
-- [ ] T023 [US3] Implement `SseStreamParser::flush(&mut self) -> Vec<SseLine>` that drains the remaining buffer in `adapters/src/sse.rs`
-- [ ] T024 [US3] Implement `sse_data_lines()` stream combinator that wraps a `reqwest` byte stream with `SseStreamParser` and filters to only `Data` and `Done` variants in `adapters/src/sse.rs`
-- [ ] T025 [US3] Add `sse` module re-exports to `adapters/src/lib.rs` public API
+- [x] T020 [P] [US3] Define `SseLine` enum with `Event(String)`, `Data(String)`, `Done`, `Empty` variants (derives: `Debug, PartialEq, Eq`) in `adapters/src/sse.rs`
+- [x] T021 [US3] Implement `SseStreamParser` struct with `buffer: String` field, `new()` as `const fn`, and `Default` impl delegating to `new()` in `adapters/src/sse.rs`
+- [x] T022 [US3] Implement `SseStreamParser::feed(&mut self, &[u8]) -> Vec<SseLine>` that accumulates bytes, splits on newlines, parses prefixes (`data:`, `event:`, `:` comments), concatenates successive `data:` lines with `\n` per SSE spec (FR-006), and yields complete lines in `adapters/src/sse.rs`
+- [x] T023 [US3] Implement `SseStreamParser::flush(&mut self) -> Vec<SseLine>` that drains the remaining buffer in `adapters/src/sse.rs`
+- [x] T024 [US3] Implement `sse_data_lines()` stream combinator that wraps a `reqwest` byte stream with `SseStreamParser` and filters to only `Data` and `Done` variants in `adapters/src/sse.rs`
+- [x] T025 [US3] Add `sse` module re-exports to `adapters/src/lib.rs` public API
 
 **Checkpoint**: User Story 3 complete — adapters can parse SSE streams using shared infrastructure
 
@@ -122,19 +122,19 @@
 
 > **NOTE: Write these tests FIRST, ensure they FAIL before implementation**
 
-- [ ] T026 [P] [US4] Write unit tests for `RemotePresetKey` construction and equality in `adapters/src/remote_presets.rs` (`#[cfg(test)]` module)
-- [ ] T027 [P] [US4] Write unit tests for `remote_presets()` listing: all presets returned when filter is None, only matching provider when filtered in `adapters/src/remote_presets.rs` (`#[cfg(test)]` module)
-- [ ] T028 [P] [US4] Write unit tests for `build_remote_connection` error paths: `UnknownPreset`, `MissingCredential` in `adapters/src/remote_presets.rs` (`#[cfg(test)]` module)
+- [x] T026 [P] [US4] Write unit tests for `RemotePresetKey` construction and equality in `adapters/src/remote_presets.rs` (`#[cfg(test)]` module)
+- [x] T027 [P] [US4] Write unit tests for `remote_presets()` listing: all presets returned when filter is None, only matching provider when filtered in `adapters/src/remote_presets.rs` (`#[cfg(test)]` module)
+- [x] T028 [P] [US4] Write unit tests for `build_remote_connection` error paths: `UnknownPreset`, `MissingCredential` in `adapters/src/remote_presets.rs` (`#[cfg(test)]` module)
 
 ### Implementation for User Story 4
 
-- [ ] T029 [P] [US4] Define `RemotePresetKey` struct with `provider_key: &'static str`, `preset_id: &'static str` (derives: `Debug, Clone, Copy, PartialEq, Eq, Hash`) and `const fn new()` in `adapters/src/remote_presets.rs`
-- [ ] T030 [US4] Define `RemoteModelConnectionError` enum with `UnknownPreset`, `NotRemotePreset`, `MissingCredential`, `MissingBaseUrl`, `MissingRegion`, `MissingAwsCredentials` variants (derives: `Debug, thiserror::Error, PartialEq, Eq`) in `adapters/src/remote_presets.rs`
-- [ ] T031 [US4] Implement `remote_preset_keys` module with nested provider sub-modules (`anthropic`, `openai`, `google`, `azure`, `xai`, `mistral`, `bedrock`) containing compile-time `RemotePresetKey` constants in `adapters/src/remote_presets.rs`
-- [ ] T032 [US4] Implement `remote_presets(provider_key: Option<&str>) -> Vec<CatalogPreset>` that lists all remote presets, optionally filtered by provider, using the model catalog in `adapters/src/remote_presets.rs`
-- [ ] T033 [US4] Implement `preset(model_id: &str) -> Option<CatalogPreset>` that finds a preset by model_id string in `adapters/src/remote_presets.rs`
-- [ ] T034 [US4] Implement `build_remote_connection(key: RemotePresetKey) -> Result<ModelConnection, RemoteModelConnectionError>` that resolves credentials from environment variables and constructs the appropriate `StreamFn` in `adapters/src/remote_presets.rs`
-- [ ] T035 [US4] Add `remote_presets` module re-exports (including `remote_preset_keys`, `build_remote_connection`, `preset`, `remote_presets`, `RemotePresetKey`, `RemoteModelConnectionError`) to `adapters/src/lib.rs` public API
+- [x] T029 [P] [US4] Define `RemotePresetKey` struct with `provider_key: &'static str`, `preset_id: &'static str` (derives: `Debug, Clone, Copy, PartialEq, Eq, Hash`) and `const fn new()` in `adapters/src/remote_presets.rs`
+- [x] T030 [US4] Define `RemoteModelConnectionError` enum with `UnknownPreset`, `NotRemotePreset`, `MissingCredential`, `MissingBaseUrl`, `MissingRegion`, `MissingAwsCredentials` variants (derives: `Debug, thiserror::Error, PartialEq, Eq`) in `adapters/src/remote_presets.rs`
+- [x] T031 [US4] Implement `remote_preset_keys` module with nested provider sub-modules (`anthropic`, `openai`, `google`, `azure`, `xai`, `mistral`, `bedrock`) containing compile-time `RemotePresetKey` constants in `adapters/src/remote_presets.rs`
+- [x] T032 [US4] Implement `remote_presets(provider_key: Option<&str>) -> Vec<CatalogPreset>` that lists all remote presets, optionally filtered by provider, using the model catalog in `adapters/src/remote_presets.rs`
+- [x] T033 [US4] Implement `preset(model_id: &str) -> Option<CatalogPreset>` that finds a preset by model_id string in `adapters/src/remote_presets.rs`
+- [x] T034 [US4] Implement `build_remote_connection(key: RemotePresetKey) -> Result<ModelConnection, RemoteModelConnectionError>` that resolves credentials from environment variables and constructs the appropriate `StreamFn` in `adapters/src/remote_presets.rs`
+- [x] T035 [US4] Add `remote_presets` module re-exports (including `remote_preset_keys`, `build_remote_connection`, `preset`, `remote_presets`, `RemotePresetKey`, `RemoteModelConnectionError`) to `adapters/src/lib.rs` public API
 
 **Checkpoint**: User Story 4 complete — catalog presets resolve to fully configured remote connections
 
@@ -144,11 +144,11 @@
 
 **Purpose**: Final verification across all modules
 
-- [ ] T036 [P] Verify all public types are re-exported from `adapters/src/lib.rs` per the public API contract in `specs/011-adapter-shared-infra/contracts/public-api.md`
-- [ ] T037 Run `cargo build -p swink-agent-adapters` and `cargo test -p swink-agent-adapters` to verify compilation and all tests pass
-- [ ] T038 Run `cargo clippy --workspace -- -D warnings` to verify zero clippy warnings
-- [ ] T039 Run `cargo test --workspace` to verify no regressions in other crates
-- [ ] T040 Run quickstart.md validation: execute all code examples from `specs/011-adapter-shared-infra/quickstart.md` usage section
+- [x] T036 [P] Verify all public types are re-exported from `adapters/src/lib.rs` per the public API contract in `specs/011-adapter-shared-infra/contracts/public-api.md`
+- [x] T037 Run `cargo build -p swink-agent-adapters` and `cargo test -p swink-agent-adapters` to verify compilation and all tests pass
+- [x] T038 Run `cargo clippy --workspace -- -D warnings` to verify zero clippy warnings
+- [x] T039 Run `cargo test --workspace` to verify no regressions in other crates
+- [x] T040 Run quickstart.md validation: execute all code examples from `specs/011-adapter-shared-infra/quickstart.md` usage section
 
 ---
 

@@ -8,7 +8,7 @@ pub mod sse;
 mod anthropic;
 mod azure;
 mod bedrock;
-mod convert;
+pub mod convert;
 mod finalize;
 mod google;
 mod mistral;

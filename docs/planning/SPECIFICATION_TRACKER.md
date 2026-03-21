@@ -7,7 +7,7 @@
 - Provider Roadmap: [PROVIDER_EXPANSION_ROADMAP.md](PROVIDER_EXPANSION_ROADMAP.md)
 - Eval Roadmap: [EVAL.md](EVAL.md)
 
-**Current Focus:** 20/30 specs have plans, 5/30 have tasks (001–004 complete, 011 ready). Next: `/speckit.implement` for 011-adapter-shared-infra (0/40 tasks), then `/speckit.tasks` for 005–006.
+**Current Focus:** 20/30 specs have plans, 5/30 have tasks (001–004, 011 complete). Next: `/speckit.tasks` for 005–006, then 012–013 (adapter implementations unblocked by 011).
 
 > **Numbering System:** Spec numbers (001–030) are sequential identifiers that
 > never change. Phase numbers represent execution order and can be reassigned
@@ -107,14 +107,14 @@ primitives, and loop governance — capabilities that enhance the core engine.
 **Goal:** LLM provider adapters — shared infrastructure and one adapter per
 provider. Each adapter implements StreamFn for its provider's streaming protocol.
 
-**Status:** 5/10 specs planned, 1/10 have tasks, 10/10 specs defined
+**Status:** 5/10 specs planned, 1/10 have tasks, 1/10 complete, 10/10 specs defined
 
 ### Implementation Checklist
 
-- [ ] **3.1** Adapter Shared Infrastructure — MessageConverter trait, HttpErrorClassifier, SSE parsing, remote preset construction (§15.1)
+- [x] **3.1** Adapter Shared Infrastructure — MessageConverter trait, HttpErrorClassifier, SSE parsing, remote preset construction (§15.1)
   - Spec: `specs/011-adapter-shared-infra/spec.md`
   - Branch: `011-adapter-shared-infra`
-  - Status: Ready for implementation (0/40 tasks)
+  - Status: Complete (40/40 tasks, merged to main)
   - Depends on: 0.3
 - [ ] **3.2** Adapter: Anthropic — AnthropicStreamFn, /v1/messages SSE, thinking blocks with budget control (§15.1)
   - Spec: `specs/012-adapter-anthropic/spec.md`
@@ -340,7 +340,7 @@ graph TD
     style H fill:#fff,color:#000,stroke:#6b7280,stroke-width:2px
     style I fill:#fff,color:#000,stroke:#6b7280,stroke-width:2px
     style J fill:#fff,color:#000,stroke:#6b7280,stroke-width:2px
-    style K fill:#facc15,color:#000,stroke:#eab308,stroke-width:2px
+    style K fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
     style L fill:#fff,color:#000,stroke:#6b7280,stroke-width:2px
     style M fill:#fff,color:#000,stroke:#6b7280,stroke-width:2px
     style N fill:#fff,color:#000,stroke:#6b7280,stroke-width:2px
