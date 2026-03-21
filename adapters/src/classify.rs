@@ -3,6 +3,11 @@
 //! Provides default and customizable mapping from HTTP status codes
 //! to [`HttpErrorKind`] variants, which adapters can use to generate
 //! appropriate error events.
+//!
+//! **Stability note:** This module is a shared implementation detail for
+//! built-in adapters. External `StreamFn` implementors should depend only
+//! on `swink_agent` (core) types. Breaking changes to this module's API
+//! may occur without a major version bump.
 
 /// Classification of HTTP error status codes for LLM providers.
 ///

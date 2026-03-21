@@ -7,8 +7,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use common::{
-    ContextCapturingStreamFn, MockStreamFn, default_convert, default_model, text_only_events,
-    user_msg,
+    ApiKeyCapturingStreamFn, ContextCapturingStreamFn, MockStreamFn, default_convert,
+    default_model, text_only_events, user_msg,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -293,46 +293,7 @@ async fn session_id_forwarding() {
 
 #[tokio::test]
 async fn get_api_key_forwarding() {
-    use std::sync::Mutex as StdMutex;
-
-    struct ApiKeyCapturingStreamFn {
-        responses: StdMutex<Vec<Vec<AssistantMessageEvent>>>,
-        captured_api_keys: StdMutex<Vec<Option<String>>>,
-    }
-
-    impl StreamFn for ApiKeyCapturingStreamFn {
-        fn stream<'a>(
-            &'a self,
-            _model: &'a ModelSpec,
-            _context: &'a swink_agent::AgentContext,
-            options: &'a StreamOptions,
-            _cancellation_token: CancellationToken,
-        ) -> Pin<Box<dyn futures::Stream<Item = AssistantMessageEvent> + Send + 'a>> {
-            self.captured_api_keys
-                .lock()
-                .unwrap()
-                .push(options.api_key.clone());
-            let events = {
-                let mut responses = self.responses.lock().unwrap();
-                if responses.is_empty() {
-                    vec![AssistantMessageEvent::Error {
-                        stop_reason: StopReason::Error,
-                        error_message: "no more responses".to_string(),
-                        usage: None,
-                        error_kind: None,
-                    }]
-                } else {
-                    responses.remove(0)
-                }
-            };
-            Box::pin(futures::stream::iter(events))
-        }
-    }
-
-    let capturing = Arc::new(ApiKeyCapturingStreamFn {
-        responses: StdMutex::new(vec![text_only_events("ok")]),
-        captured_api_keys: StdMutex::new(Vec::new()),
-    });
+    let capturing = Arc::new(ApiKeyCapturingStreamFn::new(vec![text_only_events("ok")]));
 
     let stream_fn: Arc<dyn StreamFn> = Arc::clone(&capturing) as Arc<dyn StreamFn>;
 
