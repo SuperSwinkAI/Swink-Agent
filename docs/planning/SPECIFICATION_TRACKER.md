@@ -7,7 +7,7 @@
 - Provider Roadmap: [PROVIDER_EXPANSION_ROADMAP.md](PROVIDER_EXPANSION_ROADMAP.md)
 - Eval Roadmap: [EVAL.md](EVAL.md)
 
-**Current Focus:** 16/30 specs have plans, 1/30 has tasks (001 — complete). 001-workspace-scaffold is done. Next: `/speckit.tasks` for 002–005, then implement Phase 0 foundation.
+**Current Focus:** 19/30 specs have plans, 1/30 has tasks (001 — complete). Next: clarify remaining 11 specs (015–019, 021–025, 027, 029) then `/speckit.tasks` for all planned features.
 
 > **Numbering System:** Spec numbers (001–030) are sequential identifiers that
 > never change. Phase numbers represent execution order and can be reassigned
@@ -21,7 +21,7 @@
 other crate and module depends on — the data model, error taxonomy, and
 pluggable trait boundaries.
 
-**Status:** 3/3 specs planned, 1/3 has tasks, 1/3 complete, 3/3 specs defined
+**Status:** 3/3 specs planned, 1/3 has tasks, 1/3 complete
 
 ### Implementation Checklist
 
@@ -70,7 +70,7 @@ the two central verticals that make the agent functional.
 **Goal:** Context management, tool system extensions, model catalog, multi-agent
 primitives, and loop governance — capabilities that enhance the core engine.
 
-**Status:** 3/5 specs planned, 5/5 specs defined
+**Status:** 5/5 specs planned
 
 ### Implementation Checklist
 
@@ -92,12 +92,12 @@ primitives, and loop governance — capabilities that enhance the core engine.
 - [ ] **2.4** Multi-Agent System — AgentRegistry, AgentMailbox, AgentOrchestrator, SubAgent tool wrapper
   - Spec: `specs/009-multi-agent-system/spec.md`
   - Branch: `009-multi-agent-system`
-  - Status: Specify complete — needs plan + tasks
+  - Status: Plan complete — needs tasks
   - Depends on: 1.2
 - [ ] **2.5** Loop Policies & Observability — LoopPolicy, StreamMiddleware, MetricsCollector, PostTurnHook, BudgetGuard, Checkpoint
   - Spec: `specs/010-loop-policies-observability/spec.md`
   - Branch: `010-loop-policies-observability`
-  - Status: Specify complete — needs plan + tasks
+  - Status: Plan complete — needs tasks
   - Depends on: 1.1
 
 ---
@@ -107,7 +107,7 @@ primitives, and loop governance — capabilities that enhance the core engine.
 **Goal:** LLM provider adapters — shared infrastructure and one adapter per
 provider. Each adapter implements StreamFn for its provider's streaming protocol.
 
-**Status:** 5/10 specs planned, 10/10 specs defined
+**Status:** 5/10 specs planned, 5/10 need clarification
 
 ### Implementation Checklist
 
@@ -173,7 +173,7 @@ After **3.1 Shared Infrastructure** completes, all 9 provider adapters (3.2–3.
 **Goal:** Standalone crates for session persistence, on-device inference, and
 evaluation — each depends only on the core library.
 
-**Status:** 0/4 specs planned, 4/4 specs defined
+**Status:** 0/4 specs planned, 4/4 need clarification
 
 ### Implementation Checklist
 
@@ -205,7 +205,7 @@ evaluation — each depends only on the core library.
 **Goal:** Interactive terminal interface — the binary crate that demonstrates
 the full agent library in a usable application.
 
-**Status:** 1/5 specs planned, 5/5 specs defined
+**Status:** 2/5 specs planned, 3/5 need clarification
 
 ### Implementation Checklist
 
@@ -227,7 +227,7 @@ the full agent library in a usable application.
 - [ ] **5.4** TUI: Commands, Editor & Session — Hash/slash commands, external editor, session persistence (§16.4, §16.8)
   - Spec: `specs/028-tui-commands-editor-session/spec.md`
   - Branch: `028-tui-commands-editor-session`
-  - Status: Specify complete — needs plan + tasks
+  - Status: Plan complete — needs tasks
   - Depends on: 5.2
 - [ ] **5.5** TUI: Plan Mode & Approval — Plan mode (read-only restriction), tiered approval (Enabled/Smart/Bypassed), session trust (§16.9, §16.11)
   - Spec: `specs/029-tui-plan-mode-approval/spec.md`
@@ -246,14 +246,14 @@ After **5.2 Input & Conversation** completes, specs 5.3, 5.4, and 5.5 can procee
 **Goal:** End-to-end tests exercising the full stack against all PRD acceptance
 criteria.
 
-**Status:** 0/1 specs planned, 1/1 specs defined
+**Status:** 1/1 specs planned
 
 ### Implementation Checklist
 
 - [ ] **6.1** Integration Tests — MockStreamFn, MockTool, EventCollector, tests for all 30 PRD acceptance criteria (§17)
   - Spec: `specs/030-integration-tests/spec.md`
   - Branch: `030-integration-tests`
-  - Status: Specify complete — needs plan + tasks
+  - Status: Plan complete — needs tasks
   - Depends on: 1.2, 2.1, 2.2
 
 ---
