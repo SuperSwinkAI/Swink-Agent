@@ -2,7 +2,7 @@
 
 **Feature Branch**: `002-foundation-types-errors`
 **Created**: 2026-03-20
-**Status**: Draft
+**Status**: Tasks Defined
 **Input**: Core data model types and error taxonomy for the agent harness. All types that every other module depends on. References: PRD §3 (Core Data Model), PRD §10.3 (AgentError Variants), HLD Foundation Layer.
 
 ## User Scenarios & Testing *(mandatory)*
@@ -151,6 +151,21 @@ An application developer needs to attach custom message types (e.g., notificatio
 - Q: Should an empty argument object `{}` on a tool call be valid? → A: Yes — `{}` is accepted; schema validation decides correctness.
 - Q: What should a failed custom message downcast return? → A: `Result<&T, DowncastError>` with expected vs actual type info.
 - Q: Should a usage record with all zero counters be valid? → A: Yes — zero counters are a normal value; no "empty" concept needed.
+
+## Scaffold Deviations (Code is Canonical)
+
+The 001 workspace scaffold implemented these types with intentional design
+decisions that differ from the original spec/contracts. The code is
+authoritative since other modules already depend on it:
+
+- **Usage/Cost field names**: Spec says `input_tokens`, `output_tokens`, etc. Code uses shorter `input`, `output`, etc.
+- **Timestamp type**: Spec/research says `SystemTime`. Code uses `u64` (epoch millis) — simpler serde, no custom module needed.
+- **LlmMessage structure**: Contract shows inline enum fields. Code uses struct-wrapped variants (`User(UserMessage)`, etc.) — structs enable independent construction and reuse.
+- **AssistantMessage field**: Contract says `model`. Code uses `model_id`.
+- **ThinkingBudgets value type**: Data model says `u32`. Code uses `u64` — consistent with Usage counters.
+- **NetworkError fields**: Contract shows no fields. Code has `source: Box<dyn Error + Send + Sync>` — richer error chaining.
+- **CustomMessage trait bounds**: Spec says `Send + Sync + Any`. Code also requires `Debug` — essential for error reporting.
+- **CustomMessage::type_name return**: Spec says `&str`. Code returns `Option<&str>` — supports non-serializable customs.
 
 ## Assumptions
 

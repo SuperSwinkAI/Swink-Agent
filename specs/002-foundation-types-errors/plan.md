@@ -19,7 +19,7 @@ aggregation methods.
 **Language/Version**: Rust 1.88 (edition 2024)
 **Primary Dependencies**: serde, serde_json, thiserror, uuid, schemars (all workspace deps)
 **Storage**: N/A (in-memory types only)
-**Testing**: `cargo test --workspace`, property-based tests via proptest for aggregation
+**Testing**: `cargo test --workspace`
 **Target Platform**: Cross-platform (Linux, macOS, Windows)
 **Project Type**: Library (core crate `swink-agent`)
 **Performance Goals**: Zero-copy where possible; minimal allocations in type constructors
@@ -34,7 +34,7 @@ aggregation methods.
 |-----------|--------|-------|
 | I. Library-First | ✅ Pass | Types are part of the core library crate. No service dependencies. |
 | II. Test-Driven Development | ✅ Pass | Tests written first for each type: construction, serialization round-trip, aggregation arithmetic, error display. |
-| III. Efficiency & Performance | ✅ Pass | Types use `Cow<'static, str>` or owned strings as appropriate. No unnecessary allocations. |
+| III. Efficiency & Performance | ✅ Pass | Types use owned strings. No unnecessary allocations. |
 | IV. Leverage the Ecosystem | ✅ Pass | Uses thiserror for error derive, serde for serialization, uuid for IDs — no hand-rolled alternatives. |
 | V. Provider Agnosticism | ✅ Pass | Types carry provider identifiers as strings, not provider-specific types. No provider SDK dependency. |
 | VI. Safety & Correctness | ✅ Pass | `#[forbid(unsafe_code)]`. All types derive or implement Send + Sync. Error variants implement `std::error::Error`. |
