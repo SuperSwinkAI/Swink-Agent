@@ -57,7 +57,7 @@ An operator collects metrics on agent performance: turn count, turn latency, too
 
 ### User Story 4 - Execute Logic After Each Turn (Priority: P2)
 
-A developer registers post-turn hooks that execute after each turn completes. Hooks can persist state, send notifications, update dashboards, or trigger side effects. They run after the turn is finalized and do not affect the loop's control flow.
+A developer registers post-turn hooks that execute asynchronously after each turn completes. Hooks can persist state, send notifications, update dashboards, trigger side effects, stop the loop, or inject messages for the next turn. They run after the turn is finalized and return an action indicating how the loop should proceed.
 
 **Why this priority**: Post-turn hooks enable integration with external systems without modifying loop internals.
 
@@ -67,7 +67,9 @@ A developer registers post-turn hooks that execute after each turn completes. Ho
 
 1. **Given** a post-turn hook, **When** a turn completes, **Then** the hook is called with the turn's data.
 2. **Given** multiple hooks, **When** a turn completes, **Then** all hooks are called.
-3. **Given** a hook, **When** it runs, **Then** it does not affect the loop's control flow or next turn.
+3. **Given** a hook returning `Continue`, **When** it runs, **Then** the loop proceeds normally.
+4. **Given** a hook returning `Stop`, **When** it runs, **Then** the loop terminates after this turn.
+5. **Given** a hook returning `InjectMessages`, **When** it runs, **Then** the returned messages are injected as pending for the next turn.
 
 ---
 
@@ -104,10 +106,10 @@ A developer enables checkpoints so the agent's loop state is snapshotted at turn
 
 ### Edge Cases
 
-- What happens when a policy and a budget guard both trigger at the same time — which takes precedence?
-- How does the system handle a post-turn hook that panics — is the loop affected?
-- What happens when checkpointing is enabled but the checkpoint store fails to persist — does the agent continue or stop?
-- How does stream middleware interact with the retry mechanism — are retry attempts also wrapped?
+- What happens when a policy and a budget guard both trigger — they are independent mechanisms at different phases. BudgetGuard is checked before each LLM call (pre-call), LoopPolicy after each turn. They cannot trigger simultaneously.
+- How does the system handle a post-turn hook that panics — the panic is caught and logged; the hook's action is skipped and the loop continues. A panicking hook does not crash the agent.
+- What happens when the checkpoint store fails to persist — `CheckpointStore` returns `io::Result`; failures propagate as errors. The caller decides whether to continue or stop.
+- How does stream middleware interact with retry — each retry re-invokes StreamFn, producing a new stream that gets wrapped by middleware again. Retries are also wrapped.
 
 ## Requirements *(mandatory)*
 
@@ -120,7 +122,7 @@ A developer enables checkpoints so the agent's loop state is snapshotted at turn
 - **FR-005**: Stream middleware MUST be composable — multiple middleware can be chained.
 - **FR-006**: System MUST provide structured event emission for enriched event payloads.
 - **FR-007**: System MUST provide a metrics collector that records turn-level and tool-execution-level metrics (latency, tokens, cost, count).
-- **FR-008**: System MUST provide post-turn hooks that execute after each turn without affecting loop control flow.
+- **FR-008**: System MUST provide async post-turn hooks that execute after each turn and return a `PostTurnAction` (Continue, Stop, or InjectMessages) to influence loop behavior.
 - **FR-009**: System MUST provide a budget guard that monitors cost, token, and turn thresholds in real time during stream collection and cancels the agent when any threshold is exceeded.
 - **FR-010**: System MUST provide checkpoint snapshots at turn boundaries with save and restore capability.
 
@@ -146,10 +148,20 @@ A developer enables checkpoints so the agent's loop state is snapshotted at turn
 - **SC-007**: Budget guard cancels the agent in real time when any threshold is exceeded.
 - **SC-008**: Checkpoints can be saved and restored, enabling agent resumption from a prior state.
 
+## Clarifications
+
+### Session 2026-03-20
+
+- Q: Should PostTurnHook be async with control flow actions (matching impl) or sync/observe-only (matching old spec)? → A: Match implementation — async hooks with PostTurnAction (Continue/Stop/InjectMessages).
+- Q: Should panicking post-turn hooks crash the loop? → A: No — catch panic, log it, skip the hook's action, continue the loop.
+- Q: Policy vs budget guard precedence? → A: Independent mechanisms at different phases; BudgetGuard pre-call, LoopPolicy post-turn.
+- Q: Checkpoint store failure behavior? → A: io::Result propagates; caller decides.
+- Q: Stream middleware + retry? → A: Each retry produces new stream, re-wrapped by middleware.
+
 ## Assumptions
 
 - Loop policies are checked at turn boundaries, not mid-stream. Budget guards handle mid-stream enforcement.
-- Post-turn hooks run synchronously after turn finalization but before the next turn begins.
+- Post-turn hooks are async, run after turn finalization, and return `PostTurnAction` (Continue/Stop/InjectMessages) to influence loop behavior.
 - Budget guard cancellation uses the same cancellation token mechanism as manual abort.
 - Checkpoints are opt-in — when not configured, no checkpoint overhead is incurred.
 - Metrics are collected in-memory by default; persistence is the caller's responsibility.
