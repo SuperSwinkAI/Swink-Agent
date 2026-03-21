@@ -7,7 +7,7 @@
 - Provider Roadmap: [PROVIDER_EXPANSION_ROADMAP.md](PROVIDER_EXPANSION_ROADMAP.md)
 - Eval Roadmap: [EVAL.md](EVAL.md)
 
-**Current Focus:** 20/30 specs have plans, 1/30 has tasks (001 — complete). Next: clarify remaining 10 specs (015–019, 022–025, 027, 029) then `/speckit.tasks` for all planned features.
+**Current Focus:** 18/30 specs have plans, 2/30 have tasks (001 complete, 002 ready). Next: `/speckit.implement` for 002-foundation-types-errors, then `/speckit.tasks` for 003–005.
 
 > **Numbering System:** Spec numbers (001–030) are sequential identifiers that
 > never change. Phase numbers represent execution order and can be reassigned
@@ -21,7 +21,7 @@
 other crate and module depends on — the data model, error taxonomy, and
 pluggable trait boundaries.
 
-**Status:** 3/3 specs planned, 1/3 has tasks, 1/3 complete
+**Status:** 3/3 specs planned, 2/3 have tasks, 1/3 complete, 3/3 specs defined
 
 ### Implementation Checklist
 
@@ -33,7 +33,7 @@ pluggable trait boundaries.
 - [ ] **0.2** Foundation Types & Errors — ContentBlock, LlmMessage, AgentMessage, Usage, Cost, StopReason, ModelSpec, AgentError (§3, §10.3)
   - Spec: `specs/002-foundation-types-errors/spec.md`
   - Branch: `002-foundation-types-errors`
-  - Status: Plan complete — needs tasks
+  - Status: Ready for implementation (0/63 tasks)
   - Depends on: 0.1
 - [ ] **0.3** Core Traits — AgentTool, StreamFn, RetryStrategy, JSON Schema validation, delta accumulation (§4, §7, §11)
   - Spec: `specs/003-core-traits/spec.md`
@@ -70,7 +70,7 @@ the two central verticals that make the agent functional.
 **Goal:** Context management, tool system extensions, model catalog, multi-agent
 primitives, and loop governance — capabilities that enhance the core engine.
 
-**Status:** 5/5 specs planned
+**Status:** 5/5 specs planned, 5/5 specs defined
 
 ### Implementation Checklist
 
@@ -107,7 +107,7 @@ primitives, and loop governance — capabilities that enhance the core engine.
 **Goal:** LLM provider adapters — shared infrastructure and one adapter per
 provider. Each adapter implements StreamFn for its provider's streaming protocol.
 
-**Status:** 5/10 specs planned, 5/10 need clarification
+**Status:** 5/10 specs planned, 10/10 specs defined
 
 ### Implementation Checklist
 
@@ -173,14 +173,14 @@ After **3.1 Shared Infrastructure** completes, all 9 provider adapters (3.2–3.
 **Goal:** Standalone crates for session persistence, on-device inference, and
 evaluation — each depends only on the core library.
 
-**Status:** 1/4 specs planned, 3/4 need clarification
+**Status:** 0/4 specs planned, 4/4 specs defined
 
 ### Implementation Checklist
 
 - [ ] **4.1** Memory Crate — SessionStore (sync/async), JsonlSessionStore, SummarizingCompactor, session metadata
   - Spec: `specs/021-memory-crate/spec.md`
   - Branch: `021-memory-crate`
-  - Status: Plan complete — needs tasks
+  - Status: Specify complete — needs plan + tasks
   - Depends on: 0.2
 - [ ] **4.2** Local LLM Crate — LocalModel (SmolLM3-3B), LocalStreamFn, EmbeddingModel, presets, progress reporting
   - Spec: `specs/022-local-llm-crate/spec.md`
@@ -205,7 +205,7 @@ evaluation — each depends only on the core library.
 **Goal:** Interactive terminal interface — the binary crate that demonstrates
 the full agent library in a usable application.
 
-**Status:** 2/5 specs planned, 3/5 need clarification
+**Status:** 2/5 specs planned, 5/5 specs defined
 
 ### Implementation Checklist
 
@@ -246,7 +246,7 @@ After **5.2 Input & Conversation** completes, specs 5.3, 5.4, and 5.5 can procee
 **Goal:** End-to-end tests exercising the full stack against all PRD acceptance
 criteria.
 
-**Status:** 1/1 specs planned
+**Status:** 1/1 specs planned, 1/1 specs defined
 
 ### Implementation Checklist
 
