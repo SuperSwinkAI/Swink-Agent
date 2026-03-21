@@ -7,7 +7,7 @@
 - Provider Roadmap: [PROVIDER_EXPANSION_ROADMAP.md](PROVIDER_EXPANSION_ROADMAP.md)
 - Eval Roadmap: [EVAL.md](EVAL.md)
 
-**Current Focus:** 20/30 specs have plans, 4/30 have tasks (001–004 complete). Next: `/speckit.tasks` for 005–006, then implementation of 005.
+**Current Focus:** 20/30 specs have plans, 5/30 have tasks (001–004 complete, 011 ready). Next: `/speckit.implement` for 011-adapter-shared-infra (0/40 tasks), then `/speckit.tasks` for 005–006.
 
 > **Numbering System:** Spec numbers (001–030) are sequential identifiers that
 > never change. Phase numbers represent execution order and can be reassigned
@@ -48,7 +48,7 @@ pluggable trait boundaries.
 **Goal:** The agent loop execution engine and its public API wrapper —
 the two central verticals that make the agent functional.
 
-**Status:** 2/2 specs planned, 2/2 have tasks, 1/2 complete, 2/2 specs defined
+**Status:** 2/2 specs planned, 1/2 have tasks, 1/2 complete, 2/2 specs defined
 
 ### Implementation Checklist
 
@@ -70,7 +70,7 @@ the two central verticals that make the agent functional.
 **Goal:** Context management, tool system extensions, model catalog, multi-agent
 primitives, and loop governance — capabilities that enhance the core engine.
 
-**Status:** 5/5 specs planned, 5/5 specs defined
+**Status:** 5/5 specs planned, 0/5 have tasks, 5/5 specs defined
 
 ### Implementation Checklist
 
@@ -107,14 +107,14 @@ primitives, and loop governance — capabilities that enhance the core engine.
 **Goal:** LLM provider adapters — shared infrastructure and one adapter per
 provider. Each adapter implements StreamFn for its provider's streaming protocol.
 
-**Status:** 5/10 specs planned, 10/10 specs defined
+**Status:** 5/10 specs planned, 1/10 have tasks, 10/10 specs defined
 
 ### Implementation Checklist
 
 - [ ] **3.1** Adapter Shared Infrastructure — MessageConverter trait, HttpErrorClassifier, SSE parsing, remote preset construction (§15.1)
   - Spec: `specs/011-adapter-shared-infra/spec.md`
   - Branch: `011-adapter-shared-infra`
-  - Status: Plan complete — needs tasks
+  - Status: Ready for implementation (0/40 tasks)
   - Depends on: 0.3
 - [ ] **3.2** Adapter: Anthropic — AnthropicStreamFn, /v1/messages SSE, thinking blocks with budget control (§15.1)
   - Spec: `specs/012-adapter-anthropic/spec.md`
@@ -173,7 +173,7 @@ After **3.1 Shared Infrastructure** completes, all 9 provider adapters (3.2–3.
 **Goal:** Standalone crates for session persistence, on-device inference, and
 evaluation — each depends only on the core library.
 
-**Status:** 2/4 specs planned, 4/4 specs defined
+**Status:** 2/4 specs planned, 0/4 have tasks, 4/4 specs defined
 
 ### Implementation Checklist
 
@@ -205,7 +205,7 @@ evaluation — each depends only on the core library.
 **Goal:** Interactive terminal interface — the binary crate that demonstrates
 the full agent library in a usable application.
 
-**Status:** 2/5 specs planned, 5/5 specs defined
+**Status:** 2/5 specs planned, 0/5 have tasks, 5/5 specs defined
 
 ### Implementation Checklist
 
@@ -246,7 +246,7 @@ After **5.2 Input & Conversation** completes, specs 5.3, 5.4, and 5.5 can procee
 **Goal:** End-to-end tests exercising the full stack against all PRD acceptance
 criteria.
 
-**Status:** 1/1 specs planned, 1/1 specs defined
+**Status:** 1/1 specs planned, 0/1 have tasks, 1/1 specs defined
 
 ### Implementation Checklist
 
@@ -340,7 +340,7 @@ graph TD
     style H fill:#fff,color:#000,stroke:#6b7280,stroke-width:2px
     style I fill:#fff,color:#000,stroke:#6b7280,stroke-width:2px
     style J fill:#fff,color:#000,stroke:#6b7280,stroke-width:2px
-    style K fill:#fff,color:#000,stroke:#6b7280,stroke-width:2px
+    style K fill:#facc15,color:#000,stroke:#eab308,stroke-width:2px
     style L fill:#fff,color:#000,stroke:#6b7280,stroke-width:2px
     style M fill:#fff,color:#000,stroke:#6b7280,stroke-width:2px
     style N fill:#fff,color:#000,stroke:#6b7280,stroke-width:2px

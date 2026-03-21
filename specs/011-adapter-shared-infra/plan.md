@@ -17,7 +17,7 @@ All four concerns live in the `swink-agent-adapters` crate with the conversion t
 **Testing**: `cargo test --workspace`; unit tests per module, integration live tests (`#[ignore]`)
 **Target Platform**: Any (library crate)
 **Project Type**: Library
-**Performance Goals**: Zero-copy SSE parsing where possible; minimal allocations on the streaming hot path
+**Performance Goals**: Single-allocation buffering in SSE parser (one `String` buffer, no per-line heap allocation beyond the output `Vec`); minimal allocations on the streaming hot path
 **Constraints**: `#[forbid(unsafe_code)]`; no provider-specific types in core
 **Scale/Scope**: 7 adapters use SSE, 9 adapters use `MessageConverter`, all remote adapters use `RemotePresets`
 
@@ -78,4 +78,8 @@ adapters/src/
 
 ## Complexity Tracking
 
-No constitution violations. All modules fit within existing crate boundaries.
+| Item | Principle | Decision | Justification |
+|------|-----------|----------|---------------|
+| SSE Parser | IV (Leverage Ecosystem) | Custom ~100-line `SseStreamParser` instead of wrapping `eventsource-stream` | `eventsource-stream` does not expose event-type labels needed by Anthropic's streaming state machine (event types like `content_block_start`, `content_block_delta`, etc. drive adapter state transitions). Wrapping it would require re-parsing the raw bytes anyway to extract event types, defeating the purpose. This falls below the 80% threshold for the "wrap it" escape hatch — the crate handles less than 80% of what adapters need. |
+
+No other constitution violations. All modules fit within existing crate boundaries.

@@ -1,5 +1,5 @@
 # Spec-Driven Development Status
-<!-- spec-status: project=worktree-004-agent-loop commit=98adf259437f0da940ca78ea18e9f714294f538f updated=2026-03-21T08:13:23Z -->
+<!-- spec-status: project=worktree-011-adapter-shared-infra commit=d393e74b365dc9396f6ad2808955a7651c6cbee1 updated=2026-03-21T09:14:52Z -->
 
 | Feature                         | Specify | Plan | Tasks | Implement |
 |---------------------------------|---------|------|-------|-----------|
@@ -13,7 +13,7 @@
 | 008-model-catalog-presets       | ✓     | ✓  | -     | -         |
 | 009-multi-agent-system          | ✓     | ✓  | -     | -         |
 | 010-loop-policies-observability | ✓     | ✓  | -     | -         |
-| 011-adapter-shared-infra        | ✓     | ✓  | -     | -         |
+| 011-adapter-shared-infra        | ✓     | ✓  | ✓   | ● 0/40 (0%) |
 | 012-adapter-anthropic           | ✓     | ✓  | -     | -         |
 | 013-adapter-openai              | ✓     | ✓  | -     | -         |
 | 014-adapter-ollama              | ✓     | ✓  | -     | -         |
@@ -44,7 +44,7 @@
 <!-- feature: 008-model-catalog-presets has_spec=true has_plan=true has_tasks=false has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=0 tasks_completed=0 checklist_files=requirements.md -->
 <!-- feature: 009-multi-agent-system has_spec=true has_plan=true has_tasks=false has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=0 tasks_completed=0 checklist_files=requirements.md -->
 <!-- feature: 010-loop-policies-observability has_spec=true has_plan=true has_tasks=false has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=0 tasks_completed=0 checklist_files=requirements.md -->
-<!-- feature: 011-adapter-shared-infra has_spec=true has_plan=true has_tasks=false has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=0 tasks_completed=0 checklist_files=requirements.md -->
+<!-- feature: 011-adapter-shared-infra has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=40 tasks_completed=0 checklist_files=requirements.md -->
 <!-- feature: 012-adapter-anthropic has_spec=true has_plan=true has_tasks=false has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=0 tasks_completed=0 checklist_files=requirements.md -->
 <!-- feature: 013-adapter-openai has_spec=true has_plan=true has_tasks=false has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=0 tasks_completed=0 checklist_files=requirements.md -->
 <!-- feature: 014-adapter-ollama has_spec=true has_plan=true has_tasks=false has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=0 tasks_completed=0 checklist_files=requirements.md -->
