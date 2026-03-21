@@ -104,7 +104,7 @@ A developer reads assistant responses containing fenced code blocks with languag
 - What happens when the developer pastes a very large block of text (10,000+ chars) — no max input size enforced; handled as a text buffer insertion.
 - How does the input editor handle non-ASCII characters — Rust/ratatui handle Unicode natively; emoji, CJK, combining characters work.
 - What happens when conversation contains hundreds of messages — scrolling uses indexed offsets, not full traversal; remains responsive.
-- How does the markdown renderer handle malformed/nested markdown — commonmark parser tolerates malformed input gracefully.
+- How does the markdown renderer handle malformed/nested markdown — hand-rolled markdown parser tolerates malformed input gracefully.
 - What happens when streaming response contains partial markdown — text accumulates during streaming; markdown is re-rendered on each update.
 - How does the conversation view handle a single extremely long line — word-wrap logic fits text to viewport width.
 - What happens when the developer submits an empty message — `input.trim().is_empty()` check prevents submission of whitespace-only messages.
@@ -116,7 +116,7 @@ A developer reads assistant responses containing fenced code blocks with languag
 
 - **FR-001**: The input editor MUST support character insertion, deletion, and cursor movement (arrow keys, Home/End, Ctrl+A/Ctrl+E).
 - **FR-002**: The input editor MUST dynamically resize between a minimum of 3 lines and a maximum of 10 lines based on content.
-- **FR-003**: The input editor MUST display a line number gutter.
+- **FR-003**: The input editor MUST display a line number gutter when the editor contains 2 or more lines.
 - **FR-004**: Enter MUST submit the message; Shift+Enter MUST insert a newline.
 - **FR-005**: The input editor MUST support input history recall via Up/Down arrow keys when the editor is empty.
 - **FR-006**: The conversation view MUST display messages with role-colored left borders: green (user), cyan (assistant), yellow (tool), red (error), magenta (system).
@@ -156,7 +156,7 @@ A developer reads assistant responses containing fenced code blocks with languag
 - Q: Very large paste (10,000+ chars)? → A: No max size enforced; handled as text buffer.
 - Q: Non-ASCII characters? → A: Rust/ratatui handle Unicode natively.
 - Q: Scrolling with hundreds of messages? → A: Indexed offsets; remains responsive.
-- Q: Malformed/nested markdown? → A: Commonmark parser tolerates gracefully.
+- Q: Malformed/nested markdown? → A: Hand-rolled markdown parser tolerates gracefully.
 - Q: Partial markdown during streaming? → A: Text accumulates; markdown re-rendered each update.
 - Q: Extremely long line? → A: Word-wrap fits to viewport width.
 - Q: Empty/whitespace submission? → A: `trim().is_empty()` check prevents it.
