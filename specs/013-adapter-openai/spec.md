@@ -74,11 +74,11 @@ A developer encounters various error conditions (invalid key, rate limiting, ser
 
 ### Edge Cases
 
-- What happens when an alternative provider returns chunks in a different order than OpenAI (e.g., tool call before role)?
-- How does the adapter handle a `[DONE]` sentinel that arrives mid-content (malformed stream)?
-- What happens when a provider returns an empty choices array in a chunk?
-- How are tool calls handled when the provider omits the tool call ID?
-- What happens when the provider returns a finish_reason the adapter does not recognize?
+- What happens when an alternative provider returns chunks in a different order — adapter iterates choices and processes whatever fields are present; order-tolerant.
+- How does the adapter handle a `[DONE]` sentinel that arrives mid-content — stream end without `[DONE]` is handled gracefully; open blocks are finalized if a stop_reason was set.
+- What happens when a provider returns an empty choices array — empty iteration does nothing; no crash or error.
+- How are tool calls handled when the provider omits the tool call ID — a UUID is auto-generated (`tc_{uuid}`).
+- What happens when the provider returns an unrecognized finish_reason — defaults to `StopReason::Stop` via wildcard match.
 
 ## Requirements *(mandatory)*
 
@@ -105,6 +105,16 @@ A developer encounters various error conditions (invalid key, rate limiting, ser
 - **SC-002**: Tool calls produce valid, parseable JSON arguments upon completion.
 - **SC-003**: The adapter works with at least one alternative provider (non-OpenAI) without code changes — only configuration differs.
 - **SC-004**: All error codes map to the correct agent error types consistently.
+
+## Clarifications
+
+### Session 2026-03-20
+
+- Q: Chunks in different order from alternative providers? → A: Order-tolerant; processes whatever fields present.
+- Q: `[DONE]` mid-content or missing? → A: Gracefully finalizes blocks if stop_reason was set.
+- Q: Empty choices array? → A: No-op; no crash.
+- Q: Missing tool call ID? → A: Auto-generates UUID (`tc_{uuid}`).
+- Q: Unrecognized finish_reason? → A: Defaults to `StopReason::Stop`.
 
 ## Assumptions
 

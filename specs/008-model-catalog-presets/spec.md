@@ -57,10 +57,10 @@ A developer configures a primary model with one or more fallback models. When th
 
 ### Edge Cases
 
-- What happens when the catalog data file is malformed — does loading fail gracefully with a clear error?
-- How does the system handle a provider that has presets but no credential environment variable is set?
-- What happens when a fallback chain contains only one model — does it behave identically to no fallback?
-- How does the catalog handle duplicate preset identifiers across providers?
+- What happens when the catalog data file is malformed — the catalog is embedded at compile time; malformed TOML panics at initialization with a clear message. This is a build-time invariant, not a runtime error.
+- How does the system handle a provider that has presets but no credential environment variable is set — resolution indicates the missing credentials; callers handle it (e.g., TUI shows a setup wizard).
+- What happens when a fallback chain contains only one model — behaves identically to no fallback; the single model is tried and errors propagate normally.
+- How does the catalog handle duplicate preset identifiers across providers — preset lookup uses first-match via `iter().find()`. Duplicates are prevented by TOML structure (unique keys per provider section).
 
 ## Requirements *(mandatory)*
 
@@ -93,6 +93,15 @@ A developer configures a primary model with one or more fallback models. When th
 - **SC-003**: Preset-to-connection resolution produces correct credentials and base URLs from environment variables.
 - **SC-004**: Automatic fallback tries the next model when the primary fails and stops at the first success.
 - **SC-005**: New providers can be added to the catalog data file without modifying code.
+
+## Clarifications
+
+### Session 2026-03-20
+
+- Q: How does malformed catalog data fail? → A: Compile-time embed; panics at init with clear message. Build-time invariant.
+- Q: What if provider credentials are missing? → A: Resolution indicates missing credentials; callers handle (e.g., setup wizard).
+- Q: Single-model fallback behavior? → A: Identical to no fallback; single model tried, errors propagate.
+- Q: Duplicate preset IDs across providers? → A: First-match via find(); TOML structure prevents duplicates per provider.
 
 ## Assumptions
 

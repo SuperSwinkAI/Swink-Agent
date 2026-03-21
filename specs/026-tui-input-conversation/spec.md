@@ -101,14 +101,14 @@ A developer reads assistant responses containing fenced code blocks with languag
 
 ### Edge Cases
 
-- What happens when the developer pastes a very large block of text into the input editor (e.g., 10,000+ characters)?
-- How does the input editor handle non-ASCII characters (emoji, CJK, combining characters, right-to-left text)?
-- What happens when the conversation contains hundreds of messages — does scrolling remain responsive?
-- How does the markdown renderer handle malformed or nested markdown (e.g., bold inside a code block)?
-- What happens when a streaming response contains partial markdown (e.g., an unclosed code fence)?
-- How does the conversation view handle a message that is a single extremely long line (no natural word-wrap points)?
-- What happens when the developer submits an empty message (just whitespace)?
-- How does input history behave when the developer has edited a recalled message but then presses Up again?
+- What happens when the developer pastes a very large block of text (10,000+ chars) — no max input size enforced; handled as a text buffer insertion.
+- How does the input editor handle non-ASCII characters — Rust/ratatui handle Unicode natively; emoji, CJK, combining characters work.
+- What happens when conversation contains hundreds of messages — scrolling uses indexed offsets, not full traversal; remains responsive.
+- How does the markdown renderer handle malformed/nested markdown — commonmark parser tolerates malformed input gracefully.
+- What happens when streaming response contains partial markdown — text accumulates during streaming; markdown is re-rendered on each update.
+- How does the conversation view handle a single extremely long line — word-wrap logic fits text to viewport width.
+- What happens when the developer submits an empty message — `input.trim().is_empty()` check prevents submission of whitespace-only messages.
+- How does input history behave when a recalled message is edited then Up pressed — editing a recalled message leaves history unmodified; next Up shows the next history item.
 
 ## Requirements *(mandatory)*
 
@@ -148,6 +148,19 @@ A developer reads assistant responses containing fenced code blocks with languag
 - **SC-004**: Markdown-formatted responses are rendered with visual differentiation for all supported elements (headers, bold, italic, code, lists).
 - **SC-005**: Scrolling through a conversation with 500+ messages has no perceptible lag.
 - **SC-006**: Previously submitted messages can be recalled from history with Up/Down keys.
+
+## Clarifications
+
+### Session 2026-03-20
+
+- Q: Very large paste (10,000+ chars)? → A: No max size enforced; handled as text buffer.
+- Q: Non-ASCII characters? → A: Rust/ratatui handle Unicode natively.
+- Q: Scrolling with hundreds of messages? → A: Indexed offsets; remains responsive.
+- Q: Malformed/nested markdown? → A: Commonmark parser tolerates gracefully.
+- Q: Partial markdown during streaming? → A: Text accumulates; markdown re-rendered each update.
+- Q: Extremely long line? → A: Word-wrap fits to viewport width.
+- Q: Empty/whitespace submission? → A: `trim().is_empty()` check prevents it.
+- Q: Edited recalled message then Up? → A: History unmodified; next Up shows next item.
 
 ## Assumptions
 
