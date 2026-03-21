@@ -1,5 +1,5 @@
 # Spec-Driven Development Status
-<!-- spec-status: project=worktree-007-tool-system-extensions commit=4d051e6ed1201cca08db45a77decc02789538920 updated=2026-03-21T15:12:30Z -->
+<!-- spec-status: project=Swink-Agent commit=a1f95cc353e07ad5953e428070f414ea0e43c8b5 updated=2026-03-21T15:21:12Z -->
 
 | Feature                         | Specify | Plan | Tasks | Implement |
 |---------------------------------|---------|------|-------|-----------|

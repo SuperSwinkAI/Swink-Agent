@@ -7,7 +7,7 @@
 - Provider Roadmap: [PROVIDER_EXPANSION_ROADMAP.md](PROVIDER_EXPANSION_ROADMAP.md)
 - Eval Roadmap: [EVAL.md](EVAL.md)
 
-**Current Focus:** 21/30 specs have plans, 8/30 have tasks, 7/30 complete (001–006, 011). Phase 0 + Phase 1 done, Phase 2 in progress (006 complete, 007 has tasks ready for implementation). Next: `/speckit.tasks` for remaining Phase 2 extensions (008–010) and adapters (012–014, 020). 9 specs need clarification (015–019, 023–025, 027, 029).
+**Current Focus:** 20/30 specs have plans, 8/30 have tasks, 7/30 complete (001–006, 011). Phase 0 + Phase 1 done, Phase 2 in progress (006 complete, 007 has tasks ready for implementation). Next: `/speckit.implement` for 007, then `/speckit.tasks` for remaining Phase 2 extensions (008–010) and adapters (012–014, 020). 10 specs need plans (015–019, 023–025, 027, 029).
 
 > **Numbering System:** Spec numbers (001–030) are sequential identifiers that
 > never change. Phase numbers represent execution order and can be reassigned
