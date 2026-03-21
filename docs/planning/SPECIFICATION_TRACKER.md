@@ -7,7 +7,7 @@
 - Provider Roadmap: [PROVIDER_EXPANSION_ROADMAP.md](PROVIDER_EXPANSION_ROADMAP.md)
 - Eval Roadmap: [EVAL.md](EVAL.md)
 
-**Current Focus:** 21/30 specs have plans, 6/30 complete (001–005, 011). Phase 0 + Phase 1 done. Next: `/speckit.tasks` for Phase 2 extensions (006–010) and remaining adapters (012–014, 020). 9 specs need clarification (015–019, 023–025, 027, 029).
+**Current Focus:** 21/30 specs have plans, 7/30 complete (001–006, 011). Phase 0 + Phase 1 done, Phase 2 started (006 complete). Next: `/speckit.tasks` for remaining Phase 2 extensions (007–010) and adapters (012–014, 020). 9 specs need clarification (015–019, 023–025, 027, 029).
 
 > **Numbering System:** Spec numbers (001–030) are sequential identifiers that
 > never change. Phase numbers represent execution order and can be reassigned
@@ -70,14 +70,14 @@ the two central verticals that make the agent functional.
 **Goal:** Context management, tool system extensions, model catalog, multi-agent
 primitives, and loop governance — capabilities that enhance the core engine.
 
-**Status:** 5/5 specs planned, 0/5 have tasks, 5/5 specs defined
+**Status:** 5/5 specs planned, 1/5 have tasks, 1/5 complete, 5/5 specs defined
 
 ### Implementation Checklist
 
-- [ ] **2.1** Context Management — Sliding window pruning, transform hooks (sync/async), versioned history, convert_to_llm pipeline (§5, §10.1)
+- [x] **2.1** Context Management — Sliding window pruning, transform hooks (sync/async), versioned history, convert_to_llm pipeline (§5, §10.1)
   - Spec: `specs/006-context-management/spec.md`
   - Branch: `006-context-management`
-  - Status: Plan complete — needs tasks
+  - Status: Complete (46/46 tasks, merged to main)
   - Depends on: 0.2
 - [ ] **2.2** Tool System Extensions — Transformer, validator, middleware, execution policies, FnTool, builtin tools (§4)
   - Spec: `specs/007-tool-system-extensions/spec.md`
@@ -335,7 +335,7 @@ graph TD
     style C fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
     style D fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
     style E fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
-    style F fill:#fff,color:#000,stroke:#6b7280,stroke-width:2px
+    style F fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
     style G fill:#fff,color:#000,stroke:#6b7280,stroke-width:2px
     style H fill:#fff,color:#000,stroke:#6b7280,stroke-width:2px
     style I fill:#fff,color:#000,stroke:#6b7280,stroke-width:2px
