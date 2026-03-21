@@ -7,7 +7,7 @@
 - Provider Roadmap: [PROVIDER_EXPANSION_ROADMAP.md](PROVIDER_EXPANSION_ROADMAP.md)
 - Eval Roadmap: [EVAL.md](EVAL.md)
 
-**Current Focus:** 18/30 specs have plans, 3/30 have tasks (001–002 complete, 003 ready). Next: `/speckit.implement` for 003-core-traits, then `/speckit.tasks` for 004–006.
+**Current Focus:** 18/30 specs have plans, 3/30 have tasks (001–003 complete). Next: `/speckit.tasks` for 004–006, then implementation.
 
 > **Numbering System:** Spec numbers (001–030) are sequential identifiers that
 > never change. Phase numbers represent execution order and can be reassigned
@@ -21,7 +21,7 @@
 other crate and module depends on — the data model, error taxonomy, and
 pluggable trait boundaries.
 
-**Status:** 3/3 specs planned, 3/3 have tasks, 2/3 complete, 3/3 specs defined
+**Status:** 3/3 specs planned, 3/3 have tasks, 3/3 complete, 3/3 specs defined
 
 ### Implementation Checklist
 
@@ -35,10 +35,10 @@ pluggable trait boundaries.
   - Branch: `002-foundation-types-errors`
   - Status: Complete (63/63 tasks, merged to main)
   - Depends on: 0.1
-- [ ] **0.3** Core Traits — AgentTool, StreamFn, RetryStrategy, JSON Schema validation, delta accumulation (§4, §7, §11)
+- [x] **0.3** Core Traits — AgentTool, StreamFn, RetryStrategy, JSON Schema validation, delta accumulation (§4, §7, §11)
   - Spec: `specs/003-core-traits/spec.md`
   - Branch: `003-core-traits`
-  - Status: Ready for implementation (0/47 tasks)
+  - Status: Complete (47/47 tasks, merged to main)
   - Depends on: 0.2
 
 ---

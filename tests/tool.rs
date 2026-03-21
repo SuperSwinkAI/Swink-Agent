@@ -240,3 +240,26 @@ fn dyn_agent_tool_is_send_sync() {
     fn assert_send_sync<T: Send + Sync + ?Sized>() {}
     assert_send_sync::<dyn AgentTool>();
 }
+
+// ── T017: Empty parameter schema accepts empty args ──
+
+#[test]
+fn empty_schema_accepts_empty_args() {
+    let schema = serde_json::json!({
+        "type": "object",
+        "properties": {}
+    });
+    let args = serde_json::json!({});
+    assert!(validate_tool_arguments(&schema, &args).is_ok());
+}
+
+// ── T018: is_error flag distinction ──
+
+#[test]
+fn is_error_flag_distinction() {
+    let success = AgentToolResult::text("ok");
+    assert!(!success.is_error);
+
+    let failure = AgentToolResult::error("bad");
+    assert!(failure.is_error);
+}

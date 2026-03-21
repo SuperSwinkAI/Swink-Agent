@@ -459,3 +459,39 @@ fn text_delta_on_wrong_block_type() {
     assert!(result.is_err());
     assert!(result.unwrap_err().contains("not Text"));
 }
+
+// ── T028: Empty stream edge case ──
+
+#[test]
+fn accumulate_empty_stream() {
+    let events = vec![];
+    let result = accumulate_message(events, "p", "m");
+    assert!(result.is_err());
+    assert!(result.unwrap_err().contains("no Start event"));
+}
+
+// ── T029: AssistantMessageDelta construction ──
+
+#[test]
+fn assistant_message_delta_variants() {
+    use swink_agent::AssistantMessageDelta;
+    use std::borrow::Cow;
+
+    let text = AssistantMessageDelta::Text {
+        content_index: 0,
+        delta: Cow::Borrowed("hello"),
+    };
+    assert!(matches!(text, AssistantMessageDelta::Text { content_index: 0, .. }));
+
+    let thinking = AssistantMessageDelta::Thinking {
+        content_index: 1,
+        delta: Cow::Owned("pondering".to_string()),
+    };
+    assert!(matches!(thinking, AssistantMessageDelta::Thinking { content_index: 1, .. }));
+
+    let tool = AssistantMessageDelta::ToolCall {
+        content_index: 2,
+        delta: Cow::Borrowed(r#"{"key":"val"}"#),
+    };
+    assert!(matches!(tool, AssistantMessageDelta::ToolCall { content_index: 2, .. }));
+}

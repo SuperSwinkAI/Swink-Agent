@@ -20,29 +20,42 @@ cargo clippy -p swink-agent -- -D warnings
 ### Implementing a Custom Tool
 
 ```rust
-use swink_agent::{AgentTool, AgentToolResult, ContentBlock};
+use std::future::Future;
+use std::pin::Pin;
+use swink_agent::{AgentTool, AgentToolResult};
 use serde_json::{json, Value};
 use tokio_util::sync::CancellationToken;
 
-struct GreetTool;
+struct GreetTool {
+    schema: Value,
+}
+
+impl GreetTool {
+    fn new() -> Self {
+        Self {
+            schema: json!({
+                "type": "object",
+                "properties": { "name": { "type": "string" } },
+                "required": ["name"]
+            }),
+        }
+    }
+}
 
 impl AgentTool for GreetTool {
     fn name(&self) -> &str { "greet" }
     fn label(&self) -> &str { "Greet" }
     fn description(&self) -> &str { "Greets a person by name" }
-    fn parameters_schema(&self) -> Value {
-        json!({
-            "type": "object",
-            "properties": { "name": { "type": "string" } },
-            "required": ["name"]
-        })
-    }
-    async fn execute(
+    fn parameters_schema(&self) -> &Value { &self.schema }
+    fn execute(
         &self, _call_id: &str, args: Value,
-        _token: CancellationToken, _cb: Option<Box<dyn Fn(String) + Send>>,
-    ) -> AgentToolResult {
-        let name = args["name"].as_str().unwrap_or("world");
-        AgentToolResult::text(format!("Hello, {name}!"))
+        _token: CancellationToken,
+        _on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
+    ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>> {
+        Box::pin(async move {
+            let name = args["name"].as_str().unwrap_or("world");
+            AgentToolResult::text(format!("Hello, {name}!"))
+        })
     }
 }
 ```
@@ -50,21 +63,31 @@ impl AgentTool for GreetTool {
 ### Implementing a Mock StreamFn
 
 ```rust
-use swink_agent::{StreamFn, AssistantMessageEvent, Usage, Cost, StopReason};
+use std::pin::Pin;
+use futures::Stream;
+use swink_agent::{
+    StreamFn, AssistantMessageEvent, StreamOptions,
+    Usage, Cost, StopReason, ModelSpec, AgentContext,
+};
+use tokio_util::sync::CancellationToken;
 
 struct MockStream;
 
 impl StreamFn for MockStream {
-    async fn call(&self, model: &ModelSpec, ctx: &AgentContext,
-                  opts: &StreamOptions, token: CancellationToken)
-        -> Pin<Box<dyn Stream<Item = AssistantMessageEvent> + Send>>
-    {
+    fn stream<'a>(
+        &'a self, _model: &'a ModelSpec, _ctx: &'a AgentContext,
+        _opts: &'a StreamOptions, _token: CancellationToken,
+    ) -> Pin<Box<dyn Stream<Item = AssistantMessageEvent> + Send + 'a>> {
         let events = vec![
-            AssistantMessageEvent::Start { provider: "mock".into(), model: "test".into() },
-            AssistantMessageEvent::TextStart { index: 0 },
-            AssistantMessageEvent::TextDelta { index: 0, text: "Hello!".into() },
-            AssistantMessageEvent::TextEnd { index: 0 },
-            AssistantMessageEvent::Done { usage: Usage::default(), cost: Cost::default(), stop_reason: StopReason::Stop },
+            AssistantMessageEvent::Start,
+            AssistantMessageEvent::TextStart { content_index: 0 },
+            AssistantMessageEvent::TextDelta { content_index: 0, delta: "Hello!".into() },
+            AssistantMessageEvent::TextEnd { content_index: 0 },
+            AssistantMessageEvent::Done {
+                stop_reason: StopReason::Stop,
+                usage: Usage::default(),
+                cost: Cost::default(),
+            },
         ];
         Box::pin(futures::stream::iter(events))
     }
@@ -79,7 +102,7 @@ use swink_agent::{DefaultRetryStrategy, RetryStrategy, AgentError};
 let strategy = DefaultRetryStrategy::default();
 assert!(strategy.should_retry(&AgentError::ModelThrottled, 1));
 assert!(!strategy.should_retry(&AgentError::Aborted, 1));
-assert!(!strategy.should_retry(&AgentError::ModelThrottled, 4)); // exceeds max_attempts
+assert!(!strategy.should_retry(&AgentError::ModelThrottled, 3)); // attempt == max_attempts
 ```
 
 ## Verification Checklist

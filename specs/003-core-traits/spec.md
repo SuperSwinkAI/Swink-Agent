@@ -2,7 +2,7 @@
 
 **Feature Branch**: `003-core-traits`
 **Created**: 2026-03-20
-**Status**: Draft
+**Status**: Verified
 **Input**: The three trait definitions that form the pluggable boundaries of the agent harness: tool execution, LLM streaming, and retry logic. Includes tool argument validation. References: PRD §4 (Tool System), PRD §7 (Streaming Interface), PRD §11 (Retry Strategy), HLD Core Abstractions layer.
 
 ## User Scenarios & Testing *(mandatory)*
