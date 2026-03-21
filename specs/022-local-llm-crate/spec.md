@@ -90,13 +90,13 @@ A developer uses the agent loop with a local model. The agent loop produces mess
 
 ### Edge Cases
 
-- What happens when the disk runs out of space during a model download?
-- How does the system handle a corrupted or incomplete cached model file?
-- What happens when the model file's checksum does not match the expected value after download?
-- How does the system behave on hardware without enough memory to load the model?
-- What happens when two processes attempt to download the same model simultaneously?
-- How does inference handle input that exceeds the local model's context window?
-- What happens when the embedding model receives extremely long text (beyond its maximum input length)?
+- What happens when the disk runs out of space during a model download — `Download` error variant propagates the OS I/O error.
+- How does the system handle a corrupted or incomplete cached model file — `Loading` error variant covers GGUF parse failures. The model fails to load with a clear error; re-download resolves it.
+- What happens when the model file's checksum does not match — integrity verification is delegated to the download library (HuggingFace ETag/SHA). No separate checksum step needed.
+- How does the system behave on hardware without enough memory to load the model — `Loading` error variant covers OOM. Clear error message; model does not partially load.
+- What happens when two processes attempt to download the same model simultaneously — last-writer-wins; no file locking. Single-process assumption documented.
+- How does inference handle input that exceeds the local model's context window — input is silently truncated to fit, keeping the most recent messages.
+- What happens when the embedding model receives extremely long text — returns an error indicating the input exceeds the model's maximum input length.
 
 ## Requirements *(mandatory)*
 
@@ -110,8 +110,8 @@ A developer uses the agent loop with a local model. The agent loop produces mess
 - **FR-006**: The system MUST provide an embedding model that converts text passages into fixed-dimensional vectors locally.
 - **FR-007**: The system MUST convert standard agent messages to the local model's expected format automatically.
 - **FR-008**: The system MUST provide presets for supported local models that bundle all necessary configuration.
-- **FR-009**: The system MUST validate model file integrity after download (checksum verification).
-- **FR-010**: The system MUST handle input exceeding the local model's context window gracefully (truncation or clear error).
+- **FR-009**: The system MUST validate model file integrity after download (delegated to the download library's built-in verification).
+- **FR-010**: The system MUST silently truncate input exceeding the local model's context window, keeping the most recent messages. The embedding model MUST return an error for inputs exceeding its maximum length.
 
 ### Key Entities
 
@@ -130,6 +130,18 @@ A developer uses the agent loop with a local model. The agent loop produces mess
 - **SC-003**: Cached models load without network access.
 - **SC-004**: Text embeddings produce vectors where semantically similar inputs have measurably higher similarity scores than dissimilar inputs.
 - **SC-005**: The local streaming function passes the same integration tests as cloud provider streaming functions (aside from output quality).
+
+## Clarifications
+
+### Session 2026-03-20
+
+- Q: How should model file integrity be verified after download? → A: Rely on download library verification (HuggingFace ETag/SHA). No separate checksum step.
+- Q: How should concurrent model downloads be handled? → A: Last-writer-wins; no locking. Single-process assumption.
+- Q: Should input exceeding context window be truncated or error? → A: Silently truncate to fit, keeping most recent messages.
+- Q: Should long embedding inputs be truncated or error? → A: Error — return error for inputs exceeding max length.
+- Q: Disk full during download? → A: `Download` error propagates OS I/O error.
+- Q: Corrupted cached model? → A: `Loading` error on GGUF parse failure; re-download resolves.
+- Q: Not enough memory to load? → A: `Loading` error covers OOM; clear message.
 
 ## Assumptions
 
