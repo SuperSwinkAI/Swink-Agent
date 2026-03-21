@@ -75,17 +75,16 @@ A developer registers post-turn hooks that execute asynchronously after each tur
 
 ### User Story 5 - Guard Against Budget Overruns in Real Time (Priority: P2)
 
-An operator sets real-time budget limits (cost, tokens, turns) that are monitored during stream collection. If any threshold is exceeded mid-run, the agent is cancelled via its cancellation token. This provides hard limits that take effect during execution, not just at turn boundaries.
+An operator sets budget limits (cost, tokens) that are checked before each LLM call. If any threshold is exceeded, the next LLM call is blocked and the agent loop terminates. This provides hard limits that take effect before execution, complementing loop policies that check at turn boundaries. Turn-based limits are handled by `MaxTurnsPolicy` (US1), not by BudgetGuard.
 
-**Why this priority**: Budget guards provide real-time safety — loop policies check at turn boundaries but budget guards can cancel mid-stream.
+**Why this priority**: Budget guards provide pre-call safety — loop policies check after a turn completes (by then tokens/cost are already spent), but budget guards prevent the next call from starting.
 
-**Independent Test**: Can be tested by setting a token budget below the expected response size and verifying the agent is cancelled when the budget is exceeded.
+**Independent Test**: Can be tested by setting a token budget below the expected total usage and verifying the agent is blocked when the budget is exceeded before the next LLM call.
 
 **Acceptance Scenarios**:
 
-1. **Given** a cost budget, **When** accumulated cost exceeds it during streaming, **Then** the agent is cancelled.
-2. **Given** a token budget, **When** accumulated tokens exceed it, **Then** the agent is cancelled.
-3. **Given** a turn budget, **When** the turn count exceeds it, **Then** the agent is cancelled.
+1. **Given** a cost budget, **When** accumulated cost exceeds it before an LLM call, **Then** the call is blocked with `BudgetExceeded::Cost`.
+2. **Given** a token budget, **When** accumulated tokens exceed it before an LLM call, **Then** the call is blocked with `BudgetExceeded::Tokens`.
 
 ---
 

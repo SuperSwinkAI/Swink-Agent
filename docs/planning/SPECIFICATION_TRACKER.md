@@ -7,7 +7,7 @@
 - Provider Roadmap: [PROVIDER_EXPANSION_ROADMAP.md](PROVIDER_EXPANSION_ROADMAP.md)
 - Eval Roadmap: [EVAL.md](EVAL.md)
 
-**Current Focus:** 20/30 specs have plans, 11/30 have tasks, 9/30 complete (001–008, 011). Phase 0 + Phase 1 done, Phase 2 in progress (006–008 complete, 009 has tasks, 010 needs tasks). Next: `/speckit.tasks` for remaining Phase 2 extension (010) and adapters (012–014, 020). 10 specs need plans (015–019, 023–025, 027, 029).
+**Current Focus:** 20/30 specs have plans, 12/30 have tasks, 9/30 complete (001–008, 011). Phase 0 + Phase 1 done, Phase 2 in progress (006–008 complete, 009 + 010 have tasks, ready for implementation). Next: `/speckit.tasks` for adapters (012–014, 020) and companion crates (021, 022). 10 specs need plans (015–019, 023–025, 027, 029).
 
 > **Numbering System:** Spec numbers (001–030) are sequential identifiers that
 > never change. Phase numbers represent execution order and can be reassigned
@@ -70,7 +70,7 @@ the two central verticals that make the agent functional.
 **Goal:** Context management, tool system extensions, model catalog, multi-agent
 primitives, and loop governance — capabilities that enhance the core engine.
 
-**Status:** 5/5 specs planned, 4/5 have tasks, 3/5 complete, 5/5 specs defined
+**Status:** 5/5 specs planned, 5/5 have tasks, 3/5 complete, 5/5 specs defined
 
 ### Implementation Checklist
 
@@ -97,7 +97,7 @@ primitives, and loop governance — capabilities that enhance the core engine.
 - [ ] **2.5** Loop Policies & Observability — LoopPolicy, StreamMiddleware, MetricsCollector, PostTurnHook, BudgetGuard, Checkpoint
   - Spec: `specs/010-loop-policies-observability/spec.md`
   - Branch: `010-loop-policies-observability`
-  - Status: Plan complete — needs tasks
+  - Status: Ready for implementation (0/72 tasks)
   - Depends on: 1.1
 
 ---
