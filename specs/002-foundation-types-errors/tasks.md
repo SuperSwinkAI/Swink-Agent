@@ -31,8 +31,8 @@
 
 **Purpose**: Verify scaffold state and prepare for spec-aligned changes
 
-- [ ] T001 Verify workspace builds cleanly and all existing tests pass by running `cargo test --workspace` and `cargo clippy --workspace -- -D warnings`
-- [ ] T002 Create shared test helpers module at `tests/common/mod.rs` with helper functions for constructing test messages, content blocks, and usage/cost records used across integration test files
+- [x] T001 Verify workspace builds cleanly and all existing tests pass by running `cargo test --workspace` and `cargo clippy --workspace -- -D warnings`
+- [x] T002 Create shared test helpers module at `tests/common/mod.rs` with helper functions for constructing test messages, content blocks, and usage/cost records used across integration test files
 
 **Checkpoint**: Scaffold verified, test helpers ready
 
@@ -44,11 +44,11 @@
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete
 
-- [ ] T003 Add `DowncastError` struct to `src/error.rs` with fields `expected: &'static str` and `actual: String`, deriving `Debug` and implementing `thiserror::Error` with display message `"Downcast failed: expected {expected}, got {actual}"` per contracts/public-api.md
-- [ ] T004 Add `downcast_ref<T: 'static>(&self) -> Result<&T, DowncastError>` method to `AgentMessage` in `src/types.rs` that returns `Ok(&T)` for `Custom` variant when downcast succeeds, or `Err(DowncastError)` with expected/actual type info; returns `Err` for `Llm` variant
-- [ ] T005 Add `File` variant to `ImageSource` enum in `src/types.rs` with fields `path: std::path::PathBuf` and `media_type: String` per data-model.md and contracts/public-api.md
-- [ ] T006 Add `media_type: String` field to `ImageSource::Url` variant in `src/types.rs` per contracts/public-api.md (currently missing from Url variant)
-- [ ] T007 Re-export `DowncastError` from `src/lib.rs` alongside existing `AgentError` re-export
+- [x] T003 Add `DowncastError` struct to `src/error.rs` with fields `expected: &'static str` and `actual: String`, deriving `Debug` and implementing `thiserror::Error` with display message `"Downcast failed: expected {expected}, got {actual}"` per contracts/public-api.md
+- [x] T004 Add `downcast_ref<T: 'static>(&self) -> Result<&T, DowncastError>` method to `AgentMessage` in `src/types.rs` that returns `Ok(&T)` for `Custom` variant when downcast succeeds, or `Err(DowncastError)` with expected/actual type info; returns `Err` for `Llm` variant
+- [x] T005 Add `File` variant to `ImageSource` enum in `src/types.rs` with fields `path: std::path::PathBuf` and `media_type: String` per data-model.md and contracts/public-api.md
+- [x] T006 Add `media_type: String` field to `ImageSource::Url` variant in `src/types.rs` per contracts/public-api.md (currently missing from Url variant)
+- [x] T007 Re-export `DowncastError` from `src/lib.rs` alongside existing `AgentError` re-export
 
 **Checkpoint**: Foundation ready — all spec-required types and methods exist. User story implementation can now begin in parallel.
 
@@ -64,17 +64,17 @@
 
 > **NOTE: Write these tests FIRST, ensure they FAIL or are pending before implementation**
 
-- [ ] T008 [P] [US1] Write integration test `user_message_construction_and_access` in `tests/types.rs` that creates a `UserMessage` with text content and verifies role-appropriate fields (content blocks, timestamp) are accessible
-- [ ] T009 [P] [US1] Write integration test `assistant_message_construction_and_access` in `tests/types.rs` that creates an `AssistantMessage` with all fields (content, provider, model_id, usage, cost, stop_reason, error_message, timestamp) and verifies each is accessible
-- [ ] T010 [P] [US1] Write integration test `tool_result_message_construction_and_access` in `tests/types.rs` that creates a `ToolResultMessage` with tool_call_id, content, is_error flag, timestamp and verifies each is accessible
-- [ ] T011 [P] [US1] Write integration test `message_conversation_sequence` in `tests/types.rs` that composes User → Assistant → ToolResult → Assistant into a `Vec<AgentMessage>` and verifies all messages accessible in order
-- [ ] T012 [P] [US1] Write integration test `llm_message_serde_roundtrip` in `tests/types.rs` that serializes and deserializes each `LlmMessage` variant and asserts all fields round-trip with zero data loss
+- [x] T008 [P] [US1] Write integration test `user_message_construction_and_access` in `tests/types.rs` that creates a `UserMessage` with text content and verifies role-appropriate fields (content blocks, timestamp) are accessible
+- [x] T009 [P] [US1] Write integration test `assistant_message_construction_and_access` in `tests/types.rs` that creates an `AssistantMessage` with all fields (content, provider, model_id, usage, cost, stop_reason, error_message, timestamp) and verifies each is accessible
+- [x] T010 [P] [US1] Write integration test `tool_result_message_construction_and_access` in `tests/types.rs` that creates a `ToolResultMessage` with tool_call_id, content, is_error flag, timestamp and verifies each is accessible
+- [x] T011 [P] [US1] Write integration test `message_conversation_sequence` in `tests/types.rs` that composes User → Assistant → ToolResult → Assistant into a `Vec<AgentMessage>` and verifies all messages accessible in order
+- [x] T012 [P] [US1] Write integration test `llm_message_serde_roundtrip` in `tests/types.rs` that serializes and deserializes each `LlmMessage` variant and asserts all fields round-trip with zero data loss
 
 ### Implementation for User Story 1
 
-- [ ] T013 [US1] Verify `UserMessage`, `AssistantMessage`, `ToolResultMessage` structs in `src/types.rs` derive `Serialize` and `Deserialize` and all fields match data-model.md (content, timestamp, provider, model_id, usage, cost, stop_reason, error_message, tool_call_id, is_error)
-- [ ] T014 [US1] Verify `LlmMessage` enum in `src/types.rs` has correct serde tagging (`#[serde(tag = "role")]`) and all three variants wrap their respective struct types
-- [ ] T015 [US1] Verify all US1 tests pass: `cargo test -p swink-agent --test types`
+- [x] T013 [US1] Verify `UserMessage`, `AssistantMessage`, `ToolResultMessage` structs in `src/types.rs` derive `Serialize` and `Deserialize` and all fields match data-model.md (content, timestamp, provider, model_id, usage, cost, stop_reason, error_message, tool_call_id, is_error)
+- [x] T014 [US1] Verify `LlmMessage` enum in `src/types.rs` has correct serde tagging (`#[serde(tag = "role")]`) and all three variants wrap their respective struct types
+- [x] T015 [US1] Verify all US1 tests pass: `cargo test -p swink-agent --test types`
 
 **Checkpoint**: User Story 1 complete — message types are fully functional and tested
 
@@ -88,17 +88,17 @@
 
 ### Tests for User Story 2
 
-- [ ] T016 [P] [US2] Write integration test `content_block_text_construction` in `tests/types.rs` verifying a text block contains a plain text string
-- [ ] T017 [P] [US2] Write integration test `content_block_thinking_with_signature` in `tests/types.rs` verifying a thinking block contains reasoning string and optional verification signature
-- [ ] T018 [P] [US2] Write integration test `content_block_tool_call_with_empty_args` in `tests/types.rs` verifying a tool call block with `arguments: serde_json::json!({})` is valid and contains call ID, tool name, parsed arguments, and optional partial buffer
-- [ ] T019 [P] [US2] Write integration test `content_block_image_all_sources` in `tests/types.rs` verifying image blocks from all three source types: Base64 (with media_type + data), Url (with url + media_type), and File (with path + media_type)
-- [ ] T020 [P] [US2] Write integration test `content_block_serde_roundtrip_all_variants` in `tests/types.rs` that serializes and deserializes each `ContentBlock` variant and asserts exact equality
+- [x] T016 [P] [US2] Write integration test `content_block_text_construction` in `tests/types.rs` verifying a text block contains a plain text string
+- [x] T017 [P] [US2] Write integration test `content_block_thinking_with_signature` in `tests/types.rs` verifying a thinking block contains reasoning string and optional verification signature
+- [x] T018 [P] [US2] Write integration test `content_block_tool_call_with_empty_args` in `tests/types.rs` verifying a tool call block with `arguments: serde_json::json!({})` is valid and contains call ID, tool name, parsed arguments, and optional partial buffer
+- [x] T019 [P] [US2] Write integration test `content_block_image_all_sources` in `tests/types.rs` verifying image blocks from all three source types: Base64 (with media_type + data), Url (with url + media_type), and File (with path + media_type)
+- [x] T020 [P] [US2] Write integration test `content_block_serde_roundtrip_all_variants` in `tests/types.rs` that serializes and deserializes each `ContentBlock` variant and asserts exact equality
 
 ### Implementation for User Story 2
 
-- [ ] T021 [US2] Verify `ContentBlock` enum in `src/types.rs` has all four variants (Text, Thinking, ToolCall, Image) with correct field types per contracts/public-api.md, including the `#[non_exhaustive]` attribute
-- [ ] T022 [US2] Verify `ImageSource` enum in `src/types.rs` has all three variants (Base64, Url, File) with correct field types per data-model.md after T005 and T006
-- [ ] T023 [US2] Verify all US2 tests pass: `cargo test -p swink-agent --test types`
+- [x] T021 [US2] Verify `ContentBlock` enum in `src/types.rs` has all four variants (Text, Thinking, ToolCall, Image) with correct field types per contracts/public-api.md, including the `#[non_exhaustive]` attribute
+- [x] T022 [US2] Verify `ImageSource` enum in `src/types.rs` has all three variants (Base64, Url, File) with correct field types per data-model.md after T005 and T006
+- [x] T023 [US2] Verify all US2 tests pass: `cargo test -p swink-agent --test types`
 
 **Checkpoint**: User Story 2 complete — all content block types work correctly
 
@@ -112,19 +112,19 @@
 
 ### Tests for User Story 3
 
-- [ ] T024 [P] [US3] Write integration test `usage_individual_counters` in `tests/types.rs` that creates a Usage record and verifies all counters (input, output, cache_read, cache_write, total) are independently accessible
-- [ ] T025 [P] [US3] Write integration test `usage_aggregation_two_records` in `tests/types.rs` that sums two Usage records via `Add` and verifies each counter sums correctly
-- [ ] T026 [P] [US3] Write integration test `usage_add_assign` in `tests/types.rs` that uses `AddAssign` to accumulate usage and verifies correctness
-- [ ] T027 [P] [US3] Write integration test `usage_zero_counters_valid` in `tests/types.rs` that creates `Usage::default()` and verifies all counters are zero (edge case from spec)
-- [ ] T028 [P] [US3] Write integration test `cost_per_category_and_total` in `tests/types.rs` that creates a Cost record with per-category costs, verifies total is sum of all categories via `Add`
-- [ ] T029 [P] [US3] Write integration test `cost_add_assign` in `tests/types.rs` that uses `AddAssign` to accumulate cost and verifies correctness
-- [ ] T030 [P] [US3] Write integration test `usage_cost_serde_roundtrip` in `tests/types.rs` that serializes and deserializes Usage and Cost records and verifies zero data loss
+- [x] T024 [P] [US3] Write integration test `usage_individual_counters` in `tests/types.rs` that creates a Usage record and verifies all counters (input, output, cache_read, cache_write, total) are independently accessible
+- [x] T025 [P] [US3] Write integration test `usage_aggregation_two_records` in `tests/types.rs` that sums two Usage records via `Add` and verifies each counter sums correctly
+- [x] T026 [P] [US3] Write integration test `usage_add_assign` in `tests/types.rs` that uses `AddAssign` to accumulate usage and verifies correctness
+- [x] T027 [P] [US3] Write integration test `usage_zero_counters_valid` in `tests/types.rs` that creates `Usage::default()` and verifies all counters are zero (edge case from spec)
+- [x] T028 [P] [US3] Write integration test `cost_per_category_and_total` in `tests/types.rs` that creates a Cost record with per-category costs, verifies total is sum of all categories via `Add`
+- [x] T029 [P] [US3] Write integration test `cost_add_assign` in `tests/types.rs` that uses `AddAssign` to accumulate cost and verifies correctness
+- [x] T030 [P] [US3] Write integration test `usage_cost_serde_roundtrip` in `tests/types.rs` that serializes and deserializes Usage and Cost records and verifies zero data loss
 
 ### Implementation for User Story 3
 
-- [ ] T031 [US3] Verify `Usage` struct in `src/types.rs` has all five counters as `u64`, derives `Default`, and implements `Add` + `AddAssign` with correct arithmetic per data-model.md
-- [ ] T032 [US3] Verify `Cost` struct in `src/types.rs` has all five fields as `f64`, derives `Default`, and implements `Add` + `AddAssign` with correct arithmetic per data-model.md
-- [ ] T033 [US3] Verify all US3 tests pass: `cargo test -p swink-agent --test types`
+- [x] T031 [US3] Verify `Usage` struct in `src/types.rs` has all five counters as `u64`, derives `Default`, and implements `Add` + `AddAssign` with correct arithmetic per data-model.md
+- [x] T032 [US3] Verify `Cost` struct in `src/types.rs` has all five fields as `f64`, derives `Default`, and implements `Add` + `AddAssign` with correct arithmetic per data-model.md
+- [x] T033 [US3] Verify all US3 tests pass: `cargo test -p swink-agent --test types`
 
 **Checkpoint**: User Story 3 complete — usage and cost tracking works correctly
 
@@ -138,18 +138,18 @@
 
 ### Tests for User Story 4
 
-- [ ] T034 [P] [US4] Write integration test `error_context_overflow_display` in `tests/error.rs` that constructs `AgentError::ContextWindowOverflow` with a model name and verifies display message contains the model name
-- [ ] T035 [P] [US4] Write integration test `error_structured_output_display` in `tests/error.rs` that constructs `AgentError::StructuredOutputFailed` with attempts and last_error and verifies display contains both
-- [ ] T036 [P] [US4] Write integration test `error_all_variants_implement_std_error` in `tests/error.rs` that constructs each variant and verifies it implements `std::error::Error` (can be used as `&dyn Error`)
-- [ ] T037 [P] [US4] Write integration test `error_retryable_classification` in `tests/error.rs` that verifies `is_retryable()` returns true only for `ModelThrottled` and `NetworkError`, false for all others
-- [ ] T038 [P] [US4] Write integration test `error_stream_error_source_chain` in `tests/error.rs` that constructs `AgentError::StreamError` with a source error and verifies `source()` returns the inner error
-- [ ] T039 [P] [US4] Write integration test `downcast_error_display` in `tests/error.rs` that constructs `DowncastError` and verifies display message contains expected and actual type names
+- [x] T034 [P] [US4] Write integration test `error_context_overflow_display` in `tests/error.rs` that constructs `AgentError::ContextWindowOverflow` with a model name and verifies display message contains the model name
+- [x] T035 [P] [US4] Write integration test `error_structured_output_display` in `tests/error.rs` that constructs `AgentError::StructuredOutputFailed` with attempts and last_error and verifies display contains both
+- [x] T036 [P] [US4] Write integration test `error_all_variants_implement_std_error` in `tests/error.rs` that constructs each variant and verifies it implements `std::error::Error` (can be used as `&dyn Error`)
+- [x] T037 [P] [US4] Write integration test `error_retryable_classification` in `tests/error.rs` that verifies `is_retryable()` returns true only for `ModelThrottled` and `NetworkError`, false for all others
+- [x] T038 [P] [US4] Write integration test `error_stream_error_source_chain` in `tests/error.rs` that constructs `AgentError::StreamError` with a source error and verifies `source()` returns the inner error
+- [x] T039 [P] [US4] Write integration test `downcast_error_display` in `tests/error.rs` that constructs `DowncastError` and verifies display message contains expected and actual type names
 
 ### Implementation for User Story 4
 
-- [ ] T040 [US4] Verify `AgentError` enum in `src/error.rs` has all spec-required variants (ContextWindowOverflow, ModelThrottled, NetworkError, StructuredOutputFailed, AlreadyRunning, NoMessages, InvalidContinue, StreamError, Aborted) with correct fields and display messages per contracts/public-api.md
-- [ ] T041 [US4] Verify `AgentError` derives `thiserror::Error` and all variants implement `std::error::Error` with proper `#[source]` annotations for error chaining
-- [ ] T042 [US4] Verify all US4 tests pass: `cargo test -p swink-agent --test error`
+- [x] T040 [US4] Verify `AgentError` enum in `src/error.rs` has all spec-required variants (ContextWindowOverflow, ModelThrottled, NetworkError, StructuredOutputFailed, AlreadyRunning, NoMessages, InvalidContinue, StreamError, Aborted) with correct fields and display messages per contracts/public-api.md
+- [x] T041 [US4] Verify `AgentError` derives `thiserror::Error` and all variants implement `std::error::Error` with proper `#[source]` annotations for error chaining
+- [x] T042 [US4] Verify all US4 tests pass: `cargo test -p swink-agent --test error`
 
 **Checkpoint**: User Story 4 complete — error taxonomy is fully functional
 
@@ -163,16 +163,16 @@
 
 ### Tests for User Story 5
 
-- [ ] T043 [P] [US5] Write integration test `custom_message_wrap_and_store` in `tests/types.rs` that defines a custom type implementing `CustomMessage`, wraps it as `AgentMessage::Custom`, stores it in a `Vec<AgentMessage>` alongside `Llm` messages, and verifies it persists
-- [ ] T044 [P] [US5] Write integration test `custom_message_downcast_success` in `tests/types.rs` that wraps a custom type, then calls `downcast_ref::<T>()` and verifies the original data is accessible
-- [ ] T045 [P] [US5] Write integration test `custom_message_downcast_wrong_type` in `tests/types.rs` that wraps a custom type, calls `downcast_ref::<WrongType>()`, and verifies it returns `Err(DowncastError)` with expected vs actual type info
-- [ ] T046 [P] [US5] Write integration test `custom_message_downcast_on_llm_variant` in `tests/types.rs` that calls `downcast_ref::<T>()` on an `AgentMessage::Llm` variant and verifies it returns `Err(DowncastError)`
+- [x] T043 [P] [US5] Write integration test `custom_message_wrap_and_store` in `tests/types.rs` that defines a custom type implementing `CustomMessage`, wraps it as `AgentMessage::Custom`, stores it in a `Vec<AgentMessage>` alongside `Llm` messages, and verifies it persists
+- [x] T044 [P] [US5] Write integration test `custom_message_downcast_success` in `tests/types.rs` that wraps a custom type, then calls `downcast_ref::<T>()` and verifies the original data is accessible
+- [x] T045 [P] [US5] Write integration test `custom_message_downcast_wrong_type` in `tests/types.rs` that wraps a custom type, calls `downcast_ref::<WrongType>()`, and verifies it returns `Err(DowncastError)` with expected vs actual type info
+- [x] T046 [P] [US5] Write integration test `custom_message_downcast_on_llm_variant` in `tests/types.rs` that calls `downcast_ref::<T>()` on an `AgentMessage::Llm` variant and verifies it returns `Err(DowncastError)`
 
 ### Implementation for User Story 5
 
-- [ ] T047 [US5] Verify `CustomMessage` trait in `src/types.rs` requires `Send + Sync + Debug + Any + 'static` bounds and has `as_any()` and `type_name()` methods per contracts/public-api.md
-- [ ] T048 [US5] Verify `AgentMessage::downcast_ref` method (from T004) works correctly with `DowncastError` return type and provides expected vs actual type info for debugging
-- [ ] T049 [US5] Verify all US5 tests pass: `cargo test -p swink-agent --test types`
+- [x] T047 [US5] Verify `CustomMessage` trait in `src/types.rs` requires `Send + Sync + Debug + Any + 'static` bounds and has `as_any()` and `type_name()` methods per contracts/public-api.md
+- [x] T048 [US5] Verify `AgentMessage::downcast_ref` method (from T004) works correctly with `DowncastError` return type and provides expected vs actual type info for debugging
+- [x] T049 [US5] Verify all US5 tests pass: `cargo test -p swink-agent --test types`
 
 **Checkpoint**: User Story 5 complete — custom message extension works correctly
 
@@ -186,18 +186,18 @@
 
 ### Tests
 
-- [ ] T050 [P] Write integration test `stop_reason_all_variants` in `tests/types.rs` that constructs each `StopReason` variant (Stop, Length, ToolUse, Aborted, Error) and verifies pattern matching and serde round-trip (FR-008)
-- [ ] T051 [P] Write integration test `thinking_level_all_variants` in `tests/types.rs` that constructs each `ThinkingLevel` variant (Off, Minimal, Low, Medium, High, ExtraHigh) and verifies Default is Off and serde round-trip (FR-010)
-- [ ] T052 [P] Write integration test `model_spec_construction_and_builder` in `tests/types.rs` that creates a `ModelSpec` via `new()` and chains `with_thinking_level()`, `with_thinking_budgets()`, `with_provider_config()`, `with_capabilities()` and verifies all fields (FR-009)
-- [ ] T053 [P] Write integration test `model_spec_serde_roundtrip` in `tests/types.rs` that serializes and deserializes a fully-populated `ModelSpec` and verifies zero data loss (FR-009)
-- [ ] T054 [P] Write integration test `agent_result_construction` in `tests/types.rs` that creates an `AgentResult` with messages, stop_reason, usage, cost, and optional error, then verifies all fields are accessible (FR-011)
-- [ ] T055 [P] Write integration test `agent_context_construction` in `tests/types.rs` that creates an `AgentContext` with system_prompt, messages, and tools vector, then verifies all fields accessible (FR-012)
+- [x] T050 [P] Write integration test `stop_reason_all_variants` in `tests/types.rs` that constructs each `StopReason` variant (Stop, Length, ToolUse, Aborted, Error) and verifies pattern matching and serde round-trip (FR-008)
+- [x] T051 [P] Write integration test `thinking_level_all_variants` in `tests/types.rs` that constructs each `ThinkingLevel` variant (Off, Minimal, Low, Medium, High, ExtraHigh) and verifies Default is Off and serde round-trip (FR-010)
+- [x] T052 [P] Write integration test `model_spec_construction_and_builder` in `tests/types.rs` that creates a `ModelSpec` via `new()` and chains `with_thinking_level()`, `with_thinking_budgets()`, `with_provider_config()`, `with_capabilities()` and verifies all fields (FR-009)
+- [x] T053 [P] Write integration test `model_spec_serde_roundtrip` in `tests/types.rs` that serializes and deserializes a fully-populated `ModelSpec` and verifies zero data loss (FR-009)
+- [x] T054 [P] Write integration test `agent_result_construction` in `tests/types.rs` that creates an `AgentResult` with messages, stop_reason, usage, cost, and optional error, then verifies all fields are accessible (FR-011)
+- [x] T055 [P] Write integration test `agent_context_construction` in `tests/types.rs` that creates an `AgentContext` with system_prompt, messages, and tools vector, then verifies all fields accessible (FR-012)
 
 ### Verification
 
-- [ ] T056 Verify `StopReason` enum in `src/types.rs` has all five variants with `#[non_exhaustive]`, derives `PartialEq, Eq, Hash, Serialize, Deserialize`
-- [ ] T057 Verify `ModelSpec` struct in `src/types.rs` has `new()` constructor and `with_*()` builder methods per contracts/public-api.md
-- [ ] T058 Verify all Phase 8 tests pass: `cargo test -p swink-agent --test types`
+- [x] T056 Verify `StopReason` enum in `src/types.rs` has all five variants with `#[non_exhaustive]`, derives `PartialEq, Eq, Hash, Serialize, Deserialize`
+- [x] T057 Verify `ModelSpec` struct in `src/types.rs` has `new()` constructor and `with_*()` builder methods per contracts/public-api.md
+- [x] T058 Verify all Phase 8 tests pass: `cargo test -p swink-agent --test types`
 
 **Checkpoint**: All spec types verified and tested
 
@@ -207,11 +207,11 @@
 
 **Purpose**: Final verification, compile-time checks, and comprehensive test suite validation
 
-- [ ] T059 [P] Verify compile-time `Send + Sync` assertions in `src/types.rs` cover all public types including `DowncastError` (FR-015)
-- [ ] T060 [P] Verify all public types are re-exported from `src/lib.rs` so consumers access them via `use swink_agent::*` per contracts/public-api.md
-- [ ] T061 Run full test suite: `cargo test --workspace` and verify zero failures
-- [ ] T062 Run clippy: `cargo clippy --workspace -- -D warnings` and verify zero warnings
-- [ ] T063 Run quickstart.md validation: verify all code examples from `specs/002-foundation-types-errors/quickstart.md` compile and produce expected output
+- [x] T059 [P] Verify compile-time `Send + Sync` assertions in `src/types.rs` cover all public types including `DowncastError` (FR-015)
+- [x] T060 [P] Verify all public types are re-exported from `src/lib.rs` so consumers access them via `use swink_agent::*` per contracts/public-api.md
+- [x] T061 Run full test suite: `cargo test --workspace` and verify zero failures
+- [x] T062 Run clippy: `cargo clippy --workspace -- -D warnings` and verify zero warnings
+- [x] T063 Run quickstart.md validation: verify all code examples from `specs/002-foundation-types-errors/quickstart.md` compile and produce expected output
 
 ---
 

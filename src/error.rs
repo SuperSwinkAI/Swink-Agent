@@ -4,6 +4,28 @@
 //! [`AgentError`]. Transient failures (`ModelThrottled`, `NetworkError`) are
 //! retryable; all other variants are terminal for the current operation.
 
+/// Error returned when downcasting an [`AgentMessage`](crate::types::AgentMessage) to a concrete
+/// custom message type fails.
+#[derive(Debug)]
+pub struct DowncastError {
+    /// The expected (target) type name.
+    pub expected: &'static str,
+    /// The actual type description found.
+    pub actual: String,
+}
+
+impl std::fmt::Display for DowncastError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Downcast failed: expected {}, got {}",
+            self.expected, self.actual
+        )
+    }
+}
+
+impl std::error::Error for DowncastError {}
+
 /// The top-level error type for the swink agent.
 ///
 /// Each variant maps to a specific failure mode described in PRD section 10.3.

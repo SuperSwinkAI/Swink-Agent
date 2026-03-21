@@ -1,7 +1,7 @@
 use std::error::Error;
 use std::io;
 
-use swink_agent::AgentError;
+use swink_agent::{AgentError, DowncastError};
 
 /// Test 1.8 — `AgentError` variants display meaningful messages.
 #[test]
@@ -192,4 +192,105 @@ fn named_constructors_produce_correct_variants() {
         AgentError::StructuredOutputFailed { attempts: 5, ref last_error }
             if last_error == "bad schema"
     ));
+}
+
+// ── T034: ContextWindowOverflow display contains model name ──
+
+#[test]
+fn error_context_overflow_display() {
+    let err = AgentError::context_overflow("claude-sonnet-4-6");
+    let display = err.to_string();
+    assert!(
+        display.contains("claude-sonnet-4-6"),
+        "display should contain model name, got: {display}"
+    );
+}
+
+// ── T035: StructuredOutputFailed display contains attempts and last_error ──
+
+#[test]
+fn error_structured_output_display() {
+    let err = AgentError::structured_output_failed(3, "schema mismatch");
+    let display = err.to_string();
+    assert!(
+        display.contains("3"),
+        "display should contain attempt count, got: {display}"
+    );
+    assert!(
+        display.contains("schema mismatch"),
+        "display should contain last_error, got: {display}"
+    );
+}
+
+// ── T036: All variants implement std::error::Error ──
+
+#[test]
+fn error_all_variants_implement_std_error() {
+    let variants: Vec<AgentError> = vec![
+        AgentError::context_overflow("model-x"),
+        AgentError::ModelThrottled,
+        AgentError::network(io::Error::other("net")),
+        AgentError::structured_output_failed(1, "fail"),
+        AgentError::AlreadyRunning,
+        AgentError::NoMessages,
+        AgentError::InvalidContinue,
+        AgentError::stream(io::Error::other("stream")),
+        AgentError::Aborted,
+    ];
+
+    for v in &variants {
+        let _: &dyn Error = v;
+    }
+}
+
+// ── T037: is_retryable classification ──
+
+#[test]
+fn error_retryable_classification() {
+    assert!(AgentError::ModelThrottled.is_retryable());
+    assert!(AgentError::network(io::Error::other("x")).is_retryable());
+
+    assert!(!AgentError::context_overflow("m").is_retryable());
+    assert!(!AgentError::structured_output_failed(1, "e").is_retryable());
+    assert!(!AgentError::AlreadyRunning.is_retryable());
+    assert!(!AgentError::NoMessages.is_retryable());
+    assert!(!AgentError::InvalidContinue.is_retryable());
+    assert!(!AgentError::stream(io::Error::other("x")).is_retryable());
+    assert!(!AgentError::Aborted.is_retryable());
+}
+
+// ── T038: StreamError source chain ──
+
+#[test]
+fn error_stream_error_source_chain() {
+    let inner = io::Error::new(io::ErrorKind::InvalidData, "bad data");
+    let err = AgentError::stream(inner);
+    let source = err.source().expect("StreamError should have a source");
+    assert_eq!(source.to_string(), "bad data");
+}
+
+// ── T039: DowncastError display ──
+
+#[test]
+fn downcast_error_display() {
+    let err = DowncastError {
+        expected: "MyCustomType",
+        actual: "OtherType".into(),
+    };
+    let display = err.to_string();
+    assert!(
+        display.contains("MyCustomType"),
+        "should contain expected type name, got: {display}"
+    );
+    assert!(
+        display.contains("OtherType"),
+        "should contain actual type name, got: {display}"
+    );
+    assert!(
+        display.contains("Downcast failed"),
+        "should contain 'Downcast failed', got: {display}"
+    );
+
+    // DowncastError implements std::error::Error
+    let _: &dyn Error = &err;
 }

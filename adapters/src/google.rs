@@ -473,9 +473,9 @@ fn user_parts(blocks: &[ContentBlock]) -> Vec<GeminiPart> {
                     }),
                     ..GeminiPart::default()
                 }),
-                ImageSource::Url { url } => parts.push(GeminiPart {
+                ImageSource::Url { url, media_type } => parts.push(GeminiPart {
                     file_data: Some(GeminiFileData {
-                        mime_type: "image/*".to_string(),
+                        mime_type: media_type.clone(),
                         file_uri: url.clone(),
                     }),
                     ..GeminiPart::default()

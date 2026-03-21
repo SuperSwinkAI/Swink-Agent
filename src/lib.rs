@@ -65,7 +65,7 @@ pub use context_version::{
 };
 pub use convert::{MessageConverter, ToolSchema, convert_messages, extract_tool_schemas};
 pub use emit::Emission;
-pub use error::AgentError;
+pub use error::{AgentError, DowncastError};
 pub use event_forwarder::EventForwarderFn;
 pub use fallback::ModelFallback;
 pub use fn_tool::FnTool;

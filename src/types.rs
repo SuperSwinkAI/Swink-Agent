@@ -77,7 +77,13 @@ pub enum ImageSource {
     Base64 { media_type: String, data: String },
 
     /// A URL pointing to an image.
-    Url { url: String },
+    Url { url: String, media_type: String },
+
+    /// A local file path pointing to an image.
+    File {
+        path: std::path::PathBuf,
+        media_type: String,
+    },
 }
 
 // ─── Messages ───────────────────────────────────────────────────────────────
@@ -294,6 +300,29 @@ pub enum AgentMessage {
 
     /// A custom application-defined message.
     Custom(Box<dyn CustomMessage>),
+}
+
+impl AgentMessage {
+    /// Attempt to downcast the inner custom message to a concrete type.
+    ///
+    /// Returns `Ok(&T)` if this is a `Custom` variant and the inner type matches `T`.
+    /// Returns `Err(DowncastError)` if this is an `Llm` variant or the type does not match.
+    pub fn downcast_ref<T: 'static>(&self) -> Result<&T, crate::error::DowncastError> {
+        match self {
+            Self::Custom(msg) => msg.as_any().downcast_ref::<T>().ok_or_else(|| {
+                crate::error::DowncastError {
+                    expected: std::any::type_name::<T>(),
+                    actual: msg
+                        .type_name()
+                        .map_or_else(|| format!("{msg:?}"), ToString::to_string),
+                }
+            }),
+            Self::Llm(_) => Err(crate::error::DowncastError {
+                expected: std::any::type_name::<T>(),
+                actual: "LlmMessage".to_string(),
+            }),
+        }
+    }
 }
 
 impl fmt::Debug for AgentMessage {
@@ -738,6 +767,7 @@ const _: () = {
     assert_send_sync::<AgentContext>();
     assert_send_sync::<TurnSnapshot>();
     assert_send_sync::<CustomMessageRegistry>();
+    assert_send_sync::<crate::error::DowncastError>();
 };
 
 #[cfg(test)]

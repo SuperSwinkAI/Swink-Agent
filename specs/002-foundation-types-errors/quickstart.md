@@ -20,26 +20,28 @@ cargo clippy -p swink-agent -- -D warnings
 ### Creating Messages
 
 ```rust
-use swink_agent::{ContentBlock, LlmMessage, AgentMessage, Usage, Cost, StopReason};
-use std::time::SystemTime;
-
-// User message with text
-let user_msg = LlmMessage::User {
-    content: vec![ContentBlock::Text { text: "Hello!".into() }],
-    timestamp: SystemTime::now(),
+use swink_agent::{
+    ContentBlock, LlmMessage, AgentMessage, UserMessage, AssistantMessage,
+    Usage, Cost, StopReason,
 };
 
+// User message with text
+let user_msg = LlmMessage::User(UserMessage {
+    content: vec![ContentBlock::Text { text: "Hello!".into() }],
+    timestamp: 0,
+});
+
 // Assistant message
-let assistant_msg = LlmMessage::Assistant {
+let assistant_msg = LlmMessage::Assistant(AssistantMessage {
     content: vec![ContentBlock::Text { text: "Hi there!".into() }],
     provider: "anthropic".into(),
-    model: "claude-sonnet-4-6".into(),
+    model_id: "claude-sonnet-4-6".into(),
     usage: Usage::default(),
     cost: Cost::default(),
     stop_reason: StopReason::Stop,
     error_message: None,
-    timestamp: SystemTime::now(),
-};
+    timestamp: 0,
+});
 
 // Wrap as AgentMessage
 let agent_msg = AgentMessage::Llm(user_msg);
@@ -48,11 +50,13 @@ let agent_msg = AgentMessage::Llm(user_msg);
 ### Aggregating Usage
 
 ```rust
-let usage1 = Usage { input_tokens: 100, output_tokens: 50, ..Default::default() };
-let usage2 = Usage { input_tokens: 200, output_tokens: 75, ..Default::default() };
+use swink_agent::Usage;
+
+let usage1 = Usage { input: 100, output: 50, ..Default::default() };
+let usage2 = Usage { input: 200, output: 75, ..Default::default() };
 let total = usage1 + usage2;
-assert_eq!(total.input_tokens, 300);
-assert_eq!(total.output_tokens, 125);
+assert_eq!(total.input, 300);
+assert_eq!(total.output, 125);
 ```
 
 ### Handling Errors
@@ -81,12 +85,14 @@ fn handle_error(err: AgentError) {
 ```rust
 use swink_agent::{AgentMessage, CustomMessage};
 use std::any::Any;
+use std::fmt;
 
+#[derive(Debug)]
 struct MyNotification { text: String }
 
 impl CustomMessage for MyNotification {
     fn as_any(&self) -> &dyn Any { self }
-    fn type_name(&self) -> &str { "MyNotification" }
+    fn type_name(&self) -> Option<&str> { Some("MyNotification") }
 }
 
 let msg = AgentMessage::Custom(Box::new(MyNotification { text: "done".into() }));
@@ -100,9 +106,9 @@ match msg.downcast_ref::<MyNotification>() {
 
 ## Verification Checklist
 
-- [ ] `cargo build -p swink-agent` compiles with zero errors
-- [ ] `cargo test -p swink-agent` passes all type tests
-- [ ] `cargo clippy -p swink-agent -- -D warnings` reports zero warnings
-- [ ] All public types accessible via `use swink_agent::*`
-- [ ] Serialization round-trips produce identical output
-- [ ] Usage/Cost aggregation is arithmetically correct
+- [x] `cargo build -p swink-agent` compiles with zero errors
+- [x] `cargo test -p swink-agent` passes all type tests
+- [x] `cargo clippy -p swink-agent -- -D warnings` reports zero warnings
+- [x] All public types accessible via `use swink_agent::*`
+- [x] Serialization round-trips produce identical output
+- [x] Usage/Cost aggregation is arithmetically correct
