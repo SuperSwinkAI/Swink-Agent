@@ -7,7 +7,7 @@
 - Provider Roadmap: [PROVIDER_EXPANSION_ROADMAP.md](PROVIDER_EXPANSION_ROADMAP.md)
 - Eval Roadmap: [EVAL.md](EVAL.md)
 
-**Current Focus:** 18/30 specs have plans, 2/30 have tasks (001 complete, 002 ready). Next: `/speckit.implement` for 002-foundation-types-errors, then `/speckit.tasks` for 003–005.
+**Current Focus:** 18/30 specs have plans, 3/30 have tasks (001–002 complete, 003 ready). Next: `/speckit.implement` for 003-core-traits, then `/speckit.tasks` for 004–006.
 
 > **Numbering System:** Spec numbers (001–030) are sequential identifiers that
 > never change. Phase numbers represent execution order and can be reassigned
@@ -21,7 +21,7 @@
 other crate and module depends on — the data model, error taxonomy, and
 pluggable trait boundaries.
 
-**Status:** 3/3 specs planned, 2/3 have tasks, 1/3 complete, 3/3 specs defined
+**Status:** 3/3 specs planned, 3/3 have tasks, 2/3 complete, 3/3 specs defined
 
 ### Implementation Checklist
 
@@ -30,15 +30,15 @@ pluggable trait boundaries.
   - Branch: `001-workspace-scaffold`
   - Status: Complete (24/24 tasks, merged to main)
   - Depends on: —
-- [ ] **0.2** Foundation Types & Errors — ContentBlock, LlmMessage, AgentMessage, Usage, Cost, StopReason, ModelSpec, AgentError (§3, §10.3)
+- [x] **0.2** Foundation Types & Errors — ContentBlock, LlmMessage, AgentMessage, Usage, Cost, StopReason, ModelSpec, AgentError (§3, §10.3)
   - Spec: `specs/002-foundation-types-errors/spec.md`
   - Branch: `002-foundation-types-errors`
-  - Status: Ready for implementation (0/63 tasks)
+  - Status: Complete (63/63 tasks, merged to main)
   - Depends on: 0.1
 - [ ] **0.3** Core Traits — AgentTool, StreamFn, RetryStrategy, JSON Schema validation, delta accumulation (§4, §7, §11)
   - Spec: `specs/003-core-traits/spec.md`
   - Branch: `003-core-traits`
-  - Status: Plan complete — needs tasks
+  - Status: Ready for implementation (0/47 tasks)
   - Depends on: 0.2
 
 ---
@@ -173,19 +173,19 @@ After **3.1 Shared Infrastructure** completes, all 9 provider adapters (3.2–3.
 **Goal:** Standalone crates for session persistence, on-device inference, and
 evaluation — each depends only on the core library.
 
-**Status:** 0/4 specs planned, 4/4 specs defined
+**Status:** 2/4 specs planned, 4/4 specs defined
 
 ### Implementation Checklist
 
 - [ ] **4.1** Memory Crate — SessionStore (sync/async), JsonlSessionStore, SummarizingCompactor, session metadata
   - Spec: `specs/021-memory-crate/spec.md`
   - Branch: `021-memory-crate`
-  - Status: Specify complete — needs plan + tasks
+  - Status: Plan complete — needs tasks
   - Depends on: 0.2
 - [ ] **4.2** Local LLM Crate — LocalModel (SmolLM3-3B), LocalStreamFn, EmbeddingModel, presets, progress reporting
   - Spec: `specs/022-local-llm-crate/spec.md`
   - Branch: `022-local-llm-crate`
-  - Status: Specify complete — needs plan + tasks
+  - Status: Plan complete — needs tasks
   - Depends on: 0.3
 - [ ] **4.3** Eval: Trajectory & Matching — TrajectoryCollector, TrajectoryMatcher, EfficiencyEvaluator, ResponseCriteria
   - Spec: `specs/023-eval-trajectory-matching/spec.md`

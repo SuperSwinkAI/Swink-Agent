@@ -1,11 +1,11 @@
 # Spec-Driven Development Status
-<!-- spec-status: project=worktree-002-foundation-types-errors commit=3544249d36e97c4722924be69cb2ccf3d88e1971 updated=2026-03-21T04:28:05Z -->
+<!-- spec-status: project=worktree-003-core-traits commit=adca385fbfc12325cdce3b9f468ef34f581987cf updated=2026-03-21T05:12:49Z -->
 
 | Feature                         | Specify | Plan | Tasks | Implement |
 |---------------------------------|---------|------|-------|-----------|
 | 001-workspace-scaffold          | ✓     | ✓  | ✓   | ✓ Complete |
 | 002-foundation-types-errors     | ✓     | ✓  | ✓   | ✓ Complete |
-| 003-core-traits                 | ✓     | ✓  | -     | -         |
+| 003-core-traits                 | ✓     | ✓  | ✓   | ● 0/47 (0%) |
 | 004-agent-loop                  | ✓     | ✓  | -     | -         |
 | 005-agent-struct                | ✓     | ✓  | -     | -         |
 | 006-context-management          | ✓     | ✓  | -     | -         |
@@ -36,7 +36,7 @@
 
 <!-- feature: 001-workspace-scaffold has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=false has_checklists=true tasks_total=24 tasks_completed=24 checklist_files=requirements.md -->
 <!-- feature: 002-foundation-types-errors has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=63 tasks_completed=63 checklist_files=requirements.md -->
-<!-- feature: 003-core-traits has_spec=true has_plan=true has_tasks=false has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=0 tasks_completed=0 checklist_files=requirements.md -->
+<!-- feature: 003-core-traits has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=47 tasks_completed=0 checklist_files=requirements.md -->
 <!-- feature: 004-agent-loop has_spec=true has_plan=true has_tasks=false has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=0 tasks_completed=0 checklist_files=requirements.md -->
 <!-- feature: 005-agent-struct has_spec=true has_plan=true has_tasks=false has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=0 tasks_completed=0 checklist_files=requirements.md -->
 <!-- feature: 006-context-management has_spec=true has_plan=true has_tasks=false has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=0 tasks_completed=0 checklist_files=requirements.md -->
