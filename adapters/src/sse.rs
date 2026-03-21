@@ -2,6 +2,11 @@
 //!
 //! Provides a reusable byte-buffer parser that Anthropic, `OpenAI`, Azure, and
 //! Google adapters use instead of duplicating SSE line parsing logic.
+//!
+//! **Stability note:** This module is a shared implementation detail for
+//! built-in adapters. External `StreamFn` implementors should depend only
+//! on `swink_agent` (core) types. Breaking changes to this module's API
+//! may occur without a major version bump.
 
 use std::pin::Pin;
 
