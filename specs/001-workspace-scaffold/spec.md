@@ -2,7 +2,7 @@
 
 **Feature Branch**: `001-workspace-scaffold`
 **Created**: 2026-03-20
-**Status**: Draft
+**Status**: Complete
 **Input**: Foundational workspace structure for a 7-crate Rust workspace providing the scaffolding for an LLM-powered agent library.
 
 ## User Scenarios & Testing *(mandatory)*
