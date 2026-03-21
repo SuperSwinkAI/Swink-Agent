@@ -7,7 +7,7 @@
 - Provider Roadmap: [PROVIDER_EXPANSION_ROADMAP.md](PROVIDER_EXPANSION_ROADMAP.md)
 - Eval Roadmap: [EVAL.md](EVAL.md)
 
-**Current Focus:** 19/30 specs have plans, 1/30 has tasks (001 — complete). Next: clarify remaining 11 specs (015–019, 021–025, 027, 029) then `/speckit.tasks` for all planned features.
+**Current Focus:** 20/30 specs have plans, 1/30 has tasks (001 — complete). Next: clarify remaining 10 specs (015–019, 022–025, 027, 029) then `/speckit.tasks` for all planned features.
 
 > **Numbering System:** Spec numbers (001–030) are sequential identifiers that
 > never change. Phase numbers represent execution order and can be reassigned
@@ -173,14 +173,14 @@ After **3.1 Shared Infrastructure** completes, all 9 provider adapters (3.2–3.
 **Goal:** Standalone crates for session persistence, on-device inference, and
 evaluation — each depends only on the core library.
 
-**Status:** 0/4 specs planned, 4/4 need clarification
+**Status:** 1/4 specs planned, 3/4 need clarification
 
 ### Implementation Checklist
 
 - [ ] **4.1** Memory Crate — SessionStore (sync/async), JsonlSessionStore, SummarizingCompactor, session metadata
   - Spec: `specs/021-memory-crate/spec.md`
   - Branch: `021-memory-crate`
-  - Status: Specify complete — needs plan + tasks
+  - Status: Plan complete — needs tasks
   - Depends on: 0.2
 - [ ] **4.2** Local LLM Crate — LocalModel (SmolLM3-3B), LocalStreamFn, EmbeddingModel, presets, progress reporting
   - Spec: `specs/022-local-llm-crate/spec.md`
