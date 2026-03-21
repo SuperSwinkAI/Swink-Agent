@@ -84,7 +84,7 @@ eval/
 tui/
 ├── Cargo.toml              # swink-agent-tui (binary), depends on core + adapters + memory + local-llm
 └── src/
-    └── main.rs             # Entry point (minimal)
+    ├── main.rs             # Entry point (minimal)
     └── lib.rs              # #[forbid(unsafe_code)], stub re-exports
 
 xtask/
