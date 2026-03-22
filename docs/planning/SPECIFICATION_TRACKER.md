@@ -7,7 +7,7 @@
 - Provider Roadmap: [PROVIDER_EXPANSION_ROADMAP.md](PROVIDER_EXPANSION_ROADMAP.md)
 - Eval Roadmap: [EVAL.md](EVAL.md)
 
-**Current Focus:** 20/30 specs have plans, 15/30 have tasks, 10/30 complete (001–008, 011, 012). Phase 0 + Phase 1 done, Phase 2 in progress (006–008 complete, 009 + 010 have tasks, ready for implementation). Next: `/speckit.tasks` for adapters (013–014, 020) and companion crates (021, 022). 10 specs need plans (015–019, 023–025, 027, 029).
+**Current Focus:** 20/30 specs have plans, 15/30 have tasks, 11/30 complete (001–009, 011, 012). Phase 0 + Phase 1 done, Phase 2 nearly done (006–009 complete, 010 has tasks, ready for implementation). Next: implement 010, then `/speckit.tasks` for adapters (013–014, 020) and companion crates (021, 022). 10 specs need plans (015–019, 023–025, 027, 029).
 
 > **Numbering System:** Spec numbers (001–030) are sequential identifiers that
 > never change. Phase numbers represent execution order and can be reassigned
@@ -70,7 +70,7 @@ the two central verticals that make the agent functional.
 **Goal:** Context management, tool system extensions, model catalog, multi-agent
 primitives, and loop governance — capabilities that enhance the core engine.
 
-**Status:** 5/5 specs planned, 5/5 have tasks, 3/5 complete, 5/5 specs defined
+**Status:** 5/5 specs planned, 5/5 have tasks, 4/5 complete, 5/5 specs defined
 
 ### Implementation Checklist
 
@@ -89,10 +89,10 @@ primitives, and loop governance — capabilities that enhance the core engine.
   - Branch: `008-model-catalog-presets`
   - Status: Complete (30/30 tasks, merged to main)
   - Depends on: 0.3
-- [ ] **2.4** Multi-Agent System — AgentRegistry, AgentMailbox, AgentOrchestrator, SubAgent tool wrapper
+- [x] **2.4** Multi-Agent System — AgentRegistry, AgentMailbox, AgentOrchestrator, SubAgent tool wrapper
   - Spec: `specs/009-multi-agent-system/spec.md`
   - Branch: `009-multi-agent-system`
-  - Status: Ready for implementation (0/59 tasks)
+  - Status: Complete (59/59 tasks, merged to main)
   - Depends on: 1.2
 - [ ] **2.5** Loop Policies & Observability — LoopPolicy, StreamMiddleware, MetricsCollector, PostTurnHook, BudgetGuard, Checkpoint
   - Spec: `specs/010-loop-policies-observability/spec.md`
@@ -338,7 +338,7 @@ graph TD
     style F fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
     style G fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
     style H fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
-    style I fill:#fff,color:#000,stroke:#6b7280,stroke-width:2px
+    style I fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
     style J fill:#fff,color:#000,stroke:#6b7280,stroke-width:2px
     style K fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
     style L fill:#fff,color:#000,stroke:#6b7280,stroke-width:2px

@@ -1,5 +1,5 @@
 # Spec-Driven Development Status
-<!-- spec-status: project=swink-agent commit=5ed0746 updated=2026-03-22T00:11:33Z -->
+<!-- spec-status: project=swink-agent commit=merge-009 updated=2026-03-22T00:15:00Z -->
 
 | Feature                         | Specify | Plan | Tasks | Implement |
 |---------------------------------|---------|------|-------|-----------|
@@ -11,7 +11,7 @@
 | 006-context-management          | ✓     | ✓  | ✓   | ✓ Complete |
 | 007-tool-system-extensions      | ✓     | ✓  | ✓   | ✓ Complete |
 | 008-model-catalog-presets       | ✓     | ✓  | ✓   | ✓ Complete |
-| 009-multi-agent-system          | ✓     | ✓  | ✓   | ● 0/59 (0%) |
+| 009-multi-agent-system          | ✓     | ✓  | ✓   | ✓ Complete |
 | 010-loop-policies-observability | ✓     | ✓  | ✓   | ● 0/72 (0%) |
 | 011-adapter-shared-infra        | ✓     | ✓  | ✓   | ✓ Complete |
 | 012-adapter-anthropic           | ✓     | ✓  | ✓   | ✓ Complete |
@@ -44,7 +44,7 @@
 <!-- feature: 006-context-management has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=46 tasks_completed=46 checklist_files=requirements.md -->
 <!-- feature: 007-tool-system-extensions has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=64 tasks_completed=64 checklist_files=requirements.md -->
 <!-- feature: 008-model-catalog-presets has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=30 tasks_completed=30 checklist_files=requirements.md -->
-<!-- feature: 009-multi-agent-system has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=59 tasks_completed=0 checklist_files=requirements.md -->
+<!-- feature: 009-multi-agent-system has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=59 tasks_completed=59 checklist_files=requirements.md -->
 <!-- feature: 010-loop-policies-observability has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=72 tasks_completed=0 checklist_files=requirements.md -->
 <!-- feature: 011-adapter-shared-infra has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=40 tasks_completed=40 checklist_files=requirements.md -->
 <!-- feature: 012-adapter-anthropic has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=73 tasks_completed=73 checklist_files=requirements.md -->

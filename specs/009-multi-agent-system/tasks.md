@@ -15,10 +15,10 @@
 
 **Purpose**: Core types and Agent integration needed by all user stories
 
-- [ ] T001 Add `AgentId` newtype with monotonic `AtomicU64` counter, `Display`, `Debug`, `Clone`, `Copy`, `PartialEq`, `Eq`, `Hash` in `src/registry.rs`
-- [ ] T002 Add `AgentRef` type alias (`Arc<tokio::sync::Mutex<Agent>>`) in `src/registry.rs`
-- [ ] T003 Integrate `AgentId` into `Agent` struct — assign via `AgentId::next()` in constructor, expose `pub fn id(&self) -> AgentId` in `src/agent.rs`
-- [ ] T004 [P] Add `AgentStatus` enum (`Running`, `Completed`, `Failed`, `Cancelled`) with `Debug`, `Clone`, `Copy`, `PartialEq`, `Eq` in `src/handle.rs`
+- [x] T001 Add `AgentId` newtype with monotonic `AtomicU64` counter, `Display`, `Debug`, `Clone`, `Copy`, `PartialEq`, `Eq`, `Hash` in `src/registry.rs`
+- [x] T002 Add `AgentRef` type alias (`Arc<tokio::sync::Mutex<Agent>>`) in `src/registry.rs`
+- [x] T003 Integrate `AgentId` into `Agent` struct — assign via `AgentId::next()` in constructor, expose `pub fn id(&self) -> AgentId` in `src/agent.rs`
+- [x] T004 [P] Add `AgentStatus` enum (`Running`, `Completed`, `Failed`, `Cancelled`) with `Debug`, `Clone`, `Copy`, `PartialEq`, `Eq` in `src/handle.rs`
 
 **Checkpoint**: Foundation types ready — user story implementation can begin
 
@@ -32,15 +32,15 @@
 
 ### Implementation for User Story 1
 
-- [ ] T005 [US1] Implement `AgentRegistry` struct with `Arc<RwLock<HashMap<String, AgentRef>>>` field in `src/registry.rs`
-- [ ] T006 [US1] Implement `AgentRegistry::new()` and `Default` trait in `src/registry.rs`
-- [ ] T007 [US1] Implement `AgentRegistry::register(name, agent) -> AgentRef` with replace-on-duplicate semantics in `src/registry.rs`
-- [ ] T008 [US1] Implement `AgentRegistry::get(name) -> Option<AgentRef>` with `RwLock` read guard in `src/registry.rs`
-- [ ] T009 [US1] Implement `AgentRegistry::remove(name) -> Option<AgentRef>` with `RwLock` write guard in `src/registry.rs`
-- [ ] T010 [P] [US1] Implement inspection methods `names()`, `len()`, `is_empty()` in `src/registry.rs`
-- [ ] T011 [US1] Add `PoisonError::into_inner()` recovery on all lock acquisitions in `src/registry.rs`
-- [ ] T012 [US1] Re-export `AgentId`, `AgentRef`, `AgentRegistry` from `src/lib.rs`
-- [ ] T013 [US1] Add integration tests for registry: register/lookup, non-existent lookup, thread-safe concurrent access, remove in `tests/registry.rs`
+- [x] T005 [US1] Implement `AgentRegistry` struct with `Arc<RwLock<HashMap<String, AgentRef>>>` field in `src/registry.rs`
+- [x] T006 [US1] Implement `AgentRegistry::new()` and `Default` trait in `src/registry.rs`
+- [x] T007 [US1] Implement `AgentRegistry::register(name, agent) -> AgentRef` with replace-on-duplicate semantics in `src/registry.rs`
+- [x] T008 [US1] Implement `AgentRegistry::get(name) -> Option<AgentRef>` with `RwLock` read guard in `src/registry.rs`
+- [x] T009 [US1] Implement `AgentRegistry::remove(name) -> Option<AgentRef>` with `RwLock` write guard in `src/registry.rs`
+- [x] T010 [P] [US1] Implement inspection methods `names()`, `len()`, `is_empty()` in `src/registry.rs`
+- [x] T011 [US1] Add `PoisonError::into_inner()` recovery on all lock acquisitions in `src/registry.rs`
+- [x] T012 [US1] Re-export `AgentId`, `AgentRef`, `AgentRegistry` from `src/lib.rs`
+- [x] T013 [US1] Add integration tests for registry: register/lookup, non-existent lookup, thread-safe concurrent access, remove in `tests/registry.rs`
 
 **Checkpoint**: AgentRegistry is fully functional and independently testable
 
@@ -54,16 +54,16 @@
 
 ### Implementation for User Story 2
 
-- [ ] T014 [US2] Implement `AgentMailbox` struct with `Arc<Mutex<Vec<AgentMessage>>>` inbox in `src/messaging.rs`
-- [ ] T015 [US2] Implement `AgentMailbox::new()`, `Default`, `Clone` in `src/messaging.rs`
-- [ ] T016 [US2] Implement `AgentMailbox::send(message)` — non-blocking push to inbox in `src/messaging.rs`
-- [ ] T017 [US2] Implement `AgentMailbox::drain() -> Vec<AgentMessage>` using `std::mem::take` in `src/messaging.rs`
-- [ ] T018 [P] [US2] Implement inspection methods `has_messages()`, `len()`, `is_empty()` in `src/messaging.rs`
-- [ ] T019 [US2] Add `PoisonError::into_inner()` recovery on all mutex acquisitions in `src/messaging.rs`
-- [ ] T020 [US2] Implement `send_to(registry, agent_name, message)` async free function — lookup agent, acquire tokio mutex, call `steer()` in `src/messaging.rs`
-- [ ] T021 [US2] Return `AgentError::Plugin` from `send_to` when agent not found in registry in `src/messaging.rs`
-- [ ] T022 [US2] Re-export `AgentMailbox`, `send_to` from `src/lib.rs`
-- [ ] T023 [US2] Add integration tests for messaging: mailbox send/drain, send_to delivery, send_to nonexistent agent error in `tests/messaging.rs`
+- [x] T014 [US2] Implement `AgentMailbox` struct with `Arc<Mutex<Vec<AgentMessage>>>` inbox in `src/messaging.rs`
+- [x] T015 [US2] Implement `AgentMailbox::new()`, `Default`, `Clone` in `src/messaging.rs`
+- [x] T016 [US2] Implement `AgentMailbox::send(message)` — non-blocking push to inbox in `src/messaging.rs`
+- [x] T017 [US2] Implement `AgentMailbox::drain() -> Vec<AgentMessage>` using `std::mem::take` in `src/messaging.rs`
+- [x] T018 [P] [US2] Implement inspection methods `has_messages()`, `len()`, `is_empty()` in `src/messaging.rs`
+- [x] T019 [US2] Add `PoisonError::into_inner()` recovery on all mutex acquisitions in `src/messaging.rs`
+- [x] T020 [US2] Implement `send_to(registry, agent_name, message)` async free function — lookup agent, acquire tokio mutex, call `steer()` in `src/messaging.rs`
+- [x] T021 [US2] Return `AgentError::Plugin` from `send_to` when agent not found in registry in `src/messaging.rs`
+- [x] T022 [US2] Re-export `AgentMailbox`, `send_to` from `src/lib.rs`
+- [x] T023 [US2] Add integration tests for messaging: mailbox send/drain, send_to delivery, send_to nonexistent agent error in `tests/messaging.rs`
 
 **Checkpoint**: Inter-agent messaging works independently via mailbox and registry-based send_to
 
@@ -77,17 +77,17 @@
 
 ### Implementation for User Story 3
 
-- [ ] T024 [US3] Define `OptionsFactoryFn` and `MapResultFn` type aliases in `src/sub_agent.rs`
-- [ ] T025 [US3] Implement `SubAgent` struct with name, label, description, schema, requires_approval, options_factory, map_result fields in `src/sub_agent.rs`
-- [ ] T026 [US3] Implement `SubAgent::new(name, label, description)` with default prompt schema and panic factory in `src/sub_agent.rs`
-- [ ] T027 [US3] Implement `SubAgent::simple(name, label, description, system_prompt, model, stream_fn)` convenience constructor in `src/sub_agent.rs`
-- [ ] T028 [P] [US3] Implement builder methods `with_schema()`, `with_requires_approval()`, `with_options()`, `with_map_result()` in `src/sub_agent.rs`
-- [ ] T029 [US3] Implement `default_map_result` — extract text from last assistant message, handle error stop reason in `src/sub_agent.rs`
-- [ ] T030 [US3] Implement `AgentTool` trait for `SubAgent` — name, label, description, parameters_schema, requires_approval in `src/sub_agent.rs`
-- [ ] T031 [US3] Implement `AgentTool::execute()` — construct fresh Agent via factory, run `prompt_text`, propagate cancellation via `tokio::select!` in `src/sub_agent.rs`
-- [ ] T032 [P] [US3] Implement `Debug` for `SubAgent` and compile-time `Send + Sync` assertion in `src/sub_agent.rs`
-- [ ] T033 [US3] Re-export `SubAgent` from `src/lib.rs`
-- [ ] T034 [US3] Add integration tests: SubAgent tool execution, cancellation propagation, custom result mapping, schema validation in `tests/sub_agent.rs`
+- [x] T024 [US3] Define `OptionsFactoryFn` and `MapResultFn` type aliases in `src/sub_agent.rs`
+- [x] T025 [US3] Implement `SubAgent` struct with name, label, description, schema, requires_approval, options_factory, map_result fields in `src/sub_agent.rs`
+- [x] T026 [US3] Implement `SubAgent::new(name, label, description)` with default prompt schema and panic factory in `src/sub_agent.rs`
+- [x] T027 [US3] Implement `SubAgent::simple(name, label, description, system_prompt, model, stream_fn)` convenience constructor in `src/sub_agent.rs`
+- [x] T028 [P] [US3] Implement builder methods `with_schema()`, `with_requires_approval()`, `with_options()`, `with_map_result()` in `src/sub_agent.rs`
+- [x] T029 [US3] Implement `default_map_result` — extract text from last assistant message, handle error stop reason in `src/sub_agent.rs`
+- [x] T030 [US3] Implement `AgentTool` trait for `SubAgent` — name, label, description, parameters_schema, requires_approval in `src/sub_agent.rs`
+- [x] T031 [US3] Implement `AgentTool::execute()` — construct fresh Agent via factory, run `prompt_text`, propagate cancellation via `tokio::select!` in `src/sub_agent.rs`
+- [x] T032 [P] [US3] Implement `Debug` for `SubAgent` and compile-time `Send + Sync` assertion in `src/sub_agent.rs`
+- [x] T033 [US3] Re-export `SubAgent` from `src/lib.rs`
+- [x] T034 [US3] Add integration tests: SubAgent tool execution, cancellation propagation, custom result mapping, schema validation in `tests/sub_agent.rs`
 
 **Checkpoint**: SubAgent works as a standard tool in any parent agent's tool list
 
@@ -101,26 +101,26 @@
 
 ### Implementation for User Story 4
 
-- [ ] T035 [P] [US4] Implement `SupervisorAction` enum (`Restart`, `Stop`, `Escalate`) with `Debug`, `Clone`, `Copy`, `PartialEq`, `Eq` in `src/orchestrator.rs`
-- [ ] T036 [P] [US4] Implement `SupervisorPolicy` trait with `on_agent_error(name, error) -> SupervisorAction` in `src/orchestrator.rs`
-- [ ] T037 [US4] Implement `DefaultSupervisor` — restart on retryable errors, stop otherwise in `src/orchestrator.rs`
-- [ ] T038 [P] [US4] Implement `AgentRequest` struct with `messages: Vec<AgentMessage>` and `reply: oneshot::Sender` in `src/orchestrator.rs`
-- [ ] T039 [US4] Implement `AgentEntry` internal struct with options_factory, parent, children, max_restarts fields in `src/orchestrator.rs`
-- [ ] T040 [US4] Implement `AgentOrchestrator` struct with entries map, supervisor, channel_buffer, default_max_restarts in `src/orchestrator.rs`
-- [ ] T041 [US4] Implement `AgentOrchestrator::new()`, `Default`, builder methods `with_supervisor()`, `with_channel_buffer()`, `with_max_restarts()` in `src/orchestrator.rs`
-- [ ] T042 [US4] Implement `add_agent(name, factory)` — register top-level agent in `src/orchestrator.rs`
-- [ ] T043 [US4] Implement `add_child(name, parent, factory)` — register child, update parent's children list, panic if parent missing in `src/orchestrator.rs`
-- [ ] T044 [P] [US4] Implement hierarchy inspection: `parent_of()`, `children_of()`, `names()`, `contains()` in `src/orchestrator.rs`
-- [ ] T045 [US4] Implement `OrchestratedHandle` struct with name, request_tx, cancellation_token, join_handle, status in `src/orchestrator.rs`
-- [ ] T046 [US4] Implement `OrchestratedHandle::send_message(text)` and `send_messages(messages)` with oneshot reply in `src/orchestrator.rs`
-- [ ] T047 [US4] Implement `OrchestratedHandle::await_result()` — drop channel, await join handle in `src/orchestrator.rs`
-- [ ] T048 [P] [US4] Implement `OrchestratedHandle::cancel()`, `status()`, `is_done()`, `name()`, `Debug` in `src/orchestrator.rs`
-- [ ] T049 [US4] Implement `run_agent_loop` async function — receive requests, process with agent, handle cancellation via `tokio::select!` in `src/orchestrator.rs`
-- [ ] T050 [US4] Implement supervisor policy integration in `run_agent_loop` — Restart (with counter), Escalate, Stop actions in `src/orchestrator.rs`
-- [ ] T051 [US4] Implement `AgentOrchestrator::spawn(name)` — create channel, token, status, launch `run_agent_loop` via `tokio::spawn` in `src/orchestrator.rs`
-- [ ] T052 [P] [US4] Implement `Debug` for `AgentOrchestrator` in `src/orchestrator.rs`
-- [ ] T053 [US4] Re-export `AgentOrchestrator`, `OrchestratedHandle`, `AgentRequest`, `SupervisorPolicy`, `SupervisorAction`, `DefaultSupervisor` from `src/lib.rs`
-- [ ] T054 [US4] Add unit tests in `src/orchestrator.rs`: add_agent/names, contains, parent/child hierarchy, grandchild hierarchy, missing parent panic, spawn unregistered error, supervisor actions, builder methods, custom policy, debug format, default impl
+- [x] T035 [P] [US4] Implement `SupervisorAction` enum (`Restart`, `Stop`, `Escalate`) with `Debug`, `Clone`, `Copy`, `PartialEq`, `Eq` in `src/orchestrator.rs`
+- [x] T036 [P] [US4] Implement `SupervisorPolicy` trait with `on_agent_error(name, error) -> SupervisorAction` in `src/orchestrator.rs`
+- [x] T037 [US4] Implement `DefaultSupervisor` — restart on retryable errors, stop otherwise in `src/orchestrator.rs`
+- [x] T038 [P] [US4] Implement `AgentRequest` struct with `messages: Vec<AgentMessage>` and `reply: oneshot::Sender` in `src/orchestrator.rs`
+- [x] T039 [US4] Implement `AgentEntry` internal struct with options_factory, parent, children, max_restarts fields in `src/orchestrator.rs`
+- [x] T040 [US4] Implement `AgentOrchestrator` struct with entries map, supervisor, channel_buffer, default_max_restarts in `src/orchestrator.rs`
+- [x] T041 [US4] Implement `AgentOrchestrator::new()`, `Default`, builder methods `with_supervisor()`, `with_channel_buffer()`, `with_max_restarts()` in `src/orchestrator.rs`
+- [x] T042 [US4] Implement `add_agent(name, factory)` — register top-level agent in `src/orchestrator.rs`
+- [x] T043 [US4] Implement `add_child(name, parent, factory)` — register child, update parent's children list, panic if parent missing in `src/orchestrator.rs`
+- [x] T044 [P] [US4] Implement hierarchy inspection: `parent_of()`, `children_of()`, `names()`, `contains()` in `src/orchestrator.rs`
+- [x] T045 [US4] Implement `OrchestratedHandle` struct with name, request_tx, cancellation_token, join_handle, status in `src/orchestrator.rs`
+- [x] T046 [US4] Implement `OrchestratedHandle::send_message(text)` and `send_messages(messages)` with oneshot reply in `src/orchestrator.rs`
+- [x] T047 [US4] Implement `OrchestratedHandle::await_result()` — drop channel, await join handle in `src/orchestrator.rs`
+- [x] T048 [P] [US4] Implement `OrchestratedHandle::cancel()`, `status()`, `is_done()`, `name()`, `Debug` in `src/orchestrator.rs`
+- [x] T049 [US4] Implement `run_agent_loop` async function — receive requests, process with agent, handle cancellation via `tokio::select!` in `src/orchestrator.rs`
+- [x] T050 [US4] Implement supervisor policy integration in `run_agent_loop` — Restart (with counter), Escalate, Stop actions in `src/orchestrator.rs`
+- [x] T051 [US4] Implement `AgentOrchestrator::spawn(name)` — create channel, token, status, launch `run_agent_loop` via `tokio::spawn` in `src/orchestrator.rs`
+- [x] T052 [P] [US4] Implement `Debug` for `AgentOrchestrator` in `src/orchestrator.rs`
+- [x] T053 [US4] Re-export `AgentOrchestrator`, `OrchestratedHandle`, `AgentRequest`, `SupervisorPolicy`, `SupervisorAction`, `DefaultSupervisor` from `src/lib.rs`
+- [x] T054 [US4] Add unit tests in `src/orchestrator.rs`: add_agent/names, contains, parent/child hierarchy, grandchild hierarchy, missing parent panic, spawn unregistered error, supervisor actions, builder methods, custom policy, debug format, default impl
 
 **Checkpoint**: Full orchestration with supervision, hierarchy, and lifecycle management
 
@@ -130,11 +130,11 @@
 
 **Purpose**: Final integration, documentation, and validation
 
-- [ ] T055 [P] Verify all public types re-exported from `src/lib.rs` match `contracts/public-api.md`
-- [ ] T056 Run `cargo build --workspace` and verify zero errors
-- [ ] T057 Run `cargo test --workspace` and verify all tests pass
-- [ ] T058 Run `cargo clippy --workspace -- -D warnings` and verify zero warnings
-- [ ] T059 Run quickstart.md validation — verify all usage examples compile and are accurate
+- [x] T055 [P] Verify all public types re-exported from `src/lib.rs` match `contracts/public-api.md`
+- [x] T056 Run `cargo build --workspace` and verify zero errors
+- [x] T057 Run `cargo test --workspace` and verify all tests pass
+- [x] T058 Run `cargo clippy --workspace -- -D warnings` and verify zero warnings
+- [x] T059 Run quickstart.md validation — verify all usage examples compile and are accurate
 
 ---
 
