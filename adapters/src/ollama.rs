@@ -590,3 +590,220 @@ const _: () = {
     const fn assert_send_sync<T: Send + Sync>() {}
     assert_send_sync::<OllamaStreamFn>();
 };
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::convert::convert_messages;
+    use crate::finalize::StreamFinalize;
+    use futures::stream;
+    use futures::StreamExt;
+    use swink_agent::types::{
+        AgentMessage, AssistantMessage as HarnessAssistantMessage, ContentBlock, Cost, LlmMessage,
+        StopReason, ToolResultMessage, Usage, UserMessage,
+    };
+
+    // ─── convert_messages: user + system ────────────────────────────────
+
+    #[test]
+    fn convert_user_and_system_messages() {
+        let messages = vec![AgentMessage::Llm(LlmMessage::User(UserMessage {
+            content: vec![ContentBlock::Text {
+                text: "hello".to_string(),
+            }],
+            timestamp: 0,
+        }))];
+
+        let result = convert_messages::<OllamaConverter>(&messages, "test sys");
+
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].role, "system");
+        assert_eq!(result[0].content, "test sys");
+        assert_eq!(result[1].role, "user");
+        assert_eq!(result[1].content, "hello");
+    }
+
+    // ─── ndjson_lines ───────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn ndjson_splits_two_lines() {
+        let bytes_stream = stream::iter(vec![Ok(bytes::Bytes::from("line1\nline2\n"))]);
+        let mut lines = ndjson_lines(bytes_stream);
+
+        assert_eq!(lines.next().await.unwrap(), "line1");
+        assert_eq!(lines.next().await.unwrap(), "line2");
+        assert!(lines.next().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn ndjson_crlf_line_endings() {
+        let bytes_stream = stream::iter(vec![Ok(bytes::Bytes::from("aaa\r\nbbb\r\n"))]);
+        let mut lines = ndjson_lines(bytes_stream);
+
+        assert_eq!(lines.next().await.unwrap(), "aaa");
+        assert_eq!(lines.next().await.unwrap(), "bbb");
+        assert!(lines.next().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn ndjson_partial_lines_across_chunks() {
+        let bytes_stream = stream::iter(vec![
+            Ok(bytes::Bytes::from("hel")),
+            Ok(bytes::Bytes::from("lo\nwor")),
+            Ok(bytes::Bytes::from("ld\n")),
+        ]);
+        let mut lines = ndjson_lines(bytes_stream);
+
+        assert_eq!(lines.next().await.unwrap(), "hello");
+        assert_eq!(lines.next().await.unwrap(), "world");
+        assert!(lines.next().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn ndjson_flush_remaining_buffer_no_trailing_newline() {
+        let bytes_stream = stream::iter(vec![Ok(bytes::Bytes::from("no_newline"))]);
+        let mut lines = ndjson_lines(bytes_stream);
+
+        assert_eq!(lines.next().await.unwrap(), "no_newline");
+        assert!(lines.next().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn ndjson_empty_lines_skipped() {
+        let bytes_stream = stream::iter(vec![Ok(bytes::Bytes::from("a\n\n\nb\n"))]);
+        let mut lines = ndjson_lines(bytes_stream);
+
+        assert_eq!(lines.next().await.unwrap(), "a");
+        assert_eq!(lines.next().await.unwrap(), "b");
+        assert!(lines.next().await.is_none());
+    }
+
+    // ─── StreamState drain_open_blocks ──────────────────────────────────
+
+    #[test]
+    fn drain_open_blocks_thinking_then_text() {
+        let mut state = StreamState {
+            text_started: true,
+            thinking_started: true,
+            content_index: 0,
+            tool_calls_started: HashSet::new(),
+        };
+
+        let blocks = state.drain_open_blocks();
+        assert_eq!(blocks.len(), 2);
+
+        // Thinking comes first (content_index 0), then text (content_index 1)
+        match &blocks[0] {
+            crate::finalize::OpenBlock::Thinking { content_index, .. } => {
+                assert_eq!(*content_index, 0);
+            }
+            other => panic!("expected Thinking, got {other:?}"),
+        }
+        match &blocks[1] {
+            crate::finalize::OpenBlock::Text { content_index } => {
+                assert_eq!(*content_index, 1);
+            }
+            other => panic!("expected Text, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn drain_open_blocks_idempotent() {
+        let mut state = StreamState {
+            text_started: true,
+            thinking_started: true,
+            content_index: 0,
+            tool_calls_started: HashSet::new(),
+        };
+
+        let first = state.drain_open_blocks();
+        let second = state.drain_open_blocks();
+        assert_eq!(first.len(), 2);
+        assert!(second.is_empty());
+    }
+
+    // ─── convert_messages: assistant with tool calls ────────────────────
+
+    #[test]
+    fn convert_assistant_with_tool_calls() {
+        let messages = vec![AgentMessage::Llm(LlmMessage::Assistant(
+            HarnessAssistantMessage {
+                content: vec![ContentBlock::ToolCall {
+                    id: "tc_1".to_string(),
+                    name: "my_tool".to_string(),
+                    arguments: serde_json::json!({"key": "val"}),
+                    partial_json: None,
+                }],
+                provider: "ollama".to_string(),
+                model_id: "test".to_string(),
+                usage: Usage::default(),
+                cost: Cost::default(),
+                stop_reason: StopReason::ToolUse,
+                error_message: None,
+                timestamp: 0,
+            },
+        ))];
+
+        let result = convert_messages::<OllamaConverter>(&messages, "");
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].role, "assistant");
+        let tool_calls = result[0].tool_calls.as_ref().expect("should have tool_calls");
+        assert_eq!(tool_calls.len(), 1);
+        assert_eq!(tool_calls[0].function.name, "my_tool");
+        assert_eq!(tool_calls[0].function.arguments, serde_json::json!({"key": "val"}));
+    }
+
+    // ─── convert_messages: tool result ──────────────────────────────────
+
+    #[test]
+    fn convert_tool_result_message() {
+        let messages = vec![AgentMessage::Llm(LlmMessage::ToolResult(
+            ToolResultMessage {
+                tool_call_id: "tc_1".to_string(),
+                content: vec![ContentBlock::Text {
+                    text: "result text".to_string(),
+                }],
+                is_error: false,
+                timestamp: 0,
+                details: serde_json::Value::Null,
+            },
+        ))];
+
+        let result = convert_messages::<OllamaConverter>(&messages, "");
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].role, "tool");
+        assert_eq!(result[0].content, "result text");
+    }
+
+    // ─── convert_messages: skips CustomMessage ──────────────────────────
+
+    #[test]
+    fn convert_skips_custom_message() {
+        #[derive(Debug)]
+        struct TestCustom;
+        impl swink_agent::types::CustomMessage for TestCustom {
+            fn as_any(&self) -> &dyn std::any::Any {
+                self
+            }
+        }
+
+        let messages = vec![
+            AgentMessage::Custom(Box::new(TestCustom)),
+            AgentMessage::Llm(LlmMessage::User(UserMessage {
+                content: vec![ContentBlock::Text {
+                    text: "after custom".to_string(),
+                }],
+                timestamp: 0,
+            })),
+        ];
+
+        let result = convert_messages::<OllamaConverter>(&messages, "");
+
+        // Only the user message should be present; custom is skipped.
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].role, "user");
+        assert_eq!(result[0].content, "after custom");
+    }
+}

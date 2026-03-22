@@ -447,3 +447,191 @@ async fn ollama_debug_redacts_nothing() {
         "Debug output should contain base_url, got: {debug_str}"
     );
 }
+
+/// 12. Two tool calls in one chunk produce two separate ToolCallStart events with
+/// unique content_index values (0 and 1).
+#[tokio::test]
+async fn ollama_multiple_tool_calls() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/chat"))
+        .respond_with(ndjson_response(&[
+            r#"{"message":{"role":"assistant","content":"","tool_calls":[{"function":{"name":"bash","arguments":{"command":"ls"}}},{"function":{"name":"read_file","arguments":{"path":"a.rs"}}}]},"done":false}"#,
+            r#"{"message":{"role":"assistant","content":""},"done":true,"done_reason":"tool_calls","prompt_eval_count":5,"eval_count":10}"#,
+        ]))
+        .mount(&server)
+        .await;
+
+    let ollama = OllamaStreamFn::new(server.uri());
+    let events = collect_events(&ollama).await;
+
+    let tool_starts: Vec<_> = events
+        .iter()
+        .filter(|e| matches!(e, AssistantMessageEvent::ToolCallStart { .. }))
+        .collect();
+
+    assert_eq!(
+        tool_starts.len(),
+        2,
+        "expected 2 ToolCallStart events, got: {tool_starts:?}"
+    );
+
+    match &tool_starts[0] {
+        AssistantMessageEvent::ToolCallStart {
+            content_index,
+            name,
+            ..
+        } => {
+            assert_eq!(*content_index, 0);
+            assert_eq!(name, "bash");
+        }
+        _ => unreachable!(),
+    }
+    match &tool_starts[1] {
+        AssistantMessageEvent::ToolCallStart {
+            content_index,
+            name,
+            ..
+        } => {
+            assert_eq!(*content_index, 1);
+            assert_eq!(name, "read_file");
+        }
+        _ => unreachable!(),
+    }
+}
+
+/// 13. Two chunks with the same tool name — the second is deduped; only one
+/// ToolCallStart for "bash" is emitted.
+#[tokio::test]
+async fn ollama_duplicate_tool_calls_deduped() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/chat"))
+        .respond_with(ndjson_response(&[
+            r#"{"message":{"role":"assistant","content":"","tool_calls":[{"function":{"name":"bash","arguments":{"command":"ls"}}}]},"done":false}"#,
+            r#"{"message":{"role":"assistant","content":"","tool_calls":[{"function":{"name":"bash","arguments":{"command":"pwd"}}}]},"done":false}"#,
+            r#"{"message":{"role":"assistant","content":""},"done":true,"done_reason":"tool_calls","prompt_eval_count":5,"eval_count":10}"#,
+        ]))
+        .mount(&server)
+        .await;
+
+    let ollama = OllamaStreamFn::new(server.uri());
+    let events = collect_events(&ollama).await;
+
+    let tool_starts: Vec<_> = events
+        .iter()
+        .filter(|e| matches!(e, AssistantMessageEvent::ToolCallStart { .. }))
+        .collect();
+
+    assert_eq!(
+        tool_starts.len(),
+        1,
+        "expected exactly 1 ToolCallStart (duplicate deduped), got: {tool_starts:?}"
+    );
+    match &tool_starts[0] {
+        AssistantMessageEvent::ToolCallStart { name, .. } => {
+            assert_eq!(name, "bash");
+        }
+        _ => unreachable!(),
+    }
+}
+
+/// 14. Stream ends without a done chunk — should produce an error about
+/// unexpected stream end.
+#[tokio::test]
+async fn ollama_unexpected_stream_end() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/chat"))
+        .respond_with(ndjson_response(&[
+            r#"{"message":{"role":"assistant","content":"partial"},"done":false}"#,
+        ]))
+        .mount(&server)
+        .await;
+
+    let ollama = OllamaStreamFn::new(server.uri());
+    let events = collect_events(&ollama).await;
+
+    let has_unexpected_end = events.iter().any(|e| match e {
+        AssistantMessageEvent::Error { error_message, .. } => {
+            error_message.to_lowercase().contains("stream ended unexpectedly")
+        }
+        _ => false,
+    });
+    assert!(
+        has_unexpected_end,
+        "expected error about 'stream ended unexpectedly', got: {events:?}"
+    );
+}
+
+/// 15. A chunk with an empty thinking string should be skipped — no ThinkingStart
+/// or ThinkingDelta events, only text events.
+#[tokio::test]
+async fn ollama_empty_thinking_skipped() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/chat"))
+        .respond_with(ndjson_response(&[
+            r#"{"message":{"role":"assistant","content":"answer","thinking":""},"done":false}"#,
+            r#"{"message":{"role":"assistant","content":""},"done":true,"done_reason":"stop","prompt_eval_count":5,"eval_count":10}"#,
+        ]))
+        .mount(&server)
+        .await;
+
+    let ollama = OllamaStreamFn::new(server.uri());
+    let events = collect_events(&ollama).await;
+
+    let has_thinking = events.iter().any(|e| {
+        matches!(
+            e,
+            AssistantMessageEvent::ThinkingStart { .. }
+                | AssistantMessageEvent::ThinkingDelta { .. }
+        )
+    });
+    assert!(
+        !has_thinking,
+        "expected no ThinkingStart/ThinkingDelta for empty thinking, got: {events:?}"
+    );
+
+    let has_text_delta = events.iter().any(|e| {
+        matches!(e, AssistantMessageEvent::TextDelta { delta, .. } if delta == "answer")
+    });
+    assert!(
+        has_text_delta,
+        "expected TextDelta('answer'), got: {events:?}"
+    );
+}
+
+/// 16. Chunk with empty content but tool calls — no TextStart events, only
+/// ToolCallStart.
+#[tokio::test]
+async fn ollama_assistant_empty_text_with_tools() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/chat"))
+        .respond_with(ndjson_response(&[
+            r#"{"message":{"role":"assistant","content":"","tool_calls":[{"function":{"name":"bash","arguments":{"cmd":"ls"}}}]},"done":false}"#,
+            r#"{"message":{"role":"assistant","content":""},"done":true,"done_reason":"tool_calls","prompt_eval_count":3,"eval_count":7}"#,
+        ]))
+        .mount(&server)
+        .await;
+
+    let ollama = OllamaStreamFn::new(server.uri());
+    let events = collect_events(&ollama).await;
+
+    let has_text_start = events
+        .iter()
+        .any(|e| matches!(e, AssistantMessageEvent::TextStart { .. }));
+    assert!(
+        !has_text_start,
+        "expected no TextStart events for empty content with tools, got: {events:?}"
+    );
+
+    let has_tool_start = events
+        .iter()
+        .any(|e| matches!(e, AssistantMessageEvent::ToolCallStart { .. }));
+    assert!(
+        has_tool_start,
+        "expected at least one ToolCallStart, got: {events:?}"
+    );
+}

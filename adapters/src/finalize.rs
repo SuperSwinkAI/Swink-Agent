@@ -11,6 +11,7 @@ use swink_agent::stream::AssistantMessageEvent;
 // ─── OpenBlock ──────────────────────────────────────────────────────────────
 
 /// A content block that is still open and needs a closing event.
+#[derive(Debug)]
 pub enum OpenBlock {
     /// An open text block.
     Text { content_index: usize },
