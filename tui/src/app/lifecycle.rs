@@ -9,7 +9,7 @@ use tokio::sync::{mpsc, oneshot};
 use swink_agent::{Agent, ToolApproval, ToolApprovalRequest};
 
 use crate::config::TuiConfig;
-use crate::session::{JsonlSessionStore, SessionStore};
+use crate::session::JsonlSessionStore;
 use crate::theme;
 use crate::ui::conversation::ConversationView;
 use crate::ui::help_panel::HelpPanel;
@@ -25,9 +25,11 @@ impl App {
         let (approval_tx, approval_rx) = mpsc::channel(16);
         let session_store =
             JsonlSessionStore::default_dir().and_then(|dir| JsonlSessionStore::new(dir).ok());
-        let session_id = session_store
-            .as_ref()
-            .map_or_else(|| "unnamed".to_string(), SessionStore::new_session_id);
+        let session_id = if session_store.is_some() {
+            JsonlSessionStore::new_session_id()
+        } else {
+            "unnamed".to_string()
+        };
 
         // Apply configured color mode.
         let mode = match config.color_mode.as_str() {

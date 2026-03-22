@@ -12,6 +12,17 @@ use swink_agent::{
     sliding_window,
 };
 
+/// Result of a compaction operation (diagnostic type for future use).
+#[derive(Debug)]
+pub struct CompactionResult {
+    /// The compacted messages.
+    pub messages: Vec<AgentMessage>,
+    /// Number of messages removed during compaction.
+    pub removed_count: usize,
+    /// The summary that was injected, if any.
+    pub summary: Option<String>,
+}
+
 /// Summarization-aware context compactor.
 ///
 /// Combines the core [`sliding_window`] strategy with an optional summary
@@ -56,6 +67,9 @@ impl SummarizingCompactor {
     /// Behaves like [`sliding_window`] but injects a stored summary after
     /// the anchor messages when compaction occurs. If no summary is stored,
     /// behaves identically to `sliding_window`.
+    ///
+    /// The summary is consumed after injection — it will not be re-injected
+    /// on subsequent compaction passes.
     pub fn compaction_fn(&self) -> impl Fn(&mut Vec<AgentMessage>, bool) + Send + Sync {
         let summary = Arc::clone(&self.summary);
         let base = sliding_window(self.normal_budget, self.overflow_budget, self.anchor);
@@ -71,10 +85,10 @@ impl SummarizingCompactor {
 
             // If messages were dropped and we have a stored summary, inject it.
             if len_after < len_before {
-                let guard = summary
+                let mut guard = summary
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
-                if let Some(ref text) = *guard {
+                if let Some(text) = guard.take() {
                     let summary_msg = AgentMessage::Llm(LlmMessage::Assistant(AssistantMessage {
                         content: vec![ContentBlock::Text {
                             text: format!("[Context summary of earlier conversation]\n{text}"),
@@ -216,5 +230,62 @@ mod tests {
 
         compactor.clear_summary();
         assert!(!compactor.has_summary());
+    }
+
+    #[test]
+    fn summary_injected_as_assistant_message() {
+        let compactor = SummarizingCompactor::new(250, 100, 1);
+        compactor.set_summary("Key discussion points here.");
+        let compact = compactor.compaction_fn();
+
+        let body = "x".repeat(400);
+        let mut messages = vec![
+            text_message(&body),
+            text_message(&body),
+            text_message(&body),
+        ];
+
+        compact(&mut messages, false);
+
+        // Find the summary message
+        let summary_msg = messages.iter().find(|m| {
+            if let AgentMessage::Llm(LlmMessage::Assistant(a)) = m {
+                ContentBlock::extract_text(&a.content).contains("[Context summary")
+            } else {
+                false
+            }
+        });
+        assert!(summary_msg.is_some(), "summary should be an AssistantMessage");
+    }
+
+    #[test]
+    fn compaction_with_single_message_returns_unchanged() {
+        let compactor = SummarizingCompactor::new(10_000, 5_000, 1);
+        let compact = compactor.compaction_fn();
+
+        let mut messages = vec![text_message("single message")];
+        compact(&mut messages, false);
+
+        assert_eq!(messages.len(), 1);
+    }
+
+    #[test]
+    fn summary_consumed_after_injection() {
+        let compactor = SummarizingCompactor::new(250, 100, 1);
+        compactor.set_summary("Consumed summary.");
+        let compact = compactor.compaction_fn();
+
+        let body = "x".repeat(400);
+        let mut messages = vec![
+            text_message(&body),
+            text_message(&body),
+            text_message(&body),
+            text_message(&body),
+        ];
+
+        compact(&mut messages, false);
+
+        // Summary should have been consumed
+        assert!(!compactor.has_summary(), "summary should be consumed after injection");
     }
 }

@@ -9,12 +9,19 @@
 //! # Quick Start
 //!
 //! ```rust,ignore
-//! use swink_agent_memory::{JsonlSessionStore, SessionStore};
+//! use swink_agent_memory::{JsonlSessionStore, SessionStore, SessionMeta};
+//! use swink_agent_memory::time::{now_utc, format_session_id};
 //!
 //! let dir = JsonlSessionStore::default_dir().expect("config dir");
 //! let store = JsonlSessionStore::new(dir)?;
-//! let id = store.new_session_id();
-//! store.save(&id, "claude-sonnet", "Be helpful.", &messages)?;
+//! let id = format_session_id();
+//! let meta = SessionMeta {
+//!     id: id.clone(),
+//!     title: "My session".into(),
+//!     created_at: now_utc(),
+//!     updated_at: now_utc(),
+//! };
+//! store.save(&id, &meta, &messages)?;
 //! ```
 
 pub mod compaction;
@@ -22,10 +29,11 @@ pub mod jsonl;
 pub mod meta;
 pub mod store;
 pub mod store_async;
-mod time;
+pub mod time;
 
-pub use compaction::SummarizingCompactor;
+pub use compaction::{CompactionResult, SummarizingCompactor};
 pub use jsonl::JsonlSessionStore;
 pub use meta::SessionMeta;
-pub use store::{SessionFilter, SessionStore};
-pub use store_async::{BlockingSessionStore, SessionStoreAsync};
+pub use store::SessionStore;
+pub use store_async::{AsyncSessionStore, BlockingSessionStore};
+pub use time::{format_session_id, now_utc};

@@ -17,7 +17,7 @@ use swink_agent::{
 };
 
 use crate::config::TuiConfig;
-use crate::session::{JsonlSessionStore, SessionStore};
+use crate::session::{JsonlSessionStore, SessionMeta, SessionStore};
 
 use super::*;
 
@@ -796,14 +796,29 @@ async fn trim_messages_clamps_scroll_offset() {
 async fn load_session_keeps_full_agent_state_but_trims_visible_history() {
     let tempdir = tempdir().unwrap();
     let store = JsonlSessionStore::new(tempdir.path().to_path_buf()).unwrap();
-    let mut full_messages = Vec::new();
+    let mut full_messages: Vec<AgentMessage> = Vec::new();
     for turn in 1..=25 {
         full_messages.push(make_user_agent_message(&format!("user {turn}")));
         full_messages.push(make_assistant_agent_message(&format!("assistant {turn}")));
     }
+    // Convert AgentMessages to LlmMessages for the store.
+    let llm_messages: Vec<LlmMessage> = full_messages
+        .iter()
+        .filter_map(|m| match m {
+            AgentMessage::Llm(llm) => Some(llm.clone()),
+            AgentMessage::Custom(_) => None,
+        })
+        .collect();
     let session_id = "session-1";
+    let now = swink_agent_memory::now_utc();
+    let meta = SessionMeta {
+        id: session_id.to_string(),
+        title: "mock-model".to_string(),
+        created_at: now,
+        updated_at: now,
+    };
     store
-        .save(session_id, "mock-model", "system prompt", &full_messages)
+        .save(session_id, &meta, &llm_messages)
         .unwrap();
 
     let stream_fn = Arc::new(MockStreamFn::new(vec![]));
