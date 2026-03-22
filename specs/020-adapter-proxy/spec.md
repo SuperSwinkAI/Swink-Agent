@@ -3,7 +3,7 @@
 **Feature Branch**: `020-adapter-proxy`
 **Created**: 2026-03-20
 **Status**: Draft
-**Input**: ProxyStreamFn for HTTP proxy forwarding via SSE. Bearer token authentication. Delta reconstruction (partial_message stripped by proxy, reconstructed client-side). Error classification (connection/auth/rate-limit/malformed). References: PRD §7.4, §15.1, HLD Adapters.
+**Input**: ProxyStreamFn for HTTP proxy forwarding via SSE. Bearer token authentication. Typed SSE event handling (text, thinking, tool call deltas mapped 1:1). Error classification (connection/auth/rate-limit/malformed). References: PRD §7.4, §15.1, HLD Adapters.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -23,19 +23,19 @@ A developer configures the Proxy adapter with a proxy URL and bearer token and s
 
 ---
 
-### User Story 2 - Reconstruct Deltas Stripped by the Proxy (Priority: P1)
+### User Story 2 - Handle All SSE Event Types (Priority: P1)
 
-A developer streams responses through a proxy that strips `partial_message` fields from SSE events (a common proxy optimization to reduce bandwidth). The adapter reconstructs the stripped deltas client-side by tracking the cumulative message state and computing the difference between consecutive events. The developer receives the same incremental deltas they would get from a direct connection, despite the proxy's optimization.
+A developer streams responses through the proxy that include not just text deltas but also thinking deltas and tool call deltas. The proxy protocol uses discrete typed SSE events (`TextDelta`, `ThinkingDelta`, `ToolCallDelta`, etc.) where each event carries the incremental delta directly. The adapter maps each typed event 1:1 to the corresponding `AssistantMessageEvent` variant. The developer receives all event types with correct content indices and fields.
 
-**Why this priority**: Delta reconstruction is the core differentiator of the Proxy adapter — without it, tool call arguments and text deltas would be lost when the proxy strips partial state.
+**Why this priority**: Tool calls and thinking blocks are essential for agent functionality — without handling all event types, the adapter would only work for simple text responses.
 
-**Independent Test**: Can be tested by feeding a sequence of SSE events with stripped partial_message fields and verifying that the adapter reconstructs the correct deltas.
+**Independent Test**: Can be tested by feeding SSE events for each variant (thinking, tool call) and verifying correct `AssistantMessageEvent` mapping.
 
 **Acceptance Scenarios**:
 
-1. **Given** SSE events with partial_message stripped, **When** processed sequentially, **Then** the adapter reconstructs the correct text deltas by diffing consecutive states.
-2. **Given** SSE events with tool call arguments stripped, **When** processed, **Then** the adapter reconstructs the correct argument deltas.
-3. **Given** a mix of stripped and non-stripped events, **When** processed, **Then** the adapter handles both correctly without double-counting content.
+1. **Given** SSE events with `thinking_start`, `thinking_delta`, `thinking_end` types, **When** processed, **Then** the adapter maps them to the corresponding `AssistantMessageEvent` variants with correct content indices.
+2. **Given** SSE events with `tool_call_start`, `tool_call_delta`, `tool_call_end` types, **When** processed, **Then** the adapter maps them correctly including tool call `id` and `name`.
+3. **Given** a stream mixing text, thinking, and tool call events, **When** processed, **Then** all event types are handled correctly without interference.
 
 ---
 
@@ -51,6 +51,7 @@ A developer provides a bearer token for proxy authentication. The adapter includ
 
 1. **Given** a valid bearer token, **When** a request is sent to the proxy, **Then** the token is included in the authorization header and the request succeeds.
 2. **Given** an invalid or expired bearer token, **When** a request is sent, **Then** the adapter surfaces an authentication error (not retryable).
+3. **Given** `StreamOptions.api_key` is `Some`, **When** a request is sent, **Then** the override token is used instead of the stored bearer token.
 
 ---
 
@@ -85,17 +86,17 @@ A developer encounters various error conditions when communicating through the p
 ### Functional Requirements
 
 - **FR-001**: The adapter MUST stream text responses through the proxy via SSE, emitting incremental text deltas.
-- **FR-002**: The adapter MUST reconstruct deltas when partial_message fields are stripped by the proxy, by computing differences between consecutive cumulative states.
+- **FR-002**: The adapter MUST handle all typed SSE event variants (`text_start`, `text_delta`, `text_end`, `thinking_start`, `thinking_delta`, `thinking_end`, `tool_call_start`, `tool_call_delta`, `tool_call_end`, `done`, `error`) by mapping each 1:1 to the corresponding `AssistantMessageEvent`.
 - **FR-003**: The adapter MUST authenticate with the proxy using bearer token authorization.
 - **FR-004**: The adapter MUST classify errors into four categories: connection errors (retryable), authentication errors (not retryable), rate-limit errors (retryable), and malformed response errors (with diagnostic context).
-- **FR-005**: The adapter MUST handle tool call delta reconstruction, not just text deltas.
-- **FR-006**: The adapter MUST handle mixed streams where some events have partial_message and others do not.
+- **FR-005**: The adapter MUST handle tool call events (`tool_call_start` with `id` and `name`, `tool_call_delta`, `tool_call_end`) mapping each to the corresponding `AssistantMessageEvent` variant.
+- **FR-006**: The adapter MUST handle mixed streams containing text, thinking, and tool call events in any interleaved order.
 - **FR-007**: The adapter MUST surface malformed proxy responses as parse errors with enough context for debugging.
 
 ### Key Entities
 
-- **ProxyStreamFn**: The streaming function that connects through an HTTP proxy and produces assistant message events, reconstructing stripped deltas.
-- **Delta Reconstructor**: The component that tracks cumulative message state and computes deltas when partial_message is stripped.
+- **ProxyStreamFn**: The streaming function that connects through an HTTP proxy and produces assistant message events by mapping typed SSE events 1:1 to `AssistantMessageEvent` variants.
+- **SseEventData**: The typed enum representing all SSE event variants (`Start`, `TextDelta`, `ToolCallStart`, `Done`, `Error`, etc.) deserialized from the proxy's JSON payloads.
 - **Bearer Token**: Authentication credential for the proxy endpoint.
 
 ## Success Criteria *(mandatory)*
@@ -103,7 +104,7 @@ A developer encounters various error conditions when communicating through the p
 ### Measurable Outcomes
 
 - **SC-001**: Text responses stream incrementally through the proxy — each delta arrives as a separate event.
-- **SC-002**: Delta reconstruction produces identical event sequences whether or not the proxy strips partial_message fields.
+- **SC-002**: All typed SSE event variants (text, thinking, tool call, done, error) are correctly mapped to their corresponding `AssistantMessageEvent` variants.
 - **SC-003**: All four error categories (connection, auth, rate-limit, malformed) are correctly classified.
 - **SC-004**: Bearer token authentication is included in every request to the proxy.
 
@@ -121,7 +122,7 @@ A developer encounters various error conditions when communicating through the p
 ## Assumptions
 
 - The proxy forwards requests to an upstream LLM provider and relays the SSE stream back.
-- The proxy may strip partial_message fields as a bandwidth optimization — the adapter must handle this.
+- The proxy uses typed SSE events (discrete deltas) rather than partial_message fields — no delta reconstruction is needed.
 - Bearer token is the authentication mechanism for the proxy (distinct from any upstream provider authentication, which the proxy handles).
 - The shared error classifier from the adapter shared infrastructure (spec 011) is available, extended with proxy-specific error categories.
 - The proxy does not modify the semantic content of the stream — only strips optional fields.

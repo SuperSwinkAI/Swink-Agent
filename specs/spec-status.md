@@ -1,5 +1,5 @@
 # Spec-Driven Development Status
-<!-- spec-status: project=worktree-014-adapter-ollama commit=c64846a6182a07e2fec77fd4bb5ed7fced5abdff updated=2026-03-22T03:11:51Z -->
+<!-- spec-status: project=worktree-020-adapter-proxy commit=785bc25810b70acbbbe6999738dbbfcbdf717731 updated=2026-03-22T04:15:34Z -->
 
 | Feature                         | Specify | Plan | Tasks | Implement |
 |---------------------------------|---------|------|-------|-----------|
@@ -17,22 +17,22 @@
 | 012-adapter-anthropic           | ✓     | ✓  | ✓   | ✓ Complete |
 | 013-adapter-openai              | ✓     | ✓  | ✓   | ✓ Complete |
 | 014-adapter-ollama              | ✓     | ✓  | ✓   | ● 0/74 (0%) |
-| 015-adapter-gemini              | ✓     | -  | -   | - |
-| 016-adapter-azure               | ✓     | -  | -   | - |
-| 017-adapter-xai                 | ✓     | -  | -   | - |
-| 018-adapter-mistral             | ✓     | -  | -   | - |
-| 019-adapter-bedrock             | ✓     | -  | -   | - |
-| 020-adapter-proxy               | ✓     | ✓  | -   | - |
-| 021-memory-crate                | ✓     | ✓  | -   | - |
-| 022-local-llm-crate             | ✓     | ✓  | -   | - |
-| 023-eval-trajectory-matching    | ✓     | -  | -   | - |
-| 024-eval-runner-governance      | ✓     | -  | -   | - |
-| 025-tui-scaffold-config         | ✓     | -  | -   | - |
+| 015-adapter-gemini              | ✓     | -    | -     | -         |
+| 016-adapter-azure               | ✓     | -    | -     | -         |
+| 017-adapter-xai                 | ✓     | -    | -     | -         |
+| 018-adapter-mistral             | ✓     | -    | -     | -         |
+| 019-adapter-bedrock             | ✓     | -    | -     | -         |
+| 020-adapter-proxy               | ✓     | ✓  | ✓   | ● 0/40 (0%) |
+| 021-memory-crate                | ✓     | ✓  | -     | -         |
+| 022-local-llm-crate             | ✓     | ✓  | -     | -         |
+| 023-eval-trajectory-matching    | ✓     | -    | -     | -         |
+| 024-eval-runner-governance      | ✓     | -    | -     | -         |
+| 025-tui-scaffold-config         | ✓     | -    | -     | -         |
 | 026-tui-input-conversation      | ✓     | ✓  | ✓   | ● 0/69 (0%) |
-| 027-tui-tools-diffs-status      | ✓     | -  | -   | - |
-| 028-tui-commands-editor-session | ✓     | ✓  | -   | - |
-| 029-tui-plan-mode-approval      | ✓     | -  | -   | - |
-| 030-integration-tests           | ✓     | ✓  | -   | - |
+| 027-tui-tools-diffs-status      | ✓     | -    | -     | -         |
+| 028-tui-commands-editor-session | ✓     | ✓  | -     | -         |
+| 029-tui-plan-mode-approval      | ✓     | -    | -     | -         |
+| 030-integration-tests           | ✓     | ✓  | -     | -         |
 
 <!-- feature: 001-workspace-scaffold has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=false has_checklists=true tasks_total=24 tasks_completed=24 checklist_files=requirements.md -->
 <!-- feature: 002-foundation-types-errors has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=63 tasks_completed=63 checklist_files=requirements.md -->
@@ -53,7 +53,7 @@
 <!-- feature: 017-adapter-xai has_spec=true has_plan=false has_tasks=false has_research=false has_data_model=false has_quickstart=false has_contracts=false has_checklists=true tasks_total=0 tasks_completed=0 checklist_files=requirements.md -->
 <!-- feature: 018-adapter-mistral has_spec=true has_plan=false has_tasks=false has_research=false has_data_model=false has_quickstart=false has_contracts=false has_checklists=true tasks_total=0 tasks_completed=0 checklist_files=requirements.md -->
 <!-- feature: 019-adapter-bedrock has_spec=true has_plan=false has_tasks=false has_research=false has_data_model=false has_quickstart=false has_contracts=false has_checklists=true tasks_total=0 tasks_completed=0 checklist_files=requirements.md -->
-<!-- feature: 020-adapter-proxy has_spec=true has_plan=true has_tasks=false has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=0 tasks_completed=0 checklist_files=requirements.md -->
+<!-- feature: 020-adapter-proxy has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=40 tasks_completed=0 checklist_files=requirements.md -->
 <!-- feature: 021-memory-crate has_spec=true has_plan=true has_tasks=false has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=0 tasks_completed=0 checklist_files=requirements.md -->
 <!-- feature: 022-local-llm-crate has_spec=true has_plan=true has_tasks=false has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=0 tasks_completed=0 checklist_files=requirements.md -->
 <!-- feature: 023-eval-trajectory-matching has_spec=true has_plan=false has_tasks=false has_research=false has_data_model=false has_quickstart=false has_contracts=false has_checklists=true tasks_total=0 tasks_completed=0 checklist_files=requirements.md -->
