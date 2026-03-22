@@ -2,7 +2,7 @@
 
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::Duration;
 
@@ -364,4 +364,112 @@ pub fn tool_call_events(id: &str, name: &str, args: &str) -> Vec<AssistantMessag
             cost: Cost::default(),
         },
     ]
+}
+
+/// Build events for multiple tool calls in a single response.
+///
+/// Each entry is `(id, name, args)`.
+#[allow(dead_code)]
+pub fn tool_call_events_multi(calls: &[(&str, &str, &str)]) -> Vec<AssistantMessageEvent> {
+    let mut events = vec![AssistantMessageEvent::Start];
+    for (i, (id, name, args)) in calls.iter().enumerate() {
+        events.push(AssistantMessageEvent::ToolCallStart {
+            content_index: i,
+            id: id.to_string(),
+            name: name.to_string(),
+        });
+        events.push(AssistantMessageEvent::ToolCallDelta {
+            content_index: i,
+            delta: args.to_string(),
+        });
+        events.push(AssistantMessageEvent::ToolCallEnd { content_index: i });
+    }
+    events.push(AssistantMessageEvent::Done {
+        stop_reason: StopReason::ToolUse,
+        usage: Usage::default(),
+        cost: Cost::default(),
+    });
+    events
+}
+
+/// Build events for an error response.
+#[allow(dead_code)]
+pub fn error_events(
+    message: &str,
+    error_kind: Option<swink_agent::StreamErrorKind>,
+) -> Vec<AssistantMessageEvent> {
+    vec![AssistantMessageEvent::Error {
+        stop_reason: StopReason::Error,
+        error_message: message.to_string(),
+        usage: None,
+        error_kind,
+    }]
+}
+
+// ─── EventCollector ──────────────────────────────────────────────────────
+
+/// Subscribes to Agent events and collects them for assertion.
+#[allow(dead_code)]
+#[derive(Clone)]
+pub struct EventCollector {
+    events: Arc<Mutex<Vec<String>>>,
+}
+
+#[allow(dead_code)]
+impl EventCollector {
+    pub fn new() -> Self {
+        Self {
+            events: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
+    /// Returns a closure suitable for `agent.subscribe(...)`.
+    pub fn subscriber(&self) -> impl Fn(&swink_agent::AgentEvent) + Send + Sync + 'static {
+        let events = Arc::clone(&self.events);
+        move |event: &swink_agent::AgentEvent| {
+            let name = event_variant_name(event);
+            events.lock().unwrap().push(name);
+        }
+    }
+
+    /// Snapshot of collected event names.
+    pub fn events(&self) -> Vec<String> {
+        self.events.lock().unwrap().clone()
+    }
+
+    /// Number of events collected.
+    pub fn count(&self) -> usize {
+        self.events.lock().unwrap().len()
+    }
+
+    /// Position of first occurrence of an event name.
+    pub fn position(&self, name: &str) -> Option<usize> {
+        self.events().iter().position(|n| n == name)
+    }
+}
+
+/// Extract the variant name from an `AgentEvent`.
+#[allow(dead_code)]
+pub fn event_variant_name(event: &swink_agent::AgentEvent) -> String {
+    use swink_agent::AgentEvent;
+    match event {
+        AgentEvent::AgentStart => "AgentStart".into(),
+        AgentEvent::AgentEnd { .. } => "AgentEnd".into(),
+        AgentEvent::TurnStart => "TurnStart".into(),
+        AgentEvent::TurnEnd { .. } => "TurnEnd".into(),
+        AgentEvent::MessageStart => "MessageStart".into(),
+        AgentEvent::MessageUpdate { .. } => "MessageUpdate".into(),
+        AgentEvent::MessageEnd { .. } => "MessageEnd".into(),
+        AgentEvent::ToolExecutionStart { .. } => "ToolExecutionStart".into(),
+        AgentEvent::ToolExecutionUpdate { .. } => "ToolExecutionUpdate".into(),
+        AgentEvent::ToolExecutionEnd { .. } => "ToolExecutionEnd".into(),
+        AgentEvent::ToolApprovalRequested { .. } => "ToolApprovalRequested".into(),
+        AgentEvent::ToolApprovalResolved { .. } => "ToolApprovalResolved".into(),
+        AgentEvent::BeforeLlmCall { .. } => "BeforeLlmCall".into(),
+        AgentEvent::ContextCompacted { .. } => "ContextCompacted".into(),
+        AgentEvent::Custom(emission) => format!("Custom({})", emission.name),
+        AgentEvent::ModelFallback { .. } => "ModelFallback".into(),
+        AgentEvent::ModelCycled { .. } => "ModelCycled".into(),
+        _ => "Unknown".into(),
+    }
 }

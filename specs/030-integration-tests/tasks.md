@@ -17,9 +17,9 @@
 
 **Purpose**: Extend shared test helpers and create test file scaffolding
 
-- [ ] T001 Extract and enhance `EventCollector` from existing `tests/integration.rs` into `tests/common/mod.rs` — wraps `Arc<Mutex<Vec<AgentEvent>>>`, provides `new()`, `subscriber()` (returns `impl Fn(&AgentEvent)` closure for `agent.subscribe()`), `events()` (snapshot clone), and `count()` methods per contracts/public-api.md
-- [ ] T002 Add helper function `tool_call_events_multi(calls: &[(&str, &str, &str)]) -> Vec<AssistantMessageEvent>` to `tests/common/mod.rs` for building multi-tool-call response event sequences (Start, N tool call blocks, Done with ToolUse stop reason)
-- [ ] T003 Add helper function `error_events(message: &str, error_kind: Option<StreamErrorKind>) -> Vec<AssistantMessageEvent>` to `tests/common/mod.rs` for building error response event sequences (Start, Error with configurable kind)
+- [x] T001 Extract and enhance `EventCollector` from existing `tests/integration.rs` into `tests/common/mod.rs` — wraps `Arc<Mutex<Vec<AgentEvent>>>`, provides `new()`, `subscriber()` (returns `impl Fn(&AgentEvent)` closure for `agent.subscribe()`), `events()` (snapshot clone), and `count()` methods per contracts/public-api.md
+- [x] T002 Add helper function `tool_call_events_multi(calls: &[(&str, &str, &str)]) -> Vec<AssistantMessageEvent>` to `tests/common/mod.rs` for building multi-tool-call response event sequences (Start, N tool call blocks, Done with ToolUse stop reason)
+- [x] T003 Add helper function `error_events(message: &str, error_kind: Option<StreamErrorKind>) -> Vec<AssistantMessageEvent>` to `tests/common/mod.rs` for building error response event sequences (Start, Error with configurable kind)
 
 **Checkpoint**: Shared helpers ready — all test files can use `EventCollector` and extended helpers
 
@@ -43,13 +43,13 @@
 
 ### Implementation for User Story 1
 
-- [ ] T004 [US1] Create test file `tests/ac_lifecycle.rs` with `mod common;` and imports for `swink_agent::{Agent, AgentOptions, AgentEvent}`, `MockStreamFn`, `EventCollector`, and helpers
-- [ ] T005 [US1] Implement AC 1 test `agent_creation_with_mock_stream` in `tests/ac_lifecycle.rs` — create an Agent with `AgentOptions::new("prompt", default_model(), mock_stream_fn, default_convert)`, send a user message via `agent.prompt_async(vec![...])`, and assert a text response is returned
-- [ ] T006 [US1] Implement AC 2 test `message_processing_produces_response` in `tests/ac_lifecycle.rs` — send a user message via `agent.prompt_async()`, collect the returned response text, and assert it matches the scripted mock stream output
-- [ ] T007 [US1] Implement AC 3 test `lifecycle_events_emitted_in_order` in `tests/ac_lifecycle.rs` — attach an `EventCollector` via `agent.subscribe()`, send a message, and assert events arrive in order: TurnStart, streaming events, TurnEnd
-- [ ] T008 [US1] Implement AC 4 test `streaming_delivers_text_tokens` in `tests/ac_lifecycle.rs` — attach an `EventCollector`, send a message with a multi-token scripted response (multiple TextDelta events), and assert all text deltas are received and concatenated correctly
-- [ ] T009 [US1] Implement AC 5 test `turn_completion_accumulates_history` in `tests/ac_lifecycle.rs` — send two sequential messages, and assert the agent's context contains both user messages and both assistant responses after the second turn
-- [ ] T010 [US1] Implement edge case test `panicking_subscriber_is_removed` in `tests/ac_lifecycle.rs` — register a subscriber that panics on first event, register a second `EventCollector` subscriber, send a message, and assert the panicking subscriber was auto-removed while the second subscriber received all events
+- [x] T004 [US1] Create test file `tests/ac_lifecycle.rs` with `mod common;` and imports for `swink_agent::{Agent, AgentOptions, AgentEvent}`, `MockStreamFn`, `EventCollector`, and helpers
+- [x] T005 [US1] Implement AC 1 test `agent_creation_with_mock_stream` in `tests/ac_lifecycle.rs` — create an Agent with `AgentOptions::new("prompt", default_model(), mock_stream_fn, default_convert)`, send a user message via `agent.prompt_async(vec![...])`, and assert a text response is returned
+- [x] T006 [US1] Implement AC 2 test `message_processing_produces_response` in `tests/ac_lifecycle.rs` — send a user message via `agent.prompt_async()`, collect the returned response text, and assert it matches the scripted mock stream output
+- [x] T007 [US1] Implement AC 3 test `lifecycle_events_emitted_in_order` in `tests/ac_lifecycle.rs` — attach an `EventCollector` via `agent.subscribe()`, send a message, and assert events arrive in order: TurnStart, streaming events, TurnEnd
+- [x] T008 [US1] Implement AC 4 test `streaming_delivers_text_tokens` in `tests/ac_lifecycle.rs` — attach an `EventCollector`, send a message with a multi-token scripted response (multiple TextDelta events), and assert all text deltas are received and concatenated correctly
+- [x] T009 [US1] Implement AC 5 test `turn_completion_accumulates_history` in `tests/ac_lifecycle.rs` — send two sequential messages, and assert the agent's context contains both user messages and both assistant responses after the second turn
+- [x] T010 [US1] Implement edge case test `panicking_subscriber_is_removed` in `tests/ac_lifecycle.rs` — register a subscriber that panics on first event, register a second `EventCollector` subscriber, send a message, and assert the panicking subscriber was auto-removed while the second subscriber received all events
 
 **Checkpoint**: AC 1–5 passing. `cargo test --test ac_lifecycle` succeeds independently.
 
@@ -63,15 +63,15 @@
 
 ### Implementation for User Story 2
 
-- [ ] T011 [US2] Create test file `tests/ac_tools.rs` with `mod common;` and imports for `swink_agent::{Agent, AgentOptions, AgentTool, AgentToolResult}`, `MockStreamFn`, `MockTool`, `tool_call_events`, and helpers
-- [ ] T012 [US2] Implement AC 6 test `tool_registration_and_discovery` in `tests/ac_tools.rs` — register a `MockTool` via `AgentOptions`, script a tool call in the mock stream, and assert the tool's `execute()` was called (via `was_executed()`)
-- [ ] T013 [US2] Implement AC 7 test `schema_validation_rejects_invalid_args` in `tests/ac_tools.rs` — register a `MockTool` with a strict schema (e.g. requiring a `"path"` string property), script a tool call with invalid args (missing required field), and assert the tool was NOT executed and an error result was returned
-- [ ] T014 [US2] Implement AC 8 test `tool_execution_with_valid_args` in `tests/ac_tools.rs` — register a `MockTool`, script a tool call with valid args matching the schema, and assert the tool was executed and its result text appears in the follow-up context
-- [ ] T015 [US2] Implement AC 9 test `concurrent_tool_execution` in `tests/ac_tools.rs` — register three `MockTool` instances each with a delay (e.g. 50ms), script a response with all three tool calls in a single turn using `tool_call_events_multi`, capture start `Instant` per tool, and assert all three tools were executed (via `execution_count`) and that start times are within epsilon of each other (proving concurrency per research.md:D3)
-- [ ] T016 [US2] Implement AC 10 test `tool_error_handling` in `tests/ac_tools.rs` — register a `MockTool` configured with `AgentToolResult::error("something failed")`, script a tool call, and assert the error result is returned to the agent and the loop continues (agent produces a final text response)
-- [ ] T017 [US2] Implement AC 11 test `tool_result_in_followup_message` in `tests/ac_tools.rs` — register a `MockTool`, script a tool call followed by a text response, use `ContextCapturingStreamFn` to capture context on the second call, and assert the tool result message is present in the captured context
-- [ ] T018 [US2] Implement AC 12 test `tool_call_transformation` in `tests/ac_tools.rs` — configure a `ToolCallTransformer` on `AgentOptions` that modifies tool call arguments (e.g. adds a field), register a `MockTool`, script a tool call, and assert the transformer was invoked and the modified arguments reached the tool
-- [ ] T019 [US2] Implement edge case test `tool_validator_rejects_call` in `tests/ac_tools.rs` — configure a `ToolValidator` on `AgentOptions` that rejects a specific tool call, register a `MockTool`, script a tool call, and assert the tool was NOT executed and a rejection error result was returned
+- [x] T011 [US2] Create test file `tests/ac_tools.rs` with `mod common;` and imports for `swink_agent::{Agent, AgentOptions, AgentTool, AgentToolResult}`, `MockStreamFn`, `MockTool`, `tool_call_events`, and helpers
+- [x] T012 [US2] Implement AC 6 test `tool_registration_and_discovery` in `tests/ac_tools.rs` — register a `MockTool` via `AgentOptions`, script a tool call in the mock stream, and assert the tool's `execute()` was called (via `was_executed()`)
+- [x] T013 [US2] Implement AC 7 test `schema_validation_rejects_invalid_args` in `tests/ac_tools.rs` — register a `MockTool` with a strict schema (e.g. requiring a `"path"` string property), script a tool call with invalid args (missing required field), and assert the tool was NOT executed and an error result was returned
+- [x] T014 [US2] Implement AC 8 test `tool_execution_with_valid_args` in `tests/ac_tools.rs` — register a `MockTool`, script a tool call with valid args matching the schema, and assert the tool was executed and its result text appears in the follow-up context
+- [x] T015 [US2] Implement AC 9 test `concurrent_tool_execution` in `tests/ac_tools.rs` — register three `MockTool` instances each with a delay (e.g. 50ms), script a response with all three tool calls in a single turn using `tool_call_events_multi`, capture start `Instant` per tool, and assert all three tools were executed (via `execution_count`) and that start times are within epsilon of each other (proving concurrency per research.md:D3)
+- [x] T016 [US2] Implement AC 10 test `tool_error_handling` in `tests/ac_tools.rs` — register a `MockTool` configured with `AgentToolResult::error("something failed")`, script a tool call, and assert the error result is returned to the agent and the loop continues (agent produces a final text response)
+- [x] T017 [US2] Implement AC 11 test `tool_result_in_followup_message` in `tests/ac_tools.rs` — register a `MockTool`, script a tool call followed by a text response, use `ContextCapturingStreamFn` to capture context on the second call, and assert the tool result message is present in the captured context
+- [x] T018 [US2] Implement AC 12 test `tool_call_transformation` in `tests/ac_tools.rs` — configure a `ToolCallTransformer` on `AgentOptions` that modifies tool call arguments (e.g. adds a field), register a `MockTool`, script a tool call, and assert the transformer was invoked and the modified arguments reached the tool
+- [x] T019 [US2] Implement edge case test `tool_validator_rejects_call` in `tests/ac_tools.rs` — configure a `ToolValidator` on `AgentOptions` that rejects a specific tool call, register a `MockTool`, script a tool call, and assert the tool was NOT executed and a rejection error result was returned
 
 **Checkpoint**: AC 6–12 passing. `cargo test --test ac_tools` succeeds independently.
 
@@ -85,12 +85,12 @@
 
 ### Implementation for User Story 3
 
-- [ ] T020 [US3] Create test file `tests/ac_context.rs` with `mod common;` and imports for `swink_agent::{Agent, AgentOptions, ContextWindowConfig}`, `ContextCapturingStreamFn`, and helpers
-- [ ] T021 [US3] Implement AC 13 test `context_window_tracking` in `tests/ac_context.rs` — configure a small `ContextWindowConfig` (e.g. max_tokens = 500), send multiple messages to accumulate history, and use `ContextCapturingStreamFn` to assert the message count passed to the stream decreases after compaction triggers
-- [ ] T022 [US3] Implement AC 14 test `sliding_window_preserves_anchor_and_tail` in `tests/ac_context.rs` — configure a small context budget, send enough messages to trigger compaction, capture context via `ContextCapturingStreamFn`, and assert the first message (anchor) and most recent messages (tail) are preserved while middle messages are removed
-- [ ] T023 [US3] Implement AC 15 test `context_overflow_triggers_retry` in `tests/ac_context.rs` — configure a very small context budget, script the mock stream to return the `CONTEXT_OVERFLOW_SENTINEL` error on the first call and a normal text response on the second call (after compaction), and assert the agent recovers and returns a successful response
-- [ ] T024 [US3] Implement AC 16 test `tool_result_pairs_kept_together` in `tests/ac_context.rs` — send messages that include a tool call and its result, trigger compaction, and assert the tool call message and its corresponding tool result are either both kept or both removed (never split)
-- [ ] T025 [US3] Implement edge case test `transform_context_callback_on_overflow` in `tests/ac_context.rs` — configure a `transform_context` callback on `AgentOptions`, trigger overflow, and assert the callback is invoked with the context for custom compaction
+- [x] T020 [US3] Create test file `tests/ac_context.rs` with `mod common;` and imports for `swink_agent::{Agent, AgentOptions, ContextWindowConfig}`, `ContextCapturingStreamFn`, and helpers
+- [x] T021 [US3] Implement AC 13 test `context_window_tracking` in `tests/ac_context.rs` — configure a small `ContextWindowConfig` (e.g. max_tokens = 500), send multiple messages to accumulate history, and use `ContextCapturingStreamFn` to assert the message count passed to the stream decreases after compaction triggers
+- [x] T022 [US3] Implement AC 14 test `sliding_window_preserves_anchor_and_tail` in `tests/ac_context.rs` — configure a small context budget, send enough messages to trigger compaction, capture context via `ContextCapturingStreamFn`, and assert the first message (anchor) and most recent messages (tail) are preserved while middle messages are removed
+- [x] T023 [US3] Implement AC 15 test `context_overflow_triggers_retry` in `tests/ac_context.rs` — configure a very small context budget, script the mock stream to return the `CONTEXT_OVERFLOW_SENTINEL` error on the first call and a normal text response on the second call (after compaction), and assert the agent recovers and returns a successful response
+- [x] T024 [US3] Implement AC 16 test `tool_result_pairs_kept_together` in `tests/ac_context.rs` — send messages that include a tool call and its result, trigger compaction, and assert the tool call message and its corresponding tool result are either both kept or both removed (never split)
+- [x] T025 [US3] Implement edge case test `transform_context_callback_on_overflow` in `tests/ac_context.rs` — configure a `transform_context` callback on `AgentOptions`, trigger overflow, and assert the callback is invoked with the context for custom compaction
 
 **Checkpoint**: AC 13–16 passing. `cargo test --test ac_context` succeeds independently.
 
@@ -104,13 +104,13 @@
 
 ### Implementation for User Story 4
 
-- [ ] T026 [US4] Create test file `tests/ac_resilience.rs` with `mod common;` and imports for `swink_agent::{Agent, AgentOptions, AgentError}`, `MockStreamFn`, `EventCollector`, and helpers
-- [ ] T027 [US4] Implement AC 17 test `retry_with_backoff_on_throttle` in `tests/ac_resilience.rs` — script the mock stream to return a `ModelThrottled` error on the first call and a successful text response on the second, configure a retry strategy, and assert the agent eventually succeeds
-- [ ] T028 [US4] Implement AC 18 test `steering_callback_modifies_messages` in `tests/ac_resilience.rs` — use `agent.steer(AgentMessage::user("injected"))` to inject a message between turns, script a multi-turn conversation (tool call then follow-up), and assert the injected steering message appears in the context
-- [ ] T029 [US4] Implement AC 19 test `abort_stops_running_turn` in `tests/ac_resilience.rs` — start a message with a mock stream that includes a delay, cancel via `CancellationToken` mid-turn, and assert the agent returns with an aborted/cancelled status
-- [ ] T030 [US4] Implement AC 20 test `sync_api_blocks_until_complete` in `tests/ac_resilience.rs` — use `agent.prompt_sync()` (or equivalent sync API), send a message, and assert it blocks and returns the complete response (test runs on a separate thread via `std::thread::spawn`)
-- [ ] T031 [US4] Implement AC 21 test `followup_decision_controls_continuation` in `tests/ac_resilience.rs` — configure a `should_continue` callback on `AgentOptions` that returns `false` after the first turn, script a tool call response (which normally triggers follow-up), and assert the agent stops after one turn instead of continuing
-- [ ] T032 [US4] Implement AC 22 test `custom_messages_survive_compaction` in `tests/ac_resilience.rs` — pass an `AgentMessage::Custom` via `agent.prompt_async()` input vector or `agent.steer()`, trigger compaction, capture context via `ContextCapturingStreamFn`, and assert the custom message is still present in context but was NOT sent to the provider (filtered by `default_convert` returning `None`)
+- [x] T026 [US4] Create test file `tests/ac_resilience.rs` with `mod common;` and imports for `swink_agent::{Agent, AgentOptions, AgentError}`, `MockStreamFn`, `EventCollector`, and helpers
+- [x] T027 [US4] Implement AC 17 test `retry_with_backoff_on_throttle` in `tests/ac_resilience.rs` — script the mock stream to return a `ModelThrottled` error on the first call and a successful text response on the second, configure a retry strategy, and assert the agent eventually succeeds
+- [x] T028 [US4] Implement AC 18 test `steering_callback_modifies_messages` in `tests/ac_resilience.rs` — use `agent.steer(AgentMessage::user("injected"))` to inject a message between turns, script a multi-turn conversation (tool call then follow-up), and assert the injected steering message appears in the context
+- [x] T029 [US4] Implement AC 19 test `abort_stops_running_turn` in `tests/ac_resilience.rs` — start a message with a mock stream that includes a delay, cancel via `CancellationToken` mid-turn, and assert the agent returns with an aborted/cancelled status
+- [x] T030 [US4] Implement AC 20 test `sync_api_blocks_until_complete` in `tests/ac_resilience.rs` — use `agent.prompt_sync()` (or equivalent sync API), send a message, and assert it blocks and returns the complete response (test runs on a separate thread via `std::thread::spawn`)
+- [x] T031 [US4] Implement AC 21 test `followup_decision_controls_continuation` in `tests/ac_resilience.rs` — configure a `should_continue` callback on `AgentOptions` that returns `false` after the first turn, script a tool call response (which normally triggers follow-up), and assert the agent stops after one turn instead of continuing
+- [x] T032 [US4] Implement AC 22 test `custom_messages_survive_compaction` in `tests/ac_resilience.rs` — pass an `AgentMessage::Custom` via `agent.prompt_async()` input vector or `agent.steer()`, trigger compaction, capture context via `ContextCapturingStreamFn`, and assert the custom message is still present in context but was NOT sent to the provider (filtered by `default_convert` returning `None`)
 
 **Checkpoint**: AC 17–22 passing. `cargo test --test ac_resilience` succeeds independently.
 
@@ -124,11 +124,11 @@
 
 ### Implementation for User Story 5
 
-- [ ] T033 [US5] Create test file `tests/ac_structured.rs` with `mod common;` and imports for `swink_agent::{Agent, AgentOptions}`, `swink_agent_adapters::proxy::ProxyStreamFn`, `MockStreamFn`, `serde_json::json!`, and helpers
-- [ ] T034 [US5] Implement AC 23 test `structured_output_with_schema` in `tests/ac_structured.rs` — use `agent.structured_output(prompt, schema)` with a JSON schema Value (e.g. `json!({"type": "object", "properties": {"name": {"type": "string"}}})`), script the mock stream to return valid JSON matching the schema, and assert the response is parsed as structured output
-- [ ] T035 [US5] Implement AC 24 test `schema_enforcement_rejects_invalid` in `tests/ac_structured.rs` — use `agent.structured_output(prompt, schema)` with a schema, script the mock stream to return JSON that does NOT match the schema, and assert the agent retries or returns an appropriate error
-- [ ] T036 [US5] Implement AC 25 test `proxy_stream_reconstruction` in `tests/ac_structured.rs` — create a `ProxyStreamFn`, feed it serialized event data (Start, TextDelta, Done), stream the events, and assert the reconstructed event sequence matches the original
-- [ ] T037 [US5] Implement edge case test `structured_output_empty_object` in `tests/ac_structured.rs` — configure structured output with a permissive schema, script the mock stream to return `{}`, and assert empty object is accepted
+- [x] T033 [US5] Create test file `tests/ac_structured.rs` with `mod common;` and imports for `swink_agent::{Agent, AgentOptions}`, `swink_agent_adapters::proxy::ProxyStreamFn`, `MockStreamFn`, `serde_json::json!`, and helpers
+- [x] T034 [US5] Implement AC 23 test `structured_output_with_schema` in `tests/ac_structured.rs` — use `agent.structured_output(prompt, schema)` with a JSON schema Value (e.g. `json!({"type": "object", "properties": {"name": {"type": "string"}}})`), script the mock stream to return valid JSON matching the schema, and assert the response is parsed as structured output
+- [x] T035 [US5] Implement AC 24 test `schema_enforcement_rejects_invalid` in `tests/ac_structured.rs` — use `agent.structured_output(prompt, schema)` with a schema, script the mock stream to return JSON that does NOT match the schema, and assert the agent retries or returns an appropriate error
+- [x] T036 [US5] Implement AC 25 test `proxy_stream_reconstruction` in `tests/ac_structured.rs` — create a `ProxyStreamFn`, feed it serialized event data (Start, TextDelta, Done), stream the events, and assert the reconstructed event sequence matches the original
+- [x] T037 [US5] Implement edge case test `structured_output_empty_object` in `tests/ac_structured.rs` — configure structured output with a permissive schema, script the mock stream to return `{}`, and assert empty object is accepted
 
 **Checkpoint**: AC 23–25 passing. `cargo test --test ac_structured` succeeds independently.
 
@@ -142,12 +142,12 @@
 
 ### Implementation for User Story 6
 
-- [ ] T038 [US6] Create test file `tui/tests/ac_tui.rs` (inside the TUI crate, NOT the core crate) with imports for `swink_agent_tui` types (`App`, `TuiConfig`), `ratatui::backend::TestBackend`, `ratatui::Terminal`, and TUI-internal theme/rendering modules accessible from within the crate
-- [ ] T039 [US6] Implement AC 26 test `role_based_border_colors` in `tui/tests/ac_tui.rs` — create `DisplayMessage` instances with different `MessageRole` values (User, Assistant, System), render them using the conversation view into a `TestBackend` buffer, and assert each role's block has the correct border color from the theme module
-- [ ] T040 [US6] Implement AC 27 test `inline_diff_color_coding` in `tui/tests/ac_tui.rs` — create a `DiffData` struct with known old/new content, call `render_diff_lines()`, and assert additions are styled with `theme::diff_add_color()`, removals with `theme::diff_remove_color()`, and context with `theme::diff_context_color()`
-- [ ] T041 [US6] Implement AC 28 test `context_gauge_color_thresholds` in `tui/tests/ac_tui.rs` — render the status bar or context gauge at different utilization percentages (30% = green, 70% = yellow, 90% = red), and assert the gauge color matches the expected threshold color
-- [ ] T042 [US6] Implement AC 29 test `plan_mode_restricts_write_tools` in `tui/tests/ac_tui.rs` — create an `App` in plan mode, verify the plan mode indicator is set, and assert that write tools (e.g. `WriteFileTool`) are filtered out or unavailable while read tools remain
-- [ ] T043 [US6] Implement AC 30 test `approval_mode_classifies_tools` in `tui/tests/ac_tui.rs` — create an `App` with `ApprovalMode::Smart`, and assert that tools with `requires_approval = false` (read tools) auto-execute while tools with `requires_approval = true` (write tools) trigger an approval prompt
+- [x] T038 [US6] Create test file `tui/tests/ac_tui.rs` (inside the TUI crate, NOT the core crate) with imports for `swink_agent_tui` types (`App`, `TuiConfig`), `ratatui::backend::TestBackend`, `ratatui::Terminal`, and TUI-internal theme/rendering modules accessible from within the crate
+- [x] T039 [US6] Implement AC 26 test `role_based_border_colors` in `tui/tests/ac_tui.rs` — create `DisplayMessage` instances with different `MessageRole` values (User, Assistant, System), render them using the conversation view into a `TestBackend` buffer, and assert each role's block has the correct border color from the theme module
+- [x] T040 [US6] Implement AC 27 test `inline_diff_color_coding` in `tui/tests/ac_tui.rs` — create a `DiffData` struct with known old/new content, call `render_diff_lines()`, and assert additions are styled with `theme::diff_add_color()`, removals with `theme::diff_remove_color()`, and context with `theme::diff_context_color()`
+- [x] T041 [US6] Implement AC 28 test `context_gauge_color_thresholds` in `tui/tests/ac_tui.rs` — render the status bar or context gauge at different utilization percentages (30% = green, 70% = yellow, 90% = red), and assert the gauge color matches the expected threshold color
+- [x] T042 [US6] Implement AC 29 test `plan_mode_restricts_write_tools` in `tui/tests/ac_tui.rs` — create an `App` in plan mode, verify the plan mode indicator is set, and assert that write tools (e.g. `WriteFileTool`) are filtered out or unavailable while read tools remain
+- [x] T043 [US6] Implement AC 30 test `approval_mode_classifies_tools` in `tui/tests/ac_tui.rs` — create an `App` with `ApprovalMode::Smart`, and assert that tools with `requires_approval = false` (read tools) auto-execute while tools with `requires_approval = true` (write tools) trigger an approval prompt
 
 **Checkpoint**: AC 26–30 passing. `cargo test --test ac_tui` succeeds independently.
 
@@ -157,11 +157,11 @@
 
 **Purpose**: Final validation and cleanup across all test files
 
-- [ ] T044 Run `cargo test --test ac_lifecycle --test ac_tools --test ac_context --test ac_resilience --test ac_structured --test ac_tui` and fix any compilation or test failures
-- [ ] T045 Run `cargo clippy --workspace -- -D warnings` and fix any new warnings introduced by the test files
-- [ ] T046 Run `cargo test --workspace` to ensure new tests do not break any existing tests
-- [ ] T047 Verify all 30 acceptance criteria are covered by grepping test function names across all `ac_*.rs` files and cross-referencing against data-model.md AC mapping table
-- [ ] T048 Run quickstart.md validation — execute the commands from `specs/030-integration-tests/quickstart.md` and confirm they work as documented
+- [x] T044 Run `cargo test --test ac_lifecycle --test ac_tools --test ac_context --test ac_resilience --test ac_structured --test ac_tui` and fix any compilation or test failures
+- [x] T045 Run `cargo clippy --workspace -- -D warnings` and fix any new warnings introduced by the test files
+- [x] T046 Run `cargo test --workspace` to ensure new tests do not break any existing tests
+- [x] T047 Verify all 30 acceptance criteria are covered by grepping test function names across all `ac_*.rs` files and cross-referencing against data-model.md AC mapping table
+- [x] T048 Run quickstart.md validation — execute the commands from `specs/030-integration-tests/quickstart.md` and confirm they work as documented
 
 ---
 
