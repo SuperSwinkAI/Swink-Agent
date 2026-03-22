@@ -9,11 +9,7 @@ use swink_agent::{
     ModelSpec, StopReason, SubAgent, Usage, stream::StreamFn,
 };
 
-use common::{MockStreamFn, MockTool, text_only_events, tool_call_events};
-
-fn test_model() -> ModelSpec {
-    ModelSpec::new("test", "test-model")
-}
+use common::{MockStreamFn, MockTool, default_model, text_only_events, tool_call_events};
 
 #[tokio::test]
 async fn max_turns_limits_agent_loop() {
@@ -29,7 +25,7 @@ async fn max_turns_limits_agent_loop() {
     let stream_fn: Arc<dyn StreamFn> = Arc::new(MockStreamFn::new(responses));
     let tool = Arc::new(MockTool::new("mock_tool"));
 
-    let options = AgentOptions::new_simple("test", test_model(), stream_fn)
+    let options = AgentOptions::new_simple("test", default_model(), stream_fn)
         .with_tools(vec![tool.clone()])
         .with_loop_policy(MaxTurnsPolicy::new(2));
 
@@ -102,7 +98,7 @@ async fn cost_cap_stops_agent() {
     let tool = Arc::new(MockTool::new("mock_tool"));
 
     // Cost cap at 0.01 — should allow ~2 turns (0.005 each)
-    let options = AgentOptions::new_simple("test", test_model(), stream_fn)
+    let options = AgentOptions::new_simple("test", default_model(), stream_fn)
         .with_tools(vec![tool.clone()])
         .with_loop_policy(CostCapPolicy::new(0.01));
 
@@ -133,7 +129,7 @@ async fn composed_policy_applies_all() {
         Box::new(CostCapPolicy::new(0.0)),
     ]);
 
-    let options = AgentOptions::new_simple("test", test_model(), stream_fn)
+    let options = AgentOptions::new_simple("test", default_model(), stream_fn)
         .with_tools(vec![tool.clone()])
         .with_loop_policy(policy);
 
@@ -162,11 +158,11 @@ async fn policy_with_sub_agent() {
     let sfn = sub_stream.clone();
     let sub = Arc::new(
         SubAgent::new("researcher", "Researcher", "Research sub-agent")
-            .with_options(move || AgentOptions::new_simple("sub", test_model(), Arc::clone(&sfn))),
+            .with_options(move || AgentOptions::new_simple("sub", default_model(), Arc::clone(&sfn))),
     );
 
     // Parent with max 3 turns
-    let options = AgentOptions::new_simple("parent", test_model(), parent_stream)
+    let options = AgentOptions::new_simple("parent", default_model(), parent_stream)
         .with_tools(vec![sub as Arc<dyn swink_agent::AgentTool>])
         .with_loop_policy(MaxTurnsPolicy::new(3));
 
