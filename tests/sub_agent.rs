@@ -13,11 +13,7 @@ use swink_agent::{
     LlmMessage, ModelSpec, StopReason, SubAgent, Usage, stream::StreamFn,
 };
 
-use common::{MockStreamFn, text_only_events};
-
-fn test_model() -> ModelSpec {
-    ModelSpec::new("test", "test-model")
-}
+use common::{MockStreamFn, default_model, text_only_events};
 
 #[tokio::test]
 async fn sub_agent_runs_and_returns_text() {
@@ -28,7 +24,7 @@ async fn sub_agent_runs_and_returns_text() {
     let sfn = stream_fn.clone();
     let sub =
         SubAgent::new("researcher", "Researcher", "A research sub-agent").with_options(move || {
-            AgentOptions::new_simple("You are a researcher.", test_model(), Arc::clone(&sfn))
+            AgentOptions::new_simple("You are a researcher.", default_model(), Arc::clone(&sfn))
         });
 
     let params = serde_json::json!({ "prompt": "what is rust?" });
@@ -62,7 +58,7 @@ async fn sub_agent_error_maps_to_tool_error() {
 
     let sfn = stream_fn.clone();
     let sub = SubAgent::new("broken", "Broken", "Always fails")
-        .with_options(move || AgentOptions::new_simple("fail", test_model(), Arc::clone(&sfn)));
+        .with_options(move || AgentOptions::new_simple("fail", default_model(), Arc::clone(&sfn)));
 
     let params = serde_json::json!({ "prompt": "do something" });
     let ct = CancellationToken::new();
@@ -84,7 +80,7 @@ async fn sub_agent_cancellation() {
 
     let sfn = stream_fn.clone();
     let sub = SubAgent::new("slow", "Slow", "Gets cancelled").with_options(move || {
-        AgentOptions::new_simple("slow agent", test_model(), Arc::clone(&sfn))
+        AgentOptions::new_simple("slow agent", default_model(), Arc::clone(&sfn))
     });
 
     let params = serde_json::json!({ "prompt": "go" });
@@ -111,7 +107,7 @@ async fn sub_agent_shares_stream_fn() {
     assert!(Arc::ptr_eq(&sfn1, &sfn2));
 
     let sub = SubAgent::new("shared", "Shared", "Uses shared stream")
-        .with_options(move || AgentOptions::new_simple("shared", test_model(), Arc::clone(&sfn1)));
+        .with_options(move || AgentOptions::new_simple("shared", default_model(), Arc::clone(&sfn1)));
 
     assert_eq!(sub.name(), "shared");
     assert_eq!(sub.label(), "Shared");
@@ -136,7 +132,7 @@ async fn default_map_result_with_error_and_no_message() {
     let sfn2 = Arc::clone(&stream_fn2);
 
     let sub2 = SubAgent::new("err", "Err", "errors")
-        .with_options(move || AgentOptions::new_simple("sys", test_model(), Arc::clone(&sfn2)));
+        .with_options(move || AgentOptions::new_simple("sys", default_model(), Arc::clone(&sfn2)));
 
     let ct = CancellationToken::new();
     let result = sub2.execute("c1", json!({"prompt": "go"}), ct, None).await;
@@ -159,7 +155,7 @@ async fn default_map_result_with_no_assistant_messages() {
     let sfn = Arc::clone(&stream_fn);
 
     let sub = SubAgent::new("t", "T", "test")
-        .with_options(move || AgentOptions::new_simple("sys", test_model(), Arc::clone(&sfn)))
+        .with_options(move || AgentOptions::new_simple("sys", default_model(), Arc::clone(&sfn)))
         .with_map_result(move |result| {
             *called_clone.lock().unwrap() = true;
             // Simulate default_map_result behavior for only-user-messages
@@ -192,7 +188,7 @@ async fn custom_map_result() {
     let sfn = Arc::clone(&stream_fn);
 
     let sub = SubAgent::new("custom", "Custom", "custom mapper")
-        .with_options(move || AgentOptions::new_simple("sys", test_model(), Arc::clone(&sfn)))
+        .with_options(move || AgentOptions::new_simple("sys", default_model(), Arc::clone(&sfn)))
         .with_map_result(|_result| AgentToolResult::text("custom mapped"));
 
     let ct = CancellationToken::new();
@@ -227,7 +223,7 @@ async fn execute_with_empty_prompt() {
     let sfn = Arc::clone(&stream_fn);
 
     let sub = SubAgent::new("ep", "EP", "empty prompt")
-        .with_options(move || AgentOptions::new_simple("sys", test_model(), Arc::clone(&sfn)));
+        .with_options(move || AgentOptions::new_simple("sys", default_model(), Arc::clone(&sfn)));
 
     let ct = CancellationToken::new();
     let result = sub.execute("c1", json!({"prompt": ""}), ct, None).await;
@@ -245,7 +241,7 @@ async fn execute_with_missing_prompt_param() {
     let sfn = Arc::clone(&stream_fn);
 
     let sub = SubAgent::new("np", "NP", "no prompt")
-        .with_options(move || AgentOptions::new_simple("sys", test_model(), Arc::clone(&sfn)));
+        .with_options(move || AgentOptions::new_simple("sys", default_model(), Arc::clone(&sfn)));
 
     let ct = CancellationToken::new();
     // params has no "prompt" key — as_str() returns None, unwrap_or("") kicks in

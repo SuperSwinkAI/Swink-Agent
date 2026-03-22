@@ -11,13 +11,9 @@ use tokio_util::sync::CancellationToken;
 use swink_agent::types::{AgentContext, Cost, ModelSpec, StopReason, Usage};
 use swink_agent::{AssistantMessageEvent, StreamMiddleware, StreamOptions, stream::StreamFn};
 
-use common::MockStreamFn;
+use common::{MockStreamFn, default_model};
 
-fn test_model() -> ModelSpec {
-    ModelSpec::new("test", "test-model")
-}
-
-fn test_context() -> AgentContext {
+fn empty_context() -> AgentContext {
     AgentContext {
         system_prompt: String::new(),
         messages: vec![],
@@ -39,8 +35,8 @@ async fn logging_middleware_receives_all_events() {
         count_clone.fetch_add(1, Ordering::SeqCst);
     });
 
-    let model = test_model();
-    let ctx = test_context();
+    let model = default_model();
+    let ctx = empty_context();
     let opts = StreamOptions::default();
     let ct = CancellationToken::new();
     let stream = mw.stream(&model, &ctx, &opts, ct);
@@ -64,8 +60,8 @@ async fn map_middleware_transforms_events() {
         other => other,
     });
 
-    let model = test_model();
-    let ctx = test_context();
+    let model = default_model();
+    let ctx = empty_context();
     let opts = StreamOptions::default();
     let ct = CancellationToken::new();
     let stream = mw.stream(&model, &ctx, &opts, ct);
@@ -114,8 +110,8 @@ async fn filter_middleware_drops_thinking_events() {
         )
     });
 
-    let model = test_model();
-    let ctx = test_context();
+    let model = default_model();
+    let ctx = empty_context();
     let opts = StreamOptions::default();
     let ct = CancellationToken::new();
     let stream = mw.stream(&model, &ctx, &opts, ct);
@@ -155,8 +151,8 @@ async fn middleware_chains_compose() {
         other => other,
     });
 
-    let model = test_model();
-    let ctx = test_context();
+    let model = default_model();
+    let ctx = empty_context();
     let opts = StreamOptions::default();
     let ct = CancellationToken::new();
     let stream = mapped.stream(&model, &ctx, &opts, ct);
