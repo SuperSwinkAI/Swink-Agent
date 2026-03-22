@@ -7,7 +7,7 @@
 - Provider Roadmap: [PROVIDER_EXPANSION_ROADMAP.md](PROVIDER_EXPANSION_ROADMAP.md)
 - Eval Roadmap: [EVAL.md](EVAL.md)
 
-**Current Focus:** 20/30 specs have plans, 19/30 have tasks, 15/30 complete (001–014, 020). Phase 0 + Phase 1 + Phase 2 done. Phase 3 partially done (011–014, 020 complete). Next: `/speckit.implement` for 022-local-llm-crate, `/speckit.tasks` for 030. 028 tasks generated. 10 specs need plans (015–019, 023–025, 027, 029).
+**Current Focus:** 20/30 specs have plans, 18/30 have tasks, 17/30 complete (001–014, 020–022). Phase 0 + Phase 1 + Phase 2 done. Phase 3 partially done (011–014, 020 complete). Phase 4 partially done (021–022 complete). Next: `/speckit.tasks` for 028 and 030. 10 specs need plans (015–019, 023–025, 027, 029).
 
 > **Numbering System:** Spec numbers (001–030) are sequential identifiers that
 > never change. Phase numbers represent execution order and can be reassigned
@@ -173,19 +173,19 @@ After **3.1 Shared Infrastructure** completes, all 9 provider adapters (3.2–3.
 **Goal:** Standalone crates for session persistence, on-device inference, and
 evaluation — each depends only on the core library.
 
-**Status:** 2/4 specs planned, 2/4 have tasks, 4/4 specs defined
+**Status:** 2/4 specs planned, 2/4 have tasks, 2/4 complete, 4/4 specs defined
 
 ### Implementation Checklist
 
-- [ ] **4.1** Memory Crate — SessionStore (sync/async), JsonlSessionStore, SummarizingCompactor, session metadata
+- [x] **4.1** Memory Crate — SessionStore (sync/async), JsonlSessionStore, SummarizingCompactor, session metadata
   - Spec: `specs/021-memory-crate/spec.md`
   - Branch: `021-memory-crate`
-  - Status: Ready for implementation (0/57 tasks)
+  - Status: Complete (57/57 tasks, merged to main)
   - Depends on: 0.2
-- [ ] **4.2** Local LLM Crate — LocalModel (SmolLM3-3B), LocalStreamFn, EmbeddingModel, presets, progress reporting
+- [x] **4.2** Local LLM Crate — LocalModel (SmolLM3-3B), LocalStreamFn, EmbeddingModel, presets, progress reporting
   - Spec: `specs/022-local-llm-crate/spec.md`
   - Branch: `022-local-llm-crate`
-  - Status: Ready for implementation (0/58 tasks)
+  - Status: Complete (58/58 tasks, merged to main)
   - Depends on: 0.3
 - [ ] **4.3** Eval: Trajectory & Matching — TrajectoryCollector, TrajectoryMatcher, EfficiencyEvaluator, ResponseCriteria
   - Spec: `specs/023-eval-trajectory-matching/spec.md`
@@ -205,7 +205,7 @@ evaluation — each depends only on the core library.
 **Goal:** Interactive terminal interface — the binary crate that demonstrates
 the full agent library in a usable application.
 
-**Status:** 2/5 specs planned, 2/5 have tasks, 5/5 specs defined
+**Status:** 2/5 specs planned, 1/5 have tasks, 5/5 specs defined
 
 ### Implementation Checklist
 
@@ -227,7 +227,7 @@ the full agent library in a usable application.
 - [ ] **5.4** TUI: Commands, Editor & Session — Hash/slash commands, external editor, session persistence (§16.4, §16.8)
   - Spec: `specs/028-tui-commands-editor-session/spec.md`
   - Branch: `028-tui-commands-editor-session`
-  - Status: Tasks complete (78/78 tasks) — ready for implementation
+  - Status: Plan complete — needs tasks
   - Depends on: 5.2
 - [ ] **5.5** TUI: Plan Mode & Approval — Plan mode (read-only restriction), tiered approval (Enabled/Smart/Bypassed), session trust (§16.9, §16.11)
   - Spec: `specs/029-tui-plan-mode-approval/spec.md`
@@ -342,8 +342,8 @@ graph TD
     style J fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
     style K fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
     style L fill:#fff,color:#000,stroke:#6b7280,stroke-width:2px
-    style M fill:#fff,color:#000,stroke:#6b7280,stroke-width:2px
-    style N fill:#fff,color:#000,stroke:#6b7280,stroke-width:2px
+    style M fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
+    style N fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
     style O fill:#fff,color:#000,stroke:#6b7280,stroke-width:2px
     style P fill:#fff,color:#000,stroke:#6b7280,stroke-width:2px
     style Q fill:#fff,color:#000,stroke:#6b7280,stroke-width:2px

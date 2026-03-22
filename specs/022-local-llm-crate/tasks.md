@@ -17,9 +17,9 @@
 
 **Purpose**: Crate scaffolding, workspace integration, and dependency configuration
 
-- [ ] T001 Verify `local-llm/Cargo.toml` declares correct workspace dependencies (`mistralrs`, `hf-hub`, `tokio`, `tokio-stream`, `futures`, `serde`, `serde_json`, `thiserror`, `tracing`, `uuid`) and add any missing entries to the root `Cargo.toml` `[workspace.dependencies]`
-- [ ] T002 Verify `local-llm/src/lib.rs` has `#![forbid(unsafe_code)]` and re-exports all public types (`LocalModel`, `LocalStreamFn`, `EmbeddingModel`, `ModelPreset`, `ModelConfig`, `ModelState`, `ProgressCallbackFn`, `ProgressEvent`, `LocalModelError`)
-- [ ] T003 [P] Create `local-llm/tests/common/mod.rs` with shared test helpers (mock progress callback collector, test `ModelConfig` factory)
+- [x] T001 Verify `local-llm/Cargo.toml` declares correct workspace dependencies (`mistralrs`, `hf-hub`, `tokio`, `tokio-stream`, `futures`, `serde`, `serde_json`, `thiserror`, `tracing`, `uuid`) and add any missing entries to the root `Cargo.toml` `[workspace.dependencies]`
+- [x] T002 Verify `local-llm/src/lib.rs` has `#![forbid(unsafe_code)]` and re-exports all public types (`LocalModel`, `LocalStreamFn`, `EmbeddingModel`, `ModelPreset`, `ModelConfig`, `ModelState`, `ProgressCallbackFn`, `ProgressEvent`, `LocalModelError`)
+- [x] T003 [P] Create `local-llm/tests/common/mod.rs` with shared test helpers (mock progress callback collector, test `ModelConfig` factory)
 
 ---
 
@@ -29,14 +29,14 @@
 
 **CRITICAL**: No user story work can begin until this phase is complete
 
-- [ ] T004 Implement `LocalModelError` enum with `Download`, `Loading`, `Inference`, `Embedding`, and `NotReady` variants using `thiserror` in `local-llm/src/error.rs`
-- [ ] T005 [P] Implement `ProgressEvent` enum (`DownloadProgress`, `DownloadComplete`, `LoadingProgress`, `LoadingComplete`) and `ProgressCallbackFn` type alias in `local-llm/src/progress.rs`
-- [ ] T006 [P] Implement `ModelConfig` struct (`repo_id`, `filename`, `context_length`, `chat_template`) with `LOCAL_CONTEXT_LENGTH` env var override logic in `local-llm/src/preset.rs`
-- [ ] T007 Implement `ModelPreset` enum (`SmolLM3_3B`, `EmbeddingGemma300M`) with `config()` and `all()` methods in `local-llm/src/preset.rs`
-- [ ] T008 [P] Implement `ModelState` enum (`Unloaded`, `Downloading`, `Loading`, `Ready`, `Failed(String)`) in `local-llm/src/model.rs`
-- [ ] T009 Add unit tests for `ModelPreset::config()` verifying correct `repo_id`, `filename`, and `context_length` for each preset in `local-llm/src/preset.rs` (inline tests)
-- [ ] T010 Add unit tests for `ModelConfig` verifying `LOCAL_CONTEXT_LENGTH` env var override in `local-llm/src/preset.rs` (inline tests)
-- [ ] T011 Add unit tests for `LocalModelError` Display formatting and variant construction in `local-llm/src/error.rs` (inline tests)
+- [x] T004 Implement `LocalModelError` enum with `Download`, `Loading`, `Inference`, `Embedding`, and `NotReady` variants using `thiserror` in `local-llm/src/error.rs`
+- [x] T005 [P] Implement `ProgressEvent` enum (`DownloadProgress`, `DownloadComplete`, `LoadingProgress`, `LoadingComplete`) and `ProgressCallbackFn` type alias in `local-llm/src/progress.rs`
+- [x] T006 [P] Implement `ModelConfig` struct (`repo_id`, `filename`, `context_length`, `chat_template`) with `LOCAL_CONTEXT_LENGTH` env var override logic in `local-llm/src/preset.rs`
+- [x] T007 Implement `ModelPreset` enum (`SmolLM3_3B`, `EmbeddingGemma300M`) with `config()` and `all()` methods in `local-llm/src/preset.rs`
+- [x] T008 [P] Implement `ModelState` enum (`Unloaded`, `Downloading`, `Loading`, `Ready`, `Failed(String)`) in `local-llm/src/model.rs`
+- [x] T009 Add unit tests for `ModelPreset::config()` verifying correct `repo_id`, `filename`, and `context_length` for each preset in `local-llm/src/preset.rs` (inline tests)
+- [x] T010 Add unit tests for `ModelConfig` verifying `LOCAL_CONTEXT_LENGTH` env var override in `local-llm/src/preset.rs` (inline tests)
+- [x] T011 Add unit tests for `LocalModelError` Display formatting and variant construction in `local-llm/src/error.rs` (inline tests)
 
 **Checkpoint**: Foundation ready — all shared types are defined and tested. User story implementation can begin.
 
@@ -50,24 +50,24 @@
 
 ### Tests for User Story 1 (Red-Green-Refactor: write tests first)
 
-- [ ] T012 [P] [US1] Add unit tests for `LocalModel` state transitions: `Unloaded` initial state, `with_progress` before/after `ensure_ready`, `send_chat_request` on unloaded model returns `NotReady` in `local-llm/src/model.rs` (inline tests)
-- [ ] T013 [P] [US1] Add unit tests for message conversion: system prompt positioning, user/assistant mapping, tool call/result serialization, CustomMessage filtering in `local-llm/src/convert.rs` (inline tests)
-- [ ] T014 [P] [US1] Add unit tests for `LocalStreamFn` think-tag parsing and event emission in `local-llm/src/stream.rs` (inline tests)
-- [ ] T015 [P] [US1] Add unit tests for context truncation logic in `local-llm/src/stream.rs` (inline tests)
+- [x] T012 [P] [US1] Add unit tests for `LocalModel` state transitions: `Unloaded` initial state, `with_progress` before/after `ensure_ready`, `send_chat_request` on unloaded model returns `NotReady` in `local-llm/src/model.rs` (inline tests)
+- [x] T013 [P] [US1] Add unit tests for message conversion: system prompt positioning, user/assistant mapping, tool call/result serialization, CustomMessage filtering in `local-llm/src/convert.rs` (inline tests)
+- [x] T014 [P] [US1] Add unit tests for `LocalStreamFn` think-tag parsing and event emission in `local-llm/src/stream.rs` (inline tests)
+- [x] T015 [P] [US1] Add unit tests for context truncation logic in `local-llm/src/stream.rs` (inline tests)
 
 ### Implementation for User Story 1
 
-- [ ] T016 [US1] Implement `LocalModel::new(config)` constructor creating a model in `Unloaded` state with `Arc<Mutex<ModelState>>` in `local-llm/src/model.rs`
-- [ ] T017 [US1] Implement `LocalModel::from_preset(preset)` as `Self::new(preset.config())` in `local-llm/src/model.rs`
-- [ ] T018 [US1] Implement `LocalModel::with_progress(callback)` that attaches a `ProgressCallbackFn` (must be called before `ensure_ready`, returns `Err` if called after) in `local-llm/src/model.rs`
-- [ ] T019 [US1] Implement `LocalModel::ensure_ready()` — download model via `hf-hub` if not cached, load via `mistralrs` GGUF pipeline, transition through `Unloaded → Downloading → Loading → Ready` (or `Failed`), idempotent if already `Ready`, re-attempt if `Failed`. Integrity verification delegated to hf-hub ETag/SHA (FR-009) in `local-llm/src/model.rs`
-- [ ] T020 [US1] Implement `LocalModel::send_chat_request()` — run inference on the loaded `MistralRs` runner, return `NotReady` error if model not loaded, in `local-llm/src/model.rs`
-- [ ] T021 [US1] Implement message conversion from `LlmMessage` to local model format — system prompts, user/assistant messages, tool calls, tool results, filter out `CustomMessage` — in `local-llm/src/convert.rs`
-- [ ] T022 [US1] Implement `LocalStreamFn::new(model)` constructor in `local-llm/src/stream.rs`
-- [ ] T023 [US1] Implement `StreamFn` trait for `LocalStreamFn` — call `ensure_ready()` on first invocation, convert `LlmMessage` list to local format via `convert.rs`, run inference, wrap output into `AssistantMessageEvent` stream (`Start → ContentBlockStart → ContentBlockDelta → ContentBlockEnd → Done`), cost always zero in `local-llm/src/stream.rs`
-- [ ] T024 [US1] Implement `<think>` tag parsing in `LocalStreamFn` — detect `<think>`/`</think>` in token stream and emit `ThinkingStart`/`ThinkingDelta`/`ThinkingEnd` events in `local-llm/src/stream.rs`
-- [ ] T025 [US1] Implement silent context truncation in `LocalStreamFn` — when input exceeds `context_length`, keep most recent messages to fit budget in `local-llm/src/stream.rs`
-- [ ] T026 [US1] Implement live inference test: load `SmolLM3_3B` preset, send a prompt, verify streaming tokens arrive in `local-llm/tests/local_live.rs` (`#[ignore]`)
+- [x] T016 [US1] Implement `LocalModel::new(config)` constructor creating a model in `Unloaded` state with `Arc<Mutex<ModelState>>` in `local-llm/src/model.rs`
+- [x] T017 [US1] Implement `LocalModel::from_preset(preset)` as `Self::new(preset.config())` in `local-llm/src/model.rs`
+- [x] T018 [US1] Implement `LocalModel::with_progress(callback)` that attaches a `ProgressCallbackFn` (must be called before `ensure_ready`, returns `Err` if called after) in `local-llm/src/model.rs`
+- [x] T019 [US1] Implement `LocalModel::ensure_ready()` — download model via `hf-hub` if not cached, load via `mistralrs` GGUF pipeline, transition through `Unloaded → Downloading → Loading → Ready` (or `Failed`), idempotent if already `Ready`, re-attempt if `Failed`. Integrity verification delegated to hf-hub ETag/SHA (FR-009) in `local-llm/src/model.rs`
+- [x] T020 [US1] Implement `LocalModel::send_chat_request()` — run inference on the loaded `MistralRs` runner, return `NotReady` error if model not loaded, in `local-llm/src/model.rs`
+- [x] T021 [US1] Implement message conversion from `LlmMessage` to local model format — system prompts, user/assistant messages, tool calls, tool results, filter out `CustomMessage` — in `local-llm/src/convert.rs`
+- [x] T022 [US1] Implement `LocalStreamFn::new(model)` constructor in `local-llm/src/stream.rs`
+- [x] T023 [US1] Implement `StreamFn` trait for `LocalStreamFn` — call `ensure_ready()` on first invocation, convert `LlmMessage` list to local format via `convert.rs`, run inference, wrap output into `AssistantMessageEvent` stream (`Start → ContentBlockStart → ContentBlockDelta → ContentBlockEnd → Done`), cost always zero in `local-llm/src/stream.rs`
+- [x] T024 [US1] Implement `<think>` tag parsing in `LocalStreamFn` — detect `<think>`/`</think>` in token stream and emit `ThinkingStart`/`ThinkingDelta`/`ThinkingEnd` events in `local-llm/src/stream.rs`
+- [x] T025 [US1] Implement silent context truncation in `LocalStreamFn` — when input exceeds `context_length`, keep most recent messages to fit budget in `local-llm/src/stream.rs`
+- [x] T026 [US1] Implement live inference test: load `SmolLM3_3B` preset, send a prompt, verify streaming tokens arrive in `local-llm/tests/local_live.rs` (`#[ignore]`)
 
 **Checkpoint**: User Story 1 complete — local inference works end-to-end with streaming tokens, progress reporting, and automatic download/caching.
 
@@ -81,14 +81,14 @@
 
 ### Tests for User Story 2 (Red-Green-Refactor: write tests first)
 
-- [ ] T027 [US2] Add unit tests verifying progress callback is invoked with correct event variants and that `DownloadComplete`/`LoadingComplete` each fire exactly once in `local-llm/src/model.rs` (inline tests using mock callback)
+- [x] T027 [US2] Add unit tests verifying progress callback is invoked with correct event variants and that `DownloadComplete`/`LoadingComplete` each fire exactly once in `local-llm/src/model.rs` (inline tests using mock callback)
 
 ### Implementation for User Story 2
 
-- [ ] T028 [US2] Wire `ProgressCallbackFn` into `ensure_ready()` download phase — emit `DownloadProgress` at least every 1% of total bytes and `DownloadComplete` on success in `local-llm/src/model.rs`
-- [ ] T029 [US2] Wire `ProgressCallbackFn` into `ensure_ready()` loading phase — emit `LoadingProgress` with status messages and `LoadingComplete` when ready in `local-llm/src/model.rs`
-- [ ] T030 [US2] Handle download interruption — ensure clean error propagation via `Download` variant when network fails mid-download (resume behavior delegated to hf-hub) in `local-llm/src/model.rs`
-- [ ] T031 [US2] Add live progress test: download a model with progress callback, verify `DownloadProgress` events have increasing `bytes_downloaded` in `local-llm/tests/local_live.rs` (`#[ignore]`)
+- [x] T028 [US2] Wire `ProgressCallbackFn` into `ensure_ready()` download phase — emit `DownloadProgress` at least every 1% of total bytes and `DownloadComplete` on success in `local-llm/src/model.rs`
+- [x] T029 [US2] Wire `ProgressCallbackFn` into `ensure_ready()` loading phase — emit `LoadingProgress` with status messages and `LoadingComplete` when ready in `local-llm/src/model.rs`
+- [x] T030 [US2] Handle download interruption — ensure clean error propagation via `Download` variant when network fails mid-download (resume behavior delegated to hf-hub) in `local-llm/src/model.rs`
+- [x] T031 [US2] Add live progress test: download a model with progress callback, verify `DownloadProgress` events have increasing `bytes_downloaded` in `local-llm/tests/local_live.rs` (`#[ignore]`)
 
 **Checkpoint**: User Story 2 complete — progress reporting works during download and loading phases.
 
@@ -102,18 +102,18 @@
 
 ### Tests for User Story 3 (Red-Green-Refactor: write tests first)
 
-- [ ] T032 [US3] Add unit tests for `EmbeddingModel` state transitions, constructor behavior, embed error on max length exceeded, and valid vector for empty input in `local-llm/src/embedding.rs` (inline tests)
+- [x] T032 [US3] Add unit tests for `EmbeddingModel` state transitions, constructor behavior, embed error on max length exceeded, and valid vector for empty input in `local-llm/src/embedding.rs` (inline tests)
 
 ### Implementation for User Story 3
 
-- [ ] T033 [US3] Implement `EmbeddingModel::new(config)` and `EmbeddingModel::from_preset(preset)` constructors in `local-llm/src/embedding.rs`
-- [ ] T034 [US3] Implement `EmbeddingModel::with_progress(callback)` in `local-llm/src/embedding.rs`
-- [ ] T035 [US3] Implement `EmbeddingModel::ensure_ready()` — download and load the embedding model via `mistralrs`, same lifecycle as `LocalModel` in `local-llm/src/embedding.rs`
-- [ ] T036 [US3] Implement `EmbeddingModel::embed(text)` — compute a fixed-dimensional vector, return `Embedding` error if input exceeds max length, return valid vector for empty input in `local-llm/src/embedding.rs`
-- [ ] T037 [US3] Implement `EmbeddingModel::embed_batch(texts)` — batch embedding, fail on first invalid input in `local-llm/src/embedding.rs`
-- [ ] T038 [US3] Add live embedding test: load `EmbeddingGemma300M`, embed similar/dissimilar text pairs, verify cosine similarity ordering in `local-llm/tests/embedding_live.rs` (`#[ignore]`)
-- [ ] T039 [US3] Add live embedding test: verify empty input returns a valid vector (not an error) in `local-llm/tests/embedding_live.rs` (`#[ignore]`)
-- [ ] T040 [US3] Add live embedding test: verify input exceeding max length returns `Embedding` error in `local-llm/tests/embedding_live.rs` (`#[ignore]`)
+- [x] T033 [US3] Implement `EmbeddingModel::new(config)` and `EmbeddingModel::from_preset(preset)` constructors in `local-llm/src/embedding.rs`
+- [x] T034 [US3] Implement `EmbeddingModel::with_progress(callback)` in `local-llm/src/embedding.rs`
+- [x] T035 [US3] Implement `EmbeddingModel::ensure_ready()` — download and load the embedding model via `mistralrs`, same lifecycle as `LocalModel` in `local-llm/src/embedding.rs`
+- [x] T036 [US3] Implement `EmbeddingModel::embed(text)` — compute a fixed-dimensional vector, return `Embedding` error if input exceeds max length, return valid vector for empty input in `local-llm/src/embedding.rs`
+- [x] T037 [US3] Implement `EmbeddingModel::embed_batch(texts)` — batch embedding, fail on first invalid input in `local-llm/src/embedding.rs`
+- [x] T038 [US3] Add live embedding test: load `EmbeddingGemma300M`, embed similar/dissimilar text pairs, verify cosine similarity ordering in `local-llm/tests/embedding_live.rs` (`#[ignore]`)
+- [x] T039 [US3] Add live embedding test: verify empty input returns a valid vector (not an error) in `local-llm/tests/embedding_live.rs` (`#[ignore]`)
+- [x] T040 [US3] Add live embedding test: verify input exceeding max length returns `Embedding` error in `local-llm/tests/embedding_live.rs` (`#[ignore]`)
 
 **Checkpoint**: User Story 3 complete — local embeddings work for similarity comparisons.
 
@@ -127,11 +127,11 @@
 
 ### Implementation for User Story 4
 
-- [ ] T041 [US4] Verify `ModelPreset::SmolLM3_3B` configures correct `repo_id` (`HuggingFaceTB/SmolLM3-3B-GGUF`), `filename` (`smollm3-3b-q4_k_m.gguf`), and `context_length` (8192) in `local-llm/src/preset.rs`
-- [ ] T042 [US4] Verify `ModelPreset::EmbeddingGemma300M` configures correct `repo_id` and `filename` for the embedding model in `local-llm/src/preset.rs`
-- [ ] T043 [US4] Verify `ModelPreset::all()` returns a static slice containing all preset variants in `local-llm/src/preset.rs`
-- [ ] T044 [US4] Add unit test: `LocalModel::from_preset(SmolLM3_3B)` creates model with correct config in `local-llm/src/model.rs` (inline test)
-- [ ] T045 [US4] Add unit test: `EmbeddingModel::from_preset(EmbeddingGemma300M)` creates model with correct config in `local-llm/src/embedding.rs` (inline test)
+- [x] T041 [US4] Verify `ModelPreset::SmolLM3_3B` configures correct `repo_id` (`HuggingFaceTB/SmolLM3-3B-GGUF`), `filename` (`smollm3-3b-q4_k_m.gguf`), and `context_length` (8192) in `local-llm/src/preset.rs`
+- [x] T042 [US4] Verify `ModelPreset::EmbeddingGemma300M` configures correct `repo_id` and `filename` for the embedding model in `local-llm/src/preset.rs`
+- [x] T043 [US4] Verify `ModelPreset::all()` returns a static slice containing all preset variants in `local-llm/src/preset.rs`
+- [x] T044 [US4] Add unit test: `LocalModel::from_preset(SmolLM3_3B)` creates model with correct config in `local-llm/src/model.rs` (inline test)
+- [x] T045 [US4] Add unit test: `EmbeddingModel::from_preset(EmbeddingGemma300M)` creates model with correct config in `local-llm/src/embedding.rs` (inline test)
 
 **Checkpoint**: User Story 4 complete — presets provide zero-config model setup.
 
@@ -145,11 +145,11 @@
 
 ### Implementation for User Story 5
 
-- [ ] T046 [US5] Verify system prompt conversion places the system message in the correct position for the local model format in `local-llm/src/convert.rs`
-- [ ] T047 [US5] Verify tool call messages are serialized correctly in the local format (function name, arguments JSON) in `local-llm/src/convert.rs`
-- [ ] T048 [US5] Verify tool result messages are serialized correctly in the local format (tool output text) in `local-llm/src/convert.rs`
-- [ ] T049 [US5] Verify `CustomMessage` variants are filtered out and never sent to the local model in `local-llm/src/convert.rs`
-- [ ] T050 [US5] Add unit test: round-trip conversion of a full conversation (system + user + assistant + tool call + tool result) in `local-llm/src/convert.rs` (inline test)
+- [x] T046 [US5] Verify system prompt conversion places the system message in the correct position for the local model format in `local-llm/src/convert.rs`
+- [x] T047 [US5] Verify tool call messages are serialized correctly in the local format (function name, arguments JSON) in `local-llm/src/convert.rs`
+- [x] T048 [US5] Verify tool result messages are serialized correctly in the local format (tool output text) in `local-llm/src/convert.rs`
+- [x] T049 [US5] Verify `CustomMessage` variants are filtered out and never sent to the local model in `local-llm/src/convert.rs`
+- [x] T050 [US5] Add unit test: round-trip conversion of a full conversation (system + user + assistant + tool call + tool result) in `local-llm/src/convert.rs` (inline test)
 
 **Checkpoint**: User Story 5 complete — message conversion handles all agent message types.
 
@@ -159,14 +159,14 @@
 
 **Purpose**: Edge case handling, documentation, and final validation
 
-- [ ] T051 [P] Add error handling for disk-full during download: verify `Download` error propagates OS I/O error in `local-llm/src/model.rs`
-- [ ] T052 [P] Add error handling for corrupted GGUF file: verify `Loading` error covers parse failures in `local-llm/src/model.rs`
-- [ ] T053 [P] Add error handling for out-of-memory during load: verify `Loading` error covers OOM in `local-llm/src/model.rs`
-- [ ] T054 Verify `local-llm/CLAUDE.md` documents lessons learned, active technologies, and test commands
-- [ ] T055 Run `cargo build -p swink-agent-local-llm` and verify clean compilation with zero warnings
-- [ ] T056 Run `cargo test -p swink-agent-local-llm` and verify all non-ignored tests pass
-- [ ] T057 Run `cargo clippy -p swink-agent-local-llm -- -D warnings` and verify zero clippy warnings
-- [ ] T058 Validate quickstart.md code examples compile and match the implemented public API
+- [x] T051 [P] Add error handling for disk-full during download: verify `Download` error propagates OS I/O error in `local-llm/src/model.rs`
+- [x] T052 [P] Add error handling for corrupted GGUF file: verify `Loading` error covers parse failures in `local-llm/src/model.rs`
+- [x] T053 [P] Add error handling for out-of-memory during load: verify `Loading` error covers OOM in `local-llm/src/model.rs`
+- [x] T054 Verify `local-llm/CLAUDE.md` documents lessons learned, active technologies, and test commands
+- [x] T055 Run `cargo build -p swink-agent-local-llm` and verify clean compilation with zero warnings
+- [x] T056 Run `cargo test -p swink-agent-local-llm` and verify all non-ignored tests pass
+- [x] T057 Run `cargo clippy -p swink-agent-local-llm -- -D warnings` and verify zero clippy warnings
+- [x] T058 Validate quickstart.md code examples compile and match the implemented public API
 
 ---
 

@@ -1,36 +1,39 @@
 //! Progress tracking for model download and loading.
 //!
-//! [`ModelProgress`] represents the lifecycle stages of a local model, and
-//! [`ProgressCallbackFn`] allows callers to observe transitions (e.g. for
-//! TUI progress bars).
+//! [`ProgressEvent`] represents lifecycle progress updates during model
+//! download and loading, and [`ProgressCallbackFn`] allows callers to
+//! observe transitions (e.g. for TUI progress bars).
 
 use std::sync::Arc;
 
-/// Lifecycle stage of a local model.
+/// Progress event emitted during model download and loading.
 #[derive(Debug, Clone)]
-pub enum ModelProgress {
+pub enum ProgressEvent {
     /// Model weights are being downloaded.
-    Downloading {
+    DownloadProgress {
         /// Bytes downloaded so far.
-        downloaded: u64,
-        /// Total bytes (0 if unknown).
-        total: u64,
+        bytes_downloaded: u64,
+        /// Total bytes (`None` if server doesn't report Content-Length).
+        total_bytes: Option<u64>,
     },
 
+    /// Download finished successfully.
+    DownloadComplete,
+
     /// Model is being loaded into memory.
-    Loading,
+    LoadingProgress {
+        /// Status message from the loading pipeline.
+        message: String,
+    },
 
-    /// Model is ready for inference.
-    Ready,
-
-    /// Model failed to load or download.
-    Failed { message: String },
+    /// Model loaded and ready for inference.
+    LoadingComplete,
 }
 
 /// Callback invoked when model progress changes.
 ///
 /// Stored behind `Arc` for cheap cloning and shared ownership.
-pub type ProgressCallbackFn = Arc<dyn Fn(ModelProgress) + Send + Sync>;
+pub type ProgressCallbackFn = Arc<dyn Fn(ProgressEvent) + Send + Sync>;
 
 #[cfg(test)]
 mod tests {
@@ -39,15 +42,19 @@ mod tests {
     #[test]
     fn progress_variants_are_debug() {
         let variants = [
-            ModelProgress::Downloading {
-                downloaded: 100,
-                total: 1000,
+            ProgressEvent::DownloadProgress {
+                bytes_downloaded: 100,
+                total_bytes: Some(1000),
             },
-            ModelProgress::Loading,
-            ModelProgress::Ready,
-            ModelProgress::Failed {
-                message: "oops".into(),
+            ProgressEvent::DownloadProgress {
+                bytes_downloaded: 50,
+                total_bytes: None,
             },
+            ProgressEvent::DownloadComplete,
+            ProgressEvent::LoadingProgress {
+                message: "loading layers".into(),
+            },
+            ProgressEvent::LoadingComplete,
         ];
         for v in &variants {
             let debug = format!("{v:?}");
@@ -62,7 +69,26 @@ mod tests {
         let cb: ProgressCallbackFn = Arc::new(move |_progress| {
             called_clone.store(true, std::sync::atomic::Ordering::SeqCst);
         });
-        cb(ModelProgress::Ready);
+        cb(ProgressEvent::DownloadComplete);
         assert!(called.load(std::sync::atomic::Ordering::SeqCst));
+    }
+
+    #[test]
+    fn download_progress_with_none_total() {
+        let event = ProgressEvent::DownloadProgress {
+            bytes_downloaded: 42,
+            total_bytes: None,
+        };
+        let debug = format!("{event:?}");
+        assert!(debug.contains("42"));
+    }
+
+    #[test]
+    fn loading_progress_carries_message() {
+        let event = ProgressEvent::LoadingProgress {
+            message: "initializing layers".into(),
+        };
+        let debug = format!("{event:?}");
+        assert!(debug.contains("initializing layers"));
     }
 }

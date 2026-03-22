@@ -5,6 +5,8 @@
 //!
 //! Run with: `cargo test -p swink-agent-local-llm --test local_live -- --ignored`
 
+mod common;
+
 use std::sync::Arc;
 
 use futures::StreamExt;
@@ -14,7 +16,7 @@ use swink_agent::types::{
 };
 use tokio_util::sync::CancellationToken;
 
-use swink_agent_local_llm::{LocalModel, LocalModelError, LocalStreamFn, ModelConfig};
+use swink_agent_local_llm::{LocalModel, LocalModelError, LocalStreamFn, ModelConfig, ProgressEvent};
 
 fn simple_context(prompt: &str) -> AgentContext {
     AgentContext {
@@ -148,5 +150,35 @@ async fn concurrent_sharing() {
 
     for handle in handles {
         handle.await.unwrap();
+    }
+}
+
+#[tokio::test]
+#[ignore = "downloads ~1.92 GB model artifacts"]
+async fn progress_events_fire_during_download() {
+    let config = ModelConfig::default();
+    let (cb, collector) = common::progress_collector();
+
+    let local_model = LocalModel::new(config).with_progress(cb).unwrap();
+    match local_model.ensure_ready().await {
+        Ok(()) => {
+            let events = collector.events();
+            // Should have at least one download progress and a loading complete.
+            assert!(
+                events.iter().any(|e| matches!(e, ProgressEvent::DownloadComplete)),
+                "should emit DownloadComplete"
+            );
+            assert!(
+                events.iter().any(|e| matches!(e, ProgressEvent::LoadingComplete)),
+                "should emit LoadingComplete"
+            );
+        }
+        Err(LocalModelError::Download { ref source, .. }) => {
+            eprintln!("skipping progress test: model download failed ({source})");
+        }
+        Err(LocalModelError::Loading { ref source, .. }) => {
+            eprintln!("skipping progress test: model loading failed ({source})");
+        }
+        Err(e) => panic!("unexpected error: {e}"),
     }
 }

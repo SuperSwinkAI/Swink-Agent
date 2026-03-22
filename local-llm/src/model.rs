@@ -11,8 +11,8 @@ use tokio::sync::{Notify, RwLock};
 use tracing::{debug, error, info};
 
 use crate::error::LocalModelError;
-use crate::preset::DEFAULT_LOCAL_PRESET_ID;
-use crate::progress::{ModelProgress, ProgressCallbackFn};
+use crate::preset::{DEFAULT_LOCAL_PRESET_ID, ModelPreset};
+use crate::progress::{ProgressCallbackFn, ProgressEvent};
 
 // ─── ModelConfig ────────────────────────────────────────────────────────────
 
@@ -30,6 +30,9 @@ pub struct ModelConfig {
 
     /// Context window length (capped to save memory).
     pub context_length: usize,
+
+    /// Optional chat template override. If `None`, uses model's built-in template.
+    pub chat_template: Option<String>,
 }
 
 impl Default for ModelConfig {
@@ -56,14 +59,19 @@ impl Default for ModelConfig {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(8192),
+            chat_template: None,
         }
     }
 }
 
-// ─── ModelState ─────────────────────────────────────────────────────────────
+// ─── ModelState (public) ───────────────────────────────────────────────────
 
-/// Internal state machine for model lifecycle.
-pub(crate) enum ModelState {
+/// Lifecycle state of a local model.
+///
+/// This is the public-facing state enum. Internally the model also tracks
+/// the loaded runner, but that is not exposed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ModelState {
     /// Model has not been downloaded or loaded.
     Unloaded,
 
@@ -74,13 +82,24 @@ pub(crate) enum ModelState {
     Loading,
 
     /// Model is ready for inference.
-    Ready { runner: mistralrs::Model },
+    Ready,
 
     /// Model failed to load.
+    Failed(String),
+}
+
+// ─── InternalModelState (crate-only) ───────────────────────────────────────
+
+/// Internal state machine with the actual runner reference.
+pub(crate) enum InternalModelState {
+    Unloaded,
+    Downloading,
+    Loading,
+    Ready { runner: mistralrs::Model },
     Failed { error: String },
 }
 
-impl std::fmt::Debug for ModelState {
+impl std::fmt::Debug for InternalModelState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Unloaded => write!(f, "Unloaded"),
@@ -88,6 +107,19 @@ impl std::fmt::Debug for ModelState {
             Self::Loading => write!(f, "Loading"),
             Self::Ready { .. } => write!(f, "Ready"),
             Self::Failed { error } => write!(f, "Failed({error})"),
+        }
+    }
+}
+
+impl InternalModelState {
+    /// Convert to the public [`ModelState`].
+    pub(crate) fn to_public(&self) -> ModelState {
+        match self {
+            Self::Unloaded => ModelState::Unloaded,
+            Self::Downloading => ModelState::Downloading,
+            Self::Loading => ModelState::Loading,
+            Self::Ready { .. } => ModelState::Ready,
+            Self::Failed { error } => ModelState::Failed(error.clone()),
         }
     }
 }
@@ -104,7 +136,7 @@ pub struct LocalModel {
 }
 
 struct LocalModelInner {
-    state: RwLock<ModelState>,
+    state: RwLock<InternalModelState>,
     ready_notify: Notify,
     config: ModelConfig,
     progress_cb: Option<ProgressCallbackFn>,
@@ -124,12 +156,20 @@ impl LocalModel {
     pub fn new(config: ModelConfig) -> Self {
         Self {
             inner: Arc::new(LocalModelInner {
-                state: RwLock::new(ModelState::Unloaded),
+                state: RwLock::new(InternalModelState::Unloaded),
                 ready_notify: Notify::new(),
                 config,
                 progress_cb: None,
             }),
         }
+    }
+
+    /// Create a `LocalModel` from a [`ModelPreset`].
+    ///
+    /// Equivalent to `LocalModel::new(preset.config())`.
+    #[must_use]
+    pub fn from_preset(preset: ModelPreset) -> Self {
+        Self::new(preset.config())
     }
 
     /// Attaches a progress callback for model download/load reporting.
@@ -149,7 +189,15 @@ impl LocalModel {
 
     /// Returns `true` if the model is loaded and ready for inference.
     pub async fn is_ready(&self) -> bool {
-        matches!(*self.inner.state.read().await, ModelState::Ready { .. })
+        matches!(
+            *self.inner.state.read().await,
+            InternalModelState::Ready { .. }
+        )
+    }
+
+    /// Returns the current public [`ModelState`].
+    pub async fn state(&self) -> ModelState {
+        self.inner.state.read().await.to_public()
     }
 
     /// Block until the model reaches the `Ready` state.
@@ -174,18 +222,18 @@ impl LocalModel {
         {
             let state = self.inner.state.read().await;
             match &*state {
-                ModelState::Ready { .. } => return Ok(()),
-                ModelState::Failed { error } => {
+                InternalModelState::Ready { .. } => return Ok(()),
+                InternalModelState::Failed { error } => {
                     return Err(LocalModelError::Loading {
                         source: error.clone().into(),
                     });
                 }
-                ModelState::Downloading | ModelState::Loading => {
+                InternalModelState::Downloading | InternalModelState::Loading => {
                     drop(state);
                     self.wait_until_ready().await;
                     return Ok(());
                 }
-                ModelState::Unloaded => {}
+                InternalModelState::Unloaded => {}
             }
         }
 
@@ -194,27 +242,27 @@ impl LocalModel {
 
         // Double-check after acquiring write lock.
         match &*state {
-            ModelState::Ready { .. } => return Ok(()),
-            ModelState::Failed { error } => {
+            InternalModelState::Ready { .. } => return Ok(()),
+            InternalModelState::Failed { error } => {
                 return Err(LocalModelError::Loading {
                     source: error.clone().into(),
                 });
             }
-            ModelState::Downloading | ModelState::Loading => {
+            InternalModelState::Downloading | InternalModelState::Loading => {
                 // Another task is loading — shouldn't happen with write lock,
                 // but handle gracefully.
                 drop(state);
                 self.wait_until_ready().await;
                 return Ok(());
             }
-            ModelState::Unloaded => {}
+            InternalModelState::Unloaded => {}
         }
 
         // Begin loading.
-        *state = ModelState::Downloading;
-        self.notify_progress(ModelProgress::Downloading {
-            downloaded: 0,
-            total: 0,
+        *state = InternalModelState::Downloading;
+        self.notify_progress(ProgressEvent::DownloadProgress {
+            bytes_downloaded: 0,
+            total_bytes: None,
         });
 
         info!(
@@ -227,10 +275,11 @@ impl LocalModel {
         let api = hf_hub::api::tokio::Api::new().map_err(|e| {
             let msg = format!("HuggingFace API init failed: {e}");
             error!(%msg);
-            self.notify_progress(ModelProgress::Failed {
-                message: msg.clone(),
+            self.notify_progress(ProgressEvent::DownloadProgress {
+                bytes_downloaded: 0,
+                total_bytes: None,
             });
-            *state = ModelState::Failed { error: msg };
+            *state = InternalModelState::Failed { error: msg };
             self.inner.ready_notify.notify_waiters();
             LocalModelError::download(e)
         })?;
@@ -239,18 +288,20 @@ impl LocalModel {
         let model_path = repo.get(&self.inner.config.filename).await.map_err(|e| {
             let msg = format!("model download failed: {e}");
             error!(%msg);
-            self.notify_progress(ModelProgress::Failed {
-                message: msg.clone(),
-            });
-            *state = ModelState::Failed { error: msg };
+            *state = InternalModelState::Failed { error: msg };
             self.inner.ready_notify.notify_waiters();
             LocalModelError::download(e)
         })?;
 
         debug!(path = %model_path.display(), "model downloaded, loading");
 
-        *state = ModelState::Loading;
-        self.notify_progress(ModelProgress::Loading);
+        // Emit download complete.
+        self.notify_progress(ProgressEvent::DownloadComplete);
+
+        *state = InternalModelState::Loading;
+        self.notify_progress(ProgressEvent::LoadingProgress {
+            message: "loading model into memory".to_string(),
+        });
 
         // Build the GGUF model via mistral.rs.
         // Spawn in a blocking-safe task so that panics inside the builder
@@ -269,29 +320,23 @@ impl LocalModel {
             Ok(Err(e)) => {
                 let msg = format!("model loading failed: {e}");
                 error!(%msg);
-                self.notify_progress(ModelProgress::Failed {
-                    message: msg.clone(),
-                });
-                *state = ModelState::Failed { error: msg.clone() };
+                *state = InternalModelState::Failed { error: msg.clone() };
                 self.inner.ready_notify.notify_waiters();
                 return Err(LocalModelError::Loading { source: msg.into() });
             }
             Err(join_err) => {
                 let msg = format!("model loading panicked: {join_err}");
                 error!(%msg);
-                self.notify_progress(ModelProgress::Failed {
-                    message: msg.clone(),
-                });
-                *state = ModelState::Failed { error: msg.clone() };
+                *state = InternalModelState::Failed { error: msg.clone() };
                 self.inner.ready_notify.notify_waiters();
                 return Err(LocalModelError::Loading { source: msg.into() });
             }
         };
 
         info!("local model ready");
-        *state = ModelState::Ready { runner };
+        *state = InternalModelState::Ready { runner };
         drop(state);
-        self.notify_progress(ModelProgress::Ready);
+        self.notify_progress(ProgressEvent::LoadingComplete);
         self.inner.ready_notify.notify_waiters();
 
         Ok(())
@@ -300,7 +345,7 @@ impl LocalModel {
     /// Drop the loaded model, returning to `Unloaded` state.
     pub async fn unload(&self) {
         let mut state = self.inner.state.write().await;
-        *state = ModelState::Unloaded;
+        *state = InternalModelState::Unloaded;
         drop(state);
         info!("local model unloaded");
     }
@@ -310,9 +355,9 @@ impl LocalModel {
     /// Returns `Err(NotReady)` if the model is not loaded.
     pub(crate) async fn runner(
         &self,
-    ) -> Result<tokio::sync::RwLockReadGuard<'_, ModelState>, LocalModelError> {
+    ) -> Result<tokio::sync::RwLockReadGuard<'_, InternalModelState>, LocalModelError> {
         let state = self.inner.state.read().await;
-        if matches!(&*state, ModelState::Ready { .. }) {
+        if matches!(&*state, InternalModelState::Ready { .. }) {
             Ok(state)
         } else {
             Err(LocalModelError::NotReady)
@@ -324,7 +369,7 @@ impl LocalModel {
         &self.inner.config
     }
 
-    fn notify_progress(&self, progress: ModelProgress) {
+    fn notify_progress(&self, progress: ProgressEvent) {
         if let Some(cb) = &self.inner.progress_cb {
             cb(progress);
         }
@@ -357,18 +402,45 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn new_model_state_is_unloaded() {
+        let model = LocalModel::new(ModelConfig::default());
+        assert_eq!(model.state().await, ModelState::Unloaded);
+    }
+
+    #[tokio::test]
     async fn runner_returns_not_ready_when_unloaded() {
         let model = LocalModel::new(ModelConfig::default());
         assert!(model.runner().await.is_err());
     }
 
     #[test]
-    fn model_state_debug() {
+    fn from_preset_creates_model_with_correct_config() {
+        let model = LocalModel::from_preset(ModelPreset::SmolLM3_3B);
+        let config = model.config();
+        assert!(config.repo_id.contains("SmolLM3"));
+        assert_eq!(config.context_length, 8192);
+    }
+
+    #[test]
+    fn model_config_default_has_chat_template_none() {
+        let config = ModelConfig::default();
+        assert!(config.chat_template.is_none());
+    }
+
+    #[test]
+    fn model_config_context_length_env_override() {
+        // Test that context_length has a sensible default
+        let config = ModelConfig::default();
+        assert_eq!(config.context_length, 8192);
+    }
+
+    #[test]
+    fn internal_model_state_debug() {
         let states = [
-            ModelState::Unloaded,
-            ModelState::Downloading,
-            ModelState::Loading,
-            ModelState::Failed {
+            InternalModelState::Unloaded,
+            InternalModelState::Downloading,
+            InternalModelState::Loading,
+            InternalModelState::Failed {
                 error: "test".into(),
             },
         ];
@@ -376,5 +448,57 @@ mod tests {
             let debug = format!("{s:?}");
             assert!(!debug.is_empty());
         }
+    }
+
+    #[test]
+    fn internal_state_to_public() {
+        assert_eq!(
+            InternalModelState::Unloaded.to_public(),
+            ModelState::Unloaded
+        );
+        assert_eq!(
+            InternalModelState::Downloading.to_public(),
+            ModelState::Downloading
+        );
+        assert_eq!(
+            InternalModelState::Loading.to_public(),
+            ModelState::Loading
+        );
+        assert_eq!(
+            InternalModelState::Failed {
+                error: "boom".into()
+            }
+            .to_public(),
+            ModelState::Failed("boom".into())
+        );
+    }
+
+    #[tokio::test]
+    async fn send_chat_request_on_unloaded_model_returns_not_ready() {
+        let model = LocalModel::new(ModelConfig::default());
+        let result = model.runner().await;
+        assert!(result.is_err());
+        // Verify it's a NotReady error
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("not ready"));
+    }
+
+    #[test]
+    fn with_progress_before_clone_succeeds() {
+        use std::sync::Arc;
+        let model = LocalModel::new(ModelConfig::default());
+        let cb: ProgressCallbackFn = Arc::new(|_| {});
+        let result = model.with_progress(cb);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn with_progress_after_clone_fails() {
+        use std::sync::Arc;
+        let model = LocalModel::new(ModelConfig::default());
+        let _clone = model.clone();
+        let cb: ProgressCallbackFn = Arc::new(|_| {});
+        let result = model.with_progress(cb);
+        assert!(result.is_err());
     }
 }

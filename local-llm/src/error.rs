@@ -25,6 +25,10 @@ pub enum LocalModelError {
     #[error("inference error: {message}")]
     Inference { message: String },
 
+    /// Embedding-time error (input too long, model error).
+    #[error("embedding error: {message}")]
+    Embedding { message: String },
+
     /// Model has not been loaded yet — call `ensure_ready()` first.
     #[error("model not ready — call ensure_ready() first")]
     NotReady,
@@ -48,6 +52,13 @@ impl LocalModelError {
     /// Convenience constructor for [`LocalModelError::Inference`].
     pub fn inference(message: impl Into<String>) -> Self {
         Self::Inference {
+            message: message.into(),
+        }
+    }
+
+    /// Convenience constructor for [`LocalModelError::Embedding`].
+    pub fn embedding(message: impl Into<String>) -> Self {
+        Self::Embedding {
             message: message.into(),
         }
     }
@@ -82,6 +93,12 @@ mod tests {
     fn display_inference_error() {
         let err = LocalModelError::inference("token limit exceeded");
         assert_eq!(err.to_string(), "inference error: token limit exceeded");
+    }
+
+    #[test]
+    fn display_embedding_error() {
+        let err = LocalModelError::embedding("input exceeds max length");
+        assert_eq!(err.to_string(), "embedding error: input exceeds max length");
     }
 
     #[test]

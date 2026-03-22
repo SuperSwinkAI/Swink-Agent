@@ -6,6 +6,8 @@
 //!
 //! Run with: `cargo test -p swink-agent-local-llm --test embedding_live -- --ignored`
 
+mod common;
+
 use std::sync::Arc;
 
 use swink_agent_local_llm::{EmbeddingConfig, EmbeddingModel, LocalModelError};
@@ -34,7 +36,7 @@ async fn single_embedding() {
         return;
     };
 
-    let embedding = model.embed_single("Hello, world!").await.unwrap();
+    let embedding = model.embed("Hello, world!").await.unwrap();
     assert!(!embedding.is_empty(), "embedding should not be empty");
     assert_eq!(embedding.len(), 768, "default dimensions should be 768");
 }
@@ -47,7 +49,7 @@ async fn batch_embedding() {
     };
 
     let texts = &["Hello", "World", "Rust is great"];
-    let embeddings = model.embed(texts).await.unwrap();
+    let embeddings = model.embed_batch(texts).await.unwrap();
     assert_eq!(embeddings.len(), 3, "should return one vector per input");
 
     for (i, emb) in embeddings.iter().enumerate() {
@@ -69,7 +71,7 @@ async fn concurrent_embedding() {
         let m = Arc::clone(&model);
         handles.push(tokio::spawn(async move {
             let text = format!("Concurrent embedding test {i}");
-            m.embed_single(&text).await.unwrap()
+            m.embed(&text).await.unwrap()
         }));
     }
 
@@ -94,6 +96,17 @@ async fn unload_and_reload() {
     model.ensure_ready().await.unwrap();
     assert!(model.is_ready().await);
 
-    let embedding = model.embed_single("test").await.unwrap();
+    let embedding = model.embed("test").await.unwrap();
     assert!(!embedding.is_empty());
+}
+
+#[tokio::test]
+#[ignore = "downloads gated embedding model artifacts"]
+async fn empty_input_returns_valid_vector() {
+    let Some(model) = ready_model_or_skip().await else {
+        return;
+    };
+
+    let embedding = model.embed("").await.unwrap();
+    assert!(!embedding.is_empty(), "empty input should still return a valid vector");
 }

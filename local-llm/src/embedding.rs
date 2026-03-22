@@ -10,7 +10,8 @@ use tokio::sync::{Notify, RwLock};
 use tracing::{debug, error, info};
 
 use crate::error::LocalModelError;
-use crate::progress::{ModelProgress, ProgressCallbackFn};
+use crate::preset::ModelPreset;
+use crate::progress::{ProgressCallbackFn, ProgressEvent};
 
 // ─── EmbeddingConfig ────────────────────────────────────────────────────────
 
@@ -104,6 +105,14 @@ impl EmbeddingModel {
         }
     }
 
+    /// Create an `EmbeddingModel` from a [`ModelPreset`].
+    ///
+    /// Equivalent to `EmbeddingModel::new(preset.embedding_config())`.
+    #[must_use]
+    pub fn from_preset(preset: ModelPreset) -> Self {
+        Self::new(preset.embedding_config())
+    }
+
     /// Attaches a progress callback for model download/load reporting.
     ///
     /// # Errors
@@ -168,9 +177,9 @@ impl EmbeddingModel {
         }
 
         *state = EmbeddingModelState::Downloading;
-        self.notify_progress(ModelProgress::Downloading {
-            downloaded: 0,
-            total: 0,
+        self.notify_progress(ProgressEvent::DownloadProgress {
+            bytes_downloaded: 0,
+            total_bytes: None,
         });
 
         info!(
@@ -178,9 +187,13 @@ impl EmbeddingModel {
             "downloading embedding model"
         );
 
+        self.notify_progress(ProgressEvent::DownloadComplete);
+
         // Build the embedding model via mistral.rs.
         *state = EmbeddingModelState::Loading;
-        self.notify_progress(ModelProgress::Loading);
+        self.notify_progress(ProgressEvent::LoadingProgress {
+            message: "loading embedding model".to_string(),
+        });
 
         let runner = mistralrs::EmbeddingModelBuilder::new(self.inner.config.repo_id.clone())
             .build()
@@ -188,9 +201,6 @@ impl EmbeddingModel {
             .map_err(|e| {
                 let msg = format!("embedding model loading failed: {e}");
                 error!(%msg);
-                self.notify_progress(ModelProgress::Failed {
-                    message: msg.clone(),
-                });
                 *state = EmbeddingModelState::Failed { error: msg.clone() };
                 self.inner.ready_notify.notify_waiters();
                 LocalModelError::Loading { source: msg.into() }
@@ -199,14 +209,36 @@ impl EmbeddingModel {
         info!("embedding model ready");
         *state = EmbeddingModelState::Ready { runner };
         drop(state);
-        self.notify_progress(ModelProgress::Ready);
+        self.notify_progress(ProgressEvent::LoadingComplete);
         self.inner.ready_notify.notify_waiters();
 
         Ok(())
     }
 
+    /// Embed a single text, returning a fixed-dimensional vector.
+    ///
+    /// Returns `Err(LocalModelError::Embedding)` if the input exceeds the
+    /// model's maximum input length.
+    pub async fn embed(&self, text: &str) -> Result<Vec<f32>, LocalModelError> {
+        self.ensure_ready().await?;
+
+        let state = self.inner.state.read().await;
+        let EmbeddingModelState::Ready { runner } = &*state else {
+            return Err(LocalModelError::NotReady);
+        };
+
+        let result = runner
+            .generate_embedding(text)
+            .await
+            .map_err(|e| LocalModelError::embedding(format!("embedding failed: {e}")));
+        drop(state);
+        result
+    }
+
     /// Embed a batch of texts, returning one vector per input.
-    pub async fn embed(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, LocalModelError> {
+    ///
+    /// Fails on first invalid input (e.g. text exceeding max length).
+    pub async fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, LocalModelError> {
         self.ensure_ready().await?;
 
         let state = self.inner.state.read().await;
@@ -224,27 +256,10 @@ impl EmbeddingModel {
         let embeddings = runner
             .generate_embeddings(request)
             .await
-            .map_err(|e| LocalModelError::inference(format!("embedding failed: {e}")))?;
+            .map_err(|e| LocalModelError::embedding(format!("embedding failed: {e}")))?;
 
         drop(state);
         Ok(embeddings)
-    }
-
-    /// Convenience method: embed a single text.
-    pub async fn embed_single(&self, text: &str) -> Result<Vec<f32>, LocalModelError> {
-        self.ensure_ready().await?;
-
-        let state = self.inner.state.read().await;
-        let EmbeddingModelState::Ready { runner } = &*state else {
-            return Err(LocalModelError::NotReady);
-        };
-
-        let result = runner
-            .generate_embedding(text)
-            .await
-            .map_err(|e| LocalModelError::inference(format!("embedding failed: {e}")));
-        drop(state);
-        result
     }
 
     /// Drop the loaded model, returning to `Unloaded` state.
@@ -269,7 +284,7 @@ impl EmbeddingModel {
         }
     }
 
-    fn notify_progress(&self, progress: ModelProgress) {
+    fn notify_progress(&self, progress: ProgressEvent) {
         if let Some(cb) = &self.inner.progress_cb {
             cb(progress);
         }
@@ -299,5 +314,37 @@ mod tests {
     async fn new_model_is_not_ready() {
         let model = EmbeddingModel::new(EmbeddingConfig::default());
         assert!(!model.is_ready().await);
+    }
+
+    #[test]
+    fn from_preset_creates_embedding_model() {
+        let model = EmbeddingModel::from_preset(ModelPreset::EmbeddingGemma300M);
+        let config = model.config();
+        assert!(config.repo_id.contains("gemma"));
+        assert_eq!(config.dimensions, 768);
+    }
+
+    #[test]
+    fn with_progress_before_clone_succeeds() {
+        let model = EmbeddingModel::new(EmbeddingConfig::default());
+        let cb: ProgressCallbackFn = Arc::new(|_| {});
+        let result = model.with_progress(cb);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn with_progress_after_clone_fails() {
+        let model = EmbeddingModel::new(EmbeddingConfig::default());
+        let _clone = model.clone();
+        let cb: ProgressCallbackFn = Arc::new(|_| {});
+        let result = model.with_progress(cb);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn embedding_config_default() {
+        let config = EmbeddingConfig::default();
+        assert_eq!(config.dimensions, 768);
+        assert!(config.repo_id.contains("gemma"));
     }
 }
