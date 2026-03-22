@@ -56,7 +56,7 @@ pub fn execute_command(input: &str) -> CommandResult;
 ### Hash Command Parsing
 - Input starting with `#` (after trimming) is parsed as a hash command.
 - The `#` prefix is stripped; remaining text is trimmed and matched exactly.
-- Recognized commands: `help`, `clear`, `info`, `copy`, `copy all`, `copy code`, `sessions`, `save`, `approve`, `approve on`, `approve off`, `approve smart`, `keys`.
+- Recognized commands: `help`, `clear`, `info`, `copy`, `copy all`, `copy code`, `sessions`, `save`, `load <id>`, `key <provider> <api-key>`, `keys`, `approve`, `approve on`, `approve off`, `approve smart`.
 - `load <id>` requires a non-empty ID argument; missing ID returns usage feedback.
 - `key <provider> <api-key>` requires both arguments; missing key returns usage feedback.
 - `approve` without argument returns `QueryApprovalMode`; invalid argument returns usage feedback.
@@ -121,21 +121,22 @@ pub fn open_editor(editor_command: &str) -> io::Result<Option<String>>;
 
 ```rust
 // Re-exports from swink-agent-memory
-pub use swink_agent_memory::{JsonlSessionStore, SessionStore};
+pub use swink_agent_memory::{JsonlSessionStore, SessionMeta, SessionStore};
 ```
 
 **Contract**:
 
 ### Re-exports
-- `SessionStore`: the persistence trait with `save`, `load`, `list`, `delete`, `new_session_id`.
+- `SessionStore`: the persistence trait with `save`, `load`, `list`, `delete`.
 - `JsonlSessionStore`: the JSONL-based file persistence implementation.
+- `SessionMeta`: metadata struct (`id`, `title`, `created_at`, `updated_at`).
 - See `swink-agent-memory` crate documentation for full trait contract.
 
 ### TUI Integration (in app)
-- `#save` triggers `store.save(session_id, model, system_prompt, &agent_messages)`.
-- `#load <id>` triggers `store.load(id)` and replaces conversation state.
+- `#save` triggers `store.save(session_id, &SessionMeta, &llm_messages)` where `llm_messages` is `&[LlmMessage]` filtered from agent state.
+- `#load <id>` triggers `store.load(id)` → `(SessionMeta, Vec<LlmMessage>)` and replaces conversation state.
 - `#sessions` triggers `store.list()` and displays session metadata as feedback.
-- Session ID is generated via `store.new_session_id()` on first save if not already set.
+- Session ID is set at app creation; reused across saves.
 - Corrupted or missing session files produce an error feedback message; the TUI continues with its current state.
 
 ---

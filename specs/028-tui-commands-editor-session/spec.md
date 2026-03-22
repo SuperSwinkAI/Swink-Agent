@@ -28,7 +28,7 @@ A developer types hash commands in the input editor to control the TUI session w
 
 ### User Story 2 - Execute Slash Commands for System Actions (Priority: P1)
 
-A developer types slash commands to control agent behavior and application state. Available slash commands: /quit (exit the TUI), /model (switch the active model), /thinking (toggle extended thinking display), /system (set or view the system prompt), /reset (reset the conversation), /plan (toggle plan mode), /editor (open external editor). Slash commands are recognized when the input starts with `/`. Unrecognized commands produce a helpful error message.
+A developer types slash commands to control agent behavior and application state. Available slash commands: /quit (exit the TUI), /thinking (toggle extended thinking display), /system (set the system prompt), /reset (reset the conversation), /plan (toggle plan mode), /editor (open external editor). Model switching is handled via F4 key cycling, not a slash command. Slash commands are recognized when the input starts with `/`. Unrecognized commands produce a helpful error message.
 
 **Why this priority**: Slash commands control critical agent and application behavior. /quit is the primary exit mechanism and /model switching is essential for multi-model workflows.
 
@@ -37,10 +37,10 @@ A developer types slash commands to control agent behavior and application state
 **Acceptance Scenarios**:
 
 1. **Given** a running TUI, **When** `/quit` is submitted, **Then** the TUI exits cleanly with terminal restoration.
-2. **Given** a running TUI, **When** `/model` is submitted, **Then** a model selection interface is presented.
+2. **Given** a running TUI, **When** F4 is pressed, **Then** the model cycles to the next available model.
 3. **Given** a conversation, **When** `/reset` is submitted, **Then** the conversation is cleared and the agent state is reset.
 4. **Given** the input, **When** `/system new prompt here` is submitted, **Then** the system prompt is updated.
-5. **Given** the input, **When** `/system` is submitted with no argument, **Then** the current system prompt is displayed.
+5. **Given** the input, **When** `/system` is submitted with no argument, **Then** a usage hint is displayed.
 6. **Given** the input, **When** an unrecognized slash command is submitted, **Then** an error message lists valid commands.
 
 ---
@@ -114,7 +114,7 @@ A developer wants to share or save parts of the conversation by copying them to 
 ### Functional Requirements
 
 - **FR-001**: The TUI MUST recognize hash commands (prefixed with `#`) and execute them: #help, #clear, #info, #copy, #copy all, #copy code, #approve on/off/smart.
-- **FR-002**: The TUI MUST recognize slash commands (prefixed with `/`) and execute them: /quit, /model, /thinking, /system, /reset, /plan, /editor.
+- **FR-002**: The TUI MUST recognize slash commands (prefixed with `/`) and execute them: /quit, /thinking, /system, /reset, /plan, /editor. Model switching is via F4 key cycling.
 - **FR-003**: Unrecognized hash or slash commands MUST produce an error message listing valid commands.
 - **FR-004**: The external editor MUST be resolved in order: config override, EDITOR environment variable, VISUAL environment variable, `vi` fallback.
 - **FR-005**: The TUI MUST suspend its display while the external editor is open and resume when the editor closes.
@@ -126,7 +126,7 @@ A developer wants to share or save parts of the conversation by copying them to 
 - **FR-011**: The #copy all command MUST copy the entire conversation to the system clipboard.
 - **FR-012**: The #copy code command MUST extract and copy only code blocks from the last assistant response.
 - **FR-013**: Clipboard operations MUST display a brief confirmation message on success.
-- **FR-014**: The /system command MUST accept an optional argument to set the system prompt, or display the current one if no argument is given.
+- **FR-014**: The /system command MUST accept an argument to set the system prompt. If no argument is given, it displays a usage hint.
 - **FR-015**: The /reset command MUST clear the conversation and reset agent state.
 
 ### Key Entities

@@ -102,7 +102,7 @@ match open_editor(&editor) {
 ### Session Persistence
 
 ```rust
-use swink_agent_tui::session::{JsonlSessionStore, SessionStore};
+use swink_agent_tui::session::{JsonlSessionStore, SessionMeta, SessionStore};
 use std::path::PathBuf;
 
 // Create a session store

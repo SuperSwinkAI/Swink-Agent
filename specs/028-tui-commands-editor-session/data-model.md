@@ -95,7 +95,7 @@ The app holds session state:
 | Field | Type | Purpose |
 |-------|------|---------|
 | `session_id` | `Option<String>` | Current session ID (set on save or load) |
-| `session_store` | `Option<Box<dyn SessionStore>>` | Persistence backend (initialized from config) |
+| `session_store` | `Option<JsonlSessionStore>` | Persistence backend (initialized from config) |
 
 **Session save flow**:
 1. App generates or reuses `session_id`
@@ -111,9 +111,9 @@ The app holds session state:
 
 ---
 
-## Entity: ClipboardBridge (logical, helper in app)
+## Entity: ClipboardBridge (logical, inline in event loop)
 
-**Location**: `tui/src/app/state.rs` or inline in event loop
+**Location**: `tui/src/app/event_loop.rs` (implemented inline in `copy_to_clipboard` method, not as a separate struct)
 
 Clipboard operations use `arboard::Clipboard`:
 

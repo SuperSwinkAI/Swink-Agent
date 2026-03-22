@@ -7,7 +7,7 @@
 - Provider Roadmap: [PROVIDER_EXPANSION_ROADMAP.md](PROVIDER_EXPANSION_ROADMAP.md)
 - Eval Roadmap: [EVAL.md](EVAL.md)
 
-**Current Focus:** 20/30 specs have plans, 18/30 have tasks, 15/30 complete (001–014, 020). Phase 0 + Phase 1 + Phase 2 done. Phase 3 partially done (011–014, 020 complete). Next: `/speckit.implement` for 021-memory-crate and 022-local-llm-crate, `/speckit.tasks` for 028 and 030. 10 specs need plans (015–019, 023–025, 027, 029).
+**Current Focus:** 20/30 specs have plans, 19/30 have tasks, 15/30 complete (001–014, 020). Phase 0 + Phase 1 + Phase 2 done. Phase 3 partially done (011–014, 020 complete). Next: `/speckit.implement` for 022-local-llm-crate, `/speckit.tasks` for 030. 028 tasks generated. 10 specs need plans (015–019, 023–025, 027, 029).
 
 > **Numbering System:** Spec numbers (001–030) are sequential identifiers that
 > never change. Phase numbers represent execution order and can be reassigned
@@ -205,7 +205,7 @@ evaluation — each depends only on the core library.
 **Goal:** Interactive terminal interface — the binary crate that demonstrates
 the full agent library in a usable application.
 
-**Status:** 2/5 specs planned, 1/5 have tasks, 5/5 specs defined
+**Status:** 2/5 specs planned, 2/5 have tasks, 5/5 specs defined
 
 ### Implementation Checklist
 
@@ -227,7 +227,7 @@ the full agent library in a usable application.
 - [ ] **5.4** TUI: Commands, Editor & Session — Hash/slash commands, external editor, session persistence (§16.4, §16.8)
   - Spec: `specs/028-tui-commands-editor-session/spec.md`
   - Branch: `028-tui-commands-editor-session`
-  - Status: Plan complete — needs tasks
+  - Status: Tasks complete (78/78 tasks) — ready for implementation
   - Depends on: 5.2
 - [ ] **5.5** TUI: Plan Mode & Approval — Plan mode (read-only restriction), tiered approval (Enabled/Smart/Bypassed), session trust (§16.9, §16.11)
   - Spec: `specs/029-tui-plan-mode-approval/spec.md`
