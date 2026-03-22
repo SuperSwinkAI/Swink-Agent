@@ -1,5 +1,5 @@
 # Spec-Driven Development Status
-<!-- spec-status: project=worktree-020-adapter-proxy commit=8d6fa32 updated=2026-03-22T05:00:00Z -->
+<!-- spec-status: project=worktree-021-memory-crate commit=292bf2a updated=2026-03-22T06:00:00Z -->
 
 | Feature                         | Specify | Plan | Tasks | Implement |
 |---------------------------------|---------|------|-------|-----------|
@@ -23,7 +23,7 @@
 | 018-adapter-mistral             | ✓     | ○  | -   | - |
 | 019-adapter-bedrock             | ✓     | ○  | -   | - |
 | 020-adapter-proxy               | ✓     | ✓  | ✓   | ● 0/40 (0%) |
-| 021-memory-crate                | ✓     | ✓  | ○   | - |
+| 021-memory-crate                | ✓     | ✓  | ✓   | ● 0/57 (0%) |
 | 022-local-llm-crate             | ✓     | ✓  | ○   | - |
 | 023-eval-trajectory-matching    | ✓     | ○  | -   | - |
 | 024-eval-runner-governance      | ✓     | ○  | -   | - |
@@ -54,7 +54,7 @@
 <!-- feature: 018-adapter-mistral has_spec=true has_plan=false has_tasks=false has_research=false has_data_model=false has_quickstart=false has_contracts=false has_checklists=true tasks_total=0 tasks_completed=0 checklist_files=requirements.md -->
 <!-- feature: 019-adapter-bedrock has_spec=true has_plan=false has_tasks=false has_research=false has_data_model=false has_quickstart=false has_contracts=false has_checklists=true tasks_total=0 tasks_completed=0 checklist_files=requirements.md -->
 <!-- feature: 020-adapter-proxy has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=40 tasks_completed=0 checklist_files=requirements.md -->
-<!-- feature: 021-memory-crate has_spec=true has_plan=true has_tasks=false has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=0 tasks_completed=0 checklist_files=requirements.md -->
+<!-- feature: 021-memory-crate has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=57 tasks_completed=0 checklist_files=requirements.md -->
 <!-- feature: 022-local-llm-crate has_spec=true has_plan=true has_tasks=false has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=0 tasks_completed=0 checklist_files=requirements.md -->
 <!-- feature: 023-eval-trajectory-matching has_spec=true has_plan=false has_tasks=false has_research=false has_data_model=false has_quickstart=false has_contracts=false has_checklists=true tasks_total=0 tasks_completed=0 checklist_files=requirements.md -->
 <!-- feature: 024-eval-runner-governance has_spec=true has_plan=false has_tasks=false has_research=false has_data_model=false has_quickstart=false has_contracts=false has_checklists=true tasks_total=0 tasks_completed=0 checklist_files=requirements.md -->
