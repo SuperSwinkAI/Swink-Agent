@@ -31,7 +31,7 @@
 
 - [ ] T004 [P] Define `ProxyRequest<'a>` struct with `model`, `system`, `messages`, `options` fields and `#[derive(Serialize)]` in `adapters/src/proxy.rs`
 - [ ] T005 [P] Define `ProxyRequestOptions<'a>` struct with `temperature`, `max_tokens`, `session_id` (all `Option`, `skip_serializing_if`) and `#[derive(Serialize)]` in `adapters/src/proxy.rs`
-- [ ] T006 Define `SseEventData` enum with all 11 variants (`Start`, `TextStart`, `TextDelta`, `TextEnd`, `ThinkingStart`, `ThinkingDelta`, `ThinkingEnd`, `ToolCallStart`, `ToolCallDelta`, `ToolCallEnd`, `Done`, `Error`) using `#[serde(tag = "type", rename_all = "snake_case")]` in `adapters/src/proxy.rs`
+- [ ] T006 Define `SseEventData` enum with all 12 variants (`Start`, `TextStart`, `TextDelta`, `TextEnd`, `ThinkingStart`, `ThinkingDelta`, `ThinkingEnd`, `ToolCallStart`, `ToolCallDelta`, `ToolCallEnd`, `Done`, `Error`) using `#[serde(tag = "type", rename_all = "snake_case")]` in `adapters/src/proxy.rs`
 - [ ] T007 Implement `convert_sse_event()` function mapping each `SseEventData` variant 1:1 to `AssistantMessageEvent` in `adapters/src/proxy.rs`
 - [ ] T008 Implement `parse_sse_event_data()` function that deserializes JSON string to `SseEventData` and calls `convert_sse_event`, with malformed JSON yielding `Error` event in `adapters/src/proxy.rs`
 - [ ] T009 Implement `is_terminal_event()` const fn that returns true for `Done` and `Error` variants in `adapters/src/proxy.rs`
@@ -79,9 +79,6 @@
 
 - [ ] T021 [P] [US2] Unit test `parse_thinking_end_event` — verify `{"type":"thinking_end","content_index":1,"signature":"sig123"}` parses correctly in `adapters/src/proxy.rs`
 - [ ] T022 [P] [US2] Unit test `parse_tool_call_start_event` — verify `{"type":"tool_call_start","content_index":2,"id":"tc_1","name":"read_file"}` parses correctly in `adapters/src/proxy.rs`
-
-### Implementation for User Story 2
-
 - [ ] T023 [P] [US2] Unit test `parse_thinking_delta_event` — verify `{"type":"thinking_delta","content_index":1,"delta":"reasoning"}` parses to correct `ThinkingDelta` variant in `adapters/src/proxy.rs`
 - [ ] T024 [P] [US2] Unit test `parse_tool_call_delta_event` — verify `{"type":"tool_call_delta","content_index":2,"delta":"{\"path\":"}` parses to correct `ToolCallDelta` variant in `adapters/src/proxy.rs`
 

@@ -7,7 +7,7 @@
 - Provider Roadmap: [PROVIDER_EXPANSION_ROADMAP.md](PROVIDER_EXPANSION_ROADMAP.md)
 - Eval Roadmap: [EVAL.md](EVAL.md)
 
-**Current Focus:** 20/30 specs have plans, 15/30 have tasks, 14/30 complete (001–014). Phase 0 + Phase 1 + Phase 2 done. Phase 3 partially done (011, 012, 013, 014 complete). Next: `/speckit.tasks` for adapters (020) and companion crates (021, 022). 10 specs need plans (015–019, 023–025, 027, 029).
+**Current Focus:** 20/30 specs have plans, 16/30 have tasks, 14/30 complete (001–014). Phase 0 + Phase 1 + Phase 2 done. Phase 3 partially done (011–014 complete, 020 has tasks). Next: `/speckit.implement` for 020-adapter-proxy, `/speckit.tasks` for companion crates (021, 022). 10 specs need plans (015–019, 023–025, 027, 029).
 
 > **Numbering System:** Spec numbers (001–030) are sequential identifiers that
 > never change. Phase numbers represent execution order and can be reassigned
@@ -107,7 +107,7 @@ primitives, and loop governance — capabilities that enhance the core engine.
 **Goal:** LLM provider adapters — shared infrastructure and one adapter per
 provider. Each adapter implements StreamFn for its provider's streaming protocol.
 
-**Status:** 5/10 specs planned, 4/10 have tasks, 4/10 complete, 10/10 specs defined
+**Status:** 5/10 specs planned, 5/10 have tasks, 4/10 complete, 10/10 specs defined
 
 ### Implementation Checklist
 
@@ -156,10 +156,10 @@ provider. Each adapter implements StreamFn for its provider's streaming protocol
   - Branch: `019-adapter-bedrock`
   - Status: Specify complete — needs plan + tasks
   - Depends on: 3.1
-- [ ] **3.10** Adapter: Proxy — ProxyStreamFn, SSE, bearer auth, delta reconstruction (§7.4, §15.1)
+- [ ] **3.10** Adapter: Proxy — ProxyStreamFn, SSE, bearer auth, typed delta events (§7.4, §15.1)
   - Spec: `specs/020-adapter-proxy/spec.md`
   - Branch: `020-adapter-proxy`
-  - Status: Plan complete — needs tasks
+  - Status: Ready for implementation (0/40 tasks)
   - Depends on: 3.1
 
 ### Parallel Opportunities
