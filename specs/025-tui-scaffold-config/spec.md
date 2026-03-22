@@ -5,11 +5,22 @@
 **Status**: Draft
 **Input**: TUI binary entry point, terminal setup/teardown with panic safety, async event loop multiplexing terminal input and agent events, focus management (Tab cycles components), terminal resize handling, config file for appearance and behavior settings, color theme, credential resolution (environment variables then system keychain), first-run setup wizard, provider selection (prioritized fallback order). References: PRD (TUI Architecture, Event Model), HLD TUI Architecture, TUI Phases T1+T4.
 
+## Clarifications
+
+### Session 2026-03-22
+
+- Q: What format should the config file use? → A: TOML
+- Q: What target frame rate should the TUI use? → A: 30 FPS (~33ms per frame)
+- Q: What config directory convention should be used? → A: `dirs::config_dir()/swink/` (platform-native)
+- Q: What should the default quit shortcut be? → A: `Ctrl+Q` (quit); `Ctrl+C` cancels running agent operation
+- Q: What minimum terminal dimensions should trigger the size warning? → A: 120x30
+- Q: What should happen when the system keychain is unavailable? → A: Require environment variables only (no local storage fallback)
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Launch and Exit the TUI Cleanly (Priority: P1)
 
-A developer launches the TUI from the command line. The terminal switches to an alternate screen, raw input mode is enabled, and the initial UI renders. The developer interacts with the application. When they quit (via a keyboard shortcut or quit command), the terminal is restored to its original state: alternate screen is exited, raw mode is disabled, and the cursor reappears. If the application panics, the terminal is still restored — the developer's shell is never left in a broken state.
+A developer launches the TUI from the command line. The terminal switches to an alternate screen, raw input mode is enabled, and the initial UI renders. The developer interacts with the application. When they quit (via `Ctrl+Q` or a quit command), the terminal is restored to its original state: alternate screen is exited, raw mode is disabled, and the cursor reappears. If the application panics, the terminal is still restored — the developer's shell is never left in a broken state.
 
 **Why this priority**: If the TUI cannot start and stop cleanly, nothing else works. A panic that corrupts the terminal makes the entire tool unusable.
 
@@ -60,7 +71,7 @@ A developer wants to move focus between different areas of the TUI (e.g., input 
 
 ### User Story 4 - Configure Appearance and Behavior via Config File (Priority: P2)
 
-A developer wants to customize the TUI's appearance (color theme, layout preferences) and behavior (key bindings, default provider). They edit a configuration file stored in a standard location in their home directory. On next launch, the TUI applies the custom settings. If the config file does not exist, sensible defaults are used. If the config file contains errors, the TUI launches with defaults and warns about the invalid configuration.
+A developer wants to customize the TUI's appearance (color theme, layout preferences) and behavior (key bindings, default provider). They edit a TOML configuration file stored in the platform-native config directory (`dirs::config_dir()/swink/config.toml`). On next launch, the TUI applies the custom settings. If the config file does not exist, sensible defaults are used. If the config file contains errors, the TUI launches with defaults and warns about the invalid configuration.
 
 **Why this priority**: Configuration is important for long-term usability and personal preference, but the TUI works with defaults out of the box.
 
@@ -77,7 +88,7 @@ A developer wants to customize the TUI's appearance (color theme, layout prefere
 
 ### User Story 5 - Set Up Provider Credentials on First Run (Priority: P1)
 
-A developer launches the TUI for the first time without any provider credentials configured. The TUI detects that no credentials are available and presents a first-run setup wizard. The wizard guides the developer through selecting a provider and entering their API key. The credential is stored securely (system keychain when available, environment variable file otherwise). On subsequent launches, the saved credential is used automatically. The provider selection follows a prioritized fallback order when multiple credentials are available.
+A developer launches the TUI for the first time without any provider credentials configured. The TUI detects that no credentials are available and presents a first-run setup wizard. The wizard guides the developer through selecting a provider and entering their API key. The credential is stored in the system keychain when available; when the keychain is unavailable, the wizard instructs the user to set the appropriate environment variable instead (no local file storage fallback). On subsequent launches, the saved credential is used automatically. The provider selection follows a prioritized fallback order when multiple credentials are available.
 
 **Why this priority**: Without credentials, the TUI cannot connect to any provider — the first-run experience determines whether the developer continues using the tool.
 
@@ -113,11 +124,11 @@ A developer resizes their terminal window while the TUI is running. The TUI dete
 
 - What happens when the TUI is launched in a non-interactive context (e.g., piped input, no TTY)?
 - How does the event loop handle a flood of resize events (e.g., continuous window dragging)?
-- What happens when the system keychain is unavailable or locked?
+- What happens when the system keychain is unavailable or locked? → Fall back to environment variables only; no local file storage.
 - How does the TUI handle a config file that is not readable (permissions issue)?
 - What happens when the provider selected in the first-run wizard becomes unavailable on a subsequent launch?
 - How does the TUI behave when the terminal does not support color?
-- What happens when the user interrupts the first-run wizard (Ctrl+C) before completing it?
+- What happens when the user interrupts the first-run wizard (`Ctrl+C`) before completing it? → Cancels the running operation; `Ctrl+Q` to quit entirely.
 - How does the TUI handle conflicting key bindings in the config file?
 
 ## Requirements *(mandatory)*
@@ -128,13 +139,13 @@ A developer resizes their terminal window while the TUI is running. The TUI dete
 - **FR-002**: The TUI MUST run an async event loop that multiplexes terminal input events and agent events without either source blocking the other.
 - **FR-003**: The TUI MUST support focus cycling through UI components via Tab (forward) and Shift+Tab (backward).
 - **FR-004**: The TUI MUST visually indicate which component currently has focus.
-- **FR-005**: The TUI MUST load configuration from a file in a standard user-config location, falling back to defaults when the file is absent or invalid.
+- **FR-005**: The TUI MUST load configuration from a TOML file at `dirs::config_dir()/swink/config.toml`, falling back to defaults when the file is absent or invalid.
 - **FR-006**: The TUI MUST support color theme customization via the config file.
-- **FR-007**: The TUI MUST resolve provider credentials by checking environment variables first, then the system keychain.
+- **FR-007**: The TUI MUST resolve provider credentials by checking environment variables first, then the system keychain. When the keychain is unavailable, only environment variables are used (no local file storage fallback).
 - **FR-008**: The TUI MUST present a first-run setup wizard when no provider credentials are detected.
 - **FR-009**: The TUI MUST select the provider using a prioritized fallback order when multiple credentials are available.
 - **FR-010**: The TUI MUST detect and respond to terminal resize events, recalculating layout and re-rendering.
-- **FR-011**: The TUI MUST display a warning when the terminal size is below the minimum usable dimensions.
+- **FR-011**: The TUI MUST display a warning when the terminal size is below 120 columns by 30 rows.
 - **FR-012**: The TUI MUST detect non-interactive terminals and exit with a clear error message rather than crashing.
 
 ### Key Entities
@@ -151,17 +162,17 @@ A developer resizes their terminal window while the TUI is running. The TUI dete
 ### Measurable Outcomes
 
 - **SC-001**: The terminal is restored to its original state after exit in 100% of cases, including panics.
-- **SC-002**: The event loop processes keyboard input within one render frame even while agent events are streaming.
+- **SC-002**: The event loop processes keyboard input within one render frame (33ms at 30 FPS) even while agent events are streaming.
 - **SC-003**: Focus cycling via Tab visits every registered component exactly once per full cycle.
 - **SC-004**: A developer with no prior configuration can go from first launch to a working agent conversation via the setup wizard.
 - **SC-005**: Custom color themes from the config file are visibly applied on launch.
-- **SC-006**: Terminal resize results in a correctly laid-out UI within one render frame.
+- **SC-006**: Terminal resize results in a correctly laid-out UI within one render frame (33ms at 30 FPS).
 
 ## Assumptions
 
 - The TUI runs in a terminal emulator that supports alternate screen and raw input mode (standard on modern systems).
-- The system keychain is available on supported platforms (macOS Keychain, Windows Credential Manager, Linux Secret Service) but is not required — environment variables are a fallback.
-- The config file uses a widely-supported, human-editable structured format.
+- The system keychain is available on supported platforms (macOS Keychain, Windows Credential Manager, Linux Secret Service) but is not required — when unavailable, only environment variables are supported (no local file storage).
+- The config file uses TOML format, loaded from `dirs::config_dir()/swink/config.toml`.
 - The prioritized provider fallback order is a fixed default that can be overridden in the config file.
-- The minimum usable terminal size is defined by the TUI's layout requirements (specific dimensions determined during implementation).
+- The minimum usable terminal size is 120 columns by 30 rows.
 - The TUI is a separate binary that depends on the core agent library — it is not embedded in the library.
