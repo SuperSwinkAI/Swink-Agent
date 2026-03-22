@@ -486,6 +486,38 @@ mod tests {
     }
 
     #[test]
+    fn parse_thinking_delta_event() {
+        let data = r#"{"type":"thinking_delta","content_index":1,"delta":"reasoning"}"#;
+        let event = parse_sse_event_data(data);
+        match event {
+            AssistantMessageEvent::ThinkingDelta {
+                content_index,
+                delta,
+            } => {
+                assert_eq!(content_index, 1);
+                assert_eq!(delta, "reasoning");
+            }
+            other => panic!("expected ThinkingDelta, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_tool_call_delta_event() {
+        let data = r#"{"type":"tool_call_delta","content_index":2,"delta":"{\"path\":"}"#;
+        let event = parse_sse_event_data(data);
+        match event {
+            AssistantMessageEvent::ToolCallDelta {
+                content_index,
+                delta,
+            } => {
+                assert_eq!(content_index, 2);
+                assert_eq!(delta, r#"{"path":"#);
+            }
+            other => panic!("expected ToolCallDelta, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn parse_error_event() {
         let data = r#"{"type":"error","stop_reason":"error","error_message":"boom","usage":null}"#;
         let event = parse_sse_event_data(data);
