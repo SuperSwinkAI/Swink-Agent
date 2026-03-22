@@ -1,5 +1,5 @@
 # Spec-Driven Development Status
-<!-- spec-status: project=swink-agent commit=merge-009 updated=2026-03-22T00:15:00Z -->
+<!-- spec-status: project=swink-agent commit=aa00d30 updated=2026-03-22T00:15:00Z -->
 
 | Feature                         | Specify | Plan | Tasks | Implement |
 |---------------------------------|---------|------|-------|-----------|
@@ -15,7 +15,7 @@
 | 010-loop-policies-observability | ✓     | ✓  | ✓   | ● 0/72 (0%) |
 | 011-adapter-shared-infra        | ✓     | ✓  | ✓   | ✓ Complete |
 | 012-adapter-anthropic           | ✓     | ✓  | ✓   | ✓ Complete |
-| 013-adapter-openai              | ✓     | ✓  | -     | -         |
+| 013-adapter-openai              | ✓     | ✓  | ✓   | ✓ Complete |
 | 014-adapter-ollama              | ✓     | ✓  | -     | -         |
 | 015-adapter-gemini              | ✓     | -    | -     | -         |
 | 016-adapter-azure               | ✓     | -    | -     | -         |
@@ -34,7 +34,7 @@
 | 029-tui-plan-mode-approval      | ✓     | -    | -     | -         |
 | 030-integration-tests           | ✓     | ✓  | -     | -         |
 
-**Summary:** 30 specs defined, 20 planned, 15 with tasks, 10 complete.
+**Summary:** 30 specs defined, 20 planned, 16 with tasks, 12 complete.
 
 <!-- feature: 001-workspace-scaffold has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=false has_checklists=true tasks_total=24 tasks_completed=24 checklist_files=requirements.md -->
 <!-- feature: 002-foundation-types-errors has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=63 tasks_completed=63 checklist_files=requirements.md -->
@@ -48,7 +48,7 @@
 <!-- feature: 010-loop-policies-observability has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=72 tasks_completed=0 checklist_files=requirements.md -->
 <!-- feature: 011-adapter-shared-infra has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=40 tasks_completed=40 checklist_files=requirements.md -->
 <!-- feature: 012-adapter-anthropic has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=73 tasks_completed=73 checklist_files=requirements.md -->
-<!-- feature: 013-adapter-openai has_spec=true has_plan=true has_tasks=false has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=0 tasks_completed=0 checklist_files=requirements.md -->
+<!-- feature: 013-adapter-openai has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=73 tasks_completed=73 checklist_files=requirements.md -->
 <!-- feature: 014-adapter-ollama has_spec=true has_plan=true has_tasks=false has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=0 tasks_completed=0 checklist_files=requirements.md -->
 <!-- feature: 015-adapter-gemini has_spec=true has_plan=false has_tasks=false has_research=false has_data_model=false has_quickstart=false has_contracts=false has_checklists=true tasks_total=0 tasks_completed=0 checklist_files=requirements.md -->
 <!-- feature: 016-adapter-azure has_spec=true has_plan=false has_tasks=false has_research=false has_data_model=false has_quickstart=false has_contracts=false has_checklists=true tasks_total=0 tasks_completed=0 checklist_files=requirements.md -->
