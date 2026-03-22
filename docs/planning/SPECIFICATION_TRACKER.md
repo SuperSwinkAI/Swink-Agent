@@ -7,7 +7,7 @@
 - Provider Roadmap: [PROVIDER_EXPANSION_ROADMAP.md](PROVIDER_EXPANSION_ROADMAP.md)
 - Eval Roadmap: [EVAL.md](EVAL.md)
 
-**Current Focus:** 20/30 specs have plans, 12/30 have tasks, 9/30 complete (001–008, 011). Phase 0 + Phase 1 done, Phase 2 in progress (006–008 complete, 009 + 010 have tasks, ready for implementation). Next: `/speckit.tasks` for adapters (012–014, 020) and companion crates (021, 022). 10 specs need plans (015–019, 023–025, 027, 029).
+**Current Focus:** 20/30 specs have plans, 15/30 have tasks, 10/30 complete (001–008, 011, 012). Phase 0 + Phase 1 done, Phase 2 in progress (006–008 complete, 009 + 010 have tasks, ready for implementation). Next: `/speckit.tasks` for adapters (013–014, 020) and companion crates (021, 022). 10 specs need plans (015–019, 023–025, 027, 029).
 
 > **Numbering System:** Spec numbers (001–030) are sequential identifiers that
 > never change. Phase numbers represent execution order and can be reassigned
@@ -107,7 +107,7 @@ primitives, and loop governance — capabilities that enhance the core engine.
 **Goal:** LLM provider adapters — shared infrastructure and one adapter per
 provider. Each adapter implements StreamFn for its provider's streaming protocol.
 
-**Status:** 5/10 specs planned, 1/10 have tasks, 1/10 complete, 10/10 specs defined
+**Status:** 5/10 specs planned, 2/10 have tasks, 2/10 complete, 10/10 specs defined
 
 ### Implementation Checklist
 
@@ -116,10 +116,10 @@ provider. Each adapter implements StreamFn for its provider's streaming protocol
   - Branch: `011-adapter-shared-infra`
   - Status: Complete (40/40 tasks, merged to main)
   - Depends on: 0.3
-- [ ] **3.2** Adapter: Anthropic — AnthropicStreamFn, /v1/messages SSE, thinking blocks with budget control (§15.1)
+- [x] **3.2** Adapter: Anthropic — AnthropicStreamFn, /v1/messages SSE, thinking blocks with budget control (§15.1)
   - Spec: `specs/012-adapter-anthropic/spec.md`
   - Branch: `012-adapter-anthropic`
-  - Status: Plan complete — needs tasks
+  - Status: Complete (73/73 tasks, merged to main)
   - Depends on: 3.1
 - [ ] **3.3** Adapter: OpenAI — OpenAiStreamFn, /v1/chat/completions SSE, multi-provider compatible (§15.1)
   - Spec: `specs/013-adapter-openai/spec.md`
