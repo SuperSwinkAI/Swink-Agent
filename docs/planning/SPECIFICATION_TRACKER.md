@@ -7,7 +7,7 @@
 - Provider Roadmap: [PROVIDER_EXPANSION_ROADMAP.md](PROVIDER_EXPANSION_ROADMAP.md)
 - Eval Roadmap: [EVAL.md](EVAL.md)
 
-**Current Focus:** 20/30 specs have plans, 14/30 have tasks, 13/30 complete (001–013). Phase 0 + Phase 1 + Phase 2 done. Phase 3 partially done (011, 012, 013 complete). Next: `/speckit.tasks` for adapters (014, 020) and companion crates (021, 022). 10 specs need plans (015–019, 023–025, 027, 029).
+**Current Focus:** 20/30 specs have plans, 15/30 have tasks, 13/30 complete (001–013). Phase 0 + Phase 1 + Phase 2 done. Phase 3 partially done (011, 012, 013 complete). Next: `/speckit.tasks` for adapters (020) and companion crates (021, 022). 10 specs need plans (015–019, 023–025, 027, 029).
 
 > **Numbering System:** Spec numbers (001–030) are sequential identifiers that
 > never change. Phase numbers represent execution order and can be reassigned
@@ -107,7 +107,7 @@ primitives, and loop governance — capabilities that enhance the core engine.
 **Goal:** LLM provider adapters — shared infrastructure and one adapter per
 provider. Each adapter implements StreamFn for its provider's streaming protocol.
 
-**Status:** 5/10 specs planned, 3/10 have tasks, 3/10 complete, 10/10 specs defined
+**Status:** 5/10 specs planned, 4/10 have tasks, 3/10 complete, 10/10 specs defined
 
 ### Implementation Checklist
 
@@ -129,7 +129,7 @@ provider. Each adapter implements StreamFn for its provider's streaming protocol
 - [ ] **3.4** Adapter: Ollama — OllamaStreamFn, /api/chat NDJSON, native tool-calling (§15.1)
   - Spec: `specs/014-adapter-ollama/spec.md`
   - Branch: `014-adapter-ollama`
-  - Status: Plan complete — needs tasks
+  - Status: Ready for implementation (0/74 tasks)
   - Depends on: 3.1
 - [ ] **3.5** Adapter: Google Gemini — GeminiStreamFn, Gemini API SSE (§15.1)
   - Spec: `specs/015-adapter-gemini/spec.md`
