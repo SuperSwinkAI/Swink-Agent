@@ -1,5 +1,5 @@
 # Spec-Driven Development Status
-<!-- spec-status: project=Swink-Agent commit=merged updated=2026-03-22T07:30:00Z -->
+<!-- spec-status: project=worktree-022-local-llm-crate commit=7970d78ade3ea9c02c4a0298efb258eef5e2518e updated=2026-03-22T08:11:25Z -->
 
 | Feature                         | Specify | Plan | Tasks | Implement |
 |---------------------------------|---------|------|-------|-----------|
@@ -17,17 +17,17 @@
 | 012-adapter-anthropic           | ✓     | ✓  | ✓   | ✓ Complete |
 | 013-adapter-openai              | ✓     | ✓  | ✓   | ✓ Complete |
 | 014-adapter-ollama              | ✓     | ✓  | ✓   | ✓ Complete |
-| 015-adapter-gemini              | ✓     | ○  | -   | - |
-| 016-adapter-azure               | ✓     | ○  | -   | - |
-| 017-adapter-xai                 | ✓     | ○  | -   | - |
-| 018-adapter-mistral             | ✓     | ○  | -   | - |
-| 019-adapter-bedrock             | ✓     | ○  | -   | - |
+| 015-adapter-gemini              | ✓     | -    | -     | -         |
+| 016-adapter-azure               | ✓     | -    | -     | -         |
+| 017-adapter-xai                 | ✓     | -    | -     | -         |
+| 018-adapter-mistral             | ✓     | -    | -     | -         |
+| 019-adapter-bedrock             | ✓     | -    | -     | -         |
 | 020-adapter-proxy               | ✓     | ✓  | ✓   | ✓ Complete |
 | 021-memory-crate                | ✓     | ✓  | ✓   | ● 0/57 (0%) |
-| 022-local-llm-crate             | ✓     | ✓  | ○   | - |
-| 023-eval-trajectory-matching    | ✓     | ○  | -   | - |
-| 024-eval-runner-governance      | ✓     | ○  | -   | - |
-| 025-tui-scaffold-config         | ✓     | ○  | -   | - |
+| 022-local-llm-crate             | ✓     | ✓  | ✓   | ● 0/58 (0%) |
+| 023-eval-trajectory-matching    | ✓     | -    | -     | -         |
+| 024-eval-runner-governance      | ✓     | -    | -     | -         |
+| 025-tui-scaffold-config         | ✓     | -    | -     | -         |
 | 026-tui-input-conversation      | ✓     | ✓  | ✓   | ● 0/69 (0%) |
 | 027-tui-tools-diffs-status      | ✓     | -    | -     | -         |
 | 028-tui-commands-editor-session | ✓     | ✓  | -     | -         |
@@ -55,7 +55,7 @@
 <!-- feature: 019-adapter-bedrock has_spec=true has_plan=false has_tasks=false has_research=false has_data_model=false has_quickstart=false has_contracts=false has_checklists=true tasks_total=0 tasks_completed=0 checklist_files=requirements.md -->
 <!-- feature: 020-adapter-proxy has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=40 tasks_completed=40 checklist_files=requirements.md -->
 <!-- feature: 021-memory-crate has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=57 tasks_completed=0 checklist_files=requirements.md -->
-<!-- feature: 022-local-llm-crate has_spec=true has_plan=true has_tasks=false has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=0 tasks_completed=0 checklist_files=requirements.md -->
+<!-- feature: 022-local-llm-crate has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=58 tasks_completed=0 checklist_files=requirements.md -->
 <!-- feature: 023-eval-trajectory-matching has_spec=true has_plan=false has_tasks=false has_research=false has_data_model=false has_quickstart=false has_contracts=false has_checklists=true tasks_total=0 tasks_completed=0 checklist_files=requirements.md -->
 <!-- feature: 024-eval-runner-governance has_spec=true has_plan=false has_tasks=false has_research=false has_data_model=false has_quickstart=false has_contracts=false has_checklists=true tasks_total=0 tasks_completed=0 checklist_files=requirements.md -->
 <!-- feature: 025-tui-scaffold-config has_spec=true has_plan=false has_tasks=false has_research=false has_data_model=false has_quickstart=false has_contracts=false has_checklists=true tasks_total=0 tasks_completed=0 checklist_files=requirements.md -->

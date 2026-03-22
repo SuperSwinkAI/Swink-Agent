@@ -7,7 +7,7 @@
 - Provider Roadmap: [PROVIDER_EXPANSION_ROADMAP.md](PROVIDER_EXPANSION_ROADMAP.md)
 - Eval Roadmap: [EVAL.md](EVAL.md)
 
-**Current Focus:** 20/30 specs have plans, 17/30 have tasks, 15/30 complete (001–014, 020). Phase 0 + Phase 1 + Phase 2 done. Phase 3 partially done (011–014, 020 complete). Next: `/speckit.implement` for 021-memory-crate, `/speckit.tasks` for companion crates (022). 10 specs need plans (015–019, 023–025, 027, 029).
+**Current Focus:** 20/30 specs have plans, 18/30 have tasks, 15/30 complete (001–014, 020). Phase 0 + Phase 1 + Phase 2 done. Phase 3 partially done (011–014, 020 complete). Next: `/speckit.implement` for 021-memory-crate and 022-local-llm-crate, `/speckit.tasks` for 028 and 030. 10 specs need plans (015–019, 023–025, 027, 029).
 
 > **Numbering System:** Spec numbers (001–030) are sequential identifiers that
 > never change. Phase numbers represent execution order and can be reassigned
@@ -173,7 +173,7 @@ After **3.1 Shared Infrastructure** completes, all 9 provider adapters (3.2–3.
 **Goal:** Standalone crates for session persistence, on-device inference, and
 evaluation — each depends only on the core library.
 
-**Status:** 2/4 specs planned, 1/4 have tasks, 4/4 specs defined
+**Status:** 2/4 specs planned, 2/4 have tasks, 4/4 specs defined
 
 ### Implementation Checklist
 
@@ -185,7 +185,7 @@ evaluation — each depends only on the core library.
 - [ ] **4.2** Local LLM Crate — LocalModel (SmolLM3-3B), LocalStreamFn, EmbeddingModel, presets, progress reporting
   - Spec: `specs/022-local-llm-crate/spec.md`
   - Branch: `022-local-llm-crate`
-  - Status: Plan complete — needs tasks
+  - Status: Ready for implementation (0/58 tasks)
   - Depends on: 0.3
 - [ ] **4.3** Eval: Trajectory & Matching — TrajectoryCollector, TrajectoryMatcher, EfficiencyEvaluator, ResponseCriteria
   - Spec: `specs/023-eval-trajectory-matching/spec.md`
