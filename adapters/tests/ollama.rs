@@ -553,9 +553,9 @@ async fn ollama_unexpected_stream_end() {
     let events = collect_events(&ollama).await;
 
     let has_unexpected_end = events.iter().any(|e| match e {
-        AssistantMessageEvent::Error { error_message, .. } => {
-            error_message.to_lowercase().contains("stream ended unexpectedly")
-        }
+        AssistantMessageEvent::Error { error_message, .. } => error_message
+            .to_lowercase()
+            .contains("stream ended unexpectedly"),
         _ => false,
     });
     assert!(
@@ -593,9 +593,9 @@ async fn ollama_empty_thinking_skipped() {
         "expected no ThinkingStart/ThinkingDelta for empty thinking, got: {events:?}"
     );
 
-    let has_text_delta = events.iter().any(|e| {
-        matches!(e, AssistantMessageEvent::TextDelta { delta, .. } if delta == "answer")
-    });
+    let has_text_delta = events
+        .iter()
+        .any(|e| matches!(e, AssistantMessageEvent::TextDelta { delta, .. } if delta == "answer"));
     assert!(
         has_text_delta,
         "expected TextDelta('answer'), got: {events:?}"

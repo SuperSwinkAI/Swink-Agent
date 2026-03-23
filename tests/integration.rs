@@ -10,8 +10,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use common::{
-    MockStreamFn, MockTool, default_convert, default_model, text_only_events, tool_call_events,
-    user_msg,
+    MockStreamFn, MockTool, default_convert, default_exhausted_fallback, default_model,
+    next_response, text_only_events, tool_call_events, user_msg,
 };
 use futures::Stream;
 use futures::stream::StreamExt;
@@ -24,15 +24,15 @@ use swink_agent::{
     StopReason, StreamFn, StreamOptions, Usage, UserMessage,
 };
 
-// ─── TransformTrackingStreamFn ───────────────────────────────────────────
+// ─── MockTransformTrackingStreamFn ───────────────────────────────────────────
 
 /// A `StreamFn` that tracks the number of messages in each context snapshot.
-struct TransformTrackingStreamFn {
+struct MockTransformTrackingStreamFn {
     responses: Mutex<Vec<Vec<AssistantMessageEvent>>>,
     context_sizes: Mutex<Vec<usize>>,
 }
 
-impl TransformTrackingStreamFn {
+impl MockTransformTrackingStreamFn {
     const fn new(responses: Vec<Vec<AssistantMessageEvent>>) -> Self {
         Self {
             responses: Mutex::new(responses),
@@ -41,7 +41,7 @@ impl TransformTrackingStreamFn {
     }
 }
 
-impl StreamFn for TransformTrackingStreamFn {
+impl StreamFn for MockTransformTrackingStreamFn {
     fn stream<'a>(
         &'a self,
         _model: &'a ModelSpec,
@@ -53,19 +53,7 @@ impl StreamFn for TransformTrackingStreamFn {
             .lock()
             .unwrap()
             .push(context.messages.len());
-        let events = {
-            let mut responses = self.responses.lock().unwrap();
-            if responses.is_empty() {
-                vec![AssistantMessageEvent::Error {
-                    stop_reason: StopReason::Error,
-                    error_message: "no more scripted responses".to_string(),
-                    usage: None,
-                    error_kind: None,
-                }]
-            } else {
-                responses.remove(0)
-            }
-        };
+        let events = next_response(&self.responses, default_exhausted_fallback());
         Box::pin(futures::stream::iter(events))
     }
 }
@@ -506,7 +494,7 @@ async fn transform_context_called_before_convert() {
     let transform_count = Arc::new(AtomicU32::new(0));
     let transform_clone = Arc::clone(&transform_count);
 
-    let tracking_fn = Arc::new(TransformTrackingStreamFn::new(vec![
+    let tracking_fn = Arc::new(MockTransformTrackingStreamFn::new(vec![
         tool_call_events("tc_1", "my_tool", "{}"),
         text_only_events("done"),
     ]));

@@ -49,12 +49,7 @@ impl<S: crate::store::SessionStore + 'static> BlockingSessionStore<S> {
 }
 
 impl<S: crate::store::SessionStore + 'static> AsyncSessionStore for BlockingSessionStore<S> {
-    fn save(
-        &self,
-        id: &str,
-        meta: &SessionMeta,
-        messages: &[LlmMessage],
-    ) -> AsyncResult<'_, ()> {
+    fn save(&self, id: &str, meta: &SessionMeta, messages: &[LlmMessage]) -> AsyncResult<'_, ()> {
         let inner = Arc::clone(&self.inner);
         let id = id.to_string();
         let meta = meta.clone();

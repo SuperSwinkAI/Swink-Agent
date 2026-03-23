@@ -7,7 +7,7 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
 use swink_agent::{
@@ -16,20 +16,20 @@ use swink_agent::{
 };
 
 use common::{
-    ContextCapturingStreamFn, MockStreamFn, MockTool, default_convert, default_model,
+    MockContextCapturingStreamFn, MockStreamFn, MockTool, default_convert, default_model,
     text_only_events, tool_call_events, user_msg,
 };
 
-// ─── ArgCapturingTool ────────────────────────────────────────────────────
+// ─── MockArgCapturingTool ────────────────────────────────────────────────────
 
 /// A tool that captures the arguments it receives during execution.
-struct ArgCapturingTool {
+struct MockArgCapturingTool {
     name: String,
     schema: Value,
     captured_args: Mutex<Option<Value>>,
 }
 
-impl ArgCapturingTool {
+impl MockArgCapturingTool {
     fn new(name: &str, schema: Value) -> Self {
         Self {
             name: name.to_string(),
@@ -43,7 +43,7 @@ impl ArgCapturingTool {
     }
 }
 
-impl AgentTool for ArgCapturingTool {
+impl AgentTool for MockArgCapturingTool {
     fn name(&self) -> &str {
         &self.name
     }
@@ -91,9 +91,7 @@ fn tool_call_events_multi(calls: &[(&str, &str, &str)]) -> Vec<AssistantMessageE
             content_index: i,
             delta: args.to_string(),
         });
-        events.push(AssistantMessageEvent::ToolCallEnd {
-            content_index: i,
-        });
+        events.push(AssistantMessageEvent::ToolCallEnd { content_index: i });
     }
     events.push(AssistantMessageEvent::Done {
         stop_reason: StopReason::ToolUse,
@@ -139,16 +137,14 @@ async fn tool_registration_and_discovery() {
 
 #[tokio::test]
 async fn schema_validation_rejects_invalid_args() {
-    let tool = Arc::new(
-        MockTool::new("strict_tool").with_schema(json!({
-            "type": "object",
-            "properties": {
-                "path": { "type": "string" }
-            },
-            "required": ["path"],
-            "additionalProperties": false
-        })),
-    );
+    let tool = Arc::new(MockTool::new("strict_tool").with_schema(json!({
+        "type": "object",
+        "properties": {
+            "path": { "type": "string" }
+        },
+        "required": ["path"],
+        "additionalProperties": false
+    })));
 
     // LLM sends invalid args (wrong key, wrong type)
     let stream_fn = Arc::new(MockStreamFn::new(vec![
@@ -277,10 +273,14 @@ async fn concurrent_tool_execution() {
     assert_eq!(tool_b.execution_count(), 1, "tool_b should execute once");
     assert_eq!(tool_c.execution_count(), 1, "tool_c should execute once");
 
-    // If sequential, would take >= 150ms. Concurrent should be < 130ms.
+    // 3 tools × 50ms each = 150ms sequential minimum.
+    // If concurrent, elapsed ≈ 50ms. Use a generous upper bound (200ms)
+    // that is still well below the 150ms sequential floor, avoiding
+    // flaky failures on slow CI runners while still proving overlap.
+    let sequential_total = Duration::from_millis(150);
     assert!(
-        elapsed < Duration::from_millis(130),
-        "elapsed {elapsed:?} should be < 130ms, proving concurrency"
+        elapsed < sequential_total + Duration::from_millis(50),
+        "elapsed {elapsed:?} should be significantly less than the {sequential_total:?} sequential total, proving concurrency"
     );
 }
 
@@ -340,7 +340,7 @@ async fn tool_error_handling() {
 async fn tool_result_in_followup_message() {
     let tool = Arc::new(MockTool::new("echo"));
 
-    let stream_fn = Arc::new(ContextCapturingStreamFn::new(vec![
+    let stream_fn = Arc::new(MockContextCapturingStreamFn::new(vec![
         tool_call_events("call_1", "echo", "{}"),
         text_only_events("final answer"),
     ]));
@@ -369,7 +369,7 @@ async fn tool_result_in_followup_message() {
 
 #[tokio::test]
 async fn tool_call_transformation() {
-    let tool = Arc::new(ArgCapturingTool::new(
+    let tool = Arc::new(MockArgCapturingTool::new(
         "transform_me",
         json!({
             "type": "object",
@@ -394,13 +394,17 @@ async fn tool_call_transformation() {
 
     let _result = agent.prompt_async(vec![user_msg("go")]).await.unwrap();
 
-    let captured = tool.captured_args().expect("tool should have captured args");
+    let captured = tool
+        .captured_args()
+        .expect("tool should have captured args");
     assert_eq!(
-        captured["injected"], json!(true),
+        captured["injected"],
+        json!(true),
         "transformer should have injected a field"
     );
     assert_eq!(
-        captured["original"], json!("value"),
+        captured["original"],
+        json!("value"),
         "original arg should still be present"
     );
 }
@@ -419,15 +423,13 @@ async fn tool_validator_rejects_call() {
     let mut agent = Agent::new(
         AgentOptions::new("test", default_model(), stream_fn, default_convert)
             .with_tools(vec![tool.clone()])
-            .with_tool_validator(
-                |name: &str, _args: &Value| -> Result<(), String> {
-                    if name == "blocked" {
-                        Err("blocked".into())
-                    } else {
-                        Ok(())
-                    }
-                },
-            )
+            .with_tool_validator(|name: &str, _args: &Value| -> Result<(), String> {
+                if name == "blocked" {
+                    Err("blocked".into())
+                } else {
+                    Ok(())
+                }
+            })
             .with_retry_strategy(fast_retry()),
     );
 

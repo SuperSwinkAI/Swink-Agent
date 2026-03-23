@@ -184,8 +184,8 @@ async fn live_usage_captured() {
 async fn live_tool_use_stream() {
     let sf = ollama();
     let context = AgentContext {
-        system_prompt:
-            "You must use the get_weather tool to answer. Do not reply with text only.".into(),
+        system_prompt: "You must use the get_weather tool to answer. Do not reply with text only."
+            .into(),
         messages: vec![AgentMessage::Llm(LlmMessage::User(UserMessage {
             content: vec![ContentBlock::Text {
                 text: "What's the weather in Paris? Use the get_weather tool.".into(),
@@ -328,7 +328,9 @@ async fn live_model_not_found() {
         .await
         .expect("timed out");
 
-    let has_error = events.iter().any(|e| matches!(e, AssistantMessageEvent::Error { .. }));
+    let has_error = events
+        .iter()
+        .any(|e| matches!(e, AssistantMessageEvent::Error { .. }));
     assert!(
         has_error,
         "expected an Error event for nonexistent model, got: {events:?}"

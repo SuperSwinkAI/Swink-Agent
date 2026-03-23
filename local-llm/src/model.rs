@@ -3,6 +3,16 @@
 //! [`LocalModel`] wraps a mistral.rs GGUF model behind `Arc` for cheap
 //! cloning and concurrent access. The model is lazily downloaded from
 //! `HuggingFace` and loaded on first use via [`ensure_ready`](LocalModel::ensure_ready).
+//!
+//! # Structural similarity with `embedding.rs`
+//!
+//! This module intentionally mirrors the `Arc<Inner>` + state-machine pattern
+//! used in [`crate::embedding`]. Both modules manage a lazily-loaded mistral.rs
+//! model behind `Arc` with `RwLock`-guarded state, `Notify`-based readiness
+//! signalling, and progress callbacks. They diverge in their public APIs
+//! (`runner()` + streaming chat completion here vs `embed()`/`embed_batch()`
+//! in embedding) and in their underlying runner types (`GgufModelBuilder` for
+//! chat vs `EmbeddingModelBuilder` for vectorization).
 
 use std::sync::Arc;
 
@@ -460,10 +470,7 @@ mod tests {
             InternalModelState::Downloading.to_public(),
             ModelState::Downloading
         );
-        assert_eq!(
-            InternalModelState::Loading.to_public(),
-            ModelState::Loading
-        );
+        assert_eq!(InternalModelState::Loading.to_public(), ModelState::Loading);
         assert_eq!(
             InternalModelState::Failed {
                 error: "boom".into()

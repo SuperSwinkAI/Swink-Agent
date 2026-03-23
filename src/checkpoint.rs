@@ -10,7 +10,10 @@ use std::pin::Pin;
 
 use serde::{Deserialize, Serialize};
 
-use crate::types::{AgentMessage, AssistantMessage, Cost, LlmMessage, Usage};
+use crate::types::{
+    AgentMessage, AssistantMessage, Cost, CustomMessageRegistry, LlmMessage, Usage,
+    deserialize_custom_message, serialize_custom_message,
+};
 
 // ─── Checkpoint ──────────────────────────────────────────────────────────────
 
@@ -29,8 +32,11 @@ pub struct Checkpoint {
     pub provider: String,
     /// Model identifier.
     pub model_id: String,
-    /// Conversation messages (LLM messages only; custom messages are not serializable).
+    /// Conversation messages (LLM messages only).
     pub messages: Vec<LlmMessage>,
+    /// Serialized custom messages (envelopes with `type` and `data` fields).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub custom_messages: Vec<serde_json::Value>,
     /// Number of completed turns at the time of checkpointing.
     pub turn_count: usize,
     /// Accumulated token usage.
@@ -47,7 +53,10 @@ pub struct Checkpoint {
 impl Checkpoint {
     /// Create a new checkpoint from the current agent state.
     ///
-    /// Filters out `CustomMessage` variants since they are not serializable.
+    /// Serializes `CustomMessage` variants that support serialization (i.e.
+    /// `type_name()` and `to_json()` return `Some`). Custom messages that
+    /// cannot be serialized are skipped with a warning.
+    ///
     /// Use `with_turn_count()`, `with_usage()`, and `with_cost()` to set
     /// additional fields.
     #[must_use]
@@ -58,13 +67,24 @@ impl Checkpoint {
         model_id: impl Into<String>,
         messages: &[AgentMessage],
     ) -> Self {
-        let llm_messages: Vec<LlmMessage> = messages
-            .iter()
-            .filter_map(|m| match m {
-                AgentMessage::Llm(llm) => Some(llm.clone()),
-                AgentMessage::Custom(_) => None,
-            })
-            .collect();
+        let mut llm_messages = Vec::new();
+        let mut custom_messages = Vec::new();
+
+        for m in messages {
+            match m {
+                AgentMessage::Llm(llm) => llm_messages.push(llm.clone()),
+                AgentMessage::Custom(custom) => {
+                    if let Some(envelope) = serialize_custom_message(custom.as_ref()) {
+                        custom_messages.push(envelope);
+                    } else {
+                        tracing::warn!(
+                            "skipping non-serializable CustomMessage in checkpoint: {:?}",
+                            custom
+                        );
+                    }
+                }
+            }
+        }
 
         Self {
             id: id.into(),
@@ -72,6 +92,7 @@ impl Checkpoint {
             provider: provider.into(),
             model_id: model_id.into(),
             messages: llm_messages,
+            custom_messages,
             turn_count: 0,
             usage: Usage::default(),
             cost: Cost::default(),
@@ -108,14 +129,33 @@ impl Checkpoint {
         self
     }
 
-    /// Restore the LLM messages as `AgentMessage` values.
+    /// Restore all messages as `AgentMessage` values.
+    ///
+    /// LLM messages are returned first, followed by any deserialized custom
+    /// messages. If `registry` is `None`, custom messages are silently
+    /// skipped. Deserialization failures are logged as warnings but do not
+    /// cause errors.
     #[must_use]
-    pub fn restore_messages(&self) -> Vec<AgentMessage> {
-        self.messages
+    pub fn restore_messages(&self, registry: Option<&CustomMessageRegistry>) -> Vec<AgentMessage> {
+        let mut result: Vec<AgentMessage> = self
+            .messages
             .iter()
             .cloned()
             .map(AgentMessage::Llm)
-            .collect()
+            .collect();
+
+        if let Some(reg) = registry {
+            for envelope in &self.custom_messages {
+                match deserialize_custom_message(reg, envelope) {
+                    Ok(custom) => result.push(AgentMessage::Custom(custom)),
+                    Err(e) => {
+                        tracing::warn!("failed to deserialize custom message from checkpoint: {e}");
+                    }
+                }
+            }
+        }
+
+        result
     }
 }
 
@@ -132,6 +172,9 @@ impl Checkpoint {
 pub struct LoopCheckpoint {
     /// All context messages at the time of pause.
     pub messages: Vec<LlmMessage>,
+    /// Serialized custom messages (envelopes with `type` and `data` fields).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub custom_messages: Vec<serde_json::Value>,
     /// Messages queued for injection into the next turn.
     pub pending_messages: Vec<LlmMessage>,
     /// Whether the context overflow signal was active.
@@ -160,7 +203,8 @@ pub struct LoopCheckpoint {
 impl LoopCheckpoint {
     /// Create a loop checkpoint from the current agent state.
     ///
-    /// Filters out `CustomMessage` variants since they are not serializable.
+    /// Serializes `CustomMessage` variants that support serialization.
+    /// Non-serializable custom messages are skipped with a warning.
     #[must_use]
     pub fn new(
         system_prompt: impl Into<String>,
@@ -168,16 +212,28 @@ impl LoopCheckpoint {
         model_id: impl Into<String>,
         messages: &[AgentMessage],
     ) -> Self {
-        let llm_messages: Vec<LlmMessage> = messages
-            .iter()
-            .filter_map(|m| match m {
-                AgentMessage::Llm(llm) => Some(llm.clone()),
-                AgentMessage::Custom(_) => None,
-            })
-            .collect();
+        let mut llm_messages = Vec::new();
+        let mut custom_messages = Vec::new();
+
+        for m in messages {
+            match m {
+                AgentMessage::Llm(llm) => llm_messages.push(llm.clone()),
+                AgentMessage::Custom(custom) => {
+                    if let Some(envelope) = serialize_custom_message(custom.as_ref()) {
+                        custom_messages.push(envelope);
+                    } else {
+                        tracing::warn!(
+                            "skipping non-serializable CustomMessage in loop checkpoint: {:?}",
+                            custom
+                        );
+                    }
+                }
+            }
+        }
 
         Self {
             messages: llm_messages,
+            custom_messages,
             pending_messages: Vec::new(),
             overflow_signal: false,
             turn_index: 0,
@@ -241,14 +297,34 @@ impl LoopCheckpoint {
         self
     }
 
-    /// Restore the LLM messages as `AgentMessage` values.
+    /// Restore all messages as `AgentMessage` values.
+    ///
+    /// LLM messages are returned first, followed by any deserialized custom
+    /// messages. If `registry` is `None`, custom messages are silently
+    /// skipped.
     #[must_use]
-    pub fn restore_messages(&self) -> Vec<AgentMessage> {
-        self.messages
+    pub fn restore_messages(&self, registry: Option<&CustomMessageRegistry>) -> Vec<AgentMessage> {
+        let mut result: Vec<AgentMessage> = self
+            .messages
             .iter()
             .cloned()
             .map(AgentMessage::Llm)
-            .collect()
+            .collect();
+
+        if let Some(reg) = registry {
+            for envelope in &self.custom_messages {
+                match deserialize_custom_message(reg, envelope) {
+                    Ok(custom) => result.push(AgentMessage::Custom(custom)),
+                    Err(e) => {
+                        tracing::warn!(
+                            "failed to deserialize custom message from loop checkpoint: {e}"
+                        );
+                    }
+                }
+            }
+        }
+
+        result
     }
 
     /// Restore pending messages as `AgentMessage` values.
@@ -270,6 +346,7 @@ impl LoopCheckpoint {
             provider: self.provider.clone(),
             model_id: self.model_id.clone(),
             messages: self.messages.clone(),
+            custom_messages: self.custom_messages.clone(),
             turn_count: self.turn_index,
             usage: self.usage.clone(),
             cost: self.cost.clone(),
@@ -340,9 +417,9 @@ mod tests {
     }
 
     #[test]
-    fn checkpoint_creation_filters_custom_messages() {
+    fn checkpoint_creation_skips_non_serializable_custom_messages() {
         let mut messages = sample_messages();
-        // Add a custom message that should be filtered
+        // Add a custom message without type_name/to_json — should be skipped
         #[derive(Debug)]
         struct TestCustom;
         impl crate::types::CustomMessage for TestCustom {
@@ -365,8 +442,74 @@ mod tests {
         assert_eq!(checkpoint.system_prompt, "Be helpful.");
         assert_eq!(checkpoint.provider, "anthropic");
         assert_eq!(checkpoint.model_id, "claude-sonnet");
-        assert_eq!(checkpoint.messages.len(), 2); // custom filtered out
+        assert_eq!(checkpoint.messages.len(), 2); // LLM messages only
+        assert!(checkpoint.custom_messages.is_empty()); // non-serializable skipped
         assert_eq!(checkpoint.turn_count, 3);
+    }
+
+    #[test]
+    fn checkpoint_custom_message_roundtrip() {
+        use crate::types::CustomMessageRegistry;
+
+        #[derive(Debug, Clone, PartialEq)]
+        struct SerializableCustom {
+            value: String,
+        }
+
+        impl crate::types::CustomMessage for SerializableCustom {
+            fn as_any(&self) -> &dyn std::any::Any {
+                self
+            }
+            fn type_name(&self) -> Option<&str> {
+                Some("SerializableCustom")
+            }
+            fn to_json(&self) -> Option<serde_json::Value> {
+                Some(serde_json::json!({ "value": self.value }))
+            }
+        }
+
+        let mut messages = sample_messages();
+        messages.push(AgentMessage::Custom(Box::new(SerializableCustom {
+            value: "hello".to_string(),
+        })));
+
+        let checkpoint = Checkpoint::new("cp-custom", "prompt", "p", "m", &messages);
+
+        assert_eq!(checkpoint.messages.len(), 2);
+        assert_eq!(checkpoint.custom_messages.len(), 1);
+        assert_eq!(checkpoint.custom_messages[0]["type"], "SerializableCustom");
+        assert_eq!(checkpoint.custom_messages[0]["data"]["value"], "hello");
+
+        // Serde roundtrip preserves custom_messages
+        let json = serde_json::to_string(&checkpoint).unwrap();
+        let restored_cp: Checkpoint = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored_cp.custom_messages.len(), 1);
+
+        // Restore with registry
+        let mut registry = CustomMessageRegistry::new();
+        registry.register(
+            "SerializableCustom",
+            Box::new(|val: serde_json::Value| {
+                let value = val
+                    .get("value")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| "missing value".to_string())?;
+                Ok(Box::new(SerializableCustom {
+                    value: value.to_string(),
+                }) as Box<dyn crate::types::CustomMessage>)
+            }),
+        );
+
+        let restored = restored_cp.restore_messages(Some(&registry));
+        assert_eq!(restored.len(), 3);
+        assert!(matches!(restored[0], AgentMessage::Llm(LlmMessage::User(_))));
+        assert!(matches!(restored[1], AgentMessage::Llm(LlmMessage::Assistant(_))));
+        let custom = restored[2].downcast_ref::<SerializableCustom>().unwrap();
+        assert_eq!(custom.value, "hello");
+
+        // Restore without registry — custom messages skipped
+        let restored_no_reg = restored_cp.restore_messages(None);
+        assert_eq!(restored_no_reg.len(), 2);
     }
 
     #[test]
@@ -410,7 +553,7 @@ mod tests {
         let checkpoint =
             Checkpoint::new("cp-restore", "prompt", "p", "m", &messages).with_turn_count(1);
 
-        let restored = checkpoint.restore_messages();
+        let restored = checkpoint.restore_messages(None);
         assert_eq!(restored.len(), 2);
         assert!(matches!(
             restored[0],
@@ -450,6 +593,7 @@ mod tests {
 
         let checkpoint: Checkpoint = serde_json::from_str(json).unwrap();
         assert!(checkpoint.metadata.is_empty());
+        assert!(checkpoint.custom_messages.is_empty());
     }
 
     /// In-memory checkpoint store for testing.
@@ -563,7 +707,7 @@ mod tests {
     // ─── LoopCheckpoint Tests ────────────────────────────────────────────
 
     #[test]
-    fn loop_checkpoint_creation_filters_custom_messages() {
+    fn loop_checkpoint_creation_skips_non_serializable_custom_messages() {
         let mut messages = sample_messages();
         #[derive(Debug)]
         struct TestCustom;
@@ -578,6 +722,7 @@ mod tests {
             .with_turn_index(5);
 
         assert_eq!(cp.messages.len(), 2);
+        assert!(cp.custom_messages.is_empty());
         assert_eq!(cp.turn_index, 5);
         assert_eq!(cp.system_prompt, "Be helpful.");
         assert_eq!(cp.provider, "anthropic");
@@ -620,7 +765,7 @@ mod tests {
         let messages = sample_messages();
         let cp = LoopCheckpoint::new("p", "p", "m", &messages);
 
-        let restored = cp.restore_messages();
+        let restored = cp.restore_messages(None);
         assert_eq!(restored.len(), 2);
         assert!(matches!(
             restored[0],

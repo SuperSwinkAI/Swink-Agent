@@ -2,7 +2,6 @@
 
 mod common;
 
-use std::pin::Pin;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -10,14 +9,11 @@ use std::time::Duration;
 use common::{
     MockStreamFn, default_convert, default_model, text_only_events, tool_call_events, user_msg,
 };
-use futures::Stream;
 use futures::stream::StreamExt;
 use serde_json::json;
-use tokio_util::sync::CancellationToken;
 
 use swink_agent::{
-    Agent, AgentError, AgentEvent, AgentOptions, AssistantMessageEvent, ContentBlock, Cost,
-    DefaultRetryStrategy, LlmMessage, ModelSpec, StopReason, StreamFn, StreamOptions, Usage,
+    Agent, AgentError, AgentOptions, DefaultRetryStrategy, StopReason, StreamFn,
 };
 
 // ─── Helpers ─────────────────────────────────────────────────────────────

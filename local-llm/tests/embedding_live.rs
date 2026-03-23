@@ -6,8 +6,6 @@
 //!
 //! Run with: `cargo test -p swink-agent-local-llm --test embedding_live -- --ignored`
 
-mod common;
-
 use std::sync::Arc;
 
 use swink_agent_local_llm::{EmbeddingConfig, EmbeddingModel, LocalModelError};
@@ -108,5 +106,8 @@ async fn empty_input_returns_valid_vector() {
     };
 
     let embedding = model.embed("").await.unwrap();
-    assert!(!embedding.is_empty(), "empty input should still return a valid vector");
+    assert!(
+        !embedding.is_empty(),
+        "empty input should still return a valid vector"
+    );
 }

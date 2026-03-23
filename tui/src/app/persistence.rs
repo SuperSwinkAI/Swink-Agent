@@ -94,9 +94,8 @@ impl App {
                                     .chars()
                                     .take(60)
                                     .collect::<String>();
-                                let diff_data = crate::ui::diff::DiffData::from_details(
-                                    &tool_result.details,
-                                );
+                                let diff_data =
+                                    crate::ui::diff::DiffData::from_details(&tool_result.details);
                                 self.messages.push(DisplayMessage {
                                     role: MessageRole::ToolResult,
                                     content,
@@ -119,10 +118,8 @@ impl App {
                 self.trim_messages_to_recent_turns();
                 if let Some(agent) = &mut self.agent {
                     // Convert LlmMessages back to AgentMessages for the agent.
-                    let agent_messages: Vec<AgentMessage> = messages
-                        .into_iter()
-                        .map(AgentMessage::Llm)
-                        .collect();
+                    let agent_messages: Vec<AgentMessage> =
+                        messages.into_iter().map(AgentMessage::Llm).collect();
                     agent.set_messages(agent_messages);
                 }
                 self.push_system_message(format!(
@@ -157,11 +154,7 @@ impl App {
                     } else {
                         ""
                     };
-                    let _ = writeln!(
-                        text,
-                        "  {} — {}{current}",
-                        session.id, session.title
-                    );
+                    let _ = writeln!(text, "  {} — {}{current}", session.id, session.title);
                 }
                 text.push_str("\nUse #load <id> to restore a session.");
                 self.push_system_message(text);

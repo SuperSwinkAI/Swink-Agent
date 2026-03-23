@@ -316,8 +316,8 @@ async fn anthropic_http_401() {
         "expected 'auth error', got: {err}"
     );
     assert!(
-        err.contains("x-api-key"),
-        "expected 'x-api-key' mention, got: {err}"
+        err.contains("401"),
+        "expected '401' mention, got: {err}"
     );
 }
 
@@ -353,9 +353,14 @@ async fn anthropic_http_529() {
     let events = collect_events(&sf).await;
 
     let err = find_error_message(&events).expect("expected error event");
+    // 529 is mapped to a network/server error via the Anthropic-specific override
     assert!(
-        err.contains("overloaded"),
-        "expected 'overloaded', got: {err}"
+        err.contains("529"),
+        "expected '529' mention, got: {err}"
+    );
+    assert!(
+        err.contains("Overloaded"),
+        "expected body content, got: {err}"
     );
 }
 

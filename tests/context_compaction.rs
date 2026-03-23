@@ -8,7 +8,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use common::{
-    ContextCapturingStreamFn, MockTool, default_model, text_only_events, tool_call_events, user_msg,
+    MockContextCapturingStreamFn, MockTool, default_exhausted_fallback, default_model,
+    next_response, text_only_events, tool_call_events, user_msg,
 };
 use futures::Stream;
 use futures::stream::StreamExt;
@@ -20,15 +21,15 @@ use swink_agent::{
     agent_loop, sliding_window,
 };
 
-// ─── MessageCapturingStreamFn ────────────────────────────────────────────
+// ─── MockMessageCapturingStreamFn ────────────────────────────────────────────
 
 /// A `StreamFn` that captures the full LLM messages on each call.
-struct MessageCapturingStreamFn {
+struct MockMessageCapturingStreamFn {
     responses: Mutex<Vec<Vec<AssistantMessageEvent>>>,
     captured_messages: Arc<Mutex<Vec<Vec<LlmMessage>>>>,
 }
 
-impl StreamFn for MessageCapturingStreamFn {
+impl StreamFn for MockMessageCapturingStreamFn {
     fn stream<'a>(
         &'a self,
         _model: &'a ModelSpec,
@@ -46,19 +47,7 @@ impl StreamFn for MessageCapturingStreamFn {
             .collect();
         self.captured_messages.lock().unwrap().push(llm_msgs);
 
-        let events = {
-            let mut responses = self.responses.lock().unwrap();
-            if responses.is_empty() {
-                vec![AssistantMessageEvent::Error {
-                    stop_reason: StopReason::Error,
-                    error_message: "no more scripted responses".to_string(),
-                    usage: None,
-                    error_kind: None,
-                }]
-            } else {
-                responses.remove(0)
-            }
-        };
+        let events = next_response(&self.responses, default_exhausted_fallback());
         Box::pin(futures::stream::iter(events))
     }
 }
@@ -139,10 +128,10 @@ fn has_event(events: &[AgentEvent], name: &str) -> bool {
 
 #[tokio::test]
 async fn overflow_triggers_compaction() {
-    // Set up a ContextCapturingStreamFn:
+    // Set up a MockContextCapturingStreamFn:
     //   Call 1: returns overflow error (context_length_exceeded)
     //   Call 2: succeeds with text
-    let capturing_fn = Arc::new(ContextCapturingStreamFn::new(vec![
+    let capturing_fn = Arc::new(MockContextCapturingStreamFn::new(vec![
         overflow_error_events(),
         text_only_events("recovered"),
     ]));
@@ -209,7 +198,7 @@ async fn overflow_triggers_compaction() {
 async fn compacted_context_preserves_anchors() {
     let captured_messages: Arc<Mutex<Vec<Vec<LlmMessage>>>> = Arc::new(Mutex::new(Vec::new()));
 
-    let stream_fn = Arc::new(MessageCapturingStreamFn {
+    let stream_fn = Arc::new(MockMessageCapturingStreamFn {
         responses: Mutex::new(vec![overflow_error_events(), text_only_events("ok")]),
         captured_messages: Arc::clone(&captured_messages),
     });
@@ -290,7 +279,7 @@ async fn compacted_context_preserves_tool_pairs() {
     let captured_messages: Arc<Mutex<Vec<Vec<LlmMessage>>>> = Arc::new(Mutex::new(Vec::new()));
 
     // First call: returns a tool call. Second call: overflow. Third call: success.
-    let stream_fn = Arc::new(MessageCapturingStreamFn {
+    let stream_fn = Arc::new(MockMessageCapturingStreamFn {
         responses: Mutex::new(vec![
             tool_call_events("tc_1", "mock_tool", "{}"),
             overflow_error_events(),
@@ -364,7 +353,7 @@ async fn compacted_context_preserves_tool_pairs() {
 
 #[tokio::test]
 async fn multiple_overflows_progressively_shrink() {
-    let capturing_fn = Arc::new(ContextCapturingStreamFn::new(vec![
+    let capturing_fn = Arc::new(MockContextCapturingStreamFn::new(vec![
         overflow_error_events(),
         overflow_error_events(),
         text_only_events("recovered"),
@@ -445,7 +434,7 @@ async fn overflow_with_single_large_message() {
     // When a single message exceeds the budget, sliding_window cannot compact
     // further. The loop must not enter an infinite retry cycle. The second
     // stream call should succeed (simulating the provider accepting after prune).
-    let capturing_fn = Arc::new(ContextCapturingStreamFn::new(vec![
+    let capturing_fn = Arc::new(MockContextCapturingStreamFn::new(vec![
         overflow_error_events(),
         text_only_events("handled gracefully"),
     ]));

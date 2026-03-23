@@ -13,48 +13,68 @@
 
 ---
 
-## 1. Trajectory & Process Evaluation (The "Glass-Box" Layer)
+## Implemented Features
 
-[P] Fine-Grained Trajectory Tracing: Capture every step of the agent's execution, including tool calls and timing. `TrajectoryCollector` captures turns, tool calls (name/id/arguments), timing, cost, and usage per turn via `AgentEvent` stream observation. Gaps: no visualization component, no planning-node capture, no state-transition tracking beyond tool calls.
+The following features are complete and tested in `swink-agent-eval`.
 
-[C] "Golden Path" Comparison: Compare an agent's actual execution path against a predefined "ideal" sequence of tool calls and reasoning steps. Implemented via `TrajectoryMatcher`.
+### Trajectory & Process Evaluation
 
-[C] Trajectory Efficiency Scoring: Metrics that penalize redundant tool calls and excessive step counts. `EfficiencyEvaluator` scores via duplicate ratio (unique/total tool calls, weight 0.6) and step ratio (ideal vs actual turn count, weight 0.4). Registered in `EvaluatorRegistry::with_defaults()`. Gaps: no reasoning-loop detection, no per-tool cost attribution.
+[C] **Fine-Grained Trajectory Tracing:** `TrajectoryCollector` captures turns, tool calls (name/id/arguments), timing, cost, and usage per turn via `AgentEvent` stream observation. Also supports real-time budget guarding via `collect_with_guard()`. Known gaps: no visualization component, no planning-node capture, no state-transition tracking beyond tool calls.
 
-[ ] Step-Level Reproducibility: A "replay" feature that allows developers to re-run simulations from any specific intermediate step to debug the exact moment of failure.
+[C] **"Golden Path" Comparison:** `TrajectoryMatcher` compares an agent's actual execution path against a predefined ideal sequence of tool calls (Exact / InOrder / AnyOrder modes).
 
-## 2. Advanced Verification & Judging
+[C] **Trajectory Efficiency Scoring:** `EfficiencyEvaluator` scores via duplicate ratio (weight 0.6) and step ratio (weight 0.4). Registered in `EvaluatorRegistry::with_defaults()`. Known gaps: no reasoning-loop detection, no per-tool cost attribution.
 
-[ ] Agent-as-a-Judge (AaaJ) Support: Multi-agent "judge" systems that employ planning and tool-augmented evidence collection to verify outcomes rather than relying on a single-pass LLM.
+### Observability & Governance
 
-[ ] Executable Verification (Sandboxing): Built-in sandboxed environments where a judge can execute the agent's proposed code or API calls to verify side effects and factual correctness.
+[C] **Cost-Latency Spiral Monitoring:** `BudgetGuard` monitors cost, token, and turn thresholds in real-time during stream collection via `TrajectoryCollector::collect_with_guard()`. Exceeding any threshold triggers `CancellationToken` cancellation. `EvalRunner::run_case()` automatically wires `BudgetGuard` from `EvalCase` budget constraints. `BudgetEvaluator` provides post-hoc scoring. Known gap: no per-tool cost attribution.
 
-[P] Domain-Expert Outcome Scoring: User-provided scoring functions for custom success criteria. `ResponseCriteria::Custom` accepts an `Arc<dyn Fn(&str) -> Score>`, and the `Evaluator` trait supports closure-based evaluators. Gap: requires Rust code — no plain-language or declarative interface for non-technical users.
+[C] **CI/CD Gating:** `GateConfig` checks evaluation results against pass-rate, cost, and duration thresholds via `check_gate()`. Returns `GateResult` with exit code 0 (pass) or 1 (fail). Can be wired into deployment pipelines to block releases when benchmarks regress.
 
-[ ] Automated Root Cause Analysis: AI-driven insights that automatically group failures into patterns (e.g., "tool hallucination," "instruction drift") to prioritize fixes.
+[C] **Deterministic Audit Trails:** `AuditedInvocation` wraps invocation traces with SHA-256 hash chains for tamper detection. Each turn is hashed individually; concatenated hashes produce a chain hash verified via `AuditedInvocation::verify()`.
 
-## 3. Simulation & Stress Testing
+### Verification
 
-[ ] Dynamic Environment Simulation: Support for "asynchronous" testing where the environment state can change independently of the agent's actions.
+[P] **Domain-Expert Outcome Scoring:** `ResponseCriteria::Custom` accepts an `Arc<dyn Fn(&str) -> Score>`, and the `Evaluator` trait supports closure-based evaluators. Gap: requires Rust code — no plain-language or declarative interface for non-technical users.
 
-[ ] Synthetic Persona Generation: Simulate diverse user personas and adversarial edge cases (e.g., ambiguous queries, prompt injections).
+### Data Loading
 
-[ ] Temporal Reasoning Verification: Test if agents can adhere to strict time constraints.
+[C] **YAML Eval Specs:** `load_eval_set_yaml()` loads eval sets from YAML files (requires `yaml` feature gate). All `ResponseCriteria` variants except `Custom` are supported.
 
-## 4. Observability & Standards
+---
 
-[ ] OpenInference/OTEL Compliance: Native support for OpenInference semantic conventions, ensuring traces are portable across any OpenTelemetry-compatible backend.
+## Planned / Future Features
 
-[C] Cost-Latency Spiral Monitoring: Real-time tracking of token usage and financial cost per resolution. `BudgetGuard` monitors cost, token, and turn thresholds in real-time during stream collection via `TrajectoryCollector::collect_with_guard()`. Exceeding any threshold triggers `CancellationToken` cancellation. `EvalRunner::run_case()` automatically wires `BudgetGuard` from `EvalCase` budget constraints. `BudgetEvaluator` provides post-hoc scoring. Gap: no per-tool cost attribution.
+The following features are not yet implemented.
 
-[ ] Distributed Multi-Agent Tracing: Stitch together execution traces across multiple agents and sub-agents into a unified "Agent Graph".
+### Trajectory & Process Evaluation
 
-## 5. Production Readiness & Governance
+[ ] **Step-Level Reproducibility:** A "replay" feature that allows developers to re-run simulations from any specific intermediate step to debug the exact moment of failure.
 
-[ ] Real-Time Guardrail Conversion: Automatically convert successful evaluation criteria into real-time production guardrails.
+### Advanced Verification & Judging
 
-[C] CI/CD Gating: `GateConfig` checks evaluation results against pass-rate, cost, and duration thresholds. Can be wired into deployment pipelines to block releases when benchmarks regress.
+[ ] **Agent-as-a-Judge (AaaJ) Support:** Multi-agent "judge" systems that employ planning and tool-augmented evidence collection to verify outcomes.
 
-[ ] Human-in-the-Loop (HITL) Annotation Queues: Structured workflows for subject matter experts to review and label "uncertain" traces, feeding back into the evaluation dataset.
+[ ] **Executable Verification (Sandboxing):** Built-in sandboxed environments where a judge can execute the agent's proposed code or API calls.
 
-[C] Deterministic Audit Trails: `AuditedInvocation` wraps invocation traces with SHA-256 hash chains for tamper detection. Each turn is hashed individually; concatenated hashes produce a chain hash verified via `AuditedInvocation::verify()`.
+[ ] **Automated Root Cause Analysis:** AI-driven insights that automatically group failures into patterns (e.g., "tool hallucination," "instruction drift").
+
+### Simulation & Stress Testing
+
+[ ] **Dynamic Environment Simulation:** Support for "asynchronous" testing where the environment state can change independently of the agent's actions.
+
+[ ] **Synthetic Persona Generation:** Simulate diverse user personas and adversarial edge cases.
+
+[ ] **Temporal Reasoning Verification:** Test if agents can adhere to strict time constraints.
+
+### Observability & Standards
+
+[ ] **OpenInference/OTEL Compliance:** Native support for OpenInference semantic conventions for portable traces.
+
+[ ] **Distributed Multi-Agent Tracing:** Stitch together execution traces across multiple agents and sub-agents into a unified "Agent Graph".
+
+### Production Readiness & Governance
+
+[ ] **Real-Time Guardrail Conversion:** Automatically convert successful evaluation criteria into real-time production guardrails.
+
+[ ] **Human-in-the-Loop (HITL) Annotation Queues:** Structured workflows for subject matter experts to review and label "uncertain" traces.

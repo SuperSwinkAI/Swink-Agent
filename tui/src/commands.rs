@@ -122,10 +122,7 @@ fn execute_hash_command(cmd: &str) -> CommandResult {
         "approve smart" => CommandResult::SetApprovalMode(ApprovalModeArg::Smart),
         "approve untrust" => CommandResult::UntrustAll,
         _ if cmd.starts_with("approve untrust ") => {
-            let tool_name = cmd
-                .strip_prefix("approve untrust ")
-                .unwrap_or("")
-                .trim();
+            let tool_name = cmd.strip_prefix("approve untrust ").unwrap_or("").trim();
             if tool_name.is_empty() {
                 CommandResult::UntrustAll
             } else {

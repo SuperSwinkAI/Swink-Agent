@@ -9,7 +9,10 @@
 use std::io::{self, BufRead, Read as _, Write};
 use std::path::PathBuf;
 
-use swink_agent::LlmMessage;
+use swink_agent::{
+    AgentMessage, CustomMessageRegistry, LlmMessage, deserialize_custom_message,
+    serialize_custom_message,
+};
 
 use crate::meta::SessionMeta;
 use crate::store::SessionStore;
@@ -109,8 +112,7 @@ impl SessionStore for JsonlSessionStore {
             .lines()
             .next()
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "empty session file"))??;
-        let mut meta: SessionMeta =
-            serde_json::from_str(&first_line).map_err(io::Error::other)?;
+        let mut meta: SessionMeta = serde_json::from_str(&first_line).map_err(io::Error::other)?;
         meta.updated_at = now_utc();
 
         // Rewrite line 1 with updated meta, keep existing message lines, then append new ones
@@ -173,10 +175,12 @@ impl SessionStore for JsonlSessionStore {
         let meta_line = lines
             .next()
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "empty session file"))??;
-        let meta: SessionMeta =
-            serde_json::from_str(&meta_line).map_err(|e| {
-                io::Error::new(io::ErrorKind::InvalidData, format!("invalid session metadata: {e}"))
-            })?;
+        let meta: SessionMeta = serde_json::from_str(&meta_line).map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("invalid session metadata: {e}"),
+            )
+        })?;
 
         // Remaining lines: LlmMessages with corruption tolerance
         let mut messages = Vec::new();
@@ -238,6 +242,145 @@ impl SessionStore for JsonlSessionStore {
         let path = self.sessions_dir.join(format!("{id}.jsonl"));
         std::fs::remove_file(path)
     }
+
+    fn save_full(
+        &self,
+        id: &str,
+        meta: &SessionMeta,
+        messages: &[AgentMessage],
+    ) -> io::Result<()> {
+        validate_session_id(id)?;
+
+        let path = self.sessions_dir.join(format!("{id}.jsonl"));
+
+        let file = std::fs::File::create(&path)?;
+        let mut writer = io::BufWriter::new(file);
+
+        // First line: metadata
+        serde_json::to_writer(&mut writer, meta).map_err(io::Error::other)?;
+        writeln!(writer)?;
+
+        // Subsequent lines: one message per line
+        for msg in messages {
+            match msg {
+                AgentMessage::Llm(llm) => {
+                    serde_json::to_writer(&mut writer, llm).map_err(io::Error::other)?;
+                    writeln!(writer)?;
+                }
+                AgentMessage::Custom(custom) => {
+                    if let Some(mut envelope) = serialize_custom_message(custom.as_ref()) {
+                        // Tag the envelope so load_full can distinguish it from LlmMessage
+                        envelope
+                            .as_object_mut()
+                            .expect("envelope is an object")
+                            .insert("_custom".to_string(), serde_json::Value::Bool(true));
+                        serde_json::to_writer(&mut writer, &envelope)
+                            .map_err(io::Error::other)?;
+                        writeln!(writer)?;
+                    } else {
+                        tracing::warn!(
+                            "skipping non-serializable CustomMessage in session {id}: {:?}",
+                            custom
+                        );
+                    }
+                }
+            }
+        }
+
+        writer.flush()?;
+        Ok(())
+    }
+
+    fn load_full(
+        &self,
+        id: &str,
+        registry: Option<&CustomMessageRegistry>,
+    ) -> io::Result<(SessionMeta, Vec<AgentMessage>)> {
+        validate_session_id(id)?;
+
+        let path = self.sessions_dir.join(format!("{id}.jsonl"));
+        let file = std::fs::File::open(&path).map_err(|e| {
+            if e.kind() == io::ErrorKind::NotFound {
+                io::Error::new(io::ErrorKind::NotFound, format!("session not found: {id}"))
+            } else {
+                e
+            }
+        })?;
+
+        let file_meta = file.metadata()?;
+        if file_meta.len() == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "empty session file",
+            ));
+        }
+
+        let reader = io::BufReader::new(file);
+        let mut lines = reader.lines();
+
+        // First line: metadata
+        let meta_line = lines
+            .next()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "empty session file"))??;
+        let meta: SessionMeta = serde_json::from_str(&meta_line).map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("invalid session metadata: {e}"),
+            )
+        })?;
+
+        // Remaining lines: LlmMessage or custom message envelopes
+        let mut messages = Vec::new();
+        for (line_num, line_result) in lines.enumerate() {
+            let line = line_result?;
+            if line.trim().is_empty() {
+                continue;
+            }
+
+            // Try to parse as a JSON value first to check for _custom tag
+            match serde_json::from_str::<serde_json::Value>(&line) {
+                Ok(value) => {
+                    if value.get("_custom").and_then(serde_json::Value::as_bool) == Some(true) {
+                        // Custom message envelope
+                        if let Some(reg) = registry {
+                            match deserialize_custom_message(reg, &value) {
+                                Ok(custom) => messages.push(AgentMessage::Custom(custom)),
+                                Err(e) => {
+                                    tracing::warn!(
+                                        line = line_num + 2,
+                                        error = %e,
+                                        "skipping unrestorable custom message in session {id}"
+                                    );
+                                }
+                            }
+                        }
+                        // If no registry, silently skip custom messages
+                    } else {
+                        // Standard LlmMessage
+                        match serde_json::from_value::<LlmMessage>(value) {
+                            Ok(msg) => messages.push(AgentMessage::Llm(msg)),
+                            Err(e) => {
+                                tracing::warn!(
+                                    line = line_num + 2,
+                                    error = %e,
+                                    "skipping corrupted message line in session {id}"
+                                );
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        line = line_num + 2,
+                        error = %e,
+                        "skipping unparseable line in session {id}"
+                    );
+                }
+            }
+        }
+
+        Ok((meta, messages))
+    }
 }
 
 #[cfg(test)]
@@ -286,5 +429,106 @@ mod tests {
         validate_session_id("20250315_120000").unwrap();
         validate_session_id("my-session").unwrap();
         validate_session_id("session_123").unwrap();
+    }
+
+    #[test]
+    fn save_full_load_full_roundtrip_with_custom_messages() {
+        use swink_agent::{AgentMessage, CustomMessage, CustomMessageRegistry};
+
+        #[derive(Debug)]
+        struct TestCustomMsg {
+            data: String,
+        }
+
+        impl CustomMessage for TestCustomMsg {
+            fn as_any(&self) -> &dyn std::any::Any {
+                self
+            }
+            fn type_name(&self) -> Option<&str> {
+                Some("TestCustomMsg")
+            }
+            fn to_json(&self) -> Option<serde_json::Value> {
+                Some(serde_json::json!({ "data": self.data }))
+            }
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let store = JsonlSessionStore::new(dir.path().to_path_buf()).unwrap();
+
+        let meta = SessionMeta {
+            id: "test-full".to_string(),
+            title: "Full roundtrip".to_string(),
+            created_at: chrono::DateTime::from_timestamp(1_710_500_000, 0)
+                .unwrap()
+                .to_utc(),
+            updated_at: chrono::DateTime::from_timestamp(1_710_500_000, 0)
+                .unwrap()
+                .to_utc(),
+        };
+
+        let messages: Vec<AgentMessage> = vec![
+            AgentMessage::Llm(swink_agent::LlmMessage::User(swink_agent::UserMessage {
+                content: vec![swink_agent::ContentBlock::Text {
+                    text: "Hello".to_string(),
+                }],
+                timestamp: 100,
+            })),
+            AgentMessage::Custom(Box::new(TestCustomMsg {
+                data: "custom-payload".to_string(),
+            })),
+            AgentMessage::Llm(swink_agent::LlmMessage::User(swink_agent::UserMessage {
+                content: vec![swink_agent::ContentBlock::Text {
+                    text: "World".to_string(),
+                }],
+                timestamp: 200,
+            })),
+        ];
+
+        store.save_full("test-full", &meta, &messages).unwrap();
+
+        // Load with registry — custom message restored
+        let mut registry = CustomMessageRegistry::new();
+        registry.register(
+            "TestCustomMsg",
+            Box::new(|val: serde_json::Value| {
+                let data = val
+                    .get("data")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| "missing data".to_string())?;
+                Ok(Box::new(TestCustomMsg {
+                    data: data.to_string(),
+                }) as Box<dyn CustomMessage>)
+            }),
+        );
+
+        let (loaded_meta, loaded_messages) =
+            store.load_full("test-full", Some(&registry)).unwrap();
+        assert_eq!(loaded_meta.id, "test-full");
+        assert_eq!(loaded_messages.len(), 3);
+        assert!(matches!(
+            loaded_messages[0],
+            AgentMessage::Llm(swink_agent::LlmMessage::User(_))
+        ));
+        assert!(matches!(loaded_messages[1], AgentMessage::Custom(_)));
+        assert!(matches!(
+            loaded_messages[2],
+            AgentMessage::Llm(swink_agent::LlmMessage::User(_))
+        ));
+
+        // Verify custom message content via downcast
+        let custom = loaded_messages[1]
+            .downcast_ref::<TestCustomMsg>()
+            .unwrap();
+        assert_eq!(custom.data, "custom-payload");
+
+        // Load without registry — custom messages skipped
+        let (_, loaded_no_reg) = store.load_full("test-full", None).unwrap();
+        assert_eq!(loaded_no_reg.len(), 2);
+        assert!(matches!(loaded_no_reg[0], AgentMessage::Llm(_)));
+        assert!(matches!(loaded_no_reg[1], AgentMessage::Llm(_)));
+
+        // Regular load() still works (skips custom lines with warning)
+        let (_, llm_only) = store.load("test-full").unwrap();
+        assert_eq!(llm_only.len(), 2);
     }
 }

@@ -135,7 +135,7 @@ pub fn default_local_connection() -> Result<ModelConnection, LocalPresetError> {
 
 #[cfg(test)]
 mod tests {
-    use swink_agent::{ModelSpec, model_catalog};
+    use swink_agent::model_catalog;
 
     use super::*;
 

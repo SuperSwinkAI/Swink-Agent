@@ -11,10 +11,7 @@ use std::sync::Arc;
 use futures::Stream;
 use tokio_util::sync::CancellationToken;
 
-use swink_agent::{
-    Agent, AgentContext, AgentMessage, AgentOptions, AssistantMessageEvent, ContentBlock, Cost,
-    LlmMessage, ModelSpec, StopReason, StreamFn, StreamOptions, Usage,
-};
+use swink_agent::prelude::*;
 
 // ─── DummyStreamFn ──────────────────────────────────────────────────────────
 
@@ -97,12 +94,7 @@ async fn main() {
         .expect("prompt failed");
 
     // Step 4: Print results.
-    for msg in &result.messages {
-        if let AgentMessage::Llm(LlmMessage::Assistant(assistant)) = msg {
-            let text = ContentBlock::extract_text(&assistant.content);
-            println!("Response: {text}");
-        }
-    }
+    println!("Response: {}", result.assistant_text());
 
     println!("Token usage: {:?}", result.usage);
 }

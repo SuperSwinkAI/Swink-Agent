@@ -8,9 +8,9 @@
 //! `MessageRole`, `AgentStatus`, `DisplayMessage`, and `TuiConfig`.
 
 use swink_agent::ApprovalMode;
+use swink_agent_tui::App;
 use swink_agent_tui::app::{AgentStatus, DisplayMessage, MessageRole, OperatingMode};
 use swink_agent_tui::config::TuiConfig;
-use swink_agent_tui::App;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -322,7 +322,10 @@ fn smart_mode_trust_semantics() {
     let untrusted = app.session_trusted_tools.contains("WriteFile");
 
     assert!(trusted, "ReadFile should be auto-approved (trusted)");
-    assert!(!untrusted, "WriteFile should require approval (not trusted)");
+    assert!(
+        !untrusted,
+        "WriteFile should require approval (not trusted)"
+    );
 }
 
 // ---------------------------------------------------------------------------

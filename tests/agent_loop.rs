@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use common::{
-    ApiKeyCapturingStreamFn, ContextCapturingStreamFn, MockStreamFn, MockTool, default_model,
+    MockApiKeyCapturingStreamFn, MockContextCapturingStreamFn, MockStreamFn, MockTool, default_model,
     text_only_events, tool_call_events,
 };
 use futures::Stream;
@@ -16,19 +16,19 @@ use serde_json::json;
 use tokio_util::sync::CancellationToken;
 
 use swink_agent::{
-    AgentEvent, AgentLoopConfig, AgentMessage, AgentTool, AgentToolResult,
-    AssistantMessageEvent, ContentBlock, Cost, CustomMessage, DefaultRetryStrategy, LlmMessage,
-    MessageProvider, StopReason, StreamFn, StreamOptions, ToolResultMessage,
-    TurnSnapshot, Usage, UserMessage, agent_loop,
+    AgentEvent, AgentLoopConfig, AgentMessage, AgentTool, AgentToolResult, AssistantMessageEvent,
+    ContentBlock, Cost, CustomMessage, DefaultRetryStrategy, LlmMessage, MessageProvider,
+    StopReason, StreamFn, StreamOptions, ToolResultMessage, TurnSnapshot, Usage, UserMessage,
+    agent_loop,
 };
 
-// ─── UpdatingTool ─────────────────────────────────────────────────────────
+// ─── MockUpdatingTool ─────────────────────────────────────────────────────────
 
-struct UpdatingTool {
+struct MockUpdatingTool {
     tool_name: String,
 }
 
-impl UpdatingTool {
+impl MockUpdatingTool {
     fn new(name: &str) -> Self {
         Self {
             tool_name: name.to_string(),
@@ -36,7 +36,7 @@ impl UpdatingTool {
     }
 }
 
-impl AgentTool for UpdatingTool {
+impl AgentTool for MockUpdatingTool {
     fn name(&self) -> &str {
         &self.tool_name
     }
@@ -316,7 +316,7 @@ async fn get_api_key() {
     let calls: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
     let calls_clone = Arc::clone(&calls);
 
-    let stream_fn = Arc::new(ApiKeyCapturingStreamFn::new(vec![
+    let stream_fn = Arc::new(MockApiKeyCapturingStreamFn::new(vec![
         tool_call_events("tc_1", "tool_a", "{}"),
         text_only_events("done"),
     ]));
@@ -369,7 +369,7 @@ async fn tool_execution_update_events() {
         text_only_events("done"),
     ]));
 
-    let tool = Arc::new(UpdatingTool::new("updating_tool"));
+    let tool = Arc::new(MockUpdatingTool::new("updating_tool"));
     let mut config = default_config(stream_fn);
     config.tools = vec![tool];
 
@@ -834,7 +834,7 @@ async fn convert_to_llm_filter() {
         }
     }
 
-    let capturing_fn = Arc::new(ContextCapturingStreamFn::new(vec![text_only_events("ok")]));
+    let capturing_fn = Arc::new(MockContextCapturingStreamFn::new(vec![text_only_events("ok")]));
 
     let stream_fn: Arc<dyn StreamFn> = Arc::clone(&capturing_fn) as Arc<dyn StreamFn>;
 
@@ -978,15 +978,15 @@ async fn validation_failure() {
     );
 }
 
-// ─── PanickingTool ────────────────────────────────────────────────────
+// ─── MockPanickingTool ────────────────────────────────────────────────────
 
 /// A tool that panics during execution.
-struct PanickingTool {
+struct MockPanickingTool {
     tool_name: String,
     panic_message: String,
 }
 
-impl PanickingTool {
+impl MockPanickingTool {
     fn new(name: &str, panic_message: &str) -> Self {
         Self {
             tool_name: name.to_string(),
@@ -995,7 +995,7 @@ impl PanickingTool {
     }
 }
 
-impl AgentTool for PanickingTool {
+impl AgentTool for MockPanickingTool {
     fn name(&self) -> &str {
         &self.tool_name
     }
@@ -1039,7 +1039,7 @@ async fn panicking_tool_produces_error_result() {
         text_only_events("after panic"),
     ]));
 
-    let tool = Arc::new(PanickingTool::new(
+    let tool = Arc::new(MockPanickingTool::new(
         "panicking_tool",
         "deliberate test panic",
     ));

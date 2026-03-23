@@ -124,7 +124,10 @@ mod tests {
         assert!(!lines.is_empty());
         // Each line should have spans with colors (not just plain text)
         for line in &lines {
-            assert!(!line.spans.is_empty(), "each line should have at least one span");
+            assert!(
+                !line.spans.is_empty(),
+                "each line should have at least one span"
+            );
         }
     }
 

@@ -169,7 +169,7 @@ stateDiagram-v2
 
 ### Event Forwarders
 
-In addition to synchronous listeners, the agent supports async event forwarders (`event_forwarders: Vec<EventForwarderFn>`). Add them via `AgentOptions::with_event_forwarder()` or `Agent::add_event_forwarder()`. Forwarders run after all synchronous subscribers complete and are suitable for async side effects — writing to a log store, forwarding to a metrics sink, etc.
+In addition to synchronous listeners, the agent supports async event forwarders (`event_forwarders: Vec<EventForwarderFn>`). Add them via `AgentOptions::with_event_forwarder()` or `Agent::add_event_forwarder()`. Forwarders run after all synchronous subscribers complete and are suitable for synchronous side effects (e.g., queueing async tasks, updating metrics). Forwarders are synchronous `Fn(AgentEvent)` closures and will block event dispatch if they perform blocking I/O.
 
 ---
 
@@ -189,13 +189,13 @@ sequenceDiagram
     App->>Agent: steer(message)
     Note over Agent: pushed to steering_queue
 
-    RunLoop->>Agent: poll get_steering_messages()
+    RunLoop->>Agent: poll message_provider.poll_steering()
     Agent-->>RunLoop: [steering message]
     Note over RunLoop: skip remaining tools,<br/>inject steering msg,<br/>start new turn
 
     Note over RunLoop: agent reaches natural stop...
 
-    RunLoop->>Agent: poll get_follow_up_messages()
+    RunLoop->>Agent: poll message_provider.poll_follow_up()
     Agent-->>RunLoop: [] (empty)
     RunLoop-->>Agent: AgentEnd
     Agent-->>App: AgentResult

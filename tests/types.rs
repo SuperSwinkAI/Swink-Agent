@@ -129,7 +129,10 @@ fn message_conversation_sequence() {
         })),
     ];
     assert_eq!(messages.len(), 4);
-    assert!(matches!(&messages[0], AgentMessage::Llm(LlmMessage::User(_))));
+    assert!(matches!(
+        &messages[0],
+        AgentMessage::Llm(LlmMessage::User(_))
+    ));
     assert!(matches!(
         &messages[1],
         AgentMessage::Llm(LlmMessage::Assistant(_))
@@ -154,9 +157,7 @@ fn llm_message_serde_roundtrip() {
         timestamp: 100,
     });
     let assistant = LlmMessage::Assistant(AssistantMessage {
-        content: vec![ContentBlock::Text {
-            text: "hi".into(),
-        }],
+        content: vec![ContentBlock::Text { text: "hi".into() }],
         provider: "openai".into(),
         model_id: "gpt-4".into(),
         usage: Usage {
@@ -240,9 +241,7 @@ fn content_block_thinking_with_signature() {
         thinking: "no sig".into(),
         signature: None,
     };
-    assert!(
-        matches!(&no_sig, ContentBlock::Thinking { signature, .. } if signature.is_none())
-    );
+    assert!(matches!(&no_sig, ContentBlock::Thinking { signature, .. } if signature.is_none()));
 }
 
 // T018
@@ -538,9 +537,7 @@ fn custom_message_wrap_and_store() {
     };
     let messages: Vec<AgentMessage> = vec![
         AgentMessage::Llm(LlmMessage::User(UserMessage {
-            content: vec![ContentBlock::Text {
-                text: "hi".into(),
-            }],
+            content: vec![ContentBlock::Text { text: "hi".into() }],
             timestamp: 0,
         })),
         AgentMessage::Custom(Box::new(custom)),
@@ -653,7 +650,10 @@ fn model_spec_construction_and_builder() {
     assert_eq!(spec.model_id, "claude-sonnet-4-6");
     assert_eq!(spec.thinking_level, ThinkingLevel::High);
     assert_eq!(
-        spec.thinking_budgets.as_ref().unwrap().get(&ThinkingLevel::High),
+        spec.thinking_budgets
+            .as_ref()
+            .unwrap()
+            .get(&ThinkingLevel::High),
         Some(10_000)
     );
     assert!(spec.provider_config.is_some());
@@ -742,9 +742,7 @@ fn agent_context_construction() {
                 timestamp: 0,
             })),
             AgentMessage::Llm(LlmMessage::Assistant(AssistantMessage {
-                content: vec![ContentBlock::Text {
-                    text: "hi".into(),
-                }],
+                content: vec![ContentBlock::Text { text: "hi".into() }],
                 provider: "test".into(),
                 model_id: "test-model".into(),
                 usage: Usage::default(),

@@ -82,7 +82,11 @@ fn append_does_not_rewrite_file() {
     let store = JsonlSessionStore::new(tmp.path().to_path_buf()).unwrap();
 
     let meta = sample_meta("append_test", "Append test");
-    let initial_msgs = vec![user_message("msg1"), user_message("msg2"), user_message("msg3")];
+    let initial_msgs = vec![
+        user_message("msg1"),
+        user_message("msg2"),
+        user_message("msg3"),
+    ];
     store.save("append_test", &meta, &initial_msgs).unwrap();
 
     let path = tmp.path().join("append_test.jsonl");

@@ -45,7 +45,7 @@ Set up the TUI binary crate, terminal initialization/teardown with panic safety,
 
 ### What was built
 
-- `tui/Cargo.toml` — binary crate with dependencies on `swink-agent`, `swink-agent-adapters`, `ratatui` 0.29, `crossterm` 0.28 (event-stream), `tokio`, `syntect` 5, `futures`, `arboard` 3, `toml` 0.8, `dirs` 6, `serde`
+- `tui/Cargo.toml` — binary crate with dependencies on `swink-agent`, `swink-agent-adapters`, `ratatui` 0.30, `crossterm` 0.29 (event-stream), `tokio`, `syntect` 5, `futures`, `arboard` 3, `toml` 0.8, `dirs` 6, `serde`
 - Workspace `Cargo.toml` updated with TUI as a workspace member
 - `main.rs` — terminal setup/teardown with panic hook, agent creation from environment variables
 - `app.rs` — `App` struct with async event loop using `crossterm::EventStream` + `tokio::select!`, dirty flag for render gating
@@ -229,23 +229,23 @@ UX polish, configuration, command system, inline diffs, external editor, plan mo
 
 ## Phase T5 — Planned Features
 
-**Status:** Not started.
+**Status:** Not started. Plan mode, tiered approval, and per-tool session trust were implemented in Phase T4 (spec 029) and are no longer part of this phase.
 
 ### Scope
 
-Features described in PRD §16 that are not yet implemented.
+Remaining diff interaction features described in PRD §16 that are not yet implemented.
 
 ### Planned Deliverables
 
-- **Per-hunk approve/reject** — each changed hunk in the inline diff view becomes an independent decision point. Approved hunks are applied; rejected hunks are reverted and communicated back to the agent as a tool result
 - **Side-by-side diff layout** — when terminal width exceeds a threshold (e.g., 160 columns), switch from unified to side-by-side diff rendering
+- **Per-hunk approve/reject** — each changed hunk in the inline diff view becomes an independent decision point. Approved hunks are applied; rejected hunks are reverted and communicated back to the agent as a tool result
 
 ### Acceptance Criteria
 
 | # | Criterion | Status |
 |---|---|---|
-| T5.1 | Per-hunk approve/reject in inline diff view | Planned |
-| T5.2 | Side-by-side diff layout when terminal width exceeds threshold | Planned |
+| T5.1 | Side-by-side diff layout when terminal width exceeds threshold | Planned |
+| T5.2 | Per-hunk approve/reject in inline diff view | Planned |
 
 ---
 
@@ -257,4 +257,4 @@ Features described in PRD §16 that are not yet implemented.
 | T2 — Input + Conversation | Text editor, message display, markdown, scrolling | ✅ Complete |
 | T3 — Streaming + Tools | Agent integration, streaming display, tool panel, syntax highlighting | ✅ Complete |
 | T4 — Polish | Config, commands, diffs, editor, plan mode, approval, collapse, context gauge | ✅ Complete |
-| T5 — Planned | Per-hunk approve/reject, side-by-side diffs | Not started |
+| T5 — Planned | Side-by-side diffs, per-hunk approve/reject | Not started |

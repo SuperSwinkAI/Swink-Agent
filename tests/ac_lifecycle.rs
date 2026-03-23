@@ -9,9 +9,7 @@ mod common;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use common::{
-    MockStreamFn, default_convert, default_model, text_only_events, user_msg,
-};
+use common::{MockStreamFn, default_convert, default_model, text_only_events, user_msg};
 
 use swink_agent::{
     Agent, AgentEvent, AgentMessage, AgentOptions, AssistantMessageEvent, ContentBlock, Cost,
@@ -96,7 +94,9 @@ fn make_agent(stream_fn: Arc<dyn swink_agent::StreamFn>) -> Agent {
 
 #[tokio::test]
 async fn agent_creation_with_mock_stream() {
-    let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("Hello from agent")]));
+    let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events(
+        "Hello from agent",
+    )]));
     let mut agent = make_agent(stream_fn);
 
     let result = agent.prompt_async(vec![user_msg("hi")]).await.unwrap();
@@ -125,7 +125,10 @@ async fn message_processing_produces_response() {
     let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events(expected_text)]));
     let mut agent = make_agent(stream_fn);
 
-    let result = agent.prompt_async(vec![user_msg("What is the answer?")]).await.unwrap();
+    let result = agent
+        .prompt_async(vec![user_msg("What is the answer?")])
+        .await
+        .unwrap();
 
     // Extract the assistant text and verify it matches the scripted output.
     let response_text: String = result
@@ -167,10 +170,18 @@ async fn lifecycle_events_emitted_in_order() {
 
     let _result = agent.prompt_async(vec![user_msg("hi")]).await.unwrap();
 
-    let turn_start = collector.position("TurnStart").expect("TurnStart must be emitted");
-    let msg_start = collector.position("MessageStart").expect("MessageStart must be emitted");
-    let msg_end = collector.position("MessageEnd").expect("MessageEnd must be emitted");
-    let turn_end = collector.position("TurnEnd").expect("TurnEnd must be emitted");
+    let turn_start = collector
+        .position("TurnStart")
+        .expect("TurnStart must be emitted");
+    let msg_start = collector
+        .position("MessageStart")
+        .expect("MessageStart must be emitted");
+    let msg_end = collector
+        .position("MessageEnd")
+        .expect("MessageEnd must be emitted");
+    let turn_end = collector
+        .position("TurnEnd")
+        .expect("TurnEnd must be emitted");
 
     assert!(
         turn_start < msg_start,
@@ -222,7 +233,10 @@ async fn streaming_delivers_text_tokens() {
     let collector = EventCollector::new();
     let _sub = agent.subscribe(collector.subscriber());
 
-    let result = agent.prompt_async(vec![user_msg("say hello")]).await.unwrap();
+    let result = agent
+        .prompt_async(vec![user_msg("say hello")])
+        .await
+        .unwrap();
 
     // Verify MessageUpdate events were emitted.
     let update_count = collector

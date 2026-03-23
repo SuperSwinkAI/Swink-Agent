@@ -14,10 +14,10 @@ use futures::Stream;
 use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
 
+use swink_agent::prelude::*;
 use swink_agent::{
-    Agent, AgentMessage, AgentOptions, AgentToolResult, AssistantMessageEvent, BashTool,
-    ContentBlock, Cost, FnTool, JsonSchema, LlmMessage, ModelSpec, ReadFileTool, StopReason,
-    StreamFn, StreamOptions, ToolApproval, ToolApprovalRequest, Usage, WriteFileTool,
+    BashTool, JsonSchema, ReadFileTool, ToolApproval, ToolApprovalRequest, WriteFileTool,
+    selective_approve,
 };
 
 // ─── Mock StreamFn ──────────────────────────────────────────────────────────
@@ -63,20 +63,7 @@ impl StreamFn for MockStreamFn {
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 fn text_events(text: &str) -> Vec<AssistantMessageEvent> {
-    vec![
-        AssistantMessageEvent::Start,
-        AssistantMessageEvent::TextStart { content_index: 0 },
-        AssistantMessageEvent::TextDelta {
-            content_index: 0,
-            delta: text.to_string(),
-        },
-        AssistantMessageEvent::TextEnd { content_index: 0 },
-        AssistantMessageEvent::Done {
-            stop_reason: StopReason::Stop,
-            usage: Usage::default(),
-            cost: Cost::default(),
-        },
-    ]
+    AssistantMessageEvent::text_response(text)
 }
 
 // ─── Custom tool params ─────────────────────────────────────────────────────
@@ -133,7 +120,7 @@ async fn main() {
         stream_fn,
     )
     .with_tools(tools)
-    .with_approve_tool(swink_agent::selective_approve(
+    .with_approve_tool(selective_approve(
         |req: ToolApprovalRequest| -> Pin<Box<dyn std::future::Future<Output = ToolApproval> + Send>> {
             Box::pin(async move {
                 // In a real application you would prompt the user here.
@@ -156,10 +143,5 @@ async fn main() {
         .expect("prompt failed");
 
     // Step 5: Print the response.
-    for msg in &result.messages {
-        if let AgentMessage::Llm(LlmMessage::Assistant(assistant)) = msg {
-            let text = ContentBlock::extract_text(&assistant.content);
-            println!("Assistant: {text}");
-        }
-    }
+    println!("Assistant: {}", result.assistant_text());
 }

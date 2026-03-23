@@ -2,7 +2,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use swink_agent_local_llm::{ModelConfig, ProgressCallbackFn, ProgressEvent};
+use swink_agent_local_llm::{ProgressCallbackFn, ProgressEvent};
 
 /// Collects [`ProgressEvent`]s emitted during model download/load.
 ///
@@ -19,10 +19,6 @@ impl ProgressCollector {
         self.events.lock().unwrap().clone()
     }
 
-    /// Return the number of events collected.
-    pub fn len(&self) -> usize {
-        self.events.lock().unwrap().len()
-    }
 }
 
 /// Create a [`ProgressCallbackFn`] and its paired [`ProgressCollector`].
@@ -36,15 +32,3 @@ pub fn progress_collector() -> (ProgressCallbackFn, ProgressCollector) {
     (cb, collector)
 }
 
-/// Create a test [`ModelConfig`] with defaults suitable for unit tests.
-///
-/// Does not actually download anything — just provides valid config values.
-pub fn test_model_config() -> ModelConfig {
-    ModelConfig {
-        repo_id: "test/test-model".to_string(),
-        filename: "test.gguf".to_string(),
-        gpu_layers: 0,
-        context_length: 8192,
-        chat_template: None,
-    }
-}

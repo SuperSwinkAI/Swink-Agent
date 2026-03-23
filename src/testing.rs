@@ -1,4 +1,4 @@
-//! Test helper functions for building common message types and mock StreamFn.
+//! Test helper functions for building common message types and mock `StreamFn`.
 //!
 //! Gated behind the `test-helpers` feature so downstream crates can
 //! reuse them in their own test suites without duplicating constructors.

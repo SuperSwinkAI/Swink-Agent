@@ -23,6 +23,8 @@ pub mod stream;
 pub use embedding::{EmbeddingConfig, EmbeddingModel};
 pub use error::LocalModelError;
 pub use model::{LocalModel, ModelConfig, ModelState};
-pub use preset::{DEFAULT_LOCAL_PRESET_ID, LocalPresetError, ModelPreset, default_local_connection};
+pub use preset::{
+    DEFAULT_LOCAL_PRESET_ID, LocalPresetError, ModelPreset, default_local_connection,
+};
 pub use progress::{ProgressCallbackFn, ProgressEvent};
 pub use stream::LocalStreamFn;

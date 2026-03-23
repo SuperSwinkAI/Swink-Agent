@@ -341,6 +341,55 @@ A single recorded turn:
 
 ---
 
+## L3 — CI/CD Gating
+
+The gate system checks an `EvalSetResult` against configurable thresholds and produces a pass/fail verdict with a process exit code, suitable for CI/CD pipelines.
+
+`GateConfig` supports three optional thresholds:
+
+| Threshold | Field | Check |
+|---|---|---|
+| Minimum pass rate | `min_pass_rate` (f64, 0.0–1.0) | Fraction of cases that passed |
+| Maximum cost | `max_cost` (f64, dollars) | Total cost across all cases |
+| Maximum duration | `max_duration` (Duration) | Total wall-clock time |
+
+`check_gate(result, config)` returns a `GateResult` with `passed: bool`, `exit_code: i32` (0 = pass, 1 = fail), and a human-readable `summary`. Multiple threshold violations are reported together. `GateResult::exit()` terminates the process with the appropriate exit code.
+
+---
+
+## L3 — Audit Trails
+
+`AuditedInvocation` wraps an `Invocation` with a SHA-256 hash chain for tamper detection. Each turn is serialized to canonical JSON and hashed individually; the concatenated turn hashes are then hashed again to produce a single `chain_hash`.
+
+- `AuditedInvocation::from_invocation(inv)` computes and stores the hash chain.
+- `AuditedInvocation::verify()` recomputes all hashes and returns `true` if they match the stored values.
+
+Serializable via serde for persistence alongside evaluation results. Note: `serde_json::Value` map key order is insertion-dependent, so audit trails verify same-instance integrity, not cross-process reproducibility.
+
+---
+
+## L3 — Budget Guarding
+
+`BudgetGuard` enables real-time cancellation of agent runs that exceed cost, token, or turn thresholds during stream collection. It works with `TrajectoryCollector::collect_with_guard()`.
+
+| Threshold | Builder method |
+|---|---|
+| Max cost (dollars) | `with_max_cost(f64)` |
+| Max tokens | `with_max_tokens(u64)` |
+| Max turns | `with_max_turns(usize)` |
+
+`BudgetGuard::from_case(case, cancel)` constructs a guard from an `EvalCase`'s budget constraints. After each event, `collect_with_guard` checks accumulated metrics; if any threshold is exceeded, it cancels the `CancellationToken` and logs a warning. The stream is fully drained so the returned `Invocation` trace is complete even after cancellation.
+
+`EvalRunner::run_case()` automatically wires a `BudgetGuard` when the case defines budget constraints.
+
+---
+
+## L3 — YAML Eval Specs
+
+The `yaml` feature gate enables `load_eval_set_yaml(path)`, which deserializes an `EvalSet` from a YAML file via `serde_yaml`. All `ResponseCriteria` variants except `Custom` are supported; `Custom` requires programmatic construction.
+
+---
+
 ## L4 — Future Comparative Metrics
 
 The design accommodates A/B model comparison and Pareto frontier analysis without breaking changes:

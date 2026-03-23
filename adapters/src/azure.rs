@@ -78,18 +78,7 @@ fn azure_stream<'a>(
             let code = status.as_u16();
             let body = response.text().await.unwrap_or_default();
             warn!(status = code, "Azure HTTP error");
-            let event = match code {
-                401 | 403 => AssistantMessageEvent::error_auth(format!(
-                    "Azure auth error (HTTP {code}): {body}"
-                )),
-                429 => AssistantMessageEvent::error_throttled(format!(
-                    "Azure rate limit (HTTP 429): {body}"
-                )),
-                500..=599 => AssistantMessageEvent::error_network(format!(
-                    "Azure server error (HTTP {code}): {body}"
-                )),
-                _ => AssistantMessageEvent::error(format!("Azure HTTP {code}: {body}")),
-            };
+            let event = crate::classify::error_event_from_status(code, &body, "Azure");
             return stream::iter(vec![event]).left_stream();
         }
 

@@ -148,7 +148,8 @@ flowchart TB
     subgraph EvalLayer["📊 Evaluation"]
         EvalRunner["EvalRunner<br/>Orchestration pipeline"]
         TrajectoryCollector["TrajectoryCollector<br/>AgentEvent → Invocation"]
-        EvalRegistry["EvaluatorRegistry<br/>TrajectoryMatcher,<br/>BudgetEvaluator,<br/>ResponseMatcher"]
+        EvalRegistry["EvaluatorRegistry<br/>TrajectoryMatcher,<br/>BudgetEvaluator,<br/>ResponseMatcher,<br/>EfficiencyEvaluator"]
+        AuditTrail["AuditedInvocation<br/>SHA-256 hash chain"]
         EvalStore["EvalStore<br/>FsEvalStore (JSON)"]
     end
 
@@ -162,6 +163,8 @@ flowchart TB
         ConvView["Conversation View<br/>Message rendering,<br/>markdown, syntax highlighting"]
         InputEditor["Input Editor<br/>Multi-line text input"]
         ToolPanel["Tool Panel<br/>Active executions, results"]
+        HelpPanel["Help Panel<br/>F1-toggled side panel"]
+        DiffView["Diff View<br/>Inline unified diffs"]
         StatusBar["Status Bar<br/>Model, usage, state"]
     end
 
@@ -241,8 +244,8 @@ flowchart TB
     class LocalStream,LocalModel,EmbeddingModel localStyle
     class Events,Retry,Cancel,Errors,Catalog,Registry,Mailbox,Policy,StreamMW,Emission,Orchestrator,Checkpoint,BudgetGuard,Fallback,CtxTransformer,CtxVersion,ToolExecPolicy,PostTurnHook,Metrics infraStyle
     class SessionStore,Compactor memoryStyle
-    class EvalRunner,TrajectoryCollector,EvalRegistry,EvalStore evalStyle
-    class TUIApp,ConvView,InputEditor,ToolPanel,StatusBar tuiStyle
+    class EvalRunner,TrajectoryCollector,EvalRegistry,AuditTrail,EvalStore evalStyle
+    class TUIApp,ConvView,InputEditor,ToolPanel,HelpPanel,DiffView,StatusBar tuiStyle
     class LLMProvider,ProxyServer externalStyle
 ```
 
@@ -360,6 +363,9 @@ flowchart TB
 
         subgraph APILayer["📦 Public API"]
             agent["agent.rs<br/>Agent struct,<br/>AgentOptions"]
+            display_mod["display.rs<br/>CoreDisplayMessage,<br/>IntoDisplayMessages"]
+            msg_provider["message_provider.rs<br/>MessageProvider trait,<br/>ChannelMessageProvider"]
+            event_fwd["event_forwarder.rs<br/>EventForwarderFn"]
             lib["lib.rs<br/>public re-exports"]
         end
     end
@@ -403,7 +409,9 @@ flowchart TB
         eval_trajectory["trajectory.rs<br/>TrajectoryCollector,<br/>AgentEvent → Invocation"]
         eval_evaluator["evaluator.rs<br/>Evaluator trait,<br/>EvaluatorRegistry"]
         eval_runner["runner.rs<br/>EvalRunner,<br/>AgentFactory trait"]
-        eval_builtins["match_.rs, budget.rs,<br/>response.rs<br/>Built-in evaluators"]
+        eval_builtins["match_.rs, budget.rs,<br/>response.rs, efficiency.rs<br/>Built-in evaluators (5)"]
+        eval_gate["gate.rs<br/>GateConfig, check_gate,<br/>CI/CD gating"]
+        eval_audit["audit.rs<br/>AuditedInvocation,<br/>SHA-256 hash chain"]
         eval_store["store.rs<br/>EvalStore trait,<br/>FsEvalStore"]
     end
 
@@ -500,11 +508,11 @@ flowchart TB
     class context,builtintools,transformer,tool_mw,stream_mw,sub_agent implStyle
     class catalog,presets,registry_mod,messaging_mod,policy catalogStyle
     class loop_ execStyle
-    class agent,lib apiStyle
+    class agent,display_mod,msg_provider,event_fwd,lib apiStyle
     class adapters_lib,anthropic,azure,bedrock,google,mistral,ollama,openai,xai,proxy,convert,classify_mod,remote_presets_mod adapterStyle
     class local_lib,local_model,local_stream,local_embedding,local_preset,local_convert,local_progress localStyle
     class mem_lib,mem_store,mem_jsonl,mem_meta,mem_compact memoryStyle
-    class eval_lib,eval_trajectory,eval_evaluator,eval_runner,eval_builtins,eval_store evalStyle
+    class eval_lib,eval_trajectory,eval_evaluator,eval_runner,eval_builtins,eval_gate,eval_audit,eval_store evalStyle
     class tui_main,tui_app,tui_creds,tui_session,tui_wizard tuiStyle
 ```
 

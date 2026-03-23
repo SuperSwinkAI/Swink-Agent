@@ -6,9 +6,7 @@ mod common;
 use std::sync::Arc;
 use std::time::Duration;
 
-use common::{
-    MockStreamFn, default_convert, default_model, text_only_events, tool_call_events,
-};
+use common::{MockStreamFn, default_convert, default_model, text_only_events, tool_call_events};
 use serde_json::json;
 
 use swink_agent::{

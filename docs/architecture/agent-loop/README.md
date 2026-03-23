@@ -22,10 +22,10 @@ flowchart TB
         Retry["retry_strategy: RetryStrategy"]
         StreamFnField["stream_fn: Arc&lt;dyn StreamFn&gt;"]
         ConvertFn["convert_to_llm: Fn(&amp;AgentMessage) → Option&lt;LlmMessage&gt;"]
+        AsyncTransformFn["async_transform_context: AsyncContextTransformer<br/>(runs before sync transform — async operations<br/>like RAG retrieval or summary fetching)"]
         TransformFn["transform_context: Fn(&amp;mut messages, overflow) → Option&lt;CompactionReport&gt;<br/>(synchronous — not async)"]
         ApiKey["get_api_key: async Fn(provider) → Option&lt;String&gt;"]
-        SteerFn["get_steering_messages: Fn() → Vec&lt;AgentMessage&gt;"]
-        FollowFn["get_follow_up_messages: Fn() → Vec&lt;AgentMessage&gt;"]
+        MsgProvider["message_provider: Arc&lt;dyn MessageProvider&gt;<br/>poll_steering() → Vec&lt;AgentMessage&gt;<br/>poll_follow_up() → Vec&lt;AgentMessage&gt;"]
     end
 
     subgraph Core["🔄 run_loop"]
@@ -51,7 +51,7 @@ flowchart TB
     classDef eventStyle fill:#f5f5f5,stroke:#616161,stroke-width:2px,color:#000
 
     class AgentLoop,AgentLoopContinue entryStyle
-    class Model,StreamOpts,Retry,StreamFnField,ConvertFn,TransformFn,ApiKey,SteerFn,FollowFn configStyle
+    class Model,StreamOpts,Retry,StreamFnField,ConvertFn,AsyncTransformFn,TransformFn,ApiKey,MsgProvider configStyle
     class OuterLoop,InnerLoop,TurnExec,ToolExec coreStyle
     class AgentEvents eventStyle
 ```
@@ -68,12 +68,13 @@ flowchart TB
 
     subgraph OuterLoop["🔁 Outer Loop — follow-up phase"]
         OStart(["enter"])
-        OPoll["poll get_follow_up_messages()"]
+        OPoll["poll message_provider.poll_follow_up()"]
         OHasMsg{"messages?"}
 
         subgraph InnerLoop["🔁 Inner Loop — turn + tool phase"]
             IStart(["enter turn"])
             InjectPending["inject pending messages<br/>into context"]
+            AsyncTransformCtx["async_transform_context()<br/>(if configured)"]
             TransformCtx["transform_context()"]
             ConvertLlm["convert_to_llm()"]
             ResolveKey["get_api_key()"]
@@ -85,18 +86,19 @@ flowchart TB
             CheckLength{"stop_reason: length?"}
             MTRecovery["max tokens recovery<br/>(replace incomplete tool calls)"]
             ExecTools["execute tools concurrently<br/>(emit ToolExecution* events)"]
-            PollSteer["poll get_steering_messages()"]
+            PollSteer["poll message_provider.poll_steering()"]
             HasSteer{"steering?"}
             EmitTurnEnd["emit TurnEnd"]
             EmitTurnEndErr["emit TurnEnd"]
-            IPoll["poll get_steering_messages()"]
+            IPoll["poll message_provider.poll_steering()"]
             IHasSteer{"steering?"}
         end
 
         AgentStart --> OStart
         OStart --> IStart
         IStart --> InjectPending
-        InjectPending --> TransformCtx
+        InjectPending --> AsyncTransformCtx
+        AsyncTransformCtx --> TransformCtx
         TransformCtx --> ConvertLlm
         ConvertLlm --> ResolveKey
         ResolveKey --> StreamTurn
@@ -135,7 +137,7 @@ flowchart TB
     class IStart,OStart,AgentStart phaseStyle
     class CheckStop,CheckLength,HasTools,HasSteer,IHasSteer,OHasMsg decisionStyle
     class AgentEnd termStyle
-    class InjectPending,TransformCtx,ConvertLlm,ResolveKey,StreamTurn,EmitMsgEvents,ExtractTools,MTRecovery,ExecTools,PollSteer,EmitTurnEnd,EmitTurnEndErr,IPoll,OPoll stepStyle
+    class InjectPending,AsyncTransformCtx,TransformCtx,ConvertLlm,ResolveKey,StreamTurn,EmitMsgEvents,ExtractTools,MTRecovery,ExecTools,PollSteer,EmitTurnEnd,EmitTurnEndErr,IPoll,OPoll stepStyle
 ```
 
 ---
@@ -191,7 +193,7 @@ sequenceDiagram
     Note over RunLoop: executing tool batch [A, B, C]...
     RunLoop->>Tools: execute tool A
     Tools-->>RunLoop: result A
-    RunLoop->>Agent: poll get_steering_messages()
+    RunLoop->>Agent: poll message_provider.poll_steering()
     Note over App: App calls agent.steer(msg)
     Agent-->>RunLoop: [steering message]
 

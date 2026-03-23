@@ -2,8 +2,8 @@
 
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use futures::Stream;
@@ -15,17 +15,47 @@ use swink_agent::{
     Cost, LlmMessage, ModelSpec, StopReason, StreamFn, StreamOptions, Usage, UserMessage,
 };
 
-// ─── FlagStreamFn ─────────────────────────────────────────────────────────
+// ─── Shared response-fetching helper ──────────────────────────────────────
+
+/// Pops the next scripted response from a `Mutex<Vec<…>>`, returning a
+/// sensible fallback when the list is exhausted.  Used by every `StreamFn`
+/// mock to avoid duplicating the same `if responses.is_empty() { … } else
+/// { responses.remove(0) }` pattern.
+#[allow(dead_code)]
+pub fn next_response(
+    responses: &Mutex<Vec<Vec<AssistantMessageEvent>>>,
+    fallback: Vec<AssistantMessageEvent>,
+) -> Vec<AssistantMessageEvent> {
+    let mut guard = responses.lock().unwrap();
+    if guard.is_empty() {
+        fallback
+    } else {
+        guard.remove(0)
+    }
+}
+
+/// Default error fallback used by most mock `StreamFn` implementations.
+#[allow(dead_code)]
+pub fn default_exhausted_fallback() -> Vec<AssistantMessageEvent> {
+    vec![AssistantMessageEvent::Error {
+        stop_reason: StopReason::Error,
+        error_message: "no more scripted responses".to_string(),
+        usage: None,
+        error_kind: None,
+    }]
+}
+
+// ─── MockFlagStreamFn ────────────────────────────────────────────────────
 
 /// A stream function that sets a flag when called — useful for verifying
 /// which `StreamFn` was invoked.
 #[allow(dead_code)]
-pub struct FlagStreamFn {
+pub struct MockFlagStreamFn {
     pub called: AtomicBool,
     pub responses: Mutex<Vec<Vec<AssistantMessageEvent>>>,
 }
 
-impl StreamFn for FlagStreamFn {
+impl StreamFn for MockFlagStreamFn {
     fn stream<'a>(
         &'a self,
         _model: &'a ModelSpec,
@@ -34,14 +64,7 @@ impl StreamFn for FlagStreamFn {
         _cancellation_token: CancellationToken,
     ) -> Pin<Box<dyn Stream<Item = AssistantMessageEvent> + Send + 'a>> {
         self.called.store(true, Ordering::SeqCst);
-        let events = {
-            let mut responses = self.responses.lock().unwrap();
-            if responses.is_empty() {
-                text_only_events("fallback")
-            } else {
-                responses.remove(0)
-            }
-        };
+        let events = next_response(&self.responses, text_only_events("fallback"));
         Box::pin(futures::stream::iter(events))
     }
 }
@@ -71,34 +94,22 @@ impl StreamFn for MockStreamFn {
         _options: &'a StreamOptions,
         _cancellation_token: CancellationToken,
     ) -> Pin<Box<dyn Stream<Item = AssistantMessageEvent> + Send + 'a>> {
-        let events = {
-            let mut responses = self.responses.lock().unwrap();
-            if responses.is_empty() {
-                vec![AssistantMessageEvent::Error {
-                    stop_reason: StopReason::Error,
-                    error_message: "no more scripted responses".to_string(),
-                    usage: None,
-                    error_kind: None,
-                }]
-            } else {
-                responses.remove(0)
-            }
-        };
+        let events = next_response(&self.responses, default_exhausted_fallback());
         Box::pin(futures::stream::iter(events))
     }
 }
 
-// ─── ContextCapturingStreamFn ─────────────────────────────────────────────
+// ─── MockContextCapturingStreamFn ─────────────────────────────────────────────
 
 /// A mock `StreamFn` that captures the number of messages passed in each call.
 #[allow(dead_code)]
-pub struct ContextCapturingStreamFn {
+pub struct MockContextCapturingStreamFn {
     pub responses: Mutex<Vec<Vec<AssistantMessageEvent>>>,
     pub captured_message_counts: Mutex<Vec<usize>>,
 }
 
 #[allow(dead_code)]
-impl ContextCapturingStreamFn {
+impl MockContextCapturingStreamFn {
     pub const fn new(responses: Vec<Vec<AssistantMessageEvent>>) -> Self {
         Self {
             responses: Mutex::new(responses),
@@ -107,7 +118,7 @@ impl ContextCapturingStreamFn {
     }
 }
 
-impl StreamFn for ContextCapturingStreamFn {
+impl StreamFn for MockContextCapturingStreamFn {
     fn stream<'a>(
         &'a self,
         _model: &'a ModelSpec,
@@ -119,34 +130,22 @@ impl StreamFn for ContextCapturingStreamFn {
             .lock()
             .unwrap()
             .push(context.messages.len());
-        let events = {
-            let mut responses = self.responses.lock().unwrap();
-            if responses.is_empty() {
-                vec![AssistantMessageEvent::Error {
-                    stop_reason: StopReason::Error,
-                    error_message: "no more scripted responses".to_string(),
-                    usage: None,
-                    error_kind: None,
-                }]
-            } else {
-                responses.remove(0)
-            }
-        };
+        let events = next_response(&self.responses, default_exhausted_fallback());
         Box::pin(futures::stream::iter(events))
     }
 }
 
-// ─── ApiKeyCapturingStreamFn ──────────────────────────────────────────────
+// ─── MockApiKeyCapturingStreamFn ──────────────────────────────────────────────
 
 /// A mock `StreamFn` that captures resolved API keys from stream options.
 #[allow(dead_code)]
-pub struct ApiKeyCapturingStreamFn {
+pub struct MockApiKeyCapturingStreamFn {
     pub responses: Mutex<Vec<Vec<AssistantMessageEvent>>>,
     pub captured_api_keys: Mutex<Vec<Option<String>>>,
 }
 
 #[allow(dead_code)]
-impl ApiKeyCapturingStreamFn {
+impl MockApiKeyCapturingStreamFn {
     pub const fn new(responses: Vec<Vec<AssistantMessageEvent>>) -> Self {
         Self {
             responses: Mutex::new(responses),
@@ -155,7 +154,7 @@ impl ApiKeyCapturingStreamFn {
     }
 }
 
-impl StreamFn for ApiKeyCapturingStreamFn {
+impl StreamFn for MockApiKeyCapturingStreamFn {
     fn stream<'a>(
         &'a self,
         _model: &'a ModelSpec,
@@ -167,19 +166,7 @@ impl StreamFn for ApiKeyCapturingStreamFn {
             .lock()
             .unwrap()
             .push(options.api_key.clone());
-        let events = {
-            let mut responses = self.responses.lock().unwrap();
-            if responses.is_empty() {
-                vec![AssistantMessageEvent::Error {
-                    stop_reason: StopReason::Error,
-                    error_message: "no more scripted responses".to_string(),
-                    usage: None,
-                    error_kind: None,
-                }]
-            } else {
-                responses.remove(0)
-            }
-        };
+        let events = next_response(&self.responses, default_exhausted_fallback());
         Box::pin(futures::stream::iter(events))
     }
 }

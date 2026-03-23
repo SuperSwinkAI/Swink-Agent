@@ -203,6 +203,28 @@ impl AssistantMessageEvent {
             error_kind: Some(StreamErrorKind::Network),
         }
     }
+
+    /// Build a complete single-text-block response event sequence.
+    ///
+    /// Useful for testing and mock `StreamFn` implementations. Returns the
+    /// five events needed for a valid text-only response: `Start`, `TextStart`,
+    /// `TextDelta`, `TextEnd`, and `Done`.
+    pub fn text_response(text: &str) -> Vec<Self> {
+        vec![
+            Self::Start,
+            Self::TextStart { content_index: 0 },
+            Self::TextDelta {
+                content_index: 0,
+                delta: text.to_string(),
+            },
+            Self::TextEnd { content_index: 0 },
+            Self::Done {
+                stop_reason: StopReason::Stop,
+                usage: Usage::default(),
+                cost: Cost::default(),
+            },
+        ]
+    }
 }
 
 // ─── AssistantMessageDelta ───────────────────────────────────────────────────
@@ -571,5 +593,49 @@ mod tests {
             }
             other => panic!("expected Error, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn text_response_produces_valid_event_sequence() {
+        let events = AssistantMessageEvent::text_response("hello world");
+        assert_eq!(events.len(), 5);
+        assert!(matches!(events[0], AssistantMessageEvent::Start));
+        assert!(matches!(
+            events[1],
+            AssistantMessageEvent::TextStart { content_index: 0 }
+        ));
+        match &events[2] {
+            AssistantMessageEvent::TextDelta {
+                content_index,
+                delta,
+            } => {
+                assert_eq!(*content_index, 0);
+                assert_eq!(delta, "hello world");
+            }
+            other => panic!("expected TextDelta, got {other:?}"),
+        }
+        assert!(matches!(
+            events[3],
+            AssistantMessageEvent::TextEnd { content_index: 0 }
+        ));
+        assert!(matches!(
+            events[4],
+            AssistantMessageEvent::Done {
+                stop_reason: StopReason::Stop,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn text_response_accumulates_correctly() {
+        let events = AssistantMessageEvent::text_response("accumulated text");
+        let msg = accumulate_message(events, "test", "test-model").expect("accumulation failed");
+        assert_eq!(msg.content.len(), 1);
+        assert_eq!(
+            ContentBlock::extract_text(&msg.content),
+            "accumulated text"
+        );
+        assert_eq!(msg.stop_reason, StopReason::Stop);
     }
 }

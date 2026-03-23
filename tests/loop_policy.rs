@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use swink_agent::{
     AgentOptions, AssistantMessageEvent, ComposedPolicy, Cost, CostCapPolicy, MaxTurnsPolicy,
-    ModelSpec, StopReason, SubAgent, Usage, stream::StreamFn,
+    StopReason, SubAgent, Usage, stream::StreamFn,
 };
 
 use common::{MockStreamFn, MockTool, default_model, text_only_events, tool_call_events};
@@ -157,8 +157,9 @@ async fn policy_with_sub_agent() {
 
     let sfn = sub_stream.clone();
     let sub = Arc::new(
-        SubAgent::new("researcher", "Researcher", "Research sub-agent")
-            .with_options(move || AgentOptions::new_simple("sub", default_model(), Arc::clone(&sfn))),
+        SubAgent::new("researcher", "Researcher", "Research sub-agent").with_options(move || {
+            AgentOptions::new_simple("sub", default_model(), Arc::clone(&sfn))
+        }),
     );
 
     // Parent with max 3 turns

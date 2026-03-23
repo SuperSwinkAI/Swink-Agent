@@ -106,11 +106,6 @@ impl ToolPanel {
         });
     }
 
-    /// Whether there are tools pending user approval.
-    #[allow(dead_code)]
-    pub const fn has_pending_approval(&self) -> bool {
-        !self.pending_approvals.is_empty()
-    }
 
     /// Advance the spinner and prune old completed tools (>10s) and resolved approvals (>2s).
     pub fn tick(&mut self) {

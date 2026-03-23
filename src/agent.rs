@@ -393,9 +393,11 @@ impl Agent {
     /// Restore agent message history from a checkpoint.
     ///
     /// Replaces the current messages with those from the checkpoint and
-    /// updates the system prompt to match.
+    /// updates the system prompt to match. Custom messages are not restored
+    /// by this method; use `restore_messages(Some(registry))` directly for
+    /// full restoration including custom messages.
     pub fn restore_from_checkpoint(&mut self, checkpoint: &Checkpoint) {
-        self.state.messages = checkpoint.restore_messages();
+        self.state.messages = checkpoint.restore_messages(None);
         self.state
             .system_prompt
             .clone_from(&checkpoint.system_prompt);
@@ -607,7 +609,7 @@ impl Agent {
         &mut self,
         checkpoint: &crate::checkpoint::LoopCheckpoint,
     ) -> Result<(), AgentError> {
-        self.state.messages = checkpoint.restore_messages();
+        self.state.messages = checkpoint.restore_messages(None);
         self.state
             .system_prompt
             .clone_from(&checkpoint.system_prompt);

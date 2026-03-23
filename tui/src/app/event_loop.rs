@@ -9,8 +9,8 @@ use ratatui::{Terminal, backend::CrosstermBackend};
 
 use swink_agent::{ApprovalMode, ToolApproval};
 
-use crate::commands::{self, ApprovalModeArg, ClipboardContent, CommandResult};
 use super::state::TrustFollowUp;
+use crate::commands::{self, ApprovalModeArg, ClipboardContent, CommandResult};
 use crate::theme;
 use crate::ui;
 

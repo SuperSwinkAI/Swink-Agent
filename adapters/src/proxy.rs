@@ -15,7 +15,7 @@ use tokio_util::sync::CancellationToken;
 use swink_agent::stream::{AssistantMessageEvent, StreamFn, StreamOptions};
 use swink_agent::types::{AgentContext, Cost, LlmMessage, ModelSpec, StopReason, Usage};
 
-use crate::classify::{HttpErrorKind, classify_http_status};
+use crate::classify::error_event_from_status;
 
 // ─── Request types ──────────────────────────────────────────────────────────
 
@@ -162,10 +162,13 @@ fn proxy_stream<'a>(
             Err(event) => return stream::iter(vec![event]).left_stream(),
         };
 
-        classify_response_status(&response).map_or_else(
-            || parse_sse_stream(response, cancellation_token).right_stream(),
-            |event| stream::iter(vec![event]).left_stream(),
-        )
+        let status = response.status();
+        if !status.is_success() {
+            let event = error_event_from_status(status.as_u16(), "", "Proxy");
+            return stream::iter(vec![event]).left_stream();
+        }
+
+        parse_sse_stream(response, cancellation_token).right_stream()
     })
     .flatten()
 }
@@ -209,30 +212,6 @@ async fn send_request(
         .send()
         .await
         .map_err(|e| AssistantMessageEvent::error_network(format!("network error: {e}")))
-}
-
-/// Check the HTTP status code and return an error event for non-2xx responses.
-///
-/// Delegates to [`classify_http_status`] from the shared classify module.
-fn classify_response_status(response: &reqwest::Response) -> Option<AssistantMessageEvent> {
-    let status = response.status();
-    if status.is_success() {
-        return None;
-    }
-
-    let kind = classify_http_status(status.as_u16());
-    Some(match kind {
-        Some(HttpErrorKind::Auth) => AssistantMessageEvent::error_auth(format!(
-            "authentication failure ({})",
-            status.as_u16()
-        )),
-        Some(HttpErrorKind::Throttled) => {
-            AssistantMessageEvent::error_throttled("rate limit (429)")
-        }
-        Some(HttpErrorKind::Network) | None => {
-            AssistantMessageEvent::error_network(format!("network error: HTTP {}", status.as_u16()))
-        }
-    })
 }
 
 /// Parse the SSE byte stream into `AssistantMessageEvent` values.

@@ -3,7 +3,9 @@
 #![allow(dead_code)]
 
 use chrono::{DateTime, Utc};
-use swink_agent::{ContentBlock, LlmMessage, UserMessage, AssistantMessage, Usage, Cost, StopReason};
+use swink_agent::{
+    AssistantMessage, ContentBlock, Cost, LlmMessage, StopReason, Usage, UserMessage,
+};
 use swink_agent_memory::SessionMeta;
 
 /// Create a sample `UserMessage` with the given text.

@@ -180,27 +180,17 @@ fn anthropic_stream<'a>(
             let code = status.as_u16();
             let body = response.text().await.unwrap_or_default();
             warn!(status = code, "Anthropic HTTP error");
-            let event = match code {
-                401 => AssistantMessageEvent::error_auth(format!(
-                    "Anthropic auth error (HTTP {code}): check x-api-key — {body}"
-                )),
-                429 => AssistantMessageEvent::error_throttled(format!(
-                    "Anthropic rate limit (HTTP 429): {body}"
-                )),
-                529 => AssistantMessageEvent::error_network(format!(
-                    "Anthropic overloaded (HTTP 529): {body}"
-                )),
-                504 => AssistantMessageEvent::error_network(format!(
-                    "Anthropic gateway timeout (HTTP 504): {body}"
-                )),
-                400..=499 => AssistantMessageEvent::error(format!(
-                    "Anthropic client error (HTTP {code}): {body}"
-                )),
-                500..=599 => AssistantMessageEvent::error_network(format!(
-                    "Anthropic server error (HTTP {code}): {body}"
-                )),
-                _ => AssistantMessageEvent::error(format!("Anthropic HTTP {code}: {body}")),
-            };
+            // Anthropic-specific: 529 (overloaded) and 504 (gateway timeout)
+            // are retryable network errors.
+            let event = crate::classify::error_event_from_status_with_overrides(
+                code,
+                &body,
+                "Anthropic",
+                &[
+                    (529, crate::classify::HttpErrorKind::Network),
+                    (504, crate::classify::HttpErrorKind::Network),
+                ],
+            );
             return stream::iter(vec![event]).left_stream();
         }
 

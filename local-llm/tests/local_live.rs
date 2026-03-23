@@ -16,7 +16,9 @@ use swink_agent::types::{
 };
 use tokio_util::sync::CancellationToken;
 
-use swink_agent_local_llm::{LocalModel, LocalModelError, LocalStreamFn, ModelConfig, ProgressEvent};
+use swink_agent_local_llm::{
+    LocalModel, LocalModelError, LocalStreamFn, ModelConfig, ProgressEvent,
+};
 
 fn simple_context(prompt: &str) -> AgentContext {
     AgentContext {
@@ -165,11 +167,15 @@ async fn progress_events_fire_during_download() {
             let events = collector.events();
             // Should have at least one download progress and a loading complete.
             assert!(
-                events.iter().any(|e| matches!(e, ProgressEvent::DownloadComplete)),
+                events
+                    .iter()
+                    .any(|e| matches!(e, ProgressEvent::DownloadComplete)),
                 "should emit DownloadComplete"
             );
             assert!(
-                events.iter().any(|e| matches!(e, ProgressEvent::LoadingComplete)),
+                events
+                    .iter()
+                    .any(|e| matches!(e, ProgressEvent::LoadingComplete)),
                 "should emit LoadingComplete"
             );
         }

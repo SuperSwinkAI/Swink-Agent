@@ -7,7 +7,9 @@ use std::time::Instant;
 use ratatui::layout::Rect;
 use tokio::sync::{mpsc, oneshot};
 
-use swink_agent::{Agent, AgentEvent, AgentTool, ApprovalMode, ToolApproval, ToolApprovalRequest};
+use swink_agent::{
+    Agent, AgentEvent, AgentTool, ApprovalMode, DisplayRole, ToolApproval, ToolApprovalRequest,
+};
 
 use crate::config::TuiConfig;
 use crate::session::JsonlSessionStore;
@@ -51,14 +53,10 @@ pub struct TrustFollowUp {
 }
 
 /// Message role for display styling.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MessageRole {
-    User,
-    Assistant,
-    ToolResult,
-    Error,
-    System,
-}
+///
+/// Type alias for [`DisplayRole`] from the core crate. Kept as an alias
+/// to avoid a mass-rename across the TUI codebase.
+pub type MessageRole = DisplayRole;
 
 /// A message formatted for display.
 #[derive(Debug, Clone)]

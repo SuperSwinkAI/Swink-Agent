@@ -10,6 +10,7 @@ mod context;
 mod context_transformer;
 mod context_version;
 pub mod convert;
+pub mod display;
 mod emit;
 mod error;
 mod event_forwarder;
@@ -118,3 +119,5 @@ pub use types::{
     deserialize_custom_message, serialize_custom_message,
 };
 pub use util::now_timestamp;
+
+pub use display::{CoreDisplayMessage, DisplayRole, IntoDisplayMessages};

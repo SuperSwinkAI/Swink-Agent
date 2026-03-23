@@ -298,6 +298,117 @@ let tool = FnTool::new("get_weather", "Weather", "Get weather for a city.")
 
 ---
 
+## L3 — Building a Custom Tool
+
+There are two approaches to creating a custom tool: `FnTool` for simple stateless tools, and a struct implementing `AgentTool` for tools that need internal state or complex lifecycle management.
+
+### When to use which approach
+
+| | FnTool | `impl AgentTool` |
+|---|---|---|
+| **Lines of code** | ~5-15 | ~40-60 |
+| **Flexibility** | Closure-only logic | Full struct with fields, methods, trait impls |
+| **State management** | Stateless (or capture `Arc` in closure) | Internal fields (connection pools, caches, config) |
+| **Best for** | Quick lookups, transformations, simple API calls | Database tools, tools with connection pools, tools needing setup/teardown |
+
+### FnTool closure pattern
+
+Use `FnTool` when the tool is a pure function from arguments to result:
+
+```rust
+use schemars::JsonSchema;
+use serde::Deserialize;
+use swink_agent::{AgentToolResult, FnTool};
+
+#[derive(Deserialize, JsonSchema)]
+struct LookupParams {
+    term: String,
+}
+
+let tool = FnTool::new("lookup", "Lookup", "Look up a term in the glossary.")
+    .with_schema_for::<LookupParams>()
+    .with_execute_simple(|params, _cancel| async move {
+        let term = params["term"].as_str().unwrap_or("");
+        AgentToolResult::text(format!("Definition of '{term}': ..."))
+    });
+```
+
+For tools that need the full call context, use `.with_execute()` instead of `.with_execute_simple()` — it receives `(tool_call_id, params, cancellation_token, on_update)`.
+
+### Struct-based `impl AgentTool` pattern
+
+Use a struct when the tool needs internal state such as a connection pool, configuration, or cached resources:
+
+```rust
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::Arc;
+
+use serde_json::{Value, json};
+use tokio_util::sync::CancellationToken;
+use swink_agent::{AgentTool, AgentToolResult};
+
+struct DatabaseQueryTool {
+    pool: Arc<DatabasePool>,  // your connection pool type
+    schema: Value,
+}
+
+impl DatabaseQueryTool {
+    fn new(pool: Arc<DatabasePool>) -> Self {
+        Self {
+            pool,
+            schema: json!({
+                "type": "object",
+                "properties": {
+                    "query": { "type": "string", "description": "SQL query to execute" }
+                },
+                "required": ["query"]
+            }),
+        }
+    }
+}
+
+impl AgentTool for DatabaseQueryTool {
+    fn name(&self) -> &str { "database_query" }
+
+    fn label(&self) -> &str { "Database Query" }
+
+    fn description(&self) -> &str { "Execute a read-only SQL query against the database." }
+
+    fn parameters_schema(&self) -> &Value { &self.schema }
+
+    fn requires_approval(&self) -> bool { true }
+
+    fn execute(
+        &self,
+        _tool_call_id: &str,
+        params: Value,
+        cancellation_token: CancellationToken,
+        _on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
+    ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>> {
+        Box::pin(async move {
+            if cancellation_token.is_cancelled() {
+                return AgentToolResult::error("cancelled");
+            }
+            let query = params["query"].as_str().unwrap_or("");
+            match self.pool.execute(query).await {
+                Ok(rows) => AgentToolResult::text(format!("{rows} rows returned")),
+                Err(e) => AgentToolResult::error(format!("query failed: {e}")),
+            }
+        })
+    }
+}
+```
+
+Key points for struct-based tools:
+
+- The `execute` return type is `Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>>` — the lifetime `'_` ties the future to `&self`, allowing it to borrow struct fields.
+- Always check `cancellation_token.is_cancelled()` before starting expensive work.
+- Use `AgentToolResult::text()` for success and `AgentToolResult::error()` for failures.
+- Set `requires_approval()` to `true` for tools with side effects.
+
+---
+
 ## L3 — ToolMiddleware: Execution Interceptor
 
 **Source file:** `src/tool_middleware.rs`

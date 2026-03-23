@@ -218,6 +218,10 @@ Two command prefixes are supported:
 - `#keys` — show configured API keys
 - `#key <provider> <key>` — set an API key
 - `#approve smart` — enable smart approval mode (auto-approve reads, prompt for writes)
+- `#approve on` / `#approve off` — enable Enabled / Bypassed mode
+- `#approve untrust <tool>` — remove a tool from session-trusted set
+- `#approve untrust` — clear all session-trusted tools
+- `#approve` — display current mode and trusted tools
 
 **Slash commands** (may affect agent state):
 - `/quit` — exit the application
@@ -281,8 +285,8 @@ The TUI uses `tracing` with `tracing-appender` for file-based logging. Logs are 
 | `swink-agent` | workspace | Core agent library |
 | `swink-agent-adapters` | workspace | LLM provider adapters (Ollama, proxy) |
 | `swink-agent-memory` | workspace | Session persistence, compaction strategies |
-| `ratatui` | 0.29 | Terminal UI framework |
-| `crossterm` | 0.28 | Terminal backend (with `event-stream` feature) |
+| `ratatui` | 0.30 | Terminal UI framework |
+| `crossterm` | 0.29 | Terminal backend (with `event-stream` feature) |
 | `tokio` | — | Async runtime |
 | `syntect` | 5 | Syntax highlighting for code blocks |
 | `futures` | — | Stream utilities for EventStream |
@@ -301,7 +305,7 @@ The TUI uses `tracing` with `tracing-appender` for file-based logging. Logs are 
 
 **Related:** [PRD §16.6](../../planning/PRD.md#166-inline-diff-view)
 
-> **Status: Not yet implemented (Phase T5).** The interaction model described below is the intended design. The keybindings, hunk navigation, and approval flow are planned but not present in the current codebase.
+> **Status: Diff display implemented; hunk-level approval UI pending (Phase T5).** Unified diff rendering with LCS-based computation, syntax-highlighted additions/removals, and context lines are present. Per-hunk approve/reject interaction and side-by-side layout are planned but not yet implemented.
 
 When the agent modifies a file via `WriteFileTool`, the TUI renders the change as a syntax-highlighted diff instead of displaying raw tool output. Users can approve or reject individual hunks before changes are finalized.
 
@@ -558,4 +562,6 @@ Tool call arrives
 - `#approve smart` — enable Smart mode
 - `#approve on` — enable Enabled mode (prompt for all)
 - `#approve off` — enable Bypassed mode (auto-approve all)
+- `#approve untrust <tool>` — remove a specific tool from session-trusted set
+- `#approve untrust` — clear all session-trusted tools
 - `#approve` (no argument) — display current mode and list of session-trusted tools

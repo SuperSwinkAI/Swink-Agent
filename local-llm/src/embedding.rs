@@ -3,6 +3,16 @@
 //! [`EmbeddingModel`] wraps a mistral.rs embedding model behind `Arc` for
 //! cheap cloning and concurrent access. Lazily downloaded from `HuggingFace`
 //! on first use, same pattern as [`LocalModel`](crate::model::LocalModel).
+//!
+//! # Structural similarity with `model.rs`
+//!
+//! This module intentionally mirrors the `Arc<Inner>` + state-machine pattern
+//! used in [`crate::model`]. Both modules manage a lazily-loaded mistral.rs
+//! model behind `Arc` with `RwLock`-guarded state, `Notify`-based readiness
+//! signalling, and progress callbacks. They diverge in their public APIs
+//! (`embed()`/`embed_batch()` here vs `runner()` + streaming chat completion
+//! in model) and in their underlying runner types (`EmbeddingModelBuilder`
+//! for vectorization vs `GgufModelBuilder` for chat).
 
 use std::sync::Arc;
 

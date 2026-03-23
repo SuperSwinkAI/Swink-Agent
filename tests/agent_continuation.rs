@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use common::{
-    ApiKeyCapturingStreamFn, ContextCapturingStreamFn, MockStreamFn, default_convert,
+    MockApiKeyCapturingStreamFn, MockContextCapturingStreamFn, MockStreamFn, default_convert,
     default_model, text_only_events, user_msg,
 };
 use tokio_util::sync::CancellationToken;
@@ -68,7 +68,7 @@ async fn multi_turn_across_separate_prompts() {
         "first prompt should produce messages"
     );
 
-    // Second prompt uses a ContextCapturingStreamFn to verify growing context,
+    // Second prompt uses a MockContextCapturingStreamFn to verify growing context,
     // but here we just verify it completes and produces a result.
     let r2 = agent
         .prompt_async(vec![user_msg("follow up")])
@@ -293,7 +293,7 @@ async fn session_id_forwarding() {
 
 #[tokio::test]
 async fn get_api_key_forwarding() {
-    let capturing = Arc::new(ApiKeyCapturingStreamFn::new(vec![text_only_events("ok")]));
+    let capturing = Arc::new(MockApiKeyCapturingStreamFn::new(vec![text_only_events("ok")]));
 
     let stream_fn: Arc<dyn StreamFn> = Arc::clone(&capturing) as Arc<dyn StreamFn>;
 
@@ -320,7 +320,7 @@ async fn get_api_key_forwarding() {
 
 #[tokio::test]
 async fn agent_end_subscriber_retaining_messages_does_not_lose_history() {
-    let stream_fn = Arc::new(ContextCapturingStreamFn::new(vec![
+    let stream_fn = Arc::new(MockContextCapturingStreamFn::new(vec![
         text_only_events("first response"),
         text_only_events("continued response"),
     ]));

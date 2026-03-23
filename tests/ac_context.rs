@@ -7,14 +7,13 @@
 mod common;
 
 use std::sync::{
-    Arc,
+    Arc, Mutex,
     atomic::{AtomicBool, Ordering},
-    Mutex,
 };
 use std::time::Duration;
 
 use common::{
-    ContextCapturingStreamFn, MockStreamFn, MockTool, default_convert, default_model,
+    MockContextCapturingStreamFn, MockStreamFn, MockTool, default_convert, default_model,
     text_only_events, tool_call_events, user_msg,
 };
 
@@ -53,7 +52,7 @@ fn make_agent_with_small_context(
 
 #[tokio::test]
 async fn context_window_tracking() {
-    // Use ContextCapturingStreamFn to observe message counts passed to the LLM.
+    // Use MockContextCapturingStreamFn to observe message counts passed to the LLM.
     // With a small normal_budget of 200 tokens (~800 chars), sending 5 messages
     // of ~50 tokens each (200 chars) should trigger compaction after the context
     // exceeds the budget.
@@ -61,7 +60,7 @@ async fn context_window_tracking() {
         .map(|i| text_only_events(&format!("reply-{i}")))
         .collect();
 
-    let capturing_fn = Arc::new(ContextCapturingStreamFn::new(responses));
+    let capturing_fn = Arc::new(MockContextCapturingStreamFn::new(responses));
     let stream_fn: Arc<dyn swink_agent::StreamFn> = Arc::clone(&capturing_fn) as _;
 
     // normal_budget=200 tokens, overflow_budget=100, anchor=1
@@ -148,9 +147,10 @@ async fn sliding_window_preserves_anchor_and_tail() {
     );
 
     // The most recent message should be from the last round.
-    let last_user = messages.iter().rev().find(|m| {
-        matches!(m, AgentMessage::Llm(LlmMessage::User(_)))
-    });
+    let last_user = messages
+        .iter()
+        .rev()
+        .find(|m| matches!(m, AgentMessage::Llm(LlmMessage::User(_))));
     let last_text = match last_user {
         Some(AgentMessage::Llm(LlmMessage::User(u))) => ContentBlock::extract_text(&u.content),
         _ => String::new(),
@@ -255,7 +255,10 @@ async fn tool_result_pairs_kept_together() {
     );
 
     // First prompt triggers tool call + tool result + follow-up text.
-    let _r = agent.prompt_async(vec![user_msg("use the tool")]).await.unwrap();
+    let _r = agent
+        .prompt_async(vec![user_msg("use the tool")])
+        .await
+        .unwrap();
 
     // Send several more rounds with large messages to trigger compaction.
     for i in 0..6 {
@@ -269,9 +272,9 @@ async fn tool_result_pairs_kept_together() {
 
     // Check: if any ToolResult exists, its corresponding Assistant with ToolCall
     // must also exist, and vice versa.
-    let has_tool_result = messages.iter().any(|m| {
-        matches!(m, AgentMessage::Llm(LlmMessage::ToolResult(_)))
-    });
+    let has_tool_result = messages
+        .iter()
+        .any(|m| matches!(m, AgentMessage::Llm(LlmMessage::ToolResult(_))));
     let has_tool_call = messages.iter().any(|m| {
         matches!(
             m,
@@ -312,29 +315,27 @@ async fn transform_context_callback_on_overflow() {
     let sf: Arc<dyn swink_agent::StreamFn> = stream_fn;
 
     let mut agent = Agent::new(
-        AgentOptions::new(
-            "test system prompt",
-            default_model(),
-            sf,
-            default_convert,
-        )
-        .with_transform_context_fn(move |msgs: &mut Vec<AgentMessage>, overflow: bool| {
-            flags_clone.lock().unwrap().push(overflow);
-            if overflow {
-                overflow_seen_clone.store(true, Ordering::SeqCst);
-            }
-            // Apply basic sliding window to avoid infinite loops.
-            let compact = sliding_window(10_000, 200, 1);
-            compact(msgs, overflow);
-        })
-        .with_retry_strategy(Box::new(
-            DefaultRetryStrategy::default()
-                .with_jitter(false)
-                .with_base_delay(Duration::from_millis(1)),
-        )),
+        AgentOptions::new("test system prompt", default_model(), sf, default_convert)
+            .with_transform_context_fn(move |msgs: &mut Vec<AgentMessage>, overflow: bool| {
+                flags_clone.lock().unwrap().push(overflow);
+                if overflow {
+                    overflow_seen_clone.store(true, Ordering::SeqCst);
+                }
+                // Apply basic sliding window to avoid infinite loops.
+                let compact = sliding_window(10_000, 200, 1);
+                compact(msgs, overflow);
+            })
+            .with_retry_strategy(Box::new(
+                DefaultRetryStrategy::default()
+                    .with_jitter(false)
+                    .with_base_delay(Duration::from_millis(1)),
+            )),
     );
 
-    let _result = agent.prompt_async(vec![user_msg("trigger overflow")]).await.unwrap();
+    let _result = agent
+        .prompt_async(vec![user_msg("trigger overflow")])
+        .await
+        .unwrap();
 
     // The callback should have been invoked with overflow=true at least once.
     assert!(

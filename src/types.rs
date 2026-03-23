@@ -309,14 +309,16 @@ impl AgentMessage {
     /// Returns `Err(DowncastError)` if this is an `Llm` variant or the type does not match.
     pub fn downcast_ref<T: 'static>(&self) -> Result<&T, crate::error::DowncastError> {
         match self {
-            Self::Custom(msg) => msg.as_any().downcast_ref::<T>().ok_or_else(|| {
-                crate::error::DowncastError {
-                    expected: std::any::type_name::<T>(),
-                    actual: msg
-                        .type_name()
-                        .map_or_else(|| format!("{msg:?}"), ToString::to_string),
-                }
-            }),
+            Self::Custom(msg) => {
+                msg.as_any()
+                    .downcast_ref::<T>()
+                    .ok_or_else(|| crate::error::DowncastError {
+                        expected: std::any::type_name::<T>(),
+                        actual: msg
+                            .type_name()
+                            .map_or_else(|| format!("{msg:?}"), ToString::to_string),
+                    })
+            }
             Self::Llm(_) => Err(crate::error::DowncastError {
                 expected: std::any::type_name::<T>(),
                 actual: "LlmMessage".to_string(),
@@ -660,6 +662,25 @@ pub struct AgentResult {
     pub cost: Cost,
     /// Optional error string if the run ended in an error state.
     pub error: Option<String>,
+}
+
+impl AgentResult {
+    /// Extract the text content from the last assistant message, if any.
+    ///
+    /// Iterates messages in reverse order, finds the first `Assistant` message,
+    /// and returns its concatenated text blocks. Returns an empty string if no
+    /// assistant message is found or if the assistant message contains no text.
+    pub fn assistant_text(&self) -> String {
+        self.messages
+            .iter()
+            .rev()
+            .find_map(|msg| match msg {
+                AgentMessage::Llm(LlmMessage::Assistant(a)) => Some(a),
+                _ => None,
+            })
+            .map(|a| ContentBlock::extract_text(&a.content))
+            .unwrap_or_default()
+    }
 }
 
 impl fmt::Debug for AgentResult {
@@ -1017,6 +1038,78 @@ mod tests {
         assert!(!registry.has_type_name("mock_notification"));
         registry.register_type::<MockNotification>("mock_notification");
         assert!(registry.has_type_name("mock_notification"));
+    }
+
+    #[test]
+    fn assistant_text_extracts_last_assistant_message() {
+        let result = AgentResult {
+            messages: vec![
+                AgentMessage::Llm(LlmMessage::User(UserMessage {
+                    content: vec![ContentBlock::Text {
+                        text: "hi".to_string(),
+                    }],
+                    timestamp: 0,
+                })),
+                AgentMessage::Llm(LlmMessage::Assistant(AssistantMessage {
+                    content: vec![ContentBlock::Text {
+                        text: "first".to_string(),
+                    }],
+                    provider: "test".to_string(),
+                    model_id: "m".to_string(),
+                    usage: Usage::default(),
+                    cost: Cost::default(),
+                    stop_reason: StopReason::Stop,
+                    error_message: None,
+                    timestamp: 0,
+                })),
+                AgentMessage::Llm(LlmMessage::Assistant(AssistantMessage {
+                    content: vec![ContentBlock::Text {
+                        text: "second".to_string(),
+                    }],
+                    provider: "test".to_string(),
+                    model_id: "m".to_string(),
+                    usage: Usage::default(),
+                    cost: Cost::default(),
+                    stop_reason: StopReason::Stop,
+                    error_message: None,
+                    timestamp: 0,
+                })),
+            ],
+            stop_reason: StopReason::Stop,
+            usage: Usage::default(),
+            cost: Cost::default(),
+            error: None,
+        };
+        assert_eq!(result.assistant_text(), "second");
+    }
+
+    #[test]
+    fn assistant_text_returns_empty_when_no_assistant() {
+        let result = AgentResult {
+            messages: vec![AgentMessage::Llm(LlmMessage::User(UserMessage {
+                content: vec![ContentBlock::Text {
+                    text: "hi".to_string(),
+                }],
+                timestamp: 0,
+            }))],
+            stop_reason: StopReason::Stop,
+            usage: Usage::default(),
+            cost: Cost::default(),
+            error: None,
+        };
+        assert_eq!(result.assistant_text(), "");
+    }
+
+    #[test]
+    fn assistant_text_returns_empty_when_no_messages() {
+        let result = AgentResult {
+            messages: vec![],
+            stop_reason: StopReason::Stop,
+            usage: Usage::default(),
+            cost: Cost::default(),
+            error: None,
+        };
+        assert_eq!(result.assistant_text(), "");
     }
 
     #[test]

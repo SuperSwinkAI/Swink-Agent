@@ -224,8 +224,8 @@ async fn http_401_produces_auth_error() {
         } => {
             assert_eq!(*stop_reason, StopReason::Error);
             assert!(
-                error_message.contains("authentication failure"),
-                "expected 'authentication failure', got: {error_message}"
+                error_message.contains("auth error"),
+                "expected 'auth error', got: {error_message}"
             );
         }
         other => panic!("expected Error event, got {other:?}"),
@@ -290,8 +290,8 @@ async fn http_504_produces_network_error() {
         } => {
             assert_eq!(*stop_reason, StopReason::Error);
             assert!(
-                error_message.contains("network error"),
-                "expected 'network error', got: {error_message}"
+                error_message.contains("server error"),
+                "expected 'server error', got: {error_message}"
             );
         }
         other => panic!("expected Error event, got {other:?}"),

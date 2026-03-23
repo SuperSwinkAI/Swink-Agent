@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use futures::StreamExt;
 use tokio_util::sync::CancellationToken;
 
-use swink_agent::types::{AgentContext, Cost, ModelSpec, StopReason, Usage};
+use swink_agent::types::{AgentContext, Cost, StopReason, Usage};
 use swink_agent::{AssistantMessageEvent, StreamMiddleware, StreamOptions, stream::StreamFn};
 
 use common::{MockStreamFn, default_model};

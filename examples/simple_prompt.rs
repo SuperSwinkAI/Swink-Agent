@@ -11,10 +11,7 @@ use std::sync::Mutex;
 use futures::Stream;
 use tokio_util::sync::CancellationToken;
 
-use swink_agent::{
-    Agent, AgentMessage, AgentOptions, AssistantMessageEvent, ContentBlock, Cost, LlmMessage,
-    ModelSpec, StopReason, StreamFn, StreamOptions, Usage,
-};
+use swink_agent::prelude::*;
 
 // ─── Mock StreamFn ──────────────────────────────────────────────────────────
 
@@ -60,20 +57,7 @@ impl StreamFn for MockStreamFn {
 
 /// Build a sequence of events that produces a single text response.
 fn text_events(text: &str) -> Vec<AssistantMessageEvent> {
-    vec![
-        AssistantMessageEvent::Start,
-        AssistantMessageEvent::TextStart { content_index: 0 },
-        AssistantMessageEvent::TextDelta {
-            content_index: 0,
-            delta: text.to_string(),
-        },
-        AssistantMessageEvent::TextEnd { content_index: 0 },
-        AssistantMessageEvent::Done {
-            stop_reason: StopReason::Stop,
-            usage: Usage::default(),
-            cost: Cost::default(),
-        },
-    ]
+    AssistantMessageEvent::text_response(text)
 }
 
 // ─── Main ───────────────────────────────────────────────────────────────────
@@ -101,12 +85,7 @@ async fn main() {
         .expect("prompt failed");
 
     // Step 6: Extract and print the response text.
-    for msg in &result.messages {
-        if let AgentMessage::Llm(LlmMessage::Assistant(assistant)) = msg {
-            let text = ContentBlock::extract_text(&assistant.content);
-            println!("Assistant: {text}");
-        }
-    }
+    println!("Assistant: {}", result.assistant_text());
 
     println!("Stop reason: {:?}", result.stop_reason);
     println!("Usage: {:?}", result.usage);

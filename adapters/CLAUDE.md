@@ -9,6 +9,7 @@
 - All adapters implement `StreamFn` (Send + Sync). Provider modules are private; public API is re-exports only.
 - `MessageConverter` trait (defined in core, re-exported from `swink_agent::convert`) eliminates per-adapter boilerplate — except Anthropic, which has its own `convert_messages` (system prompt is top-level, thinking blocks filtered).
 - `ProxyStreamFn` moved here from core. Import: `swink_agent_adapters::ProxyStreamFn`.
+- The `classify` and `sse` modules are public but documented as internal utilities with no stability contract. External StreamFn implementors should depend only on `swink_agent`.
 
 ## Protocols
 

@@ -6,7 +6,7 @@
 
 ## Key Facts
 
-- Provider configuration depends on the specific agent setup; `credentials::providers()` enumerates available credentials but there is no fixed priority — the active model is determined by agent configuration.
+- `credentials::providers()` returns entries in a fixed iteration order (Ollama, OpenAI, Anthropic, Custom Proxy, Local SmolLM3-3B). This order affects the F4 model-cycle UI. The active model is still determined by agent configuration.
 - Event loop (`app.rs`): `tokio::select!` — terminal events, agent events, approval events, then tick.
 - Dirty flag optimization: frame redraws only when `dirty = true`.
 - Plan mode delegates to `agent.enter_plan_mode()`/`exit_plan_mode()` in core; TUI just manages UI state.

@@ -1,8 +1,16 @@
 #![forbid(unsafe_code)]
 mod base;
+/// Internal HTTP status code classification utilities for built-in adapters.
+///
+/// **No stability guarantees.** External `StreamFn` implementors should depend
+/// only on `swink_agent` (core) types, not on `swink_agent_adapters` internals.
 pub mod classify;
 mod proxy;
 mod remote_presets;
+/// Internal SSE stream parsing utilities for built-in adapters.
+///
+/// **No stability guarantees.** External `StreamFn` implementors should depend
+/// only on `swink_agent` (core) types, not on `swink_agent_adapters` internals.
 pub mod sse;
 
 mod anthropic;

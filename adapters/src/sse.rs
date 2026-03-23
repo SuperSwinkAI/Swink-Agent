@@ -297,15 +297,15 @@ mod tests {
         // Multi-line data split across feed() calls
         let mut parser = SseStreamParser::new();
         let lines1 = parser.feed(b"data: first\n");
-        assert!(lines1.is_empty(), "pending data not emitted without separator");
+        assert!(
+            lines1.is_empty(),
+            "pending data not emitted without separator"
+        );
 
         let lines2 = parser.feed(b"data: second\n\n");
         assert_eq!(
             lines2,
-            vec![
-                SseLine::Data("first\nsecond".to_string()),
-                SseLine::Empty,
-            ]
+            vec![SseLine::Data("first\nsecond".to_string()), SseLine::Empty,]
         );
     }
 
@@ -316,10 +316,7 @@ mod tests {
         let lines = parser.feed(b"data: single\n\n");
         assert_eq!(
             lines,
-            vec![
-                SseLine::Data("single".to_string()),
-                SseLine::Empty,
-            ]
+            vec![SseLine::Data("single".to_string()), SseLine::Empty,]
         );
     }
 
@@ -341,10 +338,7 @@ mod tests {
         let lines = parser.feed(b"data: last\ndata: [DONE]\n");
         assert_eq!(
             lines,
-            vec![
-                SseLine::Data("last".to_string()),
-                SseLine::Done,
-            ]
+            vec![SseLine::Data("last".to_string()), SseLine::Done,]
         );
     }
 }

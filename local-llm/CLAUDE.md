@@ -23,6 +23,16 @@
 - **`ModelState` split** — public `ModelState` (re-exported from lib.rs) vs internal `InternalModelState` (holds `mistralrs::Model` runner). Stream code uses `InternalModelState`.
 - **Embedding method naming** — `embed(text)` for single text, `embed_batch(texts)` for batch. Errors use `LocalModelError::Embedding` variant.
 
+## Design Decisions
+
+### Intentional duplication between `model.rs` and `embedding.rs`
+
+Both modules follow the same `Arc<Inner>` + state-machine pattern (`Unloaded -> Downloading -> Loading -> Ready | Failed`), `RwLock`-guarded state, `Notify`-based readiness signalling, and progress callbacks. This structural similarity is deliberate rather than extracted into a generic type because:
+
+- **Different runner types** — `model.rs` uses `mistralrs::GgufModelBuilder` for chat completion pipelines; `embedding.rs` uses `mistralrs::EmbeddingModelBuilder` for vectorization pipelines. These are distinct mistral.rs types with incompatible builder and inference APIs.
+- **Different public APIs** — `LocalModel` exposes `runner()` for streaming chat completion; `EmbeddingModel` exposes `embed(text)` and `embed_batch(texts)` returning `Vec<f32>`.
+- **Complexity trade-off** — A generic `LazyModel<Config, State>` abstraction would require type parameters threading through config, state, runner, and builder types. With only two implementations this adds indirection without meaningful deduplication.
+
 ## Build & Test
 
 ```bash

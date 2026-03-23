@@ -193,10 +193,10 @@ fn available_models_empty_when_none_configured() {
 async fn set_model_swaps_stream_fn_for_known_model() {
     use std::sync::atomic::{AtomicBool, Ordering};
 
-    use common::FlagStreamFn;
+    use common::MockFlagStreamFn;
 
     let primary_sfn = Arc::new(MockStreamFn::new(vec![text_only_events("from primary")]));
-    let extra_sfn = Arc::new(FlagStreamFn {
+    let extra_sfn = Arc::new(MockFlagStreamFn {
         called: AtomicBool::new(false),
         responses: std::sync::Mutex::new(vec![text_only_events("from extra")]),
     });
@@ -233,13 +233,13 @@ async fn set_model_swaps_stream_fn_for_known_model() {
 async fn set_model_restores_primary_stream_fn_when_switching_back() {
     use std::sync::atomic::{AtomicBool, Ordering};
 
-    use common::FlagStreamFn;
+    use common::MockFlagStreamFn;
 
-    let primary_sfn = Arc::new(FlagStreamFn {
+    let primary_sfn = Arc::new(MockFlagStreamFn {
         called: AtomicBool::new(false),
         responses: std::sync::Mutex::new(vec![text_only_events("from primary")]),
     });
-    let extra_sfn = Arc::new(FlagStreamFn {
+    let extra_sfn = Arc::new(MockFlagStreamFn {
         called: AtomicBool::new(false),
         responses: std::sync::Mutex::new(vec![text_only_events("from extra")]),
     });

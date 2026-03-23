@@ -10,7 +10,7 @@ use serde_json::json;
 
 use swink_agent::{
     AgentMessage, AgentOptions, AgentTool, AgentToolResult, AssistantMessageEvent, ContentBlock,
-    LlmMessage, ModelSpec, StopReason, SubAgent, Usage, stream::StreamFn,
+    LlmMessage, StopReason, SubAgent, Usage, stream::StreamFn,
 };
 
 use common::{MockStreamFn, default_model, text_only_events};
@@ -106,8 +106,9 @@ async fn sub_agent_shares_stream_fn() {
 
     assert!(Arc::ptr_eq(&sfn1, &sfn2));
 
-    let sub = SubAgent::new("shared", "Shared", "Uses shared stream")
-        .with_options(move || AgentOptions::new_simple("shared", default_model(), Arc::clone(&sfn1)));
+    let sub = SubAgent::new("shared", "Shared", "Uses shared stream").with_options(move || {
+        AgentOptions::new_simple("shared", default_model(), Arc::clone(&sfn1))
+    });
 
     assert_eq!(sub.name(), "shared");
     assert_eq!(sub.label(), "Shared");

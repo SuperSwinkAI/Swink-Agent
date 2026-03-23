@@ -32,8 +32,8 @@ flowchart TB
     end
 
     subgraph UsageLayer["📊 Usage"]
-        Usage["Usage<br/>input · output · cache_read · cache_write · total"]
-        Cost["Cost<br/>per-category + total (f64)"]
+        Usage["Usage<br/>input · output · cache_read · cache_write · total<br/>extra: HashMap&lt;String, u64&gt;"]
+        Cost["Cost<br/>per-category + total (f64)<br/>extra: HashMap&lt;String, f64&gt;"]
     end
 
     subgraph ResultLayer["✅ Results"]
@@ -165,6 +165,9 @@ flowchart LR
     ToolCall -->|"✓"| InAssistant
     Image -->|"✓"| InUser
     Image -->|"✓"| InToolResult
+    Extension -->|"✓"| InUser
+    Extension -->|"✓"| InAssistant
+    Extension -->|"✓"| InToolResult
 
     classDef blockStyle fill:#fff3e0,stroke:#f57c00,stroke-width:2px,color:#000
     classDef msgStyle fill:#e3f2fd,stroke:#1976d2,stroke-width:2px,color:#000
@@ -212,7 +215,7 @@ sequenceDiagram
 | Usage | yes | yes | yes |
 | Cost | yes | yes | — |
 
-All five fields (`input`, `output`, `cache_read`, `cache_write`, `total`) are summed independently.
+All five standard fields (`input`, `output`, `cache_read`, `cache_write`, `total`) are summed independently. Both `Usage` and `Cost` also carry an `extra` map (`HashMap<String, u64>` and `HashMap<String, f64>` respectively) for provider-specific metrics (e.g., reasoning tokens, search tokens). The `extra` entries are merged key-wise during addition and `merge()`.
 
 ---
 

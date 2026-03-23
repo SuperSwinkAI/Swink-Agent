@@ -474,24 +474,42 @@ fn accumulate_empty_stream() {
 
 #[test]
 fn assistant_message_delta_variants() {
-    use swink_agent::AssistantMessageDelta;
     use std::borrow::Cow;
+    use swink_agent::AssistantMessageDelta;
 
     let text = AssistantMessageDelta::Text {
         content_index: 0,
         delta: Cow::Borrowed("hello"),
     };
-    assert!(matches!(text, AssistantMessageDelta::Text { content_index: 0, .. }));
+    assert!(matches!(
+        text,
+        AssistantMessageDelta::Text {
+            content_index: 0,
+            ..
+        }
+    ));
 
     let thinking = AssistantMessageDelta::Thinking {
         content_index: 1,
         delta: Cow::Owned("pondering".to_string()),
     };
-    assert!(matches!(thinking, AssistantMessageDelta::Thinking { content_index: 1, .. }));
+    assert!(matches!(
+        thinking,
+        AssistantMessageDelta::Thinking {
+            content_index: 1,
+            ..
+        }
+    ));
 
     let tool = AssistantMessageDelta::ToolCall {
         content_index: 2,
         delta: Cow::Borrowed(r#"{"key":"val"}"#),
     };
-    assert!(matches!(tool, AssistantMessageDelta::ToolCall { content_index: 2, .. }));
+    assert!(matches!(
+        tool,
+        AssistantMessageDelta::ToolCall {
+            content_index: 2,
+            ..
+        }
+    ));
 }

@@ -283,18 +283,7 @@ fn gemini_stream<'a>(
             let code = status.as_u16();
             let body = response.text().await.unwrap_or_default();
             warn!(status = code, "Google Gemini HTTP error");
-            let event = match code {
-                401 | 403 => AssistantMessageEvent::error_auth(format!(
-                    "Google auth error (HTTP {code}): {body}"
-                )),
-                429 => AssistantMessageEvent::error_throttled(format!(
-                    "Google rate limit (HTTP 429): {body}"
-                )),
-                500..=599 => AssistantMessageEvent::error_network(format!(
-                    "Google server error (HTTP {code}): {body}"
-                )),
-                _ => AssistantMessageEvent::error(format!("Google HTTP {code}: {body}")),
-            };
+            let event = crate::classify::error_event_from_status(code, &body, "Google");
             return stream::iter(vec![event]).left_stream();
         }
 

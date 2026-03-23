@@ -89,18 +89,6 @@ pub fn thinking_color() -> Color {
     resolve(Color::DarkGray)
 }
 
-/// Map a [`MessageRole`] to its display color.
-#[allow(dead_code)]
-pub fn role_color(role: crate::app::MessageRole) -> Color {
-    use crate::app::MessageRole;
-    match role {
-        MessageRole::User => user_color(),
-        MessageRole::Assistant => assistant_color(),
-        MessageRole::ToolResult => tool_color(),
-        MessageRole::Error => error_color(),
-        MessageRole::System => system_color(),
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Status indicator colors
@@ -203,24 +191,6 @@ pub fn heading_color() -> Color {
 // Contrast helpers (bypass `resolve()` to guarantee fg ≠ bg)
 // ---------------------------------------------------------------------------
 
-/// Foreground for monochrome badge text.
-#[allow(dead_code)]
-pub fn mono_fg() -> Color {
-    match color_mode() {
-        ColorMode::Custom | ColorMode::MonoWhite => Color::White,
-        ColorMode::MonoBlack => Color::Black,
-    }
-}
-
-/// Background for monochrome badges.
-#[allow(dead_code)]
-pub fn mono_bg() -> Color {
-    match color_mode() {
-        ColorMode::Custom => Color::DarkGray,
-        ColorMode::MonoWhite => Color::Black,
-        ColorMode::MonoBlack => Color::White,
-    }
-}
 
 /// Status bar background.
 pub fn bar_bg() -> Color {
@@ -348,7 +318,7 @@ mod tests {
         ] {
             set_color_mode(mode);
             assert_ne!(bar_fg(), bar_bg(), "bar_fg == bar_bg in {mode:?}");
-            assert_ne!(mono_fg(), mono_bg(), "mono_fg == mono_bg in {mode:?}");
+
         }
         reset();
     }
@@ -363,14 +333,4 @@ mod tests {
         reset();
     }
 
-    #[test]
-    fn role_color_maps_all_variants() {
-        use crate::app::MessageRole;
-        reset();
-        assert_eq!(role_color(MessageRole::User), user_color());
-        assert_eq!(role_color(MessageRole::Assistant), assistant_color());
-        assert_eq!(role_color(MessageRole::ToolResult), tool_color());
-        assert_eq!(role_color(MessageRole::Error), error_color());
-        assert_eq!(role_color(MessageRole::System), system_color());
-    }
 }

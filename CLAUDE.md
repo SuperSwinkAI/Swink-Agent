@@ -76,9 +76,14 @@ MSRV **1.88** (edition 2024). Workspace deps centralized in root `Cargo.toml`.
 - `AgentToolResult.is_error` replaces old `text.starts_with("error")` heuristic. Use `error()` / `text()` constructors.
 - `ToolCallTransformer` runs unconditionally (not gated by approval). Distinct from `ToolValidator` (rejects vs rewrites).
 
+### Checkpoint / Persistence
+
+- Checkpoint and SessionStore now support CustomMessage persistence via `custom_messages` field and `save_full`/`load_full`. Old checkpoints without `custom_messages` field deserialize fine (backward compat via `#[serde(default)]`).
+
 ### Feature Gates
 
 - `builtin-tools` (default-enabled) — gates `BashTool`, `ReadFileTool`, `WriteFileTool`.
+- `test-helpers` — for **downstream consumers only** (e.g., `SuperSwink-Core`). Enables public re-exports of test utilities. Not used by the `swink-agent` crate itself (it cannot be its own dev-dependency).
 - `ProxyStreamFn` lives in adapters crate, not core.
 
 ## Active Technologies

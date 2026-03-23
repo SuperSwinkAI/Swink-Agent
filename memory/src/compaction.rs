@@ -255,7 +255,10 @@ mod tests {
                 false
             }
         });
-        assert!(summary_msg.is_some(), "summary should be an AssistantMessage");
+        assert!(
+            summary_msg.is_some(),
+            "summary should be an AssistantMessage"
+        );
     }
 
     #[test]
@@ -286,6 +289,9 @@ mod tests {
         compact(&mut messages, false);
 
         // Summary should have been consumed
-        assert!(!compactor.has_summary(), "summary should be consumed after injection");
+        assert!(
+            !compactor.has_summary(),
+            "summary should be consumed after injection"
+        );
     }
 }

@@ -6,7 +6,7 @@
 
 ## Key Facts
 
-- `SessionStore` trait; `JsonlSessionStore` concrete backend. JSONL: line 1 = `SessionMeta`, lines 2+ = `LlmMessage`. `CustomMessage` filtered out (not serializable).
+- `SessionStore` trait; `JsonlSessionStore` concrete backend. JSONL: line 1 = `SessionMeta`, lines 2+ = `LlmMessage` (or custom message envelopes when using `save_full`/`load_full`). `save_full`/`load_full` support full `AgentMessage` including custom messages via `serialize_custom_message`/`deserialize_custom_message`.
 - `SummarizingCompactor::compaction_fn()` returns closure for `Agent::with_transform_context()`.
 
 ## Lessons Learned

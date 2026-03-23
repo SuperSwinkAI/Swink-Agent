@@ -817,9 +817,7 @@ async fn load_session_keeps_full_agent_state_but_trims_visible_history() {
         created_at: now,
         updated_at: now,
     };
-    store
-        .save(session_id, &meta, &llm_messages)
-        .unwrap();
+    store.save(session_id, &meta, &llm_messages).unwrap();
 
     let stream_fn = Arc::new(MockStreamFn::new(vec![]));
     let agent = make_test_agent(stream_fn);
@@ -1302,7 +1300,7 @@ async fn smart_mode_auto_approves_readonly_tool() {
     let mut app = App::new(TuiConfig::default());
     app.approval_mode = ApprovalMode::Smart;
 
-    let (tx, rx) = tokio::sync::oneshot::channel();
+    let (tx, _rx) = tokio::sync::oneshot::channel();
     let request = ToolApprovalRequest {
         tool_call_id: "call_ro".into(),
         tool_name: "read_file".into(),
@@ -1377,7 +1375,7 @@ async fn bypassed_mode_auto_approves_all() {
 
 #[test]
 fn approve_command_switches_modes() {
-    use crate::commands::{execute_command, CommandResult, ApprovalModeArg};
+    use crate::commands::{ApprovalModeArg, CommandResult, execute_command};
     assert!(matches!(
         execute_command("#approve on"),
         CommandResult::SetApprovalMode(ApprovalModeArg::On)
@@ -1512,7 +1510,10 @@ async fn trusted_tool_auto_approves_in_smart_mode() {
 
     app.handle_approval_request(request, tx);
 
-    assert!(app.pending_approval.is_none(), "trusted tool should auto-approve");
+    assert!(
+        app.pending_approval.is_none(),
+        "trusted tool should auto-approve"
+    );
     assert_eq!(rx.await.unwrap(), ToolApproval::Approved);
 }
 
@@ -1827,7 +1828,7 @@ fn tool_with_requires_approval_true() {
 
 #[test]
 fn untrust_specific_tool_command() {
-    use crate::commands::{execute_command, CommandResult};
+    use crate::commands::{CommandResult, execute_command};
     match execute_command("#approve untrust bash") {
         CommandResult::UntrustTool(name) => assert_eq!(name, "bash"),
         other => panic!("expected UntrustTool, got {other:?}"),
@@ -1836,7 +1837,7 @@ fn untrust_specific_tool_command() {
 
 #[test]
 fn untrust_all_command() {
-    use crate::commands::{execute_command, CommandResult};
+    use crate::commands::{CommandResult, execute_command};
     assert!(matches!(
         execute_command("#approve untrust"),
         CommandResult::UntrustAll
@@ -1908,7 +1909,10 @@ async fn concurrent_plan_and_tool_approval_plan_takes_precedence() {
     // Plan approval should have been handled (but approve_plan needs agent,
     // so it would be a no-op here). The key point is that tool approval
     // was NOT handled first.
-    assert!(!app.pending_plan_approval, "plan approval should be handled");
+    assert!(
+        !app.pending_plan_approval,
+        "plan approval should be handled"
+    );
     assert!(
         app.pending_approval.is_some(),
         "tool approval should not have been handled"

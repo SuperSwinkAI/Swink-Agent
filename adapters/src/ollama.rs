@@ -191,13 +191,11 @@ fn ollama_stream<'a>(
         };
 
         if !response.status().is_success() {
-            let status = response.status().as_u16();
+            let code = response.status().as_u16();
             let body = response.text().await.unwrap_or_default();
-            warn!(status, "Ollama HTTP error");
-            return stream::iter(vec![AssistantMessageEvent::error_network(format!(
-                "Ollama HTTP {status}: {body}"
-            ))])
-            .left_stream();
+            warn!(status = code, "Ollama HTTP error");
+            let event = crate::classify::error_event_from_status(code, &body, "Ollama");
+            return stream::iter(vec![event]).left_stream();
         }
 
         parse_ndjson_stream(response, cancellation_token).right_stream()
@@ -596,8 +594,8 @@ mod tests {
     use super::*;
     use crate::convert::convert_messages;
     use crate::finalize::StreamFinalize;
-    use futures::stream;
     use futures::StreamExt;
+    use futures::stream;
     use swink_agent::types::{
         AgentMessage, AssistantMessage as HarnessAssistantMessage, ContentBlock, Cost, LlmMessage,
         StopReason, ToolResultMessage, Usage, UserMessage,
@@ -748,10 +746,16 @@ mod tests {
 
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].role, "assistant");
-        let tool_calls = result[0].tool_calls.as_ref().expect("should have tool_calls");
+        let tool_calls = result[0]
+            .tool_calls
+            .as_ref()
+            .expect("should have tool_calls");
         assert_eq!(tool_calls.len(), 1);
         assert_eq!(tool_calls[0].function.name, "my_tool");
-        assert_eq!(tool_calls[0].function.arguments, serde_json::json!({"key": "val"}));
+        assert_eq!(
+            tool_calls[0].function.arguments,
+            serde_json::json!({"key": "val"})
+        );
     }
 
     // ─── convert_messages: tool result ──────────────────────────────────

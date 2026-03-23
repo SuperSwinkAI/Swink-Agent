@@ -9,9 +9,9 @@ use swink_agent::{
     StreamOptions,
 };
 
-struct DummyStreamFn;
+struct MockDummyStreamFn;
 
-impl StreamFn for DummyStreamFn {
+impl StreamFn for MockDummyStreamFn {
     fn stream<'a>(
         &'a self,
         _model: &'a ModelSpec,
@@ -24,7 +24,7 @@ impl StreamFn for DummyStreamFn {
 }
 
 fn dummy_stream() -> Arc<dyn StreamFn> {
-    Arc::new(DummyStreamFn)
+    Arc::new(MockDummyStreamFn)
 }
 
 #[test]

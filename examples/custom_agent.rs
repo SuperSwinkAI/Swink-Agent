@@ -10,9 +10,8 @@
 
 use std::sync::Arc;
 
-use swink_agent::{
-    AgentOptions, AgentTool, BashTool, ModelConnections, ReadFileTool, WriteFileTool,
-};
+use swink_agent::prelude::*;
+use swink_agent::{BashTool, ModelConnections, ReadFileTool, WriteFileTool};
 use swink_agent_adapters::{build_remote_connection, remote_preset_keys};
 use swink_agent_local_llm::default_local_connection;
 use swink_agent_tui::{TuiConfig, launch, restore_terminal, setup_terminal};

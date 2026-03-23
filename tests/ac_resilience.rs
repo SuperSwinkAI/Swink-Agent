@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use common::{
-    ContextCapturingStreamFn, EventCollector, MockStreamFn, MockTool, default_convert,
+    MockContextCapturingStreamFn, EventCollector, MockStreamFn, MockTool, default_convert,
     default_model, error_events, text_only_events, tool_call_events, user_msg,
 };
 use futures::stream::StreamExt;
@@ -22,12 +22,17 @@ use swink_agent::{
 
 fn make_agent(stream_fn: Arc<dyn swink_agent::StreamFn>) -> Agent {
     Agent::new(
-        AgentOptions::new("test system prompt", default_model(), stream_fn, default_convert)
-            .with_retry_strategy(Box::new(
-                DefaultRetryStrategy::default()
-                    .with_jitter(false)
-                    .with_base_delay(Duration::from_millis(1)),
-            )),
+        AgentOptions::new(
+            "test system prompt",
+            default_model(),
+            stream_fn,
+            default_convert,
+        )
+        .with_retry_strategy(Box::new(
+            DefaultRetryStrategy::default()
+                .with_jitter(false)
+                .with_base_delay(Duration::from_millis(1)),
+        )),
     )
 }
 
@@ -36,13 +41,18 @@ fn make_agent_with_tools(
     tools: Vec<Arc<dyn swink_agent::AgentTool>>,
 ) -> Agent {
     Agent::new(
-        AgentOptions::new("test system prompt", default_model(), stream_fn, default_convert)
-            .with_tools(tools)
-            .with_retry_strategy(Box::new(
-                DefaultRetryStrategy::default()
-                    .with_jitter(false)
-                    .with_base_delay(Duration::from_millis(1)),
-            )),
+        AgentOptions::new(
+            "test system prompt",
+            default_model(),
+            stream_fn,
+            default_convert,
+        )
+        .with_tools(tools)
+        .with_retry_strategy(Box::new(
+            DefaultRetryStrategy::default()
+                .with_jitter(false)
+                .with_base_delay(Duration::from_millis(1)),
+        )),
     )
 }
 
@@ -62,13 +72,14 @@ async fn retry_with_backoff_on_throttle() {
     ]));
 
     let mut agent = Agent::new(
-        AgentOptions::new("test", default_model(), stream_fn, default_convert)
-            .with_retry_strategy(Box::new(
+        AgentOptions::new("test", default_model(), stream_fn, default_convert).with_retry_strategy(
+            Box::new(
                 DefaultRetryStrategy::default()
                     .with_max_attempts(3)
                     .with_jitter(false)
                     .with_base_delay(Duration::from_millis(1)),
-            )),
+            ),
+        ),
     );
 
     let result = agent.prompt_async(vec![user_msg("hello")]).await.unwrap();
@@ -84,7 +95,10 @@ async fn retry_with_backoff_on_throttle() {
                 if a.content.iter().any(|b| matches!(b, ContentBlock::Text { text } if text == "success"))
         )
     });
-    assert!(has_success_text, "agent should produce the success text after retry");
+    assert!(
+        has_success_text,
+        "agent should produce the success text after retry"
+    );
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -92,7 +106,7 @@ async fn retry_with_backoff_on_throttle() {
 //
 // Steer a message into the agent before prompting. The agent loop picks up
 // the steering message between turns (after a tool call triggers a follow-up
-// turn). Use ContextCapturingStreamFn to verify the steered message is
+// turn). Use MockContextCapturingStreamFn to verify the steered message is
 // included in context on the second LLM call.
 // ═════════════════════════════════════════════════════════════════════════════
 
@@ -101,7 +115,7 @@ async fn steering_callback_modifies_messages() {
     // Turn 1: tool call triggers tool execution and a follow-up turn.
     // Between turns, the steering message is consumed.
     // Turn 2: text response.
-    let capturing_fn = Arc::new(ContextCapturingStreamFn::new(vec![
+    let capturing_fn = Arc::new(MockContextCapturingStreamFn::new(vec![
         tool_call_events("tc_1", "my_tool", "{}"),
         text_only_events("final answer"),
     ]));
@@ -174,7 +188,10 @@ async fn abort_stops_running_turn() {
         }
     }
 
-    assert!(aborted, "should have seen ToolExecutionStart and called abort");
+    assert!(
+        aborted,
+        "should have seen ToolExecutionStart and called abort"
+    );
     assert!(
         saw_agent_end,
         "stream should terminate with AgentEnd after abort"
@@ -193,12 +210,13 @@ async fn abort_stops_running_turn() {
 fn sync_api_blocks_until_complete() {
     let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("sync response")]));
     let mut agent = Agent::new(
-        AgentOptions::new("test", default_model(), stream_fn, default_convert)
-            .with_retry_strategy(Box::new(
+        AgentOptions::new("test", default_model(), stream_fn, default_convert).with_retry_strategy(
+            Box::new(
                 DefaultRetryStrategy::default()
                     .with_jitter(false)
                     .with_base_delay(Duration::from_millis(1)),
-            )),
+            ),
+        ),
     );
 
     let result = agent.prompt_sync(vec![user_msg("hi")]).unwrap();
@@ -214,7 +232,10 @@ fn sync_api_blocks_until_complete() {
         )
     });
     assert!(has_text, "sync prompt should return accumulated text");
-    assert!(!agent.state().is_running, "agent should be idle after sync completes");
+    assert!(
+        !agent.state().is_running,
+        "agent should be idle after sync completes"
+    );
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -308,12 +329,12 @@ impl CustomMessage for TestCustomMessage {
 
 #[tokio::test]
 async fn custom_messages_survive_compaction() {
-    // Use ContextCapturingStreamFn to verify the custom message is NOT sent
+    // Use MockContextCapturingStreamFn to verify the custom message is NOT sent
     // to the LLM (default_convert returns None for Custom). The loop builds
     // the StreamFn context from converted LLM messages only.
-    let capturing_fn = Arc::new(ContextCapturingStreamFn::new(vec![
-        text_only_events("acknowledged"),
-    ]));
+    let capturing_fn = Arc::new(MockContextCapturingStreamFn::new(vec![text_only_events(
+        "acknowledged",
+    )]));
     let stream_fn: Arc<dyn swink_agent::StreamFn> =
         Arc::clone(&capturing_fn) as Arc<dyn swink_agent::StreamFn>;
 
@@ -371,13 +392,14 @@ async fn retry_exhaustion_surfaces_error() {
     ]));
 
     let mut agent = Agent::new(
-        AgentOptions::new("test", default_model(), stream_fn, default_convert)
-            .with_retry_strategy(Box::new(
+        AgentOptions::new("test", default_model(), stream_fn, default_convert).with_retry_strategy(
+            Box::new(
                 DefaultRetryStrategy::default()
                     .with_max_attempts(2)
                     .with_jitter(false)
                     .with_base_delay(Duration::from_millis(1)),
-            )),
+            ),
+        ),
     );
 
     let result = agent.prompt_async(vec![user_msg("hello")]).await;

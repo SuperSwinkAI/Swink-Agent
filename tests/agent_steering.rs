@@ -2,11 +2,11 @@
 
 mod common;
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
 use common::{
-    ContextCapturingStreamFn, MockStreamFn, MockTool, default_convert, default_model,
+    MockContextCapturingStreamFn, MockStreamFn, MockTool, default_convert, default_model,
     text_only_events, tool_call_events, user_msg,
 };
 
@@ -188,7 +188,7 @@ async fn context_snapshot_immutable() {
     // the same turn. We verify by capturing context message counts: the first
     // call should see only the user message, the second call (after tool result)
     // should see user + assistant + tool_result.
-    let capturing_fn = Arc::new(ContextCapturingStreamFn::new(vec![
+    let capturing_fn = Arc::new(MockContextCapturingStreamFn::new(vec![
         tool_call_events("tc_1", "my_tool", "{}"),
         text_only_events("done"),
     ]));
