@@ -256,9 +256,9 @@ fn operating_mode_field_is_writable() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn default_approval_mode_is_enabled() {
+fn default_approval_mode_is_smart() {
     let app = make_app();
-    assert_eq!(app.approval_mode, ApprovalMode::Enabled);
+    assert_eq!(app.approval_mode, ApprovalMode::Smart);
 }
 
 #[test]

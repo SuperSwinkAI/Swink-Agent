@@ -238,10 +238,10 @@ impl fmt::Debug for ToolApprovalRequest {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum ApprovalMode {
     /// Every tool call goes through the approval callback.
-    #[default]
     Enabled,
     /// Auto-approve read-only tools (where `requires_approval()` returns false);
     /// prompt for all others. Supports per-tool session trust.
+    #[default]
     Smart,
     /// All tool calls auto-approved — callback is never called.
     /// Use this to temporarily disable approval without removing the callback.
@@ -567,8 +567,8 @@ mod tests {
     // ─── ApprovalMode ─────────────────────────────────────────────────────
 
     #[test]
-    fn approval_mode_default_is_enabled() {
-        assert_eq!(ApprovalMode::default(), ApprovalMode::Enabled);
+    fn approval_mode_default_is_smart() {
+        assert_eq!(ApprovalMode::default(), ApprovalMode::Smart);
     }
 
     #[test]

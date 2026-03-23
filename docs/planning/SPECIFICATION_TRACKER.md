@@ -7,7 +7,7 @@
 - Provider Roadmap: [PROVIDER_EXPANSION_ROADMAP.md](PROVIDER_EXPANSION_ROADMAP.md)
 - Eval Roadmap: [EVAL.md](EVAL.md)
 
-**Current Focus:** 22/30 specs have plans, 23/30 have tasks, 21/30 complete (001–014, 020–022, 025–028, 030). Phase 0 + Phase 1 + Phase 2 done. Phase 3 partially done (011–014, 020 complete). Phase 4 partially done (021–022 complete). Phase 5 partially done (025–028 complete; 029 has tasks ready for implementation). Phase 6 done (030 complete). Next: `/speckit.implement` for 029. 8 specs need plans (015–019, 023–024). 0 specs need tasks.
+**Current Focus:** 22/30 specs have plans, 23/30 have tasks, 22/30 complete (001–014, 020–022, 025–030). Phase 0 + Phase 1 + Phase 2 done. Phase 3 partially done (011–014, 020 complete). Phase 4 partially done (021–022 complete). Phase 5 done (025–029 complete). Phase 6 done (030 complete). Next: plan + tasks for remaining adapters (015–019) and eval crates (023–024). 8 specs need plans (015–019, 023–024). 0 specs need tasks.
 
 > **Numbering System:** Spec numbers (001–030) are sequential identifiers that
 > never change. Phase numbers represent execution order and can be reassigned
@@ -205,7 +205,7 @@ evaluation — each depends only on the core library.
 **Goal:** Interactive terminal interface — the binary crate that demonstrates
 the full agent library in a usable application.
 
-**Status:** 5/5 specs planned, 5/5 have tasks, 4/5 complete, 5/5 specs defined
+**Status:** 5/5 specs planned, 5/5 have tasks, 5/5 complete, 5/5 specs defined
 
 ### Implementation Checklist
 
@@ -229,10 +229,10 @@ the full agent library in a usable application.
   - Branch: `028-tui-commands-editor-session`
   - Status: Complete (78/78 tasks, merged to main)
   - Depends on: 5.2
-- [ ] **5.5** TUI: Plan Mode & Approval — Plan mode (read-only restriction), tiered approval (Enabled/Smart/Bypassed), session trust (§16.9, §16.11)
+- [x] **5.5** TUI: Plan Mode & Approval — Plan mode (read-only restriction), tiered approval (Enabled/Smart/Bypassed), session trust (§16.9, §16.11)
   - Spec: `specs/029-tui-plan-mode-approval/spec.md`
   - Branch: `029-tui-plan-mode-approval`
-  - Status: Ready for implementation (0/70 tasks)
+  - Status: Complete (70/70 tasks, merged to main)
   - Depends on: 5.2
 
 ### Parallel Opportunities
@@ -350,7 +350,7 @@ graph TD
     style R fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
     style S fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
     style T fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
-    style U fill:#fff,color:#000,stroke:#6b7280,stroke-width:2px
+    style U fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
     style V fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
 ```
 

@@ -1,6 +1,7 @@
 //! Event loop and input handling.
 
 use std::io;
+use std::time::{Duration, Instant};
 
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use futures::StreamExt;
@@ -9,6 +10,7 @@ use ratatui::{Terminal, backend::CrosstermBackend};
 use swink_agent::{ApprovalMode, ToolApproval};
 
 use crate::commands::{self, ApprovalModeArg, ClipboardContent, CommandResult};
+use super::state::TrustFollowUp;
 use crate::theme;
 use crate::ui;
 
@@ -162,34 +164,10 @@ impl App {
             _ => {}
         }
 
-        if self.pending_approval.is_some() {
-            match key.code {
-                KeyCode::Char('y' | 'Y') | KeyCode::Enter => {
-                    if let Some((_req, responder)) = self.pending_approval.take() {
-                        let _ = responder.send(ToolApproval::Approved);
-                    }
-                    self.dirty = true;
-                    return;
-                }
-                KeyCode::Char('a' | 'A') => {
-                    if let Some((req, responder)) = self.pending_approval.take() {
-                        self.session_trusted_tools.insert(req.tool_name);
-                        let _ = responder.send(ToolApproval::Approved);
-                    }
-                    self.dirty = true;
-                    return;
-                }
-                KeyCode::Char('n' | 'N') | KeyCode::Esc => {
-                    if let Some((_req, responder)) = self.pending_approval.take() {
-                        let _ = responder.send(ToolApproval::Rejected);
-                    }
-                    self.dirty = true;
-                    return;
-                }
-                _ => {
-                    return;
-                }
-            }
+        // Handle modal prompts (trust follow-up, plan approval, tool approval).
+        // Returns true if the key was consumed.
+        if self.handle_modal_key(key) {
+            return;
         }
 
         if self.focus == Focus::Conversation {
@@ -210,6 +188,93 @@ impl App {
 
         self.handle_input_key(key);
         self.dirty = true;
+    }
+
+    /// Handle modal prompts: trust follow-up, plan approval, tool approval.
+    /// Returns `true` if the key was consumed by a modal.
+    fn handle_modal_key(&mut self, key: KeyEvent) -> bool {
+        // Priority 1: Trust follow-up prompt
+        if self.trust_follow_up.is_some() {
+            match key.code {
+                KeyCode::Char('y' | 'Y') | KeyCode::Enter => {
+                    if let Some(follow_up) = self.trust_follow_up.take() {
+                        self.session_trusted_tools.insert(follow_up.tool_name);
+                    }
+                    self.dirty = true;
+                    return true;
+                }
+                KeyCode::Char('n' | 'N') | KeyCode::Esc => {
+                    self.trust_follow_up = None;
+                    self.dirty = true;
+                    return true;
+                }
+                _ => {
+                    // Clear follow-up on any other key, then re-process
+                    self.trust_follow_up = None;
+                    self.dirty = true;
+                    // Fall through to process the key normally
+                }
+            }
+        }
+
+        // Priority 2: Plan approval prompt
+        if self.pending_plan_approval {
+            match key.code {
+                KeyCode::Char('y' | 'Y') | KeyCode::Enter => {
+                    self.approve_plan();
+                    self.dirty = true;
+                    return true;
+                }
+                KeyCode::Char('n' | 'N') | KeyCode::Esc => {
+                    self.reject_plan();
+                    self.dirty = true;
+                    return true;
+                }
+                _ => {
+                    return true;
+                }
+            }
+        }
+
+        // Priority 3: Tool approval prompt
+        if self.pending_approval.is_some() {
+            match key.code {
+                KeyCode::Char('y' | 'Y') | KeyCode::Enter => {
+                    if let Some((req, responder)) = self.pending_approval.take() {
+                        let _ = responder.send(ToolApproval::Approved);
+                        // In Smart mode, offer trust follow-up
+                        if self.approval_mode == ApprovalMode::Smart {
+                            self.trust_follow_up = Some(TrustFollowUp {
+                                tool_name: req.tool_name,
+                                expires_at: Instant::now() + Duration::from_secs(3),
+                            });
+                        }
+                    }
+                    self.dirty = true;
+                    return true;
+                }
+                KeyCode::Char('a' | 'A') => {
+                    if let Some((req, responder)) = self.pending_approval.take() {
+                        self.session_trusted_tools.insert(req.tool_name);
+                        let _ = responder.send(ToolApproval::Approved);
+                    }
+                    self.dirty = true;
+                    return true;
+                }
+                KeyCode::Char('n' | 'N') | KeyCode::Esc => {
+                    if let Some((_req, responder)) = self.pending_approval.take() {
+                        let _ = responder.send(ToolApproval::Rejected);
+                    }
+                    self.dirty = true;
+                    return true;
+                }
+                _ => {
+                    return true;
+                }
+            }
+        }
+
+        false
     }
 
     fn handle_input_key(&mut self, key: KeyEvent) {
@@ -356,7 +421,9 @@ impl App {
                 self.total_cost = 0.0;
                 self.context_tokens_used = 0;
                 self.session_trusted_tools.clear();
+                self.trust_follow_up = None;
                 self.operating_mode = OperatingMode::Execute;
+                self.pending_plan_approval = false;
                 self.model_index = 0;
                 self.pending_model = None;
                 self.saved_tools = None;
@@ -412,6 +479,16 @@ impl App {
             }
             CommandResult::TogglePlanMode => {
                 self.toggle_operating_mode();
+                return;
+            }
+            CommandResult::UntrustTool(name) => {
+                self.session_trusted_tools.remove(&name);
+                self.push_system_message(format!("Untrusted tool: {name}"));
+                return;
+            }
+            CommandResult::UntrustAll => {
+                self.session_trusted_tools.clear();
+                self.push_system_message("Cleared all trusted tools".to_string());
                 return;
             }
             CommandResult::QueryApprovalMode => {

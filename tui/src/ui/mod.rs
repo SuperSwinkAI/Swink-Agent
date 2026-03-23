@@ -36,7 +36,16 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         return;
     }
     let input_height = app.input.height();
-    let tool_height = app.tool_panel.height();
+    let mut tool_height = app.tool_panel.height();
+    // Account for extra prompt lines (plan approval, trust follow-up).
+    let has_trust_follow_up = app.trust_follow_up.is_some();
+    let has_plan_approval = app.pending_plan_approval;
+    if has_plan_approval {
+        tool_height = tool_height.max(3) + 1; // at least borders + 1 line
+    }
+    if has_trust_follow_up {
+        tool_height = tool_height.max(3) + 1;
+    }
 
     let mut constraints = vec![Constraint::Min(3)]; // Conversation view
 
@@ -107,7 +116,9 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     // Render tool panel
     if let Some(area) = tool_area {
-        app.tool_panel.render(frame, area);
+        let trust_name = app.trust_follow_up.as_ref().map(|f| f.tool_name.as_str());
+        app.tool_panel
+            .render_with_prompts(frame, area, app.pending_plan_approval, trust_name);
     }
 
     // Render input

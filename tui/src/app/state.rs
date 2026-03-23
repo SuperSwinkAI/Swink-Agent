@@ -41,6 +41,15 @@ pub enum OperatingMode {
     Plan,
 }
 
+/// A follow-up prompt asking whether to always approve a tool for this session.
+#[derive(Debug)]
+pub struct TrustFollowUp {
+    /// Name of the tool to potentially trust.
+    pub tool_name: String,
+    /// When the follow-up expires (auto-dismiss).
+    pub expires_at: Instant,
+}
+
 /// Message role for display styling.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MessageRole {
@@ -139,8 +148,12 @@ pub struct App {
     pub open_editor_requested: bool,
     /// Set of tool names trusted for the current session (auto-approved in Smart mode).
     pub session_trusted_tools: HashSet<String>,
+    /// Active trust follow-up prompt (shown after approving a tool in Smart mode).
+    pub trust_follow_up: Option<TrustFollowUp>,
     /// Current operating mode.
     pub operating_mode: OperatingMode,
+    /// Whether a plan approval prompt is pending.
+    pub pending_plan_approval: bool,
     /// Available models for F4 cycling.
     pub(crate) available_models: Vec<swink_agent::ModelSpec>,
     /// Current index into `available_models`.

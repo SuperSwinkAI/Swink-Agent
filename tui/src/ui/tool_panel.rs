@@ -146,8 +146,20 @@ impl ToolPanel {
         }
     }
 
-    /// Render the tool panel.
+    /// Render the tool panel (no extra prompts).
     pub fn render(&self, frame: &mut Frame, area: Rect) {
+        self.render_with_prompts(frame, area, false, None);
+    }
+
+    /// Render the tool panel with optional plan approval and trust follow-up prompts.
+    #[allow(clippy::too_many_lines)]
+    pub fn render_with_prompts(
+        &self,
+        frame: &mut Frame,
+        area: Rect,
+        pending_plan_approval: bool,
+        trust_follow_up: Option<&str>,
+    ) {
         let block = Block::default()
             .borders(Borders::ALL)
             .title(" Tools ")
@@ -155,7 +167,51 @@ impl ToolPanel {
 
         let mut lines: Vec<Line> = Vec::new();
 
-        // Pending approvals (highest priority — shown first)
+        // Plan approval prompt (highest priority)
+        if pending_plan_approval {
+            lines.push(Line::from(vec![
+                Span::styled(
+                    " \u{26a0} ",
+                    Style::default()
+                        .fg(theme::plan_color())
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    "Approve plan?",
+                    Style::default().add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    " [Y/n]",
+                    Style::default()
+                        .fg(theme::plan_color())
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ]));
+        }
+
+        // Trust follow-up prompt
+        if let Some(tool_name) = trust_follow_up {
+            lines.push(Line::from(vec![
+                Span::styled(
+                    " \u{2713} ",
+                    Style::default()
+                        .fg(theme::tool_color())
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!("Always approve {tool_name}?"),
+                    Style::default().add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    " [y/N]",
+                    Style::default()
+                        .fg(theme::tool_color())
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ]));
+        }
+
+        // Pending tool approvals
         for approval in &self.pending_approvals {
             lines.push(Line::from(vec![
                 Span::styled(

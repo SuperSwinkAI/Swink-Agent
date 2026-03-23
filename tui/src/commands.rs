@@ -40,6 +40,10 @@ pub enum CommandResult {
     TogglePlanMode,
     /// Toggle the help side panel.
     ToggleHelp,
+    /// Revoke session trust for a specific tool.
+    UntrustTool(String),
+    /// Revoke all session trust.
+    UntrustAll,
     /// Input was not a recognized command.
     NotACommand,
 }
@@ -116,8 +120,20 @@ fn execute_hash_command(cmd: &str) -> CommandResult {
         "approve on" => CommandResult::SetApprovalMode(ApprovalModeArg::On),
         "approve off" => CommandResult::SetApprovalMode(ApprovalModeArg::Off),
         "approve smart" => CommandResult::SetApprovalMode(ApprovalModeArg::Smart),
+        "approve untrust" => CommandResult::UntrustAll,
+        _ if cmd.starts_with("approve untrust ") => {
+            let tool_name = cmd
+                .strip_prefix("approve untrust ")
+                .unwrap_or("")
+                .trim();
+            if tool_name.is_empty() {
+                CommandResult::UntrustAll
+            } else {
+                CommandResult::UntrustTool(tool_name.to_string())
+            }
+        }
         _ if cmd.starts_with("approve ") => {
-            CommandResult::Feedback("Usage: #approve [on|off|smart]".to_string())
+            CommandResult::Feedback("Usage: #approve [on|off|smart|untrust [tool]]".to_string())
         }
         _ => CommandResult::Feedback(format!(
             "Unknown command: #{cmd}\nType #help for available commands."

@@ -72,7 +72,9 @@ impl App {
             selected_tool_block: None,
             open_editor_requested: false,
             session_trusted_tools: HashSet::new(),
+            trust_follow_up: None,
             operating_mode: OperatingMode::Execute,
+            pending_plan_approval: false,
             available_models: Vec::new(),
             model_index: 0,
             pending_model: None,
@@ -123,6 +125,14 @@ impl App {
         }
         self.tool_panel.tick();
         if self.tool_panel.is_visible() {
+            self.dirty = true;
+        }
+
+        // Auto-dismiss trust follow-up after expiration.
+        if let Some(ref follow_up) = self.trust_follow_up
+            && follow_up.expires_at < Instant::now()
+        {
+            self.trust_follow_up = None;
             self.dirty = true;
         }
 

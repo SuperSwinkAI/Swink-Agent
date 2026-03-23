@@ -236,6 +236,8 @@ impl App {
         {
             let _ = responder.send(ToolApproval::Approved);
         } else {
+            // Clear any active trust follow-up when a new approval arrives.
+            self.trust_follow_up = None;
             self.pending_approval = Some((request, responder));
         }
         self.dirty = true;
@@ -243,11 +245,58 @@ impl App {
 
     /// Toggle between Plan and Execute modes.
     pub(super) fn toggle_operating_mode(&mut self) {
+        // Ignore toggle while agent is streaming or plan approval is pending.
+        if self.status == AgentStatus::Running || self.pending_plan_approval {
+            return;
+        }
         match self.operating_mode {
             OperatingMode::Execute => self.enter_plan_mode(),
-            OperatingMode::Plan => self.exit_plan_mode(),
+            OperatingMode::Plan => {
+                // Instead of exiting directly, show approval prompt.
+                self.pending_plan_approval = true;
+            }
         }
         self.dirty = true;
+    }
+
+    /// Approve the current plan — exit plan mode and send plan messages as user input.
+    pub(super) fn approve_plan(&mut self) {
+        self.pending_plan_approval = false;
+
+        // Collect all assistant messages from plan mode.
+        let plan_messages: Vec<String> = self
+            .messages
+            .iter()
+            .filter(|m| m.plan_mode && m.role == MessageRole::Assistant)
+            .map(|m| m.content.clone())
+            .collect();
+
+        self.exit_plan_mode();
+
+        // Send concatenated plan as user message if non-empty.
+        let plan_text = plan_messages.join("\n\n---\n\n");
+        if !plan_text.is_empty() {
+            self.messages.push(DisplayMessage {
+                role: MessageRole::User,
+                content: plan_text.clone(),
+                thinking: None,
+                is_streaming: false,
+                collapsed: false,
+                summary: String::new(),
+                user_expanded: false,
+                expanded_at: None,
+                plan_mode: false,
+                diff_data: None,
+            });
+            self.trim_messages_to_recent_turns();
+            self.conversation.auto_scroll = true;
+            self.send_to_agent(plan_text);
+        }
+    }
+
+    /// Reject the plan — stay in plan mode.
+    pub(super) const fn reject_plan(&mut self) {
+        self.pending_plan_approval = false;
     }
 
     pub(super) fn enter_plan_mode(&mut self) {

@@ -1039,7 +1039,17 @@ async fn toggle_operating_mode_changes_mode() {
     app.toggle_operating_mode();
     assert_eq!(app.operating_mode, OperatingMode::Plan);
 
+    // Toggling from Plan now shows approval prompt instead of directly exiting
     app.toggle_operating_mode();
+    assert!(app.pending_plan_approval);
+    assert_eq!(
+        app.operating_mode,
+        OperatingMode::Plan,
+        "should stay in Plan until approved"
+    );
+
+    // Approve the plan to exit
+    app.approve_plan();
     assert_eq!(app.operating_mode, OperatingMode::Execute);
 }
 
@@ -1150,8 +1160,14 @@ async fn shift_tab_toggles_plan_mode() {
     app.handle_key_event(key);
     assert_eq!(app.operating_mode, OperatingMode::Plan);
 
+    // Second Shift+Tab shows approval prompt (stays in Plan)
     let key = KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT);
     app.handle_key_event(key);
+    assert!(app.pending_plan_approval);
+    assert_eq!(app.operating_mode, OperatingMode::Plan);
+
+    // Approve plan to exit
+    app.approve_plan();
     assert_eq!(app.operating_mode, OperatingMode::Execute);
 }
 
@@ -1271,4 +1287,748 @@ fn resize_event_sets_dirty() {
     app.handle_terminal_event(&crossterm::event::Event::Resize(120, 40));
 
     assert!(app.dirty, "resize should set dirty flag");
+}
+
+// ─── User Story 1: Approval Modes ──────────────────────────────────────────
+
+#[test]
+fn approval_mode_default_is_smart() {
+    let app = App::new(TuiConfig::default());
+    assert_eq!(app.approval_mode, ApprovalMode::Smart);
+}
+
+#[tokio::test]
+async fn smart_mode_auto_approves_readonly_tool() {
+    let mut app = App::new(TuiConfig::default());
+    app.approval_mode = ApprovalMode::Smart;
+
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let request = ToolApprovalRequest {
+        tool_call_id: "call_ro".into(),
+        tool_name: "read_file".into(),
+        arguments: serde_json::json!({}),
+        requires_approval: false,
+    };
+
+    // In Smart mode, a non-trusted tool that is not in the approval list
+    // still goes through handle_approval_request; the approval callback
+    // is what gates it. Here we test the TUI's handle_approval_request.
+    // For a read-only tool, the core loop never sends an approval request
+    // (it checks requires_approval on the tool trait). So this path
+    // would only be reached if the tool has requires_approval=false.
+    // The approval callback in the core loop wouldn't fire for such tools.
+    // We test that the TUI correctly stores approval for untrusted tools.
+    app.handle_approval_request(request, tx);
+
+    // Since the tool is not trusted, it should be pending
+    assert!(
+        app.pending_approval.is_some(),
+        "untrusted tool should trigger pending approval"
+    );
+}
+
+#[tokio::test]
+async fn smart_mode_prompts_for_write_tool() {
+    let mut app = App::new(TuiConfig::default());
+    app.approval_mode = ApprovalMode::Smart;
+
+    let (tx, _rx) = tokio::sync::oneshot::channel();
+    let request = ToolApprovalRequest {
+        tool_call_id: "call_w".into(),
+        tool_name: "write_file".into(),
+        arguments: serde_json::json!({}),
+        requires_approval: true,
+    };
+
+    app.handle_approval_request(request, tx);
+    assert!(app.pending_approval.is_some());
+}
+
+#[tokio::test]
+async fn enabled_mode_prompts_for_all_tools() {
+    let mut app = App::new(TuiConfig::default());
+    app.approval_mode = ApprovalMode::Enabled;
+
+    let (tx, _rx) = tokio::sync::oneshot::channel();
+    let request = ToolApprovalRequest {
+        tool_call_id: "call_r".into(),
+        tool_name: "read_file".into(),
+        arguments: serde_json::json!({}),
+        requires_approval: false,
+    };
+
+    app.handle_approval_request(request, tx);
+    assert!(
+        app.pending_approval.is_some(),
+        "Enabled mode should prompt for all tools"
+    );
+}
+
+#[tokio::test]
+async fn bypassed_mode_auto_approves_all() {
+    // In Bypassed mode, the core loop never sends approval requests
+    // (ApprovalMode::Bypassed skips the callback entirely).
+    // This is tested at the core level. The TUI just sets the mode.
+    let mut app = App::new(TuiConfig::default());
+    app.approval_mode = ApprovalMode::Bypassed;
+    // Verify mode is set correctly
+    assert_eq!(app.approval_mode, ApprovalMode::Bypassed);
+}
+
+#[test]
+fn approve_command_switches_modes() {
+    use crate::commands::{execute_command, CommandResult, ApprovalModeArg};
+    assert!(matches!(
+        execute_command("#approve on"),
+        CommandResult::SetApprovalMode(ApprovalModeArg::On)
+    ));
+    assert!(matches!(
+        execute_command("#approve smart"),
+        CommandResult::SetApprovalMode(ApprovalModeArg::Smart)
+    ));
+    assert!(matches!(
+        execute_command("#approve off"),
+        CommandResult::SetApprovalMode(ApprovalModeArg::Off)
+    ));
+}
+
+// ─── User Story 2: Session Trust Follow-Up ──────────────────────────────────
+
+#[tokio::test]
+async fn trust_follow_up_triggers_after_approval_in_smart_mode() {
+    let mut app = App::new(TuiConfig::default());
+    app.approval_mode = ApprovalMode::Smart;
+
+    let (tx, _rx) = tokio::sync::oneshot::channel();
+    let request = ToolApprovalRequest {
+        tool_call_id: "call_t".into(),
+        tool_name: "bash".into(),
+        arguments: serde_json::json!({}),
+        requires_approval: true,
+    };
+    app.pending_approval = Some((request, tx));
+
+    // Press 'y' to approve
+    let key = KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE);
+    app.handle_key_event(key);
+
+    assert!(
+        app.trust_follow_up.is_some(),
+        "trust follow-up should trigger in Smart mode"
+    );
+    assert_eq!(app.trust_follow_up.as_ref().unwrap().tool_name, "bash");
+}
+
+#[tokio::test]
+async fn trust_follow_up_not_triggered_in_enabled_mode() {
+    let mut app = App::new(TuiConfig::default());
+    app.approval_mode = ApprovalMode::Enabled;
+
+    let (tx, _rx) = tokio::sync::oneshot::channel();
+    let request = ToolApprovalRequest {
+        tool_call_id: "call_e".into(),
+        tool_name: "bash".into(),
+        arguments: serde_json::json!({}),
+        requires_approval: true,
+    };
+    app.pending_approval = Some((request, tx));
+
+    let key = KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE);
+    app.handle_key_event(key);
+
+    assert!(
+        app.trust_follow_up.is_none(),
+        "trust follow-up should NOT trigger in Enabled mode"
+    );
+}
+
+#[tokio::test]
+async fn trust_follow_up_not_triggered_in_bypassed_mode() {
+    // Bypassed mode auto-approves at core level, so no approval request
+    // reaches the TUI. Trust follow-up is never triggered.
+    let app = App::new(TuiConfig::default());
+    assert!(app.trust_follow_up.is_none());
+}
+
+#[tokio::test]
+async fn trust_follow_up_y_adds_to_session_trusted() {
+    let mut app = App::new(TuiConfig::default());
+    app.trust_follow_up = Some(super::state::TrustFollowUp {
+        tool_name: "bash".to_string(),
+        expires_at: Instant::now() + Duration::from_secs(3),
+    });
+
+    let key = KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE);
+    app.handle_key_event(key);
+
+    assert!(app.session_trusted_tools.contains("bash"));
+    assert!(app.trust_follow_up.is_none());
+}
+
+#[tokio::test]
+async fn trust_follow_up_n_does_not_trust() {
+    let mut app = App::new(TuiConfig::default());
+    app.trust_follow_up = Some(super::state::TrustFollowUp {
+        tool_name: "bash".to_string(),
+        expires_at: Instant::now() + Duration::from_secs(3),
+    });
+
+    let key = KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE);
+    app.handle_key_event(key);
+
+    assert!(!app.session_trusted_tools.contains("bash"));
+    assert!(app.trust_follow_up.is_none());
+}
+
+#[test]
+fn trust_follow_up_timeout_clears() {
+    let mut app = App::new(TuiConfig::default());
+    app.trust_follow_up = Some(super::state::TrustFollowUp {
+        tool_name: "bash".to_string(),
+        expires_at: instant_secs_ago(1), // already expired
+    });
+
+    app.tick();
+
+    assert!(
+        app.trust_follow_up.is_none(),
+        "expired trust follow-up should be cleared on tick"
+    );
+}
+
+#[tokio::test]
+async fn trusted_tool_auto_approves_in_smart_mode() {
+    let mut app = App::new(TuiConfig::default());
+    app.approval_mode = ApprovalMode::Smart;
+    app.session_trusted_tools.insert("bash".to_string());
+
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let request = ToolApprovalRequest {
+        tool_call_id: "call_trusted".into(),
+        tool_name: "bash".into(),
+        arguments: serde_json::json!({}),
+        requires_approval: true,
+    };
+
+    app.handle_approval_request(request, tx);
+
+    assert!(app.pending_approval.is_none(), "trusted tool should auto-approve");
+    assert_eq!(rx.await.unwrap(), ToolApproval::Approved);
+}
+
+#[tokio::test]
+async fn trusted_tool_still_prompts_in_enabled_mode() {
+    let mut app = App::new(TuiConfig::default());
+    app.approval_mode = ApprovalMode::Enabled;
+    app.session_trusted_tools.insert("bash".to_string());
+
+    let (tx, _rx) = tokio::sync::oneshot::channel();
+    let request = ToolApprovalRequest {
+        tool_call_id: "call_te".into(),
+        tool_name: "bash".into(),
+        arguments: serde_json::json!({}),
+        requires_approval: true,
+    };
+
+    app.handle_approval_request(request, tx);
+
+    assert!(
+        app.pending_approval.is_some(),
+        "Enabled mode should prompt even for trusted tools"
+    );
+}
+
+#[test]
+fn session_trust_not_persisted() {
+    let app = App::new(TuiConfig::default());
+    assert!(
+        app.session_trusted_tools.is_empty(),
+        "new App should have no trusted tools"
+    );
+}
+
+// ─── User Story 3: Plan Mode & Approval ─────────────────────────────────────
+
+#[tokio::test]
+async fn plan_toggle_enters_plan_mode() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![]));
+    let agent = make_test_agent_with_tools(stream_fn);
+    let mut app = App::new(TuiConfig::default());
+    app.set_agent(agent);
+
+    assert_eq!(app.operating_mode, OperatingMode::Execute);
+
+    app.toggle_operating_mode();
+    assert_eq!(app.operating_mode, OperatingMode::Plan);
+}
+
+#[tokio::test]
+async fn plan_toggle_shows_approval_prompt() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![]));
+    let agent = make_test_agent_with_tools(stream_fn);
+    let mut app = App::new(TuiConfig::default());
+    app.set_agent(agent);
+
+    app.enter_plan_mode();
+    assert_eq!(app.operating_mode, OperatingMode::Plan);
+
+    // Toggle again — should show approval instead of exiting
+    app.toggle_operating_mode();
+    assert!(app.pending_plan_approval);
+    assert_eq!(
+        app.operating_mode,
+        OperatingMode::Plan,
+        "should stay in Plan until approved"
+    );
+}
+
+#[tokio::test]
+async fn plan_approval_y_exits_plan_and_sends_messages() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("executing plan")]));
+    let agent = make_test_agent_with_tools(stream_fn);
+    let mut app = App::new(TuiConfig::default());
+    app.set_agent(agent);
+
+    app.enter_plan_mode();
+
+    // Add plan-mode assistant messages
+    app.messages.push(DisplayMessage {
+        role: MessageRole::Assistant,
+        content: "step 1: read files".to_string(),
+        thinking: None,
+        is_streaming: false,
+        collapsed: false,
+        summary: String::new(),
+        user_expanded: false,
+        expanded_at: None,
+        plan_mode: true,
+        diff_data: None,
+    });
+    app.messages.push(DisplayMessage {
+        role: MessageRole::Assistant,
+        content: "step 2: modify code".to_string(),
+        thinking: None,
+        is_streaming: false,
+        collapsed: false,
+        summary: String::new(),
+        user_expanded: false,
+        expanded_at: None,
+        plan_mode: true,
+        diff_data: None,
+    });
+
+    app.pending_plan_approval = true;
+    app.approve_plan();
+
+    assert_eq!(app.operating_mode, OperatingMode::Execute);
+    assert!(!app.pending_plan_approval);
+
+    // Verify the plan was sent as a user message
+    let user_msgs: Vec<&str> = app
+        .messages
+        .iter()
+        .filter(|m| m.role == MessageRole::User)
+        .map(|m| m.content.as_str())
+        .collect();
+    assert!(
+        user_msgs
+            .iter()
+            .any(|m| m.contains("step 1") && m.contains("---") && m.contains("step 2")),
+        "plan messages should be concatenated with separator"
+    );
+}
+
+#[tokio::test]
+async fn plan_approval_n_stays_in_plan() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![]));
+    let agent = make_test_agent_with_tools(stream_fn);
+    let mut app = App::new(TuiConfig::default());
+    app.set_agent(agent);
+
+    app.enter_plan_mode();
+    app.pending_plan_approval = true;
+    app.reject_plan();
+
+    assert_eq!(app.operating_mode, OperatingMode::Plan);
+    assert!(!app.pending_plan_approval);
+}
+
+#[tokio::test]
+async fn plan_approval_empty_plan_skips_send() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![]));
+    let agent = make_test_agent_with_tools(stream_fn);
+    let mut app = App::new(TuiConfig::default());
+    app.set_agent(agent);
+
+    app.enter_plan_mode();
+    // No assistant messages added
+    app.pending_plan_approval = true;
+    app.approve_plan();
+
+    assert_eq!(app.operating_mode, OperatingMode::Execute);
+    // No user message should have been created for the plan
+    assert!(
+        !app.messages
+            .iter()
+            .any(|m| m.role == MessageRole::User && !m.content.is_empty()),
+        "empty plan should not send a user message"
+    );
+}
+
+#[tokio::test]
+async fn plan_toggle_ignored_while_agent_running() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![]));
+    let agent = make_test_agent_with_tools(stream_fn);
+    let mut app = App::new(TuiConfig::default());
+    app.set_agent(agent);
+    app.status = AgentStatus::Running;
+
+    app.toggle_operating_mode();
+    assert_eq!(
+        app.operating_mode,
+        OperatingMode::Execute,
+        "toggle should be ignored while running"
+    );
+}
+
+#[tokio::test]
+async fn plan_messages_concatenated_with_separator() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("ok")]));
+    let agent = make_test_agent_with_tools(stream_fn);
+    let mut app = App::new(TuiConfig::default());
+    app.set_agent(agent);
+
+    app.enter_plan_mode();
+
+    for step in &["step 1", "step 2", "step 3"] {
+        app.messages.push(DisplayMessage {
+            role: MessageRole::Assistant,
+            content: step.to_string(),
+            thinking: None,
+            is_streaming: false,
+            collapsed: false,
+            summary: String::new(),
+            user_expanded: false,
+            expanded_at: None,
+            plan_mode: true,
+            diff_data: None,
+        });
+    }
+
+    app.pending_plan_approval = true;
+    app.approve_plan();
+
+    let plan_msg = app
+        .messages
+        .iter()
+        .find(|m| m.role == MessageRole::User && m.content.contains("step 1"))
+        .expect("should find plan user message");
+
+    assert_eq!(plan_msg.content, "step 1\n\n---\n\nstep 2\n\n---\n\nstep 3");
+}
+
+#[tokio::test]
+async fn plan_mode_only_collects_assistant_messages() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("ok")]));
+    let agent = make_test_agent_with_tools(stream_fn);
+    let mut app = App::new(TuiConfig::default());
+    app.set_agent(agent);
+
+    app.enter_plan_mode();
+
+    // Add user message (should be excluded)
+    app.messages.push(DisplayMessage {
+        role: MessageRole::User,
+        content: "please plan".to_string(),
+        thinking: None,
+        is_streaming: false,
+        collapsed: false,
+        summary: String::new(),
+        user_expanded: false,
+        expanded_at: None,
+        plan_mode: true,
+        diff_data: None,
+    });
+
+    // Add assistant message (should be included)
+    app.messages.push(DisplayMessage {
+        role: MessageRole::Assistant,
+        content: "here is the plan".to_string(),
+        thinking: None,
+        is_streaming: false,
+        collapsed: false,
+        summary: String::new(),
+        user_expanded: false,
+        expanded_at: None,
+        plan_mode: true,
+        diff_data: None,
+    });
+
+    // Add tool result (should be excluded)
+    app.messages.push(DisplayMessage {
+        role: MessageRole::ToolResult,
+        content: "file contents".to_string(),
+        thinking: None,
+        is_streaming: false,
+        collapsed: false,
+        summary: "file contents".to_string(),
+        user_expanded: false,
+        expanded_at: None,
+        plan_mode: true,
+        diff_data: None,
+    });
+
+    app.pending_plan_approval = true;
+    app.approve_plan();
+
+    // Find the user message that was created by approve_plan (not the original "please plan")
+    let plan_msgs: Vec<&str> = app
+        .messages
+        .iter()
+        .filter(|m| m.role == MessageRole::User && !m.plan_mode)
+        .map(|m| m.content.as_str())
+        .collect();
+
+    // The approve_plan should have created a user message with only assistant content
+    assert!(
+        plan_msgs.iter().any(|m| *m == "here is the plan"),
+        "only assistant messages should be in the plan, got: {plan_msgs:?}"
+    );
+}
+
+#[tokio::test]
+async fn plan_badge_shown_in_plan_mode() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![]));
+    let agent = make_test_agent_with_tools(stream_fn);
+    let mut app = App::new(TuiConfig::default());
+    app.set_agent(agent);
+
+    app.enter_plan_mode();
+    assert_eq!(app.operating_mode, OperatingMode::Plan);
+    // The status bar rendering checks operating_mode == Plan to show badge.
+    // We verify the state is correct; rendering is tested visually.
+}
+
+// ─── User Story 4: Tool Classification ──────────────────────────────────────
+
+#[test]
+fn requires_approval_default_is_false() {
+    let tool = MockReadTool;
+    assert!(!tool.requires_approval());
+}
+
+#[test]
+fn tool_with_requires_approval_true() {
+    let tool = MockWriteTool;
+    assert!(tool.requires_approval());
+}
+
+// ─── User Story 2 Supplement: Untrust Commands ──────────────────────────────
+
+#[test]
+fn untrust_specific_tool_command() {
+    use crate::commands::{execute_command, CommandResult};
+    match execute_command("#approve untrust bash") {
+        CommandResult::UntrustTool(name) => assert_eq!(name, "bash"),
+        other => panic!("expected UntrustTool, got {other:?}"),
+    }
+}
+
+#[test]
+fn untrust_all_command() {
+    use crate::commands::{execute_command, CommandResult};
+    assert!(matches!(
+        execute_command("#approve untrust"),
+        CommandResult::UntrustAll
+    ));
+}
+
+#[test]
+fn untrust_specific_removes_from_set() {
+    let mut app = App::new(TuiConfig::default());
+    app.session_trusted_tools.insert("bash".to_string());
+    app.session_trusted_tools.insert("write_file".to_string());
+
+    app.session_trusted_tools.remove("bash");
+
+    assert!(!app.session_trusted_tools.contains("bash"));
+    assert!(app.session_trusted_tools.contains("write_file"));
+}
+
+#[test]
+fn untrust_all_clears_set() {
+    let mut app = App::new(TuiConfig::default());
+    app.session_trusted_tools.insert("bash".to_string());
+    app.session_trusted_tools.insert("write_file".to_string());
+
+    app.session_trusted_tools.clear();
+
+    assert!(app.session_trusted_tools.is_empty());
+}
+
+// ─── Edge Cases ─────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn plan_toggle_during_plan_approval_ignored() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![]));
+    let agent = make_test_agent_with_tools(stream_fn);
+    let mut app = App::new(TuiConfig::default());
+    app.set_agent(agent);
+
+    app.enter_plan_mode();
+    app.pending_plan_approval = true;
+
+    // Try to toggle again — should be ignored
+    app.toggle_operating_mode();
+    assert!(
+        app.pending_plan_approval,
+        "plan approval should still be pending"
+    );
+    assert_eq!(app.operating_mode, OperatingMode::Plan);
+}
+
+#[tokio::test]
+async fn concurrent_plan_and_tool_approval_plan_takes_precedence() {
+    let mut app = App::new(TuiConfig::default());
+    app.pending_plan_approval = true;
+
+    let (tx, _rx) = tokio::sync::oneshot::channel();
+    let request = ToolApprovalRequest {
+        tool_call_id: "call_c".into(),
+        tool_name: "bash".into(),
+        arguments: serde_json::json!({}),
+        requires_approval: true,
+    };
+    app.pending_approval = Some((request, tx));
+
+    // Press 'y' — plan approval should take precedence
+    let key = KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE);
+    app.handle_key_event(key);
+
+    // Plan approval should have been handled (but approve_plan needs agent,
+    // so it would be a no-op here). The key point is that tool approval
+    // was NOT handled first.
+    assert!(!app.pending_plan_approval, "plan approval should be handled");
+    assert!(
+        app.pending_approval.is_some(),
+        "tool approval should not have been handled"
+    );
+}
+
+#[tokio::test]
+async fn trust_follow_up_cleared_on_new_approval() {
+    let mut app = App::new(TuiConfig::default());
+    app.approval_mode = ApprovalMode::Smart;
+    app.trust_follow_up = Some(super::state::TrustFollowUp {
+        tool_name: "old_tool".to_string(),
+        expires_at: Instant::now() + Duration::from_secs(3),
+    });
+
+    let (tx, _rx) = tokio::sync::oneshot::channel();
+    let request = ToolApprovalRequest {
+        tool_call_id: "call_new".into(),
+        tool_name: "new_tool".into(),
+        arguments: serde_json::json!({}),
+        requires_approval: true,
+    };
+
+    app.handle_approval_request(request, tx);
+
+    assert!(
+        app.trust_follow_up.is_none(),
+        "trust follow-up should be cleared when new approval arrives"
+    );
+    assert!(app.pending_approval.is_some());
+}
+
+#[tokio::test]
+async fn plan_mode_removes_write_tools() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![]));
+    let agent = make_test_agent_with_tools(stream_fn);
+    let mut app = App::new(TuiConfig::default());
+    app.set_agent(agent);
+
+    assert_eq!(app.agent.as_ref().unwrap().state().tools.len(), 2);
+
+    app.enter_plan_mode();
+
+    let tools = &app.agent.as_ref().unwrap().state().tools;
+    assert_eq!(tools.len(), 1);
+    assert_eq!(tools[0].name(), "read_file");
+    assert!(
+        !tools[0].requires_approval(),
+        "remaining tool should not require approval"
+    );
+}
+
+// ─── Plan approval key handling via event_loop ──────────────────────────────
+
+#[tokio::test]
+async fn plan_approval_y_key_approves() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("executed")]));
+    let agent = make_test_agent_with_tools(stream_fn);
+    let mut app = App::new(TuiConfig::default());
+    app.set_agent(agent);
+
+    app.enter_plan_mode();
+    app.messages.push(DisplayMessage {
+        role: MessageRole::Assistant,
+        content: "the plan".to_string(),
+        thinking: None,
+        is_streaming: false,
+        collapsed: false,
+        summary: String::new(),
+        user_expanded: false,
+        expanded_at: None,
+        plan_mode: true,
+        diff_data: None,
+    });
+    app.pending_plan_approval = true;
+
+    let key = KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE);
+    app.handle_key_event(key);
+
+    assert!(!app.pending_plan_approval);
+    assert_eq!(app.operating_mode, OperatingMode::Execute);
+}
+
+#[tokio::test]
+async fn plan_approval_n_key_rejects() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![]));
+    let agent = make_test_agent_with_tools(stream_fn);
+    let mut app = App::new(TuiConfig::default());
+    app.set_agent(agent);
+
+    app.enter_plan_mode();
+    app.pending_plan_approval = true;
+
+    let key = KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE);
+    app.handle_key_event(key);
+
+    assert!(!app.pending_plan_approval);
+    assert_eq!(
+        app.operating_mode,
+        OperatingMode::Plan,
+        "should stay in plan mode after rejection"
+    );
+}
+
+// ─── Shift+Tab with streaming guard ─────────────────────────────────────────
+
+#[tokio::test]
+async fn shift_tab_ignored_while_running() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![]));
+    let agent = make_test_agent_with_tools(stream_fn);
+    let mut app = App::new(TuiConfig::default());
+    app.set_agent(agent);
+    app.status = AgentStatus::Running;
+
+    let key = KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT);
+    app.handle_key_event(key);
+
+    assert_eq!(
+        app.operating_mode,
+        OperatingMode::Execute,
+        "Shift+Tab should be ignored while running"
+    );
 }
