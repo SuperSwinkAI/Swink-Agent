@@ -8,8 +8,6 @@
 //! Requires: remote provider keys in `.env` or environment. The local SmolLM3-3B
 //! model is always available and is included in the F4 cycle by default.
 
-use std::sync::Arc;
-
 use swink_agent::prelude::*;
 use swink_agent::{BashTool, ModelConnections, ReadFileTool, WriteFileTool};
 use swink_agent_adapters::{build_remote_connection, remote_preset_keys};
@@ -29,11 +27,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ],
     );
 
-    // 2. Register tools.
-    let tools: Vec<Arc<dyn AgentTool>> = vec![
-        Arc::new(BashTool::new()),
-        Arc::new(ReadFileTool::new()),
-        Arc::new(WriteFileTool::new()),
+    // 2. Register tools — `into_tool()` wraps each in `Arc<dyn AgentTool>`.
+    let tools = vec![
+        BashTool::new().into_tool(),
+        ReadFileTool::new().into_tool(),
+        WriteFileTool::new().into_tool(),
     ];
 
     // 3. Build options directly from connections — no manual decomposition needed.

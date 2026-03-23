@@ -8,6 +8,7 @@
 use std::fmt;
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::Arc;
 
 use regex::Regex;
 use serde_json::Value;
@@ -136,6 +137,29 @@ pub trait AgentTool: Send + Sync {
         cancellation_token: CancellationToken,
         on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
     ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>>;
+}
+
+// ─── IntoTool ────────────────────────────────────────────────────────────────
+
+/// Convenience trait to convert a tool implementation into `Arc<dyn AgentTool>`.
+///
+/// This eliminates the `Arc::new(tool) as Arc<dyn AgentTool>` ceremony.
+///
+/// # Example
+///
+/// ```ignore
+/// use swink_agent::{IntoTool, BashTool};
+/// let tools = vec![BashTool::new().into_tool()];
+/// ```
+pub trait IntoTool {
+    /// Wrap this tool in an `Arc<dyn AgentTool>`.
+    fn into_tool(self) -> Arc<dyn AgentTool>;
+}
+
+impl<T: AgentTool + 'static> IntoTool for T {
+    fn into_tool(self) -> Arc<dyn AgentTool> {
+        Arc::new(self)
+    }
 }
 
 // ─── Validation ──────────────────────────────────────────────────────────────

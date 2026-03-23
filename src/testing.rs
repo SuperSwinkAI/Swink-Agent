@@ -4,14 +4,17 @@
 //! reuse them in their own test suites without duplicating constructors.
 
 use crate::stream::{AssistantMessageEvent, StreamFn, StreamOptions};
+use crate::tool::{AgentTool, AgentToolResult};
 use crate::types::{AgentContext, ModelSpec};
 use crate::types::{
     AgentMessage, AssistantMessage, ContentBlock, Cost, LlmMessage, StopReason, ToolResultMessage,
     Usage, UserMessage,
 };
 use futures::Stream;
+use serde_json::{Value, json};
+use std::future::Future;
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tokio_util::sync::CancellationToken;
 
 // ─── MockStreamFn ─────────────────────────────────────────────────────────
@@ -32,6 +35,12 @@ impl MockStreamFn {
         Self {
             tokens: Arc::new(tokens),
         }
+    }
+
+    /// Create a `MockStreamFn` that emits a single text response.
+    #[must_use]
+    pub fn from_text(text: &str) -> Self {
+        Self::new(vec![text.to_string()])
     }
 }
 
@@ -108,4 +117,135 @@ pub fn tool_result_msg(id: &str, text: &str) -> AgentMessage {
         timestamp: 0,
         details: serde_json::Value::Null,
     }))
+}
+
+// ─── ScriptedStreamFn ─────────────────────────────────────────────────────
+
+/// A deterministic [`StreamFn`] that replays scripted event sequences.
+///
+/// Each call to `stream()` pops the next event sequence from the queue.
+/// If the queue is empty, returns a default text response.
+pub struct ScriptedStreamFn {
+    responses: std::sync::Mutex<Vec<Vec<AssistantMessageEvent>>>,
+}
+
+impl ScriptedStreamFn {
+    /// Create a new `ScriptedStreamFn` with the given event sequences.
+    #[must_use]
+    pub fn new(responses: Vec<Vec<AssistantMessageEvent>>) -> Self {
+        Self {
+            responses: std::sync::Mutex::new(responses),
+        }
+    }
+}
+
+impl StreamFn for ScriptedStreamFn {
+    fn stream<'a>(
+        &'a self,
+        _model: &'a ModelSpec,
+        _context: &'a AgentContext,
+        _options: &'a StreamOptions,
+        _cancellation_token: CancellationToken,
+    ) -> Pin<Box<dyn Stream<Item = AssistantMessageEvent> + Send + 'a>> {
+        let events = {
+            let mut queue = self
+                .responses
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if queue.is_empty() {
+                text_only_events(vec!["default response".to_string()])
+            } else {
+                queue.remove(0)
+            }
+        };
+        Box::pin(futures::stream::iter(events))
+    }
+}
+
+// ─── text_events convenience ─────────────────────────────────────────────
+
+/// Build a well-formed event sequence for a single text string.
+///
+/// Convenience wrapper around [`text_only_events`] for the common case
+/// of a single text token.
+#[must_use]
+pub fn text_events(text: &str) -> Vec<AssistantMessageEvent> {
+    text_only_events(vec![text.to_string()])
+}
+
+// ─── MockTool ────────────────────────────────────────────────────────────
+
+/// A simple mock [`AgentTool`] for downstream crate tests.
+///
+/// Returns a fixed `"mock result"` text response. Use this when you need
+/// a tool that satisfies the trait but whose specific behaviour is not
+/// under test.
+pub struct MockTool {
+    tool_name: String,
+    schema: Value,
+    result: Mutex<Option<AgentToolResult>>,
+}
+
+impl MockTool {
+    /// Create a `MockTool` with the given name and an empty-object schema.
+    #[must_use]
+    pub fn new(name: &str) -> Self {
+        Self {
+            tool_name: name.to_string(),
+            schema: json!({
+                "type": "object",
+                "properties": {},
+                "additionalProperties": true
+            }),
+            result: Mutex::new(None),
+        }
+    }
+
+    /// Override the schema returned by [`AgentTool::parameters_schema`].
+    #[must_use]
+    pub fn with_schema(mut self, schema: Value) -> Self {
+        self.schema = schema;
+        self
+    }
+
+    /// Override the result returned by [`AgentTool::execute`].
+    #[must_use]
+    pub fn with_result(self, result: AgentToolResult) -> Self {
+        *self.result.lock().unwrap() = Some(result);
+        self
+    }
+}
+
+impl AgentTool for MockTool {
+    fn name(&self) -> &str {
+        &self.tool_name
+    }
+
+    fn label(&self) -> &str {
+        &self.tool_name
+    }
+
+    fn description(&self) -> &'static str {
+        "A mock tool for testing"
+    }
+
+    fn parameters_schema(&self) -> &Value {
+        &self.schema
+    }
+
+    fn execute(
+        &self,
+        _tool_call_id: &str,
+        _params: Value,
+        _cancellation_token: CancellationToken,
+        _on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
+    ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>> {
+        let result = self
+            .result
+            .lock()
+            .unwrap()
+            .clone()
+            .unwrap_or_else(|| AgentToolResult::text("mock result"));
+        Box::pin(async move { result })
+    }
 }

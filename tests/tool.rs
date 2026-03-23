@@ -1,6 +1,7 @@
+mod common;
+
+use common::MockTool;
 use serde_json::{Value, json};
-use std::future::Future;
-use std::pin::Pin;
 use std::sync::Arc;
 use swink_agent::{
     AgentTool, AgentToolResult, ContentBlock, unknown_tool_result, validate_tool_arguments,
@@ -107,78 +108,33 @@ fn extra_fields_rejected() {
 
 // ── 2.11: A mock AgentTool can be constructed and its schema validated ──
 
-struct MockTool {
-    schema: Value,
-}
-
-impl MockTool {
-    fn new() -> Self {
-        Self {
-            schema: sample_schema(),
-        }
-    }
-}
-
-#[allow(clippy::unnecessary_literal_bound)]
-impl AgentTool for MockTool {
-    fn name(&self) -> &str {
-        "mock_tool"
-    }
-
-    fn label(&self) -> &str {
-        "Mock Tool"
-    }
-
-    fn description(&self) -> &str {
-        "A mock tool for testing purposes."
-    }
-
-    fn parameters_schema(&self) -> &Value {
-        &self.schema
-    }
-
-    fn execute(
-        &self,
-        _tool_call_id: &str,
-        params: Value,
-        _cancellation_token: CancellationToken,
-        _on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
-    ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>> {
-        Box::pin(async move {
-            let path = params
-                .get("path")
-                .and_then(Value::as_str)
-                .unwrap_or("unknown");
-            AgentToolResult::text(format!("read file: {path}"))
-        })
-    }
-}
-
 #[test]
 fn mock_tool_schema_validates_good_args() {
-    let tool = MockTool::new();
+    let tool = MockTool::new("mock_tool").with_schema(sample_schema());
     let args = json!({"path": "/etc/hosts"});
     assert!(validate_tool_arguments(tool.parameters_schema(), &args).is_ok());
 }
 
 #[test]
 fn mock_tool_schema_rejects_bad_args() {
-    let tool = MockTool::new();
+    let tool = MockTool::new("mock_tool").with_schema(sample_schema());
     let args = json!({"wrong_field": 42});
     assert!(validate_tool_arguments(tool.parameters_schema(), &args).is_err());
 }
 
 #[test]
 fn mock_tool_is_object_safe() {
-    let tool: Arc<dyn AgentTool> = Arc::new(MockTool::new());
+    let tool: Arc<dyn AgentTool> = Arc::new(MockTool::new("mock_tool"));
     assert_eq!(tool.name(), "mock_tool");
-    assert_eq!(tool.label(), "Mock Tool");
+    assert_eq!(tool.label(), "mock_tool");
     assert!(!tool.description().is_empty());
 }
 
 #[tokio::test]
 async fn mock_tool_executes() {
-    let tool = MockTool::new();
+    let tool = MockTool::new("mock_tool")
+        .with_schema(sample_schema())
+        .with_result(AgentToolResult::text("read file: /tmp/x"));
     let token = CancellationToken::new();
     let result = tool
         .execute("tc_1", json!({"path": "/tmp/x"}), token, None)

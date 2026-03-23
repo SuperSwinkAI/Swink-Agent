@@ -276,6 +276,24 @@ impl AgentOptions {
         self
     }
 
+    /// Sets the tool approval callback using an async closure.
+    ///
+    /// This is a convenience wrapper around [`with_approve_tool`](Self::with_approve_tool)
+    /// that avoids the `Pin<Box<dyn Future>>` return type ceremony.
+    #[must_use]
+    pub fn with_approve_tool_async<F, Fut>(mut self, f: F) -> Self
+    where
+        F: Fn(ToolApprovalRequest) -> Fut + Send + Sync + 'static,
+        Fut: std::future::Future<Output = ToolApproval> + Send + 'static,
+    {
+        let f = std::sync::Arc::new(f);
+        self.approve_tool = Some(std::sync::Arc::new(move |req| {
+            let f = std::sync::Arc::clone(&f);
+            Box::pin(async move { f(req).await })
+        }));
+        self
+    }
+
     /// Set the approval mode.
     #[must_use]
     pub const fn with_approval_mode(mut self, mode: ApprovalMode) -> Self {

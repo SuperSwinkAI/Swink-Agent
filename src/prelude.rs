@@ -10,7 +10,7 @@ pub use crate::{
     AgentToolResult, AssistantMessage, AssistantMessageEvent, AsyncContextTransformer, Checkpoint,
     CheckpointStore, ContentBlock, ContextSummarizer, ContextTransformer, ContextVersion,
     ContextVersionMeta, ContextVersionStore, Cost, DefaultTokenCounter, Emission, EventForwarderFn,
-    FnTool, InMemoryVersionStore, LlmMessage, LoopCheckpoint, LoopPolicy, MetricsCollector,
+    FnTool, InMemoryVersionStore, IntoTool, LlmMessage, LoopCheckpoint, LoopPolicy, MetricsCollector,
     ModelFallback, ModelSpec, PostTurnHook, StopReason, StreamErrorKind, StreamFn,
     StreamMiddleware, StreamOptions, SubAgent, TokenCounter, ToolCallTransformer, ToolValidator,
     Usage, UserMessage, VersioningTransformer,

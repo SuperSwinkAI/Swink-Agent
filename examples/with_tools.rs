@@ -80,25 +80,24 @@ struct GetWeatherParams {
 
 #[tokio::main]
 async fn main() {
-    // Step 1a: Create built-in tools. Each tool implements `AgentTool`.
-    let bash = Arc::new(BashTool::new()) as Arc<dyn swink_agent::AgentTool>;
-    let read = Arc::new(ReadFileTool::new()) as Arc<dyn swink_agent::AgentTool>;
-    let write = Arc::new(WriteFileTool::new()) as Arc<dyn swink_agent::AgentTool>;
+    // Step 1a: Create built-in tools. `into_tool()` wraps each in `Arc<dyn AgentTool>`.
+    let bash = BashTool::new().into_tool();
+    let read = ReadFileTool::new().into_tool();
+    let write = WriteFileTool::new().into_tool();
 
     // Step 1b: Create a custom tool using `FnTool` — no need to implement `AgentTool` manually.
-    let weather = Arc::new(
-        FnTool::new(
-            "get_weather",
-            "Weather",
-            "Get the current weather for a city.",
-        )
-        .with_schema_for::<GetWeatherParams>()
-        .with_execute_simple(|params, _cancel| async move {
-            let city = params["city"].as_str().unwrap_or("unknown");
-            // In a real application this would call a weather API.
-            AgentToolResult::text(format!("72°F and sunny in {city}"))
-        }),
-    ) as Arc<dyn swink_agent::AgentTool>;
+    let weather = FnTool::new(
+        "get_weather",
+        "Weather",
+        "Get the current weather for a city.",
+    )
+    .with_schema_for::<GetWeatherParams>()
+    .with_execute_simple(|params, _cancel| async move {
+        let city = params["city"].as_str().unwrap_or("unknown");
+        // In a real application this would call a weather API.
+        AgentToolResult::text(format!("72°F and sunny in {city}"))
+    })
+    .into_tool();
 
     let tools = vec![bash, read, write, weather];
 
@@ -133,6 +132,13 @@ async fn main() {
             })
         },
     ));
+
+    // Tip: with_approve_tool_async avoids the Pin<Box<...>> ceremony:
+    //
+    // .with_approve_tool_async(|req| async move {
+    //     println!("Approval for '{}'", req.tool_name);
+    //     ToolApproval::Approved
+    // });
 
     // Step 4: Create the agent and run a prompt.
     let mut agent = Agent::new(options);

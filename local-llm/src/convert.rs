@@ -135,61 +135,24 @@ pub fn tool_schemas_json(context: &AgentContext) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::future::Future;
-    use std::pin::Pin;
     use std::sync::Arc;
 
     use serde_json::{Value, json};
-    use swink_agent::testing::{assistant_msg, tool_result_msg, user_msg};
-    use swink_agent::tool::{AgentTool, AgentToolResult};
+    use swink_agent::testing::{self, assistant_msg, tool_result_msg, user_msg};
+    use swink_agent::tool::AgentTool;
     use swink_agent::types::{
         AgentMessage, AssistantMessage, ContentBlock, Cost, LlmMessage, StopReason,
         ToolResultMessage, Usage,
     };
-    use tokio_util::sync::CancellationToken;
 
-    // ── Mock tool ─────────────────────────────────────────────────────────
-
-    struct MockTool {
-        schema: Value,
-    }
-
-    impl MockTool {
-        fn new() -> Self {
-            Self {
-                schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "input": { "type": "string" }
-                    },
-                    "required": ["input"]
-                }),
-            }
-        }
-    }
-
-    impl AgentTool for MockTool {
-        fn name(&self) -> &'static str {
-            "mock_tool"
-        }
-        fn label(&self) -> &'static str {
-            "Mock Tool"
-        }
-        fn description(&self) -> &'static str {
-            "A mock tool for testing"
-        }
-        fn parameters_schema(&self) -> &Value {
-            &self.schema
-        }
-        fn execute(
-            &self,
-            _tool_call_id: &str,
-            _params: Value,
-            _token: CancellationToken,
-            _on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
-        ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>> {
-            Box::pin(async { AgentToolResult::text("mock result") })
-        }
+    fn mock_tool() -> testing::MockTool {
+        testing::MockTool::new("mock_tool").with_schema(json!({
+            "type": "object",
+            "properties": {
+                "input": { "type": "string" }
+            },
+            "required": ["input"]
+        }))
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────
@@ -267,7 +230,7 @@ mod tests {
         let ctx = make_context(
             "",
             vec![],
-            vec![Arc::new(MockTool::new()) as Arc<dyn AgentTool>],
+            vec![Arc::new(mock_tool()) as Arc<dyn AgentTool>],
         );
         let schemas = tool_schemas_json(&ctx);
         assert_eq!(schemas.len(), 1);
@@ -348,7 +311,7 @@ mod tests {
         let ctx = make_context(
             "",
             vec![],
-            vec![Arc::new(MockTool::new()) as Arc<dyn AgentTool>],
+            vec![Arc::new(mock_tool()) as Arc<dyn AgentTool>],
         );
         let tools = convert_tools(&ctx);
         assert_eq!(tools.len(), 1);

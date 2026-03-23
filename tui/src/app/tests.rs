@@ -1,86 +1,26 @@
-use std::pin::Pin;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
-use futures::Stream;
 use ratatui::layout::Rect;
 use tempfile::tempdir;
-use tokio_util::sync::CancellationToken;
 
 use std::future::Future;
+use std::pin::Pin;
 
+use swink_agent::testing::ScriptedStreamFn;
 use swink_agent::{
     Agent, AgentEvent, AgentMessage, AgentOptions, AgentTool, AgentToolResult, ApprovalMode,
     AssistantMessage, AssistantMessageEvent, Cost, LlmMessage, ModelSpec, StopReason, StreamFn,
-    StreamOptions, ToolApproval, ToolApprovalRequest, Usage, UserMessage,
+    ToolApproval, ToolApprovalRequest, Usage, UserMessage, default_convert,
 };
+use swink_agent::testing::text_events;
+use tokio_util::sync::CancellationToken;
 
 use crate::config::TuiConfig;
 use crate::session::{JsonlSessionStore, SessionMeta, SessionStore};
 
 use super::*;
-
-struct MockStreamFn {
-    responses: Mutex<Vec<Vec<AssistantMessageEvent>>>,
-}
-
-impl MockStreamFn {
-    const fn new(responses: Vec<Vec<AssistantMessageEvent>>) -> Self {
-        Self {
-            responses: Mutex::new(responses),
-        }
-    }
-}
-
-impl StreamFn for MockStreamFn {
-    fn stream<'a>(
-        &'a self,
-        _model: &'a ModelSpec,
-        _context: &'a swink_agent::AgentContext,
-        _options: &'a StreamOptions,
-        _cancellation_token: CancellationToken,
-    ) -> Pin<Box<dyn Stream<Item = AssistantMessageEvent> + Send + 'a>> {
-        let events = {
-            let mut responses = self.responses.lock().unwrap();
-            if responses.is_empty() {
-                vec![AssistantMessageEvent::Error {
-                    stop_reason: StopReason::Error,
-                    error_message: "no more scripted responses".to_string(),
-                    usage: None,
-                    error_kind: None,
-                }]
-            } else {
-                responses.remove(0)
-            }
-        };
-        Box::pin(futures::stream::iter(events))
-    }
-}
-
-fn text_only_events(text: &str) -> Vec<AssistantMessageEvent> {
-    vec![
-        AssistantMessageEvent::Start,
-        AssistantMessageEvent::TextStart { content_index: 0 },
-        AssistantMessageEvent::TextDelta {
-            content_index: 0,
-            delta: text.to_string(),
-        },
-        AssistantMessageEvent::TextEnd { content_index: 0 },
-        AssistantMessageEvent::Done {
-            stop_reason: StopReason::Stop,
-            usage: Usage::default(),
-            cost: Cost::default(),
-        },
-    ]
-}
-
-fn default_convert(msg: &AgentMessage) -> Option<LlmMessage> {
-    match msg {
-        AgentMessage::Llm(llm) => Some(llm.clone()),
-        AgentMessage::Custom(_) => None,
-    }
-}
 
 fn make_test_agent(stream_fn: Arc<dyn StreamFn>) -> Agent {
     Agent::new(AgentOptions::new(
@@ -117,9 +57,9 @@ fn drain_agent_events(app: &mut App) {
 
 #[tokio::test]
 async fn multi_turn_send_and_receive() {
-    let stream_fn = Arc::new(MockStreamFn::new(vec![
-        text_only_events("first response"),
-        text_only_events("second response"),
+    let stream_fn = Arc::new(ScriptedStreamFn::new(vec![
+        text_events("first response"),
+        text_events("second response"),
     ]));
     let agent = make_test_agent(stream_fn);
 
@@ -171,7 +111,7 @@ async fn multi_turn_send_and_receive() {
 
 #[tokio::test]
 async fn agent_state_transitions_through_events() {
-    let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("hello")]));
+    let stream_fn = Arc::new(ScriptedStreamFn::new(vec![text_events("hello")]));
     let agent = make_test_agent(stream_fn);
 
     let mut app = App::new(TuiConfig::default());
@@ -196,10 +136,10 @@ async fn agent_state_transitions_through_events() {
 
 #[tokio::test]
 async fn three_turn_conversation() {
-    let stream_fn = Arc::new(MockStreamFn::new(vec![
-        text_only_events("response one"),
-        text_only_events("response two"),
-        text_only_events("response three"),
+    let stream_fn = Arc::new(ScriptedStreamFn::new(vec![
+        text_events("response one"),
+        text_events("response two"),
+        text_events("response three"),
     ]));
     let agent = make_test_agent(stream_fn);
 
@@ -238,7 +178,7 @@ async fn three_turn_conversation() {
 
 #[tokio::test]
 async fn message_end_updates_context_tokens_used() {
-    let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("hi")]));
+    let stream_fn = Arc::new(ScriptedStreamFn::new(vec![text_events("hi")]));
     let agent = make_test_agent(stream_fn);
 
     let mut app = App::new(TuiConfig::default());
@@ -271,7 +211,7 @@ async fn message_end_updates_context_tokens_used() {
 
 #[tokio::test]
 async fn reset_clears_context_tokens() {
-    let stream_fn = Arc::new(MockStreamFn::new(vec![]));
+    let stream_fn = Arc::new(ScriptedStreamFn::new(vec![]));
     let agent = make_test_agent(stream_fn);
 
     let mut app = App::new(TuiConfig::default());
@@ -287,7 +227,7 @@ async fn reset_clears_context_tokens() {
 
 #[tokio::test]
 async fn error_response_allows_retry() {
-    let stream_fn = Arc::new(MockStreamFn::new(vec![
+    let stream_fn = Arc::new(ScriptedStreamFn::new(vec![
         vec![
             AssistantMessageEvent::Start,
             AssistantMessageEvent::Error {
@@ -297,7 +237,7 @@ async fn error_response_allows_retry() {
                 error_kind: None,
             },
         ],
-        text_only_events("recovered"),
+        text_events("recovered"),
     ]));
     let agent = make_test_agent(stream_fn);
 
@@ -340,11 +280,11 @@ async fn cycle_model_applies_and_restores_provider_binding_on_send() {
     let primary_model = ModelSpec::new("anthropic", "primary-model");
     let extra_model = ModelSpec::new("openai", "extra-model");
 
-    let primary_stream = Arc::new(MockStreamFn::new(vec![
-        text_only_events("from primary after restore"),
-        text_only_events("from primary"),
+    let primary_stream = Arc::new(ScriptedStreamFn::new(vec![
+        text_events("from primary after restore"),
+        text_events("from primary"),
     ]));
-    let extra_stream = Arc::new(MockStreamFn::new(vec![text_only_events("from extra")]));
+    let extra_stream = Arc::new(ScriptedStreamFn::new(vec![text_events("from extra")]));
 
     let agent = make_test_agent_with_models(
         primary_model.clone(),
@@ -819,7 +759,7 @@ async fn load_session_keeps_full_agent_state_but_trims_visible_history() {
     };
     store.save(session_id, &meta, &llm_messages).unwrap();
 
-    let stream_fn = Arc::new(MockStreamFn::new(vec![]));
+    let stream_fn = Arc::new(ScriptedStreamFn::new(vec![]));
     let agent = make_test_agent(stream_fn);
     let mut app = App::new(TuiConfig::default());
     app.session_store = Some(store);
@@ -903,7 +843,7 @@ async fn always_approve_adds_to_trusted_set() {
 
 #[tokio::test]
 async fn reset_clears_trusted_tools() {
-    let stream_fn = Arc::new(MockStreamFn::new(vec![]));
+    let stream_fn = Arc::new(ScriptedStreamFn::new(vec![]));
     let agent = make_test_agent(stream_fn);
 
     let mut app = App::new(TuiConfig::default());
@@ -1026,7 +966,7 @@ fn make_test_agent_with_tools(stream_fn: Arc<dyn StreamFn>) -> Agent {
 
 #[tokio::test]
 async fn toggle_operating_mode_changes_mode() {
-    let stream_fn = Arc::new(MockStreamFn::new(vec![]));
+    let stream_fn = Arc::new(ScriptedStreamFn::new(vec![]));
     let agent = make_test_agent_with_tools(stream_fn);
 
     let mut app = App::new(TuiConfig::default());
@@ -1053,7 +993,7 @@ async fn toggle_operating_mode_changes_mode() {
 
 #[tokio::test]
 async fn plan_mode_filters_tools() {
-    let stream_fn = Arc::new(MockStreamFn::new(vec![]));
+    let stream_fn = Arc::new(ScriptedStreamFn::new(vec![]));
     let agent = make_test_agent_with_tools(stream_fn);
 
     let mut app = App::new(TuiConfig::default());
@@ -1070,7 +1010,7 @@ async fn plan_mode_filters_tools() {
 
 #[tokio::test]
 async fn plan_mode_modifies_system_prompt() {
-    let stream_fn = Arc::new(MockStreamFn::new(vec![]));
+    let stream_fn = Arc::new(ScriptedStreamFn::new(vec![]));
     let agent = make_test_agent_with_tools(stream_fn);
 
     let mut app = App::new(TuiConfig::default());
@@ -1087,7 +1027,7 @@ async fn plan_mode_modifies_system_prompt() {
 
 #[tokio::test]
 async fn exit_plan_mode_restores_tools() {
-    let stream_fn = Arc::new(MockStreamFn::new(vec![]));
+    let stream_fn = Arc::new(ScriptedStreamFn::new(vec![]));
     let agent = make_test_agent_with_tools(stream_fn);
 
     let mut app = App::new(TuiConfig::default());
@@ -1102,7 +1042,7 @@ async fn exit_plan_mode_restores_tools() {
 
 #[tokio::test]
 async fn exit_plan_mode_restores_system_prompt() {
-    let stream_fn = Arc::new(MockStreamFn::new(vec![]));
+    let stream_fn = Arc::new(ScriptedStreamFn::new(vec![]));
     let agent = make_test_agent_with_tools(stream_fn);
 
     let mut app = App::new(TuiConfig::default());
@@ -1122,7 +1062,7 @@ async fn exit_plan_mode_restores_system_prompt() {
 
 #[tokio::test]
 async fn reset_exits_plan_mode() {
-    let stream_fn = Arc::new(MockStreamFn::new(vec![]));
+    let stream_fn = Arc::new(ScriptedStreamFn::new(vec![]));
     let agent = make_test_agent_with_tools(stream_fn);
 
     let mut app = App::new(TuiConfig::default());
@@ -1146,7 +1086,7 @@ async fn reset_exits_plan_mode() {
 
 #[tokio::test]
 async fn shift_tab_toggles_plan_mode() {
-    let stream_fn = Arc::new(MockStreamFn::new(vec![]));
+    let stream_fn = Arc::new(ScriptedStreamFn::new(vec![]));
     let agent = make_test_agent_with_tools(stream_fn);
 
     let mut app = App::new(TuiConfig::default());
@@ -1552,7 +1492,7 @@ fn session_trust_not_persisted() {
 
 #[tokio::test]
 async fn plan_toggle_enters_plan_mode() {
-    let stream_fn = Arc::new(MockStreamFn::new(vec![]));
+    let stream_fn = Arc::new(ScriptedStreamFn::new(vec![]));
     let agent = make_test_agent_with_tools(stream_fn);
     let mut app = App::new(TuiConfig::default());
     app.set_agent(agent);
@@ -1565,7 +1505,7 @@ async fn plan_toggle_enters_plan_mode() {
 
 #[tokio::test]
 async fn plan_toggle_shows_approval_prompt() {
-    let stream_fn = Arc::new(MockStreamFn::new(vec![]));
+    let stream_fn = Arc::new(ScriptedStreamFn::new(vec![]));
     let agent = make_test_agent_with_tools(stream_fn);
     let mut app = App::new(TuiConfig::default());
     app.set_agent(agent);
@@ -1585,7 +1525,7 @@ async fn plan_toggle_shows_approval_prompt() {
 
 #[tokio::test]
 async fn plan_approval_y_exits_plan_and_sends_messages() {
-    let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("executing plan")]));
+    let stream_fn = Arc::new(ScriptedStreamFn::new(vec![text_events("executing plan")]));
     let agent = make_test_agent_with_tools(stream_fn);
     let mut app = App::new(TuiConfig::default());
     app.set_agent(agent);
@@ -1641,7 +1581,7 @@ async fn plan_approval_y_exits_plan_and_sends_messages() {
 
 #[tokio::test]
 async fn plan_approval_n_stays_in_plan() {
-    let stream_fn = Arc::new(MockStreamFn::new(vec![]));
+    let stream_fn = Arc::new(ScriptedStreamFn::new(vec![]));
     let agent = make_test_agent_with_tools(stream_fn);
     let mut app = App::new(TuiConfig::default());
     app.set_agent(agent);
@@ -1656,7 +1596,7 @@ async fn plan_approval_n_stays_in_plan() {
 
 #[tokio::test]
 async fn plan_approval_empty_plan_skips_send() {
-    let stream_fn = Arc::new(MockStreamFn::new(vec![]));
+    let stream_fn = Arc::new(ScriptedStreamFn::new(vec![]));
     let agent = make_test_agent_with_tools(stream_fn);
     let mut app = App::new(TuiConfig::default());
     app.set_agent(agent);
@@ -1678,7 +1618,7 @@ async fn plan_approval_empty_plan_skips_send() {
 
 #[tokio::test]
 async fn plan_toggle_ignored_while_agent_running() {
-    let stream_fn = Arc::new(MockStreamFn::new(vec![]));
+    let stream_fn = Arc::new(ScriptedStreamFn::new(vec![]));
     let agent = make_test_agent_with_tools(stream_fn);
     let mut app = App::new(TuiConfig::default());
     app.set_agent(agent);
@@ -1694,7 +1634,7 @@ async fn plan_toggle_ignored_while_agent_running() {
 
 #[tokio::test]
 async fn plan_messages_concatenated_with_separator() {
-    let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("ok")]));
+    let stream_fn = Arc::new(ScriptedStreamFn::new(vec![text_events("ok")]));
     let agent = make_test_agent_with_tools(stream_fn);
     let mut app = App::new(TuiConfig::default());
     app.set_agent(agent);
@@ -1730,7 +1670,7 @@ async fn plan_messages_concatenated_with_separator() {
 
 #[tokio::test]
 async fn plan_mode_only_collects_assistant_messages() {
-    let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("ok")]));
+    let stream_fn = Arc::new(ScriptedStreamFn::new(vec![text_events("ok")]));
     let agent = make_test_agent_with_tools(stream_fn);
     let mut app = App::new(TuiConfig::default());
     app.set_agent(agent);
@@ -1799,7 +1739,7 @@ async fn plan_mode_only_collects_assistant_messages() {
 
 #[tokio::test]
 async fn plan_badge_shown_in_plan_mode() {
-    let stream_fn = Arc::new(MockStreamFn::new(vec![]));
+    let stream_fn = Arc::new(ScriptedStreamFn::new(vec![]));
     let agent = make_test_agent_with_tools(stream_fn);
     let mut app = App::new(TuiConfig::default());
     app.set_agent(agent);
@@ -1871,7 +1811,7 @@ fn untrust_all_clears_set() {
 
 #[tokio::test]
 async fn plan_toggle_during_plan_approval_ignored() {
-    let stream_fn = Arc::new(MockStreamFn::new(vec![]));
+    let stream_fn = Arc::new(ScriptedStreamFn::new(vec![]));
     let agent = make_test_agent_with_tools(stream_fn);
     let mut app = App::new(TuiConfig::default());
     app.set_agent(agent);
@@ -1947,7 +1887,7 @@ async fn trust_follow_up_cleared_on_new_approval() {
 
 #[tokio::test]
 async fn plan_mode_removes_write_tools() {
-    let stream_fn = Arc::new(MockStreamFn::new(vec![]));
+    let stream_fn = Arc::new(ScriptedStreamFn::new(vec![]));
     let agent = make_test_agent_with_tools(stream_fn);
     let mut app = App::new(TuiConfig::default());
     app.set_agent(agent);
@@ -1969,7 +1909,7 @@ async fn plan_mode_removes_write_tools() {
 
 #[tokio::test]
 async fn plan_approval_y_key_approves() {
-    let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("executed")]));
+    let stream_fn = Arc::new(ScriptedStreamFn::new(vec![text_events("executed")]));
     let agent = make_test_agent_with_tools(stream_fn);
     let mut app = App::new(TuiConfig::default());
     app.set_agent(agent);
@@ -1998,7 +1938,7 @@ async fn plan_approval_y_key_approves() {
 
 #[tokio::test]
 async fn plan_approval_n_key_rejects() {
-    let stream_fn = Arc::new(MockStreamFn::new(vec![]));
+    let stream_fn = Arc::new(ScriptedStreamFn::new(vec![]));
     let agent = make_test_agent_with_tools(stream_fn);
     let mut app = App::new(TuiConfig::default());
     app.set_agent(agent);
@@ -2021,7 +1961,7 @@ async fn plan_approval_n_key_rejects() {
 
 #[tokio::test]
 async fn shift_tab_ignored_while_running() {
-    let stream_fn = Arc::new(MockStreamFn::new(vec![]));
+    let stream_fn = Arc::new(ScriptedStreamFn::new(vec![]));
     let agent = make_test_agent_with_tools(stream_fn);
     let mut app = App::new(TuiConfig::default());
     app.set_agent(agent);
