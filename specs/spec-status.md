@@ -28,7 +28,7 @@
 | 023-eval-trajectory-matching    | ✓     | -    | -     | -         |
 | 024-eval-runner-governance      | ✓     | -    | -     | -         |
 | 025-tui-scaffold-config         | ✓     | ✓  | ✓   | ✓ Complete |
-| 026-tui-input-conversation      | ✓     | ✓  | ✓   | ● 0/69 (0%) |
+| 026-tui-input-conversation      | ✓     | ✓  | ✓   | ✓ Complete |
 | 027-tui-tools-diffs-status      | ✓     | ✓  | ✓   | ● 0/67 (0%) |
 | 028-tui-commands-editor-session | ✓     | ✓  | ✓   | ✓ Complete |
 | 029-tui-plan-mode-approval      | ✓     | ✓  | ✓   | ● 0/70 (0%) |
@@ -59,7 +59,7 @@
 <!-- feature: 023-eval-trajectory-matching has_spec=true has_plan=false has_tasks=false has_research=false has_data_model=false has_quickstart=false has_contracts=false has_checklists=true tasks_total=0 tasks_completed=0 checklist_files=requirements.md -->
 <!-- feature: 024-eval-runner-governance has_spec=true has_plan=false has_tasks=false has_research=false has_data_model=false has_quickstart=false has_contracts=false has_checklists=true tasks_total=0 tasks_completed=0 checklist_files=requirements.md -->
 <!-- feature: 025-tui-scaffold-config has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=56 tasks_completed=56 checklist_files=requirements.md -->
-<!-- feature: 026-tui-input-conversation has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=69 tasks_completed=0 checklist_files=requirements.md -->
+<!-- feature: 026-tui-input-conversation has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=69 tasks_completed=69 checklist_files=requirements.md -->
 <!-- feature: 027-tui-tools-diffs-status has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=67 tasks_completed=0 checklist_files=requirements.md -->
 <!-- feature: 028-tui-commands-editor-session has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=78 tasks_completed=78 checklist_files=requirements.md -->
 <!-- feature: 029-tui-plan-mode-approval has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=false has_checklists=true tasks_total=70 tasks_completed=0 checklist_files=requirements.md -->

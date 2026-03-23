@@ -89,6 +89,19 @@ pub fn thinking_color() -> Color {
     resolve(Color::DarkGray)
 }
 
+/// Map a [`MessageRole`] to its display color.
+#[allow(dead_code)]
+pub fn role_color(role: crate::app::MessageRole) -> Color {
+    use crate::app::MessageRole;
+    match role {
+        MessageRole::User => user_color(),
+        MessageRole::Assistant => assistant_color(),
+        MessageRole::ToolResult => tool_color(),
+        MessageRole::Error => error_color(),
+        MessageRole::System => system_color(),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Status indicator colors
 // ---------------------------------------------------------------------------
@@ -348,5 +361,16 @@ mod tests {
         assert_eq!(cycle_color_mode(), ColorMode::MonoBlack);
         assert_eq!(cycle_color_mode(), ColorMode::Custom);
         reset();
+    }
+
+    #[test]
+    fn role_color_maps_all_variants() {
+        use crate::app::MessageRole;
+        reset();
+        assert_eq!(role_color(MessageRole::User), user_color());
+        assert_eq!(role_color(MessageRole::Assistant), assistant_color());
+        assert_eq!(role_color(MessageRole::ToolResult), tool_color());
+        assert_eq!(role_color(MessageRole::Error), error_color());
+        assert_eq!(role_color(MessageRole::System), system_color());
     }
 }

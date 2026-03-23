@@ -26,6 +26,12 @@ pub struct InputEditor {
     saved_input: Option<Vec<String>>,
 }
 
+impl Default for InputEditor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl InputEditor {
     pub fn new() -> Self {
         Self {
@@ -37,6 +43,23 @@ impl InputEditor {
             history_index: None,
             saved_input: None,
         }
+    }
+
+    /// Char count of the current line.
+    fn line_char_len(&self) -> usize {
+        self.lines[self.cursor_row].chars().count()
+    }
+
+    /// Convert a char index to a byte offset in the given line.
+    fn char_to_byte(line: &str, char_idx: usize) -> usize {
+        line.char_indices()
+            .nth(char_idx)
+            .map_or(line.len(), |(byte_idx, _)| byte_idx)
+    }
+
+    /// Convert a byte offset to a char index.
+    fn byte_to_char(line: &str) -> usize {
+        line.chars().count()
     }
 
     /// Get the dynamic height for the input area.
@@ -51,18 +74,20 @@ impl InputEditor {
 
     /// Insert a character at the cursor position.
     pub fn insert_char(&mut self, c: char) {
-        if self.cursor_col > self.lines[self.cursor_row].len() {
-            self.cursor_col = self.lines[self.cursor_row].len();
+        let char_count = self.line_char_len();
+        if self.cursor_col > char_count {
+            self.cursor_col = char_count;
         }
-        self.lines[self.cursor_row].insert(self.cursor_col, c);
+        let byte_idx = Self::char_to_byte(&self.lines[self.cursor_row], self.cursor_col);
+        self.lines[self.cursor_row].insert(byte_idx, c);
         self.cursor_col += 1;
     }
 
     /// Insert a newline at the cursor position (Shift+Enter).
     pub fn insert_newline(&mut self) {
-        let current = &self.lines[self.cursor_row];
-        let remainder = current[self.cursor_col..].to_string();
-        self.lines[self.cursor_row].truncate(self.cursor_col);
+        let byte_idx = Self::char_to_byte(&self.lines[self.cursor_row], self.cursor_col);
+        let remainder = self.lines[self.cursor_row][byte_idx..].to_string();
+        self.lines[self.cursor_row].truncate(byte_idx);
         self.cursor_row += 1;
         self.lines.insert(self.cursor_row, remainder);
         self.cursor_col = 0;
@@ -72,21 +97,28 @@ impl InputEditor {
     pub fn backspace(&mut self) {
         if self.cursor_col > 0 {
             self.cursor_col -= 1;
-            self.lines[self.cursor_row].remove(self.cursor_col);
+            let byte_idx = Self::char_to_byte(&self.lines[self.cursor_row], self.cursor_col);
+            // Find the byte range of the char at this position
+            let ch = self.lines[self.cursor_row][byte_idx..].chars().next().unwrap();
+            self.lines[self.cursor_row]
+                .replace_range(byte_idx..byte_idx + ch.len_utf8(), "");
         } else if self.cursor_row > 0 {
             // Merge with previous line
             let current = self.lines.remove(self.cursor_row);
             self.cursor_row -= 1;
-            self.cursor_col = self.lines[self.cursor_row].len();
+            self.cursor_col = Self::byte_to_char(&self.lines[self.cursor_row]);
             self.lines[self.cursor_row].push_str(&current);
         }
     }
 
     /// Delete the character at the cursor.
     pub fn delete(&mut self) {
-        let line_len = self.lines[self.cursor_row].len();
-        if self.cursor_col < line_len {
-            self.lines[self.cursor_row].remove(self.cursor_col);
+        let char_count = self.line_char_len();
+        if self.cursor_col < char_count {
+            let byte_idx = Self::char_to_byte(&self.lines[self.cursor_row], self.cursor_col);
+            let ch = self.lines[self.cursor_row][byte_idx..].chars().next().unwrap();
+            self.lines[self.cursor_row]
+                .replace_range(byte_idx..byte_idx + ch.len_utf8(), "");
         } else if self.cursor_row + 1 < self.lines.len() {
             // Merge with next line
             let next = self.lines.remove(self.cursor_row + 1);
@@ -100,14 +132,14 @@ impl InputEditor {
             self.cursor_col -= 1;
         } else if self.cursor_row > 0 {
             self.cursor_row -= 1;
-            self.cursor_col = self.lines[self.cursor_row].len();
+            self.cursor_col = Self::byte_to_char(&self.lines[self.cursor_row]);
         }
     }
 
     /// Move cursor right.
     pub fn move_right(&mut self) {
-        let line_len = self.lines[self.cursor_row].len();
-        if self.cursor_col < line_len {
+        let char_count = self.line_char_len();
+        if self.cursor_col < char_count {
             self.cursor_col += 1;
         } else if self.cursor_row + 1 < self.lines.len() {
             self.cursor_row += 1;
@@ -119,7 +151,8 @@ impl InputEditor {
     pub fn move_up(&mut self) {
         if self.cursor_row > 0 {
             self.cursor_row -= 1;
-            self.cursor_col = self.cursor_col.min(self.lines[self.cursor_row].len());
+            let char_count = Self::byte_to_char(&self.lines[self.cursor_row]);
+            self.cursor_col = self.cursor_col.min(char_count);
         }
     }
 
@@ -127,7 +160,8 @@ impl InputEditor {
     pub fn move_down(&mut self) {
         if self.cursor_row + 1 < self.lines.len() {
             self.cursor_row += 1;
-            self.cursor_col = self.cursor_col.min(self.lines[self.cursor_row].len());
+            let char_count = Self::byte_to_char(&self.lines[self.cursor_row]);
+            self.cursor_col = self.cursor_col.min(char_count);
         }
     }
 
@@ -138,7 +172,7 @@ impl InputEditor {
 
     /// Move cursor to end of line (End / Ctrl+E).
     pub fn move_end(&mut self) {
-        self.cursor_col = self.lines[self.cursor_row].len();
+        self.cursor_col = Self::byte_to_char(&self.lines[self.cursor_row]);
     }
 
     /// Submit the current input, returning the full text. Clears the editor.
@@ -182,7 +216,7 @@ impl InputEditor {
             _ => return,
         }
         self.cursor_row = self.lines.len().saturating_sub(1);
-        self.cursor_col = self.lines[self.cursor_row].len();
+        self.cursor_col = Self::byte_to_char(&self.lines[self.cursor_row]);
     }
 
     /// Navigate to next history entry.
@@ -202,7 +236,7 @@ impl InputEditor {
                 }
             }
             self.cursor_row = self.lines.len().saturating_sub(1);
-            self.cursor_col = self.lines[self.cursor_row].len();
+            self.cursor_col = Self::byte_to_char(&self.lines[self.cursor_row]);
         }
     }
 
@@ -466,5 +500,55 @@ mod tests {
             editor.insert_newline();
         }
         assert_eq!(editor.height(), 10);
+    }
+
+    #[test]
+    fn insert_emoji_and_cursor_advances() {
+        let mut editor = InputEditor::new();
+        editor.insert_char('🎉');
+        assert_eq!(editor.lines[0], "🎉");
+        assert_eq!(editor.cursor_col, 1);
+        editor.insert_char('x');
+        assert_eq!(editor.lines[0], "🎉x");
+        assert_eq!(editor.cursor_col, 2);
+    }
+
+    #[test]
+    fn insert_cjk_characters() {
+        let mut editor = InputEditor::new();
+        editor.insert_char('你');
+        editor.insert_char('好');
+        assert_eq!(editor.lines[0], "你好");
+        assert_eq!(editor.cursor_col, 2);
+        editor.move_left();
+        assert_eq!(editor.cursor_col, 1);
+        editor.backspace();
+        assert_eq!(editor.lines[0], "好");
+        assert_eq!(editor.cursor_col, 0);
+    }
+
+    #[test]
+    fn insert_combining_characters() {
+        let mut editor = InputEditor::new();
+        // e followed by combining acute accent (two chars, one grapheme)
+        editor.insert_char('e');
+        editor.insert_char('\u{0301}');
+        assert_eq!(editor.lines[0], "e\u{0301}");
+        assert_eq!(editor.cursor_col, 2);
+    }
+
+    #[test]
+    fn large_paste_does_not_panic() {
+        let mut editor = InputEditor::new();
+        let large_text: String = "a".repeat(10_000);
+        for c in large_text.chars() {
+            editor.insert_char(c);
+        }
+        assert_eq!(editor.lines[0].len(), 10_000);
+        assert_eq!(editor.cursor_col, 10_000);
+        // Verify submit works with large content
+        let result = editor.submit();
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().len(), 10_000);
     }
 }

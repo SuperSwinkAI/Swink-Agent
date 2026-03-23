@@ -20,6 +20,12 @@ pub struct ConversationView {
     rendered_lines: usize,
 }
 
+impl Default for ConversationView {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ConversationView {
     pub const fn new() -> Self {
         Self {

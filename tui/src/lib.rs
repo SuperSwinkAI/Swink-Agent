@@ -34,6 +34,10 @@ use swink_agent::{Agent, ToolApproval, ToolApprovalRequest, selective_approve};
 
 pub use app::App;
 pub use config::TuiConfig;
+pub use ui::conversation::ConversationView;
+pub use ui::input::InputEditor;
+pub use ui::markdown::markdown_to_lines;
+pub use ui::syntax::highlight_code;
 
 /// Sender half of the approval channel used by the TUI.
 pub type ApprovalSender = mpsc::Sender<(ToolApprovalRequest, oneshot::Sender<ToolApproval>)>;
