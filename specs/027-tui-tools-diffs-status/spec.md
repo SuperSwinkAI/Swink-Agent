@@ -2,7 +2,7 @@
 
 **Feature Branch**: `027-tui-tools-diffs-status`
 **Created**: 2026-03-20
-**Status**: Draft
+**Status**: Complete
 **Input**: Tool panel with spinners and badges, collapsible tool result blocks, inline unified diff view, status bar with model/token/cost/state info, context window progress bar, format helpers. References: PRD §16.6-16.7, §16.10, HLD TUI, TUI_PHASES T3+T4.
 
 ## User Scenarios & Testing *(mandatory)*
@@ -27,7 +27,7 @@ A developer watches the agent execute tools. The tool panel appears when tool ex
 
 ### User Story 2 - Review File Changes as Inline Diffs (Priority: P1)
 
-A developer reviews file modifications made by the agent. When a tool produces file changes, the conversation displays an inline unified diff. Added lines are shown in green, removed lines in red, and context lines are dimmed. New files are displayed as all-addition diffs. Large diffs are truncated with an indication of how many lines were omitted. The diff is syntax-highlighted to match the file type when possible.
+A developer reviews file modifications made by the agent. When a tool produces file changes, the conversation displays an inline unified diff. Added lines are shown in green, removed lines in red, and context lines are dimmed. New files are displayed as all-addition diffs. Large diffs are truncated with an indication of how many lines were omitted.
 
 **Why this priority**: Reviewing changes before they are applied is essential for developer trust and safety — diffs are the standard way developers verify modifications.
 
@@ -39,13 +39,13 @@ A developer reviews file modifications made by the agent. When a tool produces f
 2. **Given** a tool creates a new file, **When** the result is displayed, **Then** all lines are shown as additions.
 3. **Given** unchanged lines surround a change, **When** the diff is displayed, **Then** context lines appear in a dimmed style.
 4. **Given** a diff exceeds a size threshold, **When** displayed, **Then** the diff is truncated with a summary of omitted lines.
-5. **Given** a diff for a file with a known type, **When** displayed, **Then** the diff content is syntax-highlighted.
+5. ~~**Given** a diff for a file with a known type, **When** displayed, **Then** the diff content is syntax-highlighted.~~ *Deferred — diffs use generic color coding (green/red/dim); syntax highlighting is available for markdown code blocks only.*
 
 ---
 
 ### User Story 3 - Track Resource Consumption via Status Bar (Priority: P1)
 
-A developer monitors the agent's resource usage and state through a persistent status bar. The status bar displays: the current model name, token usage (formatted as human-readable counts like "12.5K"), estimated cost, the agent's state (idle, running, or error), a retry indicator when retries are in progress, and elapsed time for the current operation. This information is always visible at a glance.
+A developer monitors the agent's resource usage and state through a persistent status bar. The status bar displays: the current model name, token usage (formatted as human-readable counts like "12.5K"), estimated cost, the agent's state (idle, running, error, or aborted), a retry indicator when retries are in progress, and elapsed session time. This information is always visible at a glance.
 
 **Why this priority**: Resource awareness prevents surprise costs and helps developers understand agent behavior — this is always-visible, non-intrusive information.
 
@@ -53,9 +53,10 @@ A developer monitors the agent's resource usage and state through a persistent s
 
 **Acceptance Scenarios**:
 
-1. **Given** the agent is idle, **When** the developer looks at the status bar, **Then** the state shows "idle" and elapsed time is not shown.
-2. **Given** the agent is generating a response, **When** the status bar updates, **Then** the state shows "running" and elapsed time increments.
-3. **Given** the agent encounters an error, **When** the status bar updates, **Then** the state shows "error."
+1. **Given** the agent is idle, **When** the developer looks at the status bar, **Then** the state shows "IDLE" and elapsed session time is displayed.
+2. **Given** the agent is generating a response, **When** the status bar updates, **Then** the state shows "RUNNING" and elapsed time increments.
+3. **Given** the agent encounters an error, **When** the status bar updates, **Then** the state shows "ERROR."
+3a. **Given** the agent is aborted by the user, **When** the status bar updates, **Then** the state shows "ABORTED."
 4. **Given** tokens have been consumed, **When** the status bar updates, **Then** token usage is displayed in human-readable format (e.g., "1.2K", "3.5M").
 5. **Given** a retry is in progress, **When** the status bar updates, **Then** a retry indicator is visible.
 6. **Given** an active session, **When** the developer looks at the status bar, **Then** the model name and estimated cost are displayed.
@@ -81,7 +82,7 @@ A developer monitors how much of the model's context window has been consumed. A
 
 ### User Story 5 - Expand and Collapse Tool Result Blocks (Priority: P2)
 
-A developer manages screen space by collapsing and expanding tool result blocks in the conversation. When a tool result first appears, it is expanded to show full details. After a timeout, it auto-collapses to a single-line summary to reduce clutter. The developer can toggle expansion with a keyboard shortcut (F2) and cycle selection between tool blocks with Shift+arrow keys. If the developer has manually expanded a block, it resists auto-collapse — the developer's explicit choice is preserved.
+A developer manages screen space by collapsing and expanding tool result blocks in the conversation. When a tool result first appears, it is expanded to show full details. After 10 seconds, it auto-collapses to a single-line summary to reduce clutter. The developer can toggle expansion with a keyboard shortcut (F2) and cycle selection between tool blocks with Shift+Left/Right. If the developer has manually expanded a block, it resists auto-collapse — the developer's explicit choice is preserved.
 
 **Why this priority**: Collapsible blocks reduce visual clutter in tool-heavy conversations, but are a usability enhancement rather than core functionality.
 
@@ -93,20 +94,20 @@ A developer manages screen space by collapsing and expanding tool result blocks 
 2. **Given** an expanded tool result, **When** a timeout elapses, **Then** the block auto-collapses to a one-line summary.
 3. **Given** a collapsed tool block is selected, **When** F2 is pressed, **Then** the block expands.
 4. **Given** the developer has manually expanded a block, **When** the auto-collapse timeout elapses, **Then** the block remains expanded.
-5. **Given** multiple tool blocks, **When** Shift+Up/Down is pressed, **Then** selection cycles between tool blocks.
+5. **Given** multiple tool blocks, **When** Shift+Left/Right is pressed, **Then** selection cycles between tool blocks.
 
 ---
 
 ### Edge Cases
 
-- What happens when dozens of tools execute concurrently — does the tool panel scale or scroll?
-- How does the diff view handle binary files or files with no newline at end?
-- What happens when the model name is very long — does the status bar truncate it?
-- How does the context gauge behave when the model does not report context usage?
-- What happens when a tool result is extremely large (megabytes of output)?
-- How does the diff computation handle files that are entirely replaced (no common lines)?
-- What happens when cost information is not available for the current model?
-- How does the tool panel behave when a tool hangs indefinitely (no completion event)?
+- **Dozens of concurrent tools**: The tool panel caps its height at 10 lines; excess entries are not visible until earlier ones complete and age out.
+- **Binary files or missing newline**: Diffs operate on line-split text content; binary files are not specially handled (they render as raw text lines). Missing trailing newlines are handled by Rust's `str::lines()`.
+- **Long model names**: The status bar renders the full model name without truncation; very long names push other elements rightward.
+- **No context usage reported**: The context gauge is hidden entirely when `context_budget` is 0.
+- **Extremely large tool output**: Tool result summaries are truncated to the first line (max 60 chars) when collapsed. Diff output is capped at 50 lines.
+- **Entirely replaced files (no common lines)**: The LCS algorithm returns an empty match set, so all old lines show as removals and all new lines as additions.
+- **Cost unavailable**: Cost displays as `$0.0000` when no cost data is provided.
+- **Tool hangs indefinitely**: The tool remains in the active list with its elapsed-time counter incrementing until the agent cancels it or the session ends.
 
 ## Requirements *(mandatory)*
 
@@ -114,16 +115,16 @@ A developer manages screen space by collapsing and expanding tool result blocks 
 
 - **FR-001**: The tool panel MUST display an animated spinner for each actively executing tool.
 - **FR-002**: The tool panel MUST replace the spinner with a check badge on success or a cross badge on failure.
-- **FR-003**: The tool panel MUST auto-hide after a configurable timeout when all tools have completed.
+- **FR-003**: The tool panel MUST auto-hide after 10 seconds when all tools have completed (resolved approvals auto-hide after 2 seconds).
 - **FR-004**: The tool panel MUST appear when tools begin executing and hide when idle.
-- **FR-005**: Tool result blocks MUST default to expanded and auto-collapse to a one-line summary after a timeout.
+- **FR-005**: Tool result blocks MUST default to expanded and auto-collapse to a one-line summary after 10 seconds.
 - **FR-006**: Tool result blocks MUST be toggleable via F2 keyboard shortcut.
-- **FR-007**: Tool result blocks MUST support selection cycling via Shift+Up/Shift+Down.
+- **FR-007**: Tool result blocks MUST support selection cycling via Shift+Left/Shift+Right.
 - **FR-008**: User-expanded tool result blocks MUST resist auto-collapse.
 - **FR-009**: Inline diffs MUST use unified diff format with additions in green, removals in red, and context lines dimmed.
 - **FR-010**: New files MUST be displayed as all-addition diffs.
 - **FR-011**: Large diffs MUST be truncated with a summary of omitted lines.
-- **FR-012**: Diffs MUST be syntax-highlighted when the file type is recognized.
+- **FR-012**: ~~Diffs MUST be syntax-highlighted when the file type is recognized.~~ *Deferred — diffs use generic green/red/dim color coding. Syntax highlighting is available for markdown code blocks via `syntect` but not yet applied to diff lines.*
 - **FR-013**: The status bar MUST display model name, token usage, estimated cost, agent state, and elapsed time.
 - **FR-014**: The status bar MUST show a retry indicator during retry operations.
 - **FR-015**: Token counts MUST be formatted in human-readable notation (K for thousands, M for millions).
@@ -132,9 +133,9 @@ A developer manages screen space by collapsing and expanding tool result blocks 
 
 ### Key Entities
 
-- **ToolPanel**: The UI component that shows active and recently completed tool executions with spinners and badges. Auto-hides when idle.
+- **ToolPanel**: A docked region above the conversation area that shows active tools, recently completed tools, pending approvals, and resolved approvals. Uses braille spinner frames. Height capped at 10 lines. Auto-hides when idle.
 - **ToolResultBlock**: A collapsible section in the conversation displaying a tool's output. Has expanded and collapsed states, with auto-collapse behavior and user override.
-- **DiffView**: A visual representation of file changes in unified diff format, with syntax highlighting and color-coded additions/removals.
+- **DiffView**: A visual representation of file changes in unified diff format with color-coded additions/removals. Truncates at 50 lines.
 - **StatusBar**: A persistent UI element displaying model information, token usage, cost, agent state, retry status, and elapsed time.
 - **ContextGauge**: A compact progress bar within the status bar showing context window utilization with color-coded urgency thresholds.
 - **FormatHelper**: Utility functions for rendering human-readable token counts, elapsed time, and context gauge percentages.
@@ -157,4 +158,4 @@ A developer manages screen space by collapsing and expanding tool result blocks 
 - File content before and after modification is available to compute diffs (provided by the tool result or agent context).
 - Token usage and cost data are provided by the agent or adapter layer; the TUI only displays them.
 - The context window size (maximum tokens) for the current model is known so that utilization percentage can be calculated.
-- The auto-hide and auto-collapse timeouts are configurable via the TUI config file.
+- The auto-hide and auto-collapse timeouts are hardcoded at 10 seconds (not configurable via TUI config).
