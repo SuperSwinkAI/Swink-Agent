@@ -7,7 +7,7 @@
 - Provider Roadmap: [PROVIDER_EXPANSION_ROADMAP.md](PROVIDER_EXPANSION_ROADMAP.md)
 - Eval Roadmap: [EVAL.md](EVAL.md)
 
-**Current Focus:** 22/30 specs have plans, 22/30 have tasks, 19/30 complete (001–014, 020–022, 025, 028, 030). Phase 0 + Phase 1 + Phase 2 done. Phase 3 partially done (011–014, 020 complete). Phase 4 partially done (021–022 complete). Phase 5 partially done (025, 028 complete; 026, 027 have tasks ready for implementation). Phase 6 done (030 complete). Next: `/speckit.implement` for 026. 8 specs need plans (015–019, 023–024). 1 spec needs tasks (029).
+**Current Focus:** 22/30 specs have plans, 23/30 have tasks, 19/30 complete (001–014, 020–022, 025, 028, 030). Phase 0 + Phase 1 + Phase 2 done. Phase 3 partially done (011–014, 020 complete). Phase 4 partially done (021–022 complete). Phase 5 partially done (025, 028 complete; 026, 027, 029 have tasks ready for implementation). Phase 6 done (030 complete). Next: `/speckit.implement` for 026. 8 specs need plans (015–019, 023–024). 0 specs need tasks.
 
 > **Numbering System:** Spec numbers (001–030) are sequential identifiers that
 > never change. Phase numbers represent execution order and can be reassigned
@@ -205,7 +205,7 @@ evaluation — each depends only on the core library.
 **Goal:** Interactive terminal interface — the binary crate that demonstrates
 the full agent library in a usable application.
 
-**Status:** 5/5 specs planned, 5/5 have tasks, 2/5 complete, 5/5 specs defined
+**Status:** 5/5 specs planned, 5/5 have tasks (including 029), 2/5 complete, 5/5 specs defined
 
 ### Implementation Checklist
 
@@ -232,7 +232,7 @@ the full agent library in a usable application.
 - [ ] **5.5** TUI: Plan Mode & Approval — Plan mode (read-only restriction), tiered approval (Enabled/Smart/Bypassed), session trust (§16.9, §16.11)
   - Spec: `specs/029-tui-plan-mode-approval/spec.md`
   - Branch: `029-tui-plan-mode-approval`
-  - Status: Plan complete — needs tasks
+  - Status: Ready for implementation (0/70 tasks)
   - Depends on: 5.2
 
 ### Parallel Opportunities
