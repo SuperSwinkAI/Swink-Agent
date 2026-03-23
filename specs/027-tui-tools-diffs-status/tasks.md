@@ -15,16 +15,16 @@
 
 **Purpose**: Theme colors, format helpers, and shared types needed by all user stories
 
-- [ ] T001 [P] Add diff and status bar color constants (`diff_add_color`, `diff_remove_color`, `diff_context_color`, `status_idle`, `status_running`, `status_error`, `status_aborted`, `context_green`, `context_yellow`, `context_red`, `plan_color`, `bar_bg`, `bar_fg`) to `tui/src/theme.rs`
-- [ ] T002 [P] Implement `format_tokens(n: u64) -> String` in `tui/src/format.rs` — below 1K as-is, 1K–10K one decimal, 10K–1M rounded, 1M+ with M suffix
-- [ ] T003 [P] Implement `format_elapsed(start: Instant) -> String` in `tui/src/format.rs` — MM:SS under 1h, HH:MM:SS at or above 1h
-- [ ] T004 [P] Implement `format_context_gauge(tokens_used: u64, budget: u64) -> (String, f32)` in `tui/src/format.rs` — 10-char bar with fill/empty blocks, returns percentage; budget=0 returns `("[ no limit ]", 0.0)`
-- [ ] T005 [P] Add unit tests for `format_tokens` boundary values (0, 999, 1000, 4600, 10000, 999999, 1000000, 1500000) in `tui/src/format.rs`
-- [ ] T006 [P] Add unit tests for `format_elapsed` (0s, 59s, 60s, 3599s, 3600s, 7261s) in `tui/src/format.rs`
-- [ ] T007 [P] Add unit tests for `format_context_gauge` (budget=0, 0%, 50%, 60%, 85%, 100%, >100%) in `tui/src/format.rs`
-- [ ] T008 Add `AgentStatus` enum (Idle, Running, Error, Aborted) to `tui/src/app/state.rs` with display text and color mapping
-- [ ] T009 Extend `DisplayMessage` in `tui/src/app/state.rs` with `collapsed: bool`, `summary: String`, `user_expanded: bool`, `expanded_at: Option<Instant>`, `diff_data: Option<DiffData>` fields
-- [ ] T010 Add `tool_panel: ToolPanel`, `total_input_tokens: u64`, `total_output_tokens: u64`, `total_cost: f64`, `retry_attempt: Option<u32>`, `context_budget: u64`, `context_tokens_used: u64`, `selected_tool_block: Option<usize>` fields to `App` struct in `tui/src/app/state.rs`
+- [x] T001 [P] Add diff and status bar color constants (`diff_add_color`, `diff_remove_color`, `diff_context_color`, `status_idle`, `status_running`, `status_error`, `status_aborted`, `context_green`, `context_yellow`, `context_red`, `plan_color`, `bar_bg`, `bar_fg`) to `tui/src/theme.rs`
+- [x] T002 [P] Implement `format_tokens(n: u64) -> String` in `tui/src/format.rs` — below 1K as-is, 1K–10K one decimal, 10K–1M rounded, 1M+ with M suffix
+- [x] T003 [P] Implement `format_elapsed(start: Instant) -> String` in `tui/src/format.rs` — MM:SS under 1h, HH:MM:SS at or above 1h
+- [x] T004 [P] Implement `format_context_gauge(tokens_used: u64, budget: u64) -> (String, f32)` in `tui/src/format.rs` — 10-char bar with fill/empty blocks, returns percentage; budget=0 returns `("[ no limit ]", 0.0)`
+- [x] T005 [P] Add unit tests for `format_tokens` boundary values (0, 999, 1000, 4600, 10000, 999999, 1000000, 1500000) in `tui/src/format.rs`
+- [x] T006 [P] Add unit tests for `format_elapsed` (0s, 59s, 60s, 3599s, 3600s, 7261s) in `tui/src/format.rs`
+- [x] T007 [P] Add unit tests for `format_context_gauge` (budget=0, 0%, 50%, 60%, 85%, 100%, >100%) in `tui/src/format.rs`
+- [x] T008 Add `AgentStatus` enum (Idle, Running, Error, Aborted) to `tui/src/app/state.rs` with display text and color mapping
+- [x] T009 Extend `DisplayMessage` in `tui/src/app/state.rs` with `collapsed: bool`, `summary: String`, `user_expanded: bool`, `expanded_at: Option<Instant>`, `diff_data: Option<DiffData>` fields
+- [x] T010 Add `tool_panel: ToolPanel`, `total_input_tokens: u64`, `total_output_tokens: u64`, `total_cost: f64`, `retry_attempt: Option<u32>`, `context_budget: u64`, `context_tokens_used: u64`, `selected_tool_block: Option<usize>` fields to `App` struct in `tui/src/app/state.rs`
 
 **Checkpoint**: All shared types, format helpers, and theme colors are in place. All format helper unit tests pass.
 
@@ -36,13 +36,13 @@
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete
 
-- [ ] T011 Create `DiffData` struct with `path`, `is_new_file`, `old_content`, `new_content` fields and `from_details(details: &Value) -> Option<Self>` constructor in `tui/src/ui/diff.rs`
-- [ ] T012 Create `ToolExecution` struct with `id`, `name`, `started_at`, `completed_at`, `is_error` fields in `tui/src/ui/tool_panel.rs`
-- [ ] T013 Create `PendingApproval` struct with `id`, `name`, `arguments_summary` fields in `tui/src/ui/tool_panel.rs`
-- [ ] T014 Create `ResolvedApproval` struct with `approved`, `resolved_at` fields in `tui/src/ui/tool_panel.rs`
-- [ ] T015 Create `ToolPanel` struct with `active`, `completed`, `pending_approvals`, `resolved_approvals`, `spinner_frame` fields and `const fn new() -> Self` constructor in `tui/src/ui/tool_panel.rs`
-- [ ] T016 Register `pub mod tool_panel;`, `pub mod diff;`, `pub mod status_bar;` in `tui/src/ui/mod.rs` and `pub mod format;` in `tui/src/lib.rs`
-- [ ] T017 Add unit test for `DiffData::from_details` with valid JSON, missing fields, and wrong types in `tui/src/ui/diff.rs`
+- [x] T011 Create `DiffData` struct with `path`, `is_new_file`, `old_content`, `new_content` fields and `from_details(details: &Value) -> Option<Self>` constructor in `tui/src/ui/diff.rs`
+- [x] T012 Create `ToolExecution` struct with `id`, `name`, `started_at`, `completed_at`, `is_error` fields in `tui/src/ui/tool_panel.rs`
+- [x] T013 Create `PendingApproval` struct with `id`, `name`, `arguments_summary` fields in `tui/src/ui/tool_panel.rs`
+- [x] T014 Create `ResolvedApproval` struct with `approved`, `resolved_at` fields in `tui/src/ui/tool_panel.rs`
+- [x] T015 Create `ToolPanel` struct with `active`, `completed`, `pending_approvals`, `resolved_approvals`, `spinner_frame` fields and `const fn new() -> Self` constructor in `tui/src/ui/tool_panel.rs`
+- [x] T016 Register `pub mod tool_panel;`, `pub mod diff;`, `pub mod status_bar;` in `tui/src/ui/mod.rs` and `pub mod format;` in `tui/src/lib.rs`
+- [x] T017 Add unit test for `DiffData::from_details` with valid JSON, missing fields, and wrong types in `tui/src/ui/diff.rs`
 
 **Checkpoint**: Foundation ready — user story implementation can now begin in parallel
 
@@ -56,19 +56,19 @@
 
 ### Implementation for User Story 1
 
-- [ ] T018 [US1] Implement `ToolPanel::start_tool(&mut self, id: String, name: String)` — creates `ToolExecution` and pushes to `active` in `tui/src/ui/tool_panel.rs`
-- [ ] T019 [US1] Implement `ToolPanel::end_tool(&mut self, id: &str, is_error: bool)` — moves tool from `active` to `completed`, sets `completed_at` and `is_error` in `tui/src/ui/tool_panel.rs`
-- [ ] T020 [US1] Implement `ToolPanel::set_awaiting_approval(&mut self, id: &str, name: &str, arguments: &Value)` — creates `PendingApproval` with redacted argument summary using `swink_agent::redact_sensitive_values` in `tui/src/ui/tool_panel.rs`
-- [ ] T021 [US1] Implement `ToolPanel::resolve_approval(&mut self, id: &str, approved: bool)` — removes from `pending_approvals`, adds `ResolvedApproval` in `tui/src/ui/tool_panel.rs`
-- [ ] T022 [US1] Implement `ToolPanel::tick(&mut self)` — advance `spinner_frame` (mod 10), prune completed entries older than 10s, prune resolved approvals older than 2s in `tui/src/ui/tool_panel.rs`
-- [ ] T023 [US1] Implement `ToolPanel::is_visible(&self) -> bool` and `ToolPanel::has_pending_approval(&self) -> bool` — `is_visible` returns true if any of the four collections is non-empty in `tui/src/ui/tool_panel.rs`
-- [ ] T024 [US1] Implement `ToolPanel::height(&self) -> u16` — 0 when hidden, min(total_entries + 2 borders, 10) when visible in `tui/src/ui/tool_panel.rs`
-- [ ] T025 [US1] Implement `ToolPanel::render(&self, frame: &mut Frame, area: Rect)` — render active tools with braille spinner (SPINNER constant ⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏), completed tools with ✓/✗ badge, pending approvals with ⚠ icon, resolved approvals with brief text in `tui/src/ui/tool_panel.rs`
-- [ ] T026 [US1] Update layout in `tui/src/ui/mod.rs` to allocate conditional tool panel region (0 or `tool_panel.height()` lines) above conversation area
-- [ ] T027 [US1] Wire `AgentEvent::ToolCallStart` and `AgentEvent::ToolCallEnd` events from agent bridge to `tool_panel.start_tool()`/`end_tool()` in `tui/src/app/agent_bridge.rs`
-- [ ] T028 [US1] Call `tool_panel.tick()` from the main tick handler in `tui/src/app/event_loop.rs`
-- [ ] T029 [P] [US1] Add unit tests for `ToolPanel` lifecycle: start → end → tick prune, visibility, height capping at 10, spinner frame advancement in `tui/src/ui/tool_panel.rs`
-- [ ] T030 [P] [US1] Add unit tests for `ToolPanel` approval flow: set_awaiting → resolve → tick prune (2s) in `tui/src/ui/tool_panel.rs`
+- [x] T018 [US1] Implement `ToolPanel::start_tool(&mut self, id: String, name: String)` — creates `ToolExecution` and pushes to `active` in `tui/src/ui/tool_panel.rs`
+- [x] T019 [US1] Implement `ToolPanel::end_tool(&mut self, id: &str, is_error: bool)` — moves tool from `active` to `completed`, sets `completed_at` and `is_error` in `tui/src/ui/tool_panel.rs`
+- [x] T020 [US1] Implement `ToolPanel::set_awaiting_approval(&mut self, id: &str, name: &str, arguments: &Value)` — creates `PendingApproval` with redacted argument summary using `swink_agent::redact_sensitive_values` in `tui/src/ui/tool_panel.rs`
+- [x] T021 [US1] Implement `ToolPanel::resolve_approval(&mut self, id: &str, approved: bool)` — removes from `pending_approvals`, adds `ResolvedApproval` in `tui/src/ui/tool_panel.rs`
+- [x] T022 [US1] Implement `ToolPanel::tick(&mut self)` — advance `spinner_frame` (mod 10), prune completed entries older than 10s, prune resolved approvals older than 2s in `tui/src/ui/tool_panel.rs`
+- [x] T023 [US1] Implement `ToolPanel::is_visible(&self) -> bool` and `ToolPanel::has_pending_approval(&self) -> bool` — `is_visible` returns true if any of the four collections is non-empty in `tui/src/ui/tool_panel.rs`
+- [x] T024 [US1] Implement `ToolPanel::height(&self) -> u16` — 0 when hidden, min(total_entries + 2 borders, 10) when visible in `tui/src/ui/tool_panel.rs`
+- [x] T025 [US1] Implement `ToolPanel::render(&self, frame: &mut Frame, area: Rect)` — render active tools with braille spinner (SPINNER constant ⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏), completed tools with ✓/✗ badge, pending approvals with ⚠ icon, resolved approvals with brief text in `tui/src/ui/tool_panel.rs`
+- [x] T026 [US1] Update layout in `tui/src/ui/mod.rs` to allocate conditional tool panel region (0 or `tool_panel.height()` lines) above conversation area
+- [x] T027 [US1] Wire `AgentEvent::ToolCallStart` and `AgentEvent::ToolCallEnd` events from agent bridge to `tool_panel.start_tool()`/`end_tool()` in `tui/src/app/agent_bridge.rs`
+- [x] T028 [US1] Call `tool_panel.tick()` from the main tick handler in `tui/src/app/event_loop.rs`
+- [x] T029 [P] [US1] Add unit tests for `ToolPanel` lifecycle: start → end → tick prune, visibility, height capping at 10, spinner frame advancement in `tui/src/ui/tool_panel.rs`
+- [x] T030 [P] [US1] Add unit tests for `ToolPanel` approval flow: set_awaiting → resolve → tick prune (2s) in `tui/src/ui/tool_panel.rs`
 
 **Checkpoint**: Tool panel shows active/completed tools with spinners/badges and auto-hides. Approvals display with redacted arguments.
 
@@ -82,16 +82,16 @@
 
 ### Implementation for User Story 2
 
-- [ ] T031 [US2] Implement LCS dynamic programming algorithm (`compute_lcs`) for line-level diff computation in `tui/src/ui/diff.rs`
-- [ ] T032 [US2] Implement `render_diff_lines(diff: &DiffData, max_width: u16) -> Vec<Line<'static>>` — header line with path, addition lines (green +), removal lines (red −), context lines (dimmed) in `tui/src/ui/diff.rs`
-- [ ] T033 [US2] Implement diff truncation at `MAX_DIFF_LINES` (50) with summary of omitted lines in `tui/src/ui/diff.rs`
-- [ ] T034 [US2] Handle new file case in `render_diff_lines` — all lines as additions when `is_new_file` is true in `tui/src/ui/diff.rs`
-- [ ] T035 [US2] Implement `truncate_line` helper for capping long lines to terminal width in `tui/src/ui/diff.rs`
-- [ ] T036 [US2] Extract `DiffData` from tool result details JSON in `tui/src/app/agent_bridge.rs` — parse WriteFileTool details, store in `DisplayMessage.diff_data`
-- [ ] T037 [US2] Integrate diff rendering in `tui/src/ui/conversation.rs` — when `DisplayMessage.diff_data.is_some()` and block is expanded, call `render_diff_lines` and append to message output
-- [ ] T038 [P] [US2] Add unit tests for LCS computation: identical content, completely different content, single insertion, single deletion, mixed changes in `tui/src/ui/diff.rs`
-- [ ] T039 [P] [US2] Add unit tests for `render_diff_lines`: new file (all additions), modification (green/red/dim), truncation at 50 lines, empty content in `tui/src/ui/diff.rs`
-- [ ] T040 [P] [US2] Add unit test for `DiffData::from_details` round-trip: construct JSON with path/is_new_file/old_content/new_content, parse, verify fields in `tui/src/ui/diff.rs`
+- [x] T031 [US2] Implement LCS dynamic programming algorithm (`compute_lcs`) for line-level diff computation in `tui/src/ui/diff.rs`
+- [x] T032 [US2] Implement `render_diff_lines(diff: &DiffData, max_width: u16) -> Vec<Line<'static>>` — header line with path, addition lines (green +), removal lines (red −), context lines (dimmed) in `tui/src/ui/diff.rs`
+- [x] T033 [US2] Implement diff truncation at `MAX_DIFF_LINES` (50) with summary of omitted lines in `tui/src/ui/diff.rs`
+- [x] T034 [US2] Handle new file case in `render_diff_lines` — all lines as additions when `is_new_file` is true in `tui/src/ui/diff.rs`
+- [x] T035 [US2] Implement `truncate_line` helper for capping long lines to terminal width in `tui/src/ui/diff.rs`
+- [x] T036 [US2] Extract `DiffData` from tool result details JSON in `tui/src/app/agent_bridge.rs` — parse WriteFileTool details, store in `DisplayMessage.diff_data`
+- [x] T037 [US2] Integrate diff rendering in `tui/src/ui/conversation.rs` — when `DisplayMessage.diff_data.is_some()` and block is expanded, call `render_diff_lines` and append to message output
+- [x] T038 [P] [US2] Add unit tests for LCS computation: identical content, completely different content, single insertion, single deletion, mixed changes in `tui/src/ui/diff.rs`
+- [x] T039 [P] [US2] Add unit tests for `render_diff_lines`: new file (all additions), modification (green/red/dim), truncation at 50 lines, empty content in `tui/src/ui/diff.rs`
+- [x] T040 [P] [US2] Add unit test for `DiffData::from_details` round-trip: construct JSON with path/is_new_file/old_content/new_content, parse, verify fields in `tui/src/ui/diff.rs`
 
 **Checkpoint**: File modifications display as color-coded inline diffs. New files show as all-addition diffs. Large diffs are truncated with count of omitted lines.
 
@@ -105,12 +105,12 @@
 
 ### Implementation for User Story 3
 
-- [ ] T041 [US3] Implement `status_bar::render(frame: &mut Frame, app: &App, area: Rect)` in `tui/src/ui/status_bar.rs` with all segments: state badge (colored bg), optional PLAN badge, optional color mode badge (MONO-W/MONO-B), model name (dimmed), token usage (↓input ↑output using `format_tokens`), cost ($x.xxxx), elapsed time (dimmed, using `format_elapsed`), retry indicator
-- [ ] T042 [US3] Allocate 1-line status bar area at bottom of layout in `tui/src/ui/mod.rs`
-- [ ] T043 [US3] Update agent bridge to accumulate `total_input_tokens`, `total_output_tokens`, `total_cost` from `AgentEvent::TurnEnd` usage data in `tui/src/app/agent_bridge.rs`
-- [ ] T044 [US3] Set `app.status` transitions: Idle on init, Running on `AgentEvent::TurnStart`, Idle on `AgentEvent::TurnEnd`, Error on `AgentEvent::Error`, Aborted on user cancel (Ctrl+C / Esc) in `tui/src/app/agent_bridge.rs` and `tui/src/app/event_loop.rs`
-- [ ] T045 [US3] Set `app.retry_attempt` from `AgentEvent::RetryAttempt` events and clear on successful `AgentEvent::TurnEnd` in `tui/src/app/agent_bridge.rs`
-- [ ] T046 [P] [US3] Add unit test verifying status bar renders all segments with correct colors for each `AgentStatus` variant in `tui/src/ui/status_bar.rs` or `tui/src/app/tests.rs`
+- [x] T041 [US3] Implement `status_bar::render(frame: &mut Frame, app: &App, area: Rect)` in `tui/src/ui/status_bar.rs` with all segments: state badge (colored bg), optional PLAN badge, optional color mode badge (MONO-W/MONO-B), model name (dimmed), token usage (↓input ↑output using `format_tokens`), cost ($x.xxxx), elapsed time (dimmed, using `format_elapsed`), retry indicator
+- [x] T042 [US3] Allocate 1-line status bar area at bottom of layout in `tui/src/ui/mod.rs`
+- [x] T043 [US3] Update agent bridge to accumulate `total_input_tokens`, `total_output_tokens`, `total_cost` from `AgentEvent::TurnEnd` usage data in `tui/src/app/agent_bridge.rs`
+- [x] T044 [US3] Set `app.status` transitions: Idle on init, Running on `AgentEvent::TurnStart`, Idle on `AgentEvent::TurnEnd`, Error on `AgentEvent::Error`, Aborted on user cancel (Ctrl+C / Esc) in `tui/src/app/agent_bridge.rs` and `tui/src/app/event_loop.rs`
+- [x] T045 [US3] Set `app.retry_attempt` from `AgentEvent::RetryAttempt` events and clear on successful `AgentEvent::TurnEnd` in `tui/src/app/agent_bridge.rs`
+- [x] T046 [P] [US3] Add unit test verifying status bar renders all segments with correct colors for each `AgentStatus` variant in `tui/src/ui/status_bar.rs` or `tui/src/app/tests.rs`
 
 **Checkpoint**: Status bar shows all resource and state information, updates in real time during agent interactions.
 
@@ -124,9 +124,9 @@
 
 ### Implementation for User Story 4
 
-- [ ] T047 [US4] Add context gauge rendering to status bar — call `format_context_gauge`, apply green/yellow/red color based on percentage thresholds (<60%, 60-85%, >85%), hide when `context_budget == 0` in `tui/src/ui/status_bar.rs`
-- [ ] T048 [US4] Update agent bridge to set `app.context_budget` from `agent.state().model.context_window` and `app.context_tokens_used` from `AgentEvent::ContextUpdated` events in `tui/src/app/agent_bridge.rs`
-- [ ] T049 [P] [US4] Add integration test verifying context gauge threshold math (green at 59%, yellow at 60%, yellow at 84%, red at 85%) in `tui/tests/ac_tui.rs`
+- [x] T047 [US4] Add context gauge rendering to status bar — call `format_context_gauge`, apply green/yellow/red color based on percentage thresholds (<60%, 60-85%, >85%), hide when `context_budget == 0` in `tui/src/ui/status_bar.rs`
+- [x] T048 [US4] Update agent bridge to set `app.context_budget` from `agent.state().model.context_window` and `app.context_tokens_used` from `AgentEvent::ContextUpdated` events in `tui/src/app/agent_bridge.rs`
+- [x] T049 [P] [US4] Add integration test verifying context gauge threshold math (green at 59%, yellow at 60%, yellow at 84%, red at 85%) in `tui/tests/ac_tui.rs`
 
 **Checkpoint**: Context gauge appears in status bar with correct color transitions. Hidden when budget is 0.
 
@@ -140,18 +140,18 @@
 
 ### Implementation for User Story 5
 
-- [ ] T050 [US5] Implement auto-collapse logic in `App::tick()` — for each `DisplayMessage` with `role == ToolResult`, if `expanded_at` is set and elapsed > 10s and `user_expanded` is false, set `collapsed = true` in `tui/src/app/lifecycle.rs`
-- [ ] T051 [US5] Implement `App::toggle_collapse(index: usize)` — toggles `collapsed`, sets `user_expanded` on expand, resets `expanded_at` in `tui/src/app/lifecycle.rs`
-- [ ] T052 [US5] Implement `App::select_prev_tool_block()` and `App::select_next_tool_block()` — cycle `selected_tool_block` through messages with `role == ToolResult` in `tui/src/app/lifecycle.rs`
-- [ ] T053 [US5] Add F2 key handler in `tui/src/app/event_loop.rs` — if `selected_tool_block` is set, toggle that block; else find most recent ToolResult, select it, and toggle
-- [ ] T054 [US5] Add Shift+Left and Shift+Right handlers in `tui/src/app/event_loop.rs` — call `select_prev_tool_block()` and `select_next_tool_block()` respectively
-- [ ] T055 [US5] Generate one-line `summary` (first line of content, max 60 chars) when creating `DisplayMessage` for tool results in `tui/src/app/agent_bridge.rs`
-- [ ] T056 [US5] Render collapsed tool result blocks as single-line summary with `[+]` indicator and selected highlight; expanded blocks with `[-]` indicator and `[F2]` hint in `tui/src/ui/conversation.rs`
-- [ ] T057 [US5] Document F2 as "Collapse tool" in help panel key list in `tui/src/ui/help_panel.rs`
-- [ ] T058 [P] [US5] Add unit tests for auto-collapse timing, user-expanded prevention, toggle behavior in `tui/src/app/tests.rs`
-- [ ] T059 [P] [US5] Add unit tests for `select_next_tool_block` and `select_prev_tool_block` navigation in `tui/src/app/tests.rs`
-- [ ] T060 [P] [US5] Add unit test for F2 key event toggling most recent and selected tool blocks in `tui/src/app/tests.rs`
-- [ ] T061 [P] [US5] Add unit test for Shift+Left/Right cycling from input focus in `tui/src/app/tests.rs`
+- [x] T050 [US5] Implement auto-collapse logic in `App::tick()` — for each `DisplayMessage` with `role == ToolResult`, if `expanded_at` is set and elapsed > 10s and `user_expanded` is false, set `collapsed = true` in `tui/src/app/lifecycle.rs`
+- [x] T051 [US5] Implement `App::toggle_collapse(index: usize)` — toggles `collapsed`, sets `user_expanded` on expand, resets `expanded_at` in `tui/src/app/lifecycle.rs`
+- [x] T052 [US5] Implement `App::select_prev_tool_block()` and `App::select_next_tool_block()` — cycle `selected_tool_block` through messages with `role == ToolResult` in `tui/src/app/lifecycle.rs`
+- [x] T053 [US5] Add F2 key handler in `tui/src/app/event_loop.rs` — if `selected_tool_block` is set, toggle that block; else find most recent ToolResult, select it, and toggle
+- [x] T054 [US5] Add Shift+Left and Shift+Right handlers in `tui/src/app/event_loop.rs` — call `select_prev_tool_block()` and `select_next_tool_block()` respectively
+- [x] T055 [US5] Generate one-line `summary` (first line of content, max 60 chars) when creating `DisplayMessage` for tool results in `tui/src/app/agent_bridge.rs`
+- [x] T056 [US5] Render collapsed tool result blocks as single-line summary with `[+]` indicator and selected highlight; expanded blocks with `[-]` indicator and `[F2]` hint in `tui/src/ui/conversation.rs`
+- [x] T057 [US5] Document F2 as "Collapse tool" in help panel key list in `tui/src/ui/help_panel.rs`
+- [x] T058 [P] [US5] Add unit tests for auto-collapse timing, user-expanded prevention, toggle behavior in `tui/src/app/tests.rs`
+- [x] T059 [P] [US5] Add unit tests for `select_next_tool_block` and `select_prev_tool_block` navigation in `tui/src/app/tests.rs`
+- [x] T060 [P] [US5] Add unit test for F2 key event toggling most recent and selected tool blocks in `tui/src/app/tests.rs`
+- [x] T061 [P] [US5] Add unit test for Shift+Left/Right cycling from input focus in `tui/src/app/tests.rs`
 
 **Checkpoint**: Tool blocks auto-collapse after 10s, F2 toggles selected block, Shift+arrows cycle selection. User-expanded blocks persist.
 
@@ -161,12 +161,12 @@
 
 **Purpose**: Integration, edge cases, and cross-story validation
 
-- [ ] T062 [P] Add integration test verifying `DisplayMessage.diff_data` defaults to `None` and round-trips through `DiffData::from_details` in `tui/tests/ac_tui.rs`
-- [ ] T063 [P] Add integration test verifying context gauge fields default to zero on `App` in `tui/tests/ac_tui.rs`
-- [ ] T064 Verify `cargo test -p swink-agent-tui` passes all unit and integration tests
-- [ ] T065 Verify `cargo clippy -p swink-agent-tui -- -D warnings` produces zero warnings
-- [ ] T066 Run `cargo build --workspace` to verify no cross-crate breakage
-- [ ] T067 Run quickstart.md validation — verify documented build/test commands work
+- [x] T062 [P] Add integration test verifying `DisplayMessage.diff_data` defaults to `None` and round-trips through `DiffData::from_details` in `tui/tests/ac_tui.rs`
+- [x] T063 [P] Add integration test verifying context gauge fields default to zero on `App` in `tui/tests/ac_tui.rs`
+- [x] T064 Verify `cargo test -p swink-agent-tui` passes all unit and integration tests
+- [x] T065 Verify `cargo clippy -p swink-agent-tui -- -D warnings` produces zero warnings
+- [x] T066 Run `cargo build --workspace` to verify no cross-crate breakage
+- [x] T067 Run quickstart.md validation — verify documented build/test commands work
 
 ---
 

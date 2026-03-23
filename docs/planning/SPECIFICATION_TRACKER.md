@@ -7,7 +7,7 @@
 - Provider Roadmap: [PROVIDER_EXPANSION_ROADMAP.md](PROVIDER_EXPANSION_ROADMAP.md)
 - Eval Roadmap: [EVAL.md](EVAL.md)
 
-**Current Focus:** 22/30 specs have plans, 23/30 have tasks, 20/30 complete (001–014, 020–022, 025–026, 028, 030). Phase 0 + Phase 1 + Phase 2 done. Phase 3 partially done (011–014, 020 complete). Phase 4 partially done (021–022 complete). Phase 5 partially done (025, 026, 028 complete; 027, 029 have tasks ready for implementation). Phase 6 done (030 complete). Next: `/speckit.implement` for 027. 8 specs need plans (015–019, 023–024). 0 specs need tasks.
+**Current Focus:** 22/30 specs have plans, 23/30 have tasks, 21/30 complete (001–014, 020–022, 025–028, 030). Phase 0 + Phase 1 + Phase 2 done. Phase 3 partially done (011–014, 020 complete). Phase 4 partially done (021–022 complete). Phase 5 partially done (025–028 complete; 029 has tasks ready for implementation). Phase 6 done (030 complete). Next: `/speckit.implement` for 029. 8 specs need plans (015–019, 023–024). 0 specs need tasks.
 
 > **Numbering System:** Spec numbers (001–030) are sequential identifiers that
 > never change. Phase numbers represent execution order and can be reassigned
@@ -205,7 +205,7 @@ evaluation — each depends only on the core library.
 **Goal:** Interactive terminal interface — the binary crate that demonstrates
 the full agent library in a usable application.
 
-**Status:** 5/5 specs planned, 5/5 have tasks, 3/5 complete, 5/5 specs defined
+**Status:** 5/5 specs planned, 5/5 have tasks, 4/5 complete, 5/5 specs defined
 
 ### Implementation Checklist
 
@@ -219,10 +219,10 @@ the full agent library in a usable application.
   - Branch: `026-tui-input-conversation`
   - Status: Complete (69/69 tasks, merged to main)
   - Depends on: 5.1
-- [ ] **5.3** TUI: Tool Panel, Diffs & Status Bar — Tool panel, collapsible blocks, inline diffs, status bar, context gauge (§16.6–16.7, §16.10)
+- [x] **5.3** TUI: Tool Panel, Diffs & Status Bar — Tool panel, collapsible blocks, inline diffs, status bar, context gauge (§16.6–16.7, §16.10)
   - Spec: `specs/027-tui-tools-diffs-status/spec.md`
   - Branch: `027-tui-tools-diffs-status`
-  - Status: Ready for implementation (0/67 tasks)
+  - Status: Complete (67/67 tasks, merged to main)
   - Depends on: 5.2
 - [x] **5.4** TUI: Commands, Editor & Session — Hash/slash commands, external editor, session persistence (§16.4, §16.8)
   - Spec: `specs/028-tui-commands-editor-session/spec.md`
@@ -348,7 +348,7 @@ graph TD
     style P fill:#fff,color:#000,stroke:#6b7280,stroke-width:2px
     style Q fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
     style R fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
-    style S fill:#fff,color:#000,stroke:#6b7280,stroke-width:2px
+    style S fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
     style T fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
     style U fill:#fff,color:#000,stroke:#6b7280,stroke-width:2px
     style V fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
