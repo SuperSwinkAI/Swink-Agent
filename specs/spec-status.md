@@ -1,5 +1,5 @@
 # Spec-Driven Development Status
-<!-- spec-status: project=worktree-027-tui-tools-diffs-status commit=8fe61cad255b891f74836085d61fe258640e0395 updated=2026-03-23T03:14:26Z -->
+<!-- spec-status: project=Swink-Agent updated=2026-03-23T03:20:25Z -->
 
 | Feature                         | Specify | Plan | Tasks | Implement |
 |---------------------------------|---------|------|-------|-----------|
@@ -27,7 +27,7 @@
 | 022-local-llm-crate             | ✓     | ✓  | ✓   | ✓ Complete |
 | 023-eval-trajectory-matching    | ✓     | -    | -     | -         |
 | 024-eval-runner-governance      | ✓     | -    | -     | -         |
-| 025-tui-scaffold-config         | ✓     | ✓  | ✓   | ● 0/56 (0%) |
+| 025-tui-scaffold-config         | ✓     | ✓  | ✓   | ✓ Complete |
 | 026-tui-input-conversation      | ✓     | ✓  | ✓   | ● 0/69 (0%) |
 | 027-tui-tools-diffs-status      | ✓     | ✓  | ✓   | ● 0/67 (0%) |
 | 028-tui-commands-editor-session | ✓     | ✓  | ✓   | ✓ Complete |
@@ -58,7 +58,7 @@
 <!-- feature: 022-local-llm-crate has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=58 tasks_completed=58 checklist_files=requirements.md -->
 <!-- feature: 023-eval-trajectory-matching has_spec=true has_plan=false has_tasks=false has_research=false has_data_model=false has_quickstart=false has_contracts=false has_checklists=true tasks_total=0 tasks_completed=0 checklist_files=requirements.md -->
 <!-- feature: 024-eval-runner-governance has_spec=true has_plan=false has_tasks=false has_research=false has_data_model=false has_quickstart=false has_contracts=false has_checklists=true tasks_total=0 tasks_completed=0 checklist_files=requirements.md -->
-<!-- feature: 025-tui-scaffold-config has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=56 tasks_completed=0 checklist_files=requirements.md -->
+<!-- feature: 025-tui-scaffold-config has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=56 tasks_completed=56 checklist_files=requirements.md -->
 <!-- feature: 026-tui-input-conversation has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=69 tasks_completed=0 checklist_files=requirements.md -->
 <!-- feature: 027-tui-tools-diffs-status has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=67 tasks_completed=0 checklist_files=requirements.md -->
 <!-- feature: 028-tui-commands-editor-session has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=78 tasks_completed=78 checklist_files=requirements.md -->

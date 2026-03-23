@@ -7,7 +7,7 @@
 - Provider Roadmap: [PROVIDER_EXPANSION_ROADMAP.md](PROVIDER_EXPANSION_ROADMAP.md)
 - Eval Roadmap: [EVAL.md](EVAL.md)
 
-**Current Focus:** 22/30 specs have plans, 22/30 have tasks, 18/30 complete (001–014, 020–022, 028, 030). Phase 0 + Phase 1 + Phase 2 done. Phase 3 partially done (011–014, 020 complete). Phase 4 partially done (021–022 complete). Phase 5 partially done (028 complete; 025, 026, 027 have tasks ready for implementation). Phase 6 done (030 complete). Next: `/speckit.implement` for 025. 8 specs need plans (015–019, 023–024). 1 spec needs tasks (029).
+**Current Focus:** 22/30 specs have plans, 22/30 have tasks, 19/30 complete (001–014, 020–022, 025, 028, 030). Phase 0 + Phase 1 + Phase 2 done. Phase 3 partially done (011–014, 020 complete). Phase 4 partially done (021–022 complete). Phase 5 partially done (025, 028 complete; 026, 027 have tasks ready for implementation). Phase 6 done (030 complete). Next: `/speckit.implement` for 026. 8 specs need plans (015–019, 023–024). 1 spec needs tasks (029).
 
 > **Numbering System:** Spec numbers (001–030) are sequential identifiers that
 > never change. Phase numbers represent execution order and can be reassigned
@@ -205,14 +205,14 @@ evaluation — each depends only on the core library.
 **Goal:** Interactive terminal interface — the binary crate that demonstrates
 the full agent library in a usable application.
 
-**Status:** 5/5 specs planned, 5/5 have tasks, 1/5 complete, 5/5 specs defined
+**Status:** 5/5 specs planned, 5/5 have tasks, 2/5 complete, 5/5 specs defined
 
 ### Implementation Checklist
 
-- [ ] **5.1** TUI: Scaffold, Event Loop & Config — Binary entry, terminal setup, async event loop, config, credentials, wizard (§16.1–16.2)
+- [x] **5.1** TUI: Scaffold, Event Loop & Config — Binary entry, terminal setup, async event loop, config, credentials, wizard (§16.1–16.2)
   - Spec: `specs/025-tui-scaffold-config/spec.md`
   - Branch: `025-tui-scaffold-config`
-  - Status: Ready for implementation (0/56 tasks)
+  - Status: Complete (56/56 tasks, merged to main)
   - Depends on: 1.2, 3.1
 - [ ] **5.2** TUI: Input & Conversation — Multi-line editor, scrollable conversation, markdown, syntax highlighting (§16.2–16.3)
   - Spec: `specs/026-tui-input-conversation/spec.md`
@@ -346,7 +346,7 @@ graph TD
     style N fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
     style O fill:#fff,color:#000,stroke:#6b7280,stroke-width:2px
     style P fill:#fff,color:#000,stroke:#6b7280,stroke-width:2px
-    style Q fill:#fff,color:#000,stroke:#6b7280,stroke-width:2px
+    style Q fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
     style R fill:#fff,color:#000,stroke:#6b7280,stroke-width:2px
     style S fill:#fff,color:#000,stroke:#6b7280,stroke-width:2px
     style T fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px

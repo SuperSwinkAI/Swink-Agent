@@ -10,13 +10,31 @@ pub mod syntax;
 pub mod tool_panel;
 
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Direction, Layout};
+use ratatui::layout::{Alignment, Constraint, Direction, Layout};
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 
 use crate::app::{App, Focus};
 use crate::ui::help_panel::MIN_CONV_WIDTH;
 
+/// Minimum terminal width for normal UI rendering.
+pub const MIN_TERMINAL_WIDTH: u16 = 120;
+/// Minimum terminal height for normal UI rendering.
+pub const MIN_TERMINAL_HEIGHT: u16 = 30;
+
+/// Returns true if the terminal dimensions meet the minimum size requirements.
+pub const fn meets_minimum_size(width: u16, height: u16) -> bool {
+    width >= MIN_TERMINAL_WIDTH && height >= MIN_TERMINAL_HEIGHT
+}
+
 /// Render the complete UI into the given frame.
 pub fn render(frame: &mut Frame, app: &mut App) {
+    let area = frame.area();
+    if !meets_minimum_size(area.width, area.height) {
+        render_size_warning(frame, area.width, area.height);
+        return;
+    }
     let input_height = app.input.height();
     let tool_height = app.tool_panel.height();
 
@@ -104,4 +122,40 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     // Render status bar
     status_bar::render(frame, app, status_area);
+}
+
+/// Render a centered warning when the terminal is below minimum size.
+fn render_size_warning(frame: &mut Frame, width: u16, height: u16) {
+    let area = frame.area();
+    frame.render_widget(Clear, area);
+
+    let lines = vec![
+        Line::from(Span::styled(
+            "Terminal Too Small",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        Line::from(format!("Current size: {width} x {height}")),
+        Line::from(format!(
+            "Minimum required: {MIN_TERMINAL_WIDTH} x {MIN_TERMINAL_HEIGHT}"
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            "Please resize your terminal to continue.",
+            Style::default().add_modifier(Modifier::DIM),
+        )),
+    ];
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" Swink Agent ")
+        .border_style(Style::default().fg(Color::Yellow));
+
+    let paragraph = Paragraph::new(lines)
+        .block(block)
+        .alignment(Alignment::Center);
+
+    frame.render_widget(paragraph, area);
 }

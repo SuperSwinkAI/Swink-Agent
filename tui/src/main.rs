@@ -1,5 +1,6 @@
 //! Swink Agent TUI — interactive terminal interface for LLM agents.
 
+use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -13,6 +14,12 @@ use swink_agent_tui::{
 type AppResult<T> = Result<T, swink_agent_tui::error::TuiError>;
 
 fn main() -> AppResult<()> {
+    if !std::io::stdout().is_terminal() {
+        eprintln!("Error: swink-agent-tui requires an interactive terminal (TTY).");
+        eprintln!("Cannot run in a non-interactive environment (e.g., piped input/output).");
+        std::process::exit(1);
+    }
+
     dotenvy::dotenv().ok();
 
     // Initialize file-based tracing (TUI owns stdout, so we log to a file).

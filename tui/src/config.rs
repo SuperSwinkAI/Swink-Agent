@@ -29,7 +29,7 @@ impl Default for TuiConfig {
         Self {
             show_thinking: true,
             auto_scroll: true,
-            tick_rate_ms: 100,
+            tick_rate_ms: 33,
             default_model: "not connected".to_string(),
             theme: "default".to_string(),
             system_prompt: None,
@@ -73,7 +73,7 @@ mod tests {
         let config = TuiConfig::default();
         assert!(config.show_thinking);
         assert!(config.auto_scroll);
-        assert_eq!(config.tick_rate_ms, 100);
+        assert_eq!(config.tick_rate_ms, 33);
         assert_eq!(config.default_model, "not connected");
         assert_eq!(config.theme, "default");
     }
@@ -106,7 +106,7 @@ mod tests {
         assert!(!config.show_thinking);
         // Other fields should be defaults
         assert!(config.auto_scroll);
-        assert_eq!(config.tick_rate_ms, 100);
+        assert_eq!(config.tick_rate_ms, 33);
         assert_eq!(config.default_model, "not connected");
         assert_eq!(config.theme, "default");
     }
@@ -116,14 +116,14 @@ mod tests {
         let config = TuiConfig::from_toml("");
         assert!(config.show_thinking);
         assert!(config.auto_scroll);
-        assert_eq!(config.tick_rate_ms, 100);
+        assert_eq!(config.tick_rate_ms, 33);
     }
 
     #[test]
     fn from_toml_invalid_falls_back_to_defaults() {
         let config = TuiConfig::from_toml("this is not valid toml {{{{");
         assert!(config.show_thinking);
-        assert_eq!(config.tick_rate_ms, 100);
+        assert_eq!(config.tick_rate_ms, 33);
     }
 
     #[test]

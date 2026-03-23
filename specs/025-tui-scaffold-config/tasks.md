@@ -19,9 +19,9 @@
 
 **Purpose**: Verify existing project structure and ensure crate manifest matches spec requirements
 
-- [ ] T001 Verify `tui/Cargo.toml` declares all required dependencies from plan.md: ratatui 0.30, crossterm 0.29 (event-stream feature), tokio, toml 0.8, dirs 6, keyring 3, thiserror, tracing + tracing-subscriber + tracing-appender in tui/Cargo.toml
-- [ ] T002 [P] Verify `#[forbid(unsafe_code)]` is present at crate root in tui/src/lib.rs
-- [ ] T003 [P] Verify workspace member entry for `swink-agent-tui` exists in root Cargo.toml
+- [x] T001 Verify `tui/Cargo.toml` declares all required dependencies from plan.md: ratatui 0.30, crossterm 0.29 (event-stream feature), tokio, toml 0.8, dirs 6, keyring 3, thiserror, tracing + tracing-subscriber + tracing-appender in tui/Cargo.toml
+- [x] T002 [P] Verify `#[forbid(unsafe_code)]` is present at crate root in tui/src/lib.rs
+- [x] T003 [P] Verify workspace member entry for `swink-agent-tui` exists in root Cargo.toml
 
 ---
 
@@ -31,17 +31,17 @@
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete
 
-- [ ] T004 Verify `TuiError` enum has `Io`, `Agent`, and `Other` variants with correct `#[from]` derives in tui/src/error.rs
-- [ ] T005 [P] Verify `TuiConfig` struct has all fields from data-model.md (`show_thinking`, `auto_scroll`, `tick_rate_ms`, `default_model`, `theme`, `system_prompt`, `editor_command`, `color_mode`) with `#[serde(default)]` in tui/src/config.rs
-- [ ] T006 Update `TuiConfig::default()` tick_rate_ms from 100 to 33 to match spec (30 FPS = ~33ms) in tui/src/config.rs
-- [ ] T007 Update existing `TuiConfig` unit tests to expect `tick_rate_ms = 33` instead of 100 in tui/src/config.rs
-- [ ] T008 [P] Verify `ColorMode` enum with `Custom`, `MonoWhite`, `MonoBlack` variants and `AtomicU8` global in tui/src/theme.rs
-- [ ] T009 [P] Verify `Focus` enum with `Input` and `Conversation` variants in tui/src/app/state.rs
-- [ ] T010 [P] Verify `AgentStatus` enum with `Idle`, `Running`, `Error`, `Aborted` variants in tui/src/app/state.rs
-- [ ] T011 [P] Verify `OperatingMode` enum with `Execute` and `Plan` variants in tui/src/app/state.rs
-- [ ] T012 [P] Verify `DisplayMessage` struct has all fields from data-model.md in tui/src/app/state.rs
-- [ ] T013 [P] Verify `MessageRole` enum with `User`, `Assistant`, `ToolResult`, `Error`, `System` variants in tui/src/app/state.rs
-- [ ] T014 [P] Verify `ProviderInfo` struct with `name`, `key_name`, `env_var`, `description`, `requires_key` fields and five provider entries in tui/src/credentials.rs
+- [x] T004 Verify `TuiError` enum has `Io`, `Agent`, and `Other` variants with correct `#[from]` derives in tui/src/error.rs
+- [x] T005 [P] Verify `TuiConfig` struct has all fields from data-model.md (`show_thinking`, `auto_scroll`, `tick_rate_ms`, `default_model`, `theme`, `system_prompt`, `editor_command`, `color_mode`) with `#[serde(default)]` in tui/src/config.rs
+- [x] T006 Update `TuiConfig::default()` tick_rate_ms from 100 to 33 to match spec (30 FPS = ~33ms) in tui/src/config.rs
+- [x] T007 Update existing `TuiConfig` unit tests to expect `tick_rate_ms = 33` instead of 100 in tui/src/config.rs
+- [x] T008 [P] Verify `ColorMode` enum with `Custom`, `MonoWhite`, `MonoBlack` variants and `AtomicU8` global in tui/src/theme.rs
+- [x] T009 [P] Verify `Focus` enum with `Input` and `Conversation` variants in tui/src/app/state.rs
+- [x] T010 [P] Verify `AgentStatus` enum with `Idle`, `Running`, `Error`, `Aborted` variants in tui/src/app/state.rs
+- [x] T011 [P] Verify `OperatingMode` enum with `Execute` and `Plan` variants in tui/src/app/state.rs
+- [x] T012 [P] Verify `DisplayMessage` struct has all fields from data-model.md in tui/src/app/state.rs
+- [x] T013 [P] Verify `MessageRole` enum with `User`, `Assistant`, `ToolResult`, `Error`, `System` variants in tui/src/app/state.rs
+- [x] T014 [P] Verify `ProviderInfo` struct with `name`, `key_name`, `env_var`, `description`, `requires_key` fields and five provider entries in tui/src/credentials.rs
 
 **Checkpoint**: Foundation ready — user story implementation can now begin in parallel
 
@@ -55,13 +55,13 @@
 
 ### Implementation for User Story 1
 
-- [ ] T015 [US1] Add non-interactive terminal detection to `main()` — check `std::io::stdout().is_terminal()` before `setup_terminal()`, print error to stderr and exit(1) if not a TTY, in tui/src/main.rs
-- [ ] T016 [US1] Verify `setup_terminal()` enables raw mode, enters alternate screen, and enables mouse capture in tui/src/lib.rs
-- [ ] T017 [US1] Verify `restore_terminal()` disables raw mode, leaves alternate screen, and disables mouse capture (idempotent) in tui/src/lib.rs
-- [ ] T018 [US1] Verify panic hook in `main()` calls `restore_terminal()` before the original hook in tui/src/main.rs
-- [ ] T019 [US1] Verify `Ctrl+Q` sets `should_quit = true` and the event loop exits cleanly in tui/src/app/event_loop.rs
-- [ ] T020 [US1] Verify file-based logging is configured with `tracing-appender` rolling daily to `dirs::config_dir()/swink-agent/logs/swink-agent.log` in tui/src/main.rs
-- [ ] T021 [US1] Add unit test for TTY detection: verify non-TTY stdout produces an error message (test the detection logic, not the actual terminal) in tui/src/app/tests.rs
+- [x] T015 [US1] Add non-interactive terminal detection to `main()` — check `std::io::stdout().is_terminal()` before `setup_terminal()`, print error to stderr and exit(1) if not a TTY, in tui/src/main.rs
+- [x] T016 [US1] Verify `setup_terminal()` enables raw mode, enters alternate screen, and enables mouse capture in tui/src/lib.rs
+- [x] T017 [US1] Verify `restore_terminal()` disables raw mode, leaves alternate screen, and disables mouse capture (idempotent) in tui/src/lib.rs
+- [x] T018 [US1] Verify panic hook in `main()` calls `restore_terminal()` before the original hook in tui/src/main.rs
+- [x] T019 [US1] Verify `Ctrl+Q` sets `should_quit = true` and the event loop exits cleanly in tui/src/app/event_loop.rs
+- [x] T020 [US1] Verify file-based logging is configured with `tracing-appender` rolling daily to `dirs::config_dir()/swink-agent/logs/swink-agent.log` in tui/src/main.rs
+- [x] T021 [US1] Add unit test for TTY detection: verify non-TTY stdout produces an error message (test the detection logic, not the actual terminal) in tui/src/app/tests.rs
 
 **Checkpoint**: TUI launches, exits cleanly, handles panics, and rejects non-TTY environments
 
@@ -75,12 +75,12 @@
 
 ### Implementation for User Story 2
 
-- [ ] T022 [US2] Verify event loop in `App::run()` uses `tokio::select!` with four branches: terminal events (EventStream), agent events (mpsc), approval requests (mpsc), tick interval in tui/src/app/event_loop.rs
-- [ ] T023 [US2] Verify dirty-flag rendering: `terminal.draw()` only called when `self.dirty == true`, flag reset after draw in tui/src/app/event_loop.rs
-- [ ] T024 [US2] Verify tick interval uses `self.config.tick_rate_ms` for the interval duration in tui/src/app/event_loop.rs
-- [ ] T025 [US2] Verify agent event handler updates `DisplayMessage` and sets `dirty = true` on streaming content in tui/src/app/agent_bridge.rs
-- [ ] T026 [US2] Verify `Ctrl+C` aborts running agent (sets `AgentStatus::Aborted`) without quitting the TUI in tui/src/app/event_loop.rs
-- [ ] T027 [US2] Add unit test: construct App, simulate tick, verify `dirty` flag behavior and `blink_on` toggling in tui/src/app/tests.rs
+- [x] T022 [US2] Verify event loop in `App::run()` uses `tokio::select!` with four branches: terminal events (EventStream), agent events (mpsc), approval requests (mpsc), tick interval in tui/src/app/event_loop.rs
+- [x] T023 [US2] Verify dirty-flag rendering: `terminal.draw()` only called when `self.dirty == true`, flag reset after draw in tui/src/app/event_loop.rs
+- [x] T024 [US2] Verify tick interval uses `self.config.tick_rate_ms` for the interval duration in tui/src/app/event_loop.rs
+- [x] T025 [US2] Verify agent event handler updates `DisplayMessage` and sets `dirty = true` on streaming content in tui/src/app/agent_bridge.rs
+- [x] T026 [US2] Verify `Ctrl+C` aborts running agent (sets `AgentStatus::Aborted`) without quitting the TUI in tui/src/app/event_loop.rs
+- [x] T027 [US2] Add unit test: construct App, simulate tick, verify `dirty` flag behavior and `blink_on` toggling in tui/src/app/tests.rs
 
 **Checkpoint**: Event loop processes keyboard and agent events concurrently without blocking
 
@@ -94,13 +94,13 @@
 
 ### Implementation for User Story 5
 
-- [ ] T028 [US5] Verify `any_key_configured()` returns false when no API keys are set (checks all providers with `requires_key`) in tui/src/credentials.rs
-- [ ] T029 [US5] Verify `credential()` checks env var first then keychain (env var wins) in tui/src/credentials.rs
-- [ ] T030 [US5] Verify `store_credential()` stores to OS keychain via `keyring::Entry` in tui/src/credentials.rs
-- [ ] T031 [US5] Verify wizard is launched when `!credentials::any_key_configured()` in `run()` function in tui/src/main.rs
-- [ ] T032 [US5] Verify `SetupWizard` renders provider selection list and handles key entry in tui/src/wizard.rs
-- [ ] T033 [US5] Verify provider priority order in `create_options()`: Proxy → OpenAI → Anthropic → Local → Ollama in tui/src/main.rs
-- [ ] T034 [US5] Add unit test: verify `credential()` returns env var value when both env var and keychain are available (mock env var) in tui/src/credentials.rs
+- [x] T028 [US5] Verify `any_key_configured()` returns false when no API keys are set (checks all providers with `requires_key`) in tui/src/credentials.rs
+- [x] T029 [US5] Verify `credential()` checks env var first then keychain (env var wins) in tui/src/credentials.rs
+- [x] T030 [US5] Verify `store_credential()` stores to OS keychain via `keyring::Entry` in tui/src/credentials.rs
+- [x] T031 [US5] Verify wizard is launched when `!credentials::any_key_configured()` in `run()` function in tui/src/main.rs
+- [x] T032 [US5] Verify `SetupWizard` renders provider selection list and handles key entry in tui/src/wizard.rs
+- [x] T033 [US5] Verify provider priority order in `create_options()`: Proxy → OpenAI → Anthropic → Local → Ollama in tui/src/main.rs
+- [x] T034 [US5] Add unit test: verify `credential()` returns env var value when both env var and keychain are available (mock env var) in tui/src/credentials.rs
 
 **Checkpoint**: First-run wizard works, credentials persist, provider priority order is correct
 
@@ -114,10 +114,10 @@
 
 ### Implementation for User Story 3
 
-- [ ] T035 [US3] Verify Tab key handler cycles `Focus::Input → Focus::Conversation → Focus::Input` in tui/src/app/event_loop.rs
-- [ ] T036 [US3] Verify focused component gets distinct visual border (e.g., `Color::White` for focused, `Color::DarkGray` for unfocused) in tui/src/ui/conversation.rs and tui/src/ui/input.rs
-- [ ] T037 [US3] Verify component-specific shortcuts only fire when that component has focus — check that conversation scroll keys (PageUp/PageDown/j/k) are gated on `Focus::Conversation` in tui/src/app/event_loop.rs
-- [ ] T038 [US3] Add unit test: construct App, simulate Tab keypress, verify focus changes from Input to Conversation and back in tui/src/app/tests.rs
+- [x] T035 [US3] Verify Tab key handler cycles `Focus::Input → Focus::Conversation → Focus::Input` in tui/src/app/event_loop.rs
+- [x] T036 [US3] Verify focused component gets distinct visual border (e.g., `Color::White` for focused, `Color::DarkGray` for unfocused) in tui/src/ui/conversation.rs and tui/src/ui/input.rs
+- [x] T037 [US3] Verify component-specific shortcuts only fire when that component has focus — check that conversation scroll keys (PageUp/PageDown/j/k) are gated on `Focus::Conversation` in tui/src/app/event_loop.rs
+- [x] T038 [US3] Add unit test: construct App, simulate Tab keypress, verify focus changes from Input to Conversation and back in tui/src/app/tests.rs
 
 **Checkpoint**: Focus cycling works, visual distinction is clear, component-specific shortcuts are gated
 
@@ -131,14 +131,14 @@
 
 ### Implementation for User Story 4
 
-- [ ] T039 [US4] Verify `TuiConfig::load()` reads from `dirs::config_dir()/swink-agent/tui.toml` in tui/src/config.rs
-- [ ] T040 [US4] Verify `TuiConfig::from_toml()` handles partial overrides (missing fields use defaults) in tui/src/config.rs
-- [ ] T041 [US4] Verify invalid TOML falls back to full defaults (existing test covers this) in tui/src/config.rs
-- [ ] T042 [US4] Verify unknown keys are silently ignored (existing test covers this) in tui/src/config.rs
-- [ ] T043 [US4] Verify `App::new()` applies `config.color_mode` to the global `ColorMode` via `theme::set_color_mode()` in tui/src/app/lifecycle.rs
-- [ ] T044 [US4] Verify `resolve_system_prompt()` priority chain: explicit > `LLM_SYSTEM_PROMPT` env var > config.system_prompt > default constant in tui/src/lib.rs
-- [ ] T045 [US4] Verify F3 key handler calls `theme::cycle_color_mode()` and sets `dirty = true` in tui/src/app/event_loop.rs
-- [ ] T046 [US4] Verify `resolve()` function in theme.rs correctly maps colors through MonoWhite and MonoBlack modes in tui/src/theme.rs
+- [x] T039 [US4] Verify `TuiConfig::load()` reads from `dirs::config_dir()/swink-agent/tui.toml` in tui/src/config.rs
+- [x] T040 [US4] Verify `TuiConfig::from_toml()` handles partial overrides (missing fields use defaults) in tui/src/config.rs
+- [x] T041 [US4] Verify invalid TOML falls back to full defaults (existing test covers this) in tui/src/config.rs
+- [x] T042 [US4] Verify unknown keys are silently ignored (existing test covers this) in tui/src/config.rs
+- [x] T043 [US4] Verify `App::new()` applies `config.color_mode` to the global `ColorMode` via `theme::set_color_mode()` in tui/src/app/lifecycle.rs
+- [x] T044 [US4] Verify `resolve_system_prompt()` priority chain: explicit > `LLM_SYSTEM_PROMPT` env var > config.system_prompt > default constant in tui/src/lib.rs
+- [x] T045 [US4] Verify F3 key handler calls `theme::cycle_color_mode()` and sets `dirty = true` in tui/src/app/event_loop.rs
+- [x] T046 [US4] Verify `resolve()` function in theme.rs correctly maps colors through MonoWhite and MonoBlack modes in tui/src/theme.rs
 
 **Checkpoint**: Config file loading works with all edge cases, color theme system is functional
 
@@ -152,11 +152,11 @@
 
 ### Implementation for User Story 6
 
-- [ ] T047 [US6] Verify crossterm `Event::Resize` is handled in the terminal event handler and sets `dirty = true` in tui/src/app/event_loop.rs
-- [ ] T048 [US6] Implement minimum terminal size check in `ui::render()` — if terminal dimensions are below 120×30, render a centered warning overlay showing current size and minimum required (120×30), skip normal UI rendering, in tui/src/ui/mod.rs
-- [ ] T049 [US6] Add constants `MIN_TERMINAL_WIDTH = 120` and `MIN_TERMINAL_HEIGHT = 30` at module level in tui/src/ui/mod.rs
-- [ ] T050 [US6] Verify normal UI rendering resumes immediately when terminal is resized above threshold (no restart needed) in tui/src/ui/mod.rs
-- [ ] T051 [US6] Add unit test: verify minimum size check returns true/false for various dimensions in tui/src/app/tests.rs
+- [x] T047 [US6] Verify crossterm `Event::Resize` is handled in the terminal event handler and sets `dirty = true` in tui/src/app/event_loop.rs
+- [x] T048 [US6] Implement minimum terminal size check in `ui::render()` — if terminal dimensions are below 120×30, render a centered warning overlay showing current size and minimum required (120×30), skip normal UI rendering, in tui/src/ui/mod.rs
+- [x] T049 [US6] Add constants `MIN_TERMINAL_WIDTH = 120` and `MIN_TERMINAL_HEIGHT = 30` at module level in tui/src/ui/mod.rs
+- [x] T050 [US6] Verify normal UI rendering resumes immediately when terminal is resized above threshold (no restart needed) in tui/src/ui/mod.rs
+- [x] T051 [US6] Add unit test: verify minimum size check returns true/false for various dimensions in tui/src/app/tests.rs
 
 **Checkpoint**: Resize handling works, minimum size warning is clear and non-blocking
 
@@ -166,11 +166,11 @@
 
 **Purpose**: Final verification and cleanup
 
-- [ ] T052 [P] Run `cargo build -p swink-agent-tui` and verify clean compilation with no errors
-- [ ] T053 [P] Run `cargo clippy -p swink-agent-tui -- -D warnings` and fix any warnings
-- [ ] T054 Run `cargo test -p swink-agent-tui` and verify all existing and new tests pass
-- [ ] T055 [P] Verify library API matches contract in specs/025-tui-scaffold-config/contracts/library-api.md: `setup_terminal()`, `restore_terminal()`, `resolve_system_prompt()`, `tui_approval_callback()`, `launch()`, `TuiConfig`, `App` re-exports in tui/src/lib.rs
-- [ ] T056 Run quickstart.md validation: verify `cargo build -p swink-agent-tui` and `cargo test -p swink-agent-tui` succeed as documented
+- [x] T052 [P] Run `cargo build -p swink-agent-tui` and verify clean compilation with no errors
+- [x] T053 [P] Run `cargo clippy -p swink-agent-tui -- -D warnings` and fix any warnings
+- [x] T054 Run `cargo test -p swink-agent-tui` and verify all existing and new tests pass
+- [x] T055 [P] Verify library API matches contract in specs/025-tui-scaffold-config/contracts/library-api.md: `setup_terminal()`, `restore_terminal()`, `resolve_system_prompt()`, `tui_approval_callback()`, `launch()`, `TuiConfig`, `App` re-exports in tui/src/lib.rs
+- [x] T056 Run quickstart.md validation: verify `cargo build -p swink-agent-tui` and `cargo test -p swink-agent-tui` succeed as documented
 
 ---
 

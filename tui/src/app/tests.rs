@@ -1194,3 +1194,81 @@ async fn hash_help_toggles_panel() {
 
     assert!(app.help_panel.visible);
 }
+
+#[test]
+fn tty_detection_logic() {
+    // Verify is_terminal() is available and returns a bool.
+    // In test environments stdout is typically not a TTY.
+    use std::io::IsTerminal;
+    let _is_tty: bool = std::io::stdout().is_terminal();
+    // The main.rs guard calls this same check and exits if false.
+    // We can't test the process::exit path in-process, but we verify
+    // the detection function is callable and returns a well-typed value.
+}
+
+#[test]
+fn minimum_terminal_size_check() {
+    use crate::ui::{MIN_TERMINAL_HEIGHT, MIN_TERMINAL_WIDTH, meets_minimum_size};
+
+    // Below both dimensions
+    assert!(!meets_minimum_size(80, 24));
+
+    // Below width only
+    assert!(!meets_minimum_size(100, 30));
+
+    // Below height only
+    assert!(!meets_minimum_size(120, 20));
+
+    // Exactly at minimum
+    assert!(meets_minimum_size(MIN_TERMINAL_WIDTH, MIN_TERMINAL_HEIGHT));
+
+    // Above minimum
+    assert!(meets_minimum_size(200, 50));
+}
+
+#[test]
+fn tick_toggles_blink_and_sets_dirty() {
+    let mut app = App::new(TuiConfig::default());
+    app.status = AgentStatus::Running;
+    app.dirty = false;
+
+    // Tick 5 times to trigger a blink toggle (every 5 ticks)
+    for _ in 0..5 {
+        app.tick();
+    }
+
+    assert!(!app.blink_on, "blink should have toggled after 5 ticks");
+    assert!(app.dirty, "dirty should be set when agent is running");
+}
+
+#[test]
+fn tab_cycles_focus_from_input() {
+    let mut app = App::new(TuiConfig::default());
+    assert_eq!(app.focus, Focus::Input);
+
+    let tab = KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE);
+    app.handle_key_event(tab);
+    assert_eq!(app.focus, Focus::Conversation);
+}
+
+#[test]
+fn non_navigation_key_returns_focus_to_input() {
+    // When focus is on Conversation, any non-navigation key switches back to Input
+    let mut app = App::new(TuiConfig::default());
+    app.focus = Focus::Conversation;
+
+    // A regular character key should switch focus back to Input
+    let key = KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE);
+    app.handle_key_event(key);
+    assert_eq!(app.focus, Focus::Input);
+}
+
+#[test]
+fn resize_event_sets_dirty() {
+    let mut app = App::new(TuiConfig::default());
+    app.dirty = false;
+
+    app.handle_terminal_event(&crossterm::event::Event::Resize(120, 40));
+
+    assert!(app.dirty, "resize should set dirty flag");
+}
