@@ -170,3 +170,29 @@ pub fn case_with_budget(budget: BudgetConstraints) -> EvalCase {
         metadata: serde_json::Value::Null,
     }
 }
+
+/// Build an eval case with both expected trajectory and response criteria.
+#[allow(dead_code)]
+pub fn case_with_trajectory_and_response(
+    expected: Vec<ExpectedToolCall>,
+    criteria: ResponseCriteria,
+) -> EvalCase {
+    EvalCase {
+        id: "test-case".to_string(),
+        name: "Test Case".to_string(),
+        description: None,
+        system_prompt: "You are a test agent.".to_string(),
+        user_messages: vec!["test prompt".to_string()],
+        expected_trajectory: Some(expected),
+        expected_response: Some(criteria),
+        budget: None,
+        evaluators: vec![],
+        metadata: serde_json::Value::Null,
+    }
+}
+
+/// Build a minimal `Invocation` with the given tool call names and a set response.
+#[allow(dead_code)]
+pub fn mock_invocation_with_response(tool_names: &[&str], response: &str) -> Invocation {
+    mock_invocation(tool_names, Some(response), 0.01, 500)
+}

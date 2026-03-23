@@ -3,6 +3,8 @@
 //! Scores the agent's final response text against expected criteria:
 //! exact match, substring containment, regex pattern, or custom function.
 
+use std::panic::{AssertUnwindSafe, catch_unwind};
+
 use regex::Regex;
 
 use crate::evaluator::Evaluator;
@@ -61,9 +63,23 @@ impl Evaluator for ResponseMatcher {
                 Err(e) => (Score::fail(), format!("invalid regex: {e}")),
             },
             ResponseCriteria::Custom(f) => {
-                let score = f(actual);
-                let details = format!("custom score: {:.2}", score.value);
-                (score, details)
+                match catch_unwind(AssertUnwindSafe(|| f(actual))) {
+                    Ok(score) => {
+                        let details = format!("custom score: {:.2}", score.value);
+                        (score, details)
+                    }
+                    Err(payload) => {
+                        let msg = payload
+                            .downcast_ref::<&str>()
+                            .copied()
+                            .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+                            .unwrap_or("unknown panic");
+                        (
+                            Score::fail(),
+                            format!("custom matcher panicked: {msg}"),
+                        )
+                    }
+                }
             }
         };
 
@@ -88,6 +104,57 @@ fn truncate(s: &str, max_len: usize) -> String {
 mod tests {
     use super::*;
 
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    use swink_agent::{AssistantMessage, ContentBlock, Cost, ModelSpec, StopReason, Usage};
+
+    use crate::types::{EvalCase, Invocation, TurnRecord};
+
+    fn minimal_case_with_response(criteria: ResponseCriteria) -> EvalCase {
+        EvalCase {
+            id: "test".to_string(),
+            name: "Test".to_string(),
+            description: None,
+            system_prompt: "test".to_string(),
+            user_messages: vec!["test".to_string()],
+            expected_trajectory: None,
+            expected_response: Some(criteria),
+            budget: None,
+            evaluators: vec![],
+            metadata: serde_json::Value::Null,
+        }
+    }
+
+    fn invocation_with_response(text: &str) -> Invocation {
+        Invocation {
+            turns: vec![TurnRecord {
+                turn_index: 0,
+                assistant_message: AssistantMessage {
+                    content: vec![ContentBlock::Text {
+                        text: text.to_string(),
+                    }],
+                    provider: "test".to_string(),
+                    model_id: "test-model".to_string(),
+                    usage: Usage::default(),
+                    cost: Cost::default(),
+                    stop_reason: StopReason::Stop,
+                    error_message: None,
+                    timestamp: 0,
+                },
+                tool_calls: vec![],
+                tool_results: vec![],
+                duration: Duration::from_millis(10),
+            }],
+            total_usage: Usage::default(),
+            total_cost: Cost::default(),
+            total_duration: Duration::from_millis(10),
+            final_response: Some(text.to_string()),
+            stop_reason: StopReason::Stop,
+            model: ModelSpec::new("test", "test-model"),
+        }
+    }
+
     #[test]
     fn truncate_short_string() {
         assert_eq!(truncate("hello", 10), "hello");
@@ -99,5 +166,26 @@ mod tests {
         let result = truncate(&long, 100);
         assert_eq!(result.len(), 103); // 100 + "..."
         assert!(result.ends_with("..."));
+    }
+
+    #[test]
+    fn custom_fn_panic_caught_as_failure() {
+        let criteria = ResponseCriteria::Custom(Arc::new(|_: &str| -> Score {
+            panic!("deliberate test panic");
+        }));
+        let case = minimal_case_with_response(criteria);
+        let invocation = invocation_with_response("anything");
+
+        let result = ResponseMatcher.evaluate(&case, &invocation).unwrap();
+        assert!((result.score.value - 0.0).abs() < f64::EPSILON);
+        let details = result.details.unwrap();
+        assert!(
+            details.contains("panicked"),
+            "expected panic mention, got: {details}"
+        );
+        assert!(
+            details.contains("deliberate test panic"),
+            "expected panic message, got: {details}"
+        );
     }
 }
