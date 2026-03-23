@@ -7,7 +7,7 @@
 - Provider Roadmap: [PROVIDER_EXPANSION_ROADMAP.md](PROVIDER_EXPANSION_ROADMAP.md)
 - Eval Roadmap: [EVAL.md](EVAL.md)
 
-**Current Focus:** 22/30 specs have plans, 21/30 have tasks, 18/30 complete (001–014, 020–022, 028, 030). Phase 0 + Phase 1 + Phase 2 done. Phase 3 partially done (011–014, 020 complete). Phase 4 partially done (021–022 complete). Phase 5 partially done (028 complete; 025 has tasks ready for implementation; 026 ready for implementation). Phase 6 done (030 complete). Next: `/speckit.implement` for 025. 8 specs need plans (015–019, 023–024). 2 specs need tasks (027, 029).
+**Current Focus:** 22/30 specs have plans, 22/30 have tasks, 18/30 complete (001–014, 020–022, 028, 030). Phase 0 + Phase 1 + Phase 2 done. Phase 3 partially done (011–014, 020 complete). Phase 4 partially done (021–022 complete). Phase 5 partially done (028 complete; 025, 026, 027 have tasks ready for implementation). Phase 6 done (030 complete). Next: `/speckit.implement` for 025. 8 specs need plans (015–019, 023–024). 1 spec needs tasks (029).
 
 > **Numbering System:** Spec numbers (001–030) are sequential identifiers that
 > never change. Phase numbers represent execution order and can be reassigned
@@ -205,7 +205,7 @@ evaluation — each depends only on the core library.
 **Goal:** Interactive terminal interface — the binary crate that demonstrates
 the full agent library in a usable application.
 
-**Status:** 5/5 specs planned, 4/5 have tasks, 1/5 complete, 5/5 specs defined
+**Status:** 5/5 specs planned, 5/5 have tasks, 1/5 complete, 5/5 specs defined
 
 ### Implementation Checklist
 
@@ -222,7 +222,7 @@ the full agent library in a usable application.
 - [ ] **5.3** TUI: Tool Panel, Diffs & Status Bar — Tool panel, collapsible blocks, inline diffs, status bar, context gauge (§16.6–16.7, §16.10)
   - Spec: `specs/027-tui-tools-diffs-status/spec.md`
   - Branch: `027-tui-tools-diffs-status`
-  - Status: Plan complete — needs tasks
+  - Status: Ready for implementation (0/67 tasks)
   - Depends on: 5.2
 - [x] **5.4** TUI: Commands, Editor & Session — Hash/slash commands, external editor, session persistence (§16.4, §16.8)
   - Spec: `specs/028-tui-commands-editor-session/spec.md`
