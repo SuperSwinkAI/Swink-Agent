@@ -7,8 +7,7 @@ use std::sync::Arc;
 use futures::stream;
 use serde_json::json;
 use swink_agent::{
-    AgentEvent, AssistantMessage, ContentBlock, Cost, LlmMessage, ModelSpec, StopReason,
-    TurnSnapshot, Usage,
+    AgentEvent, AssistantMessage, ContentBlock, Cost, ModelSpec, StopReason, TurnSnapshot, Usage,
 };
 use swink_agent_eval::{BudgetGuard, TrajectoryCollector};
 use tokio_util::sync::CancellationToken;

@@ -129,6 +129,8 @@ MSRV **1.88** (edition 2024). Workspace deps centralized in root `Cargo.toml`.
 - Rust 1.88 (edition 2024) + `swink-agent` (core), `ratatui` 0.30, `crossterm` 0.29, `tokio`, `tokio-util` (029-tui-plan-mode-approval)
 - Rust 1.88 (edition 2024) + `swink-agent` (core types: `AgentEvent`, `ContentBlock`, `AssistantMessage`, `Cost`, `Usage`, `ModelSpec`, `StopReason`), `serde`/`serde_json` (serialization), `tokio`/`tokio-util` (async runtime, `CancellationToken`), `futures` (stream combinators), `regex` (response pattern matching), `sha2` (audit hashes), `thiserror` (error types), `tracing` (diagnostics), `uuid` (IDs) (023-eval-trajectory-matching)
 - N/A (in-memory types; `FsEvalStore` for optional JSON persistence — covered by spec 024) (023-eval-trajectory-matching)
+- Rust 1.88 (edition 2024) + `swink-agent` (core), `serde`/`serde_json`, `tokio`/`tokio-util`, `futures`, `sha2`, `regex`, `thiserror`, `tracing`, `uuid`; optional `serde_yaml` via `yaml` feature gate (024-eval-runner-governance)
+- Local filesystem via JSON files (`FsEvalStore`); optional YAML input via feature gate (024-eval-runner-governance)
 
 ## Recent Changes
 - 001-workspace-scaffold: Added Rust 1.88 (edition 2024) + serde, serde_json, tokio, futures, thiserror, uuid, reqwest, jsonschema, schemars, rand, tracing, toml (all centralized in workspace `[workspace.dependencies]`)

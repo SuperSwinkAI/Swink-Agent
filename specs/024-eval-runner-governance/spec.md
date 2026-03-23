@@ -110,14 +110,24 @@ An evaluator wants to check whether agent runs stayed within acceptable resource
 
 ### Edge Cases
 
-- What happens when an eval case data file is malformed or missing required fields?
-- How does the runner handle a case where the agent never terminates (infinite loop)?
-- What happens when the gate configuration specifies no thresholds (empty config)?
-- How does score aggregation handle cases where some evaluators produce no score (e.g., skipped)?
-- What happens when the eval store's filesystem location does not exist or is not writable?
-- How does the hash chain handle an evaluation run with zero invocations?
-- What happens when two suite runs have the same identifier?
-- How does the runner handle concurrent execution of multiple suites?
+- **Malformed or missing fields in eval case data file**: Returns `EvalError::Serde` (JSON) or `EvalError::Yaml` (YAML) with the deserialization error details. Invalid case definitions return `EvalError::InvalidCase { reason }`.
+- **Agent never terminates (infinite loop)**: `BudgetGuard` enforces real-time budget constraints (cost, tokens, turns, duration) and triggers a `CancellationToken` to abort the agent when any limit is exceeded.
+- **Empty gate configuration (no thresholds)**: `check_gate` returns a pass decision — no thresholds means no violations.
+- **Evaluator produces no score (skipped)**: Evaluators return `Option<EvalMetricResult>`; `None` means the evaluator is not applicable to the case and is excluded from results. Only evaluators that return `Some` contribute to the case verdict.
+- **Eval store filesystem location does not exist or is not writable**: Returns `EvalError::Io` wrapping the underlying `std::io::Error`.
+- **Hash chain with zero invocations**: Produces an `AuditedInvocation` with empty `turn_hashes` and a chain hash of the empty string's SHA-256. Verification passes.
+- **Duplicate suite run identifiers**: The filesystem store uses timestamps as result keys; a save with an existing timestamp overwrites the previous result file.
+- **Concurrent execution of multiple suites**: Not supported. The runner executes cases sequentially within a suite. Concurrent suite execution is a future enhancement (see Assumptions).
+
+## Clarifications
+
+### Session 2026-03-23
+
+- Q: What structured data format do eval case files use? → A: JSON primary, YAML opt-in via `yaml` feature gate.
+- Q: Which cryptographic hash algorithm for audit trails? → A: SHA-256 (via `sha2` crate).
+- Q: How are edge cases (malformed files, infinite loops, empty configs, skipped evaluators, filesystem errors, zero-invocation chains, duplicate run IDs, concurrency) handled? → A: All resolved from implementation — see Edge Cases section above.
+- Q: How does the persistence layer organize results on disk? → A: `{dir}/sets/{id}.json` for eval set definitions, `{dir}/results/{eval_set_id}/{timestamp}.json` for run results.
+- Q: What are the default built-in evaluators? → A: TrajectoryMatcher, ResponseMatcher, BudgetEvaluator, EfficiencyEvaluator (pre-registered via `EvaluatorRegistry::with_defaults()`).
 
 ## Requirements *(mandatory)*
 
@@ -163,8 +173,8 @@ An evaluator wants to check whether agent runs stayed within acceptable resource
 ## Assumptions
 
 - The trajectory collection and matching capabilities from spec 023 are available for use by evaluators.
-- Eval case data files use a widely-supported structured format that supports nested data and lists.
-- The cryptographic hash function used for audit trails is a standard, well-known algorithm (not a custom hash).
+- Eval case data files use JSON as the primary format, with optional YAML support via the `yaml` feature gate.
+- The cryptographic hash function used for audit trails is SHA-256 (via the `sha2` crate).
 - The eval runner executes cases sequentially by default; parallel execution is a future enhancement.
 - Score values are normalized to the range 0.0-1.0 for consistency across evaluators.
 - The filesystem-based eval store is sufficient for local development and CI; remote storage backends are a future extension.

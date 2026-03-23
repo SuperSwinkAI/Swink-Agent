@@ -6,13 +6,16 @@
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
-use swink_agent::{Agent, ContentBlock, Cost, Usage, UserMessage};
+use swink_agent::{Agent, AssistantMessage, ContentBlock, Cost, ModelSpec, StopReason, Usage, UserMessage};
 
 use crate::error::EvalError;
 use crate::evaluator::EvaluatorRegistry;
-use crate::score::Verdict;
+use crate::score::{Score, Verdict};
 use crate::trajectory::{BudgetGuard, TrajectoryCollector};
-use crate::types::{EvalCase, EvalCaseResult, EvalSet, EvalSetResult, EvalSummary};
+use crate::types::{
+    EvalCase, EvalCaseResult, EvalMetricResult, EvalSet, EvalSetResult, EvalSummary, Invocation,
+    TurnRecord,
+};
 
 /// Factory that creates a configured [`Agent`] for each eval case.
 ///
@@ -124,8 +127,41 @@ impl EvalRunner {
                     case_results.push(result);
                 }
                 Err(e) => {
-                    warn!(case_id = %case.id, error = %e, "eval case failed with error");
-                    return Err(e);
+                    warn!(case_id = %case.id, error = %e, "eval case failed with error — recording failure and continuing");
+                    failed += 1;
+                    case_results.push(EvalCaseResult {
+                        case_id: case.id.clone(),
+                        invocation: Invocation {
+                            turns: vec![TurnRecord {
+                                turn_index: 0,
+                                assistant_message: AssistantMessage {
+                                    content: vec![],
+                                    provider: String::new(),
+                                    model_id: String::new(),
+                                    usage: Usage::default(),
+                                    cost: Cost::default(),
+                                    stop_reason: StopReason::Error,
+                                    error_message: Some(e.to_string()),
+                                    timestamp: swink_agent::now_timestamp(),
+                                },
+                                tool_calls: vec![],
+                                tool_results: vec![],
+                                duration: std::time::Duration::ZERO,
+                            }],
+                            total_usage: Usage::default(),
+                            total_cost: Cost::default(),
+                            total_duration: std::time::Duration::ZERO,
+                            final_response: None,
+                            stop_reason: StopReason::Error,
+                            model: ModelSpec::new("unknown", "unknown"),
+                        },
+                        metric_results: vec![EvalMetricResult {
+                            evaluator_name: "error".to_string(),
+                            score: Score::fail(),
+                            details: Some(e.to_string()),
+                        }],
+                        verdict: Verdict::Fail,
+                    });
                 }
             }
         }
