@@ -11,7 +11,7 @@
 
 - Q: What format should the config file use? → A: TOML
 - Q: What target frame rate should the TUI use? → A: 30 FPS (~33ms per frame)
-- Q: What config directory convention should be used? → A: `dirs::config_dir()/swink/` (platform-native)
+- Q: What config directory convention should be used? → A: `dirs::config_dir()/swink-agent/` (platform-native)
 - Q: What should the default quit shortcut be? → A: `Ctrl+Q` (quit); `Ctrl+C` cancels running agent operation
 - Q: What minimum terminal dimensions should trigger the size warning? → A: 120x30
 - Q: What should happen when the system keychain is unavailable? → A: Require environment variables only (no local storage fallback)
@@ -71,7 +71,7 @@ A developer wants to move focus between different areas of the TUI (e.g., input 
 
 ### User Story 4 - Configure Appearance and Behavior via Config File (Priority: P2)
 
-A developer wants to customize the TUI's appearance (color theme, layout preferences) and behavior (key bindings, default provider). They edit a TOML configuration file stored in the platform-native config directory (`dirs::config_dir()/swink/config.toml`). On next launch, the TUI applies the custom settings. If the config file does not exist, sensible defaults are used. If the config file contains errors, the TUI launches with defaults and warns about the invalid configuration.
+A developer wants to customize the TUI's appearance (color theme, layout preferences) and behavior (key bindings, default provider). They edit a TOML configuration file stored in the platform-native config directory (`dirs::config_dir()/swink-agent/tui.toml`). On next launch, the TUI applies the custom settings. If the config file does not exist, sensible defaults are used. If the config file contains errors, the TUI launches with defaults and warns about the invalid configuration.
 
 **Why this priority**: Configuration is important for long-term usability and personal preference, but the TUI works with defaults out of the box.
 
@@ -139,7 +139,7 @@ A developer resizes their terminal window while the TUI is running. The TUI dete
 - **FR-002**: The TUI MUST run an async event loop that multiplexes terminal input events and agent events without either source blocking the other.
 - **FR-003**: The TUI MUST support focus cycling through UI components via Tab (forward) and Shift+Tab (backward).
 - **FR-004**: The TUI MUST visually indicate which component currently has focus.
-- **FR-005**: The TUI MUST load configuration from a TOML file at `dirs::config_dir()/swink/config.toml`, falling back to defaults when the file is absent or invalid.
+- **FR-005**: The TUI MUST load configuration from a TOML file at `dirs::config_dir()/swink-agent/tui.toml`, falling back to defaults when the file is absent or invalid.
 - **FR-006**: The TUI MUST support color theme customization via the config file.
 - **FR-007**: The TUI MUST resolve provider credentials by checking environment variables first, then the system keychain. When the keychain is unavailable, only environment variables are used (no local file storage fallback).
 - **FR-008**: The TUI MUST present a first-run setup wizard when no provider credentials are detected.
@@ -172,7 +172,7 @@ A developer resizes their terminal window while the TUI is running. The TUI dete
 
 - The TUI runs in a terminal emulator that supports alternate screen and raw input mode (standard on modern systems).
 - The system keychain is available on supported platforms (macOS Keychain, Windows Credential Manager, Linux Secret Service) but is not required — when unavailable, only environment variables are supported (no local file storage).
-- The config file uses TOML format, loaded from `dirs::config_dir()/swink/config.toml`.
+- The config file uses TOML format, loaded from `dirs::config_dir()/swink-agent/tui.toml`.
 - The prioritized provider fallback order is a fixed default that can be overridden in the config file.
 - The minimum usable terminal size is 120 columns by 30 rows.
 - The TUI is a separate binary that depends on the core agent library — it is not embedded in the library.

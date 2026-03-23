@@ -58,7 +58,7 @@ Missing fields use defaults. Unknown keys are ignored. Invalid TOML falls back t
 | Ctrl+Q | Quit |
 | Ctrl+C | Cancel running agent (or quit if idle) |
 | Tab | Cycle focus (Input → Conversation) |
-| Shift+Tab | Toggle operating mode (Execute ↔ Plan) |
+| Shift+Tab | Cycle focus backward |
 | F1 | Toggle help panel |
 | F3 | Cycle color mode |
 | F4 | Cycle model |

@@ -7,7 +7,7 @@
 - Provider Roadmap: [PROVIDER_EXPANSION_ROADMAP.md](PROVIDER_EXPANSION_ROADMAP.md)
 - Eval Roadmap: [EVAL.md](EVAL.md)
 
-**Current Focus:** 20/30 specs have plans, 20/30 have tasks, 18/30 complete (001–014, 020–022, 028). Phase 0 + Phase 1 + Phase 2 done. Phase 3 partially done (011–014, 020 complete). Phase 4 partially done (021–022 complete). Phase 5 partially done (028 complete, 026 ready for implementation). Phase 6 ready (030 has tasks). Next: `/speckit.implement` for 026 and 030. 10 specs need plans (015–019, 023–025, 027, 029).
+**Current Focus:** 22/30 specs have plans, 21/30 have tasks, 18/30 complete (001–014, 020–022, 028, 030). Phase 0 + Phase 1 + Phase 2 done. Phase 3 partially done (011–014, 020 complete). Phase 4 partially done (021–022 complete). Phase 5 partially done (028 complete; 025 has tasks ready for implementation; 026 ready for implementation). Phase 6 done (030 complete). Next: `/speckit.implement` for 025. 8 specs need plans (015–019, 023–024). 2 specs need tasks (027, 029).
 
 > **Numbering System:** Spec numbers (001–030) are sequential identifiers that
 > never change. Phase numbers represent execution order and can be reassigned
@@ -205,14 +205,14 @@ evaluation — each depends only on the core library.
 **Goal:** Interactive terminal interface — the binary crate that demonstrates
 the full agent library in a usable application.
 
-**Status:** 3/5 specs planned, 3/5 have tasks, 1/5 complete, 5/5 specs defined
+**Status:** 5/5 specs planned, 4/5 have tasks, 1/5 complete, 5/5 specs defined
 
 ### Implementation Checklist
 
 - [ ] **5.1** TUI: Scaffold, Event Loop & Config — Binary entry, terminal setup, async event loop, config, credentials, wizard (§16.1–16.2)
   - Spec: `specs/025-tui-scaffold-config/spec.md`
   - Branch: `025-tui-scaffold-config`
-  - Status: Specify complete — needs plan + tasks
+  - Status: Ready for implementation (0/56 tasks)
   - Depends on: 1.2, 3.1
 - [ ] **5.2** TUI: Input & Conversation — Multi-line editor, scrollable conversation, markdown, syntax highlighting (§16.2–16.3)
   - Spec: `specs/026-tui-input-conversation/spec.md`
@@ -222,7 +222,7 @@ the full agent library in a usable application.
 - [ ] **5.3** TUI: Tool Panel, Diffs & Status Bar — Tool panel, collapsible blocks, inline diffs, status bar, context gauge (§16.6–16.7, §16.10)
   - Spec: `specs/027-tui-tools-diffs-status/spec.md`
   - Branch: `027-tui-tools-diffs-status`
-  - Status: Specify complete — needs plan + tasks
+  - Status: Plan complete — needs tasks
   - Depends on: 5.2
 - [x] **5.4** TUI: Commands, Editor & Session — Hash/slash commands, external editor, session persistence (§16.4, §16.8)
   - Spec: `specs/028-tui-commands-editor-session/spec.md`
@@ -232,7 +232,7 @@ the full agent library in a usable application.
 - [ ] **5.5** TUI: Plan Mode & Approval — Plan mode (read-only restriction), tiered approval (Enabled/Smart/Bypassed), session trust (§16.9, §16.11)
   - Spec: `specs/029-tui-plan-mode-approval/spec.md`
   - Branch: `029-tui-plan-mode-approval`
-  - Status: Specify complete — needs plan + tasks
+  - Status: Plan complete — needs tasks
   - Depends on: 5.2
 
 ### Parallel Opportunities
@@ -246,14 +246,14 @@ After **5.2 Input & Conversation** completes, specs 5.3, 5.4, and 5.5 can procee
 **Goal:** End-to-end tests exercising the full stack against all PRD acceptance
 criteria.
 
-**Status:** 1/1 specs planned, 1/1 have tasks, 1/1 specs defined
+**Status:** 1/1 specs planned, 1/1 have tasks, 1/1 complete, 1/1 specs defined
 
 ### Implementation Checklist
 
-- [ ] **6.1** Integration Tests — MockStreamFn, MockTool, EventCollector, tests for all 30 PRD acceptance criteria (§17)
+- [x] **6.1** Integration Tests — MockStreamFn, MockTool, EventCollector, tests for all 30 PRD acceptance criteria (§17)
   - Spec: `specs/030-integration-tests/spec.md`
   - Branch: `030-integration-tests`
-  - Status: Ready for implementation (0/48 tasks)
+  - Status: Complete (48/48 tasks, merged to main)
   - Depends on: 1.2, 2.1, 2.2
 
 ---
@@ -351,7 +351,7 @@ graph TD
     style S fill:#fff,color:#000,stroke:#6b7280,stroke-width:2px
     style T fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
     style U fill:#fff,color:#000,stroke:#6b7280,stroke-width:2px
-    style V fill:#fff,color:#000,stroke:#6b7280,stroke-width:2px
+    style V fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
 ```
 
 > ⬜ Not started · 🟢 Complete · 🟡 In progress · 🔴 Blocked

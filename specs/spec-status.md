@@ -1,5 +1,5 @@
 # Spec-Driven Development Status
-<!-- spec-status: project=Swink-Agent commit=2aee38d86b4ffc6026e1714dc5dba00b6a625606 updated=2026-03-23T01:07:05Z -->
+<!-- spec-status: project=worktree-025-tui-scaffold-config commit=59e929ee38b20b02890e01283f42e2b1451ae0a3 updated=2026-03-23T02:11:37Z -->
 
 | Feature                         | Specify | Plan | Tasks | Implement |
 |---------------------------------|---------|------|-------|-----------|
@@ -27,11 +27,11 @@
 | 022-local-llm-crate             | ✓     | ✓  | ✓   | ✓ Complete |
 | 023-eval-trajectory-matching    | ✓     | -    | -     | -         |
 | 024-eval-runner-governance      | ✓     | -    | -     | -         |
-| 025-tui-scaffold-config         | ✓     | ✓  | -     | -         |
+| 025-tui-scaffold-config         | ✓     | ✓  | ✓   | ● 0/56 (0%) |
 | 026-tui-input-conversation      | ✓     | ✓  | ✓   | ● 0/69 (0%) |
-| 027-tui-tools-diffs-status      | ✓     | -    | -     | -         |
+| 027-tui-tools-diffs-status      | ✓     | ✓  | -     | -         |
 | 028-tui-commands-editor-session | ✓     | ✓  | ✓   | ✓ Complete |
-| 029-tui-plan-mode-approval      | ✓     | -    | -     | -         |
+| 029-tui-plan-mode-approval      | ✓     | ✓  | -     | -         |
 | 030-integration-tests           | ✓     | ✓  | ✓   | ✓ Complete |
 
 <!-- feature: 001-workspace-scaffold has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=false has_checklists=true tasks_total=24 tasks_completed=24 checklist_files=requirements.md -->
@@ -58,9 +58,9 @@
 <!-- feature: 022-local-llm-crate has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=58 tasks_completed=58 checklist_files=requirements.md -->
 <!-- feature: 023-eval-trajectory-matching has_spec=true has_plan=false has_tasks=false has_research=false has_data_model=false has_quickstart=false has_contracts=false has_checklists=true tasks_total=0 tasks_completed=0 checklist_files=requirements.md -->
 <!-- feature: 024-eval-runner-governance has_spec=true has_plan=false has_tasks=false has_research=false has_data_model=false has_quickstart=false has_contracts=false has_checklists=true tasks_total=0 tasks_completed=0 checklist_files=requirements.md -->
-<!-- feature: 025-tui-scaffold-config has_spec=true has_plan=true has_tasks=false has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=0 tasks_completed=0 checklist_files=requirements.md -->
+<!-- feature: 025-tui-scaffold-config has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=56 tasks_completed=0 checklist_files=requirements.md -->
 <!-- feature: 026-tui-input-conversation has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=69 tasks_completed=0 checklist_files=requirements.md -->
-<!-- feature: 027-tui-tools-diffs-status has_spec=true has_plan=false has_tasks=false has_research=false has_data_model=false has_quickstart=false has_contracts=false has_checklists=true tasks_total=0 tasks_completed=0 checklist_files=requirements.md -->
+<!-- feature: 027-tui-tools-diffs-status has_spec=true has_plan=true has_tasks=false has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=0 tasks_completed=0 checklist_files=requirements.md -->
 <!-- feature: 028-tui-commands-editor-session has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=78 tasks_completed=78 checklist_files=requirements.md -->
-<!-- feature: 029-tui-plan-mode-approval has_spec=true has_plan=false has_tasks=false has_research=false has_data_model=false has_quickstart=false has_contracts=false has_checklists=true tasks_total=0 tasks_completed=0 checklist_files=requirements.md -->
+<!-- feature: 029-tui-plan-mode-approval has_spec=true has_plan=true has_tasks=false has_research=true has_data_model=true has_quickstart=true has_contracts=false has_checklists=true tasks_total=0 tasks_completed=0 checklist_files=requirements.md -->
 <!-- feature: 030-integration-tests has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=48 tasks_completed=48 checklist_files=requirements.md -->
