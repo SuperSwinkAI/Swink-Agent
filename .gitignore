@@ -25,6 +25,7 @@ Thumbs.db
 **/*.rs.bk
 *.pdb
 **/mutants.out*/
+sweep.timestamp
 
 # ── OS / temp ────────────────────────────────────────────────────────
 *.tmp

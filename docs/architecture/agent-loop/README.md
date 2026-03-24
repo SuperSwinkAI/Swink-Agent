@@ -19,13 +19,17 @@ flowchart TB
     subgraph Config["⚙️ AgentLoopConfig"]
         Model["model: ModelSpec"]
         StreamOpts["stream_options: StreamOptions"]
-        Retry["retry_strategy: RetryStrategy"]
+        Retry["retry_strategy: Box&lt;dyn RetryStrategy&gt;"]
         StreamFnField["stream_fn: Arc&lt;dyn StreamFn&gt;"]
-        ConvertFn["convert_to_llm: Fn(&amp;AgentMessage) → Option&lt;LlmMessage&gt;"]
-        AsyncTransformFn["async_transform_context: AsyncContextTransformer<br/>(runs before sync transform — async operations<br/>like RAG retrieval or summary fetching)"]
-        TransformFn["transform_context: Fn(&amp;mut messages, overflow) → Option&lt;CompactionReport&gt;<br/>(synchronous — not async)"]
-        ApiKey["get_api_key: async Fn(provider) → Option&lt;String&gt;"]
-        MsgProvider["message_provider: Arc&lt;dyn MessageProvider&gt;<br/>poll_steering() → Vec&lt;AgentMessage&gt;<br/>poll_follow_up() → Vec&lt;AgentMessage&gt;"]
+        ConvertFn["convert_to_llm: Box&lt;ConvertToLlmFn&gt;"]
+        AsyncTransformFn["async_transform_context: Option&lt;Arc&lt;dyn AsyncContextTransformer&gt;&gt;<br/>(runs before sync transform — async operations<br/>like RAG retrieval or summary fetching)"]
+        TransformFn["transform_context: Option&lt;Arc&lt;dyn ContextTransformer&gt;&gt;<br/>(synchronous — not async)"]
+        ApiKey["get_api_key: Option&lt;Box&lt;GetApiKeyFn&gt;&gt;"]
+        MsgProvider["message_provider: Option&lt;Arc&lt;dyn MessageProvider&gt;&gt;<br/>poll_steering() → Vec&lt;AgentMessage&gt;<br/>poll_follow_up() → Vec&lt;AgentMessage&gt;"]
+        PreTurnPolicies["pre_turn_policies: Vec&lt;Arc&lt;dyn PreTurnPolicy&gt;&gt;"]
+        PreDispatchPolicies["pre_dispatch_policies: Vec&lt;Arc&lt;dyn PreDispatchPolicy&gt;&gt;"]
+        PostTurnPolicies["post_turn_policies: Vec&lt;Arc&lt;dyn PostTurnPolicy&gt;&gt;"]
+        PostLoopPolicies["post_loop_policies: Vec&lt;Arc&lt;dyn PostLoopPolicy&gt;&gt;"]
     end
 
     subgraph Core["🔄 run_loop"]
@@ -51,7 +55,7 @@ flowchart TB
     classDef eventStyle fill:#f5f5f5,stroke:#616161,stroke-width:2px,color:#000
 
     class AgentLoop,AgentLoopContinue entryStyle
-    class Model,StreamOpts,Retry,StreamFnField,ConvertFn,AsyncTransformFn,TransformFn,ApiKey,MsgProvider configStyle
+    class Model,StreamOpts,Retry,StreamFnField,ConvertFn,AsyncTransformFn,TransformFn,ApiKey,MsgProvider,PreTurnPolicies,PreDispatchPolicies,PostTurnPolicies,PostLoopPolicies configStyle
     class OuterLoop,InnerLoop,TurnExec,ToolExec coreStyle
     class AgentEvents eventStyle
 ```

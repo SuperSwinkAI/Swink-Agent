@@ -131,17 +131,16 @@ flowchart TB
         Catalog["ModelCatalog<br/>(TOML-driven provider/<br/>preset registry)"]
         Registry["AgentRegistry<br/>(named agent lookup)"]
         Mailbox["AgentMailbox<br/>(inter-agent messaging)"]
-        Policy["LoopPolicy<br/>(MaxTurns, CostCap,<br/>ComposedPolicy)"]
+        Policy["PolicySlots<br/>(PreTurn, PreDispatch,<br/>PostTurn, PostLoop)"]
         StreamMW["StreamMiddleware<br/>(intercept output stream)"]
         Emission["Emission<br/>(structured event payloads)"]
         Orchestrator["AgentOrchestrator<br/>(multi-agent supervision)"]
         Checkpoint["Checkpoint<br/>(loop state snapshots)"]
-        BudgetGuard["BudgetGuard<br/>(cost/token limits)"]
+        BuiltinPolicies["Built-in Policies<br/>(Budget, Checkpoint,<br/>DenyList, LoopDetection,<br/>MaxTurns, Sandbox)"]
         Fallback["ModelFallback<br/>(automatic model failover)"]
         CtxTransformer["ContextTransformer<br/>(sync context rewriting)"]
         CtxVersion["ContextVersion<br/>(versioned context history)"]
         ToolExecPolicy["ToolExecutionPolicy<br/>(Concurrent/Sequential/Priority)"]
-        PostTurnHook["PostTurnHook<br/>(per-turn callbacks)"]
         Metrics["MetricsCollector<br/>(turn + tool execution metrics)"]
     end
 
@@ -242,7 +241,7 @@ flowchart TB
     class StreamFn streamStyle
     class AnthropicFn,AzureFn,BedrockFn,GeminiFn,MistralFn,OllamaFn,OpenAiFn,XAiFn,ProxyFn,RemotePresets,Classify adapterStyle
     class LocalStream,LocalModel,EmbeddingModel localStyle
-    class Events,Retry,Cancel,Errors,Catalog,Registry,Mailbox,Policy,StreamMW,Emission,Orchestrator,Checkpoint,BudgetGuard,Fallback,CtxTransformer,CtxVersion,ToolExecPolicy,PostTurnHook,Metrics infraStyle
+    class Events,Retry,Cancel,Errors,Catalog,Registry,Mailbox,Policy,StreamMW,Emission,Orchestrator,Checkpoint,BuiltinPolicies,Fallback,CtxTransformer,CtxVersion,ToolExecPolicy,Metrics infraStyle
     class SessionStore,Compactor memoryStyle
     class EvalRunner,TrajectoryCollector,EvalRegistry,AuditTrail,EvalStore evalStyle
     class TUIApp,ConvView,InputEditor,ToolPanel,HelpPanel,DiffView,StatusBar tuiStyle
@@ -343,7 +342,6 @@ flowchart TB
         subgraph ImplLayer["🔧 Implementations"]
             context["context.rs<br/>sliding_window,<br/>overflow-aware pruning"]
             builtintools["tools/<br/>BashTool, ReadFileTool,<br/>WriteFileTool<br/>(feature-gated)"]
-            transformer["tool_call_transformer.rs<br/>ToolCallTransformer trait"]
             tool_mw["tool_middleware.rs<br/>ToolMiddleware"]
             stream_mw["stream_middleware.rs<br/>StreamMiddleware"]
             sub_agent["sub_agent.rs<br/>SubAgent (multi-agent tool)"]
@@ -354,7 +352,7 @@ flowchart TB
             presets["model_presets.rs<br/>ModelConnection,<br/>ModelConnections"]
             registry_mod["registry.rs<br/>AgentRegistry,<br/>AgentId, AgentRef"]
             messaging_mod["messaging.rs<br/>AgentMailbox, send_to"]
-            policy["loop_policy.rs<br/>LoopPolicy, MaxTurnsPolicy,<br/>CostCapPolicy, ComposedPolicy"]
+            policy["policy.rs + policies/<br/>PolicySlots (PreTurn, PreDispatch,<br/>PostTurn, PostLoop),<br/>6 built-in policies"]
         end
 
         subgraph ExecutionLayer["🔄 Execution"]
@@ -505,7 +503,7 @@ flowchart TB
 
     class types,error foundationStyle
     class tool,stream,retry coreStyle
-    class context,builtintools,transformer,tool_mw,stream_mw,sub_agent implStyle
+    class context,builtintools,tool_mw,stream_mw,sub_agent implStyle
     class catalog,presets,registry_mod,messaging_mod,policy catalogStyle
     class loop_ execStyle
     class agent,display_mod,msg_provider,event_fwd,lib apiStyle
@@ -530,7 +528,7 @@ flowchart TB
 
 **Catalogs and registries are core concerns.** `ModelCatalog` loads provider and preset metadata from an embedded TOML file, enabling catalog-driven provider selection without hardcoding model details. `AgentRegistry` provides thread-safe named agent lookup for multi-agent systems. `AgentMailbox` enables asynchronous inter-agent messaging. These subsystems live in the core crate because they define coordination primitives that any agent-based application may need.
 
-**Policies control loop termination.** The `LoopPolicy` trait replaces ad-hoc turn limits with composable policies (`MaxTurnsPolicy`, `CostCapPolicy`, `ComposedPolicy`). Closures also implement `LoopPolicy` for simple cases. This keeps loop governance extensible without modifying loop internals.
+**Policies control loop behavior.** Four configurable policy slots (`PreTurn`, `PreDispatch`, `PostTurn`, `PostLoop`) replace the previous scattered hooks (`LoopPolicy`, `BudgetGuard`, `PostTurnHook`, `ToolValidator`, `ToolCallTransformer`). Each slot accepts a `Vec` of policy implementations evaluated in order. Six built-in policies ship with the library: `BudgetPolicy`, `CheckpointPolicy`, `DenyListPolicy`, `LoopDetectionPolicy`, `MaxTurnsPolicy`, and `SandboxPolicy`. Empty policy vecs mean anything goes — zero overhead when unused.
 
 **Middleware wraps both tools and streams.** `ToolMiddleware` intercepts `execute()` on any `AgentTool`, and `StreamMiddleware` intercepts the output stream from any `StreamFn`. Both follow the decorator pattern — callers compose them without touching inner implementations. This enables cross-cutting concerns like logging, metrics, and access control.
 
