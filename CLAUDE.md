@@ -67,6 +67,17 @@ MSRV **1.88** (edition 2024). Workspace deps centralized in root `Cargo.toml`.
 - `PolicyContext.new_messages` contains only messages added since the last evaluation for that slot. PreTurn: pending batch (tracked via `new_messages_start` index before append). PostTurn/PostLoop/PreDispatch: `&[]` (current-turn data is in `TurnPolicyContext`/`ToolPolicyContext`). This is a slice borrow (zero-copy), not a clone.
 - `RetryStrategy::should_retry()` is the **sole** retryability decision point — `is_retryable()` pre-check was removed.
 
+### Policy Recipes Crate (`policies/`)
+
+- Separate workspace crate `swink-agent-policies` — depends only on `swink-agent` public API, no internal imports.
+- Four policies: `PromptInjectionGuard` (PreTurn + PostTurn), `PiiRedactor` (PostTurn), `ContentFilter` (PostTurn), `AuditLogger` (PostTurn).
+- Feature gates: `prompt-guard`, `pii`, `content-filter`, `audit`, `all` (default). `regex` is shared optional dep for first three.
+- `PromptInjectionGuard` implements both `PreTurnPolicy` and `PostTurnPolicy` — single struct, dual trait. PreTurn scans `ctx.new_messages` for User variants. PostTurn scans `turn.tool_results`.
+- `PiiRedactor` Inject verdict constructs `AgentMessage::Llm(LlmMessage::Assistant(...))` preserving original metadata (provider, model_id, usage, cost, timestamp).
+- `ContentFilter` converts keywords to regex at construction time (with `\b` for whole-word, `(?i)` for case-insensitive). Categories filter at evaluate time.
+- `AuditSink` trait is sync (`fn write(&self, record: &AuditRecord)`) — defined in this crate, not in core. `JsonlAuditSink` uses `std::fs::OpenOptions::append`.
+- All regex patterns compiled once at construction, `evaluate()` only runs matches.
+
 ### Streaming (`src/stream.rs`)
 
 - `accumulate_message` enforces strict ordering: one Start, indexed content blocks, one terminal (Done/Error).
@@ -147,6 +158,8 @@ MSRV **1.88** (edition 2024). Workspace deps centralized in root `Cargo.toml`.
 - Local filesystem via JSON files (`FsEvalStore`); optional YAML input via feature gate (024-eval-runner-governance)
 - Rust 1.88 (edition 2024) + `tokio` (async runtime), `tokio-util` (CancellationToken), `serde_json` (Value for arguments), `tracing` (debug/warn logging), `std::panic::catch_unwind` (panic isolation) (031-policy-slots)
 - N/A (in-memory policy evaluation; CheckpointPolicy delegates to existing `CheckpointStore` trait) (031-policy-slots)
+- Rust 1.88 (edition 2024) + `swink-agent` (core types — policy traits, message types, verdict enums), `regex` (pattern matching for injection/PII/content), `chrono` (timestamps for audit records), `serde`/`serde_json` (audit record serialization), `tracing` (error logging in audit sink) (032-policy-recipes-crate)
+- Local filesystem via JSONL (AuditLogger's `JsonlAuditSink` only) (032-policy-recipes-crate)
 
 ## Recent Changes
 - 001-workspace-scaffold: Added Rust 1.88 (edition 2024) + serde, serde_json, tokio, futures, thiserror, uuid, reqwest, jsonschema, schemars, rand, tracing, toml (all centralized in workspace `[workspace.dependencies]`)

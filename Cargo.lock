@@ -5695,6 +5695,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "swink-agent-policies"
+version = "0.2.0"
+dependencies = [
+ "chrono",
+ "regex",
+ "serde",
+ "serde_json",
+ "swink-agent",
+ "tempfile",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "swink-agent-tui"
 version = "0.2.0"
 dependencies = [

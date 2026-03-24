@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "adapters", "eval", "local-llm", "memory", "tui", "xtask"]
+members = [".", "adapters", "eval", "local-llm", "memory", "policies", "tui", "xtask"]
 resolver = "2"
 
 [workspace.dependencies]
