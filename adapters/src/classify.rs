@@ -1,13 +1,12 @@
 //! HTTP status code classification for LLM provider error handling.
 //!
 //! Provides default and customizable mapping from HTTP status codes
-//! to [`HttpErrorKind`] variants, which adapters can use to generate
+//! to `HttpErrorKind` variants, which adapters can use to generate
 //! appropriate error events.
 //!
-//! The [`error_event_from_status`] helper converts an HTTP error response
-//! into an [`AssistantMessageEvent::Error`] with the correct
-//! [`StreamErrorKind`], eliminating duplicated status-matching logic across
-//! adapters.
+//! The `error_event_from_status` helper converts an HTTP error response
+//! into an error event with the correct `StreamErrorKind`, eliminating
+//! duplicated status-matching logic across adapters.
 //!
 //! **Stability note:** This module is a shared implementation detail for
 //! built-in adapters. External `StreamFn` implementors should depend only

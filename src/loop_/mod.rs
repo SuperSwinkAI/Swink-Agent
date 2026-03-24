@@ -171,7 +171,7 @@ pub enum AgentEvent {
         reason: String,
     },
 
-    /// A custom event emitted via [`Agent::emit`].
+    /// A custom event emitted via [`Agent::emit`](crate::Agent::emit).
     Custom(crate::emit::Emission),
 }
 

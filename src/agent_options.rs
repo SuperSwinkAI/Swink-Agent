@@ -105,7 +105,7 @@ pub struct AgentOptions {
     pub budget_guard: Option<crate::budget_guard::BudgetGuard>,
     /// Controls how tool calls within a turn are dispatched.
     ///
-    /// Defaults to [`ToolExecutionPolicy::Concurrent`].
+    /// Defaults to [`Concurrent`](crate::tool_execution_policy::ToolExecutionPolicy::Concurrent).
     pub tool_execution_policy: crate::tool_execution_policy::ToolExecutionPolicy,
     /// Optional addendum appended to the system prompt when entering plan mode.
     ///
