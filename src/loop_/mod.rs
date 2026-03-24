@@ -437,6 +437,7 @@ async fn run_loop_inner(
                         accumulated_cost: &state.accumulated_cost,
                         message_count: state.context_messages.len(),
                         overflow_signal: state.overflow_signal,
+                        new_messages: &[], // current-turn data is in TurnPolicyContext
                     };
                     let turn_ctx = TurnPolicyContext {
                         assistant_message: msg,
@@ -474,6 +475,7 @@ async fn run_loop_inner(
                     accumulated_cost: &state.accumulated_cost,
                     message_count: state.context_messages.len(),
                     overflow_signal: state.overflow_signal,
+                    new_messages: &[], // no new messages at post-loop
                 };
                 match run_post_loop_policies(&config.post_loop_policies, &policy_ctx) {
                     PolicyVerdict::Continue => {}

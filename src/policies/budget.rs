@@ -108,6 +108,7 @@ mod tests {
             accumulated_cost: cost,
             message_count: 0,
             overflow_signal: false,
+            new_messages: &[],
         }
     }
 

@@ -146,6 +146,7 @@ pub async fn execute_tools_concurrently(
                 accumulated_cost: &crate::types::Cost::default(),
                 message_count: 0,
                 overflow_signal: false,
+                new_messages: &[],
             };
             let mut tool_ctx = ToolPolicyContext {
                 tool_name: &tc.name,

@@ -70,6 +70,15 @@ pub struct PolicyContext<'a> {
     pub message_count: usize,
     /// Whether context overflow was signaled.
     pub overflow_signal: bool,
+    /// Messages added since the last policy evaluation for this slot.
+    ///
+    /// - **`PreTurn`**: user/pending messages appended since the previous turn.
+    /// - **`PostTurn`** / **`PostLoop`**: empty — current-turn data is in [`TurnPolicyContext`].
+    /// - **`PreDispatch`**: empty — tool-call data is in [`ToolPolicyContext`].
+    ///
+    /// Policies should only scan this slice, never the full session history,
+    /// to avoid redundant work on messages that have already been evaluated.
+    pub new_messages: &'a [AgentMessage],
 }
 
 /// Per-tool-call context for `PreDispatch` policies.
@@ -450,6 +459,7 @@ mod tests {
             accumulated_cost: cost,
             message_count: 5,
             overflow_signal: false,
+            new_messages: &[],
         }
     }
 

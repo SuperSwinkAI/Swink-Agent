@@ -40,6 +40,7 @@ Shared read-only context available to every policy evaluation.
 | `accumulated_cost` | `&'a Cost` | Accumulated cost across all turns |
 | `message_count` | `usize` | Number of messages in context |
 | `overflow_signal` | `bool` | Whether context overflow was signaled |
+| `new_messages` | `&'a [AgentMessage]` | Messages added since the last policy evaluation for this slot (PreTurn: pending batch; PostTurn/PostLoop/PreDispatch: empty) |
 
 Implements: `Debug`. Lifetime `'a` borrows from loop state.
 

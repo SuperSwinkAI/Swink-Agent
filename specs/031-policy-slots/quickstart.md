@@ -104,7 +104,8 @@ struct RateLimitPolicy {
 impl PreTurnPolicy for RateLimitPolicy {
     fn name(&self) -> &str { "rate_limit" }
 
-    fn evaluate(&self, _ctx: &PolicyContext<'_>) -> PolicyVerdict {
+    fn evaluate(&self, ctx: &PolicyContext<'_>) -> PolicyVerdict {
+        // ctx.new_messages contains only messages added since the last evaluation
         let count = self.calls.fetch_add(1, Ordering::Relaxed);
         if count >= self.max_calls {
             PolicyVerdict::Stop(format!("Rate limit exceeded: {} calls", count))

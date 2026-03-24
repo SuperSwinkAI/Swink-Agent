@@ -64,6 +64,7 @@ MSRV **1.88** (edition 2024). Workspace deps centralized in root `Cargo.toml`.
 - PreDispatch uses two-pass approach: evaluate all tool calls first, then dispatch. Stop aborts entire batch before any tool executes.
 - `SandboxPolicy` checks configured field names (default: `["path", "file_path", "file"]`) — Skip with error, no silent rewriting.
 - Old fields removed from `AgentLoopConfig`: `budget_guard`, `loop_policy`, `post_turn_hook`, `tool_validator`, `tool_call_transformer`. Replaced by 4 policy vecs.
+- `PolicyContext.new_messages` contains only messages added since the last evaluation for that slot. PreTurn: pending batch (tracked via `new_messages_start` index before append). PostTurn/PostLoop/PreDispatch: `&[]` (current-turn data is in `TurnPolicyContext`/`ToolPolicyContext`). This is a slice borrow (zero-copy), not a clone.
 - `RetryStrategy::should_retry()` is the **sole** retryability decision point — `is_retryable()` pre-check was removed.
 
 ### Streaming (`src/stream.rs`)

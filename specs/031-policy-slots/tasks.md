@@ -43,7 +43,7 @@
 
 - [x] T009 Define `PolicyVerdict` enum (Continue, Stop(String), Inject(Vec<AgentMessage>)) in `src/policy.rs` with Debug, Clone derives
 - [x] T010 Define `PreDispatchVerdict` enum (Continue, Stop(String), Inject(Vec<AgentMessage>), Skip(String)) in `src/policy.rs` with Debug, Clone derives
-- [x] T011 [P] Define `PolicyContext<'a>` struct in `src/policy.rs`: turn_index, accumulated_usage, accumulated_cost, message_count, overflow_signal
+- [x] T011 [P] Define `PolicyContext<'a>` struct in `src/policy.rs`: turn_index, accumulated_usage, accumulated_cost, message_count, overflow_signal, new_messages
 - [x] T012 [P] Define `ToolPolicyContext<'a>` struct in `src/policy.rs`: tool_name, tool_call_id, arguments (&mut Value)
 - [x] T013 [P] Define `TurnPolicyContext<'a>` struct in `src/policy.rs`: assistant_message, tool_results, stop_reason
 - [x] T014 Define four slot traits in `src/policy.rs`: `PreTurnPolicy`, `PreDispatchPolicy`, `PostTurnPolicy`, `PostLoopPolicy` — each with `name() -> &str` and `evaluate()` returning the appropriate verdict type. Bounds: `Send + Sync`
@@ -302,6 +302,30 @@
 6. Add US6 (Custom) → Extensibility validated
 7. Phase 9-11 (Loop Integration + Migration + Cleanup) → Full migration complete
 8. Phase 12 (Polish) → Production ready
+
+---
+
+## Phase 13: PolicyContext Messages Extension (032 Prerequisite)
+
+**Purpose**: Add `messages: &'a [AgentMessage]` to `PolicyContext` per updated FR-010. Backward-compatible.
+
+### Implementation
+
+- [x] T084 Add `pub new_messages: &'a [AgentMessage]` field to `PolicyContext<'a>` in `src/policy.rs` with doc comments explaining per-slot semantics
+- [x] T085 [P] Track `new_messages_start` before pending append; pass `new_messages: &state.context_messages[new_messages_start..]` at PreTurn construction in `src/loop_/turn.rs`
+- [x] T086 [P] Pass `new_messages: &[]` at PostTurn construction in `src/loop_/mod.rs` (current-turn data in TurnPolicyContext)
+- [x] T087 [P] Pass `new_messages: &[]` at PostLoop construction in `src/loop_/mod.rs`
+- [x] T088 [P] Pass `new_messages: &[]` at PreDispatch construction in `src/loop_/tool_dispatch.rs`
+- [x] T089 Update all `make_ctx` test helpers and inline `PolicyContext` constructions to include `new_messages: &[]` in `src/policy.rs`, `src/policies/budget.rs`, `src/policies/max_turns.rs`, `src/policies/deny_list.rs`, `src/policies/sandbox.rs`, `src/policies/checkpoint.rs`, `src/policies/loop_detection.rs`
+- [x] T090 Run `cargo test --workspace` — verify all tests pass with new field
+
+### Documentation
+
+- [x] T091 [P] Update `PolicyContext` table in `specs/031-policy-slots/data-model.md` to include `messages` field
+- [x] T092 [P] Update `PolicyContext` struct in `specs/031-policy-slots/contracts/public-api.md` to include `messages` field
+- [x] T093 [P] Update custom policy example in `specs/031-policy-slots/quickstart.md` to show `ctx.messages` access
+
+**Checkpoint**: PolicyContext carries messages. All tests green. 032 can depend on this.
 
 ---
 
