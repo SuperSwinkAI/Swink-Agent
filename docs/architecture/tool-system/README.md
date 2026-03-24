@@ -1,6 +1,6 @@
 # Tool System
 
-**Source files:** `src/tool.rs`, `src/tools/`, `src/fn_tool.rs`, `src/tool_middleware.rs`, `src/tool_validator.rs`, `src/tool_call_transformer.rs`, `src/loop_/tool_dispatch.rs`
+**Source files:** `src/tool.rs`, `src/tools/`, `src/fn_tool.rs`, `src/tool_middleware.rs`, `src/policy.rs`, `src/policies/`, `src/loop_/tool_dispatch.rs`
 **Related:** [PRD §4](../../planning/PRD.md#4-tool-system)
 
 The tool system defines how tools are declared, validated, executed, and how their results are returned to the LLM. It also covers the structured output mechanism, which is implemented as a synthetic tool injected by the harness.
@@ -457,88 +457,35 @@ assert_eq!(logged.name(), "bash"); // metadata delegates to inner
 
 ---
 
-## L3 — ToolCallTransformer: Argument Rewriting
+## L3 — PreDispatch Policies: Validation and Argument Rewriting
 
-**Source file:** `src/tool_call_transformer.rs`
-**Re-exported as:** `swink_agent::ToolCallTransformer`
+**Source files:** `src/policy.rs`, `src/policies/`
 
-`ToolCallTransformer` is a trait for pre-execution argument rewriting. It runs **unconditionally** (not gated by approval mode) and mutates arguments in place. Typical use cases: sandboxing file paths, injecting default values, normalizing argument formats.
+PreDispatch policies replace the previous `ToolCallTransformer` and `ToolValidator` traits. They run **before** the approval gate on each tool call and can:
 
-### Trait
-
-```rust
-pub trait ToolCallTransformer: Send + Sync {
-    fn transform(&self, tool_name: &str, arguments: &mut Value);
-}
-```
-
-A blanket impl exists for closures matching `Fn(&str, &mut Value) + Send + Sync`, so a closure can be used directly:
-
-```rust
-let transformer = |name: &str, args: &mut Value| {
-    if name == "bash" {
-        if let Some(cmd) = args.get("command").and_then(Value::as_str) {
-            args["command"] = Value::String(format!("sandbox {cmd}"));
-        }
-    }
-};
-```
-
-### Configuration
-
-Set on `AgentLoopConfig` as `tool_call_transformer: Option<Arc<dyn ToolCallTransformer>>`. When `None`, the transformer step is skipped.
-
-### Execution order
-
-The transformer runs **after** the approval gate and **before** the validator and schema validation. See the [Dispatch Pipeline](#l2--tool-dispatch-pipeline) diagram below for the complete ordering.
-
----
-
-## L3 — ToolValidator: Pre-Execution Validation Hook
-
-**Source file:** `src/tool_validator.rs`
-**Re-exported as:** `swink_agent::ToolValidator`
-
-`ToolValidator` is a trait for application-specific validation that runs **after** `ToolCallTransformer` and **before** JSON Schema validation. Use it for constraints that cannot be expressed in JSON Schema, such as file path allowlists, command blocklists, or cross-field business rules.
+- **Skip** the tool call (returning an error to the LLM)
+- **Mutate arguments** in place via `ToolPolicyContext`
+- **Stop** the entire tool batch
+- **Inject** messages into the pending queue
 
 ### Trait
 
 ```rust
-pub trait ToolValidator: Send + Sync {
-    fn validate(&self, tool_name: &str, arguments: &Value) -> Result<(), String>;
+pub trait PreDispatchPolicy: Send + Sync {
+    fn evaluate(&self, ctx: &PolicyContext, tool_ctx: &mut ToolPolicyContext) -> PreDispatchVerdict;
 }
 ```
 
-- Return `Ok(())` to proceed to schema validation and execution.
-- Return `Err(message)` to reject the call. The error message is returned to the LLM as an error `ToolResultMessage` with `is_error: true`. The tool's `execute()` is never called.
+### Built-in PreDispatch Policies
 
-A blanket impl exists for closures matching `Fn(&str, &Value) -> Result<(), String> + Send + Sync`:
-
-```rust
-let validator = |name: &str, args: &Value| -> Result<(), String> {
-    if name == "bash" {
-        if let Some(cmd) = args.get("command").and_then(Value::as_str) {
-            if cmd.contains("rm -rf") {
-                return Err("destructive commands are not allowed".into());
-            }
-        }
-    }
-    Ok(())
-};
-```
+| Policy | Behavior |
+|---|---|
+| `SandboxPolicy` | Checks configured field names (default: `path`, `file_path`, `file`) against allowed directories. Skips with error if path escapes sandbox. |
+| `DenyListPolicy` | Rejects tool calls by name or argument pattern. Skips with descriptive error. |
 
 ### Configuration
 
-Set on `AgentLoopConfig` as `tool_validator: Option<Arc<dyn ToolValidator>>`. When `None`, the validator step is skipped.
-
-### Distinction from ToolCallTransformer
-
-| | ToolCallTransformer | ToolValidator |
-|---|---|---|
-| **Purpose** | Rewrite arguments | Accept or reject arguments |
-| **Mutation** | Mutates `&mut Value` in place | Read-only `&Value` |
-| **On failure** | N/A (cannot fail) | Error result returned to LLM |
-| **Runs** | After approval, before validator | After transformer, before schema validation |
+Set on `AgentLoopConfig` as `pre_dispatch_policies: Vec<Arc<dyn PreDispatchPolicy>>`. When empty, the step is skipped.
 
 ---
 
@@ -609,28 +556,26 @@ flowchart TB
         TC["ToolCall<br/>(id, name, arguments)"]
     end
 
-    subgraph Stage1["1️⃣ Approval Gate"]
+    subgraph Stage1["1️⃣ PreDispatch Policies"]
+        PolicyCheck{"pre_dispatch_policies<br/>evaluate all"}
+        PolicyContinue["Continue"]
+        PolicySkip["Skip(msg) → error result"]
+        PolicyStop["Stop → abort batch"]
+    end
+
+    subgraph Stage2["2️⃣ Approval Gate"]
         ApprovalCheck{"approval mode<br/>+ approve_fn?"}
         Approved["Approved"]
         ApprovedWith["ApprovedWith(new_params)<br/>overrides arguments"]
         Rejected["Rejected → error result"]
     end
 
-    subgraph Stage2["2️⃣ ToolCallTransformer"]
-        Transform["transformer.transform(<br/>  tool_name, &mut arguments<br/>)<br/>mutates in place"]
-    end
-
-    subgraph Stage3["3️⃣ ToolValidator"]
-        CustomValidate{"validator.validate(<br/>  tool_name, &arguments<br/>)?"}
-        ValidatorErr["Err(msg) → error result"]
-    end
-
-    subgraph Stage4["4️⃣ Schema Validation"]
+    subgraph Stage3["3️⃣ Schema Validation"]
         SchemaCheck{"validate_tool_arguments(<br/>  schema, &arguments<br/>)?"}
         SchemaErr["Err(errors) → error result"]
     end
 
-    subgraph Stage5["5️⃣ Execution"]
+    subgraph Stage4["4️⃣ Execution"]
         Spawn["tokio::spawn<br/>tool.execute()"]
         Result["AgentToolResult"]
     end
@@ -639,19 +584,21 @@ flowchart TB
         TRM["ToolResultMessage<br/>(appended to context)"]
     end
 
-    TC --> ApprovalCheck
-    ApprovalCheck -->|"Bypassed / no callback"| Transform
+    TC --> PolicyCheck
+    PolicyCheck -->|"Continue"| PolicyContinue
+    PolicyCheck -->|"Skip"| PolicySkip
+    PolicyCheck -->|"Stop"| PolicyStop
+    PolicyContinue --> ApprovalCheck
+    PolicySkip --> TRM
+    PolicyStop --> TRM
+
+    ApprovalCheck -->|"Bypassed / no callback"| SchemaCheck
     ApprovalCheck -->|"callback returns"| Approved
     ApprovalCheck -->|"callback returns"| ApprovedWith
     ApprovalCheck -->|"callback returns"| Rejected
-    Approved --> Transform
-    ApprovedWith --> Transform
+    Approved --> SchemaCheck
+    ApprovedWith --> SchemaCheck
     Rejected --> TRM
-
-    Transform --> CustomValidate
-    CustomValidate -->|"Ok"| SchemaCheck
-    CustomValidate -->|"Err"| ValidatorErr
-    ValidatorErr --> TRM
 
     SchemaCheck -->|"valid"| Spawn
     SchemaCheck -->|"invalid"| SchemaErr
@@ -661,18 +608,18 @@ flowchart TB
     Result --> TRM
 
     classDef inputStyle fill:#e3f2fd,stroke:#1976d2,stroke-width:2px,color:#000
+    classDef policyStyle fill:#e8f5e9,stroke:#388e3c,stroke-width:2px,color:#000
     classDef approvalStyle fill:#fff3e0,stroke:#f57c00,stroke-width:2px,color:#000
-    classDef transformStyle fill:#e8f5e9,stroke:#388e3c,stroke-width:2px,color:#000
     classDef validStyle fill:#ff9800,stroke:#e65100,stroke-width:2px,color:#000
     classDef errorStyle fill:#e0e0e0,stroke:#424242,stroke-width:2px,color:#000
     classDef execStyle fill:#1976d2,stroke:#0d47a1,stroke-width:2px,color:#fff
     classDef outputStyle fill:#f5f5f5,stroke:#616161,stroke-width:2px,color:#000
 
     class TC inputStyle
+    class PolicyCheck,PolicyContinue policyStyle
+    class PolicySkip,PolicyStop,Rejected,SchemaErr errorStyle
     class ApprovalCheck,Approved,ApprovedWith approvalStyle
-    class Rejected,ValidatorErr,SchemaErr errorStyle
-    class Transform transformStyle
-    class CustomValidate,SchemaCheck validStyle
+    class SchemaCheck validStyle
     class Spawn,Result execStyle
     class TRM outputStyle
 ```
@@ -681,13 +628,10 @@ flowchart TB
 
 | Stage | Component | Skip condition | Short-circuit |
 |---|---|---|---|
-| 1. Approval | `approve_tool` callback | `ApprovalMode::Bypassed` or no callback set | `Rejected` → error result, skip remaining |
-| 2. Transform | `ToolCallTransformer` | `tool_call_transformer` is `None` | Cannot fail |
-| 3. Validate | `ToolValidator` | `tool_validator` is `None` | `Err(msg)` → error result, skip remaining |
-| 4. Schema | `validate_tool_arguments` | Never skipped | Invalid → error result, skip execute |
-| 5. Execute | `tool.execute()` | Never skipped (if reached) | N/A — always produces result |
-
-> **Note:** `ApprovedWith(new_params)` from the approval gate overrides the original arguments **before** the transformer runs. The transformer then operates on the already-overridden arguments.
+| 1. PreDispatch | `PreDispatchPolicy` | `pre_dispatch_policies` is empty | `Skip` → error result; `Stop` → abort entire batch |
+| 2. Approval | `approve_tool` callback | `ApprovalMode::Bypassed` or no callback set | `Rejected` → error result, skip remaining |
+| 3. Schema | `validate_tool_arguments` | Never skipped | Invalid → error result, skip execute |
+| 4. Execute | `tool.execute()` | Never skipped (if reached) | N/A — always produces result |
 
 ---
 

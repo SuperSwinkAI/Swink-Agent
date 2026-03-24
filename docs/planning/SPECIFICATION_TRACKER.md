@@ -7,7 +7,7 @@
 - Provider Roadmap: [PROVIDER_EXPANSION_ROADMAP.md](PROVIDER_EXPANSION_ROADMAP.md)
 - Eval Roadmap: [EVAL.md](EVAL.md)
 
-**Current Focus:** 22/30 specs have plans, 23/30 have tasks, 22/30 complete (001–014, 020–022, 025–030). Phase 0 + Phase 1 + Phase 2 done. Phase 3 partially done (011–014, 020 complete). Phase 4 partially done (021–022 complete). Phase 5 done (025–029 complete). Phase 6 done (030 complete). Next: plan + tasks for remaining adapters (015–019) and eval crates (023–024). 8 specs need plans (015–019, 023–024). 0 specs need tasks.
+**Current Focus:** 23/31 specs have plans, 24/31 have tasks, 23/31 complete (001–014, 020–024, 025–031). Phase 0 + Phase 1 + Phase 2 done. Phase 3 partially done (011–014, 020 complete). Phase 4 done (021–024 complete). Phase 5 done (025–029 complete). Phase 6 done (030 complete). Phase 7 done (031 complete). Next: plan + tasks for remaining adapters (015–019). 5 specs need plans (015–019). 0 specs need tasks.
 
 > **Numbering System:** Spec numbers (001–030) are sequential identifiers that
 > never change. Phase numbers represent execution order and can be reassigned
@@ -173,7 +173,7 @@ After **3.1 Shared Infrastructure** completes, all 9 provider adapters (3.2–3.
 **Goal:** Standalone crates for session persistence, on-device inference, and
 evaluation — each depends only on the core library.
 
-**Status:** 2/4 specs planned, 2/4 have tasks, 2/4 complete, 4/4 specs defined
+**Status:** 4/4 specs planned, 4/4 have tasks, 4/4 complete, 4/4 specs defined
 
 ### Implementation Checklist
 
@@ -187,15 +187,15 @@ evaluation — each depends only on the core library.
   - Branch: `022-local-llm-crate`
   - Status: Complete (58/58 tasks, merged to main)
   - Depends on: 0.3
-- [ ] **4.3** Eval: Trajectory & Matching — TrajectoryCollector, TrajectoryMatcher, EfficiencyEvaluator, ResponseCriteria
+- [x] **4.3** Eval: Trajectory & Matching — TrajectoryCollector, TrajectoryMatcher, EfficiencyEvaluator, ResponseCriteria
   - Spec: `specs/023-eval-trajectory-matching/spec.md`
   - Branch: `023-eval-trajectory-matching`
-  - Status: Specify complete — needs plan + tasks
+  - Status: Complete (40/40 tasks, merged to main)
   - Depends on: 1.1
-- [ ] **4.4** Eval: Runner, Scoring & Governance — EvalRunner, EvaluatorRegistry, FsEvalStore, CI/CD gating, audit trails
+- [x] **4.4** Eval: Runner, Scoring & Governance — EvalRunner, EvaluatorRegistry, FsEvalStore, CI/CD gating, audit trails
   - Spec: `specs/024-eval-runner-governance/spec.md`
   - Branch: `024-eval-runner-governance`
-  - Status: Specify complete — needs plan + tasks
+  - Status: Complete (69/69 tasks, merged to main)
   - Depends on: 4.3
 
 ---
@@ -258,6 +258,23 @@ criteria.
 
 ---
 
+## Phase 7: Policy Slots
+
+**Goal:** Replace scattered loop hooks (BudgetGuard, LoopPolicy, PostTurnHook,
+ToolValidator, ToolCallTransformer) with a unified, configurable policy slot system.
+
+**Status:** 1/1 specs planned, 1/1 have tasks, 1/1 complete, 1/1 specs defined
+
+### Implementation Checklist
+
+- [x] **7.1** Policy Slots — Four configurable policy slots (PreTurn, PreDispatch, PostTurn, PostLoop), verdict enums, built-in policies (Budget, Checkpoint, DenyList, LoopDetection, MaxTurns, Sandbox)
+  - Spec: `specs/031-policy-slots/spec.md`
+  - Branch: `031-policy-slots`
+  - Status: Complete (83/83 tasks, merged to main)
+  - Depends on: 2.5
+
+---
+
 ## Dependencies
 
 ```mermaid
@@ -305,6 +322,10 @@ graph TD
         V["6.1 Integration Tests"]
     end
 
+    subgraph Phase 7: Policy Slots
+        W["7.1 Policy Slots"]
+    end
+
     A --> B
     B --> C
     B --> F
@@ -326,6 +347,7 @@ graph TD
     R --> S
     R --> T
     R --> U
+    J --> W
     E --> V
     F --> V
     G --> V
@@ -344,14 +366,15 @@ graph TD
     style L fill:#fff,color:#000,stroke:#6b7280,stroke-width:2px
     style M fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
     style N fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
-    style O fill:#fff,color:#000,stroke:#6b7280,stroke-width:2px
-    style P fill:#fff,color:#000,stroke:#6b7280,stroke-width:2px
+    style O fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
+    style P fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
     style Q fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
     style R fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
     style S fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
     style T fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
     style U fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
     style V fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
+    style W fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
 ```
 
 > ⬜ Not started · 🟢 Complete · 🟡 In progress · 🔴 Blocked
@@ -363,6 +386,7 @@ graph TD
                                        ↘ 3.1 Shared Infra → 3.2–3.10 Adapters (provider coverage)
                            ↘ 2.1 Context, 2.2 Tools, 2.3 Catalog (extensions)
                                        ↘ 4.3 Eval Trajectory → 4.4 Eval Runner (evaluation)
+                                       ↘ 2.5 Policies → 7.1 Policy Slots (unified policy system)
 ```
 
 ### Parallel Opportunities
