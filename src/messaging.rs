@@ -62,7 +62,7 @@ impl AgentMailbox {
     /// Whether the mailbox is empty.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.len() == 0
+        !self.has_messages()
     }
 }
 
@@ -92,6 +92,5 @@ pub async fn send_to(
         )
     })?;
     agent_ref.lock().await.steer(message);
-    drop(agent_ref);
     Ok(())
 }

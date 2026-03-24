@@ -712,10 +712,9 @@ impl Agent {
         &mut self,
         input: Vec<AgentMessage>,
     ) -> Result<Pin<Box<dyn Stream<Item = AgentEvent> + Send>>, AgentError> {
-        if let Err(e) = self.check_not_running() {
+        self.check_not_running().inspect_err(|_| {
             warn!("prompt_stream called while agent is already running");
-            return Err(e);
-        }
+        })?;
         info!(
             model = %self.state.model.model_id,
             input_messages = input.len(),
@@ -1003,26 +1002,17 @@ impl Agent {
 
         let config = self.build_loop_config();
         let system_prompt = self.state.system_prompt.clone();
-        let in_flight_llm_messages = if is_continue {
-            self.state
-                .messages
-                .iter()
-                .filter_map(|msg| match msg {
-                    AgentMessage::Llm(llm) => Some(AgentMessage::Llm(llm.clone())),
-                    AgentMessage::Custom(_) => None,
-                })
-                .collect()
+        let llm_source: Box<dyn Iterator<Item = &AgentMessage>> = if is_continue {
+            Box::new(self.state.messages.iter())
         } else {
-            self.state
-                .messages
-                .iter()
-                .chain(input.iter())
-                .filter_map(|msg| match msg {
-                    AgentMessage::Llm(llm) => Some(AgentMessage::Llm(llm.clone())),
-                    AgentMessage::Custom(_) => None,
-                })
-                .collect()
+            Box::new(self.state.messages.iter().chain(input.iter()))
         };
+        let in_flight_llm_messages: Vec<AgentMessage> = llm_source
+            .filter_map(|msg| match msg {
+                AgentMessage::Llm(llm) => Some(AgentMessage::Llm(llm.clone())),
+                AgentMessage::Custom(_) => None,
+            })
+            .collect();
 
         let messages_for_loop = if is_continue {
             std::mem::take(&mut self.state.messages)
@@ -1134,12 +1124,9 @@ impl Agent {
                     if let Some(ref err) = assistant_message.error_message {
                         error = Some(err.clone());
                     }
-                    let assistant_msg = AgentMessage::Llm(LlmMessage::Assistant(assistant_message));
-                    state_messages.push(match &assistant_msg {
-                        AgentMessage::Llm(msg) => AgentMessage::Llm(msg.clone()),
-                        AgentMessage::Custom(_) => unreachable!(),
-                    });
-                    all_messages.push(assistant_msg);
+                    let assistant_llm = LlmMessage::Assistant(assistant_message);
+                    state_messages.push(AgentMessage::Llm(assistant_llm.clone()));
+                    all_messages.push(AgentMessage::Llm(assistant_llm));
                     for tr in tool_results {
                         state_messages.push(AgentMessage::Llm(LlmMessage::ToolResult(tr.clone())));
                         all_messages.push(AgentMessage::Llm(LlmMessage::ToolResult(tr)));
@@ -1231,11 +1218,6 @@ impl Agent {
             }
             AgentEvent::ToolExecutionStart { id, .. } => {
                 self.state.pending_tool_calls.insert(id.clone());
-            }
-            AgentEvent::ToolExecutionEnd { result, .. } => {
-                // We don't have the ID directly on ToolExecutionEnd, so we
-                // clear pending_tool_calls when the turn ends.
-                let _ = result;
             }
             AgentEvent::TurnEnd { .. } => {
                 self.state.pending_tool_calls.clear();

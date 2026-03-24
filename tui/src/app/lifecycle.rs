@@ -86,18 +86,8 @@ impl App {
     }
 
     pub(super) fn push_system_message(&mut self, content: String) {
-        self.messages.push(DisplayMessage {
-            role: MessageRole::System,
-            content,
-            thinking: None,
-            is_streaming: false,
-            collapsed: false,
-            summary: String::new(),
-            user_expanded: false,
-            expanded_at: None,
-            plan_mode: false,
-            diff_data: None,
-        });
+        self.messages
+            .push(DisplayMessage::new(MessageRole::System, content));
     }
 
     pub(super) fn abort_agent(&mut self) {

@@ -105,7 +105,6 @@ pub struct InMemoryVersionStore {
 }
 
 impl InMemoryVersionStore {
-    /// Create a new empty in-memory store.
     #[must_use]
     pub const fn new() -> Self {
         Self {
@@ -113,7 +112,6 @@ impl InMemoryVersionStore {
         }
     }
 
-    /// Return the number of stored versions.
     pub fn len(&self) -> usize {
         self.versions
             .lock()
@@ -121,7 +119,6 @@ impl InMemoryVersionStore {
             .len()
     }
 
-    /// Return true if no versions are stored.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
@@ -204,7 +201,6 @@ struct VersioningState {
     turn_counter: u64,
 }
 
-/// Extract LLM messages from a slice of `AgentMessage`, cloning only LLM variants.
 fn extract_llm_messages(messages: &[AgentMessage]) -> Vec<LlmMessage> {
     messages
         .iter()
@@ -359,7 +355,6 @@ mod tests {
 
         // A version should have been saved.
         let versions = store.list_versions();
-        assert_eq!(versions.len(), 1);
         assert_eq!(versions.len(), 1);
         assert_eq!(versions[0].version, 1);
         assert_eq!(versions[0].message_count, 2); // 2 messages were dropped

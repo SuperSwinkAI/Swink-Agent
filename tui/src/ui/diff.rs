@@ -67,16 +67,8 @@ pub fn render_diff_lines(diff: &DiffData, max_width: u16) -> Vec<Line<'static>> 
         ]));
     }
 
-    let old_lines: Vec<&str> = if diff.old_content.is_empty() {
-        Vec::new()
-    } else {
-        diff.old_content.lines().collect()
-    };
-    let new_lines: Vec<&str> = if diff.new_content.is_empty() {
-        Vec::new()
-    } else {
-        diff.new_content.lines().collect()
-    };
+    let old_lines: Vec<&str> = diff.old_content.lines().collect();
+    let new_lines: Vec<&str> = diff.new_content.lines().collect();
 
     if diff.is_new_file {
         // All additions

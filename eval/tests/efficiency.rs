@@ -166,7 +166,7 @@ fn us3_more_efficient_scores_higher() {
     );
 }
 
-/// Edge case: ideal_turns uses budget.max_turns when set.
+/// Edge case: `ideal_turns` uses `budget.max_turns` when set.
 #[test]
 fn us3_ideal_turns_from_budget() {
     let eval = EfficiencyEvaluator::new();

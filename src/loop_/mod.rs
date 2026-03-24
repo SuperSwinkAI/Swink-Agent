@@ -566,32 +566,36 @@ pub enum ToolExecOutcome {
     ChannelClosed,
 }
 
-/// Build an aborted `AssistantMessage`.
-pub fn build_abort_message(model: &ModelSpec) -> AssistantMessage {
+/// Build a terminal `AssistantMessage` with the given stop reason and message.
+fn build_terminal_message(
+    model: &ModelSpec,
+    stop_reason: StopReason,
+    error_message: String,
+) -> AssistantMessage {
     AssistantMessage {
         content: vec![],
         provider: model.provider.clone(),
         model_id: model.model_id.clone(),
         usage: crate::types::Usage::default(),
         cost: crate::types::Cost::default(),
-        stop_reason: StopReason::Aborted,
-        error_message: Some("operation aborted via cancellation token".to_string()),
+        stop_reason,
+        error_message: Some(error_message),
         timestamp: now_timestamp(),
     }
 }
 
+/// Build an aborted `AssistantMessage`.
+pub fn build_abort_message(model: &ModelSpec) -> AssistantMessage {
+    build_terminal_message(
+        model,
+        StopReason::Aborted,
+        "operation aborted via cancellation token".to_string(),
+    )
+}
+
 /// Build an error `AssistantMessage` from a `AgentError`.
 pub fn build_error_message(model: &ModelSpec, error: &AgentError) -> AssistantMessage {
-    AssistantMessage {
-        content: vec![],
-        provider: model.provider.clone(),
-        model_id: model.model_id.clone(),
-        usage: crate::types::Usage::default(),
-        cost: crate::types::Cost::default(),
-        stop_reason: StopReason::Error,
-        error_message: Some(format_error_with_sources(error)),
-        timestamp: now_timestamp(),
-    }
+    build_terminal_message(model, StopReason::Error, format_error_with_sources(error))
 }
 
 pub fn format_error_with_sources(error: &AgentError) -> String {

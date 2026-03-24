@@ -71,6 +71,5 @@ async fn async_list_and_delete() {
 
     let sessions = store.list().await.unwrap();
     assert_eq!(sessions.len(), 2);
-    let ids: Vec<&str> = sessions.iter().map(|s| s.id.as_str()).collect();
-    assert!(!ids.contains(&"del_b"));
+    assert!(!sessions.iter().map(|s| s.id.as_str()).any(|x| x == "del_b"));
 }

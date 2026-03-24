@@ -57,32 +57,16 @@ impl App {
                 for msg in &messages {
                     match msg {
                         LlmMessage::User(user) => {
-                            self.messages.push(DisplayMessage {
-                                role: MessageRole::User,
-                                content: ContentBlock::extract_text(&user.content),
-                                thinking: None,
-                                is_streaming: false,
-                                collapsed: false,
-                                summary: String::new(),
-                                user_expanded: false,
-                                expanded_at: None,
-                                plan_mode: false,
-                                diff_data: None,
-                            });
+                            self.messages.push(DisplayMessage::new(
+                                MessageRole::User,
+                                ContentBlock::extract_text(&user.content),
+                            ));
                         }
                         LlmMessage::Assistant(assistant) => {
-                            self.messages.push(DisplayMessage {
-                                role: MessageRole::Assistant,
-                                content: ContentBlock::extract_text(&assistant.content),
-                                thinking: None,
-                                is_streaming: false,
-                                collapsed: false,
-                                summary: String::new(),
-                                user_expanded: false,
-                                expanded_at: None,
-                                plan_mode: false,
-                                diff_data: None,
-                            });
+                            self.messages.push(DisplayMessage::new(
+                                MessageRole::Assistant,
+                                ContentBlock::extract_text(&assistant.content),
+                            ));
                         }
                         LlmMessage::ToolResult(tool_result) => {
                             let content = ContentBlock::extract_text(&tool_result.content);
@@ -94,20 +78,14 @@ impl App {
                                     .chars()
                                     .take(60)
                                     .collect::<String>();
-                                let diff_data =
-                                    crate::ui::diff::DiffData::from_details(&tool_result.details);
-                                self.messages.push(DisplayMessage {
-                                    role: MessageRole::ToolResult,
-                                    content,
-                                    thinking: None,
-                                    is_streaming: false,
-                                    collapsed: true,
-                                    summary,
-                                    user_expanded: false,
-                                    expanded_at: None,
-                                    plan_mode: false,
-                                    diff_data,
-                                });
+                                let mut dm =
+                                    DisplayMessage::new(MessageRole::ToolResult, content);
+                                dm.collapsed = true;
+                                dm.summary = summary;
+                                dm.diff_data = crate::ui::diff::DiffData::from_details(
+                                    &tool_result.details,
+                                );
+                                self.messages.push(dm);
                             }
                         }
                     }

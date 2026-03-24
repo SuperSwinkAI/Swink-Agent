@@ -354,14 +354,7 @@ pub struct Usage {
 impl Usage {
     /// Merge another `Usage` into this one by summing all fields.
     pub fn merge(&mut self, other: &Self) {
-        self.input += other.input;
-        self.output += other.output;
-        self.cache_read += other.cache_read;
-        self.cache_write += other.cache_write;
-        self.total += other.total;
-        for (k, v) in &other.extra {
-            *self.extra.entry(k.clone()).or_insert(0) += v;
-        }
+        *self += other.clone();
     }
 }
 
@@ -369,14 +362,7 @@ impl Add for Usage {
     type Output = Self;
 
     fn add(mut self, rhs: Self) -> Self::Output {
-        self.input += rhs.input;
-        self.output += rhs.output;
-        self.cache_read += rhs.cache_read;
-        self.cache_write += rhs.cache_write;
-        self.total += rhs.total;
-        for (k, v) in rhs.extra {
-            *self.extra.entry(k).or_insert(0) += v;
-        }
+        self += rhs;
         self
     }
 }
@@ -411,14 +397,7 @@ impl Add for Cost {
     type Output = Self;
 
     fn add(mut self, rhs: Self) -> Self::Output {
-        self.input += rhs.input;
-        self.output += rhs.output;
-        self.cache_read += rhs.cache_read;
-        self.cache_write += rhs.cache_write;
-        self.total += rhs.total;
-        for (k, v) in rhs.extra {
-            *self.extra.entry(k).or_insert(0.0) += v;
-        }
+        self += rhs;
         self
     }
 }
@@ -488,49 +467,42 @@ impl ModelCapabilities {
         Self::default()
     }
 
-    /// Set `supports_thinking`.
     #[must_use]
     pub const fn with_thinking(mut self, val: bool) -> Self {
         self.supports_thinking = val;
         self
     }
 
-    /// Set `supports_vision`.
     #[must_use]
     pub const fn with_vision(mut self, val: bool) -> Self {
         self.supports_vision = val;
         self
     }
 
-    /// Set `supports_tool_use`.
     #[must_use]
     pub const fn with_tool_use(mut self, val: bool) -> Self {
         self.supports_tool_use = val;
         self
     }
 
-    /// Set `supports_streaming`.
     #[must_use]
     pub const fn with_streaming(mut self, val: bool) -> Self {
         self.supports_streaming = val;
         self
     }
 
-    /// Set `supports_structured_output`.
     #[must_use]
     pub const fn with_structured_output(mut self, val: bool) -> Self {
         self.supports_structured_output = val;
         self
     }
 
-    /// Set `max_context_window`.
     #[must_use]
     pub const fn with_max_context_window(mut self, tokens: u64) -> Self {
         self.max_context_window = Some(tokens);
         self
     }
 
-    /// Set `max_output_tokens`.
     #[must_use]
     pub const fn with_max_output_tokens(mut self, tokens: u64) -> Self {
         self.max_output_tokens = Some(tokens);
@@ -604,28 +576,24 @@ impl ModelSpec {
         }
     }
 
-    /// Set the reasoning depth for this model specification.
     #[must_use]
     pub const fn with_thinking_level(mut self, level: ThinkingLevel) -> Self {
         self.thinking_level = level;
         self
     }
 
-    /// Set per-level token budget overrides for reasoning control.
     #[must_use]
     pub fn with_thinking_budgets(mut self, budgets: ThinkingBudgets) -> Self {
         self.thinking_budgets = Some(budgets);
         self
     }
 
-    /// Set provider-specific configuration.
     #[must_use]
     pub fn with_provider_config(mut self, config: serde_json::Value) -> Self {
         self.provider_config = Some(config);
         self
     }
 
-    /// Set model capabilities.
     #[must_use]
     pub const fn with_capabilities(mut self, capabilities: ModelCapabilities) -> Self {
         self.capabilities = Some(capabilities);

@@ -11,13 +11,13 @@ use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
 use swink_agent::{
-    Agent, AgentMessage, AgentOptions, AgentTool, AgentToolResult, AssistantMessageEvent,
-    ContentBlock, Cost, DefaultRetryStrategy, LlmMessage, StopReason, Usage,
+    Agent, AgentMessage, AgentOptions, AgentTool, AgentToolResult, ContentBlock,
+    DefaultRetryStrategy, LlmMessage,
 };
 
 use common::{
     MockContextCapturingStreamFn, MockStreamFn, MockTool, default_convert, default_model,
-    text_only_events, tool_call_events, user_msg,
+    text_only_events, tool_call_events, tool_call_events_multi, user_msg,
 };
 
 // ─── MockArgCapturingTool ────────────────────────────────────────────────────
@@ -74,31 +74,6 @@ impl AgentTool for MockArgCapturingTool {
         *self.captured_args.lock().unwrap() = Some(params);
         Box::pin(async { AgentToolResult::text("ok") })
     }
-}
-
-// ─── Helper: build multi-tool-call events ────────────────────────────────
-
-/// Build events for a response containing multiple tool calls in a single turn.
-fn tool_call_events_multi(calls: &[(&str, &str, &str)]) -> Vec<AssistantMessageEvent> {
-    let mut events = vec![AssistantMessageEvent::Start];
-    for (i, (id, name, args)) in calls.iter().enumerate() {
-        events.push(AssistantMessageEvent::ToolCallStart {
-            content_index: i,
-            id: id.to_string(),
-            name: name.to_string(),
-        });
-        events.push(AssistantMessageEvent::ToolCallDelta {
-            content_index: i,
-            delta: args.to_string(),
-        });
-        events.push(AssistantMessageEvent::ToolCallEnd { content_index: i });
-    }
-    events.push(AssistantMessageEvent::Done {
-        stop_reason: StopReason::ToolUse,
-        usage: Usage::default(),
-        cost: Cost::default(),
-    });
-    events
 }
 
 // ─── Helper: default retry strategy (no jitter, minimal delay) ───────────

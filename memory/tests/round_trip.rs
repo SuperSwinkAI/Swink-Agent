@@ -37,7 +37,7 @@ fn save_overwrites_existing_session() {
 
     let meta2 = SessionMeta {
         title: "Version 2".to_string(),
-        ..meta1.clone()
+        ..meta1
     };
     let msgs2 = vec![user_message("second"), user_message("third")];
     store.save("overwrite_test", &meta2, &msgs2).unwrap();

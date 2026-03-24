@@ -78,18 +78,7 @@ impl App {
 
                 match result {
                     Ok(Some(content)) => {
-                        self.messages.push(DisplayMessage {
-                            role: MessageRole::User,
-                            content: content.clone(),
-                            thinking: None,
-                            is_streaming: false,
-                            collapsed: false,
-                            summary: String::new(),
-                            user_expanded: false,
-                            expanded_at: None,
-                            plan_mode: false,
-                            diff_data: None,
-                        });
+                        self.messages.push(DisplayMessage::new(MessageRole::User, content.clone()));
                         self.trim_messages_to_recent_turns();
                         self.conversation.auto_scroll = true;
                         self.send_to_agent(content);
@@ -516,18 +505,8 @@ impl App {
             }
         }
 
-        self.messages.push(DisplayMessage {
-            role: MessageRole::User,
-            content: text.clone(),
-            thinking: None,
-            is_streaming: false,
-            collapsed: false,
-            summary: String::new(),
-            user_expanded: false,
-            expanded_at: None,
-            plan_mode: false,
-            diff_data: None,
-        });
+        self.messages
+            .push(DisplayMessage::new(MessageRole::User, text.clone()));
 
         self.trim_messages_to_recent_turns();
         self.conversation.auto_scroll = true;

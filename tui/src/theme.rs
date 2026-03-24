@@ -89,7 +89,6 @@ pub fn thinking_color() -> Color {
     resolve(Color::DarkGray)
 }
 
-
 // ---------------------------------------------------------------------------
 // Status indicator colors
 // ---------------------------------------------------------------------------
@@ -190,7 +189,6 @@ pub fn heading_color() -> Color {
 // ---------------------------------------------------------------------------
 // Contrast helpers (bypass `resolve()` to guarantee fg ≠ bg)
 // ---------------------------------------------------------------------------
-
 
 /// Status bar background.
 pub fn bar_bg() -> Color {

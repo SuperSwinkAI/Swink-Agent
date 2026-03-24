@@ -26,6 +26,54 @@ struct PreparedToolCall {
     effective_arguments: serde_json::Value,
 }
 
+// ─── Shared helpers ──────────────────────────────────────────────────────────
+
+/// Build an error `ToolResultMessage` and emit `ToolExecutionEnd`.
+async fn emit_error_result(
+    tool_call_id: &str,
+    error_result: AgentToolResult,
+    idx: usize,
+    results: &Arc<tokio::sync::Mutex<Vec<(usize, ToolResultMessage)>>>,
+    tx: &mpsc::Sender<AgentEvent>,
+) {
+    let _ = emit(
+        tx,
+        AgentEvent::ToolExecutionEnd {
+            result: error_result.clone(),
+            is_error: true,
+        },
+    )
+    .await;
+
+    let tool_result_msg = ToolResultMessage {
+        tool_call_id: tool_call_id.to_string(),
+        content: error_result.content,
+        is_error: true,
+        timestamp: now_timestamp(),
+        details: serde_json::Value::Null,
+    };
+    results.lock().await.push((idx, tool_result_msg));
+}
+
+/// Order results to match the original `tool_calls` order, returning only
+/// those whose IDs appear in the result set.
+fn order_results_by_tool_calls(
+    tool_calls: &[ToolCallInfo],
+    all_results: &[(usize, ToolResultMessage)],
+) -> Vec<ToolResultMessage> {
+    let result_map: HashMap<&str, &ToolResultMessage> = all_results
+        .iter()
+        .map(|(_, r)| (r.tool_call_id.as_str(), r))
+        .collect();
+    let mut ordered: Vec<ToolResultMessage> = Vec::with_capacity(tool_calls.len());
+    for tc in tool_calls {
+        if let Some(result) = result_map.get(tc.id.as_str()) {
+            ordered.push((*result).clone());
+        }
+    }
+    ordered
+}
+
 // ─── Public entry point ──────────────────────────────────────────────────────
 
 /// Execute tool calls using the configured [`ToolExecutionPolicy`].
@@ -115,26 +163,12 @@ pub async fn execute_tools_concurrently(
         if let Some(ref validator) = config.tool_validator
             && let Err(msg) = validator.validate(&tc.name, &effective_arguments)
         {
-            let tool_result_msg = ToolResultMessage {
-                tool_call_id: tc.id.clone(),
+            let error_result = AgentToolResult {
                 content: vec![ContentBlock::Text { text: msg }],
-                is_error: true,
-                timestamp: now_timestamp(),
                 details: serde_json::Value::Null,
+                is_error: true,
             };
-            let _ = emit(
-                tx,
-                AgentEvent::ToolExecutionEnd {
-                    result: AgentToolResult {
-                        content: tool_result_msg.content.clone(),
-                        details: serde_json::Value::Null,
-                        is_error: true,
-                    },
-                    is_error: true,
-                },
-            )
-            .await;
-            results.lock().await.push((idx, tool_result_msg));
+            emit_error_result(&tc.id, error_result, idx, &results, tx).await;
             continue;
         }
 
@@ -197,16 +231,7 @@ pub async fn execute_tools_concurrently(
 
     // All groups completed without steering interrupts.
     let all_results = std::mem::take(&mut *results.lock().await);
-    let result_map: HashMap<&str, &ToolResultMessage> = all_results
-        .iter()
-        .map(|(_, r)| (r.tool_call_id.as_str(), r))
-        .collect();
-    let mut ordered: Vec<ToolResultMessage> = Vec::with_capacity(tool_calls.len());
-    for tc in tool_calls {
-        if let Some(result) = result_map.get(tc.id.as_str()) {
-            ordered.push((*result).clone());
-        }
-    }
+    let ordered = order_results_by_tool_calls(tool_calls, &all_results);
 
     let collected_timings = std::mem::take(&mut *tool_timings.lock().await);
     ToolExecOutcome::Completed {
@@ -264,7 +289,11 @@ async fn compute_execution_groups(
 
             for (prep_idx, priority) in scored {
                 if current_priority == Some(priority) {
-                    groups.last_mut().unwrap().push(prep_idx);
+                    // Safe: a new group is always pushed when priority changes,
+                    // so `groups` is non-empty here.
+                    if let Some(last) = groups.last_mut() {
+                        last.push(prep_idx);
+                    }
                 } else {
                     current_priority = Some(priority);
                     groups.push(vec![prep_idx]);
@@ -467,25 +496,7 @@ async fn check_approval(
                 "Tool call '{}' was rejected by the approval gate.",
                 tc.name
             ));
-            if !emit(
-                tx,
-                AgentEvent::ToolExecutionEnd {
-                    result: rejection_result.clone(),
-                    is_error: true,
-                },
-            )
-            .await
-            {
-                return ApprovalOutcome::ChannelClosed;
-            }
-            let tool_result_msg = ToolResultMessage {
-                tool_call_id: tc.id.clone(),
-                content: rejection_result.content,
-                is_error: true,
-                timestamp: now_timestamp(),
-                details: serde_json::Value::Null,
-            };
-            results.lock().await.push((idx, tool_result_msg));
+            emit_error_result(&tc.id, rejection_result, idx, results, tx).await;
             ApprovalOutcome::Rejected
         }
     }
@@ -519,102 +530,85 @@ async fn dispatch_single_tool(
     let tool_name = tc.name.clone();
     let arguments = effective_arguments.clone();
 
-    if let Some(tool) = tool {
-        let tool = Arc::clone(tool);
-        let child_token = batch_token.child_token();
-        let results_clone = Arc::clone(results);
-        let timings_clone = Arc::clone(tool_timings);
-        let steering_clone = Arc::clone(steering_flag);
-        let config_clone = Arc::clone(config);
-        let tx_clone = tx.clone();
-        let on_update_tx = tx.clone();
-        let timing_tool_name = tool_name.clone();
-
-        let validation = validate_tool_arguments(tool.parameters_schema(), &arguments);
-
-        let tool_span = info_span!(
-            "tool_execute",
-            tool_name = %tool_name,
-            tool_call_id = %tool_call_id,
-        );
-        let handle = tokio::spawn(
-            async move {
-                debug!(tool = %tool_name, id = %tool_call_id, "tool execution starting");
-                let exec_start = std::time::Instant::now();
-                let (result, is_error) = if let Err(errors) = validation {
-                    (validation_error_result(&errors), true)
-                } else {
-                    let on_update = Box::new(move |partial: AgentToolResult| {
-                        let _ = on_update_tx.try_send(AgentEvent::ToolExecutionUpdate { partial });
-                    });
-                    let result = tool
-                        .execute(&tool_call_id, arguments, child_token, Some(on_update))
-                        .await;
-                    let is_error = result.is_error;
-                    (result, is_error)
-                };
-                let exec_duration = exec_start.elapsed();
-                debug!(tool = %tool_name, id = %tool_call_id, is_error, "tool execution finished");
-
-                timings_clone
-                    .lock()
-                    .await
-                    .push(crate::metrics::ToolExecMetrics {
-                        tool_name: timing_tool_name,
-                        duration: exec_duration,
-                        success: !is_error,
-                    });
-
-                let _ = emit(
-                    &tx_clone,
-                    AgentEvent::ToolExecutionEnd {
-                        result: result.clone(),
-                        is_error,
-                    },
-                )
-                .await;
-
-                let tool_result_msg = ToolResultMessage {
-                    tool_call_id: tool_call_id.clone(),
-                    content: result.content,
-                    is_error,
-                    timestamp: now_timestamp(),
-                    details: result.details,
-                };
-
-                results_clone.lock().await.push((idx, tool_result_msg));
-
-                if let Some(ref provider) = config_clone.message_provider {
-                    let msgs = provider.poll_steering();
-                    if !msgs.is_empty() {
-                        steering_clone.store(true, std::sync::atomic::Ordering::SeqCst);
-                    }
-                }
-            }
-            .instrument(tool_span),
-        );
-
-        DispatchResult::Spawned(handle)
-    } else {
+    let Some(tool) = tool else {
         // Unknown tool
         let error_result = crate::tool::unknown_tool_result(&tool_name);
-        let _ = emit(
-            tx,
-            AgentEvent::ToolExecutionEnd {
-                result: error_result.clone(),
-                is_error: true,
-            },
-        )
-        .await;
+        emit_error_result(&tool_call_id, error_result, idx, results, tx).await;
+        return DispatchResult::Inline;
+    };
 
-        let tool_result_msg = ToolResultMessage {
-            tool_call_id,
-            content: error_result.content,
-            is_error: true,
-            timestamp: now_timestamp(),
-            details: serde_json::Value::Null,
-        };
-        results.lock().await.push((idx, tool_result_msg));
-        DispatchResult::Inline
-    }
+    let tool = Arc::clone(tool);
+    let child_token = batch_token.child_token();
+    let results_clone = Arc::clone(results);
+    let timings_clone = Arc::clone(tool_timings);
+    let steering_clone = Arc::clone(steering_flag);
+    let config_clone = Arc::clone(config);
+    let tx_clone = tx.clone();
+
+    let validation = validate_tool_arguments(tool.parameters_schema(), &arguments);
+
+    let tool_span = info_span!(
+        "tool_execute",
+        tool_name = %tool_name,
+        tool_call_id = %tool_call_id,
+    );
+    let handle = tokio::spawn(
+        async move {
+            debug!(tool = %tool_name, id = %tool_call_id, "tool execution starting");
+            let exec_start = std::time::Instant::now();
+            let (result, is_error) = if let Err(errors) = validation {
+                (validation_error_result(&errors), true)
+            } else {
+                let on_update_tx = tx_clone.clone();
+                let on_update = Box::new(move |partial: AgentToolResult| {
+                    let _ = on_update_tx.try_send(AgentEvent::ToolExecutionUpdate { partial });
+                });
+                let result = tool
+                    .execute(&tool_call_id, arguments, child_token, Some(on_update))
+                    .await;
+                let is_error = result.is_error;
+                (result, is_error)
+            };
+            let exec_duration = exec_start.elapsed();
+            debug!(tool = %tool_name, id = %tool_call_id, is_error, "tool execution finished");
+
+            timings_clone
+                .lock()
+                .await
+                .push(crate::metrics::ToolExecMetrics {
+                    tool_name,
+                    duration: exec_duration,
+                    success: !is_error,
+                });
+
+            let _ = emit(
+                &tx_clone,
+                AgentEvent::ToolExecutionEnd {
+                    result: result.clone(),
+                    is_error,
+                },
+            )
+            .await;
+
+            let tool_result_msg = ToolResultMessage {
+                tool_call_id,
+                content: result.content,
+                is_error,
+                timestamp: now_timestamp(),
+                details: result.details,
+            };
+
+            results_clone.lock().await.push((idx, tool_result_msg));
+
+            if let Some(ref provider) = config_clone.message_provider {
+                let msgs = provider.poll_steering();
+                if !msgs.is_empty() {
+                    steering_clone.store(true, std::sync::atomic::Ordering::SeqCst);
+                }
+            }
+        }
+        .instrument(tool_span),
+    );
+
+    DispatchResult::Spawned(handle)
 }

@@ -5,7 +5,7 @@
 //! mistral.rs inference engine. Follows the same stream state machine
 //! pattern as the Ollama adapter.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::pin::Pin;
 use std::sync::Arc;
 
@@ -243,24 +243,15 @@ fn response_to_events(
     let usage = Usage {
         input: u64::try_from(response.usage.prompt_tokens).unwrap_or(0),
         output: u64::try_from(response.usage.completion_tokens).unwrap_or(0),
-        cache_read: 0,
-        cache_write: 0,
         total: u64::try_from(response.usage.total_tokens).unwrap_or(0),
-        extra: HashMap::new(),
+        ..Default::default()
     };
 
     events.push(AssistantMessageEvent::Done {
         stop_reason,
         usage,
         // Local inference — no cost.
-        cost: Cost {
-            input: 0.0,
-            output: 0.0,
-            cache_read: 0.0,
-            cache_write: 0.0,
-            total: 0.0,
-            extra: HashMap::new(),
-        },
+        cost: Cost::default(),
     });
 
     events

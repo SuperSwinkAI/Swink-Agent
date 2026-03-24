@@ -99,7 +99,6 @@ impl ToolPanel {
     /// Resolve a pending approval.
     pub fn resolve_approval(&mut self, id: &str, approved: bool) {
         self.pending_approvals.retain(|p| p.id != id);
-        let _ = id; // id used for matching only
         self.resolved_approvals.push(ResolvedApproval {
             approved,
             resolved_at: Instant::now(),
