@@ -531,7 +531,7 @@ impl Agent {
         }
     }
 
-    /// Pause the currently running loop and capture its state as a [`LoopCheckpoint`].
+    /// Pause the currently running loop and capture its state as a [`crate::checkpoint::LoopCheckpoint`].
     ///
     /// Signals the loop to stop via the cancellation token and snapshots the
     /// agent's messages, system prompt, and model into a serializable
@@ -565,7 +565,7 @@ impl Agent {
         Some(checkpoint)
     }
 
-    /// Resume the agent loop from a previously captured [`LoopCheckpoint`].
+    /// Resume the agent loop from a previously captured [`crate::checkpoint::LoopCheckpoint`].
     ///
     /// Restores the message history, system prompt, and accumulated
     /// usage/cost from the checkpoint, then continues the loop via
