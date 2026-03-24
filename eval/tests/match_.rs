@@ -129,7 +129,7 @@ fn us2_missing_steps_identified() {
     assert!(result.score.value < 1.0, "expected partial match, got {}", result.score.value);
 }
 
-/// AS-2.3: Extra (unexpected) steps — Exact fails, InOrder passes.
+/// AS-2.3: Extra (unexpected) steps — `Exact` fails, `InOrder` passes.
 #[test]
 fn us2_extra_steps_exact_fails_inorder_passes() {
     let case = case_with_trajectory(vec![
@@ -147,7 +147,7 @@ fn us2_extra_steps_exact_fails_inorder_passes() {
     assert_eq!(result.score.verdict(), Verdict::Pass, "InOrder should pass with extras");
 }
 
-/// AS-2.4: Ordering deviation — Exact fails (wrong order), AnyOrder passes.
+/// AS-2.4: Ordering deviation — `Exact` fails (wrong order), `AnyOrder` passes.
 #[test]
 fn us2_ordering_deviation_exact_fails_anyorder_passes() {
     let case = case_with_trajectory(vec![
@@ -165,7 +165,7 @@ fn us2_ordering_deviation_exact_fails_anyorder_passes() {
     assert_eq!(result.score.verdict(), Verdict::Pass, "AnyOrder should pass regardless of order");
 }
 
-/// Edge case: Empty golden path — InOrder/AnyOrder return pass (vacuous truth).
+/// Edge case: Empty golden path — `InOrder`/`AnyOrder` return pass (vacuous truth).
 #[test]
 fn us2_empty_golden_path_vacuous_truth() {
     let case = case_with_trajectory(vec![]);
@@ -191,7 +191,7 @@ fn us2_empty_golden_path_exact_fails() {
     assert_eq!(result.score.verdict(), Verdict::Fail);
 }
 
-/// Edge case: ExpectedToolCall with arguments requires JSON equality.
+/// Edge case: `ExpectedToolCall` with arguments requires JSON equality.
 #[test]
 fn us2_arguments_matching_exact_json() {
     let matcher = TrajectoryMatcher::exact();
@@ -217,7 +217,7 @@ fn us2_arguments_matching_exact_json() {
     assert_eq!(result.score.verdict(), Verdict::Fail);
 }
 
-/// Edge case: ExpectedToolCall with arguments: None matches by name only.
+/// Edge case: `ExpectedToolCall` with arguments: `None` matches by name only.
 #[test]
 fn us2_arguments_none_matches_by_name_only() {
     let matcher = TrajectoryMatcher::exact();

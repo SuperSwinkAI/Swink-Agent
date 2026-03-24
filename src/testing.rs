@@ -132,7 +132,7 @@ pub struct ScriptedStreamFn {
 impl ScriptedStreamFn {
     /// Create a new `ScriptedStreamFn` with the given event sequences.
     #[must_use]
-    pub fn new(responses: Vec<Vec<AssistantMessageEvent>>) -> Self {
+    pub const fn new(responses: Vec<Vec<AssistantMessageEvent>>) -> Self {
         Self {
             responses: std::sync::Mutex::new(responses),
         }

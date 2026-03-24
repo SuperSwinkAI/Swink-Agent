@@ -6,74 +6,17 @@
 
 mod common;
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
-use common::{MockStreamFn, default_convert, default_model, text_only_events, user_msg};
+use common::{
+    EventCollector, MockStreamFn, default_convert, default_model, text_only_events, user_msg,
+};
 
 use swink_agent::{
     Agent, AgentEvent, AgentMessage, AgentOptions, AssistantMessageEvent, ContentBlock, Cost,
     DefaultRetryStrategy, LlmMessage, StopReason, Usage,
 };
-
-// ─── EventCollector ──────────────────────────────────────────────────────
-
-/// Subscribes to Agent events and collects variant names for assertion.
-#[derive(Clone)]
-struct EventCollector {
-    names: Arc<Mutex<Vec<String>>>,
-}
-
-impl EventCollector {
-    fn new() -> Self {
-        Self {
-            names: Arc::new(Mutex::new(Vec::new())),
-        }
-    }
-
-    /// Returns a closure suitable for `agent.subscribe(...)`.
-    fn subscriber(&self) -> impl Fn(&AgentEvent) + Send + Sync + 'static {
-        let names = Arc::clone(&self.names);
-        move |event: &AgentEvent| {
-            let name = event_variant_name(event);
-            names.lock().unwrap().push(name);
-        }
-    }
-
-    fn events(&self) -> Vec<String> {
-        self.names.lock().unwrap().clone()
-    }
-
-    fn count(&self) -> usize {
-        self.names.lock().unwrap().len()
-    }
-
-    fn position(&self, name: &str) -> Option<usize> {
-        self.events().iter().position(|n| n == name)
-    }
-}
-
-fn event_variant_name(event: &AgentEvent) -> String {
-    match event {
-        AgentEvent::AgentStart => "AgentStart".into(),
-        AgentEvent::AgentEnd { .. } => "AgentEnd".into(),
-        AgentEvent::TurnStart => "TurnStart".into(),
-        AgentEvent::TurnEnd { .. } => "TurnEnd".into(),
-        AgentEvent::MessageStart => "MessageStart".into(),
-        AgentEvent::MessageUpdate { .. } => "MessageUpdate".into(),
-        AgentEvent::MessageEnd { .. } => "MessageEnd".into(),
-        AgentEvent::ToolExecutionStart { .. } => "ToolExecutionStart".into(),
-        AgentEvent::ToolExecutionUpdate { .. } => "ToolExecutionUpdate".into(),
-        AgentEvent::ToolExecutionEnd { .. } => "ToolExecutionEnd".into(),
-        AgentEvent::ToolApprovalRequested { .. } => "ToolApprovalRequested".into(),
-        AgentEvent::ToolApprovalResolved { .. } => "ToolApprovalResolved".into(),
-        AgentEvent::BeforeLlmCall { .. } => "BeforeLlmCall".into(),
-        AgentEvent::ContextCompacted { .. } => "ContextCompacted".into(),
-        AgentEvent::Custom(emission) => format!("Custom({})", emission.name),
-        AgentEvent::ModelFallback { .. } => "ModelFallback".into(),
-        _ => "Unknown".into(),
-    }
-}
 
 // ─── Helpers ─────────────────────────────────────────────────────────────
 

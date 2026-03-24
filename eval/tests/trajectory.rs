@@ -278,7 +278,7 @@ async fn us1_text_only_response_captured() {
     );
 }
 
-/// BudgetGuard cancels on cost breach, but invocation trace is still complete.
+/// `BudgetGuard` cancels on cost breach, but invocation trace is still complete.
 #[tokio::test]
 async fn us1_budget_guard_cancels_on_breach() {
     let cancel = CancellationToken::new();
@@ -322,7 +322,7 @@ async fn us1_budget_guard_cancels_on_breach() {
     assert_eq!(invocation.turns[0].tool_calls.len(), 1);
 }
 
-/// BudgetGuard::from_case returns None when no budget constraints.
+/// `BudgetGuard::from_case` returns `None` when no budget constraints.
 #[tokio::test]
 async fn us1_budget_guard_from_case_none_without_constraints() {
     use swink_agent_eval::EvalCase;

@@ -41,18 +41,13 @@ impl TokenCounter for DefaultTokenCounter {
     }
 }
 
-/// Estimate the token count of a single message using the default heuristic.
-///
-/// Uses a simple heuristic: count characters in all text content blocks of
-/// `LlmMessage` variants and divide by 4. `CustomMessage` variants count as
-/// 100 tokens each.
+/// Estimate token count using `chars / 4` for LLM messages, 100 flat for custom.
 ///
 /// For pluggable counting, use a [`TokenCounter`] implementation instead.
 pub fn estimate_tokens(msg: &AgentMessage) -> usize {
     DefaultTokenCounter.count_tokens(msg)
 }
 
-/// Extract content blocks from an `LlmMessage`.
 fn content_blocks(msg: &LlmMessage) -> &[ContentBlock] {
     match msg {
         LlmMessage::User(m) => &m.content,
@@ -61,7 +56,6 @@ fn content_blocks(msg: &LlmMessage) -> &[ContentBlock] {
     }
 }
 
-/// Returns true if the message at `idx` is a tool result.
 fn is_tool_result(messages: &[AgentMessage], idx: usize) -> bool {
     matches!(
         messages.get(idx),

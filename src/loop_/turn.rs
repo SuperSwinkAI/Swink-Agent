@@ -166,7 +166,7 @@ pub async fn run_single_turn(
         .await;
     }
 
-    // x–xiii. Process tool calls
+    // x-xiii. Process tool calls
     handle_tool_calls(
         config,
         state,
@@ -178,6 +178,72 @@ pub async fn run_single_turn(
         tx,
     )
     .await
+}
+
+// ─── Shared helpers ──────────────────────────────────────────────────────
+
+/// Update accumulated usage/cost and track the last assistant message.
+fn accumulate_turn_state(state: &mut LoopState, message: &AssistantMessage) {
+    state.accumulated_usage += message.usage.clone();
+    state.accumulated_cost += message.cost.clone();
+    state.last_assistant_message = Some(message.clone());
+}
+
+/// Emit turn metrics if a collector is configured.
+async fn emit_turn_metrics(
+    config: &Arc<AgentLoopConfig>,
+    state: &LoopState,
+    message: &AssistantMessage,
+    llm_call_duration: Duration,
+    tool_executions: Vec<crate::metrics::ToolExecMetrics>,
+    turn_start: Instant,
+) {
+    if let Some(ref collector) = config.metrics_collector {
+        let metrics = crate::metrics::TurnMetrics {
+            turn_index: state.turn_index,
+            llm_call_duration,
+            tool_executions,
+            usage: message.usage.clone(),
+            cost: message.cost.clone(),
+            turn_duration: turn_start.elapsed(),
+        };
+        collector.on_metrics(&metrics).await;
+    }
+}
+
+/// Emit `TurnEnd` followed by `AgentEnd`, returning `TurnOutcome::Return`.
+///
+/// Consolidates the repeated pattern of emitting these two terminal events
+/// and draining `context_messages` into the `AgentEnd` payload.
+async fn emit_turn_end_and_agent_end(
+    assistant_message: AssistantMessage,
+    tool_results: Vec<ToolResultMessage>,
+    reason: TurnEndReason,
+    snapshot: TurnSnapshot,
+    state: &mut LoopState,
+    tx: &mpsc::Sender<AgentEvent>,
+) -> TurnOutcome {
+    if !emit(
+        tx,
+        AgentEvent::TurnEnd {
+            assistant_message,
+            tool_results,
+            reason,
+            snapshot,
+        },
+    )
+    .await
+    {
+        return TurnOutcome::Return;
+    }
+    let _ = emit(
+        tx,
+        AgentEvent::AgentEnd {
+            messages: Arc::new(std::mem::take(&mut state.context_messages)),
+        },
+    )
+    .await;
+    TurnOutcome::Return
 }
 
 // ─── Snapshot builder ────────────────────────────────────────────────────
@@ -213,7 +279,7 @@ async fn handle_cancellation(
     tx: &mpsc::Sender<AgentEvent>,
 ) -> TurnOutcome {
     let abort_msg = build_abort_message(&config.model);
-    let abort_msg_clone = abort_msg.clone();
+    let msg_for_event = abort_msg.clone();
     state
         .context_messages
         .push(AgentMessage::Llm(LlmMessage::Assistant(abort_msg)));
@@ -226,7 +292,7 @@ async fn handle_cancellation(
     if !emit(
         tx,
         AgentEvent::MessageEnd {
-            message: abort_msg_clone.clone(),
+            message: msg_for_event.clone(),
         },
     )
     .await
@@ -234,27 +300,15 @@ async fn handle_cancellation(
         return TurnOutcome::Return;
     }
     let snapshot = build_snapshot(state, StopReason::Aborted);
-    if !emit(
+    emit_turn_end_and_agent_end(
+        msg_for_event,
+        vec![],
+        TurnEndReason::Cancelled,
+        snapshot,
+        state,
         tx,
-        AgentEvent::TurnEnd {
-            assistant_message: abort_msg_clone,
-            tool_results: vec![],
-            reason: TurnEndReason::Cancelled,
-            snapshot,
-        },
     )
     .await
-    {
-        return TurnOutcome::Return;
-    }
-    let _ = emit(
-        tx,
-        AgentEvent::AgentEnd {
-            messages: Arc::new(std::mem::take(&mut state.context_messages)),
-        },
-    )
-    .await;
-    TurnOutcome::Return
 }
 
 /// Process the `StreamResult`, returning the assistant message on success,
@@ -282,29 +336,18 @@ async fn handle_stream_result(
         }
         StreamResult::Aborted => {
             let abort_msg = build_abort_message(&config.model);
-            let abort_msg_clone = abort_msg.clone();
+            let msg_for_event = abort_msg.clone();
             state
                 .context_messages
                 .push(AgentMessage::Llm(LlmMessage::Assistant(abort_msg)));
             let snapshot = build_snapshot(state, StopReason::Aborted);
-            if !emit(
+            emit_turn_end_and_agent_end(
+                msg_for_event,
+                vec![],
+                TurnEndReason::Aborted,
+                snapshot,
+                state,
                 tx,
-                AgentEvent::TurnEnd {
-                    assistant_message: abort_msg_clone,
-                    tool_results: vec![],
-                    reason: TurnEndReason::Aborted,
-                    snapshot,
-                },
-            )
-            .await
-            {
-                return None;
-            }
-            let _ = emit(
-                tx,
-                AgentEvent::AgentEnd {
-                    messages: Arc::new(std::mem::take(&mut state.context_messages)),
-                },
             )
             .await;
             None
@@ -324,34 +367,22 @@ async fn handle_error_stop(
         error = ?assistant_message.error_message,
         "agent loop stopping due to error/abort"
     );
-    let msg_clone = assistant_message.clone();
+    let msg_for_event = assistant_message.clone();
     let stop = assistant_message.stop_reason;
     state
         .context_messages
         .push(AgentMessage::Llm(LlmMessage::Assistant(assistant_message)));
     let snapshot = build_snapshot(state, stop);
-    if !emit(
+    // CRITICAL: On error/abort, exit immediately — no follow-up polling
+    emit_turn_end_and_agent_end(
+        msg_for_event,
+        vec![],
+        TurnEndReason::Error,
+        snapshot,
+        state,
         tx,
-        AgentEvent::TurnEnd {
-            assistant_message: msg_clone,
-            tool_results: vec![],
-            reason: TurnEndReason::Error,
-            snapshot,
-        },
     )
     .await
-    {
-        return TurnOutcome::Return;
-    }
-    // CRITICAL: On error/abort, exit immediately — no follow-up polling
-    let _ = emit(
-        tx,
-        AgentEvent::AgentEnd {
-            messages: Arc::new(std::mem::take(&mut state.context_messages)),
-        },
-    )
-    .await;
-    TurnOutcome::Return
 }
 
 /// Extract tool call info from the assistant message content blocks.
@@ -390,29 +421,19 @@ async fn handle_no_tool_calls(
     turn_start: Instant,
     tx: &mpsc::Sender<AgentEvent>,
 ) -> TurnOutcome {
-    // Update accumulated usage/cost for policy tracking.
-    state.accumulated_usage += assistant_message.usage.clone();
-    state.accumulated_cost += assistant_message.cost.clone();
-    state.last_assistant_message = Some(assistant_message.clone());
-
-    // Clear last tool results (no tools this turn).
+    accumulate_turn_state(state, &assistant_message);
     state.last_tool_results = vec![];
 
-    // Emit metrics if collector is configured.
-    if let Some(ref collector) = config.metrics_collector {
-        let metrics = crate::metrics::TurnMetrics {
-            turn_index: state.turn_index,
-            llm_call_duration,
-            tool_executions: vec![],
-            usage: assistant_message.usage.clone(),
-            cost: assistant_message.cost.clone(),
-            turn_duration: turn_start.elapsed(),
-        };
-        collector.on_metrics(&metrics).await;
-    }
+    emit_turn_metrics(
+        config,
+        state,
+        &assistant_message,
+        llm_call_duration,
+        vec![],
+        turn_start,
+    )
+    .await;
 
-    // Clone twice: once for all_new_messages, once for TurnEnd event.
-    // The original goes to context_messages.
     let msg_for_event = assistant_message.clone();
     let stop = assistant_message.stop_reason;
     state
@@ -448,13 +469,8 @@ async fn handle_tool_calls(
     cancellation_token: &CancellationToken,
     tx: &mpsc::Sender<AgentEvent>,
 ) -> TurnOutcome {
-    // Update accumulated usage/cost for policy tracking.
-    state.accumulated_usage += assistant_message.usage.clone();
-    state.accumulated_cost += assistant_message.cost.clone();
-    state.last_assistant_message = Some(assistant_message.clone());
+    accumulate_turn_state(state, &assistant_message);
 
-    // Clone twice: once for all_new_messages, once for TurnEnd event.
-    // The original goes to context_messages.
     let msg_for_turn_end = assistant_message.clone();
     state
         .context_messages
@@ -504,18 +520,15 @@ async fn handle_tool_calls(
         }
     }
 
-    // Emit metrics if collector is configured.
-    if let Some(ref collector) = config.metrics_collector {
-        let metrics = crate::metrics::TurnMetrics {
-            turn_index: state.turn_index,
-            llm_call_duration,
-            tool_executions: collected_tool_metrics,
-            usage: msg_for_turn_end.usage.clone(),
-            cost: msg_for_turn_end.cost.clone(),
-            turn_duration: turn_start.elapsed(),
-        };
-        collector.on_metrics(&metrics).await;
-    }
+    emit_turn_metrics(
+        config,
+        state,
+        &msg_for_turn_end,
+        llm_call_duration,
+        collected_tool_metrics,
+        turn_start,
+    )
+    .await;
 
     // xii. Add tool result messages to context
     for tr in &tool_results {
@@ -548,7 +561,9 @@ async fn handle_tool_calls(
     }
 
     // Poll steering if not already interrupted
-    if !steering_interrupted && let Some(ref provider) = config.message_provider {
+    if !steering_interrupted
+        && let Some(ref provider) = config.message_provider
+    {
         let msgs = provider.poll_steering();
         if !msgs.is_empty() {
             state.pending_messages.extend(msgs);

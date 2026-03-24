@@ -21,10 +21,6 @@ pub struct CompactionReport {
     pub overflow: bool,
 }
 
-/// Pluggable context transformation with compaction awareness.
-///
-/// Replaces the bare `TransformContextFn` closure with a trait that supports
-/// both transformation and compaction reporting.
 pub trait ContextTransformer: Send + Sync {
     /// Transform the context messages in-place.
     ///
@@ -94,7 +90,6 @@ impl SlidingWindowTransformer {
         }
     }
 
-    /// Set a custom token counter for this transformer.
     #[must_use]
     pub fn with_token_counter(mut self, counter: Arc<dyn TokenCounter>) -> Self {
         self.token_counter = Some(counter);

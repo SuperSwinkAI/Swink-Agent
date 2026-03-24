@@ -1,4 +1,4 @@
-//! Tests for EvaluatorRegistry composition, filtering, and defaults.
+//! Tests for `EvaluatorRegistry` composition, filtering, and defaults.
 
 mod common;
 
@@ -92,8 +92,7 @@ fn custom_evaluator_alongside_defaults() {
     let invocation = common::mock_invocation(&[], Some("hello"), 0.01, 500);
     let case = minimal_case();
     let results = registry.evaluate(&case, &invocation);
-    let names: Vec<_> = results.iter().map(|r| r.evaluator_name.as_str()).collect();
-    assert!(names.contains(&"always_pass"));
+    assert!(results.iter().any(|r| r.evaluator_name == "always_pass"));
 }
 
 #[test]

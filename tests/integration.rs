@@ -4,114 +4,22 @@
 
 mod common;
 
-use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use common::{
-    MockStreamFn, MockTool, default_convert, default_exhausted_fallback, default_model,
-    next_response, text_only_events, tool_call_events, user_msg,
+    EventCollector, MockContextCapturingStreamFn, MockStreamFn, MockTool, default_convert,
+    default_model, text_only_events, tool_call_events, user_msg,
 };
-use futures::Stream;
 use futures::stream::StreamExt;
 use serde_json::json;
-use tokio_util::sync::CancellationToken;
 
 use swink_agent::{
     Agent, AgentError, AgentEvent, AgentMessage, AgentOptions, AgentTool, AgentToolResult,
     AssistantMessageEvent, ContentBlock, Cost, DefaultRetryStrategy, LlmMessage, ModelSpec,
     StopReason, StreamFn, StreamOptions, Usage, UserMessage,
 };
-
-// ─── MockTransformTrackingStreamFn ───────────────────────────────────────────
-
-/// A `StreamFn` that tracks the number of messages in each context snapshot.
-struct MockTransformTrackingStreamFn {
-    responses: Mutex<Vec<Vec<AssistantMessageEvent>>>,
-    context_sizes: Mutex<Vec<usize>>,
-}
-
-impl MockTransformTrackingStreamFn {
-    const fn new(responses: Vec<Vec<AssistantMessageEvent>>) -> Self {
-        Self {
-            responses: Mutex::new(responses),
-            context_sizes: Mutex::new(Vec::new()),
-        }
-    }
-}
-
-impl StreamFn for MockTransformTrackingStreamFn {
-    fn stream<'a>(
-        &'a self,
-        _model: &'a ModelSpec,
-        context: &'a swink_agent::AgentContext,
-        _options: &'a StreamOptions,
-        _cancellation_token: CancellationToken,
-    ) -> Pin<Box<dyn Stream<Item = AssistantMessageEvent> + Send + 'a>> {
-        self.context_sizes
-            .lock()
-            .unwrap()
-            .push(context.messages.len());
-        let events = next_response(&self.responses, default_exhausted_fallback());
-        Box::pin(futures::stream::iter(events))
-    }
-}
-
-// ─── EventCollector ──────────────────────────────────────────────────────
-
-/// Subscribes to Agent events and collects them for assertion.
-#[derive(Clone)]
-struct EventCollector {
-    names: Arc<Mutex<Vec<String>>>,
-}
-
-impl EventCollector {
-    fn new() -> Self {
-        Self {
-            names: Arc::new(Mutex::new(Vec::new())),
-        }
-    }
-
-    /// Returns a closure suitable for `agent.subscribe(...)`.
-    fn callback(&self) -> impl Fn(&AgentEvent) + Send + Sync + 'static {
-        let names = Arc::clone(&self.names);
-        move |event: &AgentEvent| {
-            let name = event_variant_name(event);
-            names.lock().unwrap().push(name);
-        }
-    }
-
-    fn event_names(&self) -> Vec<String> {
-        self.names.lock().unwrap().clone()
-    }
-
-    fn position(&self, name: &str) -> Option<usize> {
-        self.event_names().iter().position(|n| n == name)
-    }
-}
-
-fn event_variant_name(event: &AgentEvent) -> String {
-    match event {
-        AgentEvent::AgentStart => "AgentStart".into(),
-        AgentEvent::AgentEnd { .. } => "AgentEnd".into(),
-        AgentEvent::TurnStart => "TurnStart".into(),
-        AgentEvent::TurnEnd { .. } => "TurnEnd".into(),
-        AgentEvent::MessageStart => "MessageStart".into(),
-        AgentEvent::MessageUpdate { .. } => "MessageUpdate".into(),
-        AgentEvent::MessageEnd { .. } => "MessageEnd".into(),
-        AgentEvent::ToolExecutionStart { .. } => "ToolExecutionStart".into(),
-        AgentEvent::ToolExecutionUpdate { .. } => "ToolExecutionUpdate".into(),
-        AgentEvent::ToolExecutionEnd { .. } => "ToolExecutionEnd".into(),
-        AgentEvent::ToolApprovalRequested { .. } => "ToolApprovalRequested".into(),
-        AgentEvent::ToolApprovalResolved { .. } => "ToolApprovalResolved".into(),
-        AgentEvent::BeforeLlmCall { .. } => "BeforeLlmCall".into(),
-        AgentEvent::ContextCompacted { .. } => "ContextCompacted".into(),
-        AgentEvent::Custom(emission) => format!("Custom({})", emission.name),
-        AgentEvent::ModelFallback { .. } => "ModelFallback".into(),
-        _ => "Unknown".into(),
-    }
-}
 
 // ─── Helpers ─────────────────────────────────────────────────────────────
 
@@ -149,11 +57,11 @@ async fn lifecycle_events_order_single_turn() {
     let mut agent = make_agent(stream_fn);
 
     let collector = EventCollector::new();
-    let _sub = agent.subscribe(collector.callback());
+    let _sub = agent.subscribe(collector.subscriber());
 
     let _result = agent.prompt_async(vec![user_msg("hi")]).await.unwrap();
 
-    let names = collector.event_names();
+    let names = collector.events();
 
     let agent_start = collector.position("AgentStart").expect("AgentStart");
     let turn_start = collector.position("TurnStart").expect("TurnStart");
@@ -494,7 +402,7 @@ async fn transform_context_called_before_convert() {
     let transform_count = Arc::new(AtomicU32::new(0));
     let transform_clone = Arc::clone(&transform_count);
 
-    let tracking_fn = Arc::new(MockTransformTrackingStreamFn::new(vec![
+    let tracking_fn = Arc::new(MockContextCapturingStreamFn::new(vec![
         tool_call_events("tc_1", "my_tool", "{}"),
         text_only_events("done"),
     ]));
@@ -517,7 +425,7 @@ async fn transform_context_called_before_convert() {
     let _result = agent.prompt_async(vec![user_msg("go")]).await.unwrap();
 
     let tc = transform_count.load(Ordering::SeqCst);
-    let stream_calls = tracking_fn.context_sizes.lock().unwrap().len();
+    let stream_calls = tracking_fn.captured_message_counts.lock().unwrap().len();
 
     // transform_context should be called at least once per turn.
     assert!(

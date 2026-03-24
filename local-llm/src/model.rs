@@ -483,10 +483,7 @@ mod tests {
     #[tokio::test]
     async fn send_chat_request_on_unloaded_model_returns_not_ready() {
         let model = LocalModel::new(ModelConfig::default());
-        let result = model.runner().await;
-        assert!(result.is_err());
-        // Verify it's a NotReady error
-        let err = result.unwrap_err();
+        let err = model.runner().await.unwrap_err();
         assert!(err.to_string().contains("not ready"));
     }
 

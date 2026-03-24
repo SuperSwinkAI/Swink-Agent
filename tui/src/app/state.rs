@@ -79,6 +79,23 @@ pub struct DisplayMessage {
     /// Diff data for file modification tool results.
     pub diff_data: Option<crate::ui::diff::DiffData>,
 }
+impl DisplayMessage {
+    /// Create a simple display message with default field values.
+    pub const fn new(role: MessageRole, content: String) -> Self {
+        Self {
+            role,
+            content,
+            thinking: None,
+            is_streaming: false,
+            collapsed: false,
+            summary: String::new(),
+            user_expanded: false,
+            expanded_at: None,
+            plan_mode: false,
+            diff_data: None,
+        }
+    }
+}
 
 /// Top-level application state.
 #[allow(clippy::struct_excessive_bools)]

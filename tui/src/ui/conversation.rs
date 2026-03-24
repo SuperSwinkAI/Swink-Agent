@@ -112,17 +112,22 @@ impl ConversationView {
                 MessageRole::System => ("System", theme::system_color()),
             };
 
+            // Tool result selection style
+            let tool_select_style = if msg.role == MessageRole::ToolResult {
+                let mut style = Style::default().fg(role_color);
+                if selected_tool_block == Some(msg_idx) {
+                    style = style.add_modifier(Modifier::BOLD);
+                }
+                Some(style)
+            } else {
+                None
+            };
+
             // Collapsed tool result: show one-line summary
             if msg.role == MessageRole::ToolResult && msg.collapsed {
-                let is_selected = selected_tool_block == Some(msg_idx);
-                let select_style = if is_selected {
-                    Style::default().fg(role_color).add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default().fg(role_color)
-                };
                 all_lines.push(Line::from(vec![
                     Span::styled("│ ", Style::default().fg(role_color)),
-                    Span::styled("▶ ", select_style),
+                    Span::styled("▶ ", tool_select_style.unwrap_or_default()),
                     Span::styled(
                         role_label.to_string(),
                         Style::default().fg(role_color).add_modifier(Modifier::BOLD),
@@ -136,17 +141,7 @@ impl ConversationView {
             }
 
             // Expanded tool result: show ▼ indicator
-            let indicator = if msg.role == MessageRole::ToolResult {
-                let is_selected = selected_tool_block == Some(msg_idx);
-                let select_style = if is_selected {
-                    Style::default().fg(role_color).add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default().fg(role_color)
-                };
-                Some(Span::styled("▼ ", select_style))
-            } else {
-                None
-            };
+            let indicator = tool_select_style.map(|style| Span::styled("▼ ", style));
 
             // Role header line with colored left border
             let mut header_spans = vec![Span::styled("│ ", Style::default().fg(role_color))];

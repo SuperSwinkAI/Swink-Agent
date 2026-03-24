@@ -29,6 +29,18 @@ const fn to_ratatui_color(c: syntect::highlighting::Color) -> ratatui::style::Co
     ratatui::style::Color::Rgb(c.r, c.g, c.b)
 }
 
+/// Render code as indented dim text with the given foreground color.
+fn plain_code_lines(code: &str, fg: ratatui::style::Color) -> Vec<Line<'static>> {
+    code.lines()
+        .map(|line| {
+            Line::from(Span::styled(
+                format!("  {line}"),
+                Style::default().fg(fg).add_modifier(Modifier::DIM),
+            ))
+        })
+        .collect()
+}
+
 /// Highlight a code block with syntax highlighting.
 ///
 /// Falls back to plain dimmed text if the language isn't recognized.
@@ -36,16 +48,7 @@ const fn to_ratatui_color(c: syntect::highlighting::Color) -> ratatui::style::Co
 pub fn highlight_code(code: &str, language: &str) -> Vec<Line<'static>> {
     // Monochrome: skip syntect, render plain text with DIM + mono color
     if theme::color_mode() != ColorMode::Custom {
-        let mono = theme::user_color();
-        return code
-            .lines()
-            .map(|line| {
-                Line::from(Span::styled(
-                    format!("  {line}"),
-                    Style::default().fg(mono).add_modifier(Modifier::DIM),
-                ))
-            })
-            .collect();
+        return plain_code_lines(code, theme::user_color());
     }
 
     let ss = syntax_set();
@@ -58,18 +61,7 @@ pub fn highlight_code(code: &str, language: &str) -> Vec<Line<'static>> {
     };
 
     let Some(syntax) = syntax else {
-        // Fallback: plain code with dim styling
-        return code
-            .lines()
-            .map(|line| {
-                Line::from(Span::styled(
-                    format!("  {line}"),
-                    Style::default()
-                        .fg(theme::border_focused_color())
-                        .add_modifier(Modifier::DIM),
-                ))
-            })
-            .collect();
+        return plain_code_lines(code, theme::border_focused_color());
     };
 
     let syntect_theme = &ts.themes["base16-ocean.dark"];

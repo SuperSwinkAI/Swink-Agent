@@ -144,7 +144,7 @@ fn us4_custom_composite_criterion() {
     assert_eq!(ResponseMatcher.evaluate(&case, &fail).unwrap().score.verdict(), Verdict::Fail);
 }
 
-/// Edge case: Invalid regex returns Score::fail with compilation error.
+/// Edge case: Invalid regex returns `Score::fail` with compilation error.
 #[test]
 fn us4_invalid_regex_fails_with_diagnostic() {
     let case = case_with_response(ResponseCriteria::Regex {
@@ -171,7 +171,7 @@ fn us4_custom_fn_panic_caught() {
     assert!(details.contains("oops"), "expected panic message, got: {details}");
 }
 
-/// Edge case: None final_response falls back to empty string.
+/// Edge case: `None` `final_response` falls back to empty string.
 #[test]
 fn us4_none_response_falls_back_to_empty() {
     let case = case_with_response(ResponseCriteria::Exact {

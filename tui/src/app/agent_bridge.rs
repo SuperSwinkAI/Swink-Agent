@@ -45,18 +45,10 @@ impl App {
             }
             Err(error) => {
                 self.status = AgentStatus::Error;
-                self.messages.push(DisplayMessage {
-                    role: MessageRole::Error,
-                    content: format!("Failed to start agent: {error}"),
-                    thinking: None,
-                    is_streaming: false,
-                    collapsed: false,
-                    summary: String::new(),
-                    user_expanded: false,
-                    expanded_at: None,
-                    plan_mode: false,
-                    diff_data: None,
-                });
+                self.messages.push(DisplayMessage::new(
+                    MessageRole::Error,
+                    format!("Failed to start agent: {error}"),
+                ));
             }
         }
     }
@@ -71,18 +63,10 @@ impl App {
                 self.status = AgentStatus::Running;
             }
             AgentEvent::MessageStart => {
-                self.messages.push(DisplayMessage {
-                    role: MessageRole::Assistant,
-                    content: String::new(),
-                    thinking: None,
-                    is_streaming: true,
-                    collapsed: false,
-                    summary: String::new(),
-                    user_expanded: false,
-                    expanded_at: None,
-                    plan_mode: self.operating_mode == OperatingMode::Plan,
-                    diff_data: None,
-                });
+                let mut msg = DisplayMessage::new(MessageRole::Assistant, String::new());
+                msg.is_streaming = true;
+                msg.plan_mode = self.operating_mode == OperatingMode::Plan;
+                self.messages.push(msg);
             }
             AgentEvent::MessageUpdate { delta } => {
                 if let Some(msg) = self.messages.last_mut() {
@@ -134,22 +118,15 @@ impl App {
                     msg.content = content;
                     msg.thinking = thinking;
                 } else if !content.is_empty() || thinking.is_some() {
-                    self.messages.push(DisplayMessage {
-                        role: if message.stop_reason == swink_agent::StopReason::Error {
-                            MessageRole::Error
-                        } else {
-                            MessageRole::Assistant
-                        },
-                        content,
-                        thinking,
-                        is_streaming: false,
-                        collapsed: false,
-                        summary: String::new(),
-                        user_expanded: false,
-                        expanded_at: None,
-                        plan_mode: self.operating_mode == OperatingMode::Plan,
-                        diff_data: None,
-                    });
+                    let role = if message.stop_reason == swink_agent::StopReason::Error {
+                        MessageRole::Error
+                    } else {
+                        MessageRole::Assistant
+                    };
+                    let mut msg = DisplayMessage::new(role, content);
+                    msg.thinking = thinking;
+                    msg.plan_mode = self.operating_mode == OperatingMode::Plan;
+                    self.messages.push(msg);
                 }
                 self.total_input_tokens += message.usage.input;
                 self.total_output_tokens += message.usage.output;
@@ -182,24 +159,13 @@ impl App {
                             .chars()
                             .take(60)
                             .collect::<String>();
-                        let is_tool_result = role == MessageRole::ToolResult;
-                        let diff_data = crate::ui::diff::DiffData::from_details(&result.details);
-                        self.messages.push(DisplayMessage {
-                            role,
-                            content,
-                            thinking: None,
-                            is_streaming: false,
-                            collapsed: false,
-                            summary,
-                            user_expanded: false,
-                            expanded_at: if is_tool_result {
-                                Some(Instant::now())
-                            } else {
-                                None
-                            },
-                            plan_mode: false,
-                            diff_data,
-                        });
+                        let mut msg = DisplayMessage::new(role, content);
+                        msg.summary = summary;
+                        msg.diff_data = crate::ui::diff::DiffData::from_details(&result.details);
+                        if role == MessageRole::ToolResult {
+                            msg.expanded_at = Some(Instant::now());
+                        }
+                        self.messages.push(msg);
                     }
                 }
                 self.trim_messages_to_recent_turns();
@@ -276,18 +242,8 @@ impl App {
         // Send concatenated plan as user message if non-empty.
         let plan_text = plan_messages.join("\n\n---\n\n");
         if !plan_text.is_empty() {
-            self.messages.push(DisplayMessage {
-                role: MessageRole::User,
-                content: plan_text.clone(),
-                thinking: None,
-                is_streaming: false,
-                collapsed: false,
-                summary: String::new(),
-                user_expanded: false,
-                expanded_at: None,
-                plan_mode: false,
-                diff_data: None,
-            });
+            self.messages
+                .push(DisplayMessage::new(MessageRole::User, plan_text.clone()));
             self.trim_messages_to_recent_turns();
             self.conversation.auto_scroll = true;
             self.send_to_agent(plan_text);

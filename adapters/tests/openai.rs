@@ -1,33 +1,21 @@
 //! Wiremock-based tests for `OpenAiStreamFn`.
 
+mod common;
+
 use futures::StreamExt;
 use tokio_util::sync::CancellationToken;
 use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-use swink_agent::{
-    AgentContext, AssistantMessageEvent, ModelSpec, StopReason, StreamFn, StreamOptions,
-};
+use swink_agent::{AssistantMessageEvent, ModelSpec, StopReason, StreamFn, StreamOptions};
 use swink_agent_adapters::OpenAiStreamFn;
+
+use common::{event_name, find_error_message, sse_response, test_context};
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 fn test_model() -> ModelSpec {
     ModelSpec::new("openai", "gpt-4")
-}
-
-fn test_context() -> AgentContext {
-    AgentContext {
-        system_prompt: "You are a test assistant.".into(),
-        messages: Vec::new(),
-        tools: Vec::new(),
-    }
-}
-
-fn sse_response(body: &str) -> ResponseTemplate {
-    ResponseTemplate::new(200)
-        .insert_header("Content-Type", "text/event-stream")
-        .set_body_string(body.to_owned())
 }
 
 async fn collect_events(stream_fn: &OpenAiStreamFn) -> Vec<AssistantMessageEvent> {
@@ -500,33 +488,6 @@ async fn openai_done_without_finish_reason() {
         Some(StopReason::Stop),
         "expected Done with Stop when no finish_reason, got: {events:?}"
     );
-}
-
-// ── Utility functions ────────────────────────────────────────────────────────
-
-const fn event_name(event: &AssistantMessageEvent) -> &'static str {
-    match event {
-        AssistantMessageEvent::Start => "Start",
-        AssistantMessageEvent::TextStart { .. } => "TextStart",
-        AssistantMessageEvent::TextDelta { .. } => "TextDelta",
-        AssistantMessageEvent::TextEnd { .. } => "TextEnd",
-        AssistantMessageEvent::ThinkingStart { .. } => "ThinkingStart",
-        AssistantMessageEvent::ThinkingDelta { .. } => "ThinkingDelta",
-        AssistantMessageEvent::ThinkingEnd { .. } => "ThinkingEnd",
-        AssistantMessageEvent::ToolCallStart { .. } => "ToolCallStart",
-        AssistantMessageEvent::ToolCallDelta { .. } => "ToolCallDelta",
-        AssistantMessageEvent::ToolCallEnd { .. } => "ToolCallEnd",
-        AssistantMessageEvent::Done { .. } => "Done",
-        AssistantMessageEvent::Error { .. } => "Error",
-        _ => "Unknown",
-    }
-}
-
-fn find_error_message(events: &[AssistantMessageEvent]) -> Option<String> {
-    events.iter().find_map(|e| match e {
-        AssistantMessageEvent::Error { error_message, .. } => Some(error_message.clone()),
-        _ => None,
-    })
 }
 
 // ── Edge case tests ─────────────────────────────────────────────────────────
