@@ -124,7 +124,7 @@ A library consumer implements their own policy by creating a struct that impleme
 - **FR-007**: The user approval gate MUST remain separate from the policy system. PreDispatch policies run before approval, not instead of it.
 - **FR-008**: JSON Schema validation of tool arguments MUST remain hardcoded in the loop, running after PreDispatch policies and after the approval gate.
 - **FR-009**: When all policy slot vecs are empty, the loop MUST run with no restrictions (default anything-goes behavior).
-- **FR-010**: Every policy evaluation MUST receive a shared context containing: turn index, accumulated usage, accumulated cost, message count, and overflow signal.
+- **FR-010**: Every policy evaluation MUST receive a shared context containing: turn index, accumulated usage, accumulated cost, message count, overflow signal, and a read-only slice of the current conversation messages (`&[AgentMessage]`).
 - **FR-011**: PreDispatch policies MUST receive per-tool-call context with tool name, tool call ID, and mutable access to arguments.
 - **FR-012**: PostTurn policies MUST receive per-turn context with the assistant message, tool results, and stop reason.
 - **FR-013**: Each policy trait MUST include a name method returning a string identifier for tracing and debugging.
@@ -146,7 +146,7 @@ A library consumer implements their own policy by creating a struct that impleme
 
 - **PolicyVerdict**: The outcome of a policy evaluation for PreTurn, PostTurn, and PostLoop slots — Continue, Stop (with reason), or Inject (with messages). Does not include Skip.
 - **PreDispatchVerdict**: The outcome of a PreDispatch policy evaluation — Continue, Stop (with reason), Inject (with messages), or Skip (with error text). Separate type from PolicyVerdict to enforce Skip-only-in-PreDispatch at compile time.
-- **PolicyContext**: Shared read-only context for all policy evaluations — turn state, accumulated usage, accumulated cost, message count, overflow signal.
+- **PolicyContext**: Shared read-only context for all policy evaluations — turn state, accumulated usage, accumulated cost, message count, overflow signal, and conversation messages slice.
 - **ToolPolicyContext**: Per-tool-call context with mutable access to arguments, available to PreDispatch policies.
 - **TurnPolicyContext**: Per-turn context with the assistant message and tool results, available to PostTurn policies.
 - **PreTurnPolicy**: Slot 1 trait — evaluated before each LLM call. Guards and pre-conditions.
@@ -178,3 +178,4 @@ A library consumer implements their own policy by creating a struct that impleme
 - Q: How does CheckpointPolicy call async CheckpointStore from a sync evaluate method? → A: Fire-and-forget via `tokio::spawn`. CheckpointPolicy captures a `tokio::runtime::Handle` and spawns the save task. Returns Continue immediately without blocking.
 - Q: How does SandboxPolicy know which argument fields contain file paths? → A: Configured with a list of field names to check (default: `["path", "file_path", "file"]`). Only string values in those fields are validated. Skip with error on violation (no silent rewriting).
 - Q: Is PreDispatch evaluation per-tool sequential or two-pass? → A: Two-pass. First pass evaluates all PreDispatch policies for all tool calls. If any returns Stop, entire batch is aborted before any tool executes. Second pass proceeds to approval and execution for all passing tool calls.
+- Q: Should PolicyContext include conversation messages? → A: Yes. Added `messages: &[AgentMessage]` to PolicyContext (FR-010) so PreTurn policies can inspect message history. Required by 032-policy-recipes-crate (PromptInjectionGuard needs to scan user messages). Backward-compatible — existing policies simply ignore the new field.
