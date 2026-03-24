@@ -1,12 +1,12 @@
-//! Integration tests for `LoopPolicy`.
+//! Integration tests for policy slots (replaces old LoopPolicy tests).
 
 mod common;
 
 use std::sync::Arc;
 
 use swink_agent::{
-    AgentOptions, AssistantMessageEvent, ComposedPolicy, Cost, CostCapPolicy, MaxTurnsPolicy,
-    StopReason, SubAgent, Usage, stream::StreamFn,
+    AgentOptions, AssistantMessageEvent, BudgetPolicy, Cost, MaxTurnsPolicy, StopReason, SubAgent,
+    Usage, stream::StreamFn,
 };
 
 use common::{MockStreamFn, MockTool, default_model, text_only_events, tool_call_events};
@@ -27,7 +27,7 @@ async fn max_turns_limits_agent_loop() {
 
     let options = AgentOptions::new_simple("test", default_model(), stream_fn)
         .with_tools(vec![tool.clone()])
-        .with_loop_policy(MaxTurnsPolicy::new(2));
+        .with_pre_turn_policy(MaxTurnsPolicy::new(2));
 
     let mut agent = swink_agent::Agent::new(options);
     let result = agent.prompt_text("go").await;
@@ -97,10 +97,10 @@ async fn cost_cap_stops_agent() {
     let stream_fn: Arc<dyn StreamFn> = Arc::new(MockStreamFn::new(responses));
     let tool = Arc::new(MockTool::new("mock_tool"));
 
-    // Cost cap at 0.01 — should allow ~2 turns (0.005 each)
+    // BudgetPolicy with max cost 0.01 — should allow ~2 turns (0.005 each)
     let options = AgentOptions::new_simple("test", default_model(), stream_fn)
         .with_tools(vec![tool.clone()])
-        .with_loop_policy(CostCapPolicy::new(0.01));
+        .with_pre_turn_policy(BudgetPolicy::new().max_cost(0.01));
 
     let mut agent = swink_agent::Agent::new(options);
     let result = agent.prompt_text("go").await;
@@ -111,7 +111,7 @@ async fn cost_cap_stops_agent() {
 }
 
 #[tokio::test]
-async fn composed_policy_applies_all() {
+async fn composed_policies_apply_all() {
     let responses = vec![
         tool_call_events("c1", "mock_tool", "{}"),
         text_only_events("done 1"),
@@ -123,15 +123,11 @@ async fn composed_policy_applies_all() {
     let stream_fn: Arc<dyn StreamFn> = Arc::new(MockStreamFn::new(responses));
     let tool = Arc::new(MockTool::new("mock_tool"));
 
-    // Max turns = 5 (lenient), cost cap = 0.0 (strict) — cost cap wins
-    let policy = ComposedPolicy::new(vec![
-        Box::new(MaxTurnsPolicy::new(5)),
-        Box::new(CostCapPolicy::new(0.0)),
-    ]);
-
+    // Max turns = 5 (lenient), budget cost = 0.0 (strict) — budget wins
     let options = AgentOptions::new_simple("test", default_model(), stream_fn)
         .with_tools(vec![tool.clone()])
-        .with_loop_policy(policy);
+        .with_pre_turn_policy(MaxTurnsPolicy::new(5))
+        .with_pre_turn_policy(BudgetPolicy::new().max_cost(0.0));
 
     let mut agent = swink_agent::Agent::new(options);
     let result = agent.prompt_text("go").await;
@@ -165,7 +161,7 @@ async fn policy_with_sub_agent() {
     // Parent with max 3 turns
     let options = AgentOptions::new_simple("parent", default_model(), parent_stream)
         .with_tools(vec![sub as Arc<dyn swink_agent::AgentTool>])
-        .with_loop_policy(MaxTurnsPolicy::new(3));
+        .with_pre_turn_policy(MaxTurnsPolicy::new(3));
 
     let mut agent = swink_agent::Agent::new(options);
     let result = agent.prompt_text("research and answer").await;

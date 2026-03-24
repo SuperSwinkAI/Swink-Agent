@@ -122,7 +122,10 @@ impl StreamOptionsConfig {
 
 // ─── BudgetGuardConfig ───────────────────────────────────────────────────────
 
-/// Serializable representation of [`BudgetGuard`](crate::BudgetGuard).
+/// Serializable budget configuration for [`BudgetPolicy`](crate::BudgetPolicy).
+///
+/// Retained for config persistence and round-tripping. Use
+/// [`BudgetPolicy`](crate::BudgetPolicy) at runtime.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BudgetGuardConfig {
     /// Maximum total cost before blocking further LLM calls.
@@ -131,30 +134,6 @@ pub struct BudgetGuardConfig {
     /// Maximum total tokens before blocking further LLM calls.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_tokens: Option<u64>,
-}
-
-impl From<&crate::budget_guard::BudgetGuard> for BudgetGuardConfig {
-    fn from(bg: &crate::budget_guard::BudgetGuard) -> Self {
-        Self {
-            max_cost: bg.max_cost,
-            max_tokens: bg.max_tokens,
-        }
-    }
-}
-
-impl BudgetGuardConfig {
-    /// Convert back to a [`BudgetGuard`](crate::BudgetGuard).
-    #[must_use]
-    pub const fn to_budget_guard(&self) -> crate::budget_guard::BudgetGuard {
-        let mut bg = crate::budget_guard::BudgetGuard::new();
-        if let Some(c) = self.max_cost {
-            bg = bg.with_max_cost(c);
-        }
-        if let Some(t) = self.max_tokens {
-            bg = bg.with_max_tokens(t);
-        }
-        bg
-    }
 }
 
 // ─── SteeringMode / FollowUpMode serde wrappers ─────────────────────────────
@@ -350,7 +329,10 @@ impl AgentConfig {
         opts.follow_up_mode = self.follow_up_mode.into();
         opts.structured_output_max_retries = self.structured_output_max_retries;
         opts.approval_mode = self.approval_mode.into();
-        opts.budget_guard = self.budget_guard.map(|bg| bg.to_budget_guard());
+        // budget_guard field is retained for config round-tripping but is no
+        // longer applied at runtime — use BudgetPolicy via with_pre_turn_policy
+        // instead.
+        let _ = &self.budget_guard;
 
         // Clear the default transform_context — the caller may want to re-attach
         // their own, and `from_config` should not silently override.
@@ -400,7 +382,7 @@ impl crate::agent::AgentOptions {
             approval_mode: self.approval_mode.into(),
             available_models,
             fallback_models,
-            budget_guard: self.budget_guard.as_ref().map(BudgetGuardConfig::from),
+            budget_guard: None,
             extra: serde_json::Value::Null,
         }
     }
@@ -533,10 +515,6 @@ mod tests {
         let restored: BudgetGuardConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(restored.max_cost, Some(5.0));
         assert_eq!(restored.max_tokens, Some(100_000));
-
-        let guard = restored.to_budget_guard();
-        assert_eq!(guard.max_cost, Some(5.0));
-        assert_eq!(guard.max_tokens, Some(100_000));
     }
 
     #[test]

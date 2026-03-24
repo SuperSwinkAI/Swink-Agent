@@ -1,6 +1,6 @@
 use swink_agent::{
     Agent, AgentError, AgentTool, DefaultRetryStrategy, MessageProvider, RetryStrategy, StreamFn,
-    ToolApproval, ToolApprovalRequest, ToolCallTransformer, from_fns,
+    ToolApproval, ToolApprovalRequest, from_fns,
 };
 #[cfg(feature = "builtin-tools")]
 use swink_agent::{BashTool, ReadFileTool, WriteFileTool};
@@ -19,7 +19,6 @@ fn top_level_reexports_remain_consumable() {
     let _: fn(TuiConfig) -> App = App::new;
     let _tool_approval_type = std::any::type_name::<ToolApproval>();
     let _tool_request_type = std::any::type_name::<ToolApprovalRequest>();
-    let _transformer_type = std::any::type_name::<dyn ToolCallTransformer>();
     let _agent_error_type = std::any::type_name::<AgentError>();
     let _provider = from_fns(Vec::new, Vec::new);
 }

@@ -2,9 +2,13 @@
 
 **Feature**: 010-loop-policies-observability | **Date**: 2026-03-20
 
+> **Partially superseded by [031-policy-slots](../031-policy-slots/spec.md).**
+> LoopPolicy, PolicyContext, MaxTurnsPolicy, CostCapPolicy, ComposedPolicy, PostTurnHook, PostTurnAction, PostTurnContext, BudgetGuard, and BudgetExceeded are all replaced by the four-slot policy system. See 031 for the new PolicyVerdict, PolicyContext, ToolPolicyContext, TurnPolicyContext, and slot traits.
+> StreamMiddleware, MetricsCollector, TurnMetrics, ToolExecMetrics, Checkpoint, LoopCheckpoint, and CheckpointStore remain valid.
+
 ## Entities
 
-### PolicyContext
+### PolicyContext (superseded by 031)
 
 Snapshot of loop state provided to policy decisions at turn boundaries.
 
@@ -18,7 +22,7 @@ Snapshot of loop state provided to policy decisions at turn boundaries.
 
 Implements: `Debug`. Lifetime: borrows from the loop's turn data.
 
-### LoopPolicy (trait)
+### LoopPolicy (trait) — superseded by 031 PostTurnPolicy
 
 Controls whether the agent loop continues after each turn.
 
@@ -132,7 +136,7 @@ pub trait MetricsCollector: Send + Sync {
 }
 ```
 
-### PostTurnContext
+### PostTurnContext — superseded by 031 TurnPolicyContext
 
 Snapshot of state provided to the post-turn hook.
 
@@ -147,7 +151,7 @@ Snapshot of state provided to the post-turn hook.
 
 Implements: `Debug`. Lifetime: borrows from the loop's turn data.
 
-### PostTurnAction
+### PostTurnAction — superseded by 031 PolicyVerdict
 
 Action returned by a PostTurnHook to influence loop behavior.
 
@@ -159,7 +163,7 @@ Action returned by a PostTurnHook to influence loop behavior.
 
 Implements: `Debug`.
 
-### PostTurnHook (trait)
+### PostTurnHook (trait) — superseded by 031 PostTurnPolicy
 
 Hook invoked after each completed turn in the agent loop.
 
@@ -172,7 +176,7 @@ pub trait PostTurnHook: Send + Sync {
 }
 ```
 
-### BudgetGuard
+### BudgetGuard — superseded by 031 BudgetPolicy (PreTurnPolicy)
 
 Pre-call budget limits that prevent an LLM call from starting when accumulated cost or token usage has exceeded the budget.
 
@@ -252,8 +256,8 @@ Where `AsyncResult<'a, T> = Pin<Box<dyn Future<Output = io::Result<T>> + Send + 
 ## Relationships
 
 ```
-LoopPolicy <-- MaxTurnsPolicy, CostCapPolicy, ComposedPolicy, closures
-    PolicyContext --reads--> Usage, Cost, AssistantMessage, StopReason
+LoopPolicy <-- MaxTurnsPolicy, CostCapPolicy, ComposedPolicy, closures  [SUPERSEDED by 031 policy slots]
+    PolicyContext --reads--> Usage, Cost, AssistantMessage, StopReason  [SUPERSEDED by 031 PolicyContext]
 
 StreamMiddleware --wraps--> Arc<dyn StreamFn>
     StreamMiddleware --implements--> StreamFn
@@ -263,11 +267,11 @@ MetricsCollector --receives--> TurnMetrics
     TurnMetrics --contains--> Vec<ToolExecMetrics>
     TurnMetrics --contains--> Usage, Cost
 
-PostTurnHook --receives--> PostTurnContext
-    PostTurnHook --returns--> PostTurnAction
+PostTurnHook --receives--> PostTurnContext  [SUPERSEDED by 031 PostTurnPolicy + TurnPolicyContext]
+    PostTurnHook --returns--> PostTurnAction  [SUPERSEDED by 031 PolicyVerdict]
     PostTurnContext --borrows--> AssistantMessage, ToolResultMessage, Usage, Cost, AgentMessage
 
-BudgetGuard --checks--> Usage, Cost
+BudgetGuard --checks--> Usage, Cost  [SUPERSEDED by 031 BudgetPolicy in PreTurn slot]
     BudgetGuard --returns--> Result<(), BudgetExceeded>
 
 Checkpoint --contains--> Vec<LlmMessage>, Usage, Cost

@@ -3,6 +3,8 @@
 **Input**: Design documents from `/specs/007-tool-system-extensions/`
 **Prerequisites**: plan.md (required), spec.md (required for user stories), research.md, data-model.md, contracts/public-api.md
 
+> **Supersession Note**: Tasks for US1 (ToolCallTransformer) and US2 (ToolValidator) were completed as the original design. These types are superseded by `PreDispatchPolicy` (Slot 2) in [031-policy-slots](../031-policy-slots/spec.md). The dispatch pipeline order changes from "approval → transformer → validator → schema → execute" to "PreDispatch policies → approval → schema validation → execute." The code delivered by these tasks remains pending 031 implementation. Tasks for US3-US6 (ToolMiddleware, ExecutionPolicy, FnTool, Built-in Tools) remain active and unaffected.
+
 **Organization**: Tasks are grouped by user story to enable independent implementation and testing of each story.
 
 **TDD Note**: Per constitution principle II (Test-Driven Development), test tasks within each phase MUST be executed before their corresponding implementation tasks, regardless of task ID ordering. Write tests first, verify they fail, then implement.

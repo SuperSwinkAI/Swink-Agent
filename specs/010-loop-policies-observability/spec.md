@@ -5,6 +5,21 @@
 **Status**: Draft
 **Input**: Composable loop termination policies, stream middleware, structured event emission, metrics collection, post-turn hooks, budget guards, and checkpoint snapshots. Cross-cutting infrastructure for governance, observability, and resumability. References: HLD Infrastructure Layer (LoopPolicy, StreamMiddleware, Emission, MetricsCollector, PostTurnHook, BudgetGuard, Checkpoint).
 
+## Supersession Notice
+
+> **Partially superseded by [031-policy-slots](../031-policy-slots/spec.md).**
+>
+> The following concepts from this spec are replaced by the configurable policy slot system in 031:
+> - **LoopPolicy** (MaxTurnsPolicy, CostCapPolicy, ComposedPolicy) → replaced by `PostTurnPolicy` slot (Slot 3) with opt-in `MaxTurnsPolicy` and `BudgetPolicy` implementations.
+> - **PostTurnHook** (PostTurnAction: Continue/Stop/InjectMessages) → replaced by `PostTurnPolicy` slot (Slot 3). The same actions are expressed as `PolicyVerdict` variants (Continue, Stop, Inject).
+> - **BudgetGuard** (pre-call cost/token enforcement) → replaced by `PreTurnPolicy` slot (Slot 1) with opt-in `BudgetPolicy` implementation.
+>
+> The following concepts from this spec **remain valid and are NOT affected by 031**:
+> - **StreamMiddleware** (US2) — not a policy concern; stays as-is.
+> - **MetricsCollector** (US3) — observation-only, explicitly excluded from the policy system (031 FR-022).
+> - **Checkpoint** (US6) — persistence moves to an opt-in `CheckpointPolicy` in the PostTurn slot, but the `CheckpointStore` trait and snapshot format are unchanged.
+> - **Structured event emission** (US3/FR-006) — not a policy concern; stays as-is.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Limit Agent Turns and Cost (Priority: P1)
@@ -105,7 +120,7 @@ A developer enables checkpoints so the agent's loop state is snapshotted at turn
 
 ### Edge Cases
 
-- What happens when a policy and a budget guard both trigger — they are independent mechanisms at different phases. BudgetGuard is checked before each LLM call (pre-call), LoopPolicy after each turn. They cannot trigger simultaneously.
+- What happens when a policy and a budget guard both trigger — **[Superseded by 031]** Both are now policies in slots. BudgetPolicy runs in PreTurn (Slot 1), MaxTurnsPolicy runs in PostTurn (Slot 3). They are independent policies at different slots and cannot trigger simultaneously.
 - How does the system handle a post-turn hook that panics — the panic is caught and logged; the hook's action is skipped and the loop continues. A panicking hook does not crash the agent.
 - What happens when the checkpoint store fails to persist — `CheckpointStore` returns `io::Result`; failures propagate as errors. The caller decides whether to continue or stop.
 - How does stream middleware interact with retry — each retry re-invokes StreamFn, producing a new stream that gets wrapped by middleware again. Retries are also wrapped.
@@ -151,16 +166,16 @@ A developer enables checkpoints so the agent's loop state is snapshotted at turn
 
 ### Session 2026-03-20
 
-- Q: Should PostTurnHook be async with control flow actions (matching impl) or sync/observe-only (matching old spec)? → A: Match implementation — async hooks with PostTurnAction (Continue/Stop/InjectMessages).
+- Q: Should PostTurnHook be async with control flow actions (matching impl) or sync/observe-only (matching old spec)? → A: **[Superseded by 031]** PostTurnHook is replaced by sync PostTurnPolicy. Control flow actions are expressed as PolicyVerdict (Continue, Stop, Inject).
 - Q: Should panicking post-turn hooks crash the loop? → A: No — catch panic, log it, skip the hook's action, continue the loop.
-- Q: Policy vs budget guard precedence? → A: Independent mechanisms at different phases; BudgetGuard pre-call, LoopPolicy post-turn.
+- Q: Policy vs budget guard precedence? → A: **[Superseded by 031]** Both are now policies in separate slots (PreTurn vs PostTurn). Independent by design.
 - Q: Checkpoint store failure behavior? → A: io::Result propagates; caller decides.
 - Q: Stream middleware + retry? → A: Each retry produces new stream, re-wrapped by middleware.
 
 ## Assumptions
 
-- Loop policies are checked at turn boundaries, not mid-stream. Budget guards handle mid-stream enforcement.
-- Post-turn hooks are async, run after turn finalization, and return `PostTurnAction` (Continue/Stop/InjectMessages) to influence loop behavior.
-- Budget guard cancellation uses the same cancellation token mechanism as manual abort.
+- **[Superseded by 031]** Loop policies and budget guards are replaced by configurable policy slots. PreTurn policies (Slot 1) run before each LLM call. PostTurn policies (Slot 3) run after each turn. All policies are sync and return PolicyVerdict.
+- **[Superseded by 031]** Post-turn hooks are replaced by PostTurnPolicy (sync, returns PolicyVerdict with Continue/Stop/Inject variants).
+- Budget enforcement uses the same cancellation token mechanism as manual abort (unchanged).
 - Checkpoints are opt-in — when not configured, no checkpoint overhead is incurred.
 - Metrics are collected in-memory by default; persistence is the caller's responsibility.

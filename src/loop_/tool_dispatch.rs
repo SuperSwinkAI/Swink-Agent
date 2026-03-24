@@ -133,8 +133,62 @@ pub async fn execute_tools_concurrently(
             return ToolExecOutcome::ChannelClosed;
         }
 
+        // ── PreDispatch policies ──
+        let mut effective_arguments = tc.arguments.clone();
+        {
+            use crate::policy::{
+                PolicyContext, PreDispatchVerdict, ToolPolicyContext, run_pre_dispatch_policies,
+            };
+
+            let policy_ctx = PolicyContext {
+                turn_index: 0, // tool dispatch doesn't track turn index
+                accumulated_usage: &crate::types::Usage::default(),
+                accumulated_cost: &crate::types::Cost::default(),
+                message_count: 0,
+                overflow_signal: false,
+            };
+            let mut tool_ctx = ToolPolicyContext {
+                tool_name: &tc.name,
+                tool_call_id: &tc.id,
+                arguments: &mut effective_arguments,
+            };
+            match run_pre_dispatch_policies(
+                &config.pre_dispatch_policies,
+                &policy_ctx,
+                &mut tool_ctx,
+            ) {
+                PreDispatchVerdict::Continue | PreDispatchVerdict::Inject(_) => {}
+                PreDispatchVerdict::Stop(reason) => {
+                    let error_result = AgentToolResult {
+                        content: vec![ContentBlock::Text {
+                            text: format!("policy stopped tool batch: {reason}"),
+                        }],
+                        details: serde_json::Value::Null,
+                        is_error: true,
+                    };
+                    emit_error_result(&tc.id, error_result, idx, &results, tx).await;
+                    // Return all results collected so far
+                    let all_results = std::mem::take(&mut *results.lock().await);
+                    let ordered = order_results_by_tool_calls(tool_calls, &all_results);
+                    let collected_timings = std::mem::take(&mut *tool_timings.lock().await);
+                    return ToolExecOutcome::Completed {
+                        results: ordered,
+                        tool_metrics: collected_timings,
+                    };
+                }
+                PreDispatchVerdict::Skip(error_text) => {
+                    let error_result = AgentToolResult {
+                        content: vec![ContentBlock::Text { text: error_text }],
+                        details: serde_json::Value::Null,
+                        is_error: true,
+                    };
+                    emit_error_result(&tc.id, error_result, idx, &results, tx).await;
+                    continue;
+                }
+            }
+        }
+
         // ── Approval gate ──
-        let mut arguments_override: Option<serde_json::Value> = None;
         if let Some(ref approve_fn) = config.approve_tool
             && config.approval_mode != ApprovalMode::Bypassed
         {
@@ -142,34 +196,13 @@ pub async fn execute_tools_concurrently(
                 .get(tc.name.as_str())
                 .is_some_and(|t| t.requires_approval());
             match check_approval(approve_fn, tc, idx, requires_approval, &results, tx).await {
-                ApprovalOutcome::Approved => {} // proceed to dispatch
+                ApprovalOutcome::Approved => {}
                 ApprovalOutcome::ApprovedWith(new_params) => {
-                    arguments_override = Some(new_params);
+                    effective_arguments = new_params;
                 }
                 ApprovalOutcome::Rejected => continue,
                 ApprovalOutcome::ChannelClosed => return ToolExecOutcome::ChannelClosed,
             }
-        }
-
-        // Resolve effective arguments (may be overridden by ApprovedWith)
-        let mut effective_arguments = arguments_override.unwrap_or_else(|| tc.arguments.clone());
-
-        // ── Tool call transformer ──
-        if let Some(ref transformer) = config.tool_call_transformer {
-            transformer.transform(&tc.name, &mut effective_arguments);
-        }
-
-        // ── Custom validator check ──
-        if let Some(ref validator) = config.tool_validator
-            && let Err(msg) = validator.validate(&tc.name, &effective_arguments)
-        {
-            let error_result = AgentToolResult {
-                content: vec![ContentBlock::Text { text: msg }],
-                details: serde_json::Value::Null,
-                is_error: true,
-            };
-            emit_error_result(&tc.id, error_result, idx, &results, tx).await;
-            continue;
         }
 
         prepared.push(PreparedToolCall {

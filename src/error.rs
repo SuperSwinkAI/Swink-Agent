@@ -70,10 +70,6 @@ pub enum AgentError {
         source: Box<dyn std::error::Error + Send + Sync>,
     },
 
-    /// Accumulated cost or token usage exceeded the configured budget guard limit.
-    #[error("{0}")]
-    BudgetExceeded(crate::budget_guard::BudgetExceeded),
-
     /// The operation was cancelled via a `CancellationToken`.
     #[error("operation aborted via cancellation token")]
     Aborted,

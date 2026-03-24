@@ -3,9 +3,15 @@
 **Branch**: `010-loop-policies-observability` | **Date**: 2026-03-20 | **Spec**: [spec.md](./spec.md)
 **Input**: Feature specification from `/specs/010-loop-policies-observability/spec.md`
 
+## Supersession Notice
+
+> **Partially superseded by [031-policy-slots](../031-policy-slots/spec.md).**
+> LoopPolicy, PostTurnHook, PostTurnAction, PostTurnContext, BudgetGuard, and BudgetExceeded are replaced by the four-slot policy system in 031. The types defined here were implemented as the original design and are now being superseded. See 031 spec for the replacement architecture.
+> StreamMiddleware, MetricsCollector, Emission, Checkpoint, LoopCheckpoint, and CheckpointStore remain valid and active.
+
 ## Summary
 
-Cross-cutting infrastructure for agent loop governance, observability, and resumability. Provides composable loop policies (`LoopPolicy` trait with `MaxTurnsPolicy`, `CostCapPolicy`, `ComposedPolicy`, and closure blanket impl) for post-turn termination decisions. Stream middleware (`StreamMiddleware`) wraps `StreamFn` using the decorator pattern for event interception, transformation, and filtering. Structured emission (`Emission`) carries named payloads for enriched events. An async `MetricsCollector` trait receives `TurnMetrics` snapshots (LLM call duration, per-tool timing, token usage, cost). Async `PostTurnHook` callbacks return `PostTurnAction` (Continue/Stop/InjectMessages) to influence loop control flow. `BudgetGuard` provides pre-call cost/token gating for real-time budget enforcement. `Checkpoint` and `LoopCheckpoint` capture serializable snapshots of agent state, with `CheckpointStore` as an async trait for persistence.
+Cross-cutting infrastructure for agent loop governance, observability, and resumability. ~~Provides composable loop policies (`LoopPolicy` trait with `MaxTurnsPolicy`, `CostCapPolicy`, `ComposedPolicy`, and closure blanket impl) for post-turn termination decisions.~~ **[Superseded by 031]** Loop termination, post-turn hooks, and budget enforcement are now handled by configurable policy slots. Stream middleware (`StreamMiddleware`) wraps `StreamFn` using the decorator pattern for event interception, transformation, and filtering. Structured emission (`Emission`) carries named payloads for enriched events. An async `MetricsCollector` trait receives `TurnMetrics` snapshots (LLM call duration, per-tool timing, token usage, cost). ~~Async `PostTurnHook` callbacks return `PostTurnAction` (Continue/Stop/InjectMessages) to influence loop control flow. `BudgetGuard` provides pre-call cost/token gating for real-time budget enforcement.~~ **[Superseded by 031]** `Checkpoint` and `LoopCheckpoint` capture serializable snapshots of agent state, with `CheckpointStore` as an async trait for persistence.
 
 ## Technical Context
 

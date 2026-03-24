@@ -50,7 +50,20 @@ MSRV **1.88** (edition 2024). Workspace deps centralized in root `Cargo.toml`.
 - `overflow_signal` lives on `LoopState`, **not** `AgentContext`. Resets after `transform_context`.
 - `transform_context` is **synchronous** (not async).
 - `CONTEXT_OVERFLOW_SENTINEL` triggers overflow retry — loop control signal, not an error.
-- Tool dispatch order: Approval → ToolCallTransformer → ToolValidator → Schema validation → `execute()`.
+- Tool dispatch order: PreDispatch policies → Approval → Schema validation → `execute()`. (Old order was Approval → Transformer → Validator → Schema → Execute, superseded by 031-policy-slots.)
+- `RetryStrategy::should_retry()` is the **sole** retryability decision point — `is_retryable()` pre-check was removed.
+
+### Policy Slots (`src/policy.rs`, `src/policies/`)
+
+- Four configurable policy slots: PreTurn (before LLM call), PreDispatch (per tool call), PostTurn (after turn), PostLoop (after inner loop).
+- Two verdict enums: `PolicyVerdict` (Continue/Stop/Inject) and `PreDispatchVerdict` (+ Skip). Compile-time enforcement that Skip is only valid in PreDispatch.
+- Slot runner uses `AssertUnwindSafe` + `catch_unwind` — traits only need `Send + Sync`, not `UnwindSafe`.
+- Empty policy vecs = zero overhead, no allocation. Default is anything-goes.
+- Stateful policies (e.g., `LoopDetectionPolicy`) use interior mutability (`Mutex`) — trait takes `&self`.
+- `CheckpointPolicy` bridges sync/async via `tokio::spawn` fire-and-forget. Captures `Handle::current()` at construction.
+- PreDispatch uses two-pass approach: evaluate all tool calls first, then dispatch. Stop aborts entire batch before any tool executes.
+- `SandboxPolicy` checks configured field names (default: `["path", "file_path", "file"]`) — Skip with error, no silent rewriting.
+- Old fields removed from `AgentLoopConfig`: `budget_guard`, `loop_policy`, `post_turn_hook`, `tool_validator`, `tool_call_transformer`. Replaced by 4 policy vecs.
 - `RetryStrategy::should_retry()` is the **sole** retryability decision point — `is_retryable()` pre-check was removed.
 
 ### Streaming (`src/stream.rs`)
@@ -131,6 +144,8 @@ MSRV **1.88** (edition 2024). Workspace deps centralized in root `Cargo.toml`.
 - N/A (in-memory types; `FsEvalStore` for optional JSON persistence — covered by spec 024) (023-eval-trajectory-matching)
 - Rust 1.88 (edition 2024) + `swink-agent` (core), `serde`/`serde_json`, `tokio`/`tokio-util`, `futures`, `sha2`, `regex`, `thiserror`, `tracing`, `uuid`; optional `serde_yaml` via `yaml` feature gate (024-eval-runner-governance)
 - Local filesystem via JSON files (`FsEvalStore`); optional YAML input via feature gate (024-eval-runner-governance)
+- Rust 1.88 (edition 2024) + `tokio` (async runtime), `tokio-util` (CancellationToken), `serde_json` (Value for arguments), `tracing` (debug/warn logging), `std::panic::catch_unwind` (panic isolation) (031-policy-slots)
+- N/A (in-memory policy evaluation; CheckpointPolicy delegates to existing `CheckpointStore` trait) (031-policy-slots)
 
 ## Recent Changes
 - 001-workspace-scaffold: Added Rust 1.88 (edition 2024) + serde, serde_json, tokio, futures, thiserror, uuid, reqwest, jsonschema, schemars, rand, tracing, toml (all centralized in workspace `[workspace.dependencies]`)

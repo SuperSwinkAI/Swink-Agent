@@ -2,7 +2,11 @@
 
 **Feature**: 010-loop-policies-observability | **Date**: 2026-03-20
 
-## LoopPolicy (trait)
+> **Partially superseded by [031-policy-slots](../../031-policy-slots/spec.md).**
+> LoopPolicy, PolicyContext, MaxTurnsPolicy, CostCapPolicy, ComposedPolicy, PostTurnHook, PostTurnAction, PostTurnContext, BudgetGuard, and BudgetExceeded are replaced by the four-slot policy system.
+> See 031 for the new API contracts. StreamMiddleware, MetricsCollector, Checkpoint, and CheckpointStore APIs remain valid.
+
+## LoopPolicy (trait) — superseded by 031
 
 ```rust
 pub trait LoopPolicy: Send + Sync {
@@ -117,7 +121,7 @@ pub trait MetricsCollector: Send + Sync {
 }
 ```
 
-## PostTurnContext
+## PostTurnContext — superseded by 031 TurnPolicyContext
 
 ```rust
 pub struct PostTurnContext<'a> {
@@ -130,7 +134,7 @@ pub struct PostTurnContext<'a> {
 }
 ```
 
-## PostTurnAction
+## PostTurnAction — superseded by 031 PolicyVerdict
 
 ```rust
 pub enum PostTurnAction {
@@ -140,7 +144,7 @@ pub enum PostTurnAction {
 }
 ```
 
-## PostTurnHook (trait)
+## PostTurnHook (trait) — superseded by 031 PostTurnPolicy
 
 ```rust
 pub trait PostTurnHook: Send + Sync {
@@ -151,7 +155,7 @@ pub trait PostTurnHook: Send + Sync {
 }
 ```
 
-## BudgetGuard
+## BudgetGuard — superseded by 031 BudgetPolicy (PreTurnPolicy)
 
 ```rust
 // Constructor
@@ -170,7 +174,7 @@ guard.max_cost: Option<f64>
 guard.max_tokens: Option<u64>
 ```
 
-## BudgetExceeded
+## BudgetExceeded — superseded by 031 PolicyVerdict::Stop
 
 ```rust
 pub enum BudgetExceeded {
@@ -242,11 +246,21 @@ Where `AsyncResult<'a, T> = Pin<Box<dyn Future<Output = io::Result<T>> + Send + 
 All public types are re-exported from `lib.rs`:
 
 ```rust
-pub use loop_policy::{LoopPolicy, PolicyContext, MaxTurnsPolicy, CostCapPolicy, ComposedPolicy};
+// [031] Superseded — replaced by policy slot traits and built-in policy impls:
+// pub use loop_policy::{LoopPolicy, PolicyContext, MaxTurnsPolicy, CostCapPolicy, ComposedPolicy};
+// pub use post_turn_hook::{PostTurnHook, PostTurnContext, PostTurnAction};
+// pub use budget_guard::{BudgetGuard, BudgetExceeded};
+
+// [031] New policy slot exports (defined and documented in 031-policy-slots):
+// pub use policy::{PolicyVerdict, PolicyContext, ToolPolicyContext, TurnPolicyContext};
+// pub use policy::{PreTurnPolicy, PreDispatchPolicy, PostTurnPolicy, PostLoopPolicy};
+// pub use policy::{BudgetPolicy, MaxTurnsPolicy, SandboxPolicy, ToolDenyListPolicy};
+// pub use policy::{CheckpointPolicy, LoopDetectionPolicy};
+// See 031-policy-slots spec for the full API contract of these types.
+
+// Unchanged:
 pub use stream_middleware::StreamMiddleware;
 pub use emit::Emission;
 pub use metrics::{MetricsCollector, TurnMetrics, ToolExecMetrics};
-pub use post_turn_hook::{PostTurnHook, PostTurnContext, PostTurnAction};
-pub use budget_guard::{BudgetGuard, BudgetExceeded};
 pub use checkpoint::{Checkpoint, LoopCheckpoint, CheckpointStore};
 ```

@@ -149,11 +149,11 @@ All return `Self` for chaining:
 .with_structured_output_max_retries(n)
 .with_approve_tool(callback)
 .with_approval_mode(mode)
-.with_tool_validator(validator)
+.with_pre_turn_policy(policy)       // [031] pushes to pre_turn_policies vec
+.with_pre_dispatch_policy(policy)   // [031] pushes to pre_dispatch_policies vec
+.with_post_turn_policy(policy)      // [031] pushes to post_turn_policies vec
+.with_post_loop_policy(policy)      // [031] pushes to post_loop_policies vec
 .with_available_models(models)
-.with_tool_call_transformer(transformer)
-.with_loop_policy(policy)
-.with_post_turn_hook(hook)
 .with_event_forwarder(callback)
 .with_async_transform_context(transformer)
 .with_checkpoint_store(store)
@@ -162,9 +162,10 @@ All return `Self` for chaining:
 .with_model_fallback(fallback)
 .with_message_channel() -> MessageSender  // mutates in place, returns sender
 .with_external_message_provider(provider)
-.with_budget_guard(guard)
-.with_cost_limit(max_cost)
-.with_token_limit(max_tokens)
+// [031] Budget enforcement is now via BudgetPolicy in pre_turn_policies
+// .with_budget_guard(guard)     — removed by 031
+// .with_cost_limit(max_cost)    — removed by 031; use BudgetPolicy::new().max_cost(n)
+// .with_token_limit(max_tokens) — removed by 031; use BudgetPolicy::new().max_tokens(n)
 .with_tool_execution_policy(policy)
 .with_plan_mode_addendum(addendum)
 ```

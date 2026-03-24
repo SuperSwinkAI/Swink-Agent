@@ -3,9 +3,15 @@
 **Branch**: `007-tool-system-extensions` | **Date**: 2026-03-20 | **Spec**: [spec.md](./spec.md)
 **Input**: Feature specification from `/specs/007-tool-system-extensions/spec.md`
 
+## Supersession Notice
+
+> **Partially superseded by [031-policy-slots](../031-policy-slots/spec.md).**
+> `ToolCallTransformer` and `ToolValidator` are replaced by `PreDispatchPolicy` (Slot 2) in the 031 policy slot system. The dispatch pipeline order changes from "approval → transformer → validator → schema → execute" to "PreDispatch policies → approval → schema validation → execute."
+> `ToolMiddleware`, `ToolExecutionPolicy`, `FnTool`, and built-in tools remain valid and active.
+
 ## Summary
 
-Extend the core tool system with composable pipeline hooks and convenience abstractions. The feature adds six components to the `swink-agent` core crate: a `ToolCallTransformer` trait for pre-validation argument rewriting, a `ToolValidator` trait for accept/reject gating, a `ToolMiddleware` decorator for wrapping `execute()`, a `ToolExecutionPolicy` enum controlling dispatch concurrency, a `FnTool` closure-based tool builder, and three built-in tools (`BashTool`, `ReadFileTool`, `WriteFileTool`) behind the `builtin-tools` feature gate. The dispatch pipeline is fixed: approval, transformer, validator, schema validation, execute.
+Extend the core tool system with composable pipeline hooks and convenience abstractions. The feature adds components to the `swink-agent` core crate: ~~a `ToolCallTransformer` trait for pre-validation argument rewriting, a `ToolValidator` trait for accept/reject gating,~~ **[Superseded by 031 PreDispatchPolicy]** a `ToolMiddleware` decorator for wrapping `execute()`, a `ToolExecutionPolicy` enum controlling dispatch concurrency, a `FnTool` closure-based tool builder, and three built-in tools (`BashTool`, `ReadFileTool`, `WriteFileTool`) behind the `builtin-tools` feature gate. ~~The dispatch pipeline is fixed: approval, transformer, validator, schema validation, execute.~~ **[Superseded by 031]** New order: PreDispatch policies → approval → schema validation → execute.
 
 ## Technical Context
 

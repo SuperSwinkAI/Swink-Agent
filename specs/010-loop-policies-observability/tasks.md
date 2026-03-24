@@ -3,6 +3,8 @@
 **Input**: Design documents from `/specs/010-loop-policies-observability/`
 **Prerequisites**: plan.md (required), spec.md (required for user stories), research.md, data-model.md, contracts/
 
+> **Supersession Note**: Tasks for US1 (LoopPolicy), US4 (PostTurnHook), and US5 (BudgetGuard) were completed as the original design. These types are superseded by the configurable policy slot system in [031-policy-slots](../031-policy-slots/spec.md). The code delivered by these tasks remains in the codebase pending 031 implementation, at which point it will be replaced. Tasks for US2 (StreamMiddleware), US3 (MetricsCollector), and US6 (Checkpoint) remain active and unaffected.
+
 **Organization**: Tasks are grouped by user story to enable independent implementation and testing of each story.
 
 ## Format: `[ID] [P?] [Story] Description`

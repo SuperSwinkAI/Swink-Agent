@@ -82,32 +82,26 @@ where
     F: Fn(ToolApprovalRequest) -> Pin<Box<dyn Future<Output = ToolApproval> + Send>> + Send + Sync + 'static;
 ```
 
-## `src/tool_call_transformer.rs` — Argument Rewriting
+## `src/tool_call_transformer.rs` — SUPERSEDED by 031 PreDispatchPolicy
+
+> **Removed by [031-policy-slots](../../031-policy-slots/spec.md).** Argument rewriting is now handled by PreDispatchPolicy implementations in Slot 2, which receive `&mut arguments` in ToolPolicyContext.
 
 ```rust
-/// Transforms tool-call arguments before validation and execution.
-/// Runs unconditionally (not gated by approval mode).
-///
-/// Execution order: Approval → Transformer → Validator → Schema validation → execute()
-pub trait ToolCallTransformer: Send + Sync {
-    fn transform(&self, tool_name: &str, arguments: &mut Value);
-}
-
-// Blanket impl for closures:
-impl<F: Fn(&str, &mut Value) + Send + Sync> ToolCallTransformer for F { ... }
+// REMOVED — replaced by PreDispatchPolicy (031)
+// pub trait ToolCallTransformer: Send + Sync {
+//     fn transform(&self, tool_name: &str, arguments: &mut Value);
+// }
 ```
 
-## `src/tool_validator.rs` — Accept/Reject Gating
+## `src/tool_validator.rs` — SUPERSEDED by 031 PreDispatchPolicy
+
+> **Removed by [031-policy-slots](../../031-policy-slots/spec.md).** Tool call rejection is now handled by PreDispatchPolicy implementations returning PolicyVerdict::Skip.
 
 ```rust
-/// Custom validation hook invoked before tool execution.
-/// Runs after transformation, before schema validation.
-pub trait ToolValidator: Send + Sync {
-    fn validate(&self, tool_name: &str, arguments: &Value) -> Result<(), String>;
-}
-
-// Blanket impl for closures:
-impl<F: Fn(&str, &Value) -> Result<(), String> + Send + Sync> ToolValidator for F { ... }
+// REMOVED — replaced by PreDispatchPolicy (031)
+// pub trait ToolValidator: Send + Sync {
+//     fn validate(&self, tool_name: &str, arguments: &Value) -> Result<(), String>;
+// }
 ```
 
 ## `src/tool_middleware.rs` — Execution Decorator
@@ -233,8 +227,9 @@ pub use tool::{
     redact_sensitive_values, selective_approve, unknown_tool_result, validate_schema,
     validate_tool_arguments, validation_error_result,
 };
-pub use tool_call_transformer::ToolCallTransformer;
-pub use tool_validator::ToolValidator;
+// [031] Superseded — replaced by PreDispatchPolicy slot:
+// pub use tool_call_transformer::ToolCallTransformer;
+// pub use tool_validator::ToolValidator;
 pub use tool_middleware::ToolMiddleware;
 pub use tool_execution_policy::{
     PriorityFn, ToolCallSummary, ToolExecutionPolicy, ToolExecutionStrategy,
