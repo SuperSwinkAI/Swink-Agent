@@ -34,6 +34,7 @@ pub struct PolicyContext<'a> {
     pub accumulated_cost: &'a Cost,
     pub message_count: usize,
     pub overflow_signal: bool,
+    pub new_messages: &'a [AgentMessage],
 }
 
 /// Per-tool-call context for PreDispatch policies.

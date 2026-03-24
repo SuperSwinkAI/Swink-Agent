@@ -96,7 +96,7 @@ An agent operator configures an audit logger so that every assistant turn is rec
 
 ### Session 2026-03-24
 
-- Q: How does PromptInjectionGuard access user messages given PreTurnPolicy::evaluate only receives PolicyContext (no message content)? → A: Extend PolicyContext in core (spec 031) to include `messages: &[AgentMessage]` so all PreTurn policies can read conversation history. This requires a backward-compatible update to 031-policy-slots.
+- Q: How does PromptInjectionGuard access user messages given PreTurnPolicy::evaluate only receives PolicyContext (no message content)? → A: Extend PolicyContext in core (spec 031) to include `new_messages: &[AgentMessage]` — only messages added since the last evaluation. For PreTurn, this is the pending batch (user messages). Avoids redundant re-scanning. This requires a backward-compatible update to 031-policy-slots.
 - Q: Should PromptInjectionGuard also scan tool results for indirect prompt injection? → A: Yes. The guard implements both PreTurnPolicy (scan user messages) and PostTurnPolicy (scan tool results). Operators register it in one or both slots. Single struct, dual trait implementation.
 - Q: Should PiiRedactor also scan tool call arguments? → A: No. PostTurn fires after tool execution; tool arguments are internal. The redactor cleans assistant text content being returned to the user, which is the user-facing output.
 
@@ -106,8 +106,8 @@ An agent operator configures an audit logger so that every assistant turn is rec
 
 - **FR-001**: The crate MUST be a new workspace member named `swink-agent-policies` that depends only on `swink-agent`'s public API (re-exported types from `lib.rs`) — no `pub(crate)` or internal module imports.
 - **FR-002**: Each policy MUST be independently feature-gated (`prompt-guard`, `pii`, `content-filter`, `audit`) with an `all` feature that enables everything, defaulting to `all`.
-- **FR-003**: `PolicyContext` in core (031-policy-slots) MUST be extended to include a `messages: &[AgentMessage]` field so PreTurn policies can read conversation history. This is a backward-compatible addition.
-- **FR-004**: `PromptInjectionGuard` MUST implement both `PreTurnPolicy` and `PostTurnPolicy` traits. In PreTurn, it scans the most recent user message from `PolicyContext.messages`. In PostTurn, it scans tool result content from `TurnPolicyContext.tool_results`. Operators can register it in either or both slots.
+- **FR-003**: `PolicyContext` in core (031-policy-slots) MUST be extended to include a `new_messages: &[AgentMessage]` field containing only messages added since the last evaluation. For PreTurn, this is the pending batch. This is a backward-compatible addition.
+- **FR-004**: `PromptInjectionGuard` MUST implement both `PreTurnPolicy` and `PostTurnPolicy` traits. In PreTurn, it scans user messages from `PolicyContext.new_messages`. In PostTurn, it scans tool result content from `TurnPolicyContext.tool_results`. Operators can register it in either or both slots.
 - **FR-005**: `PromptInjectionGuard` MUST ship with a default set of regex patterns covering common injection phrases (e.g., "ignore all previous instructions", "disregard your system prompt", "you are now a", role-reassignment attempts).
 - **FR-006**: `PromptInjectionGuard` MUST allow users to add custom regex patterns alongside the defaults and to disable individual default patterns.
 - **FR-007**: `PiiRedactor` MUST implement the `PostTurnPolicy` trait and scan the assistant message text content for PII patterns (email, phone, SSN, credit card, IPv4).
@@ -144,7 +144,7 @@ An agent operator configures an audit logger so that every assistant turn is rec
 
 ## Assumptions
 
-- `PolicyContext` in core will be extended with a `messages: &[AgentMessage]` field (FR-003). This is a backward-compatible addition to 031-policy-slots — existing policies that don't use the field are unaffected. The 031 spec and implementation must be updated as a prerequisite.
+- `PolicyContext` in core has been extended with a `new_messages: &[AgentMessage]` field (FR-003). For PreTurn, this contains only messages added since the last evaluation (the pending batch). For PostTurn/PostLoop/PreDispatch, it is empty — current-turn data is in `TurnPolicyContext` or `ToolPolicyContext`. This avoids redundant re-scanning. Already implemented in 031-policy-slots.
 - The `PostTurnPolicy` trait receives `TurnPolicyContext` which includes `assistant_message: &AssistantMessage`. The `PiiRedactor` and `ContentFilter` will extract text content from this to scan.
 - The `PiiRedactor`'s Inject verdict constructs a replacement `AgentMessage` containing the redacted text. The exact message construction approach will be determined in the plan phase based on `AgentMessage` variants available in the public API.
 - Default PII patterns target US formats (US phone numbers, SSNs, etc.). International format support is a future enhancement, not in scope.

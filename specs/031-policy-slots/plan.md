@@ -91,6 +91,24 @@ tests/
 
 **Structure Decision**: All policy infrastructure lives in the core `swink-agent` crate. Traits and runner in `src/policy.rs` (single file — estimated ~200 lines). Built-in implementations in `src/policies/` directory (one file per policy). No new crates needed.
 
+## Phase 13: PolicyContext Messages Extension (032 Prerequisite)
+
+**Purpose**: Add `new_messages: &'a [AgentMessage]` field to `PolicyContext` so PreTurn policies can inspect new messages without redundantly re-scanning already-evaluated content. Required by 032-policy-recipes-crate (PromptInjectionGuard). Backward-compatible.
+
+**Design**: Only messages added since the last policy evaluation are passed:
+- **PreTurn**: `&context_messages[new_messages_start..]` — the pending batch appended at the start of the turn
+- **PostTurn**: `&[]` — current-turn data is in `TurnPolicyContext`
+- **PostLoop**: `&[]` — no new messages at this point
+- **PreDispatch**: `&[]` — tool-call data is in `ToolPolicyContext`
+
+**Changes**:
+- `src/policy.rs`: Add `new_messages` field to `PolicyContext` struct with doc comments
+- `src/loop_/turn.rs`: Track `new_messages_start` before pending append; pass `&context_messages[start..]`
+- `src/loop_/mod.rs`: Pass `&[]` at PostTurn and PostLoop construction sites
+- `src/loop_/tool_dispatch.rs`: Pass `&[]` at PreDispatch construction site
+- Unit tests: Update all `make_ctx` helpers and inline `PolicyContext` constructions to include `new_messages: &[]`
+- Docs: Update `data-model.md`, `contracts/public-api.md`, `quickstart.md`
+
 ## Notes
 
 - **Deletion scope**: 5 source files removed (`budget_guard.rs`, `loop_policy.rs`, `post_turn_hook.rs`, `tool_validator.rs`, `tool_call_transformer.rs`). Their functionality is absorbed by the policy slot system and built-in policy implementations.

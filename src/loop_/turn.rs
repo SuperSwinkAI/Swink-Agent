@@ -34,7 +34,9 @@ pub async fn run_single_turn(
         "turn starting"
     );
 
-    // i. Inject any pending messages into context
+    // i. Inject any pending messages into context.
+    // Track where new messages start so PreTurn policies only see the fresh batch.
+    let new_messages_start = state.context_messages.len();
     if !state.pending_messages.is_empty() {
         state.context_messages.append(&mut state.pending_messages);
     }
@@ -56,6 +58,7 @@ pub async fn run_single_turn(
             accumulated_cost: &state.accumulated_cost,
             message_count: state.context_messages.len(),
             overflow_signal: state.overflow_signal,
+            new_messages: &state.context_messages[new_messages_start..],
         };
         match run_policies(&config.pre_turn_policies, &policy_ctx) {
             PolicyVerdict::Continue => {}
