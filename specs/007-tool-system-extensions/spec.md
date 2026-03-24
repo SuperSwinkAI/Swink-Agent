@@ -5,6 +5,21 @@
 **Status**: Draft
 **Input**: Extended tool system capabilities beyond the base trait: tool call transformers, validators, middleware, execution policies, closure-based tools, and built-in tools (shell, file read, file write) behind a feature gate. References: PRD §4 (Tool System), HLD Implementations Layer (transformer, tool_mw, sub_agent), HLD Tool System architecture doc.
 
+## Supersession Notice
+
+> **Partially superseded by [031-policy-slots](../031-policy-slots/spec.md).**
+>
+> The following concepts from this spec are replaced by the configurable policy slot system in 031:
+> - **ToolCallTransformer** (US1) → replaced by `PreDispatchPolicy` slot (Slot 2). Argument mutation is supported via `&mut arguments` in `ToolPolicyContext`.
+> - **ToolValidator** (US2) → replaced by `PreDispatchPolicy` slot (Slot 2). Rejection is expressed as `PolicyVerdict::Skip(error_text)`.
+> - **Tool dispatch pipeline order** (FR-004: approval → transformer → validator → schema → execute) → new order is: **PreDispatch policies → Approval gate → Schema validation (hardcoded) → Execute**. See 031 FR-007, FR-008.
+>
+> The following concepts from this spec **remain valid and are NOT affected by 031**:
+> - **ToolMiddleware** (US3) — wraps `execute()`, not the dispatch pipeline. Not a policy.
+> - **ToolExecutionPolicy** (US4) — controls concurrency, not policy decisions. Stays as-is.
+> - **FnTool / closure-based tools** (US5) — unchanged.
+> - **Built-in tools** (US6) — unchanged.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Rewrite Tool Calls Before Execution (Priority: P1)
@@ -116,7 +131,7 @@ A developer enables the built-in tools feature to get pre-made tools for shell c
 - **FR-001**: System MUST support a tool call transformer that rewrites tool calls before validation and execution. It MUST run unconditionally on every tool call.
 - **FR-002**: The transformer MUST be distinct from the validator — it rewrites, not rejects.
 - **FR-003**: System MUST support a tool validator that accepts or rejects tool calls after transformation but before execution. Rejected calls MUST produce an error result without invoking execute.
-- **FR-004**: The tool dispatch pipeline order MUST be: approval → transformer → validator → schema validation → execute.
+- **FR-004**: **[Superseded by 031]** The tool dispatch pipeline order is now: PreDispatch policies (Slot 2) → approval → schema validation (hardcoded) → execute. See 031 FR-007, FR-008.
 - **FR-005**: System MUST support tool middleware that wraps the execute function using the decorator pattern, enabling composable cross-cutting behavior.
 - **FR-006**: Middleware MUST NOT alter the tool's name, description, or schema — only the execution behavior.
 - **FR-007**: System MUST support configurable tool execution policies: concurrent (default), sequential, and priority.
@@ -127,8 +142,8 @@ A developer enables the built-in tools feature to get pre-made tools for shell c
 
 ### Key Entities
 
-- **ToolCallTransformer**: Hook that rewrites tool calls before validation — modifies arguments, renames tools, injects parameters.
-- **ToolValidator**: Hook that accepts or rejects tool calls after transformation — distinct from transformer (rejects vs rewrites).
+- **ToolCallTransformer**: **[Superseded by 031]** Replaced by `PreDispatchPolicy` slot (Slot 2) with `&mut arguments` support.
+- **ToolValidator**: **[Superseded by 031]** Replaced by `PreDispatchPolicy` slot (Slot 2) with `PolicyVerdict::Skip` for rejection.
 - **ToolMiddleware**: Decorator wrapping a tool's execute function — composable cross-cutting behavior.
 - **ToolExecutionPolicy**: Configuration controlling how a batch of tool calls is executed: concurrent, sequential, or priority.
 - **FnTool**: Convenience wrapper that creates a tool from a closure.
@@ -159,8 +174,8 @@ A developer enables the built-in tools feature to get pre-made tools for shell c
 
 ## Assumptions
 
-- The tool call transformer runs unconditionally — it is not gated by approval. This is distinct from the validator.
-- The dispatch pipeline order is fixed and not configurable by the caller.
+- **[Superseded by 031]** Tool call transformers and validators are replaced by PreDispatch policies (Slot 2). Policies run unconditionally before approval, matching the original transformer behavior.
+- **[Superseded by 031]** The dispatch pipeline order is now: PreDispatch policies → approval → schema validation → execute. See 031.
 - Built-in tools are enabled by default via the `builtin-tools` feature flag on the core crate.
 - Closure-based tools support async execution and cancellation tokens.
 - Middleware composition order is determined by the order middleware is applied (outermost wraps first).

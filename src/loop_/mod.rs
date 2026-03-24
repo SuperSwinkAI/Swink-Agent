@@ -224,25 +224,17 @@ pub struct AgentLoopConfig {
     /// Controls whether the approval gate is active. Defaults to `Enabled`.
     pub approval_mode: ApprovalMode,
 
-    /// Optional custom validation hook invoked after JSON Schema validation
-    /// but before tool execution.
-    pub tool_validator: Option<Arc<dyn crate::tool_validator::ToolValidator>>,
+    /// Pre-turn policies evaluated before each LLM call.
+    pub pre_turn_policies: Vec<Arc<dyn crate::policy::PreTurnPolicy>>,
 
-    /// Optional loop policy to control agent loop continuation.
-    pub loop_policy: Option<Arc<dyn crate::loop_policy::LoopPolicy>>,
+    /// Pre-dispatch policies evaluated per tool call, before approval.
+    pub pre_dispatch_policies: Vec<Arc<dyn crate::policy::PreDispatchPolicy>>,
 
-    /// Optional pre-execution argument transformer.
-    ///
-    /// Runs after approval but before validation, allowing programmatic
-    /// argument rewriting (sandboxing, path rewrites, etc.).
-    pub tool_call_transformer: Option<Arc<dyn crate::tool_call_transformer::ToolCallTransformer>>,
+    /// Post-turn policies evaluated after each completed turn.
+    pub post_turn_policies: Vec<Arc<dyn crate::policy::PostTurnPolicy>>,
 
-    /// Optional post-turn lifecycle hook invoked after each completed turn.
-    ///
-    /// Runs after the `TurnEnd` event is emitted, before the loop decides
-    /// whether to continue. Enables memory persistence, metrics flush, or
-    /// dynamic steering between turns.
-    pub post_turn_hook: Option<Arc<dyn crate::post_turn_hook::PostTurnHook>>,
+    /// Post-loop policies evaluated after the inner loop exits.
+    pub post_loop_policies: Vec<Arc<dyn crate::policy::PostLoopPolicy>>,
 
     /// Optional async context transformer (runs before the sync transformer).
     ///
@@ -258,12 +250,6 @@ pub struct AgentLoopConfig {
     /// its retry budget on a retryable error.
     pub fallback: Option<ModelFallback>,
 
-    /// Optional pre-call budget guard checked before each LLM call.
-    ///
-    /// When set, the loop compares accumulated cost/tokens against the
-    /// configured limits and stops gracefully if the budget is exceeded.
-    pub budget_guard: Option<crate::budget_guard::BudgetGuard>,
-
     /// Controls how tool calls within a turn are dispatched.
     ///
     /// Defaults to [`ToolExecutionPolicy::Concurrent`] for backward
@@ -278,16 +264,20 @@ impl std::fmt::Debug for AgentLoopConfig {
             .field("stream_options", &self.stream_options)
             .field("tools", &format_args!("[{} tool(s)]", self.tools.len()))
             .field(
-                "tool_validator",
-                &self.tool_validator.as_ref().map(|_| "..."),
+                "pre_turn_policies",
+                &format_args!("[{} policy(ies)]", self.pre_turn_policies.len()),
             )
             .field(
-                "tool_call_transformer",
-                &self.tool_call_transformer.as_ref().map(|_| "..."),
+                "pre_dispatch_policies",
+                &format_args!("[{} policy(ies)]", self.pre_dispatch_policies.len()),
             )
             .field(
-                "post_turn_hook",
-                &self.post_turn_hook.as_ref().map(|_| "..."),
+                "post_turn_policies",
+                &format_args!("[{} policy(ies)]", self.post_turn_policies.len()),
+            )
+            .field(
+                "post_loop_policies",
+                &format_args!("[{} policy(ies)]", self.post_loop_policies.len()),
             )
             .field("tool_execution_policy", &self.tool_execution_policy)
             .finish_non_exhaustive()
@@ -428,39 +418,80 @@ async fn run_loop_inner(
 
                 let should_break = match turn_result {
                     TurnOutcome::ContinueInner => {
-                        // Update turn tracking and check loop policy
                         state.turn_index += 1;
-                        if let Some(ref policy) = config.loop_policy
-                            && let Some(ref msg) = state.last_assistant_message
-                        {
-                            let ctx = crate::loop_policy::PolicyContext {
-                                turn_index: state.turn_index,
-                                accumulated_usage: state.accumulated_usage.clone(),
-                                accumulated_cost: state.accumulated_cost.clone(),
-                                assistant_message: msg,
-                                stop_reason: msg.stop_reason,
-                            };
-                            if policy.should_continue(&ctx) {
-                                false
-                            } else {
-                                info!("loop policy stopped agent after turn {}", state.turn_index);
-                                true
-                            }
-                        } else {
-                            false
-                        }
+                        false
                     }
                     TurnOutcome::BreakInner => true,
                     TurnOutcome::Return => return,
                 };
 
-                // Post-turn hook: invoke after each completed turn
-                if invoke_post_turn_hook(&config, &mut state).await {
-                    break 'inner;
+                // Post-turn policies: invoke after each completed turn
+                if let Some(ref msg) = state.last_assistant_message {
+                    use crate::policy::{
+                        PolicyContext, PolicyVerdict, TurnPolicyContext, run_post_turn_policies,
+                    };
+
+                    let policy_ctx = PolicyContext {
+                        turn_index: state.turn_index,
+                        accumulated_usage: &state.accumulated_usage,
+                        accumulated_cost: &state.accumulated_cost,
+                        message_count: state.context_messages.len(),
+                        overflow_signal: state.overflow_signal,
+                    };
+                    let turn_ctx = TurnPolicyContext {
+                        assistant_message: msg,
+                        tool_results: &state.last_tool_results,
+                        stop_reason: msg.stop_reason,
+                    };
+                    match run_post_turn_policies(
+                        &config.post_turn_policies,
+                        &policy_ctx,
+                        &turn_ctx,
+                    ) {
+                        PolicyVerdict::Continue => {}
+                        PolicyVerdict::Stop(reason) => {
+                            info!("post-turn policy stopped agent: {reason}");
+                            break 'inner;
+                        }
+                        PolicyVerdict::Inject(msgs) => {
+                            state.pending_messages.extend(msgs);
+                        }
+                    }
                 }
 
                 if should_break {
                     break 'inner;
+                }
+            }
+
+            // Post-loop policies: evaluate after inner loop exits
+            {
+                use crate::policy::{PolicyContext, PolicyVerdict, run_post_loop_policies};
+
+                let policy_ctx = PolicyContext {
+                    turn_index: state.turn_index,
+                    accumulated_usage: &state.accumulated_usage,
+                    accumulated_cost: &state.accumulated_cost,
+                    message_count: state.context_messages.len(),
+                    overflow_signal: state.overflow_signal,
+                };
+                match run_post_loop_policies(&config.post_loop_policies, &policy_ctx) {
+                    PolicyVerdict::Continue => {}
+                    PolicyVerdict::Stop(_reason) => {
+                        let _ = emit(
+                            &tx,
+                            AgentEvent::AgentEnd {
+                                messages: Arc::new(state.context_messages),
+                            },
+                        )
+                        .await;
+                        info!("post-loop policy stopped agent");
+                        return;
+                    }
+                    PolicyVerdict::Inject(msgs) => {
+                        state.pending_messages.extend(msgs);
+                        continue 'outer;
+                    }
                 }
             }
 
@@ -497,39 +528,6 @@ pub enum TurnOutcome {
     BreakInner,
     /// Return from the entire loop (channel closed, error, or abort).
     Return,
-}
-
-/// Invoke the post-turn hook if configured. Returns `true` if the loop should break.
-async fn invoke_post_turn_hook(config: &AgentLoopConfig, state: &mut LoopState) -> bool {
-    let Some(ref hook) = config.post_turn_hook else {
-        return false;
-    };
-    let Some(ref msg) = state.last_assistant_message else {
-        return false;
-    };
-    let hook_ctx = crate::post_turn_hook::PostTurnContext {
-        turn_index: state.turn_index,
-        assistant_message: msg,
-        tool_results: &state.last_tool_results,
-        accumulated_usage: &state.accumulated_usage,
-        accumulated_cost: &state.accumulated_cost,
-        messages: &state.context_messages,
-    };
-    match hook.on_turn_end(&hook_ctx).await {
-        crate::post_turn_hook::PostTurnAction::Continue => false,
-        crate::post_turn_hook::PostTurnAction::Stop(reason) => {
-            if let Some(ref r) = reason {
-                info!("post-turn hook stopped agent: {}", r);
-            } else {
-                info!("post-turn hook stopped agent");
-            }
-            true
-        }
-        crate::post_turn_hook::PostTurnAction::InjectMessages(msgs) => {
-            state.pending_messages.extend(msgs);
-            false
-        }
-    }
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────

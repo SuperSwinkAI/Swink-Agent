@@ -152,10 +152,10 @@ pub struct Agent {
     in_flight_llm_messages: Option<Vec<AgentMessage>>,
     approve_tool: Option<ApproveToolArc>,
     approval_mode: ApprovalMode,
-    tool_validator: Option<Arc<dyn crate::tool_validator::ToolValidator>>,
-    loop_policy: Option<Arc<dyn crate::loop_policy::LoopPolicy>>,
-    tool_call_transformer: Option<Arc<dyn crate::tool_call_transformer::ToolCallTransformer>>,
-    post_turn_hook: Option<Arc<dyn crate::post_turn_hook::PostTurnHook>>,
+    pre_turn_policies: Vec<Arc<dyn crate::policy::PreTurnPolicy>>,
+    pre_dispatch_policies: Vec<Arc<dyn crate::policy::PreDispatchPolicy>>,
+    post_turn_policies: Vec<Arc<dyn crate::policy::PostTurnPolicy>>,
+    post_loop_policies: Vec<Arc<dyn crate::policy::PostLoopPolicy>>,
     /// Extra `model/stream_fn` pairs for model cycling.
     model_stream_fns: Vec<(ModelSpec, Arc<dyn StreamFn>)>,
     /// Event forwarders that receive cloned events after listener dispatch.
@@ -170,8 +170,6 @@ pub struct Agent {
     fallback: Option<crate::fallback::ModelFallback>,
     /// Optional external message provider.
     external_message_provider: Option<Arc<dyn MessageProvider>>,
-    /// Optional budget guard.
-    budget_guard: Option<crate::budget_guard::BudgetGuard>,
     /// Tool execution policy.
     tool_execution_policy: crate::tool_execution_policy::ToolExecutionPolicy,
     /// Optional plan mode addendum (falls back to `DEFAULT_PLAN_MODE_ADDENDUM`).
@@ -239,10 +237,10 @@ impl Agent {
             in_flight_llm_messages: None,
             approve_tool: options.approve_tool,
             approval_mode: options.approval_mode,
-            tool_validator: options.tool_validator,
-            loop_policy: options.loop_policy,
-            tool_call_transformer: options.tool_call_transformer,
-            post_turn_hook: options.post_turn_hook,
+            pre_turn_policies: options.pre_turn_policies,
+            pre_dispatch_policies: options.pre_dispatch_policies,
+            post_turn_policies: options.post_turn_policies,
+            post_loop_policies: options.post_loop_policies,
             model_stream_fns,
             event_forwarders: options.event_forwarders,
             async_transform_context: options.async_transform_context,
@@ -250,7 +248,6 @@ impl Agent {
             metrics_collector: options.metrics_collector,
             fallback: options.fallback,
             external_message_provider: options.external_message_provider,
-            budget_guard: options.budget_guard,
             tool_execution_policy: options.tool_execution_policy,
             plan_mode_addendum: options.plan_mode_addendum,
         }
@@ -1083,14 +1080,13 @@ impl Agent {
                 b
             }),
             approval_mode: self.approval_mode,
-            tool_validator: self.tool_validator.clone(),
-            loop_policy: self.loop_policy.clone(),
-            tool_call_transformer: self.tool_call_transformer.clone(),
-            post_turn_hook: self.post_turn_hook.clone(),
+            pre_turn_policies: self.pre_turn_policies.clone(),
+            pre_dispatch_policies: self.pre_dispatch_policies.clone(),
+            post_turn_policies: self.post_turn_policies.clone(),
+            post_loop_policies: self.post_loop_policies.clone(),
             async_transform_context: self.async_transform_context.as_ref().map(Arc::clone),
             metrics_collector: self.metrics_collector.as_ref().map(Arc::clone),
             fallback: self.fallback.clone(),
-            budget_guard: self.budget_guard.clone(),
             tool_execution_policy: self.tool_execution_policy.clone(),
         }
     }

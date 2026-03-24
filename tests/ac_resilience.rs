@@ -285,7 +285,7 @@ async fn followup_decision_controls_continuation_policy_limits() {
     let mut agent = Agent::new(
         AgentOptions::new("test", default_model(), stream_fn, default_convert)
             .with_tools(vec![tool.clone()])
-            .with_loop_policy(MaxTurnsPolicy::new(1))
+            .with_pre_turn_policy(MaxTurnsPolicy::new(1))
             .with_retry_strategy(Box::new(
                 DefaultRetryStrategy::default()
                     .with_jitter(false)

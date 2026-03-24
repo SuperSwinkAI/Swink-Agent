@@ -61,14 +61,13 @@ fn default_config(
         message_provider: None,
         approve_tool: None,
         approval_mode: swink_agent::ApprovalMode::default(),
-        tool_validator: None,
-        loop_policy: None,
-        tool_call_transformer: None,
-        post_turn_hook: None,
+        pre_turn_policies: vec![],
+        pre_dispatch_policies: vec![],
+        post_turn_policies: vec![],
+        post_loop_policies: vec![],
         async_transform_context: None,
         metrics_collector: None,
         fallback,
-        budget_guard: None,
         tool_execution_policy: swink_agent::ToolExecutionPolicy::default(),
     }
 }

@@ -64,16 +64,16 @@ pub struct AgentOptions {
     pub approve_tool: Option<ApproveToolArc>,
     /// Controls whether the approval gate is active. Defaults to `Enabled`.
     pub approval_mode: ApprovalMode,
-    /// Optional custom validation hook.
-    pub tool_validator: Option<Arc<dyn crate::tool_validator::ToolValidator>>,
     /// Additional model specs for model cycling (each with its own stream function).
     pub available_models: Vec<(ModelSpec, Arc<dyn StreamFn>)>,
-    /// Optional loop policy.
-    pub loop_policy: Option<Arc<dyn crate::loop_policy::LoopPolicy>>,
-    /// Optional pre-execution argument transformer.
-    pub tool_call_transformer: Option<Arc<dyn crate::tool_call_transformer::ToolCallTransformer>>,
-    /// Optional post-turn lifecycle hook.
-    pub post_turn_hook: Option<Arc<dyn crate::post_turn_hook::PostTurnHook>>,
+    /// Pre-turn policies evaluated before each LLM call.
+    pub pre_turn_policies: Vec<Arc<dyn crate::policy::PreTurnPolicy>>,
+    /// Pre-dispatch policies evaluated per tool call, before approval.
+    pub pre_dispatch_policies: Vec<Arc<dyn crate::policy::PreDispatchPolicy>>,
+    /// Post-turn policies evaluated after each completed turn.
+    pub post_turn_policies: Vec<Arc<dyn crate::policy::PostTurnPolicy>>,
+    /// Post-loop policies evaluated after the inner loop exits.
+    pub post_loop_policies: Vec<Arc<dyn crate::policy::PostLoopPolicy>>,
     /// Event forwarders that receive all dispatched events.
     pub event_forwarders: Vec<crate::event_forwarder::EventForwarderFn>,
     /// Optional async context transformer (runs before the sync transformer).
@@ -98,11 +98,6 @@ pub struct AgentOptions {
     /// Set via [`with_message_channel`](Self::with_message_channel) or
     /// [`with_external_message_provider`](Self::with_external_message_provider).
     pub external_message_provider: Option<Arc<dyn MessageProvider>>,
-    /// Optional pre-call budget guard for mid-turn cost/token gating.
-    ///
-    /// Checked before each LLM call. Complements [`CostCapPolicy`](crate::CostCapPolicy)
-    /// which only checks after turns.
-    pub budget_guard: Option<crate::budget_guard::BudgetGuard>,
     /// Controls how tool calls within a turn are dispatched.
     ///
     /// Defaults to [`Concurrent`](crate::tool_execution_policy::ToolExecutionPolicy::Concurrent).
@@ -139,11 +134,11 @@ impl AgentOptions {
             structured_output_max_retries: 3,
             approve_tool: None,
             approval_mode: ApprovalMode::default(),
-            tool_validator: None,
             available_models: Vec::new(),
-            loop_policy: None,
-            tool_call_transformer: None,
-            post_turn_hook: None,
+            pre_turn_policies: Vec::new(),
+            pre_dispatch_policies: Vec::new(),
+            post_turn_policies: Vec::new(),
+            post_loop_policies: Vec::new(),
             event_forwarders: Vec::new(),
             async_transform_context: None,
             checkpoint_store: None,
@@ -151,7 +146,6 @@ impl AgentOptions {
             token_counter: None,
             fallback: None,
             external_message_provider: None,
-            budget_guard: None,
             tool_execution_policy: crate::tool_execution_policy::ToolExecutionPolicy::default(),
             plan_mode_addendum: None,
         }
@@ -301,16 +295,6 @@ impl AgentOptions {
         self
     }
 
-    /// Set the custom tool validator.
-    #[must_use]
-    pub fn with_tool_validator(
-        mut self,
-        validator: impl crate::tool_validator::ToolValidator + 'static,
-    ) -> Self {
-        self.tool_validator = Some(Arc::new(validator));
-        self
-    }
-
     /// Set additional models for model cycling.
     #[must_use]
     pub fn with_available_models(mut self, models: Vec<(ModelSpec, Arc<dyn StreamFn>)>) -> Self {
@@ -318,33 +302,43 @@ impl AgentOptions {
         self
     }
 
-    /// Set the pre-execution tool-call argument transformer.
+    /// Add a pre-turn policy (evaluated before each LLM call).
     #[must_use]
-    pub fn with_tool_call_transformer(
+    pub fn with_pre_turn_policy(
         mut self,
-        transformer: impl crate::tool_call_transformer::ToolCallTransformer + 'static,
+        policy: impl crate::policy::PreTurnPolicy + 'static,
     ) -> Self {
-        self.tool_call_transformer = Some(Arc::new(transformer));
+        self.pre_turn_policies.push(Arc::new(policy));
         self
     }
 
-    /// Set the loop policy for controlling agent loop continuation.
+    /// Add a pre-dispatch policy (evaluated per tool call, before approval).
     #[must_use]
-    pub fn with_loop_policy(
+    pub fn with_pre_dispatch_policy(
         mut self,
-        policy: impl crate::loop_policy::LoopPolicy + 'static,
+        policy: impl crate::policy::PreDispatchPolicy + 'static,
     ) -> Self {
-        self.loop_policy = Some(Arc::new(policy));
+        self.pre_dispatch_policies.push(Arc::new(policy));
         self
     }
 
-    /// Set the post-turn lifecycle hook.
+    /// Add a post-turn policy (evaluated after each completed turn).
     #[must_use]
-    pub fn with_post_turn_hook(
+    pub fn with_post_turn_policy(
         mut self,
-        hook: impl crate::post_turn_hook::PostTurnHook + 'static,
+        policy: impl crate::policy::PostTurnPolicy + 'static,
     ) -> Self {
-        self.post_turn_hook = Some(Arc::new(hook));
+        self.post_turn_policies.push(Arc::new(policy));
+        self
+    }
+
+    /// Add a post-loop policy (evaluated after the inner loop exits).
+    #[must_use]
+    pub fn with_post_loop_policy(
+        mut self,
+        policy: impl crate::policy::PostLoopPolicy + 'static,
+    ) -> Self {
+        self.post_loop_policies.push(Arc::new(policy));
         self
     }
 
@@ -437,34 +431,6 @@ impl AgentOptions {
     ) -> Self {
         self.external_message_provider = Some(Arc::new(provider));
         self
-    }
-
-    /// Set a pre-call budget guard for mid-turn cost/token gating.
-    ///
-    /// The guard is checked before each LLM call. If accumulated cost or
-    /// token usage exceeds the configured limits, the loop stops gracefully.
-    /// This complements [`CostCapPolicy`](crate::CostCapPolicy) which only
-    /// checks after turns complete.
-    #[must_use]
-    pub const fn with_budget_guard(mut self, guard: crate::budget_guard::BudgetGuard) -> Self {
-        self.budget_guard = Some(guard);
-        self
-    }
-
-    /// Convenience: set a maximum cost limit (creates a [`BudgetGuard`](crate::BudgetGuard)).
-    ///
-    /// Equivalent to `with_budget_guard(BudgetGuard::new().with_max_cost(max_cost))`.
-    #[must_use]
-    pub const fn with_cost_limit(self, max_cost: f64) -> Self {
-        self.with_budget_guard(crate::budget_guard::BudgetGuard::new().with_max_cost(max_cost))
-    }
-
-    /// Convenience: set a maximum token limit (creates a [`BudgetGuard`](crate::BudgetGuard)).
-    ///
-    /// Equivalent to `with_budget_guard(BudgetGuard::new().with_max_tokens(max_tokens))`.
-    #[must_use]
-    pub const fn with_token_limit(self, max_tokens: u64) -> Self {
-        self.with_budget_guard(crate::budget_guard::BudgetGuard::new().with_max_tokens(max_tokens))
     }
 
     /// Set the tool execution policy.

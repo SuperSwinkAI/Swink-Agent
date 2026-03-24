@@ -9,7 +9,7 @@
 
 ### Session 2026-03-23
 
-- Q: Should 023 formally acknowledge BudgetGuard integration with TrajectoryCollector? → A: Yes — add BudgetGuard as a key entity since it's integral to trajectory collection.
+- Q: Should 023 formally acknowledge BudgetGuard integration with TrajectoryCollector? → A: Yes — add BudgetGuard as a key entity since it's integral to trajectory collection. **[Note: BudgetGuard is superseded by BudgetPolicy (PreTurn slot) per 031-policy-slots. The budget enforcement concept remains; the mechanism changes from a dedicated struct to a policy in PreTurnPolicy Slot 1.]**
 - Q: Should the spec document all three TrajectoryMatcher modes (Exact, InOrder, AnyOrder)? → A: Yes — document all three with InOrder as default.
 - Q: Should spec entity names align with the implementation's hierarchy (Invocation → TurnRecord → RecordedToolCall)? → A: Yes — update to match code structure.
 - Q: Should the spec resolve all 8 edge cases with answers from the implementation? → A: Yes — resolve all 8.
@@ -121,7 +121,7 @@ An evaluator wants to verify that the agent's final response meets specific cont
 - **TrajectoryMatcher**: Compares an actual trajectory against a golden path (expected invocation sequence), producing a comparison report of matched, missing, and unexpected steps. Supports three match modes: **Exact** (strict sequence, no extras allowed), **InOrder** (golden steps must appear in order, extras allowed between them — the default), and **AnyOrder** (all golden steps must appear, order irrelevant).
 - **EfficiencyEvaluator**: Scores a trajectory's efficiency based on duplicate invocation ratio (0.6 weight) and step count ratio (0.4 weight).
 - **ResponseCriteria**: A set of matching rules applied to the agent's final response, supporting exact, contains, regex, and custom matching strategies.
-- **BudgetGuard**: Real-time budget enforcement during trajectory collection. Monitors cost, token usage, and turn count against thresholds; cancels the agent run via CancellationToken when any limit is exceeded while allowing the trajectory collector to drain the stream and capture a complete trace.
+- **BudgetGuard / BudgetPolicy**: Real-time budget enforcement during trajectory collection. Monitors cost, token usage, and turn count against thresholds; cancels the agent run via CancellationToken when any limit is exceeded while allowing the trajectory collector to drain the stream and capture a complete trace. **[Note: The standalone BudgetGuard struct is superseded by BudgetPolicy in the PreTurn policy slot per 031-policy-slots. The enforcement behavior and CancellationToken integration are preserved.]**
 
 ## Success Criteria *(mandatory)*
 

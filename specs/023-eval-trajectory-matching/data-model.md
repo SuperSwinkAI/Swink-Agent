@@ -15,7 +15,7 @@ TurnRecord 1──* RecordedToolCall      (ordered by execution)
 TurnRecord 1──* ToolResultMessage     (from core crate)
 TurnRecord 1──1 AssistantMessage      (from core crate)
 
-BudgetGuard ──monitors──> TrajectoryCollector (accumulated metrics)
+BudgetGuard ──monitors──> TrajectoryCollector (accumulated metrics)  [SUPERSEDED by 031 BudgetPolicy]
 BudgetGuard ──cancels──> CancellationToken
 
 TrajectoryMatcher ──compares──> (Invocation, EvalCase.expected_trajectory)
@@ -80,7 +80,7 @@ Score ──derives──> Verdict
 | `Regex` | `pattern: String` | JSON with `mode: "regex"` |
 | `Custom` | `Arc<dyn Fn(&str) -> Score>` | `#[serde(skip)]` — programmatic only |
 
-### BudgetGuard
+### BudgetGuard — superseded by 031 BudgetPolicy (PreTurnPolicy)
 | Field | Type | Constraints |
 |---|---|---|
 | `cancel` | `CancellationToken` | Cancelled when any threshold exceeded |

@@ -44,6 +44,39 @@ pub async fn run_single_turn(
         return handle_cancellation(config, state, tx).await;
     }
 
+    // Pre-turn policies: check budget, turn caps, etc. before emitting TurnStart.
+    // A Stop verdict here breaks the inner loop without emitting TurnStart/TurnEnd.
+    {
+        use crate::policy::{PolicyContext, PolicyVerdict, run_policies};
+        use tracing::info;
+
+        let policy_ctx = PolicyContext {
+            turn_index: state.turn_index,
+            accumulated_usage: &state.accumulated_usage,
+            accumulated_cost: &state.accumulated_cost,
+            message_count: state.context_messages.len(),
+            overflow_signal: state.overflow_signal,
+        };
+        match run_policies(&config.pre_turn_policies, &policy_ctx) {
+            PolicyVerdict::Continue => {}
+            PolicyVerdict::Stop(reason) => {
+                info!("pre-turn policy stopped agent: {reason}");
+                // Emit AgentEnd directly — no TurnStart was emitted yet.
+                let _ = super::emit(
+                    tx,
+                    super::AgentEvent::AgentEnd {
+                        messages: Arc::new(std::mem::take(&mut state.context_messages)),
+                    },
+                )
+                .await;
+                return TurnOutcome::Return;
+            }
+            PolicyVerdict::Inject(msgs) => {
+                state.pending_messages.extend(msgs);
+            }
+        }
+    }
+
     // Emit TurnStart
     if !emit(tx, AgentEvent::TurnStart).await {
         return TurnOutcome::Return;
@@ -81,15 +114,6 @@ pub async fn run_single_turn(
     } else {
         None
     };
-
-    // v-pre. Budget guard: check accumulated cost/tokens before calling the LLM
-    if let Some(ref guard) = config.budget_guard
-        && let Err(exceeded) = guard.check(&state.accumulated_usage, &state.accumulated_cost)
-    {
-        let error = crate::error::AgentError::BudgetExceeded(exceeded);
-        let error_msg = super::build_error_message(&config.model, &error);
-        return handle_error_stop(error_msg, state, tx).await;
-    }
 
     // v. Build context and call StreamFn with retry logic.
     // Filter tools based on model capabilities (strip tools if the model

@@ -340,7 +340,27 @@ async fn tool_result_in_followup_message() {
     );
 }
 
-// ─── T017: tool_call_transformation (AC 12) ──────────────────────────────
+// ─── T017: tool_call_transformation via PreDispatch policy (AC 12) ──────
+
+/// A PreDispatch policy that injects a field into tool call arguments.
+struct InjectFieldPolicy;
+
+impl swink_agent::PreDispatchPolicy for InjectFieldPolicy {
+    fn name(&self) -> &str {
+        "inject_field"
+    }
+
+    fn evaluate(
+        &self,
+        _ctx: &swink_agent::PolicyContext<'_>,
+        tool: &mut swink_agent::ToolPolicyContext<'_>,
+    ) -> swink_agent::PreDispatchVerdict {
+        if let Some(obj) = tool.arguments.as_object_mut() {
+            obj.insert("injected".to_string(), json!(true));
+        }
+        swink_agent::PreDispatchVerdict::Continue
+    }
+}
 
 #[tokio::test]
 async fn tool_call_transformation() {
@@ -361,9 +381,7 @@ async fn tool_call_transformation() {
     let mut agent = Agent::new(
         AgentOptions::new("test", default_model(), stream_fn, default_convert)
             .with_tools(vec![tool.clone()])
-            .with_tool_call_transformer(|_name: &str, args: &mut Value| {
-                args["injected"] = json!(true);
-            })
+            .with_pre_dispatch_policy(InjectFieldPolicy)
             .with_retry_strategy(fast_retry()),
     );
 
@@ -375,7 +393,7 @@ async fn tool_call_transformation() {
     assert_eq!(
         captured["injected"],
         json!(true),
-        "transformer should have injected a field"
+        "policy should have injected a field"
     );
     assert_eq!(
         captured["original"],
@@ -384,7 +402,28 @@ async fn tool_call_transformation() {
     );
 }
 
-// ─── T018: tool_validator_rejects_call (edge case) ───────────────────────
+// ─── T018: tool_validator_rejects_call via PreDispatch policy (edge case) ──
+
+/// A PreDispatch policy that skips (rejects) a specific tool.
+struct BlockToolPolicy;
+
+impl swink_agent::PreDispatchPolicy for BlockToolPolicy {
+    fn name(&self) -> &str {
+        "block_tool"
+    }
+
+    fn evaluate(
+        &self,
+        _ctx: &swink_agent::PolicyContext<'_>,
+        tool: &mut swink_agent::ToolPolicyContext<'_>,
+    ) -> swink_agent::PreDispatchVerdict {
+        if tool.tool_name == "blocked" {
+            swink_agent::PreDispatchVerdict::Skip("blocked".into())
+        } else {
+            swink_agent::PreDispatchVerdict::Continue
+        }
+    }
+}
 
 #[tokio::test]
 async fn tool_validator_rejects_call() {
@@ -398,13 +437,7 @@ async fn tool_validator_rejects_call() {
     let mut agent = Agent::new(
         AgentOptions::new("test", default_model(), stream_fn, default_convert)
             .with_tools(vec![tool.clone()])
-            .with_tool_validator(|name: &str, _args: &Value| -> Result<(), String> {
-                if name == "blocked" {
-                    Err("blocked".into())
-                } else {
-                    Ok(())
-                }
-            })
+            .with_pre_dispatch_policy(BlockToolPolicy)
             .with_retry_strategy(fast_retry()),
     );
 
@@ -412,7 +445,7 @@ async fn tool_validator_rejects_call() {
 
     assert!(
         !tool.was_executed(),
-        "tool should NOT be executed when validator rejects it"
+        "tool should NOT be executed when policy skips it"
     );
 
     // Verify there is an error ToolResult in the messages
@@ -425,6 +458,6 @@ async fn tool_validator_rejects_call() {
     });
     assert!(
         has_error_result,
-        "should have an error tool result when validator rejects"
+        "should have an error tool result when policy skips"
     );
 }

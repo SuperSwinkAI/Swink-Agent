@@ -3,7 +3,6 @@ mod agent;
 pub mod agent_options;
 pub(crate) mod agent_subscriptions;
 mod async_context_transformer;
-mod budget_guard;
 mod checkpoint;
 mod config;
 mod context;
@@ -18,14 +17,14 @@ mod fallback;
 mod fn_tool;
 mod handle;
 mod loop_;
-mod loop_policy;
 pub mod message_provider;
 mod messaging;
 pub mod metrics;
 mod model_catalog;
 mod model_presets;
 mod orchestrator;
-mod post_turn_hook;
+pub mod policies;
+pub mod policy;
 mod registry;
 mod retry;
 mod schema;
@@ -33,10 +32,8 @@ pub mod stream;
 mod stream_middleware;
 mod sub_agent;
 pub mod tool;
-mod tool_call_transformer;
 mod tool_execution_policy;
 mod tool_middleware;
-mod tool_validator;
 pub mod tools;
 pub mod types;
 mod util;
@@ -52,7 +49,6 @@ pub use agent::{
     SubscriptionId, default_convert,
 };
 pub use async_context_transformer::AsyncContextTransformer;
-pub use budget_guard::{BudgetExceeded, BudgetGuard};
 pub use checkpoint::{Checkpoint, CheckpointStore, LoopCheckpoint};
 pub use config::{
     AgentConfig, ApprovalModeConfig, BudgetGuardConfig, FollowUpModeConfig, RetryConfig,
@@ -72,7 +68,6 @@ pub use fallback::ModelFallback;
 pub use fn_tool::FnTool;
 pub use handle::{AgentHandle, AgentStatus};
 pub use loop_::{AgentEvent, AgentLoopConfig, TurnEndReason, agent_loop, agent_loop_continue};
-pub use loop_policy::{ComposedPolicy, CostCapPolicy, LoopPolicy, MaxTurnsPolicy, PolicyContext};
 pub use message_provider::{
     ChannelMessageProvider, ComposedMessageProvider, MessageProvider, MessageSender, from_fns,
     message_channel,
@@ -88,7 +83,6 @@ pub use orchestrator::{
     AgentOrchestrator, AgentRequest, DefaultSupervisor, OrchestratedHandle, SupervisorAction,
     SupervisorPolicy,
 };
-pub use post_turn_hook::{PostTurnAction, PostTurnContext, PostTurnHook};
 pub use registry::{AgentId, AgentRef, AgentRegistry};
 pub use retry::{DefaultRetryStrategy, RetryStrategy};
 pub use schema::schema_for;
@@ -104,12 +98,10 @@ pub use tool::{
     ToolMetadata, redact_sensitive_values, selective_approve, unknown_tool_result, validate_schema,
     validate_tool_arguments, validation_error_result,
 };
-pub use tool_call_transformer::ToolCallTransformer;
 pub use tool_execution_policy::{
     PriorityFn, ToolCallSummary, ToolExecutionPolicy, ToolExecutionStrategy,
 };
 pub use tool_middleware::ToolMiddleware;
-pub use tool_validator::ToolValidator;
 #[cfg(feature = "builtin-tools")]
 pub use tools::{BashTool, ReadFileTool, WriteFileTool, builtin_tools};
 pub use types::{
@@ -121,3 +113,12 @@ pub use types::{
 pub use util::now_timestamp;
 
 pub use display::{CoreDisplayMessage, DisplayRole, IntoDisplayMessages};
+pub use policies::{
+    BudgetPolicy, CheckpointPolicy, LoopDetectionAction, LoopDetectionPolicy, MaxTurnsPolicy,
+    SandboxPolicy, ToolDenyListPolicy,
+};
+pub use policy::{
+    PolicyContext, PolicyVerdict, PostLoopPolicy, PostTurnPolicy, PreDispatchPolicy,
+    PreDispatchVerdict, PreTurnPolicy, ToolPolicyContext, TurnPolicyContext, run_policies,
+    run_post_loop_policies, run_post_turn_policies, run_pre_dispatch_policies,
+};

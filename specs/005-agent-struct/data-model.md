@@ -1,6 +1,7 @@
 # Data Model: Agent Struct & Public API
 
 **Feature**: 005-agent-struct | **Date**: 2026-03-20
+**Revised**: 2026-03-24 — Updated for [031-policy-slots](../031-policy-slots/spec.md): replaced tool_validator, loop_policy, tool_call_transformer, post_turn_hook with four policy slot vecs; marked budget_guard as removed.
 
 ## Entities
 
@@ -28,10 +29,10 @@ The stateful public API wrapper. Owns all mutable state and provides invocation 
 | `in_flight_llm_messages` | `Option<Vec<AgentMessage>>` | Accumulated messages during a run |
 | `approve_tool` | `Option<ApproveToolArc>` | Tool approval callback |
 | `approval_mode` | `ApprovalMode` | Whether approval gate is active |
-| `tool_validator` | `Option<Arc<dyn ToolValidator>>` | Custom validation hook |
-| `loop_policy` | `Option<Arc<dyn LoopPolicy>>` | Loop continuation policy |
-| `tool_call_transformer` | `Option<Arc<dyn ToolCallTransformer>>` | Pre-execution argument transformer |
-| `post_turn_hook` | `Option<Arc<dyn PostTurnHook>>` | Post-turn lifecycle hook |
+| `pre_turn_policies` | `Vec<Arc<dyn PreTurnPolicy>>` | **[031]** Pre-LLM-call policy slot |
+| `pre_dispatch_policies` | `Vec<Arc<dyn PreDispatchPolicy>>` | **[031]** Per-tool-call policy slot |
+| `post_turn_policies` | `Vec<Arc<dyn PostTurnPolicy>>` | **[031]** Post-turn policy slot |
+| `post_loop_policies` | `Vec<Arc<dyn PostLoopPolicy>>` | **[031]** Post-inner-loop policy slot |
 | `model_stream_fns` | `Vec<(ModelSpec, Arc<dyn StreamFn>)>` | Model/StreamFn pairs for cycling |
 | `event_forwarders` | `Vec<EventForwarderFn>` | Event forwarder callbacks |
 | `async_transform_context` | `Option<AsyncTransformContextArc>` | Async context transformer |
@@ -39,7 +40,7 @@ The stateful public API wrapper. Owns all mutable state and provides invocation 
 | `metrics_collector` | `Option<Arc<dyn MetricsCollector>>` | Per-turn metrics |
 | `fallback` | `Option<ModelFallback>` | Model fallback chain |
 | `external_message_provider` | `Option<Arc<dyn MessageProvider>>` | External message source |
-| `budget_guard` | `Option<BudgetGuard>` | Pre-call cost/token guard |
+| ~~`budget_guard`~~ | ~~`Option<BudgetGuard>`~~ | **[Removed by 031]** Use `BudgetPolicy` in `pre_turn_policies` |
 | `tool_execution_policy` | `ToolExecutionPolicy` | Concurrent vs sequential tool dispatch |
 | `plan_mode_addendum` | `Option<String>` | Custom plan mode prompt addendum |
 

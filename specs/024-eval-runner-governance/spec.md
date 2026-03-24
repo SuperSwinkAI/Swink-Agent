@@ -111,7 +111,7 @@ An evaluator wants to check whether agent runs stayed within acceptable resource
 ### Edge Cases
 
 - **Malformed or missing fields in eval case data file**: Returns `EvalError::Serde` (JSON) or `EvalError::Yaml` (YAML) with the deserialization error details. Invalid case definitions return `EvalError::InvalidCase { reason }`.
-- **Agent never terminates (infinite loop)**: `BudgetGuard` enforces real-time budget constraints (cost, tokens, turns, duration) and triggers a `CancellationToken` to abort the agent when any limit is exceeded.
+- **Agent never terminates (infinite loop)**: The eval runner configures budget enforcement on the agent before each case run. In the general agent loop, this is handled by `BudgetPolicy` in the PreTurn policy slot (see [031-policy-slots](../031-policy-slots/spec.md)). The eval crate's `BudgetGuard` wraps this by constructing the appropriate policy from `EvalCase.budget` and attaching it to the agent. The `CancellationToken` abort mechanism remains available as a fallback for external cancellation.
 - **Empty gate configuration (no thresholds)**: `check_gate` returns a pass decision — no thresholds means no violations.
 - **Evaluator produces no score (skipped)**: Evaluators return `Option<EvalMetricResult>`; `None` means the evaluator is not applicable to the case and is excluded from results. Only evaluators that return `Some` contribute to the case verdict.
 - **Eval store filesystem location does not exist or is not writable**: Returns `EvalError::Io` wrapping the underlying `std::io::Error`.

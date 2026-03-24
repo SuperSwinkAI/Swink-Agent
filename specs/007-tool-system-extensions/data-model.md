@@ -43,7 +43,7 @@ The core trait that all tools implement. Object-safe, `Send + Sync`.
 
 ---
 
-### ToolCallTransformer (trait)
+### ToolCallTransformer (trait) — superseded by 031 PreDispatchPolicy
 
 Pre-validation argument rewriting hook. Synchronous. Runs unconditionally (not gated by approval).
 
@@ -55,7 +55,7 @@ Pre-validation argument rewriting hook. Synchronous. Runs unconditionally (not g
 
 ---
 
-### ToolValidator (trait)
+### ToolValidator (trait) — superseded by 031 PreDispatchPolicy
 
 Post-transformation validation hook. Synchronous. Rejects with error message or accepts.
 
@@ -226,18 +226,16 @@ Controls whether the approval gate is active.
 ```text
 AgentLoopConfig
 ├── tools: Vec<Arc<dyn AgentTool>>          # Includes FnTool, ToolMiddleware, BashTool, etc.
-├── tool_call_transformer: Option<Box<dyn ToolCallTransformer>>
-├── tool_validator: Option<Box<dyn ToolValidator>>
+├── pre_dispatch_policies: Vec<Arc<dyn PreDispatchPolicy>>  # [031] replaces tool_call_transformer + tool_validator
 ├── tool_execution_policy: ToolExecutionPolicy
 ├── approval_callback: Option<ApprovalFn>
 └── approval_mode: ApprovalMode
 
-Dispatch Pipeline (fixed order):
-  ApprovalMode + approval_callback
-    → ToolCallTransformer::transform()
-      → ToolValidator::validate()
-        → validate_tool_arguments() (schema)
-          → AgentTool::execute()
+Dispatch Pipeline (fixed order) — [Updated by 031]:
+  PreDispatchPolicy::evaluate() (Slot 2, may transform args or Skip)
+    → ApprovalMode + approval_callback
+      → validate_tool_arguments() (schema, hardcoded)
+        → AgentTool::execute()
 
 ToolMiddleware → wraps Arc<dyn AgentTool> → delegates metadata, intercepts execute()
 FnTool → implements AgentTool via stored closures
