@@ -1,3 +1,4 @@
+#![cfg(feature = "openai")]
 //! Live API tests for `OpenAiStreamFn`.
 //!
 //! These tests hit the real `OpenAI` API and are skipped by default.

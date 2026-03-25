@@ -1,3 +1,4 @@
+#![cfg(feature = "anthropic")]
 //! Live API tests for `AnthropicStreamFn`.
 //!
 //! These tests hit the real Anthropic API and are skipped by default.

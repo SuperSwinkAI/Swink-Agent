@@ -1,3 +1,4 @@
+#![cfg(feature = "xai")]
 //! Wiremock-based tests for `XAiStreamFn`.
 
 use futures::StreamExt;

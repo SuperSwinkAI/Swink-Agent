@@ -1,3 +1,4 @@
+#![cfg(feature = "mistral")]
 //! Wiremock-based tests for `MistralStreamFn`.
 
 use futures::StreamExt;

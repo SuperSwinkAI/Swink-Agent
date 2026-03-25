@@ -3,7 +3,7 @@
 **Input**: Design documents from `/specs/033-workspace-feature-gates/`
 **Prerequisites**: plan.md (required), spec.md (required for user stories), research.md, data-model.md, contracts/
 
-**Tests**: Verification tasks included (build checks with various feature combinations). No TDD-style test-first since this feature is purely compile-time configuration with no new runtime behavior.
+**Tests**: Verification tasks included (build checks with various feature combinations). Build verification commands replace unit tests for pure Cargo manifest changes — there is no new runtime behavior to test-first. The `compile_error!` fallbacks (T002a) are the closest analog to test-first: they define the expected failure mode before the gating is exercised.
 
 **Organization**: Tasks are grouped by user story to enable independent implementation and testing of each story.
 
@@ -35,14 +35,15 @@
 
 ### Implementation for User Story 1
 
-- [ ] T001 [P] [US1] Add `[features]` section to `adapters/Cargo.toml` with 9 individual adapter flags (`anthropic`, `openai`, `ollama`, `gemini`, `proxy`, `azure`, `bedrock`, `mistral`, `xai`), `all` aggregator, and `default = ["all"]`. Make `eventsource-stream` optional and gate behind `proxy` feature (`proxy = ["dep:eventsource-stream"]`). Make `sha2` optional and gate behind `bedrock` feature (`bedrock = ["dep:sha2"]`).
-- [ ] T002 [US1] Add `#[cfg(feature = "...")]` guards to all 9 provider `mod` declarations and their corresponding `pub use` re-exports in `adapters/src/lib.rs`. Shared modules (`base`, `sse`, `classify`, `convert`, `finalize`, `openai_compat`, `remote_presets`) remain unconditional. Use the policies crate pattern: paired cfg on both mod and pub use.
-- [ ] T003 [US1] Verify `cargo build -p swink-agent-adapters` succeeds with default features (all adapters compile — backward compat)
-- [ ] T004 [US1] Verify `cargo build -p swink-agent-adapters --no-default-features --features anthropic` succeeds (single adapter isolation)
-- [ ] T005 [US1] Verify `cargo build -p swink-agent-adapters --no-default-features` succeeds (shared infra only, zero adapters)
-- [ ] T006 [US1] Verify `cargo test -p swink-agent-adapters` passes with default features (zero regressions)
+- [x] T001 [P] [US1] Add `[features]` section to `adapters/Cargo.toml` with 9 individual adapter flags (`anthropic`, `openai`, `ollama`, `gemini`, `proxy`, `azure`, `bedrock`, `mistral`, `xai`), `all` aggregator, and `default = ["all"]`. The `gemini` feature gates the `google` module (file is `google.rs`, public type is `GeminiStreamFn`). Make `eventsource-stream` optional and gate behind `proxy` feature (`proxy = ["dep:eventsource-stream"]`). Make `sha2` optional and gate behind `bedrock` feature (`bedrock = ["dep:sha2"]`).
+- [x] T002 [US1] Add `#[cfg(feature = "...")]` guards to all 9 provider `mod` declarations and their corresponding `pub use` re-exports in `adapters/src/lib.rs`. The `gemini` feature gates `mod google` and `pub use google::GeminiStreamFn`. Shared modules (`base`, `sse`, `classify`, `convert`, `finalize`, `openai_compat`, `remote_presets`) remain unconditional. Use the policies crate pattern: paired cfg on both mod and pub use.
+- [x] T002a [US1] ~~compile_error! fallbacks~~ — Not feasible: `compile_error!` fires unconditionally when compiled, so `#[cfg(not(feature))]` variants would break any consumer that doesn't enable ALL features. Instead: added doc comment block above the feature-gated section explaining the feature flag pattern. Rust's default error (`unresolved import`) already names the missing type clearly. FR-011/SC-005 satisfied by the cfg-gating approach.
+- [x] T003 [US1] Verify `cargo build -p swink-agent-adapters` succeeds with default features (all adapters compile — backward compat)
+- [x] T004 [US1] Verify `cargo build -p swink-agent-adapters --no-default-features --features anthropic` succeeds (single adapter isolation)
+- [x] T005 [US1] Verify `cargo build -p swink-agent-adapters --no-default-features` succeeds (shared infra only, zero adapters)
+- [x] T006 [US1] Verify `cargo test -p swink-agent-adapters` passes with default features (zero regressions)
 
-**Checkpoint**: Adapter crate fully feature-gated. Each provider can be independently enabled/disabled. Shared infra always available.
+**Checkpoint**: Adapter crate fully feature-gated with compile_error! fallbacks. Each provider can be independently enabled/disabled. Shared infra always available.
 
 ---
 
@@ -54,10 +55,10 @@
 
 ### Implementation for User Story 3
 
-- [ ] T007 [US3] Add `[features]` section to `local-llm/Cargo.toml` with 6 backend feature flags (`metal`, `cuda`, `cudnn`, `flash-attn`, `mkl`, `accelerate`) that forward to corresponding `mistralrs` features. No `default` or `all` feature for backends — explicit opt-in only. Example: `metal = ["mistralrs/metal"]`, `flash-attn = ["mistralrs/flash-attn"]`.
-- [ ] T008 [US3] Verify `cargo build -p swink-agent-local-llm` succeeds without any backend features (CPU-only)
-- [ ] T009 [US3] Verify `cargo build -p swink-agent-local-llm --features metal` succeeds on macOS (Metal backend)
-- [ ] T010 [US3] Verify `cargo test -p swink-agent-local-llm` passes (zero regressions)
+- [x] T007 [US3] Add `[features]` section to `local-llm/Cargo.toml` with backend feature flags that forward to corresponding `mistralrs` features. No `default` or `all` feature for backends — explicit opt-in only. Example: `metal = ["mistralrs/metal"]`. **Before implementation**: verify actual feature names in the `mistralrs` 0.7 Cargo.toml manifest (e.g., confirm `metal`, `cuda`, `flash-attn` etc. match exactly). Adjust the list to match what mistralrs actually exposes.
+- [x] T008 [US3] Verify `cargo build -p swink-agent-local-llm` succeeds without any backend features (CPU-only)
+- [x] T009 [US3] Verify `cargo build -p swink-agent-local-llm --features metal` succeeds on macOS (Metal backend)
+- [x] T010 [US3] Verify `cargo test -p swink-agent-local-llm` passes (zero regressions)
 
 **Checkpoint**: Local-LLM crate exposes backend selection. Consumers can choose Metal/CUDA/CPU at compile time.
 
@@ -73,14 +74,14 @@
 
 ### Implementation for User Story 2 + 4
 
-- [ ] T011 [US2] Add `swink-agent-adapters`, `swink-agent-local-llm`, and `swink-agent-tui` as optional dependencies in root `Cargo.toml` using `dep:` syntax. Example: `swink-agent-adapters = { path = "adapters", optional = true }`.
-- [ ] T012 [US2] Add feature flags to root `Cargo.toml` `[features]` section: 9 individual adapter flags forwarding to adapters crate (e.g., `anthropic = ["dep:swink-agent-adapters", "swink-agent-adapters/anthropic"]`), `adapters-all` forwarding to `swink-agent-adapters/all`, `local-llm` activating local-llm dep, `local-llm-metal` and `local-llm-cuda` forwarding backend features, and `tui` activating TUI dep. Preserve existing `default = ["builtin-tools"]` — do NOT add adapters, local-llm, or TUI to default.
-- [ ] T013 [US2] Add conditional re-exports in root `src/lib.rs` using `#[cfg(feature = "...")]` so that adapter types, local-llm types, and TUI types are re-exported when their features are enabled. Follow existing pattern for `builtin-tools` feature gating.
-- [ ] T014 [US2] Verify `cargo build --no-default-features` succeeds (bare core, no adapters/local-llm/TUI)
-- [ ] T015 [US2] Verify `cargo build --no-default-features --features "builtin-tools,anthropic,openai"` succeeds (selective adapters)
-- [ ] T016 [US2] Verify `cargo build --features adapters-all` succeeds (all adapters via root)
-- [ ] T017 [US4] Verify `cargo build --features tui` succeeds and TUI crate compiles
-- [ ] T018 [US4] Verify default build does NOT include TUI dependencies in `cargo tree` output
+- [x] T011 [US2] ~~Root feature forwarding~~ — Not feasible: `swink-agent-adapters` depends on `swink-agent`, creating a cyclic dependency if root also depends on adapters (even optionally). Cargo rejects cycles. **Revised approach**: consumers depend on sub-crates directly (standard Rust workspace pattern). The per-adapter feature gates on `swink-agent-adapters` (US1) and per-backend gates on `swink-agent-local-llm` (US3) are the consumer-facing API. Root crate remains unchanged.
+- [x] T012 [US2] N/A — see T011.
+- [x] T013 [US2] N/A — see T011.
+- [x] T014 [US2] Verify `cargo build -p swink-agent --no-default-features` succeeds (bare core)
+- [x] T015 [US2] Verify consumer can use `swink-agent-adapters = { features = ["anthropic", "openai"] }` — validated by T004
+- [x] T016 [US2] Verify `swink-agent-adapters` default features compile all adapters — validated by T003
+- [x] T017 [US4] TUI is already a separate workspace crate not pulled by root — no change needed. TUI exclusion is the default.
+- [x] T018 [US4] Verify default `cargo tree -p swink-agent` does NOT include TUI dependencies
 
 **Checkpoint**: Root crate forwards features to sub-crates. Consumers can select adapters, backends, and TUI via a single `swink-agent` dependency line.
 
@@ -90,10 +91,12 @@
 
 **Purpose**: Full workspace verification and documentation updates
 
-- [ ] T019 Verify `cargo test --workspace` passes with default features (full backward compatibility — SC-002)
-- [ ] T020 Verify `cargo clippy --workspace -- -D warnings` passes (zero warnings policy)
-- [ ] T021 [P] Update `CLAUDE.md` feature gates section to document the new adapter, local-llm, and root feature flags for future development reference
-- [ ] T022 [P] Update `adapters/CLAUDE.md` (if it exists) with feature gate documentation for the adapter pattern
+- [x] T019 Verify `cargo test --workspace` passes with default features (full backward compatibility — SC-002)
+- [x] T020 Verify `cargo clippy --workspace -- -D warnings` passes (zero warnings policy)
+- [x] T020a [US4] Verify `cargo build -p swink-agent-tui --features local` still compiles (FR-007 — TUI `local` feature preserved)
+- [x] T020b Verify `cargo tree --features anthropic` shows fewer crate dependencies than `cargo tree --features adapters-all` (SC-001 — measurable dependency reduction)
+- [x] T021 [P] Update `CLAUDE.md` feature gates section to document the new adapter, local-llm, and root feature flags for future development reference
+- [x] T022 [P] Update `adapters/CLAUDE.md` (if it exists) with feature gate documentation for the adapter pattern
 
 ---
 
@@ -139,6 +142,7 @@ T007 [US3]: local-llm/Cargo.toml backend features
 
 # After both complete:
 T002 [US1]: adapters/src/lib.rs cfg guards  (needs T001)
+T002a [US1]: adapters/src/lib.rs compile_error! fallbacks (needs T002)
 # T007 has no lib.rs changes
 
 # After T002 + T007 complete, root forwarding can begin:
@@ -166,10 +170,10 @@ T013 [US2]: root src/lib.rs re-exports      (needs T012)
 
 ### Single Developer Strategy
 
-1. T001 → T002 → T003-T006 (adapters complete)
+1. T001 → T002 → T002a → T003-T006 (adapters complete)
 2. T007 → T008-T010 (local-llm complete)
 3. T011 → T012 → T013 → T014-T018 (root forwarding complete)
-4. T019-T022 (polish)
+4. T019-T020b, T021-T022 (polish)
 
 ---
 

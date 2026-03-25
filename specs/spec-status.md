@@ -1,5 +1,5 @@
 # Spec-Driven Development Status
-<!-- spec-status: project=Swink-Agent commit=98446d4a7b68781274fa456f65d196bfa0651982 updated=2026-03-25T12:31:50Z -->
+<!-- spec-status: project=Swink-Agent commit=a53ce536c5a4380c25e097cf8b437d71830b644c updated=2026-03-25T19:35:50Z -->
 
 | Feature                         | Specify | Plan | Tasks | Implement |
 |---------------------------------|---------|------|-------|-----------|
@@ -35,6 +35,7 @@
 | 030-integration-tests           | ✓     | ✓  | ✓   | ✓ Complete |
 | 031-policy-slots                | ✓     | ✓  | ✓   | ✓ Complete |
 | 032-policy-recipes-crate        | ✓     | ✓  | ✓   | ✓ Complete |
+| 033-workspace-feature-gates     | ✓     | ✓  | ✓   | ● 0/22 (0%) |
 
 <!-- feature: 001-workspace-scaffold has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=false has_checklists=true tasks_total=24 tasks_completed=24 checklist_files=requirements.md -->
 <!-- feature: 002-foundation-types-errors has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=63 tasks_completed=63 checklist_files=requirements.md -->
@@ -68,3 +69,4 @@
 <!-- feature: 030-integration-tests has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=48 tasks_completed=48 checklist_files=requirements.md -->
 <!-- feature: 031-policy-slots has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=93 tasks_completed=93 checklist_files=requirements.md -->
 <!-- feature: 032-policy-recipes-crate has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=43 tasks_completed=43 checklist_files=requirements.md -->
+<!-- feature: 033-workspace-feature-gates has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=22 tasks_completed=0 checklist_files=requirements.md -->

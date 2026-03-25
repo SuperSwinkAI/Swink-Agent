@@ -1,3 +1,4 @@
+#![cfg(feature = "anthropic")]
 //! Wiremock-based tests for `AnthropicStreamFn`.
 
 mod common;

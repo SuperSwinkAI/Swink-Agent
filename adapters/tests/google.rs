@@ -1,3 +1,4 @@
+#![cfg(feature = "gemini")]
 //! Wiremock-based tests for `GeminiStreamFn`.
 
 mod common;

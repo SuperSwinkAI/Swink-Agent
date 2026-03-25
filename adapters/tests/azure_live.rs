@@ -1,3 +1,4 @@
+#![cfg(feature = "azure")]
 //! Live API tests for `AzureStreamFn`.
 
 use std::time::Duration;

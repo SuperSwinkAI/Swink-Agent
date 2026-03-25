@@ -1,3 +1,4 @@
+#![cfg(feature = "openai")]
 //! Wiremock-based tests for `OpenAiStreamFn`.
 
 mod common;

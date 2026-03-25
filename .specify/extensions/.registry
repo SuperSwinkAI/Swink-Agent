@@ -2,17 +2,20 @@
   "schema_version": "1.0",
   "extensions": {
     "status-report": {
-      "version": "1.1.4",
+      "version": "1.1.5",
       "source": "local",
-      "manifest_hash": "sha256:076ea5c41388810d7afc16e56da46d4375d7d0295ba68dda46127e54ba78a6d3",
+      "manifest_hash": "sha256:4c00045b60ba3f8a040ac9e6bb0506c5f94cead9c3dedd28adf26b160563b510",
       "enabled": true,
       "priority": 10,
       "registered_commands": {
         "claude": [
           "speckit.status.report"
+        ],
+        "codex": [
+          "speckit.status.report"
         ]
       },
-      "installed_at": "2026-03-20T17:37:43.756296+00:00"
+      "installed_at": "2026-03-25T19:35:06.756936+00:00"
     }
   }
 }

@@ -1,3 +1,4 @@
+#![cfg(feature = "azure")]
 //! Wiremock-based tests for `AzureStreamFn`.
 
 mod common;
