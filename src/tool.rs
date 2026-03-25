@@ -11,6 +11,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use regex::Regex;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
@@ -22,7 +23,7 @@ use crate::types::ContentBlock;
 ///
 /// Contains content blocks returned to the LLM and structured details for
 /// logging that are not sent to the model.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentToolResult {
     /// Content blocks returned to the LLM as the tool result.
     pub content: Vec<ContentBlock>,

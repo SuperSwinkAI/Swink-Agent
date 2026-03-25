@@ -60,7 +60,8 @@ pub type ApproveToolFn =
 
 /// Why a turn ended.
 #[non_exhaustive]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum TurnEndReason {
     /// Assistant completed without requesting tool calls.
     Complete,
@@ -84,7 +85,8 @@ pub enum TurnEndReason {
 /// logging. The harness never calls back into application logic for display
 /// concerns.
 #[non_exhaustive]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(tag = "event", rename_all = "snake_case")]
 #[allow(clippy::large_enum_variant)]
 pub enum AgentEvent {
     /// Emitted once when the loop begins.

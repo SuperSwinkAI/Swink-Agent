@@ -293,6 +293,11 @@ pub fn deserialize_custom_message(
 
 /// The top-level message type that wraps either an LLM message or a custom
 /// application-defined message.
+///
+/// Implements [`Serialize`] so events containing messages can be forwarded
+/// across process boundaries. `Llm` variants delegate to the derived impl;
+/// `Custom` variants serialize via [`serialize_custom_message`] (or as
+/// `null` if the custom message does not support serialization).
 #[allow(clippy::large_enum_variant)]
 pub enum AgentMessage {
     /// A standard LLM message (user, assistant, or tool result).
@@ -332,6 +337,29 @@ impl fmt::Debug for AgentMessage {
         match self {
             Self::Llm(msg) => f.debug_tuple("Llm").field(msg).finish(),
             Self::Custom(msg) => f.debug_tuple("Custom").field(msg).finish(),
+        }
+    }
+}
+
+impl Serialize for AgentMessage {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::Llm(msg) => {
+                use serde::ser::SerializeMap;
+                let mut map = serializer.serialize_map(Some(2))?;
+                map.serialize_entry("kind", "llm")?;
+                map.serialize_entry("message", msg)?;
+                map.end()
+            }
+            Self::Custom(msg) => {
+                use serde::ser::SerializeMap;
+                let mut map = serializer.serialize_map(Some(2))?;
+                map.serialize_entry("kind", "custom")?;
+                // Use the existing envelope helper; falls back to null.
+                let envelope = serialize_custom_message(msg.as_ref());
+                map.serialize_entry("message", &envelope)?;
+                map.end()
+            }
         }
     }
 }

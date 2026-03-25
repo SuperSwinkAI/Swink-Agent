@@ -233,7 +233,8 @@ impl AssistantMessageEvent {
 ///
 /// The `delta` field uses [`Cow<'static, str>`] to avoid cloning on the hot
 /// path when the caller can transfer ownership of the underlying `String`.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
 pub enum AssistantMessageDelta {
     /// An appended text string fragment.
     Text {

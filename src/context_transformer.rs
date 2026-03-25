@@ -5,11 +5,13 @@
 
 use std::sync::Arc;
 
+use serde::{Deserialize, Serialize};
+
 use crate::context::{TokenCounter, compact_sliding_window_with};
 use crate::types::AgentMessage;
 
 /// Result of a context transformation pass.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompactionReport {
     /// Number of messages that were removed during compaction.
     pub dropped_count: usize,
