@@ -1,5 +1,5 @@
 # Spec-Driven Development Status
-<!-- spec-status: project=Swink-Agent commit=dc00a84a73850319af5a4a4e050f2c5a12a85d9b updated=2026-03-24T15:49:16Z -->
+<!-- spec-status: project=Swink-Agent commit=98446d4a7b68781274fa456f65d196bfa0651982 updated=2026-03-25T12:31:50Z -->
 
 | Feature                         | Specify | Plan | Tasks | Implement |
 |---------------------------------|---------|------|-------|-----------|
@@ -17,7 +17,7 @@
 | 012-adapter-anthropic           | ✓     | ✓  | ✓   | ✓ Complete |
 | 013-adapter-openai              | ✓     | ✓  | ✓   | ✓ Complete |
 | 014-adapter-ollama              | ✓     | ✓  | ✓   | ✓ Complete |
-| 015-adapter-gemini              | ✓     | -    | -     | -         |
+| 015-adapter-gemini              | ✓     | ✓  | ✓   | ✓ Complete |
 | 016-adapter-azure               | ✓     | -    | -     | -         |
 | 017-adapter-xai                 | ✓     | -    | -     | -         |
 | 018-adapter-mistral             | ✓     | -    | -     | -         |
@@ -34,6 +34,7 @@
 | 029-tui-plan-mode-approval      | ✓     | ✓  | ✓   | ✓ Complete |
 | 030-integration-tests           | ✓     | ✓  | ✓   | ✓ Complete |
 | 031-policy-slots                | ✓     | ✓  | ✓   | ✓ Complete |
+| 032-policy-recipes-crate        | ✓     | ✓  | ✓   | ✓ Complete |
 
 <!-- feature: 001-workspace-scaffold has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=false has_checklists=true tasks_total=24 tasks_completed=24 checklist_files=requirements.md -->
 <!-- feature: 002-foundation-types-errors has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=63 tasks_completed=63 checklist_files=requirements.md -->
@@ -49,7 +50,7 @@
 <!-- feature: 012-adapter-anthropic has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=73 tasks_completed=73 checklist_files=requirements.md -->
 <!-- feature: 013-adapter-openai has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=73 tasks_completed=73 checklist_files=requirements.md -->
 <!-- feature: 014-adapter-ollama has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=74 tasks_completed=74 checklist_files=requirements.md -->
-<!-- feature: 015-adapter-gemini has_spec=true has_plan=false has_tasks=false has_research=false has_data_model=false has_quickstart=false has_contracts=false has_checklists=true tasks_total=0 tasks_completed=0 checklist_files=requirements.md -->
+<!-- feature: 015-adapter-gemini has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=44 tasks_completed=44 checklist_files=requirements.md -->
 <!-- feature: 016-adapter-azure has_spec=true has_plan=false has_tasks=false has_research=false has_data_model=false has_quickstart=false has_contracts=false has_checklists=true tasks_total=0 tasks_completed=0 checklist_files=requirements.md -->
 <!-- feature: 017-adapter-xai has_spec=true has_plan=false has_tasks=false has_research=false has_data_model=false has_quickstart=false has_contracts=false has_checklists=true tasks_total=0 tasks_completed=0 checklist_files=requirements.md -->
 <!-- feature: 018-adapter-mistral has_spec=true has_plan=false has_tasks=false has_research=false has_data_model=false has_quickstart=false has_contracts=false has_checklists=true tasks_total=0 tasks_completed=0 checklist_files=requirements.md -->
@@ -65,4 +66,5 @@
 <!-- feature: 028-tui-commands-editor-session has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=78 tasks_completed=78 checklist_files=requirements.md -->
 <!-- feature: 029-tui-plan-mode-approval has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=false has_checklists=true tasks_total=70 tasks_completed=70 checklist_files=requirements.md -->
 <!-- feature: 030-integration-tests has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=48 tasks_completed=48 checklist_files=requirements.md -->
-<!-- feature: 031-policy-slots has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=83 tasks_completed=83 checklist_files=requirements.md -->
+<!-- feature: 031-policy-slots has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=93 tasks_completed=93 checklist_files=requirements.md -->
+<!-- feature: 032-policy-recipes-crate has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=43 tasks_completed=43 checklist_files=requirements.md -->

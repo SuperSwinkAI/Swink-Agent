@@ -704,8 +704,17 @@ fn process_chunk(
         }
     }
 
-    if let Some(finish_reason) = candidate.finish_reason {
-        state.stop_reason = Some(map_finish_reason(&finish_reason, state.saw_tool_call));
+    if let Some(ref finish_reason) = candidate.finish_reason {
+        if finish_reason == "SAFETY" {
+            warn!("Google Gemini response blocked by safety filter");
+            close_text_block(state, events);
+            close_thinking_block(state, events);
+            events.push(AssistantMessageEvent::error(
+                "Google Gemini: response blocked by safety filter",
+            ));
+        } else {
+            state.stop_reason = Some(map_finish_reason(finish_reason, state.saw_tool_call));
+        }
     }
 }
 

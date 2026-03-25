@@ -5,6 +5,12 @@
 **Status**: Draft
 **Input**: GeminiStreamFn for Google Gemini API via SSE. Gemini-specific message and tool format conversion. References: PRD §15.1, HLD Adapters.
 
+## Clarifications
+
+### Session 2026-03-24
+
+- Q: Should Gemini safety filter blocks / `"SAFETY"` finish reason emit an error or be treated as normal stop? → A: Emit `AssistantMessageEvent::error()`.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Stream Text Responses from Google Gemini (Priority: P1)
@@ -74,11 +80,11 @@ A developer encounters various error conditions when communicating with the Gemi
 
 ### Edge Cases
 
-- What happens when Gemini returns a safety filter block instead of content — how is it surfaced to the developer?
-- How does the adapter handle Gemini's multi-candidate responses (multiple alternative completions)?
-- What happens when Gemini returns a finish reason of "SAFETY" — is this classified as an error?
-- How are image inputs converted to Gemini's parts-based format?
-- What happens when tool definitions use schema features that Gemini's function declarations do not support?
+- When Gemini returns a safety filter block or a finish reason of `"SAFETY"`, the adapter emits an `AssistantMessageEvent::error()` rather than silently dropping content or treating it as a normal stop.
+- The adapter uses only the first candidate from multi-candidate responses; additional candidates are ignored.
+- Image inputs are converted to Gemini's `inlineData` parts with the appropriate `mime_type`.
+- Tool definition schemas are passed through to Gemini as-is; unsupported schema features (e.g., `oneOf`, `$ref`) are the caller's responsibility — the Gemini API will reject invalid schemas.
+- When the conversation history contains thinking blocks, tool calls, or tool definitions, the adapter enables Gemini's thinking mode (`includeThoughts: true`) and streams thinking blocks as ThinkingStart/ThinkingDelta/ThinkingEnd events with `thoughtSignature`.
 
 ## Requirements *(mandatory)*
 
@@ -87,7 +93,7 @@ A developer encounters various error conditions when communicating with the Gemi
 - **FR-001**: The adapter MUST stream text responses from the Gemini streaming endpoint via SSE, emitting incremental text deltas.
 - **FR-002**: The adapter MUST stream function call responses, emitting function name, arguments, and completion events.
 - **FR-003**: The adapter MUST convert agent tool definitions to Gemini's function declaration format.
-- **FR-004**: The adapter MUST convert agent messages to Gemini's content format using the shared conversion trait.
+- **FR-004**: The adapter MUST convert agent messages to Gemini's content format (parts-based content with function declarations).
 - **FR-005**: The adapter MUST classify HTTP errors using the shared error classifier (429 → rate limit, 401/403 → auth, 5xx → network, timeout → network).
 - **FR-006**: The adapter MUST handle Gemini safety filter blocks, surfacing them as errors rather than silently dropping content.
 
