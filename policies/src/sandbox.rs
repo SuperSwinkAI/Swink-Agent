@@ -3,7 +3,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::policy::{PolicyContext, PreDispatchPolicy, PreDispatchVerdict, ToolPolicyContext};
+use swink_agent::{PolicyContext, PreDispatchPolicy, PreDispatchVerdict, ToolPolicyContext};
 
 /// Rejects tool calls that reference file paths outside an allowed root directory.
 ///
@@ -12,7 +12,8 @@ use crate::policy::{PolicyContext, PreDispatchPolicy, PreDispatchVerdict, ToolPo
 ///
 /// # Example
 /// ```rust,ignore
-/// use swink_agent::{SandboxPolicy, AgentOptions};
+/// use swink_agent_policies::SandboxPolicy;
+/// use swink_agent::AgentOptions;
 ///
 /// let opts = AgentOptions::new(...)
 ///     .with_pre_dispatch_policy(SandboxPolicy::new("/tmp/workspace"));
@@ -103,7 +104,7 @@ impl PreDispatchPolicy for SandboxPolicy {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{Cost, Usage};
+    use swink_agent::{Cost, Usage};
 
     fn make_ctx<'a>(usage: &'a Usage, cost: &'a Cost) -> PolicyContext<'a> {
         PolicyContext {

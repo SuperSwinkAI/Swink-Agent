@@ -1,14 +1,12 @@
 //! Integration tests for policy composition.
 
-use std::sync::Arc;
-
 use swink_agent::{
     AgentMessage, AssistantMessage, ContentBlock, Cost, LlmMessage, PolicyContext, PolicyVerdict,
     PostTurnPolicy, PreTurnPolicy, StopReason, ToolResultMessage, TurnPolicyContext, Usage,
     UserMessage,
 };
 use swink_agent_policies::{
-    AuditLogger, AuditSink, ContentFilter, JsonlAuditSink, PiiRedactor, PromptInjectionGuard,
+    AuditLogger, ContentFilter, JsonlAuditSink, PiiRedactor, PromptInjectionGuard,
 };
 
 fn make_assistant_msg(text: &str) -> AssistantMessage {

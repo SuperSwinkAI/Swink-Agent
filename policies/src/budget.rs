@@ -1,13 +1,14 @@
 //! Budget enforcement policy — stops the loop when cost or token limits are exceeded.
 #![forbid(unsafe_code)]
 
-use crate::policy::{PolicyContext, PolicyVerdict, PreTurnPolicy};
+use swink_agent::{PolicyContext, PolicyVerdict, PreTurnPolicy};
 
 /// Stops the agent loop when accumulated cost or tokens exceed configured limits.
 ///
 /// # Example
 /// ```rust,ignore
-/// use swink_agent::{BudgetPolicy, AgentOptions};
+/// use swink_agent_policies::BudgetPolicy;
+/// use swink_agent::AgentOptions;
 ///
 /// let opts = AgentOptions::new(...)
 ///     .with_pre_turn_policy(BudgetPolicy::new().max_cost(5.0));
@@ -99,7 +100,7 @@ impl PreTurnPolicy for BudgetPolicy {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{Cost, Usage};
+    use swink_agent::{Cost, Usage};
 
     fn make_ctx<'a>(usage: &'a Usage, cost: &'a Cost) -> PolicyContext<'a> {
         PolicyContext {

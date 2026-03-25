@@ -4,8 +4,10 @@
 use std::collections::VecDeque;
 use std::sync::Mutex;
 
-use crate::policy::{PolicyContext, PolicyVerdict, PostTurnPolicy, TurnPolicyContext};
-use crate::types::ContentBlock;
+use swink_agent::{
+    AgentMessage, ContentBlock, LlmMessage, PolicyContext, PolicyVerdict, PostTurnPolicy,
+    TurnPolicyContext, UserMessage, now_timestamp,
+};
 
 /// What to do when a repeated tool call pattern is detected.
 #[derive(Debug, Clone)]
@@ -24,7 +26,8 @@ pub enum LoopDetectionAction {
 ///
 /// # Example
 /// ```rust,ignore
-/// use swink_agent::{LoopDetectionPolicy, AgentOptions};
+/// use swink_agent_policies::LoopDetectionPolicy;
+/// use swink_agent::AgentOptions;
 ///
 /// let opts = AgentOptions::new(...)
 ///     .with_post_turn_policy(
@@ -127,12 +130,12 @@ impl PostTurnPolicy for LoopDetectionPolicy {
                     PolicyVerdict::Stop("loop detected: repeated tool call pattern".to_string())
                 }
                 LoopDetectionAction::Inject(message) => {
-                    let steering_msg = crate::types::AgentMessage::Llm(
-                        crate::types::LlmMessage::User(crate::types::UserMessage {
+                    let steering_msg = AgentMessage::Llm(
+                        LlmMessage::User(UserMessage {
                             content: vec![ContentBlock::Text {
                                 text: message.clone(),
                             }],
-                            timestamp: crate::util::now_timestamp(),
+                            timestamp: now_timestamp(),
                         }),
                     );
                     PolicyVerdict::Inject(vec![steering_msg])
@@ -147,7 +150,7 @@ impl PostTurnPolicy for LoopDetectionPolicy {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{AssistantMessage, Cost, StopReason, ToolResultMessage, Usage};
+    use swink_agent::{AssistantMessage, ContentBlock, Cost, StopReason, Usage};
 
     fn make_ctx<'a>(usage: &'a Usage, cost: &'a Cost) -> PolicyContext<'a> {
         PolicyContext {
@@ -162,7 +165,7 @@ mod tests {
 
     fn make_turn_ctx<'a>(
         msg: &'a AssistantMessage,
-        results: &'a [ToolResultMessage],
+        results: &'a [swink_agent::ToolResultMessage],
     ) -> TurnPolicyContext<'a> {
         TurnPolicyContext {
             assistant_message: msg,
@@ -184,8 +187,8 @@ mod tests {
         }
     }
 
-    fn tool_result(id: &str, text: &str) -> ToolResultMessage {
-        ToolResultMessage {
+    fn tool_result(id: &str, text: &str) -> swink_agent::ToolResultMessage {
+        swink_agent::ToolResultMessage {
             tool_call_id: id.to_string(),
             content: vec![ContentBlock::Text { text: text.to_string() }],
             is_error: false,
@@ -224,34 +227,18 @@ mod tests {
         let msg = dummy_msg();
 
         let results = vec![tool_result("bash_1", "same_output")];
-        for _ in 0..3 {
-            let turn = make_turn_ctx(&msg, &results);
-            let _ = policy.evaluate(&ctx, &turn);
-        }
-
-        // Fourth identical turn should trigger
-        // Actually the third already makes lookback=3 identical entries
-        // Let's check: after 3 identical pushes, is_stuck checks last 3 — all same
-        // But evaluate pushes THEN checks, so after 3rd push we have 3 entries, all same
-        // Wait, is_stuck is called after push. After 3 pushes of identical data, lookback=3,
-        // history.len()=3 >= 3, and all 3 are identical → stuck.
-        // So the 3rd call should return Stop.
-
-        // Re-test with fresh policy
-        let policy2 = LoopDetectionPolicy::new(3);
-        let results = vec![tool_result("bash_1", "same_output")];
 
         let turn = make_turn_ctx(&msg, &results);
-        let r1 = policy2.evaluate(&ctx, &turn);
+        let r1 = policy.evaluate(&ctx, &turn);
         assert!(matches!(r1, PolicyVerdict::Continue)); // 1 entry, need 3
 
         let turn = make_turn_ctx(&msg, &results);
-        let r2 = policy2.evaluate(&ctx, &turn);
+        let r2 = policy.evaluate(&ctx, &turn);
         assert!(matches!(r2, PolicyVerdict::Continue)); // 2 entries, need 3
 
         let turn = make_turn_ctx(&msg, &results);
-        let r3 = policy2.evaluate(&ctx, &turn);
-        assert!(matches!(r3, PolicyVerdict::Stop(_))); // 3 identical entries → stuck
+        let r3 = policy.evaluate(&ctx, &turn);
+        assert!(matches!(r3, PolicyVerdict::Stop(_))); // 3 identical entries -> stuck
     }
 
     #[test]
@@ -269,7 +256,7 @@ mod tests {
         let _ = policy.evaluate(&ctx, &turn); // 1st
 
         let turn = make_turn_ctx(&msg, &results);
-        let r = policy.evaluate(&ctx, &turn); // 2nd identical → inject
+        let r = policy.evaluate(&ctx, &turn); // 2nd identical -> inject
         assert!(matches!(r, PolicyVerdict::Inject(_)));
     }
 

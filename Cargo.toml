@@ -28,7 +28,7 @@ proptest = { version = "1", default-features = false, features = ["std"] }
 
 [package]
 name = "swink-agent"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 rust-version = "1.88"
 description = "Core scaffolding for running LLM-powered agentic loops"

@@ -53,29 +53,31 @@ MSRV **1.88** (edition 2024). Workspace deps centralized in root `Cargo.toml`.
 - Tool dispatch order: PreDispatch policies → Approval → Schema validation → `execute()`. (Old order was Approval → Transformer → Validator → Schema → Execute, superseded by 031-policy-slots.)
 - `RetryStrategy::should_retry()` is the **sole** retryability decision point — `is_retryable()` pre-check was removed.
 
-### Policy Slots (`src/policy.rs`, `src/policies/`)
+### Policy Slots (`src/policy.rs`)
 
 - Four configurable policy slots: PreTurn (before LLM call), PreDispatch (per tool call), PostTurn (after turn), PostLoop (after inner loop).
 - Two verdict enums: `PolicyVerdict` (Continue/Stop/Inject) and `PreDispatchVerdict` (+ Skip). Compile-time enforcement that Skip is only valid in PreDispatch.
 - Slot runner uses `AssertUnwindSafe` + `catch_unwind` — traits only need `Send + Sync`, not `UnwindSafe`.
 - Empty policy vecs = zero overhead, no allocation. Default is anything-goes.
-- Stateful policies (e.g., `LoopDetectionPolicy`) use interior mutability (`Mutex`) — trait takes `&self`.
-- `CheckpointPolicy` bridges sync/async via `tokio::spawn` fire-and-forget. Captures `Handle::current()` at construction.
-- PreDispatch uses two-pass approach: evaluate all tool calls first, then dispatch. Stop aborts entire batch before any tool executes.
-- `SandboxPolicy` checks configured field names (default: `["path", "file_path", "file"]`) — Skip with error, no silent rewriting.
+- **All policy implementations live in `swink-agent-policies` crate** — core only defines traits and runners.
 - Old fields removed from `AgentLoopConfig`: `budget_guard`, `loop_policy`, `post_turn_hook`, `tool_validator`, `tool_call_transformer`. Replaced by 4 policy vecs.
 - `PolicyContext.new_messages` contains only messages added since the last evaluation for that slot. PreTurn: pending batch (tracked via `new_messages_start` index before append). PostTurn/PostLoop/PreDispatch: `&[]` (current-turn data is in `TurnPolicyContext`/`ToolPolicyContext`). This is a slice borrow (zero-copy), not a clone.
 - `RetryStrategy::should_retry()` is the **sole** retryability decision point — `is_retryable()` pre-check was removed.
 
-### Policy Recipes Crate (`policies/`)
+### Policies Crate (`policies/`)
 
 - Separate workspace crate `swink-agent-policies` — depends only on `swink-agent` public API, no internal imports.
-- Four policies: `PromptInjectionGuard` (PreTurn + PostTurn), `PiiRedactor` (PostTurn), `ContentFilter` (PostTurn), `AuditLogger` (PostTurn).
-- Feature gates: `prompt-guard`, `pii`, `content-filter`, `audit`, `all` (default). `regex` is shared optional dep for first three.
-- `PromptInjectionGuard` implements both `PreTurnPolicy` and `PostTurnPolicy` — single struct, dual trait. PreTurn scans `ctx.new_messages` for User variants. PostTurn scans `turn.tool_results`.
-- `PiiRedactor` Inject verdict constructs `AgentMessage::Llm(LlmMessage::Assistant(...))` preserving original metadata (provider, model_id, usage, cost, timestamp).
-- `ContentFilter` converts keywords to regex at construction time (with `\b` for whole-word, `(?i)` for case-insensitive). Categories filter at evaluate time.
-- `AuditSink` trait is sync (`fn write(&self, record: &AuditRecord)`) — defined in this crate, not in core. `JsonlAuditSink` uses `std::fs::OpenOptions::append`.
+- **All policy implementations live here** (10 total, each feature-gated independently):
+  - Core: `BudgetPolicy`, `MaxTurnsPolicy`, `ToolDenyListPolicy`, `SandboxPolicy`, `LoopDetectionPolicy`, `CheckpointPolicy`.
+  - Application: `PromptInjectionGuard`, `PiiRedactor`, `ContentFilter`, `AuditLogger`.
+- Feature gates: `budget`, `max-turns`, `deny-list`, `sandbox`, `loop-detection`, `checkpoint`, `prompt-guard`, `pii`, `content-filter`, `audit`, `all` (default).
+- Stateful policies (e.g., `LoopDetectionPolicy`) use interior mutability (`Mutex`) — trait takes `&self`.
+- `CheckpointPolicy` bridges sync/async via `tokio::spawn` fire-and-forget. Captures `Handle::current()` at construction.
+- `SandboxPolicy` checks configured field names (default: `["path", "file_path", "file"]`) — Skip with error, no silent rewriting.
+- `PromptInjectionGuard` implements both `PreTurnPolicy` and `PostTurnPolicy` — single struct, dual trait.
+- `PiiRedactor` Inject verdict constructs `AgentMessage::Llm(LlmMessage::Assistant(...))` preserving original metadata.
+- `ContentFilter` converts keywords to regex at construction time (with `\b` for whole-word, `(?i)` for case-insensitive).
+- `AuditSink` trait is sync (`fn write(&self, record: &AuditRecord)`) — defined in this crate, not in core.
 - All regex patterns compiled once at construction, `evaluate()` only runs matches.
 
 ### Streaming (`src/stream.rs`)

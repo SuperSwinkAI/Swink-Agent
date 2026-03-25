@@ -1,15 +1,58 @@
-//! Ready-to-use application-level policies for [`swink_agent`].
+//! Policy implementations for [`swink_agent`].
 //!
-//! This crate provides four policies built entirely against `swink-agent`'s public
-//! policy trait API. Each policy is feature-gated independently:
+//! This crate provides all policy implementations built against `swink-agent`'s
+//! public policy trait API. Each policy is feature-gated independently:
 //!
-//! - **`prompt-guard`**: [`PromptInjectionGuard`] — blocks prompt injection in user messages (`PreTurn`) and tool results (`PostTurn`)
+//! ## Core policies
+//!
+//! - **`budget`**: [`BudgetPolicy`] — stops the loop when cost or token limits are exceeded
+//! - **`max-turns`**: [`MaxTurnsPolicy`] — stops the loop after a configured number of turns
+//! - **`deny-list`**: [`ToolDenyListPolicy`] — rejects tool calls by name
+//! - **`sandbox`**: [`SandboxPolicy`] — restricts file paths to an allowed root directory
+//! - **`loop-detection`**: [`LoopDetectionPolicy`] — detects repeated tool call patterns
+//! - **`checkpoint`**: [`CheckpointPolicy`] — persists agent state after each turn
+//!
+//! ## Application policies
+//!
+//! - **`prompt-guard`**: [`PromptInjectionGuard`] — blocks prompt injection in user messages and tool results
 //! - **`pii`**: [`PiiRedactor`] — redacts personally identifiable information from assistant responses
 //! - **`content-filter`**: [`ContentFilter`] — keyword/regex blocklist for assistant output
 //! - **`audit`**: [`AuditLogger`] — records every turn to a pluggable sink
-//!
-//! The crate also serves as a reference example for building custom policies.
 #![forbid(unsafe_code)]
+
+// ── Core policies ───────────────────────────────────────────────────────────
+
+#[cfg(feature = "budget")]
+mod budget;
+#[cfg(feature = "budget")]
+pub use budget::BudgetPolicy;
+
+#[cfg(feature = "max-turns")]
+mod max_turns;
+#[cfg(feature = "max-turns")]
+pub use max_turns::MaxTurnsPolicy;
+
+#[cfg(feature = "deny-list")]
+mod deny_list;
+#[cfg(feature = "deny-list")]
+pub use deny_list::ToolDenyListPolicy;
+
+#[cfg(feature = "sandbox")]
+mod sandbox;
+#[cfg(feature = "sandbox")]
+pub use sandbox::SandboxPolicy;
+
+#[cfg(feature = "loop-detection")]
+mod loop_detection;
+#[cfg(feature = "loop-detection")]
+pub use loop_detection::{LoopDetectionAction, LoopDetectionPolicy};
+
+#[cfg(feature = "checkpoint")]
+mod checkpoint;
+#[cfg(feature = "checkpoint")]
+pub use checkpoint::CheckpointPolicy;
+
+// ── Application policies ────────────────────────────────────────────────────
 
 #[cfg(feature = "prompt-guard")]
 mod prompt_guard;

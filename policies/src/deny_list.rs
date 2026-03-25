@@ -3,13 +3,14 @@
 
 use std::collections::HashSet;
 
-use crate::policy::{PolicyContext, PreDispatchPolicy, PreDispatchVerdict, ToolPolicyContext};
+use swink_agent::{PolicyContext, PreDispatchPolicy, PreDispatchVerdict, ToolPolicyContext};
 
 /// Rejects tool calls whose names appear in the deny list.
 ///
 /// # Example
 /// ```rust,ignore
-/// use swink_agent::{ToolDenyListPolicy, AgentOptions};
+/// use swink_agent_policies::ToolDenyListPolicy;
+/// use swink_agent::AgentOptions;
 ///
 /// let opts = AgentOptions::new(...)
 ///     .with_pre_dispatch_policy(ToolDenyListPolicy::new(["bash", "write_file"]));
@@ -52,7 +53,7 @@ impl PreDispatchPolicy for ToolDenyListPolicy {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{Cost, Usage};
+    use swink_agent::{Cost, Usage};
 
     fn make_ctx<'a>(usage: &'a Usage, cost: &'a Cost) -> PolicyContext<'a> {
         PolicyContext {

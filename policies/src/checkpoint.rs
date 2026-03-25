@@ -3,8 +3,7 @@
 
 use std::sync::Arc;
 
-use crate::checkpoint::CheckpointStore;
-use crate::policy::{PolicyContext, PolicyVerdict, PostTurnPolicy, TurnPolicyContext};
+use swink_agent::{Checkpoint, CheckpointStore, PolicyContext, PolicyVerdict, PostTurnPolicy, TurnPolicyContext};
 
 /// Persists agent state after each turn via a [`CheckpointStore`].
 ///
@@ -16,7 +15,8 @@ use crate::policy::{PolicyContext, PolicyVerdict, PostTurnPolicy, TurnPolicyCont
 ///
 /// # Example
 /// ```rust,ignore
-/// use swink_agent::{CheckpointPolicy, AgentOptions};
+/// use swink_agent_policies::CheckpointPolicy;
+/// use swink_agent::AgentOptions;
 ///
 /// let opts = AgentOptions::new(...)
 ///     .with_post_turn_policy(CheckpointPolicy::new(store));
@@ -64,7 +64,7 @@ impl PostTurnPolicy for CheckpointPolicy {
         ctx: &PolicyContext<'_>,
         _turn: &TurnPolicyContext<'_>,
     ) -> PolicyVerdict {
-        let checkpoint = crate::checkpoint::Checkpoint::new(
+        let checkpoint = Checkpoint::new(
             format!("turn-{}", ctx.turn_index),
             String::new(), // system_prompt not available in PolicyContext
             String::new(), // provider
@@ -94,6 +94,8 @@ mod tests {
     use std::io;
     use std::pin::Pin;
 
+    use swink_agent::{AssistantMessage, Cost, StopReason, Usage};
+
     type AsyncResult<'a, T> = Pin<Box<dyn Future<Output = io::Result<T>> + Send + 'a>>;
 
     /// Minimal in-memory checkpoint store for testing.
@@ -110,7 +112,7 @@ mod tests {
     }
 
     impl CheckpointStore for MockCheckpointStore {
-        fn save_checkpoint(&self, checkpoint: &crate::checkpoint::Checkpoint) -> AsyncResult<'_, ()> {
+        fn save_checkpoint(&self, checkpoint: &Checkpoint) -> AsyncResult<'_, ()> {
             let json = serde_json::to_string(checkpoint).unwrap();
             let id = checkpoint.id.clone();
             Box::pin(async move {
@@ -119,7 +121,7 @@ mod tests {
             })
         }
 
-        fn load_checkpoint(&self, id: &str) -> AsyncResult<'_, Option<crate::checkpoint::Checkpoint>> {
+        fn load_checkpoint(&self, id: &str) -> AsyncResult<'_, Option<Checkpoint>> {
             let id = id.to_string();
             Box::pin(async move {
                 let guard = self.data.lock().unwrap();
@@ -142,9 +144,6 @@ mod tests {
         }
     }
 
-    // Note: Full integration test is in tests/policy_slots.rs (T040)
-    // These unit tests verify the basic API contract.
-
     #[test]
     fn name_returns_checkpoint() {
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -163,8 +162,8 @@ mod tests {
         let store: Arc<dyn CheckpointStore> = Arc::new(MockCheckpointStore::new());
         let policy = CheckpointPolicy::new(store);
 
-        let usage = crate::types::Usage::default();
-        let cost = crate::types::Cost::default();
+        let usage = Usage::default();
+        let cost = Cost::default();
         let ctx = PolicyContext {
             turn_index: 0,
             accumulated_usage: &usage,
@@ -173,20 +172,20 @@ mod tests {
             overflow_signal: false,
             new_messages: &[],
         };
-        let msg = crate::types::AssistantMessage {
+        let msg = AssistantMessage {
             content: vec![],
             provider: String::new(),
             model_id: String::new(),
-            usage: crate::types::Usage::default(),
-            cost: crate::types::Cost::default(),
-            stop_reason: crate::types::StopReason::Stop,
+            usage: Usage::default(),
+            cost: Cost::default(),
+            stop_reason: StopReason::Stop,
             error_message: None,
             timestamp: 0,
         };
         let turn = TurnPolicyContext {
             assistant_message: &msg,
             tool_results: &[],
-            stop_reason: crate::types::StopReason::Stop,
+            stop_reason: StopReason::Stop,
         };
 
         let result = policy.evaluate(&ctx, &turn);

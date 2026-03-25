@@ -23,7 +23,6 @@ pub mod metrics;
 mod model_catalog;
 mod model_presets;
 mod orchestrator;
-pub mod policies;
 pub mod policy;
 mod registry;
 mod retry;
@@ -113,10 +112,6 @@ pub use types::{
 pub use util::now_timestamp;
 
 pub use display::{CoreDisplayMessage, DisplayRole, IntoDisplayMessages};
-pub use policies::{
-    BudgetPolicy, CheckpointPolicy, LoopDetectionAction, LoopDetectionPolicy, MaxTurnsPolicy,
-    SandboxPolicy, ToolDenyListPolicy,
-};
 pub use policy::{
     PolicyContext, PolicyVerdict, PostLoopPolicy, PostTurnPolicy, PreDispatchPolicy,
     PreDispatchVerdict, PreTurnPolicy, ToolPolicyContext, TurnPolicyContext, run_policies,

@@ -1,16 +1,22 @@
 [package]
 name = "swink-agent-policies"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 rust-version = "1.88"
-description = "Ready-to-use application-level policies for swink-agent"
+description = "Policy implementations for swink-agent"
 license = "MIT"
 repository = "https://github.com/SuperSwinkAI/Swink-Agent"
 keywords = ["llm", "agent", "policy", "security", "audit"]
 
 [features]
 default = ["all"]
-all = ["prompt-guard", "pii", "content-filter", "audit"]
+all = ["budget", "max-turns", "deny-list", "sandbox", "loop-detection", "checkpoint", "prompt-guard", "pii", "content-filter", "audit"]
+budget = []
+max-turns = []
+deny-list = []
+sandbox = []
+loop-detection = []
+checkpoint = ["dep:tokio"]
 prompt-guard = ["regex"]
 pii = ["regex"]
 content-filter = ["regex"]
@@ -22,12 +28,15 @@ regex = { version = "1", optional = true }
 chrono = { workspace = true, optional = true }
 serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
+futures = { workspace = true }
 serde_json = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["full", "test-util"] }
+tokio-util = { workspace = true }
 
 [lints.rust]
 unsafe_code = "forbid"
@@ -37,3 +46,6 @@ all = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
 nursery = { level = "warn", priority = -1 }
 module_name_repetitions = "allow"
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"

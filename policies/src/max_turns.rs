@@ -1,7 +1,7 @@
 //! Maximum turns policy — stops the loop after a configured number of turns.
 #![forbid(unsafe_code)]
 
-use crate::policy::{PolicyContext, PolicyVerdict, PostTurnPolicy, PreTurnPolicy, TurnPolicyContext};
+use swink_agent::{PolicyContext, PolicyVerdict, PostTurnPolicy, PreTurnPolicy, TurnPolicyContext};
 
 /// Stops the agent loop after a configured number of turns.
 ///
@@ -11,7 +11,8 @@ use crate::policy::{PolicyContext, PolicyVerdict, PostTurnPolicy, PreTurnPolicy,
 ///
 /// # Example
 /// ```rust,ignore
-/// use swink_agent::{MaxTurnsPolicy, AgentOptions};
+/// use swink_agent_policies::MaxTurnsPolicy;
+/// use swink_agent::AgentOptions;
 ///
 /// let opts = AgentOptions::new(...)
 ///     .with_pre_turn_policy(MaxTurnsPolicy::new(10));
@@ -65,7 +66,7 @@ impl PostTurnPolicy for MaxTurnsPolicy {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{Cost, Usage};
+    use swink_agent::{Cost, Usage};
 
     fn make_ctx_at_turn<'a>(turn: usize, usage: &'a Usage, cost: &'a Cost) -> PolicyContext<'a> {
         PolicyContext {

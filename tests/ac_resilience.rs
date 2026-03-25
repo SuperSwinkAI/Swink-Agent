@@ -15,8 +15,38 @@ use futures::stream::StreamExt;
 
 use swink_agent::{
     Agent, AgentEvent, AgentMessage, AgentOptions, ContentBlock, CustomMessage,
-    DefaultRetryStrategy, LlmMessage, MaxTurnsPolicy, StopReason, StreamErrorKind,
+    DefaultRetryStrategy, LlmMessage, PolicyContext, PolicyVerdict, PreTurnPolicy, StopReason,
+    StreamErrorKind,
 };
+
+/// Inline max-turns policy for this test (the real one lives in swink-agent-policies).
+#[derive(Debug, Clone)]
+struct MaxTurnsPolicy {
+    max_turns: usize,
+}
+
+impl MaxTurnsPolicy {
+    const fn new(max_turns: usize) -> Self {
+        Self { max_turns }
+    }
+}
+
+impl PreTurnPolicy for MaxTurnsPolicy {
+    fn name(&self) -> &'static str {
+        "max_turns"
+    }
+
+    fn evaluate(&self, ctx: &PolicyContext<'_>) -> PolicyVerdict {
+        if ctx.turn_index >= self.max_turns {
+            PolicyVerdict::Stop(format!(
+                "max turns reached: {} >= {}",
+                ctx.turn_index, self.max_turns
+            ))
+        } else {
+            PolicyVerdict::Continue
+        }
+    }
+}
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 

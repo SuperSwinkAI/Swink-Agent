@@ -12,7 +12,7 @@ use futures::Stream;
 use tokio_util::sync::CancellationToken;
 
 use swink_agent::prelude::*;
-use swink_agent::{BudgetPolicy, MaxTurnsPolicy, ToolDenyListPolicy};
+use swink_agent_policies::{BudgetPolicy, MaxTurnsPolicy, ToolDenyListPolicy};
 
 // ─── Mock StreamFn ──────────────────────────────────────────────────────────
 

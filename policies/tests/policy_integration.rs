@@ -1,19 +1,19 @@
-//! Integration tests for policy slots (replaces old LoopPolicy tests).
+//! Integration tests for policy slots — moved from swink-agent core.
 
 mod common;
 
 use std::sync::Arc;
 
 use swink_agent::{
-    AgentOptions, AssistantMessageEvent, BudgetPolicy, Cost, MaxTurnsPolicy, StopReason, SubAgent,
-    Usage, stream::StreamFn,
+    AgentOptions, AssistantMessageEvent, Cost, StopReason, SubAgent, Usage,
+    stream::StreamFn,
 };
+use swink_agent_policies::{BudgetPolicy, MaxTurnsPolicy};
 
 use common::{MockStreamFn, MockTool, default_model, text_only_events, tool_call_events};
 
 #[tokio::test]
 async fn max_turns_limits_agent_loop() {
-    // MockStreamFn always returns tool calls, then text after enough turns
     let responses = vec![
         tool_call_events("call-1", "mock_tool", "{}"),
         text_only_events("turn 1 tool result processed"),
@@ -32,16 +32,12 @@ async fn max_turns_limits_agent_loop() {
     let mut agent = swink_agent::Agent::new(options);
     let result = agent.prompt_text("go").await;
 
-    // The agent should complete (policy stops it) — either Ok or the loop terminated
-    // The key assertion is that we don't run all 6 responses
     assert!(result.is_ok());
-    // Tool was executed at most 2 times (2 turns)
     assert!(tool.execution_count() <= 2);
 }
 
 #[tokio::test]
 async fn cost_cap_stops_agent() {
-    // Each response costs 0.005
     let make_events = |text: &str| -> Vec<AssistantMessageEvent> {
         vec![
             AssistantMessageEvent::Start,
@@ -97,7 +93,6 @@ async fn cost_cap_stops_agent() {
     let stream_fn: Arc<dyn StreamFn> = Arc::new(MockStreamFn::new(responses));
     let tool = Arc::new(MockTool::new("mock_tool"));
 
-    // BudgetPolicy with max cost 0.01 — should allow ~2 turns (0.005 each)
     let options = AgentOptions::new_simple("test", default_model(), stream_fn)
         .with_tools(vec![tool.clone()])
         .with_pre_turn_policy(BudgetPolicy::new().max_cost(0.01));
@@ -106,7 +101,6 @@ async fn cost_cap_stops_agent() {
     let result = agent.prompt_text("go").await;
 
     assert!(result.is_ok());
-    // Should have stopped before all 3 tool executions
     assert!(tool.execution_count() <= 2);
 }
 
@@ -123,7 +117,6 @@ async fn composed_policies_apply_all() {
     let stream_fn: Arc<dyn StreamFn> = Arc::new(MockStreamFn::new(responses));
     let tool = Arc::new(MockTool::new("mock_tool"));
 
-    // Max turns = 5 (lenient), budget cost = 0.0 (strict) — budget wins
     let options = AgentOptions::new_simple("test", default_model(), stream_fn)
         .with_tools(vec![tool.clone()])
         .with_pre_turn_policy(MaxTurnsPolicy::new(5))
@@ -133,20 +126,17 @@ async fn composed_policies_apply_all() {
     let result = agent.prompt_text("go").await;
 
     assert!(result.is_ok());
-    // Cost cap of 0.0 should stop very quickly
     assert!(tool.execution_count() <= 1);
 }
 
 #[tokio::test]
 async fn policy_with_sub_agent() {
-    // Parent responses: one tool call to the sub-agent, then text
     let parent_responses = vec![
         tool_call_events("sub-call", "researcher", r#"{"prompt":"research this"}"#),
         text_only_events("parent final answer"),
     ];
     let parent_stream: Arc<dyn StreamFn> = Arc::new(MockStreamFn::new(parent_responses));
 
-    // Sub-agent stream
     let sub_stream: Arc<dyn StreamFn> = Arc::new(MockStreamFn::new(vec![text_only_events(
         "sub-agent result",
     )]));
@@ -158,7 +148,6 @@ async fn policy_with_sub_agent() {
         }),
     );
 
-    // Parent with max 3 turns
     let options = AgentOptions::new_simple("parent", default_model(), parent_stream)
         .with_tools(vec![sub as Arc<dyn swink_agent::AgentTool>])
         .with_pre_turn_policy(MaxTurnsPolicy::new(3));
