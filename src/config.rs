@@ -122,10 +122,10 @@ impl StreamOptionsConfig {
 
 // ─── BudgetGuardConfig ───────────────────────────────────────────────────────
 
-/// Serializable budget configuration for [`BudgetPolicy`](crate::BudgetPolicy).
+/// Serializable budget configuration for `BudgetPolicy` (in `swink-agent-policies`).
 ///
 /// Retained for config persistence and round-tripping. Use
-/// [`BudgetPolicy`](crate::BudgetPolicy) at runtime.
+/// `BudgetPolicy` from the `swink-agent-policies` crate at runtime.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BudgetGuardConfig {
     /// Maximum total cost before blocking further LLM calls.
