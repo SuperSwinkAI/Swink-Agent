@@ -1,0 +1,118 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 620" font-family="Inter, system-ui, -apple-system, sans-serif">
+  <defs>
+    <filter id="shadow" x="-4%" y="-4%" width="108%" height="108%">
+      <feDropShadow dx="0" dy="1" stdDeviation="3" flood-opacity="0.08"/>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="900" height="620" rx="16" fill="#f0f1f4"/>
+
+  <!-- Agent Loop box -->
+  <rect x="30" y="30" width="840" height="560" rx="12" fill="#f8f9fb" stroke="#c4c8d0" stroke-width="1.5"/>
+  <text x="450" y="56" text-anchor="middle" font-size="11" font-weight="600" letter-spacing="0.14em" fill="rgba(0,0,0,0.35)" font-family="'JetBrains Mono', monospace">AGENT LOOP</text>
+
+  <!-- Policy Slots box (dashed) -->
+  <rect x="55" y="75" width="280" height="490" rx="10" fill="#f8f9fb" stroke="#c4c8d0" stroke-width="1.5" stroke-dasharray="6 4"/>
+  <text x="195" y="98" text-anchor="middle" font-size="10" font-weight="600" letter-spacing="0.14em" fill="rgba(0,0,0,0.35)" font-family="'JetBrains Mono', monospace">POLICY SLOTS</text>
+
+  <!-- Pre-Turn Guard (blue) -->
+  <rect x="80" y="115" width="230" height="90" rx="8" fill="#2563eb" filter="url(#shadow)"/>
+  <text x="195" y="142" text-anchor="middle" font-size="14" font-weight="600" fill="white">Pre-Turn Guard</text>
+  <line x1="150" y1="155" x2="240" y2="155" stroke="rgba(255,255,255,0.4)" stroke-width="1"/>
+  <text x="195" y="175" text-anchor="middle" font-size="11" fill="rgba(255,255,255,0.9)">e.g. Budget · Max Turns</text>
+  <text x="195" y="193" text-anchor="middle" font-size="11" fill="rgba(255,255,255,0.9)">Injection Detection</text>
+
+  <!-- Pre-Dispatch Guard (amber) -->
+  <rect x="80" y="225" width="230" height="80" rx="8" fill="#d97706" filter="url(#shadow)"/>
+  <text x="195" y="252" text-anchor="middle" font-size="14" font-weight="600" fill="white">Pre-Dispatch Guard</text>
+  <line x1="150" y1="265" x2="240" y2="265" stroke="rgba(255,255,255,0.4)" stroke-width="1"/>
+  <text x="195" y="285" text-anchor="middle" font-size="11" fill="rgba(255,255,255,0.9)">e.g. Tool Deny List · Sandbox</text>
+
+  <!-- Post-Turn Guard (green) -->
+  <rect x="80" y="325" width="230" height="90" rx="8" fill="#16a34a" filter="url(#shadow)"/>
+  <text x="195" y="352" text-anchor="middle" font-size="14" font-weight="600" fill="white">Post-Turn Guard</text>
+  <line x1="150" y1="365" x2="240" y2="365" stroke="rgba(255,255,255,0.4)" stroke-width="1"/>
+  <text x="195" y="385" text-anchor="middle" font-size="11" fill="rgba(255,255,255,0.9)">e.g. PII Redaction · Content Filter</text>
+  <text x="195" y="403" text-anchor="middle" font-size="11" fill="rgba(255,255,255,0.9)">Loop Detection · Audit Log</text>
+
+  <!-- Post-Loop Guard (grey) -->
+  <rect x="80" y="435" width="230" height="80" rx="8" fill="#94a3b8" filter="url(#shadow)"/>
+  <text x="195" y="462" text-anchor="middle" font-size="14" font-weight="600" fill="white">Post-Loop Guard</text>
+  <line x1="150" y1="475" x2="240" y2="475" stroke="rgba(255,255,255,0.4)" stroke-width="1"/>
+  <text x="195" y="495" text-anchor="middle" font-size="11" fill="rgba(255,255,255,0.9)">e.g. Checkpoint · Audit Log</text>
+
+  <!-- Agent Loop steps -->
+  <!-- Receive Message -->
+  <rect x="500" y="100" width="160" height="56" rx="8" fill="white" stroke="#94a3b8" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="580" y="124" text-anchor="middle" font-size="13" font-weight="500" fill="rgba(0,0,0,0.75)">Receive</text>
+  <text x="580" y="142" text-anchor="middle" font-size="13" font-weight="500" fill="rgba(0,0,0,0.75)">Message</text>
+
+  <!-- AI Reasoning -->
+  <rect x="500" y="210" width="160" height="56" rx="8" fill="white" stroke="#94a3b8" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="580" y="234" text-anchor="middle" font-size="13" font-weight="500" fill="rgba(0,0,0,0.75)">AI</text>
+  <text x="580" y="252" text-anchor="middle" font-size="13" font-weight="500" fill="rgba(0,0,0,0.75)">Reasoning</text>
+
+  <!-- Tool Execution -->
+  <rect x="500" y="320" width="160" height="56" rx="8" fill="white" stroke="#94a3b8" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="580" y="344" text-anchor="middle" font-size="13" font-weight="500" fill="rgba(0,0,0,0.75)">Tool</text>
+  <text x="580" y="362" text-anchor="middle" font-size="13" font-weight="500" fill="rgba(0,0,0,0.75)">Execution</text>
+
+  <!-- Deliver Response -->
+  <rect x="500" y="430" width="160" height="56" rx="8" fill="white" stroke="#94a3b8" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="580" y="454" text-anchor="middle" font-size="13" font-weight="500" fill="rgba(0,0,0,0.75)">Deliver</text>
+  <text x="580" y="472" text-anchor="middle" font-size="13" font-weight="500" fill="rgba(0,0,0,0.75)">Response</text>
+
+  <!-- Flow arrows (solid, thick) -->
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 7" refX="10" refY="3.5" markerWidth="10" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 3.5 L 0 7 z" fill="#94a3b8"/>
+    </marker>
+    <marker id="arrow-blue" viewBox="0 0 10 7" refX="10" refY="3.5" markerWidth="10" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 3.5 L 0 7 z" fill="#2563eb"/>
+    </marker>
+    <marker id="arrow-amber" viewBox="0 0 10 7" refX="10" refY="3.5" markerWidth="10" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 3.5 L 0 7 z" fill="#d97706"/>
+    </marker>
+    <marker id="arrow-green" viewBox="0 0 10 7" refX="10" refY="3.5" markerWidth="10" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 3.5 L 0 7 z" fill="#16a34a"/>
+    </marker>
+    <marker id="arrow-grey" viewBox="0 0 10 7" refX="10" refY="3.5" markerWidth="10" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 3.5 L 0 7 z" fill="#94a3b8"/>
+    </marker>
+  </defs>
+
+  <!-- Receive -> AI Reasoning -->
+  <line x1="580" y1="156" x2="580" y2="210" stroke="#94a3b8" stroke-width="2.5" marker-end="url(#arrow)"/>
+  <!-- AI Reasoning -> Tool Execution -->
+  <line x1="580" y1="266" x2="580" y2="320" stroke="#94a3b8" stroke-width="2.5" marker-end="url(#arrow)"/>
+  <!-- Tool Execution -> Deliver Response -->
+  <line x1="580" y1="376" x2="580" y2="430" stroke="#94a3b8" stroke-width="2.5" marker-end="url(#arrow)"/>
+
+  <!-- Next turn loop-back -->
+  <path d="M 580 486 L 580 530 Q 580 545 595 545 L 760 545 Q 775 545 775 530 L 775 115 Q 775 100 760 100 L 665 100" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="6 4" fill="none" marker-end="url(#arrow)"/>
+  <rect x="730" y="535" width="70" height="20" rx="4" fill="#f0f1f4"/>
+  <text x="765" y="549" text-anchor="middle" font-size="10" fill="rgba(0,0,0,0.4)">next turn</text>
+
+  <!-- Dashed cross-links: Policy -> Loop step -->
+  <!-- Pre-Turn -> AI Reasoning -->
+  <line x1="310" y1="155" x2="498" y2="238" stroke="#2563eb" stroke-width="1.5" stroke-dasharray="6 4" marker-end="url(#arrow-blue)"/>
+  <rect x="350" y="178" width="100" height="18" rx="4" fill="#f0f1f4"/>
+  <text x="400" y="191" text-anchor="middle" font-size="9" fill="#2563eb">approve or stop</text>
+
+  <!-- Pre-Dispatch -> Tool Execution -->
+  <line x1="310" y1="265" x2="498" y2="348" stroke="#d97706" stroke-width="1.5" stroke-dasharray="6 4" marker-end="url(#arrow-amber)"/>
+  <rect x="350" y="290" width="100" height="18" rx="4" fill="#f0f1f4"/>
+  <text x="400" y="303" text-anchor="middle" font-size="9" fill="#d97706">approve or skip</text>
+
+  <!-- Post-Turn -> Deliver Response -->
+  <line x1="310" y1="370" x2="498" y2="458" stroke="#16a34a" stroke-width="1.5" stroke-dasharray="6 4" marker-end="url(#arrow-green)"/>
+  <rect x="345" y="400" width="115" height="18" rx="4" fill="#f0f1f4"/>
+  <text x="403" y="413" text-anchor="middle" font-size="9" fill="#16a34a">pass, redact, or stop</text>
+
+  <!-- Post-Loop -> circle after Deliver -->
+  <circle cx="580" cy="510" r="8" fill="#94a3b8"/>
+  <line x1="310" y1="475" x2="570" y2="508" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="6 4"/>
+  <rect x="380" y="485" width="60" height="18" rx="4" fill="#f0f1f4"/>
+  <text x="410" y="498" text-anchor="middle" font-size="9" fill="#94a3b8">finalize</text>
+</svg>
