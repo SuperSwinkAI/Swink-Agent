@@ -36,3 +36,4 @@ tmp/
 
 # ── Tool / agent state ──────────────────────────────────────────────
 .claude/
+QA_Report.md
