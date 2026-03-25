@@ -1,0 +1,58 @@
+# Quickstart: 033 Workspace Feature Gates
+
+**Date**: 2026-03-25
+
+## What This Changes
+
+Adds granular Cargo feature flags to three crates (adapters, local-llm, root) so consumers compile only the providers and backends they need. Follows the existing policies crate pattern.
+
+## Implementation Order
+
+1. **Adapters crate** — Add 9 feature flags + `all` + `default`. Gate `mod` + `pub use` in lib.rs. Gate `eventsource-stream` behind `proxy`, `sha2` behind `bedrock`.
+2. **Local-LLM crate** — Add backend features (`metal`, `cuda`, `cudnn`, `flash-attn`, `mkl`, `accelerate`) forwarding to mistralrs.
+3. **Root crate** — Add optional deps on adapters + local-llm + TUI. Add feature flags that forward to sub-crates.
+4. **Verification** — `cargo test --workspace` with defaults. Minimal feature builds. CI matrix additions.
+
+## Key Pattern (from policies crate)
+
+```toml
+# Cargo.toml
+[features]
+default = ["all"]
+all = ["anthropic", "openai", ...]
+anthropic = []
+proxy = ["dep:eventsource-stream"]
+
+[dependencies]
+eventsource-stream = { version = "0.2", optional = true }
+```
+
+```rust
+// lib.rs
+#[cfg(feature = "anthropic")]
+mod anthropic;
+#[cfg(feature = "anthropic")]
+pub use anthropic::AnthropicStreamFn;
+```
+
+## Verification Commands
+
+```bash
+# Default (all features) — must match current behavior
+cargo test --workspace
+
+# Single adapter
+cargo build -p swink-agent-adapters --no-default-features --features anthropic
+
+# No adapters (shared infra only)
+cargo build -p swink-agent-adapters --no-default-features
+
+# Root with selective adapters
+cargo build --no-default-features --features "builtin-tools,anthropic,openai"
+
+# Local LLM with Metal
+cargo build -p swink-agent-local-llm --features metal
+
+# Bare minimum root
+cargo build --no-default-features
+```
