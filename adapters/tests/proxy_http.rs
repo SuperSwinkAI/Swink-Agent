@@ -1,3 +1,4 @@
+#![cfg(feature = "proxy")]
 //! Integration tests for the HTTP/SSE proxy functionality (`ProxyStreamFn`).
 //!
 //! These tests exercise the public API end-to-end by standing up a mock HTTP

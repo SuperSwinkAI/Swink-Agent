@@ -88,19 +88,19 @@ A headless daemon or library consumer depends on `swink-agent` for its agent loo
 
 ### Functional Requirements
 
-- **FR-001**: The adapters crate MUST expose individual feature flags for all 9 adapter modules — implemented (`anthropic`, `openai`, `ollama`, `gemini`, `proxy`) and stubs (`azure`, `bedrock`, `mistral`, `xai`) — that gate each provider's module compilation and re-exports.
+- **FR-001**: The adapters crate MUST expose individual feature flags for all 9 adapter modules — implemented (`anthropic`, `openai`, `ollama`, `gemini`, `proxy`) and stubs (`azure`, `bedrock`, `mistral`, `xai`) — that gate each provider's module compilation and re-exports. Note: the `gemini` feature gates the `google` module (which exports `GeminiStreamFn`); the feature name matches the public type and user mental model.
 - **FR-002**: The adapters crate MUST compile shared infrastructure (base HTTP client, SSE parsing, error types, conversion utilities) unconditionally, regardless of which provider features are enabled.
 - **FR-003**: The adapters crate MUST provide an `all` feature that enables all 9 adapter feature flags (5 implemented + 4 stubs), and `default` MUST include `all`.
 - **FR-004**: The local-llm crate MUST expose backend feature flags (`metal`, `cuda`, `cudnn`, `flash-attn`, `mkl`, `accelerate`) that forward to the corresponding mistralrs compile-time features.
 - **FR-005**: The local-llm crate MUST default to CPU-only inference when no backend feature is explicitly selected (no `default` or `all` feature for backends — explicit opt-in only).
 - **FR-006**: The TUI crate MUST remain opt-in from the workspace root — it MUST NOT be included in the root crate's default features.
 - **FR-007**: The TUI crate MUST preserve its existing `local` feature that optionally depends on `swink-agent-local-llm`.
-- **FR-008**: The root `swink-agent` crate MUST forward adapter feature flags to the adapters sub-crate so consumers can select providers via the root dependency.
-- **FR-009**: The root crate MUST expose `adapters-all`, `tui`, and `local-llm` features for coarse-grained control.
-- **FR-010**: The root crate's `default` features MUST include `builtin-tools` (preserving current behavior) but MUST NOT include adapters, TUI, or local-llm by default.
+- **FR-008**: ~~The root `swink-agent` crate MUST forward adapter feature flags to the adapters sub-crate so consumers can select providers via the root dependency.~~ **Not feasible**: cyclic dependency (root → adapters → root). Consumers depend on `swink-agent-adapters` directly with feature flags.
+- **FR-009**: ~~The root crate MUST expose `adapters-all`, `tui`, and `local-llm` features for coarse-grained control.~~ **Not feasible**: see FR-008. Consumers use sub-crate features directly.
+- **FR-010**: The root crate's `default` features MUST include `builtin-tools` (preserving current behavior). Adapters, TUI, and local-llm are separate workspace crates — consumers opt-in by adding them as direct dependencies.
 - **FR-011**: Feature-gated modules MUST produce clear compile-time errors when a consumer references a type whose feature is not enabled, not silent omission.
 - **FR-012**: All existing tests MUST pass with default features enabled, preserving full backward compatibility.
-- **FR-013**: Provider-specific dependencies (e.g., `eventsource-stream` for SSE-based adapters) MUST only compile when the corresponding provider feature is enabled.
+- **FR-013**: Provider-specific dependencies (e.g., `eventsource-stream` for the proxy adapter, `sha2` for the bedrock adapter) MUST only compile when the corresponding provider feature is enabled. The shared `sse` module has no external dependencies and compiles unconditionally.
 
 ### Key Entities
 

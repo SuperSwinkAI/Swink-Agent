@@ -14,6 +14,14 @@ categories = ["development-tools", "machine-learning"]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
+[features]
+metal = ["mistralrs/metal"]
+cuda = ["mistralrs/cuda"]
+cudnn = ["mistralrs/cudnn"]
+flash-attn = ["mistralrs/flash-attn"]
+mkl = ["mistralrs/mkl"]
+accelerate = ["mistralrs/accelerate"]
+
 [dependencies]
 swink-agent = { path = ".." }
 mistralrs = "0.7"

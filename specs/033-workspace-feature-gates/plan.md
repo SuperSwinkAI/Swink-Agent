@@ -34,7 +34,7 @@ Add granular Cargo feature flags across three workspace crates (adapters, local-
 
 | Constraint | Status | Notes |
 |------------|--------|-------|
-| Crate count (7 members) | **PASS** | No new crates. Modifying existing crates only. |
+| Crate count (8 members) | **PASS** | No new crates. Modifying existing crates only. (Constitution says 7 — stale; policies crate added in 032.) |
 | MSRV 1.88 | **PASS** | Feature flags are stable Rust. `dep:` syntax available since 1.60. |
 | No global mutable state | **PASS** | No runtime state changes. |
 

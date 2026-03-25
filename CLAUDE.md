@@ -109,9 +109,25 @@ MSRV **1.88** (edition 2024). Workspace deps centralized in root `Cargo.toml`.
 
 ### Feature Gates
 
+**Root crate (`swink-agent`):**
 - `builtin-tools` (default-enabled) — gates `BashTool`, `ReadFileTool`, `WriteFileTool`.
 - `test-helpers` — for **downstream consumers only** (e.g., `SuperSwink-Core`). Enables public re-exports of test utilities. Not used by the `swink-agent` crate itself (it cannot be its own dev-dependency).
-- `ProxyStreamFn` lives in adapters crate, not core.
+- Root crate cannot re-export adapters/local-llm/TUI (cyclic dependency). Consumers depend on sub-crates directly.
+
+**Adapters crate (`swink-agent-adapters`):**
+- `default = ["all"]` — backward compatible, all 9 adapters enabled.
+- Individual flags: `anthropic`, `openai`, `ollama`, `gemini`, `proxy`, `azure`, `bedrock`, `mistral`, `xai`.
+- `gemini` feature gates the `google` module (file is `google.rs`, public type is `GeminiStreamFn`).
+- `proxy` activates `eventsource-stream` dep. `bedrock` activates `sha2` dep. All others are marker flags.
+- Shared infra (`base`, `sse`, `classify`, `convert`, `finalize`, `openai_compat`, `remote_presets`) compiles unconditionally.
+- Pattern follows `swink-agent-policies`: paired `#[cfg(feature)]` on `mod` + `pub use`.
+
+**Local-LLM crate (`swink-agent-local-llm`):**
+- Backend flags: `metal`, `cuda`, `cudnn`, `flash-attn`, `mkl`, `accelerate` — each forwards to `mistralrs/<flag>`.
+- No default backend. CPU-only inference when none enabled.
+
+**Policies crate (`swink-agent-policies`):**
+- `default = ["all"]`, 10 individual policy flags. Established pattern for feature gating.
 
 ## Active Technologies
 - Rust 1.88 (edition 2024) + serde, serde_json, tokio, futures, thiserror, uuid, reqwest, jsonschema, schemars, rand, tracing, toml (all centralized in workspace `[workspace.dependencies]`) (001-workspace-scaffold)

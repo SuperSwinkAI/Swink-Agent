@@ -1,8 +1,11 @@
 ---
-description: Display project status, feature progress, and recommended next actions across the spec-driven development workflow.
-scripts:
-  sh: .specify/extensions/status-report/scripts/bash/get-project-status.sh --json
-  ps: .specify/extensions/status-report/scripts/powershell/Get-ProjectStatus.ps1 -Json
+name: speckit-status.report
+description: Display project status, feature progress, and recommended next actions
+  across the spec-driven development workflow.
+compatibility: Requires spec-kit project structure with .specify/ directory
+metadata:
+  author: github-spec-kit
+  source: status-report:commands/status.md
 ---
 
 ## User Input

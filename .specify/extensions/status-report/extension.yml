@@ -3,7 +3,7 @@ schema_version: "1.0"
 extension:
   id: "status-report"
   name: "Status Report"
-  version: "1.1.4"
+  version: "1.1.5"
   description: "Display project status, feature progress, and recommended next actions across the spec-driven development workflow."
   author: "Open-Agent-Tools"
   repository: "https://github.com/Open-Agent-Tools/spec-kit-status"

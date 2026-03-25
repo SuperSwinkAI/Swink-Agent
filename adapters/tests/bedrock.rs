@@ -1,3 +1,4 @@
+#![cfg(feature = "bedrock")]
 //! Wiremock-based tests for `BedrockStreamFn`.
 
 use futures::StreamExt;

@@ -1,3 +1,4 @@
+#![cfg(feature = "ollama")]
 //! Live integration tests for `OllamaStreamFn`.
 //!
 //! These tests hit a real Ollama instance and are skipped by default.

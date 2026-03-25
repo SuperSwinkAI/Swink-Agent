@@ -1,3 +1,4 @@
+#![cfg(feature = "gemini")]
 //! Live API tests for `GeminiStreamFn`.
 //!
 //! These tests hit the real Google Gemini API and are skipped by default.

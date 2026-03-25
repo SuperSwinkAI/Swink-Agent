@@ -2,7 +2,35 @@
 
 ## Scope
 
-`adapters/` — StreamFn implementations for Ollama, Anthropic, OpenAI, and Proxy. Separate crate to keep provider-specific deps out of core.
+`adapters/` — StreamFn implementations for 9 LLM providers (5 implemented, 4 stubs). Separate crate to keep provider-specific deps out of core.
+
+## Feature Gates
+
+Each adapter is feature-gated. `default = ["all"]` enables everything (backward compatible).
+
+```toml
+# Selective compilation
+swink-agent-adapters = { features = ["anthropic", "openai"] }
+
+# Everything (default)
+swink-agent-adapters = {}
+```
+
+| Feature | Module | Extra deps | Status |
+|---------|--------|-----------|--------|
+| `anthropic` | `anthropic.rs` | — | Implemented |
+| `openai` | `openai.rs` | — | Implemented |
+| `ollama` | `ollama.rs` | — | Implemented |
+| `gemini` | `google.rs` | — | Implemented |
+| `proxy` | `proxy.rs` | `eventsource-stream` | Implemented |
+| `azure` | `azure.rs` | — | Stub |
+| `bedrock` | `bedrock.rs` | `sha2` | Stub |
+| `mistral` | `mistral.rs` | — | Stub |
+| `xai` | `xai.rs` | — | Stub |
+
+**Always compiled** (shared infra): `base`, `sse`, `classify`, `convert`, `finalize`, `openai_compat`, `remote_presets`.
+
+**Note**: `gemini` feature gates `mod google` — the feature name matches the public type (`GeminiStreamFn`) and user mental model, not the file name.
 
 ## Key Facts
 
@@ -10,6 +38,8 @@
 - `MessageConverter` trait (defined in core, re-exported from `swink_agent::convert`) eliminates per-adapter boilerplate — except Anthropic, which has its own `convert_messages` (system prompt is top-level, thinking blocks filtered).
 - `ProxyStreamFn` moved here from core. Import: `swink_agent_adapters::ProxyStreamFn`.
 - The `classify` and `sse` modules are public but documented as internal utilities with no stability contract. External StreamFn implementors should depend only on `swink_agent`.
+- `openai_compat` is shared by `openai`, `azure`, `mistral`, `xai` — compiles unconditionally but has `allow(dead_code)` when none of its consumers are enabled.
+- `remote_presets` module feature-gates preset key sub-modules and `build_remote_connection` match arms per provider.
 
 ## Protocols
 

@@ -1,3 +1,4 @@
+#![cfg(feature = "ollama")]
 //! Wiremock-based tests for the Ollama adapter (`OllamaStreamFn`).
 //!
 //! These tests exercise the public API end-to-end by standing up a mock HTTP

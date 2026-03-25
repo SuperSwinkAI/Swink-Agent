@@ -14,6 +14,19 @@ categories = ["development-tools", "api-bindings", "asynchronous"]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
+[features]
+default = ["all"]
+all = ["anthropic", "openai", "ollama", "gemini", "proxy", "azure", "bedrock", "mistral", "xai"]
+anthropic = []
+openai = []
+ollama = []
+gemini = []
+proxy = ["dep:eventsource-stream"]
+azure = []
+bedrock = ["dep:sha2"]
+mistral = []
+xai = []
+
 [dependencies]
 swink-agent = { path = ".." }
 reqwest.workspace = true
@@ -25,9 +38,9 @@ serde_json.workspace = true
 uuid.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
-sha2.workspace = true
+sha2 = { workspace = true, optional = true }
 bytes = "1"
-eventsource-stream = "0.2"
+eventsource-stream = { version = "0.2", optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["full", "test-util"] }
