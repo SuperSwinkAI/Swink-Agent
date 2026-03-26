@@ -37,7 +37,6 @@ pub mod tools;
 pub mod types;
 mod util;
 
-#[cfg(feature = "test-helpers")]
 pub mod testing;
 
 pub mod prelude;
@@ -77,7 +76,7 @@ pub use model_catalog::{
     ApiVersion, AuthMode, CatalogPreset, ModelCatalog, PresetCapability, PresetCatalog,
     PresetStatus, ProviderCatalog, ProviderKind, model_catalog,
 };
-pub use model_presets::{ModelConnection, ModelConnections};
+pub use model_presets::{ModelConnection, ModelConnections, ModelConnectionsBuilder};
 pub use orchestrator::{
     AgentOrchestrator, AgentRequest, DefaultSupervisor, OrchestratedHandle, SupervisorAction,
     SupervisorPolicy,

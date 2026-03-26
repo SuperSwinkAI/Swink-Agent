@@ -6,7 +6,7 @@
 //! Concurrent writes to the same session may corrupt the file.
 //! Callers are expected to enforce single-writer access.
 
-use std::io::{self, BufRead, Read as _, Write};
+use std::io::{self, BufRead, Read as _, Seek, Write};
 use std::path::PathBuf;
 
 use swink_agent::{
@@ -105,45 +105,67 @@ impl SessionStore for JsonlSessionStore {
             ));
         }
 
-        // Read existing meta to update updated_at
-        let existing_file = std::fs::File::open(&path)?;
-        let reader = io::BufReader::new(existing_file);
-        let first_line = reader
-            .lines()
-            .next()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "empty session file"))??;
-        let mut meta: SessionMeta = serde_json::from_str(&first_line).map_err(io::Error::other)?;
-        meta.updated_at = now_utc();
-
-        // Rewrite line 1 with updated meta, keep existing message lines, then append new ones
-        let mut all_content = String::new();
+        // Read only line 1 to get current meta and its byte length.
+        let mut first_line = String::new();
         {
             let file = std::fs::File::open(&path)?;
-            let mut buf_reader = io::BufReader::new(file);
-            buf_reader.read_to_string(&mut all_content)?;
+            let mut reader = io::BufReader::new(file);
+            reader.read_line(&mut first_line)?;
         }
+        if first_line.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "empty session file",
+            ));
+        }
+        // Byte length of original line 1 including its newline
+        let old_line1_bytes = first_line.len();
+        let first_line_trimmed = first_line.trim_end();
 
-        // Split into lines, replace first line
-        let lines: Vec<&str> = all_content.lines().collect();
+        let mut meta: SessionMeta =
+            serde_json::from_str(first_line_trimmed).map_err(io::Error::other)?;
+        meta.updated_at = now_utc();
+
         let new_meta_line = serde_json::to_string(&meta).map_err(io::Error::other)?;
+        // New line 1 including newline
+        let new_line1 = format!("{new_meta_line}\n");
 
-        // Build new file content
-        let mut file = std::fs::File::create(&path)?;
-        // Write updated meta
-        writeln!(file, "{new_meta_line}")?;
-        // Write existing message lines (skip first line which was meta)
-        for line in lines.iter().skip(1) {
-            if !line.is_empty() {
-                writeln!(file, "{line}")?;
+        if new_line1.len() == old_line1_bytes {
+            // Fast path: meta line is same byte length — overwrite in place, then append.
+            let mut file = std::fs::OpenOptions::new().write(true).open(&path)?;
+            file.seek(io::SeekFrom::Start(0))?;
+            file.write_all(new_line1.as_bytes())?;
+            file.seek(io::SeekFrom::End(0))?;
+            for msg in messages {
+                let json = serde_json::to_string(msg).map_err(io::Error::other)?;
+                writeln!(file, "{json}")?;
             }
-        }
-        // Append new messages
-        for msg in messages {
-            let json = serde_json::to_string(msg).map_err(io::Error::other)?;
-            writeln!(file, "{json}")?;
+            file.flush()?;
+        } else {
+            // Slow path: meta line length changed — full rewrite required.
+            let mut all_content = String::new();
+            {
+                let file = std::fs::File::open(&path)?;
+                let mut buf_reader = io::BufReader::new(file);
+                buf_reader.read_to_string(&mut all_content)?;
+            }
+
+            let lines: Vec<&str> = all_content.lines().collect();
+
+            let mut file = std::fs::File::create(&path)?;
+            writeln!(file, "{new_meta_line}")?;
+            for line in lines.iter().skip(1) {
+                if !line.is_empty() {
+                    writeln!(file, "{line}")?;
+                }
+            }
+            for msg in messages {
+                let json = serde_json::to_string(msg).map_err(io::Error::other)?;
+                writeln!(file, "{json}")?;
+            }
+            file.flush()?;
         }
 
-        file.flush()?;
         Ok(())
     }
 

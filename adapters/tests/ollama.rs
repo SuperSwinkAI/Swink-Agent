@@ -6,28 +6,21 @@
 //! requests and reconstructs `AssistantMessageEvent` streams from NDJSON
 //! responses.
 
+mod common;
+
 use futures::StreamExt;
 use tokio_util::sync::CancellationToken;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-use swink_agent::{
-    AgentContext, AssistantMessageEvent, ModelSpec, StopReason, StreamFn, StreamOptions,
-};
+use common::test_context;
+use swink_agent::{AssistantMessageEvent, ModelSpec, StopReason, StreamFn, StreamOptions};
 use swink_agent_adapters::OllamaStreamFn;
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 fn test_model() -> ModelSpec {
     ModelSpec::new("ollama", "test-model")
-}
-
-fn test_context() -> AgentContext {
-    AgentContext {
-        system_prompt: "You are a test assistant.".into(),
-        messages: Vec::new(),
-        tools: Vec::new(),
-    }
 }
 
 fn ndjson_response(lines: &[&str]) -> ResponseTemplate {

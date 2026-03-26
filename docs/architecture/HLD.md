@@ -7,7 +7,7 @@
 
 ## System Overview
 
-The Swink Agent is a Rust workspace composed of seven crates that provide the core scaffolding for building LLM-powered agentic applications. The **core library** (`swink-agent`) manages the agent loop, message context, tool dispatch, streaming, lifecycle events, model catalogs, agent registries, loop policies, middleware, and inter-agent messaging. The **adapters crate** (`swink-agent-adapters`) provides ready-made `StreamFn` implementations for nine LLM providers: Anthropic, Azure, AWS Bedrock, Google Gemini, Mistral, Ollama, OpenAI (multi-provider compatible), Proxy, and xAI. The **memory crate** (`swink-agent-memory`) provides session persistence and summarization-aware context compaction. The **local-llm crate** (`swink-agent-local-llm`) provides on-device inference via mistral.rs with SmolLM3-3B for text/tool generation and EmbeddingGemma-300M for embeddings. The **eval crate** (`swink-agent-eval`) provides trajectory tracing, golden path verification, response matching, and cost/latency governance for agent evaluation. The **TUI crate** (`swink-agent-tui`) is a binary that provides an interactive terminal interface. All LLM provider access is delegated to a `StreamFn` implementation, keeping the core harness fully provider-agnostic.
+The Swink Agent is a Rust workspace composed of eight crates that provide the core scaffolding for building LLM-powered agentic applications. The **core library** (`swink-agent`) manages the agent loop, message context, tool dispatch, streaming, lifecycle events, model catalogs, agent registries, loop policies, middleware, and inter-agent messaging. The **adapters crate** (`swink-agent-adapters`) provides ready-made `StreamFn` implementations for nine LLM providers: Anthropic, Azure, AWS Bedrock, Google Gemini, Mistral, Ollama, OpenAI (multi-provider compatible), Proxy, and xAI. The **policies crate** (`swink-agent-policies`) provides all policy implementations (10 total) built against the core policy trait API, each feature-gated independently. The **memory crate** (`swink-agent-memory`) provides session persistence and summarization-aware context compaction. The **local-llm crate** (`swink-agent-local-llm`) provides on-device inference via mistral.rs with SmolLM3-3B for text/tool generation and EmbeddingGemma-300M for embeddings. The **eval crate** (`swink-agent-eval`) provides trajectory tracing, golden path verification, response matching, and cost/latency governance for agent evaluation. The **TUI crate** (`swink-agent-tui`) is a binary that provides an interactive terminal interface. All LLM provider access is delegated to a `StreamFn` implementation, keeping the core harness fully provider-agnostic.
 
 ---
 
@@ -136,7 +136,7 @@ flowchart TB
         Emission["Emission<br/>(structured event payloads)"]
         Orchestrator["AgentOrchestrator<br/>(multi-agent supervision)"]
         Checkpoint["Checkpoint<br/>(loop state snapshots)"]
-        BuiltinPolicies["Built-in Policies<br/>(Budget, Checkpoint,<br/>DenyList, LoopDetection,<br/>MaxTurns, Sandbox)"]
+        BuiltinPolicies["swink-agent-policies<br/>Core: Budget, Checkpoint,<br/>DenyList, LoopDetection,<br/>MaxTurns, Sandbox<br/>App: PromptInjectionGuard,<br/>PiiRedactor, ContentFilter,<br/>AuditLogger"]
         Fallback["ModelFallback<br/>(automatic model failover)"]
         CtxTransformer["ContextTransformer<br/>(sync context rewriting)"]
         CtxVersion["ContextVersion<br/>(versioned context history)"]
@@ -323,7 +323,7 @@ flowchart LR
 
 ## Workspace Crate Dependencies
 
-This diagram shows how the seven workspace crates and their internal modules depend on each other.
+This diagram shows how the eight workspace crates and their internal modules depend on each other.
 
 ```mermaid
 flowchart TB
@@ -352,7 +352,7 @@ flowchart TB
             presets["model_presets.rs<br/>ModelConnection,<br/>ModelConnections"]
             registry_mod["registry.rs<br/>AgentRegistry,<br/>AgentId, AgentRef"]
             messaging_mod["messaging.rs<br/>AgentMailbox, send_to"]
-            policy["policy.rs + policies/<br/>PolicySlots (PreTurn, PreDispatch,<br/>PostTurn, PostLoop),<br/>6 built-in policies"]
+            policy["policy.rs<br/>PolicySlots (PreTurn, PreDispatch,<br/>PostTurn, PostLoop)"]
         end
 
         subgraph ExecutionLayer["🔄 Execution"]
@@ -411,6 +411,12 @@ flowchart TB
         eval_gate["gate.rs<br/>GateConfig, check_gate,<br/>CI/CD gating"]
         eval_audit["audit.rs<br/>AuditedInvocation,<br/>SHA-256 hash chain"]
         eval_store["store.rs<br/>EvalStore trait,<br/>FsEvalStore"]
+    end
+
+    subgraph PoliciesCrate["🛡️ swink-agent-policies"]
+        policies_lib["lib.rs<br/>re-exports"]
+        policies_core["Core policies<br/>Budget, MaxTurns, DenyList,<br/>Sandbox, LoopDetection,<br/>Checkpoint"]
+        policies_app["App policies<br/>PromptInjectionGuard,<br/>PiiRedactor, ContentFilter,<br/>AuditLogger"]
     end
 
     subgraph TUICrate["🖥️ swink-agent-tui"]
@@ -483,6 +489,10 @@ flowchart TB
     eval_runner --> eval_lib
     eval_store --> eval_lib
 
+    lib -->|"swink-agent dep"| policies_lib
+    policies_core --> policies_lib
+    policies_app --> policies_lib
+
     lib -->|"swink-agent dep"| tui_main
     adapters_lib -->|"adapters dep"| tui_main
     local_lib -->|"local-llm dep"| tui_main
@@ -500,6 +510,7 @@ flowchart TB
     classDef evalStyle fill:#a5d6a7,stroke:#2e7d32,stroke-width:2px,color:#000
     classDef tuiStyle fill:#1976d2,stroke:#0d47a1,stroke-width:2px,color:#fff
     classDef catalogStyle fill:#fff9c4,stroke:#f9a825,stroke-width:2px,color:#000
+    classDef policiesStyle fill:#ffcdd2,stroke:#c62828,stroke-width:2px,color:#000
 
     class types,error foundationStyle
     class tool,stream,retry coreStyle
@@ -512,6 +523,7 @@ flowchart TB
     class mem_lib,mem_store,mem_jsonl,mem_meta,mem_compact memoryStyle
     class eval_lib,eval_trajectory,eval_evaluator,eval_runner,eval_builtins,eval_gate,eval_audit,eval_store evalStyle
     class tui_main,tui_app,tui_creds,tui_session,tui_wizard tuiStyle
+    class policies_lib,policies_core,policies_app policiesStyle
 ```
 
 ---
@@ -528,7 +540,9 @@ flowchart TB
 
 **Catalogs and registries are core concerns.** `ModelCatalog` loads provider and preset metadata from an embedded TOML file, enabling catalog-driven provider selection without hardcoding model details. `AgentRegistry` provides thread-safe named agent lookup for multi-agent systems. `AgentMailbox` enables asynchronous inter-agent messaging. These subsystems live in the core crate because they define coordination primitives that any agent-based application may need.
 
-**Policies control loop behavior.** Four configurable policy slots (`PreTurn`, `PreDispatch`, `PostTurn`, `PostLoop`) replace the previous scattered hooks (`LoopPolicy`, `BudgetGuard`, `PostTurnHook`, `ToolValidator`, `ToolCallTransformer`). Each slot accepts a `Vec` of policy implementations evaluated in order. Six built-in policies ship with the library: `BudgetPolicy`, `CheckpointPolicy`, `DenyListPolicy`, `LoopDetectionPolicy`, `MaxTurnsPolicy`, and `SandboxPolicy`. Empty policy vecs mean anything goes — zero overhead when unused.
+**Policies control loop behavior.** Four configurable policy slots (`PreTurn`, `PreDispatch`, `PostTurn`, `PostLoop`) replace the previous scattered hooks (`LoopPolicy`, `BudgetGuard`, `PostTurnHook`, `ToolValidator`, `ToolCallTransformer`). Each slot accepts a `Vec` of policy implementations evaluated in order. Empty policy vecs mean anything goes — zero overhead when unused.
+
+**Policies are a separate crate.** All 10 policy implementations live in `swink-agent-policies`, keeping them optional and independently feature-gated. The crate depends only on `swink-agent` public API — no internal imports. Six core policies (`BudgetPolicy`, `CheckpointPolicy`, `ToolDenyListPolicy`, `LoopDetectionPolicy`, `MaxTurnsPolicy`, `SandboxPolicy`) handle loop governance; four application policies (`PromptInjectionGuard`, `PiiRedactor`, `ContentFilter`, `AuditLogger`) address content safety and audit. Each policy is behind its own feature flag (`budget`, `max-turns`, `deny-list`, `sandbox`, `loop-detection`, `checkpoint`, `prompt-guard`, `pii`, `content-filter`, `audit`), with `default = ["all"]`.
 
 **Middleware wraps both tools and streams.** `ToolMiddleware` intercepts `execute()` on any `AgentTool`, and `StreamMiddleware` intercepts the output stream from any `StreamFn`. Both follow the decorator pattern — callers compose them without touching inner implementations. This enables cross-cutting concerns like logging, metrics, and access control.
 

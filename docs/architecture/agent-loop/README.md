@@ -81,6 +81,7 @@ flowchart TB
             AsyncTransformCtx["async_transform_context()<br/>(if configured)"]
             TransformCtx["transform_context()"]
             ConvertLlm["convert_to_llm()"]
+            PreTurnPolicy{"pre_turn_policies?"}
             ResolveKey["get_api_key()"]
             StreamTurn["call StreamFn<br/>(with retry)"]
             EmitMsgEvents["emit MessageStart<br/>MessageUpdate ×N<br/>MessageEnd"]
@@ -104,7 +105,9 @@ flowchart TB
         InjectPending --> AsyncTransformCtx
         AsyncTransformCtx --> TransformCtx
         TransformCtx --> ConvertLlm
-        ConvertLlm --> ResolveKey
+        ConvertLlm --> PreTurnPolicy
+        PreTurnPolicy -->|"Continue"| ResolveKey
+        PreTurnPolicy -->|"Stop / Inject"| EmitTurnEndErr
         ResolveKey --> StreamTurn
         StreamTurn --> EmitMsgEvents
         EmitMsgEvents --> CheckStop
@@ -139,7 +142,7 @@ flowchart TB
     classDef stepStyle fill:#f5f5f5,stroke:#616161,stroke-width:2px,color:#000
 
     class IStart,OStart,AgentStart phaseStyle
-    class CheckStop,CheckLength,HasTools,HasSteer,IHasSteer,OHasMsg decisionStyle
+    class CheckStop,CheckLength,HasTools,HasSteer,IHasSteer,OHasMsg,PreTurnPolicy decisionStyle
     class AgentEnd termStyle
     class InjectPending,AsyncTransformCtx,TransformCtx,ConvertLlm,ResolveKey,StreamTurn,EmitMsgEvents,ExtractTools,MTRecovery,ExecTools,PollSteer,EmitTurnEnd,EmitTurnEndErr,IPoll,OPoll stepStyle
 ```

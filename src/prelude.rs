@@ -11,7 +11,11 @@ pub use crate::{
     CheckpointStore, ContentBlock, ContextSummarizer, ContextTransformer, ContextVersion,
     ContextVersionMeta, ContextVersionStore, Cost, DefaultTokenCounter, Emission, EventForwarderFn,
     FnTool, InMemoryVersionStore, IntoTool, LlmMessage, LoopCheckpoint, MetricsCollector,
-    ModelFallback, ModelSpec, StopReason, StreamErrorKind, StreamFn,
-    StreamMiddleware, StreamOptions, SubAgent, TokenCounter,
-    Usage, UserMessage, VersioningTransformer,
+    ModelConnection, ModelConnections, ModelConnectionsBuilder, ModelFallback, ModelSpec,
+    StopReason, StreamErrorKind,
+    StreamFn, StreamMiddleware, StreamOptions, SubAgent, TokenCounter, Usage, UserMessage,
+    VersioningTransformer,
 };
+
+#[cfg(feature = "builtin-tools")]
+pub use crate::{BashTool, ReadFileTool, WriteFileTool, builtin_tools};

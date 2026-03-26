@@ -81,6 +81,66 @@ impl ModelConnections {
             self.extra_models,
         )
     }
+
+    /// Create a builder for constructing `ModelConnections` incrementally.
+    #[must_use]
+    pub const fn builder() -> ModelConnectionsBuilder {
+        ModelConnectionsBuilder::new()
+    }
+}
+
+/// Incrementally builds a [`ModelConnections`] value.
+///
+/// # Panics
+///
+/// [`build`](Self::build) panics if no primary connection has been set.
+pub struct ModelConnectionsBuilder {
+    primary: Option<ModelConnection>,
+    fallbacks: Vec<ModelConnection>,
+}
+
+impl Default for ModelConnectionsBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ModelConnectionsBuilder {
+    /// Create a new empty builder.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            primary: None,
+            fallbacks: Vec::new(),
+        }
+    }
+
+    /// Set the primary model connection.
+    #[must_use]
+    pub fn primary(mut self, connection: ModelConnection) -> Self {
+        self.primary = Some(connection);
+        self
+    }
+
+    /// Add a fallback model connection.
+    #[must_use]
+    pub fn fallback(mut self, connection: ModelConnection) -> Self {
+        self.fallbacks.push(connection);
+        self
+    }
+
+    /// Build the final [`ModelConnections`].
+    ///
+    /// # Panics
+    ///
+    /// Panics if no primary connection was set via [`primary`](Self::primary).
+    #[must_use]
+    pub fn build(self) -> ModelConnections {
+        let primary = self
+            .primary
+            .expect("ModelConnectionsBuilder: primary connection is required");
+        ModelConnections::new(primary, self.fallbacks)
+    }
 }
 
 #[cfg(test)]
@@ -202,5 +262,51 @@ mod tests {
             connections.extra_models()[1].0,
             ModelSpec::new("local", "SmolLM3-3B-Q4_K_M")
         );
+    }
+
+    #[test]
+    fn builder_primary_only() {
+        let connections = ModelConnections::builder()
+            .primary(ModelConnection::new(
+                ModelSpec::new("anthropic", "claude-sonnet-4-6"),
+                dummy_stream(),
+            ))
+            .build();
+
+        assert_eq!(
+            connections.primary_model(),
+            &ModelSpec::new("anthropic", "claude-sonnet-4-6")
+        );
+        assert_eq!(connections.extra_models().len(), 0);
+    }
+
+    #[test]
+    fn builder_with_fallbacks() {
+        let connections = ModelConnections::builder()
+            .primary(ModelConnection::new(
+                ModelSpec::new("anthropic", "claude-sonnet-4-6"),
+                dummy_stream(),
+            ))
+            .fallback(ModelConnection::new(
+                ModelSpec::new("openai", "gpt-5.2"),
+                dummy_stream(),
+            ))
+            .fallback(ModelConnection::new(
+                ModelSpec::new("local", "SmolLM3-3B-Q4_K_M"),
+                dummy_stream(),
+            ))
+            .build();
+
+        assert_eq!(connections.extra_models().len(), 2);
+        assert_eq!(
+            connections.extra_models()[0].0,
+            ModelSpec::new("openai", "gpt-5.2")
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "primary connection is required")]
+    fn builder_panics_without_primary() {
+        let _ = ModelConnections::builder().build();
     }
 }

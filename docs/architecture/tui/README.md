@@ -59,7 +59,14 @@ App
 ```
 tui/src/
 ├── main.rs        — Entry point, terminal setup/teardown, agent creation from env vars
-├── app.rs         — App state, async event loop, key handling, agent dispatch
+├── app/           — App state, async event loop, key handling, agent dispatch
+│   ├── mod.rs           — Re-exports and App struct definition
+│   ├── agent_bridge.rs  — Agent ↔ TUI event bridging
+│   ├── event_loop.rs    — Async event loop (tokio::select! multiplexer)
+│   ├── lifecycle.rs     — App startup and shutdown logic
+│   ├── persistence.rs   — Session save/load integration
+│   ├── render_helpers.rs — Shared rendering utilities
+│   └── state.rs         — App state fields and mutations
 ├── commands.rs    — Command parsing: hash commands (#help, #clear, #info, #copy,
 │                    #copy all, #copy code) and slash commands (/quit,
 │                    /thinking, /system, /reset)
@@ -160,8 +167,8 @@ Agent integration uses `prompt_stream()` with an mpsc forwarder task that sends 
 | `F3` | Cycle color mode (Custom → MonoWhite → MonoBlack) |
 | `F4` | Cycle model (applied on next send) |
 | `Shift+←` / `Shift+→` | Select previous/next tool block |
-| `y` / `n` (in diff view) | Approve/reject individual diff hunk |
-| `a` (in diff view) | Approve all remaining diff hunks |
+| `y` / `n` (in diff view) | Approve/reject individual diff hunk (Planned -- not yet implemented) |
+| `a` (in diff view) | Approve all remaining diff hunks (Planned -- not yet implemented) |
 
 Typing any printable character auto-focuses the input editor.
 
