@@ -75,7 +75,6 @@ flowchart LR
         StreamError["StreamError<br/>{ source: Box&lt;dyn Error&gt; }"]
         Aborted["Aborted"]
         Plugin["Plugin<br/>{ name: String, source: Box&lt;dyn Error&gt; }"]
-        BudgetExceeded["BudgetExceeded<br/>{ BudgetExceeded }"]
     end
 
     subgraph Trigger["Triggered by…"]
@@ -87,9 +86,8 @@ flowchart LR
         T6["continue() with zero messages"]
         T7["continue() from assistant message"]
         T8["StreamFn non-retryable failure"]
-        T9["CancellationToken cancelled"]
+        T9["CancellationToken cancelled<br/>(includes budget cancellation via policies)"]
         T10["plugin or extension failure"]
-        T11["eval gate cost/turn budget exceeded"]
     end
 
     CWO --- T1
@@ -102,13 +100,12 @@ flowchart LR
     StreamError --- T8
     Aborted --- T9
     Plugin --- T10
-    BudgetExceeded --- T11
 
     classDef errStyle fill:#fff3e0,stroke:#f57c00,stroke-width:2px,color:#000
     classDef trigStyle fill:#f5f5f5,stroke:#616161,stroke-width:2px,color:#000
 
-    class CWO,ModelThrottled,NetErr,StructFail,AlreadyRunning,NoMessages,InvalidContinue,StreamError,Aborted,Plugin,BudgetExceeded errStyle
-    class T1,T2,T3,T4,T5,T6,T7,T8,T9,T10,T11 trigStyle
+    class CWO,ModelThrottled,NetErr,StructFail,AlreadyRunning,NoMessages,InvalidContinue,StreamError,Aborted,Plugin errStyle
+    class T1,T2,T3,T4,T5,T6,T7,T8,T9,T10 trigStyle
 ```
 
 ---
@@ -129,7 +126,7 @@ flowchart TB
         Multiplier["multiplier: f64 (default 2.0)"]
         Jitter["jitter: bool (default true)"]
         RetryOn["retries on: ModelThrottled, NetworkError"]
-        NeverOn["never retries: ContextWindowOverflow,<br/>Aborted, AlreadyRunning, StructuredOutputFailed,<br/>Plugin, NoMessages, InvalidContinue, StreamError,<br/>BudgetExceeded"]
+        NeverOn["never retries: ContextWindowOverflow,<br/>Aborted, AlreadyRunning, StructuredOutputFailed,<br/>Plugin, NoMessages, InvalidContinue, StreamError"]
     end
 
     ShouldRetry --> Default

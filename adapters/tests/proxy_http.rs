@@ -6,34 +6,24 @@
 //! requests and reconstructs `AssistantMessageEvent` streams from SSE
 //! responses.
 
+mod common;
+
 use futures::StreamExt;
 use swink_agent::{
-    AgentContext, AssistantMessageEvent, ContentBlock, ModelSpec, StopReason, StreamFn,
-    StreamOptions, accumulate_message,
+    AssistantMessageEvent, ContentBlock, ModelSpec, StopReason, StreamFn, StreamOptions,
+    accumulate_message,
 };
 use swink_agent_adapters::ProxyStreamFn;
 use tokio_util::sync::CancellationToken;
 use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
+use common::{sse_response, test_context};
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 fn test_model() -> ModelSpec {
     ModelSpec::new("test", "test-model")
-}
-
-fn test_context() -> AgentContext {
-    AgentContext {
-        system_prompt: "You are a test assistant.".into(),
-        messages: Vec::new(),
-        tools: Vec::new(),
-    }
-}
-
-fn sse_response(body: &str) -> ResponseTemplate {
-    ResponseTemplate::new(200)
-        .insert_header("Content-Type", "text/event-stream")
-        .set_body_string(body.to_owned())
 }
 
 fn text_only_sse_body() -> String {

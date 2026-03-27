@@ -15,10 +15,7 @@ use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
 
 use swink_agent::prelude::*;
-use swink_agent::{
-    BashTool, JsonSchema, ReadFileTool, ToolApproval, ToolApprovalRequest, WriteFileTool,
-    selective_approve,
-};
+use swink_agent::{JsonSchema, ToolApproval};
 
 // ─── Mock StreamFn ──────────────────────────────────────────────────────────
 
@@ -80,10 +77,9 @@ struct GetWeatherParams {
 
 #[tokio::main]
 async fn main() {
-    // Step 1a: Create built-in tools. `into_tool()` wraps each in `Arc<dyn AgentTool>`.
-    let bash = BashTool::new().into_tool();
-    let read = ReadFileTool::new().into_tool();
-    let write = WriteFileTool::new().into_tool();
+    // Step 1a: Create built-in tools.
+    // `builtin_tools()` returns Vec<Arc<dyn AgentTool>> with BashTool, ReadFileTool, WriteFileTool.
+    let mut tools = builtin_tools();
 
     // Step 1b: Create a custom tool using `FnTool` — no need to implement `AgentTool` manually.
     let weather = FnTool::new(
@@ -99,7 +95,7 @@ async fn main() {
     })
     .into_tool();
 
-    let tools = vec![bash, read, write, weather];
+    tools.push(weather);
 
     // Step 2: Set up a mock stream function (replace with a real adapter).
     let stream_fn = Arc::new(MockStreamFn::new(vec![text_events(
@@ -113,32 +109,28 @@ async fn main() {
     // `selective_approve` wraps the inner callback so that only tools with
     // `requires_approval() == true` are sent through. BashTool and WriteFileTool
     // require approval; ReadFileTool does not.
+    // `with_approve_tool_async` avoids the verbose `Pin<Box<dyn Future<...>>>`
+    // ceremony that `with_approve_tool` requires.
+    //
+    // To gate approval to only tools with `requires_approval() == true`, wrap
+    // the callback with `selective_approve` and pass it to `with_approve_tool`:
+    //
+    //   .with_approve_tool(selective_approve(|req| Box::pin(async move { ... })))
     let options = AgentOptions::new_simple(
         "You are a helpful coding assistant with access to shell and file tools.",
         model,
         stream_fn,
     )
     .with_tools(tools)
-    .with_approve_tool(selective_approve(
-        |req: ToolApprovalRequest| -> Pin<Box<dyn std::future::Future<Output = ToolApproval> + Send>> {
-            Box::pin(async move {
-                // In a real application you would prompt the user here.
-                println!(
-                    "Approval requested for tool '{}' with args: {}",
-                    req.tool_name, req.arguments
-                );
-                // Auto-approve for this example.
-                ToolApproval::Approved
-            })
-        },
-    ));
-
-    // Tip: with_approve_tool_async avoids the Pin<Box<...>> ceremony:
-    //
-    // .with_approve_tool_async(|req| async move {
-    //     println!("Approval for '{}'", req.tool_name);
-    //     ToolApproval::Approved
-    // });
+    .with_approve_tool_async(|req| async move {
+        // In a real application you would prompt the user here.
+        println!(
+            "Approval requested for tool '{}' with args: {}",
+            req.tool_name, req.arguments
+        );
+        // Auto-approve for this example.
+        ToolApproval::Approved
+    });
 
     // Step 4: Create the agent and run a prompt.
     let mut agent = Agent::new(options);
