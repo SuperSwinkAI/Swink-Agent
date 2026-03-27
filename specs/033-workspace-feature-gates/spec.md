@@ -98,7 +98,7 @@ A headless daemon or library consumer depends on `swink-agent` for its agent loo
 - **FR-008**: ~~The root `swink-agent` crate MUST forward adapter feature flags to the adapters sub-crate so consumers can select providers via the root dependency.~~ **Not feasible**: cyclic dependency (root → adapters → root). Consumers depend on `swink-agent-adapters` directly with feature flags.
 - **FR-009**: ~~The root crate MUST expose `adapters-all`, `tui`, and `local-llm` features for coarse-grained control.~~ **Not feasible**: see FR-008. Consumers use sub-crate features directly.
 - **FR-010**: The root crate's `default` features MUST include `builtin-tools` (preserving current behavior). Adapters, TUI, and local-llm are separate workspace crates — consumers opt-in by adding them as direct dependencies.
-- **FR-011**: Feature-gated modules MUST produce clear compile-time errors when a consumer references a type whose feature is not enabled, not silent omission.
+- **FR-011**: Feature-gated modules MUST produce compile-time errors when a consumer references a type whose feature is not enabled (Rust's default "unresolved import" error is sufficient — no explicit `compile_error!` macro required).
 - **FR-012**: All existing tests MUST pass with default features enabled, preserving full backward compatibility.
 - **FR-013**: Provider-specific dependencies (e.g., `eventsource-stream` for the proxy adapter, `sha2` for the bedrock adapter) MUST only compile when the corresponding provider feature is enabled. The shared `sse` module has no external dependencies and compiles unconditionally.
 
@@ -116,9 +116,9 @@ A headless daemon or library consumer depends on `swink-agent` for its agent loo
 - **SC-002**: All existing workspace tests pass with default features enabled — zero regressions.
 - **SC-003**: Building the adapters crate with `--no-default-features --features anthropic` succeeds and excludes all other provider modules from compilation.
 - **SC-004**: Building the root crate with `default-features = false` succeeds with only the core agent loop available.
-- **SC-005**: A consumer referencing an ungated adapter type receives a compile error that names the missing feature flag.
+- **SC-005**: A consumer referencing an ungated adapter type receives a compile error indicating the type is unavailable (Rust's "unresolved import" error).
 - **SC-006**: The local-llm crate builds with each backend feature (`metal`, `cuda`, `cpu`) independently on its target platform.
-- **SC-007**: The TUI crate and its dependencies do not appear in the dependency tree for a consumer that has not enabled the `tui` feature.
+- **SC-007**: The TUI crate and its dependencies do not appear in the dependency tree of a consumer that depends only on `swink-agent` (TUI is a separate workspace crate, not a root dependency).
 
 ## Assumptions
 
