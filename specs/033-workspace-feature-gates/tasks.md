@@ -43,7 +43,7 @@
 - [x] T005 [US1] Verify `cargo build -p swink-agent-adapters --no-default-features` succeeds (shared infra only, zero adapters)
 - [x] T006 [US1] Verify `cargo test -p swink-agent-adapters` passes with default features (zero regressions)
 
-**Checkpoint**: Adapter crate fully feature-gated with compile_error! fallbacks. Each provider can be independently enabled/disabled. Shared infra always available.
+**Checkpoint**: Adapter crate fully feature-gated with cfg guards and doc comments. Each provider can be independently enabled/disabled. Shared infra always available. Rust's default "unresolved import" errors guide consumers to the missing feature.
 
 ---
 
@@ -83,7 +83,7 @@
 - [x] T017 [US4] TUI is already a separate workspace crate not pulled by root — no change needed. TUI exclusion is the default.
 - [x] T018 [US4] Verify default `cargo tree -p swink-agent` does NOT include TUI dependencies
 
-**Checkpoint**: Root crate forwards features to sub-crates. Consumers can select adapters, backends, and TUI via a single `swink-agent` dependency line.
+**Checkpoint**: Root forwarding found infeasible (cyclic dep). Consumers depend on `swink-agent-adapters` and `swink-agent-local-llm` directly with feature flags. TUI is already excluded by default (separate crate).
 
 ---
 
@@ -94,7 +94,7 @@
 - [x] T019 Verify `cargo test --workspace` passes with default features (full backward compatibility — SC-002)
 - [x] T020 Verify `cargo clippy --workspace -- -D warnings` passes (zero warnings policy)
 - [x] T020a [US4] Verify `cargo build -p swink-agent-tui --features local` still compiles (FR-007 — TUI `local` feature preserved)
-- [x] T020b Verify `cargo tree --features anthropic` shows fewer crate dependencies than `cargo tree --features adapters-all` (SC-001 — measurable dependency reduction)
+- [x] T020b Verify `cargo tree -p swink-agent-adapters --no-default-features --features anthropic` shows fewer crate dependencies than `cargo tree -p swink-agent-adapters` (SC-001 — measurable dependency reduction)
 - [x] T021 [P] Update `CLAUDE.md` feature gates section to document the new adapter, local-llm, and root feature flags for future development reference
 - [x] T022 [P] Update `adapters/CLAUDE.md` (if it exists) with feature gate documentation for the adapter pattern
 
@@ -128,7 +128,7 @@
 - **US1 and US3 are fully parallel** — different crates, different files, no shared state
 - T001 and T007 can run simultaneously (different Cargo.toml files)
 - T002 can run as soon as T001 completes (same crate, sequential)
-- T011-T013 can only start after both T002 and T007 complete
+- T011-T013 were N/A (cyclic dep) — US2/US4 reduced to verification-only tasks
 - T021 and T022 are parallel with each other and with T019-T020
 
 ---
@@ -142,13 +142,11 @@ T007 [US3]: local-llm/Cargo.toml backend features
 
 # After both complete:
 T002 [US1]: adapters/src/lib.rs cfg guards  (needs T001)
-T002a [US1]: adapters/src/lib.rs compile_error! fallbacks (needs T002)
+T002a [US1]: adapters/src/lib.rs doc comments (needs T002)
 # T007 has no lib.rs changes
 
-# After T002 + T007 complete, root forwarding can begin:
-T011 [US2]: root Cargo.toml optional deps
-T012 [US2]: root Cargo.toml feature flags  (needs T011)
-T013 [US2]: root src/lib.rs re-exports      (needs T012)
+# Root forwarding (T011-T013) was infeasible — cyclic dependency.
+# US2/US4 reduced to verification tasks (T014-T018).
 ```
 
 ---
@@ -165,14 +163,14 @@ T013 [US2]: root src/lib.rs re-exports      (needs T012)
 
 1. US1 (Adapters) → Validate isolation → Most valuable standalone increment
 2. US3 (Local LLM backends) → Validate → Independent value for platform-specific builds
-3. US2+US4 (Root forwarding + TUI) → Validate → Ergonomic single-dep consumption
+3. US2+US4 (Verification only — root forwarding infeasible) → Confirm sub-crate pattern works
 4. Polish → Full workspace verification → Ready to merge
 
 ### Single Developer Strategy
 
 1. T001 → T002 → T002a → T003-T006 (adapters complete)
 2. T007 → T008-T010 (local-llm complete)
-3. T011 → T012 → T013 → T014-T018 (root forwarding complete)
+3. T014-T018 (verification — root forwarding N/A)
 4. T019-T020b, T021-T022 (polish)
 
 ---
