@@ -96,10 +96,28 @@ pub mod remote_preset_keys {
     pub mod mistral {
         use super::RemotePresetKey;
 
+        pub const MISTRAL_LARGE: RemotePresetKey =
+            RemotePresetKey::new("mistral", "mistral_large");
         pub const MISTRAL_MEDIUM: RemotePresetKey =
             RemotePresetKey::new("mistral", "mistral_medium");
-        pub const MISTRAL_SMALL: RemotePresetKey = RemotePresetKey::new("mistral", "mistral_small");
+        pub const MISTRAL_SMALL: RemotePresetKey =
+            RemotePresetKey::new("mistral", "mistral_small");
+        pub const MINISTRAL_3B: RemotePresetKey =
+            RemotePresetKey::new("mistral", "ministral_3b");
+        pub const MINISTRAL_8B: RemotePresetKey =
+            RemotePresetKey::new("mistral", "ministral_8b");
+        pub const MINISTRAL_14B: RemotePresetKey =
+            RemotePresetKey::new("mistral", "ministral_14b");
+        pub const MAGISTRAL_MEDIUM: RemotePresetKey =
+            RemotePresetKey::new("mistral", "magistral_medium");
+        pub const MAGISTRAL_SMALL: RemotePresetKey =
+            RemotePresetKey::new("mistral", "magistral_small");
         pub const CODESTRAL: RemotePresetKey = RemotePresetKey::new("mistral", "codestral");
+        pub const DEVSTRAL: RemotePresetKey = RemotePresetKey::new("mistral", "devstral");
+        pub const PIXTRAL_LARGE: RemotePresetKey =
+            RemotePresetKey::new("mistral", "pixtral_large");
+        pub const PIXTRAL_12B: RemotePresetKey =
+            RemotePresetKey::new("mistral", "pixtral_12b");
     }
 
     #[cfg(feature = "bedrock")]
@@ -448,10 +466,28 @@ mod tests {
             "grok-3"
         );
         assert_eq!(
+            required_catalog_preset(remote_preset_keys::mistral::MISTRAL_LARGE)
+                .unwrap()
+                .model_id,
+            "mistral-large-latest"
+        );
+        assert_eq!(
             required_catalog_preset(remote_preset_keys::mistral::CODESTRAL)
                 .unwrap()
                 .model_id,
             "codestral-latest"
+        );
+        assert_eq!(
+            required_catalog_preset(remote_preset_keys::mistral::DEVSTRAL)
+                .unwrap()
+                .model_id,
+            "devstral-2512"
+        );
+        assert_eq!(
+            required_catalog_preset(remote_preset_keys::mistral::PIXTRAL_LARGE)
+                .unwrap()
+                .model_id,
+            "pixtral-large-2411"
         );
         assert_eq!(
             required_catalog_preset(remote_preset_keys::bedrock::AMAZON_NOVA_PRO)

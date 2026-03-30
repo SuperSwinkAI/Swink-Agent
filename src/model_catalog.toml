@@ -256,12 +256,23 @@ base_url_env_var = "MISTRAL_BASE_URL"
 default_base_url = "https://api.mistral.ai"
 
 [[providers.presets]]
+id = "mistral_large"
+display_name = "Mistral Large"
+group = "mistral"
+model_id = "mistral-large-latest"
+api_version = "v1"
+capabilities = ["text", "tools", "images_in", "streaming", "structured_output"]
+status = "ga"
+context_window_tokens = 256000
+max_output_tokens = 8192
+
+[[providers.presets]]
 id = "mistral_medium"
 display_name = "Mistral Medium"
 group = "mistral"
 model_id = "mistral-medium-latest"
 api_version = "v1"
-capabilities = ["text", "tools", "images_in", "streaming", "structured_output"]
+capabilities = ["text", "tools", "images_in", "streaming"]
 status = "ga"
 context_window_tokens = 128000
 max_output_tokens = 8192
@@ -272,9 +283,64 @@ display_name = "Mistral Small"
 group = "mistral"
 model_id = "mistral-small-latest"
 api_version = "v1"
-capabilities = ["text", "tools", "streaming", "structured_output"]
+capabilities = ["text", "tools", "images_in", "streaming", "structured_output"]
 status = "ga"
-context_window_tokens = 128000
+context_window_tokens = 256000
+max_output_tokens = 8192
+
+[[providers.presets]]
+id = "ministral_3b"
+display_name = "Ministral 3B"
+group = "ministral"
+model_id = "ministral-3b-2512"
+api_version = "v1"
+capabilities = ["text", "images_in", "streaming"]
+status = "ga"
+context_window_tokens = 256000
+max_output_tokens = 8192
+
+[[providers.presets]]
+id = "ministral_8b"
+display_name = "Ministral 8B"
+group = "ministral"
+model_id = "ministral-8b-2512"
+api_version = "v1"
+capabilities = ["text", "images_in", "streaming"]
+status = "ga"
+context_window_tokens = 256000
+max_output_tokens = 8192
+
+[[providers.presets]]
+id = "ministral_14b"
+display_name = "Ministral 14B"
+group = "ministral"
+model_id = "ministral-14b-2512"
+api_version = "v1"
+capabilities = ["text", "images_in", "streaming"]
+status = "ga"
+context_window_tokens = 256000
+max_output_tokens = 8192
+
+[[providers.presets]]
+id = "magistral_medium"
+display_name = "Magistral Medium"
+group = "magistral"
+model_id = "magistral-medium-2509"
+api_version = "v1"
+capabilities = ["text", "tools", "streaming"]
+status = "ga"
+context_window_tokens = 40000
+max_output_tokens = 8192
+
+[[providers.presets]]
+id = "magistral_small"
+display_name = "Magistral Small"
+group = "magistral"
+model_id = "magistral-small-2509"
+api_version = "v1"
+capabilities = ["text", "tools", "streaming"]
+status = "ga"
+context_window_tokens = 40000
 max_output_tokens = 8192
 
 [[providers.presets]]
@@ -286,6 +352,39 @@ api_version = "v1"
 capabilities = ["text", "tools", "streaming"]
 status = "ga"
 context_window_tokens = 256000
+max_output_tokens = 8192
+
+[[providers.presets]]
+id = "devstral"
+display_name = "Devstral"
+group = "codestral"
+model_id = "devstral-2512"
+api_version = "v1"
+capabilities = ["text", "tools", "streaming"]
+status = "ga"
+context_window_tokens = 256000
+max_output_tokens = 8192
+
+[[providers.presets]]
+id = "pixtral_large"
+display_name = "Pixtral Large"
+group = "pixtral"
+model_id = "pixtral-large-2411"
+api_version = "v1"
+capabilities = ["text", "tools", "images_in", "streaming"]
+status = "ga"
+context_window_tokens = 128000
+max_output_tokens = 8192
+
+[[providers.presets]]
+id = "pixtral_12b"
+display_name = "Pixtral 12B"
+group = "pixtral"
+model_id = "pixtral-12b-2409"
+api_version = "v1"
+capabilities = ["text", "images_in", "streaming"]
+status = "ga"
+context_window_tokens = 128000
 max_output_tokens = 8192
 
 [[providers]]

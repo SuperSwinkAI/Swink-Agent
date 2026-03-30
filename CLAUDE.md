@@ -76,7 +76,7 @@ MSRV **1.88** (edition 2024). Workspace deps centralized in root `Cargo.toml`.
 - `SandboxPolicy` checks configured field names (default: `["path", "file_path", "file"]`) — Skip with error, no silent rewriting.
 - `PromptInjectionGuard` implements both `PreTurnPolicy` and `PostTurnPolicy` — single struct, dual trait.
 - `PiiRedactor` Inject verdict constructs `AgentMessage::Llm(LlmMessage::Assistant(...))` preserving original metadata.
-- `ContentFilter` converts keywords to regex at construction time (with `\b` for whole-word, `(?i)` for case-insensitive).
+- `ContentFilter` converts keywords to regex at construction time (with `` for whole-word, `(?i)` for case-insensitive).
 - `AuditSink` trait is sync (`fn write(&self, record: &AuditRecord)`) — defined in this crate, not in core.
 - All regex patterns compiled once at construction, `evaluate()` only runs matches.
 
@@ -180,6 +180,7 @@ MSRV **1.88** (edition 2024). Workspace deps centralized in root `Cargo.toml`.
 - Local filesystem via JSONL (AuditLogger's `JsonlAuditSink` only) (032-policy-recipes-crate)
 - Rust 1.88 (edition 2024) + `swink-agent` (core), `reqwest`, `futures`, `serde`, `serde_json`, `tokio`, `tokio-util`, `tracing` (015-adapter-gemini)
 - Rust 1.88 (edition 2024) + Workspace deps centralized in root Cargo.toml. Key deps for this feature: `mistralrs` 0.7 (backend features), `eventsource-stream` 0.2 (proxy-only), `sha2` (bedrock-only). (033-workspace-feature-gates)
+- Rust 1.88 (edition 2024) + `swink-agent` (core), `reqwest`, `futures`, `serde`/`serde_json`, `tokio`, `tokio-util`, `tracing`, `rand` (ID generation) (018-adapter-mistral)
 
 ## Recent Changes
 - 001-workspace-scaffold: Added Rust 1.88 (edition 2024) + serde, serde_json, tokio, futures, thiserror, uuid, reqwest, jsonschema, schemars, rand, tracing, toml (all centralized in workspace `[workspace.dependencies]`)

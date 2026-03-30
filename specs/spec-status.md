@@ -1,5 +1,5 @@
 # Spec-Driven Development Status
-<!-- spec-status: project=Swink-Agent commit=43e49d06b366385964ca8a9f5d25dfec3bf54b89 updated=2026-03-27T14:28:57Z -->
+<!-- spec-status: project=Swink-Agent commit=932f4b3136879f4f63a3b75e50080cc5e86240ef updated=2026-03-30T18:25:38Z -->
 
 | Feature                         | Specify | Plan | Tasks | Implement |
 |---------------------------------|---------|------|-------|-----------|
