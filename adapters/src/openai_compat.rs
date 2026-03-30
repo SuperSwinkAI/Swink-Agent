@@ -360,7 +360,7 @@ pub fn process_oai_chunk(
         if let Some(reason) = &choice.finish_reason {
             let stop_reason = match reason.as_str() {
                 "tool_calls" => StopReason::ToolUse,
-                "length" => StopReason::Length,
+                "length" | "model_length" => StopReason::Length,
                 _ => StopReason::Stop,
             };
 
