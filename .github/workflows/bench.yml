@@ -30,7 +30,7 @@ jobs:
         run: critcmp base pr | tee bench-diff.txt
 
       - name: Post comment
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             const fs = require('fs');
