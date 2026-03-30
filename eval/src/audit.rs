@@ -68,7 +68,13 @@ impl AuditedInvocation {
 fn hex_sha256(data: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(data);
-    format!("{:x}", hasher.finalize())
+    let hash = hasher.finalize();
+    let mut out = String::with_capacity(hash.len() * 2);
+    for byte in hash {
+        use std::fmt::Write as _;
+        let _ = write!(&mut out, "{byte:02x}");
+    }
+    out
 }
 
 fn compute_chain_hash(turn_hashes: &[String]) -> String {

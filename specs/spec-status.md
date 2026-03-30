@@ -1,5 +1,5 @@
 # Spec-Driven Development Status
-<!-- spec-status: project=Swink-Agent commit=932f4b3136879f4f63a3b75e50080cc5e86240ef updated=2026-03-30T18:25:38Z -->
+<!-- spec-status: project=Swink-Agent commit=d29e871966f41a74942343dc867dba7b7b904233 updated=2026-03-30T22:56:12Z -->
 
 | Feature                         | Specify | Plan | Tasks | Implement |
 |---------------------------------|---------|------|-------|-----------|
@@ -20,7 +20,7 @@
 | 015-adapter-gemini              | ✓     | ✓  | ✓   | ✓ Complete |
 | 016-adapter-azure               | ✓     | -    | -     | -         |
 | 017-adapter-xai                 | ✓     | -    | -     | -         |
-| 018-adapter-mistral             | ✓     | -    | -     | -         |
+| 018-adapter-mistral             | ✓     | ✓  | ✓   | ✓ Complete |
 | 019-adapter-bedrock             | ✓     | -    | -     | -         |
 | 020-adapter-proxy               | ✓     | ✓  | ✓   | ✓ Complete |
 | 021-memory-crate                | ✓     | ✓  | ✓   | ✓ Complete |
@@ -35,7 +35,7 @@
 | 030-integration-tests           | ✓     | ✓  | ✓   | ✓ Complete |
 | 031-policy-slots                | ✓     | ✓  | ✓   | ✓ Complete |
 | 032-policy-recipes-crate        | ✓     | ✓  | ✓   | ✓ Complete |
-| 033-workspace-feature-gates     | ✓     | ✓  | ✓   | ● 0/22 (0%) |
+| 033-workspace-feature-gates     | ✓     | ✓  | ✓   | ✓ Complete |
 
 <!-- feature: 001-workspace-scaffold has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=false has_checklists=true tasks_total=24 tasks_completed=24 checklist_files=requirements.md -->
 <!-- feature: 002-foundation-types-errors has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=63 tasks_completed=63 checklist_files=requirements.md -->
@@ -54,7 +54,7 @@
 <!-- feature: 015-adapter-gemini has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=44 tasks_completed=44 checklist_files=requirements.md -->
 <!-- feature: 016-adapter-azure has_spec=true has_plan=false has_tasks=false has_research=false has_data_model=false has_quickstart=false has_contracts=false has_checklists=true tasks_total=0 tasks_completed=0 checklist_files=requirements.md -->
 <!-- feature: 017-adapter-xai has_spec=true has_plan=false has_tasks=false has_research=false has_data_model=false has_quickstart=false has_contracts=false has_checklists=true tasks_total=0 tasks_completed=0 checklist_files=requirements.md -->
-<!-- feature: 018-adapter-mistral has_spec=true has_plan=false has_tasks=false has_research=false has_data_model=false has_quickstart=false has_contracts=false has_checklists=true tasks_total=0 tasks_completed=0 checklist_files=requirements.md -->
+<!-- feature: 018-adapter-mistral has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=42 tasks_completed=42 checklist_files=requirements.md -->
 <!-- feature: 019-adapter-bedrock has_spec=true has_plan=false has_tasks=false has_research=false has_data_model=false has_quickstart=false has_contracts=false has_checklists=true tasks_total=0 tasks_completed=0 checklist_files=requirements.md -->
 <!-- feature: 020-adapter-proxy has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=40 tasks_completed=40 checklist_files=requirements.md -->
 <!-- feature: 021-memory-crate has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=57 tasks_completed=57 checklist_files=requirements.md -->
@@ -69,4 +69,4 @@
 <!-- feature: 030-integration-tests has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=48 tasks_completed=48 checklist_files=requirements.md -->
 <!-- feature: 031-policy-slots has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=93 tasks_completed=93 checklist_files=requirements.md -->
 <!-- feature: 032-policy-recipes-crate has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=43 tasks_completed=43 checklist_files=requirements.md -->
-<!-- feature: 033-workspace-feature-gates has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=22 tasks_completed=0 checklist_files=requirements.md -->
+<!-- feature: 033-workspace-feature-gates has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=25 tasks_completed=25 checklist_files=requirements.md -->
