@@ -25,7 +25,7 @@ accelerate = ["mistralrs/accelerate"]
 [dependencies]
 swink-agent = { path = ".." }
 mistralrs = "0.7"
-hf-hub = { version = "0.4", features = ["tokio"] }
+hf-hub = { version = "0.5", features = ["tokio"] }
 tokio.workspace = true
 tokio-util.workspace = true
 tokio-stream.workspace = true
