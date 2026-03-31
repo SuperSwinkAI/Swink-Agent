@@ -89,6 +89,6 @@ let mut stream = agent_loop(vec![], context, config, token);
 - [ ] Follow-up messages cause loop continuation
 - [ ] Error/abort exits skip follow-up polling
 - [ ] Retry strategy consulted for transient failures
-- [ ] Context overflow signals transformation hook
+- [ ] Context overflow triggers emergency recovery (compact + retry), second failure surfaces error
 - [ ] Max tokens recovery replaces incomplete tool calls
 - [ ] Cancellation produces clean aborted shutdown

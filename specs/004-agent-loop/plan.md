@@ -1,14 +1,14 @@
 # Implementation Plan: Agent Loop
 
-**Branch**: `004-agent-loop` | **Date**: 2026-03-20 | **Spec**: [spec.md](spec.md)
+**Branch**: `004-agent-loop` | **Date**: 2026-03-20 | **Updated**: 2026-03-31 | **Spec**: [spec.md](spec.md)
 **Input**: Feature specification from `/specs/004-agent-loop/spec.md`
 
 ## Summary
 
 Implement the core execution engine: the nested inner/outer loop that
 orchestrates LLM calls, concurrent tool dispatch, steering interrupts,
-follow-up continuation, retry integration, context overflow recovery,
-and max tokens recovery. The loop is stateless — all state is passed
+follow-up continuation, retry integration, emergency context overflow
+recovery (in-place compaction + retry), and max tokens recovery. The loop is stateless — all state is passed
 via `AgentLoopConfig` and `AgentContext`. It returns an async stream of
 `AgentEvent` values.
 

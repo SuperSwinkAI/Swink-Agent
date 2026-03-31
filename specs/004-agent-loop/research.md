@@ -1,7 +1,7 @@
 # Research: Agent Loop
 
 **Feature**: 004-agent-loop
-**Date**: 2026-03-20
+**Date**: 2026-03-20 | **Updated**: 2026-03-31
 
 ## Technical Context Resolution
 
@@ -78,6 +78,29 @@ HLD execution layer, CLAUDE.md lessons learned, and clarification session.
 - **Alternatives considered**: Callback-based emission — rejected
   because callbacks would require the loop to hold references to
   the subscriber, complicating lifetime management.
+
+### Emergency Context Overflow Recovery (Updated 2026-03-31)
+
+- **Decision**: When `ContextWindowExceeded` is detected in the stream
+  error path, perform in-place recovery: set `overflow_signal = true`,
+  re-run both async and sync context transformers, emit `ContextCompacted`
+  events, and retry the LLM call within the same turn. Limited to one
+  recovery attempt per turn via `overflow_recovery_attempted` guard.
+- **Rationale**: The original design set `overflow_signal` and returned
+  `TurnOutcome::ContinueInner`, which re-entered the turn from the top.
+  This worked but had a subtle gap: the overflow error was surfaced as
+  a `MessageEnd` event with the error *before* recovery, leaking the
+  internal retry to event subscribers. In-place recovery keeps the
+  overflow handling fully internal — subscribers only see the
+  `ContextCompacted` event and the successful (or failed) result.
+  AWS Strands uses the same pattern: `reduce_context()` is called
+  in the exception handler, then the request is retried immediately.
+- **Alternatives considered**: (1) Keep the sentinel-based approach —
+  rejected because it leaks a `MessageEnd` error event before recovery
+  and requires the turn to re-enter from the top, re-running policies
+  and re-emitting `TurnStart`. (2) Add overflow as a `RetryStrategy`
+  error kind — rejected because overflow recovery has fundamentally
+  different semantics (compact + retry once, not exponential backoff).
 
 ### Max Tokens Recovery
 
