@@ -107,6 +107,8 @@ When the streaming layer returns `StreamErrorKind::ContextWindowExceeded`, the l
 4. **Given** the compacted context, **When** the LLM is retried, **Then** it uses the reduced context from the emergency compaction.
 5. **Given** the retry also returns `ContextWindowExceeded`, **When** the second failure occurs, **Then** the error IS surfaced — no further retries (prevents infinite loops).
 6. **Given** no context transformer is configured, **When** overflow occurs, **Then** the error is surfaced immediately (no compaction possible, no point retrying).
+7. **Given** transformers are configured but neither reports compaction (both return `None`), **When** emergency recovery runs, **Then** the error is surfaced immediately without retrying the LLM call (compaction was ineffective, retry would hit the same overflow).
+8. **Given** a multi-turn conversation, **When** a new turn starts, **Then** `overflow_recovery_attempted` resets to `false` — each turn gets its own independent recovery opportunity.
 
 ---
 
@@ -135,6 +137,8 @@ When the provider stops mid-response because it hit the output token limit and t
 - What happens when overflow occurs but no context transformer is configured — the error is surfaced immediately. Without a transformer, compaction is not possible and retrying would produce the same result.
 - Does emergency overflow recovery count as a retry for the RetryStrategy — no. Overflow recovery is a separate code path from the general retry strategy. The overflow recovery has its own single-retry limit (one compaction + one retry), independent of `RetryStrategy` attempts.
 - Does emergency overflow recovery emit TurnStart/TurnEnd events for the retry — no. The recovery is internal to the stream error handling path. The retry re-runs the transform + stream within the same turn. Only the `ContextCompacted` event is emitted during recovery.
+- What happens if the cancellation token fires during emergency overflow recovery — the loop checks cancellation between compaction and the retry stream call. If cancelled, recovery is aborted and the loop emits `Aborted` stop reason, consistent with existing cancellation semantics at turn boundaries.
+- What if transformers run but neither reports compaction (both return `None`) — skip the retry and surface the error immediately. Compaction was ineffective; retrying would hit the same overflow.
 
 ## Requirements *(mandatory)*
 
@@ -156,6 +160,7 @@ When the provider stops mid-response because it hit the output token limit and t
 - **FR-013a**: Emergency overflow recovery MUST be limited to a single retry. If the retry also fails with overflow, the error MUST be surfaced.
 - **FR-013b**: Emergency overflow recovery MUST NOT occur when no context transformer is configured — the error MUST be surfaced immediately.
 - **FR-013c**: Emergency overflow recovery MUST be independent of the `RetryStrategy` — it has its own single-retry limit and does not consume retry attempts.
+- **FR-013d**: Emergency overflow recovery MUST skip the retry if neither transformer reports compaction (both return `None`) — the error MUST be surfaced immediately.
 - **FR-014**: When the provider returns stop reason "length" with incomplete tool calls, the loop MUST replace each incomplete tool call with an error result and continue.
 - **FR-015**: Cancellation via the cancellation token MUST cause the loop to exit cleanly with an aborted stop reason.
 - **FR-016**: The convert-to-LLM function MUST be able to filter messages by returning nothing for messages that should not reach the provider.
@@ -195,6 +200,8 @@ When the provider stops mid-response because it hit the output token limit and t
 - Q: Does the CONTEXT_OVERFLOW_SENTINEL mechanism remain? → A: The sentinel encoding is replaced by in-place recovery. The `overflow_signal` flag on `LoopState` still exists but is set and consumed within the same turn rather than across turns.
 - Q: How does this interact with the existing retry strategy? → A: They are independent. Overflow recovery has its own single-retry limit. A `ContextWindowExceeded` error does not consume `RetryStrategy` attempts. If overflow recovery succeeds, the turn continues normally. If it fails, the error is surfaced directly (not routed through `RetryStrategy`).
 - Q: What if only the async transformer is configured (no sync)? → A: Only the async transformer runs. The recovery runs whatever transformers are available — async, sync, or both. If neither is configured, recovery is skipped and the error surfaces immediately.
+- Q: What happens if the cancellation token fires during emergency overflow recovery? → A: The loop checks cancellation between compaction and the retry stream call. If cancelled, recovery aborts and emits `Aborted` stop reason. Consistent with existing cancellation semantics at turn boundaries.
+- Q: What if transformers run but report no compaction (both return `None`)? → A: Skip the retry and surface the error immediately. If compaction was ineffective, retrying would hit the same overflow — avoids a wasted API call.
 
 ## Assumptions
 
