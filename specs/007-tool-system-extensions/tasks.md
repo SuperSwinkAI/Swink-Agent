@@ -172,7 +172,101 @@
 
 ---
 
-## Phase 9: Polish & Cross-Cutting Concerns
+## Phase 9: User Story 7 — Auto-Schema Generation (Priority: P1) — C12
+
+**Goal**: Proc macros for generating JSON Schema from Rust types and wrapping async functions as `AgentTool` implementations
+
+**Independent Test**: Define a struct with `#[derive(ToolSchema)]`, call `json_schema()`, verify correct JSON Schema output
+
+### Implementation for User Story 7
+
+- [ ] T065 [US7] Create `macros/` directory with `Cargo.toml` declaring `proc-macro = true`, deps: `syn`, `quote`, `proc-macro2`. Add to workspace members.
+- [ ] T066 [US7] Define `ToolParameters` trait with `fn json_schema() -> Value` in `src/tool.rs` (or `src/tool_parameters.rs`). Re-export from `src/lib.rs`.
+- [ ] T067 [US7] Implement `#[derive(ToolSchema)]` proc macro in `macros/src/tool_schema.rs`: map field types to JSON Schema types, extract doc comments as descriptions, support `#[tool(description = "...")]` override.
+- [ ] T068 [US7] Implement `#[tool]` attribute macro in `macros/src/tool_attr.rs`: generate struct + `AgentTool` impl from async function signature with `name` and `description` attributes.
+- [ ] T069 [US7] Wire up `macros/src/lib.rs` to export both proc macros.
+- [ ] T070 [US7] Add unit tests in `macros/tests/`: `derive_tool_schema_basic` (String/u64/bool fields), `derive_tool_schema_option` (Option field not required), `derive_tool_schema_vec` (Vec → array), `derive_tool_schema_doc_comments` (doc comments → description), `derive_tool_schema_attr_override` (`#[tool(description = "...")]` overrides doc comment).
+- [ ] T071 [US7] Add unit tests in `macros/tests/`: `tool_attr_generates_struct` (function becomes AgentTool), `tool_attr_schema_from_params` (schema matches function params), `tool_attr_requires_async` (non-async fn = compile error), `derive_tool_schema_unsupported_type` (HashMap or custom enum produces compile error with helpful message).
+- [ ] T072 [US7] Add integration test: create an `AgentTool` via `#[tool]` macro, register it with an agent, verify it executes correctly.
+
+**Checkpoint**: Proc macros functional — tools can be created from structs and functions with zero schema boilerplate
+
+---
+
+## Phase 10: User Story 8 — Tool Hot-Reloading (Priority: P2) — I12
+
+**Goal**: Feature-gated directory watcher that loads tool definitions from files and updates the agent at runtime
+
+**Independent Test**: Start a watcher on a temp directory, add a tool definition file, verify the agent's tool list updates
+
+### Implementation for User Story 8
+
+- [ ] T073 [US8] Add `hot-reload` feature gate to `Cargo.toml` with optional `notify` dependency.
+- [ ] T074 [US8] Implement `ScriptTool` struct in `src/hot_reload.rs`: parse TOML/YAML/JSON definition files, implement `AgentTool` with shell command execution.
+- [ ] T075 [US8] Implement `ToolWatcher` struct in `src/hot_reload.rs`: use `notify` to watch directory, debounce changes, load/reload/remove `ScriptTool` instances.
+- [ ] T076 [US8] Implement `ToolWatcher::start()` — spawns async task, watches for file events, calls `Agent::set_tools()` on changes. Apply optional `ToolFilter`.
+- [ ] T077 [US8] Add unit tests: `script_tool_from_toml` (parse TOML definition), `script_tool_executes_command` (run command with interpolated args), `script_tool_invalid_definition` (reject malformed files), `script_tool_escapes_parameters` (verify parameter values are shell-escaped before interpolation — e.g., `"; rm -rf /"` in a parameter does not execute as a command).
+- [ ] T078 [US8] Add integration test: start watcher on tempdir, add/modify/delete TOML files, verify tool list updates. Include `duplicate_tool_names_last_write_wins` — add two files defining the same tool name, verify the most recently modified one takes precedence with a warning logged.
+- [ ] T079 [US8] Re-export `ToolWatcher` and `ScriptTool` from `src/lib.rs` behind `#[cfg(feature = "hot-reload")]`.
+
+**Checkpoint**: Hot-reloading functional — tools can be added/modified/removed via definition files at runtime
+
+---
+
+## Phase 11: User Story 9 — Tool Filtering (Priority: P2) — I13
+
+**Goal**: Pattern-based tool filtering at registration time using exact, glob, and regex patterns
+
+**Independent Test**: Create a `ToolFilter`, register tools, verify only matching tools are available
+
+### Implementation for User Story 9
+
+- [ ] T080 [US9] Implement `ToolPattern` enum (Exact/Glob/Regex) with `parse()` auto-detection and `matches()` in `src/tool_filter.rs`.
+- [ ] T081 [US9] Implement `ToolFilter` struct with `allowed`/`rejected` fields, `with_allowed()`/`with_rejected()` builders, and `filter_tools()` method in `src/tool_filter.rs`.
+- [ ] T082 [US9] Add unit tests: `exact_pattern_matches` , `glob_pattern_matches` (`read_*` matches `read_file`), `regex_pattern_matches` (`^file_.*$`), `rejected_takes_precedence`, `empty_filter_allows_all`.
+- [ ] T083 [US9] Re-export `ToolFilter` and `ToolPattern` from `src/lib.rs`.
+
+**Checkpoint**: Tool filtering functional — registration-time pattern matching restricts available tools
+
+---
+
+## Phase 12: User Story 10 — Noop Tool (Priority: P3) — N5
+
+**Goal**: Auto-inject placeholder tools for session history compatibility
+
+**Independent Test**: Load a session referencing a non-existent tool, verify NoopTool is injected and returns error result
+
+### Implementation for User Story 10
+
+- [ ] T084 [US10] Implement `NoopTool` struct in `src/noop_tool.rs`: `new(name)`, `AgentTool` impl returning error result.
+- [ ] T085 [US10] Integrate `NoopTool` injection into session loading — detect tool references not in registry, auto-inject NoopTool for each.
+- [ ] T086 [US10] Add unit tests: `noop_tool_returns_error`, `noop_tool_name_matches`, `noop_tool_no_approval_required`.
+- [ ] T087 [US10] Re-export `NoopTool` from `src/lib.rs`.
+
+**Checkpoint**: NoopTool functional — sessions with removed tools load gracefully
+
+---
+
+## Phase 13: User Story 11 — Tool Confirmation Payloads (Priority: P3) — N6
+
+**Goal**: Rich context for the approval UI via `approval_context()` default method on AgentTool
+
+**Independent Test**: Implement `approval_context` on a tool, trigger approval, verify context attached to request
+
+### Implementation for User Story 11
+
+- [ ] T088 [US11] Add `fn approval_context(&self, params: &Value) -> Option<Value> { None }` default method to `AgentTool` trait in `src/tool.rs`.
+- [ ] T089 [US11] Add `context: Option<Value>` field to `ToolApprovalRequest` in `src/tool.rs`. Populate from `approval_context()` in tool dispatch pipeline (`src/loop_/tool_dispatch.rs`).
+- [ ] T090 [US11] Add `catch_unwind` around `approval_context()` call — log panics, set context to `None`.
+- [ ] T091 [US11] Update `FnTool` to support `approval_context` via a new `with_approval_context()` builder method.
+- [ ] T092 [US11] Add unit tests: `approval_context_default_none`, `approval_context_returns_value`, `approval_context_panic_caught`, `approval_request_includes_context`.
+- [ ] T093 [US11] Update `ToolMiddleware` to delegate `approval_context()` to inner tool (same as other metadata methods).
+
+**Checkpoint**: Approval context functional — tools can provide rich previews to the approval UI
+
+---
+
+## Phase 14: Polish & Cross-Cutting Concerns
 
 **Purpose**: Final integration validation and cross-cutting quality checks
 
@@ -181,6 +275,11 @@
 - [x] T062 [P] Run `cargo test --workspace` and verify all tests pass
 - [x] T063 [P] Run `cargo test -p swink-agent --no-default-features` and verify feature-gated compilation
 - [x] T064 Validate quickstart.md examples compile and match public API in `specs/007-tool-system-extensions/quickstart.md`
+- [ ] T094 Add compile-time `Send + Sync` assertions for new public types: `ToolFilter`, `ToolPattern`, `NoopTool`, `ScriptTool` (behind feature gate)
+- [ ] T095 Run `cargo build -p swink-agent --features hot-reload` and verify zero compilation errors
+- [ ] T096 Run `cargo test -p swink-agent-macros` and verify all macro tests pass
+- [ ] T097 Run `cargo clippy --workspace -- -D warnings` with all features enabled and fix any warnings
+- [ ] T098 Validate quickstart.md new examples (auto-schema, filtering, hot-reload, noop, confirmation) match actual API
 
 ---
 
@@ -196,7 +295,12 @@
 - **US4 Execution Policy (Phase 6)**: Depends on Phase 2 (independent of US1–US3)
 - **US5 FnTool (Phase 7)**: Depends on Phase 2 (independent of US1–US4)
 - **US6 Built-in Tools (Phase 8)**: Depends on Phase 1 (feature flag) and Phase 2
-- **Polish (Phase 9)**: Depends on all user stories being complete
+- **US7 Auto-Schema (Phase 9)**: Depends on Phase 2 (needs `ToolParameters` trait in core). Independent of US1–US6.
+- **US8 Hot-Reloading (Phase 10)**: Depends on Phase 2. Optionally uses US9 (ToolFilter) but can proceed independently.
+- **US9 Tool Filtering (Phase 11)**: Depends on Phase 2. Independent of all other stories.
+- **US10 Noop Tool (Phase 12)**: Depends on Phase 2. Independent of all other stories.
+- **US11 Confirmation Payloads (Phase 13)**: Depends on Phase 2. Touches `src/tool.rs` (AgentTool trait) and `src/loop_/tool_dispatch.rs`.
+- **Polish (Phase 14)**: Depends on all user stories being complete
 
 ### User Story Dependencies
 
@@ -206,6 +310,11 @@
 - **US4 (P2)**: Foundational only — no cross-story dependencies
 - **US5 (P2)**: Foundational only — no cross-story dependencies
 - **US6 (P3)**: Foundational + Setup (feature flag) — no cross-story dependencies
+- **US7 (P1)**: Foundational + new macros crate — no cross-story dependencies
+- **US8 (P2)**: Foundational + feature flag — optionally uses US9 ToolFilter
+- **US9 (P2)**: Foundational only — no cross-story dependencies
+- **US10 (P3)**: Foundational only — no cross-story dependencies
+- **US11 (P3)**: Foundational only — modifies AgentTool trait (default method, backward compatible)
 
 ### Within Each User Story
 
@@ -217,8 +326,10 @@
 - All Foundational [P] tasks can run in parallel (within Phase 2)
 - US1 through US5 can proceed in parallel after Phase 2 completes
 - US6 can proceed after Phase 1 + Phase 2 complete
+- US7 through US11 can proceed in parallel after Phase 2 (US7 needs macros crate setup first)
 - Within US3: with_timeout and with_logging factories are [P]
 - Within US6: ReadFileTool and WriteFileTool are [P]
+- US9 (ToolFilter) and US10 (NoopTool) and US11 (Confirmation Payloads) touch separate files with no cross-deps
 
 ---
 
@@ -232,6 +343,11 @@ US3: "Define MiddlewareFn type alias in src/tool_middleware.rs"
 US4: "Define ToolCallSummary struct in src/tool_execution_policy.rs"
 US5: "Define ExecuteFn type alias in src/fn_tool.rs"
 US6: "Implement BashTool in src/tools/bash.rs"
+US7: "Create macros/ crate, define ToolParameters trait"
+US8: "Add hot-reload feature gate, implement ScriptTool"
+US9: "Implement ToolFilter in src/tool_filter.rs"
+US10: "Implement NoopTool in src/noop_tool.rs"
+US11: "Add approval_context() to AgentTool trait"
 ```
 
 ---
@@ -254,7 +370,12 @@ US6: "Implement BashTool in src/tools/bash.rs"
 4. Add US4 Execution Policy → Configurable dispatch ordering
 5. Add US5 FnTool → Closure-based convenience
 6. Add US6 Built-in Tools → Ready-to-use shell/file tools
-7. Each story adds value without breaking previous stories
+7. Add US7 Auto-Schema → Zero-boilerplate tool definition
+8. Add US11 Confirmation Payloads → Rich approval context
+9. Add US9 Tool Filtering → Registration-time security
+10. Add US10 Noop Tool → Session compatibility
+11. Add US8 Hot-Reloading → Runtime tool management
+12. Each story adds value without breaking previous stories
 
 ---
 
@@ -266,3 +387,6 @@ US6: "Implement BashTool in src/tools/bash.rs"
 - Commit after each task or logical group
 - Stop at any checkpoint to validate story independently
 - Dispatch pipeline order is fixed: approval → transformer → validator → schema → execute
+- US7 (Auto-Schema) is new work — creates the `swink-agent-macros` workspace crate
+- US8 (Hot-Reloading) is new work — feature-gated behind `hot-reload`
+- US9 (Tool Filtering), US10 (Noop Tool), US11 (Confirmation Payloads) are new work in core crate

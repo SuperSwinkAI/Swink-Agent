@@ -8,11 +8,17 @@
 # Build the workspace
 cargo build --workspace
 
+# Build with hot-reload feature
+cargo build -p swink-agent --features hot-reload
+
 # Run all tests (includes tool system tests)
 cargo test --workspace
 
 # Verify built-in tools can be excluded
 cargo test -p swink-agent --no-default-features
+
+# Test macros crate
+cargo test -p swink-agent-macros
 
 # Lint (zero warnings policy)
 cargo clippy --workspace -- -D warnings
@@ -159,3 +165,118 @@ The tool dispatch pipeline is fixed and executes in this order for every tool ca
 5. **Execute** — `AgentTool::execute()` runs the tool
 
 If any step rejects the call, subsequent steps are skipped and an error result is returned.
+
+### Auto-Schema from Rust Types (proc macro)
+
+```rust
+use swink_agent_macros::ToolSchema;
+use swink_agent::ToolParameters;
+
+/// Parameters for the weather tool.
+#[derive(ToolSchema)]
+struct WeatherParams {
+    /// The city to get weather for.
+    city: String,
+    /// Temperature units (celsius or fahrenheit).
+    units: Option<String>,
+}
+
+let schema = WeatherParams::json_schema();
+// Produces: {"type": "object", "properties": {"city": {"type": "string", "description": "The city to get weather for."}, "units": {"type": "string", "description": "Temperature units (celsius or fahrenheit)."}}, "required": ["city"]}
+```
+
+### Tool from Function (attribute macro)
+
+```rust
+use swink_agent_macros::tool;
+use swink_agent::AgentToolResult;
+
+#[tool(name = "weather", description = "Get weather for a city")]
+async fn get_weather(city: String, units: Option<String>) -> AgentToolResult {
+    let u = units.unwrap_or_else(|| "fahrenheit".into());
+    AgentToolResult::text(format!("72°F in {city} ({u})"))
+}
+
+// Use the generated tool:
+let tool = GetWeatherTool;
+// tool.name() == "weather"
+// tool.parameters_schema() has city (required) and units (optional)
+```
+
+### Tool Filtering at Registration Time
+
+```rust
+use swink_agent::tool_filter::{ToolFilter, ToolPattern};
+
+// Allow only read-related tools
+let filter = ToolFilter::new()
+    .with_allowed(vec![ToolPattern::parse("read_*")]);
+
+// Block dangerous tools, allow everything else
+let filter = ToolFilter::new()
+    .with_rejected(vec![
+        ToolPattern::parse("bash"),
+        ToolPattern::parse("^exec_.*$"),  // regex
+    ]);
+
+// Apply to a tool list
+let filtered = filter.filter_tools(tools);
+```
+
+### Hot-Reload Tools from Directory
+
+```rust
+use swink_agent::hot_reload::ToolWatcher;
+
+// Watch a directory for tool definition files
+let watcher = ToolWatcher::new("./tools/")
+    .with_filter(ToolFilter::new().with_rejected(vec![ToolPattern::parse("bash")]));
+
+// Start watching — updates agent tools on file changes
+let handle = watcher.start(&agent);
+```
+
+Example tool definition (`tools/list_files.toml`):
+```toml
+name = "list_files"
+description = "List files in a directory"
+command = "ls -la {path}"
+requires_approval = false
+
+[parameters]
+path = { type = "string", description = "Directory path" }
+```
+
+### Noop Tool for Session Compatibility
+
+```rust
+use swink_agent::NoopTool;
+
+// Auto-injected by the session loader, but can be created manually:
+let noop = NoopTool::new("deprecated_tool");
+// noop.execute(...) returns AgentToolResult::error("Tool 'deprecated_tool' is no longer available...")
+```
+
+### Tool Confirmation Payloads
+
+```rust
+use swink_agent::{AgentTool, AgentToolResult};
+
+struct WriteFileTool;
+
+impl AgentTool for WriteFileTool {
+    // ... name, description, schema, execute ...
+
+    fn approval_context(&self, params: &serde_json::Value) -> Option<serde_json::Value> {
+        // Provide a diff preview for the approval UI
+        let path = params.get("path")?.as_str()?;
+        let content = params.get("content")?.as_str()?;
+        Some(serde_json::json!({
+            "preview_type": "file_write",
+            "path": path,
+            "content_length": content.len(),
+            "first_100_chars": &content[..content.len().min(100)],
+        }))
+    }
+}
+```
