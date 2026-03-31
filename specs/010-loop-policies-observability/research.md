@@ -69,3 +69,44 @@
 - **Single checkpoint type**: Would either bloat the portable format with loop internals or lose loop state for pause/resume. Two types serve both needs cleanly.
 - **Custom error type**: `io::Result` is sufficient and well-understood. Storage errors are inherently I/O errors.
 - **Automatic checkpointing in the loop**: Would couple the loop to a specific checkpointing strategy. Opt-in via `PostTurnHook` or explicit calls keeps the loop lean.
+
+### D7: OpenTelemetry via `tracing` + `tracing-opentelemetry` (not direct OTel API)
+
+**Decision**: Instrument the agent loop with `tracing` spans and fields (which is already used for diagnostics). Feature-gate `tracing-opentelemetry` behind `otel` so that, when enabled, existing `tracing` spans are automatically exported as OTel spans. The core crate never imports `opentelemetry` directly — it only uses `tracing` macros.
+
+**Rationale**: The `tracing` crate is already a dependency. Adding `tracing::info_span!` calls with structured fields costs nothing when no subscriber is attached and integrates naturally with the Rust ecosystem. The `tracing-opentelemetry` layer is the standard Rust bridge — it maps `tracing::Span` to `opentelemetry::trace::Span` with zero application code changes. This approach means:
+1. Users who don't need OTel pay zero cost (no feature, no dep, no overhead).
+2. Users who do need OTel get it by adding a `tracing_subscriber` layer — no code changes to the agent.
+3. The core loop is instrumented once with `tracing` spans, benefiting both OTel users and plain `tracing` users (e.g., `tracing_subscriber::fmt` for console logging).
+
+**Key references**:
+- AWS Strands SDK uses Python `opentelemetry` SDK with manual spans for agent/loop/tool.
+- Google ADK uses Google Cloud Trace with custom spans.
+- Rust ecosystem standard: `tracing` + `tracing-opentelemetry` (used by Axum, Tonic, and most production Rust services).
+
+**Alternatives rejected**:
+- **Direct `opentelemetry` API in the core crate**: Would add a hard dependency on the OTel SDK, increase compile times for all users, and couple the core to a specific observability system. The `tracing` layer approach is strictly more flexible.
+- **EventForwarder-based OTel bridge**: Would require a separate struct that subscribes to `AgentEvent` and manually creates OTel spans post-hoc. This loses proper span hierarchy (parent-child) because events are point-in-time, not scoped. `tracing` spans are scoped by design.
+- **MetricsCollector-based OTel bridge**: Same problem — MetricsCollector runs at turn end, so it can only emit after-the-fact data, not properly nested spans. OTel tracing requires spans to be entered/exited at the correct points in the lifecycle.
+- **Separate `swink-agent-otel` crate**: Over-scoped for what is essentially a few `info_span!` calls and a convenience init function. The feature gate in the core crate is simpler and keeps instrumentation co-located with the code it observes.
+
+### D8: Span hierarchy design — flat turns with nested calls
+
+**Decision**: Four-level span hierarchy: `agent.run` (root) → `agent.turn` → `agent.llm_call` / `agent.tool.{name}`. Tool spans are children of the turn, not children of the LLM call. Multiple tool executions within a turn appear as sibling spans.
+
+**Rationale**: Tools execute after the LLM call completes (the LLM decides which tools to call, then tools run). Making tools children of the LLM call would be semantically wrong — tools are a phase of the turn, not part of the LLM request. Concurrent tools are siblings with overlapping timelines, which OTel handles natively.
+
+**Alternatives rejected**:
+- **Tools as children of LLM call**: Incorrect semantics. The LLM call ends before tools begin.
+- **Flat spans (no hierarchy)**: Would lose the parent-child relationship, making it impossible to filter "all spans for turn 3" or "all tool calls in this run" in Jaeger/Grafana.
+- **Per-message spans**: Too granular. MessageStart/Update/End are streaming deltas within a single LLM call — they don't warrant separate OTel spans (they'd create thousands of microsecond spans). The `agent.llm_call` span covers the entire streaming duration.
+
+### D9: Convenience `init_otel_layer` vs leave setup to users
+
+**Decision**: Provide an optional convenience function `init_otel_layer(config: OtelInitConfig) -> impl Layer<S>` that wires up `tracing-opentelemetry` with an OTLP exporter. This function lives behind the `otel` feature gate. Users can ignore it and set up their own `tracing_subscriber` pipeline.
+
+**Rationale**: OTel pipeline setup involves ~15 lines of boilerplate (TracerProvider, OTLP exporter, resource, tracing-opentelemetry layer). A convenience function reduces friction for the common case (OTLP to localhost:4317) while remaining fully optional. Advanced users (custom exporters, Prometheus, batching config) compose their own subscriber stack.
+
+**Alternatives rejected**:
+- **No convenience function**: Would require every user to write the same boilerplate. The function saves time without constraining power users.
+- **Auto-init via environment variable**: Implicit behavior is surprising. Explicit `init_otel_layer()` call is clearer and testable.

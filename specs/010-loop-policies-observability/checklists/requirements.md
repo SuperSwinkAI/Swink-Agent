@@ -29,6 +29,16 @@
 - [x] Feature meets measurable outcomes defined in Success Criteria
 - [x] No implementation details leak into specification
 
+## OpenTelemetry Addition (C9)
+
+- [x] US7 acceptance scenarios are testable and unambiguous
+- [x] FR-011 through FR-015 are measurable
+- [x] SC-009 through SC-011 are technology-agnostic success criteria
+- [x] Edge cases for OTel (exporter unavailable, model fallback, concurrent tools) are identified
+- [x] Feature gate boundary is clearly defined (otel feature)
+- [x] Coexistence with MetricsCollector is explicitly specified
+
 ## Notes
 
 - All items pass. Spec is ready for `/speckit.clarify` or `/speckit.plan`.
+- C9 (OpenTelemetry) added 2026-03-31: US7, FR-011–FR-015, SC-009–SC-011, tasks T073–T092.

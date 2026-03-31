@@ -175,7 +175,38 @@
 
 ---
 
-## Phase 9: Polish & Cross-Cutting Concerns
+## Phase 9: User Story 7 — OpenTelemetry Integration (Priority: P2) — C9
+
+**Goal**: Feature-gated OTel-compliant tracing via `tracing` span instrumentation, bridged to OpenTelemetry via `tracing-opentelemetry`
+
+**Independent Test**: Enable the `otel` feature, run an agent with a mock OTel exporter (in-memory `SpanExporter`), verify the exporter captures the correct span hierarchy and attributes
+
+### Implementation for User Story 7
+
+- [ ] T073 [US7] Add `otel` feature gate to `Cargo.toml` with optional dependencies: `tracing-opentelemetry`, `opentelemetry`, `opentelemetry_sdk`, `opentelemetry-otlp`. Verify the feature does not activate without opt-in.
+- [ ] T074 [US7] Create `src/otel.rs` module with `#[cfg(feature = "otel")]` gate. Declare module in `src/lib.rs` behind `#[cfg(feature = "otel")]`.
+- [ ] T075 [US7] Implement `OtelInitConfig` struct in `src/otel.rs`: fields `service_name: String` (default `"swink-agent"`), `endpoint: Option<String>` (default `"http://localhost:4317"`), derives `Debug`, `Clone`, `Default`.
+- [ ] T076 [US7] Implement `init_otel_layer()` function in `src/otel.rs`: accepts `OtelInitConfig`, returns `impl Layer<S>` using `tracing-opentelemetry` with an OTLP gRPC exporter configured from the config.
+- [ ] T077 [US7] Add `tracing::info_span!("agent.run")` to `run_loop()` in `src/loop_/mod.rs`, wrapping the entire loop execution. The span should be entered for the full duration of the agent loop.
+- [ ] T078 [US7] Add `tracing::info_span!("agent.turn", agent.turn_index = tracing::field::Empty, agent.stop_reason = tracing::field::Empty)` in `src/loop_/turn.rs` at turn start. Record `agent.turn_index` on entry. Record `agent.stop_reason` on turn exit via `span.record()`.
+- [ ] T079 [US7] Add `tracing::info_span!("agent.llm_call", agent.model = tracing::field::Empty, agent.tokens.input = tracing::field::Empty, agent.tokens.output = tracing::field::Empty, agent.cost.total = tracing::field::Empty)` in `src/loop_/turn.rs` around the LLM streaming call. Record `agent.model` on entry. Record token/cost fields on span exit after streaming completes.
+- [ ] T080 [US7] Add `tracing::info_span!("agent.tool", agent.tool.name = %name)` in `src/loop_/tool_dispatch.rs` around each tool execution. Set span status to error on tool failure.
+- [ ] T081 [US7] Re-export `OtelInitConfig` and `init_otel_layer` from `src/lib.rs` behind `#[cfg(feature = "otel")]`.
+- [ ] T082 [US7] Add unit test in `src/otel.rs`: `otel_init_config_defaults` — verifies `OtelInitConfig::default()` sets `service_name` to `"swink-agent"` and `endpoint` to `None`.
+- [ ] T083 [US7] Add integration test `tests/otel_spans.rs` (gated with `#[cfg(feature = "otel")]`): configures an in-memory `SpanExporter`, runs a mock agent for 1 turn with 1 tool call, verifies the exporter received spans named `agent.run`, `agent.turn`, `agent.llm_call`, and `agent.tool`.
+- [ ] T084 [US7] Add integration test `tests/otel_spans.rs`: `otel_span_attributes` — verifies `agent.turn_index`, `agent.model`, `agent.tokens.input`, `agent.tokens.output`, `agent.cost.total`, and `agent.tool.name` attributes are present and correctly valued on their respective spans.
+- [ ] T085 [US7] Add integration test `tests/otel_spans.rs`: `otel_span_hierarchy` — verifies parent-child relationships: `agent.turn` is child of `agent.run`, `agent.llm_call` and `agent.tool` are children of `agent.turn`.
+- [ ] T086 [US7] Add integration test `tests/otel_spans.rs`: `otel_coexists_with_metrics_collector` — configures both an in-memory OTel exporter and a mock `MetricsCollector`, runs an agent for 1 turn, verifies OTel exporter received spans AND MetricsCollector received `TurnMetrics`. Neither suppresses the other. (Covers FR-014, US7 acceptance scenario 6.)
+- [ ] T087 [US7] Add integration test `tests/otel_spans.rs`: `otel_spans_exclude_content` — verifies that span attributes do NOT contain prompt text, tool arguments, or tool result content. Only structural metadata (model ID, token counts, cost, turn index, tool name, stop reason) is present. (Covers FR-016.)
+- [ ] T088 [US7] Add integration test `tests/otel_spans.rs`: `otel_model_fallback_spans` — configures model fallback, triggers a retryable error on the primary model, verifies the failed `agent.llm_call` span has error status and a second `agent.llm_call` span is created for the fallback model, both as children of the same `agent.turn`.
+- [ ] T089 [US7] Verify `cargo build -p swink-agent --no-default-features` does not pull in any `opentelemetry` or `tracing-opentelemetry` dependencies (feature gate isolation).
+- [ ] T090 [US7] Verify `cargo build -p swink-agent --features otel` compiles cleanly with zero warnings.
+
+**Checkpoint**: OpenTelemetry integration is functional — agents emit properly hierarchical OTel spans with semantic attributes when the `otel` feature is enabled, with zero overhead when disabled
+
+---
+
+## Phase 10: Polish & Cross-Cutting Concerns
 
 **Purpose**: Final validation, compile-time assertions, and documentation
 
@@ -185,6 +216,11 @@
 - [x] T070 Run `cargo clippy --workspace -- -D warnings` and fix any warnings
 - [x] T071 Run `cargo test -p swink-agent --no-default-features` to verify feature-gated code compiles without defaults
 - [x] T072 Validate quickstart.md examples compile by spot-checking key API patterns against actual type signatures
+- [ ] T091 Add compile-time `Send + Sync` assertion for `OtelInitConfig` in `src/otel.rs` (behind `#[cfg(feature = "otel")]`)
+- [ ] T092 Run `cargo build -p swink-agent --features otel` and verify zero compilation errors
+- [ ] T093 Run `cargo test -p swink-agent --features otel` and verify all OTel tests pass
+- [ ] T094 Run `cargo clippy -p swink-agent --features otel -- -D warnings` and fix any warnings
+- [ ] T095 Validate quickstart.md OTel examples compile by spot-checking API patterns against actual type signatures
 
 ---
 
@@ -200,11 +236,12 @@
 - **US4 — Post-Turn Hooks (Phase 6)**: Depends on Phase 2 — no other story dependencies
 - **US5 — Budget Guard (Phase 7)**: Depends on Phase 2 — no other story dependencies
 - **US6 — Checkpoints (Phase 8)**: Depends on Phase 2 — no other story dependencies
-- **Polish (Phase 9)**: Depends on all user stories being complete
+- **US7 — OpenTelemetry (Phase 9)**: Depends on Phase 2 — adds spans to loop files from US3/US4 but does not modify their APIs. Can proceed independently.
+- **Polish (Phase 10)**: Depends on all user stories being complete
 
 ### User Story Independence
 
-All six user stories are **fully independent** — they operate in separate source files with no cross-dependencies. After Phase 2, all stories can proceed in parallel.
+All seven user stories are **fully independent** — they operate in separate source files with no cross-dependencies. US7 adds `tracing` spans to the loop files (`mod.rs`, `turn.rs`, `tool_dispatch.rs`) but does not modify existing types or APIs. After Phase 2, all stories can proceed in parallel.
 
 ### Within Each User Story
 
@@ -216,10 +253,11 @@ All six user stories are **fully independent** — they operate in separate sour
 ### Parallel Opportunities
 
 - All Phase 2 foundational tasks (T004–T011) marked [P] can run in parallel
-- All six user stories (Phases 3–8) can run in parallel after Phase 2
+- All seven user stories (Phases 3–9) can run in parallel after Phase 2
 - Within US1: T014 and T015 can run in parallel (MaxTurns and CostCap are independent)
 - Within US2: T025, T026, T027 can run in parallel (convenience constructors are independent)
 - Within US5: T044, T045 can run in parallel (builder methods are independent)
+- Within US7: T077, T078, T079, T080 can run in parallel (separate files, no cross-deps)
 
 ---
 
@@ -233,6 +271,7 @@ Story 3: T032–T035 (metrics.rs)
 Story 4: T036–T041 (post_turn_hook.rs)
 Story 5: T042–T051 (budget_guard.rs)
 Story 6: T052–T066 (checkpoint.rs)
+Story 7: T073–T090 (otel.rs, loop_/mod.rs, loop_/turn.rs, loop_/tool_dispatch.rs)
 ```
 
 ---
@@ -255,13 +294,15 @@ Story 6: T052–T066 (checkpoint.rs)
 4. Add User Story 2 (Stream Middleware) → Test independently → Stream interception
 5. Add User Story 3 (Metrics) + Story 4 (Post-Turn Hooks) → Test independently → Observability
 6. Add User Story 6 (Checkpoints) → Test independently → Resumability
+7. Add User Story 7 (OpenTelemetry) → Test independently → OTel integration
 
 ### Parallel Strategy
 
-All six user stories touch separate files and have no cross-dependencies. With multiple agents:
+All seven user stories touch separate files and have no cross-dependencies. With multiple agents:
 - Agent A: US1 (loop_policy.rs) + US5 (budget_guard.rs) — governance pair
 - Agent B: US2 (stream_middleware.rs) + US3 (metrics.rs) — observability pair
 - Agent C: US4 (post_turn_hook.rs) + US6 (checkpoint.rs) — lifecycle pair
+- Agent D: US7 (otel.rs + loop span instrumentation) — OTel integration
 
 ---
 
@@ -270,6 +311,7 @@ All six user stories touch separate files and have no cross-dependencies. With m
 - [P] tasks = different files, no dependencies
 - [Story] label maps task to specific user story for traceability
 - Each user story is independently completable and testable in its own source file
-- All code already exists — tasks verify conformance to spec and add missing tests
+- All code for US1–US6 already exists — tasks verify conformance to spec and add missing tests
+- US7 (OpenTelemetry) is new work — tasks create the feature gate, span instrumentation, and convenience init function
 - Commit after each phase or logical group
 - Stop at any checkpoint to validate story independently
