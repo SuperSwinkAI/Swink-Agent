@@ -14,6 +14,8 @@ Descriptive information about a persisted session.
 | `title` | `String` | Human-readable session title. |
 | `created_at` | `DateTime<Utc>` | Timestamp when the session was first created. |
 | `updated_at` | `DateTime<Utc>` | Timestamp of the most recent save. Updated on every save. |
+| `version` | `u32` | Schema version for migration (default: `1`, `#[serde(default = "default_version")]`). |
+| `sequence` | `u64` | Monotonic counter incremented on every write (default: `0`, `#[serde(default)]`). |
 
 ### SessionStore (trait, sync)
 
@@ -25,7 +27,10 @@ Synchronous session persistence abstraction.
 | `append` | `(&self, id: &str, messages: &[LlmMessage]) -> io::Result<()>` | Append messages to an existing session. Updates `updated_at`. |
 | `load` | `(&self, id: &str) -> io::Result<(SessionMeta, Vec<LlmMessage>)>` | Load a session by ID. Returns `NotFound` if missing, `InvalidData` if empty. |
 | `list` | `(&self) -> io::Result<Vec<SessionMeta>>` | List all sessions with metadata. |
-| `delete` | `(&self, id: &str) -> io::Result<()>` | Delete a session by ID. |
+| `delete` | `(&self, id: &str) -> io::Result<()>` | Delete a session by ID (also deletes interrupt file). |
+| `save_interrupt` | `(&self, id: &str, state: &InterruptState) -> io::Result<()>` | Persist interrupt state for a session. |
+| `load_interrupt` | `(&self, id: &str) -> io::Result<Option<InterruptState>>` | Load interrupt state, or `None` if none exists. |
+| `clear_interrupt` | `(&self, id: &str) -> io::Result<()>` | Delete the interrupt state file. |
 
 ### AsyncSessionStore (trait, async)
 
@@ -76,6 +81,80 @@ Output of a compaction operation.
 | `removed_count` | `usize` | Number of messages replaced by the summary. |
 | `summary` | `Option<String>` | The generated summary text, if compaction occurred. |
 
+### SessionEntry (enum)
+
+Discriminated union of entry types persisted in a session. Used in JSONL serialization with an `entry_type` field.
+
+| Variant | Fields | Description |
+|---------|--------|-------------|
+| `Message` | `AgentMessage` | An LLM message (user, assistant, tool result). The primary entry type. |
+| `ModelChange` | `from: ModelSpec, to: ModelSpec, timestamp: u64` | Records a model switch during the session. |
+| `ThinkingLevelChange` | `from: String, to: String, timestamp: u64` | Records a thinking level change. |
+| `Compaction` | `dropped_count: usize, tokens_before: usize, tokens_after: usize, timestamp: u64` | Records a context compaction event. |
+| `Label` | `text: String, message_index: usize, timestamp: u64` | A user bookmark/annotation on a specific message. |
+| `Custom` | `type_name: String, data: Value, timestamp: u64` | Arbitrary structured data for extensibility. |
+
+**Derives**: `Debug`, `Clone`, `Serialize`, `Deserialize`.
+**Serde**: Adjacently tagged via `#[serde(tag = "entry_type", content = "data", rename_all = "snake_case")]`. The `Message` variant nests the `AgentMessage` under the `data` key: `{"entry_type": "message", "data": {...}}`. Old-format lines (without `entry_type`) are deserialized as `Message` via a custom fallback.
+
+---
+
+### InterruptState (struct)
+
+Snapshot of agent state at an interrupt point, persisted as a separate JSON file.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `interrupted_at` | `u64` | Unix timestamp of the interrupt. |
+| `pending_tool_calls` | `Vec<PendingToolCall>` | Tool calls waiting for approval. |
+| `context_snapshot` | `Vec<AgentMessage>` | Full conversation context at interrupt point. |
+| `system_prompt` | `String` | Active system prompt. |
+| `model` | `ModelSpec` | Active model at interrupt time. |
+
+**Derives**: `Debug`, `Clone`, `Serialize`, `Deserialize`.
+
+---
+
+### PendingToolCall (struct)
+
+A tool call that was awaiting approval at interrupt time.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `tool_call_id` | `String` | Unique tool call ID. |
+| `tool_name` | `String` | Name of the tool being called. |
+| `arguments` | `Value` | Arguments passed to the tool. |
+
+**Derives**: `Debug`, `Clone`, `Serialize`, `Deserialize`.
+
+---
+
+### SessionMigrator (trait)
+
+Trait for upgrading sessions from one schema version to another.
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `source_version` | `&self -> u32` | Version this migrator upgrades from. |
+| `target_version` | `&self -> u32` | Version this migrator upgrades to. |
+| `migrate` | `&self, meta: &mut SessionMeta, entries: &mut Vec<SessionEntry>) -> io::Result<()>` | Transform entries in place. |
+
+---
+
+### LoadOptions (struct)
+
+Filter parameters for partial session loading.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `last_n_entries` | `Option<usize>` | Only return the last N entries. |
+| `after_timestamp` | `Option<u64>` | Only return entries after this Unix timestamp. |
+| `entry_types` | `Option<Vec<String>>` | Only return entries matching these type names. |
+
+**Derives**: `Debug`, `Clone`, `Default`.
+
+---
+
 ## Relationships
 
 ```
@@ -91,6 +170,22 @@ SummarizingCompactor ----produces----> CompactionResult
     |
     v  returns closure for
 Agent::with_transform_context()
+
+SessionEntry (enum)
+    ├── Message(AgentMessage)       -- the only variant sent to LLM
+    ├── ModelChange                 -- audit/display only
+    ├── ThinkingLevelChange         -- audit/display only
+    ├── Compaction                  -- audit/display only
+    ├── Label                       -- user bookmark
+    └── Custom                      -- extensibility
+
+InterruptState ----persisted-as----> {session_id}.interrupt.json
+    ├── pending_tool_calls: Vec<PendingToolCall>
+    ├── context_snapshot: Vec<AgentMessage>
+    └── model: ModelSpec
+
+SessionMigrator ----upgrades----> SessionMeta + Vec<SessionEntry>
+LoadOptions ----filters----> SessionStore::load() output
 ```
 
 ## JSONL File Layout

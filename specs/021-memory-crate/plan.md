@@ -5,7 +5,7 @@
 
 ## Summary
 
-Implement the `swink-agent-memory` workspace crate providing session persistence and summarization-aware context compaction. The crate defines `SessionStore` (sync) and `AsyncSessionStore` traits with save/load/list/delete operations, a `JsonlSessionStore` concrete backend using JSONL (one message per line, metadata on line 1), and a `SummarizingCompactor` that produces a closure compatible with `Agent::with_transform_context()`. Summaries are pre-computed asynchronously after each turn and injected synchronously during context transformation.
+Implement the `swink-agent-memory` workspace crate providing session persistence, summarization-aware context compaction, rich session entry types, session versioning with migration, interrupt state persistence, and filtered session retrieval. The crate defines `SessionStore` (sync) and `AsyncSessionStore` traits with save/load/list/delete operations, a `JsonlSessionStore` concrete backend using JSONL (one message per line, metadata on line 1), and a `SummarizingCompactor` that produces a closure compatible with `Agent::with_transform_context()`. Summaries are pre-computed asynchronously after each turn and injected synchronously during context transformation.
 
 ## Technical Context
 
@@ -26,7 +26,7 @@ Implement the `swink-agent-memory` workspace crate providing session persistence
 | # | Principle | Status | Notes |
 |---|-----------|--------|-------|
 | I | Library-First | PASS | Memory is its own workspace crate with a clean public API. No reverse dependency on core. |
-| II | Test-Driven Development | PASS | Tests cover save/load round-trip, compaction budget enforcement, partial corruption recovery, async operations, and edge cases (empty file, single message, unsafe IDs). |
+| II | Test-Driven Development | PASS | Tests cover save/load round-trip, compaction budget enforcement, partial corruption recovery, async operations, edge cases (empty file, single message, unsafe IDs), rich entry type serialization (T058–T060), backward compatibility for old-format sessions (T059, T064), interrupt state save/load/clear/delete roundtrips (T072–T075), version migration (T067), optimistic concurrency conflict detection (T066), and filtered loading by count/timestamp/type (T081–T084). |
 | III | Efficiency & Performance | PASS | Append-only writes avoid full-file rewrites. JSONL enables streaming reads. No unnecessary allocations on the compaction hot path. |
 | IV | Leverage the Ecosystem | PASS | Uses `serde`/`serde_json` for serialization, `tokio::fs` for async I/O, `chrono` for timestamps. No hand-rolled JSON or async filesystem code. |
 | V | Provider Agnosticism | PASS | Compactor accepts a summarization function (`async Fn(Vec<LlmMessage>) -> String`) — no embedded provider. |
@@ -59,7 +59,11 @@ memory/
     ├── store_async.rs    # AsyncSessionStore trait
     ├── jsonl.rs          # JsonlSessionStore implementation
     ├── compaction.rs     # SummarizingCompactor
-    ├── meta.rs           # SessionMeta struct
+    ├── meta.rs           # SessionMeta struct (with version + sequence)
+    ├── entry.rs          # SessionEntry enum (rich entry types)
+    ├── interrupt.rs      # InterruptState, PendingToolCall
+    ├── migrate.rs        # SessionMigrator trait
+    ├── load_options.rs   # LoadOptions struct
     └── time.rs           # Timestamp utilities
 
 memory/tests/
