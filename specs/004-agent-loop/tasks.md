@@ -168,11 +168,11 @@
 
 ---
 
-## Phase 8: User Story 6 — Context Overflow Recovery (Priority: P2)
+## Phase 8: User Story 6 — Emergency Context Overflow Recovery (Priority: P2)
 
-**Goal**: Provider rejects request due to context overflow; loop signals overflow condition to transformation hook and retries with reduced context.
+**Goal**: Provider rejects request due to context overflow; loop performs emergency in-place recovery: re-runs context transformers with overflow=true, emits ContextCompacted, retries LLM call with compacted context. Fails after one retry to prevent infinite loops.
 
-**Independent Test**: Mock provider rejects with overflow on first call, succeeds on second; verify overflow signal passed to transformation hook.
+**Independent Test**: Mock provider rejects with overflow on first call, succeeds on second; verify: (a) transformers re-run with overflow=true, (b) ContextCompacted emitted, (c) reduced context used on retry, (d) second overflow surfaces error.
 
 ### Tests for User Story 6
 
@@ -180,14 +180,22 @@
 
 - [x] T046 [P] [US6] Write test verifying overflow error sets `overflow_signal = true` on `LoopState` in `tests/loop_overflow.rs`
 - [x] T047 [P] [US6] Write test verifying `transform_context` receives overflow signal and reduced context is used on retry in `tests/loop_overflow.rs`
+- [ ] T064 [P] [US6] Write test verifying emergency overflow recovery: mock provider rejects with overflow on first call, succeeds on second — verify both async and sync transformers re-run with `overflow=true`, `ContextCompacted` event emitted, and retry uses compacted context in `tests/loop_overflow.rs`
+- [ ] T065 [P] [US6] Write test verifying double overflow surfaces error: mock provider rejects with overflow on both calls — verify error is surfaced after one recovery attempt, no infinite loop in `tests/loop_overflow.rs`
+- [ ] T066 [P] [US6] Write test verifying no transformer configured: overflow error is surfaced immediately without retry in `tests/loop_overflow.rs`
+- [ ] T067 [P] [US6] Write test verifying `overflow_recovery_attempted` resets at turn start — second turn can also recover from overflow independently in `tests/loop_overflow.rs`
 
 ### Implementation for User Story 6
 
-- [x] T048 [US6] Implement overflow detection in `src/loop_/stream.rs` — detect `CONTEXT_OVERFLOW_SENTINEL` from provider error, set `LoopState.overflow_signal = true`
+- [x] T048 [US6] Implement overflow detection in `src/loop_/stream.rs` — detect `ContextWindowExceeded` from provider error via `classify_stream_error`, return `StreamErrorAction::ContextOverflow`
 - [x] T049 [US6] Implement overflow signal passing in `src/loop_/turn.rs` — pass `overflow_signal` to `transform_context`, reset to `false` after call; when `transform_context` returns `Some(report)`, emit `ContextCompacted` event
-- [x] T050 [US6] Implement overflow retry loop in `src/loop_/mod.rs` — when overflow detected, re-enter turn with overflow signal set (not a retry strategy error, a loop control signal)
+- [x] T050 [US6] Implement overflow retry via `TurnOutcome::ContinueInner` in `src/loop_/mod.rs` — when overflow detected, re-enter turn with overflow signal set
+- [ ] T068 [US6] Add `overflow_recovery_attempted: bool` field to `LoopState` in `src/loop_/mod.rs`. Initialize to `false`. Reset to `false` at the start of each turn in `src/loop_/turn.rs`.
+- [ ] T069 [US6] Implement emergency in-place overflow recovery in `src/loop_/stream.rs` or `src/loop_/turn.rs` — when `StreamResult::ContextOverflow` is returned and `overflow_recovery_attempted` is false: (a) set `overflow_signal = true`, (b) set `overflow_recovery_attempted = true`, (c) re-run async context transformer (if present) with overflow=true, (d) re-run sync context transformer (if present) with overflow=true, (e) emit `ContextCompacted` for each transformer that reports compaction, (f) re-run the convert-to-LLM pipeline, (g) retry the stream call with compacted context.
+- [ ] T070 [US6] Implement overflow guard — when `StreamResult::ContextOverflow` is returned and `overflow_recovery_attempted` is true, surface the error (do not retry). When no transformer is configured, surface immediately.
+- [ ] T071 [US6] Remove or deprecate the `CONTEXT_OVERFLOW_SENTINEL` encoding path in `handle_stream_result` — overflow recovery now happens in-place rather than via sentinel + `TurnOutcome::ContinueInner`. Retain the sentinel constant for backward compatibility but mark as deprecated.
 
-**Checkpoint**: Context overflow triggers transformation hook with overflow signal (SC-008)
+**Checkpoint**: Emergency overflow recovery works — compact + retry on first overflow, error on second (SC-008)
 
 ---
 
@@ -300,7 +308,7 @@ Task T020: "Test loop exit on no more tools in tests/loop_tool_execution.rs"
 4. US3 (Steering) → Test independently → Interactive interrupts work
 5. US4 (Follow-Up) → Test independently → Autonomous continuation works
 6. US5 (Retry) → Test independently → Production reliability
-7. US6 (Overflow) → Test independently → Long conversation recovery
+7. US6 (Emergency Overflow Recovery) → Test independently → In-place compact + retry recovery
 8. US7 (Max Tokens) → Test independently → Edge case recovery
 9. Polish → All edge cases, clippy clean, full test suite green
 

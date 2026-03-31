@@ -1,7 +1,7 @@
 # Data Model: Agent Loop
 
 **Feature**: 004-agent-loop
-**Date**: 2026-03-20
+**Date**: 2026-03-20 | **Updated**: 2026-03-31
 
 ## Overview
 
@@ -33,7 +33,8 @@ Internal mutable state for a single loop invocation.
 | Field | Type | Description |
 |-------|------|-------------|
 | context_messages | Vec<AgentMessage> | Current message history |
-| overflow_signal | bool | Set on context overflow, reset after transform_context |
+| overflow_signal | bool | Set during emergency overflow recovery, reset after transform_context processes it |
+| overflow_recovery_attempted | bool | Guards against infinite overflow loops — true after one emergency recovery attempt within a turn |
 | pending_messages | Vec<AgentMessage> | Steering/follow-up messages queued for next turn |
 | system_prompt | String | System prompt text |
 | tools | Vec<Arc<dyn AgentTool>> | Available tools |
@@ -112,5 +113,7 @@ Why the turn ended. Enum.
 - Events MUST be emitted in lifecycle order (FR-003)
 - Tool calls MUST execute concurrently (FR-007)
 - Overflow signal MUST reset after transform_context (CLAUDE.md lesson)
+- `overflow_recovery_attempted` MUST reset at the start of each turn (allows recovery once per turn)
+- Emergency overflow recovery MUST NOT occur when `overflow_recovery_attempted` is true (prevents infinite loops)
 - Error/abort MUST skip follow-up polling (FR-011)
 - Transform MUST run before convert-to-llm (FR-005)

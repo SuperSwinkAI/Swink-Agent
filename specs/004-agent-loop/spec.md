@@ -2,8 +2,9 @@
 
 **Feature Branch**: `004-agent-loop`
 **Created**: 2026-03-20
+**Updated**: 2026-03-31
 **Status**: Draft
-**Input**: The core execution engine for the agent harness. Implements the nested inner/outer loop, tool dispatch, steering/follow-up injection, event emission, retry integration, error/abort handling, and max tokens recovery. Stateless — all state is passed in via configuration and context. References: PRD §8 (Event System), PRD §9 (Cancellation), PRD §10.1-10.2 (Context Overflow, Max Tokens), PRD §12 (Agent Loop), HLD Execution Layer and Single Turn Data Flow.
+**Input**: The core execution engine for the agent harness. Implements the nested inner/outer loop, tool dispatch, steering/follow-up injection, event emission, retry integration, error/abort handling, emergency context overflow recovery, and max tokens recovery. Stateless — all state is passed in via configuration and context. References: PRD §8 (Event System), PRD §9 (Cancellation), PRD §10.1-10.2 (Context Overflow, Max Tokens), PRD §12 (Agent Loop), HLD Execution Layer and Single Turn Data Flow, AWS Strands conversation_manager.reduce_context() pattern.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -88,18 +89,24 @@ When the LLM provider returns a transient error (rate limit, network failure), t
 
 ---
 
-### User Story 6 - Context Overflow Recovery (Priority: P2)
+### User Story 6 - Emergency Context Overflow Recovery (Priority: P2)
 
-When the provider rejects a request because the context exceeds the model's window, the loop signals the overflow condition to the context transformation hook. On the next attempt, the hook applies more aggressive pruning, and the loop retries with the reduced context.
+When the streaming layer returns `StreamErrorKind::ContextWindowExceeded`, the loop does NOT surface the error immediately. Instead, it performs emergency recovery: sets `overflow_signal = true`, re-runs the context transformation pipeline (both async and sync transformers) to compact the context, emits a `ContextCompacted` event, and retries the LLM call with the reduced context. If the retry also fails with overflow (compaction was insufficient), THEN the error is surfaced. This is a single-retry recovery — no infinite loops.
 
-**Why this priority**: Context overflow is a common production issue with long conversations. Automatic recovery prevents hard failures.
+**Why this priority**: Context overflow is a common production issue with long conversations. The current implementation sets `overflow_signal` but only takes effect on the *next* turn — which never happens because the overflow error terminates the current turn. This change wires the overflow recovery directly into the stream error path so recovery happens in-place.
 
-**Independent Test**: Can be tested with a mock provider that rejects with overflow on the first call and succeeds on the second, verifying the overflow signal is passed to the transformation hook.
+**Key reference**: AWS Strands' `conversation_manager.reduce_context()` which is called automatically when `ContextWindowOverflowException` is caught, then the request is retried.
+
+**Independent Test**: Can be tested with a mock provider that rejects with overflow on the first call and succeeds on the second, verifying: (a) the transformation hook receives the overflow signal, (b) a `ContextCompacted` event is emitted, (c) the provider is retried with the reduced context, (d) if both attempts fail, the error is surfaced.
 
 **Acceptance Scenarios**:
 
-1. **Given** a context overflow error, **When** the loop retries, **Then** the transformation hook receives an overflow signal.
-2. **Given** the transformation hook reduces context, **When** the provider is called again, **Then** the reduced context is used.
+1. **Given** a `ContextWindowExceeded` error from the streaming layer, **When** the loop handles it, **Then** it does NOT surface the error immediately — it enters the emergency recovery path.
+2. **Given** the emergency recovery path, **When** `overflow_signal` is set to true, **Then** both the async context transformer (if present) and the sync context transformer are re-run with `overflow=true`.
+3. **Given** the transformers compact the context, **When** compaction produces a `CompactionReport`, **Then** a `ContextCompacted` event is emitted for each transformer that reports compaction.
+4. **Given** the compacted context, **When** the LLM is retried, **Then** it uses the reduced context from the emergency compaction.
+5. **Given** the retry also returns `ContextWindowExceeded`, **When** the second failure occurs, **Then** the error IS surfaced — no further retries (prevents infinite loops).
+6. **Given** no context transformer is configured, **When** overflow occurs, **Then** the error is surfaced immediately (no compaction possible, no point retrying).
 
 ---
 
@@ -125,6 +132,9 @@ When the provider stops mid-response because it hit the output token limit and t
 - How does the loop handle a provider that returns zero content blocks (empty response)? → Treat as natural stop with empty assistant message; emit `TurnEnd` with `Complete` reason.
 - What happens when all tool calls in a batch are cancelled by steering — does the loop still emit turn end? → Yes, emit `TurnEnd` with `SteeringInterrupt` reason.
 - What happens when the cancellation token is triggered during the provider call — does the loop emit an aborted stop reason? → Yes, cancellation during provider call emits `TurnEnd` with `Aborted` reason followed by `AgentEnd`.
+- What happens when overflow occurs but no context transformer is configured — the error is surfaced immediately. Without a transformer, compaction is not possible and retrying would produce the same result.
+- Does emergency overflow recovery count as a retry for the RetryStrategy — no. Overflow recovery is a separate code path from the general retry strategy. The overflow recovery has its own single-retry limit (one compaction + one retry), independent of `RetryStrategy` attempts.
+- Does emergency overflow recovery emit TurnStart/TurnEnd events for the retry — no. The recovery is internal to the stream error handling path. The retry re-runs the transform + stream within the same turn. Only the `ContextCompacted` event is emitted during recovery.
 
 ## Requirements *(mandatory)*
 
@@ -142,7 +152,10 @@ When the provider stops mid-response because it hit the output token limit and t
 - **FR-010**: When the inner loop exits normally, the outer loop MUST poll for follow-up messages. If available, the inner loop re-enters.
 - **FR-011**: When the inner loop exits due to error or abort, the outer loop MUST NOT poll for follow-up — it MUST emit AgentEnd and exit immediately.
 - **FR-012**: The loop MUST apply the retry strategy for retryable provider errors and respect the computed delay.
-- **FR-013**: Context overflow errors MUST signal the overflow condition to the transformation hook on retry.
+- **FR-013**: Context overflow errors MUST trigger emergency recovery: set `overflow_signal = true`, re-run both async and sync context transformers, emit `ContextCompacted` events, and retry the LLM call with the compacted context.
+- **FR-013a**: Emergency overflow recovery MUST be limited to a single retry. If the retry also fails with overflow, the error MUST be surfaced.
+- **FR-013b**: Emergency overflow recovery MUST NOT occur when no context transformer is configured — the error MUST be surfaced immediately.
+- **FR-013c**: Emergency overflow recovery MUST be independent of the `RetryStrategy` — it has its own single-retry limit and does not consume retry attempts.
 - **FR-014**: When the provider returns stop reason "length" with incomplete tool calls, the loop MUST replace each incomplete tool call with an error result and continue.
 - **FR-015**: Cancellation via the cancellation token MUST cause the loop to exit cleanly with an aborted stop reason.
 - **FR-016**: The convert-to-LLM function MUST be able to filter messages by returning nothing for messages that should not reach the provider.
@@ -164,7 +177,7 @@ When the provider stops mid-response because it hit the output token limit and t
 - **SC-005**: Error or abort stop reasons cause immediate exit without follow-up polling.
 - **SC-006**: Retryable errors trigger the retry strategy; the loop recovers on success.
 - **SC-007**: Non-retryable errors cause immediate loop exit.
-- **SC-008**: Context overflow triggers the overflow signal to the transformation hook.
+- **SC-008**: Context overflow triggers emergency recovery — transformers re-run with overflow=true, ContextCompacted emitted, LLM retried with compacted context. Second overflow surfaces the error.
 - **SC-009**: Incomplete tool calls from max tokens are replaced with error results and the loop continues.
 - **SC-010**: Cancellation produces a clean shutdown with aborted stop reason.
 - **SC-011**: The transformation hook is called before the convert-to-LLM function on every turn.
@@ -176,10 +189,18 @@ When the provider stops mid-response because it hit the output token limit and t
 - Q: How should the loop behave when no context transformation hook is provided? → A: Use an identity transform — context passes through unchanged.
 - Q: How should steering messages be handled when no tools are executing? → A: Queued as pending messages, processed before the next provider call.
 
+### Session 2026-03-31
+
+- Q: Where does emergency overflow recovery execute — in the turn pipeline or the stream retry path? → A: In the stream error handling path (`handle_stream_result` or `stream_with_retry`). When `StreamResult::ContextOverflow` is returned, instead of encoding a sentinel and returning to the turn, the recovery re-runs transformers and retries the stream call in-place.
+- Q: Does the CONTEXT_OVERFLOW_SENTINEL mechanism remain? → A: The sentinel encoding is replaced by in-place recovery. The `overflow_signal` flag on `LoopState` still exists but is set and consumed within the same turn rather than across turns.
+- Q: How does this interact with the existing retry strategy? → A: They are independent. Overflow recovery has its own single-retry limit. A `ContextWindowExceeded` error does not consume `RetryStrategy` attempts. If overflow recovery succeeds, the turn continues normally. If it fails, the error is surfaced directly (not routed through `RetryStrategy`).
+- Q: What if only the async transformer is configured (no sync)? → A: Only the async transformer runs. The recovery runs whatever transformers are available — async, sync, or both. If neither is configured, recovery is skipped and the error surfaces immediately.
+
 ## Assumptions
 
 - The loop is stateless — all state is passed in via AgentLoopConfig and AgentContext. Mutable state lives in the caller (Agent struct).
 - Concurrent tool execution uses task spawning with per-tool cancellation tokens.
 - The overflow signal is a boolean flag on the loop state, not an event — it is reset after the transformation hook processes it.
 - "Steering interrupt" means cancelling remaining tools and injecting error results; the steering message itself is processed on the next turn.
-- The context overflow sentinel is a loop control signal, not an error that propagates to the caller.
+- Emergency overflow recovery is bounded to one compaction + one retry per overflow occurrence. No infinite loops.
+- The `CONTEXT_OVERFLOW_SENTINEL` mechanism is superseded by in-place recovery in the stream error path. The sentinel constant may remain for backward compatibility but is no longer the primary recovery path.
