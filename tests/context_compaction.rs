@@ -116,9 +116,11 @@ async fn collect_events(stream: Pin<Box<dyn Stream<Item = AgentEvent> + Send>>) 
     stream.collect().await
 }
 
-/// Check if events contain a specific variant (by Debug name prefix).
+/// Check if events contain a specific variant by name.
 fn has_event(events: &[AgentEvent], name: &str) -> bool {
-    events.iter().any(|e| format!("{e:?}").starts_with(name))
+    events
+        .iter()
+        .any(|e| common::event_variant_name(e) == name)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

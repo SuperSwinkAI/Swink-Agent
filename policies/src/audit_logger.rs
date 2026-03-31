@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use chrono::Utc;
 use serde::Serialize;
+use unicode_truncate::UnicodeTruncateStr;
 
 use swink_agent::{
     ContentBlock, PolicyContext, PolicyVerdict, PostTurnPolicy, TurnPolicyContext,
@@ -123,9 +124,11 @@ impl PostTurnPolicy for AuditLogger {
     }
 }
 
-/// Truncate a string to at most `max` characters (not bytes).
+/// Truncate a string to at most `max` display-width columns, respecting
+/// grapheme cluster boundaries (e.g. emoji with zero-width joiners).
 fn truncate_to_chars(s: &str, max: usize) -> String {
-    s.chars().take(max).collect()
+    let (truncated, _width) = s.unicode_truncate(max);
+    truncated.to_string()
 }
 
 // ─── JSONL Sink ─────────────────────────────────────────────────────────────

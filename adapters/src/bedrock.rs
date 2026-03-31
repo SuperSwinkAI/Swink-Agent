@@ -5,9 +5,10 @@
 //! request completes.
 
 use std::pin::Pin;
-use std::time::{SystemTime, UNIX_EPOCH};
 
+use chrono::Utc;
 use futures::stream::{self, Stream, StreamExt as _};
+use hmac::{Hmac, KeyInit, Mac};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -501,50 +502,11 @@ fn response_to_events(response: BedrockResponse) -> Vec<AssistantMessageEvent> {
 }
 
 fn amz_dates() -> (String, String) {
-    let now = chrono_like_now();
-    (now.0, now.1)
-}
-
-#[allow(clippy::cast_possible_wrap)]
-fn chrono_like_now() -> (String, String) {
-    // UTC formatting without extra dependencies.
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs() as i64;
-    let (year, month, day, hour, minute, second) = unix_to_utc(now);
+    let now = Utc::now();
     (
-        format!("{year:04}{month:02}{day:02}T{hour:02}{minute:02}{second:02}Z"),
-        format!("{year:04}{month:02}{day:02}"),
+        now.format("%Y%m%dT%H%M%SZ").to_string(),
+        now.format("%Y%m%d").to_string(),
     )
-}
-
-#[allow(
-    clippy::missing_const_for_fn,
-    clippy::cast_possible_truncation,
-    clippy::cast_possible_wrap,
-    clippy::cast_sign_loss,
-    clippy::bool_to_int_with_if
-)]
-fn unix_to_utc(timestamp: i64) -> (i32, u32, u32, u32, u32, u32) {
-    let days = timestamp.div_euclid(86_400);
-    let secs_of_day = timestamp.rem_euclid(86_400) as u32;
-    let hour = secs_of_day / 3_600;
-    let minute = (secs_of_day % 3_600) / 60;
-    let second = secs_of_day % 60;
-
-    let z = days + 719_468;
-    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
-    let doe = z - era * 146_097;
-    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let day = doy - (153 * mp + 2) / 5 + 1;
-    let month = mp + if mp < 10 { 3 } else { -9 };
-    let year = y + if month <= 2 { 1 } else { 0 };
-
-    (year as i32, month as u32, day as u32, hour, minute, second)
 }
 
 fn canonical_headers(
@@ -599,32 +561,39 @@ fn hex_encode(bytes: &[u8]) -> String {
     output
 }
 
+type HmacSha256 = Hmac<Sha256>;
+
 fn hmac_sha256(key: &[u8], data: &[u8]) -> [u8; 32] {
-    let block_size = 64usize;
-    let mut key_block = [0u8; 64];
-    if key.len() > block_size {
-        let digest = Sha256::digest(key);
-        key_block[..32].copy_from_slice(&digest);
-    } else {
-        key_block[..key.len()].copy_from_slice(key);
+    let mut mac =
+        HmacSha256::new_from_slice(key).expect("HMAC accepts any key size");
+    mac.update(data);
+    mac.finalize().into_bytes().into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hmac_sha256_known_answer() {
+        // RFC 4231 Test Case 2
+        let key = b"Jefe";
+        let data = b"what do ya want for nothing?";
+        let result = hmac_sha256(key, data);
+        let expected =
+            "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843";
+        assert_eq!(hex_encode(&result), expected);
     }
 
-    let mut o_key_pad = [0u8; 64];
-    let mut i_key_pad = [0u8; 64];
-    for (index, byte) in key_block.iter().enumerate() {
-        o_key_pad[index] = byte ^ 0x5c;
-        i_key_pad[index] = byte ^ 0x36;
+    #[test]
+    fn amz_dates_format() {
+        let (amz_date, date_stamp) = amz_dates();
+        assert_eq!(amz_date.len(), 16);
+        assert!(amz_date.ends_with('Z'));
+        assert_eq!(&amz_date[8..9], "T");
+        assert_eq!(date_stamp.len(), 8);
+        assert!(date_stamp.chars().all(|c| c.is_ascii_digit()));
     }
-
-    let mut inner = Sha256::new();
-    inner.update(i_key_pad);
-    inner.update(data);
-    let inner_hash = inner.finalize();
-
-    let mut outer = Sha256::new();
-    outer.update(o_key_pad);
-    outer.update(inner_hash);
-    outer.finalize().into()
 }
 
 const _: () = {

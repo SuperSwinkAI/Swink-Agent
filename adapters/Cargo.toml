@@ -1,6 +1,6 @@
 [package]
 name = "swink-agent-adapters"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 rust-version = "1.88"
 description = "LLM provider adapters for swink-agent"
@@ -23,7 +23,7 @@ ollama = []
 gemini = []
 proxy = ["dep:eventsource-stream"]
 azure = []
-bedrock = ["dep:sha2"]
+bedrock = ["dep:sha2", "dep:hmac", "dep:chrono"]
 mistral = []
 xai = []
 
@@ -39,6 +39,8 @@ uuid.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
 sha2 = { workspace = true, optional = true }
+hmac = { workspace = true, optional = true }
+chrono = { workspace = true, optional = true }
 bytes = "1"
 eventsource-stream = { version = "0.2", optional = true }
 
@@ -47,6 +49,8 @@ tokio = { workspace = true, features = ["full", "test-util"] }
 wiremock.workspace = true
 pretty_assertions.workspace = true
 dotenvy.workspace = true
+rstest.workspace = true
+insta.workspace = true
 
 [lints.rust]
 unsafe_code = "forbid"

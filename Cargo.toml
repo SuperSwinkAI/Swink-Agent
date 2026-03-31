@@ -22,13 +22,16 @@ tempfile = "3"
 wiremock = "0.6"
 serde_yaml = "0.9"
 sha2 = "0.11"
+hmac = "0.13"
 toml = "0.8"
 chrono = { version = "0.4", features = ["serde"] }
 proptest = { version = "1", default-features = false, features = ["std"] }
+rstest = "0.25"
+insta = { version = "1", features = ["json"] }
 
 [package]
 name = "swink-agent"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 rust-version = "1.88"
 description = "Core scaffolding for running LLM-powered agentic loops"
@@ -54,6 +57,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 default = ["builtin-tools"]
 builtin-tools = []
 test-helpers = []
+tiktoken = ["dep:tiktoken-rs"]
 
 [dependencies]
 serde.workspace = true
@@ -70,6 +74,7 @@ uuid.workspace = true
 rand.workspace = true
 tracing.workspace = true
 toml.workspace = true
+tiktoken-rs = { version = "0.6", optional = true }
 
 [[bench]]
 name = "context"
@@ -86,6 +91,7 @@ criterion.workspace = true
 tokio = { workspace = true, features = ["full", "test-util"] }
 wiremock.workspace = true
 proptest.workspace = true
+insta.workspace = true
 
 [lints.rust]
 unsafe_code = "forbid"

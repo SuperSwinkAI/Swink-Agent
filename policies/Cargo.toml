@@ -1,6 +1,6 @@
 [package]
 name = "swink-agent-policies"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 rust-version = "1.88"
 description = "Policy implementations for swink-agent"
@@ -20,7 +20,7 @@ checkpoint = ["dep:tokio"]
 prompt-guard = ["regex"]
 pii = ["regex"]
 content-filter = ["regex"]
-audit = ["chrono", "serde", "serde_json"]
+audit = ["chrono", "serde", "serde_json", "unicode-truncate"]
 
 [dependencies]
 swink-agent = { path = ".." }
@@ -30,6 +30,7 @@ serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true }
 tracing = { workspace = true }
+unicode-truncate = { version = "2", optional = true }
 
 [dev-dependencies]
 futures = { workspace = true }
