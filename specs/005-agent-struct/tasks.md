@@ -231,7 +231,51 @@
 
 ---
 
-## Phase 12: Polish & Cross-Cutting Concerns
+## Phase 12: User Story 6 — Dynamic Model Swapping (Priority: P2) — I20
+
+**Goal**: Formalize and verify `set_model()` StreamFn lookup behavior and add `set_model_with_stream()` variant
+
+**Independent Test**: Configure agent with two available models, call `set_model()` to switch, prompt, verify new model is used
+
+> **NOTE**: `set_model()` with StreamFn lookup already exists in `src/agent.rs`. These tasks verify existing behavior, add `set_model_with_stream()`, and ensure ModelCycled event emission.
+
+### Tests for User Story 6
+
+- [ ] T079 [P] [US6] Integration test `set_model_swaps_stream_fn` in `tests/agent_models.rs`: configure agent with two available models, call `set_model()`, prompt, verify the new model's StreamFn is used (check via model-specific mock response)
+- [ ] T080 [P] [US6] Integration test `set_model_unknown_keeps_stream_fn` in `tests/agent_models.rs`: call `set_model()` with a model NOT in available_models, verify ModelSpec is updated but StreamFn remains unchanged
+- [ ] T081 [P] [US6] Integration test `set_model_with_stream_bypasses_available` in `tests/agent_models.rs`: call `set_model_with_stream()` with an explicit StreamFn, verify both ModelSpec and StreamFn are swapped
+- [ ] T082 [P] [US6] Integration test `set_model_emits_model_cycled_event` in `tests/agent_models.rs`: subscribe to events, call `set_model()`, prompt, verify `ModelCycled` event is emitted with correct old/new model specs
+
+### Implementation for User Story 6
+
+- [ ] T083 [US6] Implement `set_model_with_stream(&mut self, model: ModelSpec, stream_fn: Arc<dyn StreamFn>)` in `src/agent.rs` — swaps both ModelSpec and StreamFn unconditionally
+- [ ] T084 [US6] Verify `set_model()` emits `ModelCycled` event when the model actually changes (compare old vs new ModelSpec). Add event emission if not already present.
+- [ ] T085 [US6] Verify `set_model()` is documented in the `AgentState` that `available_models` is populated from `AgentOptions::with_available_models()` at construction time.
+
+**Checkpoint**: US6 complete — model swapping works with StreamFn resolution, event emission, and explicit StreamFn variant
+
+---
+
+## Phase 13: User Story 7 — Wait for Idle (Priority: P3) — N15
+
+**Goal**: Formalize and verify `wait_for_idle()` behavior
+
+**Independent Test**: Start a prompt in background, call `wait_for_idle()`, verify it resolves when prompt completes
+
+> **NOTE**: `wait_for_idle()` already exists in `src/agent.rs` using `Arc<Notify>`. These tasks verify existing behavior against the new acceptance scenarios.
+
+### Tests for User Story 7
+
+- [ ] T086 [P] [US7] Integration test `wait_for_idle_returns_immediately_when_not_running` in `tests/agent.rs`: create agent (not running), call `wait_for_idle()`, verify it returns immediately (no hang)
+- [ ] T087 [P] [US7] Integration test `wait_for_idle_resolves_on_completion` in `tests/agent.rs`: start prompt in background task, call `wait_for_idle()` from main task, verify it resolves when prompt finishes
+- [ ] T088 [P] [US7] Integration test `wait_for_idle_resolves_after_abort` in `tests/agent.rs`: start prompt, call `abort()`, then `wait_for_idle()`, verify it resolves after abort completes
+- [ ] T089 [P] [US7] Integration test `wait_for_idle_multiple_waiters` in `tests/agent.rs`: start prompt, spawn two tasks both calling `wait_for_idle()`, verify both resolve when prompt finishes
+
+**Checkpoint**: US7 complete — wait_for_idle behavior formally verified
+
+---
+
+## Phase 14: Polish & Cross-Cutting Concerns
 
 **Purpose**: Improvements that affect multiple user stories
 
@@ -241,6 +285,10 @@
 - [x] T076 Run `cargo test --workspace` and verify all tests pass
 - [x] T077 Run `cargo test -p swink-agent --no-default-features` to verify builtin-tools feature gate
 - [x] T078 Run quickstart.md validation: verify all code examples compile
+- [ ] T090 Verify `set_model_with_stream` is re-exported and documented in contracts/public-api.md
+- [ ] T091 Run `cargo clippy --workspace -- -D warnings` and fix any warnings from new code
+- [ ] T092 Run `cargo test --workspace` and verify all new tests pass
+- [ ] T093 Validate new quickstart.md examples (model swap, wait_for_idle) match actual API
 
 ---
 
@@ -259,7 +307,9 @@
 - **AgentHandle (Phase 9)**: Depends on US1 (needs prompt flow working)
 - **Tool Discovery (Phase 10)**: Depends on Foundational phase
 - **Checkpointing (Phase 11)**: Depends on Foundational phase
-- **Polish (Phase 12)**: Depends on all user stories being complete
+- **User Story 6 — Model Swap (Phase 12)**: Depends on US1 + US5 (needs prompt flow and state mutation). Modifies `src/agent.rs`.
+- **User Story 7 — Wait for Idle (Phase 13)**: Depends on US1 (needs prompt flow). Test-only — verifies existing behavior.
+- **Polish (Phase 14)**: Depends on all user stories being complete
 
 ### User Story Dependencies
 
@@ -287,6 +337,9 @@
 - All US5 tests (T048-T053) can run in parallel
 - US1, US2, US3, and US5 can all proceed in parallel after Foundational
 - US5 state mutation methods (T054-T056) can run in parallel
+- US6 and US7 can proceed in parallel (separate concerns, both modify/test different agent.rs methods)
+- All US6 tests (T079-T082) can run in parallel
+- All US7 tests (T086-T089) can run in parallel
 
 ---
 
@@ -331,7 +384,9 @@ Task T022: "Implement handle_stream_event()"
 5. Add User Story 4 -> Test independently (structured output)
 6. Add User Story 5 -> Test independently (state management)
 7. Add Continue + Handle + Tool Discovery + Checkpointing
-8. Polish phase -> Full validation
+8. Add User Story 6 -> Test independently (dynamic model swap)
+9. Add User Story 7 -> Test independently (wait for idle)
+10. Polish phase -> Full validation
 
 ### Parallel Team Strategy
 
@@ -356,3 +411,5 @@ With multiple developers:
 - Commit after each task or logical group
 - Stop at any checkpoint to validate story independently
 - The code is already fully implemented in `src/agent.rs`, `src/agent_options.rs`, `src/agent_subscriptions.rs`, `src/handle.rs` - tasks describe the logical implementation order
+- US6 (Dynamic Model Swap) — `set_model()` with StreamFn lookup already exists. New work: add `set_model_with_stream()`, verify ModelCycled event emission, formal test coverage.
+- US7 (Wait for Idle) — `wait_for_idle()` already exists using `Arc<Notify>`. New work: formal test coverage against acceptance scenarios.

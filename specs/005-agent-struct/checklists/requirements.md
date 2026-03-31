@@ -29,6 +29,16 @@
 - [x] Feature meets measurable outcomes defined in Success Criteria
 - [x] No implementation details leak into specification
 
+## Dynamic Model Swap & Wait for Idle (I20, N15)
+
+- [x] US6–US7 acceptance scenarios are testable and unambiguous
+- [x] FR-015 through FR-020 are measurable
+- [x] SC-010 through SC-012 are technology-agnostic success criteria
+- [x] Edge cases for new features (mid-run swap, subscriber wait, same-model swap) identified
+- [x] Backward compatibility maintained (`set_model()` unchanged, `set_model_with_stream()` is additive)
+- [x] Both features already implemented — tasks verify and extend existing behavior
+
 ## Notes
 
 - All items pass. Spec is ready for `/speckit.clarify` or `/speckit.plan`.
+- I20 (Dynamic model swap) and N15 (Wait for idle) added 2026-03-31: US6–US7, FR-015–FR-020, SC-010–SC-012, tasks T079–T093.

@@ -3,7 +3,7 @@
 **Feature Branch**: `005-agent-struct`
 **Created**: 2026-03-20
 **Status**: Draft
-**Input**: The stateful public API wrapper over the agent loop. Owns conversation history, manages steering/follow-up queues, enforces single-invocation concurrency, provides three invocation modes (streaming, async, sync), implements structured output, and fans events to subscribers. References: PRD §13 (Agent Struct), HLD API Layer.
+**Input**: The stateful public API wrapper over the agent loop. Owns conversation history, manages steering/follow-up queues, enforces single-invocation concurrency, provides three invocation modes (streaming, async, sync), implements structured output, fans events to subscribers, supports dynamic model swapping with StreamFn resolution, and provides idle-waiting for non-blocking integration patterns. References: PRD §13 (Agent Struct), HLD API Layer.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -95,6 +95,41 @@ A developer modifies the agent's state between runs: changing the system prompt,
 
 ---
 
+### User Story 6 - Dynamic Model Swapping at Runtime (Priority: P2) — I20
+
+A developer switches the agent's model mid-session — for example, starting with a fast model for triage, then switching to a powerful model for complex reasoning. `set_model()` looks up the model in the registered `available_models` list and swaps both the `ModelSpec` and the `StreamFn`. If the model is not in `available_models`, `set_model_with_stream()` accepts an explicit `StreamFn`. The change takes effect on the next turn. A `ModelCycled` event is emitted when the model changes programmatically.
+
+**Why this priority**: Dynamic model swapping enables cost optimization and adaptive complexity — agents can use cheap models for simple tasks and expensive models for hard ones, all within a single session.
+
+**Independent Test**: Can be tested by configuring an agent with two available models, calling `set_model()` to switch, prompting, and verifying the new model is used.
+
+**Acceptance Scenarios**:
+
+1. **Given** an agent with available_models containing Model A and Model B, **When** `set_model(Model B)` is called, **Then** the agent's `stream_fn` is swapped to Model B's StreamFn and the next prompt uses Model B.
+2. **Given** `set_model()` called with a model in `available_models`, **When** the switch completes, **Then** a `ModelCycled` event is emitted with the old and new model specs.
+3. **Given** `set_model()` called with a model NOT in `available_models`, **When** the switch is attempted, **Then** only the `ModelSpec` is updated (no StreamFn swap) — the existing StreamFn continues to be used.
+4. **Given** `set_model_with_stream(model, stream_fn)` called, **When** the switch completes, **Then** both the ModelSpec and StreamFn are updated, regardless of `available_models`.
+5. **Given** a running agent, **When** `set_model()` is called, **Then** the change takes effect on the NEXT turn, not mid-turn.
+
+---
+
+### User Story 7 - Wait for Agent Idle (Priority: P3) — N15
+
+A developer awaits the agent becoming idle using `wait_for_idle()`. This is useful for fire-and-forget patterns where callers start a prompt in a background task and need to know when it finishes. The method returns immediately if the agent is not running, and awaits a notification otherwise. It is safe to call from multiple tasks concurrently.
+
+**Why this priority**: Nice-to-have for non-blocking integration patterns. Most callers use `prompt_async()` which already awaits completion.
+
+**Independent Test**: Can be tested by starting a prompt in a background task, calling `wait_for_idle()` from the main task, and verifying it resolves when the prompt completes.
+
+**Acceptance Scenarios**:
+
+1. **Given** an idle agent (`is_running == false`), **When** `wait_for_idle()` is called, **Then** it returns immediately.
+2. **Given** a running agent, **When** `wait_for_idle()` is called, **Then** it resolves when the agent finishes its current run.
+3. **Given** multiple tasks calling `wait_for_idle()` concurrently, **When** the agent finishes, **Then** all waiting tasks are notified.
+4. **Given** a running agent that is aborted, **When** `wait_for_idle()` is awaited, **Then** it resolves after the abort completes.
+
+---
+
 ### Edge Cases
 
 - What happens when prompt is called while the agent is already running — `check_not_running()` returns `Err(AgentError::AlreadyRunning)`.
@@ -102,6 +137,9 @@ A developer modifies the agent's state between runs: changing the system prompt,
 - What happens when continue is called and the last message is an assistant message — `validate_continue()` returns `Err(AgentError::InvalidContinue)` when the last message is an assistant message AND there are no pending messages in the steering/follow-up queues. If there are pending messages, continue is allowed because the queued messages will be injected.
 - How does the agent handle a subscriber that is registered and unregistered during a run? — `subscribe` returns a `SubscriptionId`; calling `unsubscribe` with that ID removes the callback immediately and no further events are delivered to it. This is safe to call at any time because the `ListenerRegistry` manages dispatch with panic isolation.
 - What happens when the steering queue is cleared while the agent is running? — `clear_steering()` uses `Arc<Mutex<>>` with poison recovery, so it is safe to call concurrently. Clearing removes any undelivered messages from the shared queue; the `QueueMessageProvider` will see an empty queue on its next `poll_steering` call.
+- What happens when `set_model()` is called during a run? — The model change updates internal state but takes effect on the NEXT turn. The current turn continues with the previous model and StreamFn. This is safe because `set_model()` takes `&mut self` which prevents concurrent invocation with the running loop (Rust borrow checker enforces this).
+- What happens when `wait_for_idle()` is called from an event subscriber callback? — The subscriber holds a reference that prevents calling `&mut self` methods, but `wait_for_idle()` takes `&self`, so it can be called. However, awaiting inside a synchronous callback would require a runtime — this is a caller responsibility. In practice, subscribers should not block.
+- What happens when `set_model_with_stream()` is called with the same model that is already active? — The swap still occurs (both ModelSpec and StreamFn are replaced). No deduplication check — the caller knows what they're doing.
 
 ## Clarifications
 
@@ -131,6 +169,12 @@ A developer modifies the agent's state between runs: changing the system prompt,
 - **FR-012**: Agent MUST provide abort (signals cancellation), wait-for-idle (resolves when done), and reset (clears all state) control operations.
 - **FR-013**: Agent MUST provide state mutation methods: set system prompt, set model, set thinking level, set tools, set/append/clear messages.
 - **FR-014**: The public API module MUST re-export all public types so consumers never reach into submodules.
+- **FR-015**: `set_model()` MUST look up the model in `available_models` (registered at construction via `with_available_models()`) and swap both the `ModelSpec` and `StreamFn` when found. If the model is not in `available_models`, only the `ModelSpec` is updated.
+- **FR-016**: The system MUST provide `set_model_with_stream(model, stream_fn)` for swapping to models not registered in `available_models`.
+- **FR-017**: Model swaps MUST emit a `ModelCycled` event with old and new model specs.
+- **FR-018**: Model swaps MUST take effect on the next turn, not mid-turn.
+- **FR-019**: `wait_for_idle()` MUST return immediately if the agent is not running, and MUST resolve when the current run finishes.
+- **FR-020**: `wait_for_idle()` MUST be safe to call from multiple tasks concurrently — all waiters are notified when the agent becomes idle.
 
 ### Key Entities
 
@@ -152,6 +196,9 @@ A developer modifies the agent's state between runs: changing the system prompt,
 - **SC-007**: Abort causes the running agent to exit with an aborted stop reason.
 - **SC-008**: Reset clears all state (messages, queues, error) to initial values.
 - **SC-009**: The sync invocation mode blocks without requiring the caller to manage an async runtime.
+- **SC-010**: `set_model()` correctly swaps the StreamFn when the model is found in `available_models`, and the next prompt uses the new model.
+- **SC-011**: `set_model_with_stream()` swaps both ModelSpec and StreamFn regardless of `available_models`.
+- **SC-012**: `wait_for_idle()` returns immediately for an idle agent and resolves when a running agent finishes.
 
 ## Assumptions
 
@@ -160,3 +207,6 @@ A developer modifies the agent's state between runs: changing the system prompt,
 - Delivery mode defaults are "one at a time" for both steering and follow-up.
 - The structured output retry mechanism uses continue (not a fresh prompt) to give the LLM its previous invalid attempt as context.
 - Queues use thread-safe interior mutability with poisoned-lock recovery.
+- `set_model()` and `set_model_with_stream()` both take `&mut self` — the Rust borrow checker prevents calling them while the agent is running (which holds a mutable borrow). No runtime guard needed beyond the existing `&mut self` requirement.
+- `wait_for_idle()` uses `Arc<Notify>` internally — the Notify is signaled when `is_running` transitions to `false`.
+- Both features (dynamic model swap, wait_for_idle) are already implemented in `src/agent.rs`. These user stories formalize the existing behavior with acceptance scenarios and test coverage requirements.

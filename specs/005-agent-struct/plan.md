@@ -26,7 +26,7 @@ The Agent struct is the stateful public API wrapper over the agent loop. It owns
 | Principle | Status | Notes |
 |-----------|--------|-------|
 | I. Library-First | PASS | Agent is a library struct with no service/daemon coupling |
-| II. Test-Driven Development | PASS | Comprehensive test coverage in `tests/agent*.rs` |
+| II. Test-Driven Development | PASS | Comprehensive test coverage in `tests/agent*.rs`, including model swap (T079–T082) and wait_for_idle (T086–T089) integration tests |
 | III. Efficiency & Performance | PASS | `Arc<Mutex<>>` for shared queues; concurrent tool dispatch via tokio::spawn |
 | IV. Leverage the Ecosystem | PASS | Uses tokio, futures, serde_json — no custom reimplementations |
 | V. Provider Agnosticism | PASS | All LLM interaction via `StreamFn` trait; Agent holds no provider types |

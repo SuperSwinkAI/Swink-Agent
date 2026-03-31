@@ -56,7 +56,8 @@ agent.structured_output_typed_sync<T>(prompt, schema) -> Result<T, AgentError> /
 
 ```rust
 agent.set_system_prompt(prompt)
-agent.set_model(model)
+agent.set_model(model)                              // looks up StreamFn in available_models
+agent.set_model_with_stream(model, stream_fn)       // explicit StreamFn, bypasses available_models
 agent.set_thinking_level(level)
 agent.set_tools(tools)
 agent.add_tool(tool)

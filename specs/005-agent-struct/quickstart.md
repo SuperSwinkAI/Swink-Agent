@@ -130,6 +130,52 @@ agent.set_model(ModelSpec::new("anthropic", "claude-sonnet-4-20250514"));
 agent.clear_messages();
 ```
 
+### Dynamic model swapping
+
+```rust
+use swink_agent::ModelSpec;
+
+// Configure available models at construction
+let options = AgentOptions::new_simple("prompt", model, stream_fn)
+    .with_available_models(vec![
+        (ModelSpec::new("anthropic", "claude-haiku-4-5-20251001"), haiku_stream_fn),
+        (ModelSpec::new("anthropic", "claude-sonnet-4-6"), sonnet_stream_fn),
+    ]);
+let mut agent = Agent::new(options);
+
+// Start with haiku for triage
+let result = agent.prompt_text("Categorize this issue.").await?;
+
+// Switch to sonnet for complex reasoning — StreamFn auto-swapped from available_models
+agent.set_model(ModelSpec::new("anthropic", "claude-sonnet-4-6"));
+let result = agent.prompt_text("Now analyze the root cause in detail.").await?;
+
+// Switch to a model not in available_models — provide explicit StreamFn
+agent.set_model_with_stream(
+    ModelSpec::new("openai", "gpt-4o"),
+    openai_stream_fn,
+);
+```
+
+### Waiting for idle
+
+```rust
+// Fire-and-forget pattern: start prompt in background, check later
+let agent_handle = tokio::spawn(async move {
+    agent.prompt_text("Do some work.").await
+});
+
+// ... do other work ...
+
+// Wait for the agent to finish (non-blocking, resolves on completion)
+agent.wait_for_idle().await;
+
+// Safe to call multiple times from different tasks
+let wait1 = agent.wait_for_idle();
+let wait2 = agent.wait_for_idle();
+tokio::join!(wait1, wait2);  // both resolve when agent finishes
+```
+
 ### Continue from existing context
 
 ```rust
