@@ -53,7 +53,7 @@ pub enum PresetStatus {
 }
 
 /// A single model preset within a provider.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct PresetCatalog {
     pub id: String,
     pub display_name: String,
@@ -65,6 +65,10 @@ pub struct PresetCatalog {
     pub context_window_tokens: Option<u64>,
     pub max_output_tokens: Option<u64>,
     pub include_by_default: bool,                  // #[serde(default)]
+    pub cost_per_million_input: Option<f64>,        // #[serde(default)]
+    pub cost_per_million_output: Option<f64>,       // #[serde(default)]
+    pub cost_per_million_cache_read: Option<f64>,   // #[serde(default)]
+    pub cost_per_million_cache_write: Option<f64>,  // #[serde(default)]
     pub repo_id: Option<String>,
     pub filename: Option<String>,
 }
@@ -100,7 +104,7 @@ impl ModelCatalog {
 }
 
 /// Flattened view of a preset with its provider context.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct CatalogPreset {
     pub provider_key: String,
     pub provider_display_name: String,
@@ -121,6 +125,10 @@ pub struct CatalogPreset {
     pub requires_base_url: bool,
     pub region_env_var: Option<String>,
     pub include_by_default: bool,
+    pub cost_per_million_input: Option<f64>,
+    pub cost_per_million_output: Option<f64>,
+    pub cost_per_million_cache_read: Option<f64>,
+    pub cost_per_million_cache_write: Option<f64>,
     pub repo_id: Option<String>,
     pub filename: Option<String>,
 }
@@ -136,6 +144,10 @@ impl CatalogPreset {
 /// Returns the singleton model catalog loaded from embedded TOML.
 /// Panics if the TOML is malformed.
 pub fn model_catalog() -> &'static ModelCatalog;
+
+/// Calculate monetary cost from token usage using catalog pricing data.
+/// Returns Cost::default() (all zeros) if model not found or no pricing data.
+pub fn calculate_cost(model_id: &str, usage: &Usage) -> Cost;
 ```
 
 ## `src/model_presets.rs` — Connection Types
@@ -193,7 +205,7 @@ impl Debug for ModelFallback { /* displays "provider:model_id" for each entry */
 pub use fallback::ModelFallback;
 pub use model_catalog::{
     ApiVersion, AuthMode, CatalogPreset, ModelCatalog, PresetCapability, PresetCatalog,
-    PresetStatus, ProviderCatalog, ProviderKind, model_catalog,
+    PresetStatus, ProviderCatalog, ProviderKind, model_catalog, calculate_cost,
 };
 pub use model_presets::{ModelConnection, ModelConnections};
 ```

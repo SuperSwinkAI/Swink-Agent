@@ -5,7 +5,7 @@
 
 ## Summary
 
-Provide a data-driven model and provider registry, preset-based connection configuration, and automatic model fallback. The model catalog is loaded from a TOML data file embedded at compile time via `include_str!`, containing provider metadata (credential environment variables, base URLs, auth modes) and model presets grouped by provider and family. Presets carry identifiers, display names, groups, model IDs, capabilities, status, and optional context window sizes. `ModelConnection` and `ModelConnections` resolve presets to fully configured connection objects carrying a `ModelSpec` and `StreamFn`. `ModelFallback` defines an ordered chain of fallback models with automatic failover when the primary model exhausts its retry budget.
+Provide a data-driven model and provider registry, preset-based connection configuration, automatic model fallback, model cost calculation from catalog pricing data, and capability introspection. The model catalog is loaded from a TOML data file embedded at compile time via `include_str!`, containing provider metadata (credential environment variables, base URLs, auth modes) and model presets grouped by provider and family. Presets carry identifiers, display names, groups, model IDs, capabilities, status, and optional context window sizes. `ModelConnection` and `ModelConnections` resolve presets to fully configured connection objects carrying a `ModelSpec` and `StreamFn`. `ModelFallback` defines an ordered chain of fallback models with automatic failover when the primary model exhausts its retry budget.
 
 ## Technical Context
 
@@ -26,7 +26,7 @@ Provide a data-driven model and provider registry, preset-based connection confi
 | Principle | Status | Notes |
 |---|---|---|
 | I. Library-First | PASS | All components live in the `swink-agent` core crate as public API surface. No new crates introduced. The catalog is embedded data, not a service dependency. `ModelConnection`, `ModelConnections`, and `ModelFallback` are self-contained types with no UI or provider-specific imports. |
-| II. Test-Driven Development | PASS | Each source file includes inline `#[cfg(test)]` modules. Tests cover catalog loading, preset lookup, provider metadata propagation, connection deduplication, fallback chain semantics, and capability conversion. |
+| II. Test-Driven Development | PASS | Each source file includes inline `#[cfg(test)]` modules. Tests cover catalog loading, preset lookup, provider metadata propagation, connection deduplication, fallback chain semantics, capability conversion, cost calculation (known/unknown/zero/cache), and capability introspection (flags, limits, defaults). |
 | III. Efficiency & Performance | PASS | Catalog parsed once via `OnceLock` and stored as `&'static ModelCatalog`. No runtime file I/O. `CatalogPreset` flattens provider+preset data to avoid repeated lookups. `ModelConnections` deduplicates extras in `new()` to avoid redundant fallback attempts. |
 | IV. Leverage the Ecosystem | PASS | Uses `toml` crate for deserialization (high download count, stable API). Uses `serde::Deserialize` for all catalog types. No hand-rolled parser. |
 | V. Provider Agnosticism | PASS | The catalog stores metadata (env var names, base URLs) but never holds API keys or SDK clients. `ModelConnection` pairs a `ModelSpec` with a `StreamFn` — the core crate does not know how to construct provider-specific stream functions. |

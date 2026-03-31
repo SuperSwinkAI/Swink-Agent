@@ -171,3 +171,52 @@ max_output_tokens = 8192
 ```
 
 Run `cargo test --workspace` to verify the updated catalog loads correctly.
+
+### Calculate Cost from Usage
+
+```rust
+use swink_agent::{calculate_cost, Usage};
+
+let usage = Usage {
+    input: 1000,
+    output: 500,
+    cache_read: 200,
+    cache_write: 100,
+    ..Default::default()
+};
+
+let cost = calculate_cost("claude-sonnet-4-6", &usage);
+// cost.input = 1000 * 3.0 / 1_000_000 = 0.003
+// cost.output = 500 * 15.0 / 1_000_000 = 0.0075
+// cost.cache_read = 200 * 0.30 / 1_000_000 = 0.00006
+// cost.cache_write = 100 * 3.75 / 1_000_000 = 0.000375
+// cost.total = 0.010935
+
+// Unknown model returns zero cost
+let zero = calculate_cost("unknown-model", &usage);
+assert_eq!(zero.total, 0.0);
+```
+
+### Query Model Capabilities
+
+```rust
+use swink_agent::{model_catalog, ModelSpec};
+
+// From catalog preset
+let preset = model_catalog().preset("anthropic", "sonnet_46").unwrap();
+let caps = preset.model_capabilities();
+assert!(caps.supports_thinking);
+assert!(caps.supports_tool_use);
+assert!(caps.supports_streaming);
+assert_eq!(caps.max_context_window, Some(200_000));
+assert_eq!(caps.max_output_tokens, Some(64_000));
+
+// From ModelSpec (populated when created from catalog)
+let spec = preset.model_spec();
+assert!(spec.capabilities().supports_thinking);
+
+// Manual ModelSpec (no catalog) — defaults
+let manual = ModelSpec::new("custom", "my-model");
+assert!(!manual.capabilities().supports_thinking);
+assert_eq!(manual.capabilities().max_context_window, None);
+```
