@@ -1,6 +1,6 @@
 # Research: Context Management
 
-**Feature**: 006-context-management | **Date**: 2026-03-20
+**Feature**: 006-context-management | **Date**: 2026-03-20 | **Updated**: 2026-03-31
 
 ## Design Decisions
 
@@ -60,3 +60,40 @@
 **Alternatives rejected**:
 - **Closure-based conversion (ConvertToLlmFn)**: The original design used a bare closure. The trait approach is more structured and provides compile-time type checking for the message type.
 - **Enum-based conversion**: Would require a single message enum that all providers share, which is too constraining for providers with different capabilities.
+
+### D7: Provider-agnostic CacheHint abstraction for context caching
+
+**Decision**: The core framework defines a `CacheHint` enum (`Write { ttl }` | `Read`) that annotates messages in the context. Adapters translate these hints to provider-specific cache control mechanisms. A `CacheConfig` struct configures the cache lifecycle (TTL, min_tokens threshold, refresh interval). Internal `CacheState` tracks turns since last write and determines when to emit Write vs Read hints.
+
+**Rationale**: Provider-side context caching is one of the highest-impact cost/latency optimizations available. Anthropic uses inline `cache_control: {"type": "ephemeral"}` blocks. Google uses a `CachedContent` API with server-side TTL. These mechanisms are fundamentally different but share the same semantic: "this prefix is stable, cache it." The framework abstracts the *intent* (what to cache, when to refresh) while adapters own the *mechanism* (how to tell the provider). This follows the same pattern as `MessageConverter` — core defines structure, adapters implement details.
+
+**Key design choice — CacheHint as annotation, not message wrapper**: The hint is an optional field/annotation on messages rather than a wrapping type. This keeps the existing `AgentMessage` pipeline unchanged. Messages without hints flow through untouched. Adapters that don't support caching ignore hints — zero behavioral change.
+
+**Reference implementations studied**:
+- **Google ADK**: `ContextCacheConfig(min_tokens=4096, ttl_seconds=600, cache_intervals=3)` at the application level. Static instruction goes in `system_instruction` (cacheable), dynamic instruction appended to user contents (not cached). Prompt structure: `system_instruction + tools + tool_config` = cached prefix, `contents` = dynamic.
+- **Anthropic SDK**: `cache_control: {"type": "ephemeral"}` on individual content blocks within messages. No explicit TTL (provider manages eviction). Implicit caching in newer models.
+
+**Alternatives rejected**:
+- **Adapter-only caching**: Each adapter independently implements caching. Leads to inconsistent behavior, duplicated lifecycle logic, and no way for the core to reason about cache boundaries during compaction.
+- **Transparent caching (hidden from user)**: Automatically cache everything above a threshold. Too opaque — users need control over what's cached and when to refresh, especially when system prompts change.
+- **Cache as a separate pipeline stage**: A dedicated "cache transformer" in the transform chain. Adds pipeline complexity for something that's really a message annotation concern, not a message mutation concern.
+
+### D8: Static vs dynamic system prompt separation
+
+**Decision**: `AgentOptions` gains optional `static_system_prompt: String` and `dynamic_system_prompt: Option<Box<dyn Fn() -> String + Send + Sync>>` fields. The existing `system_prompt` field remains and is treated as static when the new fields are not set. When `static_system_prompt` is set, it takes precedence for the cached portion. The dynamic prompt is a closure called each turn, producing fresh context.
+
+**Rationale**: Following Google ADK's pattern: the static portion (`system_instruction`) is placed in the cacheable prefix, while dynamic content is appended to user contents outside the cache boundary. This is the single most effective thing a framework can do for caching — ensure the cacheable prefix is actually stable. A closure for dynamic content (rather than a string) lets per-turn context be generated lazily without requiring the caller to manually update the prompt each turn.
+
+**Alternatives rejected**:
+- **Single system_prompt with cache markers**: Users would need to manually split their prompt and annotate sections. Error-prone and not ergonomic.
+- **Enum-based prompt type**: `SystemPrompt::Static(String) | SystemPrompt::Dynamic(Fn)`. Doesn't support the mixed case where you want both static and dynamic portions.
+
+### D9: Pre-flight context overflow predicate
+
+**Decision**: A standalone function `is_context_overflow(messages, model, counter?) -> bool` estimates the total token count of the message list using the provided (or default) `TokenCounter` and compares against `model.capabilities.max_context_window`. Returns `false` when `max_context_window` is `None` (unknown — let the provider decide).
+
+**Rationale**: The current overflow detection relies on the provider returning an error (`CONTEXT_OVERFLOW_SENTINEL`), which wastes a round-trip. A pre-flight check avoids this. The function is deliberately simple — it doesn't trigger compaction or modify state, just answers "will this fit?" Callers can use it to decide whether to compact, warn the user, or proceed. Returning `false` for unknown context windows is the safe default: better to attempt and let the provider reject than to falsely block requests for models whose limits we don't know.
+
+**Alternatives rejected**:
+- **Automatic pre-flight compaction**: Check and auto-compact in one step. Too much magic — callers should decide what to do when overflow is predicted.
+- **Result type with token details**: Return `OverflowInfo { estimated_tokens, max_tokens, overflow: bool }`. Over-engineered for the common case. The bool is the 90% use case; callers who want details can call `estimate_tokens` directly.

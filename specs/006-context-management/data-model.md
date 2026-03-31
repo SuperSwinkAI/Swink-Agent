@@ -1,6 +1,6 @@
 # Data Model: Context Management
 
-**Feature**: 006-context-management | **Date**: 2026-03-20
+**Feature**: 006-context-management | **Date**: 2026-03-20 | **Updated**: 2026-03-31
 
 ## Entities
 
@@ -166,6 +166,56 @@ Legacy closure-based conversion function used by `AgentOptions`.
 type ConvertToLlmFn = Arc<dyn Fn(&[AgentMessage], &str) -> Vec<LlmMessage> + Send + Sync>;
 ```
 
+### CacheConfig
+
+Configuration for provider-side context caching. Optional on `AgentOptions`.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `ttl` | `Duration` | How long cached content remains valid provider-side |
+| `min_tokens` | `usize` | Minimum estimated token count to justify caching (below this, no cache markers emitted) |
+| `cache_intervals` | `usize` | Reuse the same cache for N turns before refreshing with a new `Write` |
+
+### CacheHint (enum)
+
+Annotation on messages indicating cache intent. Adapters translate this to provider-specific format (e.g., Anthropic `cache_control`, Google `CachedContent`).
+
+| Variant | Fields | Description |
+|---------|--------|-------------|
+| `Write` | `ttl: Duration` | Mark this content for caching with the given TTL |
+| `Read` | — | Reference previously cached content (don't re-send full payload) |
+
+### CacheState
+
+Internal state tracker for cache lifecycle. Managed by the context pipeline, not user-facing. Tracks turn count only — TTL expiry is the provider's responsibility.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `turns_since_write` | `usize` | Turns elapsed since last `CacheHint::Write` |
+| `cached_prefix_len` | `usize` | Number of messages in the cached prefix (protected from compaction) |
+
+### SystemPromptConfig
+
+Replaces the single `system_prompt` string with a static/dynamic split for caching support.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `static_system_prompt` | `String` | Stable instructions cached across turns (persona, base behavior, tool descriptions) |
+| `dynamic_system_prompt` | `Option<Box<dyn Fn() -> String + Send + Sync>>` | Per-turn context generator (current time, user state, etc.) — `None` if no dynamic content |
+
+## Functions
+
+### is_context_overflow
+
+Pre-flight predicate that estimates whether the current context would exceed the model's context window.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `messages` | `&[AgentMessage]` | Current context messages |
+| `model` | `&ModelSpec` | Model spec with `capabilities.max_context_window` |
+| `token_counter` | `Option<&dyn TokenCounter>` | Optional custom counter (defaults to `DefaultTokenCounter`) |
+| **Returns** | `bool` | `true` if estimated tokens exceed `max_context_window`; `false` if within budget or window is unknown |
+
 ## Relationships
 
 ```
@@ -179,4 +229,11 @@ InMemoryVersionStore --implements--> ContextVersionStore
 AsyncContextTransformer --parallel-to--> ContextTransformer (async variant)
 MessageConverter --used-by--> convert_messages() (generic function)
 AgentOptions --configures--> ContextTransformer | AsyncContextTransformer | ConvertToLlmFn
+AgentOptions --optionally-configures--> CacheConfig
+AgentOptions --optionally-configures--> SystemPromptConfig (static + dynamic)
+CacheConfig --controls--> CacheState (internal lifecycle)
+CacheState --emits--> CacheHint (on messages)
+CacheHint --consumed-by--> Adapters (MessageConverter impls)
+is_context_overflow() --uses--> TokenCounter + ModelSpec.capabilities.max_context_window
+SlidingWindowTransformer --respects--> CacheState.cached_prefix_len (skip compaction of cached prefix)
 ```
