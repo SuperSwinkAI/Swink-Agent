@@ -17,6 +17,10 @@ pub struct SessionMeta {
     pub title: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    #[serde(default = "default_version")]
+    pub version: u32,               // schema version, default 1
+    #[serde(default)]
+    pub sequence: u64,              // monotonic write counter, default 0
 }
 ```
 
@@ -31,6 +35,9 @@ pub trait SessionStore: Send + Sync {
     fn load(&self, id: &str) -> io::Result<(SessionMeta, Vec<LlmMessage>)>;
     fn list(&self) -> io::Result<Vec<SessionMeta>>;
     fn delete(&self, id: &str) -> io::Result<()>;
+    fn save_interrupt(&self, id: &str, state: &InterruptState) -> io::Result<()>;
+    fn load_interrupt(&self, id: &str) -> io::Result<Option<InterruptState>>;
+    fn clear_interrupt(&self, id: &str) -> io::Result<()>;
 }
 ```
 
@@ -110,6 +117,70 @@ pub struct CompactionResult {
     pub messages: Vec<LlmMessage>,
     pub removed_count: usize,
     pub summary: Option<String>,
+}
+```
+
+---
+
+### `SessionEntry`
+
+```rust
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "entry_type", content = "data", rename_all = "snake_case")]
+pub enum SessionEntry {
+    Message(AgentMessage),
+    ModelChange { from: ModelSpec, to: ModelSpec, timestamp: u64 },
+    ThinkingLevelChange { from: String, to: String, timestamp: u64 },
+    Compaction { dropped_count: usize, tokens_before: usize, tokens_after: usize, timestamp: u64 },
+    Label { text: String, message_index: usize, timestamp: u64 },
+    Custom { type_name: String, data: Value, timestamp: u64 },
+}
+```
+
+---
+
+### `InterruptState`
+
+```rust
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InterruptState {
+    pub interrupted_at: u64,
+    pub pending_tool_calls: Vec<PendingToolCall>,
+    pub context_snapshot: Vec<AgentMessage>,
+    pub system_prompt: String,
+    pub model: ModelSpec,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PendingToolCall {
+    pub tool_call_id: String,
+    pub tool_name: String,
+    pub arguments: Value,
+}
+```
+
+---
+
+### `SessionMigrator` (trait)
+
+```rust
+pub trait SessionMigrator: Send + Sync {
+    fn source_version(&self) -> u32;
+    fn target_version(&self) -> u32;
+    fn migrate(&self, meta: &mut SessionMeta, entries: &mut Vec<SessionEntry>) -> io::Result<()>;
+}
+```
+
+---
+
+### `LoadOptions`
+
+```rust
+#[derive(Debug, Clone, Default)]
+pub struct LoadOptions {
+    pub last_n_entries: Option<usize>,
+    pub after_timestamp: Option<u64>,
+    pub entry_types: Option<Vec<String>>,
 }
 ```
 

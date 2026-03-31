@@ -65,6 +65,52 @@
 
 **Rationale**: `CustomMessage` is an opaque type used for in-flight control signals. It survives compaction but never reaches the provider and has no meaningful serialization. Filtering matches the core crate's `in_flight_llm_messages` behavior.
 
+### 8. Rich Session Entry Types via Tagged Enum
+
+**Decision**: Introduce `SessionEntry` as a serde-tagged enum with `#[serde(tag = "entry_type")]`. Old-format JSONL lines (without `entry_type`) are deserialized as `SessionEntry::Message` via a custom deserializer fallback.
+
+**Rationale**: A tagged enum provides compile-time exhaustiveness and serde compatibility. The `entry_type` discriminator is minimal overhead (one extra field per line). Backward compatibility with old sessions is achieved by checking whether the `entry_type` field exists — if absent, the line is assumed to be a `Message`. This avoids requiring migration of existing session files.
+
+**Key reference**: Pi Agent's session entry types (message, model_change, thinking_level_change, compaction, label, custom).
+
+**Alternatives Rejected**:
+- **Separate files per entry type**: Loses ordering; entries must interleave chronologically.
+- **Wrapper struct with optional fields**: Loses type safety; every field is `Option` and the correct combination is runtime-checked.
+- **Binary format with type tags**: Not human-readable; violates the JSONL design decision.
+
+### 9. Interrupt State as Separate JSON File
+
+**Decision**: Persist interrupt state as `{session_id}.interrupt.json`, not inline in the JSONL stream.
+
+**Rationale**: Interrupt state is transient — it represents a snapshot at a point in time that should be consumed (resumed) and then deleted. Putting it in the JSONL stream would make it permanent, requiring special handling during load to distinguish "active interrupt" from "historical interrupt record." A separate file is simpler: exists = interrupted, deleted = resumed. The JSON format (not JSONL) is appropriate because interrupt state is a single structured object, not a stream.
+
+**Alternatives Rejected**:
+- **Inline in JSONL**: Mixes transient state with permanent log; complicates load logic.
+- **Database table**: Adds dependency; overkill for a single JSON object.
+- **In-memory only (no persistence)**: Loses state on crash — defeats the purpose.
+
+### 10. Optimistic Concurrency via Sequence Counter
+
+**Decision**: Add `sequence: u64` to `SessionMeta`, incremented on every write. On save, optionally check that the stored sequence matches the expected value.
+
+**Rationale**: File locking is complex and cross-platform-inconsistent (decision 5). A sequence counter provides lightweight optimistic concurrency — the second writer detects the conflict and can retry or report. This is optional: callers who don't care about concurrency ignore the sequence. The implementation is simple: read sequence on load, pass it back on save, compare before writing.
+
+**Alternatives Rejected**:
+- **File locking (flock)**: Cross-platform differences; advisory on some systems; deadlock risk.
+- **Last-write-wins only**: Silently loses data; acceptable for single-writer but dangerous for multi-writer.
+- **CAS with external lock service**: Massive over-engineering for a local filesystem store.
+
+### 11. Filtered Loading via LoadOptions
+
+**Decision**: Add `LoadOptions` parameter to `load()` with `last_n_entries`, `after_timestamp`, and `entry_types` filters. For JSONL, implement by reading the full file and filtering in memory (with future optimization to seek-from-end for `last_n_entries`).
+
+**Rationale**: Large sessions (thousands of entries) are expensive to load fully when only recent context is needed. The filtering API is simple and composable. The initial implementation reads and filters in memory — this is correct and sufficient for typical session sizes (<10K entries). Seek-from-end optimization can be added later without API changes.
+
+**Alternatives Rejected**:
+- **Separate "load_last_n" method**: Proliferates trait methods. A single `load_with_options` is cleaner.
+- **Streaming iterator**: More complex API; callers typically want all matching entries in a `Vec`.
+- **Index file for random access**: Significant complexity; premature optimization.
+
 ## Open Questions
 
 None — all clarifications resolved in the spec.

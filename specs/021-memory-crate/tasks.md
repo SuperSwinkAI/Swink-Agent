@@ -171,7 +171,106 @@
 
 ---
 
-## Phase 8: Polish & Integration
+## Phase 8: User Story 6 — Rich Session Entry Types (Priority: P2) — I9
+
+**Goal**: Support non-message entries (model changes, compaction events, labels, custom data) in the session log
+
+**Independent Test**: Save a session with mixed entry types, load, verify all recovered with correct types and timestamps
+
+### Tests for User Story 6
+
+- [ ] T058 [P] [US6] Integration test `rich_entries_roundtrip` in `memory/tests/round_trip.rs`: save session with Message, ModelChange, Label, and Custom entries, load, verify all preserved in order with correct data
+- [ ] T059 [P] [US6] Integration test `rich_entries_backward_compat` in `memory/tests/round_trip.rs`: create an old-format JSONL file (raw LlmMessage lines without `entry_type`), load, verify all lines interpreted as `SessionEntry::Message`
+- [ ] T060 [P] [US6] Unit test `session_entry_serde_roundtrip` in `memory/src/entry.rs` tests: serialize/deserialize each variant, verify discriminator and fields preserved
+- [ ] T060b [P] [US6] Unit test `rich_entries_excluded_from_llm_context` in `memory/src/entry.rs` tests: verify that `SessionEntry::messages()` (or equivalent filter method) only returns `Message` variants, excluding `ModelChange`, `Label`, `Compaction`, `Custom` entries (covers FR-012)
+
+### Implementation for User Story 6
+
+- [ ] T061 [US6] Implement `SessionEntry` enum in `memory/src/entry.rs` with serde tagged serialization (`#[serde(tag = "entry_type")]`). Implement custom deserialization fallback for old-format lines (no `entry_type` → `Message`).
+- [ ] T062 [US6] Update `JsonlSessionStore::save()` and `load()` in `memory/src/jsonl.rs` to use `SessionEntry` instead of raw `LlmMessage`. Lines 2+ become `SessionEntry` values.
+- [ ] T063 [US6] Add `entry.rs` module declaration and re-export `SessionEntry` from `memory/src/lib.rs`.
+
+**Checkpoint**: US6 complete — sessions can store rich non-message entries
+
+---
+
+## Phase 9: User Story 7 — Session Versioning (Priority: P2) — I10
+
+**Goal**: Schema version and optimistic concurrency via version/sequence fields on SessionMeta
+
+**Independent Test**: Create a v1 session, load with v1→v2 migrator, verify upgrade
+
+### Tests for User Story 7
+
+- [ ] T064 [P] [US7] Integration test `version_defaults_for_old_sessions` in `memory/tests/round_trip.rs`: create JSONL without version/sequence fields, load, verify defaults (version=1, sequence=0)
+- [ ] T065 [P] [US7] Integration test `sequence_increments_on_save` in `memory/tests/round_trip.rs`: save session, verify sequence=1, save again, verify sequence=2
+- [ ] T066 [P] [US7] Integration test `optimistic_concurrency_rejects_stale_sequence` in `memory/tests/round_trip.rs`: save session (sequence becomes 1), load meta (sequence=1), simulate another writer by saving again (sequence becomes 2), then attempt save with the stale loaded meta (sequence=1) — verify conflict error returned
+- [ ] T067 [P] [US7] Unit test `migrator_upgrades_session` in `memory/src/migrate.rs` tests: implement a test migrator v1→v2, apply to v1 session, verify entries transformed and version updated
+- [ ] T067b [P] [US7] Integration test `unsupported_future_version_returns_error` in `memory/tests/round_trip.rs`: create a JSONL file with `version: 999`, attempt load, verify error indicating unsupported version
+
+### Implementation for User Story 7
+
+- [ ] T068 [US7] Add `version: u32` and `sequence: u64` fields to `SessionMeta` in `memory/src/meta.rs` with `#[serde(default)]` for backward compatibility.
+- [ ] T069 [US7] Update `JsonlSessionStore::save()` to increment `sequence` on every write. Before writing, compare `meta.sequence` against the stored file's sequence — reject with an error if they don't match (optimistic concurrency). New sessions (no existing file) skip the check.
+- [ ] T070 [US7] Implement `SessionMigrator` trait in `memory/src/migrate.rs`. Add migration runner to `JsonlSessionStore::load()` — check version, run applicable migrators in order.
+- [ ] T071 [US7] Re-export `SessionMigrator` from `memory/src/lib.rs`.
+
+**Checkpoint**: US7 complete — sessions are versioned with migration support and optimistic concurrency
+
+---
+
+## Phase 10: User Story 8 — Interrupt State Persistence (Priority: P2) — I11
+
+**Goal**: Persist and resume from interrupt state (pending tool calls, context snapshot)
+
+**Independent Test**: Save interrupt state, restart, load, verify all fields recovered
+
+### Tests for User Story 8
+
+- [ ] T072 [P] [US8] Integration test `interrupt_save_and_load_roundtrip` in `memory/tests/round_trip.rs`: save interrupt with 2 pending tool calls, load, verify all fields match
+- [ ] T073 [P] [US8] Integration test `interrupt_none_when_not_saved` in `memory/tests/round_trip.rs`: load interrupt for session without one, verify `None` returned
+- [ ] T074 [P] [US8] Integration test `interrupt_cleared_after_resume` in `memory/tests/round_trip.rs`: save interrupt, clear it, load, verify `None`
+- [ ] T075 [P] [US8] Integration test `delete_session_also_deletes_interrupt` in `memory/tests/round_trip.rs`: save session + interrupt, delete session, verify interrupt file also gone
+- [ ] T075b [P] [US8] Integration test `corrupted_interrupt_returns_error` in `memory/tests/round_trip.rs`: write garbage to `{session_id}.interrupt.json`, call `load_interrupt`, verify `InvalidData` error returned
+
+### Implementation for User Story 8
+
+- [ ] T076 [US8] Implement `InterruptState` and `PendingToolCall` structs in `memory/src/interrupt.rs`. Derive `Serialize`, `Deserialize`.
+- [ ] T077 [US8] Add `save_interrupt`, `load_interrupt`, `clear_interrupt` methods to `SessionStore` trait in `memory/src/store.rs`.
+- [ ] T078 [US8] Implement interrupt methods in `JsonlSessionStore`: persist as `{session_id}.interrupt.json`, delete on `clear_interrupt` and `delete`.
+- [ ] T079 [US8] Add interrupt methods to `AsyncSessionStore` trait and `BlockingSessionStore` adapter in `memory/src/store_async.rs`.
+- [ ] T080 [US8] Re-export `InterruptState`, `PendingToolCall` from `memory/src/lib.rs`.
+
+**Checkpoint**: US8 complete — agent interrupts persist across restarts
+
+---
+
+## Phase 11: User Story 9 — Filtered Session Retrieval (Priority: P3) — N12
+
+**Goal**: Load a subset of session entries by count, timestamp, or type
+
+**Independent Test**: Save 100 entries, load with `last_n_entries: Some(10)`, verify 10 returned
+
+### Tests for User Story 9
+
+- [ ] T081 [P] [US9] Integration test `load_last_n_entries` in `memory/tests/round_trip.rs`: save 50 entries, load with `last_n_entries: Some(10)`, verify exactly 10 returned (the last 10)
+- [ ] T082 [P] [US9] Integration test `load_after_timestamp` in `memory/tests/round_trip.rs`: save entries with timestamps T1–T50, load with `after_timestamp: Some(T25)`, verify only entries after T25 returned
+- [ ] T083 [P] [US9] Integration test `load_by_entry_type` in `memory/tests/round_trip.rs`: save mixed entries (messages + model changes + labels), load with `entry_types: Some(vec!["message"])`, verify only message entries returned
+- [ ] T084 [P] [US9] Integration test `load_options_all_none_returns_full` in `memory/tests/round_trip.rs`: load with `LoadOptions::default()`, verify full session returned
+
+### Implementation for User Story 9
+
+- [ ] T085 [US9] Implement `LoadOptions` struct in `memory/src/load_options.rs`. Derive `Debug`, `Clone`, `Default`.
+- [ ] T086 [US9] Add `load_with_options(&self, id: &str, options: &LoadOptions) -> io::Result<(SessionMeta, Vec<SessionEntry>)>` method to `SessionStore` trait.
+- [ ] T087 [US9] Implement `load_with_options` in `JsonlSessionStore`: read all entries, apply filters in memory (last_n via truncation, after_timestamp via comparison, entry_types via discriminator match).
+- [ ] T088 [US9] Add `load_with_options` to `AsyncSessionStore` and `BlockingSessionStore` adapter.
+- [ ] T089 [US9] Re-export `LoadOptions` from `memory/src/lib.rs`.
+
+**Checkpoint**: US9 complete — partial session loading avoids full-file reads for large sessions
+
+---
+
+## Phase 12: Polish & Integration
 
 **Purpose**: Final cleanup, documentation, and build verification
 
@@ -183,5 +282,35 @@
 - [x] T055 Run `cargo clippy -p swink-agent-memory -- -D warnings` — fix any warnings
 - [x] T056 Run `cargo test --workspace` — verify no regressions in other crates
 - [x] T057 Run `cargo clippy --workspace -- -D warnings` — verify no workspace-wide warnings
+- [ ] T090 Verify all new public types re-exported from `memory/src/lib.rs`: `SessionEntry`, `InterruptState`, `PendingToolCall`, `SessionMigrator`, `LoadOptions`
+- [ ] T091 Add compile-time `Send + Sync` assertions for `SessionEntry`, `InterruptState`, `PendingToolCall`, `LoadOptions`
+- [ ] T092 Run `cargo build -p swink-agent-memory` — fix any compilation errors from new features
+- [ ] T093 Run `cargo test -p swink-agent-memory` — fix any test failures from new features
+- [ ] T094 Run `cargo clippy -p swink-agent-memory -- -D warnings` — fix any warnings
+- [ ] T095 Validate quickstart.md new examples (rich entries, interrupt, filtered load) match actual API
 
 **Checkpoint**: All tests pass, clippy clean, workspace builds successfully
+
+---
+
+## Dependencies & Execution Order
+
+### Phase Dependencies (new phases)
+
+- **US6 — Rich Entries (Phase 8)**: Depends on US1/US5 (save/load and JSONL). Modifies `jsonl.rs`.
+- **US7 — Versioning (Phase 9)**: Depends on US1. Modifies `meta.rs` and `jsonl.rs`.
+- **US8 — Interrupt (Phase 10)**: Depends on US1. Adds new files. Independent of US6/US7.
+- **US9 — Filtered Loading (Phase 11)**: Depends on US6 (needs `SessionEntry` type). Adds new trait method.
+- **Polish (Phase 12)**: Depends on all user stories being complete.
+
+### Parallel Opportunities (new phases)
+
+- US6 and US7 both modify `jsonl.rs` — run sequentially (US6 first, then US7).
+- US8 (interrupt) touches separate files — can run in parallel with US6/US7.
+- US9 depends on US6 (`SessionEntry`) — must run after US6.
+
+### Notes
+
+- US6–US9 are new work — rich entries, versioning, interrupt persistence, filtered loading.
+- All new features must be backward compatible with existing JSONL sessions (serde defaults).
+- Test tasks marked [P] within each phase can run in parallel (different test files/functions).
