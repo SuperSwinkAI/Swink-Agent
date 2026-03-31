@@ -29,6 +29,17 @@
 - [x] Feature meets measurable outcomes defined in Success Criteria
 - [x] No implementation details leak into specification
 
+## New Features Addition (C12, I12, I13, N5, N6)
+
+- [x] US7–US11 acceptance scenarios are testable and unambiguous
+- [x] FR-012 through FR-021 are measurable
+- [x] SC-008 through SC-013 are technology-agnostic success criteria
+- [x] Edge cases for new features (macro errors, invalid definitions, panic in approval_context) are identified
+- [x] Feature gate boundaries clearly defined (hot-reload, hot-reload-dylib, macros crate)
+- [x] Backward compatibility maintained (default methods, optional features, new crate)
+- [x] New crate (`swink-agent-macros`) justified per Constitution Principle I
+
 ## Notes
 
 - All items pass. Spec is ready for `/speckit.clarify` or `/speckit.plan`.
+- C12 (Auto-schema), I12 (Hot-reload), I13 (Filtering), N5 (Noop), N6 (Confirmation payloads) added 2026-03-31: US7–US11, FR-012–FR-021, SC-008–SC-013, tasks T065–T098.

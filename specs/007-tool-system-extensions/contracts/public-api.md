@@ -15,6 +15,7 @@ pub trait AgentTool: Send + Sync {
     fn parameters_schema(&self) -> &Value;
     fn requires_approval(&self) -> bool { false }
     fn metadata(&self) -> Option<ToolMetadata> { None }
+    fn approval_context(&self, _params: &Value) -> Option<Value> { None }
     fn execute(
         &self,
         tool_call_id: &str,
@@ -66,6 +67,7 @@ pub struct ToolApprovalRequest {
     pub tool_name: String,
     pub arguments: Value,
     pub requires_approval: bool,
+    pub context: Option<Value>,  // from AgentTool::approval_context()
 }
 
 #[non_exhaustive]
@@ -238,4 +240,97 @@ pub use fn_tool::FnTool;
 
 #[cfg(feature = "builtin-tools")]
 pub use tools::{BashTool, ReadFileTool, WriteFileTool, builtin_tools};
+
+pub use tool_filter::{ToolFilter, ToolPattern};
+pub use noop_tool::NoopTool;
+
+#[cfg(feature = "hot-reload")]
+pub use hot_reload::{ToolWatcher, ScriptTool};
+```
+
+## `src/tool_filter.rs` — Registration-Time Filtering
+
+```rust
+/// Pattern for matching tool names.
+#[derive(Debug, Clone)]
+pub enum ToolPattern {
+    Exact(String),
+    Glob(String),
+    Regex(regex::Regex),
+}
+
+impl ToolPattern {
+    /// Auto-detects pattern type: glob if contains * or ?, regex if starts with ^ or ends with $, else exact.
+    pub fn parse(s: &str) -> Self;
+    pub fn matches(&self, name: &str) -> bool;
+}
+
+/// Filters tools at registration time by name patterns.
+#[derive(Debug, Clone, Default)]
+pub struct ToolFilter {
+    pub allowed: Vec<ToolPattern>,
+    pub rejected: Vec<ToolPattern>,
+}
+
+impl ToolFilter {
+    pub fn new() -> Self;
+    pub fn with_allowed(mut self, patterns: Vec<ToolPattern>) -> Self;
+    pub fn with_rejected(mut self, patterns: Vec<ToolPattern>) -> Self;
+    pub fn matches(&self, tool_name: &str) -> bool;
+    pub fn filter_tools(&self, tools: Vec<Arc<dyn AgentTool>>) -> Vec<Arc<dyn AgentTool>>;
+}
+```
+
+## `src/noop_tool.rs` — Session History Compatibility
+
+```rust
+/// Placeholder tool for tools that no longer exist in the registry.
+pub struct NoopTool {
+    name: String,
+    schema: Value,
+}
+
+impl NoopTool {
+    pub fn new(name: impl Into<String>) -> Self;
+}
+
+impl AgentTool for NoopTool { ... }
+// name() → stored name
+// description() → "This tool is no longer available."
+// requires_approval() → false
+// execute() → AgentToolResult::error("Tool '{name}' is no longer available...")
+```
+
+## `swink-agent-macros` — Proc Macro Crate
+
+```rust
+// In swink-agent core crate (src/tool.rs or src/tool_parameters.rs):
+pub trait ToolParameters {
+    fn json_schema() -> Value;
+}
+
+// In swink-agent-macros crate:
+#[proc_macro_derive(ToolSchema, attributes(tool))]
+pub fn derive_tool_schema(input: TokenStream) -> TokenStream;
+
+#[proc_macro_attribute]
+pub fn tool(attr: TokenStream, item: TokenStream) -> TokenStream;
+```
+
+## `src/hot_reload.rs` — Tool Hot-Reloading (feature-gated: `hot-reload`)
+
+```rust
+/// Tool loaded from a definition file (TOML/YAML/JSON).
+pub struct ScriptTool { ... }
+impl AgentTool for ScriptTool { ... }
+
+/// Watches a directory for tool definition changes.
+pub struct ToolWatcher { ... }
+
+impl ToolWatcher {
+    pub fn new(watch_dir: impl Into<PathBuf>) -> Self;
+    pub fn with_filter(mut self, filter: ToolFilter) -> Self;
+    pub fn start(&self, agent: &Agent) -> tokio::task::JoinHandle<()>;
+    pub fn stop(&self);
+}
 ```

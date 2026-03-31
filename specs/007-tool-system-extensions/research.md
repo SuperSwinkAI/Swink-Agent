@@ -87,3 +87,70 @@
 **Alternatives rejected**:
 - **Configurable pipeline ordering**: Adds complexity with no clear use case. Every reasonable ordering is equivalent to the fixed one.
 - **Multiple transformer/validator stages**: Over-engineering. Composing multiple transformers can be done within a single transformer implementation.
+
+---
+
+### D8: Auto-Schema via Proc Macro in Separate Crate
+
+**Decision**: Create a `swink-agent-macros` crate containing `#[derive(ToolSchema)]` and `#[tool]` proc macros. The `ToolParameters` trait (with `fn json_schema() -> Value`) is defined in the core crate. The macro crate is an optional dependency — tools can still use `FnTool::with_schema_for::<T>()` or manual JSON Schema.
+
+**Rationale**: Proc macros must live in a separate crate (Rust constraint). Defining the trait in core and the derive in the macro crate follows the standard pattern (`serde` / `serde_derive`). Making the macro crate optional preserves the existing `FnTool` and manual `AgentTool` impl paths — no existing code needs changes. The `#[tool]` attribute macro is strictly additive, converting a common 30-line boilerplate pattern into a single annotation.
+
+**Key references**: AWS Strands' `@tool` decorator auto-generates schema from Python type hints + docstrings. Google ADK's `build_function_declaration()` extracts from Python function signatures. In Rust, `schemars` already does type → JSON Schema; our macro wraps this with tool-specific ergonomics.
+
+**Alternatives rejected**:
+- **Extend `schemars` derive directly**: Does not generate tool-specific schema structure (name, description from doc comments, required/optional from `Option<T>`). A custom derive provides the right abstraction level.
+- **Runtime reflection**: Not available in Rust. Proc macros are the idiomatic approach.
+- **Put macro in core crate**: Proc macro crates cannot export non-macro items. The trait must be in core, the derive in a separate crate.
+
+---
+
+### D9: Tool Hot-Reloading via notify + TOML Definitions
+
+**Decision**: Feature-gate hot-reloading behind `hot-reload`. Use the `notify` crate for filesystem watching. Tool definitions are TOML/YAML/JSON files specifying `name`, `description`, `command`, and optional `parameters_schema`. Loaded tools become `ScriptTool` instances that execute shell commands. Dynamic library loading (`libloading`) is a separate sub-feature (`hot-reload-dylib`).
+
+**Rationale**: Rust can't reload compiled code without `libloading` (which requires `unsafe`). Script-based tools (shell commands from definition files) are the natural hot-reloadable unit — they match MCP-style tool definitions. `notify` is the standard Rust filesystem watcher (3M+ downloads). The two-tier feature gate (`hot-reload` for scripts, `hot-reload-dylib` for shared libraries) keeps the common case simple while allowing the advanced case.
+
+**Alternatives rejected**:
+- **WASM-based tool loading**: Over-engineered. Shell commands cover the hot-reload use case without a WASM runtime.
+- **Always-on file watching**: Pulls in `notify` for all users. Feature gating respects the zero-cost principle.
+- **Compiling tools from source at runtime**: Not feasible without shipping a Rust compiler. Shell commands are the practical alternative.
+
+---
+
+### D10: ToolFilter with Pattern Matching at Registration Time
+
+**Decision**: `ToolFilter` applies at tool registration time (when tools are added to the agent), not at execution time. It uses `ToolPattern` (Exact/Glob/Regex) with auto-detection via `parse()`. `rejected` patterns take precedence over `allowed`.
+
+**Rationale**: Filtering at registration time is a coarser-grained boundary than per-call policies (ToolDenyListPolicy). A tool that fails the filter never appears in the LLM prompt — the model never sees it, can't call it, and the tool's schema doesn't consume token budget. This complements `ToolDenyListPolicy` (which blocks at execution time) for defense-in-depth. The reject-wins precedence rule is the safest default — explicitly blocked tools can't be unblocked by a permissive `allowed` pattern.
+
+**Alternatives rejected**:
+- **Extend ToolDenyListPolicy**: ToolDenyListPolicy runs at execution time (per-call). Registration-time filtering serves a different purpose — removing tools from the prompt entirely.
+- **Only exact matching**: Insufficient for dynamically loaded tools where names follow patterns (e.g., `mcp_*`).
+- **Allowed-wins precedence**: Dangerous — an overly broad `allowed` pattern could override a specific `rejected` entry.
+
+---
+
+### D11: NoopTool as Auto-Injected Placeholder
+
+**Decision**: When loading a session that references a tool not in the current registry, auto-inject a `NoopTool` with the missing tool's name. The `NoopTool` returns `AgentToolResult::error(...)` explaining the tool is no longer available.
+
+**Rationale**: Without this, loading a session with a removed tool causes either a deserialization error or a silent `unknown_tool_result()` at dispatch time. The `NoopTool` makes the situation explicit to the model — it can adapt its strategy rather than repeatedly calling a broken tool. The tool is transparent (no special-casing in the loop) because it implements `AgentTool` like any other tool.
+
+**Alternatives rejected**:
+- **Silently drop tool calls**: The model would see no result and might retry indefinitely.
+- **Error during session loading**: Too harsh — the session is otherwise valid.
+- **Map to a default tool**: Unpredictable behavior. An explicit error is safer.
+
+---
+
+### D12: Approval Context as Optional Default Method
+
+**Decision**: Add `fn approval_context(&self, params: &Value) -> Option<Value> { None }` as a default method on `AgentTool`. Populate `ToolApprovalRequest.context` from this method before sending to the approval callback.
+
+**Rationale**: A default method is backward compatible — no existing tool implementations need changes. The `Option<Value>` return type allows tools to provide arbitrary structured context (diffs, cost estimates, query plans) without constraining the format. Panics in `approval_context` are caught via `catch_unwind` to prevent tool-provided context from crashing the dispatch pipeline.
+
+**Alternatives rejected**:
+- **Separate trait for contextual tools**: Adds complexity. A default method on the existing trait is simpler and more discoverable.
+- **Typed context (enum of known formats)**: Over-constrains. Tools should be free to provide whatever context their approval UI needs.
+- **Context as part of `execute()`**: Too late — context is needed before execution, at approval time.

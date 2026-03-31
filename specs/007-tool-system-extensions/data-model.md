@@ -16,6 +16,7 @@ The core trait that all tools implement. Object-safe, `Send + Sync`.
 | `parameters_schema` | `&self -> &Value` | JSON Schema for input validation |
 | `requires_approval` | `&self -> bool` | Whether approval gate applies (default: `false`) |
 | `metadata` | `&self -> Option<ToolMetadata>` | Optional namespace/version (default: `None`) |
+| `approval_context` | `&self, params: &Value -> Option<Value>` | Rich context for approval UI (default: `None`) |
 | `execute` | `&self, &str, Value, CancellationToken, Option<Box<dyn Fn(AgentToolResult) + Send + Sync>> -> Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>>` | Execute with validated params |
 
 ---
@@ -206,6 +207,7 @@ Information about a tool call pending approval. Debug impl redacts `arguments`.
 | `tool_name` | `String` | Tool being called |
 | `arguments` | `Value` | Arguments passed to the tool |
 | `requires_approval` | `bool` | Whether the tool declared approval requirement |
+| `context` | `Option<Value>` | Rich context from `approval_context()` for the approval UI |
 
 ---
 
@@ -218,6 +220,145 @@ Controls whether the approval gate is active.
 | `Enabled` | Every tool call goes through approval callback (default) |
 | `Smart` | Auto-approve tools where `requires_approval()` is false |
 | `Bypassed` | All tool calls auto-approved |
+
+---
+
+### ToolParameters (trait) — from `swink-agent-macros`
+
+Trait implemented by `#[derive(ToolSchema)]`. Provides a static method to generate JSON Schema.
+
+| Method | Signature | Description |
+|---|---|---|
+| `json_schema` | `() -> Value` | Returns JSON Schema for the struct's fields |
+
+---
+
+### ToolSchema (derive macro) — `swink-agent-macros` crate
+
+Proc macro that generates a `ToolParameters` implementation. Maps:
+- Field names → property names
+- `String` → `{"type": "string"}`
+- `u64`/`i64`/`u32`/`i32`/`usize`/`isize` → `{"type": "integer"}`
+- `f64`/`f32` → `{"type": "number"}`
+- `bool` → `{"type": "boolean"}`
+- `Option<T>` → type of `T`, field omitted from `required`
+- `Vec<T>` → `{"type": "array", "items": <T>}`
+- `///` doc comments → `"description"` field
+- `#[tool(description = "...")]` → overrides doc comment description
+
+---
+
+### #[tool] (attribute macro) — `swink-agent-macros` crate
+
+Attribute macro that wraps an async function as an `AgentTool` implementation. Accepts `name` and `description` attributes.
+
+```rust
+#[tool(name = "weather", description = "Get weather for a city")]
+async fn get_weather(city: String, units: Option<String>) -> AgentToolResult { ... }
+```
+
+Generates: a struct (e.g., `GetWeatherTool`), a `ToolParameters` impl for the parameters, and an `AgentTool` impl that deserializes parameters and calls the original function.
+
+---
+
+### ToolWatcher (struct, feature-gated: `hot-reload`)
+
+Monitors a directory for tool definition file changes and updates an agent's tool list.
+
+| Field | Type | Description |
+|---|---|---|
+| `watch_dir` | `PathBuf` | Directory to monitor |
+| `tools` | `Arc<Mutex<Vec<Arc<dyn AgentTool>>>>` | Current loaded tools |
+| `filter` | `Option<ToolFilter>` | Optional filter applied to loaded tools |
+
+**Constructors**: `new(watch_dir: impl Into<PathBuf>)`, `with_filter(self, ToolFilter) -> Self`
+
+**Methods**:
+- `start(&self, agent: &Agent) -> JoinHandle<()>` — begins watching, updates agent on changes
+- `stop(&self)` — stops the watcher
+
+Uses `notify` crate for filesystem events. Debounces rapid changes.
+
+---
+
+### ScriptTool (struct, feature-gated: `hot-reload`)
+
+A tool loaded from a TOML/YAML/JSON definition file that executes a shell command.
+
+| Field | Type | Description |
+|---|---|---|
+| `name` | `String` | Tool name from definition |
+| `description` | `String` | Tool description from definition |
+| `command` | `String` | Shell command template |
+| `schema` | `Value` | JSON Schema for parameters |
+| `requires_approval` | `bool` | Whether approval is required (default: true) |
+
+**Definition file format** (TOML example):
+```toml
+name = "list_files"
+description = "List files in a directory"
+command = "ls -la {path}"
+requires_approval = false
+
+[parameters]
+path = { type = "string", description = "Directory path" }
+```
+
+Implements `AgentTool`. The `execute()` method interpolates parameters into the command template and runs it via `sh -c`.
+
+---
+
+### ToolFilter (struct)
+
+Pattern-based tool filtering applied at registration time.
+
+| Field | Type | Description |
+|---|---|---|
+| `allowed` | `Vec<ToolPattern>` | Patterns for allowed tool names (empty = allow all) |
+| `rejected` | `Vec<ToolPattern>` | Patterns for rejected tool names (takes precedence) |
+
+**Constructors**: `new()`, `with_allowed(patterns)`, `with_rejected(patterns)`
+
+**Methods**:
+- `matches(&self, tool_name: &str) -> bool` — returns `true` if the tool should be included
+- `filter_tools(&self, tools: Vec<Arc<dyn AgentTool>>) -> Vec<Arc<dyn AgentTool>>` — filters a tool list
+
+Implements: `Debug`, `Clone`, `Default` (default allows all).
+
+---
+
+### ToolPattern (enum)
+
+A pattern for matching tool names.
+
+| Variant | Data | Description |
+|---|---|---|
+| `Exact` | `String` | Exact string match |
+| `Glob` | `String` | Glob pattern (e.g., `read_*`) |
+| `Regex` | `Regex` | Compiled regex pattern |
+
+**Constructor**: `ToolPattern::parse(s: &str) -> Self` — auto-detects: if contains `*` or `?` → Glob, if starts with `^` or ends with `$` → Regex, else Exact.
+
+Implements: `Debug`, `Clone`.
+
+---
+
+### NoopTool (struct)
+
+Placeholder tool for session history compatibility.
+
+| Field | Type | Description |
+|---|---|---|
+| `name` | `String` | Name of the missing tool |
+| `schema` | `Value` | Empty object schema |
+
+**Constructor**: `new(name: impl Into<String>)`
+
+Implements `AgentTool`:
+- `name()` → stored name
+- `description()` → `"This tool is no longer available."`
+- `requires_approval()` → `false`
+- `execute()` → `AgentToolResult::error("Tool '{name}' is no longer available...")`
 
 ---
 
@@ -243,4 +384,14 @@ BashTool / ReadFileTool / WriteFileTool → implement AgentTool directly
 
 ToolExecutionPolicy::Priority → uses PriorityFn(ToolCallSummary)
 ToolExecutionPolicy::Custom → uses ToolExecutionStrategy::partition(ToolCallSummary[])
+
+ToolFilter → contains Vec<ToolPattern> for allowed/rejected
+ToolFilter → applied at Agent::set_tools() / tool registration
+ToolWatcher → monitors directory → loads ScriptTool definitions → updates Agent tools
+ToolWatcher → optionally uses ToolFilter to restrict loaded tools
+ScriptTool → implements AgentTool → executes shell commands from definition files
+NoopTool → implements AgentTool → injected by session loader for missing tools
+ToolParameters → trait generated by #[derive(ToolSchema)] → returns JSON Schema Value
+#[tool] macro → generates struct + AgentTool impl from async fn
+ToolApprovalRequest.context → populated from AgentTool::approval_context()
 ```
