@@ -253,6 +253,44 @@ pub trait CheckpointStore: Send + Sync {
 
 Where `AsyncResult<'a, T> = Pin<Box<dyn Future<Output = io::Result<T>> + Send + 'a>>`.
 
+### OTel Span Hierarchy (feature-gated: `otel`)
+
+The OpenTelemetry integration maps the agent loop lifecycle to a span tree. No new structs are introduced — the integration is implemented via `tracing` instrumentation spans with recorded fields.
+
+**Span tree**:
+
+| Span Name | Parent | Lifetime | Key Attributes |
+|-----------|--------|----------|----------------|
+| `agent.run` | (root or caller span) | Full `agent_loop` / `agent_loop_continue` call | — |
+| `agent.turn` | `agent.run` | Single turn (TurnStart → TurnEnd) | `agent.turn_index`, `agent.stop_reason` |
+| `agent.llm_call` | `agent.turn` | LLM streaming call duration | `agent.model`, `agent.tokens.input`, `agent.tokens.output`, `agent.cost.total` |
+| `agent.tool.{name}` | `agent.turn` | Tool execution duration | `agent.tool.name`, `otel.status_code` (OK/ERROR) |
+
+**Semantic attributes** (recorded as `tracing` span fields):
+
+| Attribute | Type | Source |
+|-----------|------|--------|
+| `agent.model` | `String` | `ModelSpec.model_id` from `AgentLoopConfig` / `BeforeLlmCall` event |
+| `agent.turn_index` | `u64` | `TurnMetrics.turn_index` or loop counter |
+| `agent.tokens.input` | `u64` | `TurnMetrics.usage.input` |
+| `agent.tokens.output` | `u64` | `TurnMetrics.usage.output` |
+| `agent.cost.total` | `f64` | `TurnMetrics.cost.total` |
+| `agent.tool.name` | `String` | `ToolExecutionStart.name` |
+| `agent.stop_reason` | `String` | `TurnEndReason` display value |
+
+**Integration point**: `tracing::info_span!` calls in `src/loop_/mod.rs` and `src/loop_/turn.rs`, gated by `#[cfg(feature = "otel")]`. When the feature is disabled, these are standard `tracing` spans (already present for diagnostics). When enabled, `tracing-opentelemetry` bridges them to OTel.
+
+### OtelInitConfig (feature-gated: `otel`)
+
+Configuration for the convenience `init_otel_layer()` function.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `service_name` | `String` | OTel service name (default: `"swink-agent"`) |
+| `endpoint` | `Option<String>` | OTLP exporter endpoint (default: `http://localhost:4317` for gRPC) |
+
+Implements: `Debug`, `Clone`, `Default`.
+
 ## Relationships
 
 ```
@@ -278,4 +316,13 @@ Checkpoint --contains--> Vec<LlmMessage>, Usage, Cost
 LoopCheckpoint --contains--> Vec<LlmMessage>, Usage, Cost, AssistantMessage
     LoopCheckpoint --converts-to--> Checkpoint (via to_checkpoint)
 CheckpointStore --persists--> Checkpoint
+
+OTel Span Hierarchy (feature = "otel"):
+    agent.run --parent-of--> agent.turn
+    agent.turn --parent-of--> agent.llm_call
+    agent.turn --parent-of--> agent.tool.{name}
+    agent.llm_call --records--> ModelSpec, Usage, Cost
+    agent.tool.{name} --records--> tool_name, duration, success
+    tracing-opentelemetry --bridges--> tracing spans to OTel SDK
+    OtelInitConfig --configures--> TracerProvider (OTLP exporter)
 ```

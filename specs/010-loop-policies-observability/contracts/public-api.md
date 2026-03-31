@@ -263,4 +263,73 @@ pub use stream_middleware::StreamMiddleware;
 pub use emit::Emission;
 pub use metrics::{MetricsCollector, TurnMetrics, ToolExecMetrics};
 pub use checkpoint::{Checkpoint, LoopCheckpoint, CheckpointStore};
+
+// New (feature = "otel"):
+#[cfg(feature = "otel")]
+pub use otel::{OtelInitConfig, init_otel_layer};
+```
+
+## OpenTelemetry Integration (feature = "otel")
+
+### Span Instrumentation (core loop)
+
+The agent loop emits `tracing` spans at key lifecycle points. These are always present as `tracing` spans (useful for `tracing_subscriber::fmt` logging) and become OTel spans when `tracing-opentelemetry` is configured as a subscriber layer.
+
+```rust
+// Span hierarchy (created via tracing::info_span! in the loop):
+//
+// agent.run                              — root span, covers full agent_loop() call
+//   └─ agent.turn                        — per turn, fields: agent.turn_index, agent.stop_reason
+//       ├─ agent.llm_call                — per LLM streaming call, fields: agent.model,
+//       │                                    agent.tokens.input, agent.tokens.output, agent.cost.total
+//       ├─ agent.tool.{name}             — per tool execution, fields: agent.tool.name
+//       └─ agent.tool.{name}             — concurrent tools are sibling spans
+```
+
+**Span field types** (recorded via `tracing::Span::record`):
+
+| Field | Type | When Recorded |
+|-------|------|---------------|
+| `agent.model` | `&str` | On `agent.llm_call` span entry |
+| `agent.turn_index` | `u64` | On `agent.turn` span entry |
+| `agent.tokens.input` | `u64` | On `agent.llm_call` span exit (after streaming completes) |
+| `agent.tokens.output` | `u64` | On `agent.llm_call` span exit |
+| `agent.cost.total` | `f64` | On `agent.llm_call` span exit |
+| `agent.tool.name` | `&str` | On `agent.tool.{name}` span entry |
+| `agent.stop_reason` | `&str` | On `agent.turn` span exit |
+
+### OtelInitConfig
+
+```rust
+#[cfg(feature = "otel")]
+pub struct OtelInitConfig {
+    pub service_name: String,       // default: "swink-agent"
+    pub endpoint: Option<String>,   // default: "http://localhost:4317" (gRPC OTLP)
+}
+```
+
+Derives: `Debug`, `Clone`, `Default`.
+
+### init_otel_layer
+
+```rust
+#[cfg(feature = "otel")]
+pub fn init_otel_layer(
+    config: OtelInitConfig,
+) -> impl tracing_subscriber::Layer<S>
+where
+    S: tracing::Subscriber + for<'span> tracing_subscriber::registry::LookupSpan<'span>;
+```
+
+Returns a configured `tracing_opentelemetry::OpenTelemetryLayer` with an OTLP exporter. Users compose this into their `tracing_subscriber` stack:
+
+```rust
+use tracing_subscriber::prelude::*;
+use swink_agent::otel::{OtelInitConfig, init_otel_layer};
+
+let otel_layer = init_otel_layer(OtelInitConfig::default());
+tracing_subscriber::registry()
+    .with(otel_layer)
+    .with(tracing_subscriber::fmt::layer()) // optional: also log to console
+    .init();
 ```

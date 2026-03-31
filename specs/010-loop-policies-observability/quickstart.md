@@ -8,6 +8,9 @@
 # Build the workspace
 cargo build --workspace
 
+# Build with OTel feature enabled
+cargo build -p swink-agent --features otel
+
 # Run all tests
 cargo test --workspace
 
@@ -18,6 +21,10 @@ cargo test -p swink-agent metrics
 cargo test -p swink-agent post_turn_hook
 cargo test -p swink-agent budget_guard
 cargo test -p swink-agent checkpoint
+cargo test -p swink-agent otel --features otel
+
+# Verify OTel feature gate (no OTel deps without feature)
+cargo test -p swink-agent --no-default-features
 
 # Lint
 cargo clippy --workspace -- -D warnings
@@ -271,4 +278,68 @@ store.save_checkpoint(&checkpoint).await?;
 
 // Restore pending messages
 let pending = loop_cp.restore_pending_messages();
+```
+
+### Enable OpenTelemetry tracing
+
+Add the `otel` feature to your `Cargo.toml`:
+
+```toml
+[dependencies]
+swink-agent = { version = "0.4", features = ["otel"] }
+```
+
+Set up the OTel subscriber layer:
+
+```rust
+use tracing_subscriber::prelude::*;
+use swink_agent::otel::{OtelInitConfig, init_otel_layer};
+
+// Quick setup: OTLP exporter to localhost:4317
+let otel_layer = init_otel_layer(OtelInitConfig::default());
+tracing_subscriber::registry()
+    .with(otel_layer)
+    .init();
+
+// Now run agents as normal — spans are automatically exported
+let mut agent = Agent::new(options);
+let result = agent.prompt_text("Hello").await?;
+// Spans emitted: agent.run → agent.turn → agent.llm_call
+```
+
+### Custom OTel endpoint
+
+```rust
+use swink_agent::otel::{OtelInitConfig, init_otel_layer};
+
+let config = OtelInitConfig {
+    service_name: "my-agent-service".into(),
+    endpoint: Some("https://otel-collector.example.com:4317".into()),
+};
+let otel_layer = init_otel_layer(config);
+```
+
+### OTel + console logging together
+
+```rust
+use tracing_subscriber::prelude::*;
+use swink_agent::otel::{OtelInitConfig, init_otel_layer};
+
+tracing_subscriber::registry()
+    .with(init_otel_layer(OtelInitConfig::default()))
+    .with(tracing_subscriber::fmt::layer())  // also log to stderr
+    .init();
+```
+
+### OTel with MetricsCollector (both enabled)
+
+```rust
+// OTel and MetricsCollector are independent — use both:
+let options = AgentOptions::new_simple("prompt", model, stream_fn)
+    .with_metrics_collector(Arc::new(LogMetrics));
+
+// OTel spans are emitted via tracing subscriber (configured above)
+// MetricsCollector::on_metrics is called at each turn end (as usual)
+// No duplication — OTel observes the loop lifecycle, MetricsCollector
+// receives structured TurnMetrics data
 ```
