@@ -5,9 +5,9 @@
 
 ## Summary
 
-Extract and consolidate the shared infrastructure that all LLM provider adapters depend on: a `MessageConverter` trait for converting agent messages to provider-specific formats, an `HttpErrorClassifier` for mapping HTTP status codes to agent error types, an `SseStreamParser` for consuming SSE byte streams, and a catalog-driven `RemotePresets` system for constructing configured remote connections from preset keys.
+Extract and consolidate the shared infrastructure that all LLM provider adapters depend on: a `MessageConverter` trait for converting agent messages to provider-specific formats, an `HttpErrorClassifier` for mapping HTTP status codes to agent error types, an `SseStreamParser` for consuming SSE byte streams, a catalog-driven `RemotePresets` system for constructing configured remote connections from preset keys, a `CacheStrategy` enum for provider-agnostic prompt caching configuration, a `ProxyStreamFn` for raw SSE byte relay in gateway deployments, and an `OnRawPayload` callback for observing raw provider data before event parsing.
 
-All four concerns live in the `swink-agent-adapters` crate with the conversion trait defined in core (`swink-agent`) and re-exported through adapters.
+All concerns live in the `swink-agent-adapters` crate (or core for types that flow through `StreamOptions`) with the conversion trait defined in core (`swink-agent`) and re-exported through adapters.
 
 ## Technical Context
 
@@ -28,11 +28,11 @@ All four concerns live in the `swink-agent-adapters` crate with the conversion t
 | # | Principle | Status | Notes |
 |---|-----------|--------|-------|
 | I | Library-First | PASS | All shared infra lives in `swink-agent-adapters` (or core for `MessageConverter`). No service, no daemon. Independently compilable and testable. |
-| II | Test-Driven Development | PASS | Each module (`classify`, `sse`, `remote_presets`) already has unit tests. `convert` re-exports core's tested trait. |
+| II | Test-Driven Development | PASS | Each module (`classify`, `sse`, `remote_presets`) already has unit tests. `convert` re-exports core's tested trait. New tests for CacheStrategy translation, ProxyStreamFn raw byte delivery, and OnRawPayload callback invocation/panic isolation. |
 | III | Efficiency & Performance | PASS | `SseStreamParser` buffers bytes and drains lines incrementally; `classify_http_status` is `const fn`. No unnecessary allocations. |
 | IV | Leverage the Ecosystem | PASS | Uses `reqwest` for HTTP, `futures` for streams, `bytes` for zero-copy chunks, `thiserror` for error derive. No reinvented wheels. |
-| V | Provider Agnosticism | PASS | `MessageConverter` defines a generic contract — each adapter implements it. Core holds no provider types. `HttpErrorClassifier` is provider-neutral with an override mechanism. |
-| VI | Safety & Correctness | PASS | `#[forbid(unsafe_code)]` at crate root. Errors produce proper error types, never panics. Poisoned-mutex recovery via `into_inner()`. |
+| V | Provider Agnosticism | PASS | `MessageConverter` defines a generic contract — each adapter implements it. Core holds no provider types. `HttpErrorClassifier` is provider-neutral with an override mechanism. `CacheStrategy` is defined in core as a provider-agnostic enum; adapters translate to provider-specific formats. |
+| VI | Safety & Correctness | PASS | `#[forbid(unsafe_code)]` at crate root. Errors produce proper error types, never panics. Poisoned-mutex recovery via `into_inner()`. `OnRawPayload` panics caught via `catch_unwind`; stream continues uninterrupted. |
 
 ## Project Structure
 

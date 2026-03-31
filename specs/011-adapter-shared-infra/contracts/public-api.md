@@ -148,3 +148,63 @@ pub fn preset(model_id: &str) -> Option<CatalogPreset>;
 - `remote_presets(Some("anthropic"))` returns only Anthropic presets.
 - `preset("claude-sonnet-4-6")` returns the matching `CatalogPreset` or `None`.
 - Adding a new provider requires: one new `remote_preset_keys` sub-module, one new match arm in `build_remote_connection_from_values`, and the corresponding `StreamFn` import.
+
+---
+
+## Core: `swink_agent::stream` (CacheStrategy + OnRawPayload)
+
+```rust
+/// Provider-agnostic caching configuration.
+#[derive(Debug, Clone, Default)]
+pub enum CacheStrategy {
+    #[default]
+    None,                           // no caching
+    Auto,                           // adapter decides optimal cache points
+    Anthropic,                      // Anthropic cache_control blocks on system prompt + tools
+    Google { ttl: Duration },       // Google CachedContent with TTL
+}
+
+/// Callback for raw SSE data line observation.
+pub type OnRawPayload = Arc<dyn Fn(&str) + Send + Sync>;
+
+// Added to StreamOptions:
+pub struct StreamOptions {
+    // ... existing fields ...
+    pub cache_strategy: CacheStrategy,
+    pub on_raw_payload: Option<OnRawPayload>,
+}
+```
+
+**Contract**:
+- `CacheStrategy::None` is the default — no caching overhead.
+- `CacheStrategy::Auto` enables adapter-determined caching (system prompt + tool defs for Anthropic, long context for Google).
+- Adapters that don't support caching silently ignore the strategy.
+- `on_raw_payload` fires synchronously with each raw SSE `data:` line before event parsing.
+- Panics in `on_raw_payload` are caught via `catch_unwind`; the stream continues.
+
+---
+
+## Module: `swink_agent_adapters` (ProxyStreamFn)
+
+```rust
+/// Raw SSE byte relay — skips event parsing.
+pub struct ProxyStreamFn {
+    base: AdapterBase,
+    target_provider: String,
+}
+
+impl ProxyStreamFn {
+    pub fn new(base_url: impl Into<String>, api_key: impl Into<String>, target_provider: impl Into<String>) -> Self;
+    pub async fn stream_raw(
+        &self,
+        model: &ModelSpec,
+        messages: Vec<LlmMessage>,
+        options: &StreamOptions,
+    ) -> Pin<Box<dyn Stream<Item = Result<Bytes, reqwest::Error>> + Send>>;
+}
+```
+
+**Contract**:
+- Returns raw SSE bytes — no `AssistantMessageEvent` conversion.
+- Reuses `AdapterBase` for HTTP connection management and authentication.
+- The `target_provider` field determines URL construction and auth header format.

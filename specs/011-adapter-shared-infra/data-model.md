@@ -110,6 +110,52 @@ Nested modules (`anthropic`, `openai`, `google`, `azure`, `xai`, `mistral`, `bed
 
 ---
 
+## Entity: CacheStrategy (enum, defined in core)
+
+**Location**: `src/stream.rs` (core), as a field on `StreamOptions`
+
+| Variant | Data | Purpose |
+|---------|------|---------|
+| `None` | — | No caching (default) |
+| `Auto` | — | Adapter decides optimal cache points |
+| `Anthropic` | — | Anthropic-specific `cache_control` blocks |
+| `Google` | `ttl: Duration` | Google context caching with explicit TTL |
+
+**Derives**: `Debug, Clone, Default` (default = `None`)
+
+**Flow**: `AgentOptions` → `StreamOptions.cache_strategy` → adapter's `apply_cache_strategy()`
+
+---
+
+## Entity: ProxyStreamFn (struct)
+
+**Location**: `adapters/src/proxy.rs` (or new `adapters/src/proxy_raw.rs`)
+
+| Field | Type | Purpose |
+|-------|------|---------|
+| `base` | `AdapterBase` | Shared HTTP infrastructure |
+| `target_provider` | `String` | Provider format for URL/auth routing |
+
+**Returns**: `Stream<Item = Result<Bytes, reqwest::Error>>` — raw SSE bytes, not parsed events
+
+**Contract**: Does NOT implement `StreamFn` (which returns `AssistantMessageEvent`). Instead provides a separate method or trait for raw byte streaming.
+
+---
+
+## Entity: OnRawPayload (type alias, defined in core)
+
+**Location**: `src/stream.rs` (core), as a field on `StreamOptions`
+
+```
+pub type OnRawPayload = Arc<dyn Fn(&str) + Send + Sync>;
+```
+
+**Field on StreamOptions**: `on_raw_payload: Option<OnRawPayload>`
+
+**Contract**: Called with each raw SSE `data:` line string before event parsing. Panics caught via `catch_unwind`. Must return quickly.
+
+---
+
 ## Relationship Diagram
 
 ```text
@@ -125,4 +171,13 @@ swink-agent-adapters
   ├── src/sse.rs            ──► SseLine, SseStreamParser, sse_data_lines
   ├── src/remote_presets.rs ──► RemotePresetKey, remote_preset_keys, build_remote_connection
   └── src/lib.rs            ──► re-exports all public types
+
+swink-agent (core)
+  └── src/stream.rs
+        ├── StreamOptions.cache_strategy: CacheStrategy
+        └── StreamOptions.on_raw_payload: Option<OnRawPayload>
+
+CacheStrategy ──► flows via StreamOptions ──► adapter apply_cache_strategy()
+OnRawPayload  ──► called in sse_data_lines() or adapter stream loop before event parsing
+ProxyStreamFn ──► uses AdapterBase for HTTP ──► returns raw Bytes stream
 ```

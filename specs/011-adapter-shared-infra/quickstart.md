@@ -92,3 +92,53 @@ let connection = build_remote_connection(
 | `adapters/src/remote_presets.rs` | `RemotePresetKey`, preset constants, `build_remote_connection` |
 | `adapters/src/lib.rs` | Crate root with re-exports |
 | `src/convert.rs` | Core `MessageConverter` trait definition |
+
+### Configure Prompt Caching
+
+```rust
+use swink_agent::stream::{StreamOptions, CacheStrategy};
+
+// Enable automatic caching (adapter determines optimal cache points)
+let options = StreamOptions {
+    cache_strategy: CacheStrategy::Auto,
+    ..Default::default()
+};
+
+// Provider-specific: Anthropic cache_control blocks
+let options = StreamOptions {
+    cache_strategy: CacheStrategy::Anthropic,
+    ..Default::default()
+};
+
+// Provider-specific: Google with TTL
+use std::time::Duration;
+let options = StreamOptions {
+    cache_strategy: CacheStrategy::Google { ttl: Duration::from_secs(3600) },
+    ..Default::default()
+};
+```
+
+### Observe Raw Provider Payloads
+
+```rust
+use std::sync::Arc;
+use swink_agent::stream::StreamOptions;
+
+let options = StreamOptions {
+    on_raw_payload: Some(Arc::new(|raw: &str| {
+        eprintln!("[RAW] {raw}");
+    })),
+    ..Default::default()
+};
+// Each raw SSE data line is printed before event parsing
+```
+
+### Proxy Raw SSE Bytes
+
+```rust
+use swink_agent_adapters::ProxyStreamFn;
+
+let proxy = ProxyStreamFn::new(base_url, api_key, "anthropic");
+let byte_stream = proxy.stream_raw(model, messages, options).await;
+// byte_stream yields raw Bytes — consumer parses events
+```
