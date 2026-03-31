@@ -1,6 +1,6 @@
 # Tool System
 
-**Source files:** `src/tool.rs`, `src/tools/`, `src/fn_tool.rs`, `src/tool_middleware.rs`, `src/policy.rs`, `src/policies/`, `src/loop_/tool_dispatch.rs`
+**Source files:** `src/tool.rs`, `src/tools/`, `src/fn_tool.rs`, `src/tool_middleware.rs`, `src/policy.rs`, `policies/` (separate workspace crate `swink-agent-policies`), `src/loop_/tool_dispatch.rs`
 **Related:** [PRD §4](../../planning/PRD.md#4-tool-system)
 
 The tool system defines how tools are declared, validated, executed, and how their results are returned to the LLM. It also covers the structured output mechanism, which is implemented as a synthetic tool injected by the harness.
@@ -459,7 +459,7 @@ assert_eq!(logged.name(), "bash"); // metadata delegates to inner
 
 ## L3 — PreDispatch Policies: Validation and Argument Rewriting
 
-**Source files:** `src/policy.rs`, `src/policies/`
+**Source files:** `src/policy.rs` (core trait definitions), `policies/` (separate workspace crate `swink-agent-policies` containing all policy implementations)
 
 PreDispatch policies replace the previous `ToolCallTransformer` and `ToolValidator` traits. They run **before** the approval gate on each tool call and can:
 
@@ -472,6 +472,7 @@ PreDispatch policies replace the previous `ToolCallTransformer` and `ToolValidat
 
 ```rust
 pub trait PreDispatchPolicy: Send + Sync {
+    fn name(&self) -> &str;
     fn evaluate(&self, ctx: &PolicyContext, tool_ctx: &mut ToolPolicyContext) -> PreDispatchVerdict;
 }
 ```

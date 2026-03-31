@@ -1,30 +1,9 @@
 //! Agent registry for naming and looking up agents at runtime.
 
 use std::collections::HashMap;
-use std::fmt;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 
 use crate::agent::Agent;
-
-// ─── AgentId ────────────────────────────────────────────────────────────────
-
-/// Unique identifier assigned to every [`Agent`] on construction.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct AgentId(u64);
-
-impl AgentId {
-    pub(crate) fn next() -> Self {
-        static COUNTER: AtomicU64 = AtomicU64::new(1);
-        Self(COUNTER.fetch_add(1, Ordering::Relaxed))
-    }
-}
-
-impl fmt::Display for AgentId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "AgentId({})", self.0)
-    }
-}
 
 // ─── AgentRef ───────────────────────────────────────────────────────────────
 

@@ -364,6 +364,32 @@ impl Serialize for AgentMessage {
     }
 }
 
+impl<'de> Deserialize<'de> for AgentMessage {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        struct Tagged {
+            kind: String,
+            message: serde_json::Value,
+        }
+
+        let tagged = Tagged::deserialize(deserializer)?;
+        match tagged.kind.as_str() {
+            "llm" => {
+                let msg: LlmMessage =
+                    serde_json::from_value(tagged.message).map_err(serde::de::Error::custom)?;
+                Ok(Self::Llm(msg))
+            }
+            "custom" => Err(serde::de::Error::custom(
+                "cannot deserialize AgentMessage::Custom (requires runtime type info)",
+            )),
+            other => Err(serde::de::Error::unknown_variant(
+                other,
+                &["llm", "custom"],
+            )),
+        }
+    }
+}
+
 // ─── Usage & Cost ───────────────────────────────────────────────────────────
 
 /// Token usage counters for an LLM response.

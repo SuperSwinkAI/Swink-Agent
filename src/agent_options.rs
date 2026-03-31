@@ -189,6 +189,13 @@ impl AgentOptions {
         self
     }
 
+    /// Convenience: register all built-in tools (bash, read-file, write-file).
+    #[cfg(feature = "builtin-tools")]
+    #[must_use]
+    pub fn with_default_tools(self) -> Self {
+        self.with_tools(crate::tools::builtin_tools())
+    }
+
     /// Set the retry strategy.
     #[must_use]
     pub fn with_retry_strategy(mut self, strategy: Box<dyn RetryStrategy>) -> Self {

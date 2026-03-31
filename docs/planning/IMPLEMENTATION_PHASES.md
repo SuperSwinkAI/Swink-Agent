@@ -1,5 +1,7 @@
 > **Archived** — All phases complete as of 2026-03-14. Kept for historical reference.
 
+> **ARCHIVED (2026-03-14)** — Covers Phases 1–6 (complete). Phase 7 (Policy Slots) and adapter implementations (specs 015–019) are documented in `SPECIFICATION_TRACKER.md`.
+
 ---
 
 # Swink Agent — Implementation Phases

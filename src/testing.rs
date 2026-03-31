@@ -21,19 +21,52 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
-// ─── MockStreamFn (simple token-based) ──────────────────────────────────
+// ─── MockStreamFn (error-fallback scripted stream) ─────────────────────
+
+/// A mock [`StreamFn`] that yields scripted event sequences.
+///
+/// Returns an error event when all responses have been consumed.
+/// Delegates to [`ScriptedStreamFn::with_error_fallback`].
+///
+/// This is the most commonly used mock in tests — it replays canned
+/// responses and fails loudly when exhausted.
+pub struct MockStreamFn(ScriptedStreamFn);
+
+impl MockStreamFn {
+    /// Create a `MockStreamFn` with the given event sequences.
+    ///
+    /// When responses are exhausted, an error event is returned.
+    #[must_use]
+    pub const fn new(responses: Vec<Vec<AssistantMessageEvent>>) -> Self {
+        Self(ScriptedStreamFn::with_error_fallback(responses))
+    }
+}
+
+impl StreamFn for MockStreamFn {
+    fn stream<'a>(
+        &'a self,
+        model: &'a ModelSpec,
+        context: &'a AgentContext,
+        options: &'a StreamOptions,
+        cancellation_token: CancellationToken,
+    ) -> Pin<Box<dyn Stream<Item = AssistantMessageEvent> + Send + 'a>> {
+        self.0.stream(model, context, options, cancellation_token)
+    }
+}
+
+// ─── SimpleMockStreamFn (simple token-based) ────────────────────────────
 
 /// A deterministic [`StreamFn`] implementation for testing.
 ///
 /// Emits the configured text tokens as a properly-sequenced event stream
 /// (`Start -> TextStart -> TextDelta x N -> TextEnd -> Done`) without making
-/// any network calls. Use [`MockStreamFn::new`] to configure the tokens.
-pub struct MockStreamFn {
+/// any network calls. Use [`SimpleMockStreamFn::new`] to configure the tokens.
+pub struct SimpleMockStreamFn {
     tokens: Arc<Vec<String>>,
 }
 
-impl MockStreamFn {
-    /// Create a `MockStreamFn` that will emit `tokens` in order.
+impl SimpleMockStreamFn {
+    /// Create a `SimpleMockStreamFn` that will emit `tokens` in order.
     #[must_use]
     pub fn new(tokens: Vec<String>) -> Self {
         Self {
@@ -41,14 +74,14 @@ impl MockStreamFn {
         }
     }
 
-    /// Create a `MockStreamFn` that emits a single text response.
+    /// Create a `SimpleMockStreamFn` that emits a single text response.
     #[must_use]
     pub fn from_text(text: &str) -> Self {
         Self::new(vec![text.to_string()])
     }
 }
 
-impl StreamFn for MockStreamFn {
+impl StreamFn for SimpleMockStreamFn {
     fn stream<'a>(
         &'a self,
         _model: &'a ModelSpec,

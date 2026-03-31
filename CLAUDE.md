@@ -10,6 +10,8 @@ Pure-Rust library for LLM-powered agentic loops. Provider-agnostic core with plu
 - **Speed.** Minimize allocations on hot paths. `tokio::spawn` for concurrent tool execution, not sequential awaits.
 - **No unsafe.** `#[forbid(unsafe_code)]` at every crate root.
 - **Lessons learned go in nested CLAUDE.md files.** Update when you discover something non-obvious.
+- **Context7 first.** When researching any crate API, dependency docs, or library usage, always query the context7 MCP server before falling back to web search or training data. Training data may be stale; context7 pulls current docs.
+- **No parallel builds in agents.** Never have multiple subagents run `cargo build`/`test`/`clippy` concurrently — Cargo's global lock serializes them anyway, causing extended build times. Run all compilation in the main conversation first; subagents should only read and analyze code.
 
 ## Style (project-specific conventions)
 
@@ -43,6 +45,8 @@ MSRV **1.88** (edition 2024). Workspace deps centralized in root `Cargo.toml`.
 - `dispatch_event` catches panics via `catch_unwind` and **auto-removes** panicking subscribers (QA-discovered: originally panics were caught but subscribers were not removed).
 - `in_flight_llm_messages` filters out `CustomMessage` — they survive compaction but never reach the provider.
 - Queues use `Arc<Mutex<>>` with `PoisonError::into_inner()` — never panics on poisoned locks.
+- `dispatch_event` now wraps event forwarders in `catch_unwind` — matching the existing listener panic safety. Panicking forwarders are logged and skipped, not auto-removed (unlike listeners).
+- `AgentId` lives in its own module `src/agent_id.rs` (extracted from `registry.rs` to break the `agent.rs` ↔ `registry.rs` circular import).
 
 ### Agent Loop (`src/loop_.rs`)
 
@@ -51,7 +55,6 @@ MSRV **1.88** (edition 2024). Workspace deps centralized in root `Cargo.toml`.
 - `transform_context` is **synchronous** (not async).
 - `CONTEXT_OVERFLOW_SENTINEL` triggers overflow retry — loop control signal, not an error.
 - Tool dispatch order: PreDispatch policies → Approval → Schema validation → `execute()`. (Old order was Approval → Transformer → Validator → Schema → Execute, superseded by 031-policy-slots.)
-- `RetryStrategy::should_retry()` is the **sole** retryability decision point — `is_retryable()` pre-check was removed.
 
 ### Policy Slots (`src/policy.rs`)
 
@@ -111,7 +114,7 @@ MSRV **1.88** (edition 2024). Workspace deps centralized in root `Cargo.toml`.
 
 **Root crate (`swink-agent`):**
 - `builtin-tools` (default-enabled) — gates `BashTool`, `ReadFileTool`, `WriteFileTool`.
-- `test-helpers` — for **downstream consumers only** (e.g., `SuperSwink-Core`). Enables public re-exports of test utilities. Not used by the `swink-agent` crate itself (it cannot be its own dev-dependency).
+- ~~`test-helpers`~~ — **removed**. The `testing` module is now always public regardless of feature flags; no gate needed.
 - Root crate cannot re-export adapters/local-llm/TUI (cyclic dependency). Consumers depend on sub-crates directly.
 
 **Adapters crate (`swink-agent-adapters`):**

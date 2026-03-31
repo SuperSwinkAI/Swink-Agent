@@ -171,6 +171,8 @@ stateDiagram-v2
 
 In addition to synchronous listeners, the agent supports event forwarders (`event_forwarders: Vec<EventForwarderFn>`). Add them via `AgentOptions::with_event_forwarder()` or `Agent::add_event_forwarder()`. Forwarders run after all synchronous subscribers complete and are suitable for side effects (e.g., queueing async tasks, updating metrics). Forwarders are synchronous `Fn(AgentEvent)` closures and will block event dispatch if they perform blocking I/O.
 
+Forwarders now have panic protection via `catch_unwind`, matching the behavior of synchronous listeners. A panicking forwarder is caught and auto-removed from the forwarder list, preventing a single misbehaving forwarder from crashing the agent. Previously, forwarders lacked this protection and a panic would propagate up and crash the agent.
+
 ---
 
 ## L4 — Steering and Follow-up Queue Draining

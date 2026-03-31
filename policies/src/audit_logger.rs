@@ -45,6 +45,22 @@ pub struct AuditCost {
     pub total: f64,
 }
 
+impl From<&swink_agent::Usage> for AuditUsage {
+    fn from(u: &swink_agent::Usage) -> Self {
+        Self {
+            input: u.input,
+            output: u.output,
+            total: u.total,
+        }
+    }
+}
+
+impl From<&swink_agent::Cost> for AuditCost {
+    fn from(c: &swink_agent::Cost) -> Self {
+        Self { total: c.total }
+    }
+}
+
 // ─── Sink Trait ─────────────────────────────────────────────────────────────
 
 /// Pluggable destination for audit records.
@@ -108,14 +124,8 @@ impl PostTurnPolicy for AuditLogger {
             turn_index: ctx.turn_index,
             content_summary,
             tool_calls,
-            usage: AuditUsage {
-                input: turn.assistant_message.usage.input,
-                output: turn.assistant_message.usage.output,
-                total: turn.assistant_message.usage.total,
-            },
-            cost: AuditCost {
-                total: turn.assistant_message.cost.total,
-            },
+            usage: AuditUsage::from(&turn.assistant_message.usage),
+            cost: AuditCost::from(&turn.assistant_message.cost),
         };
 
         self.sink.write(&record);

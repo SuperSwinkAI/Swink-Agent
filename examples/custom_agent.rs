@@ -9,7 +9,6 @@
 //! model is always available and is included in the F4 cycle by default.
 
 use swink_agent::prelude::*;
-use swink_agent::{BashTool, ModelConnections, ReadFileTool, WriteFileTool};
 use swink_agent_adapters::{build_remote_connection, remote_preset_keys};
 use swink_agent_local_llm::default_local_connection;
 use swink_agent_tui::{TuiConfig, launch, restore_terminal, setup_terminal};
@@ -19,26 +18,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenvy::dotenv().ok();
 
     // 1. Choose named helpers instead of hand-typing provider/model/base-url strings.
-    let connections = ModelConnections::new(
-        build_remote_connection(remote_preset_keys::anthropic::SONNET_46)?,
-        vec![
-            build_remote_connection(remote_preset_keys::openai::GPT_4_1)?,
-            default_local_connection()?,
-        ],
-    );
+    let connections = ModelConnections::builder()
+        .primary(build_remote_connection(remote_preset_keys::anthropic::SONNET_46)?)
+        .fallback(build_remote_connection(remote_preset_keys::openai::GPT_4_1)?)
+        .fallback(default_local_connection()?)
+        .build();
 
-    // 2. Register tools — `into_tool()` wraps each in `Arc<dyn AgentTool>`.
-    let tools = vec![
-        BashTool::new().into_tool(),
-        ReadFileTool::new().into_tool(),
-        WriteFileTool::new().into_tool(),
-    ];
-
-    // 3. Build options directly from connections — no manual decomposition needed.
+    // 2. Build options and register built-in tools in one call.
     let options = AgentOptions::from_connections("You are a helpful assistant.", connections)
-        .with_tools(tools);
+        .with_default_tools();
 
-    // 4. Set up terminal and launch the TUI.
+    // 3. Set up terminal and launch the TUI.
     let mut terminal = setup_terminal()?;
     let result = launch(TuiConfig::default(), &mut terminal, options).await;
 

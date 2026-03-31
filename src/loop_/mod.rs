@@ -85,7 +85,7 @@ pub enum TurnEndReason {
 /// logging. The harness never calls back into application logic for display
 /// concerns.
 #[non_exhaustive]
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
 #[allow(clippy::large_enum_variant)]
 pub enum AgentEvent {

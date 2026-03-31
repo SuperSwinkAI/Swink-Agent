@@ -1,5 +1,7 @@
 > **Archived** — All phases complete as of 2026-03-14. Kept for historical reference.
 
+> **ARCHIVED (2026-03-14)** — This document describes the initial v0.1 vision. The project has expanded significantly to v0.4.1 with 8 workspace crates (including `swink-agent-policies`). See `SPECIFICATION_TRACKER.md` for current state.
+
 ---
 
 # Swink Agent — Product Requirements Document

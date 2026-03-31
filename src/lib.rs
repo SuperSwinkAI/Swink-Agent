@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 mod agent;
+mod agent_id;
 pub mod agent_options;
 pub(crate) mod agent_subscriptions;
 mod async_context_transformer;
@@ -81,7 +82,8 @@ pub use orchestrator::{
     AgentOrchestrator, AgentRequest, DefaultSupervisor, OrchestratedHandle, SupervisorAction,
     SupervisorPolicy,
 };
-pub use registry::{AgentId, AgentRef, AgentRegistry};
+pub use agent_id::AgentId;
+pub use registry::{AgentRef, AgentRegistry};
 pub use retry::{DefaultRetryStrategy, RetryStrategy};
 pub use schema::schema_for;
 pub use schemars::JsonSchema;

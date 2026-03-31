@@ -11,7 +11,7 @@ tokio-stream = "0.1"
 futures = "0.3"
 tracing = "0.1"
 uuid = { version = "1", features = ["v4"] }
-reqwest = { version = "0.13", features = ["stream"] }
+reqwest = { version = "0.13", features = ["json", "stream"] }
 thiserror = "2"
 rand = "0.9"
 schemars = "1"
@@ -31,7 +31,7 @@ insta = { version = "1", features = ["json"] }
 
 [package]
 name = "swink-agent"
-version = "0.4.0"
+version = "0.4.2"
 edition = "2024"
 rust-version = "1.88"
 description = "Core scaffolding for running LLM-powered agentic loops"
@@ -56,7 +56,6 @@ rustdoc-args = ["--cfg", "docsrs"]
 [features]
 default = ["builtin-tools"]
 builtin-tools = []
-test-helpers = []
 tiktoken = ["dep:tiktoken-rs"]
 
 [dependencies]

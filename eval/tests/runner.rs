@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use tokio_util::sync::CancellationToken;
 
-use swink_agent::{Agent, AgentOptions, ModelSpec, testing::MockStreamFn};
+use swink_agent::{Agent, AgentOptions, ModelSpec, testing::SimpleMockStreamFn};
 use swink_agent_eval::{
     AgentFactory, EvalCase, EvalError, EvalRunner, EvalSet, Verdict,
 };
@@ -31,7 +31,7 @@ impl AgentFactory for MockFactory {
         case: &EvalCase,
     ) -> Result<(Agent, CancellationToken), EvalError> {
         let cancel = CancellationToken::new();
-        let stream_fn = Arc::new(MockStreamFn::new(self.tokens.clone()));
+        let stream_fn = Arc::new(SimpleMockStreamFn::new(self.tokens.clone()));
         let model = ModelSpec::new("test", "test-model");
         let options = AgentOptions::new_simple(&case.system_prompt, model, stream_fn);
         let agent = Agent::new(options);

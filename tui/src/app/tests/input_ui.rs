@@ -13,6 +13,9 @@ use crate::session::{JsonlSessionStore, SessionMeta, SessionStore};
 use super::super::*;
 use super::helpers::*;
 
+/// Guards tests that depend on the global `COLOR_MODE` atomic from running in parallel.
+static COLOR_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[tokio::test]
 async fn capital_e_inserts_char() {
     let mut app = App::new(TuiConfig::default());
@@ -30,9 +33,13 @@ async fn capital_e_inserts_char() {
 async fn f3_cycles_color_mode() {
     use crate::theme::{self, ColorMode};
 
-    theme::set_color_mode(ColorMode::Custom);
+    let _guard = COLOR_TEST_LOCK.lock().unwrap();
 
     let mut app = App::new(TuiConfig::default());
+
+    // Set color mode AFTER App::new(), since construction resets the global from config.
+    theme::set_color_mode(ColorMode::Custom);
+
     let key = KeyEvent::new(KeyCode::F(3), KeyModifiers::NONE);
 
     app.handle_key_event(key);

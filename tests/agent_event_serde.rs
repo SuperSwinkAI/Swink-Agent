@@ -320,3 +320,187 @@ fn agent_end_serializes_messages_array() {
     assert_eq!(val["event"], "agent_end");
     assert!(val["messages"].is_array());
 }
+
+// ─── Deserialization tests ──────────────────────────────────────────────────
+
+#[test]
+fn agent_event_roundtrip_all_variants() {
+    let model = default_model();
+
+    let events: Vec<(&str, AgentEvent)> = vec![
+        ("AgentStart", AgentEvent::AgentStart),
+        (
+            "AgentEnd",
+            AgentEvent::AgentEnd {
+                messages: Arc::new(vec![]),
+            },
+        ),
+        ("TurnStart", AgentEvent::TurnStart),
+        (
+            "TurnEnd",
+            AgentEvent::TurnEnd {
+                assistant_message: minimal_assistant_message(),
+                tool_results: vec![ToolResultMessage {
+                    tool_call_id: "tc1".into(),
+                    content: vec![ContentBlock::Text {
+                        text: "ok".into(),
+                    }],
+                    is_error: false,
+                    timestamp: 0,
+                    details: json!(null),
+                }],
+                reason: TurnEndReason::Complete,
+                snapshot: minimal_snapshot(),
+            },
+        ),
+        (
+            "BeforeLlmCall",
+            AgentEvent::BeforeLlmCall {
+                system_prompt: "You are helpful.".into(),
+                messages: vec![LlmMessage::User(UserMessage {
+                    content: vec![ContentBlock::Text {
+                        text: "hi".into(),
+                    }],
+                    timestamp: 0,
+                })],
+                model: model.clone(),
+            },
+        ),
+        ("MessageStart", AgentEvent::MessageStart),
+        (
+            "MessageUpdate_Text",
+            AgentEvent::MessageUpdate {
+                delta: AssistantMessageDelta::Text {
+                    content_index: 0,
+                    delta: Cow::Borrowed("chunk"),
+                },
+            },
+        ),
+        (
+            "MessageUpdate_Thinking",
+            AgentEvent::MessageUpdate {
+                delta: AssistantMessageDelta::Thinking {
+                    content_index: 0,
+                    delta: Cow::Borrowed("reasoning"),
+                },
+            },
+        ),
+        (
+            "MessageUpdate_ToolCall",
+            AgentEvent::MessageUpdate {
+                delta: AssistantMessageDelta::ToolCall {
+                    content_index: 0,
+                    delta: Cow::Borrowed("{\"key\":\"value\"}"),
+                },
+            },
+        ),
+        (
+            "MessageEnd",
+            AgentEvent::MessageEnd {
+                message: minimal_assistant_message(),
+            },
+        ),
+        (
+            "ToolExecutionStart",
+            AgentEvent::ToolExecutionStart {
+                id: "tc1".into(),
+                name: "my_tool".into(),
+                arguments: json!({"path": "/tmp"}),
+            },
+        ),
+        (
+            "ToolExecutionUpdate",
+            AgentEvent::ToolExecutionUpdate {
+                partial: AgentToolResult::text("partial output"),
+            },
+        ),
+        (
+            "ToolExecutionEnd",
+            AgentEvent::ToolExecutionEnd {
+                result: AgentToolResult::text("done"),
+                is_error: false,
+            },
+        ),
+        (
+            "ToolApprovalRequested",
+            AgentEvent::ToolApprovalRequested {
+                id: "tc1".into(),
+                name: "dangerous_tool".into(),
+                arguments: json!({}),
+            },
+        ),
+        (
+            "ToolApprovalResolved",
+            AgentEvent::ToolApprovalResolved {
+                id: "tc1".into(),
+                name: "dangerous_tool".into(),
+                approved: true,
+            },
+        ),
+        (
+            "ContextCompacted",
+            AgentEvent::ContextCompacted {
+                report: CompactionReport {
+                    dropped_count: 5,
+                    tokens_before: 10000,
+                    tokens_after: 5000,
+                    overflow: false,
+                },
+            },
+        ),
+        (
+            "ModelFallback",
+            AgentEvent::ModelFallback {
+                from_model: model.clone(),
+                to_model: ModelSpec::new("openai", "gpt-4"),
+            },
+        ),
+        (
+            "ModelCycled",
+            AgentEvent::ModelCycled {
+                old: model.clone(),
+                new: ModelSpec::new("openai", "gpt-4"),
+                reason: "throttled".into(),
+            },
+        ),
+        (
+            "Custom",
+            AgentEvent::Custom(Emission::new("test_event", json!({"key": "value"}))),
+        ),
+    ];
+
+    for (label, event) in &events {
+        let json = serde_json::to_value(event).unwrap();
+        let deserialized: AgentEvent = serde_json::from_value(json.clone()).unwrap_or_else(|e| {
+            panic!("Failed to deserialize AgentEvent variant '{label}': {e}")
+        });
+        // Compare by re-serializing — exact equality may not hold for all types.
+        let reserialized = serde_json::to_value(&deserialized).unwrap();
+        assert_eq!(
+            json, reserialized,
+            "Roundtrip mismatch for AgentEvent variant '{label}'"
+        );
+    }
+}
+
+#[test]
+fn agent_event_deserialize_invalid_variant() {
+    let json = json!({"event": "nonexistent_event"});
+    let result = serde_json::from_value::<AgentEvent>(json);
+    assert!(result.is_err());
+}
+
+#[test]
+fn agent_event_deserialize_missing_required_field() {
+    // "turn_end" requires assistant_message, tool_results, reason, and snapshot fields.
+    let json = json!({"event": "turn_end"});
+    let result = serde_json::from_value::<AgentEvent>(json);
+    assert!(result.is_err());
+}
+
+#[test]
+fn agent_event_deserialize_type_mismatch() {
+    let json = json!({"event": 123});
+    let result = serde_json::from_value::<AgentEvent>(json);
+    assert!(result.is_err());
+}

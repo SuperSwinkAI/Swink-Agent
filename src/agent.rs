@@ -29,7 +29,7 @@ use crate::error::AgentError;
 use crate::loop_::ApproveToolFn;
 use crate::loop_::{AgentEvent, AgentLoopConfig, agent_loop, agent_loop_continue};
 use crate::message_provider::MessageProvider;
-use crate::registry::AgentId;
+use crate::agent_id::AgentId;
 use crate::retry::RetryStrategy;
 use crate::stream::{StreamFn, StreamOptions};
 use crate::tool::{AgentTool, ApprovalMode};
@@ -674,9 +674,13 @@ impl Agent {
     fn dispatch_event(&mut self, event: &AgentEvent) {
         self.listeners.dispatch(event);
 
-        // Forward to event forwarders
+        // Forward to event forwarders, catching panics so one bad forwarder
+        // cannot take down the dispatch loop.
         for forwarder in &self.event_forwarders {
-            forwarder(event.clone());
+            let f = std::panic::AssertUnwindSafe(|| forwarder(event.clone()));
+            if let Err(e) = std::panic::catch_unwind(f) {
+                warn!("event forwarder panicked: {e:?}");
+            }
         }
     }
 

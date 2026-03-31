@@ -38,9 +38,7 @@ cargo test --workspace             # run all tests
 Wire up an LLM provider, register tools, and launch the interactive TUI — all in one file:
 
 ```rust
-use std::sync::Arc;
-
-use swink_agent::{AgentOptions, AgentTool, BashTool, ModelConnections, ReadFileTool, WriteFileTool};
+use swink_agent::{AgentOptions, BashTool, ModelConnections, ReadFileTool, WriteFileTool};
 use swink_agent_adapters::{build_remote_connection, remote_preset_keys};
 use swink_agent_local_llm::default_local_connection;
 use swink_agent_tui::{TuiConfig, launch, restore_terminal, setup_terminal};
@@ -56,10 +54,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             default_local_connection()?,
         ],
     );
-    let tools: Vec<Arc<dyn AgentTool>> = vec![
-        Arc::new(BashTool::new()),
-        Arc::new(ReadFileTool::new()),
-        Arc::new(WriteFileTool::new()),
+    let tools = vec![
+        BashTool::new().into_tool(),
+        ReadFileTool::new().into_tool(),
+        WriteFileTool::new().into_tool(),
     ];
 
     let options =

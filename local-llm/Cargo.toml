@@ -1,6 +1,6 @@
 [package]
 name = "swink-agent-local-llm"
-version = "0.4.0"
+version = "0.4.2"
 edition = "2024"
 rust-version = "1.88"
 description = "Local on-device LLM inference for swink-agent using mistral.rs"
@@ -37,7 +37,7 @@ tracing.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
-swink-agent = { path = "..", features = ["test-helpers"] }
+swink-agent = { path = ".." }
 tokio = { workspace = true, features = ["full", "test-util"] }
 pretty_assertions.workspace = true
 

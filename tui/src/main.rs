@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! Swink Agent TUI — interactive terminal interface for LLM agents.
 
 use std::io::IsTerminal;

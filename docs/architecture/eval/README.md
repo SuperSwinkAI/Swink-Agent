@@ -380,6 +380,8 @@ Serializable via serde for persistence alongside evaluation results. Note: `serd
 
 `BudgetGuard::from_case(case, cancel)` constructs a guard from an `EvalCase`'s budget constraints. After each event, `collect_with_guard` checks accumulated metrics; if any threshold is exceeded, it cancels the `CancellationToken` and logs a warning. The stream is fully drained so the returned `Invocation` trace is complete even after cancellation.
 
+> **Duration is not checked by `BudgetGuard`.** Duration constraints (`max_duration`) are only evaluated post-execution by `BudgetEvaluator`, not during real-time stream collection. `BudgetGuard` monitors cost, tokens, and turns in-flight; duration is inherently retrospective and cannot be reliably enforced mid-stream.
+
 `EvalRunner::run_case()` automatically wires a `BudgetGuard` when the case defines budget constraints.
 
 ---

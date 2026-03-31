@@ -244,14 +244,6 @@ impl InputEditor {
         }
     }
 
-    /// Check if content is empty.
-    ///
-    /// Reserved for future use by input validation logic.
-    #[allow(dead_code)]
-    pub fn is_empty(&self) -> bool {
-        self.lines.iter().all(String::is_empty)
-    }
-
     /// Check if this is a multi-line input.
     pub const fn is_multiline(&self) -> bool {
         self.lines.len() > 1
@@ -329,7 +321,7 @@ mod tests {
         assert_eq!(editor.lines, vec![String::new()]);
         assert_eq!(editor.cursor_row, 0);
         assert_eq!(editor.cursor_col, 0);
-        assert!(editor.is_empty());
+        assert!(editor.lines.iter().all(String::is_empty));
     }
 
     #[test]
