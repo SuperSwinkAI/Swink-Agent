@@ -1,6 +1,6 @@
 # Quickstart: Context Management
 
-**Feature**: 006-context-management | **Date**: 2026-03-20
+**Feature**: 006-context-management | **Date**: 2026-03-20 | **Updated**: 2026-03-31
 
 ## Build & Test
 
@@ -175,6 +175,49 @@ let transformer = VersioningTransformer::new(
 );
 let options = AgentOptions::new_simple("prompt", model, stream_fn)
     .with_transform_context(transformer);
+```
+
+### Context caching with static/dynamic prompt split
+
+```rust
+use swink_agent::{AgentOptions, CacheConfig};
+use std::time::Duration;
+
+// Configure caching: 10-minute TTL, minimum 4096 tokens, refresh every 3 turns
+let cache_config = CacheConfig {
+    ttl: Duration::from_secs(600),
+    min_tokens: 4096,
+    cache_intervals: 3,
+};
+
+let options = AgentOptions::new_simple("default prompt", model, stream_fn)
+    .with_static_system_prompt("You are a helpful assistant with deep expertise in...".into())
+    .with_dynamic_system_prompt(|| {
+        format!("Current time: {}. User timezone: UTC-5.", chrono::Utc::now())
+    })
+    .with_cache_config(cache_config);
+
+// Turn 1: static prompt sent with CacheHint::Write { ttl: 600s }
+// Turns 2-3: static prompt sent with CacheHint::Read
+// Turn 4: cache refreshed with new CacheHint::Write
+```
+
+### Pre-flight context overflow check
+
+```rust
+use swink_agent::{is_context_overflow, estimate_tokens};
+use swink_agent::types::ModelSpec;
+
+// Check before sending
+if is_context_overflow(&messages, &model, None) {
+    // Trigger compaction or warn the user
+    transformer.transform(&mut messages, true); // overflow=true for aggressive pruning
+}
+
+// With a custom token counter
+if is_context_overflow(&messages, &model, Some(&my_tiktoken_counter)) {
+    // Handle overflow
+}
 ```
 
 ### Message conversion (adapter implementation)

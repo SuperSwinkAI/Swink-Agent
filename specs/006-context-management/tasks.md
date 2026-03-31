@@ -130,7 +130,80 @@
 
 ---
 
-## Phase 7: Polish & Cross-Cutting Concerns
+## Phase 7: User Story 5 — Explicit Context Caching with TTL (Priority: P1)
+
+**Goal**: Provider-agnostic context caching abstraction with TTL, minimum token threshold, and cache interval lifecycle.
+
+**Independent Test**: Configure `CacheConfig` with TTL=600s, min_tokens=4096, cache_intervals=3. Simulate 5 turns and verify Write/Read hint emission pattern.
+
+### Implementation for User Story 5
+
+- [ ] T047 [US5] Create `src/context_cache.rs` with `#![forbid(unsafe_code)]`, module-level doc comment. Register in `src/lib.rs` as `mod context_cache;`
+- [ ] T051 [US5] Add unit tests for `CacheConfig`, `CacheHint`, and `CacheState` in `src/context_cache.rs`: (a) first turn emits Write, (b) turns 2..N emit Read, (c) turn N+1 emits Write (refresh), (d) `reset()` forces Write on next turn (adapter-reported cache miss), (e) `cached_prefix_len` tracks correctly, (f) `min_tokens` below threshold suppresses hints
+- [ ] T048 [US5] Implement `CacheConfig` struct in `src/context_cache.rs` — fields: `ttl: Duration`, `min_tokens: usize`, `cache_intervals: usize`. Derive `Debug, Clone`.
+- [ ] T049 [US5] Implement `CacheHint` enum in `src/context_cache.rs` — variants: `Write { ttl: Duration }`, `Read`. Derive `Debug, Clone, PartialEq`.
+- [ ] T050 [US5] Implement `CacheState` struct in `src/context_cache.rs` — fields: `turns_since_write: usize`, `cached_prefix_len: usize`. Methods: `new()`, `advance_turn(&mut self, config: &CacheConfig) -> CacheHint` (returns Write on first turn and every `cache_intervals` turns, Read otherwise), `reset(&mut self)` (force Write on next turn, used when adapter reports provider cache miss).
+- [ ] T074 [US5] Add unit tests for `cache_hint` field on `AgentMessage` in `tests/types.rs` or `src/types.rs`: (a) serde round-trip with `cache_hint: Some(Write)` preserves value, (b) serde round-trip with `cache_hint: None` omits field from JSON, (c) deserializing JSON without `cache_hint` field produces `None` (backward compat with old checkpoints).
+- [ ] T067 [US5] Add `cache_hint: Option<CacheHint>` field to `AgentMessage` in `src/types.rs` with `#[serde(default, skip_serializing_if = "Option::is_none")]`. Ensure backward-compatible deserialization.
+- [ ] T052 [US5] Add `cache_config: Option<CacheConfig>` field to `AgentOptions` in `src/agent_options.rs`. Add builder method `with_cache_config(config: CacheConfig)`.
+- [ ] T075 [US5] Add unit tests for sliding window cache prefix protection in `src/context_transformer.rs`: (a) `cached_prefix_len=3` with 10 messages — first 3 never compacted even if anchor=1, (b) `cached_prefix_len=0` — behaves identically to current (no regression), (c) `cached_prefix_len` larger than message count — all messages preserved.
+- [ ] T070 [US5] Modify `SlidingWindowTransformer` in `src/context_transformer.rs` to accept optional `cached_prefix_len: usize` and protect those messages from compaction (FR-016). When caching is active, anchor count is `max(anchor, cached_prefix_len)`.
+- [ ] T076 [US5] Add integration test for turn pipeline cache hint annotation and event emission in `tests/ac_context.rs` or new `tests/context_cache.rs`: (a) configure `CacheConfig` with `cache_intervals=2`, run 3 turns — verify turn 1 messages carry `CacheHint::Write`, turn 2 carry `CacheHint::Read`, turn 3 carry `CacheHint::Write` (refresh), (b) verify `AgentEvent::CacheAction` emitted each turn with correct hint and prefix_tokens, (c) no `CacheConfig` → no `CacheHint` on messages and no `CacheAction` events.
+- [ ] T068 [US5] Integrate cache hint annotation into the turn pipeline in `src/loop_/turn.rs` — after context transform, if `CacheConfig` is present: call `CacheState::advance_turn()`, annotate cacheable prefix messages with the returned `CacheHint`, set `cached_prefix_len` on `CacheState`.
+- [ ] T069 [US5] Add `CacheAction { hint: CacheHint, prefix_tokens: usize }` variant to `AgentEvent` in `src/types.rs`. Emit in `src/loop_/turn.rs` after cache hint annotation (FR-018).
+- [ ] T053 [US5] Add re-exports to `src/lib.rs`: `pub use context_cache::{CacheConfig, CacheHint, CacheState};`
+
+**Checkpoint**: `cargo test -p swink-agent context_cache` passes. Cache lifecycle logic works standalone, messages annotated, sliding window respects cached prefix.
+
+---
+
+## Phase 8: User Story 6 — Static vs Dynamic Instruction Split (Priority: P1)
+
+**Goal**: Separate static (cached) and dynamic (per-turn) system prompts on `AgentOptions`.
+
+**Independent Test**: Create an agent with both static and dynamic prompts. Verify static portion is stable across turns, dynamic portion updates each turn.
+
+### Implementation for User Story 6
+
+- [ ] T057 [US6] Add unit tests for prompt split in `src/agent_options.rs`: (a) only `system_prompt` set → used as-is, (b) `static_system_prompt` set → takes precedence as system prompt, (c) dynamic closure called fresh each invocation returns separate string, (d) `effective_system_prompt()` returns only static portion (not concatenated with dynamic).
+- [ ] T054 [US6] Add `static_system_prompt: Option<String>` and `dynamic_system_prompt: Option<Box<dyn Fn() -> String + Send + Sync>>` fields to `AgentOptions` in `src/agent_options.rs`.
+- [ ] T055 [US6] Add builder methods `.with_static_system_prompt(prompt: String)` and `.with_dynamic_system_prompt(f: impl Fn() -> String + Send + Sync + 'static)` to `AgentOptions`.
+- [ ] T056 [US6] Add `effective_system_prompt(&self) -> String` method to `AgentOptions` — returns `static_system_prompt` if set, otherwise falls back to `system_prompt`. Does NOT include dynamic content (dynamic prompt is injected as a separate user-role message by the turn pipeline).
+- [ ] T058 [US6] Update turn pipeline in `src/loop_/turn.rs` to: (a) use `effective_system_prompt()` for the system prompt message (cacheable), (b) if `dynamic_system_prompt` is set, inject its output as a separate user-role message immediately after the system prompt (non-cacheable).
+
+**Checkpoint**: `cargo test -p swink-agent agent_options` passes. Static/dynamic split works with and without caching.
+
+---
+
+## Phase 9: User Story 7 — Context Overflow Predicate (Priority: P2)
+
+**Goal**: `is_context_overflow()` function that estimates whether context exceeds the model's window before sending.
+
+**Independent Test**: Create messages with known token estimate, a ModelSpec with `max_context_window = Some(1000)`, verify returns true/false correctly.
+
+### Implementation for User Story 7
+
+- [ ] T059 [US7] Add unit tests for `is_context_overflow()` in `src/context.rs`: (a) messages within budget → false, (b) messages exceeding budget → true, (c) `max_context_window = None` → false, (d) custom TokenCounter used, (e) empty messages → false.
+- [ ] T060 [US7] Implement `is_context_overflow()` in `src/context.rs` — signature: `pub fn is_context_overflow(messages: &[AgentMessage], model: &ModelSpec, counter: Option<&dyn TokenCounter>) -> bool`. Sum token estimates, compare against `model.capabilities.as_ref().and_then(|c| c.max_context_window)`.
+- [ ] T061 [US7] Add re-export to `src/lib.rs`: `pub use context::is_context_overflow;`
+
+**Checkpoint**: `cargo test -p swink-agent context` passes with new overflow predicate tests.
+
+---
+
+## Phase 9b: Cache-Miss Retry Integration (FR-019)
+
+**Goal**: When an adapter returns a cache-miss error, the framework resets `CacheState` and retries with `CacheHint::Write`.
+
+- [ ] T071 [US5] Add `CacheMiss` variant to `AgentError` in `src/error.rs`. Mark as retryable in `is_retryable()` (alongside `ModelThrottled` and `NetworkError`).
+- [ ] T072 [US5] Add unit test for cache-miss retry in `src/loop_/turn.rs`: simulate a `CacheMiss` error, verify `CacheState::reset()` is called before retry and next attempt emits `CacheHint::Write`.
+- [ ] T073 [US5] Implement cache-miss detection in retry path in `src/loop_/turn.rs` — when `AgentError::CacheMiss` is caught, call `CacheState::reset()` before the retry turn so the next attempt re-sends the prefix with `CacheHint::Write`.
+
+**Checkpoint**: Cache-miss → retry → Write cycle works end-to-end.
+
+---
+
+## Phase 10: Polish & Cross-Cutting Concerns
 
 **Purpose**: Integration, API surface completeness, and validation across all stories
 
@@ -139,6 +212,11 @@
 - [x] T044 Run `cargo test --workspace` to verify no regressions across the full workspace
 - [x] T045 Run `cargo test -p swink-agent --no-default-features` to verify context management works with builtin-tools disabled
 - [x] T046 Validate quickstart.md code examples compile by inspection — check `sliding_window`, `SlidingWindowTransformer`, `VersioningTransformer`, `convert_messages` usage patterns match the public API
+- [ ] T062 Verify new re-exports in `src/lib.rs`: `CacheConfig`, `CacheHint`, `CacheState`, `is_context_overflow`
+- [ ] T063 Run `cargo clippy --workspace -- -D warnings` and fix any warnings in new context cache and overflow modules
+- [ ] T064 Run `cargo test --workspace` to verify no regressions from new code
+- [ ] T065 Run `cargo test -p swink-agent --no-default-features` to verify caching and overflow work with builtin-tools disabled
+- [ ] T066 Validate new quickstart.md code examples compile by inspection — check `CacheConfig`, `is_context_overflow`, static/dynamic prompt patterns
 
 ---
 
@@ -146,20 +224,28 @@
 
 ### Phase Dependencies
 
-- **Setup (Phase 1)**: No dependencies — can start immediately
-- **Foundational (Phase 2)**: Depends on Setup completion — BLOCKS all user stories
-- **User Story 1 (Phase 3)**: Depends on Foundational (Phase 2) — sliding window uses `estimate_tokens`, `TokenCounter`, `CompactionResult`
-- **User Story 2 (Phase 4)**: Depends on Foundational (Phase 2) and User Story 1 (Phase 3) — `SlidingWindowTransformer` delegates to `compact_sliding_window_with()`
-- **User Story 3 (Phase 5)**: Depends on Foundational (Phase 2) only — message conversion is independent of sliding window and transformers
-- **User Story 4 (Phase 6)**: Depends on Foundational (Phase 2) and User Story 2 (Phase 4) — `VersioningTransformer` wraps `ContextTransformer`
-- **Polish (Phase 7)**: Depends on all user stories being complete
+- **Setup (Phase 1)**: No dependencies — can start immediately ✅
+- **Foundational (Phase 2)**: Depends on Setup completion — BLOCKS all user stories ✅
+- **User Story 1 (Phase 3)**: Depends on Foundational (Phase 2) ✅
+- **User Story 2 (Phase 4)**: Depends on Phase 2 and Phase 3 ✅
+- **User Story 3 (Phase 5)**: Depends on Phase 2 only ✅
+- **User Story 4 (Phase 6)**: Depends on Phase 2 and Phase 4 ✅
+- **User Story 5 (Phase 7)**: Depends on Phase 2 (TokenCounter for min_tokens check) — independent of US1-US4
+- **User Story 6 (Phase 8)**: Depends on Phase 7 (CacheConfig must exist before prompt split references it) — can start in parallel with US7
+- **User Story 7 (Phase 9)**: Depends on Phase 2 only (TokenCounter + ModelSpec) — independent of US5/US6
+- **Cache-Miss Retry (Phase 9b)**: Depends on Phase 7 (CacheState, AgentError) — can run after US5 core is done
+- **Polish (Phase 10)**: Depends on all user stories and Phase 9b being complete
 
 ### User Story Dependencies
 
-- **US1 (Sliding Window)**: After Foundational — no story dependencies
-- **US2 (Transformers)**: After US1 — `SlidingWindowTransformer` wraps `compact_sliding_window_with()`
-- **US3 (Message Conversion)**: After Foundational — independent of US1/US2, can run in parallel with them
-- **US4 (Versioning)**: After US2 — `VersioningTransformer` wraps `ContextTransformer`
+- **US1 (Sliding Window)**: After Foundational — no story dependencies ✅
+- **US2 (Transformers)**: After US1 ✅
+- **US3 (Message Conversion)**: After Foundational ✅
+- **US4 (Versioning)**: After US2 ✅
+- **US5 (Context Caching)**: After Foundational — new module, no deps on US1-US4. Includes turn pipeline integration (T068), event emission (T069), sliding window protection (T070), and AgentMessage field (T067)
+- **US6 (Static/Dynamic Split)**: After US5 — references CacheConfig for cache-aware prompt building
+- **US7 (Overflow Predicate)**: After Foundational — independent of US5/US6, same file as token estimation
+- **Cache-Miss Retry (Phase 9b)**: After US5 core — adds error variant and retry path integration
 
 ### Within Each User Story
 
@@ -170,11 +256,13 @@
 
 ### Parallel Opportunities
 
-- T003, T004, T005 can run in parallel (independent module files)
-- US1 and US3 can run in parallel after Foundational (different files, no dependencies)
-- Within US1: T014 and T015 are sequential (same function), but T016 and T017 can follow immediately
-- Within US3: T027, T029 can run in parallel (different types in same file)
-- Within US4: T033, T034 can run in parallel (independent structs)
+- T003, T004, T005 can run in parallel (independent module files) ✅
+- US1 and US3 can run in parallel after Foundational ✅
+- US5 and US7 can run in parallel (different files, no dependencies)
+- US6 depends on US5 but can overlap — T057 (tests) can start while US5 pipeline tasks run
+- Phase 9b can run in parallel with US6 (different files: error.rs vs agent_options.rs)
+- Within US5: T048, T049 can run in parallel (independent types); T067 can run in parallel with T048-T050 (different file: types.rs)
+- Within US7: T059 and T060 are sequential (same function, TDD)
 
 ---
 
@@ -214,30 +302,29 @@ Task T032: Re-exports in src/lib.rs
 
 ## Implementation Strategy
 
-### MVP First (User Story 1 + User Story 3)
+### MVP First (User Story 1 + User Story 3) ✅ COMPLETE
 
-1. Complete Phase 1: Setup (module scaffolding)
-2. Complete Phase 2: Foundational (token estimation, result types)
-3. Complete Phase 3: User Story 1 (sliding window)
-4. Complete Phase 5: User Story 3 (message conversion) — can run in parallel with US1
-5. **STOP and VALIDATE**: `cargo test -p swink-agent context` and `cargo test -p swink-agent convert` both pass
-6. Core context management is functional
+1. Complete Phase 1: Setup (module scaffolding) ✅
+2. Complete Phase 2: Foundational (token estimation, result types) ✅
+3. Complete Phase 3: User Story 1 (sliding window) ✅
+4. Complete Phase 5: User Story 3 (message conversion) ✅
+5. Core context management is functional ✅
 
-### Incremental Delivery
+### Incremental Delivery (Updated 2026-03-31)
 
-1. Setup + Foundational -> Foundation ready
-2. Add US1 (Sliding Window) -> Test independently -> Core pruning works
-3. Add US3 (Message Conversion) -> Test independently -> Provider pipeline works
-4. Add US2 (Transformers) -> Test independently -> Pluggable transform hooks work
-5. Add US4 (Versioning) -> Test independently -> Debug/observability layer works
-6. Polish -> Full workspace validation
+1. Setup + Foundational → Foundation ready ✅
+2. Add US1 (Sliding Window) → Core pruning works ✅
+3. Add US3 (Message Conversion) → Provider pipeline works ✅
+4. Add US2 (Transformers) → Pluggable transform hooks work ✅
+5. Add US4 (Versioning) → Debug/observability layer works ✅
+6. **Add US5 (Context Caching) → Cache lifecycle, hint emission, event, sliding window protection, AgentMessage field**
+7. **Add US6 (Static/Dynamic Split) → Prompt separation for caching (dynamic as user-role message)**
+8. **Add US7 (Overflow Predicate) → Pre-flight overflow detection** (can run in parallel with US5/US6)
+9. **Add Phase 9b (Cache-Miss Retry) → Error variant + retry path integration**
+10. Polish → Full workspace validation
 
-### Parallel Team Strategy
+### Parallel Team Strategy (New Stories)
 
-With multiple developers:
-
-1. Team completes Setup + Foundational together
-2. Once Foundational is done:
-   - Developer A: US1 (Sliding Window) then US2 (Transformers)
-   - Developer B: US3 (Message Conversion) then US4 (Versioning, after US2 merges)
-3. Stories complete and integrate independently
+- **Developer A**: US5 (Context Caching + pipeline integration) then US6 (Static/Dynamic Split) — sequential dependency
+- **Developer B**: US7 (Overflow Predicate) then Phase 9b (Cache-Miss Retry, after US5 merges) — independent until 9b
+- Both merge → Phase 10 Polish
