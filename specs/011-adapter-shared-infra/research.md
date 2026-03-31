@@ -50,3 +50,39 @@
 **Alternatives rejected**:
 - *Registry trait with dynamic registration*: Over-engineered; the provider set is known at compile time.
 - *Config-file-based presets*: Adds I/O to what should be a pure construction step; credentials still come from env vars.
+
+## Decision 5: CacheStrategy as Provider-Agnostic Enum
+
+**Question**: How should caching be configured across adapters with different caching mechanisms?
+
+**Decision**: Define `CacheStrategy` as an enum in core (`StreamOptions`) with `None`, `Auto`, `Anthropic`, and `Google { ttl }` variants. Each adapter implements `apply_cache_strategy()` to translate the strategy into provider-specific request modifications. Adapters without caching support ignore the strategy.
+
+**Rationale**: Caching mechanisms differ fundamentally between providers — Anthropic uses inline `cache_control` blocks, Google uses separate `CachedContent` resources with TTLs. A shared enum with provider-specific variants keeps the user-facing API simple while allowing each adapter to do the right thing. `Auto` lets the adapter decide optimal cache points (system prompt + tool definitions for Anthropic, long context for Google).
+
+**Key reference**: AWS Strands' `CacheConfig` with `strategy="auto"|"anthropic"` that auto-detects and injects cache points.
+
+**Alternatives rejected**:
+- *Per-adapter caching config*: Users would need provider-specific knowledge to configure caching. The enum abstracts this.
+- *Trait-based caching*: Over-engineered. The variants are a closed set (tied to provider capabilities), not extensible.
+- *Always-on caching*: Not all prompts benefit from caching (short prompts, one-shot queries). Opt-in is correct.
+
+## Decision 6: ProxyStreamFn as Raw Byte Relay
+
+**Decision**: `ProxyStreamFn` relays raw SSE bytes without parsing into `AssistantMessageEvent`. It reuses `AdapterBase` for HTTP/auth but returns `Stream<Item = Result<Bytes, Error>>` instead of the parsed event stream.
+
+**Rationale**: Gateway deployments need Swink as a thin proxy — the consumer (e.g., a web frontend) has its own event parser. Parsing and re-serializing would add latency and lose provider-specific event fields. Raw relay is zero-overhead for this use case.
+
+**Alternatives rejected**:
+- *Parse then re-serialize*: Adds latency and loses provider-specific fields.
+- *WebSocket relay*: Different protocol; SSE relay is simpler and matches provider output.
+
+## Decision 7: OnRawPayload as Optional Synchronous Callback
+
+**Decision**: `on_raw_payload: Option<OnRawPayload>` in `StreamOptions` fires synchronously with each raw SSE data line string. Panics are caught via `catch_unwind`.
+
+**Rationale**: Raw payload observation is a debugging tool — it needs to see every byte the provider sends, before any parsing. Synchronous execution on the streaming task ensures correct ordering (callback sees data before the adapter). The `Option` check is zero-cost when not configured. Panic isolation follows the same pattern as event subscriber dispatch.
+
+**Alternatives rejected**:
+- *Channel-based async callback*: Adds ordering complexity — the callback might see data out of order if the channel buffers.
+- *Logging-only (tracing crate)*: Too structured — users want the raw string, not a tracing event that's been formatted.
+- *Middleware on the byte stream*: Would require wrapping the reqwest byte stream, adding complexity. A simple callback is lighter.

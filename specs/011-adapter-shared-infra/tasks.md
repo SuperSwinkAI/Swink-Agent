@@ -140,7 +140,73 @@
 
 ---
 
-## Phase 7: Polish & Cross-Cutting Concerns
+## Phase 7: User Story 5 — Prompt Caching Strategy (Priority: P2) — I6
+
+**Goal**: Provider-agnostic caching configuration via `CacheStrategy` enum flowing through `StreamOptions`
+
+**Independent Test**: Configure `CacheStrategy::Auto`, call adapter's `apply_cache_strategy()`, verify provider-specific markers injected
+
+### Tests for User Story 5
+
+- [ ] T041 [P] [US5] Unit test `cache_strategy_none_no_markers` in `adapters/tests/`: verify no cache markers when `CacheStrategy::None`
+- [ ] T042 [P] [US5] Unit test `cache_strategy_auto_anthropic_markers` in `adapters/tests/`: verify Anthropic adapter injects `cache_control` blocks on system prompt and tool definitions when `Auto`
+- [ ] T043 [P] [US5] Unit test `cache_strategy_ignored_by_unsupporting_adapter` in `adapters/tests/`: verify an adapter without caching support ignores the strategy silently
+
+### Implementation for User Story 5
+
+- [ ] T044 [US5] Add `CacheStrategy` enum (`None`, `Auto`, `Anthropic`, `Google { ttl }`) to `src/stream.rs` in core. Derive `Debug`, `Clone`, `Default` (default = `None`).
+- [ ] T045 [US5] Add `cache_strategy: CacheStrategy` field to `StreamOptions` in `src/stream.rs` with `#[serde(default)]`.
+- [ ] T046 [US5] Implement `apply_cache_strategy()` in the Anthropic adapter (`adapters/src/anthropic.rs`): inject `cache_control: { type: "ephemeral" }` on system prompt and tool definitions when `Auto` or `Anthropic`.
+- [ ] T047 [US5] Verify other adapters (OpenAI, Ollama, Mistral, xAI, Azure) silently ignore `CacheStrategy` (no-op — no code changes needed, just verify).
+- [ ] T048 [US5] Re-export `CacheStrategy` from `src/lib.rs` (core).
+
+**Checkpoint**: US5 complete — caching strategy flows from configuration to adapters
+
+---
+
+## Phase 8: User Story 6 — Proxy Streaming Mode (Priority: P3) — N3
+
+**Goal**: Raw SSE byte relay for gateway deployments via `ProxyStreamFn`
+
+**Independent Test**: Configure `ProxyStreamFn`, send request, verify consumer receives raw SSE bytes
+
+### Tests for User Story 6
+
+- [ ] T049 [P] [US6] Integration test `proxy_stream_raw_bytes` in `adapters/tests/`: configure `ProxyStreamFn` with a mock HTTP server, verify raw bytes are relayed
+- [ ] T050 [P] [US6] Integration test `proxy_stream_error_propagated` in `adapters/tests/`: mock HTTP server returns 500, verify error propagated to consumer
+
+### Implementation for User Story 6
+
+- [ ] T051 [US6] Implement `ProxyStreamFn` struct in `adapters/src/proxy.rs` (or new `proxy_raw.rs`): `new()` constructor, `stream_raw()` method returning `Stream<Item = Result<Bytes, Error>>`.
+- [ ] T052 [US6] Re-export `ProxyStreamFn` from `adapters/src/lib.rs`.
+
+**Checkpoint**: US6 complete — raw SSE relay available for gateway use cases
+
+---
+
+## Phase 9: User Story 7 — Raw Provider Payload Callback (Priority: P3) — N4
+
+**Goal**: Optional `on_raw_payload` callback in `StreamOptions` for observing raw SSE data lines
+
+**Independent Test**: Configure callback, send request, verify callback fires with raw data lines
+
+### Tests for User Story 7
+
+- [ ] T053 [P] [US7] Unit test `on_raw_payload_fires_for_each_line` in `adapters/tests/`: configure callback, feed SSE data, verify callback called for each data line
+- [ ] T054 [P] [US7] Unit test `on_raw_payload_none_no_overhead` in `adapters/tests/`: verify no overhead when callback is `None`
+- [ ] T055 [P] [US7] Unit test `on_raw_payload_panic_caught` in `adapters/tests/`: configure panicking callback, verify stream continues
+
+### Implementation for User Story 7
+
+- [ ] T056 [US7] Add `OnRawPayload` type alias and `on_raw_payload: Option<OnRawPayload>` field to `StreamOptions` in `src/stream.rs` (core).
+- [ ] T057 [US7] Integrate `on_raw_payload` invocation into `sse_data_lines()` in `adapters/src/sse.rs`: call callback with raw data line string before yielding `SseLine::Data`. Wrap in `catch_unwind`.
+- [ ] T058 [US7] Re-export `OnRawPayload` from `src/lib.rs` (core).
+
+**Checkpoint**: US7 complete — raw payload observation available for debugging
+
+---
+
+## Phase 10: Polish & Cross-Cutting Concerns
 
 **Purpose**: Final verification across all modules
 
@@ -149,6 +215,11 @@
 - [x] T038 Run `cargo clippy --workspace -- -D warnings` to verify zero clippy warnings
 - [x] T039 Run `cargo test --workspace` to verify no regressions in other crates
 - [x] T040 Run quickstart.md validation: execute all code examples from `specs/011-adapter-shared-infra/quickstart.md` usage section
+- [ ] T059 Verify `CacheStrategy`, `OnRawPayload`, and `ProxyStreamFn` are re-exported from their respective crate roots
+- [ ] T060 Run `cargo build --workspace` and verify zero compilation errors with new types
+- [ ] T061 Run `cargo test --workspace` and verify all new tests pass
+- [ ] T062 Run `cargo clippy --workspace -- -D warnings` and fix any warnings
+- [ ] T063 Validate new quickstart.md examples (caching, raw payload, proxy) match actual API
 
 ---
 
@@ -162,7 +233,10 @@
 - **US2 (Phase 4)**: Depends on Foundational (Phase 2) — independent of US1, US3, US4
 - **US3 (Phase 5)**: Depends on Foundational (Phase 2) — independent of US1, US2, US4
 - **US4 (Phase 6)**: Depends on Foundational (Phase 2) — may reference types from US1/US2/US3 but is independently testable
-- **Polish (Phase 7)**: Depends on all user stories being complete
+- **US5 Caching (Phase 7)**: Depends on Phase 2. Modifies core `StreamOptions` and Anthropic adapter.
+- **US6 Proxy (Phase 8)**: Depends on Phase 2. Adds new struct in adapters. Independent of US5/US7.
+- **US7 Raw Payload (Phase 9)**: Depends on Phase 2 and US3 (SSE parsing). Modifies `sse_data_lines()`.
+- **Polish (Phase 10)**: Depends on all user stories being complete
 
 ### User Story Dependencies
 
@@ -181,6 +255,8 @@
 ### Parallel Opportunities
 
 - US1, US2, US3 are fully independent and can all start in parallel after Phase 2
+- US5, US6 can proceed in parallel after Phase 2 (separate files, no cross-deps)
+- US7 depends on US3 (modifies sse_data_lines) but can proceed after US3 is complete
 - Within US2: T011, T012 (tests) in parallel; T013 (types) in parallel with tests
 - Within US3: T017, T018, T019 (tests) in parallel; T020 (types) in parallel with tests
 - Within US4: T026, T027, T028 (tests) in parallel; T029 (types) in parallel with tests
@@ -256,3 +332,6 @@ Task T025: "Re-exports in lib.rs"
 - Verify tests fail before implementing
 - Commit after each task or logical group
 - Stop at any checkpoint to validate story independently
+- US5 (Caching) adds `CacheStrategy` to core `StreamOptions` and modifies Anthropic adapter
+- US6 (Proxy) adds `ProxyStreamFn` — new struct in adapters crate
+- US7 (Raw Payload) adds `OnRawPayload` to core `StreamOptions` and modifies `sse_data_lines()`
