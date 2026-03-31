@@ -88,3 +88,39 @@
 **Alternatives rejected**:
 - **String-based capabilities**: No compile-time safety. Typos in TOML silently fail.
 - **Bitflags**: Less readable in TOML (numeric values). The number of capabilities is small enough that a `Vec<PresetCapability>` is fine.
+
+---
+
+### D8: Pricing Data Inline in Catalog TOML
+
+**Decision**: Add pricing fields (`cost_per_million_input`, `cost_per_million_output`, `cost_per_million_cache_read`, `cost_per_million_cache_write`) as optional `f64` fields directly on `PresetCatalog`. The `calculate_cost()` function looks up pricing by `model_id` across all providers.
+
+**Rationale**: Pricing is per-model, not per-provider — different tiers from the same provider have different prices. Keeping pricing inline with the preset definition ensures pricing and model metadata stay in sync. The fields are `Option<f64>` so models without pricing data (e.g., local models, preview models) simply omit them. A separate pricing file was considered but adds indirection without benefit — pricing changes at the same cadence as model additions.
+
+**Key reference**: Pi Agent's `calculateCost(model, usage)` with pricing baked into model metadata. AWS Bedrock SDK bakes pricing into model definitions.
+
+**Alternatives rejected**:
+- **Separate pricing TOML file**: Adds a second file to maintain. Pricing and model metadata change together, so co-location is cleaner.
+- **Runtime pricing lookup (API call)**: Violates library-first principle. Adds network dependency for a simple calculation.
+- **Pricing as a trait/callback**: Over-engineering. A pure function with catalog lookup is simpler and covers all use cases.
+
+---
+
+### D9: calculate_cost() Lookup by model_id, Not Provider+Preset
+
+**Decision**: `calculate_cost(model_id: &str, usage: &Usage) -> Cost` searches the catalog by `model_id` across all providers, not by `(provider_key, preset_id)`.
+
+**Rationale**: Callers typically have a `ModelSpec` (which carries `model_id`) but not necessarily the preset ID. Searching by `model_id` is the most ergonomic API. Since `model_id` is unique across the catalog (each model ID maps to exactly one preset), the search is unambiguous. Graceful degradation (zero cost) when the model is not found avoids forcing callers to handle errors for what is essentially a monitoring convenience.
+
+**Alternatives rejected**:
+- **Lookup by `(provider_key, preset_id)`**: Requires callers to know the preset ID, which is a catalog-internal concept. `model_id` is what the LLM API uses.
+- **Lookup by `&ModelSpec`**: Would work but ties the function signature to `ModelSpec`. Using `&str` for `model_id` is more flexible.
+- **Returning `Result<Cost, _>`**: Cost calculation is a best-effort convenience. Returning an error for unknown models adds error handling burden with no benefit — zero cost is the correct answer for "I don't know this model's pricing."
+
+---
+
+### D10: ModelCapabilities as Optional Field on ModelSpec
+
+**Decision**: `ModelSpec` carries `capabilities: Option<ModelCapabilities>`. The `capabilities()` method returns stored capabilities or `ModelCapabilities::default()` (all flags false, no limits). `CatalogPreset::model_spec()` pre-populates capabilities from the catalog.
+
+**Rationale**: Capabilities are metadata that flows with the model specification. Making them `Option` preserves backward compatibility — manually created `ModelSpec` instances work without specifying capabilities. The `capabilities()` accessor returning defaults for `None` means callers never need to handle the absence case. This pattern mirrors how `serde(default)` works — absent data gets safe defaults.

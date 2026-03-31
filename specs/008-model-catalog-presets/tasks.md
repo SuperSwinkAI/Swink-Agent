@@ -111,7 +111,50 @@
 
 ---
 
-## Phase 6: Polish & Cross-Cutting Concerns
+## Phase 6: User Story 4 — Calculate Model Cost from Usage (Priority: P2) — I21
+
+**Goal**: Compute monetary cost from token usage using catalog pricing data
+
+**Independent Test**: Call `calculate_cost()` with a known model and usage, verify computed cost matches expected values
+
+### Tests for User Story 4
+
+> **NOTE: Write these tests FIRST, ensure they FAIL before implementation (Constitution Principle II: TDD)**
+
+- [ ] T031 [US4] Write unit tests in `src/model_catalog.rs` `#[cfg(test)]` module: `calculate_cost_known_model` (verify input/output/cache costs match expected), `calculate_cost_unknown_model` (returns zero cost), `calculate_cost_zero_usage` (returns zero cost), `calculate_cost_cache_tokens` (verify cache_read and cache_write costs), `calculate_cost_no_pricing_data` (model exists in catalog but has no pricing fields — e.g., local model — returns zero cost)
+
+### Implementation for User Story 4
+
+- [ ] T032 [US4] Add pricing fields to `PresetCatalog` in `src/model_catalog.rs`: `cost_per_million_input: Option<f64>`, `cost_per_million_output: Option<f64>`, `cost_per_million_cache_read: Option<f64>`, `cost_per_million_cache_write: Option<f64>` with `#[serde(default)]`
+- [ ] T033 [US4] Add pricing fields to `CatalogPreset` (flattened view) — propagate from `PresetCatalog` during `ModelCatalog::preset()` construction
+- [ ] T034 [US4] Add helper method to `ModelCatalog`: `fn find_preset_by_model_id(&self, model_id: &str) -> Option<CatalogPreset>` — search across all providers
+- [ ] T035 [US4] Implement `calculate_cost(model_id: &str, usage: &Usage) -> Cost` in `src/model_catalog.rs` — look up pricing via `find_preset_by_model_id`, compute per-category costs, return `Cost::default()` if not found
+- [ ] T036 [US4] Populate pricing data for all Anthropic presets in `src/model_catalog.toml` (opus_46, sonnet_46, haiku_45)
+- [ ] T037 [P] [US4] Populate pricing data for all OpenAI presets in `src/model_catalog.toml`
+- [ ] T038 [P] [US4] Populate pricing data for all Google, Mistral, xAI presets in `src/model_catalog.toml`
+- [ ] T039 [US4] Re-export `calculate_cost` from `src/lib.rs`
+
+**Checkpoint**: Cost calculation functional — monetary cost can be computed from token usage for any cataloged model
+
+---
+
+## Phase 7: User Story 5 — Query Model Capabilities at Runtime (Priority: P2) — I22
+
+**Goal**: Formalize capability introspection from catalog presets through ModelSpec
+
+**Independent Test**: Load a catalog preset, call `model_capabilities()`, verify correct flags and limits
+
+> **NOTE**: `ModelCapabilities`, `CatalogPreset::model_capabilities()`, and `ModelSpec::capabilities()` already exist. This phase validates existing behavior against the new acceptance scenarios and adds any missing test coverage.
+
+### Tests for User Story 5
+
+- [ ] T040 [US5] Write unit tests in `src/model_catalog.rs` `#[cfg(test)]` module (if not already covered): `capabilities_from_catalog_preset` (verify all flags from catalog capabilities), `capabilities_context_window_and_output` (verify max_context_window and max_output_tokens from catalog), `model_spec_carries_capabilities` (verify capabilities survive model_spec() creation), `manual_model_spec_defaults` (verify ModelSpec::new() has default capabilities)
+
+**Checkpoint**: Capability introspection formally verified — catalog capabilities flow correctly through ModelSpec
+
+---
+
+## Phase 8: Polish & Cross-Cutting Concerns
 
 **Purpose**: Re-exports, final validation, and cleanup
 
@@ -119,6 +162,10 @@
 - [x] T028 [P] Run `cargo clippy --workspace -- -D warnings` and fix any warnings
 - [x] T029 Run `cargo test --workspace` to verify all tests pass
 - [x] T030 Run quickstart.md validation — verify all code examples compile conceptually against the implemented API
+- [ ] T041 Verify `calculate_cost` is re-exported from `src/lib.rs`
+- [ ] T042 Run `cargo clippy --workspace -- -D warnings` with updated catalog and fix any warnings
+- [ ] T043 Run `cargo test --workspace` to verify all new tests pass
+- [ ] T044 Validate new quickstart.md examples (cost calculation, capability query) match actual API
 
 ---
 
@@ -131,13 +178,17 @@
 - **User Story 1 (Phase 3)**: Depends on Foundational phase completion
 - **User Story 2 (Phase 4)**: Depends on Foundational phase completion — can run in parallel with US1 (different files)
 - **User Story 3 (Phase 5)**: Depends on Foundational phase completion — can run in parallel with US1 and US2 (different file)
-- **Polish (Phase 6)**: Depends on all user stories being complete
+- **User Story 4 — Cost (Phase 6)**: Depends on US1 (needs catalog with presets). Modifies `model_catalog.rs` and `model_catalog.toml`.
+- **User Story 5 — Capabilities (Phase 7)**: Depends on US1 (needs catalog). Primarily test verification of existing behavior.
+- **Polish (Phase 8)**: Depends on all user stories being complete
 
 ### User Story Dependencies
 
 - **User Story 1 (P1)**: Depends on Phase 2 only. Self-contained in `src/model_catalog.rs` and `src/model_catalog.toml`
 - **User Story 2 (P1)**: Depends on Phase 2 only. Self-contained in `src/model_presets.rs`. Uses `ModelSpec` and `StreamFn` from existing core types
 - **User Story 3 (P2)**: Depends on Phase 2 only. Self-contained in `src/fallback.rs`. Uses `ModelSpec` and `StreamFn` from existing core types
+- **User Story 4 (P2)**: Depends on US1 (catalog with presets). Adds pricing fields to `PresetCatalog`/`CatalogPreset` and `calculate_cost()` function in `src/model_catalog.rs`
+- **User Story 5 (P2)**: Depends on US1 (catalog). Primarily test-only — validates existing `ModelCapabilities` behavior against formal acceptance scenarios
 
 ### Within Each User Story
 
@@ -153,7 +204,8 @@
 - T019 can run in parallel with US1 tasks (different file: model_presets.rs vs model_catalog.rs)
 - T024 can run in parallel with US1 and US2 tasks (different file: fallback.rs)
 - T027 and T028 can run in parallel (different concerns)
-- All three user stories can proceed in parallel after Phase 2 since each lives in a separate source file
+- US1, US2, US3 can proceed in parallel after Phase 2 since each lives in a separate source file
+- US4 and US5 can proceed in parallel after US1 (both modify model_catalog.rs but US5 is test-only)
 
 ---
 
@@ -190,7 +242,9 @@ Task T024-T026
 2. Add User Story 1 → Catalog browsing works → MVP
 3. Add User Story 2 → Connection resolution works → Enhanced
 4. Add User Story 3 → Fallback configuration works → Production-ready
-5. Polish → Clean re-exports, zero warnings, all tests green
+5. Add User Story 4 → Cost calculation works → Cost-aware
+6. Add User Story 5 → Capabilities formally verified → Introspectable
+7. Polish → Clean re-exports, zero warnings, all tests green
 
 ### Parallel Team Strategy
 
@@ -209,5 +263,7 @@ With multiple developers after Phase 2:
 - Each user story is independently completable and testable
 - All source files live in `src/` of the `swink-agent` core crate
 - The TOML data file (`src/model_catalog.toml`) is embedded at compile time — changes require recompilation but no code changes
+- US4 (Cost Calculation) is new work — adds pricing fields to catalog and `calculate_cost()` function
+- US5 (Capability Introspection) is primarily test verification of existing behavior — `ModelCapabilities` already exists
 - Commit after each task or logical group
 - Stop at any checkpoint to validate story independently

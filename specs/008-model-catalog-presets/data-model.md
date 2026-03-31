@@ -60,10 +60,14 @@ Metadata for a specific model preset within a provider.
 | `context_window_tokens` | `Option<u64>` | Maximum context window size in tokens |
 | `max_output_tokens` | `Option<u64>` | Maximum output tokens per response |
 | `include_by_default` | `bool` | Whether to include in default model list (default: `false`) |
+| `cost_per_million_input` | `Option<f64>` | USD cost per million input tokens (default: `None`) |
+| `cost_per_million_output` | `Option<f64>` | USD cost per million output tokens (default: `None`) |
+| `cost_per_million_cache_read` | `Option<f64>` | USD cost per million cache read tokens (default: `None`) |
+| `cost_per_million_cache_write` | `Option<f64>` | USD cost per million cache write tokens (default: `None`) |
 | `repo_id` | `Option<String>` | HuggingFace repository ID (local models) |
 | `filename` | `Option<String>` | Model filename (local models) |
 
-**Derives**: `Debug`, `Clone`, `PartialEq`, `Eq`, `Deserialize`
+**Derives**: `Debug`, `Clone`, `PartialEq`, `Deserialize` (note: `Eq` removed since `f64` fields do not implement `Eq`)
 
 ---
 
@@ -92,6 +96,10 @@ Flattened, denormalized view combining provider and preset metadata. Not deseria
 | `requires_base_url` | `bool` | Whether base URL is required |
 | `region_env_var` | `Option<String>` | Region env var name |
 | `include_by_default` | `bool` | Default inclusion flag |
+| `cost_per_million_input` | `Option<f64>` | USD cost per million input tokens |
+| `cost_per_million_output` | `Option<f64>` | USD cost per million output tokens |
+| `cost_per_million_cache_read` | `Option<f64>` | USD cost per million cache read tokens |
+| `cost_per_million_cache_write` | `Option<f64>` | USD cost per million cache write tokens |
 | `repo_id` | `Option<String>` | HuggingFace repo ID |
 | `filename` | `Option<String>` | Model filename |
 
@@ -99,7 +107,7 @@ Flattened, denormalized view combining provider and preset metadata. Not deseria
 - `model_capabilities(&self) -> ModelCapabilities` — convert capability list to `ModelCapabilities` struct
 - `model_spec(&self) -> ModelSpec` — create a `ModelSpec` with capabilities pre-populated
 
-**Derives**: `Debug`, `Clone`, `PartialEq`, `Eq`
+**Derives**: `Debug`, `Clone`, `PartialEq`
 
 ---
 
@@ -228,6 +236,23 @@ Returns a reference to the singleton `ModelCatalog` loaded from the embedded TOM
 
 ---
 
+### calculate_cost() (free function)
+
+```text
+pub fn calculate_cost(model_id: &str, usage: &Usage) -> Cost
+```
+
+Looks up pricing data from the catalog by `model_id` (searching across all providers). Computes monetary cost:
+- `input_cost = usage.input as f64 * cost_per_million_input / 1_000_000.0`
+- `output_cost = usage.output as f64 * cost_per_million_output / 1_000_000.0`
+- `cache_read_cost = usage.cache_read as f64 * cost_per_million_cache_read / 1_000_000.0`
+- `cache_write_cost = usage.cache_write as f64 * cost_per_million_cache_write / 1_000_000.0`
+- `total = input_cost + output_cost + cache_read_cost + cache_write_cost`
+
+Returns `Cost::default()` (all zeros) if model not found or pricing data is `None`.
+
+---
+
 ## Relationships
 
 ```text
@@ -253,4 +278,13 @@ ModelConnection (ModelSpec + Arc<dyn StreamFn>)
 
 ModelFallback (Vec<(ModelSpec, Arc<dyn StreamFn>)>)
     └── consumed by agent loop for automatic failover
+
+calculate_cost(model_id, usage) -> Cost
+    ├── looks up PresetCatalog by model_id across all providers
+    ├── uses cost_per_million_input/output/cache_read/cache_write
+    └── returns Cost with input, output, cache_read, cache_write, total
+
+ModelSpec.capabilities -> Option<ModelCapabilities>
+    ├── populated by CatalogPreset::model_spec()
+    └── queryable via ModelSpec::capabilities() (returns stored or default)
 ```

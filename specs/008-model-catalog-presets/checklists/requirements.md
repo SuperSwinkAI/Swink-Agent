@@ -29,6 +29,16 @@
 - [x] Feature meets measurable outcomes defined in Success Criteria
 - [x] No implementation details leak into specification
 
+## Cost Calculation & Capability Introspection (I21, I22)
+
+- [x] US4–US5 acceptance scenarios are testable and unambiguous
+- [x] FR-010 through FR-014 are measurable
+- [x] SC-006 through SC-009 are technology-agnostic success criteria
+- [x] Edge cases for cost calculation (unknown model, missing pricing, provider-specific costs) identified
+- [x] Graceful degradation specified (zero cost for unknowns)
+- [x] Backward compatibility maintained (Option fields, existing ModelCapabilities reused)
+
 ## Notes
 
 - All items pass. Spec is ready for `/speckit.clarify` or `/speckit.plan`.
+- I21 (Cost Calculation) and I22 (Capability Introspection) added 2026-03-31: US4–US5, FR-010–FR-014, SC-006–SC-009, tasks T031–T044.

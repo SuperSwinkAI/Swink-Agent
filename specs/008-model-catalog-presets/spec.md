@@ -3,7 +3,7 @@
 **Feature Branch**: `008-model-catalog-presets`
 **Created**: 2026-03-20
 **Status**: Draft
-**Input**: Data-driven model and provider registry, preset-based connection configuration, and automatic model fallback. References: HLD Catalogs & Registries (ModelCatalog, PresetCatalog, ProviderCatalog), HLD Design Decisions (catalogs are core concerns), Provider Expansion Roadmap (catalog shape guidance).
+**Input**: Data-driven model and provider registry, preset-based connection configuration, automatic model fallback, model cost calculation from catalog pricing data, and capability introspection. References: HLD Catalogs & Registries (ModelCatalog, PresetCatalog, ProviderCatalog), HLD Design Decisions (catalogs are core concerns), Provider Expansion Roadmap (catalog shape guidance).
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -55,12 +55,49 @@ A developer configures a primary model with one or more fallback models. When th
 
 ---
 
+### User Story 4 - Calculate Model Cost from Usage (Priority: P2) — I21
+
+A developer calculates the monetary cost of an LLM call by passing a model specification and token usage to a `calculate_cost()` function. The function looks up per-million-token pricing data from the catalog and computes input, output, cache read, cache write, and total costs. If the model is not found in the catalog, zero cost is returned (graceful degradation).
+
+**Why this priority**: Cost visibility is essential for production monitoring and budget enforcement. Without catalog-driven pricing, operators must maintain separate pricing tables or hardcode costs.
+
+**Independent Test**: Can be tested by calling `calculate_cost()` with a known model and usage, and verifying the computed cost matches the expected value from the catalog's pricing data.
+
+**Acceptance Scenarios**:
+
+1. **Given** a model in the catalog with pricing data and a `Usage` with input/output tokens, **When** `calculate_cost()` is called, **Then** the returned `Cost` has correct `input`, `output`, and `total` fields computed as `tokens * price_per_million / 1_000_000`.
+2. **Given** a `Usage` with `cache_read` and `cache_write` tokens, **When** `calculate_cost()` is called, **Then** the returned `Cost` includes correct `cache_read` and `cache_write` fields.
+3. **Given** a model not in the catalog (unknown model), **When** `calculate_cost()` is called, **Then** a zero `Cost` is returned (all fields are 0.0).
+4. **Given** a model with pricing data but zero usage tokens, **When** `calculate_cost()` is called, **Then** a zero `Cost` is returned.
+
+---
+
+### User Story 5 - Query Model Capabilities at Runtime (Priority: P2) — I22
+
+A developer queries a model's capabilities at runtime to determine what features it supports (thinking, tool use, vision, streaming, structured output) and its limits (context window, max output tokens). Capabilities are populated from the catalog when a `ModelSpec` is created via `CatalogPreset::model_spec()`, and are queryable via `ModelSpec::capabilities()`.
+
+**Why this priority**: Capability introspection enables adaptive agent behavior — e.g., only requesting thinking mode from models that support it, or adjusting context size to fit the model's window.
+
+**Independent Test**: Can be tested by loading a catalog preset, calling `model_capabilities()`, and verifying the correct flags and limits are set.
+
+**Acceptance Scenarios**:
+
+1. **Given** a catalog preset with capabilities `["thinking", "tools", "images_in", "streaming"]`, **When** `model_capabilities()` is called, **Then** the returned `ModelCapabilities` has `supports_thinking: true`, `supports_tool_use: true`, `supports_vision: true`, `supports_streaming: true`.
+2. **Given** a catalog preset with `context_window_tokens = 200000` and `max_output_tokens = 64000`, **When** `model_capabilities()` is called, **Then** the returned `ModelCapabilities` has `max_context_window: Some(200000)` and `max_output_tokens: Some(64000)`.
+3. **Given** a `ModelSpec` created via `CatalogPreset::model_spec()`, **When** `spec.capabilities()` is called, **Then** it returns the same capabilities as the catalog preset.
+4. **Given** a `ModelSpec` created manually (not from catalog), **When** `spec.capabilities()` is called, **Then** it returns default capabilities (all flags false, no limits).
+
+---
+
 ### Edge Cases
 
 - What happens when the catalog data file is malformed — the catalog is embedded at compile time; malformed TOML panics at initialization with a clear message. This is a build-time invariant, not a runtime error.
 - How does the system handle a provider that has presets but no credential environment variable is set — resolution indicates the missing credentials; callers handle it (e.g., TUI shows a setup wizard).
 - What happens when a fallback chain contains only one model — behaves identically to no fallback; the single model is tried and errors propagate normally.
 - How does the catalog handle duplicate preset identifiers across providers — preset lookup uses first-match via `iter().find()`. Duplicates are prevented by TOML structure (unique keys per provider section).
+- What happens when pricing data is missing for a model in the catalog — `calculate_cost()` returns zero cost. Models without pricing fields are treated as free (graceful degradation, not an error).
+- What happens when pricing data changes between catalog versions — pricing is compiled into the binary. To update pricing, update `model_catalog.toml` and recompile. Runtime pricing updates are out of scope.
+- What happens when `Usage.extra` contains provider-specific token categories — `calculate_cost()` only computes costs for standard categories (input, output, cache_read, cache_write). Provider-specific costs in `Cost.extra` must be computed by the adapter.
 
 ## Requirements *(mandatory)*
 
@@ -75,6 +112,11 @@ A developer configures a primary model with one or more fallback models. When th
 - **FR-007**: System MUST support automatic model fallback with a configurable chain of model specifications.
 - **FR-008**: Fallback MUST try each model in order, stopping at the first success. If all fail, the last error is surfaced.
 - **FR-009**: The catalog MUST be extensible — new providers and presets can be added by updating the data file without code changes.
+- **FR-010**: The catalog MUST support per-preset pricing fields: `cost_per_million_input`, `cost_per_million_output`, `cost_per_million_cache_read`, `cost_per_million_cache_write` (all `Option<f64>`, defaulting to `None`/zero).
+- **FR-011**: System MUST provide a `calculate_cost(model_id: &str, usage: &Usage) -> Cost` function that looks up pricing from the catalog and computes monetary cost from token counts.
+- **FR-012**: `calculate_cost()` MUST return zero cost for models not found in the catalog or models without pricing data (graceful degradation, not an error).
+- **FR-013**: The catalog MUST expose capability metadata per preset via `CatalogPreset::model_capabilities()`, mapping capability flags and token limits to the `ModelCapabilities` struct.
+- **FR-014**: `ModelSpec` MUST carry optional `capabilities: Option<ModelCapabilities>` and provide `capabilities() -> ModelCapabilities` returning stored capabilities or defaults.
 
 ### Key Entities
 
@@ -83,6 +125,9 @@ A developer configures a primary model with one or more fallback models. When th
 - **Preset**: Metadata for a specific model — ID, display name, group, model ID, capabilities, status, context window.
 - **ModelConnection**: Fully resolved connection configuration — base URL, credentials, model specification.
 - **ModelFallback**: Ordered chain of model specifications with automatic failover.
+- **ModelPricing**: Per-preset pricing data (cost per million tokens for input, output, cache read, cache write) embedded in the catalog TOML.
+- **calculate_cost()**: Free function computing `Cost` from `Usage` using catalog pricing data.
+- **ModelCapabilities**: Capability flags and token limits queryable from `ModelSpec` or `CatalogPreset`.
 
 ## Success Criteria *(mandatory)*
 
@@ -93,6 +138,10 @@ A developer configures a primary model with one or more fallback models. When th
 - **SC-003**: Preset-to-connection resolution produces correct credentials and base URLs from environment variables.
 - **SC-004**: Automatic fallback tries the next model when the primary fails and stops at the first success.
 - **SC-005**: New providers can be added to the catalog data file without modifying code.
+- **SC-006**: `calculate_cost()` correctly computes input, output, cache read, cache write, and total costs from catalog pricing data and token usage.
+- **SC-007**: `calculate_cost()` returns zero cost for unknown models or models without pricing data.
+- **SC-008**: `CatalogPreset::model_capabilities()` correctly maps catalog capability flags and token limits to `ModelCapabilities`.
+- **SC-009**: `ModelSpec::capabilities()` returns catalog-populated capabilities when created from a preset, or defaults when created manually.
 
 ## Clarifications
 
@@ -102,6 +151,12 @@ A developer configures a primary model with one or more fallback models. When th
 - Q: What if provider credentials are missing? → A: Resolution indicates missing credentials; callers handle (e.g., setup wizard).
 - Q: Single-model fallback behavior? → A: Identical to no fallback; single model tried, errors propagate.
 - Q: Duplicate preset IDs across providers? → A: First-match via find(); TOML structure prevents duplicates per provider.
+### Session 2026-03-31
+
+- Q: Should `Eq` be removed from `PresetCatalog` and `CatalogPreset` after adding `f64` pricing fields? → A: Yes — remove `Eq`, keep `PartialEq`. `f64` does not implement `Eq`, but `PartialEq` works fine. NaN pricing values are not a realistic concern since TOML parsing produces finite floats.
+
+### Session 2026-03-20
+
 - Q: How does FR-004 filtering by group/capability/status work? → A: The catalog exposes `providers` and their `presets` as public fields. Callers filter by iterating over presets and matching on group, capability, or status fields directly. The core catalog provides lookup by provider key and preset ID; advanced filtering is a caller concern.
 - Q: Does FR-006 (preset-to-connection resolution via env vars) live in core? → A: No. The core crate provides `ModelConnection` as a provider-agnostic container. Actual env-var resolution is an adapter-layer responsibility per Constitution Principle V (Provider Agnosticism).
 - Q: Does FR-008 (fallback execution) live in this feature? → A: No. `ModelFallback` is configuration only. The agent loop (spec 004) consumes it to implement failover execution.
@@ -113,3 +168,7 @@ A developer configures a primary model with one or more fallback models. When th
 - Preset capabilities include at minimum: text generation, tool calling, and reasoning/thinking.
 - Preset status indicates whether the model is generally available, in preview, or deprecated.
 - Fallback is triggered by errors from the provider, not by response quality.
+- Pricing data is per-preset, not per-provider — different model tiers from the same provider have different prices.
+- Pricing is in USD per million tokens, consistent across all providers.
+- `calculate_cost()` looks up pricing by `model_id` (searching across all providers), not by provider key + preset ID.
+- `ModelCapabilities` already exists in `src/types.rs` — this spec formalizes its usage, not its creation.
