@@ -5,19 +5,19 @@
 //!
 //! ## Core policies
 //!
-//! - **`budget`**: [`BudgetPolicy`] — stops the loop when cost or token limits are exceeded
-//! - **`max-turns`**: [`MaxTurnsPolicy`] — stops the loop after a configured number of turns
-//! - **`deny-list`**: [`ToolDenyListPolicy`] — rejects tool calls by name
-//! - **`sandbox`**: [`SandboxPolicy`] — restricts file paths to an allowed root directory
-//! - **`loop-detection`**: [`LoopDetectionPolicy`] — detects repeated tool call patterns
-//! - **`checkpoint`**: [`CheckpointPolicy`] — persists agent state after each turn
+//! - **`budget`**: `BudgetPolicy` — stops the loop when cost or token limits are exceeded
+//! - **`max-turns`**: `MaxTurnsPolicy` — stops the loop after a configured number of turns
+//! - **`deny-list`**: `ToolDenyListPolicy` — rejects tool calls by name
+//! - **`sandbox`**: `SandboxPolicy` — restricts file paths to an allowed root directory
+//! - **`loop-detection`**: `LoopDetectionPolicy` — detects repeated tool call patterns
+//! - **`checkpoint`**: `CheckpointPolicy` — persists agent state after each turn
 //!
 //! ## Application policies
 //!
-//! - **`prompt-guard`**: [`PromptInjectionGuard`] — blocks prompt injection in user messages and tool results
-//! - **`pii`**: [`PiiRedactor`] — redacts personally identifiable information from assistant responses
-//! - **`content-filter`**: [`ContentFilter`] — keyword/regex blocklist for assistant output
-//! - **`audit`**: [`AuditLogger`] — records every turn to a pluggable sink
+//! - **`prompt-guard`**: `PromptInjectionGuard` — blocks prompt injection in user messages and tool results
+//! - **`pii`**: `PiiRedactor` — redacts personally identifiable information from assistant responses
+//! - **`content-filter`**: `ContentFilter` — keyword/regex blocklist for assistant output
+//! - **`audit`**: `AuditLogger` — records every turn to a pluggable sink
 #![forbid(unsafe_code)]
 
 #[cfg(any(feature = "prompt-guard", feature = "pii", feature = "content-filter"))]
