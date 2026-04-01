@@ -49,6 +49,13 @@ impl LocalModelError {
         }
     }
 
+    /// Convenience constructor for [`LocalModelError::Loading`] from a message.
+    pub fn loading_message(message: impl Into<String>) -> Self {
+        Self::Loading {
+            source: message.into().into(),
+        }
+    }
+
     /// Convenience constructor for [`LocalModelError::Inference`].
     pub fn inference(message: impl Into<String>) -> Self {
         Self::Inference {
