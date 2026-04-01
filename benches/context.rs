@@ -10,6 +10,7 @@ fn make_messages(n: usize, text: &str) -> Vec<AgentMessage> {
                     text: format!("{text} {i}"),
                 }],
                 timestamp: 0,
+                cache_hint: None,
             }))
         })
         .collect()
