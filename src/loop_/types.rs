@@ -1,0 +1,77 @@
+//! Internal type definitions shared across loop submodules.
+
+use crate::types::{AgentMessage, AssistantMessage, LlmMessage, ToolResultMessage};
+
+// ─── Type Aliases ────────────────────────────────────────────────────────────
+
+/// Converts an `AgentMessage` to an optional `LlmMessage` for the provider.
+pub type ConvertToLlmFn = dyn Fn(&AgentMessage) -> Option<LlmMessage> + Send + Sync;
+
+// ─── LoopState ──────────────────────────────────────────────────────────────
+
+/// Mutable state threaded through the loop iterations.
+pub struct LoopState {
+    pub context_messages: Vec<AgentMessage>,
+    pub pending_messages: Vec<AgentMessage>,
+    pub overflow_signal: bool,
+    /// Whether emergency overflow recovery has already been attempted this turn.
+    /// Resets to `false` at the start of each turn.
+    pub overflow_recovery_attempted: bool,
+    pub turn_index: usize,
+    pub accumulated_usage: crate::types::Usage,
+    pub accumulated_cost: crate::types::Cost,
+    /// The last assistant message from a completed turn (for policy checks).
+    pub last_assistant_message: Option<AssistantMessage>,
+    /// Tool results from the last completed turn (for post-turn hook).
+    pub last_tool_results: Vec<ToolResultMessage>,
+}
+
+// ─── TurnOutcome ────────────────────────────────────────────────────────────
+
+/// Outcome of a single turn execution within the inner loop.
+pub enum TurnOutcome {
+    /// Continue to the next inner-loop iteration (tool results need processing).
+    ContinueInner,
+    /// Break out of the inner loop (no tool calls, check follow-ups).
+    BreakInner,
+    /// Return from the entire loop (channel closed, error, or abort).
+    Return,
+}
+
+// ─── ToolCallInfo ───────────────────────────────────────────────────────────
+
+/// Info about a tool call extracted from the assistant message.
+pub struct ToolCallInfo {
+    pub id: String,
+    pub name: String,
+    pub arguments: serde_json::Value,
+    pub is_incomplete: bool,
+}
+
+// ─── StreamResult ───────────────────────────────────────────────────────────
+
+/// Result of streaming an assistant response.
+#[allow(clippy::large_enum_variant)]
+pub enum StreamResult {
+    Message(AssistantMessage),
+    ContextOverflow,
+    Aborted,
+    ChannelClosed,
+}
+
+// ─── ToolExecOutcome ────────────────────────────────────────────────────────
+
+/// Outcome of concurrent tool execution.
+pub enum ToolExecOutcome {
+    Completed {
+        results: Vec<ToolResultMessage>,
+        tool_metrics: Vec<crate::metrics::ToolExecMetrics>,
+    },
+    SteeringInterrupt {
+        completed: Vec<ToolResultMessage>,
+        cancelled: Vec<ToolResultMessage>,
+        steering_messages: Vec<AgentMessage>,
+        tool_metrics: Vec<crate::metrics::ToolExecMetrics>,
+    },
+    ChannelClosed,
+}
