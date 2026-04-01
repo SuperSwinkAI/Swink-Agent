@@ -36,8 +36,18 @@ pub const DEFAULT_PLAN_MODE_ADDENDUM: &str = "\n\nYou are in planning mode. Anal
 
 /// Configuration options for constructing an [`Agent`](crate::Agent).
 pub struct AgentOptions {
-    /// System prompt.
+    /// System prompt (used as-is when no static/dynamic split is configured).
     pub system_prompt: String,
+    /// Static portion of the system prompt (cacheable, immutable for the agent lifetime).
+    ///
+    /// When set, takes precedence over `system_prompt` as the system message.
+    pub static_system_prompt: Option<String>,
+    /// Dynamic portion of the system prompt (per-turn, non-cacheable).
+    ///
+    /// Called fresh each turn. Its output is injected as a separate user-role
+    /// message immediately after the system prompt, so it does not invalidate
+    /// provider-side caches.
+    pub dynamic_system_prompt: Option<Box<dyn Fn() -> String + Send + Sync>>,
     /// Model specification.
     pub model: ModelSpec,
     /// Available tools.
@@ -113,6 +123,12 @@ pub struct AgentOptions {
     /// When set, tools that return `Some` from [`auth_config()`](crate::AgentTool::auth_config)
     /// will have their credentials resolved before execution.
     pub credential_resolver: Option<Arc<dyn crate::credential::CredentialResolver>>,
+    /// Optional context caching configuration.
+    ///
+    /// When set, the turn pipeline annotates cacheable prefix messages with
+    /// [`CacheHint`](crate::context_cache::CacheHint) markers and emits
+    /// [`AgentEvent::CacheAction`](crate::AgentEvent) events.
+    pub cache_config: Option<crate::context_cache::CacheConfig>,
 }
 
 impl AgentOptions {
@@ -126,6 +142,8 @@ impl AgentOptions {
     ) -> Self {
         Self {
             system_prompt: system_prompt.into(),
+            static_system_prompt: None,
+            dynamic_system_prompt: None,
             model,
             tools: Vec::new(),
             stream_fn,
@@ -157,6 +175,7 @@ impl AgentOptions {
             plan_mode_addendum: None,
             session_state: None,
             credential_resolver: None,
+            cache_config: None,
         }
     }
 
@@ -499,5 +518,44 @@ impl AgentOptions {
     ) -> Self {
         self.credential_resolver = Some(resolver);
         self
+    }
+
+    /// Set context caching configuration.
+    #[must_use]
+    pub const fn with_cache_config(mut self, config: crate::context_cache::CacheConfig) -> Self {
+        self.cache_config = Some(config);
+        self
+    }
+
+    /// Set a static system prompt (cacheable, immutable for the agent lifetime).
+    ///
+    /// When set, takes precedence over `system_prompt`.
+    #[must_use]
+    pub fn with_static_system_prompt(mut self, prompt: String) -> Self {
+        self.static_system_prompt = Some(prompt);
+        self
+    }
+
+    /// Set a dynamic system prompt closure (called fresh each turn).
+    ///
+    /// Its output is injected as a separate user-role message after the system
+    /// prompt so it does not invalidate provider-side caches.
+    #[must_use]
+    pub fn with_dynamic_system_prompt(
+        mut self,
+        f: impl Fn() -> String + Send + Sync + 'static,
+    ) -> Self {
+        self.dynamic_system_prompt = Some(Box::new(f));
+        self
+    }
+
+    /// Return the effective system prompt (static portion only).
+    ///
+    /// Returns `static_system_prompt` if set, otherwise falls back to
+    /// `system_prompt`. Does NOT include dynamic content.
+    pub fn effective_system_prompt(&self) -> &str {
+        self.static_system_prompt
+            .as_deref()
+            .unwrap_or(&self.system_prompt)
     }
 }

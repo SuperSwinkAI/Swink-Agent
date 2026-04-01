@@ -127,6 +127,7 @@ mod tests {
                 text: "hello".to_string(),
             }],
             timestamp: 0,
+            cache_hint: None,
         });
         let display = msg.to_display_messages();
         assert_eq!(display.len(), 1);
@@ -154,6 +155,7 @@ mod tests {
             stop_reason: StopReason::Stop,
             error_message: None,
             timestamp: 0,
+            cache_hint: None,
         });
         let display = msg.to_display_messages();
         assert_eq!(display.len(), 1);
@@ -173,6 +175,7 @@ mod tests {
             stop_reason: StopReason::Error,
             error_message: Some("something broke".to_string()),
             timestamp: 0,
+            cache_hint: None,
         });
         let display = msg.to_display_messages();
         assert_eq!(display.len(), 1);
@@ -188,6 +191,7 @@ mod tests {
             is_error: false,
             timestamp: 0,
             details: serde_json::Value::Null,
+            cache_hint: None,
         });
         let display = msg.to_display_messages();
         assert!(display.is_empty());

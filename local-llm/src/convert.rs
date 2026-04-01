@@ -249,6 +249,7 @@ mod tests {
             stop_reason: StopReason::Stop,
             error_message: None,
             timestamp: 0,
+            cache_hint: None,
         }));
         let ctx = make_context("", vec![msg], vec![]);
         let _msgs = convert_context_messages(&ctx);
@@ -275,6 +276,7 @@ mod tests {
                 },
             ],
             timestamp: 0,
+            cache_hint: None,
         }));
         let ctx = make_context("", vec![msg], vec![]);
         let _msgs = convert_context_messages(&ctx);
@@ -300,6 +302,7 @@ mod tests {
                 },
             ],
             timestamp: 0,
+            cache_hint: None,
         }));
         let ctx = make_context("", vec![msg], vec![]);
         // Only Text blocks are extracted — others silently ignored.
@@ -334,6 +337,7 @@ mod tests {
             is_error: true,
             timestamp: 0,
             details: serde_json::Value::Null,
+            cache_hint: None,
         }));
         let ctx = make_context("", vec![msg], vec![]);
         let _msgs = convert_context_messages(&ctx);

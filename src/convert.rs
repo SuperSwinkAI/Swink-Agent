@@ -177,6 +177,7 @@ mod tests {
                 text: text.to_string(),
             }],
             timestamp: 0,
+            cache_hint: None,
         }))
     }
 
@@ -192,6 +193,7 @@ mod tests {
             stop_reason: StopReason::Stop,
             error_message: None,
             timestamp: 0,
+            cache_hint: None,
         }))
     }
 
@@ -204,6 +206,7 @@ mod tests {
             is_error: false,
             timestamp: 0,
             details: serde_json::Value::Null,
+            cache_hint: None,
         }))
     }
 

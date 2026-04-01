@@ -113,12 +113,74 @@ pub async fn run_single_turn(
     // Reset overflow after it's been signaled
     state.overflow_signal = false;
 
+    // ii-c. Annotate context messages with cache hints if caching is configured
+    if let Some(ref cache_config) = config.cache_config {
+        // Scope the MutexGuard so it's dropped before any await.
+        let cache_event = {
+            let mut cache_state = config
+                .cache_state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let hint = cache_state.advance_turn(cache_config);
+            let prefix_len = cache_state.cached_prefix_len;
+
+            // Estimate prefix tokens and check min_tokens threshold
+            let prefix_tokens: usize = state
+                .context_messages
+                .iter()
+                .take(prefix_len)
+                .map(crate::context::estimate_tokens)
+                .sum();
+
+            if prefix_tokens >= cache_config.min_tokens {
+                // Annotate cacheable prefix messages with the hint
+                for msg in state.context_messages.iter_mut().take(prefix_len) {
+                    msg.set_cache_hint(hint.clone());
+                }
+                // Clear hints on messages beyond the prefix
+                for msg in state.context_messages.iter_mut().skip(prefix_len) {
+                    msg.clear_cache_hint();
+                }
+                cache_state.cached_prefix_len = prefix_len;
+                drop(cache_state);
+                Some((hint, prefix_tokens))
+            } else {
+                drop(cache_state);
+                None
+            }
+        };
+
+        // Emit CacheAction event (after guard is dropped)
+        if let Some((hint, prefix_tokens)) = cache_event {
+            let _ = emit(tx, AgentEvent::CacheAction { hint, prefix_tokens }).await;
+        }
+    }
+
+    // ii-d. Inject dynamic system prompt as a user-role message (non-cacheable)
+    let dynamic_prompt_injected = config.dynamic_system_prompt.as_ref().and_then(|dynamic_fn| {
+        let dynamic_text = dynamic_fn();
+        if dynamic_text.is_empty() {
+            None
+        } else {
+            Some(LlmMessage::User(crate::types::UserMessage {
+                content: vec![ContentBlock::Text { text: dynamic_text }],
+                timestamp: crate::util::now_timestamp(),
+                cache_hint: None,
+            }))
+        }
+    });
+
     // iii. Apply convert_to_llm to filter messages for the provider
-    let llm_messages: Vec<LlmMessage> = state
+    let mut llm_messages: Vec<LlmMessage> = state
         .context_messages
         .iter()
         .filter_map(|m| (config.convert_to_llm)(m))
         .collect();
+
+    // Insert dynamic prompt as the first message (after system prompt, before history)
+    if let Some(dynamic_msg) = dynamic_prompt_injected {
+        llm_messages.insert(0, dynamic_msg);
+    }
 
     // iv. Resolve a per-call API key if configured
     let api_key = if let Some(ref get_key) = config.get_api_key {
@@ -797,6 +859,7 @@ fn recover_incomplete_tool_calls(
                     is_error: true,
                     timestamp: now_timestamp(),
                     details: serde_json::Value::Null,
+                    cache_hint: None,
                 });
             } else {
                 remaining.push(tc);

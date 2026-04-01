@@ -99,6 +99,9 @@ fn default_config(stream_fn: Arc<dyn StreamFn>) -> AgentLoopConfig {
         tool_execution_policy: swink_agent::ToolExecutionPolicy::default(),
         session_state: std::sync::Arc::new(std::sync::RwLock::new(swink_agent::SessionState::new())),
         credential_resolver: None,
+        cache_config: None,
+        cache_state: std::sync::Mutex::new(swink_agent::CacheState::default()),
+        dynamic_system_prompt: None,
     }
 }
 
@@ -110,6 +113,7 @@ fn large_user_msg(label: &str, token_count: usize) -> AgentMessage {
     AgentMessage::Llm(LlmMessage::User(UserMessage {
         content: vec![ContentBlock::Text { text }],
         timestamp: 0,
+        cache_hint: None,
     }))
 }
 

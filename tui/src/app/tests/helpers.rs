@@ -103,6 +103,7 @@ pub(super) fn make_user_agent_message(content: &str) -> AgentMessage {
             text: content.to_string(),
         }],
         timestamp: 0,
+        cache_hint: None,
     }))
 }
 
@@ -118,6 +119,7 @@ pub(super) fn make_assistant_agent_message(content: &str) -> AgentMessage {
         stop_reason: StopReason::Stop,
         error_message: None,
         timestamp: 0,
+        cache_hint: None,
     }))
 }
 

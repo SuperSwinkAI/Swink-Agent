@@ -199,6 +199,7 @@ async fn context_overflow_triggers_retry() {
                 text: format!("msg{i}:{padding}"),
             }],
             timestamp: 0,
+            cache_hint: None,
         })));
     }
 

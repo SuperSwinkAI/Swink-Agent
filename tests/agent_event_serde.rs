@@ -27,6 +27,7 @@ fn minimal_assistant_message() -> AssistantMessage {
         stop_reason: StopReason::Stop,
         error_message: None,
         timestamp: 0,
+        cache_hint: None,
     }
 }
 
@@ -39,6 +40,7 @@ fn minimal_snapshot() -> TurnSnapshot {
                 text: "hi".into(),
             }],
             timestamp: 0,
+            cache_hint: None,
         })]),
         usage: Usage::default(),
         cost: Cost::default(),
@@ -72,6 +74,7 @@ fn all_agent_event_variants_serialize_to_json() {
                     is_error: false,
                     timestamp: 0,
                     details: json!(null),
+                    cache_hint: None,
                 }],
                 reason: TurnEndReason::Complete,
                 snapshot: minimal_snapshot(),
@@ -86,6 +89,7 @@ fn all_agent_event_variants_serialize_to_json() {
                         text: "hi".into(),
                     }],
                     timestamp: 0,
+                    cache_hint: None,
                 })],
                 model: model.clone(),
             },
@@ -355,6 +359,7 @@ fn agent_event_roundtrip_all_variants() {
                     is_error: false,
                     timestamp: 0,
                     details: json!(null),
+                    cache_hint: None,
                 }],
                 reason: TurnEndReason::Complete,
                 snapshot: minimal_snapshot(),
@@ -369,6 +374,7 @@ fn agent_event_roundtrip_all_variants() {
                         text: "hi".into(),
                     }],
                     timestamp: 0,
+                    cache_hint: None,
                 })],
                 model: model.clone(),
             },

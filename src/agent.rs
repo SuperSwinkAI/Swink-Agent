@@ -178,6 +178,10 @@ pub struct Agent {
     session_state: Arc<std::sync::RwLock<crate::SessionState>>,
     /// Optional credential resolver for tool authentication.
     credential_resolver: Option<Arc<dyn crate::credential::CredentialResolver>>,
+    /// Optional context caching configuration.
+    cache_config: Option<crate::context_cache::CacheConfig>,
+    /// Optional dynamic system prompt.
+    dynamic_system_prompt: Option<Arc<dyn Fn() -> String + Send + Sync>>,
 }
 
 impl Agent {
@@ -201,6 +205,9 @@ impl Agent {
                 .map(|(model, stream_fn): &(ModelSpec, _)| (model.clone(), Arc::clone(stream_fn))),
         );
 
+        // Compute the effective system prompt before partial moves.
+        let effective_prompt = options.effective_system_prompt().to_owned();
+
         // If a custom token counter is provided and no custom transform_context
         // was set, rebuild the default SlidingWindowTransformer with the counter.
         let transform_context = match (options.token_counter, options.transform_context) {
@@ -214,7 +221,7 @@ impl Agent {
         Self {
             id: AgentId::next(),
             state: AgentState {
-                system_prompt: options.system_prompt,
+                system_prompt: effective_prompt,
                 model: options.model,
                 tools: options.tools,
                 messages: Vec::new(),
@@ -258,6 +265,8 @@ impl Agent {
                 options.session_state.unwrap_or_default(),
             )),
             credential_resolver: options.credential_resolver,
+            cache_config: options.cache_config,
+            dynamic_system_prompt: options.dynamic_system_prompt.map(Arc::from),
         }
     }
 
@@ -842,6 +851,7 @@ impl Agent {
         let msg = AgentMessage::Llm(LlmMessage::User(crate::types::UserMessage {
             content: vec![ContentBlock::Text { text: text.into() }],
             timestamp: now_timestamp(),
+            cache_hint: None,
         }));
         self.prompt_async(vec![msg]).await
     }
@@ -861,6 +871,7 @@ impl Agent {
         let msg = AgentMessage::Llm(LlmMessage::User(crate::types::UserMessage {
             content,
             timestamp: now_timestamp(),
+            cache_hint: None,
         }));
         self.prompt_async(vec![msg]).await
     }
@@ -872,6 +883,7 @@ impl Agent {
         let msg = AgentMessage::Llm(LlmMessage::User(crate::types::UserMessage {
             content: vec![ContentBlock::Text { text: text.into() }],
             timestamp: now_timestamp(),
+            cache_hint: None,
         }));
         self.prompt_sync(vec![msg])
     }
@@ -953,6 +965,7 @@ impl Agent {
                         text: prompt.clone(),
                     }],
                     timestamp: now_timestamp(),
+                    cache_hint: None,
                 }));
                 self.prompt_async(vec![user_msg]).await?
             } else {
@@ -981,6 +994,7 @@ impl Agent {
                                 is_error: true,
                                 timestamp: now_timestamp(),
                                 details: serde_json::Value::Null,
+                                cache_hint: None,
                             },
                         ));
                         self.state.messages.push(feedback);
@@ -1168,6 +1182,9 @@ impl Agent {
             tool_execution_policy: self.tool_execution_policy.clone(),
             session_state: Arc::clone(&self.session_state),
             credential_resolver: self.credential_resolver.as_ref().map(Arc::clone),
+            cache_config: self.cache_config.clone(),
+            cache_state: std::sync::Mutex::new(crate::context_cache::CacheState::new()),
+            dynamic_system_prompt: self.dynamic_system_prompt.clone(),
         }
     }
 

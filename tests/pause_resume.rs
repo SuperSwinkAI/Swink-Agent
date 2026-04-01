@@ -60,6 +60,7 @@ async fn resume_restores_messages_and_continues() {
             text: "continue please".to_string(),
         }],
         timestamp: 0,
+        cache_hint: None,
     })];
     let checkpoint = LoopCheckpoint::new(
         "Be helpful.",
@@ -87,6 +88,7 @@ async fn resume_stream_returns_event_stream() {
             text: "continue".to_string(),
         }],
         timestamp: 0,
+        cache_hint: None,
     })];
     let checkpoint = LoopCheckpoint::new(
         "Be helpful.",

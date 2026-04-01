@@ -160,6 +160,7 @@ async fn message_end_updates_context_tokens_used() {
         stop_reason: StopReason::Stop,
         error_message: None,
         timestamp: 0,
+        cache_hint: None,
     };
 
     app.handle_agent_event(AgentEvent::MessageEnd { message });

@@ -50,6 +50,7 @@ fn assistant_msg(
         stop_reason: stop,
         error_message: None,
         timestamp: 0,
+        cache_hint: None,
     }
 }
 
@@ -73,6 +74,7 @@ fn tool_result(id: &str, content: &str) -> swink_agent::ToolResultMessage {
         is_error: false,
         timestamp: 0,
         details: serde_json::Value::Null,
+        cache_hint: None,
     }
 }
 
@@ -85,6 +87,7 @@ fn tool_result_error(id: &str, content: &str) -> swink_agent::ToolResultMessage 
         is_error: true,
         timestamp: 0,
         details: serde_json::Value::Null,
+        cache_hint: None,
     }
 }
 

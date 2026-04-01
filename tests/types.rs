@@ -18,6 +18,7 @@ fn user_message_construction_and_access() {
             text: "hello world".into(),
         }],
         timestamp: 1710000000,
+        cache_hint: None,
     };
     assert_eq!(msg.content.len(), 1);
     assert!(matches!(&msg.content[0], ContentBlock::Text { text } if text == "hello world"));
@@ -52,6 +53,7 @@ fn assistant_message_construction_and_access() {
         stop_reason: StopReason::Stop,
         error_message: Some("optional error".into()),
         timestamp: 1710000001,
+        cache_hint: None,
     };
     assert_eq!(msg.provider, "anthropic");
     assert_eq!(msg.model_id, "claude-sonnet-4-6");
@@ -74,6 +76,7 @@ fn tool_result_message_construction_and_access() {
         is_error: false,
         timestamp: 1710000002,
         details: serde_json::Value::Null,
+        cache_hint: None,
     };
     assert_eq!(msg.tool_call_id, "tc_123");
     assert_eq!(msg.content.len(), 1);
@@ -90,6 +93,7 @@ fn message_conversation_sequence() {
                 text: "user input".into(),
             }],
             timestamp: 1,
+            cache_hint: None,
         })),
         AgentMessage::Llm(LlmMessage::Assistant(AssistantMessage {
             content: vec![ContentBlock::ToolCall {
@@ -105,6 +109,7 @@ fn message_conversation_sequence() {
             stop_reason: StopReason::ToolUse,
             error_message: None,
             timestamp: 2,
+            cache_hint: None,
         })),
         AgentMessage::Llm(LlmMessage::ToolResult(ToolResultMessage {
             tool_call_id: "tc_1".into(),
@@ -114,6 +119,7 @@ fn message_conversation_sequence() {
             is_error: false,
             timestamp: 3,
             details: serde_json::Value::Null,
+            cache_hint: None,
         })),
         AgentMessage::Llm(LlmMessage::Assistant(AssistantMessage {
             content: vec![ContentBlock::Text {
@@ -126,6 +132,7 @@ fn message_conversation_sequence() {
             stop_reason: StopReason::Stop,
             error_message: None,
             timestamp: 4,
+            cache_hint: None,
         })),
     ];
     assert_eq!(messages.len(), 4);
@@ -155,6 +162,7 @@ fn llm_message_serde_roundtrip() {
             text: "hello".into(),
         }],
         timestamp: 100,
+        cache_hint: None,
     });
     let assistant = LlmMessage::Assistant(AssistantMessage {
         content: vec![ContentBlock::Text { text: "hi".into() }],
@@ -179,6 +187,7 @@ fn llm_message_serde_roundtrip() {
         stop_reason: StopReason::Stop,
         error_message: None,
         timestamp: 101,
+        cache_hint: None,
     });
     let tool_result = LlmMessage::ToolResult(ToolResultMessage {
         tool_call_id: "tc_1".into(),
@@ -188,6 +197,7 @@ fn llm_message_serde_roundtrip() {
         is_error: true,
         timestamp: 102,
         details: serde_json::Value::Null,
+        cache_hint: None,
     });
 
     for msg in [&user, &assistant, &tool_result] {
@@ -207,6 +217,7 @@ fn llm_message_serde_tag() {
     let msg = LlmMessage::User(UserMessage {
         content: vec![],
         timestamp: 0,
+        cache_hint: None,
     });
     let json = serde_json::to_value(&msg).unwrap();
     assert_eq!(json["role"], "user");
@@ -539,6 +550,7 @@ fn custom_message_wrap_and_store() {
         AgentMessage::Llm(LlmMessage::User(UserMessage {
             content: vec![ContentBlock::Text { text: "hi".into() }],
             timestamp: 0,
+            cache_hint: None,
         })),
         AgentMessage::Custom(Box::new(custom)),
     ];
@@ -577,6 +589,7 @@ fn custom_message_downcast_on_llm_variant() {
     let msg = AgentMessage::Llm(LlmMessage::User(UserMessage {
         content: vec![],
         timestamp: 0,
+        cache_hint: None,
     }));
     let result = msg.downcast_ref::<TestCustom>();
     assert!(result.is_err());
@@ -707,6 +720,7 @@ fn agent_result_construction() {
             stop_reason: StopReason::Stop,
             error_message: None,
             timestamp: 1,
+            cache_hint: None,
         }))],
         stop_reason: StopReason::Stop,
         usage: Usage {
@@ -740,6 +754,7 @@ fn agent_context_construction() {
                     text: "hello".into(),
                 }],
                 timestamp: 0,
+                cache_hint: None,
             })),
             AgentMessage::Llm(LlmMessage::Assistant(AssistantMessage {
                 content: vec![ContentBlock::Text { text: "hi".into() }],
@@ -750,6 +765,7 @@ fn agent_context_construction() {
                 stop_reason: StopReason::Stop,
                 error_message: None,
                 timestamp: 1,
+                cache_hint: None,
             })),
         ],
         tools: vec![],

@@ -16,6 +16,7 @@ fn text_message(text: &str) -> AgentMessage {
             text: text.to_owned(),
         }],
         timestamp: 0,
+        cache_hint: None,
     }))
 }
 

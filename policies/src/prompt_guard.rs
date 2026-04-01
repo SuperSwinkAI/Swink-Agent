@@ -179,6 +179,7 @@ mod tests {
                 text: text.to_string(),
             }],
             timestamp: 0,
+            cache_hint: None,
         }))];
         (messages, Usage::default(), Cost::default())
     }
@@ -221,6 +222,7 @@ mod tests {
             stop_reason: StopReason::Stop,
             error_message: None,
             timestamp: 0,
+            cache_hint: None,
         }
     }
 
@@ -372,6 +374,7 @@ mod tests {
             is_error: false,
             timestamp: 0,
             details: serde_json::json!({}),
+            cache_hint: None,
         }];
 
         let (messages, usage, cost) = (vec![], Usage::default(), Cost::default());
@@ -406,6 +409,7 @@ mod tests {
             is_error: false,
             timestamp: 0,
             details: serde_json::json!({}),
+            cache_hint: None,
         }];
 
         let (messages, usage, cost) = (vec![], Usage::default(), Cost::default());

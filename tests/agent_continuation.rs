@@ -99,6 +99,7 @@ async fn continue_from_tool_result() {
             text: "do something".to_string(),
         }],
         timestamp: 0,
+        cache_hint: None,
     }));
     let assistant = AgentMessage::Llm(LlmMessage::Assistant(swink_agent::AssistantMessage {
         content: vec![ContentBlock::ToolCall {
@@ -114,6 +115,7 @@ async fn continue_from_tool_result() {
         cost: Cost::default(),
         error_message: None,
         timestamp: 0,
+        cache_hint: None,
     }));
     let tool_result = AgentMessage::Llm(LlmMessage::ToolResult(ToolResultMessage {
         tool_call_id: "tc_1".to_string(),
@@ -123,6 +125,7 @@ async fn continue_from_tool_result() {
         is_error: false,
         timestamp: 0,
         details: serde_json::Value::Null,
+        cache_hint: None,
     }));
 
     agent.set_messages(vec![user, assistant, tool_result]);
@@ -167,6 +170,7 @@ async fn continue_does_not_reemit_existing_messages() {
             text: "original".to_string(),
         }],
         timestamp: 0,
+        cache_hint: None,
     }));
     let assistant = AgentMessage::Llm(LlmMessage::Assistant(swink_agent::AssistantMessage {
         content: vec![ContentBlock::ToolCall {
@@ -182,6 +186,7 @@ async fn continue_does_not_reemit_existing_messages() {
         cost: Cost::default(),
         error_message: None,
         timestamp: 0,
+        cache_hint: None,
     }));
     let tool_result = AgentMessage::Llm(LlmMessage::ToolResult(ToolResultMessage {
         tool_call_id: "tc_1".to_string(),
@@ -191,6 +196,7 @@ async fn continue_does_not_reemit_existing_messages() {
         is_error: false,
         timestamp: 0,
         details: serde_json::Value::Null,
+        cache_hint: None,
     }));
     agent.set_messages(vec![user, assistant, tool_result]);
 

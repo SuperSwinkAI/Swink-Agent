@@ -367,7 +367,7 @@ mod tests {
 
     #[tokio::test]
     async fn on_raw_payload_fires_for_each_line() {
-        use std::sync::Mutex;
+        use std::sync::{Arc, Mutex};
 
         let captured = Arc::new(Mutex::new(Vec::<String>::new()));
         let captured_clone = Arc::clone(&captured);
@@ -408,6 +408,7 @@ mod tests {
 
     #[tokio::test]
     async fn on_raw_payload_panic_caught() {
+        use std::sync::Arc;
         let callback: Arc<dyn Fn(&str) + Send + Sync> = Arc::new(|_data: &str| {
             panic!("callback panic!");
         });

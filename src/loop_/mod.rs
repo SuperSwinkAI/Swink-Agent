@@ -181,6 +181,12 @@ pub enum AgentEvent {
         delta: crate::StateDelta,
     },
 
+    /// Emitted when context caching acts on a turn (write or read).
+    CacheAction {
+        hint: crate::context_cache::CacheHint,
+        prefix_tokens: usize,
+    },
+
     /// A custom event emitted via [`Agent::emit`](crate::Agent::emit).
     Custom(crate::emit::Emission),
 }
@@ -271,6 +277,18 @@ pub struct AgentLoopConfig {
 
     /// Optional credential resolver for tool authentication.
     pub credential_resolver: Option<Arc<dyn crate::credential::CredentialResolver>>,
+
+    /// Optional context caching configuration.
+    pub cache_config: Option<crate::context_cache::CacheConfig>,
+
+    /// Mutable cache state tracking turns since last write.
+    pub cache_state: std::sync::Mutex<crate::context_cache::CacheState>,
+
+    /// Optional dynamic system prompt closure (called fresh each turn).
+    ///
+    /// Its output is injected as a user-role message after the system prompt
+    /// to avoid invalidating provider-side caches.
+    pub dynamic_system_prompt: Option<Arc<dyn Fn() -> String + Send + Sync>>,
 }
 
 impl std::fmt::Debug for AgentLoopConfig {
@@ -611,6 +629,7 @@ fn build_terminal_message(
         stop_reason,
         error_message: Some(error_message),
         timestamp: now_timestamp(),
+        cache_hint: None,
     }
 }
 
@@ -655,10 +674,37 @@ pub fn classify_stream_error(error_message: &str, stop_reason: StopReason) -> Ag
     if lower.contains("rate limit") || lower.contains("429") || lower.contains("throttl") {
         return AgentError::ModelThrottled;
     }
+    if lower.contains("cache miss") || lower.contains("cache not found") || lower.contains("cache_miss") {
+        return AgentError::CacheMiss;
+    }
     if stop_reason == StopReason::Aborted {
         return AgentError::Aborted;
     }
     AgentError::StreamError {
         source: Box::new(std::io::Error::other(error_message.to_string())),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn classify_cache_miss_variants() {
+        let cases = ["cache miss", "Cache Miss detected", "provider cache_miss", "cache not found"];
+        for msg in cases {
+            let err = classify_stream_error(msg, StopReason::Error);
+            assert!(
+                matches!(err, AgentError::CacheMiss),
+                "expected CacheMiss for \"{msg}\", got {err:?}"
+            );
+            assert!(err.is_retryable());
+        }
+    }
+
+    #[test]
+    fn classify_non_cache_miss() {
+        let err = classify_stream_error("internal server error", StopReason::Error);
+        assert!(!matches!(err, AgentError::CacheMiss));
     }
 }

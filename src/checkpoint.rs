@@ -423,6 +423,7 @@ mod tests {
                     text: "Hello".to_string(),
                 }],
                 timestamp: 100,
+                cache_hint: None,
             })),
             AgentMessage::Llm(LlmMessage::Assistant(crate::types::AssistantMessage {
                 content: vec![ContentBlock::Text {
@@ -435,6 +436,7 @@ mod tests {
                 stop_reason: crate::types::StopReason::Stop,
                 error_message: None,
                 timestamp: 101,
+                cache_hint: None,
             })),
         ]
     }
@@ -807,6 +809,7 @@ mod tests {
                 text: "follow-up".to_string(),
             }],
             timestamp: 200,
+            cache_hint: None,
         })];
 
         let cp = LoopCheckpoint::new("p", "p", "m", &[]).with_pending_messages(pending);
@@ -853,6 +856,7 @@ mod tests {
             stop_reason: crate::types::StopReason::Stop,
             error_message: None,
             timestamp: 300,
+            cache_hint: None,
         };
 
         let cp =

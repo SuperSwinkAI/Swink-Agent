@@ -565,6 +565,7 @@ mod tests {
                     text: "Hello".to_string(),
                 }],
                 timestamp: 100,
+                cache_hint: None,
             })),
             AgentMessage::Custom(Box::new(TestCustomMsg {
                 data: "custom-payload".to_string(),
@@ -574,6 +575,7 @@ mod tests {
                     text: "World".to_string(),
                 }],
                 timestamp: 200,
+                cache_hint: None,
             })),
         ];
 

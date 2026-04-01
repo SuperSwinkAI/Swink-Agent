@@ -130,6 +130,7 @@ impl OrchestratedHandle {
         let msg = AgentMessage::Llm(LlmMessage::User(UserMessage {
             content: vec![ContentBlock::Text { text: text.into() }],
             timestamp: now_timestamp(),
+            cache_hint: None,
         }));
         self.send_messages(vec![msg]).await
     }

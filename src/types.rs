@@ -93,6 +93,9 @@ pub enum ImageSource {
 pub struct UserMessage {
     pub content: Vec<ContentBlock>,
     pub timestamp: u64,
+    /// Provider-agnostic cache hint for this message.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_hint: Option<crate::context_cache::CacheHint>,
 }
 
 /// A message from the assistant (LLM response).
@@ -106,6 +109,9 @@ pub struct AssistantMessage {
     pub stop_reason: StopReason,
     pub error_message: Option<String>,
     pub timestamp: u64,
+    /// Provider-agnostic cache hint for this message.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_hint: Option<crate::context_cache::CacheHint>,
 }
 
 /// The result of a tool execution, sent back to the LLM.
@@ -118,6 +124,9 @@ pub struct ToolResultMessage {
     /// Structured data for display — not sent to the LLM.
     #[serde(default)]
     pub details: serde_json::Value,
+    /// Provider-agnostic cache hint for this message.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_hint: Option<crate::context_cache::CacheHint>,
 }
 
 /// A discriminated union of the three LLM message roles.
@@ -308,6 +317,46 @@ pub enum AgentMessage {
 }
 
 impl AgentMessage {
+    /// Get the cache hint for this message (if any).
+    ///
+    /// Returns `None` for `Custom` messages (they are never sent to the LLM).
+    pub const fn cache_hint(&self) -> Option<&crate::context_cache::CacheHint> {
+        match self {
+            Self::Llm(msg) => match msg {
+                LlmMessage::User(m) => m.cache_hint.as_ref(),
+                LlmMessage::Assistant(m) => m.cache_hint.as_ref(),
+                LlmMessage::ToolResult(m) => m.cache_hint.as_ref(),
+            },
+            Self::Custom(_) => None,
+        }
+    }
+
+    /// Set the cache hint on this message.
+    ///
+    /// No-op for `Custom` messages.
+    pub const fn set_cache_hint(&mut self, hint: crate::context_cache::CacheHint) {
+        match self {
+            Self::Llm(msg) => match msg {
+                LlmMessage::User(m) => m.cache_hint = Some(hint),
+                LlmMessage::Assistant(m) => m.cache_hint = Some(hint),
+                LlmMessage::ToolResult(m) => m.cache_hint = Some(hint),
+            },
+            Self::Custom(_) => {}
+        }
+    }
+
+    /// Clear the cache hint on this message.
+    pub const fn clear_cache_hint(&mut self) {
+        match self {
+            Self::Llm(msg) => match msg {
+                LlmMessage::User(m) => m.cache_hint = None,
+                LlmMessage::Assistant(m) => m.cache_hint = None,
+                LlmMessage::ToolResult(m) => m.cache_hint = None,
+            },
+            Self::Custom(_) => {}
+        }
+    }
+
     /// Attempt to downcast the inner custom message to a concrete type.
     ///
     /// Returns `Ok(&T)` if this is a `Custom` variant and the inner type matches `T`.
@@ -1074,6 +1123,7 @@ mod tests {
                         text: "hi".to_string(),
                     }],
                     timestamp: 0,
+                    cache_hint: None,
                 })),
                 AgentMessage::Llm(LlmMessage::Assistant(AssistantMessage {
                     content: vec![ContentBlock::Text {
@@ -1086,6 +1136,7 @@ mod tests {
                     stop_reason: StopReason::Stop,
                     error_message: None,
                     timestamp: 0,
+                    cache_hint: None,
                 })),
                 AgentMessage::Llm(LlmMessage::Assistant(AssistantMessage {
                     content: vec![ContentBlock::Text {
@@ -1098,6 +1149,7 @@ mod tests {
                     stop_reason: StopReason::Stop,
                     error_message: None,
                     timestamp: 0,
+                    cache_hint: None,
                 })),
             ],
             stop_reason: StopReason::Stop,
@@ -1116,6 +1168,7 @@ mod tests {
                     text: "hi".to_string(),
                 }],
                 timestamp: 0,
+                cache_hint: None,
             }))],
             stop_reason: StopReason::Stop,
             usage: Usage::default(),

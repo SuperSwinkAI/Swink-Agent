@@ -136,6 +136,9 @@ fn make_config(
         tool_execution_policy: policy,
         session_state: std::sync::Arc::new(std::sync::RwLock::new(swink_agent::SessionState::new())),
         credential_resolver: None,
+        cache_config: None,
+        cache_state: std::sync::Mutex::new(swink_agent::CacheState::default()),
+        dynamic_system_prompt: None,
     }
 }
 
@@ -227,6 +230,7 @@ async fn sequential_policy_executes_tools_in_order() {
             text: "go".to_string(),
         }],
         timestamp: 0,
+        cache_hint: None,
     }))];
 
     let stream =
@@ -288,6 +292,7 @@ async fn priority_policy_executes_higher_priority_first() {
             text: "go".to_string(),
         }],
         timestamp: 0,
+        cache_hint: None,
     }))];
 
     let stream =
@@ -371,6 +376,7 @@ async fn concurrent_policy_is_default_and_spawns_all() {
             text: "go".to_string(),
         }],
         timestamp: 0,
+        cache_hint: None,
     }))];
 
     let stream =
@@ -437,6 +443,7 @@ async fn custom_strategy_controls_grouping() {
             text: "go".to_string(),
         }],
         timestamp: 0,
+        cache_hint: None,
     }))];
 
     let stream =
@@ -496,6 +503,7 @@ async fn priority_groups_with_equal_priority_run_concurrently() {
             text: "go".to_string(),
         }],
         timestamp: 0,
+        cache_hint: None,
     }))];
 
     let stream =

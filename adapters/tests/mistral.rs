@@ -70,6 +70,7 @@ fn make_assistant_with_tool_call(tool_call_id: &str, tool_name: &str) -> Assista
         provider: String::new(),
         error_message: None,
         timestamp: 0,
+        cache_hint: None,
     }
 }
 
@@ -82,6 +83,7 @@ fn make_tool_result(tool_call_id: &str, result_text: &str) -> ToolResultMessage 
         is_error: false,
         timestamp: 0,
         details: Value::Null,
+        cache_hint: None,
     }
 }
 
@@ -91,6 +93,7 @@ fn make_user_message(text: &str) -> UserMessage {
             text: text.to_string(),
         }],
         timestamp: 0,
+        cache_hint: None,
     }
 }
 

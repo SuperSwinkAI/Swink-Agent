@@ -484,6 +484,7 @@ pub fn user_msg(text: &str) -> AgentMessage {
             text: text.to_string(),
         }],
         timestamp: 0,
+        cache_hint: None,
     }))
 }
 
@@ -500,6 +501,7 @@ pub fn assistant_msg(text: &str) -> AgentMessage {
         stop_reason: StopReason::Stop,
         error_message: None,
         timestamp: 0,
+        cache_hint: None,
     }))
 }
 
@@ -513,6 +515,7 @@ pub fn tool_result_msg(id: &str, text: &str) -> AgentMessage {
         is_error: false,
         timestamp: 0,
         details: serde_json::Value::Null,
+        cache_hint: None,
     }))
 }
 
@@ -635,5 +638,6 @@ pub fn event_variant_name(event: &AgentEvent) -> String {
         AgentEvent::ModelFallback { .. } => "ModelFallback".into(),
         AgentEvent::ModelCycled { .. } => "ModelCycled".into(),
         AgentEvent::StateChanged { .. } => "StateChanged".into(),
+        AgentEvent::CacheAction { .. } => "CacheAction".into(),
     }
 }

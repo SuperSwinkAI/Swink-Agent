@@ -45,6 +45,7 @@ fn simple_context(prompt: &str) -> AgentContext {
                 text: prompt.to_string(),
             }],
             timestamp: 0,
+            cache_hint: None,
         }))],
         tools: Vec::new(),
     }
@@ -195,6 +196,7 @@ async fn live_tool_use_stream() {
                 text: "What's the weather in Paris?".into(),
             }],
             timestamp: 0,
+            cache_hint: None,
         }))],
         tools: vec![Arc::new(DummyTool)],
     };
@@ -256,6 +258,7 @@ async fn live_multi_turn_context() {
                     text: "My name is Alice.".into(),
                 }],
                 timestamp: 0,
+                cache_hint: None,
             })),
             AgentMessage::Llm(LlmMessage::Assistant(AssistantMessage {
                 content: vec![ContentBlock::Text { text: reply }],
@@ -266,12 +269,14 @@ async fn live_multi_turn_context() {
                 stop_reason: StopReason::Stop,
                 error_message: None,
                 timestamp: 1,
+                cache_hint: None,
             })),
             AgentMessage::Llm(LlmMessage::User(UserMessage {
                 content: vec![ContentBlock::Text {
                     text: "What is my name?".into(),
                 }],
                 timestamp: 2,
+                cache_hint: None,
             })),
         ],
         tools: Vec::new(),

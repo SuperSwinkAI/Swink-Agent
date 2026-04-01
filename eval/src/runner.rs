@@ -62,6 +62,7 @@ impl EvalRunner {
                 swink_agent::AgentMessage::Llm(swink_agent::LlmMessage::User(UserMessage {
                     content: vec![ContentBlock::Text { text: text.clone() }],
                     timestamp: swink_agent::now_timestamp(),
+                    cache_hint: None,
                 }))
             })
             .collect();
@@ -143,6 +144,7 @@ impl EvalRunner {
                                     stop_reason: StopReason::Error,
                                     error_message: Some(e.to_string()),
                                     timestamp: swink_agent::now_timestamp(),
+                                    cache_hint: None,
                                 },
                                 tool_calls: vec![],
                                 tool_results: vec![],

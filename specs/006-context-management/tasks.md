@@ -138,20 +138,20 @@
 
 ### Implementation for User Story 5
 
-- [ ] T047 [US5] Create `src/context_cache.rs` with `#![forbid(unsafe_code)]`, module-level doc comment. Register in `src/lib.rs` as `mod context_cache;`
-- [ ] T051 [US5] Add unit tests for `CacheConfig`, `CacheHint`, and `CacheState` in `src/context_cache.rs`: (a) first turn emits Write, (b) turns 2..N emit Read, (c) turn N+1 emits Write (refresh), (d) `reset()` forces Write on next turn (adapter-reported cache miss), (e) `cached_prefix_len` tracks correctly, (f) `min_tokens` below threshold suppresses hints
-- [ ] T048 [US5] Implement `CacheConfig` struct in `src/context_cache.rs` — fields: `ttl: Duration`, `min_tokens: usize`, `cache_intervals: usize`. Derive `Debug, Clone`.
-- [ ] T049 [US5] Implement `CacheHint` enum in `src/context_cache.rs` — variants: `Write { ttl: Duration }`, `Read`. Derive `Debug, Clone, PartialEq`.
-- [ ] T050 [US5] Implement `CacheState` struct in `src/context_cache.rs` — fields: `turns_since_write: usize`, `cached_prefix_len: usize`. Methods: `new()`, `advance_turn(&mut self, config: &CacheConfig) -> CacheHint` (returns Write on first turn and every `cache_intervals` turns, Read otherwise), `reset(&mut self)` (force Write on next turn, used when adapter reports provider cache miss).
-- [ ] T074 [US5] Add unit tests for `cache_hint` field on `AgentMessage` in `tests/types.rs` or `src/types.rs`: (a) serde round-trip with `cache_hint: Some(Write)` preserves value, (b) serde round-trip with `cache_hint: None` omits field from JSON, (c) deserializing JSON without `cache_hint` field produces `None` (backward compat with old checkpoints).
-- [ ] T067 [US5] Add `cache_hint: Option<CacheHint>` field to `AgentMessage` in `src/types.rs` with `#[serde(default, skip_serializing_if = "Option::is_none")]`. Ensure backward-compatible deserialization.
-- [ ] T052 [US5] Add `cache_config: Option<CacheConfig>` field to `AgentOptions` in `src/agent_options.rs`. Add builder method `with_cache_config(config: CacheConfig)`.
-- [ ] T075 [US5] Add unit tests for sliding window cache prefix protection in `src/context_transformer.rs`: (a) `cached_prefix_len=3` with 10 messages — first 3 never compacted even if anchor=1, (b) `cached_prefix_len=0` — behaves identically to current (no regression), (c) `cached_prefix_len` larger than message count — all messages preserved.
-- [ ] T070 [US5] Modify `SlidingWindowTransformer` in `src/context_transformer.rs` to accept optional `cached_prefix_len: usize` and protect those messages from compaction (FR-016). When caching is active, anchor count is `max(anchor, cached_prefix_len)`.
-- [ ] T076 [US5] Add integration test for turn pipeline cache hint annotation and event emission in `tests/ac_context.rs` or new `tests/context_cache.rs`: (a) configure `CacheConfig` with `cache_intervals=2`, run 3 turns — verify turn 1 messages carry `CacheHint::Write`, turn 2 carry `CacheHint::Read`, turn 3 carry `CacheHint::Write` (refresh), (b) verify `AgentEvent::CacheAction` emitted each turn with correct hint and prefix_tokens, (c) no `CacheConfig` → no `CacheHint` on messages and no `CacheAction` events.
-- [ ] T068 [US5] Integrate cache hint annotation into the turn pipeline in `src/loop_/turn.rs` — after context transform, if `CacheConfig` is present: call `CacheState::advance_turn()`, annotate cacheable prefix messages with the returned `CacheHint`, set `cached_prefix_len` on `CacheState`.
-- [ ] T069 [US5] Add `CacheAction { hint: CacheHint, prefix_tokens: usize }` variant to `AgentEvent` in `src/types.rs`. Emit in `src/loop_/turn.rs` after cache hint annotation (FR-018).
-- [ ] T053 [US5] Add re-exports to `src/lib.rs`: `pub use context_cache::{CacheConfig, CacheHint, CacheState};`
+- [x] T047 [US5] Create `src/context_cache.rs` with `#![forbid(unsafe_code)]`, module-level doc comment. Register in `src/lib.rs` as `mod context_cache;`
+- [x] T051 [US5] Add unit tests for `CacheConfig`, `CacheHint`, and `CacheState` in `src/context_cache.rs`: (a) first turn emits Write, (b) turns 2..N emit Read, (c) turn N+1 emits Write (refresh), (d) `reset()` forces Write on next turn (adapter-reported cache miss), (e) `cached_prefix_len` tracks correctly, (f) `min_tokens` below threshold suppresses hints
+- [x] T048 [US5] Implement `CacheConfig` struct in `src/context_cache.rs` — fields: `ttl: Duration`, `min_tokens: usize`, `cache_intervals: usize`. Derive `Debug, Clone`.
+- [x] T049 [US5] Implement `CacheHint` enum in `src/context_cache.rs` — variants: `Write { ttl: Duration }`, `Read`. Derive `Debug, Clone, PartialEq`.
+- [x] T050 [US5] Implement `CacheState` struct in `src/context_cache.rs` — fields: `turns_since_write: usize`, `cached_prefix_len: usize`. Methods: `new()`, `advance_turn(&mut self, config: &CacheConfig) -> CacheHint` (returns Write on first turn and every `cache_intervals` turns, Read otherwise), `reset(&mut self)` (force Write on next turn, used when adapter reports provider cache miss).
+- [x] T074 [US5] Add unit tests for `cache_hint` field on `AgentMessage` in `tests/types.rs` or `src/types.rs`: (a) serde round-trip with `cache_hint: Some(Write)` preserves value, (b) serde round-trip with `cache_hint: None` omits field from JSON, (c) deserializing JSON without `cache_hint` field produces `None` (backward compat with old checkpoints).
+- [x] T067 [US5] Add `cache_hint: Option<CacheHint>` field to `AgentMessage` in `src/types.rs` with `#[serde(default, skip_serializing_if = "Option::is_none")]`. Ensure backward-compatible deserialization.
+- [x] T052 [US5] Add `cache_config: Option<CacheConfig>` field to `AgentOptions` in `src/agent_options.rs`. Add builder method `with_cache_config(config: CacheConfig)`.
+- [x] T075 [US5] Add unit tests for sliding window cache prefix protection in `src/context_transformer.rs`: (a) `cached_prefix_len=3` with 10 messages — first 3 never compacted even if anchor=1, (b) `cached_prefix_len=0` — behaves identically to current (no regression), (c) `cached_prefix_len` larger than message count — all messages preserved.
+- [x] T070 [US5] Modify `SlidingWindowTransformer` in `src/context_transformer.rs` to accept optional `cached_prefix_len: usize` and protect those messages from compaction (FR-016). When caching is active, anchor count is `max(anchor, cached_prefix_len)`.
+- [x] T076 [US5] Add integration test for turn pipeline cache hint annotation and event emission in `tests/ac_context.rs` or new `tests/context_cache.rs`: (a) configure `CacheConfig` with `cache_intervals=2`, run 3 turns — verify turn 1 messages carry `CacheHint::Write`, turn 2 carry `CacheHint::Read`, turn 3 carry `CacheHint::Write` (refresh), (b) verify `AgentEvent::CacheAction` emitted each turn with correct hint and prefix_tokens, (c) no `CacheConfig` → no `CacheHint` on messages and no `CacheAction` events.
+- [x] T068 [US5] Integrate cache hint annotation into the turn pipeline in `src/loop_/turn.rs` — after context transform, if `CacheConfig` is present: call `CacheState::advance_turn()`, annotate cacheable prefix messages with the returned `CacheHint`, set `cached_prefix_len` on `CacheState`.
+- [x] T069 [US5] Add `CacheAction { hint: CacheHint, prefix_tokens: usize }` variant to `AgentEvent` in `src/types.rs`. Emit in `src/loop_/turn.rs` after cache hint annotation (FR-018).
+- [x] T053 [US5] Add re-exports to `src/lib.rs`: `pub use context_cache::{CacheConfig, CacheHint, CacheState};`
 
 **Checkpoint**: `cargo test -p swink-agent context_cache` passes. Cache lifecycle logic works standalone, messages annotated, sliding window respects cached prefix.
 
@@ -165,11 +165,11 @@
 
 ### Implementation for User Story 6
 
-- [ ] T057 [US6] Add unit tests for prompt split in `src/agent_options.rs`: (a) only `system_prompt` set → used as-is, (b) `static_system_prompt` set → takes precedence as system prompt, (c) dynamic closure called fresh each invocation returns separate string, (d) `effective_system_prompt()` returns only static portion (not concatenated with dynamic).
-- [ ] T054 [US6] Add `static_system_prompt: Option<String>` and `dynamic_system_prompt: Option<Box<dyn Fn() -> String + Send + Sync>>` fields to `AgentOptions` in `src/agent_options.rs`.
-- [ ] T055 [US6] Add builder methods `.with_static_system_prompt(prompt: String)` and `.with_dynamic_system_prompt(f: impl Fn() -> String + Send + Sync + 'static)` to `AgentOptions`.
-- [ ] T056 [US6] Add `effective_system_prompt(&self) -> String` method to `AgentOptions` — returns `static_system_prompt` if set, otherwise falls back to `system_prompt`. Does NOT include dynamic content (dynamic prompt is injected as a separate user-role message by the turn pipeline).
-- [ ] T058 [US6] Update turn pipeline in `src/loop_/turn.rs` to: (a) use `effective_system_prompt()` for the system prompt message (cacheable), (b) if `dynamic_system_prompt` is set, inject its output as a separate user-role message immediately after the system prompt (non-cacheable).
+- [x] T057 [US6] Add unit tests for prompt split in `src/agent_options.rs`: (a) only `system_prompt` set → used as-is, (b) `static_system_prompt` set → takes precedence as system prompt, (c) dynamic closure called fresh each invocation returns separate string, (d) `effective_system_prompt()` returns only static portion (not concatenated with dynamic).
+- [x] T054 [US6] Add `static_system_prompt: Option<String>` and `dynamic_system_prompt: Option<Box<dyn Fn() -> String + Send + Sync>>` fields to `AgentOptions` in `src/agent_options.rs`.
+- [x] T055 [US6] Add builder methods `.with_static_system_prompt(prompt: String)` and `.with_dynamic_system_prompt(f: impl Fn() -> String + Send + Sync + 'static)` to `AgentOptions`.
+- [x] T056 [US6] Add `effective_system_prompt(&self) -> String` method to `AgentOptions` — returns `static_system_prompt` if set, otherwise falls back to `system_prompt`. Does NOT include dynamic content (dynamic prompt is injected as a separate user-role message by the turn pipeline).
+- [x] T058 [US6] Update turn pipeline in `src/loop_/turn.rs` to: (a) use `effective_system_prompt()` for the system prompt message (cacheable), (b) if `dynamic_system_prompt` is set, inject its output as a separate user-role message immediately after the system prompt (non-cacheable).
 
 **Checkpoint**: `cargo test -p swink-agent agent_options` passes. Static/dynamic split works with and without caching.
 
@@ -183,9 +183,9 @@
 
 ### Implementation for User Story 7
 
-- [ ] T059 [US7] Add unit tests for `is_context_overflow()` in `src/context.rs`: (a) messages within budget → false, (b) messages exceeding budget → true, (c) `max_context_window = None` → false, (d) custom TokenCounter used, (e) empty messages → false.
-- [ ] T060 [US7] Implement `is_context_overflow()` in `src/context.rs` — signature: `pub fn is_context_overflow(messages: &[AgentMessage], model: &ModelSpec, counter: Option<&dyn TokenCounter>) -> bool`. Sum token estimates, compare against `model.capabilities.as_ref().and_then(|c| c.max_context_window)`.
-- [ ] T061 [US7] Add re-export to `src/lib.rs`: `pub use context::is_context_overflow;`
+- [x] T059 [US7] Add unit tests for `is_context_overflow()` in `src/context.rs`: (a) messages within budget → false, (b) messages exceeding budget → true, (c) `max_context_window = None` → false, (d) custom TokenCounter used, (e) empty messages → false.
+- [x] T060 [US7] Implement `is_context_overflow()` in `src/context.rs` — signature: `pub fn is_context_overflow(messages: &[AgentMessage], model: &ModelSpec, counter: Option<&dyn TokenCounter>) -> bool`. Sum token estimates, compare against `model.capabilities.as_ref().and_then(|c| c.max_context_window)`.
+- [x] T061 [US7] Add re-export to `src/lib.rs`: `pub use context::is_context_overflow;`
 
 **Checkpoint**: `cargo test -p swink-agent context` passes with new overflow predicate tests.
 
@@ -195,9 +195,9 @@
 
 **Goal**: When an adapter returns a cache-miss error, the framework resets `CacheState` and retries with `CacheHint::Write`.
 
-- [ ] T071 [US5] Add `CacheMiss` variant to `AgentError` in `src/error.rs`. Mark as retryable in `is_retryable()` (alongside `ModelThrottled` and `NetworkError`).
-- [ ] T072 [US5] Add unit test for cache-miss retry in `src/loop_/turn.rs`: simulate a `CacheMiss` error, verify `CacheState::reset()` is called before retry and next attempt emits `CacheHint::Write`.
-- [ ] T073 [US5] Implement cache-miss detection in retry path in `src/loop_/turn.rs` — when `AgentError::CacheMiss` is caught, call `CacheState::reset()` before the retry turn so the next attempt re-sends the prefix with `CacheHint::Write`.
+- [x] T071 [US5] Add `CacheMiss` variant to `AgentError` in `src/error.rs`. Mark as retryable in `is_retryable()` (alongside `ModelThrottled` and `NetworkError`).
+- [x] T072 [US5] Add unit test for cache-miss retry in `src/loop_/turn.rs`: simulate a `CacheMiss` error, verify `CacheState::reset()` is called before retry and next attempt emits `CacheHint::Write`.
+- [x] T073 [US5] Implement cache-miss detection in retry path in `src/loop_/turn.rs` — when `AgentError::CacheMiss` is caught, call `CacheState::reset()` before the retry turn so the next attempt re-sends the prefix with `CacheHint::Write`.
 
 **Checkpoint**: Cache-miss → retry → Write cycle works end-to-end.
 
@@ -212,11 +212,11 @@
 - [x] T044 Run `cargo test --workspace` to verify no regressions across the full workspace
 - [x] T045 Run `cargo test -p swink-agent --no-default-features` to verify context management works with builtin-tools disabled
 - [x] T046 Validate quickstart.md code examples compile by inspection — check `sliding_window`, `SlidingWindowTransformer`, `VersioningTransformer`, `convert_messages` usage patterns match the public API
-- [ ] T062 Verify new re-exports in `src/lib.rs`: `CacheConfig`, `CacheHint`, `CacheState`, `is_context_overflow`
-- [ ] T063 Run `cargo clippy --workspace -- -D warnings` and fix any warnings in new context cache and overflow modules
-- [ ] T064 Run `cargo test --workspace` to verify no regressions from new code
-- [ ] T065 Run `cargo test -p swink-agent --no-default-features` to verify caching and overflow work with builtin-tools disabled
-- [ ] T066 Validate new quickstart.md code examples compile by inspection — check `CacheConfig`, `is_context_overflow`, static/dynamic prompt patterns
+- [x] T062 Verify new re-exports in `src/lib.rs`: `CacheConfig`, `CacheHint`, `CacheState`, `is_context_overflow`
+- [x] T063 Run `cargo clippy --workspace -- -D warnings` and fix any warnings in new context cache and overflow modules
+- [x] T064 Run `cargo test --workspace` to verify no regressions from new code
+- [x] T065 Run `cargo test -p swink-agent --no-default-features` to verify caching and overflow work with builtin-tools disabled
+- [x] T066 Validate new quickstart.md code examples compile by inspection — check `CacheConfig`, `is_context_overflow`, static/dynamic prompt patterns
 
 ---
 

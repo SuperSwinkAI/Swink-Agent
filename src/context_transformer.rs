@@ -72,6 +72,9 @@ pub struct SlidingWindowTransformer {
     overflow_budget: usize,
     anchor: usize,
     token_counter: Option<Arc<dyn TokenCounter>>,
+    /// When caching is active, protects this many messages from compaction.
+    /// The effective anchor becomes `max(anchor, cached_prefix_len)`.
+    cached_prefix_len: usize,
 }
 
 impl SlidingWindowTransformer {
@@ -89,6 +92,7 @@ impl SlidingWindowTransformer {
             overflow_budget,
             anchor,
             token_counter: None,
+            cached_prefix_len: 0,
         }
     }
 
@@ -96,6 +100,20 @@ impl SlidingWindowTransformer {
     pub fn with_token_counter(mut self, counter: Arc<dyn TokenCounter>) -> Self {
         self.token_counter = Some(counter);
         self
+    }
+
+    /// Set the cached prefix length to protect from compaction.
+    ///
+    /// When caching is active, the effective anchor is `max(anchor, cached_prefix_len)`.
+    #[must_use]
+    pub const fn with_cached_prefix_len(mut self, len: usize) -> Self {
+        self.cached_prefix_len = len;
+        self
+    }
+
+    /// Update the cached prefix length (for runtime updates from the turn pipeline).
+    pub const fn set_cached_prefix_len(&mut self, len: usize) {
+        self.cached_prefix_len = len;
     }
 }
 
@@ -111,8 +129,9 @@ impl ContextTransformer for SlidingWindowTransformer {
             self.normal_budget
         };
 
+        let effective_anchor = self.anchor.max(self.cached_prefix_len);
         let counter_ref = self.token_counter.as_deref();
-        let result = compact_sliding_window_with(messages, budget, self.anchor, counter_ref)?;
+        let result = compact_sliding_window_with(messages, budget, effective_anchor, counter_ref)?;
 
         Some(CompactionReport {
             dropped_count: result.dropped_count,
@@ -134,6 +153,7 @@ mod tests {
                 text: text.to_owned(),
             }],
             timestamp: 0,
+            cache_hint: None,
         }))
     }
 

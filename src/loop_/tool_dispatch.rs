@@ -51,6 +51,7 @@ async fn emit_error_result(
         is_error: true,
         timestamp: now_timestamp(),
         details: serde_json::Value::Null,
+        cache_hint: None,
     };
     results.lock().await.push((idx, tool_result_msg));
 }
@@ -411,6 +412,7 @@ async fn collect_group_results(
                 is_error: true,
                 timestamp: now_timestamp(),
                 details: serde_json::Value::Null,
+                cache_hint: None,
             };
             results.lock().await.push((idx, panic_result));
             continue;
@@ -454,6 +456,7 @@ async fn build_steering_outcome(
                 is_error: true,
                 timestamp: now_timestamp(),
                 details: serde_json::Value::Null,
+                cache_hint: None,
             });
         }
     }
@@ -643,6 +646,7 @@ async fn dispatch_single_tool(
                 is_error,
                 timestamp: now_timestamp(),
                 details: result.details,
+                cache_hint: None,
             };
 
             results_clone.lock().await.push((idx, tool_result_msg));

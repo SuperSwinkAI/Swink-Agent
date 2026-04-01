@@ -183,6 +183,7 @@ mod tests {
             stop_reason: StopReason::Stop,
             error_message: None,
             timestamp: 0,
+            cache_hint: None,
         };
         let turn = TurnPolicyContext {
             assistant_message: &msg,

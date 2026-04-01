@@ -15,6 +15,7 @@ pub fn user_message(text: &str) -> LlmMessage {
             text: text.to_owned(),
         }],
         timestamp: 0,
+        cache_hint: None,
     })
 }
 
@@ -31,6 +32,7 @@ pub fn assistant_message(text: &str) -> LlmMessage {
         stop_reason: StopReason::Stop,
         error_message: None,
         timestamp: 0,
+        cache_hint: None,
     })
 }
 

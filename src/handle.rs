@@ -82,6 +82,7 @@ impl AgentHandle {
         let msg = AgentMessage::Llm(LlmMessage::User(UserMessage {
             content: vec![ContentBlock::Text { text: text.into() }],
             timestamp: now_timestamp(),
+            cache_hint: None,
         }));
         Self::spawn(agent, vec![msg])
     }

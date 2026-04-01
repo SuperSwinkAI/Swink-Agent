@@ -14,6 +14,7 @@ fn user_message(text: &str) -> AgentMessage {
             text: text.to_string(),
         }],
         timestamp: 0,
+        cache_hint: None,
     }))
 }
 

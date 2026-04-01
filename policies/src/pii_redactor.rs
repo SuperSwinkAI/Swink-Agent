@@ -170,6 +170,7 @@ impl PostTurnPolicy for PiiRedactor {
                     stop_reason: orig.stop_reason,
                     error_message: orig.error_message.clone(),
                     timestamp: orig.timestamp,
+                    cache_hint: None,
                 };
 
                 PolicyVerdict::Inject(vec![AgentMessage::Llm(LlmMessage::Assistant(msg))])
@@ -199,6 +200,7 @@ mod tests {
             stop_reason: StopReason::Stop,
             error_message: None,
             timestamp: 12345,
+            cache_hint: None,
         };
         (msg, vec![])
     }

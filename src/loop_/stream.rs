@@ -350,6 +350,19 @@ async fn handle_stream_error(
         return StreamErrorAction::ContextOverflow;
     }
 
+    // Cache miss — reset cache state so next attempt re-sends with Write hint
+    if matches!(harness_error, AgentError::CacheMiss) {
+        warn!("provider cache miss, resetting cache state for retry");
+        {
+            let mut cache_state = config
+                .cache_state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            cache_state.reset();
+        }
+        return StreamErrorAction::Retry(std::time::Duration::ZERO);
+    }
+
     // Check if retryable — RetryStrategy is the sole decision point
     if config.retry_strategy.should_retry(&harness_error, attempt) {
         let delay = config.retry_strategy.delay(attempt);

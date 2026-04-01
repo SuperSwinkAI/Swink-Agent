@@ -183,6 +183,32 @@ pub fn sliding_window(
     }
 }
 
+/// Estimate whether the context exceeds the model's maximum context window.
+///
+/// Returns `true` if the estimated token count exceeds
+/// `model.capabilities.max_context_window`. Returns `false` if the model has
+/// no known context window limit.
+pub fn is_context_overflow(
+    messages: &[AgentMessage],
+    model: &crate::types::ModelSpec,
+    counter: Option<&dyn TokenCounter>,
+) -> bool {
+    let max_window = model
+        .capabilities
+        .as_ref()
+        .and_then(|c| c.max_context_window);
+
+    let Some(max_window) = max_window else {
+        return false;
+    };
+
+    let default = DefaultTokenCounter;
+    let counter: &dyn TokenCounter = counter.unwrap_or(&default);
+
+    let total_tokens: usize = messages.iter().map(|m| counter.count_tokens(m)).sum();
+    total_tokens as u64 > max_window
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -197,6 +223,7 @@ mod tests {
                 text: text.to_owned(),
             }],
             timestamp: 0,
+            cache_hint: None,
         }))
     }
 
@@ -216,6 +243,7 @@ mod tests {
             stop_reason: StopReason::ToolUse,
             error_message: None,
             timestamp: 0,
+            cache_hint: None,
         }))
     }
 
@@ -227,6 +255,7 @@ mod tests {
             is_error: false,
             timestamp: 0,
             details: serde_json::Value::Null,
+            cache_hint: None,
         }))
     }
 
@@ -572,5 +601,71 @@ mod tests {
         let result = compact_sliding_window(&mut messages, 250, 1);
         assert!(result.is_some());
         assert_eq!(messages.len(), 2);
+    }
+
+    // ── is_context_overflow tests ──────────────────────────────────────
+
+    fn model_with_window(window: u64) -> crate::types::ModelSpec {
+        crate::types::ModelSpec {
+            provider: "test".into(),
+            model_id: "test-model".into(),
+            thinking_level: crate::types::ThinkingLevel::default(),
+            thinking_budgets: None,
+            provider_config: None,
+            capabilities: Some(
+                crate::types::ModelCapabilities::none().with_max_context_window(window),
+            ),
+        }
+    }
+
+    fn model_no_window() -> crate::types::ModelSpec {
+        crate::types::ModelSpec {
+            provider: "test".into(),
+            model_id: "test-model".into(),
+            thinking_level: crate::types::ThinkingLevel::default(),
+            thinking_budgets: None,
+            provider_config: None,
+            capabilities: None,
+        }
+    }
+
+    #[test]
+    fn overflow_within_budget_returns_false() {
+        let messages = vec![text_message(&"x".repeat(400))]; // 100 tokens
+        assert!(!is_context_overflow(&messages, &model_with_window(1000), None));
+    }
+
+    #[test]
+    fn overflow_exceeding_budget_returns_true() {
+        let messages = vec![
+            text_message(&"x".repeat(400)), // 100 tokens
+            text_message(&"x".repeat(400)), // 100 tokens
+        ];
+        assert!(is_context_overflow(&messages, &model_with_window(150), None));
+    }
+
+    #[test]
+    fn overflow_no_window_returns_false() {
+        let messages = vec![text_message(&"x".repeat(40_000))]; // 10_000 tokens
+        assert!(!is_context_overflow(&messages, &model_no_window(), None));
+    }
+
+    #[test]
+    fn overflow_custom_counter() {
+        let messages = vec![text_message(&"x".repeat(400))]; // CharCounter: 400 tokens
+        // With CharCounter and window=300, overflow should be detected
+        assert!(is_context_overflow(
+            &messages,
+            &model_with_window(300),
+            Some(&CharCounter)
+        ));
+        // With default counter: 400/4 = 100 tokens < 300
+        assert!(!is_context_overflow(&messages, &model_with_window(300), None));
+    }
+
+    #[test]
+    fn overflow_empty_messages_returns_false() {
+        let messages: Vec<AgentMessage> = vec![];
+        assert!(!is_context_overflow(&messages, &model_with_window(100), None));
     }
 }

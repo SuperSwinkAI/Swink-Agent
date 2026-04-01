@@ -39,6 +39,7 @@ fn simple_context(prompt: &str) -> AgentContext {
                 text: prompt.to_string(),
             }],
             timestamp: 0,
+            cache_hint: None,
         }))],
         tools: Vec::new(),
     }
@@ -163,6 +164,7 @@ async fn live_tool_use_stream() {
                 text: "What's the weather in Paris?".into(),
             }],
             timestamp: 0,
+            cache_hint: None,
         }))],
         tools: vec![Arc::new(DummyTool)],
     };

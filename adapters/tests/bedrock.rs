@@ -133,6 +133,7 @@ async fn bedrock_tool_use_maps_to_tool_events() {
                         text: "weather?".into(),
                     }],
                     timestamp: 0,
+                    cache_hint: None,
                 }))],
                 tools: vec![std::sync::Arc::new(DummyTool)],
             },

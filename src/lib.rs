@@ -7,6 +7,7 @@ mod async_context_transformer;
 mod checkpoint;
 mod config;
 mod context;
+pub mod context_cache;
 mod context_transformer;
 pub mod credential;
 mod context_version;
@@ -55,7 +56,8 @@ pub use config::{
     AgentConfig, ApprovalModeConfig, BudgetGuardConfig, FollowUpModeConfig, RetryConfig,
     SteeringModeConfig, StreamOptionsConfig,
 };
-pub use context::{DefaultTokenCounter, TokenCounter, estimate_tokens, sliding_window};
+pub use context::{DefaultTokenCounter, TokenCounter, estimate_tokens, is_context_overflow, sliding_window};
+pub use context_cache::{CacheConfig, CacheHint, CacheState};
 pub use context_transformer::{CompactionReport, ContextTransformer, SlidingWindowTransformer};
 pub use context_version::{
     ContextSummarizer, ContextVersion, ContextVersionMeta, ContextVersionStore,

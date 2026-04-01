@@ -25,6 +25,7 @@ impl App {
         let user_message = AgentMessage::Llm(LlmMessage::User(UserMessage {
             content: vec![ContentBlock::Text { text }],
             timestamp: timestamp_now(),
+            cache_hint: None,
         }));
 
         let input = vec![user_message];

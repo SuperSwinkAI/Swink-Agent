@@ -562,6 +562,7 @@ pub fn accumulate_message(
         stop_reason,
         error_message,
         timestamp,
+        cache_hint: None,
     })
 }
 

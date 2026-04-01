@@ -447,6 +447,7 @@ mod tests {
         AgentMessage::Llm(crate::types::LlmMessage::User(crate::types::UserMessage {
             content: vec![],
             timestamp: 0,
+            cache_hint: None,
         }))
     }
 

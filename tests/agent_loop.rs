@@ -149,6 +149,9 @@ fn default_config(stream_fn: Arc<dyn StreamFn>) -> AgentLoopConfig {
         tool_execution_policy: swink_agent::ToolExecutionPolicy::default(),
         session_state: std::sync::Arc::new(std::sync::RwLock::new(swink_agent::SessionState::new())),
         credential_resolver: None,
+        cache_config: None,
+        cache_state: std::sync::Mutex::new(swink_agent::CacheState::default()),
+        dynamic_system_prompt: None,
     }
 }
 
@@ -569,6 +572,7 @@ async fn steering_interrupt() {
                     text: "steering: change direction".to_string(),
                 }],
                 timestamp: 0,
+                cache_hint: None,
             }))]
         } else {
             vec![]
@@ -608,6 +612,7 @@ async fn follow_up() {
                     text: "follow up question".to_string(),
                 }],
                 timestamp: 0,
+                cache_hint: None,
             }))]
         } else {
             vec![]
@@ -853,6 +858,7 @@ async fn convert_to_llm_filter() {
                 text: "hello".to_string(),
             }],
             timestamp: 0,
+            cache_hint: None,
         })),
         AgentMessage::Custom(Box::new(CustomMsg)),
     ];

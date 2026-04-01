@@ -28,6 +28,7 @@ fn simple_context(prompt: &str) -> AgentContext {
                 text: prompt.to_string(),
             }],
             timestamp: 0,
+            cache_hint: None,
         }))],
         tools: vec![],
     }

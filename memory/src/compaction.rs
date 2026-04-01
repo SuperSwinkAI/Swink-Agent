@@ -100,6 +100,7 @@ impl SummarizingCompactor {
                         stop_reason: StopReason::Stop,
                         error_message: None,
                         timestamp: 0,
+                        cache_hint: None,
                     }));
 
                     // Insert after anchor messages.
@@ -154,6 +155,7 @@ mod tests {
                 text: text.to_owned(),
             }],
             timestamp: 0,
+            cache_hint: None,
         }))
     }
 

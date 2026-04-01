@@ -21,6 +21,7 @@ fn make_assistant_msg(text: &str) -> AssistantMessage {
         stop_reason: StopReason::Stop,
         error_message: None,
         timestamp: 0,
+        cache_hint: None,
     }
 }
 
@@ -51,6 +52,7 @@ fn all_policies_compose() {
             text: "Hello, normal message".into(),
         }],
         timestamp: 0,
+        cache_hint: None,
     }))];
     let state = swink_agent::SessionState::new();
     let ctx = PolicyContext {

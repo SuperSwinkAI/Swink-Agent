@@ -610,6 +610,7 @@ mod tests {
                 text: "hello".to_string(),
             }],
             timestamp: 0,
+            cache_hint: None,
         }))];
 
         let result = convert_messages::<OllamaConverter>(&messages, "test sys");
@@ -739,6 +740,7 @@ mod tests {
                 stop_reason: StopReason::ToolUse,
                 error_message: None,
                 timestamp: 0,
+                cache_hint: None,
             },
         ))];
 
@@ -771,6 +773,7 @@ mod tests {
                 is_error: false,
                 timestamp: 0,
                 details: serde_json::Value::Null,
+                cache_hint: None,
             },
         ))];
 
@@ -800,6 +803,7 @@ mod tests {
                     text: "after custom".to_string(),
                 }],
                 timestamp: 0,
+                cache_hint: None,
             })),
         ];
 

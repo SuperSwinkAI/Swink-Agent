@@ -80,14 +80,24 @@ pub enum AgentError {
         name: String,
         source: Box<dyn std::error::Error + Send + Sync>,
     },
+
+    /// Provider-side context cache was not found (evicted or expired).
+    ///
+    /// The framework resets [`CacheState`](crate::context_cache::CacheState) and
+    /// retries with `CacheHint::Write`.
+    #[error("provider cache miss")]
+    CacheMiss,
 }
 
 impl AgentError {
     /// Returns `true` for error variants that are safe to retry
-    /// (`ModelThrottled` and `NetworkError`).
+    /// (`ModelThrottled`, `NetworkError`, and `CacheMiss`).
     #[must_use]
     pub const fn is_retryable(&self) -> bool {
-        matches!(self, Self::ModelThrottled | Self::NetworkError { .. })
+        matches!(
+            self,
+            Self::ModelThrottled | Self::NetworkError { .. } | Self::CacheMiss
+        )
     }
 
     /// Convenience constructor for [`AgentError::NetworkError`].

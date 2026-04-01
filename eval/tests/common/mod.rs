@@ -48,6 +48,7 @@ pub fn mock_invocation(
         stop_reason: StopReason::Stop,
         error_message: None,
         timestamp: 0,
+        cache_hint: None,
     };
 
     Invocation {
@@ -135,6 +136,7 @@ pub fn mock_invocation_multi_turn(turns: &[&[(&str, serde_json::Value)]]) -> Inv
                     stop_reason: StopReason::Stop,
                     error_message: None,
                     timestamp: 0,
+                    cache_hint: None,
                 },
                 tool_calls,
                 tool_results: vec![],
