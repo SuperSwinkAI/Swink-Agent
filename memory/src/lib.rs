@@ -35,5 +35,5 @@ pub use compaction::{CompactionResult, SummarizingCompactor};
 pub use jsonl::JsonlSessionStore;
 pub use meta::SessionMeta;
 pub use store::SessionStore;
-pub use store_async::{AsyncSessionStore, BlockingSessionStore};
+pub use store_async::{AsyncSessionStore, BlockingSessionStore, SessionStoreFuture};
 pub use time::{format_session_id, now_utc};
