@@ -14,7 +14,9 @@ use crate::tool_execution_policy::{ToolCallSummary, ToolExecutionPolicy};
 use crate::types::{ContentBlock, ToolResultMessage};
 use crate::util::now_timestamp;
 
-use super::{AgentEvent, AgentLoopConfig, ApproveToolFn, ToolCallInfo, ToolExecOutcome, emit};
+use crate::agent_options::ApproveToolFn;
+
+use super::{AgentEvent, AgentLoopConfig, ToolCallInfo, ToolExecOutcome, emit};
 
 // ─── Pre-processed tool call ─────────────────────────────────────────────────
 

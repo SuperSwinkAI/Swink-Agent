@@ -11,11 +11,12 @@ use crate::types::{
 };
 use crate::util::now_timestamp;
 
+use super::overflow::{OverflowRecoveryResult, attempt_overflow_recovery};
 use super::stream::{capability_filter_tools, stream_with_retry};
 use super::tool_dispatch::execute_tools_concurrently;
 use super::{
     AgentEvent, AgentLoopConfig, LoopState, StreamResult, ToolCallInfo,
-    ToolExecOutcome, TurnEndReason, TurnOutcome, build_abort_message, build_error_message, emit,
+    ToolExecOutcome, TurnEndReason, TurnOutcome, build_abort_message, emit,
 };
 
 /// Run a single turn of the inner loop: inject pending messages, transform
@@ -313,148 +314,6 @@ pub async fn run_single_turn(
     .await
 }
 
-// ─── Emergency overflow recovery ────────────────────────────────────────
-
-/// Outcome of an in-place overflow recovery attempt.
-enum OverflowRecoveryResult {
-    /// Recovery succeeded — the retry produced a new `StreamResult`.
-    Recovered(Box<StreamResult>),
-    /// Recovery failed — the turn should exit with this outcome.
-    Failed(TurnOutcome),
-}
-
-/// Attempt emergency in-place overflow recovery.
-///
-/// When the LLM rejects a request with a context-window overflow, this function
-/// re-runs context transformers with `overflow=true`, then retries the LLM call
-/// with the compacted context. If recovery is not possible (no transformers, no
-/// compaction, second overflow, or cancellation), it surfaces an error.
-#[allow(clippy::too_many_arguments)]
-async fn attempt_overflow_recovery(
-    config: &Arc<AgentLoopConfig>,
-    state: &mut LoopState,
-    system_prompt: &str,
-    agent_context: &crate::types::AgentContext,
-    api_key: Option<String>,
-    cancellation_token: &CancellationToken,
-    tx: &mpsc::Sender<AgentEvent>,
-) -> OverflowRecoveryResult {
-    // Guard 1: Already attempted recovery this turn — surface error.
-    if state.overflow_recovery_attempted {
-        debug!("second overflow in same turn — surfacing error");
-        return overflow_error(config, state, tx).await;
-    }
-
-    // Guard 2: No transformer configured — cannot compact.
-    if config.async_transform_context.is_none() && config.transform_context.is_none() {
-        debug!("no context transformer configured — cannot recover from overflow");
-        return overflow_error(config, state, tx).await;
-    }
-
-    // Mark recovery as attempted for this turn.
-    state.overflow_recovery_attempted = true;
-    state.overflow_signal = true;
-
-    // Re-run async transformer with overflow=true
-    let mut any_compacted = false;
-    if let Some(ref async_transformer) = config.async_transform_context
-        && let Some(report) = async_transformer
-            .transform(&mut state.context_messages, true)
-            .await
-    {
-        any_compacted = true;
-        let _ = emit(tx, AgentEvent::ContextCompacted { report }).await;
-    }
-
-    // Re-run sync transformer with overflow=true
-    if let Some(ref transformer) = config.transform_context
-        && let Some(report) = transformer.transform(&mut state.context_messages, true)
-    {
-        any_compacted = true;
-        let _ = emit(tx, AgentEvent::ContextCompacted { report }).await;
-    }
-
-    // Reset overflow signal after transformers ran.
-    state.overflow_signal = false;
-
-    // Guard 3: Transformers ran but neither reported compaction — no point retrying.
-    if !any_compacted {
-        debug!("transformers ran but no compaction occurred — surfacing error");
-        return overflow_error(config, state, tx).await;
-    }
-
-    // Check cancellation before retrying.
-    if cancellation_token.is_cancelled() {
-        return OverflowRecoveryResult::Failed(
-            handle_cancellation(config, state, tx).await,
-        );
-    }
-
-    // Re-run convert-to-LLM pipeline with compacted context.
-    let llm_messages: Vec<LlmMessage> = state
-        .context_messages
-        .iter()
-        .filter_map(|m| (config.convert_to_llm)(m))
-        .collect();
-
-    // Retry the stream call with compacted context.
-    let retry_result = stream_with_retry(
-        config,
-        agent_context,
-        &llm_messages,
-        system_prompt,
-        api_key,
-        cancellation_token,
-        tx,
-    )
-    .await;
-
-    // If the retry also overflows, surface the error — no further recovery.
-    if matches!(retry_result, StreamResult::ContextOverflow) {
-        debug!("retry after compaction still overflowed — surfacing error");
-        return overflow_error(config, state, tx).await;
-    }
-
-    OverflowRecoveryResult::Recovered(Box::new(retry_result))
-}
-
-/// Build an overflow error message and emit `TurnEnd` + `AgentEnd`.
-async fn overflow_error(
-    config: &Arc<AgentLoopConfig>,
-    state: &mut LoopState,
-    tx: &mpsc::Sender<AgentEvent>,
-) -> OverflowRecoveryResult {
-    let error = crate::error::AgentError::ContextWindowOverflow {
-        model: config.model.model_id.clone(),
-    };
-    let error_msg = build_error_message(&config.model, &error);
-    let msg_for_event = error_msg.clone();
-    state
-        .context_messages
-        .push(AgentMessage::Llm(LlmMessage::Assistant(error_msg)));
-
-    let _ = emit(
-        tx,
-        AgentEvent::MessageEnd {
-            message: msg_for_event.clone(),
-        },
-    )
-    .await;
-
-    let snapshot = build_snapshot(state, StopReason::Error, None);
-    OverflowRecoveryResult::Failed(
-        emit_turn_end_and_agent_end(
-            msg_for_event,
-            vec![],
-            TurnEndReason::Error,
-            snapshot,
-            state,
-            tx,
-        )
-        .await,
-    )
-}
-
 // ─── Shared helpers ──────────────────────────────────────────────────────
 
 /// Update accumulated usage/cost and track the last assistant message.
@@ -490,7 +349,7 @@ async fn emit_turn_metrics(
 ///
 /// Consolidates the repeated pattern of emitting these two terminal events
 /// and draining `context_messages` into the `AgentEnd` payload.
-async fn emit_turn_end_and_agent_end(
+pub(super) async fn emit_turn_end_and_agent_end(
     assistant_message: AssistantMessage,
     tool_results: Vec<ToolResultMessage>,
     reason: TurnEndReason,
@@ -527,7 +386,7 @@ async fn emit_turn_end_and_agent_end(
 ///
 /// Extracts LLM messages from `context_messages`, using the accumulated
 /// usage/cost and the given stop reason.
-fn build_snapshot(state: &LoopState, stop_reason: StopReason, state_delta: Option<crate::StateDelta>) -> TurnSnapshot {
+pub(super) fn build_snapshot(state: &LoopState, stop_reason: StopReason, state_delta: Option<crate::StateDelta>) -> TurnSnapshot {
     let llm_messages: Vec<LlmMessage> = state
         .context_messages
         .iter()
@@ -566,7 +425,7 @@ async fn flush_state_delta(
 // ─── run_single_turn helpers ─────────────────────────────────────────────────
 
 /// Emit cancellation events and return from the loop.
-async fn handle_cancellation(
+pub(super) async fn handle_cancellation(
     config: &Arc<AgentLoopConfig>,
     state: &mut LoopState,
     tx: &mpsc::Sender<AgentEvent>,
