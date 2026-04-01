@@ -16,6 +16,10 @@ capabilities = ["text", "tools", "thinking", "images_in", "streaming", "structur
 status = "ga"
 context_window_tokens = 200000
 max_output_tokens = 16384
+cost_per_million_input = 3.0
+cost_per_million_output = 15.0
+cost_per_million_cache_read = 0.30
+cost_per_million_cache_write = 3.75
 
 [[providers.presets]]
 id = "opus_46"
@@ -26,6 +30,10 @@ capabilities = ["text", "tools", "thinking", "images_in", "streaming", "structur
 status = "ga"
 context_window_tokens = 200000
 max_output_tokens = 32768
+cost_per_million_input = 15.0
+cost_per_million_output = 75.0
+cost_per_million_cache_read = 1.50
+cost_per_million_cache_write = 18.75
 
 [[providers.presets]]
 id = "haiku_45"
@@ -36,6 +44,10 @@ capabilities = ["text", "tools", "thinking", "images_in", "streaming", "structur
 status = "ga"
 context_window_tokens = 200000
 max_output_tokens = 8192
+cost_per_million_input = 0.80
+cost_per_million_output = 4.0
+cost_per_million_cache_read = 0.08
+cost_per_million_cache_write = 1.0
 
 [[providers]]
 key = "openai"
@@ -55,6 +67,10 @@ capabilities = ["text", "tools", "images_in", "streaming", "structured_output"]
 status = "ga"
 context_window_tokens = 128000
 max_output_tokens = 16384
+cost_per_million_input = 2.50
+cost_per_million_output = 10.0
+cost_per_million_cache_read = 1.25
+cost_per_million_cache_write = 2.50
 
 [[providers.presets]]
 id = "gpt_4_1"
@@ -65,6 +81,10 @@ capabilities = ["text", "tools", "images_in", "streaming", "structured_output"]
 status = "ga"
 context_window_tokens = 1000000
 max_output_tokens = 32768
+cost_per_million_input = 2.0
+cost_per_million_output = 8.0
+cost_per_million_cache_read = 0.50
+cost_per_million_cache_write = 2.0
 
 [[providers.presets]]
 id = "gpt_4o_mini"
@@ -75,6 +95,10 @@ capabilities = ["text", "tools", "images_in", "streaming", "structured_output"]
 status = "ga"
 context_window_tokens = 128000
 max_output_tokens = 16384
+cost_per_million_input = 0.15
+cost_per_million_output = 0.60
+cost_per_million_cache_read = 0.075
+cost_per_million_cache_write = 0.15
 
 [[providers.presets]]
 id = "gpt_4_1_mini"
@@ -85,6 +109,10 @@ capabilities = ["text", "tools", "images_in", "streaming", "structured_output"]
 status = "ga"
 context_window_tokens = 1000000
 max_output_tokens = 32768
+cost_per_million_input = 0.40
+cost_per_million_output = 1.60
+cost_per_million_cache_read = 0.10
+cost_per_million_cache_write = 0.40
 
 [[providers.presets]]
 id = "o3_mini"
@@ -95,6 +123,10 @@ capabilities = ["text", "tools", "streaming", "structured_output"]
 status = "ga"
 context_window_tokens = 200000
 max_output_tokens = 100000
+cost_per_million_input = 1.10
+cost_per_million_output = 4.40
+cost_per_million_cache_read = 0.55
+cost_per_million_cache_write = 1.10
 
 [[providers.presets]]
 id = "o1"
@@ -105,6 +137,10 @@ capabilities = ["text", "tools", "images_in", "streaming", "structured_output"]
 status = "ga"
 context_window_tokens = 200000
 max_output_tokens = 100000
+cost_per_million_input = 15.0
+cost_per_million_output = 60.0
+cost_per_million_cache_read = 7.50
+cost_per_million_cache_write = 15.0
 
 [[providers]]
 key = "local"
@@ -142,6 +178,8 @@ capabilities = ["text", "tools", "thinking", "images_in", "streaming", "structur
 status = "preview"
 context_window_tokens = 1000000
 max_output_tokens = 65536
+cost_per_million_input = 2.50
+cost_per_million_output = 15.0
 
 [[providers.presets]]
 id = "gemini_3_1_deep_think"
@@ -153,6 +191,8 @@ capabilities = ["text", "tools", "thinking", "images_in", "streaming"]
 status = "preview"
 context_window_tokens = 1000000
 max_output_tokens = 65536
+cost_per_million_input = 2.50
+cost_per_million_output = 15.0
 
 [[providers.presets]]
 id = "gemini_3_flash"
@@ -164,6 +204,8 @@ capabilities = ["text", "tools", "thinking", "images_in", "streaming", "structur
 status = "preview"
 context_window_tokens = 1000000
 max_output_tokens = 65536
+cost_per_million_input = 0.15
+cost_per_million_output = 0.60
 
 [[providers.presets]]
 id = "gemini_3_1_flash_lite"
@@ -175,6 +217,8 @@ capabilities = ["text", "tools", "thinking", "images_in", "streaming"]
 status = "preview"
 context_window_tokens = 1000000
 max_output_tokens = 65536
+cost_per_million_input = 0.075
+cost_per_million_output = 0.30
 
 [[providers]]
 key = "azure"
@@ -234,6 +278,8 @@ capabilities = ["text", "tools", "images_in", "streaming"]
 status = "ga"
 context_window_tokens = 131072
 max_output_tokens = 16384
+cost_per_million_input = 3.0
+cost_per_million_output = 15.0
 
 [[providers.presets]]
 id = "grok_3_fast"
@@ -245,6 +291,8 @@ capabilities = ["text", "tools", "images_in", "streaming"]
 status = "ga"
 context_window_tokens = 131072
 max_output_tokens = 16384
+cost_per_million_input = 5.0
+cost_per_million_output = 25.0
 
 [[providers]]
 key = "mistral"
@@ -265,6 +313,8 @@ capabilities = ["text", "tools", "images_in", "streaming", "structured_output"]
 status = "ga"
 context_window_tokens = 256000
 max_output_tokens = 8192
+cost_per_million_input = 2.0
+cost_per_million_output = 6.0
 
 [[providers.presets]]
 id = "mistral_medium"
@@ -276,6 +326,8 @@ capabilities = ["text", "tools", "images_in", "streaming"]
 status = "ga"
 context_window_tokens = 128000
 max_output_tokens = 8192
+cost_per_million_input = 0.40
+cost_per_million_output = 2.0
 
 [[providers.presets]]
 id = "mistral_small"
@@ -287,6 +339,8 @@ capabilities = ["text", "tools", "images_in", "streaming", "structured_output"]
 status = "ga"
 context_window_tokens = 256000
 max_output_tokens = 8192
+cost_per_million_input = 0.10
+cost_per_million_output = 0.30
 
 [[providers.presets]]
 id = "ministral_3b"
@@ -353,6 +407,8 @@ capabilities = ["text", "tools", "streaming"]
 status = "ga"
 context_window_tokens = 256000
 max_output_tokens = 8192
+cost_per_million_input = 0.30
+cost_per_million_output = 0.90
 
 [[providers.presets]]
 id = "devstral"

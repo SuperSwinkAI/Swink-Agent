@@ -83,7 +83,7 @@ pub use messaging::{AgentMailbox, send_to};
 pub use metrics::{MetricsCollector, ToolExecMetrics, TurnMetrics};
 pub use model_catalog::{
     ApiVersion, AuthMode, CatalogPreset, ModelCatalog, PresetCapability, PresetCatalog,
-    PresetStatus, ProviderCatalog, ProviderKind, model_catalog,
+    PresetStatus, ProviderCatalog, ProviderKind, calculate_cost, model_catalog,
 };
 pub use model_presets::{ModelConnection, ModelConnections, ModelConnectionsBuilder};
 pub use orchestrator::{

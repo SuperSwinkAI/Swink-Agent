@@ -121,18 +121,18 @@
 
 > **NOTE: Write these tests FIRST, ensure they FAIL before implementation (Constitution Principle II: TDD)**
 
-- [ ] T031 [US4] Write unit tests in `src/model_catalog.rs` `#[cfg(test)]` module: `calculate_cost_known_model` (verify input/output/cache costs match expected), `calculate_cost_unknown_model` (returns zero cost), `calculate_cost_zero_usage` (returns zero cost), `calculate_cost_cache_tokens` (verify cache_read and cache_write costs), `calculate_cost_no_pricing_data` (model exists in catalog but has no pricing fields — e.g., local model — returns zero cost)
+- [x] T031 [US4] Write unit tests in `src/model_catalog.rs` `#[cfg(test)]` module: `calculate_cost_known_model` (verify input/output/cache costs match expected), `calculate_cost_unknown_model` (returns zero cost), `calculate_cost_zero_usage` (returns zero cost), `calculate_cost_cache_tokens` (verify cache_read and cache_write costs), `calculate_cost_no_pricing_data` (model exists in catalog but has no pricing fields — e.g., local model — returns zero cost)
 
 ### Implementation for User Story 4
 
-- [ ] T032 [US4] Add pricing fields to `PresetCatalog` in `src/model_catalog.rs`: `cost_per_million_input: Option<f64>`, `cost_per_million_output: Option<f64>`, `cost_per_million_cache_read: Option<f64>`, `cost_per_million_cache_write: Option<f64>` with `#[serde(default)]`
-- [ ] T033 [US4] Add pricing fields to `CatalogPreset` (flattened view) — propagate from `PresetCatalog` during `ModelCatalog::preset()` construction
-- [ ] T034 [US4] Add helper method to `ModelCatalog`: `fn find_preset_by_model_id(&self, model_id: &str) -> Option<CatalogPreset>` — search across all providers
-- [ ] T035 [US4] Implement `calculate_cost(model_id: &str, usage: &Usage) -> Cost` in `src/model_catalog.rs` — look up pricing via `find_preset_by_model_id`, compute per-category costs, return `Cost::default()` if not found
-- [ ] T036 [US4] Populate pricing data for all Anthropic presets in `src/model_catalog.toml` (opus_46, sonnet_46, haiku_45)
-- [ ] T037 [P] [US4] Populate pricing data for all OpenAI presets in `src/model_catalog.toml`
-- [ ] T038 [P] [US4] Populate pricing data for all Google, Mistral, xAI presets in `src/model_catalog.toml`
-- [ ] T039 [US4] Re-export `calculate_cost` from `src/lib.rs`
+- [x] T032 [US4] Add pricing fields to `PresetCatalog` in `src/model_catalog.rs`: `cost_per_million_input: Option<f64>`, `cost_per_million_output: Option<f64>`, `cost_per_million_cache_read: Option<f64>`, `cost_per_million_cache_write: Option<f64>` with `#[serde(default)]`
+- [x] T033 [US4] Add pricing fields to `CatalogPreset` (flattened view) — propagate from `PresetCatalog` during `ModelCatalog::preset()` construction
+- [x] T034 [US4] Add helper method to `ModelCatalog`: `fn find_preset_by_model_id(&self, model_id: &str) -> Option<CatalogPreset>` — search across all providers
+- [x] T035 [US4] Implement `calculate_cost(model_id: &str, usage: &Usage) -> Cost` in `src/model_catalog.rs` — look up pricing via `find_preset_by_model_id`, compute per-category costs, return `Cost::default()` if not found
+- [x] T036 [US4] Populate pricing data for all Anthropic presets in `src/model_catalog.toml` (opus_46, sonnet_46, haiku_45)
+- [x] T037 [P] [US4] Populate pricing data for all OpenAI presets in `src/model_catalog.toml`
+- [x] T038 [P] [US4] Populate pricing data for all Google, Mistral, xAI presets in `src/model_catalog.toml`
+- [x] T039 [US4] Re-export `calculate_cost` from `src/lib.rs`
 
 **Checkpoint**: Cost calculation functional — monetary cost can be computed from token usage for any cataloged model
 
@@ -148,7 +148,7 @@
 
 ### Tests for User Story 5
 
-- [ ] T040 [US5] Write unit tests in `src/model_catalog.rs` `#[cfg(test)]` module (if not already covered): `capabilities_from_catalog_preset` (verify all flags from catalog capabilities), `capabilities_context_window_and_output` (verify max_context_window and max_output_tokens from catalog), `model_spec_carries_capabilities` (verify capabilities survive model_spec() creation), `manual_model_spec_defaults` (verify ModelSpec::new() has default capabilities)
+- [x] T040 [US5] Write unit tests in `src/model_catalog.rs` `#[cfg(test)]` module (if not already covered): `capabilities_from_catalog_preset` (verify all flags from catalog capabilities), `capabilities_context_window_and_output` (verify max_context_window and max_output_tokens from catalog), `model_spec_carries_capabilities` (verify capabilities survive model_spec() creation), `manual_model_spec_defaults` (verify ModelSpec::new() has default capabilities)
 
 **Checkpoint**: Capability introspection formally verified — catalog capabilities flow correctly through ModelSpec
 
@@ -162,10 +162,10 @@
 - [x] T028 [P] Run `cargo clippy --workspace -- -D warnings` and fix any warnings
 - [x] T029 Run `cargo test --workspace` to verify all tests pass
 - [x] T030 Run quickstart.md validation — verify all code examples compile conceptually against the implemented API
-- [ ] T041 Verify `calculate_cost` is re-exported from `src/lib.rs`
-- [ ] T042 Run `cargo clippy --workspace -- -D warnings` with updated catalog and fix any warnings
-- [ ] T043 Run `cargo test --workspace` to verify all new tests pass
-- [ ] T044 Validate new quickstart.md examples (cost calculation, capability query) match actual API
+- [x] T041 Verify `calculate_cost` is re-exported from `src/lib.rs`
+- [x] T042 Run `cargo clippy --workspace -- -D warnings` with updated catalog and fix any warnings
+- [x] T043 Run `cargo test --workspace` to verify all new tests pass
+- [x] T044 Validate new quickstart.md examples (cost calculation, capability query) match actual API
 
 ---
 

@@ -3,7 +3,7 @@ use std::sync::OnceLock;
 use serde::Deserialize;
 
 use crate::ModelSpec;
-use crate::types::ModelCapabilities;
+use crate::types::{Cost, ModelCapabilities, Usage};
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -45,7 +45,7 @@ pub enum PresetStatus {
     Preview,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct PresetCatalog {
     pub id: String,
     pub display_name: String,
@@ -61,9 +61,17 @@ pub struct PresetCatalog {
     pub include_by_default: bool,
     pub repo_id: Option<String>,
     pub filename: Option<String>,
+    #[serde(default)]
+    pub cost_per_million_input: Option<f64>,
+    #[serde(default)]
+    pub cost_per_million_output: Option<f64>,
+    #[serde(default)]
+    pub cost_per_million_cache_read: Option<f64>,
+    #[serde(default)]
+    pub cost_per_million_cache_write: Option<f64>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct ProviderCatalog {
     pub key: String,
     pub display_name: String,
@@ -86,7 +94,7 @@ impl ProviderCatalog {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct ModelCatalog {
     #[serde(default)]
     pub providers: Vec<ProviderCatalog>,
@@ -98,6 +106,19 @@ impl ModelCatalog {
         self.providers
             .iter()
             .find(|provider| provider.key == provider_key)
+    }
+
+    /// Search across all providers for a preset matching the given `model_id`.
+    #[must_use]
+    pub fn find_preset_by_model_id(&self, model_id: &str) -> Option<CatalogPreset> {
+        for provider in &self.providers {
+            for preset in &provider.presets {
+                if preset.model_id == model_id {
+                    return self.preset(&provider.key, &preset.id);
+                }
+            }
+        }
+        None
     }
 
     #[must_use]
@@ -126,11 +147,15 @@ impl ModelCatalog {
             include_by_default: preset.include_by_default,
             repo_id: preset.repo_id.clone(),
             filename: preset.filename.clone(),
+            cost_per_million_input: preset.cost_per_million_input,
+            cost_per_million_output: preset.cost_per_million_output,
+            cost_per_million_cache_read: preset.cost_per_million_cache_read,
+            cost_per_million_cache_write: preset.cost_per_million_cache_write,
         })
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct CatalogPreset {
     pub provider_key: String,
     pub provider_display_name: String,
@@ -153,6 +178,10 @@ pub struct CatalogPreset {
     pub include_by_default: bool,
     pub repo_id: Option<String>,
     pub filename: Option<String>,
+    pub cost_per_million_input: Option<f64>,
+    pub cost_per_million_output: Option<f64>,
+    pub cost_per_million_cache_read: Option<f64>,
+    pub cost_per_million_cache_write: Option<f64>,
 }
 
 impl CatalogPreset {
@@ -187,6 +216,36 @@ pub fn model_catalog() -> &'static ModelCatalog {
         toml::from_str(include_str!("model_catalog.toml"))
             .expect("src/model_catalog.toml must be valid TOML")
     })
+}
+
+/// Compute monetary cost from token usage using catalog pricing data.
+///
+/// Looks up the model by `model_id` across all providers. Returns
+/// `Cost::default()` if the model is not found or has no pricing data.
+#[must_use]
+pub fn calculate_cost(model_id: &str, usage: &Usage) -> Cost {
+    let Some(preset) = model_catalog().find_preset_by_model_id(model_id) else {
+        return Cost::default();
+    };
+
+    #[allow(clippy::cast_precision_loss)] // token counts fit comfortably in f64
+    let per_m = |tokens: u64, rate: Option<f64>| -> f64 {
+        rate.map_or(0.0, |r| tokens as f64 * r / 1_000_000.0)
+    };
+
+    let input = per_m(usage.input, preset.cost_per_million_input);
+    let output = per_m(usage.output, preset.cost_per_million_output);
+    let cache_read = per_m(usage.cache_read, preset.cost_per_million_cache_read);
+    let cache_write = per_m(usage.cache_write, preset.cost_per_million_cache_write);
+
+    Cost {
+        input,
+        output,
+        cache_read,
+        cache_write,
+        total: input + output + cache_read + cache_write,
+        ..Cost::default()
+    }
 }
 
 #[cfg(test)]
@@ -336,5 +395,105 @@ mod tests {
         assert!(!caps.supports_structured_output);
         assert_eq!(caps.max_context_window, None);
         assert_eq!(caps.max_output_tokens, None);
+    }
+
+    // --- US4: Cost calculation tests ---
+
+    fn usage(input: u64, output: u64, cache_read: u64, cache_write: u64) -> crate::types::Usage {
+        crate::types::Usage {
+            input,
+            output,
+            cache_read,
+            cache_write,
+            total: input + output + cache_read + cache_write,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn calculate_cost_known_model() {
+        // Sonnet 4.6: input=$3/M, output=$15/M
+        let cost = calculate_cost("claude-sonnet-4-6", &usage(1_000_000, 500_000, 0, 0));
+        assert!((cost.input - 3.0).abs() < 0.001);
+        assert!((cost.output - 7.5).abs() < 0.001);
+        assert!((cost.total - 10.5).abs() < 0.001);
+    }
+
+    #[test]
+    fn calculate_cost_unknown_model() {
+        let cost = calculate_cost("nonexistent-model-xyz", &usage(1_000_000, 1_000_000, 0, 0));
+        assert!((cost.input).abs() < 0.001);
+        assert!((cost.output).abs() < 0.001);
+        assert!((cost.total).abs() < 0.001);
+    }
+
+    #[test]
+    fn calculate_cost_zero_usage() {
+        let cost = calculate_cost("claude-sonnet-4-6", &usage(0, 0, 0, 0));
+        assert!((cost.total).abs() < 0.001);
+    }
+
+    #[test]
+    fn calculate_cost_cache_tokens() {
+        // Sonnet 4.6: cache_read=$0.30/M, cache_write=$3.75/M
+        let cost = calculate_cost("claude-sonnet-4-6", &usage(0, 0, 2_000_000, 1_000_000));
+        assert!((cost.cache_read - 0.60).abs() < 0.001);
+        assert!((cost.cache_write - 3.75).abs() < 0.001);
+        assert!((cost.total - 4.35).abs() < 0.001);
+    }
+
+    #[test]
+    fn calculate_cost_no_pricing_data() {
+        // Local model has no pricing fields
+        let cost = calculate_cost("SmolLM3-3B-Q4_K_M", &usage(1_000_000, 500_000, 0, 0));
+        assert!((cost.total).abs() < 0.001);
+    }
+
+    // --- US5: Capability introspection tests ---
+
+    #[test]
+    fn capabilities_from_catalog_preset() {
+        let preset = model_catalog().preset("anthropic", "sonnet_46").unwrap();
+        let caps = preset.model_capabilities();
+        assert!(caps.supports_thinking);
+        assert!(caps.supports_vision);
+        assert!(caps.supports_tool_use);
+        assert!(caps.supports_streaming);
+        assert!(caps.supports_structured_output);
+    }
+
+    #[test]
+    fn capabilities_context_window_and_output() {
+        let preset = model_catalog().preset("openai", "gpt_4o").unwrap();
+        let caps = preset.model_capabilities();
+        assert_eq!(caps.max_context_window, Some(128_000));
+        assert_eq!(caps.max_output_tokens, Some(16384));
+    }
+
+    #[test]
+    fn model_spec_carries_capabilities() {
+        let preset = model_catalog().preset("google", "gemini_3_flash").unwrap();
+        let spec = preset.model_spec();
+        let caps = spec.capabilities();
+        assert!(caps.supports_thinking);
+        assert!(caps.supports_vision);
+        assert!(caps.supports_tool_use);
+        assert_eq!(caps.max_context_window, Some(1_000_000));
+    }
+
+    #[test]
+    fn find_preset_by_model_id_works() {
+        let preset = model_catalog()
+            .find_preset_by_model_id("claude-sonnet-4-6")
+            .unwrap();
+        assert_eq!(preset.preset_id, "sonnet_46");
+        assert_eq!(preset.provider_key, "anthropic");
+    }
+
+    #[test]
+    fn find_preset_by_model_id_unknown_returns_none() {
+        assert!(model_catalog()
+            .find_preset_by_model_id("nonexistent")
+            .is_none());
     }
 }
