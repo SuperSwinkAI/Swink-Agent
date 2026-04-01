@@ -131,12 +131,14 @@ pub trait AgentTool: Send + Sync {
     /// * `params` — validated input parameters as a JSON value
     /// * `cancellation_token` — token that signals the tool should abort
     /// * `on_update` — optional callback for streaming partial results
+    /// * `state` — shared session state for reading/writing structured data
     fn execute(
         &self,
         tool_call_id: &str,
         params: Value,
         cancellation_token: CancellationToken,
         on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
+        state: Arc<std::sync::RwLock<crate::SessionState>>,
     ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>>;
 }
 
@@ -646,6 +648,7 @@ mod tests {
                 _params: Value,
                 _ct: CancellationToken,
                 _on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
+                _state: Arc<std::sync::RwLock<crate::SessionState>>,
             ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>> {
                 Box::pin(async { AgentToolResult::text("ok") })
             }

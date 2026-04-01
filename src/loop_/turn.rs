@@ -52,6 +52,10 @@ pub async fn run_single_turn(
         use crate::policy::{PolicyContext, PolicyVerdict, run_policies};
         use tracing::info;
 
+        let state_snapshot = {
+            let guard = config.session_state.read().unwrap_or_else(std::sync::PoisonError::into_inner);
+            guard.clone()
+        };
         let policy_ctx = PolicyContext {
             turn_index: state.turn_index,
             accumulated_usage: &state.accumulated_usage,
@@ -59,6 +63,7 @@ pub async fn run_single_turn(
             message_count: state.context_messages.len(),
             overflow_signal: state.overflow_signal,
             new_messages: &state.context_messages[new_messages_start..],
+            state: &state_snapshot,
         };
         match run_policies(&config.pre_turn_policies, &policy_ctx) {
             PolicyVerdict::Continue => {}
@@ -279,7 +284,7 @@ async fn emit_turn_end_and_agent_end(
 ///
 /// Extracts LLM messages from `context_messages`, using the accumulated
 /// usage/cost and the given stop reason.
-fn build_snapshot(state: &LoopState, stop_reason: StopReason) -> TurnSnapshot {
+fn build_snapshot(state: &LoopState, stop_reason: StopReason, state_delta: Option<crate::StateDelta>) -> TurnSnapshot {
     let llm_messages: Vec<LlmMessage> = state
         .context_messages
         .iter()
@@ -294,6 +299,24 @@ fn build_snapshot(state: &LoopState, stop_reason: StopReason) -> TurnSnapshot {
         usage: state.accumulated_usage.clone(),
         cost: state.accumulated_cost.clone(),
         stop_reason,
+        state_delta,
+    }
+}
+
+/// Flush the session state delta and emit a `StateChanged` event if non-empty.
+async fn flush_state_delta(
+    config: &AgentLoopConfig,
+    tx: &mpsc::Sender<AgentEvent>,
+) -> Option<crate::StateDelta> {
+    let delta = {
+        let mut s = config.session_state.write().unwrap_or_else(std::sync::PoisonError::into_inner);
+        s.flush_delta()
+    };
+    if delta.is_empty() {
+        None
+    } else {
+        let _ = emit(tx, AgentEvent::StateChanged { delta: delta.clone() }).await;
+        Some(delta)
     }
 }
 
@@ -326,7 +349,7 @@ async fn handle_cancellation(
     {
         return TurnOutcome::Return;
     }
-    let snapshot = build_snapshot(state, StopReason::Aborted);
+    let snapshot = build_snapshot(state, StopReason::Aborted, None);
     emit_turn_end_and_agent_end(
         msg_for_event,
         vec![],
@@ -367,7 +390,7 @@ async fn handle_stream_result(
             state
                 .context_messages
                 .push(AgentMessage::Llm(LlmMessage::Assistant(abort_msg)));
-            let snapshot = build_snapshot(state, StopReason::Aborted);
+            let snapshot = build_snapshot(state, StopReason::Aborted, None);
             emit_turn_end_and_agent_end(
                 msg_for_event,
                 vec![],
@@ -399,7 +422,7 @@ async fn handle_error_stop(
     state
         .context_messages
         .push(AgentMessage::Llm(LlmMessage::Assistant(assistant_message)));
-    let snapshot = build_snapshot(state, stop);
+    let snapshot = build_snapshot(state, stop, None);
     // CRITICAL: On error/abort, exit immediately — no follow-up polling
     emit_turn_end_and_agent_end(
         msg_for_event,
@@ -466,7 +489,8 @@ async fn handle_no_tool_calls(
     state
         .context_messages
         .push(AgentMessage::Llm(LlmMessage::Assistant(assistant_message)));
-    let snapshot = build_snapshot(state, stop);
+    let state_delta = flush_state_delta(config, tx).await;
+    let snapshot = build_snapshot(state, stop, state_delta);
     if !emit(
         tx,
         AgentEvent::TurnEnd {
@@ -568,7 +592,8 @@ async fn handle_tool_calls(
     state.last_tool_results.clone_from(&tool_results);
 
     // xiii. Emit TurnEnd
-    let snapshot = build_snapshot(state, msg_for_turn_end.stop_reason);
+    let state_delta = flush_state_delta(config, tx).await;
+    let snapshot = build_snapshot(state, msg_for_turn_end.stop_reason, state_delta);
     if !emit(
         tx,
         AgentEvent::TurnEnd {

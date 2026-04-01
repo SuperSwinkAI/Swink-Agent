@@ -785,6 +785,9 @@ pub struct TurnSnapshot {
     pub cost: Cost,
     /// Stop reason from the assistant message that ended this turn.
     pub stop_reason: StopReason,
+    /// Session state changes during this turn, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state_delta: Option<crate::StateDelta>,
 }
 
 // ─── Compile-time Send + Sync assertions ────────────────────────────────────

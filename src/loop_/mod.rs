@@ -173,6 +173,12 @@ pub enum AgentEvent {
         reason: String,
     },
 
+    /// Emitted when session state delta is flushed (non-empty only).
+    /// Fired immediately before `TurnEnd`.
+    StateChanged {
+        delta: crate::StateDelta,
+    },
+
     /// A custom event emitted via [`Agent::emit`](crate::Agent::emit).
     Custom(crate::emit::Emission),
 }
@@ -257,6 +263,9 @@ pub struct AgentLoopConfig {
     /// Defaults to [`ToolExecutionPolicy::Concurrent`] for backward
     /// compatibility.
     pub tool_execution_policy: ToolExecutionPolicy,
+
+    /// Session key-value state store shared with tools and policies.
+    pub session_state: Arc<std::sync::RwLock<crate::SessionState>>,
 }
 
 impl std::fmt::Debug for AgentLoopConfig {
@@ -433,6 +442,10 @@ async fn run_loop_inner(
                         PolicyContext, PolicyVerdict, TurnPolicyContext, run_post_turn_policies,
                     };
 
+                    let state_snapshot = {
+                        let guard = config.session_state.read().unwrap_or_else(std::sync::PoisonError::into_inner);
+                        guard.clone()
+                    };
                     let policy_ctx = PolicyContext {
                         turn_index: state.turn_index,
                         accumulated_usage: &state.accumulated_usage,
@@ -440,6 +453,7 @@ async fn run_loop_inner(
                         message_count: state.context_messages.len(),
                         overflow_signal: state.overflow_signal,
                         new_messages: &[], // current-turn data is in TurnPolicyContext
+                        state: &state_snapshot,
                     };
                     let turn_ctx = TurnPolicyContext {
                         assistant_message: msg,
@@ -471,6 +485,10 @@ async fn run_loop_inner(
             {
                 use crate::policy::{PolicyContext, PolicyVerdict, run_post_loop_policies};
 
+                let state_snapshot = {
+                    let guard = config.session_state.read().unwrap_or_else(std::sync::PoisonError::into_inner);
+                    guard.clone()
+                };
                 let policy_ctx = PolicyContext {
                     turn_index: state.turn_index,
                     accumulated_usage: &state.accumulated_usage,
@@ -478,6 +496,7 @@ async fn run_loop_inner(
                     message_count: state.context_messages.len(),
                     overflow_signal: state.overflow_signal,
                     new_messages: &[], // no new messages at post-loop
+                    state: &state_snapshot,
                 };
                 match run_post_loop_policies(&config.post_loop_policies, &policy_ctx) {
                     PolicyVerdict::Continue => {}

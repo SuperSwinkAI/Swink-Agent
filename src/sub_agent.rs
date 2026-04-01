@@ -176,6 +176,7 @@ impl AgentTool for SubAgent {
         params: Value,
         cancellation_token: CancellationToken,
         _on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
+        _state: std::sync::Arc<std::sync::RwLock<crate::SessionState>>,
     ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>> {
         let options = (self.options_factory)();
         let map_result = Arc::clone(&self.map_result);

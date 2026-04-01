@@ -235,7 +235,7 @@ mod tests {
         }
     }
 
-    fn make_ctx<'a>(usage: &'a Usage, cost: &'a Cost) -> PolicyContext<'a> {
+    fn make_ctx<'a>(usage: &'a Usage, cost: &'a Cost, state: &'a swink_agent::SessionState) -> PolicyContext<'a> {
         PolicyContext {
             turn_index: 3,
             accumulated_usage: usage,
@@ -243,6 +243,7 @@ mod tests {
             message_count: 10,
             overflow_signal: false,
             new_messages: &[],
+            state,
         }
     }
 
@@ -258,7 +259,8 @@ mod tests {
         }]);
         let usage = Usage::default();
         let cost = Cost::default();
-        let ctx = make_ctx(&usage, &cost);
+        let state = swink_agent::SessionState::new();
+        let ctx = make_ctx(&usage, &cost, &state);
         let turn = TurnPolicyContext {
             assistant_message: &msg,
             tool_results: &[],
@@ -280,7 +282,8 @@ mod tests {
         }]);
         let usage = Usage::default();
         let cost = Cost::default();
-        let ctx = make_ctx(&usage, &cost);
+        let state = swink_agent::SessionState::new();
+        let ctx = make_ctx(&usage, &cost, &state);
         let turn = TurnPolicyContext {
             assistant_message: &msg,
             tool_results: &[],
@@ -320,7 +323,8 @@ mod tests {
 
         let usage = Usage::default();
         let cost = Cost::default();
-        let ctx = make_ctx(&usage, &cost);
+        let state = swink_agent::SessionState::new();
+        let ctx = make_ctx(&usage, &cost, &state);
         let turn = TurnPolicyContext {
             assistant_message: &msg,
             tool_results: &[],

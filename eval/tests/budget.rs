@@ -96,6 +96,7 @@ fn turn_events(cost: f64, tokens: u64) -> Vec<AgentEvent> {
                     ..Default::default()
                 },
                 stop_reason: StopReason::Stop,
+                state_delta: None,
             },
         },
     ]

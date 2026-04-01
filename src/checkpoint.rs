@@ -48,6 +48,9 @@ pub struct Checkpoint {
     /// Arbitrary metadata for application-specific use.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub metadata: HashMap<String, serde_json::Value>,
+    /// Serialized session state snapshot (`SessionState.data`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state: Option<serde_json::Value>,
 }
 
 impl Checkpoint {
@@ -98,7 +101,15 @@ impl Checkpoint {
             cost: Cost::default(),
             created_at: crate::util::now_timestamp(),
             metadata: HashMap::new(),
+            state: None,
         }
+    }
+
+    /// Set the session state snapshot.
+    #[must_use]
+    pub fn with_state(mut self, state: serde_json::Value) -> Self {
+        self.state = Some(state);
+        self
     }
 
     /// Set the turn count.
@@ -198,6 +209,9 @@ pub struct LoopCheckpoint {
     /// Arbitrary metadata for application-specific use.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub metadata: HashMap<String, serde_json::Value>,
+    /// Serialized session state snapshot (`SessionState.data`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state: Option<serde_json::Value>,
 }
 
 impl LoopCheckpoint {
@@ -245,7 +259,15 @@ impl LoopCheckpoint {
             last_assistant_message: None,
             created_at: crate::util::now_timestamp(),
             metadata: HashMap::new(),
+            state: None,
         }
+    }
+
+    /// Set the session state snapshot.
+    #[must_use]
+    pub fn with_state(mut self, state: serde_json::Value) -> Self {
+        self.state = Some(state);
+        self
     }
 
     /// Set the turn index.
@@ -352,6 +374,7 @@ impl LoopCheckpoint {
             cost: self.cost.clone(),
             created_at: self.created_at,
             metadata: self.metadata.clone(),
+            state: self.state.clone(),
         }
     }
 }
