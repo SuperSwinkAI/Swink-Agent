@@ -129,6 +129,21 @@ fn read_meta_and_message_lines(path: &Path, id: &str) -> io::Result<(SessionMeta
     Ok((meta, remaining_lines))
 }
 
+fn read_meta_with_line_len(path: &Path, id: &str) -> io::Result<(SessionMeta, usize)> {
+    let mut first_line = String::new();
+    let file = open_session_file(path, id)?;
+    let mut reader = io::BufReader::new(file);
+    reader.read_line(&mut first_line)?;
+
+    if first_line.is_empty() {
+        return Err(empty_file());
+    }
+
+    let line_len = first_line.len();
+    let meta = serde_json::from_str(first_line.trim_end()).map_err(invalid_meta)?;
+    Ok((meta, line_len))
+}
+
 fn rewrite_session_file(path: &Path, meta: &SessionMeta, lines: &[String]) -> io::Result<()> {
     let file = std::fs::File::create(path)?;
     let mut writer = io::BufWriter::new(file);
@@ -144,6 +159,58 @@ fn rewrite_session_file(path: &Path, meta: &SessionMeta, lines: &[String]) -> io
 
     writer.flush()?;
     Ok(())
+}
+
+fn append_records(
+    path: &Path,
+    id: &str,
+    records: impl IntoIterator<Item = SessionRecord>,
+) -> io::Result<()> {
+    let (mut meta, old_meta_line_len) = read_meta_with_line_len(path, id)?;
+    meta.updated_at = now_utc();
+
+    let new_meta_line = serde_json::to_string(&meta).map_err(io::Error::other)?;
+    let new_meta_with_newline = format!("{new_meta_line}\n");
+    let record_lines = records
+        .into_iter()
+        .map(|record| record.to_json_line())
+        .collect::<io::Result<Vec<_>>>()?;
+
+    if new_meta_with_newline.len() == old_meta_line_len {
+        let mut file = std::fs::OpenOptions::new().write(true).open(path)?;
+        file.seek(io::SeekFrom::Start(0))?;
+        file.write_all(new_meta_with_newline.as_bytes())?;
+        file.seek(io::SeekFrom::End(0))?;
+        for line in &record_lines {
+            writeln!(file, "{line}")?;
+        }
+        file.flush()?;
+        return Ok(());
+    }
+
+    let (_, mut existing_lines) = read_meta_and_message_lines(path, id)?;
+    existing_lines.extend(record_lines);
+    rewrite_session_file(path, &meta, &existing_lines)
+}
+
+fn find_record_line_mut<'a>(
+    lines: &'a mut [String],
+    session_id: &str,
+    predicate: impl Fn(&SessionRecord) -> bool,
+) -> Option<&'a mut String> {
+    for line in lines {
+        match SessionRecord::parse(line) {
+            Ok(record) if predicate(&record) => return Some(line),
+            Ok(_) => {}
+            Err(error) => {
+                tracing::warn!(
+                    error = %error,
+                    "skipping unparseable line while scanning session {session_id}"
+                );
+            }
+        }
+    }
+    None
 }
 
 fn parse_message_record(
@@ -173,6 +240,24 @@ fn parse_message_record(
                 line = line_num,
                 error = %error,
                 "skipping unparseable line in session {id}"
+            );
+            None
+        }
+    }
+}
+
+fn parse_llm_message(line: &str, line_num: usize, id: &str) -> Option<LlmMessage> {
+    match SessionRecord::parse(line) {
+        Ok(SessionRecord::Llm(message)) => Some(*message),
+        Ok(SessionRecord::Custom(_) | SessionRecord::State(_)) => {
+            tracing::warn!(line = line_num, "skipping non-llm record in session {id}");
+            None
+        }
+        Err(error) => {
+            tracing::warn!(
+                line = line_num,
+                error = %error,
+                "skipping corrupted message line in session {id}"
             );
             None
         }
@@ -258,56 +343,14 @@ impl SessionStore for JsonlSessionStore {
         validate_session_id(id)?;
 
         let path = session_path(&self.sessions_dir, id);
-
-        if !path.exists() {
-            return Err(not_found(id));
-        }
-
-        // Read only line 1 to get current meta and its byte length.
-        let mut first_line = String::new();
-        {
-            let file = std::fs::File::open(&path)?;
-            let mut reader = io::BufReader::new(file);
-            reader.read_line(&mut first_line)?;
-        }
-        if first_line.is_empty() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "empty session file",
-            ));
-        }
-        // Byte length of original line 1 including its newline
-        let old_line1_bytes = first_line.len();
-        let first_line_trimmed = first_line.trim_end();
-
-        let mut meta: SessionMeta =
-            serde_json::from_str(first_line_trimmed).map_err(io::Error::other)?;
-        meta.updated_at = now_utc();
-
-        let new_meta_line = serde_json::to_string(&meta).map_err(io::Error::other)?;
-        // New line 1 including newline
-        let new_line1 = format!("{new_meta_line}\n");
-
-        if new_line1.len() == old_line1_bytes {
-            // Fast path: meta line is same byte length — overwrite in place, then append.
-            let mut file = std::fs::OpenOptions::new().write(true).open(&path)?;
-            file.seek(io::SeekFrom::Start(0))?;
-            file.write_all(new_line1.as_bytes())?;
-            file.seek(io::SeekFrom::End(0))?;
-            for msg in messages {
-                let json = SessionRecord::Llm(Box::new(msg.clone())).to_json_line()?;
-                writeln!(file, "{json}")?;
-            }
-            file.flush()?;
-        } else {
-            let (_, mut lines) = read_meta_and_message_lines(&path, id)?;
-            for msg in messages {
-                lines.push(SessionRecord::Llm(Box::new(msg.clone())).to_json_line()?);
-            }
-            rewrite_session_file(&path, &meta, &lines)?;
-        }
-
-        Ok(())
+        append_records(
+            &path,
+            id,
+            messages
+                .iter()
+                .cloned()
+                .map(|message| SessionRecord::Llm(Box::new(message))),
+        )
     }
 
     fn load(&self, id: &str) -> io::Result<(SessionMeta, Vec<LlmMessage>)> {
@@ -316,29 +359,15 @@ impl SessionStore for JsonlSessionStore {
         let path = session_path(&self.sessions_dir, id);
         let (meta, lines) = read_meta_and_message_lines(&path, id)?;
 
-        // Remaining lines: LlmMessages with corruption tolerance
-        let mut messages = Vec::new();
-        for (line_num, line) in lines.into_iter().enumerate() {
-            if line.trim().is_empty() {
-                continue;
-            }
-            match SessionRecord::parse(&line) {
-                Ok(SessionRecord::Llm(message)) => messages.push(*message),
-                Ok(SessionRecord::Custom(_) | SessionRecord::State(_)) => {
-                    tracing::warn!(
-                        line = line_num + 2,
-                        "skipping non-llm record in session {id}"
-                    );
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        line = line_num + 2,
-                        error = %e,
-                        "skipping corrupted message line in session {id}"
-                    );
-                }
-            }
-        }
+        let messages = lines
+            .into_iter()
+            .enumerate()
+            .filter_map(|(line_num, line)| {
+                (!line.trim().is_empty()).then_some(line).and_then(|line| {
+                    parse_llm_message(&line, line_num + 2, id)
+                })
+            })
+            .collect();
 
         Ok((meta, messages))
     }
@@ -446,16 +475,11 @@ impl SessionStore for JsonlSessionStore {
         let (meta, mut lines) = read_meta_and_message_lines(&path, id)?;
         let state_line = SessionRecord::state(state.clone()).to_json_line()?;
 
-        // Find existing _state line and replace, or append.
-        let mut found = false;
-        for line in &mut lines {
-            if matches!(SessionRecord::parse(line), Ok(SessionRecord::State(_))) {
-                line.clone_from(&state_line);
-                found = true;
-                break;
-            }
-        }
-        if !found {
+        if let Some(line) = find_record_line_mut(&mut lines, id, |record| {
+            matches!(record, SessionRecord::State(_))
+        }) {
+            line.clone_from(&state_line);
+        } else {
             lines.push(state_line);
         }
         rewrite_session_file(&path, &meta, &lines)
@@ -629,5 +653,46 @@ mod tests {
         // Regular load() still works (skips custom lines with warning)
         let (_, llm_only) = store.load("test-full").unwrap();
         assert_eq!(llm_only.len(), 2);
+    }
+
+    #[test]
+    fn append_preserves_saved_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = JsonlSessionStore::new(dir.path().to_path_buf()).unwrap();
+
+        let now = now_utc();
+        let meta = SessionMeta {
+            id: "test-state".to_string(),
+            title: "State".to_string(),
+            created_at: now,
+            updated_at: now,
+        };
+
+        let initial_messages = vec![LlmMessage::User(swink_agent::UserMessage {
+            content: vec![swink_agent::ContentBlock::Text {
+                text: "hello".to_string(),
+            }],
+            timestamp: 1,
+            cache_hint: None,
+        })];
+        store.save("test-state", &meta, &initial_messages).unwrap();
+        store
+            .save_state("test-state", &serde_json::json!({ "cursor": 1 }))
+            .unwrap();
+
+        let appended_messages = vec![LlmMessage::User(swink_agent::UserMessage {
+            content: vec![swink_agent::ContentBlock::Text {
+                text: "world".to_string(),
+            }],
+            timestamp: 2,
+            cache_hint: None,
+        })];
+        store.append("test-state", &appended_messages).unwrap();
+
+        let state = store.load_state("test-state").unwrap();
+        assert_eq!(state, Some(serde_json::json!({ "cursor": 1 })));
+
+        let (_, messages) = store.load("test-state").unwrap();
+        assert_eq!(messages.len(), 2);
     }
 }
