@@ -17,6 +17,7 @@ use swink_agent::stream::{AssistantMessageEvent, StreamFn, StreamOptions};
 use swink_agent::types::{AgentContext, Cost, LlmMessage, ModelSpec, StopReason, Usage};
 
 use crate::classify::error_event_from_status;
+use crate::sse::{SseLine, sse_data_lines};
 
 // ─── Request types ──────────────────────────────────────────────────────────
 
@@ -249,9 +250,7 @@ fn parse_sse_stream(
     response: reqwest::Response,
     cancellation_token: CancellationToken,
 ) -> impl Stream<Item = AssistantMessageEvent> + Send {
-    use eventsource_stream::Eventsource as _;
-
-    let sse_stream = response.bytes_stream().eventsource();
+    let sse_stream = sse_data_lines(response.bytes_stream());
 
     stream::unfold(
         (Box::pin(sse_stream), cancellation_token, false),
@@ -281,21 +280,21 @@ fn parse_sse_stream(
                                 (sse, token, done),
                             ))
                         }
-                        Some(Ok(event)) => {
-                            let parsed = parse_sse_event_data(&event.data);
-                            let is_terminal = is_terminal_event(&parsed);
-                            if is_terminal {
-                                done = true;
-                            }
-                            Some((parsed, (sse, token, done)))
-                        }
-                        Some(Err(e)) => {
+                        Some(SseLine::Done) => {
                             done = true;
                             Some((
-                                AssistantMessageEvent::error_network(format!("network error: SSE stream error: {e}")),
+                                AssistantMessageEvent::error_network("network error: SSE stream ended unexpectedly"),
                                 (sse, token, done),
                             ))
                         }
+                        Some(SseLine::Data(data)) => {
+                            let parsed = parse_sse_event_data(&data);
+                            done = is_terminal_event(&parsed);
+                            Some((parsed, (sse, token, done)))
+                        }
+                        Some(_) => Some((AssistantMessageEvent::error_network(
+                            "network error: unexpected non-data SSE line",
+                        ), (sse, token, true))),
                     }
                 }
             }
