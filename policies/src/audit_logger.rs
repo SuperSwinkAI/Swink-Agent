@@ -296,6 +296,7 @@ mod tests {
         let records = records.lock().unwrap();
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].content_summary, "hello world");
+        drop(records);
     }
 
     #[test]
@@ -337,15 +338,22 @@ mod tests {
         let records = records_handle.lock().unwrap();
         assert_eq!(records.len(), 1);
 
-        let r = &records[0];
-        assert!(!r.timestamp.is_empty());
-        assert_eq!(r.turn_index, 3);
-        assert_eq!(r.content_summary, "I will run a tool");
-        assert_eq!(r.tool_calls, vec!["bash", "read_file"]);
-        assert_eq!(r.usage.input, 100);
-        assert_eq!(r.usage.output, 50);
-        assert_eq!(r.usage.total, 150);
-        assert!((r.cost.total - 0.005).abs() < f64::EPSILON);
+        let timestamp = records[0].timestamp.clone();
+        let turn_index = records[0].turn_index;
+        let content_summary = records[0].content_summary.clone();
+        let tool_calls = records[0].tool_calls.clone();
+        let usage = records[0].usage.clone();
+        let cost = records[0].cost.clone();
+        drop(records);
+
+        assert!(!timestamp.is_empty());
+        assert_eq!(turn_index, 3);
+        assert_eq!(content_summary, "I will run a tool");
+        assert_eq!(tool_calls, vec!["bash", "read_file"]);
+        assert_eq!(usage.input, 100);
+        assert_eq!(usage.output, 50);
+        assert_eq!(usage.total, 150);
+        assert!((cost.total - 0.005).abs() < f64::EPSILON);
     }
 
     #[test]

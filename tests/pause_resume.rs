@@ -148,7 +148,7 @@ async fn resume_while_running_returns_already_running() {
     let mut agent = simple_agent(vec![text_only_events("hello")]);
 
     // Start a stream but don't consume it yet
-    let _stream = agent.prompt_stream(vec![user_msg("hi")]).unwrap();
+    let stream = agent.prompt_stream(vec![user_msg("hi")]).unwrap();
 
     // Agent is now "running"
     let checkpoint = LoopCheckpoint::new("prompt", "test", "test-model", &[user_msg("hi")]);
@@ -160,8 +160,8 @@ async fn resume_while_running_returns_already_running() {
     ));
 
     // Clean up - consume the stream
-    let mut stream = _stream;
-    while let Some(_) = stream.next().await {}
+    let mut stream = stream;
+    while stream.next().await.is_some() {}
 }
 
 #[test]

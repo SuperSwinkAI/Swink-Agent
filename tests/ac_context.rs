@@ -2,7 +2,7 @@
 //!
 //! Tests verifying context window tracking, sliding-window compaction,
 //! overflow-triggered retry, tool-result pair preservation, and the
-//! overflow flag propagation to transform_context callbacks.
+//! overflow flag propagation to `transform_context` callbacks.
 
 mod common;
 

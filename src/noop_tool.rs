@@ -128,9 +128,8 @@ mod tests {
             )
             .await;
         assert!(result.is_error);
-        let text = match &result.content[0] {
-            crate::types::ContentBlock::Text { text } => text,
-            _ => panic!("expected text content"),
+        let crate::types::ContentBlock::Text { text } = &result.content[0] else {
+            panic!("expected text content");
         };
         assert!(text.contains("deleted_tool"));
         assert!(text.contains("no longer available"));

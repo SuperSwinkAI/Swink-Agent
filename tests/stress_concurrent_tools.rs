@@ -29,26 +29,16 @@ const TOOL_NAMES: [&str; TOOL_COUNT] = [
 /// Deterministic per-tool delays in milliseconds (1-50ms range).
 const DELAYS_MS: [u64; TOOL_COUNT] = [23, 7, 42, 15, 1, 38, 11, 50, 3, 29, 19, 46];
 
-#[tokio::test]
-async fn twelve_concurrent_tool_calls_no_duplicates_no_lost() {
-    // Build 12 tool call entries for a single assistant turn.
-    let calls: Vec<(String, String, String)> = TOOL_NAMES
+fn build_tool_calls() -> Vec<(String, String, String)> {
+    TOOL_NAMES
         .iter()
         .enumerate()
         .map(|(i, name)| (format!("tc_{i}"), name.to_string(), "{}".to_string()))
-        .collect();
-    let call_refs: Vec<(&str, &str, &str)> = calls
-        .iter()
-        .map(|(id, name, args)| (id.as_str(), name.as_str(), args.as_str()))
-        .collect();
+        .collect()
+}
 
-    // First response: 12 tool calls. Second response: text-only "done".
-    let responses = vec![tool_call_events_multi(&call_refs), text_events("done")];
-
-    let stream_fn = Arc::new(MockStreamFn::new(responses));
-
-    // Register 12 tools, each with its own delay and a result containing its name.
-    let tools: Vec<Arc<dyn AgentTool>> = TOOL_NAMES
+fn build_tools() -> Vec<Arc<dyn AgentTool>> {
+    TOOL_NAMES
         .iter()
         .enumerate()
         .map(|(i, name)| {
@@ -58,7 +48,37 @@ async fn twelve_concurrent_tool_calls_no_duplicates_no_lost() {
                     .with_result(AgentToolResult::text(format!("result_from_{name}"))),
             ) as Arc<dyn AgentTool>
         })
+        .collect()
+}
+
+fn extract_tool_result_texts(messages: &[AgentMessage]) -> Vec<String> {
+    messages
+        .iter()
+        .filter_map(|msg| match msg {
+            AgentMessage::Llm(LlmMessage::ToolResult(tr)) => {
+                tr.content.iter().find_map(|block| match block {
+                    ContentBlock::Text { text } => Some(text.clone()),
+                    _ => None,
+                })
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn twelve_concurrent_tool_calls_no_duplicates_no_lost() {
+    let calls = build_tool_calls();
+    let call_refs: Vec<(&str, &str, &str)> = calls
+        .iter()
+        .map(|(id, name, args)| (id.as_str(), name.as_str(), args.as_str()))
         .collect();
+
+    // First response: 12 tool calls. Second response: text-only "done".
+    let responses = vec![tool_call_events_multi(&call_refs), text_events("done")];
+
+    let stream_fn = Arc::new(MockStreamFn::new(responses));
+    let tools = build_tools();
 
     let opts = AgentOptions::new(
         "You are a tool-using assistant.",
@@ -121,7 +141,7 @@ async fn twelve_concurrent_tool_calls_no_duplicates_no_lost() {
     );
 
     // ── Verify no duplicate start names ──
-    let names = started_names.lock().unwrap();
+    let names = started_names.lock().unwrap().clone();
     let unique_names: HashSet<&String> = names.iter().collect();
     assert_eq!(
         unique_names.len(),
@@ -131,19 +151,7 @@ async fn twelve_concurrent_tool_calls_no_duplicates_no_lost() {
     );
 
     // ── Verify all 12 tool results present in final messages ──
-    let tool_result_texts: Vec<String> = agent_result
-        .messages
-        .iter()
-        .filter_map(|msg| match msg {
-            AgentMessage::Llm(LlmMessage::ToolResult(tr)) => {
-                tr.content.iter().find_map(|block| match block {
-                    ContentBlock::Text { text } => Some(text.clone()),
-                    _ => None,
-                })
-            }
-            _ => None,
-        })
-        .collect();
+    let tool_result_texts = extract_tool_result_texts(&agent_result.messages);
 
     // Each tool should have exactly one result.
     assert_eq!(

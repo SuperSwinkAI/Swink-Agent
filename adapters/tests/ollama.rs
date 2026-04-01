@@ -442,8 +442,8 @@ async fn ollama_debug_redacts_nothing() {
     );
 }
 
-/// 12. Two tool calls in one chunk produce two separate ToolCallStart events with
-/// unique content_index values (0 and 1).
+/// 12. Two tool calls in one chunk produce two separate `ToolCallStart` events with
+/// unique `content_index` values (0 and 1).
 #[tokio::test]
 async fn ollama_multiple_tool_calls() {
     let server = MockServer::start().await;
@@ -495,7 +495,7 @@ async fn ollama_multiple_tool_calls() {
 }
 
 /// 13. Two chunks with the same tool name — the second is deduped; only one
-/// ToolCallStart for "bash" is emitted.
+/// `ToolCallStart` for "bash" is emitted.
 #[tokio::test]
 async fn ollama_duplicate_tool_calls_deduped() {
     let server = MockServer::start().await;
@@ -558,8 +558,8 @@ async fn ollama_unexpected_stream_end() {
     );
 }
 
-/// 15. A chunk with an empty thinking string should be skipped — no ThinkingStart
-/// or ThinkingDelta events, only text events.
+/// 15. A chunk with an empty thinking string should be skipped — no `ThinkingStart`
+/// or `ThinkingDelta` events, only text events.
 #[tokio::test]
 async fn ollama_empty_thinking_skipped() {
     let server = MockServer::start().await;
@@ -596,8 +596,8 @@ async fn ollama_empty_thinking_skipped() {
     );
 }
 
-/// 16. Chunk with empty content but tool calls — no TextStart events, only
-/// ToolCallStart.
+/// 16. Chunk with empty content but tool calls — no `TextStart` events, only
+/// `ToolCallStart`.
 #[tokio::test]
 async fn ollama_assistant_empty_text_with_tools() {
     let server = MockServer::start().await;

@@ -258,12 +258,14 @@ async fn double_overflow_surfaces_error() {
     assert!(has_event(&events, "AgentEnd"));
 
     // No TurnEnd with ToolsExecuted — the turn ended due to error.
-    let turn_end_events: Vec<_> = events
-        .iter()
-        .filter(|e| matches!(e, AgentEvent::TurnEnd { reason, .. } if *reason == swink_agent::TurnEndReason::Error))
-        .collect();
     assert!(
-        !turn_end_events.is_empty(),
+        events.iter().any(|e| {
+            matches!(
+                e,
+                AgentEvent::TurnEnd { reason, .. }
+                    if *reason == swink_agent::TurnEndReason::Error
+            )
+        }),
         "should have a TurnEnd with Error reason"
     );
 }
@@ -300,12 +302,14 @@ async fn no_transformer_overflow_surfaces_error() {
     );
 
     // Should end with error.
-    let turn_end_events: Vec<_> = events
-        .iter()
-        .filter(|e| matches!(e, AgentEvent::TurnEnd { reason, .. } if *reason == swink_agent::TurnEndReason::Error))
-        .collect();
     assert!(
-        !turn_end_events.is_empty(),
+        events.iter().any(|e| {
+            matches!(
+                e,
+                AgentEvent::TurnEnd { reason, .. }
+                    if *reason == swink_agent::TurnEndReason::Error
+            )
+        }),
         "should have TurnEnd with Error reason"
     );
 }
@@ -367,12 +371,14 @@ async fn overflow_recovery_resets_per_turn() {
     );
 
     // Should NOT end with an error — the recovery in turn 2 should succeed.
-    let error_turn_ends: Vec<_> = events
-        .iter()
-        .filter(|e| matches!(e, AgentEvent::TurnEnd { reason, .. } if *reason == swink_agent::TurnEndReason::Error))
-        .collect();
     assert!(
-        error_turn_ends.is_empty(),
+        !events.iter().any(|e| {
+            matches!(
+                e,
+                AgentEvent::TurnEnd { reason, .. }
+                    if *reason == swink_agent::TurnEndReason::Error
+            )
+        }),
         "should not have error TurnEnd — recovery should succeed"
     );
 }
@@ -426,12 +432,14 @@ async fn no_compaction_skip_surfaces_error() {
     );
 
     // Should end with error.
-    let turn_end_events: Vec<_> = events
-        .iter()
-        .filter(|e| matches!(e, AgentEvent::TurnEnd { reason, .. } if *reason == swink_agent::TurnEndReason::Error))
-        .collect();
     assert!(
-        !turn_end_events.is_empty(),
+        events.iter().any(|e| {
+            matches!(
+                e,
+                AgentEvent::TurnEnd { reason, .. }
+                    if *reason == swink_agent::TurnEndReason::Error
+            )
+        }),
         "should have TurnEnd with Error reason"
     );
 }
@@ -440,7 +448,7 @@ async fn no_compaction_skip_surfaces_error() {
 // T073: Cancellation during emergency recovery aborts the loop
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// A StreamFn that cancels the token after the first overflow, before the retry.
+/// A `StreamFn` that cancels the token after the first overflow, before the retry.
 struct CancellingAfterOverflowStreamFn {
     responses: Mutex<Vec<Vec<AssistantMessageEvent>>>,
     cancel_token: CancellationToken,
@@ -504,18 +512,14 @@ async fn cancellation_during_recovery_aborts() {
     assert!(has_event(&events, "AgentEnd"), "loop should complete");
 
     // Should have a TurnEnd with Cancelled or Aborted reason.
-    let cancel_events: Vec<_> = events
-        .iter()
-        .filter(|e| {
+    assert!(
+        events.iter().any(|e| {
             matches!(
                 e,
                 AgentEvent::TurnEnd { reason, .. }
                     if matches!(reason, swink_agent::TurnEndReason::Cancelled | swink_agent::TurnEndReason::Aborted)
             )
-        })
-        .collect();
-    assert!(
-        !cancel_events.is_empty(),
+        }),
         "should have TurnEnd with Cancelled/Aborted reason"
     );
 }

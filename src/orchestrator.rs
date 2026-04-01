@@ -523,7 +523,7 @@ mod tests {
         orch.add_agent("beta", || panic!("not called"));
 
         let mut names = orch.names();
-        names.sort();
+        names.sort_unstable();
         assert_eq!(names, vec!["alpha", "beta"]);
     }
 

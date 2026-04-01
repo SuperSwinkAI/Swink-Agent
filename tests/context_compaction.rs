@@ -360,7 +360,7 @@ async fn compacted_context_preserves_tool_pairs() {
 
 /// With in-place overflow recovery, a double overflow in the same turn is fatal.
 /// The first overflow triggers recovery (compact + retry), but when the retry
-/// also overflows, the loop surfaces a ContextWindowOverflow error.
+/// also overflows, the loop surfaces a `ContextWindowOverflow` error.
 #[tokio::test]
 async fn double_overflow_surfaces_error() {
     let capturing_fn = Arc::new(MockContextCapturingStreamFn::new(vec![
@@ -377,8 +377,10 @@ async fn double_overflow_surfaces_error() {
     config.transform_context = Some(Arc::new(
         move |msgs: &mut Vec<AgentMessage>, overflow: bool| {
             if overflow {
-                let mut count = overflow_clone.lock().unwrap();
-                *count += 1;
+                {
+                    let mut count = overflow_clone.lock().unwrap();
+                    *count += 1;
+                }
                 // Remove some messages to report compaction.
                 let keep = msgs.len().saturating_sub(2).max(1);
                 if keep < msgs.len() {
@@ -430,7 +432,7 @@ async fn double_overflow_surfaces_error() {
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// When a single message exceeds the budget and the transformer cannot compact
-/// (returns None), the loop surfaces a ContextWindowOverflow error immediately
+/// (returns None), the loop surfaces a `ContextWindowOverflow` error immediately
 /// without retrying the LLM call (FR-013d: no-compaction-skip).
 #[tokio::test]
 async fn overflow_with_no_compaction_surfaces_error() {

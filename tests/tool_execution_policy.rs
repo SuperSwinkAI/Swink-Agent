@@ -98,7 +98,9 @@ impl AgentTool for OrderedMockTool {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-fn default_convert_to_llm() -> Box<dyn Fn(&AgentMessage) -> Option<LlmMessage> + Send + Sync> {
+type ConvertToLlmBoxed = Box<dyn Fn(&AgentMessage) -> Option<LlmMessage> + Send + Sync>;
+
+fn default_convert_to_llm() -> ConvertToLlmBoxed {
     Box::new(|msg| match msg {
         AgentMessage::Llm(llm) => Some(llm.clone()),
         AgentMessage::Custom(_) => None,

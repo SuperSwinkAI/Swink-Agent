@@ -1,5 +1,7 @@
 //! Tests for `#[derive(ToolSchema)]`.
 
+#![allow(dead_code)]
+
 use swink_agent::tool::ToolParameters;
 use swink_agent_macros::ToolSchema;
 
@@ -90,6 +92,7 @@ fn derive_tool_schema_attr_override() {
 }
 
 #[derive(ToolSchema)]
+#[allow(clippy::struct_field_names)]
 struct NumericParams {
     count_i32: i32,
     count_f64: f64,

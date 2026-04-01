@@ -690,13 +690,13 @@ mod tests {
         struct MinimalTool;
 
         impl AgentTool for MinimalTool {
-            fn name(&self) -> &str {
+            fn name(&self) -> &'static str {
                 "minimal"
             }
-            fn label(&self) -> &str {
+            fn label(&self) -> &'static str {
                 "Minimal"
             }
-            fn description(&self) -> &str {
+            fn description(&self) -> &'static str {
                 "A minimal tool"
             }
             fn parameters_schema(&self) -> &Value {
@@ -727,9 +727,9 @@ mod tests {
         struct NoAuthTool;
 
         impl AgentTool for NoAuthTool {
-            fn name(&self) -> &str { "no-auth" }
-            fn label(&self) -> &str { "No Auth" }
-            fn description(&self) -> &str { "Tool with no auth" }
+            fn name(&self) -> &'static str { "no-auth" }
+            fn label(&self) -> &'static str { "No Auth" }
+            fn description(&self) -> &'static str { "Tool with no auth" }
             fn parameters_schema(&self) -> &Value { &Value::Null }
             fn execute(
                 &self,
@@ -757,9 +757,9 @@ mod tests {
         struct PlainTool;
 
         impl AgentTool for PlainTool {
-            fn name(&self) -> &str { "plain" }
-            fn label(&self) -> &str { "Plain" }
-            fn description(&self) -> &str { "No context" }
+            fn name(&self) -> &'static str { "plain" }
+            fn label(&self) -> &'static str { "Plain" }
+            fn description(&self) -> &'static str { "No context" }
             fn parameters_schema(&self) -> &Value { &Value::Null }
             fn execute(
                 &self,
@@ -785,9 +785,9 @@ mod tests {
         struct ContextTool;
 
         impl AgentTool for ContextTool {
-            fn name(&self) -> &str { "ctx" }
-            fn label(&self) -> &str { "Ctx" }
-            fn description(&self) -> &str { "With context" }
+            fn name(&self) -> &'static str { "ctx" }
+            fn label(&self) -> &'static str { "Ctx" }
+            fn description(&self) -> &'static str { "With context" }
             fn parameters_schema(&self) -> &Value { &Value::Null }
             fn approval_context(&self, params: &Value) -> Option<Value> {
                 Some(json!({"preview": format!("Will process: {}", params)}))
@@ -818,9 +818,9 @@ mod tests {
         struct PanickingTool;
 
         impl AgentTool for PanickingTool {
-            fn name(&self) -> &str { "panicker" }
-            fn label(&self) -> &str { "Panicker" }
-            fn description(&self) -> &str { "Panics in context" }
+            fn name(&self) -> &'static str { "panicker" }
+            fn label(&self) -> &'static str { "Panicker" }
+            fn description(&self) -> &'static str { "Panics in context" }
             fn parameters_schema(&self) -> &Value { &Value::Null }
             fn approval_context(&self, _params: &Value) -> Option<Value> {
                 panic!("oops");

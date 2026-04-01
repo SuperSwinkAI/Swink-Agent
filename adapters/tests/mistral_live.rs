@@ -82,13 +82,13 @@ const fn event_name(event: &AssistantMessageEvent) -> &'static str {
 struct WeatherTool;
 
 impl AgentTool for WeatherTool {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "get_weather"
     }
-    fn label(&self) -> &str {
+    fn label(&self) -> &'static str {
         "Get Weather"
     }
-    fn description(&self) -> &str {
+    fn description(&self) -> &'static str {
         "Get the current weather for a city."
     }
     fn parameters_schema(&self) -> &serde_json::Value {

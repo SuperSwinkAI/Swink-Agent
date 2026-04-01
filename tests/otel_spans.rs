@@ -1,6 +1,6 @@
 //! Integration tests for OpenTelemetry span instrumentation.
 //!
-//! These tests verify that the agent loop emits properly hierarchical OTel spans
+//! These tests verify that the agent loop emits properly hierarchical `OTel` spans
 //! with semantic attributes. They use an in-memory exporter so no collector is
 //! needed.
 
@@ -22,7 +22,9 @@ use swink_agent::{
     StreamFn, StreamOptions, UserMessage, agent_loop,
 };
 
-fn default_convert_to_llm() -> Box<dyn Fn(&AgentMessage) -> Option<LlmMessage> + Send + Sync> {
+type ConvertToLlmBoxed = Box<dyn Fn(&AgentMessage) -> Option<LlmMessage> + Send + Sync>;
+
+fn default_convert_to_llm() -> ConvertToLlmBoxed {
     Box::new(swink_agent::default_convert)
 }
 
@@ -69,7 +71,7 @@ fn user_msg(text: &str) -> AgentMessage {
     }))
 }
 
-/// Set up an in-memory OTel exporter and tracing subscriber, returning the
+/// Set up an in-memory `OTel` exporter and tracing subscriber, returning the
 /// exporter handle for span inspection after the test.
 fn setup_otel_tracing() -> (
     opentelemetry_sdk::trace::InMemorySpanExporter,

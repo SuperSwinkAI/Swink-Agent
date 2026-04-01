@@ -191,18 +191,18 @@ fn context_gauge_threshold_math() {
     ];
 
     for case in &cases {
-        let pct = (case.used as f64 / case.budget as f64) * 100.0;
-        let zone = if pct < 60.0 {
+        let used_pct = (u128::from(case.used) * 100) / u128::from(case.budget);
+        let zone = if used_pct < 60 {
             "green"
-        } else if pct < 85.0 {
+        } else if used_pct < 85 {
             "yellow"
         } else {
             "red"
         };
         assert_eq!(
             zone, case.expected_zone,
-            "used={} budget={} pct={pct:.1} expected={} got={zone}",
-            case.used, case.budget, case.expected_zone,
+            "used={} budget={} pct={} expected={} got={zone}",
+            case.used, case.budget, used_pct, case.expected_zone,
         );
     }
 }

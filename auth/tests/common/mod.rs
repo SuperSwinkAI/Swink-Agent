@@ -1,5 +1,7 @@
 //! Shared test helpers for auth crate tests.
 
+#![allow(dead_code)]
+
 use std::sync::Arc;
 
 use swink_agent::credential::CredentialFuture;

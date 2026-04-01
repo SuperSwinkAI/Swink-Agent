@@ -283,7 +283,7 @@ mod tests {
     #[test]
     fn delta_remove_set_is_some() {
         let mut s = SessionState::with_data(
-            [("k".to_string(), json!(1))].into_iter().collect(),
+            std::iter::once(("k".to_string(), json!(1))).collect(),
         );
         s.remove("k");
         s.set("k", 99);
@@ -313,7 +313,7 @@ mod tests {
     #[test]
     fn with_data_pre_seeds_without_delta() {
         let data: HashMap<String, Value> =
-            [("x".into(), json!(42))].into_iter().collect();
+            std::iter::once(("x".into(), json!(42))).collect();
         let s = SessionState::with_data(data);
         assert_eq!(s.get::<i64>("x"), Some(42));
         assert!(s.delta().is_empty());

@@ -399,7 +399,7 @@ async fn plan_mode_only_collects_assistant_messages() {
 
     // The approve_plan should have created a user message with only assistant content
     assert!(
-        plan_msgs.iter().any(|m| *m == "here is the plan"),
+        plan_msgs.contains(&"here is the plan"),
         "only assistant messages should be in the plan, got: {plan_msgs:?}"
     );
 }

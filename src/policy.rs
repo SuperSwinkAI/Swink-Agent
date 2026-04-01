@@ -376,7 +376,7 @@ mod tests {
 
     struct PanickingPolicy;
     impl PreTurnPolicy for PanickingPolicy {
-        fn name(&self) -> &str { "panicker" }
+        fn name(&self) -> &'static str { "panicker" }
         fn evaluate(&self, _ctx: &PolicyContext<'_>) -> PolicyVerdict {
             panic!("policy intentionally panicked");
         }
@@ -412,7 +412,7 @@ mod tests {
 
     struct PanickingPreDispatchPolicy;
     impl PreDispatchPolicy for PanickingPreDispatchPolicy {
-        fn name(&self) -> &str { "panicker" }
+        fn name(&self) -> &'static str { "panicker" }
         fn evaluate(&self, _ctx: &PolicyContext<'_>, _tool: &mut ToolPolicyContext<'_>) -> PreDispatchVerdict {
             panic!("pre-dispatch policy panicked");
         }
@@ -420,7 +420,7 @@ mod tests {
 
     struct MutatingPreDispatchPolicy;
     impl PreDispatchPolicy for MutatingPreDispatchPolicy {
-        fn name(&self) -> &str { "mutator" }
+        fn name(&self) -> &'static str { "mutator" }
         fn evaluate(&self, _ctx: &PolicyContext<'_>, tool: &mut ToolPolicyContext<'_>) -> PreDispatchVerdict {
             if let Some(obj) = tool.arguments.as_object_mut() {
                 obj.insert("injected".to_string(), serde_json::json!("by_policy"));
@@ -433,7 +433,7 @@ mod tests {
         expected_key: String,
     }
     impl PreDispatchPolicy for VerifyingPreDispatchPolicy {
-        fn name(&self) -> &str { "verifier" }
+        fn name(&self) -> &'static str { "verifier" }
         fn evaluate(&self, _ctx: &PolicyContext<'_>, tool: &mut ToolPolicyContext<'_>) -> PreDispatchVerdict {
             if tool.arguments.get(&self.expected_key).is_some() {
                 PreDispatchVerdict::Continue
@@ -626,7 +626,7 @@ mod tests {
     fn pre_dispatch_stop_short_circuits() {
         let p1 = Arc::new(TestPreDispatchPolicy::new("stopper", || PreDispatchVerdict::Stop("halt".into())));
         let p2 = Arc::new(TestPreDispatchPolicy::new("never", || PreDispatchVerdict::Continue));
-        let policies: Vec<Arc<dyn PreDispatchPolicy>> = vec![p1.clone(), p2.clone()];
+        let policies: Vec<Arc<dyn PreDispatchPolicy>> = vec![p1, p2.clone()];
         let (usage, cost) = test_context();
         let state = crate::SessionState::new();
         let ctx = make_ctx(&usage, &cost, &state);

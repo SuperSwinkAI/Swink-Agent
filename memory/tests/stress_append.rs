@@ -114,7 +114,9 @@ fn slow_path_triggered_by_title_change() {
                 swink_agent::ContentBlock::Text { text } => text.clone(),
                 other => panic!("unexpected content block at {idx}: {other:?}"),
             },
-            other => panic!("unexpected message type at {idx}: {other:?}"),
+            other @ swink_agent::LlmMessage::ToolResult(_) => {
+                panic!("unexpected message type at {idx}: {other:?}")
+            }
         }
     };
 

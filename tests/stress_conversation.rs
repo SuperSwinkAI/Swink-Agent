@@ -40,13 +40,10 @@ async fn many_turns_with_compaction() {
     // Create a message provider that drip-feeds one follow-up per poll.
     let follow_ups_clone = Arc::clone(&follow_ups);
     let provider = message_provider::from_fns(
-        || Vec::new(), // no steering messages
+        Vec::new, // no steering messages
         move || {
             let mut guard = follow_ups_clone.lock().unwrap();
-            match guard.pop() {
-                Some(msg) => vec![msg],
-                None => Vec::new(),
-            }
+            guard.pop().map_or_else(Vec::new, |msg| vec![msg])
         },
     );
 

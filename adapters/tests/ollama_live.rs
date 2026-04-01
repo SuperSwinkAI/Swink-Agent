@@ -176,8 +176,8 @@ async fn live_usage_captured() {
 
     assert!(usage.input > 0, "expected non-zero input tokens");
     assert!(usage.output > 0, "expected non-zero output tokens");
-    assert_eq!(
-        cost.total, 0.0,
+    assert!(
+        cost.total.abs() < f64::EPSILON,
         "Ollama is local — cost should be zero, got: {}",
         cost.total
     );

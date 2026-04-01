@@ -13,6 +13,8 @@ use tokio_util::sync::CancellationToken;
 
 use common::{MockStreamFn, text_only_events, user_msg};
 
+type ConvertToLlmBoxed = Box<dyn Fn(&AgentMessage) -> Option<LlmMessage> + Send + Sync>;
+
 fn primary_model() -> ModelSpec {
     ModelSpec::new("test", "primary-model")
 }
@@ -21,7 +23,7 @@ fn fallback_model() -> ModelSpec {
     ModelSpec::new("test", "fallback-model")
 }
 
-fn default_convert_to_llm() -> Box<dyn Fn(&AgentMessage) -> Option<LlmMessage> + Send + Sync> {
+fn default_convert_to_llm() -> ConvertToLlmBoxed {
     Box::new(|msg| match msg {
         AgentMessage::Llm(llm) => Some(llm.clone()),
         AgentMessage::Custom(_) => None,

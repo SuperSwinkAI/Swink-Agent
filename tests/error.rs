@@ -213,7 +213,7 @@ fn error_structured_output_display() {
     let err = AgentError::structured_output_failed(3, "schema mismatch");
     let display = err.to_string();
     assert!(
-        display.contains("3"),
+        display.contains('3'),
         "display should contain attempt count, got: {display}"
     );
     assert!(

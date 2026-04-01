@@ -1,7 +1,7 @@
 #![cfg(feature = "mistral")]
 //! Wiremock-based tests for `MistralStreamFn`.
 //!
-//! Full test parity with the OpenAI adapter: text streaming, tool calls,
+//! Full test parity with the `OpenAI` adapter: text streaming, tool calls,
 //! multi-tool, errors, cancellation, usage, edge cases.
 
 mod common;
@@ -64,8 +64,8 @@ fn make_assistant_with_tool_call(tool_call_id: &str, tool_name: &str) -> Assista
             partial_json: None,
         }],
         stop_reason: StopReason::ToolUse,
-        usage: Default::default(),
-        cost: Default::default(),
+        usage: swink_agent::Usage::default(),
+        cost: swink_agent::Cost::default(),
         model_id: String::new(),
         provider: String::new(),
         error_message: None,
@@ -943,8 +943,7 @@ async fn empty_response_body() {
     let sf = MistralStreamFn::new(server.uri(), "test-key");
     let events = collect_events(&sf).await;
 
-    let types: Vec<&str> = events.iter().map(|e| event_name(e)).collect();
-    assert!(types.contains(&"Start"));
+    assert!(events.iter().map(event_name).any(|name| name == "Start"));
     let err = find_error_message(&events).expect("expected error event");
     assert!(err.contains("stream ended unexpectedly"));
 }
@@ -989,13 +988,13 @@ static DUMMY_SCHEMA: std::sync::LazyLock<Value> = std::sync::LazyLock::new(|| {
 struct DummyTool;
 
 impl AgentTool for DummyTool {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "dummy"
     }
-    fn label(&self) -> &str {
+    fn label(&self) -> &'static str {
         "Dummy"
     }
-    fn description(&self) -> &str {
+    fn description(&self) -> &'static str {
         "A dummy tool for testing"
     }
     fn parameters_schema(&self) -> &Value {

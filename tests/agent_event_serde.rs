@@ -50,6 +50,7 @@ fn minimal_snapshot() -> TurnSnapshot {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn all_agent_event_variants_serialize_to_json() {
     let model = default_model();
 
@@ -186,7 +187,7 @@ fn all_agent_event_variants_serialize_to_json() {
         (
             "ModelCycled",
             AgentEvent::ModelCycled {
-                old: model.clone(),
+                old: model,
                 new: ModelSpec::new("openai", "gpt-4"),
                 reason: "throttled".into(),
             },
@@ -335,6 +336,7 @@ fn agent_end_serializes_messages_array() {
 // ─── Deserialization tests ──────────────────────────────────────────────────
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn agent_event_roundtrip_all_variants() {
     let model = default_model();
 
@@ -471,7 +473,7 @@ fn agent_event_roundtrip_all_variants() {
         (
             "ModelCycled",
             AgentEvent::ModelCycled {
-                old: model.clone(),
+                old: model,
                 new: ModelSpec::new("openai", "gpt-4"),
                 reason: "throttled".into(),
             },

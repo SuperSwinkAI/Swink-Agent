@@ -85,13 +85,11 @@ async fn message_processing_produces_response() {
                         ContentBlock::Text { text } => Some(text.as_str()),
                         _ => None,
                     })
-                    .collect::<Vec<_>>()
-                    .join(""),
+                    .collect::<String>(),
             ),
             _ => None,
         })
-        .collect::<Vec<_>>()
-        .join("");
+        .collect::<String>();
 
     assert_eq!(
         response_text, expected_text,
@@ -204,13 +202,11 @@ async fn streaming_delivers_text_tokens() {
                         ContentBlock::Text { text } => Some(text.as_str()),
                         _ => None,
                     })
-                    .collect::<Vec<_>>()
-                    .join(""),
+                    .collect::<String>(),
             ),
             _ => None,
         })
-        .collect::<Vec<_>>()
-        .join("");
+        .collect::<String>();
 
     assert_eq!(
         full_text, "Hello World",

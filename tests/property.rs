@@ -46,14 +46,14 @@ proptest! {
     ) {
         let compact = sliding_window(budget, budget / 2, anchor);
         let mut msgs = lengths_to_messages(&lengths);
-        let total_before: usize = msgs.iter().map(|m| estimate_tokens(m)).sum();
+        let total_before: usize = msgs.iter().map(estimate_tokens).sum();
         compact(&mut msgs, false);
-        let total_after: usize = msgs.iter().map(|m| estimate_tokens(m)).sum();
+        let total_after: usize = msgs.iter().map(estimate_tokens).sum();
 
         // After compaction, tokens should be ≤ budget, unless:
         // - already under budget (no compaction needed), or
         // - anchor messages alone exceed the budget (anchors always preserved)
-        let anchor_tokens: usize = msgs.iter().take(anchor).map(|m| estimate_tokens(m)).sum();
+        let anchor_tokens: usize = msgs.iter().take(anchor).map(estimate_tokens).sum();
         prop_assert!(
             total_after <= budget || total_before <= budget || total_after <= anchor_tokens,
             "total_after={total_after} budget={budget} anchor_tokens={anchor_tokens} total_before={total_before}"
@@ -149,10 +149,10 @@ proptest! {
             if let AssistantMessageEvent::TextStart { .. } = event {
                 expected.push(String::new());
             }
-            if let AssistantMessageEvent::TextDelta { delta, content_index } = event {
-                if let Some(s) = expected.get_mut(*content_index) {
-                    s.push_str(delta);
-                }
+            if let AssistantMessageEvent::TextDelta { delta, content_index } = event
+                && let Some(s) = expected.get_mut(*content_index)
+            {
+                s.push_str(delta);
             }
         }
 
@@ -187,9 +187,11 @@ proptest! {
         let delay = strategy.delay(attempt);
 
         // Compute the expected base (before jitter): base_delay * multiplier^(attempt-1)
-        let exp = multiplier.powi(attempt.saturating_sub(1) as i32);
-        let base_secs = (base_ms as f64 / 1000.0) * exp;
-        let capped_secs = base_secs.min(3600.0);
+        let exponent =
+            i32::try_from(attempt.saturating_sub(1)).expect("attempt range fits in i32");
+        let exp = multiplier.powi(exponent);
+        let base = Duration::from_millis(base_ms).as_secs_f64() * exp;
+        let capped_secs = base.min(3600.0);
 
         // Jitter factor is in [0.5, 1.5), so result should be in [0.5 * capped, 1.5 * capped).
         let lower = capped_secs * 0.5;

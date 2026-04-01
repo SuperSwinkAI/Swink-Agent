@@ -414,8 +414,8 @@ fn set_model_emits_model_cycled_event() {
 
     agent.set_model(extra.clone());
 
-    let received = events.lock().unwrap();
-    assert_eq!(received.len(), 1, "should receive exactly one ModelCycled event");
+    let received_len = events.lock().unwrap().len();
+    assert_eq!(received_len, 1, "should receive exactly one ModelCycled event");
 
     let old = captured_old.lock().unwrap().clone().unwrap();
     let new = captured_new.lock().unwrap().clone().unwrap();

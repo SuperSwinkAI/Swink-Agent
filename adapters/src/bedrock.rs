@@ -570,6 +570,11 @@ fn hmac_sha256(key: &[u8], data: &[u8]) -> [u8; 32] {
     mac.finalize().into_bytes().into()
 }
 
+const _: () = {
+    const fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<BedrockStreamFn>();
+};
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -595,8 +600,3 @@ mod tests {
         assert!(date_stamp.chars().all(|c| c.is_ascii_digit()));
     }
 }
-
-const _: () = {
-    const fn assert_send_sync<T: Send + Sync>() {}
-    assert_send_sync::<BedrockStreamFn>();
-};

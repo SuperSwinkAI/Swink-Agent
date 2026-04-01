@@ -80,6 +80,7 @@ impl AgentTool for MockArgCapturingTool {
 
 // ─── Helper: default retry strategy (no jitter, minimal delay) ───────────
 
+#[allow(clippy::unnecessary_box_returns)]
 fn fast_retry() -> Box<DefaultRetryStrategy> {
     Box::new(
         DefaultRetryStrategy::default()
@@ -191,10 +192,10 @@ async fn tool_execution_with_valid_args() {
     // Verify tool result content appears in messages
     let tool_result_content = result.messages.iter().find_map(|msg| {
         if let AgentMessage::Llm(LlmMessage::ToolResult(tr)) = msg {
-            if !tr.is_error {
-                Some(&tr.content)
-            } else {
+            if tr.is_error {
                 None
+            } else {
+                Some(&tr.content)
             }
         } else {
             None
@@ -330,25 +331,24 @@ async fn tool_result_in_followup_message() {
 
     let _result = agent.prompt_async(vec![user_msg("hi")]).await.unwrap();
 
-    let counts = stream_fn.captured_message_counts.lock().unwrap();
+    let counts = stream_fn.captured_message_counts.lock().unwrap().clone();
     assert!(
         counts.len() >= 2,
         "stream should have been called at least twice (tool call + follow-up)"
     );
     assert!(
         counts[1] > counts[0],
-        "second call should see more messages than first (tool result was added): {:?}",
-        *counts
+        "second call should see more messages than first (tool result was added): {counts:?}",
     );
 }
 
 // ─── T017: tool_call_transformation via PreDispatch policy (AC 12) ──────
 
-/// A PreDispatch policy that injects a field into tool call arguments.
+/// A `PreDispatch` policy that injects a field into tool call arguments.
 struct InjectFieldPolicy;
 
 impl swink_agent::PreDispatchPolicy for InjectFieldPolicy {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "inject_field"
     }
 
@@ -406,11 +406,11 @@ async fn tool_call_transformation() {
 
 // ─── T018: tool_validator_rejects_call via PreDispatch policy (edge case) ──
 
-/// A PreDispatch policy that skips (rejects) a specific tool.
+/// A `PreDispatch` policy that skips (rejects) a specific tool.
 struct BlockToolPolicy;
 
 impl swink_agent::PreDispatchPolicy for BlockToolPolicy {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "block_tool"
     }
 

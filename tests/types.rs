@@ -17,12 +17,12 @@ fn user_message_construction_and_access() {
         content: vec![ContentBlock::Text {
             text: "hello world".into(),
         }],
-        timestamp: 1710000000,
+        timestamp: 1_710_000_000,
         cache_hint: None,
     };
     assert_eq!(msg.content.len(), 1);
     assert!(matches!(&msg.content[0], ContentBlock::Text { text } if text == "hello world"));
-    assert_eq!(msg.timestamp, 1710000000);
+    assert_eq!(msg.timestamp, 1_710_000_000);
 }
 
 // T009
@@ -52,7 +52,7 @@ fn assistant_message_construction_and_access() {
         },
         stop_reason: StopReason::Stop,
         error_message: Some("optional error".into()),
-        timestamp: 1710000001,
+        timestamp: 1_710_000_001,
         cache_hint: None,
     };
     assert_eq!(msg.provider, "anthropic");
@@ -62,7 +62,7 @@ fn assistant_message_construction_and_access() {
     assert!((msg.cost.total - 0.0315).abs() < f64::EPSILON);
     assert_eq!(msg.stop_reason, StopReason::Stop);
     assert_eq!(msg.error_message.as_deref(), Some("optional error"));
-    assert_eq!(msg.timestamp, 1710000001);
+    assert_eq!(msg.timestamp, 1_710_000_001);
 }
 
 // T010
@@ -74,14 +74,14 @@ fn tool_result_message_construction_and_access() {
             text: "tool output".into(),
         }],
         is_error: false,
-        timestamp: 1710000002,
+        timestamp: 1_710_000_002,
         details: serde_json::Value::Null,
         cache_hint: None,
     };
     assert_eq!(msg.tool_call_id, "tc_123");
     assert_eq!(msg.content.len(), 1);
     assert!(!msg.is_error);
-    assert_eq!(msg.timestamp, 1710000002);
+    assert_eq!(msg.timestamp, 1_710_000_002);
 }
 
 // T011
