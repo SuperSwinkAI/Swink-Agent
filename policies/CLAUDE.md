@@ -9,7 +9,7 @@
 - **10 policies total:**
   - Core (6): `BudgetPolicy`, `MaxTurnsPolicy`, `ToolDenyListPolicy`, `SandboxPolicy`, `LoopDetectionPolicy`, `CheckpointPolicy`
   - Application (4): `PromptInjectionGuard`, `PiiRedactor`, `ContentFilter`, `AuditLogger`
-- Each feature-gated independently: `default = ["all"]`, individual flags (`budget`, `max-turns`, `deny-list`, `sandbox`, `loop-detection`, `checkpoint`, `prompt-guard`, `pii`, `content-filter`, `audit`)
+- Each feature-gated independently: defaults are minimal, `full` enables the batteries-included set, and individual flags remain available (`budget`, `max-turns`, `deny-list`, `sandbox`, `loop-detection`, `checkpoint`, `prompt-guard`, `pii`, `content-filter`, `audit`)
 - All implementations depend only on `swink-agent` public API — no internal imports
 - Policy traits take `&self` — stateful policies use interior mutability (`Mutex`)
 
