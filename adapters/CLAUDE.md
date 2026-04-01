@@ -25,7 +25,7 @@ swink-agent-adapters = {}
 | `openai` | `openai.rs` | — | Implemented |
 | `ollama` | `ollama.rs` | — | Implemented |
 | `gemini` | `google.rs` | — | Implemented |
-| `proxy` | `proxy.rs` | `eventsource-stream` | Implemented |
+| `proxy` | `proxy.rs` | — | Implemented |
 | `azure` | `azure.rs` | — | Stub |
 | `bedrock` | `bedrock.rs` | `sha2` | Stub |
 | `mistral` | `mistral.rs` | — | Implemented |
@@ -41,6 +41,7 @@ swink-agent-adapters = {}
 - `MessageConverter` trait (defined in core, re-exported from `swink_agent::convert`) eliminates per-adapter boilerplate — except Anthropic, which has its own `convert_messages` (system prompt is top-level, thinking blocks filtered).
 - `ProxyStreamFn` moved here from core. Import: `swink_agent_adapters::ProxyStreamFn`.
 - The `classify` and `sse` modules are public but documented as internal utilities with no stability contract. External StreamFn implementors should depend only on `swink_agent`.
+- SSE-backed adapters should reuse `adapters/src/sse.rs` helpers when possible instead of carrying their own byte-to-line parser. `ProxyStreamFn` now follows that shared path too.
 - `openai_compat` is shared by `openai`, `azure`, `mistral`, `xai` — compiles unconditionally but has `allow(dead_code)` when none of its consumers are enabled.
 - `remote_presets` module feature-gates preset key sub-modules and `build_remote_connection` match arms per provider.
 

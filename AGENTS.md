@@ -60,6 +60,7 @@ MSRV **1.88** (edition 2024). Workspace deps centralized in root `Cargo.toml`.
 - `accumulate_message` enforces strict ordering: one Start, indexed content blocks, one terminal (Done/Error).
 - `partial_json` consumed on `ToolCallEnd` — parsed once. Empty string → `{}`, not null.
 - `AssistantMessageEvent::error()` is the canonical error constructor — adapters must use it.
+- Adapter SSE parsing should go through `adapters/src/sse.rs` helpers when possible; the proxy adapter no longer uses its own `eventsource-stream` path.
 - `adapters/src/sse.rs` is the shared byte-to-SSE-line parser for both generic data-only adapters and Anthropic's event+data pairing logic; avoid reintroducing custom chunk splitters in provider modules.
 
 ### Context (`src/context.rs`)

@@ -22,7 +22,7 @@ anthropic = []
 openai = []
 ollama = []
 gemini = []
-proxy = ["dep:eventsource-stream"]
+proxy = []
 azure = []
 bedrock = ["dep:sha2", "dep:hmac", "dep:chrono"]
 mistral = []
@@ -43,7 +43,6 @@ sha2 = { workspace = true, optional = true }
 hmac = { workspace = true, optional = true }
 chrono = { workspace = true, optional = true }
 bytes = "1"
-eventsource-stream = { version = "0.2", optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["full", "test-util"] }
