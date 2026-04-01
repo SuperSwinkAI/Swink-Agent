@@ -185,6 +185,8 @@ MSRV **1.88** (edition 2024). Workspace deps centralized in root `Cargo.toml`.
 - Rust 1.88 (edition 2024) + `swink-agent` (core), `reqwest`, `futures`, `serde`, `serde_json`, `tokio`, `tokio-util`, `tracing` (015-adapter-gemini)
 - Rust 1.88 (edition 2024) + Workspace deps centralized in root Cargo.toml. Key deps for this feature: `mistralrs` 0.7 (backend features), `eventsource-stream` 0.2 (proxy-only), `sha2` (bedrock-only). (033-workspace-feature-gates)
 - Rust 1.88 (edition 2024) + `swink-agent` (core), `reqwest`, `futures`, `serde`/`serde_json`, `tokio`, `tokio-util`, `tracing`, `rand` (ID generation) (018-adapter-mistral)
+- Rust 1.88 (edition 2024) + serde, serde_json, tokio, std::sync::RwLock (no new external deps) (034-session-state-store)
+- JSONL via swink-agent-memory crate (extends existing SessionStore) (034-session-state-store)
 
 ## Recent Changes
 - 001-workspace-scaffold: Added Rust 1.88 (edition 2024) + serde, serde_json, tokio, futures, thiserror, uuid, reqwest, jsonschema, schemars, rand, tracing, toml (all centralized in workspace `[workspace.dependencies]`)
