@@ -2,6 +2,8 @@
 
 use regex::Regex;
 
+use crate::patterns::{compile_named_regexes, compile_regex};
+
 use swink_agent::{
     AgentMessage, AssistantMessage, ContentBlock, LlmMessage, PolicyContext, PolicyVerdict,
     PostTurnPolicy, TurnPolicyContext,
@@ -52,30 +54,11 @@ impl PiiRedactor {
     /// Panics if a built-in regex pattern fails to compile (should never happen).
     #[must_use]
     pub fn new() -> Self {
-        let defaults: &[(&str, &str)] = &[
-            ("email", r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}"),
-            (
-                "us_phone",
-                r"(\+1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}",
-            ),
-            ("ssn", r"\d{3}-\d{2}-\d{4}"),
-            (
-                "credit_card",
-                r"\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}",
-            ),
-            ("ipv4", r"\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}"),
-        ];
-
-        let patterns = defaults
-            .iter()
-            .map(|(name, pat)| PiiPattern {
-                name: (*name).to_string(),
-                regex: Regex::new(pat).expect("default PII pattern must compile"),
-            })
-            .collect();
-
         Self {
-            patterns,
+            patterns: compile_named_regexes(default_patterns(), |name, regex| {
+                PiiPattern { name, regex }
+            })
+            .expect("default PII pattern must compile"),
             mode: PiiMode::default(),
             placeholder: "[REDACTED]".to_string(),
         }
@@ -105,7 +88,7 @@ impl PiiRedactor {
         name: impl Into<String>,
         pattern: &str,
     ) -> Result<Self, regex::Error> {
-        let regex = Regex::new(pattern)?;
+        let regex = compile_regex(pattern)?;
         self.patterns.push(PiiPattern {
             name: name.into(),
             regex,
@@ -118,6 +101,22 @@ impl Default for PiiRedactor {
     fn default() -> Self {
         Self::new()
     }
+}
+
+const fn default_patterns() -> &'static [(&'static str, &'static str)] {
+    &[
+        ("email", r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}"),
+        (
+            "us_phone",
+            r"(\+1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}",
+        ),
+        ("ssn", r"\d{3}-\d{2}-\d{4}"),
+        (
+            "credit_card",
+            r"\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}",
+        ),
+        ("ipv4", r"\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}"),
+    ]
 }
 
 impl PostTurnPolicy for PiiRedactor {

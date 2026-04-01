@@ -4,6 +4,8 @@ use std::collections::HashSet;
 
 use regex::Regex;
 
+use crate::patterns::compile_regex;
+
 use swink_agent::{ContentBlock, PolicyContext, PolicyVerdict, PostTurnPolicy, TurnPolicyContext};
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -107,10 +109,7 @@ impl ContentFilter {
     /// Returns [`ContentFilterError::InvalidRegex`] if the pattern fails to
     /// compile.
     pub fn with_regex(mut self, pattern: &str) -> Result<Self, ContentFilterError> {
-        let compiled = Regex::new(pattern).map_err(|source| ContentFilterError::InvalidRegex {
-            pattern: pattern.to_string(),
-            source,
-        })?;
+        let compiled = Self::compile_rule(pattern)?;
         self.regex_rules.push(FilterRule {
             pattern: compiled,
             display_name: pattern.to_string(),
@@ -146,10 +145,7 @@ impl ContentFilter {
         category: impl Into<String>,
         pattern: &str,
     ) -> Result<Self, ContentFilterError> {
-        let compiled = Regex::new(pattern).map_err(|source| ContentFilterError::InvalidRegex {
-            pattern: pattern.to_string(),
-            source,
-        })?;
+        let compiled = Self::compile_rule(pattern)?;
         self.regex_rules.push(FilterRule {
             pattern: compiled,
             display_name: pattern.to_string(),
@@ -210,11 +206,18 @@ impl ContentFilter {
         }
     }
 
+    fn compile_rule(pattern: &str) -> Result<Regex, ContentFilterError> {
+        compile_regex(pattern).map_err(|source| ContentFilterError::InvalidRegex {
+            pattern: pattern.to_string(),
+            source,
+        })
+    }
+
     fn push_keyword_rule(&mut self, category: Option<String>, word: String) {
         if self.whole_word {
             let escaped = regex::escape(&word);
             let pattern_str = self.build_pattern(&escaped);
-            let pattern = Regex::new(&pattern_str)
+            let pattern = compile_regex(&pattern_str)
                 .expect("escaped keyword should always produce valid regex");
             self.regex_rules.push(FilterRule {
                 pattern,

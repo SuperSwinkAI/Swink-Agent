@@ -20,6 +20,8 @@
 //! - **`audit`**: [`AuditLogger`] — records every turn to a pluggable sink
 #![forbid(unsafe_code)]
 
+mod patterns;
+
 // ── Core policies ───────────────────────────────────────────────────────────
 
 #[cfg(feature = "budget")]
