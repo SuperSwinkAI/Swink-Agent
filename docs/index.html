@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Swink Agent</title>
+  <meta name="description" content="A pure-Rust library for building LLM-powered agentic loops. Provider-agnostic core with pluggable streaming, concurrent tool execution, and lifecycle events.">
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      margin: 0;
+      background: #ffffff;
+      color: #1a1a2e;
+    }
+    .container {
+      text-align: center;
+      padding: 2rem 1.5rem 3rem 1.5rem;
+      max-width: 720px;
+    }
+    h1 { font-size: 3rem; margin-bottom: 0.25rem; }
+    .tagline {
+      font-size: 1.3rem;
+      color: #555;
+      margin: 0.25rem auto 0 auto;
+      max-width: 500px;
+    }
+    p {
+      color: #555;
+      font-size: 1.1rem;
+      max-width: 540px;
+      margin: 0 auto;
+      padding: 0 1rem;
+      word-wrap: break-word;
+      line-height: 1.6;
+    }
+    .definition {
+      font-size: 0.9rem;
+      color: #888;
+      font-style: italic;
+      letter-spacing: 0.5px;
+      margin-bottom: 0.5rem;
+    }
+    img { max-width: 480px; min-width: 300px; margin-bottom: 0.5rem; }
+    .coming-soon {
+      font-size: 3.6rem;
+      color: #1a1a2e;
+      font-weight: 700;
+      letter-spacing: 2px;
+      margin-bottom: 0.5rem;
+    }
+    a { color: #d4880f; }
+    .features {
+      margin-top: 2rem;
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 1rem;
+      max-width: 600px;
+      margin-left: auto;
+      margin-right: auto;
+    }
+    .feature {
+      flex: 1 1 250px;
+      text-align: left;
+      padding: 0.75rem 1rem;
+      border-left: 3px solid #d4880f;
+    }
+    .feature strong {
+      display: block;
+      font-size: 0.95rem;
+      color: #1a1a2e;
+      margin-bottom: 0.15rem;
+    }
+    .feature span {
+      font-size: 0.85rem;
+      color: #666;
+      line-height: 1.4;
+    }
+    .crates {
+      margin-top: 2rem;
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 0.5rem;
+    }
+    .crate-badge {
+      display: inline-block;
+      background: #f3f4f6;
+      border: 1px solid #d1d5db;
+      border-radius: 6px;
+      padding: 0.3rem 0.7rem;
+      font-size: 0.85rem;
+      color: #555;
+      font-family: ui-monospace, monospace;
+    }
+    @media (max-width: 480px) {
+      .container { padding: 1.5rem 1rem 2rem 1rem; }
+      h1 { font-size: 2.2rem; }
+      .coming-soon { font-size: 2.4rem; }
+      .tagline { font-size: 1rem; }
+      img { min-width: 100%; max-width: 100%; }
+      .feature { flex: 1 1 100%; }
+    }
+    @media (min-width: 481px) and (max-width: 1024px) {
+      .container { padding: 1.5rem 1.5rem 2rem 1.5rem; }
+      h1 { font-size: 2.5rem; }
+      .coming-soon { font-size: 3rem; }
+      img { max-width: 400px; min-width: 280px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <p class="coming-soon">Coming soon</p>
+    <img src="images/hero.jpeg" alt="Swink Agent">
+    <div class="definition">swink: to toil, to labor, to work hard</div>
+    <h1>Swink Agent</h1>
+    <p class="tagline">Your tireless agent loop, in pure Rust.</p>
+
+    <div class="features">
+      <div class="feature">
+        <strong>Any LLM, one trait</strong>
+        <span>Implement StreamFn to plug in Anthropic, OpenAI, Gemini, Ollama, or your own.</span>
+      </div>
+      <div class="feature">
+        <strong>Tools run concurrently</strong>
+        <span>Batch tool calls execute in parallel. Steering callbacks can interrupt mid-batch.</span>
+      </div>
+      <div class="feature">
+        <strong>No unsafe. No globals.</strong>
+        <span>#[forbid(unsafe_code)] at every crate root. Pure, predictable state.</span>
+      </div>
+      <div class="feature">
+        <strong>Policy guardrails, not afterthoughts</strong>
+        <span>Budget caps, sandboxing, PII redaction, prompt injection detection &mdash; compiled into the loop, not bolted on. Zero latency. No extra LLM calls.</span>
+      </div>
+      <div class="feature">
+        <strong>Batteries included</strong>
+        <span>9 LLM adapters, session memory, eval harness, on-device inference, and a full TUI &mdash; all in the workspace.</span>
+      </div>
+    </div>
+
+    <div class="crates">
+      <span class="crate-badge">swink-agent</span>
+      <span class="crate-badge">swink-agent-adapters</span>
+      <span class="crate-badge">swink-agent-memory</span>
+      <span class="crate-badge">swink-agent-local-llm</span>
+      <span class="crate-badge">swink-agent-eval</span>
+      <span class="crate-badge">swink-agent-policies</span>
+      <span class="crate-badge">swink-agent-tui</span>
+    </div>
+  </div>
+</body>
+</html>
