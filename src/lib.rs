@@ -62,9 +62,11 @@ pub use config::{
     AgentConfig, ApprovalModeConfig, BudgetGuardConfig, FollowUpModeConfig, RetryConfig,
     SteeringModeConfig, StreamOptionsConfig,
 };
+#[allow(deprecated)]
 pub use context::{DefaultTokenCounter, TokenCounter, estimate_tokens, is_context_overflow, sliding_window};
 pub use context_cache::{CacheConfig, CacheHint, CacheState};
-pub use context_transformer::{CompactionReport, ContextTransformer, SlidingWindowTransformer};
+pub use context::CompactionReport;
+pub use context_transformer::{ContextTransformer, SlidingWindowTransformer};
 pub use context_version::{
     ContextSummarizer, ContextVersion, ContextVersionMeta, ContextVersionStore,
     InMemoryVersionStore, VersioningTransformer,

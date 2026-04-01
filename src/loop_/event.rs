@@ -108,7 +108,7 @@ pub enum AgentEvent {
 
     /// Emitted when context compaction drops messages.
     ContextCompacted {
-        report: crate::context_transformer::CompactionReport,
+        report: crate::context::CompactionReport,
     },
 
     /// Emitted when the agent falls back to a different model after exhausting

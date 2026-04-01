@@ -1,5 +1,7 @@
 //! Context compaction utilities for managing conversation history size.
 
+use serde::{Deserialize, Serialize};
+
 use crate::types::{AgentMessage, ContentBlock, LlmMessage};
 
 // ─── Token Counter Trait ────────────────────────────────────────────────────
@@ -63,16 +65,17 @@ fn is_tool_result(messages: &[AgentMessage], idx: usize) -> bool {
     )
 }
 
-/// Result of a sliding window compaction pass (crate-internal).
-///
-/// Returned by [`compact_sliding_window`] when messages were dropped.
-pub struct CompactionResult {
-    /// Number of messages that were removed.
+/// Result of a context transformation pass.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompactionReport {
+    /// Number of messages that were removed during compaction.
     pub dropped_count: usize,
     /// Estimated tokens before compaction.
     pub tokens_before: usize,
     /// Estimated tokens after compaction.
     pub tokens_after: usize,
+    /// Whether compaction was triggered by overflow.
+    pub overflow: bool,
 }
 
 /// Core sliding window compaction algorithm.
@@ -84,12 +87,12 @@ pub struct CompactionResult {
 ///
 /// When `counter` is `None` the [`DefaultTokenCounter`] heuristic is used.
 ///
-/// Returns `Some(CompactionResult)` when messages were dropped, `None` otherwise.
+/// Returns `Some(CompactionReport)` when messages were dropped, `None` otherwise.
 pub fn compact_sliding_window(
     messages: &mut Vec<AgentMessage>,
     budget: usize,
     anchor: usize,
-) -> Option<CompactionResult> {
+) -> Option<CompactionReport> {
     compact_sliding_window_with(messages, budget, anchor, None)
 }
 
@@ -99,7 +102,7 @@ pub fn compact_sliding_window_with(
     budget: usize,
     anchor: usize,
     counter: Option<&dyn TokenCounter>,
-) -> Option<CompactionResult> {
+) -> Option<CompactionReport> {
     let default = DefaultTokenCounter;
     let counter: &dyn TokenCounter = counter.unwrap_or(&default);
 
@@ -153,10 +156,11 @@ pub fn compact_sliding_window_with(
 
     let tokens_after: usize = messages.iter().map(count).sum();
 
-    Some(CompactionResult {
+    Some(CompactionReport {
         dropped_count,
         tokens_before,
         tokens_after,
+        overflow: false,
     })
 }
 
@@ -168,6 +172,7 @@ pub fn compact_sliding_window_with(
 ///
 /// When `overflow` is true (context window exceeded), uses `overflow_budget`
 /// instead of `normal_budget`.
+#[deprecated(since = "0.5.0", note = "Use SlidingWindowTransformer instead")]
 pub fn sliding_window(
     normal_budget: usize,
     overflow_budget: usize,
@@ -260,6 +265,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn under_budget_no_change() {
         let compact = sliding_window(10_000, 5_000, 1);
         let mut messages = vec![text_message("hello"), text_message("world")];
@@ -268,6 +274,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn over_budget_trims_middle() {
         // Each message: 400 chars / 4 = 100 tokens.
         let body = "x".repeat(400);
@@ -285,6 +292,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn overflow_uses_smaller_budget() {
         let body = "x".repeat(400);
         let compact = sliding_window(1000, 150, 1);
@@ -304,6 +312,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn preserves_tool_result_pair() {
         let compact = sliding_window(300, 100, 1);
 
@@ -334,6 +343,7 @@ mod tests {
     // ── New edge case tests ─────────────────────────────────────────────────
 
     #[test]
+    #[allow(deprecated)]
     fn empty_messages_no_change() {
         let compact = sliding_window(100, 50, 1);
         let mut messages: Vec<AgentMessage> = vec![];
@@ -342,6 +352,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn single_message_preserved() {
         // A single message should never be trimmed, even if it exceeds the budget.
         // With anchor=1, this message is the anchor and tail_start <= effective_anchor
@@ -354,6 +365,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn anchor_messages_always_kept() {
         // Even when anchors alone exceed the budget, they must be preserved.
         let body = "x".repeat(400); // 100 tokens each
@@ -380,6 +392,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn all_messages_under_budget_with_large_system_prompt() {
         // The sliding_window function operates on messages only; the system prompt
         // is not passed to it. Verify that when total message tokens are under
@@ -395,6 +408,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn tool_result_at_boundary_preserved() {
         // When the natural trim point falls exactly on a tool-result message,
         // the preceding tool-call must also be kept.
@@ -424,6 +438,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn consecutive_tool_pairs_preserved() {
         // Multiple consecutive tool call/result pairs at the tail should all
         // be kept together: if any tool result is included, its call is too.
@@ -457,6 +472,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn custom_messages_token_estimation() {
         // CustomMessage uses 100 tokens flat, regardless of content.
         // Create a custom message and verify it contributes to budget.
@@ -482,6 +498,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn overflow_budget_smaller_than_normal() {
         // Verify that overflow mode trims more aggressively.
         let body = "x".repeat(400); // 100 tokens each

@@ -5,23 +5,8 @@
 
 use std::sync::Arc;
 
-use serde::{Deserialize, Serialize};
-
-use crate::context::{TokenCounter, compact_sliding_window_with};
+use crate::context::{CompactionReport, TokenCounter, compact_sliding_window_with};
 use crate::types::AgentMessage;
-
-/// Result of a context transformation pass.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CompactionReport {
-    /// Number of messages that were removed during compaction.
-    pub dropped_count: usize,
-    /// Estimated tokens before compaction.
-    pub tokens_before: usize,
-    /// Estimated tokens after compaction.
-    pub tokens_after: usize,
-    /// Whether compaction was triggered by overflow.
-    pub overflow: bool,
-}
 
 pub trait ContextTransformer: Send + Sync {
     /// Transform the context messages in-place.
@@ -131,14 +116,9 @@ impl ContextTransformer for SlidingWindowTransformer {
 
         let effective_anchor = self.anchor.max(self.cached_prefix_len);
         let counter_ref = self.token_counter.as_deref();
-        let result = compact_sliding_window_with(messages, budget, effective_anchor, counter_ref)?;
-
-        Some(CompactionReport {
-            dropped_count: result.dropped_count,
-            tokens_before: result.tokens_before,
-            tokens_after: result.tokens_after,
-            overflow,
-        })
+        let mut report = compact_sliding_window_with(messages, budget, effective_anchor, counter_ref)?;
+        report.overflow = overflow;
+        Some(report)
     }
 }
 

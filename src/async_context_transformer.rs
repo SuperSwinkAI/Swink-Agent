@@ -8,7 +8,7 @@
 use std::future::Future;
 use std::pin::Pin;
 
-use crate::context_transformer::CompactionReport;
+use crate::context::CompactionReport;
 use crate::types::AgentMessage;
 
 /// A boxed future returned by an [`AsyncContextTransformer`].

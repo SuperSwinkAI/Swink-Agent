@@ -8,7 +8,8 @@
 
 use std::sync::{Arc, Mutex};
 
-use crate::context_transformer::{CompactionReport, ContextTransformer};
+use crate::context::CompactionReport;
+use crate::context_transformer::ContextTransformer;
 use crate::types::{AgentMessage, LlmMessage};
 
 // ─── ContextVersion ──────────────────────────────────────────────────────────

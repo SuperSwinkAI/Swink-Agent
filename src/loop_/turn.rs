@@ -102,23 +102,8 @@ pub async fn run_single_turn(
     );
     let _turn_guard = turn_span.enter();
 
-    // ii-a. Call async context transformer if set (runs before sync)
-    if let Some(ref async_transformer) = config.async_transform_context
-        && let Some(report) = async_transformer
-            .transform(&mut state.context_messages, state.overflow_signal)
-            .await
-    {
-        let _ = emit(tx, AgentEvent::ContextCompacted { report }).await;
-    }
-
-    // ii-b. Call sync context transformer if set
-    if let Some(ref transformer) = config.transform_context
-        && let Some(report) =
-            transformer.transform(&mut state.context_messages, state.overflow_signal)
-    {
-        let _ = emit(tx, AgentEvent::ContextCompacted { report }).await;
-    }
-    // Reset overflow after it's been signaled
+    // ii. Run context transformers (async first, then sync)
+    run_context_transformers(config, &mut state.context_messages, state.overflow_signal, tx).await;
     state.overflow_signal = false;
 
     // ii-c. Annotate context messages with cache hints if caching is configured
@@ -312,6 +297,37 @@ pub async fn run_single_turn(
         tx,
     )
     .await
+}
+
+// ─── Context transformer runner ─────────────────────────────────────────
+
+/// Run async and sync context transformers in sequence, emitting
+/// `ContextCompacted` events for each. Returns whether any compaction occurred.
+pub(super) async fn run_context_transformers(
+    config: &AgentLoopConfig,
+    messages: &mut Vec<crate::types::AgentMessage>,
+    overflow: bool,
+    tx: &mpsc::Sender<AgentEvent>,
+) -> bool {
+    let mut any_compacted = false;
+
+    // Async transformer runs first
+    if let Some(ref async_transformer) = config.async_transform_context
+        && let Some(report) = async_transformer.transform(messages, overflow).await
+    {
+        any_compacted = true;
+        let _ = emit(tx, AgentEvent::ContextCompacted { report }).await;
+    }
+
+    // Sync transformer runs second
+    if let Some(ref transformer) = config.transform_context
+        && let Some(report) = transformer.transform(messages, overflow)
+    {
+        any_compacted = true;
+        let _ = emit(tx, AgentEvent::ContextCompacted { report }).await;
+    }
+
+    any_compacted
 }
 
 // ─── Shared helpers ──────────────────────────────────────────────────────

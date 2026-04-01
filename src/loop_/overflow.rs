@@ -18,7 +18,7 @@ use super::{
     AgentEvent, AgentLoopConfig, LoopState, StreamResult, TurnEndReason, TurnOutcome,
     build_error_message, emit,
 };
-use super::turn::{build_snapshot, emit_turn_end_and_agent_end, handle_cancellation};
+use super::turn::{build_snapshot, emit_turn_end_and_agent_end, handle_cancellation, run_context_transformers};
 
 /// Outcome of an in-place overflow recovery attempt.
 pub(super) enum OverflowRecoveryResult {
@@ -60,26 +60,8 @@ pub(super) async fn attempt_overflow_recovery(
     state.overflow_recovery_attempted = true;
     state.overflow_signal = true;
 
-    // Re-run async transformer with overflow=true
-    let mut any_compacted = false;
-    if let Some(ref async_transformer) = config.async_transform_context
-        && let Some(report) = async_transformer
-            .transform(&mut state.context_messages, true)
-            .await
-    {
-        any_compacted = true;
-        let _ = emit(tx, AgentEvent::ContextCompacted { report }).await;
-    }
-
-    // Re-run sync transformer with overflow=true
-    if let Some(ref transformer) = config.transform_context
-        && let Some(report) = transformer.transform(&mut state.context_messages, true)
-    {
-        any_compacted = true;
-        let _ = emit(tx, AgentEvent::ContextCompacted { report }).await;
-    }
-
-    // Reset overflow signal after transformers ran.
+    // Re-run transformers with overflow=true
+    let any_compacted = run_context_transformers(config, &mut state.context_messages, true, tx).await;
     state.overflow_signal = false;
 
     // Guard 3: Transformers ran but neither reported compaction — no point retrying.

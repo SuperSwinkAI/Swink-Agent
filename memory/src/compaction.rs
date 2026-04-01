@@ -7,9 +7,10 @@
 
 use std::sync::{Arc, Mutex};
 
+#[allow(deprecated)]
+use swink_agent::sliding_window;
 use swink_agent::{
     AgentMessage, AssistantMessage, ContentBlock, Cost, LlmMessage, StopReason, Usage,
-    sliding_window,
 };
 
 /// Result of a compaction operation (diagnostic type for future use).
@@ -72,6 +73,7 @@ impl SummarizingCompactor {
     /// on subsequent compaction passes.
     pub fn compaction_fn(&self) -> impl Fn(&mut Vec<AgentMessage>, bool) + Send + Sync {
         let summary = Arc::clone(&self.summary);
+        #[allow(deprecated)]
         let base = sliding_window(self.normal_budget, self.overflow_budget, self.anchor);
         let anchor = self.anchor;
 
