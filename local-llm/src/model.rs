@@ -21,7 +21,10 @@ use tokio::sync::{Notify, RwLock};
 use tracing::{debug, error, info};
 
 use crate::error::LocalModelError;
-use crate::lifecycle::{attach_progress_callback, emit_progress, wait_until_ready};
+use crate::lifecycle::{
+    LoadStateCheck, attach_progress_callback, classify_load_state, emit_progress,
+    set_failed_and_notify, wait_until_ready,
+};
 use crate::preset::{DEFAULT_LOCAL_PRESET_ID, ModelPreset};
 use crate::progress::{ProgressCallbackFn, ProgressEvent};
 
@@ -226,19 +229,30 @@ impl LocalModel {
         // Fast path: already ready.
         {
             let state = self.inner.state.read().await;
-            match &*state {
-                InternalModelState::Ready { .. } => return Ok(()),
-                InternalModelState::Failed { error } => {
-                    return Err(LocalModelError::Loading {
-                        source: error.clone().into(),
-                    });
+            match classify_load_state(
+                &*state,
+                |state| matches!(state, InternalModelState::Ready { .. }),
+                |state| match state {
+                    InternalModelState::Failed { error } => Some(error.clone()),
+                    _ => None,
+                },
+                |state| {
+                    matches!(
+                        state,
+                        InternalModelState::Downloading | InternalModelState::Loading
+                    )
+                },
+            ) {
+                LoadStateCheck::Ready => return Ok(()),
+                LoadStateCheck::Failed(error) => {
+                    return Err(LocalModelError::loading_message(error));
                 }
-                InternalModelState::Downloading | InternalModelState::Loading => {
+                LoadStateCheck::Waiting => {
                     drop(state);
                     self.wait_until_ready().await;
                     return Ok(());
                 }
-                InternalModelState::Unloaded => {}
+                LoadStateCheck::Unloaded => {}
             }
         }
 
@@ -246,21 +260,32 @@ impl LocalModel {
         let mut state = self.inner.state.write().await;
 
         // Double-check after acquiring write lock.
-        match &*state {
-            InternalModelState::Ready { .. } => return Ok(()),
-            InternalModelState::Failed { error } => {
-                return Err(LocalModelError::Loading {
-                    source: error.clone().into(),
-                });
+        match classify_load_state(
+            &*state,
+            |state| matches!(state, InternalModelState::Ready { .. }),
+            |state| match state {
+                InternalModelState::Failed { error } => Some(error.clone()),
+                _ => None,
+            },
+            |state| {
+                matches!(
+                    state,
+                    InternalModelState::Downloading | InternalModelState::Loading
+                )
+            },
+        ) {
+            LoadStateCheck::Ready => return Ok(()),
+            LoadStateCheck::Failed(error) => {
+                return Err(LocalModelError::loading_message(error));
             }
-            InternalModelState::Downloading | InternalModelState::Loading => {
+            LoadStateCheck::Waiting => {
                 // Another task is loading — shouldn't happen with write lock,
                 // but handle gracefully.
                 drop(state);
                 self.wait_until_ready().await;
                 return Ok(());
             }
-            InternalModelState::Unloaded => {}
+            LoadStateCheck::Unloaded => {}
         }
 
         // Begin loading.
@@ -325,16 +350,22 @@ impl LocalModel {
             Ok(Err(e)) => {
                 let msg = format!("model loading failed: {e}");
                 error!(%msg);
-                *state = InternalModelState::Failed { error: msg.clone() };
-                self.inner.ready_notify.notify_waiters();
-                return Err(LocalModelError::Loading { source: msg.into() });
+                return Err(set_failed_and_notify(
+                    &mut *state,
+                    &self.inner.ready_notify,
+                    msg,
+                    |state, error| *state = InternalModelState::Failed { error },
+                ));
             }
             Err(join_err) => {
                 let msg = format!("model loading panicked: {join_err}");
                 error!(%msg);
-                *state = InternalModelState::Failed { error: msg.clone() };
-                self.inner.ready_notify.notify_waiters();
-                return Err(LocalModelError::Loading { source: msg.into() });
+                return Err(set_failed_and_notify(
+                    &mut *state,
+                    &self.inner.ready_notify,
+                    msg,
+                    |state, error| *state = InternalModelState::Failed { error },
+                ));
             }
         };
 

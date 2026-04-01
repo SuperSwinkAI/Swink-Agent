@@ -20,7 +20,10 @@ use tokio::sync::{Notify, RwLock};
 use tracing::{debug, error, info};
 
 use crate::error::LocalModelError;
-use crate::lifecycle::{attach_progress_callback, emit_progress, wait_until_ready};
+use crate::lifecycle::{
+    LoadStateCheck, attach_progress_callback, classify_load_state, emit_progress,
+    set_failed_and_notify, wait_until_ready,
+};
 use crate::preset::ModelPreset;
 use crate::progress::{ProgressCallbackFn, ProgressEvent};
 
@@ -151,19 +154,30 @@ impl EmbeddingModel {
         // Fast path.
         {
             let state = self.inner.state.read().await;
-            match &*state {
-                EmbeddingModelState::Ready { .. } => return Ok(()),
-                EmbeddingModelState::Failed { error } => {
-                    return Err(LocalModelError::Loading {
-                        source: error.clone().into(),
-                    });
+            match classify_load_state(
+                &*state,
+                |state| matches!(state, EmbeddingModelState::Ready { .. }),
+                |state| match state {
+                    EmbeddingModelState::Failed { error } => Some(error.clone()),
+                    _ => None,
+                },
+                |state| {
+                    matches!(
+                        state,
+                        EmbeddingModelState::Downloading | EmbeddingModelState::Loading
+                    )
+                },
+            ) {
+                LoadStateCheck::Ready => return Ok(()),
+                LoadStateCheck::Failed(error) => {
+                    return Err(LocalModelError::loading_message(error));
                 }
-                EmbeddingModelState::Downloading | EmbeddingModelState::Loading => {
+                LoadStateCheck::Waiting => {
                     drop(state);
                     self.wait_until_ready().await;
                     return Ok(());
                 }
-                EmbeddingModelState::Unloaded => {}
+                LoadStateCheck::Unloaded => {}
             }
         }
 
@@ -171,19 +185,30 @@ impl EmbeddingModel {
         let mut state = self.inner.state.write().await;
 
         // Double-check.
-        match &*state {
-            EmbeddingModelState::Ready { .. } => return Ok(()),
-            EmbeddingModelState::Failed { error } => {
-                return Err(LocalModelError::Loading {
-                    source: error.clone().into(),
-                });
+        match classify_load_state(
+            &*state,
+            |state| matches!(state, EmbeddingModelState::Ready { .. }),
+            |state| match state {
+                EmbeddingModelState::Failed { error } => Some(error.clone()),
+                _ => None,
+            },
+            |state| {
+                matches!(
+                    state,
+                    EmbeddingModelState::Downloading | EmbeddingModelState::Loading
+                )
+            },
+        ) {
+            LoadStateCheck::Ready => return Ok(()),
+            LoadStateCheck::Failed(error) => {
+                return Err(LocalModelError::loading_message(error));
             }
-            EmbeddingModelState::Downloading | EmbeddingModelState::Loading => {
+            LoadStateCheck::Waiting => {
                 drop(state);
                 self.wait_until_ready().await;
                 return Ok(());
             }
-            EmbeddingModelState::Unloaded => {}
+            LoadStateCheck::Unloaded => {}
         }
 
         *state = EmbeddingModelState::Downloading;
@@ -211,9 +236,12 @@ impl EmbeddingModel {
             .map_err(|e| {
                 let msg = format!("embedding model loading failed: {e}");
                 error!(%msg);
-                *state = EmbeddingModelState::Failed { error: msg.clone() };
-                self.inner.ready_notify.notify_waiters();
-                LocalModelError::Loading { source: msg.into() }
+                set_failed_and_notify(
+                    &mut *state,
+                    &self.inner.ready_notify,
+                    msg,
+                    |state, error| *state = EmbeddingModelState::Failed { error },
+                )
             })?;
 
         info!("embedding model ready");
