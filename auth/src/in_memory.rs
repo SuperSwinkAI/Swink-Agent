@@ -10,7 +10,7 @@ use swink_agent::{Credential, CredentialError, CredentialStore};
 /// Thread-safe in-memory credential store.
 ///
 /// Uses `Arc<RwLock<HashMap>>` for concurrent reads with exclusive writes.
-/// Poisoned locks are recovered via [`PoisonError::into_inner`].
+/// Poisoned locks are recovered via [`std::sync::PoisonError::into_inner`].
 pub struct InMemoryCredentialStore {
     store: Arc<RwLock<HashMap<String, Credential>>>,
 }
