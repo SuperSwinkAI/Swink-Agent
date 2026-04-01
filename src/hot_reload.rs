@@ -27,7 +27,7 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
-use crate::tool::{AgentTool, AgentToolResult, ToolFuture};
+use crate::tool::{AgentTool, AgentToolResult, ToolFuture, permissive_object_schema};
 use crate::tool_filter::ToolFilter;
 
 // ─── ScriptTool ────────────────────────────────────────────────────────────
@@ -47,11 +47,7 @@ pub struct ScriptToolDef {
 }
 
 fn default_schema() -> Value {
-    serde_json::json!({
-        "type": "object",
-        "properties": {},
-        "additionalProperties": true
-    })
+    permissive_object_schema()
 }
 
 /// A tool loaded from a definition file that executes a shell command.

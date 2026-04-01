@@ -5,8 +5,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
-use crate::schema::schema_for;
-use crate::tool::{AgentTool, AgentToolResult, ToolFuture, validate_schema};
+use crate::tool::{AgentTool, AgentToolResult, ToolFuture, validated_schema_for};
 use crate::types::ContentBlock;
 
 /// Built-in tool that writes content to a file, creating parent directories as
@@ -19,9 +18,9 @@ impl WriteFileTool {
     /// Create a new `WriteFileTool`.
     #[must_use]
     pub fn new() -> Self {
-        let schema = schema_for::<Params>();
-        debug_assert!(validate_schema(&schema).is_ok());
-        Self { schema }
+        Self {
+            schema: validated_schema_for::<Params>(),
+        }
     }
 }
 

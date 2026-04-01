@@ -27,8 +27,10 @@ use std::sync::Arc;
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
-use crate::schema::schema_for;
-use crate::tool::{AgentTool, AgentToolResult, ToolFuture, validate_schema};
+use crate::tool::{
+    AgentTool, AgentToolResult, ToolFuture, debug_validated_schema, permissive_object_schema,
+    validated_schema_for,
+};
 
 // ─── Type aliases for stored closures ───────────────────────────────────────
 
@@ -77,11 +79,7 @@ impl FnTool {
             name: name.into(),
             label: label.into(),
             description: description.into(),
-            schema: serde_json::json!({
-                "type": "object",
-                "properties": {},
-                "additionalProperties": true
-            }),
+            schema: permissive_object_schema(),
             requires_approval: false,
             execute_fn: Arc::new(|_, _, _, _| {
                 Box::pin(async { AgentToolResult::error("not implemented") })
@@ -94,16 +92,14 @@ impl FnTool {
     /// [`JsonSchema`](schemars::JsonSchema).
     #[must_use]
     pub fn with_schema_for<T: schemars::JsonSchema>(mut self) -> Self {
-        self.schema = schema_for::<T>();
-        debug_assert!(validate_schema(&self.schema).is_ok());
+        self.schema = validated_schema_for::<T>();
         self
     }
 
     /// Set the parameters schema from a raw JSON value.
     #[must_use]
     pub fn with_schema(mut self, schema: Value) -> Self {
-        debug_assert!(validate_schema(&schema).is_ok());
-        self.schema = schema;
+        self.schema = debug_validated_schema(schema);
         self
     }
 
