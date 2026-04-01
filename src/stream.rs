@@ -10,6 +10,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::borrow::Cow;
 use std::pin::Pin;
+use std::sync::Arc;
+use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
 use crate::types::{
@@ -27,6 +29,40 @@ pub enum StreamTransport {
     Sse,
 }
 
+// ─── CacheStrategy ──────────────────────────────────────────────────────────
+
+/// Provider-agnostic caching configuration.
+///
+/// Adapters translate this to provider-specific cache markers at request
+/// construction time. Adapters that don't support caching silently ignore
+/// the strategy.
+#[derive(Debug, Clone, Default)]
+pub enum CacheStrategy {
+    /// No caching (default) — no cache markers injected.
+    #[default]
+    None,
+    /// Adapter determines optimal cache points (e.g., system prompt + tool
+    /// definitions for Anthropic, long context for Google).
+    Auto,
+    /// Anthropic-specific: inject `cache_control: { type: "ephemeral" }`
+    /// blocks on system prompt and tool definitions.
+    Anthropic,
+    /// Google-specific: reference a `CachedContent` resource with the given TTL.
+    Google {
+        /// Time-to-live for the cached content.
+        ttl: Duration,
+    },
+}
+
+// ─── OnRawPayload ───────────────────────────────────────────────────────────
+
+/// Callback for observing raw SSE data lines before event parsing.
+///
+/// Fires synchronously with each raw `data:` line. Must return quickly
+/// (fire-and-forget semantics). Panics are caught and do not interrupt
+/// the streaming pipeline.
+pub type OnRawPayload = Arc<dyn Fn(&str) + Send + Sync>;
+
 // ─── StreamOptions ───────────────────────────────────────────────────────────
 
 /// Per-call configuration passed through to the LLM provider.
@@ -42,6 +78,10 @@ pub struct StreamOptions {
     pub api_key: Option<String>,
     /// Preferred transport protocol.
     pub transport: StreamTransport,
+    /// Provider-agnostic caching configuration.
+    pub cache_strategy: CacheStrategy,
+    /// Optional callback for observing raw SSE data lines before parsing.
+    pub on_raw_payload: Option<OnRawPayload>,
 }
 
 impl std::fmt::Debug for StreamOptions {
@@ -52,6 +92,11 @@ impl std::fmt::Debug for StreamOptions {
             .field("session_id", &self.session_id)
             .field("api_key", &self.api_key.as_ref().map(|_| "[REDACTED]"))
             .field("transport", &self.transport)
+            .field("cache_strategy", &self.cache_strategy)
+            .field(
+                "on_raw_payload",
+                &self.on_raw_payload.as_ref().map(|_| "<callback>"),
+            )
             .finish()
     }
 }

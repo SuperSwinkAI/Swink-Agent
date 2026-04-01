@@ -116,6 +116,8 @@ impl StreamOptionsConfig {
             session_id: self.session_id.clone(),
             api_key: None,
             transport: self.transport,
+            cache_strategy: crate::stream::CacheStrategy::default(),
+            on_raw_payload: None,
         }
     }
 }
@@ -495,6 +497,8 @@ mod tests {
             session_id: None,
             api_key: Some("secret-key".into()),
             transport: StreamTransport::Sse,
+            cache_strategy: crate::stream::CacheStrategy::default(),
+            on_raw_payload: None,
         };
         let config = StreamOptionsConfig::from(&opts);
         let json = serde_json::to_string(&config).unwrap();

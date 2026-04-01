@@ -90,8 +90,8 @@ pub use retry::{DefaultRetryStrategy, RetryStrategy};
 pub use schema::schema_for;
 pub use schemars::JsonSchema;
 pub use stream::{
-    AssistantMessageDelta, AssistantMessageEvent, StreamErrorKind, StreamFn, StreamOptions,
-    StreamTransport, accumulate_message,
+    AssistantMessageDelta, AssistantMessageEvent, CacheStrategy, OnRawPayload, StreamErrorKind,
+    StreamFn, StreamOptions, StreamTransport, accumulate_message,
 };
 pub use stream_middleware::StreamMiddleware;
 pub use sub_agent::SubAgent;

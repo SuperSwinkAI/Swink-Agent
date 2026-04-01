@@ -1,12 +1,12 @@
 # Spec-Driven Development Status
-<!-- spec-status: project=agitated-poincare commit=d42fc9a5c3c1300aba5a6f6ba45608e8a40e5eb0 updated=2026-04-01T09:04:57Z -->
+<!-- spec-status: project=Swink-Agent commit=e0ae6dfe3629fd186df1facbc29235b4bcdddd43 updated=2026-04-01T03:05:30Z -->
 
 | Feature                         | Specify | Plan | Tasks | Implement |
 |---------------------------------|---------|------|-------|-----------|
 | 001-workspace-scaffold          | ✓     | ✓  | ✓   | ✓ Complete |
 | 002-foundation-types-errors     | ✓     | ✓  | ✓   | ✓ Complete |
 | 003-core-traits                 | ✓     | ✓  | ✓   | ✓ Complete |
-| 004-agent-loop                  | ✓     | ✓  | ✓   | ✓ Complete |
+| 004-agent-loop                  | ✓     | ✓  | ✓   | ● 65/75 (86%) |
 | 005-agent-struct                | ✓     | ✓  | ✓   | ● 78/93 (83%) |
 | 006-context-management          | ✓     | ✓  | ✓   | ● 46/76 (60%) |
 | 007-tool-system-extensions      | ✓     | ✓  | ✓   | ● 64/98 (65%) |
@@ -36,13 +36,13 @@
 | 031-policy-slots                | ✓     | ✓  | ✓   | ✓ Complete |
 | 032-policy-recipes-crate        | ✓     | ✓  | ✓   | ✓ Complete |
 | 033-workspace-feature-gates     | ✓     | ✓  | ✓   | ✓ Complete |
-| 034-session-state-store         | ✓     | ✓  | ✓   | ✓ Complete |
-| 035-credential-management       | ✓     | ✓  | ✓   | ✓ Complete |
+| 034-session-state-store         | ✓     | ✓  | ✓   | ● 0/93 (0%) |
+| 035-credential-management       | ✓     | ✓  | ✓   | ● 0/73 (0%) |
 
 <!-- feature: 001-workspace-scaffold has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=false has_checklists=true tasks_total=24 tasks_completed=24 checklist_files=requirements.md -->
 <!-- feature: 002-foundation-types-errors has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=63 tasks_completed=63 checklist_files=requirements.md -->
 <!-- feature: 003-core-traits has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=47 tasks_completed=47 checklist_files=requirements.md -->
-<!-- feature: 004-agent-loop has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=75 tasks_completed=75 checklist_files=requirements.md -->
+<!-- feature: 004-agent-loop has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=75 tasks_completed=65 checklist_files=requirements.md -->
 <!-- feature: 005-agent-struct has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=93 tasks_completed=78 checklist_files=requirements.md -->
 <!-- feature: 006-context-management has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=76 tasks_completed=46 checklist_files=requirements.md -->
 <!-- feature: 007-tool-system-extensions has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=98 tasks_completed=64 checklist_files=requirements.md -->
@@ -72,5 +72,5 @@
 <!-- feature: 031-policy-slots has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=93 tasks_completed=93 checklist_files=requirements.md -->
 <!-- feature: 032-policy-recipes-crate has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=43 tasks_completed=43 checklist_files=requirements.md -->
 <!-- feature: 033-workspace-feature-gates has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=25 tasks_completed=25 checklist_files=requirements.md -->
-<!-- feature: 034-session-state-store has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=93 tasks_completed=93 checklist_files=requirements.md -->
-<!-- feature: 035-credential-management has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=73 tasks_completed=73 checklist_files=requirements.md -->
+<!-- feature: 034-session-state-store has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=93 tasks_completed=0 checklist_files=requirements.md -->
+<!-- feature: 035-credential-management has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=73 tasks_completed=0 checklist_files=requirements.md -->

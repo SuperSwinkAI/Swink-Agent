@@ -7,6 +7,7 @@
 
 use std::pin::Pin;
 
+use bytes::Bytes;
 use futures::stream::{self, Stream, StreamExt as _};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -118,6 +119,32 @@ impl ProxyStreamFn {
             bearer_token: bearer_token.into(),
             client: Client::new(),
         }
+    }
+
+    /// Stream raw SSE bytes from the proxy without event parsing.
+    ///
+    /// Returns a stream of raw byte chunks from the provider's SSE response.
+    /// Useful for gateway deployments where the consumer handles its own
+    /// event parsing.
+    pub async fn stream_raw(
+        &self,
+        model: &ModelSpec,
+        context: &AgentContext,
+        options: &StreamOptions,
+    ) -> Result<Pin<Box<dyn Stream<Item = Result<Bytes, reqwest::Error>> + Send>>, String> {
+        let response = send_request(self, model, context, options)
+            .await
+            .map_err(|event| match event {
+                AssistantMessageEvent::Error { error_message, .. } => error_message,
+                _ => "unknown error".to_owned(),
+            })?;
+
+        let status = response.status();
+        if !status.is_success() {
+            return Err(format!("proxy HTTP error: {status}"));
+        }
+
+        Ok(Box::pin(response.bytes_stream()))
     }
 }
 
@@ -608,5 +635,21 @@ mod tests {
         let debug = format!("{proxy:?}");
         assert!(!debug.contains("secret-token"));
         assert!(debug.contains("[redacted]"));
+    }
+
+    #[tokio::test]
+    async fn proxy_stream_raw_returns_error_for_unreachable_server() {
+        let proxy = ProxyStreamFn::new("http://127.0.0.1:1", "token");
+        let model = ModelSpec::new("test-provider", "test-model");
+        let context = AgentContext {
+            system_prompt: "test".to_string(),
+            messages: vec![],
+            tools: vec![],
+        };
+        let options = StreamOptions::default();
+        let result = proxy.stream_raw(&model, &context, &options).await;
+        assert!(result.is_err());
+        let err = result.err().unwrap();
+        assert!(err.contains("network error"), "got: {err}");
     }
 }

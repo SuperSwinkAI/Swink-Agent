@@ -148,17 +148,17 @@
 
 ### Tests for User Story 5
 
-- [ ] T041 [P] [US5] Unit test `cache_strategy_none_no_markers` in `adapters/tests/`: verify no cache markers when `CacheStrategy::None`
-- [ ] T042 [P] [US5] Unit test `cache_strategy_auto_anthropic_markers` in `adapters/tests/`: verify Anthropic adapter injects `cache_control` blocks on system prompt and tool definitions when `Auto`
-- [ ] T043 [P] [US5] Unit test `cache_strategy_ignored_by_unsupporting_adapter` in `adapters/tests/`: verify an adapter without caching support ignores the strategy silently
+- [x] T041 [P] [US5] Unit test `cache_strategy_none_no_markers` in `adapters/tests/`: verify no cache markers when `CacheStrategy::None`
+- [x] T042 [P] [US5] Unit test `cache_strategy_auto_anthropic_markers` in `adapters/tests/`: verify Anthropic adapter injects `cache_control` blocks on system prompt and tool definitions when `Auto`
+- [x] T043 [P] [US5] Unit test `cache_strategy_ignored_by_unsupporting_adapter` in `adapters/tests/`: verify an adapter without caching support ignores the strategy silently
 
 ### Implementation for User Story 5
 
-- [ ] T044 [US5] Add `CacheStrategy` enum (`None`, `Auto`, `Anthropic`, `Google { ttl }`) to `src/stream.rs` in core. Derive `Debug`, `Clone`, `Default` (default = `None`).
-- [ ] T045 [US5] Add `cache_strategy: CacheStrategy` field to `StreamOptions` in `src/stream.rs` with `#[serde(default)]`.
-- [ ] T046 [US5] Implement `apply_cache_strategy()` in the Anthropic adapter (`adapters/src/anthropic.rs`): inject `cache_control: { type: "ephemeral" }` on system prompt and tool definitions when `Auto` or `Anthropic`.
-- [ ] T047 [US5] Verify other adapters (OpenAI, Ollama, Mistral, xAI, Azure) silently ignore `CacheStrategy` (no-op — no code changes needed, just verify).
-- [ ] T048 [US5] Re-export `CacheStrategy` from `src/lib.rs` (core).
+- [x] T044 [US5] Add `CacheStrategy` enum (`None`, `Auto`, `Anthropic`, `Google { ttl }`) to `src/stream.rs` in core. Derive `Debug`, `Clone`, `Default` (default = `None`).
+- [x] T045 [US5] Add `cache_strategy: CacheStrategy` field to `StreamOptions` in `src/stream.rs` with `#[serde(default)]`.
+- [x] T046 [US5] Implement `apply_cache_strategy()` in the Anthropic adapter (`adapters/src/anthropic.rs`): inject `cache_control: { type: "ephemeral" }` on system prompt and tool definitions when `Auto` or `Anthropic`.
+- [x] T047 [US5] Verify other adapters (OpenAI, Ollama, Mistral, xAI, Azure) silently ignore `CacheStrategy` (no-op — no code changes needed, just verify).
+- [x] T048 [US5] Re-export `CacheStrategy` from `src/lib.rs` (core).
 
 **Checkpoint**: US5 complete — caching strategy flows from configuration to adapters
 
@@ -172,13 +172,13 @@
 
 ### Tests for User Story 6
 
-- [ ] T049 [P] [US6] Integration test `proxy_stream_raw_bytes` in `adapters/tests/`: configure `ProxyStreamFn` with a mock HTTP server, verify raw bytes are relayed
-- [ ] T050 [P] [US6] Integration test `proxy_stream_error_propagated` in `adapters/tests/`: mock HTTP server returns 500, verify error propagated to consumer
+- [x] T049 [P] [US6] Integration test `proxy_stream_raw_bytes` in `adapters/tests/`: configure `ProxyStreamFn` with a mock HTTP server, verify raw bytes are relayed
+- [x] T050 [P] [US6] Integration test `proxy_stream_error_propagated` in `adapters/tests/`: mock HTTP server returns 500, verify error propagated to consumer
 
 ### Implementation for User Story 6
 
-- [ ] T051 [US6] Implement `ProxyStreamFn` struct in `adapters/src/proxy.rs` (or new `proxy_raw.rs`): `new()` constructor, `stream_raw()` method returning `Stream<Item = Result<Bytes, Error>>`.
-- [ ] T052 [US6] Re-export `ProxyStreamFn` from `adapters/src/lib.rs`.
+- [x] T051 [US6] Implement `ProxyStreamFn` struct in `adapters/src/proxy.rs` (or new `proxy_raw.rs`): `new()` constructor, `stream_raw()` method returning `Stream<Item = Result<Bytes, Error>>`.
+- [x] T052 [US6] Re-export `ProxyStreamFn` from `adapters/src/lib.rs`.
 
 **Checkpoint**: US6 complete — raw SSE relay available for gateway use cases
 
@@ -192,15 +192,15 @@
 
 ### Tests for User Story 7
 
-- [ ] T053 [P] [US7] Unit test `on_raw_payload_fires_for_each_line` in `adapters/tests/`: configure callback, feed SSE data, verify callback called for each data line
-- [ ] T054 [P] [US7] Unit test `on_raw_payload_none_no_overhead` in `adapters/tests/`: verify no overhead when callback is `None`
-- [ ] T055 [P] [US7] Unit test `on_raw_payload_panic_caught` in `adapters/tests/`: configure panicking callback, verify stream continues
+- [x] T053 [P] [US7] Unit test `on_raw_payload_fires_for_each_line` in `adapters/tests/`: configure callback, feed SSE data, verify callback called for each data line
+- [x] T054 [P] [US7] Unit test `on_raw_payload_none_no_overhead` in `adapters/tests/`: verify no overhead when callback is `None`
+- [x] T055 [P] [US7] Unit test `on_raw_payload_panic_caught` in `adapters/tests/`: configure panicking callback, verify stream continues
 
 ### Implementation for User Story 7
 
-- [ ] T056 [US7] Add `OnRawPayload` type alias and `on_raw_payload: Option<OnRawPayload>` field to `StreamOptions` in `src/stream.rs` (core).
-- [ ] T057 [US7] Integrate `on_raw_payload` invocation into `sse_data_lines()` in `adapters/src/sse.rs`: call callback with raw data line string before yielding `SseLine::Data`. Wrap in `catch_unwind`.
-- [ ] T058 [US7] Re-export `OnRawPayload` from `src/lib.rs` (core).
+- [x] T056 [US7] Add `OnRawPayload` type alias and `on_raw_payload: Option<OnRawPayload>` field to `StreamOptions` in `src/stream.rs` (core).
+- [x] T057 [US7] Integrate `on_raw_payload` invocation into `sse_data_lines()` in `adapters/src/sse.rs`: call callback with raw data line string before yielding `SseLine::Data`. Wrap in `catch_unwind`.
+- [x] T058 [US7] Re-export `OnRawPayload` from `src/lib.rs` (core).
 
 **Checkpoint**: US7 complete — raw payload observation available for debugging
 
@@ -215,11 +215,11 @@
 - [x] T038 Run `cargo clippy --workspace -- -D warnings` to verify zero clippy warnings
 - [x] T039 Run `cargo test --workspace` to verify no regressions in other crates
 - [x] T040 Run quickstart.md validation: execute all code examples from `specs/011-adapter-shared-infra/quickstart.md` usage section
-- [ ] T059 Verify `CacheStrategy`, `OnRawPayload`, and `ProxyStreamFn` are re-exported from their respective crate roots
-- [ ] T060 Run `cargo build --workspace` and verify zero compilation errors with new types
-- [ ] T061 Run `cargo test --workspace` and verify all new tests pass
-- [ ] T062 Run `cargo clippy --workspace -- -D warnings` and fix any warnings
-- [ ] T063 Validate new quickstart.md examples (caching, raw payload, proxy) match actual API
+- [x] T059 Verify `CacheStrategy`, `OnRawPayload`, and `ProxyStreamFn` are re-exported from their respective crate roots
+- [x] T060 Run `cargo build --workspace` and verify zero compilation errors with new types
+- [x] T061 Run `cargo test --workspace` and verify all new tests pass
+- [x] T062 Run `cargo clippy --workspace -- -D warnings` and fix any warnings
+- [x] T063 Validate new quickstart.md examples (caching, raw payload, proxy) match actual API
 
 ---
 

@@ -8,6 +8,7 @@
 //! on `swink_agent` (core) types. Breaking changes to this module's API
 //! may occur without a major version bump.
 
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::pin::Pin;
 
 use futures::stream::{self, Stream, StreamExt as _};
@@ -155,21 +156,41 @@ impl Default for SseStreamParser {
 /// [`SseLine::Data`] and [`SseLine::Done`] variants (skipping events,
 /// comments, and empty lines), and flushes any remaining buffer when
 /// the byte stream ends.
+///
+/// If `on_raw_payload` is provided, it is called with each raw data line
+/// string before the line is yielded. Panics in the callback are caught
+/// and the stream continues uninterrupted.
 pub fn sse_data_lines(
     byte_stream: impl Stream<Item = Result<bytes::Bytes, reqwest::Error>> + Send + 'static,
+) -> Pin<Box<dyn Stream<Item = SseLine> + Send + 'static>> {
+    sse_data_lines_with_callback(byte_stream, None)
+}
+
+/// Like [`sse_data_lines`] but with an optional raw-payload callback.
+pub fn sse_data_lines_with_callback(
+    byte_stream: impl Stream<Item = Result<bytes::Bytes, reqwest::Error>> + Send + 'static,
+    on_raw_payload: Option<swink_agent::OnRawPayload>,
 ) -> Pin<Box<dyn Stream<Item = SseLine> + Send + 'static>> {
     Box::pin(stream::unfold(
         (
             Box::pin(byte_stream),
             SseStreamParser::new(),
             Vec::<SseLine>::new(),
+            on_raw_payload,
         ),
-        |(mut stream, mut parser, mut pending)| async move {
+        |(mut stream, mut parser, mut pending, callback)| async move {
             loop {
                 // Drain any pending parsed lines, yielding only Data/Done.
                 while let Some(line) = pending.first() {
                     if matches!(line, SseLine::Data(_) | SseLine::Done) {
-                        return Some((pending.remove(0), (stream, parser, pending)));
+                        let line = pending.remove(0);
+                        // Fire callback for Data lines before yielding
+                        if let (SseLine::Data(data), Some(cb)) = (&line, &callback) {
+                            let cb = AssertUnwindSafe(cb);
+                            let data = AssertUnwindSafe(data);
+                            let _ = catch_unwind(|| (cb)(&data));
+                        }
+                        return Some((line, (stream, parser, pending, callback)));
                     }
                     pending.remove(0);
                 }
@@ -340,5 +361,68 @@ mod tests {
             lines,
             vec![SseLine::Data("last".to_string()), SseLine::Done,]
         );
+    }
+
+    // ─── OnRawPayload tests ────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn on_raw_payload_fires_for_each_line() {
+        use std::sync::Mutex;
+
+        let captured = Arc::new(Mutex::new(Vec::<String>::new()));
+        let captured_clone = Arc::clone(&captured);
+        let callback: Arc<dyn Fn(&str) + Send + Sync> = Arc::new(move |data: &str| {
+            captured_clone.lock().unwrap().push(data.to_owned());
+        });
+
+        let chunks = vec![
+            Ok(bytes::Bytes::from("data: line1\n\ndata: line2\n\n")),
+        ];
+        let byte_stream = futures::stream::iter(chunks);
+        let mut data_stream = sse_data_lines_with_callback(byte_stream, Some(callback));
+
+        use futures::StreamExt as _;
+        let first = data_stream.next().await;
+        assert_eq!(first, Some(SseLine::Data("line1".to_string())));
+        let second = data_stream.next().await;
+        assert_eq!(second, Some(SseLine::Data("line2".to_string())));
+
+        let lines = captured.lock().unwrap();
+        assert_eq!(*lines, vec!["line1".to_string(), "line2".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn on_raw_payload_none_no_overhead() {
+        let chunks = vec![
+            Ok(bytes::Bytes::from("data: hello\n\n")),
+        ];
+        let byte_stream = futures::stream::iter(chunks);
+        let mut data_stream = sse_data_lines_with_callback(byte_stream, None);
+
+        use futures::StreamExt as _;
+        let first = data_stream.next().await;
+        assert_eq!(first, Some(SseLine::Data("hello".to_string())));
+        let done = data_stream.next().await;
+        assert!(done.is_none());
+    }
+
+    #[tokio::test]
+    async fn on_raw_payload_panic_caught() {
+        let callback: Arc<dyn Fn(&str) + Send + Sync> = Arc::new(|_data: &str| {
+            panic!("callback panic!");
+        });
+
+        let chunks = vec![
+            Ok(bytes::Bytes::from("data: safe\n\ndata: also_safe\n\n")),
+        ];
+        let byte_stream = futures::stream::iter(chunks);
+        let mut data_stream = sse_data_lines_with_callback(byte_stream, Some(callback));
+
+        use futures::StreamExt as _;
+        // Should not panic — the callback panic is caught
+        let first = data_stream.next().await;
+        assert_eq!(first, Some(SseLine::Data("safe".to_string())));
+        let second = data_stream.next().await;
+        assert_eq!(second, Some(SseLine::Data("also_safe".to_string())));
     }
 }

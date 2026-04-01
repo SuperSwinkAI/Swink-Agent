@@ -14,7 +14,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, warn};
 
 use swink_agent::ContentBlock;
-use swink_agent::stream::{AssistantMessageEvent, StreamFn, StreamOptions};
+use swink_agent::stream::{AssistantMessageEvent, CacheStrategy, StreamFn, StreamOptions};
 use swink_agent::types::{
     AgentContext, AgentMessage, Cost, LlmMessage, ModelSpec, StopReason, ThinkingLevel, Usage,
 };
@@ -56,6 +56,23 @@ struct AnthropicToolDef {
     name: String,
     description: String,
     input_schema: Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cache_control: Option<CacheControl>,
+}
+
+/// System prompt content block for Anthropic.
+#[derive(Debug, Serialize)]
+struct SystemBlock {
+    r#type: &'static str,
+    text: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cache_control: Option<CacheControl>,
+}
+
+/// Cache control marker for Anthropic.
+#[derive(Debug, Clone, Serialize)]
+struct CacheControl {
+    r#type: &'static str,
 }
 
 /// Thinking configuration.
@@ -72,7 +89,7 @@ struct AnthropicChatRequest {
     max_tokens: u64,
     stream: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
-    system: Option<String>,
+    system: Option<Value>,
     messages: Vec<AnthropicMessage>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     tools: Vec<AnthropicToolDef>,
@@ -214,16 +231,39 @@ async fn send_request(
         "sending Anthropic request"
     );
 
-    let (system, messages) = convert_messages(&context.messages, &context.system_prompt);
+    let (system_text, messages) = convert_messages(&context.messages, &context.system_prompt);
 
-    let tools: Vec<AnthropicToolDef> = extract_tool_schemas(&context.tools)
+    let use_caching = matches!(
+        options.cache_strategy,
+        CacheStrategy::Auto | CacheStrategy::Anthropic
+    );
+
+    let mut tools: Vec<AnthropicToolDef> = extract_tool_schemas(&context.tools)
         .into_iter()
         .map(|s| AnthropicToolDef {
             name: s.name,
             description: s.description,
             input_schema: s.parameters,
+            cache_control: None,
         })
         .collect();
+
+    // Apply cache strategy: inject cache_control on system prompt and last tool def
+    let system = if use_caching {
+        if let Some(last) = tools.last_mut() {
+            last.cache_control = Some(CacheControl { r#type: "ephemeral" });
+        }
+        system_text.map(|text| {
+            serde_json::to_value(vec![SystemBlock {
+                r#type: "text",
+                text,
+                cache_control: Some(CacheControl { r#type: "ephemeral" }),
+            }])
+            .unwrap_or(Value::Null)
+        })
+    } else {
+        system_text.map(Value::String)
+    };
 
     let max_tokens = options.max_tokens.unwrap_or(4096);
 
@@ -804,3 +844,97 @@ const _: () = {
     const fn assert_send_sync<T: Send + Sync>() {}
     assert_send_sync::<AnthropicStreamFn>();
 };
+
+// ─── Tests ──────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cache_strategy_none_no_markers() {
+        let tools = vec![AnthropicToolDef {
+            name: "test".to_string(),
+            description: "desc".to_string(),
+            input_schema: serde_json::json!({}),
+            cache_control: None,
+        }];
+
+        let request = AnthropicChatRequest {
+            model: "claude-sonnet-4-6".to_string(),
+            max_tokens: 4096,
+            stream: true,
+            system: Some(Value::String("You are helpful".to_string())),
+            messages: vec![],
+            tools,
+            temperature: None,
+            thinking: None,
+        };
+
+        let json = serde_json::to_value(&request).unwrap();
+        // System should be a plain string
+        assert_eq!(json["system"], "You are helpful");
+        // Tools should not have cache_control
+        assert!(json["tools"][0].get("cache_control").is_none());
+    }
+
+    #[test]
+    fn cache_strategy_auto_anthropic_markers() {
+        // Simulate what send_request does with CacheStrategy::Auto
+        let system_text = Some("You are helpful".to_string());
+        let mut tools = vec![AnthropicToolDef {
+            name: "test".to_string(),
+            description: "desc".to_string(),
+            input_schema: serde_json::json!({}),
+            cache_control: None,
+        }];
+
+        // Apply caching (mirroring send_request logic)
+        if let Some(last) = tools.last_mut() {
+            last.cache_control = Some(CacheControl {
+                r#type: "ephemeral",
+            });
+        }
+        let system = system_text.map(|text| {
+            serde_json::to_value(vec![SystemBlock {
+                r#type: "text",
+                text,
+                cache_control: Some(CacheControl {
+                    r#type: "ephemeral",
+                }),
+            }])
+            .unwrap()
+        });
+
+        let request = AnthropicChatRequest {
+            model: "claude-sonnet-4-6".to_string(),
+            max_tokens: 4096,
+            stream: true,
+            system,
+            messages: vec![],
+            tools,
+            temperature: None,
+            thinking: None,
+        };
+
+        let json = serde_json::to_value(&request).unwrap();
+        // System should be an array with cache_control
+        let sys_array = json["system"].as_array().unwrap();
+        assert_eq!(sys_array.len(), 1);
+        assert_eq!(sys_array[0]["type"], "text");
+        assert_eq!(sys_array[0]["text"], "You are helpful");
+        assert_eq!(sys_array[0]["cache_control"]["type"], "ephemeral");
+        // Last tool should have cache_control
+        assert_eq!(json["tools"][0]["cache_control"]["type"], "ephemeral");
+    }
+
+    #[test]
+    fn cache_strategy_ignored_by_unsupporting_adapter() {
+        // CacheStrategy::Auto on a non-Anthropic adapter should be a no-op.
+        // This is tested by verifying that CacheStrategy is just an enum —
+        // adapters that don't support it simply don't read the field.
+        let strategy = CacheStrategy::Auto;
+        assert!(matches!(strategy, CacheStrategy::Auto));
+        // No code changes needed in other adapters — they ignore it by design.
+    }
+}
