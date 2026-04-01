@@ -288,11 +288,42 @@ impl Agent {
 
     /// Set the model specification, swapping the stream function if a matching
     /// model was registered via [`with_available_models`](AgentOptions::with_available_models).
+    ///
+    /// If the model actually changes, a [`AgentEvent::ModelCycled`] event is
+    /// dispatched to all subscribers.
     pub fn set_model(&mut self, model: ModelSpec) {
+        let old = self.state.model.clone();
         if let Some((_, sfn)) = self.model_stream_fns.iter().find(|(m, _)| *m == model) {
             self.stream_fn = Arc::clone(sfn);
         }
-        self.state.model = model;
+        self.state.model = model.clone();
+        if old != model {
+            let event = AgentEvent::ModelCycled {
+                old,
+                new: model,
+                reason: "set_model".to_string(),
+            };
+            self.dispatch_event(&event);
+        }
+    }
+
+    /// Set the model specification and stream function explicitly, bypassing
+    /// the [`available_models`](AgentState::available_models) lookup.
+    ///
+    /// Both `ModelSpec` and `StreamFn` are replaced unconditionally.
+    /// A [`AgentEvent::ModelCycled`] event is dispatched when the model changes.
+    pub fn set_model_with_stream(&mut self, model: ModelSpec, stream_fn: Arc<dyn StreamFn>) {
+        let old = self.state.model.clone();
+        self.state.model = model.clone();
+        self.stream_fn = stream_fn;
+        if old != model {
+            let event = AgentEvent::ModelCycled {
+                old,
+                new: model,
+                reason: "set_model_with_stream".to_string(),
+            };
+            self.dispatch_event(&event);
+        }
     }
 
     /// Set the thinking level on the current model.

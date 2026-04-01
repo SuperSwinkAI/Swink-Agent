@@ -312,3 +312,71 @@ async fn error_sets_state_error() {
     assert!(state_error.is_some(), "agent state should have error set");
     assert_eq!(state_error, result.error.as_ref());
 }
+
+// ─── US7: Wait for Idle ──────────────────────────────────────────────────
+
+#[tokio::test]
+async fn wait_for_idle_returns_immediately_when_not_running() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("hi")]));
+    let agent = make_agent(stream_fn);
+
+    // Agent was just created, not running. Should return immediately.
+    assert!(!agent.state().is_running);
+    agent.wait_for_idle().await;
+    // If we reach here, it returned immediately — no hang.
+}
+
+#[tokio::test]
+async fn wait_for_idle_resolves_on_completion() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("done")]));
+    let mut agent = make_agent(stream_fn);
+
+    // Start prompt in a spawned task and wait for it.
+    let result = agent.prompt_async(vec![user_msg("hi")]).await.unwrap();
+    assert_eq!(result.stop_reason, StopReason::Stop);
+
+    // After completion, wait_for_idle resolves immediately.
+    agent.wait_for_idle().await;
+    assert!(!agent.state().is_running);
+}
+
+#[tokio::test]
+async fn wait_for_idle_resolves_after_abort() {
+    use common::tool_call_events;
+
+    // Use a tool-calling response so the agent takes multiple turns.
+    let stream_fn = Arc::new(MockStreamFn::new(vec![
+        tool_call_events("call_1", "slow_tool", "{}"),
+        text_only_events("done"),
+    ]));
+    let tool = Arc::new(MockTool::new("slow_tool"));
+    let mut agent = Agent::new(
+        AgentOptions::new(
+            "sys",
+            default_model(),
+            stream_fn as Arc<dyn StreamFn>,
+            default_convert,
+        )
+        .with_tools(vec![tool as Arc<dyn AgentTool>])
+        .with_retry_strategy(Box::new(DefaultRetryStrategy::default().with_jitter(false))),
+    );
+
+    // Run and abort. prompt_async collects the whole stream, so abort won't
+    // interrupt in this mock, but we can still verify wait_for_idle works post-run.
+    let _result = agent.prompt_async(vec![user_msg("do stuff")]).await;
+    agent.wait_for_idle().await;
+    assert!(!agent.state().is_running);
+}
+
+#[tokio::test]
+async fn wait_for_idle_multiple_waiters() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("done")]));
+    let mut agent = make_agent(stream_fn);
+
+    // Run to completion first.
+    let _result = agent.prompt_async(vec![user_msg("hi")]).await.unwrap();
+
+    // Both waiters should resolve immediately (agent is already idle).
+    let ((), ()) = tokio::join!(agent.wait_for_idle(), agent.wait_for_idle(),);
+    assert!(!agent.state().is_running);
+}

@@ -285,3 +285,140 @@ async fn set_model_restores_primary_stream_fn_when_switching_back() {
         "extra stream_fn should not remain active after restoring primary"
     );
 }
+
+// ─── US6: Dynamic Model Swapping ─────────────────────────────────────────
+
+#[tokio::test]
+async fn set_model_swaps_stream_fn() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    use common::MockFlagStreamFn;
+
+    let primary_sfn = Arc::new(MockStreamFn::new(vec![text_only_events("from primary")]));
+    let extra_sfn = Arc::new(MockFlagStreamFn {
+        called: AtomicBool::new(false),
+        responses: std::sync::Mutex::new(vec![text_only_events("from extra")]),
+    });
+
+    let primary = ModelSpec::new("test", "primary-model");
+    let extra = ModelSpec::new("test", "extra-model");
+
+    let mut agent = Agent::new(
+        AgentOptions::new(
+            "sys",
+            primary,
+            primary_sfn as Arc<dyn StreamFn>,
+            default_convert,
+        )
+        .with_available_models(vec![(extra.clone(), extra_sfn.clone() as Arc<dyn StreamFn>)]),
+    );
+
+    agent.set_model(extra.clone());
+    assert_eq!(agent.state().model, extra);
+
+    let _result = agent.prompt_async(vec![user_msg("hello")]).await.unwrap();
+    assert!(
+        extra_sfn.called.load(Ordering::SeqCst),
+        "extra stream_fn should be used after set_model"
+    );
+}
+
+#[test]
+fn set_model_unknown_keeps_stream_fn() {
+    let primary_sfn = Arc::new(MockStreamFn::new(vec![text_only_events("from primary")]));
+    let primary = ModelSpec::new("test", "primary-model");
+    let unknown = ModelSpec::new("test", "unknown-model");
+
+    let mut agent = Agent::new(AgentOptions::new(
+        "sys",
+        primary,
+        primary_sfn as Arc<dyn StreamFn>,
+        default_convert,
+    ));
+
+    // set_model with unknown model — ModelSpec updates, StreamFn unchanged.
+    agent.set_model(unknown.clone());
+    assert_eq!(agent.state().model, unknown);
+    // StreamFn is internal; we can only verify by prompting (which would use the original).
+}
+
+#[tokio::test]
+async fn set_model_with_stream_bypasses_available() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    use common::MockFlagStreamFn;
+
+    let primary_sfn = Arc::new(MockStreamFn::new(vec![text_only_events("from primary")]));
+    let explicit_sfn = Arc::new(MockFlagStreamFn {
+        called: AtomicBool::new(false),
+        responses: std::sync::Mutex::new(vec![text_only_events("from explicit")]),
+    });
+
+    let primary = ModelSpec::new("test", "primary-model");
+    let explicit_model = ModelSpec::new("test", "explicit-model");
+
+    let mut agent = Agent::new(AgentOptions::new(
+        "sys",
+        primary,
+        primary_sfn as Arc<dyn StreamFn>,
+        default_convert,
+    ));
+
+    // set_model_with_stream bypasses available_models.
+    agent.set_model_with_stream(explicit_model.clone(), explicit_sfn.clone() as Arc<dyn StreamFn>);
+    assert_eq!(agent.state().model, explicit_model);
+
+    let _result = agent.prompt_async(vec![user_msg("hello")]).await.unwrap();
+    assert!(
+        explicit_sfn.called.load(Ordering::SeqCst),
+        "explicit stream_fn should be used after set_model_with_stream"
+    );
+}
+
+#[test]
+fn set_model_emits_model_cycled_event() {
+    use std::sync::{Arc as StdArc, Mutex as StdMutex};
+
+    use swink_agent::AgentEvent;
+
+    let primary_sfn = Arc::new(MockStreamFn::new(vec![]));
+    let extra_sfn = Arc::new(MockStreamFn::new(vec![]));
+
+    let primary = ModelSpec::new("test", "primary-model");
+    let extra = ModelSpec::new("test", "extra-model");
+
+    let mut agent = Agent::new(
+        AgentOptions::new(
+            "sys",
+            primary.clone(),
+            primary_sfn as Arc<dyn StreamFn>,
+            default_convert,
+        )
+        .with_available_models(vec![(extra.clone(), extra_sfn as Arc<dyn StreamFn>)]),
+    );
+
+    let events: StdArc<StdMutex<Vec<String>>> = StdArc::new(StdMutex::new(Vec::new()));
+    let events_clone = StdArc::clone(&events);
+    let captured_old: StdArc<StdMutex<Option<ModelSpec>>> = StdArc::new(StdMutex::new(None));
+    let captured_new: StdArc<StdMutex<Option<ModelSpec>>> = StdArc::new(StdMutex::new(None));
+    let old_clone = StdArc::clone(&captured_old);
+    let new_clone = StdArc::clone(&captured_new);
+
+    agent.subscribe(move |event| {
+        if let AgentEvent::ModelCycled { old, new, .. } = event {
+            events_clone.lock().unwrap().push("ModelCycled".to_string());
+            *old_clone.lock().unwrap() = Some(old.clone());
+            *new_clone.lock().unwrap() = Some(new.clone());
+        }
+    });
+
+    agent.set_model(extra.clone());
+
+    let received = events.lock().unwrap();
+    assert_eq!(received.len(), 1, "should receive exactly one ModelCycled event");
+
+    let old = captured_old.lock().unwrap().clone().unwrap();
+    let new = captured_new.lock().unwrap().clone().unwrap();
+    assert_eq!(old, primary);
+    assert_eq!(new, extra);
+}

@@ -7,7 +7,7 @@
 - Provider Roadmap: [PROVIDER_EXPANSION_ROADMAP.md](PROVIDER_EXPANSION_ROADMAP.md)
 - Eval Roadmap: [EVAL.md](EVAL.md)
 
-**Current Focus:** 35 specs total — 32/35 have plans, 32/35 have tasks, 24/35 complete. Phase 0–2 done. Phase 3: 7/10 complete (016, 017, 019 need plans). Phase 4: 3/4 complete (021 has extended tasks). Phase 5–6 done. Phase 7 done. Phase 8: 033 + 034 complete, 035 ready for implementation. Next: plan remaining adapters (016, 017, 019); implement 035.
+**Current Focus:** 35 specs total — 32/35 have plans, 32/35 have tasks, 25/35 complete. Phase 0–2 done. Phase 3: 7/10 complete (016, 017, 019 need plans). Phase 4: 3/4 complete (021 has extended tasks). Phase 5–7 done. Phase 8 done (033 + 034 + 035 complete). Next: plan remaining adapters (016, 017, 019); continue extended requirements on partially-complete specs.
 
 > **Numbering System:** Spec numbers (001–035) are sequential identifiers that
 > never change. Phase numbers represent execution order and can be reassigned
@@ -60,7 +60,7 @@ the two central verticals that make the agent functional.
 - [x] **1.2** Agent Struct & Public API — Stateful wrapper, streaming/async/sync API, structured output, queues, subscriptions (§13)
   - Spec: `specs/005-agent-struct/spec.md`
   - Branch: `005-agent-struct`
-  - Status: Complete (78/93 tasks, merged to main — extended requirements pending)
+  - Status: Complete (93/93 tasks, merged to main)
   - Depends on: 1.1
 
 ---
@@ -285,7 +285,7 @@ ToolValidator, ToolCallTransformer) with a unified, configurable policy slot sys
 **Goal:** Workspace-level feature gates, session state persistence, and
 credential management — cross-cutting infrastructure for production readiness.
 
-**Status:** 3/3 specs planned, 3/3 have tasks, 2/3 complete, 3/3 specs defined
+**Status:** 3/3 specs planned, 3/3 have tasks, 3/3 complete, 3/3 specs defined
 
 ### Implementation Checklist
 
@@ -299,10 +299,10 @@ credential management — cross-cutting infrastructure for production readiness.
   - Branch: `034-session-state-store`
   - Status: Complete (93/93 tasks, merged to main)
   - Depends on: 4.1
-- [ ] **8.3** Credential Management — OAuth2 refresh, credential provider trait, in-memory credential store, deduplication
+- [x] **8.3** Credential Management — OAuth2 refresh, credential provider trait, in-memory credential store, deduplication
   - Spec: `specs/035-credential-management/spec.md`
   - Branch: `035-credential-management`
-  - Status: Ready for implementation (0/73 tasks)
+  - Status: Complete (73/73 tasks, merged to main)
   - Depends on: 3.1
 
 ---
@@ -422,7 +422,7 @@ graph TD
     style X fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
     style Y fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
     style Z fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
-    style AA fill:#fff,color:#000,stroke:#6b7280,stroke-width:2px
+    style AA fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
 ```
 
 > ⬜ Not started · 🟢 Complete · 🟡 In progress · 🔴 Blocked

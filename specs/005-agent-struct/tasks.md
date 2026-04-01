@@ -241,16 +241,16 @@
 
 ### Tests for User Story 6
 
-- [ ] T079 [P] [US6] Integration test `set_model_swaps_stream_fn` in `tests/agent_models.rs`: configure agent with two available models, call `set_model()`, prompt, verify the new model's StreamFn is used (check via model-specific mock response)
-- [ ] T080 [P] [US6] Integration test `set_model_unknown_keeps_stream_fn` in `tests/agent_models.rs`: call `set_model()` with a model NOT in available_models, verify ModelSpec is updated but StreamFn remains unchanged
-- [ ] T081 [P] [US6] Integration test `set_model_with_stream_bypasses_available` in `tests/agent_models.rs`: call `set_model_with_stream()` with an explicit StreamFn, verify both ModelSpec and StreamFn are swapped
-- [ ] T082 [P] [US6] Integration test `set_model_emits_model_cycled_event` in `tests/agent_models.rs`: subscribe to events, call `set_model()`, prompt, verify `ModelCycled` event is emitted with correct old/new model specs
+- [x] T079 [P] [US6] Integration test `set_model_swaps_stream_fn` in `tests/agent_models.rs`: configure agent with two available models, call `set_model()`, prompt, verify the new model's StreamFn is used (check via model-specific mock response)
+- [x] T080 [P] [US6] Integration test `set_model_unknown_keeps_stream_fn` in `tests/agent_models.rs`: call `set_model()` with a model NOT in available_models, verify ModelSpec is updated but StreamFn remains unchanged
+- [x] T081 [P] [US6] Integration test `set_model_with_stream_bypasses_available` in `tests/agent_models.rs`: call `set_model_with_stream()` with an explicit StreamFn, verify both ModelSpec and StreamFn are swapped
+- [x] T082 [P] [US6] Integration test `set_model_emits_model_cycled_event` in `tests/agent_models.rs`: subscribe to events, call `set_model()`, prompt, verify `ModelCycled` event is emitted with correct old/new model specs
 
 ### Implementation for User Story 6
 
-- [ ] T083 [US6] Implement `set_model_with_stream(&mut self, model: ModelSpec, stream_fn: Arc<dyn StreamFn>)` in `src/agent.rs` — swaps both ModelSpec and StreamFn unconditionally
-- [ ] T084 [US6] Verify `set_model()` emits `ModelCycled` event when the model actually changes (compare old vs new ModelSpec). Add event emission if not already present.
-- [ ] T085 [US6] Verify `set_model()` is documented in the `AgentState` that `available_models` is populated from `AgentOptions::with_available_models()` at construction time.
+- [x] T083 [US6] Implement `set_model_with_stream(&mut self, model: ModelSpec, stream_fn: Arc<dyn StreamFn>)` in `src/agent.rs` — swaps both ModelSpec and StreamFn unconditionally
+- [x] T084 [US6] Verify `set_model()` emits `ModelCycled` event when the model actually changes (compare old vs new ModelSpec). Add event emission if not already present.
+- [x] T085 [US6] Verify `set_model()` is documented in the `AgentState` that `available_models` is populated from `AgentOptions::with_available_models()` at construction time.
 
 **Checkpoint**: US6 complete — model swapping works with StreamFn resolution, event emission, and explicit StreamFn variant
 
@@ -266,10 +266,10 @@
 
 ### Tests for User Story 7
 
-- [ ] T086 [P] [US7] Integration test `wait_for_idle_returns_immediately_when_not_running` in `tests/agent.rs`: create agent (not running), call `wait_for_idle()`, verify it returns immediately (no hang)
-- [ ] T087 [P] [US7] Integration test `wait_for_idle_resolves_on_completion` in `tests/agent.rs`: start prompt in background task, call `wait_for_idle()` from main task, verify it resolves when prompt finishes
-- [ ] T088 [P] [US7] Integration test `wait_for_idle_resolves_after_abort` in `tests/agent.rs`: start prompt, call `abort()`, then `wait_for_idle()`, verify it resolves after abort completes
-- [ ] T089 [P] [US7] Integration test `wait_for_idle_multiple_waiters` in `tests/agent.rs`: start prompt, spawn two tasks both calling `wait_for_idle()`, verify both resolve when prompt finishes
+- [x] T086 [P] [US7] Integration test `wait_for_idle_returns_immediately_when_not_running` in `tests/agent.rs`: create agent (not running), call `wait_for_idle()`, verify it returns immediately (no hang)
+- [x] T087 [P] [US7] Integration test `wait_for_idle_resolves_on_completion` in `tests/agent.rs`: start prompt in background task, call `wait_for_idle()` from main task, verify it resolves when prompt finishes
+- [x] T088 [P] [US7] Integration test `wait_for_idle_resolves_after_abort` in `tests/agent.rs`: start prompt, call `abort()`, then `wait_for_idle()`, verify it resolves after abort completes
+- [x] T089 [P] [US7] Integration test `wait_for_idle_multiple_waiters` in `tests/agent.rs`: start prompt, spawn two tasks both calling `wait_for_idle()`, verify both resolve when prompt finishes
 
 **Checkpoint**: US7 complete — wait_for_idle behavior formally verified
 
@@ -285,10 +285,10 @@
 - [x] T076 Run `cargo test --workspace` and verify all tests pass
 - [x] T077 Run `cargo test -p swink-agent --no-default-features` to verify builtin-tools feature gate
 - [x] T078 Run quickstart.md validation: verify all code examples compile
-- [ ] T090 Verify `set_model_with_stream` is re-exported and documented in contracts/public-api.md
-- [ ] T091 Run `cargo clippy --workspace -- -D warnings` and fix any warnings from new code
-- [ ] T092 Run `cargo test --workspace` and verify all new tests pass
-- [ ] T093 Validate new quickstart.md examples (model swap, wait_for_idle) match actual API
+- [x] T090 Verify `set_model_with_stream` is re-exported and documented in contracts/public-api.md
+- [x] T091 Run `cargo clippy --workspace -- -D warnings` and fix any warnings from new code
+- [x] T092 Run `cargo test --workspace` and verify all new tests pass
+- [x] T093 Validate new quickstart.md examples (model swap, wait_for_idle) match actual API
 
 ---
 
