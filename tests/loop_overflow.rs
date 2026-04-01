@@ -67,6 +67,7 @@ fn default_config(stream_fn: Arc<dyn StreamFn>) -> AgentLoopConfig {
         fallback: None,
         tool_execution_policy: swink_agent::ToolExecutionPolicy::default(),
         session_state: Arc::new(std::sync::RwLock::new(swink_agent::SessionState::new())),
+        credential_resolver: None,
     }
 }
 

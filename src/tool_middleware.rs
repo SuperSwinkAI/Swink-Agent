@@ -8,10 +8,10 @@
 //! use swink_agent::{AgentTool, AgentToolResult, BashTool, ToolMiddleware};
 //!
 //! let tool = Arc::new(BashTool::new());
-//! let logged = ToolMiddleware::new(tool, |inner, id, params, cancel, on_update, state| {
+//! let logged = ToolMiddleware::new(tool, |inner, id, params, cancel, on_update, state, credential| {
 //!     Box::pin(async move {
 //!         println!("before");
-//!         let result = inner.execute(&id, params, cancel, on_update, state).await;
+//!         let result = inner.execute(&id, params, cancel, on_update, state, credential).await;
 //!         println!("after");
 //!         result
 //!     })
@@ -40,6 +40,7 @@ type MiddlewareFn = Arc<
             CancellationToken,
             Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
             std::sync::Arc<std::sync::RwLock<crate::SessionState>>,
+            Option<crate::credential::ResolvedCredential>,
         ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send>>
         + Send
         + Sync,
@@ -59,7 +60,7 @@ pub struct ToolMiddleware {
 impl ToolMiddleware {
     /// Create a new middleware wrapping `inner`.
     ///
-    /// The closure receives `(inner_tool, tool_call_id, params, cancel, on_update)`
+    /// The closure receives `(inner_tool, tool_call_id, params, cancel, on_update, state, credential)`
     /// and can call through to the inner tool's `execute()` at any point.
     pub fn new<F>(inner: Arc<dyn AgentTool>, f: F) -> Self
     where
@@ -70,6 +71,7 @@ impl ToolMiddleware {
                 CancellationToken,
                 Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
                 std::sync::Arc<std::sync::RwLock<crate::SessionState>>,
+                Option<crate::credential::ResolvedCredential>,
             ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send>>
             + Send
             + Sync
@@ -86,10 +88,10 @@ impl ToolMiddleware {
     /// If the inner tool does not complete within `timeout`, an error result
     /// is returned.
     pub fn with_timeout(inner: Arc<dyn AgentTool>, timeout: Duration) -> Self {
-        Self::new(inner, move |tool, id, params, cancel, on_update, state| {
+        Self::new(inner, move |tool, id, params, cancel, on_update, state, credential| {
             Box::pin(async move {
                 tokio::select! {
-                    result = tool.execute(&id, params, cancel.clone(), on_update, state) => result,
+                    result = tool.execute(&id, params, cancel.clone(), on_update, state, credential) => result,
                     () = tokio::time::sleep(timeout) => {
                         cancel.cancel();
                         AgentToolResult::error(format!(
@@ -112,12 +114,12 @@ impl ToolMiddleware {
         F: Fn(&str, &str, bool) + Send + Sync + 'static,
     {
         let callback = Arc::new(callback);
-        Self::new(inner, move |tool, id, params, cancel, on_update, state| {
+        Self::new(inner, move |tool, id, params, cancel, on_update, state, credential| {
             let cb = callback.clone();
             let name = tool.name().to_owned();
             Box::pin(async move {
                 cb(&name, &id, true);
-                let result = tool.execute(&id, params, cancel, on_update, state).await;
+                let result = tool.execute(&id, params, cancel, on_update, state, credential).await;
                 cb(&name, &id, false);
                 result
             })
@@ -153,10 +155,11 @@ impl AgentTool for ToolMiddleware {
         cancellation_token: CancellationToken,
         on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
         state: std::sync::Arc<std::sync::RwLock<crate::SessionState>>,
+        credential: Option<crate::credential::ResolvedCredential>,
     ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>> {
         let inner = self.inner.clone();
         let id = tool_call_id.to_owned();
-        let fut = (self.middleware_fn)(inner, id, params, cancellation_token, on_update, state);
+        let fut = (self.middleware_fn)(inner, id, params, cancellation_token, on_update, state, credential);
         Box::pin(fut)
     }
 }
@@ -211,6 +214,7 @@ mod tests {
             _cancellation_token: CancellationToken,
             _on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
             _state: std::sync::Arc<std::sync::RwLock<crate::SessionState>>,
+            _credential: Option<crate::credential::ResolvedCredential>,
         ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>> {
             Box::pin(async { AgentToolResult::text("dummy result") })
         }
@@ -219,8 +223,8 @@ mod tests {
     #[test]
     fn metadata_delegates_to_inner() {
         let inner: Arc<dyn AgentTool> = Arc::new(DummyTool);
-        let mw = ToolMiddleware::new(inner, |tool, id, params, cancel, on_update, state| {
-            Box::pin(async move { tool.execute(&id, params, cancel, on_update, state).await })
+        let mw = ToolMiddleware::new(inner, |tool, id, params, cancel, on_update, state, credential| {
+            Box::pin(async move { tool.execute(&id, params, cancel, on_update, state, credential).await })
         });
 
         assert_eq!(mw.name(), "dummy");
@@ -239,16 +243,16 @@ mod tests {
         let counter_clone = counter.clone();
 
         let inner: Arc<dyn AgentTool> = Arc::new(DummyTool);
-        let mw = ToolMiddleware::new(inner, move |tool, id, params, cancel, on_update, state| {
+        let mw = ToolMiddleware::new(inner, move |tool, id, params, cancel, on_update, state, credential| {
             let c = counter_clone.clone();
             Box::pin(async move {
                 c.fetch_add(1, Ordering::SeqCst);
-                tool.execute(&id, params, cancel, on_update, state).await
+                tool.execute(&id, params, cancel, on_update, state, credential).await
             })
         });
 
         let result = mw
-            .execute("id", json!({}), CancellationToken::new(), None, test_state())
+            .execute("id", json!({}), CancellationToken::new(), None, test_state(), None)
             .await;
         assert!(!result.is_error);
         assert_eq!(counter.load(Ordering::SeqCst), 1);
@@ -257,12 +261,12 @@ mod tests {
     #[tokio::test]
     async fn call_through_returns_inner_result() {
         let inner: Arc<dyn AgentTool> = Arc::new(DummyTool);
-        let mw = ToolMiddleware::new(inner, |tool, id, params, cancel, on_update, state| {
-            Box::pin(async move { tool.execute(&id, params, cancel, on_update, state).await })
+        let mw = ToolMiddleware::new(inner, |tool, id, params, cancel, on_update, state, credential| {
+            Box::pin(async move { tool.execute(&id, params, cancel, on_update, state, credential).await })
         });
 
         let result = mw
-            .execute("id", json!({}), CancellationToken::new(), None, test_state())
+            .execute("id", json!({}), CancellationToken::new(), None, test_state(), None)
             .await;
         assert!(!result.is_error);
     }
@@ -291,6 +295,7 @@ mod tests {
                 cancel: CancellationToken,
                 _on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
                 _state: std::sync::Arc<std::sync::RwLock<crate::SessionState>>,
+                _credential: Option<crate::credential::ResolvedCredential>,
             ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>> {
                 Box::pin(async move {
                     cancel.cancelled().await;
@@ -303,7 +308,7 @@ mod tests {
         let mw = ToolMiddleware::with_timeout(inner, Duration::from_millis(10));
 
         let result = mw
-            .execute("id", json!({}), CancellationToken::new(), None, test_state())
+            .execute("id", json!({}), CancellationToken::new(), None, test_state(), None)
             .await;
         assert!(result.is_error);
     }
@@ -318,7 +323,7 @@ mod tests {
             calls_clone.fetch_add(1, Ordering::SeqCst);
         });
 
-        mw.execute("id", json!({}), CancellationToken::new(), None, test_state())
+        mw.execute("id", json!({}), CancellationToken::new(), None, test_state(), None)
             .await;
 
         // Should be called twice — once before, once after.

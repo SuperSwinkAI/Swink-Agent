@@ -8,6 +8,7 @@ mod checkpoint;
 mod config;
 mod context;
 mod context_transformer;
+pub mod credential;
 mod context_version;
 pub mod convert;
 pub mod display;
@@ -112,6 +113,10 @@ pub use types::{
     deserialize_custom_message, serialize_custom_message,
 };
 pub use state::{SessionState, StateDelta};
+pub use credential::{
+    AuthConfig, AuthScheme, AuthorizationHandler, Credential, CredentialError, CredentialResolver,
+    CredentialStore, CredentialType, ResolvedCredential,
+};
 pub use util::now_timestamp;
 
 pub use display::{CoreDisplayMessage, DisplayRole, IntoDisplayMessages};

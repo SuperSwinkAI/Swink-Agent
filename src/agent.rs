@@ -176,6 +176,8 @@ pub struct Agent {
     plan_mode_addendum: Option<String>,
     /// Session key-value state store shared with tools and policies.
     session_state: Arc<std::sync::RwLock<crate::SessionState>>,
+    /// Optional credential resolver for tool authentication.
+    credential_resolver: Option<Arc<dyn crate::credential::CredentialResolver>>,
 }
 
 impl Agent {
@@ -255,6 +257,7 @@ impl Agent {
             session_state: Arc::new(std::sync::RwLock::new(
                 options.session_state.unwrap_or_default(),
             )),
+            credential_resolver: options.credential_resolver,
         }
     }
 
@@ -1133,6 +1136,7 @@ impl Agent {
             fallback: self.fallback.clone(),
             tool_execution_policy: self.tool_execution_policy.clone(),
             session_state: Arc::clone(&self.session_state),
+            credential_resolver: self.credential_resolver.as_ref().map(Arc::clone),
         }
     }
 
@@ -1387,6 +1391,7 @@ impl crate::tool::AgentTool for StructuredOutputTool {
         _cancellation_token: CancellationToken,
         _on_update: Option<Box<dyn Fn(crate::tool::AgentToolResult) + Send + Sync>>,
         _state: std::sync::Arc<std::sync::RwLock<crate::SessionState>>,
+        _credential: Option<crate::credential::ResolvedCredential>,
     ) -> Pin<Box<dyn Future<Output = crate::tool::AgentToolResult> + Send + '_>> {
         Box::pin(async move {
             crate::tool::AgentToolResult::text(serde_json::to_string(&params).unwrap_or_default())

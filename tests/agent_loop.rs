@@ -67,6 +67,7 @@ impl AgentTool for MockUpdatingTool {
         _cancellation_token: CancellationToken,
         on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
         _state: std::sync::Arc<std::sync::RwLock<swink_agent::SessionState>>,
+        _credential: Option<swink_agent::ResolvedCredential>,
     ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>> {
         Box::pin(async move {
             if let Some(on_update) = on_update {
@@ -147,6 +148,7 @@ fn default_config(stream_fn: Arc<dyn StreamFn>) -> AgentLoopConfig {
         fallback: None,
         tool_execution_policy: swink_agent::ToolExecutionPolicy::default(),
         session_state: std::sync::Arc::new(std::sync::RwLock::new(swink_agent::SessionState::new())),
+        credential_resolver: None,
     }
 }
 
@@ -1027,6 +1029,7 @@ impl AgentTool for MockPanickingTool {
         _cancellation_token: CancellationToken,
         _on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
         _state: std::sync::Arc<std::sync::RwLock<swink_agent::SessionState>>,
+        _credential: Option<swink_agent::ResolvedCredential>,
     ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>> {
         Box::pin(async { panic!("{}", self.panic_message) })
     }

@@ -36,7 +36,7 @@ async fn bash_echo_success() {
     let tool = BashTool::new();
     let token = CancellationToken::new();
     let result = tool
-        .execute("tc_1", json!({"command": "echo hello"}), token, None, std::sync::Arc::new(std::sync::RwLock::new(swink_agent::SessionState::new())))
+        .execute("tc_1", json!({"command": "echo hello"}), token, None, std::sync::Arc::new(std::sync::RwLock::new(swink_agent::SessionState::new())), None)
         .await;
     let text = ContentBlock::extract_text(&result.content);
     assert!(
@@ -54,7 +54,7 @@ async fn bash_exit_code_nonzero() {
     let tool = BashTool::new();
     let token = CancellationToken::new();
     let result = tool
-        .execute("tc_2", json!({"command": "exit 42"}), token, None, std::sync::Arc::new(std::sync::RwLock::new(swink_agent::SessionState::new())))
+        .execute("tc_2", json!({"command": "exit 42"}), token, None, std::sync::Arc::new(std::sync::RwLock::new(swink_agent::SessionState::new())), None)
         .await;
     let text = ContentBlock::extract_text(&result.content);
     assert!(
@@ -68,7 +68,7 @@ async fn bash_stderr_captured() {
     let tool = BashTool::new();
     let token = CancellationToken::new();
     let result = tool
-        .execute("tc_3", json!({"command": "echo err >&2"}), token, None, std::sync::Arc::new(std::sync::RwLock::new(swink_agent::SessionState::new())))
+        .execute("tc_3", json!({"command": "echo err >&2"}), token, None, std::sync::Arc::new(std::sync::RwLock::new(swink_agent::SessionState::new())), None)
         .await;
     let text = ContentBlock::extract_text(&result.content);
     assert!(
@@ -85,7 +85,7 @@ async fn bash_stderr_captured() {
 async fn bash_invalid_params() {
     let tool = BashTool::new();
     let token = CancellationToken::new();
-    let result = tool.execute("tc_4", json!({}), token, None, std::sync::Arc::new(std::sync::RwLock::new(swink_agent::SessionState::new()))).await;
+    let result = tool.execute("tc_4", json!({}), token, None, std::sync::Arc::new(std::sync::RwLock::new(swink_agent::SessionState::new())), None).await;
     let text = ContentBlock::extract_text(&result.content);
     assert!(
         text.contains("invalid parameters") || text.contains("error"),
@@ -105,6 +105,7 @@ async fn bash_cancellation() {
             token,
             None,
             std::sync::Arc::new(std::sync::RwLock::new(swink_agent::SessionState::new())),
+            None,
         )
         .await;
     let text = ContentBlock::extract_text(&result.content);
@@ -125,6 +126,7 @@ async fn bash_timeout() {
             token,
             None,
             std::sync::Arc::new(std::sync::RwLock::new(swink_agent::SessionState::new())),
+            None,
         )
         .await;
     let text = ContentBlock::extract_text(&result.content);
@@ -154,7 +156,7 @@ async fn bash_output_truncation() {
         stderr_file.display()
     );
     let result = tool
-        .execute("tc_7", json!({"command": cmd}), token, None, std::sync::Arc::new(std::sync::RwLock::new(swink_agent::SessionState::new())))
+        .execute("tc_7", json!({"command": cmd}), token, None, std::sync::Arc::new(std::sync::RwLock::new(swink_agent::SessionState::new())), None)
         .await;
     let text = ContentBlock::extract_text(&result.content);
     assert!(
@@ -176,6 +178,7 @@ async fn bash_large_stdout_does_not_deadlock() {
             token,
             None,
             std::sync::Arc::new(std::sync::RwLock::new(swink_agent::SessionState::new())),
+            None,
         ),
     )
     .await
@@ -200,6 +203,7 @@ async fn bash_large_stdout_and_stderr_do_not_deadlock() {
             token,
             None,
             std::sync::Arc::new(std::sync::RwLock::new(swink_agent::SessionState::new())),
+            None,
         ),
     )
     .await
@@ -232,6 +236,7 @@ async fn bash_noisy_timeout_does_not_deadlock() {
             token,
             None,
             std::sync::Arc::new(std::sync::RwLock::new(swink_agent::SessionState::new())),
+            None,
         ),
     )
     .await
@@ -272,6 +277,7 @@ async fn read_file_success() {
             token,
             None,
             std::sync::Arc::new(std::sync::RwLock::new(swink_agent::SessionState::new())),
+            None,
         )
         .await;
     let text = ContentBlock::extract_text(&result.content);
@@ -289,6 +295,7 @@ async fn read_file_not_found() {
             token,
             None,
             std::sync::Arc::new(std::sync::RwLock::new(swink_agent::SessionState::new())),
+            None,
         )
         .await;
     let text = ContentBlock::extract_text(&result.content);
@@ -302,7 +309,7 @@ async fn read_file_not_found() {
 async fn read_file_invalid_params() {
     let tool = ReadFileTool::new();
     let token = CancellationToken::new();
-    let result = tool.execute("tc_3", json!({}), token, None, std::sync::Arc::new(std::sync::RwLock::new(swink_agent::SessionState::new()))).await;
+    let result = tool.execute("tc_3", json!({}), token, None, std::sync::Arc::new(std::sync::RwLock::new(swink_agent::SessionState::new())), None).await;
     let text = ContentBlock::extract_text(&result.content);
     assert!(
         text.contains("invalid parameters"),
@@ -316,7 +323,7 @@ async fn read_file_cancellation() {
     let token = CancellationToken::new();
     token.cancel();
     let result = tool
-        .execute("tc_4", json!({"path": "/tmp/anything"}), token, None, std::sync::Arc::new(std::sync::RwLock::new(swink_agent::SessionState::new())))
+        .execute("tc_4", json!({"path": "/tmp/anything"}), token, None, std::sync::Arc::new(std::sync::RwLock::new(swink_agent::SessionState::new())), None)
         .await;
     let text = ContentBlock::extract_text(&result.content);
     assert!(
@@ -343,6 +350,7 @@ async fn read_file_truncation() {
             token,
             None,
             std::sync::Arc::new(std::sync::RwLock::new(swink_agent::SessionState::new())),
+            None,
         )
         .await;
     let text = ContentBlock::extract_text(&result.content);
@@ -385,6 +393,7 @@ async fn write_file_success() {
             token,
             None,
             std::sync::Arc::new(std::sync::RwLock::new(swink_agent::SessionState::new())),
+            None,
         )
         .await;
     let text = ContentBlock::extract_text(&result.content);
@@ -412,6 +421,7 @@ async fn write_file_creates_dirs() {
             token,
             None,
             std::sync::Arc::new(std::sync::RwLock::new(swink_agent::SessionState::new())),
+            None,
         )
         .await;
     let text = ContentBlock::extract_text(&result.content);
@@ -428,7 +438,7 @@ async fn write_file_creates_dirs() {
 async fn write_file_invalid_params() {
     let tool = WriteFileTool::new();
     let token = CancellationToken::new();
-    let result = tool.execute("tc_3", json!({}), token, None, std::sync::Arc::new(std::sync::RwLock::new(swink_agent::SessionState::new()))).await;
+    let result = tool.execute("tc_3", json!({}), token, None, std::sync::Arc::new(std::sync::RwLock::new(swink_agent::SessionState::new())), None).await;
     let text = ContentBlock::extract_text(&result.content);
     assert!(
         text.contains("invalid parameters"),
@@ -448,6 +458,7 @@ async fn write_file_cancellation() {
             token,
             None,
             std::sync::Arc::new(std::sync::RwLock::new(swink_agent::SessionState::new())),
+            None,
         )
         .await;
     let text = ContentBlock::extract_text(&result.content);
