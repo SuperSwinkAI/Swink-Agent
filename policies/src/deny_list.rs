@@ -55,7 +55,7 @@ mod tests {
     use super::*;
     use swink_agent::{Cost, Usage};
 
-    fn make_ctx<'a>(usage: &'a Usage, cost: &'a Cost) -> PolicyContext<'a> {
+    fn make_ctx<'a>(usage: &'a Usage, cost: &'a Cost, state: &'a swink_agent::SessionState) -> PolicyContext<'a> {
         PolicyContext {
             turn_index: 0,
             accumulated_usage: usage,
@@ -63,6 +63,7 @@ mod tests {
             message_count: 0,
             overflow_signal: false,
             new_messages: &[],
+            state,
         }
     }
 
@@ -71,7 +72,8 @@ mod tests {
         let policy = ToolDenyListPolicy::new(["bash", "write_file"]);
         let usage = Usage::default();
         let cost = Cost::default();
-        let ctx = make_ctx(&usage, &cost);
+        let state = swink_agent::SessionState::new();
+        let ctx = make_ctx(&usage, &cost, &state);
         let mut args = serde_json::json!({"command": "ls"});
         let mut tool_ctx = ToolPolicyContext {
             tool_name: "bash",
@@ -87,7 +89,8 @@ mod tests {
         let policy = ToolDenyListPolicy::new(["bash"]);
         let usage = Usage::default();
         let cost = Cost::default();
-        let ctx = make_ctx(&usage, &cost);
+        let state = swink_agent::SessionState::new();
+        let ctx = make_ctx(&usage, &cost, &state);
         let mut args = serde_json::json!({"path": "/tmp/file"});
         let mut tool_ctx = ToolPolicyContext {
             tool_name: "read_file",
@@ -103,7 +106,8 @@ mod tests {
         let policy = ToolDenyListPolicy::new(Vec::<String>::new());
         let usage = Usage::default();
         let cost = Cost::default();
-        let ctx = make_ctx(&usage, &cost);
+        let state = swink_agent::SessionState::new();
+        let ctx = make_ctx(&usage, &cost, &state);
         let mut args = serde_json::json!({});
         let mut tool_ctx = ToolPolicyContext {
             tool_name: "bash",

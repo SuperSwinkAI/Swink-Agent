@@ -164,6 +164,7 @@ mod tests {
 
         let usage = Usage::default();
         let cost = Cost::default();
+        let state = swink_agent::SessionState::new();
         let ctx = PolicyContext {
             turn_index: 0,
             accumulated_usage: &usage,
@@ -171,6 +172,7 @@ mod tests {
             message_count: 0,
             overflow_signal: false,
             new_messages: &[],
+            state: &state,
         };
         let msg = AssistantMessage {
             content: vec![],

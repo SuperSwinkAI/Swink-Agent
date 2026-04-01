@@ -344,6 +344,7 @@ impl AgentTool for MockTool {
         _params: Value,
         cancellation_token: CancellationToken,
         _on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
+        _state: std::sync::Arc<std::sync::RwLock<crate::SessionState>>,
     ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>> {
         self.executed.store(true, Ordering::SeqCst);
         self.execute_count.fetch_add(1, Ordering::SeqCst);
@@ -632,5 +633,6 @@ pub fn event_variant_name(event: &AgentEvent) -> String {
         AgentEvent::Custom(emission) => format!("Custom({})", emission.name),
         AgentEvent::ModelFallback { .. } => "ModelFallback".into(),
         AgentEvent::ModelCycled { .. } => "ModelCycled".into(),
+        AgentEvent::StateChanged { .. } => "StateChanged".into(),
     }
 }

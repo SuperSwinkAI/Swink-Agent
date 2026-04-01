@@ -106,6 +106,8 @@ pub struct AgentOptions {
     ///
     /// Falls back to [`DEFAULT_PLAN_MODE_ADDENDUM`] when `None`.
     pub plan_mode_addendum: Option<String>,
+    /// Optional initial session state for pre-seeding key-value pairs.
+    pub session_state: Option<crate::SessionState>,
 }
 
 impl AgentOptions {
@@ -148,6 +150,7 @@ impl AgentOptions {
             external_message_provider: None,
             tool_execution_policy: crate::tool_execution_policy::ToolExecutionPolicy::default(),
             plan_mode_addendum: None,
+            session_state: None,
         }
     }
 
@@ -459,6 +462,23 @@ impl AgentOptions {
     #[must_use]
     pub fn with_plan_mode_addendum(mut self, addendum: impl Into<String>) -> Self {
         self.plan_mode_addendum = Some(addendum.into());
+        self
+    }
+
+    /// Pre-seed session state with initial key-value pairs.
+    #[must_use]
+    pub fn with_initial_state(mut self, state: crate::SessionState) -> Self {
+        self.session_state = Some(state);
+        self
+    }
+
+    /// Add a single key-value pair to initial state.
+    #[must_use]
+    pub fn with_state_entry(mut self, key: impl Into<String>, value: impl serde::Serialize) -> Self {
+        let state = self.session_state.get_or_insert_with(crate::SessionState::new);
+        state.set(&key.into(), value);
+        // Flush delta so pre-seeded entries don't appear as mutations (baseline semantics).
+        state.flush_delta();
         self
     }
 }

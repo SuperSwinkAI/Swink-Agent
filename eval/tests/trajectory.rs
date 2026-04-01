@@ -60,6 +60,7 @@ fn empty_snapshot() -> TurnSnapshot {
         usage: Usage::default(),
         cost: Cost::default(),
         stop_reason: StopReason::Stop,
+        state_delta: None,
     }
 }
 

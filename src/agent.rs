@@ -174,6 +174,8 @@ pub struct Agent {
     tool_execution_policy: crate::tool_execution_policy::ToolExecutionPolicy,
     /// Optional plan mode addendum (falls back to `DEFAULT_PLAN_MODE_ADDENDUM`).
     plan_mode_addendum: Option<String>,
+    /// Session key-value state store shared with tools and policies.
+    session_state: Arc<std::sync::RwLock<crate::SessionState>>,
 }
 
 impl Agent {
@@ -250,6 +252,9 @@ impl Agent {
             external_message_provider: options.external_message_provider,
             tool_execution_policy: options.tool_execution_policy,
             plan_mode_addendum: options.plan_mode_addendum,
+            session_state: Arc::new(std::sync::RwLock::new(
+                options.session_state.unwrap_or_default(),
+            )),
         }
     }
 
@@ -263,6 +268,12 @@ impl Agent {
     #[must_use]
     pub const fn state(&self) -> &AgentState {
         &self.state
+    }
+
+    /// Access the session key-value state (thread-safe, shared reference).
+    #[must_use]
+    pub const fn session_state(&self) -> &Arc<std::sync::RwLock<crate::SessionState>> {
+        &self.session_state
     }
 
     // ── State Mutation ───────────────────────────────────────────────────
@@ -372,13 +383,21 @@ impl Agent {
         &self,
         id: impl Into<String>,
     ) -> Result<Checkpoint, std::io::Error> {
-        let checkpoint = Checkpoint::new(
+        let mut checkpoint = Checkpoint::new(
             id,
             &self.state.system_prompt,
             &self.state.model.provider,
             &self.state.model.model_id,
             &self.state.messages,
         );
+
+        // Include session state snapshot if non-empty.
+        {
+            let s = self.session_state.read().unwrap_or_else(std::sync::PoisonError::into_inner);
+            if !s.is_empty() {
+                checkpoint.state = Some(s.snapshot());
+            }
+        }
 
         if let Some(ref store) = self.checkpoint_store {
             store.save_checkpoint(&checkpoint).await?;
@@ -398,6 +417,13 @@ impl Agent {
         self.state
             .system_prompt
             .clone_from(&checkpoint.system_prompt);
+
+        // Restore session state from checkpoint if present.
+        if let Some(ref state_val) = checkpoint.state {
+            let restored = crate::SessionState::restore_from_snapshot(state_val.clone());
+            let mut s = self.session_state.write().unwrap_or_else(std::sync::PoisonError::into_inner);
+            *s = restored;
+        }
     }
 
     /// Load a checkpoint from the configured store and restore state from it.
@@ -548,12 +574,19 @@ impl Agent {
         }
 
         // Build the loop checkpoint from current state
-        let checkpoint = crate::checkpoint::LoopCheckpoint::new(
+        let mut checkpoint = crate::checkpoint::LoopCheckpoint::new(
             &self.state.system_prompt,
             &self.state.model.provider,
             &self.state.model.model_id,
             &self.state.messages,
         );
+
+        // Include session state snapshot if non-empty.
+        let s = self.session_state.read().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if !s.is_empty() {
+            checkpoint.state = Some(s.snapshot());
+        }
+        drop(s);
 
         self.state.is_running = false;
         self.abort_controller = None;
@@ -610,6 +643,13 @@ impl Agent {
         self.state
             .system_prompt
             .clone_from(&checkpoint.system_prompt);
+
+        // Restore session state from checkpoint if present.
+        if let Some(ref state_val) = checkpoint.state {
+            let restored = crate::SessionState::restore_from_snapshot(state_val.clone());
+            let mut s = self.session_state.write().unwrap_or_else(std::sync::PoisonError::into_inner);
+            *s = restored;
+        }
 
         if self.state.messages.is_empty() {
             return Err(AgentError::NoMessages);
@@ -1092,6 +1132,7 @@ impl Agent {
             metrics_collector: self.metrics_collector.as_ref().map(Arc::clone),
             fallback: self.fallback.clone(),
             tool_execution_policy: self.tool_execution_policy.clone(),
+            session_state: Arc::clone(&self.session_state),
         }
     }
 
@@ -1345,6 +1386,7 @@ impl crate::tool::AgentTool for StructuredOutputTool {
         params: Value,
         _cancellation_token: CancellationToken,
         _on_update: Option<Box<dyn Fn(crate::tool::AgentToolResult) + Send + Sync>>,
+        _state: std::sync::Arc<std::sync::RwLock<crate::SessionState>>,
     ) -> Pin<Box<dyn Future<Output = crate::tool::AgentToolResult> + Send + '_>> {
         Box::pin(async move {
             crate::tool::AgentToolResult::text(serde_json::to_string(&params).unwrap_or_default())

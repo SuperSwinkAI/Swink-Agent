@@ -140,6 +140,10 @@ pub async fn execute_tools_concurrently(
                 PolicyContext, PreDispatchVerdict, ToolPolicyContext, run_pre_dispatch_policies,
             };
 
+            let state_snapshot = {
+                let guard = config.session_state.read().unwrap_or_else(std::sync::PoisonError::into_inner);
+                guard.clone()
+            };
             let policy_ctx = PolicyContext {
                 turn_index: 0, // tool dispatch doesn't track turn index
                 accumulated_usage: &crate::types::Usage::default(),
@@ -147,6 +151,7 @@ pub async fn execute_tools_concurrently(
                 message_count: 0,
                 overflow_signal: false,
                 new_messages: &[],
+                state: &state_snapshot,
             };
             let mut tool_ctx = ToolPolicyContext {
                 tool_name: &tc.name,
@@ -598,7 +603,7 @@ async fn dispatch_single_tool(
                     let _ = on_update_tx.try_send(AgentEvent::ToolExecutionUpdate { partial });
                 });
                 let result = tool
-                    .execute(&tool_call_id, arguments, child_token, Some(on_update))
+                    .execute(&tool_call_id, arguments, child_token, Some(on_update), config_clone.session_state.clone())
                     .await;
                 let is_error = result.is_error;
                 (result, is_error)

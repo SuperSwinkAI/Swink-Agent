@@ -69,6 +69,7 @@ fn default_config(
         metrics_collector: None,
         fallback,
         tool_execution_policy: swink_agent::ToolExecutionPolicy::default(),
+        session_state: std::sync::Arc::new(std::sync::RwLock::new(swink_agent::SessionState::new())),
     }
 }
 

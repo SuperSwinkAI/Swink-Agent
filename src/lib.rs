@@ -28,6 +28,7 @@ pub mod policy;
 mod registry;
 mod retry;
 mod schema;
+mod state;
 pub mod stream;
 mod stream_middleware;
 mod sub_agent;
@@ -110,6 +111,7 @@ pub use types::{
     ThinkingBudgets, ThinkingLevel, ToolResultMessage, TurnSnapshot, Usage, UserMessage,
     deserialize_custom_message, serialize_custom_message,
 };
+pub use state::{SessionState, StateDelta};
 pub use util::now_timestamp;
 
 pub use display::{CoreDisplayMessage, DisplayRole, IntoDisplayMessages};

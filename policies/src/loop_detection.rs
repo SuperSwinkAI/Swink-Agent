@@ -152,7 +152,7 @@ mod tests {
     use super::*;
     use swink_agent::{AssistantMessage, ContentBlock, Cost, StopReason, Usage};
 
-    fn make_ctx<'a>(usage: &'a Usage, cost: &'a Cost) -> PolicyContext<'a> {
+    fn make_ctx<'a>(usage: &'a Usage, cost: &'a Cost, state: &'a swink_agent::SessionState) -> PolicyContext<'a> {
         PolicyContext {
             turn_index: 0,
             accumulated_usage: usage,
@@ -160,6 +160,7 @@ mod tests {
             message_count: 0,
             overflow_signal: false,
             new_messages: &[],
+            state,
         }
     }
 
@@ -202,7 +203,8 @@ mod tests {
         let policy = LoopDetectionPolicy::new(3);
         let usage = Usage::default();
         let cost = Cost::default();
-        let ctx = make_ctx(&usage, &cost);
+        let state = swink_agent::SessionState::new();
+        let ctx = make_ctx(&usage, &cost, &state);
         let msg = dummy_msg();
 
         let results1 = vec![tool_result("bash_1", "output1")];
@@ -223,7 +225,8 @@ mod tests {
         let policy = LoopDetectionPolicy::new(3);
         let usage = Usage::default();
         let cost = Cost::default();
-        let ctx = make_ctx(&usage, &cost);
+        let state = swink_agent::SessionState::new();
+        let ctx = make_ctx(&usage, &cost, &state);
         let msg = dummy_msg();
 
         let results = vec![tool_result("bash_1", "same_output")];
@@ -247,7 +250,8 @@ mod tests {
             .with_steering("Try something different");
         let usage = Usage::default();
         let cost = Cost::default();
-        let ctx = make_ctx(&usage, &cost);
+        let state = swink_agent::SessionState::new();
+        let ctx = make_ctx(&usage, &cost, &state);
         let msg = dummy_msg();
 
         let results = vec![tool_result("bash_1", "same")];
@@ -265,7 +269,8 @@ mod tests {
         let policy = LoopDetectionPolicy::new(2);
         let usage = Usage::default();
         let cost = Cost::default();
-        let ctx = make_ctx(&usage, &cost);
+        let state = swink_agent::SessionState::new();
+        let ctx = make_ctx(&usage, &cost, &state);
         let msg = dummy_msg();
 
         let results1 = vec![tool_result("bash_1", "output_a")];
@@ -283,7 +288,8 @@ mod tests {
         let policy = LoopDetectionPolicy::new(3);
         let usage = Usage::default();
         let cost = Cost::default();
-        let ctx = make_ctx(&usage, &cost);
+        let state = swink_agent::SessionState::new();
+        let ctx = make_ctx(&usage, &cost, &state);
         let msg = dummy_msg();
 
         // Push 2 identical, then 1 different, then 2 identical again

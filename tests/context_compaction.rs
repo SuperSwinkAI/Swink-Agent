@@ -97,6 +97,7 @@ fn default_config(stream_fn: Arc<dyn StreamFn>) -> AgentLoopConfig {
         metrics_collector: None,
         fallback: None,
         tool_execution_policy: swink_agent::ToolExecutionPolicy::default(),
+        session_state: std::sync::Arc::new(std::sync::RwLock::new(swink_agent::SessionState::new())),
     }
 }
 
