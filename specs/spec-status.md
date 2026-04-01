@@ -1,5 +1,5 @@
 # Spec-Driven Development Status
-<!-- spec-status: project=Swink-Agent commit=004ff61bea58b78fb769230415668b86fd645f9f updated=2026-04-01T15:32:53Z -->
+<!-- spec-status: project=Swink-Agent commit=b08fab9d334e1ac8979e05d3acbea024df3e57bb updated=2026-04-01T23:08:50Z -->
 
 | Feature                         | Specify | Plan | Tasks | Implement |
 |---------------------------------|---------|------|-------|-----------|
@@ -38,6 +38,8 @@
 | 033-workspace-feature-gates     | ✓     | ✓  | ✓   | ✓ Complete |
 | 034-session-state-store         | ✓     | ✓  | ✓   | ● 0/93 (0%) |
 | 035-credential-management       | ✓     | ✓  | ✓   | ● 0/73 (0%) |
+| 036-artifact-service            | ✓     | -    | -     | -         |
+| 037-plugin-system               | ✓     | -    | -     | -         |
 
 <!-- feature: 001-workspace-scaffold has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=false has_checklists=true tasks_total=24 tasks_completed=24 checklist_files=requirements.md -->
 <!-- feature: 002-foundation-types-errors has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=63 tasks_completed=63 checklist_files=requirements.md -->
@@ -74,3 +76,5 @@
 <!-- feature: 033-workspace-feature-gates has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=25 tasks_completed=25 checklist_files=requirements.md -->
 <!-- feature: 034-session-state-store has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=93 tasks_completed=0 checklist_files=requirements.md -->
 <!-- feature: 035-credential-management has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=73 tasks_completed=0 checklist_files=requirements.md -->
+<!-- feature: 036-artifact-service has_spec=true has_plan=false has_tasks=false has_research=false has_data_model=false has_quickstart=false has_contracts=false has_checklists=true tasks_total=0 tasks_completed=0 checklist_files=requirements.md -->
+<!-- feature: 037-plugin-system has_spec=true has_plan=false has_tasks=false has_research=false has_data_model=false has_quickstart=false has_contracts=false has_checklists=true tasks_total=0 tasks_completed=0 checklist_files=requirements.md -->
