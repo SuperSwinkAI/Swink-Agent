@@ -176,6 +176,7 @@ async fn sliding_window_preserves_anchor_and_tail() {
 #[tokio::test]
 async fn context_overflow_triggers_retry() {
     // First call returns a context overflow error, second call succeeds.
+    // In-place recovery compacts context then retries the LLM call.
     let stream_fn = Arc::new(MockStreamFn::new(vec![
         vec![AssistantMessageEvent::error_context_overflow(
             "context_length_exceeded",
@@ -185,9 +186,23 @@ async fn context_overflow_triggers_retry() {
 
     let sf: Arc<dyn swink_agent::StreamFn> = stream_fn;
 
+    // Use a tight overflow budget (200 tokens) so compaction has work to do.
     let mut agent = make_agent_with_small_context(sf, 10_000, 200, 1);
 
-    let result = agent.prompt_async(vec![user_msg("hello")]).await.unwrap();
+    // Provide enough messages (~100 tokens each) that the overflow-budget
+    // compaction can remove some, enabling the retry.
+    let padding = "x".repeat(400); // 400 chars = ~100 tokens
+    let mut messages = Vec::new();
+    for i in 0..5 {
+        messages.push(AgentMessage::Llm(LlmMessage::User(swink_agent::UserMessage {
+            content: vec![ContentBlock::Text {
+                text: format!("msg{i}:{padding}"),
+            }],
+            timestamp: 0,
+        })));
+    }
+
+    let result = agent.prompt_async(messages).await.unwrap();
 
     // The agent should have recovered and returned a successful response.
     let has_recovered_text = result.messages.iter().any(|m| {

@@ -292,8 +292,8 @@ async fn abort_during_tool_execution_with_approval() {
 // ─── Test 5: Context overflow triggers retry with tools ──────────────────
 
 /// Set up a scenario where the context overflows during a tool-use turn,
-/// triggering the overflow retry path. Verify the tool is re-executed on
-/// the retry turn.
+/// triggering the in-place overflow recovery path. Verify the tool is
+/// re-executed on the retry within the same turn.
 #[tokio::test]
 async fn context_overflow_triggers_retry_with_tools() {
     let tool = Arc::new(MockTool::new("my_tool"));
@@ -302,8 +302,8 @@ async fn context_overflow_triggers_retry_with_tools() {
     let overflow_flags: Arc<Mutex<Vec<bool>>> = Arc::new(Mutex::new(Vec::new()));
     let flags_clone = Arc::clone(&overflow_flags);
 
-    // Turn 1: tool call. Turn 2: overflow error (simulating context window exceeded).
-    // Turn 3 (retry after overflow): tool call again. Turn 4: final text.
+    // Turn 1: tool call. Turn 2: overflow error → in-place recovery → tool call.
+    // Turn 3: final text.
     let responses = vec![
         tool_call_events("tc1", "my_tool", "{}"),
         vec![
@@ -319,9 +319,17 @@ async fn context_overflow_triggers_retry_with_tools() {
         text_only_events("recovered after overflow"),
     ];
 
+    // Use a transformer that actually compacts on overflow so recovery can
+    // proceed. Without compaction, the no-compaction guard surfaces an error.
     let options = make_options(responses, vec![tool]).with_transform_context(
-        move |_msgs: &mut Vec<AgentMessage>, overflow: bool| {
+        move |msgs: &mut Vec<AgentMessage>, overflow: bool| {
             flags_clone.lock().unwrap().push(overflow);
+            if overflow && msgs.len() > 2 {
+                // Keep first and last message, remove the middle.
+                let last = msgs.pop().unwrap();
+                msgs.truncate(1);
+                msgs.push(last);
+            }
         },
     );
     let mut agent = Agent::new(options);

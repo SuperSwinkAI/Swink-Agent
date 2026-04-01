@@ -37,6 +37,8 @@ use crate::util::now_timestamp;
 
 /// Sentinel value used to signal context overflow between `handle_stream_result`
 /// and `run_single_turn`.
+#[deprecated(note = "Overflow recovery now happens in-place in run_single_turn. Retained for backward compatibility.")]
+#[allow(dead_code)]
 pub const CONTEXT_OVERFLOW_SENTINEL: &str = "__context_overflow__";
 
 /// Channel capacity for agent events. Sized to handle burst streaming
@@ -363,6 +365,9 @@ pub struct LoopState {
     pub context_messages: Vec<AgentMessage>,
     pub pending_messages: Vec<AgentMessage>,
     pub overflow_signal: bool,
+    /// Whether emergency overflow recovery has already been attempted this turn.
+    /// Resets to `false` at the start of each turn.
+    pub overflow_recovery_attempted: bool,
     pub turn_index: usize,
     pub accumulated_usage: crate::types::Usage,
     pub accumulated_cost: crate::types::Cost,
@@ -402,6 +407,7 @@ async fn run_loop_inner(
             context_messages: initial_messages,
             pending_messages: Vec::new(),
             overflow_signal: false,
+            overflow_recovery_attempted: false,
             turn_index: 0,
             accumulated_usage: crate::types::Usage::default(),
             accumulated_cost: crate::types::Cost::default(),

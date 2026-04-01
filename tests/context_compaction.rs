@@ -353,18 +353,18 @@ async fn compacted_context_preserves_tool_pairs() {
 // Test d: multiple_overflows_progressively_shrink
 // ═══════════════════════════════════════════════════════════════════════════
 
+/// With in-place overflow recovery, a double overflow in the same turn is fatal.
+/// The first overflow triggers recovery (compact + retry), but when the retry
+/// also overflows, the loop surfaces a ContextWindowOverflow error.
 #[tokio::test]
-async fn multiple_overflows_progressively_shrink() {
+async fn double_overflow_surfaces_error() {
     let capturing_fn = Arc::new(MockContextCapturingStreamFn::new(vec![
         overflow_error_events(),
         overflow_error_events(),
-        text_only_events("recovered"),
+        text_only_events("should not reach this"),
     ]));
     let stream_fn: Arc<dyn StreamFn> = Arc::clone(&capturing_fn) as Arc<dyn StreamFn>;
 
-    // Use a transform that progressively removes more messages each time
-    // overflow is signaled. We simulate this by using a counter that
-    // tightens the budget on each overflow.
     let overflow_count: Arc<Mutex<usize>> = Arc::new(Mutex::new(0));
     let overflow_clone = Arc::clone(&overflow_count);
 
@@ -372,14 +372,10 @@ async fn multiple_overflows_progressively_shrink() {
     config.transform_context = Some(Arc::new(
         move |msgs: &mut Vec<AgentMessage>, overflow: bool| {
             if overflow {
-                let n = {
-                    let mut count = overflow_clone.lock().unwrap();
-                    *count += 1;
-                    *count
-                };
-                // Each overflow removes progressively more: keep only the last
-                // (msgs.len() - n * 2) messages, minimum 1.
-                let keep = msgs.len().saturating_sub(n * 2).max(1);
+                let mut count = overflow_clone.lock().unwrap();
+                *count += 1;
+                // Remove some messages to report compaction.
+                let keep = msgs.len().saturating_sub(2).max(1);
                 if keep < msgs.len() {
                     let tail: Vec<AgentMessage> = msgs.drain(keep..).collect();
                     msgs.clear();
@@ -389,7 +385,6 @@ async fn multiple_overflows_progressively_shrink() {
         },
     ));
 
-    // Start with many messages
     let mut initial_messages = Vec::new();
     for i in 0..10 {
         initial_messages.push(large_user_msg(&format!("msg{i}"), 50));
@@ -403,27 +398,25 @@ async fn multiple_overflows_progressively_shrink() {
     ))
     .await;
 
+    // Loop should still terminate with AgentEnd.
     assert!(has_event(&events, "AgentEnd"));
 
+    // The retry (2nd call) also overflowed, so the error is surfaced.
+    // There should be exactly 2 stream calls, not 3.
     let counts: Vec<usize> = capturing_fn.captured_message_counts.lock().unwrap().clone();
-    assert!(
-        counts.len() >= 3,
-        "should have at least 3 stream calls, got {}",
+    assert_eq!(
+        counts.len(),
+        2,
+        "should have exactly 2 stream calls (initial + retry), got {}",
         counts.len()
     );
 
-    // Each successive call should see fewer messages
+    // The second call should have fewer messages (compaction worked).
     assert!(
         counts[1] < counts[0],
         "second call should have fewer messages than first: {} vs {}",
         counts[1],
         counts[0]
-    );
-    assert!(
-        counts[2] < counts[1],
-        "third call should have fewer messages than second: {} vs {}",
-        counts[2],
-        counts[1]
     );
 }
 
@@ -431,18 +424,20 @@ async fn multiple_overflows_progressively_shrink() {
 // Test e: overflow_with_single_large_message
 // ═══════════════════════════════════════════════════════════════════════════
 
+/// When a single message exceeds the budget and the transformer cannot compact
+/// (returns None), the loop surfaces a ContextWindowOverflow error immediately
+/// without retrying the LLM call (FR-013d: no-compaction-skip).
 #[tokio::test]
-async fn overflow_with_single_large_message() {
-    // When a single message exceeds the budget, sliding_window cannot compact
-    // further. The loop must not enter an infinite retry cycle. The second
-    // stream call should succeed (simulating the provider accepting after prune).
+async fn overflow_with_no_compaction_surfaces_error() {
     let capturing_fn = Arc::new(MockContextCapturingStreamFn::new(vec![
         overflow_error_events(),
-        text_only_events("handled gracefully"),
+        text_only_events("should not reach this"),
     ]));
     let stream_fn: Arc<dyn StreamFn> = Arc::clone(&capturing_fn) as Arc<dyn StreamFn>;
 
     // Very tight overflow budget that a single large message exceeds.
+    // sliding_window with anchor=1 and budget=10 on a single message cannot
+    // remove anything (the anchor IS the only message), so it returns None.
     let compact = sliding_window(10_000, 10, 1);
 
     let mut config = default_config(stream_fn);
@@ -463,14 +458,18 @@ async fn overflow_with_single_large_message() {
     ))
     .await;
 
-    // The loop should terminate (not hang) and produce AgentEnd.
+    // The loop should terminate with AgentEnd (no infinite retry).
     assert!(
         has_event(&events, "AgentEnd"),
-        "loop should complete even when a single message exceeds the budget"
+        "loop should complete even when compaction cannot help"
     );
 
-    assert!(
-        capturing_fn.captured_message_counts.lock().unwrap().len() >= 2,
-        "should have at least 2 stream calls (overflow + recovery)"
+    // Only 1 stream call — no retry when compaction produces no effect.
+    let counts = capturing_fn.captured_message_counts.lock().unwrap().clone();
+    assert_eq!(
+        counts.len(),
+        1,
+        "should have exactly 1 stream call (no retry when no compaction), got {}",
+        counts.len()
     );
 }
