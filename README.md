@@ -29,7 +29,8 @@ A pure-Rust library for building LLM-powered agentic loops. Provider-agnostic co
 ## Quick Reference
 
 ```bash
-cargo run -p swink-agent-tui     # launch the TUI
+cargo run -p swink-agent-tui     # launch the TUI (remote/Ollama defaults)
+cargo run -p swink-agent-tui --features local  # include bundled local-LLM support
 cargo test --workspace             # run all tests
 ```
 

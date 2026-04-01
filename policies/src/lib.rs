@@ -20,6 +20,7 @@
 //! - **`audit`**: [`AuditLogger`] — records every turn to a pluggable sink
 #![forbid(unsafe_code)]
 
+#[cfg(any(feature = "prompt-guard", feature = "pii", feature = "content-filter"))]
 mod patterns;
 
 // ── Core policies ───────────────────────────────────────────────────────────

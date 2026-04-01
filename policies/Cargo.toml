@@ -9,7 +9,8 @@ repository = "https://github.com/SuperSwinkAI/Swink-Agent"
 keywords = ["llm", "agent", "policy", "security", "audit"]
 
 [features]
-default = ["all"]
+default = []
+full = ["all"]
 all = ["budget", "max-turns", "deny-list", "sandbox", "loop-detection", "checkpoint", "prompt-guard", "pii", "content-filter", "audit"]
 budget = []
 max-turns = []

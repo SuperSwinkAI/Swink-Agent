@@ -6,13 +6,16 @@
 
 ## Feature Gates
 
-Each adapter is feature-gated. `default = ["all"]` enables everything (backward compatible).
+Each adapter is feature-gated. Defaults are minimal, and `full` enables the current batteries-included set.
 
 ```toml
 # Selective compilation
 swink-agent-adapters = { features = ["anthropic", "openai"] }
 
-# Everything (default)
+# Everything
+swink-agent-adapters = { features = ["full"] }
+
+# Minimal default build
 swink-agent-adapters = {}
 ```
 

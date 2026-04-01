@@ -15,7 +15,8 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
-default = ["all"]
+default = []
+full = ["all"]
 all = ["anthropic", "openai", "ollama", "gemini", "proxy", "azure", "bedrock", "mistral", "xai"]
 anthropic = []
 openai = []
