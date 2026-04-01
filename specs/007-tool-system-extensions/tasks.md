@@ -180,14 +180,14 @@
 
 ### Implementation for User Story 7
 
-- [ ] T065 [US7] Create `macros/` directory with `Cargo.toml` declaring `proc-macro = true`, deps: `syn`, `quote`, `proc-macro2`. Add to workspace members.
-- [ ] T066 [US7] Define `ToolParameters` trait with `fn json_schema() -> Value` in `src/tool.rs` (or `src/tool_parameters.rs`). Re-export from `src/lib.rs`.
-- [ ] T067 [US7] Implement `#[derive(ToolSchema)]` proc macro in `macros/src/tool_schema.rs`: map field types to JSON Schema types, extract doc comments as descriptions, support `#[tool(description = "...")]` override.
-- [ ] T068 [US7] Implement `#[tool]` attribute macro in `macros/src/tool_attr.rs`: generate struct + `AgentTool` impl from async function signature with `name` and `description` attributes.
-- [ ] T069 [US7] Wire up `macros/src/lib.rs` to export both proc macros.
-- [ ] T070 [US7] Add unit tests in `macros/tests/`: `derive_tool_schema_basic` (String/u64/bool fields), `derive_tool_schema_option` (Option field not required), `derive_tool_schema_vec` (Vec → array), `derive_tool_schema_doc_comments` (doc comments → description), `derive_tool_schema_attr_override` (`#[tool(description = "...")]` overrides doc comment).
-- [ ] T071 [US7] Add unit tests in `macros/tests/`: `tool_attr_generates_struct` (function becomes AgentTool), `tool_attr_schema_from_params` (schema matches function params), `tool_attr_requires_async` (non-async fn = compile error), `derive_tool_schema_unsupported_type` (HashMap or custom enum produces compile error with helpful message).
-- [ ] T072 [US7] Add integration test: create an `AgentTool` via `#[tool]` macro, register it with an agent, verify it executes correctly.
+- [x] T065 [US7] Create `macros/` directory with `Cargo.toml` declaring `proc-macro = true`, deps: `syn`, `quote`, `proc-macro2`. Add to workspace members.
+- [x] T066 [US7] Define `ToolParameters` trait with `fn json_schema() -> Value` in `src/tool.rs` (or `src/tool_parameters.rs`). Re-export from `src/lib.rs`.
+- [x] T067 [US7] Implement `#[derive(ToolSchema)]` proc macro in `macros/src/tool_schema.rs`: map field types to JSON Schema types, extract doc comments as descriptions, support `#[tool(description = "...")]` override.
+- [x] T068 [US7] Implement `#[tool]` attribute macro in `macros/src/tool_attr.rs`: generate struct + `AgentTool` impl from async function signature with `name` and `description` attributes.
+- [x] T069 [US7] Wire up `macros/src/lib.rs` to export both proc macros.
+- [x] T070 [US7] Add unit tests in `macros/tests/`: `derive_tool_schema_basic` (String/u64/bool fields), `derive_tool_schema_option` (Option field not required), `derive_tool_schema_vec` (Vec → array), `derive_tool_schema_doc_comments` (doc comments → description), `derive_tool_schema_attr_override` (`#[tool(description = "...")]` overrides doc comment).
+- [x] T071 [US7] Add unit tests in `macros/tests/`: `tool_attr_generates_struct` (function becomes AgentTool), `tool_attr_schema_from_params` (schema matches function params), `tool_attr_requires_async` (non-async fn = compile error), `derive_tool_schema_unsupported_type` (HashMap or custom enum produces compile error with helpful message).
+- [x] T072 [US7] Add integration test: create an `AgentTool` via `#[tool]` macro, register it with an agent, verify it executes correctly.
 
 **Checkpoint**: Proc macros functional — tools can be created from structs and functions with zero schema boilerplate
 
@@ -201,13 +201,13 @@
 
 ### Implementation for User Story 8
 
-- [ ] T073 [US8] Add `hot-reload` feature gate to `Cargo.toml` with optional `notify` dependency.
-- [ ] T074 [US8] Implement `ScriptTool` struct in `src/hot_reload.rs`: parse TOML/YAML/JSON definition files, implement `AgentTool` with shell command execution.
-- [ ] T075 [US8] Implement `ToolWatcher` struct in `src/hot_reload.rs`: use `notify` to watch directory, debounce changes, load/reload/remove `ScriptTool` instances.
-- [ ] T076 [US8] Implement `ToolWatcher::start()` — spawns async task, watches for file events, calls `Agent::set_tools()` on changes. Apply optional `ToolFilter`.
-- [ ] T077 [US8] Add unit tests: `script_tool_from_toml` (parse TOML definition), `script_tool_executes_command` (run command with interpolated args), `script_tool_invalid_definition` (reject malformed files), `script_tool_escapes_parameters` (verify parameter values are shell-escaped before interpolation — e.g., `"; rm -rf /"` in a parameter does not execute as a command).
-- [ ] T078 [US8] Add integration test: start watcher on tempdir, add/modify/delete TOML files, verify tool list updates. Include `duplicate_tool_names_last_write_wins` — add two files defining the same tool name, verify the most recently modified one takes precedence with a warning logged.
-- [ ] T079 [US8] Re-export `ToolWatcher` and `ScriptTool` from `src/lib.rs` behind `#[cfg(feature = "hot-reload")]`.
+- [x] T073 [US8] Add `hot-reload` feature gate to `Cargo.toml` with optional `notify` dependency.
+- [x] T074 [US8] Implement `ScriptTool` struct in `src/hot_reload.rs`: parse TOML/YAML/JSON definition files, implement `AgentTool` with shell command execution.
+- [x] T075 [US8] Implement `ToolWatcher` struct in `src/hot_reload.rs`: use `notify` to watch directory, debounce changes, load/reload/remove `ScriptTool` instances.
+- [x] T076 [US8] Implement `ToolWatcher::start()` — spawns async task, watches for file events, calls `Agent::set_tools()` on changes. Apply optional `ToolFilter`.
+- [x] T077 [US8] Add unit tests: `script_tool_from_toml` (parse TOML definition), `script_tool_executes_command` (run command with interpolated args), `script_tool_invalid_definition` (reject malformed files), `script_tool_escapes_parameters` (verify parameter values are shell-escaped before interpolation — e.g., `"; rm -rf /"` in a parameter does not execute as a command).
+- [x] T078 [US8] Add integration test: start watcher on tempdir, add/modify/delete TOML files, verify tool list updates. Include `duplicate_tool_names_last_write_wins` — add two files defining the same tool name, verify the most recently modified one takes precedence with a warning logged.
+- [x] T079 [US8] Re-export `ToolWatcher` and `ScriptTool` from `src/lib.rs` behind `#[cfg(feature = "hot-reload")]`.
 
 **Checkpoint**: Hot-reloading functional — tools can be added/modified/removed via definition files at runtime
 
@@ -221,10 +221,10 @@
 
 ### Implementation for User Story 9
 
-- [ ] T080 [US9] Implement `ToolPattern` enum (Exact/Glob/Regex) with `parse()` auto-detection and `matches()` in `src/tool_filter.rs`.
-- [ ] T081 [US9] Implement `ToolFilter` struct with `allowed`/`rejected` fields, `with_allowed()`/`with_rejected()` builders, and `filter_tools()` method in `src/tool_filter.rs`.
-- [ ] T082 [US9] Add unit tests: `exact_pattern_matches` , `glob_pattern_matches` (`read_*` matches `read_file`), `regex_pattern_matches` (`^file_.*$`), `rejected_takes_precedence`, `empty_filter_allows_all`.
-- [ ] T083 [US9] Re-export `ToolFilter` and `ToolPattern` from `src/lib.rs`.
+- [x] T080 [US9] Implement `ToolPattern` enum (Exact/Glob/Regex) with `parse()` auto-detection and `matches()` in `src/tool_filter.rs`.
+- [x] T081 [US9] Implement `ToolFilter` struct with `allowed`/`rejected` fields, `with_allowed()`/`with_rejected()` builders, and `filter_tools()` method in `src/tool_filter.rs`.
+- [x] T082 [US9] Add unit tests: `exact_pattern_matches` , `glob_pattern_matches` (`read_*` matches `read_file`), `regex_pattern_matches` (`^file_.*$`), `rejected_takes_precedence`, `empty_filter_allows_all`.
+- [x] T083 [US9] Re-export `ToolFilter` and `ToolPattern` from `src/lib.rs`.
 
 **Checkpoint**: Tool filtering functional — registration-time pattern matching restricts available tools
 
@@ -238,10 +238,10 @@
 
 ### Implementation for User Story 10
 
-- [ ] T084 [US10] Implement `NoopTool` struct in `src/noop_tool.rs`: `new(name)`, `AgentTool` impl returning error result.
-- [ ] T085 [US10] Integrate `NoopTool` injection into session loading — detect tool references not in registry, auto-inject NoopTool for each.
-- [ ] T086 [US10] Add unit tests: `noop_tool_returns_error`, `noop_tool_name_matches`, `noop_tool_no_approval_required`.
-- [ ] T087 [US10] Re-export `NoopTool` from `src/lib.rs`.
+- [x] T084 [US10] Implement `NoopTool` struct in `src/noop_tool.rs`: `new(name)`, `AgentTool` impl returning error result.
+- [x] T085 [US10] Integrate `NoopTool` injection into session loading — detect tool references not in registry, auto-inject NoopTool for each.
+- [x] T086 [US10] Add unit tests: `noop_tool_returns_error`, `noop_tool_name_matches`, `noop_tool_no_approval_required`.
+- [x] T087 [US10] Re-export `NoopTool` from `src/lib.rs`.
 
 **Checkpoint**: NoopTool functional — sessions with removed tools load gracefully
 
@@ -255,12 +255,12 @@
 
 ### Implementation for User Story 11
 
-- [ ] T088 [US11] Add `fn approval_context(&self, params: &Value) -> Option<Value> { None }` default method to `AgentTool` trait in `src/tool.rs`.
-- [ ] T089 [US11] Add `context: Option<Value>` field to `ToolApprovalRequest` in `src/tool.rs`. Populate from `approval_context()` in tool dispatch pipeline (`src/loop_/tool_dispatch.rs`).
-- [ ] T090 [US11] Add `catch_unwind` around `approval_context()` call — log panics, set context to `None`.
-- [ ] T091 [US11] Update `FnTool` to support `approval_context` via a new `with_approval_context()` builder method.
-- [ ] T092 [US11] Add unit tests: `approval_context_default_none`, `approval_context_returns_value`, `approval_context_panic_caught`, `approval_request_includes_context`.
-- [ ] T093 [US11] Update `ToolMiddleware` to delegate `approval_context()` to inner tool (same as other metadata methods).
+- [x] T088 [US11] Add `fn approval_context(&self, params: &Value) -> Option<Value> { None }` default method to `AgentTool` trait in `src/tool.rs`.
+- [x] T089 [US11] Add `context: Option<Value>` field to `ToolApprovalRequest` in `src/tool.rs`. Populate from `approval_context()` in tool dispatch pipeline (`src/loop_/tool_dispatch.rs`).
+- [x] T090 [US11] Add `catch_unwind` around `approval_context()` call — log panics, set context to `None`.
+- [x] T091 [US11] Update `FnTool` to support `approval_context` via a new `with_approval_context()` builder method.
+- [x] T092 [US11] Add unit tests: `approval_context_default_none`, `approval_context_returns_value`, `approval_context_panic_caught`, `approval_request_includes_context`.
+- [x] T093 [US11] Update `ToolMiddleware` to delegate `approval_context()` to inner tool (same as other metadata methods).
 
 **Checkpoint**: Approval context functional — tools can provide rich previews to the approval UI
 
@@ -275,11 +275,11 @@
 - [x] T062 [P] Run `cargo test --workspace` and verify all tests pass
 - [x] T063 [P] Run `cargo test -p swink-agent --no-default-features` and verify feature-gated compilation
 - [x] T064 Validate quickstart.md examples compile and match public API in `specs/007-tool-system-extensions/quickstart.md`
-- [ ] T094 Add compile-time `Send + Sync` assertions for new public types: `ToolFilter`, `ToolPattern`, `NoopTool`, `ScriptTool` (behind feature gate)
-- [ ] T095 Run `cargo build -p swink-agent --features hot-reload` and verify zero compilation errors
-- [ ] T096 Run `cargo test -p swink-agent-macros` and verify all macro tests pass
-- [ ] T097 Run `cargo clippy --workspace -- -D warnings` with all features enabled and fix any warnings
-- [ ] T098 Validate quickstart.md new examples (auto-schema, filtering, hot-reload, noop, confirmation) match actual API
+- [x] T094 Add compile-time `Send + Sync` assertions for new public types: `ToolFilter`, `ToolPattern`, `NoopTool`, `ScriptTool` (behind feature gate)
+- [x] T095 Run `cargo build -p swink-agent --features hot-reload` and verify zero compilation errors
+- [x] T096 Run `cargo test -p swink-agent-macros` and verify all macro tests pass
+- [x] T097 Run `cargo clippy --workspace -- -D warnings` with all features enabled and fix any warnings
+- [x] T098 Validate quickstart.md new examples (auto-schema, filtering, hot-reload, noop, confirmation) match actual API
 
 ---
 

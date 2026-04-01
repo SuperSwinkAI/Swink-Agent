@@ -148,6 +148,10 @@ impl AgentTool for ToolMiddleware {
         self.inner.requires_approval()
     }
 
+    fn approval_context(&self, params: &Value) -> Option<Value> {
+        self.inner.approval_context(params)
+    }
+
     fn execute(
         &self,
         tool_call_id: &str,

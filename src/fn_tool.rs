@@ -44,6 +44,8 @@ type ExecuteFn = Arc<
         + Sync,
 >;
 
+type ApprovalContextFn = Arc<dyn Fn(&Value) -> Option<Value> + Send + Sync>;
+
 // ─── FnTool ─────────────────────────────────────────────────────────────────
 
 /// A tool built entirely from closures and configuration, implementing
@@ -58,6 +60,7 @@ pub struct FnTool {
     schema: Value,
     requires_approval: bool,
     execute_fn: ExecuteFn,
+    approval_context_fn: Option<ApprovalContextFn>,
 }
 
 impl FnTool {
@@ -84,6 +87,7 @@ impl FnTool {
             execute_fn: Arc::new(|_, _, _, _| {
                 Box::pin(async { AgentToolResult::error("not implemented") })
             }),
+            approval_context_fn: None,
         }
     }
 
@@ -148,6 +152,19 @@ impl FnTool {
             Arc::new(move |_id, params, cancel, _on_update| Box::pin(f(params, cancel)));
         self
     }
+
+    /// Set a closure that provides rich context for the approval UI.
+    ///
+    /// When the tool requires approval, this closure is called to produce
+    /// context that is attached to the [`ToolApprovalRequest`](crate::ToolApprovalRequest).
+    #[must_use]
+    pub fn with_approval_context<F>(mut self, f: F) -> Self
+    where
+        F: Fn(&Value) -> Option<Value> + Send + Sync + 'static,
+    {
+        self.approval_context_fn = Some(Arc::new(f));
+        self
+    }
 }
 
 impl AgentTool for FnTool {
@@ -169,6 +186,10 @@ impl AgentTool for FnTool {
 
     fn requires_approval(&self) -> bool {
         self.requires_approval
+    }
+
+    fn approval_context(&self, params: &Value) -> Option<Value> {
+        self.approval_context_fn.as_ref().and_then(|f| f(params))
     }
 
     fn execute(

@@ -202,7 +202,7 @@ pub async fn execute_tools_concurrently(
             let requires_approval = tool_map
                 .get(tc.name.as_str())
                 .is_some_and(|t| t.requires_approval());
-            match check_approval(approve_fn, tc, idx, requires_approval, &results, tx).await {
+            match check_approval(approve_fn, tc, idx, requires_approval, &tool_map, &results, tx).await {
                 ApprovalOutcome::Approved => {}
                 ApprovalOutcome::ApprovedWith(new_params) => {
                     effective_arguments = new_params;
@@ -492,6 +492,7 @@ async fn check_approval(
     tc: &ToolCallInfo,
     idx: usize,
     requires_approval: bool,
+    tool_map: &HashMap<&str, &Arc<dyn AgentTool>>,
     results: &Arc<tokio::sync::Mutex<Vec<(usize, ToolResultMessage)>>>,
     tx: &mpsc::Sender<AgentEvent>,
 ) -> ApprovalOutcome {
@@ -508,11 +509,25 @@ async fn check_approval(
         return ApprovalOutcome::ChannelClosed;
     }
 
+    // Resolve approval context with panic safety.
+    let approval_context = tool_map
+        .get(tc.name.as_str())
+        .and_then(|tool| {
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                tool.approval_context(&tc.arguments)
+            }))
+            .unwrap_or_else(|_| {
+                tracing::warn!(tool_name = %tc.name, "approval_context() panicked — using None");
+                None
+            })
+        });
+
     let request = ToolApprovalRequest {
         tool_call_id: tc.id.clone(),
         tool_name: tc.name.clone(),
         arguments: tc.arguments.clone(),
         requires_approval,
+        context: approval_context,
     };
     let decision = approve_fn(request).await;
     let approved = !matches!(decision, ToolApproval::Rejected);

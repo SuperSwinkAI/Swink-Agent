@@ -36,7 +36,11 @@ mod stream_middleware;
 mod sub_agent;
 pub mod tool;
 mod tool_execution_policy;
+pub mod tool_filter;
 mod tool_middleware;
+mod noop_tool;
+#[cfg(feature = "hot-reload")]
+pub mod hot_reload;
 pub mod tools;
 pub mod types;
 mod util;
@@ -99,15 +103,19 @@ pub use stream_middleware::StreamMiddleware;
 pub use sub_agent::SubAgent;
 pub use tool::{
     AgentTool, AgentToolResult, ApprovalMode, IntoTool, ToolApproval, ToolApprovalRequest,
-    ToolMetadata, redact_sensitive_values, selective_approve, unknown_tool_result, validate_schema,
-    validate_tool_arguments, validation_error_result,
+    ToolMetadata, ToolParameters, redact_sensitive_values, selective_approve, unknown_tool_result,
+    validate_schema, validate_tool_arguments, validation_error_result,
 };
 pub use tool_execution_policy::{
     PriorityFn, ToolCallSummary, ToolExecutionPolicy, ToolExecutionStrategy,
 };
+pub use tool_filter::{ToolFilter, ToolPattern};
 pub use tool_middleware::ToolMiddleware;
+pub use noop_tool::NoopTool;
 #[cfg(feature = "builtin-tools")]
 pub use tools::{BashTool, ReadFileTool, WriteFileTool, builtin_tools};
+#[cfg(feature = "hot-reload")]
+pub use hot_reload::{ScriptTool, ToolWatcher};
 pub use types::{
     AgentContext, AgentMessage, AgentResult, AssistantMessage, ContentBlock, Cost, CustomMessage,
     CustomMessageRegistry, ImageSource, LlmMessage, ModelCapabilities, ModelSpec, StopReason,

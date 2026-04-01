@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "adapters", "auth", "eval", "local-llm", "memory", "policies", "tui", "xtask"]
+members = [".", "adapters", "auth", "eval", "local-llm", "macros", "memory", "policies", "tui", "xtask"]
 resolver = "2"
 
 [workspace.dependencies]
@@ -28,6 +28,9 @@ chrono = { version = "0.4", features = ["serde"] }
 proptest = { version = "1", default-features = false, features = ["std"] }
 rstest = "0.25"
 insta = { version = "1", features = ["json"] }
+syn = { version = "2", features = ["full", "extra-traits"] }
+quote = "1"
+proc-macro2 = "1"
 
 [package]
 name = "swink-agent"
@@ -56,6 +59,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 [features]
 default = ["builtin-tools"]
 builtin-tools = []
+hot-reload = ["dep:notify"]
 tiktoken = ["dep:tiktoken-rs"]
 
 [dependencies]
@@ -75,6 +79,7 @@ tracing.workspace = true
 toml.workspace = true
 chrono.workspace = true
 tiktoken-rs = { version = "0.6", optional = true }
+notify = { version = "7", optional = true }
 
 [[bench]]
 name = "context"

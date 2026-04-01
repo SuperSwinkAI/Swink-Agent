@@ -123,6 +123,18 @@ pub trait AgentTool: Send + Sync {
         None
     }
 
+    /// Optional rich context for the approval UI.
+    ///
+    /// When a tool call requires approval, this method is called to provide
+    /// additional context (e.g., a diff preview, estimated cost, query plan).
+    /// The returned value is attached to the [`ToolApprovalRequest`].
+    ///
+    /// Returns `None` by default — tools work fine without it. Panics are
+    /// caught and treated as `None`.
+    fn approval_context(&self, _params: &Value) -> Option<Value> {
+        None
+    }
+
     /// Optional authentication configuration for this tool.
     ///
     /// When `Some`, the framework resolves credentials from the configured
@@ -258,6 +270,8 @@ pub struct ToolApprovalRequest {
     pub arguments: Value,
     /// Whether the tool itself declared that it requires approval.
     pub requires_approval: bool,
+    /// Optional rich context from the tool's `approval_context()` method.
+    pub context: Option<Value>,
 }
 
 impl fmt::Debug for ToolApprovalRequest {
@@ -267,6 +281,7 @@ impl fmt::Debug for ToolApprovalRequest {
             .field("tool_name", &self.tool_name)
             .field("arguments", &"[REDACTED]")
             .field("requires_approval", &self.requires_approval)
+            .field("context", &self.context)
             .finish()
     }
 }
@@ -397,6 +412,17 @@ fn is_sensitive_string(s: &str) -> bool {
     ENV_VAR_RE.with(|re| re.is_match(s))
 }
 
+// ─── ToolParameters trait ───────────────────────────────────────────────────
+
+/// Trait for types that can produce a JSON Schema describing their fields.
+///
+/// Implemented automatically by `#[derive(ToolSchema)]` from the
+/// `swink-agent-macros` crate.
+pub trait ToolParameters {
+    /// Generate a JSON Schema for this type's fields.
+    fn json_schema() -> Value;
+}
+
 // ─── Compile-time Send + Sync assertions ────────────────────────────────────
 
 const _: () = {
@@ -422,6 +448,7 @@ mod tests {
             tool_name: "bash".into(),
             arguments: json!({"command": "echo secret"}),
             requires_approval: true,
+            context: None,
         };
         let debug = format!("{req:?}");
         assert!(debug.contains("tool_call_id: \"call_1\""));
@@ -699,5 +726,122 @@ mod tests {
 
         let tool = NoAuthTool;
         assert!(tool.auth_config().is_none());
+    }
+
+    // ─── approval_context ────────────────────────────────────────────────
+
+    #[test]
+    fn approval_context_default_none() {
+        use std::future::Future;
+        use std::pin::Pin;
+        use tokio_util::sync::CancellationToken;
+
+        struct PlainTool;
+
+        impl AgentTool for PlainTool {
+            fn name(&self) -> &str { "plain" }
+            fn label(&self) -> &str { "Plain" }
+            fn description(&self) -> &str { "No context" }
+            fn parameters_schema(&self) -> &Value { &Value::Null }
+            fn execute(
+                &self,
+                _tool_call_id: &str,
+                _params: Value,
+                _ct: CancellationToken,
+                _on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
+                _state: Arc<std::sync::RwLock<crate::SessionState>>,
+                _credential: Option<crate::credential::ResolvedCredential>,
+            ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>> {
+                Box::pin(async { AgentToolResult::text("ok") })
+            }
+        }
+
+        let tool = PlainTool;
+        assert!(tool.approval_context(&json!({})).is_none());
+    }
+
+    #[test]
+    fn approval_context_returns_value() {
+        use std::future::Future;
+        use std::pin::Pin;
+        use tokio_util::sync::CancellationToken;
+
+        struct ContextTool;
+
+        impl AgentTool for ContextTool {
+            fn name(&self) -> &str { "ctx" }
+            fn label(&self) -> &str { "Ctx" }
+            fn description(&self) -> &str { "With context" }
+            fn parameters_schema(&self) -> &Value { &Value::Null }
+            fn approval_context(&self, params: &Value) -> Option<Value> {
+                Some(json!({"preview": format!("Will process: {}", params)}))
+            }
+            fn execute(
+                &self,
+                _tool_call_id: &str,
+                _params: Value,
+                _ct: CancellationToken,
+                _on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
+                _state: Arc<std::sync::RwLock<crate::SessionState>>,
+                _credential: Option<crate::credential::ResolvedCredential>,
+            ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>> {
+                Box::pin(async { AgentToolResult::text("ok") })
+            }
+        }
+
+        let tool = ContextTool;
+        let ctx = tool.approval_context(&json!({"file": "test.txt"}));
+        assert!(ctx.is_some());
+        assert!(ctx.unwrap()["preview"].as_str().unwrap().contains("test.txt"));
+    }
+
+    #[test]
+    fn approval_context_panic_caught() {
+        use std::future::Future;
+        use std::pin::Pin;
+        use tokio_util::sync::CancellationToken;
+
+        struct PanickingTool;
+
+        impl AgentTool for PanickingTool {
+            fn name(&self) -> &str { "panicker" }
+            fn label(&self) -> &str { "Panicker" }
+            fn description(&self) -> &str { "Panics in context" }
+            fn parameters_schema(&self) -> &Value { &Value::Null }
+            fn approval_context(&self, _params: &Value) -> Option<Value> {
+                panic!("oops");
+            }
+            fn execute(
+                &self,
+                _tool_call_id: &str,
+                _params: Value,
+                _ct: CancellationToken,
+                _on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
+                _state: Arc<std::sync::RwLock<crate::SessionState>>,
+                _credential: Option<crate::credential::ResolvedCredential>,
+            ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>> {
+                Box::pin(async { AgentToolResult::text("ok") })
+            }
+        }
+
+        let tool = PanickingTool;
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            tool.approval_context(&json!({}))
+        }));
+        // Panic is caught
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn approval_request_includes_context() {
+        let ctx = json!({"diff": "+new line"});
+        let req = ToolApprovalRequest {
+            tool_call_id: "call_1".into(),
+            tool_name: "write_file".into(),
+            arguments: json!({"path": "/tmp/test"}),
+            requires_approval: true,
+            context: Some(ctx.clone()),
+        };
+        assert_eq!(req.context, Some(ctx));
     }
 }

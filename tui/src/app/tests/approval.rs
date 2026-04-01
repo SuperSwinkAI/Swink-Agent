@@ -23,6 +23,7 @@ async fn smart_mode_auto_approves_trusted_tool() {
         tool_name: "bash".into(),
         arguments: serde_json::json!({"command": "ls"}),
         requires_approval: true,
+        context: None,
     };
 
     app.approval_tx.send((request, tx)).await.unwrap();
@@ -45,6 +46,7 @@ async fn smart_mode_prompts_for_untrusted_tool() {
         tool_name: "write_file".into(),
         arguments: serde_json::json!({}),
         requires_approval: true,
+        context: None,
     };
 
     app.handle_approval_request(request, tx);
@@ -62,6 +64,7 @@ async fn always_approve_adds_to_trusted_set() {
         tool_name: "bash".into(),
         arguments: serde_json::json!({}),
         requires_approval: true,
+        context: None,
     };
     app.pending_approval = Some((request, tx));
 
@@ -140,6 +143,7 @@ async fn smart_mode_auto_approves_readonly_tool() {
         tool_name: "read_file".into(),
         arguments: serde_json::json!({}),
         requires_approval: false,
+        context: None,
     };
 
     app.handle_approval_request(request, tx);
@@ -161,6 +165,7 @@ async fn smart_mode_prompts_for_write_tool() {
         tool_name: "write_file".into(),
         arguments: serde_json::json!({}),
         requires_approval: true,
+        context: None,
     };
 
     app.handle_approval_request(request, tx);
@@ -178,6 +183,7 @@ async fn enabled_mode_prompts_for_all_tools() {
         tool_name: "read_file".into(),
         arguments: serde_json::json!({}),
         requires_approval: false,
+        context: None,
     };
 
     app.handle_approval_request(request, tx);
@@ -224,6 +230,7 @@ async fn trust_follow_up_triggers_after_approval_in_smart_mode() {
         tool_name: "bash".into(),
         arguments: serde_json::json!({}),
         requires_approval: true,
+        context: None,
     };
     app.pending_approval = Some((request, tx));
 
@@ -249,6 +256,7 @@ async fn trust_follow_up_not_triggered_in_enabled_mode() {
         tool_name: "bash".into(),
         arguments: serde_json::json!({}),
         requires_approval: true,
+        context: None,
     };
     app.pending_approval = Some((request, tx));
 
@@ -325,6 +333,7 @@ async fn trusted_tool_auto_approves_in_smart_mode() {
         tool_name: "bash".into(),
         arguments: serde_json::json!({}),
         requires_approval: true,
+        context: None,
     };
 
     app.handle_approval_request(request, tx);
@@ -348,6 +357,7 @@ async fn trusted_tool_still_prompts_in_enabled_mode() {
         tool_name: "bash".into(),
         arguments: serde_json::json!({}),
         requires_approval: true,
+        context: None,
     };
 
     app.handle_approval_request(request, tx);
@@ -441,6 +451,7 @@ async fn trust_follow_up_cleared_on_new_approval() {
         tool_name: "new_tool".into(),
         arguments: serde_json::json!({}),
         requires_approval: true,
+        context: None,
     };
 
     app.handle_approval_request(request, tx);
@@ -463,6 +474,7 @@ async fn concurrent_plan_and_tool_approval_plan_takes_precedence() {
         tool_name: "bash".into(),
         arguments: serde_json::json!({}),
         requires_approval: true,
+        context: None,
     };
     app.pending_approval = Some((request, tx));
 

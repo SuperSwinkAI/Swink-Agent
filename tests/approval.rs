@@ -323,6 +323,7 @@ async fn selective_approve_skips_non_requiring_tools() {
         tool_name: "safe_tool".into(),
         arguments: serde_json::json!({}),
         requires_approval: false,
+        context: None,
     };
 
     let result = wrapped(req).await;
@@ -349,6 +350,7 @@ async fn selective_approve_calls_inner_for_requiring_tools() {
         tool_name: "bash".into(),
         arguments: serde_json::json!({}),
         requires_approval: true,
+        context: None,
     };
 
     let result = wrapped(req).await;
