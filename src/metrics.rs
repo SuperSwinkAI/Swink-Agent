@@ -46,18 +46,17 @@ pub struct TurnMetrics {
 
 // ─── MetricsCollector Trait ─────────────────────────────────────────────────
 
+pub type MetricsFuture<'a> = Pin<Box<dyn Future<Output = ()> + Send + 'a>>;
+///
 /// Async observer that receives structured metrics at the end of each turn.
 ///
 /// Implementations can persist metrics, forward to monitoring systems, or
 /// accumulate for post-run analysis.
-pub type MetricsFuture<'a> = Pin<Box<dyn Future<Output = ()> + Send + 'a>>;
 ///
 /// # Example
 ///
 /// ```rust
-/// use std::future::Future;
-/// use std::pin::Pin;
-/// use swink_agent::metrics::{MetricsCollector, TurnMetrics};
+/// use swink_agent::{MetricsCollector, MetricsFuture, TurnMetrics};
 ///
 /// struct LogMetrics;
 ///
@@ -65,7 +64,7 @@ pub type MetricsFuture<'a> = Pin<Box<dyn Future<Output = ()> + Send + 'a>>;
 ///     fn on_metrics<'a>(
 ///         &'a self,
 ///         metrics: &'a TurnMetrics,
-///     ) -> Pin<Box<dyn Future<Output = ()> + Send + 'a>> {
+///     ) -> MetricsFuture<'a> {
 ///         Box::pin(async move {
 ///             println!("Turn {}: LLM took {:?}", metrics.turn_index, metrics.llm_call_duration);
 ///         })

@@ -56,8 +56,8 @@ pub use agent::{
     Agent, AgentOptions, AgentState, DEFAULT_PLAN_MODE_ADDENDUM, FollowUpMode, SteeringMode,
     SubscriptionId, default_convert,
 };
-pub use async_context_transformer::AsyncContextTransformer;
-pub use checkpoint::{Checkpoint, CheckpointStore, LoopCheckpoint};
+pub use async_context_transformer::{AsyncContextTransformer, AsyncTransformFuture};
+pub use checkpoint::{Checkpoint, CheckpointFuture, CheckpointStore, LoopCheckpoint};
 pub use config::{
     AgentConfig, ApprovalModeConfig, BudgetGuardConfig, FollowUpModeConfig, RetryConfig,
     SteeringModeConfig, StreamOptionsConfig,
@@ -84,7 +84,7 @@ pub use message_provider::{
     message_channel,
 };
 pub use messaging::{AgentMailbox, send_to};
-pub use metrics::{MetricsCollector, ToolExecMetrics, TurnMetrics};
+pub use metrics::{MetricsCollector, MetricsFuture, ToolExecMetrics, TurnMetrics};
 pub use model_catalog::{
     ApiVersion, AuthMode, CatalogPreset, ModelCatalog, PresetCapability, PresetCatalog,
     PresetStatus, ProviderCatalog, ProviderKind, calculate_cost, model_catalog,
@@ -112,6 +112,7 @@ pub use tool::{
 };
 pub use tool_execution_policy::{
     PriorityFn, ToolCallSummary, ToolExecutionPolicy, ToolExecutionStrategy,
+    ToolExecutionStrategyFuture,
 };
 pub use tool_filter::{ToolFilter, ToolPattern};
 pub use tool_middleware::ToolMiddleware;

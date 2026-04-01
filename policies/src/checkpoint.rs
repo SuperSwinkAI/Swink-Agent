@@ -3,7 +3,10 @@
 
 use std::sync::Arc;
 
-use swink_agent::{Checkpoint, CheckpointStore, PolicyContext, PolicyVerdict, PostTurnPolicy, TurnPolicyContext};
+use swink_agent::{
+    Checkpoint, CheckpointFuture, CheckpointStore, PolicyContext, PolicyVerdict, PostTurnPolicy,
+    TurnPolicyContext,
+};
 
 /// Persists agent state after each turn via a [`CheckpointStore`].
 ///
@@ -90,13 +93,8 @@ impl PostTurnPolicy for CheckpointPolicy {
 mod tests {
     use super::*;
     use std::collections::HashMap;
-    use std::future::Future;
-    use std::io;
-    use std::pin::Pin;
 
     use swink_agent::{AssistantMessage, Cost, StopReason, Usage};
-
-    type CheckpointFuture<'a, T> = Pin<Box<dyn Future<Output = io::Result<T>> + Send + 'a>>;
 
     /// Minimal in-memory checkpoint store for testing.
     struct MockCheckpointStore {
