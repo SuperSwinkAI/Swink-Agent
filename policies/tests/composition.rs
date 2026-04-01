@@ -52,6 +52,7 @@ fn all_policies_compose() {
         }],
         timestamp: 0,
     }))];
+    let state = swink_agent::SessionState::new();
     let ctx = PolicyContext {
         turn_index: 0,
         accumulated_usage: &usage,
@@ -59,6 +60,7 @@ fn all_policies_compose() {
         message_count: 1,
         overflow_signal: false,
         new_messages: &messages,
+        state: &state,
     };
 
     // PreTurn: guard allows benign message

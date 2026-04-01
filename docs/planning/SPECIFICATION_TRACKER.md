@@ -7,9 +7,9 @@
 - Provider Roadmap: [PROVIDER_EXPANSION_ROADMAP.md](PROVIDER_EXPANSION_ROADMAP.md)
 - Eval Roadmap: [EVAL.md](EVAL.md)
 
-**Current Focus:** 23/31 specs have plans, 24/31 have tasks, 23/31 complete (001–014, 020–024, 025–031). Phase 0 + Phase 1 + Phase 2 done. Phase 3 partially done (011–014, 020 complete). Phase 4 done (021–024 complete). Phase 5 done (025–029 complete). Phase 6 done (030 complete). Phase 7 done (031 complete). Next: plan + tasks for remaining adapters (015–019). 5 specs need plans (015–019). 0 specs need tasks.
+**Current Focus:** 35 specs total — 32/35 have plans, 32/35 have tasks, 24/35 complete. Phase 0–2 done. Phase 3: 7/10 complete (016, 017, 019 need plans). Phase 4: 3/4 complete (021 has extended tasks). Phase 5–6 done. Phase 7 done. Phase 8: 033 + 034 complete, 035 ready for implementation. Next: plan remaining adapters (016, 017, 019); implement 035.
 
-> **Numbering System:** Spec numbers (001–030) are sequential identifiers that
+> **Numbering System:** Spec numbers (001–035) are sequential identifiers that
 > never change. Phase numbers represent execution order and can be reassigned
 > as priorities shift.
 
@@ -48,19 +48,19 @@ pluggable trait boundaries.
 **Goal:** The agent loop execution engine and its public API wrapper —
 the two central verticals that make the agent functional.
 
-**Status:** 2/2 specs planned, 2/2 have tasks, 2/2 complete, 2/2 specs defined
+**Status:** 2/2 specs planned, 2/2 have tasks, 2/2 complete (core merged), 2/2 specs defined
 
 ### Implementation Checklist
 
 - [x] **1.1** Agent Loop — Nested inner/outer loop, concurrent tool dispatch, steering/follow-up, retry, overflow recovery (§8, §9, §12)
   - Spec: `specs/004-agent-loop/spec.md`
   - Branch: `004-agent-loop`
-  - Status: Complete (65/65 tasks, merged to main)
+  - Status: Complete (75/75 tasks, merged to main)
   - Depends on: 0.2, 0.3
 - [x] **1.2** Agent Struct & Public API — Stateful wrapper, streaming/async/sync API, structured output, queues, subscriptions (§13)
   - Spec: `specs/005-agent-struct/spec.md`
   - Branch: `005-agent-struct`
-  - Status: Complete (78/78 tasks, merged to main)
+  - Status: Complete (78/93 tasks, merged to main — extended requirements pending)
   - Depends on: 1.1
 
 ---
@@ -70,24 +70,24 @@ the two central verticals that make the agent functional.
 **Goal:** Context management, tool system extensions, model catalog, multi-agent
 primitives, and loop governance — capabilities that enhance the core engine.
 
-**Status:** 5/5 specs planned, 5/5 have tasks, 5/5 complete, 5/5 specs defined
+**Status:** 5/5 specs planned, 5/5 have tasks, 5/5 complete (core merged), 5/5 specs defined
 
 ### Implementation Checklist
 
 - [x] **2.1** Context Management — Sliding window pruning, transform hooks (sync/async), versioned history, convert_to_llm pipeline (§5, §10.1)
   - Spec: `specs/006-context-management/spec.md`
   - Branch: `006-context-management`
-  - Status: Complete (46/46 tasks, merged to main)
+  - Status: Complete (46/76 tasks, merged to main — extended requirements pending)
   - Depends on: 0.2
 - [x] **2.2** Tool System Extensions — Transformer, validator, middleware, execution policies, FnTool, builtin tools (§4)
   - Spec: `specs/007-tool-system-extensions/spec.md`
   - Branch: `007-tool-system-extensions`
-  - Status: Complete (64/64 tasks, merged to main)
+  - Status: Complete (64/98 tasks, merged to main — extended requirements pending)
   - Depends on: 0.3
 - [x] **2.3** Model Catalog, Presets & Fallback — TOML-driven catalog, preset-to-connection resolution, automatic fallback chain
   - Spec: `specs/008-model-catalog-presets/spec.md`
   - Branch: `008-model-catalog-presets`
-  - Status: Complete (30/30 tasks, merged to main)
+  - Status: Complete (30/44 tasks, merged to main — extended requirements pending)
   - Depends on: 0.3
 - [x] **2.4** Multi-Agent System — AgentRegistry, AgentMailbox, AgentOrchestrator, SubAgent tool wrapper
   - Spec: `specs/009-multi-agent-system/spec.md`
@@ -97,7 +97,7 @@ primitives, and loop governance — capabilities that enhance the core engine.
 - [x] **2.5** Loop Policies & Observability — LoopPolicy, StreamMiddleware, MetricsCollector, PostTurnHook, BudgetGuard, Checkpoint
   - Spec: `specs/010-loop-policies-observability/spec.md`
   - Branch: `010-loop-policies-observability`
-  - Status: Complete (72/72 tasks, merged to main)
+  - Status: Complete (72/95 tasks, merged to main — extended requirements pending)
   - Depends on: 1.1
 
 ---
@@ -107,14 +107,14 @@ primitives, and loop governance — capabilities that enhance the core engine.
 **Goal:** LLM provider adapters — shared infrastructure and one adapter per
 provider. Each adapter implements StreamFn for its provider's streaming protocol.
 
-**Status:** 5/10 specs planned, 5/10 have tasks, 5/10 complete, 10/10 specs defined
+**Status:** 7/10 specs planned, 7/10 have tasks, 7/10 complete, 10/10 specs defined
 
 ### Implementation Checklist
 
 - [x] **3.1** Adapter Shared Infrastructure — MessageConverter trait, HttpErrorClassifier, SSE parsing, remote preset construction (§15.1)
   - Spec: `specs/011-adapter-shared-infra/spec.md`
   - Branch: `011-adapter-shared-infra`
-  - Status: Complete (40/40 tasks, merged to main)
+  - Status: Complete (40/63 tasks, merged to main — extended requirements pending)
   - Depends on: 0.3
 - [x] **3.2** Adapter: Anthropic — AnthropicStreamFn, /v1/messages SSE, thinking blocks with budget control (§15.1)
   - Spec: `specs/012-adapter-anthropic/spec.md`
@@ -131,10 +131,10 @@ provider. Each adapter implements StreamFn for its provider's streaming protocol
   - Branch: `014-adapter-ollama`
   - Status: Complete (74/74 tasks, merged to main)
   - Depends on: 3.1
-- [ ] **3.5** Adapter: Google Gemini — GeminiStreamFn, Gemini API SSE (§15.1)
+- [x] **3.5** Adapter: Google Gemini — GeminiStreamFn, Gemini API SSE (§15.1)
   - Spec: `specs/015-adapter-gemini/spec.md`
   - Branch: `015-adapter-gemini`
-  - Status: Specify complete — needs plan + tasks
+  - Status: Complete (44/44 tasks, merged to main)
   - Depends on: 3.1
 - [ ] **3.6** Adapter: Azure OpenAI — AzureStreamFn, deployment routing, API versioning (§15.1)
   - Spec: `specs/016-adapter-azure/spec.md`
@@ -146,10 +146,10 @@ provider. Each adapter implements StreamFn for its provider's streaming protocol
   - Branch: `017-adapter-xai`
   - Status: Specify complete — needs plan + tasks
   - Depends on: 3.1
-- [ ] **3.8** Adapter: Mistral — MistralStreamFn, Mistral API SSE (§15.1)
+- [x] **3.8** Adapter: Mistral — MistralStreamFn, Mistral API SSE (§15.1)
   - Spec: `specs/018-adapter-mistral/spec.md`
   - Branch: `018-adapter-mistral`
-  - Status: Specify complete — needs plan + tasks
+  - Status: Complete (42/42 tasks, merged to main)
   - Depends on: 3.1
 - [ ] **3.9** Adapter: AWS Bedrock — BedrockStreamFn, SSE, AWS SigV4 signing (§15.1)
   - Spec: `specs/019-adapter-bedrock/spec.md`
@@ -180,7 +180,7 @@ evaluation — each depends only on the core library.
 - [x] **4.1** Memory Crate — SessionStore (sync/async), JsonlSessionStore, SummarizingCompactor, session metadata
   - Spec: `specs/021-memory-crate/spec.md`
   - Branch: `021-memory-crate`
-  - Status: Complete (57/57 tasks, merged to main)
+  - Status: Complete (57/98 tasks, merged to main — extended requirements pending)
   - Depends on: 0.2
 - [x] **4.2** Local LLM Crate — LocalModel (SmolLM3-3B), LocalStreamFn, EmbeddingModel, presets, progress reporting
   - Spec: `specs/022-local-llm-crate/spec.md`
@@ -263,15 +263,47 @@ criteria.
 **Goal:** Replace scattered loop hooks (BudgetGuard, LoopPolicy, PostTurnHook,
 ToolValidator, ToolCallTransformer) with a unified, configurable policy slot system.
 
-**Status:** 1/1 specs planned, 1/1 have tasks, 1/1 complete, 1/1 specs defined
+**Status:** 2/2 specs planned, 2/2 have tasks, 2/2 complete, 2/2 specs defined
 
 ### Implementation Checklist
 
 - [x] **7.1** Policy Slots — Four configurable policy slots (PreTurn, PreDispatch, PostTurn, PostLoop), verdict enums, built-in policies (Budget, Checkpoint, DenyList, LoopDetection, MaxTurns, Sandbox)
   - Spec: `specs/031-policy-slots/spec.md`
   - Branch: `031-policy-slots`
-  - Status: Complete (83/83 tasks, merged to main)
+  - Status: Complete (93/93 tasks, merged to main)
   - Depends on: 2.5
+- [x] **7.2** Policy Recipes Crate — swink-agent-policies crate with 10 feature-gated policy implementations (PromptInjectionGuard, PiiRedactor, ContentFilter, AuditLogger, Budget, MaxTurns, DenyList, Sandbox, LoopDetection, Checkpoint)
+  - Spec: `specs/032-policy-recipes-crate/spec.md`
+  - Branch: `032-policy-recipes-crate`
+  - Status: Complete (43/43 tasks, merged to main)
+  - Depends on: 7.1
+
+---
+
+## Phase 8: Infrastructure & Credentials
+
+**Goal:** Workspace-level feature gates, session state persistence, and
+credential management — cross-cutting infrastructure for production readiness.
+
+**Status:** 3/3 specs planned, 3/3 have tasks, 2/3 complete, 3/3 specs defined
+
+### Implementation Checklist
+
+- [x] **8.1** Workspace Feature Gates — Per-adapter and local-llm feature flags, cyclic dependency detection, conditional compilation
+  - Spec: `specs/033-workspace-feature-gates/spec.md`
+  - Branch: `033-workspace-feature-gates`
+  - Status: Complete (25/25 tasks, merged to main)
+  - Depends on: 3.1, 4.2
+- [x] **8.2** Session State Store — Key-value state store per session, integrated with SessionStore and JSONL persistence
+  - Spec: `specs/034-session-state-store/spec.md`
+  - Branch: `034-session-state-store`
+  - Status: Complete (93/93 tasks, merged to main)
+  - Depends on: 4.1
+- [ ] **8.3** Credential Management — OAuth2 refresh, credential provider trait, in-memory credential store, deduplication
+  - Spec: `specs/035-credential-management/spec.md`
+  - Branch: `035-credential-management`
+  - Status: Ready for implementation (0/73 tasks)
+  - Depends on: 3.1
 
 ---
 
@@ -324,6 +356,13 @@ graph TD
 
     subgraph Phase 7: Policy Slots
         W["7.1 Policy Slots"]
+        X["7.2 Policy Recipes"]
+    end
+
+    subgraph Phase 8: Infrastructure
+        Y["8.1 Feature Gates"]
+        Z["8.2 Session State"]
+        AA["8.3 Credentials"]
     end
 
     A --> B
@@ -348,6 +387,11 @@ graph TD
     R --> T
     R --> U
     J --> W
+    W --> X
+    K --> Y
+    N --> Y
+    M --> Z
+    K --> AA
     E --> V
     F --> V
     G --> V
@@ -375,6 +419,10 @@ graph TD
     style U fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
     style V fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
     style W fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
+    style X fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
+    style Y fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
+    style Z fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
+    style AA fill:#fff,color:#000,stroke:#6b7280,stroke-width:2px
 ```
 
 > ⬜ Not started · 🟢 Complete · 🟡 In progress · 🔴 Blocked
@@ -402,3 +450,9 @@ After **1.2 Agent Struct** completes:
 
 After **0.2 Foundation Types** completes:
 - **Track F (Companion):** 4.1 Memory (depends only on core types)
+
+After **4.1 Memory** completes:
+- **Track G (Session State):** 8.2 Session State Store
+
+After **3.1 Shared Infra** completes:
+- **Track H (Credentials):** 8.3 Credential Management (can proceed in parallel with adapters)

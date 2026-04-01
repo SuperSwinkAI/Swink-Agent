@@ -1004,6 +1004,7 @@ impl AgentTool for DummyTool {
         _arguments: Value,
         _cancellation_token: CancellationToken,
         _on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
+        _state: std::sync::Arc<std::sync::RwLock<swink_agent::SessionState>>,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = AgentToolResult> + Send + '_>> {
         Box::pin(async { AgentToolResult::text("done") })
     }

@@ -102,7 +102,7 @@ mod tests {
     use super::*;
     use swink_agent::{Cost, Usage};
 
-    fn make_ctx<'a>(usage: &'a Usage, cost: &'a Cost) -> PolicyContext<'a> {
+    fn make_ctx<'a>(usage: &'a Usage, cost: &'a Cost, state: &'a swink_agent::SessionState) -> PolicyContext<'a> {
         PolicyContext {
             turn_index: 0,
             accumulated_usage: usage,
@@ -110,6 +110,7 @@ mod tests {
             message_count: 0,
             overflow_signal: false,
             new_messages: &[],
+            state,
         }
     }
 
@@ -123,7 +124,8 @@ mod tests {
         let policy = BudgetPolicy::new();
         let usage = Usage { input: 1000, output: 500, ..Default::default() };
         let cost = Cost { total: 10.0, ..Default::default() };
-        let ctx = make_ctx(&usage, &cost);
+        let state = swink_agent::SessionState::new();
+        let ctx = make_ctx(&usage, &cost, &state);
         assert!(matches!(policy.evaluate(&ctx), PolicyVerdict::Continue));
     }
 
@@ -132,7 +134,8 @@ mod tests {
         let policy = BudgetPolicy::new().max_cost(1.0);
         let usage = Usage::default();
         let cost = Cost { total: 1.5, ..Default::default() };
-        let ctx = make_ctx(&usage, &cost);
+        let state = swink_agent::SessionState::new();
+        let ctx = make_ctx(&usage, &cost, &state);
         assert!(matches!(policy.evaluate(&ctx), PolicyVerdict::Stop(_)));
     }
 
@@ -141,7 +144,8 @@ mod tests {
         let policy = BudgetPolicy::new().max_cost(5.0);
         let usage = Usage::default();
         let cost = Cost { total: 4.99, ..Default::default() };
-        let ctx = make_ctx(&usage, &cost);
+        let state = swink_agent::SessionState::new();
+        let ctx = make_ctx(&usage, &cost, &state);
         assert!(matches!(policy.evaluate(&ctx), PolicyVerdict::Continue));
     }
 
@@ -150,7 +154,8 @@ mod tests {
         let policy = BudgetPolicy::new().max_input(100);
         let usage = Usage { input: 150, ..Default::default() };
         let cost = Cost::default();
-        let ctx = make_ctx(&usage, &cost);
+        let state = swink_agent::SessionState::new();
+        let ctx = make_ctx(&usage, &cost, &state);
         assert!(matches!(policy.evaluate(&ctx), PolicyVerdict::Stop(_)));
     }
 
@@ -159,7 +164,8 @@ mod tests {
         let policy = BudgetPolicy::new().max_cost(1.0);
         let usage = Usage::default();
         let cost = Cost { total: 1.0, ..Default::default() };
-        let ctx = make_ctx(&usage, &cost);
+        let state = swink_agent::SessionState::new();
+        let ctx = make_ctx(&usage, &cost, &state);
         // At exactly the limit, should stop (>= comparison)
         assert!(matches!(policy.evaluate(&ctx), PolicyVerdict::Stop(_)));
     }

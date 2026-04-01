@@ -43,6 +43,7 @@ fn minimal_snapshot() -> TurnSnapshot {
         usage: Usage::default(),
         cost: Cost::default(),
         stop_reason: StopReason::Stop,
+        state_delta: None,
     }
 }
 
@@ -184,6 +185,12 @@ fn all_agent_event_variants_serialize_to_json() {
                 old: model.clone(),
                 new: ModelSpec::new("openai", "gpt-4"),
                 reason: "throttled".into(),
+            },
+        ),
+        (
+            "StateChanged",
+            AgentEvent::StateChanged {
+                delta: swink_agent::StateDelta::default(),
             },
         ),
         (

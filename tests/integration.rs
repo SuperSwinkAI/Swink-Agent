@@ -546,9 +546,13 @@ async fn context_window_overflow_error() {
 
     let mut agent = Agent::new(
         AgentOptions::new("test", default_model(), stream_fn, default_convert)
-            .with_transform_context(move |_msgs: &mut Vec<AgentMessage>, overflow: bool| {
+            .with_transform_context(move |msgs: &mut Vec<AgentMessage>, overflow: bool| {
                 if overflow {
                     overflow_clone.store(true, Ordering::SeqCst);
+                    // Must actually compact so in-place recovery can retry.
+                    if msgs.len() > 1 {
+                        msgs.truncate(1);
+                    }
                 }
             })
             .with_retry_strategy(Box::new(
@@ -558,7 +562,16 @@ async fn context_window_overflow_error() {
             )),
     );
 
-    let result = agent.prompt_async(vec![user_msg("hi")]).await.unwrap();
+    // Provide multiple messages so the transformer has something to compact.
+    let padding = "x".repeat(400);
+    let result = agent
+        .prompt_async(vec![
+            user_msg(&format!("msg0:{padding}")),
+            user_msg(&format!("msg1:{padding}")),
+            user_msg(&format!("msg2:{padding}")),
+        ])
+        .await
+        .unwrap();
 
     // The overflow signal should have been passed to transform_context.
     assert!(

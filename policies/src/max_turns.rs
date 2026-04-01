@@ -68,7 +68,7 @@ mod tests {
     use super::*;
     use swink_agent::{Cost, Usage};
 
-    fn make_ctx_at_turn<'a>(turn: usize, usage: &'a Usage, cost: &'a Cost) -> PolicyContext<'a> {
+    fn make_ctx_at_turn<'a>(turn: usize, usage: &'a Usage, cost: &'a Cost, state: &'a swink_agent::SessionState) -> PolicyContext<'a> {
         PolicyContext {
             turn_index: turn,
             accumulated_usage: usage,
@@ -76,6 +76,7 @@ mod tests {
             message_count: 0,
             overflow_signal: false,
             new_messages: &[],
+            state,
         }
     }
 
@@ -84,7 +85,8 @@ mod tests {
         let policy = MaxTurnsPolicy::new(5);
         let usage = Usage::default();
         let cost = Cost::default();
-        let ctx = make_ctx_at_turn(5, &usage, &cost);
+        let state = swink_agent::SessionState::new();
+        let ctx = make_ctx_at_turn(5, &usage, &cost, &state);
         assert!(matches!(PreTurnPolicy::evaluate(&policy, &ctx), PolicyVerdict::Stop(_)));
     }
 
@@ -93,7 +95,8 @@ mod tests {
         let policy = MaxTurnsPolicy::new(5);
         let usage = Usage::default();
         let cost = Cost::default();
-        let ctx = make_ctx_at_turn(4, &usage, &cost);
+        let state = swink_agent::SessionState::new();
+        let ctx = make_ctx_at_turn(4, &usage, &cost, &state);
         assert!(matches!(PreTurnPolicy::evaluate(&policy, &ctx), PolicyVerdict::Continue));
     }
 
@@ -104,14 +107,16 @@ mod tests {
         let cost = Cost::default();
 
         // At turn 2 (0-indexed), still below max of 3
-        let ctx = make_ctx_at_turn(2, &usage, &cost);
+        let state = swink_agent::SessionState::new();
+        let ctx = make_ctx_at_turn(2, &usage, &cost, &state);
         assert!(matches!(
             PreTurnPolicy::evaluate(&policy, &ctx),
             PolicyVerdict::Continue
         ));
 
         // At turn 3, reaches max
-        let ctx = make_ctx_at_turn(3, &usage, &cost);
+        let state = swink_agent::SessionState::new();
+        let ctx = make_ctx_at_turn(3, &usage, &cost, &state);
         assert!(matches!(
             PreTurnPolicy::evaluate(&policy, &ctx),
             PolicyVerdict::Stop(_)

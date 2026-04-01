@@ -403,6 +403,77 @@ impl SessionStore for JsonlSessionStore {
 
         Ok((meta, messages))
     }
+
+    fn save_state(&self, id: &str, state: &serde_json::Value) -> io::Result<()> {
+        validate_session_id(id)?;
+
+        let path = self.sessions_dir.join(format!("{id}.jsonl"));
+        if !path.exists() {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("session not found: {id}"),
+            ));
+        }
+
+        // Read all lines, replace or append the state line.
+        let content = std::fs::read_to_string(&path)?;
+        let mut lines: Vec<String> = content.lines().map(String::from).collect();
+
+        let state_line = serde_json::to_string(&serde_json::json!({
+            "_state": true,
+            "data": state
+        }))
+        .map_err(io::Error::other)?;
+
+        // Find existing _state line and replace, or append.
+        let mut found = false;
+        for line in &mut lines {
+            if line.contains("\"_state\"")
+                && serde_json::from_str::<serde_json::Value>(line)
+                    .ok()
+                    .and_then(|v| v.get("_state").and_then(serde_json::Value::as_bool))
+                    == Some(true)
+            {
+                line.clone_from(&state_line);
+                found = true;
+                break;
+            }
+        }
+        if !found {
+            lines.push(state_line);
+        }
+
+        let mut file = std::fs::File::create(&path)?;
+        for line in &lines {
+            writeln!(file, "{line}")?;
+        }
+        file.flush()?;
+        Ok(())
+    }
+
+    fn load_state(&self, id: &str) -> io::Result<Option<serde_json::Value>> {
+        validate_session_id(id)?;
+
+        let path = self.sessions_dir.join(format!("{id}.jsonl"));
+        if !path.exists() {
+            return Ok(None);
+        }
+
+        let file = std::fs::File::open(&path)?;
+        let reader = io::BufReader::new(file);
+
+        for line_result in reader.lines() {
+            let line = line_result?;
+            if line.contains("\"_state\"")
+                && let Ok(val) = serde_json::from_str::<serde_json::Value>(&line)
+                && val.get("_state").and_then(serde_json::Value::as_bool) == Some(true)
+            {
+                return Ok(val.get("data").cloned());
+            }
+        }
+
+        Ok(None)
+    }
 }
 
 #[cfg(test)]

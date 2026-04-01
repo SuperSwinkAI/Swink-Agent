@@ -79,6 +79,8 @@ pub struct PolicyContext<'a> {
     /// Policies should only scan this slice, never the full session history,
     /// to avoid redundant work on messages that have already been evaluated.
     pub new_messages: &'a [AgentMessage],
+    /// Read-only access to the session state.
+    pub state: &'a crate::SessionState,
 }
 
 /// Per-tool-call context for `PreDispatch` policies.
@@ -452,7 +454,7 @@ mod tests {
         (Usage::default(), Cost::default())
     }
 
-    fn make_ctx<'a>(usage: &'a Usage, cost: &'a Cost) -> PolicyContext<'a> {
+    fn make_ctx<'a>(usage: &'a Usage, cost: &'a Cost, state: &'a crate::SessionState) -> PolicyContext<'a> {
         PolicyContext {
             turn_index: 0,
             accumulated_usage: usage,
@@ -460,6 +462,7 @@ mod tests {
             message_count: 5,
             overflow_signal: false,
             new_messages: &[],
+            state,
         }
     }
 
@@ -489,7 +492,8 @@ mod tests {
     #[test]
     fn policy_context_construction() {
         let (usage, cost) = test_context();
-        let ctx = make_ctx(&usage, &cost);
+        let state = crate::SessionState::new();
+        let ctx = make_ctx(&usage, &cost, &state);
         assert_eq!(ctx.turn_index, 0);
         assert_eq!(ctx.message_count, 5);
         assert!(!ctx.overflow_signal);
@@ -501,7 +505,8 @@ mod tests {
     fn empty_vec_returns_continue() {
         let policies: Vec<Arc<dyn PreTurnPolicy>> = vec![];
         let (usage, cost) = test_context();
-        let ctx = make_ctx(&usage, &cost);
+        let state = crate::SessionState::new();
+        let ctx = make_ctx(&usage, &cost, &state);
         let result = run_policies(&policies, &ctx);
         assert!(matches!(result, PolicyVerdict::Continue));
     }
@@ -511,7 +516,8 @@ mod tests {
         let p = Arc::new(TestPolicy::new("a", || PolicyVerdict::Continue));
         let policies: Vec<Arc<dyn PreTurnPolicy>> = vec![p.clone()];
         let (usage, cost) = test_context();
-        let ctx = make_ctx(&usage, &cost);
+        let state = crate::SessionState::new();
+        let ctx = make_ctx(&usage, &cost, &state);
         let result = run_policies(&policies, &ctx);
         assert!(matches!(result, PolicyVerdict::Continue));
         assert_eq!(p.calls(), 1);
@@ -523,7 +529,8 @@ mod tests {
         let p2 = Arc::new(TestPolicy::new("never_called", || PolicyVerdict::Continue));
         let policies: Vec<Arc<dyn PreTurnPolicy>> = vec![p1.clone(), p2.clone()];
         let (usage, cost) = test_context();
-        let ctx = make_ctx(&usage, &cost);
+        let state = crate::SessionState::new();
+        let ctx = make_ctx(&usage, &cost, &state);
         let result = run_policies(&policies, &ctx);
         assert!(matches!(result, PolicyVerdict::Stop(ref r) if r == "done"));
         assert_eq!(p1.calls(), 1);
@@ -540,7 +547,8 @@ mod tests {
         }));
         let policies: Vec<Arc<dyn PreTurnPolicy>> = vec![p1, p2];
         let (usage, cost) = test_context();
-        let ctx = make_ctx(&usage, &cost);
+        let state = crate::SessionState::new();
+        let ctx = make_ctx(&usage, &cost, &state);
         let result = run_policies(&policies, &ctx);
         match result {
             PolicyVerdict::Inject(msgs) => assert_eq!(msgs.len(), 2),
@@ -556,7 +564,8 @@ mod tests {
         let p2 = Arc::new(TestPolicy::new("stopper", || PolicyVerdict::Stop("halt".into())));
         let policies: Vec<Arc<dyn PreTurnPolicy>> = vec![p1, p2];
         let (usage, cost) = test_context();
-        let ctx = make_ctx(&usage, &cost);
+        let state = crate::SessionState::new();
+        let ctx = make_ctx(&usage, &cost, &state);
         let result = run_policies(&policies, &ctx);
         assert!(matches!(result, PolicyVerdict::Stop(ref r) if r == "halt"));
     }
@@ -567,7 +576,8 @@ mod tests {
         let p2 = Arc::new(TestPolicy::new("after_panic", || PolicyVerdict::Continue));
         let policies: Vec<Arc<dyn PreTurnPolicy>> = vec![p1, p2.clone()];
         let (usage, cost) = test_context();
-        let ctx = make_ctx(&usage, &cost);
+        let state = crate::SessionState::new();
+        let ctx = make_ctx(&usage, &cost, &state);
         let result = run_policies(&policies, &ctx);
         assert!(matches!(result, PolicyVerdict::Continue));
         assert_eq!(p2.calls(), 1); // panicking policy skipped, next one runs
@@ -579,7 +589,8 @@ mod tests {
     fn pre_dispatch_empty_vec_returns_continue() {
         let policies: Vec<Arc<dyn PreDispatchPolicy>> = vec![];
         let (usage, cost) = test_context();
-        let ctx = make_ctx(&usage, &cost);
+        let state = crate::SessionState::new();
+        let ctx = make_ctx(&usage, &cost, &state);
         let mut args = serde_json::json!({});
         let mut tool_ctx = ToolPolicyContext {
             tool_name: "test",
@@ -596,7 +607,8 @@ mod tests {
         let p2 = Arc::new(TestPreDispatchPolicy::new("never", || PreDispatchVerdict::Continue));
         let policies: Vec<Arc<dyn PreDispatchPolicy>> = vec![p1.clone(), p2.clone()];
         let (usage, cost) = test_context();
-        let ctx = make_ctx(&usage, &cost);
+        let state = crate::SessionState::new();
+        let ctx = make_ctx(&usage, &cost, &state);
         let mut args = serde_json::json!({});
         let mut tool_ctx = ToolPolicyContext {
             tool_name: "test",
@@ -615,7 +627,8 @@ mod tests {
         let p2 = Arc::new(TestPreDispatchPolicy::new("never", || PreDispatchVerdict::Continue));
         let policies: Vec<Arc<dyn PreDispatchPolicy>> = vec![p1.clone(), p2.clone()];
         let (usage, cost) = test_context();
-        let ctx = make_ctx(&usage, &cost);
+        let state = crate::SessionState::new();
+        let ctx = make_ctx(&usage, &cost, &state);
         let mut args = serde_json::json!({});
         let mut tool_ctx = ToolPolicyContext {
             tool_name: "test",
@@ -637,7 +650,8 @@ mod tests {
         }));
         let policies: Vec<Arc<dyn PreDispatchPolicy>> = vec![p1, p2];
         let (usage, cost) = test_context();
-        let ctx = make_ctx(&usage, &cost);
+        let state = crate::SessionState::new();
+        let ctx = make_ctx(&usage, &cost, &state);
         let mut args = serde_json::json!({});
         let mut tool_ctx = ToolPolicyContext {
             tool_name: "test",
@@ -657,7 +671,8 @@ mod tests {
         let p2 = Arc::new(TestPreDispatchPolicy::new("after", || PreDispatchVerdict::Continue));
         let policies: Vec<Arc<dyn PreDispatchPolicy>> = vec![p1, p2.clone()];
         let (usage, cost) = test_context();
-        let ctx = make_ctx(&usage, &cost);
+        let state = crate::SessionState::new();
+        let ctx = make_ctx(&usage, &cost, &state);
         let mut args = serde_json::json!({});
         let mut tool_ctx = ToolPolicyContext {
             tool_name: "test",
@@ -677,7 +692,8 @@ mod tests {
         });
         let policies: Vec<Arc<dyn PreDispatchPolicy>> = vec![mutator, verifier];
         let (usage, cost) = test_context();
-        let ctx = make_ctx(&usage, &cost);
+        let state = crate::SessionState::new();
+        let ctx = make_ctx(&usage, &cost, &state);
         let mut args = serde_json::json!({"original": "value"});
         let mut tool_ctx = ToolPolicyContext {
             tool_name: "test",

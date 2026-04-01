@@ -17,7 +17,7 @@
 
 **Purpose**: Create the new source file for core types
 
-- [ ] T001 Create `src/state.rs` with module declaration and `#[forbid(unsafe_code)]` at crate root maintained
+- [x] T001 Create `src/state.rs` with module declaration and `#[forbid(unsafe_code)]` at crate root maintained
 
 ---
 
@@ -29,26 +29,26 @@
 
 ### Tests
 
-- [ ] T002 [P] Write tests for `StateDelta`: empty default, `is_empty()`, `len()`, serialize/deserialize roundtrip in `src/state.rs`
-- [ ] T003 [P] Write tests for `SessionState::get`/`set`/`remove`/`contains`/`keys`/`len`/`is_empty`/`clear` in `src/state.rs`
-- [ ] T004 [P] Write tests for `SessionState::get_raw` returning `Option<&Value>` without deserialization in `src/state.rs`
-- [ ] T005 [P] Write tests for delta collapse semantics: set+set→last, set+remove→None, remove+set→Some, clear→all None in `src/state.rs`
-- [ ] T006 [P] Write tests for `delta()`/`flush_delta()`: pending changes returned, delta reset after flush, empty flush returns empty in `src/state.rs`
-- [ ] T007 [P] Write tests for `SessionState::with_data` pre-seeding: data populated, delta empty (baseline semantics) in `src/state.rs`
-- [ ] T008 [P] Write tests for `SessionState::snapshot`/`restore_from_snapshot` roundtrip in `src/state.rs`
-- [ ] T009 [P] Write test for typed get with mismatched type returns `None` without corrupting stored value in `src/state.rs`
+- [x] T002 [P] Write tests for `StateDelta`: empty default, `is_empty()`, `len()`, serialize/deserialize roundtrip in `src/state.rs`
+- [x] T003 [P] Write tests for `SessionState::get`/`set`/`remove`/`contains`/`keys`/`len`/`is_empty`/`clear` in `src/state.rs`
+- [x] T004 [P] Write tests for `SessionState::get_raw` returning `Option<&Value>` without deserialization in `src/state.rs`
+- [x] T005 [P] Write tests for delta collapse semantics: set+set→last, set+remove→None, remove+set→Some, clear→all None in `src/state.rs`
+- [x] T006 [P] Write tests for `delta()`/`flush_delta()`: pending changes returned, delta reset after flush, empty flush returns empty in `src/state.rs`
+- [x] T007 [P] Write tests for `SessionState::with_data` pre-seeding: data populated, delta empty (baseline semantics) in `src/state.rs`
+- [x] T008 [P] Write tests for `SessionState::snapshot`/`restore_from_snapshot` roundtrip in `src/state.rs`
+- [x] T009 [P] Write test for typed get with mismatched type returns `None` without corrupting stored value in `src/state.rs`
 
 ### Implementation
 
-- [ ] T010 Implement `StateDelta` struct with `changes: HashMap<String, Option<Value>>`, `is_empty()`, `len()`, derive `Default`, `Clone`, `Debug`, `Serialize`, `Deserialize` in `src/state.rs`
-- [ ] T011 Implement `SessionState` struct with `data: HashMap<String, Value>` and `delta: StateDelta` (skip delta on serialize), derive `Default`, `Clone`, `Debug`, `Serialize`, `Deserialize` in `src/state.rs`
-- [ ] T012 Implement `SessionState::new()` and `SessionState::with_data(data)` (pre-seed without delta) in `src/state.rs`
-- [ ] T013 Implement `SessionState::get<T>`, `get_raw`, `set<T>`, `remove`, `contains`, `keys`, `len`, `is_empty`, `clear` with delta tracking in `src/state.rs`
-- [ ] T014 Implement delta collapse logic in `set` and `remove`: last-writer-wins within a delta window in `src/state.rs`
-- [ ] T015 Implement `delta()` and `flush_delta()` on `SessionState` in `src/state.rs`
-- [ ] T016 Implement `snapshot()` and `restore_from_snapshot()` on `SessionState` in `src/state.rs`
-- [ ] T017 Add `pub use state::{SessionState, StateDelta};` to `src/lib.rs`
-- [ ] T018 Verify all Phase 2 tests pass with `cargo test -p swink-agent`
+- [x] T010 Implement `StateDelta` struct with `changes: HashMap<String, Option<Value>>`, `is_empty()`, `len()`, derive `Default`, `Clone`, `Debug`, `Serialize`, `Deserialize` in `src/state.rs`
+- [x] T011 Implement `SessionState` struct with `data: HashMap<String, Value>` and `delta: StateDelta` (skip delta on serialize), derive `Default`, `Clone`, `Debug`, `Serialize`, `Deserialize` in `src/state.rs`
+- [x] T012 Implement `SessionState::new()` and `SessionState::with_data(data)` (pre-seed without delta) in `src/state.rs`
+- [x] T013 Implement `SessionState::get<T>`, `get_raw`, `set<T>`, `remove`, `contains`, `keys`, `len`, `is_empty`, `clear` with delta tracking in `src/state.rs`
+- [x] T014 Implement delta collapse logic in `set` and `remove`: last-writer-wins within a delta window in `src/state.rs`
+- [x] T015 Implement `delta()` and `flush_delta()` on `SessionState` in `src/state.rs`
+- [x] T016 Implement `snapshot()` and `restore_from_snapshot()` on `SessionState` in `src/state.rs`
+- [x] T017 Add `pub use state::{SessionState, StateDelta};` to `src/lib.rs`
+- [x] T018 Verify all Phase 2 tests pass with `cargo test -p swink-agent`
 
 **Checkpoint**: Core types complete — `SessionState` and `StateDelta` are usable in isolation
 
@@ -62,26 +62,26 @@
 
 ### Tests
 
-- [ ] T019 [P] [US1] Write test for `Agent::session_state()` accessor returns `Arc<RwLock<SessionState>>` in `src/agent.rs`
-- [ ] T020 [P] [US1] Write test that `AgentTool::execute` receives state and can read/write it in `tests/common/mod.rs`
-- [ ] T021 [US1] Write integration test: mock tool sets state key on turn 1, second tool reads it on turn 2, value persists in `tests/state_tests.rs`
+- [x] T019 [P] [US1] Write test for `Agent::session_state()` accessor returns `Arc<RwLock<SessionState>>` in `src/agent.rs`
+- [x] T020 [P] [US1] Write test that `AgentTool::execute` receives state and can read/write it in `tests/common/mod.rs`
+- [x] T021 [US1] Write integration test: mock tool sets state key on turn 1, second tool reads it on turn 2, value persists in `tests/state_tests.rs`
 
 ### Implementation
 
-- [ ] T022 [US1] Add `session_state: Arc<RwLock<SessionState>>` field to `Agent` struct in `src/agent.rs`
-- [ ] T023 [US1] Add `session_state()` method returning `&Arc<RwLock<SessionState>>` to `Agent` impl in `src/agent.rs`
-- [ ] T024 [US1] Initialize `session_state` from `AgentOptions` in `Agent::new()` in `src/agent.rs`
-- [ ] T025 [US1] Add `session_state: Option<SessionState>` field to `AgentOptions` in `src/agent_options.rs`
-- [ ] T026 [US1] Add `state: Arc<RwLock<SessionState>>` parameter to `AgentTool::execute` trait method in `src/tool.rs`
-- [ ] T027 [US1] Update `BashTool::execute` to accept state parameter (unused, pass-through) in `src/builtin_tools/bash.rs`
-- [ ] T028 [P] [US1] Update `ReadFileTool::execute` to accept state parameter in `src/builtin_tools/read_file.rs`
-- [ ] T029 [P] [US1] Update `WriteFileTool::execute` to accept state parameter in `src/builtin_tools/write_file.rs`
-- [ ] T030 [US1] Update `MockTool::execute` in shared test helpers to accept and optionally use state in `tests/common/mod.rs`
-- [ ] T031 [US1] Update tool dispatch in agent loop to pass `Arc<RwLock<SessionState>>` to `tool.execute()` in `src/loop_/mod.rs`
-- [ ] T032 [US1] Thread `session_state` from `Agent` through `AgentLoopConfig` to the loop in `src/loop_/mod.rs`
-- [ ] T033 [US1] Add `session_state: Arc<RwLock<SessionState>>` field to `AgentLoopConfig` in `src/loop_/mod.rs`
-- [ ] T034 [US1] Update any other `AgentTool` implementations in the workspace (eval, TUI, integration tests) to accept state parameter
-- [ ] T035 [US1] Verify all US1 tests pass with `cargo test --workspace`
+- [x] T022 [US1] Add `session_state: Arc<RwLock<SessionState>>` field to `Agent` struct in `src/agent.rs`
+- [x] T023 [US1] Add `session_state()` method returning `&Arc<RwLock<SessionState>>` to `Agent` impl in `src/agent.rs`
+- [x] T024 [US1] Initialize `session_state` from `AgentOptions` in `Agent::new()` in `src/agent.rs`
+- [x] T025 [US1] Add `session_state: Option<SessionState>` field to `AgentOptions` in `src/agent_options.rs`
+- [x] T026 [US1] Add `state: Arc<RwLock<SessionState>>` parameter to `AgentTool::execute` trait method in `src/tool.rs`
+- [x] T027 [US1] Update `BashTool::execute` to accept state parameter (unused, pass-through) in `src/builtin_tools/bash.rs`
+- [x] T028 [P] [US1] Update `ReadFileTool::execute` to accept state parameter in `src/builtin_tools/read_file.rs`
+- [x] T029 [P] [US1] Update `WriteFileTool::execute` to accept state parameter in `src/builtin_tools/write_file.rs`
+- [x] T030 [US1] Update `MockTool::execute` in shared test helpers to accept and optionally use state in `tests/common/mod.rs`
+- [x] T031 [US1] Update tool dispatch in agent loop to pass `Arc<RwLock<SessionState>>` to `tool.execute()` in `src/loop_/mod.rs`
+- [x] T032 [US1] Thread `session_state` from `Agent` through `AgentLoopConfig` to the loop in `src/loop_/mod.rs`
+- [x] T033 [US1] Add `session_state: Arc<RwLock<SessionState>>` field to `AgentLoopConfig` in `src/loop_/mod.rs`
+- [x] T034 [US1] Update any other `AgentTool` implementations in the workspace (eval, TUI, integration tests) to accept state parameter
+- [x] T035 [US1] Verify all US1 tests pass with `cargo test --workspace`
 
 **Checkpoint**: Tools can read/write state — User Story 1 is independently functional
 
@@ -95,27 +95,27 @@
 
 ### Tests
 
-- [ ] T036 [P] [US2] Write test for `SessionStore::save_state`/`load_state` default impls (no-op, returns None) in `memory/src/store.rs`
-- [ ] T037 [P] [US2] Write test for `JsonlSessionStore` state persistence: save state, load state, verify roundtrip in `memory/src/jsonl.rs`
-- [ ] T038 [P] [US2] Write test for backward compat: load pre-034 session (no state line) returns empty state in `memory/src/jsonl.rs`
-- [ ] T039 [P] [US2] Write test for state with nested JSON values survives roundtrip in `memory/src/jsonl.rs`
-- [ ] T040 [P] [US2] Write test for `Checkpoint` with `state: Some(value)` serialization/deserialization roundtrip in `src/checkpoint.rs`
-- [ ] T041 [P] [US2] Write test for `Checkpoint` with `state: None` (backward compat, missing field deserializes to None) in `src/checkpoint.rs`
-- [ ] T042 [P] [US2] Write test for `LoopCheckpoint` state field roundtrip in `src/checkpoint.rs`
+- [x] T036 [P] [US2] Write test for `SessionStore::save_state`/`load_state` default impls (no-op, returns None) in `memory/src/store.rs`
+- [x] T037 [P] [US2] Write test for `JsonlSessionStore` state persistence: save state, load state, verify roundtrip in `memory/src/jsonl.rs`
+- [x] T038 [P] [US2] Write test for backward compat: load pre-034 session (no state line) returns empty state in `memory/src/jsonl.rs`
+- [x] T039 [P] [US2] Write test for state with nested JSON values survives roundtrip in `memory/src/jsonl.rs`
+- [x] T040 [P] [US2] Write test for `Checkpoint` with `state: Some(value)` serialization/deserialization roundtrip in `src/checkpoint.rs`
+- [x] T041 [P] [US2] Write test for `Checkpoint` with `state: None` (backward compat, missing field deserializes to None) in `src/checkpoint.rs`
+- [x] T042 [P] [US2] Write test for `LoopCheckpoint` state field roundtrip in `src/checkpoint.rs`
 
 ### Implementation
 
-- [ ] T043 [US2] Add `save_state(&self, id: &str, state: &Value) -> io::Result<()>` default method to `SessionStore` trait in `memory/src/store.rs`
-- [ ] T044 [US2] Add `load_state(&self, id: &str) -> io::Result<Option<Value>>` default method to `SessionStore` trait in `memory/src/store.rs`
-- [ ] T045 [US2] Implement `save_state` in `JsonlSessionStore`: write `{"_state": true, "data": ...}` line, replace if exists in `memory/src/jsonl.rs`
-- [ ] T046 [US2] Implement `load_state` in `JsonlSessionStore`: scan for `_state` line, parse data field, return None if absent in `memory/src/jsonl.rs`
-- [ ] T047 [US2] Add `#[serde(default)] pub state: Option<Value>` field to `Checkpoint` in `src/checkpoint.rs`
-- [ ] T048 [US2] Add `#[serde(default)] pub state: Option<Value>` field to `LoopCheckpoint` in `src/checkpoint.rs`
-- [ ] T049 [US2] Update `Agent::save_checkpoint` to include `state.snapshot()` in checkpoint in `src/agent.rs`
-- [ ] T050 [US2] Update `Agent::restore_from_checkpoint` to restore state from checkpoint in `src/agent.rs`
-- [ ] T051 [US2] Update `Agent::pause` to include state snapshot in `LoopCheckpoint` in `src/agent.rs`
-- [ ] T052 [US2] Update `Agent::resume_stream` to restore state from `LoopCheckpoint` in `src/agent.rs`
-- [ ] T053 [US2] Verify all US2 tests pass with `cargo test --workspace`
+- [x] T043 [US2] Add `save_state(&self, id: &str, state: &Value) -> io::Result<()>` default method to `SessionStore` trait in `memory/src/store.rs`
+- [x] T044 [US2] Add `load_state(&self, id: &str) -> io::Result<Option<Value>>` default method to `SessionStore` trait in `memory/src/store.rs`
+- [x] T045 [US2] Implement `save_state` in `JsonlSessionStore`: write `{"_state": true, "data": ...}` line, replace if exists in `memory/src/jsonl.rs`
+- [x] T046 [US2] Implement `load_state` in `JsonlSessionStore`: scan for `_state` line, parse data field, return None if absent in `memory/src/jsonl.rs`
+- [x] T047 [US2] Add `#[serde(default)] pub state: Option<Value>` field to `Checkpoint` in `src/checkpoint.rs`
+- [x] T048 [US2] Add `#[serde(default)] pub state: Option<Value>` field to `LoopCheckpoint` in `src/checkpoint.rs`
+- [x] T049 [US2] Update `Agent::save_checkpoint` to include `state.snapshot()` in checkpoint in `src/agent.rs`
+- [x] T050 [US2] Update `Agent::restore_from_checkpoint` to restore state from checkpoint in `src/agent.rs`
+- [x] T051 [US2] Update `Agent::pause` to include state snapshot in `LoopCheckpoint` in `src/agent.rs`
+- [x] T052 [US2] Update `Agent::resume_stream` to restore state from `LoopCheckpoint` in `src/agent.rs`
+- [x] T053 [US2] Verify all US2 tests pass with `cargo test --workspace`
 
 **Checkpoint**: State survives session save/load and checkpoint cycles — User Story 2 is independently functional
 
@@ -129,16 +129,16 @@
 
 ### Tests
 
-- [ ] T054 [P] [US3] Write test: two tasks concurrently read the same key, both get correct value in `tests/state_tests.rs`
-- [ ] T055 [P] [US3] Write test: two tasks concurrently write different keys, both writes reflected in `tests/state_tests.rs`
-- [ ] T056 [P] [US3] Write test: two tasks concurrently write same key, last-writer-wins, no panic in `tests/state_tests.rs`
-- [ ] T057 [US3] Write test: poisoned lock recovery — simulate panic during write, subsequent access recovers via `into_inner()` in `tests/state_tests.rs`
+- [x] T054 [P] [US3] Write test: two tasks concurrently read the same key, both get correct value in `tests/state_tests.rs`
+- [x] T055 [P] [US3] Write test: two tasks concurrently write different keys, both writes reflected in `tests/state_tests.rs`
+- [x] T056 [P] [US3] Write test: two tasks concurrently write same key, last-writer-wins, no panic in `tests/state_tests.rs`
+- [x] T057 [US3] Write test: poisoned lock recovery — simulate panic during write, subsequent access recovers via `into_inner()` in `tests/state_tests.rs`
 
 ### Implementation
 
-- [ ] T058 [US3] Verify `Arc<RwLock<SessionState>>` is `Send + Sync` (compile-time assertion) in `src/state.rs`
-- [ ] T059 [US3] Ensure all state access in tool dispatch uses proper read/write lock patterns with `PoisonError::into_inner()` recovery in `src/loop_/mod.rs`
-- [ ] T060 [US3] Verify all US3 tests pass with `cargo test --workspace`
+- [x] T058 [US3] Verify `Arc<RwLock<SessionState>>` is `Send + Sync` (compile-time assertion) in `src/state.rs`
+- [x] T059 [US3] Ensure all state access in tool dispatch uses proper read/write lock patterns with `PoisonError::into_inner()` recovery in `src/loop_/mod.rs`
+- [x] T060 [US3] Verify all US3 tests pass with `cargo test --workspace`
 
 **Checkpoint**: Concurrent access is safe — User Story 3 is independently functional
 
@@ -152,19 +152,19 @@
 
 ### Tests
 
-- [ ] T061 [P] [US4] Write test for `AgentEvent::StateChanged` variant existence and `delta` field access in `src/loop_/mod.rs`
-- [ ] T062 [P] [US4] Write test for `TurnSnapshot.state_delta` field: `Some(delta)` when changes, `None` when no changes in `src/types.rs`
-- [ ] T063 [US4] Write integration test: subscribe to events, run agent with state-mutating tool, verify `StateChanged` emitted before `TurnEnd` in `tests/state_tests.rs`
-- [ ] T064 [US4] Write integration test: run agent with no state mutations, verify `StateChanged` is NOT emitted (suppressed for empty delta) in `tests/state_tests.rs`
+- [x] T061 [P] [US4] Write test for `AgentEvent::StateChanged` variant existence and `delta` field access in `src/loop_/mod.rs`
+- [x] T062 [P] [US4] Write test for `TurnSnapshot.state_delta` field: `Some(delta)` when changes, `None` when no changes in `src/types.rs`
+- [x] T063 [US4] Write integration test: subscribe to events, run agent with state-mutating tool, verify `StateChanged` emitted before `TurnEnd` in `tests/state_tests.rs`
+- [x] T064 [US4] Write integration test: run agent with no state mutations, verify `StateChanged` is NOT emitted (suppressed for empty delta) in `tests/state_tests.rs`
 
 ### Implementation
 
-- [ ] T065 [US4] Add `StateChanged { delta: StateDelta }` variant to `AgentEvent` enum in `src/loop_/mod.rs`
-- [ ] T066 [US4] Add `state_delta: Option<StateDelta>` field to `TurnSnapshot` in `src/types.rs`
-- [ ] T067 [US4] Add delta flush logic at turn end in loop: after PostTurn policies, call `flush_delta()`, check non-empty in `src/loop_/mod.rs`
-- [ ] T068 [US4] Emit `AgentEvent::StateChanged { delta }` when flushed delta is non-empty, immediately before `TurnEnd` emission in `src/loop_/mod.rs`
-- [ ] T069 [US4] Include flushed `StateDelta` as `state_delta` field in `TurnSnapshot` within `TurnEnd` event in `src/loop_/mod.rs`
-- [ ] T070 [US4] Verify all US4 tests pass with `cargo test --workspace`
+- [x] T065 [US4] Add `StateChanged { delta: StateDelta }` variant to `AgentEvent` enum in `src/loop_/mod.rs`
+- [x] T066 [US4] Add `state_delta: Option<StateDelta>` field to `TurnSnapshot` in `src/types.rs`
+- [x] T067 [US4] Add delta flush logic at turn end in loop: after PostTurn policies, call `flush_delta()`, check non-empty in `src/loop_/mod.rs`
+- [x] T068 [US4] Emit `AgentEvent::StateChanged { delta }` when flushed delta is non-empty, immediately before `TurnEnd` emission in `src/loop_/mod.rs`
+- [x] T069 [US4] Include flushed `StateDelta` as `state_delta` field in `TurnSnapshot` within `TurnEnd` event in `src/loop_/mod.rs`
+- [x] T070 [US4] Verify all US4 tests pass with `cargo test --workspace`
 
 **Checkpoint**: Delta tracking and event emission work — User Story 4 is independently functional
 
@@ -178,17 +178,17 @@
 
 ### Tests
 
-- [ ] T071 [P] [US5] Write test for `PolicyContext` containing `state: &SessionState` field in `src/policy.rs`
-- [ ] T072 [US5] Write test: custom PreTurnPolicy reads state key, returns Stop when key absent in `tests/state_tests.rs`
-- [ ] T073 [US5] Write test: custom PreTurnPolicy reads state key, returns Continue when key present and valid in `tests/state_tests.rs`
+- [x] T071 [P] [US5] Write test for `PolicyContext` containing `state: &SessionState` field in `src/policy.rs`
+- [x] T072 [US5] Write test: custom PreTurnPolicy reads state key, returns Stop when key absent in `tests/state_tests.rs`
+- [x] T073 [US5] Write test: custom PreTurnPolicy reads state key, returns Continue when key present and valid in `tests/state_tests.rs`
 
 ### Implementation
 
-- [ ] T074 [US5] Add `state: &'a SessionState` field to `PolicyContext<'a>` in `src/policy.rs`
-- [ ] T075 [US5] Update all policy slot runners to acquire read lock on state and pass `&SessionState` to `PolicyContext` in `src/loop_/mod.rs`
-- [ ] T076 [US5] Update `PolicyContext` construction sites in loop to include state reference in `src/loop_/mod.rs`
-- [ ] T077 [US5] Update policy implementations in `swink-agent-policies` crate to accept new `PolicyContext` shape (compile fix) in `policies/src/*.rs`
-- [ ] T078 [US5] Verify all US5 tests pass with `cargo test --workspace`
+- [x] T074 [US5] Add `state: &'a SessionState` field to `PolicyContext<'a>` in `src/policy.rs`
+- [x] T075 [US5] Update all policy slot runners to acquire read lock on state and pass `&SessionState` to `PolicyContext` in `src/loop_/mod.rs`
+- [x] T076 [US5] Update `PolicyContext` construction sites in loop to include state reference in `src/loop_/mod.rs`
+- [x] T077 [US5] Update policy implementations in `swink-agent-policies` crate to accept new `PolicyContext` shape (compile fix) in `policies/src/*.rs`
+- [x] T078 [US5] Verify all US5 tests pass with `cargo test --workspace`
 
 **Checkpoint**: Policies can read state — User Story 5 is independently functional
 
@@ -202,18 +202,18 @@
 
 ### Tests
 
-- [ ] T079 [P] [US6] Write test for `AgentOptions::with_initial_state()` builder method in `src/agent_options.rs`
-- [ ] T080 [P] [US6] Write test for `AgentOptions::with_state_entry()` builder method (single key-value) in `src/agent_options.rs`
-- [ ] T081 [US6] Write test: pre-seeded state has empty delta (baseline semantics confirmed) in `src/agent_options.rs`
-- [ ] T082 [US6] Write integration test: pre-seed state, run agent, tool reads pre-seeded value in `tests/state_tests.rs`
-- [ ] T083 [US6] Write test: read state from agent after conversation ends, keys accessible in `tests/state_tests.rs`
+- [x] T079 [P] [US6] Write test for `AgentOptions::with_initial_state()` builder method in `src/agent_options.rs`
+- [x] T080 [P] [US6] Write test for `AgentOptions::with_state_entry()` builder method (single key-value) in `src/agent_options.rs`
+- [x] T081 [US6] Write test: pre-seeded state has empty delta (baseline semantics confirmed) in `src/agent_options.rs`
+- [x] T082 [US6] Write integration test: pre-seed state, run agent, tool reads pre-seeded value in `tests/state_tests.rs`
+- [x] T083 [US6] Write test: read state from agent after conversation ends, keys accessible in `tests/state_tests.rs`
 
 ### Implementation
 
-- [ ] T084 [US6] Implement `with_initial_state(state: SessionState) -> Self` on `AgentOptions` in `src/agent_options.rs`
-- [ ] T085 [US6] Implement `with_state_entry(key: impl Into<String>, value: impl Serialize) -> Self` on `AgentOptions` in `src/agent_options.rs`
-- [ ] T086 [US6] Verify `Agent::new()` correctly initializes from pre-seeded `AgentOptions.session_state` in `src/agent.rs`
-- [ ] T087 [US6] Verify all US6 tests pass with `cargo test --workspace`
+- [x] T084 [US6] Implement `with_initial_state(state: SessionState) -> Self` on `AgentOptions` in `src/agent_options.rs`
+- [x] T085 [US6] Implement `with_state_entry(key: impl Into<String>, value: impl Serialize) -> Self` on `AgentOptions` in `src/agent_options.rs`
+- [x] T086 [US6] Verify `Agent::new()` correctly initializes from pre-seeded `AgentOptions.session_state` in `src/agent.rs`
+- [x] T087 [US6] Verify all US6 tests pass with `cargo test --workspace`
 
 **Checkpoint**: Pre-seeding and post-run extraction work — User Story 6 is independently functional
 
@@ -223,12 +223,12 @@
 
 **Purpose**: Integration validation, downstream updates, workspace-wide verification
 
-- [ ] T088 [P] Update `Agent::state()` docs (if any) to clarify relationship with `session_state()` in `src/agent.rs`
-- [ ] T089 [P] Update re-exports in `src/lib.rs` if any types were missed during Phase 2
-- [ ] T090 Run `cargo clippy --workspace -- -D warnings` and fix any warnings
-- [ ] T091 Run `cargo test --workspace` to verify all tests pass end-to-end
-- [ ] T092 Run `cargo test -p swink-agent --no-default-features` to verify builtin-tools disabled still compiles
-- [ ] T093 Run quickstart.md scenarios manually to validate examples are accurate
+- [x] T088 [P] Update `Agent::state()` docs (if any) to clarify relationship with `session_state()` in `src/agent.rs`
+- [x] T089 [P] Update re-exports in `src/lib.rs` if any types were missed during Phase 2
+- [x] T090 Run `cargo clippy --workspace -- -D warnings` and fix any warnings
+- [x] T091 Run `cargo test --workspace` to verify all tests pass end-to-end
+- [x] T092 Run `cargo test -p swink-agent --no-default-features` to verify builtin-tools disabled still compiles
+- [x] T093 Run quickstart.md scenarios manually to validate examples are accurate
 
 ---
 

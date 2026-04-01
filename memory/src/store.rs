@@ -64,4 +64,16 @@ pub trait SessionStore: Send + Sync {
         let messages = llm_messages.into_iter().map(AgentMessage::Llm).collect();
         Ok((meta, messages))
     }
+
+    /// Save session state snapshot. Default: no-op.
+    fn save_state(&self, id: &str, state: &serde_json::Value) -> io::Result<()> {
+        let _ = (id, state);
+        Ok(())
+    }
+
+    /// Load session state snapshot. Default: `None` (empty state).
+    fn load_state(&self, id: &str) -> io::Result<Option<serde_json::Value>> {
+        let _ = id;
+        Ok(None)
+    }
 }

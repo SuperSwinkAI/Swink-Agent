@@ -210,6 +210,7 @@ mod tests {
     fn evaluate_text(policy: &PiiRedactor, text: &str) -> PolicyVerdict {
         let (msg, results) = make_turn_ctx(text);
         let (usage, cost) = make_policy_ctx();
+        let state = swink_agent::SessionState::new();
         let ctx = PolicyContext {
             turn_index: 0,
             accumulated_usage: &usage,
@@ -217,6 +218,7 @@ mod tests {
             message_count: 1,
             overflow_signal: false,
             new_messages: &[],
+            state: &state,
         };
         let turn = TurnPolicyContext {
             assistant_message: &msg,

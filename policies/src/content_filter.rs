@@ -258,7 +258,7 @@ mod tests {
 
     use super::*;
 
-    fn make_policy_ctx<'a>(usage: &'a Usage, cost: &'a Cost) -> PolicyContext<'a> {
+    fn make_policy_ctx<'a>(usage: &'a Usage, cost: &'a Cost, state: &'a swink_agent::SessionState) -> PolicyContext<'a> {
         PolicyContext {
             turn_index: 0,
             accumulated_usage: usage,
@@ -266,6 +266,7 @@ mod tests {
             message_count: 0,
             overflow_signal: false,
             new_messages: &[],
+            state,
         }
     }
 
@@ -297,7 +298,8 @@ mod tests {
         let filter = ContentFilter::new().with_keyword("secret-project");
         let usage = Usage::default();
         let cost = Cost::default();
-        let ctx = make_policy_ctx(&usage, &cost);
+        let state = swink_agent::SessionState::new();
+        let ctx = make_policy_ctx(&usage, &cost, &state);
         let msg = make_msg("The secret-project is underway.");
         let turn = make_turn_ctx(&msg);
 
@@ -312,7 +314,8 @@ mod tests {
         let filter = ContentFilter::new().with_keyword("secret");
         let usage = Usage::default();
         let cost = Cost::default();
-        let ctx = make_policy_ctx(&usage, &cost);
+        let state = swink_agent::SessionState::new();
+        let ctx = make_policy_ctx(&usage, &cost, &state);
         let msg = make_msg("This is a SECRET document.");
         let turn = make_turn_ctx(&msg);
 
@@ -327,7 +330,8 @@ mod tests {
             .with_keyword("ass");
         let usage = Usage::default();
         let cost = Cost::default();
-        let ctx = make_policy_ctx(&usage, &cost);
+        let state = swink_agent::SessionState::new();
+        let ctx = make_policy_ctx(&usage, &cost, &state);
         let msg = make_msg("The assembly line is running.");
         let turn = make_turn_ctx(&msg);
 
@@ -342,7 +346,8 @@ mod tests {
             .expect("valid regex");
         let usage = Usage::default();
         let cost = Cost::default();
-        let ctx = make_policy_ctx(&usage, &cost);
+        let state = swink_agent::SessionState::new();
+        let ctx = make_policy_ctx(&usage, &cost, &state);
         let msg = make_msg("This document is for Internal Use Only.");
         let turn = make_turn_ctx(&msg);
 
@@ -357,7 +362,8 @@ mod tests {
             .with_category_keyword("profanity", "badword");
         let usage = Usage::default();
         let cost = Cost::default();
-        let ctx = make_policy_ctx(&usage, &cost);
+        let state = swink_agent::SessionState::new();
+        let ctx = make_policy_ctx(&usage, &cost, &state);
         let msg = make_msg("This contains a badword.");
         let turn = make_turn_ctx(&msg);
 
@@ -373,7 +379,8 @@ mod tests {
             .with_category_keyword("compliance", "restricted");
         let usage = Usage::default();
         let cost = Cost::default();
-        let ctx = make_policy_ctx(&usage, &cost);
+        let state = swink_agent::SessionState::new();
+        let ctx = make_policy_ctx(&usage, &cost, &state);
         let msg = make_msg("This is restricted information.");
         let turn = make_turn_ctx(&msg);
 
@@ -388,7 +395,8 @@ mod tests {
         let filter = ContentFilter::new();
         let usage = Usage::default();
         let cost = Cost::default();
-        let ctx = make_policy_ctx(&usage, &cost);
+        let state = swink_agent::SessionState::new();
+        let ctx = make_policy_ctx(&usage, &cost, &state);
         let msg = make_msg("Anything goes here.");
         let turn = make_turn_ctx(&msg);
 
@@ -412,7 +420,8 @@ mod tests {
             .expect("valid regex");
         let usage = Usage::default();
         let cost = Cost::default();
-        let ctx = make_policy_ctx(&usage, &cost);
+        let state = swink_agent::SessionState::new();
+        let ctx = make_policy_ctx(&usage, &cost, &state);
         let msg = make_msg("This is a perfectly normal message.");
         let turn = make_turn_ctx(&msg);
 

@@ -37,6 +37,8 @@ use crate::util::now_timestamp;
 
 /// Sentinel value used to signal context overflow between `handle_stream_result`
 /// and `run_single_turn`.
+#[deprecated(note = "Overflow recovery now happens in-place in run_single_turn. Retained for backward compatibility.")]
+#[allow(dead_code)]
 pub const CONTEXT_OVERFLOW_SENTINEL: &str = "__context_overflow__";
 
 /// Channel capacity for agent events. Sized to handle burst streaming
@@ -173,6 +175,12 @@ pub enum AgentEvent {
         reason: String,
     },
 
+    /// Emitted when session state delta is flushed (non-empty only).
+    /// Fired immediately before `TurnEnd`.
+    StateChanged {
+        delta: crate::StateDelta,
+    },
+
     /// A custom event emitted via [`Agent::emit`](crate::Agent::emit).
     Custom(crate::emit::Emission),
 }
@@ -257,6 +265,9 @@ pub struct AgentLoopConfig {
     /// Defaults to [`ToolExecutionPolicy::Concurrent`] for backward
     /// compatibility.
     pub tool_execution_policy: ToolExecutionPolicy,
+
+    /// Session key-value state store shared with tools and policies.
+    pub session_state: Arc<std::sync::RwLock<crate::SessionState>>,
 }
 
 impl std::fmt::Debug for AgentLoopConfig {
@@ -354,6 +365,9 @@ pub struct LoopState {
     pub context_messages: Vec<AgentMessage>,
     pub pending_messages: Vec<AgentMessage>,
     pub overflow_signal: bool,
+    /// Whether emergency overflow recovery has already been attempted this turn.
+    /// Resets to `false` at the start of each turn.
+    pub overflow_recovery_attempted: bool,
     pub turn_index: usize,
     pub accumulated_usage: crate::types::Usage,
     pub accumulated_cost: crate::types::Cost,
@@ -393,6 +407,7 @@ async fn run_loop_inner(
             context_messages: initial_messages,
             pending_messages: Vec::new(),
             overflow_signal: false,
+            overflow_recovery_attempted: false,
             turn_index: 0,
             accumulated_usage: crate::types::Usage::default(),
             accumulated_cost: crate::types::Cost::default(),
@@ -433,6 +448,10 @@ async fn run_loop_inner(
                         PolicyContext, PolicyVerdict, TurnPolicyContext, run_post_turn_policies,
                     };
 
+                    let state_snapshot = {
+                        let guard = config.session_state.read().unwrap_or_else(std::sync::PoisonError::into_inner);
+                        guard.clone()
+                    };
                     let policy_ctx = PolicyContext {
                         turn_index: state.turn_index,
                         accumulated_usage: &state.accumulated_usage,
@@ -440,6 +459,7 @@ async fn run_loop_inner(
                         message_count: state.context_messages.len(),
                         overflow_signal: state.overflow_signal,
                         new_messages: &[], // current-turn data is in TurnPolicyContext
+                        state: &state_snapshot,
                     };
                     let turn_ctx = TurnPolicyContext {
                         assistant_message: msg,
@@ -471,6 +491,10 @@ async fn run_loop_inner(
             {
                 use crate::policy::{PolicyContext, PolicyVerdict, run_post_loop_policies};
 
+                let state_snapshot = {
+                    let guard = config.session_state.read().unwrap_or_else(std::sync::PoisonError::into_inner);
+                    guard.clone()
+                };
                 let policy_ctx = PolicyContext {
                     turn_index: state.turn_index,
                     accumulated_usage: &state.accumulated_usage,
@@ -478,6 +502,7 @@ async fn run_loop_inner(
                     message_count: state.context_messages.len(),
                     overflow_signal: state.overflow_signal,
                     new_messages: &[], // no new messages at post-loop
+                    state: &state_snapshot,
                 };
                 match run_post_loop_policies(&config.post_loop_policies, &policy_ctx) {
                     PolicyVerdict::Continue => {}

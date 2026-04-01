@@ -106,7 +106,7 @@ mod tests {
     use super::*;
     use swink_agent::{Cost, Usage};
 
-    fn make_ctx<'a>(usage: &'a Usage, cost: &'a Cost) -> PolicyContext<'a> {
+    fn make_ctx<'a>(usage: &'a Usage, cost: &'a Cost, state: &'a swink_agent::SessionState) -> PolicyContext<'a> {
         PolicyContext {
             turn_index: 0,
             accumulated_usage: usage,
@@ -114,6 +114,7 @@ mod tests {
             message_count: 0,
             overflow_signal: false,
             new_messages: &[],
+            state,
         }
     }
 
@@ -122,7 +123,8 @@ mod tests {
         let policy = SandboxPolicy::new("/tmp/workspace");
         let usage = Usage::default();
         let cost = Cost::default();
-        let ctx = make_ctx(&usage, &cost);
+        let state = swink_agent::SessionState::new();
+        let ctx = make_ctx(&usage, &cost, &state);
         let mut args = serde_json::json!({"path": "/etc/passwd"});
         let mut tool_ctx = ToolPolicyContext {
             tool_name: "write_file",
@@ -138,7 +140,8 @@ mod tests {
         let policy = SandboxPolicy::new("/tmp/workspace");
         let usage = Usage::default();
         let cost = Cost::default();
-        let ctx = make_ctx(&usage, &cost);
+        let state = swink_agent::SessionState::new();
+        let ctx = make_ctx(&usage, &cost, &state);
         let mut args = serde_json::json!({"path": "/tmp/workspace/output.txt"});
         let mut tool_ctx = ToolPolicyContext {
             tool_name: "write_file",
@@ -154,7 +157,8 @@ mod tests {
         let policy = SandboxPolicy::new("/tmp/workspace");
         let usage = Usage::default();
         let cost = Cost::default();
-        let ctx = make_ctx(&usage, &cost);
+        let state = swink_agent::SessionState::new();
+        let ctx = make_ctx(&usage, &cost, &state);
         let mut args = serde_json::json!({"path": "/tmp/workspace/../../etc/passwd"});
         let mut tool_ctx = ToolPolicyContext {
             tool_name: "write_file",
@@ -170,7 +174,8 @@ mod tests {
         let policy = SandboxPolicy::new("/tmp/workspace");
         let usage = Usage::default();
         let cost = Cost::default();
-        let ctx = make_ctx(&usage, &cost);
+        let state = swink_agent::SessionState::new();
+        let ctx = make_ctx(&usage, &cost, &state);
         // "command" is not in the default path_fields, so it won't be checked
         let mut args = serde_json::json!({"command": "/etc/passwd"});
         let mut tool_ctx = ToolPolicyContext {
@@ -188,7 +193,8 @@ mod tests {
             .with_path_fields(["target_dir", "output"]);
         let usage = Usage::default();
         let cost = Cost::default();
-        let ctx = make_ctx(&usage, &cost);
+        let state = swink_agent::SessionState::new();
+        let ctx = make_ctx(&usage, &cost, &state);
         let mut args = serde_json::json!({"target_dir": "/etc/shadow"});
         let mut tool_ctx = ToolPolicyContext {
             tool_name: "deploy",
