@@ -5,8 +5,6 @@
 //! [`CheckpointStore`] trait for async save/load of checkpoints.
 
 use std::collections::HashMap;
-use std::future::Future;
-use std::pin::Pin;
 
 use serde::{Deserialize, Serialize};
 
@@ -14,6 +12,10 @@ use crate::types::{
     AgentMessage, Cost, CustomMessageRegistry, LlmMessage, Usage, deserialize_custom_message,
     serialize_custom_message,
 };
+
+mod store;
+
+pub use store::{CheckpointFuture, CheckpointStore};
 
 #[derive(Debug, Clone)]
 struct SerializedMessages {
@@ -318,29 +320,6 @@ impl LoopCheckpoint {
     }
 }
 
-// ─── CheckpointStore ─────────────────────────────────────────────────────────
-
-/// A boxed future returned by [`CheckpointStore`] methods.
-pub type CheckpointFuture<'a, T> =
-    Pin<Box<dyn Future<Output = std::io::Result<T>> + Send + 'a>>;
-
-/// Async trait for persisting and loading agent checkpoints.
-///
-/// Implementations can back onto any storage: filesystem, database, cloud, etc.
-pub trait CheckpointStore: Send + Sync {
-    /// Save a checkpoint. Overwrites any existing checkpoint with the same ID.
-    fn save_checkpoint(&self, checkpoint: &Checkpoint) -> CheckpointFuture<'_, ()>;
-
-    /// Load a checkpoint by ID.
-    fn load_checkpoint(&self, id: &str) -> CheckpointFuture<'_, Option<Checkpoint>>;
-
-    /// List all checkpoint IDs, most recent first.
-    fn list_checkpoints(&self) -> CheckpointFuture<'_, Vec<String>>;
-
-    /// Delete a checkpoint by ID.
-    fn delete_checkpoint(&self, id: &str) -> CheckpointFuture<'_, ()>;
-}
-
 // ─── Send + Sync assertions ─────────────────────────────────────────────────
 
 const _: () = {
@@ -561,114 +540,6 @@ mod tests {
         let checkpoint: Checkpoint = serde_json::from_str(json).unwrap();
         assert!(checkpoint.metadata.is_empty());
         assert!(checkpoint.custom_messages.is_empty());
-    }
-
-    /// In-memory checkpoint store for testing.
-    struct InMemoryCheckpointStore {
-        data: std::sync::Mutex<HashMap<String, String>>,
-    }
-
-    impl InMemoryCheckpointStore {
-        fn new() -> Self {
-            Self {
-                data: std::sync::Mutex::new(HashMap::new()),
-            }
-        }
-    }
-
-    impl CheckpointStore for InMemoryCheckpointStore {
-        fn save_checkpoint(&self, checkpoint: &Checkpoint) -> CheckpointFuture<'_, ()> {
-            let json = serde_json::to_string(checkpoint).unwrap();
-            let id = checkpoint.id.clone();
-            Box::pin(async move {
-                self.data
-                    .lock()
-                    .map_err(|e| std::io::Error::other(e.to_string()))?
-                    .insert(id, json);
-                Ok(())
-            })
-        }
-
-        fn load_checkpoint(&self, id: &str) -> CheckpointFuture<'_, Option<Checkpoint>> {
-            let id = id.to_string();
-            Box::pin(async move {
-                let guard = self
-                    .data
-                    .lock()
-                    .map_err(|e| std::io::Error::other(e.to_string()))?;
-                match guard.get(&id) {
-                    Some(json) => {
-                        let cp: Checkpoint = serde_json::from_str(json)
-                            .map_err(|e| std::io::Error::other(e.to_string()))?;
-                        Ok(Some(cp))
-                    }
-                    None => Ok(None),
-                }
-            })
-        }
-
-        fn list_checkpoints(&self) -> CheckpointFuture<'_, Vec<String>> {
-            Box::pin(async move {
-                let guard = self
-                    .data
-                    .lock()
-                    .map_err(|e| std::io::Error::other(e.to_string()))?;
-                Ok(guard.keys().cloned().collect())
-            })
-        }
-
-        fn delete_checkpoint(&self, id: &str) -> CheckpointFuture<'_, ()> {
-            let id = id.to_string();
-            Box::pin(async move {
-                self.data
-                    .lock()
-                    .map_err(|e| std::io::Error::other(e.to_string()))?
-                    .remove(&id);
-                Ok(())
-            })
-        }
-    }
-
-    #[tokio::test]
-    async fn in_memory_checkpoint_store_roundtrip() {
-        let store = InMemoryCheckpointStore::new();
-        let messages = sample_messages();
-
-        let checkpoint = Checkpoint::new(
-            "cp-store-test",
-            "Be helpful.",
-            "anthropic",
-            "claude",
-            &messages,
-        )
-        .with_turn_count(2);
-
-        // Save
-        store.save_checkpoint(&checkpoint).await.unwrap();
-
-        // List
-        let ids = store.list_checkpoints().await.unwrap();
-        assert_eq!(ids.len(), 1);
-        assert!(ids.contains(&"cp-store-test".to_string()));
-
-        // Load
-        let loaded = store
-            .load_checkpoint("cp-store-test")
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(loaded.id, "cp-store-test");
-        assert_eq!(loaded.messages.len(), 2);
-        assert_eq!(loaded.turn_count, 2);
-
-        // Load non-existent
-        let missing = store.load_checkpoint("nope").await.unwrap();
-        assert!(missing.is_none());
-
-        // Delete
-        store.delete_checkpoint("cp-store-test").await.unwrap();
-        let ids = store.list_checkpoints().await.unwrap();
-        assert!(ids.is_empty());
     }
 
     // ─── LoopCheckpoint Tests ────────────────────────────────────────────
