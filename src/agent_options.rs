@@ -108,6 +108,11 @@ pub struct AgentOptions {
     pub plan_mode_addendum: Option<String>,
     /// Optional initial session state for pre-seeding key-value pairs.
     pub session_state: Option<crate::SessionState>,
+    /// Optional credential resolver for tool authentication.
+    ///
+    /// When set, tools that return `Some` from [`auth_config()`](crate::AgentTool::auth_config)
+    /// will have their credentials resolved before execution.
+    pub credential_resolver: Option<Arc<dyn crate::credential::CredentialResolver>>,
 }
 
 impl AgentOptions {
@@ -151,6 +156,7 @@ impl AgentOptions {
             tool_execution_policy: crate::tool_execution_policy::ToolExecutionPolicy::default(),
             plan_mode_addendum: None,
             session_state: None,
+            credential_resolver: None,
         }
     }
 
@@ -479,6 +485,19 @@ impl AgentOptions {
         state.set(&key.into(), value);
         // Flush delta so pre-seeded entries don't appear as mutations (baseline semantics).
         state.flush_delta();
+        self
+    }
+
+    /// Configure a credential resolver for tool authentication.
+    ///
+    /// When set, tools that declare [`auth_config()`](crate::AgentTool::auth_config) will
+    /// have their credentials resolved before execution.
+    #[must_use]
+    pub fn with_credential_resolver(
+        mut self,
+        resolver: Arc<dyn crate::credential::CredentialResolver>,
+    ) -> Self {
+        self.credential_resolver = Some(resolver);
         self
     }
 }

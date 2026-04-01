@@ -19,11 +19,11 @@ async fn middleware_runs_in_agent_loop() {
     let counter_clone = counter.clone();
 
     let inner = Arc::new(MockTool::new("echo"));
-    let wrapped = ToolMiddleware::new(inner, move |tool, id, params, cancel, on_update, state| {
+    let wrapped = ToolMiddleware::new(inner, move |tool, id, params, cancel, on_update, state, credential| {
         let c = counter_clone.clone();
         Box::pin(async move {
             c.fetch_add(1, Ordering::SeqCst);
-            tool.execute(&id, params, cancel, on_update, state).await
+            tool.execute(&id, params, cancel, on_update, state, credential).await
         })
     });
 

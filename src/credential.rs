@@ -1,0 +1,403 @@
+//! Credential types, traits, and error types for tool authentication.
+//!
+//! Tools declare authentication requirements via [`AuthConfig`]; the framework
+//! resolves credentials from a pluggable [`CredentialStore`] and delivers the
+//! resolved secret to `execute()` as an [`Option<ResolvedCredential>`].
+
+use std::future::Future;
+use std::pin::Pin;
+
+use serde::{Deserialize, Serialize};
+
+// ─── Credential ─────────────────────────────────────────────────────────────
+
+/// A secret value with type information for tool authentication.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum Credential {
+    /// A single secret API key string.
+    ApiKey {
+        /// The API key value.
+        key: String,
+    },
+    /// A bearer token with optional expiry.
+    Bearer {
+        /// The bearer token value.
+        token: String,
+        /// When the token expires (if known).
+        #[serde(default)]
+        expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    },
+    /// A full `OAuth2` token set with refresh capability.
+    OAuth2 {
+        /// The current access token.
+        access_token: String,
+        /// Optional refresh token for automatic renewal.
+        refresh_token: Option<String>,
+        /// When the access token expires (if known).
+        expires_at: Option<chrono::DateTime<chrono::Utc>>,
+        /// Token endpoint URL for refresh requests.
+        token_url: String,
+        /// `OAuth2` client identifier.
+        client_id: String,
+        /// `OAuth2` client secret (optional for public clients).
+        client_secret: Option<String>,
+        /// Requested scopes.
+        #[serde(default)]
+        scopes: Vec<String>,
+    },
+}
+
+impl std::fmt::Debug for Credential {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ApiKey { .. } => f.debug_struct("Credential::ApiKey").field("key", &"[REDACTED]").finish(),
+            Self::Bearer { expires_at, .. } => f.debug_struct("Credential::Bearer")
+                .field("token", &"[REDACTED]")
+                .field("expires_at", expires_at)
+                .finish(),
+            Self::OAuth2 { expires_at, token_url, client_id, scopes, .. } => {
+                f.debug_struct("Credential::OAuth2")
+                    .field("access_token", &"[REDACTED]")
+                    .field("refresh_token", &"[REDACTED]")
+                    .field("expires_at", expires_at)
+                    .field("token_url", token_url)
+                    .field("client_id", client_id)
+                    .field("client_secret", &"[REDACTED]")
+                    .field("scopes", scopes)
+                    .finish()
+            }
+        }
+    }
+}
+
+impl Credential {
+    /// Returns the [`CredentialType`] discriminant for this credential.
+    #[must_use]
+    pub const fn credential_type(&self) -> CredentialType {
+        match self {
+            Self::ApiKey { .. } => CredentialType::ApiKey,
+            Self::Bearer { .. } => CredentialType::Bearer,
+            Self::OAuth2 { .. } => CredentialType::OAuth2,
+        }
+    }
+}
+
+// ─── ResolvedCredential ─────────────────────────────────────────────────────
+
+/// Minimal secret value delivered to a tool after credential resolution.
+///
+/// Does NOT contain refresh tokens, client secrets, or token endpoints.
+/// Tools receive only the secret they need for the authenticated request.
+#[derive(Clone)]
+pub enum ResolvedCredential {
+    /// A resolved API key.
+    ApiKey(String),
+    /// A resolved bearer token.
+    Bearer(String),
+    /// A resolved (possibly refreshed) `OAuth2` access token.
+    OAuth2AccessToken(String),
+}
+
+impl std::fmt::Debug for ResolvedCredential {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ApiKey(_) => f.debug_tuple("ResolvedCredential::ApiKey").field(&"[REDACTED]").finish(),
+            Self::Bearer(_) => f.debug_tuple("ResolvedCredential::Bearer").field(&"[REDACTED]").finish(),
+            Self::OAuth2AccessToken(_) => f.debug_tuple("ResolvedCredential::OAuth2AccessToken").field(&"[REDACTED]").finish(),
+        }
+    }
+}
+
+// ─── AuthConfig ─────────────────────────────────────────────────────────────
+
+/// Per-tool declaration of authentication requirements.
+///
+/// Returned by [`AgentTool::auth_config()`](crate::AgentTool::auth_config) to
+/// declare that a tool needs credentials resolved before execution.
+#[derive(Debug, Clone)]
+pub struct AuthConfig {
+    /// Key to look up in the credential store.
+    pub credential_key: String,
+    /// How to attach the credential to the outbound request.
+    pub auth_scheme: AuthScheme,
+    /// Expected credential type (for mismatch checking).
+    pub credential_type: CredentialType,
+}
+
+// ─── AuthScheme ─────────────────────────────────────────────────────────────
+
+/// How a resolved credential is attached to the outbound request.
+#[derive(Debug, Clone)]
+pub enum AuthScheme {
+    /// `Authorization: Bearer {token}`
+    BearerHeader,
+    /// `{header_name}: {key}`
+    ApiKeyHeader(String),
+    /// `?{param_name}={key}`
+    ApiKeyQuery(String),
+}
+
+// ─── CredentialType ─────────────────────────────────────────────────────────
+
+/// Credential type discriminant for mismatch checking (FR-018).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CredentialType {
+    /// Expects an API key credential.
+    ApiKey,
+    /// Expects a bearer token.
+    Bearer,
+    /// Expects an `OAuth2` token set.
+    OAuth2,
+}
+
+// ─── CredentialError ────────────────────────────────────────────────────────
+
+/// Errors from credential resolution.
+///
+/// All variants include the credential key for diagnostics but NEVER include
+/// secret values (FR-016).
+#[derive(Debug, thiserror::Error)]
+pub enum CredentialError {
+    /// Credential not found in the store.
+    #[error("credential not found: {key}")]
+    NotFound {
+        /// The credential key that was looked up.
+        key: String,
+    },
+
+    /// Credential has expired and cannot be refreshed.
+    #[error("credential expired: {key}")]
+    Expired {
+        /// The credential key that expired.
+        key: String,
+    },
+
+    /// `OAuth2` token refresh failed.
+    #[error("credential refresh failed for {key}: {reason}")]
+    RefreshFailed {
+        /// The credential key whose refresh failed.
+        key: String,
+        /// Human-readable reason (no secrets).
+        reason: String,
+    },
+
+    /// Credential type doesn't match what the tool expects.
+    #[error("credential type mismatch for {key}: expected {expected:?}, got {actual:?}")]
+    TypeMismatch {
+        /// The credential key.
+        key: String,
+        /// The type the tool declared.
+        expected: CredentialType,
+        /// The type found in the store.
+        actual: CredentialType,
+    },
+
+    /// `OAuth2` authorization flow failed.
+    #[error("authorization failed for {key}: {reason}")]
+    AuthorizationFailed {
+        /// The credential key.
+        key: String,
+        /// Human-readable reason (no secrets).
+        reason: String,
+    },
+
+    /// `OAuth2` authorization flow timed out.
+    #[error("authorization timed out for {key}")]
+    AuthorizationTimeout {
+        /// The credential key.
+        key: String,
+    },
+
+    /// Generic credential store error.
+    #[error("credential store error: {0}")]
+    StoreError(Box<dyn std::error::Error + Send + Sync>),
+
+    /// Credential resolution timed out.
+    #[error("credential resolution timed out for {key}")]
+    Timeout {
+        /// The credential key.
+        key: String,
+    },
+}
+
+// ─── CredentialStore trait ──────────────────────────────────────────────────
+
+/// Pluggable credential storage abstraction.
+///
+/// Thread-safe for concurrent tool executions. Implementations must be
+/// `Send + Sync` to allow sharing across `tokio::spawn` boundaries.
+pub trait CredentialStore: Send + Sync {
+    /// Retrieve a credential by key.
+    fn get(
+        &self,
+        key: &str,
+    ) -> Pin<Box<dyn Future<Output = Result<Option<Credential>, CredentialError>> + Send + '_>>;
+
+    /// Store or update a credential by key.
+    fn set(
+        &self,
+        key: &str,
+        credential: Credential,
+    ) -> Pin<Box<dyn Future<Output = Result<(), CredentialError>> + Send + '_>>;
+
+    /// Delete a credential by key.
+    fn delete(
+        &self,
+        key: &str,
+    ) -> Pin<Box<dyn Future<Output = Result<(), CredentialError>> + Send + '_>>;
+}
+
+// ─── CredentialResolver trait ───────────────────────────────────────────────
+
+/// Orchestrator for credential resolution — checks validity, triggers
+/// refresh, deduplicates concurrent requests.
+pub trait CredentialResolver: Send + Sync {
+    /// Resolve a credential by key. Returns the minimal secret value
+    /// needed for the authenticated request.
+    fn resolve(
+        &self,
+        key: &str,
+    ) -> Pin<Box<dyn Future<Output = Result<ResolvedCredential, CredentialError>> + Send + '_>>;
+}
+
+// ─── AuthorizationHandler trait ─────────────────────────────────────────────
+
+/// Callback for interactive `OAuth2` authorization code flows.
+///
+/// The handler receives the authorization URL and returns the authorization code.
+/// Implementations may open a browser, display a prompt, or use a redirect server.
+pub trait AuthorizationHandler: Send + Sync {
+    /// Present the authorization URL to the user and return the authorization code.
+    ///
+    /// `state` is the CSRF token that the caller generated and appended to
+    /// the authorization URL; implementations should verify it matches.
+    fn authorize(
+        &self,
+        auth_url: &str,
+        state: &str,
+    ) -> Pin<Box<dyn Future<Output = Result<String, CredentialError>> + Send + '_>>;
+}
+
+// ─── Tests ──────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // T023: Credential serde roundtrip
+    #[test]
+    fn credential_serde_roundtrip_api_key() {
+        let cred = Credential::ApiKey { key: "sk-test-123".into() };
+        let json = serde_json::to_string(&cred).unwrap();
+        let decoded: Credential = serde_json::from_str(&json).unwrap();
+        match decoded {
+            Credential::ApiKey { key } => assert_eq!(key, "sk-test-123"),
+            other => panic!("expected ApiKey, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn credential_serde_roundtrip_bearer() {
+        let cred = Credential::Bearer {
+            token: "tok-abc".into(),
+            expires_at: Some(chrono::Utc::now()),
+        };
+        let json = serde_json::to_string(&cred).unwrap();
+        let decoded: Credential = serde_json::from_str(&json).unwrap();
+        match decoded {
+            Credential::Bearer { token, expires_at } => {
+                assert_eq!(token, "tok-abc");
+                assert!(expires_at.is_some());
+            }
+            other => panic!("expected Bearer, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn credential_serde_roundtrip_oauth2() {
+        let cred = Credential::OAuth2 {
+            access_token: "access-123".into(),
+            refresh_token: Some("refresh-456".into()),
+            expires_at: None,
+            token_url: "https://auth.example.com/token".into(),
+            client_id: "client-1".into(),
+            client_secret: Some("secret".into()),
+            scopes: vec!["read".into(), "write".into()],
+        };
+        let json = serde_json::to_string(&cred).unwrap();
+        let decoded: Credential = serde_json::from_str(&json).unwrap();
+        match decoded {
+            Credential::OAuth2 { access_token, refresh_token, client_id, scopes, .. } => {
+                assert_eq!(access_token, "access-123");
+                assert_eq!(refresh_token.as_deref(), Some("refresh-456"));
+                assert_eq!(client_id, "client-1");
+                assert_eq!(scopes, vec!["read", "write"]);
+            }
+            other => panic!("expected OAuth2, got {other:?}"),
+        }
+    }
+
+    // T024: CredentialError Display contains no secrets
+    #[test]
+    fn credential_error_display_no_secrets() {
+        let errors = vec![
+            CredentialError::NotFound { key: "my-key".into() },
+            CredentialError::Expired { key: "my-key".into() },
+            CredentialError::RefreshFailed { key: "my-key".into(), reason: "bad response".into() },
+            CredentialError::TypeMismatch {
+                key: "my-key".into(),
+                expected: CredentialType::Bearer,
+                actual: CredentialType::ApiKey,
+            },
+            CredentialError::AuthorizationFailed { key: "my-key".into(), reason: "denied".into() },
+            CredentialError::AuthorizationTimeout { key: "my-key".into() },
+            CredentialError::Timeout { key: "my-key".into() },
+        ];
+
+        let secret_values = ["sk-test-123", "tok-abc", "access-123", "refresh-456", "secret"];
+        for err in &errors {
+            let display = format!("{err}");
+            for secret in &secret_values {
+                assert!(!display.contains(secret), "Display of {err:?} leaks secret {secret}");
+            }
+            // Should contain the key name for diagnostics
+            assert!(display.contains("my-key"), "Display of {err:?} should contain key name");
+        }
+    }
+
+    // T011: credential_type helper
+    #[test]
+    fn credential_type_helper() {
+        let api_key = Credential::ApiKey { key: "k".into() };
+        assert_eq!(api_key.credential_type(), CredentialType::ApiKey);
+
+        let bearer = Credential::Bearer { token: "t".into(), expires_at: None };
+        assert_eq!(bearer.credential_type(), CredentialType::Bearer);
+
+        let oauth2 = Credential::OAuth2 {
+            access_token: "a".into(),
+            refresh_token: None,
+            expires_at: None,
+            token_url: "https://example.com/token".into(),
+            client_id: "c".into(),
+            client_secret: None,
+            scopes: vec![],
+        };
+        assert_eq!(oauth2.credential_type(), CredentialType::OAuth2);
+    }
+
+    // T023 additional: Debug impl redacts secrets
+    #[test]
+    fn debug_impl_redacts_secrets() {
+        let cred = Credential::ApiKey { key: "super-secret".into() };
+        let debug = format!("{cred:?}");
+        assert!(!debug.contains("super-secret"), "Debug leaks secret");
+        assert!(debug.contains("[REDACTED]"));
+
+        let resolved = ResolvedCredential::ApiKey("my-secret".into());
+        let debug = format!("{resolved:?}");
+        assert!(!debug.contains("my-secret"), "Debug leaks secret");
+        assert!(debug.contains("[REDACTED]"));
+    }
+}

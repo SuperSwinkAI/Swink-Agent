@@ -82,6 +82,7 @@ impl AgentTool for OrderedMockTool {
         _cancellation_token: CancellationToken,
         _on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
         _state: std::sync::Arc<std::sync::RwLock<swink_agent::SessionState>>,
+        _credential: Option<swink_agent::ResolvedCredential>,
     ) -> Pin<Box<dyn std::future::Future<Output = AgentToolResult> + Send + '_>> {
         let order = self.order_counter.fetch_add(1, Ordering::SeqCst);
         self.execution_order.lock().unwrap().push(order);
@@ -134,6 +135,7 @@ fn make_config(
         fallback: None,
         tool_execution_policy: policy,
         session_state: std::sync::Arc::new(std::sync::RwLock::new(swink_agent::SessionState::new())),
+        credential_resolver: None,
     }
 }
 

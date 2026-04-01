@@ -137,7 +137,7 @@ async fn mock_tool_executes() {
         .with_result(AgentToolResult::text("read file: /tmp/x"));
     let token = CancellationToken::new();
     let result = tool
-        .execute("tc_1", json!({"path": "/tmp/x"}), token, None, std::sync::Arc::new(std::sync::RwLock::new(swink_agent::SessionState::new())))
+        .execute("tc_1", json!({"path": "/tmp/x"}), token, None, std::sync::Arc::new(std::sync::RwLock::new(swink_agent::SessionState::new())), None)
         .await;
     assert_eq!(result.content.len(), 1);
     assert!(matches!(&result.content[0], ContentBlock::Text { text } if text.contains("/tmp/x")));

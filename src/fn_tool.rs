@@ -178,6 +178,7 @@ impl AgentTool for FnTool {
         cancellation_token: CancellationToken,
         on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
         _state: std::sync::Arc<std::sync::RwLock<crate::SessionState>>,
+        _credential: Option<crate::credential::ResolvedCredential>,
     ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>> {
         let fut = (self.execute_fn)(
             tool_call_id.to_owned(),
@@ -233,7 +234,7 @@ mod tests {
     async fn default_execute_returns_error() {
         let tool = sample_tool();
         let result = tool
-            .execute("{}", json!({}), CancellationToken::new(), None, std::sync::Arc::new(std::sync::RwLock::new(crate::SessionState::new())))
+            .execute("{}", json!({}), CancellationToken::new(), None, std::sync::Arc::new(std::sync::RwLock::new(crate::SessionState::new())), None)
             .await;
         assert!(result.is_error);
     }
@@ -254,6 +255,7 @@ mod tests {
                 CancellationToken::new(),
                 None,
                 std::sync::Arc::new(std::sync::RwLock::new(crate::SessionState::new())),
+                None,
             )
             .await;
         assert!(!result.is_error);
@@ -295,7 +297,7 @@ mod tests {
             );
 
         let result = tool
-            .execute("call_42", json!({}), CancellationToken::new(), None, std::sync::Arc::new(std::sync::RwLock::new(crate::SessionState::new())))
+            .execute("call_42", json!({}), CancellationToken::new(), None, std::sync::Arc::new(std::sync::RwLock::new(crate::SessionState::new())), None)
             .await;
         assert!(!result.is_error);
     }

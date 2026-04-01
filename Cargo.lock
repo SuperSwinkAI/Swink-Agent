@@ -6432,6 +6432,7 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 name = "swink-agent"
 version = "0.4.2"
 dependencies = [
+ "chrono",
  "criterion",
  "dotenvy",
  "futures",
@@ -6480,6 +6481,24 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tokio-util",
+ "tracing",
+ "uuid 1.23.0",
+ "wiremock",
+]
+
+[[package]]
+name = "swink-agent-auth"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "futures",
+ "pretty_assertions",
+ "reqwest 0.13.2",
+ "serde",
+ "serde_json",
+ "swink-agent",
+ "thiserror 2.0.18",
+ "tokio",
  "tracing",
  "uuid 1.23.0",
  "wiremock",

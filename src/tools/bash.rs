@@ -82,6 +82,7 @@ impl AgentTool for BashTool {
         cancellation_token: CancellationToken,
         _on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
         _state: std::sync::Arc<std::sync::RwLock<crate::SessionState>>,
+        _credential: Option<crate::credential::ResolvedCredential>,
     ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>> {
         Box::pin(async move {
             let parsed: Params = match serde_json::from_value(params) {

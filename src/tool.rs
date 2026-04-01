@@ -123,6 +123,15 @@ pub trait AgentTool: Send + Sync {
         None
     }
 
+    /// Optional authentication configuration for this tool.
+    ///
+    /// When `Some`, the framework resolves credentials from the configured
+    /// [`CredentialResolver`](crate::CredentialResolver) before calling
+    /// [`execute()`](Self::execute). Returns `None` by default (no auth required).
+    fn auth_config(&self) -> Option<crate::credential::AuthConfig> {
+        None
+    }
+
     /// Execute the tool with validated parameters.
     ///
     /// # Arguments
@@ -132,6 +141,7 @@ pub trait AgentTool: Send + Sync {
     /// * `cancellation_token` — token that signals the tool should abort
     /// * `on_update` — optional callback for streaming partial results
     /// * `state` — shared session state for reading/writing structured data
+    /// * `credential` — resolved credential if `auth_config()` returns `Some`
     fn execute(
         &self,
         tool_call_id: &str,
@@ -139,6 +149,7 @@ pub trait AgentTool: Send + Sync {
         cancellation_token: CancellationToken,
         on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
         state: Arc<std::sync::RwLock<crate::SessionState>>,
+        credential: Option<crate::credential::ResolvedCredential>,
     ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>>;
 }
 
@@ -649,6 +660,7 @@ mod tests {
                 _ct: CancellationToken,
                 _on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
                 _state: Arc<std::sync::RwLock<crate::SessionState>>,
+                _credential: Option<crate::credential::ResolvedCredential>,
             ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>> {
                 Box::pin(async { AgentToolResult::text("ok") })
             }
@@ -656,5 +668,36 @@ mod tests {
 
         let tool = MinimalTool;
         assert!(tool.metadata().is_none());
+    }
+
+    // T025: auth_config default returns None
+    #[test]
+    fn agent_tool_auth_config_defaults_to_none() {
+        use std::future::Future;
+        use std::pin::Pin;
+        use tokio_util::sync::CancellationToken;
+
+        struct NoAuthTool;
+
+        impl AgentTool for NoAuthTool {
+            fn name(&self) -> &str { "no-auth" }
+            fn label(&self) -> &str { "No Auth" }
+            fn description(&self) -> &str { "Tool with no auth" }
+            fn parameters_schema(&self) -> &Value { &Value::Null }
+            fn execute(
+                &self,
+                _tool_call_id: &str,
+                _params: Value,
+                _ct: CancellationToken,
+                _on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
+                _state: Arc<std::sync::RwLock<crate::SessionState>>,
+                _credential: Option<crate::credential::ResolvedCredential>,
+            ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>> {
+                Box::pin(async { AgentToolResult::text("ok") })
+            }
+        }
+
+        let tool = NoAuthTool;
+        assert!(tool.auth_config().is_none());
     }
 }

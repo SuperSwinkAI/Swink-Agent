@@ -598,15 +598,23 @@ async fn dispatch_single_tool(
             let (result, is_error) = if let Err(errors) = validation {
                 (validation_error_result(&errors), true)
             } else {
-                let on_update_tx = tx_clone.clone();
-                let on_update = Box::new(move |partial: AgentToolResult| {
-                    let _ = on_update_tx.try_send(AgentEvent::ToolExecutionUpdate { partial });
-                });
-                let result = tool
-                    .execute(&tool_call_id, arguments, child_token, Some(on_update), config_clone.session_state.clone())
-                    .await;
-                let is_error = result.is_error;
-                (result, is_error)
+                // ── Credential resolution (zero overhead when no auth_config) ──
+                match resolve_credential(&tool, &config_clone, &tool_call_id).await {
+                    Err(cred_error) => {
+                        (AgentToolResult::error(format!("{cred_error}")), true)
+                    }
+                    Ok(credential) => {
+                        let on_update_tx = tx_clone.clone();
+                        let on_update = Box::new(move |partial: AgentToolResult| {
+                            let _ = on_update_tx.try_send(AgentEvent::ToolExecutionUpdate { partial });
+                        });
+                        let result = tool
+                            .execute(&tool_call_id, arguments, child_token, Some(on_update), config_clone.session_state.clone(), credential)
+                            .await;
+                        let is_error = result.is_error;
+                        (result, is_error)
+                    }
+                }
             };
             let exec_duration = exec_start.elapsed();
             debug!(tool = %tool_name, id = %tool_call_id, is_error, "tool execution finished");
@@ -650,4 +658,51 @@ async fn dispatch_single_tool(
     );
 
     DispatchResult::Spawned(handle)
+}
+
+// ─── Credential resolution helper ───────────────────────────────────────────
+
+/// Resolve credentials for a tool, if it declares an `auth_config()`.
+///
+/// Returns `Ok(None)` for unauthenticated tools (zero overhead path).
+/// Returns `Ok(Some(credential))` on successful resolution.
+/// Returns `Err(error_message)` on resolution failure (key name only, no secrets).
+async fn resolve_credential(
+    tool: &Arc<dyn AgentTool>,
+    config: &Arc<AgentLoopConfig>,
+    _tool_call_id: &str,
+) -> Result<Option<crate::credential::ResolvedCredential>, crate::credential::CredentialError> {
+    let Some(auth_config) = tool.auth_config() else {
+        return Ok(None); // No auth required — zero overhead
+    };
+
+    let cred_resolver = config.credential_resolver.as_ref().ok_or_else(|| {
+        crate::credential::CredentialError::NotFound {
+            key: auth_config.credential_key.clone(),
+        }
+    })?;
+
+    // Resolve with timeout (default 30s)
+    let resolve_future = cred_resolver.resolve(&auth_config.credential_key);
+    let credential = tokio::time::timeout(std::time::Duration::from_secs(30), resolve_future)
+        .await
+        .map_err(|_| crate::credential::CredentialError::Timeout {
+            key: auth_config.credential_key.clone(),
+        })??;
+
+    // Type mismatch check (FR-018)
+    let actual_type = match &credential {
+        crate::credential::ResolvedCredential::ApiKey(_) => crate::credential::CredentialType::ApiKey,
+        crate::credential::ResolvedCredential::Bearer(_) => crate::credential::CredentialType::Bearer,
+        crate::credential::ResolvedCredential::OAuth2AccessToken(_) => crate::credential::CredentialType::OAuth2,
+    };
+    if actual_type != auth_config.credential_type {
+        return Err(crate::credential::CredentialError::TypeMismatch {
+            key: auth_config.credential_key,
+            expected: auth_config.credential_type,
+            actual: actual_type,
+        });
+    }
+
+    Ok(Some(credential))
 }

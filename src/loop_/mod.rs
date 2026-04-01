@@ -268,6 +268,9 @@ pub struct AgentLoopConfig {
 
     /// Session key-value state store shared with tools and policies.
     pub session_state: Arc<std::sync::RwLock<crate::SessionState>>,
+
+    /// Optional credential resolver for tool authentication.
+    pub credential_resolver: Option<Arc<dyn crate::credential::CredentialResolver>>,
 }
 
 impl std::fmt::Debug for AgentLoopConfig {
