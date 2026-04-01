@@ -183,24 +183,24 @@
 
 ### Implementation for User Story 7
 
-- [ ] T073 [US7] Add `otel` feature gate to `Cargo.toml` with optional dependencies: `tracing-opentelemetry`, `opentelemetry`, `opentelemetry_sdk`, `opentelemetry-otlp`. Verify the feature does not activate without opt-in.
-- [ ] T074 [US7] Create `src/otel.rs` module with `#[cfg(feature = "otel")]` gate. Declare module in `src/lib.rs` behind `#[cfg(feature = "otel")]`.
-- [ ] T075 [US7] Implement `OtelInitConfig` struct in `src/otel.rs`: fields `service_name: String` (default `"swink-agent"`), `endpoint: Option<String>` (default `"http://localhost:4317"`), derives `Debug`, `Clone`, `Default`.
-- [ ] T076 [US7] Implement `init_otel_layer()` function in `src/otel.rs`: accepts `OtelInitConfig`, returns `impl Layer<S>` using `tracing-opentelemetry` with an OTLP gRPC exporter configured from the config.
-- [ ] T077 [US7] Add `tracing::info_span!("agent.run")` to `run_loop()` in `src/loop_/mod.rs`, wrapping the entire loop execution. The span should be entered for the full duration of the agent loop.
-- [ ] T078 [US7] Add `tracing::info_span!("agent.turn", agent.turn_index = tracing::field::Empty, agent.stop_reason = tracing::field::Empty)` in `src/loop_/turn.rs` at turn start. Record `agent.turn_index` on entry. Record `agent.stop_reason` on turn exit via `span.record()`.
-- [ ] T079 [US7] Add `tracing::info_span!("agent.llm_call", agent.model = tracing::field::Empty, agent.tokens.input = tracing::field::Empty, agent.tokens.output = tracing::field::Empty, agent.cost.total = tracing::field::Empty)` in `src/loop_/turn.rs` around the LLM streaming call. Record `agent.model` on entry. Record token/cost fields on span exit after streaming completes.
-- [ ] T080 [US7] Add `tracing::info_span!("agent.tool", agent.tool.name = %name)` in `src/loop_/tool_dispatch.rs` around each tool execution. Set span status to error on tool failure.
-- [ ] T081 [US7] Re-export `OtelInitConfig` and `init_otel_layer` from `src/lib.rs` behind `#[cfg(feature = "otel")]`.
-- [ ] T082 [US7] Add unit test in `src/otel.rs`: `otel_init_config_defaults` — verifies `OtelInitConfig::default()` sets `service_name` to `"swink-agent"` and `endpoint` to `None`.
-- [ ] T083 [US7] Add integration test `tests/otel_spans.rs` (gated with `#[cfg(feature = "otel")]`): configures an in-memory `SpanExporter`, runs a mock agent for 1 turn with 1 tool call, verifies the exporter received spans named `agent.run`, `agent.turn`, `agent.llm_call`, and `agent.tool`.
-- [ ] T084 [US7] Add integration test `tests/otel_spans.rs`: `otel_span_attributes` — verifies `agent.turn_index`, `agent.model`, `agent.tokens.input`, `agent.tokens.output`, `agent.cost.total`, and `agent.tool.name` attributes are present and correctly valued on their respective spans.
-- [ ] T085 [US7] Add integration test `tests/otel_spans.rs`: `otel_span_hierarchy` — verifies parent-child relationships: `agent.turn` is child of `agent.run`, `agent.llm_call` and `agent.tool` are children of `agent.turn`.
-- [ ] T086 [US7] Add integration test `tests/otel_spans.rs`: `otel_coexists_with_metrics_collector` — configures both an in-memory OTel exporter and a mock `MetricsCollector`, runs an agent for 1 turn, verifies OTel exporter received spans AND MetricsCollector received `TurnMetrics`. Neither suppresses the other. (Covers FR-014, US7 acceptance scenario 6.)
-- [ ] T087 [US7] Add integration test `tests/otel_spans.rs`: `otel_spans_exclude_content` — verifies that span attributes do NOT contain prompt text, tool arguments, or tool result content. Only structural metadata (model ID, token counts, cost, turn index, tool name, stop reason) is present. (Covers FR-016.)
+- [x] T073 [US7] Add `otel` feature gate to `Cargo.toml` with optional dependencies: `tracing-opentelemetry`, `opentelemetry`, `opentelemetry_sdk`, `opentelemetry-otlp`. Verify the feature does not activate without opt-in.
+- [x] T074 [US7] Create `src/otel.rs` module with `#[cfg(feature = "otel")]` gate. Declare module in `src/lib.rs` behind `#[cfg(feature = "otel")]`.
+- [x] T075 [US7] Implement `OtelInitConfig` struct in `src/otel.rs`: fields `service_name: String` (default `"swink-agent"`), `endpoint: Option<String>` (default `"http://localhost:4317"`), derives `Debug`, `Clone`, `Default`.
+- [x] T076 [US7] Implement `init_otel_layer()` function in `src/otel.rs`: accepts `OtelInitConfig`, returns `impl Layer<S>` using `tracing-opentelemetry` with an OTLP gRPC exporter configured from the config.
+- [x] T077 [US7] Add `tracing::info_span!("agent.run")` to `run_loop()` in `src/loop_/mod.rs`, wrapping the entire loop execution. The span should be entered for the full duration of the agent loop.
+- [x] T078 [US7] Add `tracing::info_span!("agent.turn", agent.turn_index = tracing::field::Empty, agent.stop_reason = tracing::field::Empty)` in `src/loop_/turn.rs` at turn start. Record `agent.turn_index` on entry. Record `agent.stop_reason` on turn exit via `span.record()`.
+- [x] T079 [US7] Add `tracing::info_span!("agent.llm_call", agent.model = tracing::field::Empty, agent.tokens.input = tracing::field::Empty, agent.tokens.output = tracing::field::Empty, agent.cost.total = tracing::field::Empty)` in `src/loop_/turn.rs` around the LLM streaming call. Record `agent.model` on entry. Record token/cost fields on span exit after streaming completes.
+- [x] T080 [US7] Add `tracing::info_span!("agent.tool", agent.tool.name = %name)` in `src/loop_/tool_dispatch.rs` around each tool execution. Set span status to error on tool failure.
+- [x] T081 [US7] Re-export `OtelInitConfig` and `init_otel_layer` from `src/lib.rs` behind `#[cfg(feature = "otel")]`.
+- [x] T082 [US7] Add unit test in `src/otel.rs`: `otel_init_config_defaults` — verifies `OtelInitConfig::default()` sets `service_name` to `"swink-agent"` and `endpoint` to `None`.
+- [x] T083 [US7] Add integration test `tests/otel_spans.rs` (gated with `#[cfg(feature = "otel")]`): configures an in-memory `SpanExporter`, runs a mock agent for 1 turn with 1 tool call, verifies the exporter received spans named `agent.run`, `agent.turn`, `agent.llm_call`, and `agent.tool`.
+- [x] T084 [US7] Add integration test `tests/otel_spans.rs`: `otel_span_attributes` — verifies `agent.turn_index`, `agent.model`, `agent.tokens.input`, `agent.tokens.output`, `agent.cost.total`, and `agent.tool.name` attributes are present and correctly valued on their respective spans.
+- [x] T085 [US7] Add integration test `tests/otel_spans.rs`: `otel_span_hierarchy` — verifies parent-child relationships: `agent.turn` is child of `agent.run`, `agent.llm_call` and `agent.tool` are children of `agent.turn`.
+- [x] T086 [US7] Add integration test `tests/otel_spans.rs`: `otel_coexists_with_metrics_collector` — configures both an in-memory OTel exporter and a mock `MetricsCollector`, runs an agent for 1 turn, verifies OTel exporter received spans AND MetricsCollector received `TurnMetrics`. Neither suppresses the other. (Covers FR-014, US7 acceptance scenario 6.)
+- [x] T087 [US7] Add integration test `tests/otel_spans.rs`: `otel_spans_exclude_content` — verifies that span attributes do NOT contain prompt text, tool arguments, or tool result content. Only structural metadata (model ID, token counts, cost, turn index, tool name, stop reason) is present. (Covers FR-016.)
 - [ ] T088 [US7] Add integration test `tests/otel_spans.rs`: `otel_model_fallback_spans` — configures model fallback, triggers a retryable error on the primary model, verifies the failed `agent.llm_call` span has error status and a second `agent.llm_call` span is created for the fallback model, both as children of the same `agent.turn`.
-- [ ] T089 [US7] Verify `cargo build -p swink-agent --no-default-features` does not pull in any `opentelemetry` or `tracing-opentelemetry` dependencies (feature gate isolation).
-- [ ] T090 [US7] Verify `cargo build -p swink-agent --features otel` compiles cleanly with zero warnings.
+- [x] T089 [US7] Verify `cargo build -p swink-agent --no-default-features` does not pull in any `opentelemetry` or `tracing-opentelemetry` dependencies (feature gate isolation).
+- [x] T090 [US7] Verify `cargo build -p swink-agent --features otel` compiles cleanly with zero warnings.
 
 **Checkpoint**: OpenTelemetry integration is functional — agents emit properly hierarchical OTel spans with semantic attributes when the `otel` feature is enabled, with zero overhead when disabled
 
@@ -216,11 +216,11 @@
 - [x] T070 Run `cargo clippy --workspace -- -D warnings` and fix any warnings
 - [x] T071 Run `cargo test -p swink-agent --no-default-features` to verify feature-gated code compiles without defaults
 - [x] T072 Validate quickstart.md examples compile by spot-checking key API patterns against actual type signatures
-- [ ] T091 Add compile-time `Send + Sync` assertion for `OtelInitConfig` in `src/otel.rs` (behind `#[cfg(feature = "otel")]`)
-- [ ] T092 Run `cargo build -p swink-agent --features otel` and verify zero compilation errors
-- [ ] T093 Run `cargo test -p swink-agent --features otel` and verify all OTel tests pass
-- [ ] T094 Run `cargo clippy -p swink-agent --features otel -- -D warnings` and fix any warnings
-- [ ] T095 Validate quickstart.md OTel examples compile by spot-checking API patterns against actual type signatures
+- [x] T091 Add compile-time `Send + Sync` assertion for `OtelInitConfig` in `src/otel.rs` (behind `#[cfg(feature = "otel")]`)
+- [x] T092 Run `cargo build -p swink-agent --features otel` and verify zero compilation errors
+- [x] T093 Run `cargo test -p swink-agent --features otel` and verify all OTel tests pass
+- [x] T094 Run `cargo clippy -p swink-agent --features otel -- -D warnings` and fix any warnings
+- [x] T095 Validate quickstart.md OTel examples compile by spot-checking API patterns against actual type signatures
 
 ---
 

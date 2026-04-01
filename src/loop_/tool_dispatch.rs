@@ -605,8 +605,8 @@ async fn dispatch_single_tool(
     let validation = validate_tool_arguments(tool.parameters_schema(), &arguments);
 
     let tool_span = info_span!(
-        "tool_execute",
-        tool_name = %tool_name,
+        "agent.tool",
+        agent.tool.name = %tool_name,
         tool_call_id = %tool_call_id,
     );
     let handle = tokio::spawn(

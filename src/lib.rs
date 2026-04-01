@@ -41,6 +41,8 @@ mod tool_middleware;
 mod noop_tool;
 #[cfg(feature = "hot-reload")]
 pub mod hot_reload;
+#[cfg(feature = "otel")]
+pub mod otel;
 pub mod tools;
 pub mod types;
 mod util;
@@ -116,6 +118,8 @@ pub use noop_tool::NoopTool;
 pub use tools::{BashTool, ReadFileTool, WriteFileTool, builtin_tools};
 #[cfg(feature = "hot-reload")]
 pub use hot_reload::{ScriptTool, ToolWatcher};
+#[cfg(feature = "otel")]
+pub use otel::{OtelInitConfig, init_otel_layer};
 pub use types::{
     AgentContext, AgentMessage, AgentResult, AssistantMessage, ContentBlock, Cost, CustomMessage,
     CustomMessageRegistry, ImageSource, LlmMessage, ModelCapabilities, ModelSpec, StopReason,

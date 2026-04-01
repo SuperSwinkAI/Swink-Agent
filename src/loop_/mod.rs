@@ -411,7 +411,7 @@ async fn run_loop_inner(
 ) {
     let config = Arc::new(config);
     let span = info_span!(
-        "agent_loop",
+        "agent.run",
         model_id = %config.model.model_id,
         provider = %config.model.provider,
         tool_count = config.tools.len(),
