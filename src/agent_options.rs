@@ -23,9 +23,12 @@ pub(crate) type ConvertToLlmFn = Arc<dyn Fn(&AgentMessage) -> Option<LlmMessage>
 pub(crate) type TransformContextArc = Arc<dyn crate::context_transformer::ContextTransformer>;
 pub(crate) type AsyncTransformContextArc = Arc<dyn AsyncContextTransformer>;
 pub(crate) type CheckpointStoreArc = Arc<dyn CheckpointStore>;
-pub(crate) type GetApiKeyFn =
-    Arc<dyn Fn(&str) -> Pin<Box<dyn Future<Output = Option<String>> + Send>> + Send + Sync>;
-pub(crate) type ApproveToolArc = Arc<crate::loop_::ApproveToolFn>;
+pub(crate) type GetApiKeyFuture = Pin<Box<dyn Future<Output = Option<String>> + Send>>;
+pub(crate) type GetApiKeyFn = dyn Fn(&str) -> GetApiKeyFuture + Send + Sync;
+pub(crate) type GetApiKeyArc = Arc<GetApiKeyFn>;
+pub(crate) type ApproveToolFuture = Pin<Box<dyn Future<Output = ToolApproval> + Send>>;
+pub(crate) type ApproveToolFn = dyn Fn(ToolApprovalRequest) -> ApproveToolFuture + Send + Sync;
+pub(crate) type ApproveToolArc = Arc<ApproveToolFn>;
 
 // ─── Plan mode addendum ───────────────────────────────────────────────────────
 
@@ -59,7 +62,7 @@ pub struct AgentOptions {
     /// Optional context transformer.
     pub transform_context: Option<TransformContextArc>,
     /// Optional async API key resolver.
-    pub get_api_key: Option<GetApiKeyFn>,
+    pub get_api_key: Option<GetApiKeyArc>,
     /// Retry strategy for transient failures.
     pub retry_strategy: Box<dyn RetryStrategy>,
     /// Per-call stream options.
@@ -265,7 +268,7 @@ impl AgentOptions {
     #[must_use]
     pub fn with_get_api_key(
         mut self,
-        f: impl Fn(&str) -> Pin<Box<dyn Future<Output = Option<String>> + Send>> + Send + Sync + 'static,
+        f: impl Fn(&str) -> GetApiKeyFuture + Send + Sync + 'static,
     ) -> Self {
         self.get_api_key = Some(Arc::new(f));
         self
@@ -296,10 +299,7 @@ impl AgentOptions {
     #[must_use]
     pub fn with_approve_tool(
         mut self,
-        f: impl Fn(ToolApprovalRequest) -> Pin<Box<dyn Future<Output = ToolApproval> + Send>>
-        + Send
-        + Sync
-        + 'static,
+        f: impl Fn(ToolApprovalRequest) -> ApproveToolFuture + Send + Sync + 'static,
     ) -> Self {
         self.approve_tool = Some(Arc::new(f));
         self

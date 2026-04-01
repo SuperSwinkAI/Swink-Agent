@@ -78,6 +78,12 @@ MSRV **1.88** (edition 2024). Workspace deps centralized in root `Cargo.toml`.
 
 - `AgentToolResult.is_error` replaces old `text.starts_with("error")` heuristic. Use `error()` / `text()` constructors.
 - `ToolCallTransformer` runs unconditionally (not gated by approval). Distinct from `ToolValidator` (rejects vs rewrites).
+- Approval and API-key callbacks now use shared future/type aliases from `src/agent_options.rs`; prefer reusing those aliases over spelling boxed-future callback signatures inline.
+- `src/tool_filter.rs` uses a direct wildcard matcher for glob patterns; avoid recompiling regexes for `*` / `?` matches.
+
+### Policies (`policies/src/content_filter.rs`)
+
+- Non-whole-word keyword filters use direct string matching, while whole-word keywords and explicit regex rules stay on the regex path. Keep the fast keyword path when extending `ContentFilter`.
 
 ### Feature Gates
 

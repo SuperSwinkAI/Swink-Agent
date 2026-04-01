@@ -11,6 +11,10 @@ use std::pin::Pin;
 use crate::context_transformer::CompactionReport;
 use crate::types::AgentMessage;
 
+/// A boxed future returned by an [`AsyncContextTransformer`].
+pub type AsyncTransformFuture<'a> =
+    Pin<Box<dyn Future<Output = Option<CompactionReport>> + Send + 'a>>;
+
 /// Async context transformer for operations that require I/O (summary fetching,
 /// RAG retrieval, database lookups) before transforming the message context.
 ///
@@ -34,7 +38,7 @@ pub trait AsyncContextTransformer: Send + Sync {
         &'a self,
         messages: &'a mut Vec<AgentMessage>,
         overflow: bool,
-    ) -> Pin<Box<dyn Future<Output = Option<CompactionReport>> + Send + 'a>>;
+    ) -> AsyncTransformFuture<'a>;
 }
 
 #[cfg(test)]
@@ -61,7 +65,7 @@ mod tests {
                 &'a self,
                 messages: &'a mut Vec<AgentMessage>,
                 overflow: bool,
-            ) -> Pin<Box<dyn Future<Output = Option<CompactionReport>> + Send + 'a>> {
+            ) -> AsyncTransformFuture<'a> {
                 Box::pin(async move {
                     if overflow && messages.len() > 2 {
                         let before = messages.len();
@@ -105,7 +109,7 @@ mod tests {
                 &'a self,
                 messages: &'a mut Vec<AgentMessage>,
                 _overflow: bool,
-            ) -> Pin<Box<dyn Future<Output = Option<CompactionReport>> + Send + 'a>> {
+            ) -> AsyncTransformFuture<'a> {
                 Box::pin(async move {
                     // Simulate injecting a summary at the start
                     messages.insert(0, text_message("[summary of prior context]"));

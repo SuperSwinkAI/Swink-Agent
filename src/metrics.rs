@@ -50,6 +50,7 @@ pub struct TurnMetrics {
 ///
 /// Implementations can persist metrics, forward to monitoring systems, or
 /// accumulate for post-run analysis.
+pub type MetricsFuture<'a> = Pin<Box<dyn Future<Output = ()> + Send + 'a>>;
 ///
 /// # Example
 ///
@@ -76,7 +77,7 @@ pub trait MetricsCollector: Send + Sync {
     fn on_metrics<'a>(
         &'a self,
         metrics: &'a TurnMetrics,
-    ) -> Pin<Box<dyn Future<Output = ()> + Send + 'a>>;
+    ) -> MetricsFuture<'a>;
 }
 
 // ─── Compile-time Send + Sync assertions ────────────────────────────────────
@@ -101,7 +102,7 @@ mod tests {
         fn on_metrics<'a>(
             &'a self,
             _metrics: &'a TurnMetrics,
-        ) -> Pin<Box<dyn Future<Output = ()> + Send + 'a>> {
+        ) -> MetricsFuture<'a> {
             Box::pin(async move {
                 self.count.fetch_add(1, Ordering::SeqCst);
             })

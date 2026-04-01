@@ -9,7 +9,6 @@ mod tool_dispatch;
 mod turn;
 
 use std::error::Error as _;
-use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
@@ -19,6 +18,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, info, info_span};
 
+use crate::agent_options::{ApproveToolFn, GetApiKeyFn};
 use crate::async_context_transformer::AsyncContextTransformer;
 use crate::error::AgentError;
 use crate::fallback::ModelFallback;
@@ -26,7 +26,7 @@ use crate::message_provider::MessageProvider;
 use crate::retry::RetryStrategy;
 use crate::stream::{AssistantMessageDelta, StreamFn, StreamOptions};
 use crate::tool::AgentTool;
-use crate::tool::{AgentToolResult, ApprovalMode, ToolApproval, ToolApprovalRequest};
+use crate::tool::{AgentToolResult, ApprovalMode};
 use crate::tool_execution_policy::ToolExecutionPolicy;
 use crate::types::{
     AgentMessage, AssistantMessage, LlmMessage, ModelSpec, StopReason, ToolResultMessage,
@@ -49,14 +49,6 @@ const EVENT_CHANNEL_CAPACITY: usize = 256;
 
 /// Converts an `AgentMessage` to an optional `LlmMessage` for the provider.
 type ConvertToLlmFn = dyn Fn(&AgentMessage) -> Option<LlmMessage> + Send + Sync;
-
-/// Async API key resolution callback.
-type GetApiKeyFn =
-    dyn Fn(&str) -> Pin<Box<dyn Future<Output = Option<String>> + Send>> + Send + Sync;
-
-/// Async callback for approving or rejecting individual tool calls.
-pub type ApproveToolFn =
-    dyn Fn(ToolApprovalRequest) -> Pin<Box<dyn Future<Output = ToolApproval> + Send>> + Send + Sync;
 
 // ─── TurnEndReason ───────────────────────────────────────────────────────────
 

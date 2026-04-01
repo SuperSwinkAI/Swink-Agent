@@ -36,6 +36,10 @@ pub struct ToolCallSummary<'a> {
 /// to lowest priority.
 pub type PriorityFn = dyn Fn(&ToolCallSummary<'_>) -> i32 + Send + Sync;
 
+/// A boxed future returned by a [`ToolExecutionStrategy`].
+pub type ToolExecutionStrategyFuture<'a> =
+    Pin<Box<dyn Future<Output = Vec<Vec<usize>>> + Send + 'a>>;
+
 // ─── ToolExecutionStrategy ───────────────────────────────────────────────────
 
 /// Fully custom tool execution strategy.
@@ -54,7 +58,7 @@ pub trait ToolExecutionStrategy: Send + Sync {
     fn partition(
         &self,
         tool_calls: &[ToolCallSummary<'_>],
-    ) -> Pin<Box<dyn Future<Output = Vec<Vec<usize>>> + Send + '_>>;
+    ) -> ToolExecutionStrategyFuture<'_>;
 }
 
 // ─── ToolExecutionPolicy ─────────────────────────────────────────────────────

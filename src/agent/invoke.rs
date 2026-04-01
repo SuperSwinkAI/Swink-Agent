@@ -1,4 +1,3 @@
-use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
@@ -6,6 +5,7 @@ use futures::Stream;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
+use crate::agent_options::{ApproveToolFn, GetApiKeyFn};
 use crate::error::AgentError;
 use crate::loop_::{AgentEvent, AgentLoopConfig, agent_loop, agent_loop_continue};
 use crate::message_provider::MessageProvider;
@@ -231,9 +231,7 @@ impl Agent {
 
         let api_key_box = self.get_api_key.as_ref().map(|k| {
             let k = Arc::clone(k);
-            let b: Box<
-                dyn Fn(&str) -> Pin<Box<dyn Future<Output = Option<String>> + Send>> + Send + Sync,
-            > = Box::new(move |provider| k(provider));
+            let b: Box<GetApiKeyFn> = Box::new(move |provider| k(provider));
             b
         });
 
@@ -266,7 +264,7 @@ impl Agent {
             message_provider: Some(message_provider),
             approve_tool: self.approve_tool.as_ref().map(|a| {
                 let a = Arc::clone(a);
-                let b: Box<crate::loop_::ApproveToolFn> = Box::new(move |req| a(req));
+                let b: Box<ApproveToolFn> = Box::new(move |req| a(req));
                 b
             }),
             approval_mode: self.approval_mode,

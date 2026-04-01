@@ -32,7 +32,7 @@ use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 
 use crate::agent_options::{
-    ApproveToolArc, AsyncTransformContextArc, CheckpointStoreArc, ConvertToLlmFn, GetApiKeyFn,
+    ApproveToolArc, AsyncTransformContextArc, CheckpointStoreArc, ConvertToLlmFn, GetApiKeyArc,
     TransformContextArc,
 };
 use crate::agent_subscriptions::ListenerRegistry;
@@ -149,7 +149,7 @@ pub struct Agent {
     stream_fn: Arc<dyn StreamFn>,
     convert_to_llm: ConvertToLlmFn,
     transform_context: Option<TransformContextArc>,
-    get_api_key: Option<GetApiKeyFn>,
+    get_api_key: Option<GetApiKeyArc>,
     retry_strategy: Arc<dyn RetryStrategy>,
     stream_options: StreamOptions,
     structured_output_max_retries: usize,

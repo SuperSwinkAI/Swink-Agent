@@ -19,6 +19,14 @@ pub struct FilterRule {
     pub category: Option<String>,
 }
 
+#[derive(Debug)]
+struct KeywordRule {
+    needle: String,
+    display_name: String,
+    category: Option<String>,
+    case_insensitive: bool,
+}
+
 /// Errors returned when constructing a [`ContentFilter`].
 #[derive(Debug)]
 pub enum ContentFilterError {
@@ -57,7 +65,8 @@ impl std::error::Error for ContentFilterError {
 /// categories are checked when `enabled_categories` is set.
 #[derive(Debug)]
 pub struct ContentFilter {
-    rules: Vec<FilterRule>,
+    regex_rules: Vec<FilterRule>,
+    keyword_rules: Vec<KeywordRule>,
     enabled_categories: Option<HashSet<String>>,
     case_insensitive: bool,
     whole_word: bool,
@@ -69,7 +78,8 @@ impl ContentFilter {
     #[must_use]
     pub const fn new() -> Self {
         Self {
-            rules: Vec::new(),
+            regex_rules: Vec::new(),
+            keyword_rules: Vec::new(),
             enabled_categories: None,
             case_insensitive: true,
             whole_word: false,
@@ -86,16 +96,7 @@ impl ContentFilter {
     #[must_use]
     pub fn with_keyword(mut self, word: impl Into<String>) -> Self {
         let word = word.into();
-        let escaped = regex::escape(&word);
-        let pattern_str = self.build_pattern(&escaped);
-        // Safety: escaped keyword with optional flags is always valid regex.
-        let pattern = Regex::new(&pattern_str)
-            .expect("escaped keyword should always produce valid regex");
-        self.rules.push(FilterRule {
-            pattern,
-            display_name: word,
-            category: None,
-        });
+        self.push_keyword_rule(None, word);
         self
     }
 
@@ -110,7 +111,7 @@ impl ContentFilter {
             pattern: pattern.to_string(),
             source,
         })?;
-        self.rules.push(FilterRule {
+        self.regex_rules.push(FilterRule {
             pattern: compiled,
             display_name: pattern.to_string(),
             category: None,
@@ -130,17 +131,7 @@ impl ContentFilter {
         category: impl Into<String>,
         word: impl Into<String>,
     ) -> Self {
-        let word = word.into();
-        let category = category.into();
-        let escaped = regex::escape(&word);
-        let pattern_str = self.build_pattern(&escaped);
-        let pattern = Regex::new(&pattern_str)
-            .expect("escaped keyword should always produce valid regex");
-        self.rules.push(FilterRule {
-            pattern,
-            display_name: word,
-            category: Some(category),
-        });
+        self.push_keyword_rule(Some(category.into()), word.into());
         self
     }
 
@@ -159,7 +150,7 @@ impl ContentFilter {
             pattern: pattern.to_string(),
             source,
         })?;
-        self.rules.push(FilterRule {
+        self.regex_rules.push(FilterRule {
             pattern: compiled,
             display_name: pattern.to_string(),
             category: Some(category.into()),
@@ -212,11 +203,38 @@ impl ContentFilter {
 
     /// Returns whether the given rule should be evaluated given the current
     /// category configuration.
-    fn should_evaluate_rule(&self, rule: &FilterRule) -> bool {
-        match (&rule.category, &self.enabled_categories) {
+    fn should_evaluate_category(&self, category: Option<&str>) -> bool {
+        match (category, &self.enabled_categories) {
             (Some(cat), Some(enabled)) => enabled.contains(cat),
             _ => true,
         }
+    }
+
+    fn push_keyword_rule(&mut self, category: Option<String>, word: String) {
+        if self.whole_word {
+            let escaped = regex::escape(&word);
+            let pattern_str = self.build_pattern(&escaped);
+            let pattern = Regex::new(&pattern_str)
+                .expect("escaped keyword should always produce valid regex");
+            self.regex_rules.push(FilterRule {
+                pattern,
+                display_name: word,
+                category,
+            });
+            return;
+        }
+
+        let needle = if self.case_insensitive {
+            word.to_lowercase()
+        } else {
+            word.clone()
+        };
+        self.keyword_rules.push(KeywordRule {
+            needle,
+            display_name: word,
+            category,
+            case_insensitive: self.case_insensitive,
+        });
     }
 }
 
@@ -237,8 +255,27 @@ impl PostTurnPolicy for ContentFilter {
         turn: &TurnPolicyContext<'_>,
     ) -> PolicyVerdict {
         let text = ContentBlock::extract_text(&turn.assistant_message.content);
-        for rule in &self.rules {
-            if !self.should_evaluate_rule(rule) {
+        let mut lowercase_text = None;
+
+        for rule in &self.keyword_rules {
+            if !self.should_evaluate_category(rule.category.as_deref()) {
+                continue;
+            }
+            let haystack = if rule.case_insensitive {
+                lowercase_text.get_or_insert_with(|| text.to_lowercase())
+            } else {
+                &text
+            };
+            if haystack.contains(&rule.needle) {
+                return PolicyVerdict::Stop(format!(
+                    "Content filter triggered: {}",
+                    rule.display_name
+                ));
+            }
+        }
+
+        for rule in &self.regex_rules {
+            if !self.should_evaluate_category(rule.category.as_deref()) {
                 continue;
             }
             if rule.pattern.is_match(&text) {
@@ -248,6 +285,7 @@ impl PostTurnPolicy for ContentFilter {
                 ));
             }
         }
+
         PolicyVerdict::Continue
     }
 }

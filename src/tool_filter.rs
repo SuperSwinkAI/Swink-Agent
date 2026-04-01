@@ -71,19 +71,45 @@ impl ToolPattern {
 
 /// Simple glob matching: `*` matches any sequence, `?` matches one char.
 fn glob_matches(pattern: &str, text: &str) -> bool {
-    let mut regex_str = String::from("^");
-    for ch in pattern.chars() {
-        match ch {
-            '*' => regex_str.push_str(".*"),
-            '?' => regex_str.push('.'),
-            c => {
-                let escaped = regex::escape(&c.to_string());
-                regex_str.push_str(&escaped);
-            }
+    let pattern_chars: Vec<char> = pattern.chars().collect();
+    let text_chars: Vec<char> = text.chars().collect();
+    let mut pattern_idx = 0;
+    let mut text_idx = 0;
+    let mut star_idx = None;
+    let mut match_after_star = 0;
+
+    while text_idx < text_chars.len() {
+        if pattern_idx < pattern_chars.len()
+            && (pattern_chars[pattern_idx] == '?'
+                || pattern_chars[pattern_idx] == text_chars[text_idx])
+        {
+            pattern_idx += 1;
+            text_idx += 1;
+            continue;
         }
+
+        if pattern_idx < pattern_chars.len() && pattern_chars[pattern_idx] == '*' {
+            star_idx = Some(pattern_idx);
+            pattern_idx += 1;
+            match_after_star = text_idx;
+            continue;
+        }
+
+        if let Some(star) = star_idx {
+            pattern_idx = star + 1;
+            match_after_star += 1;
+            text_idx = match_after_star;
+            continue;
+        }
+
+        return false;
     }
-    regex_str.push('$');
-    Regex::new(&regex_str).is_ok_and(|re| re.is_match(text))
+
+    while pattern_idx < pattern_chars.len() && pattern_chars[pattern_idx] == '*' {
+        pattern_idx += 1;
+    }
+
+    pattern_idx == pattern_chars.len()
 }
 
 // ─── ToolFilter ─────────────────────────────────────────────────────────────
@@ -177,6 +203,21 @@ mod tests {
         let pat = ToolPattern::parse("tool_?");
         assert!(pat.matches("tool_a"));
         assert!(!pat.matches("tool_ab"));
+    }
+
+    #[test]
+    fn glob_star_backtracks_without_regex() {
+        let pat = ToolPattern::parse("read_*_file");
+        assert!(pat.matches("read_secret_file"));
+        assert!(pat.matches("read_very_secret_file"));
+        assert!(!pat.matches("read_secret_dir"));
+    }
+
+    #[test]
+    fn glob_handles_unicode_chars() {
+        let pat = ToolPattern::parse("t?ol_*");
+        assert!(pat.matches("t🦀ol_alpha"));
+        assert!(!pat.matches("tool"));
     }
 
     #[test]

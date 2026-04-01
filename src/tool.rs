@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
+use crate::agent_options::{ApproveToolFn, ApproveToolFuture};
 use crate::types::ContentBlock;
 
 static SCHEMA_VALIDATOR_CACHE: LazyLock<Mutex<HashMap<String, Arc<jsonschema::Validator>>>> =
@@ -336,14 +337,9 @@ pub enum ApprovalMode {
 #[allow(clippy::type_complexity)]
 pub fn selective_approve<F>(
     inner: F,
-) -> Box<
-    dyn Fn(ToolApprovalRequest) -> Pin<Box<dyn Future<Output = ToolApproval> + Send>> + Send + Sync,
->
+) -> Box<ApproveToolFn>
 where
-    F: Fn(ToolApprovalRequest) -> Pin<Box<dyn Future<Output = ToolApproval> + Send>>
-        + Send
-        + Sync
-        + 'static,
+    F: Fn(ToolApprovalRequest) -> ApproveToolFuture + Send + Sync + 'static,
 {
     Box::new(move |req: ToolApprovalRequest| {
         if req.requires_approval {
