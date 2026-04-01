@@ -21,9 +21,13 @@ use swink_agent::{
 ///
 /// - **`PreTurn`**: scans new user messages for direct injection.
 /// - **`PostTurn`**: scans tool results for indirect injection.
+struct NamedPattern {
+    name: String,
+    regex: Regex,
+}
+
 pub struct PromptInjectionGuard {
-    patterns: Vec<Regex>,
-    pattern_names: Vec<String>,
+    patterns: Vec<NamedPattern>,
 }
 
 impl PromptInjectionGuard {
@@ -34,20 +38,15 @@ impl PromptInjectionGuard {
     /// Panics if a built-in default pattern fails to compile (indicates a bug).
     #[must_use]
     pub fn new() -> Self {
-        let defaults = default_patterns();
-        let mut patterns = Vec::with_capacity(defaults.len());
-        let mut pattern_names = Vec::with_capacity(defaults.len());
-
-        for (name, pat) in defaults {
-            // Default patterns are known-good; unwrap is safe.
-            let regex = Regex::new(&format!("(?i){pat}")).expect("default pattern must compile");
-            patterns.push(regex);
-            pattern_names.push(name.to_string());
-        }
-
         Self {
-            patterns,
-            pattern_names,
+            patterns: default_patterns()
+                .into_iter()
+                .map(|(name, pattern)| NamedPattern {
+                    name: name.to_string(),
+                    regex: Regex::new(&format!("(?i){pattern}"))
+                        .expect("default pattern must compile"),
+                })
+                .collect(),
         }
     }
 
@@ -55,10 +54,7 @@ impl PromptInjectionGuard {
     /// to add custom patterns.
     #[must_use]
     pub const fn without_defaults() -> Self {
-        Self {
-            patterns: Vec::new(),
-            pattern_names: Vec::new(),
-        }
+        Self { patterns: Vec::new() }
     }
 
     /// Adds a custom case-insensitive pattern to the guard.
@@ -68,16 +64,18 @@ impl PromptInjectionGuard {
     /// Returns `regex::Error` if `pattern` is not a valid regular expression.
     pub fn with_pattern(mut self, name: impl Into<String>, pattern: &str) -> Result<Self, regex::Error> {
         let regex = Regex::new(&format!("(?i){pattern}"))?;
-        self.patterns.push(regex);
-        self.pattern_names.push(name.into());
+        self.patterns.push(NamedPattern {
+            name: name.into(),
+            regex,
+        });
         Ok(self)
     }
 
     /// Checks `text` against all patterns. Returns the name of the first match, if any.
     fn check(&self, text: &str) -> Option<&str> {
-        for (i, pat) in self.patterns.iter().enumerate() {
-            if pat.is_match(text) {
-                return Some(&self.pattern_names[i]);
+        for pattern in &self.patterns {
+            if pattern.regex.is_match(text) {
+                return Some(&pattern.name);
             }
         }
         None

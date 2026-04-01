@@ -133,22 +133,13 @@ impl PostTurnPolicy for PiiRedactor {
     ) -> PolicyVerdict {
         let text = ContentBlock::extract_text(&turn.assistant_message.content);
 
-        // Check for any match first.
-        let has_match = self.patterns.iter().any(|p| p.regex.is_match(&text));
-        if !has_match {
+        let first_match = self.patterns.iter().find(|pattern| pattern.regex.is_match(&text));
+        let Some(first_match) = first_match else {
             return PolicyVerdict::Continue;
-        }
+        };
 
         match self.mode {
-            PiiMode::Stop => {
-                // Find the first matching pattern name.
-                let first = self
-                    .patterns
-                    .iter()
-                    .find(|p| p.regex.is_match(&text))
-                    .expect("at least one pattern matched");
-                PolicyVerdict::Stop(format!("PII detected: {}", first.name))
-            }
+            PiiMode::Stop => PolicyVerdict::Stop(format!("PII detected: {}", first_match.name)),
             PiiMode::Redact => {
                 let mut redacted = text;
                 for pattern in &self.patterns {
