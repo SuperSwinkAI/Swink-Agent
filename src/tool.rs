@@ -18,6 +18,7 @@ use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
 use crate::agent_options::{ApproveToolFn, ApproveToolFuture};
+use crate::schema::schema_for;
 use crate::types::ContentBlock;
 
 static SCHEMA_VALIDATOR_CACHE: LazyLock<Mutex<HashMap<String, Arc<jsonschema::Validator>>>> =
@@ -236,6 +237,29 @@ pub fn validate_tool_arguments(schema: &Value, arguments: &Value) -> Result<(), 
     } else {
         Err(errors)
     }
+}
+
+/// Build the default permissive object schema used by simple tools.
+#[must_use]
+pub(crate) fn permissive_object_schema() -> Value {
+    serde_json::json!({
+        "type": "object",
+        "properties": {},
+        "additionalProperties": true
+    })
+}
+
+/// Validate a schema in debug builds and return it unchanged.
+#[must_use]
+pub(crate) fn debug_validated_schema(schema: Value) -> Value {
+    debug_assert!(validate_schema(&schema).is_ok());
+    schema
+}
+
+/// Generate and debug-validate a schema from a `schemars` type.
+#[must_use]
+pub(crate) fn validated_schema_for<T: schemars::JsonSchema>() -> Value {
+    debug_validated_schema(schema_for::<T>())
 }
 
 fn compiled_validator(schema: &Value) -> Result<Arc<jsonschema::Validator>, String> {

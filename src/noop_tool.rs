@@ -19,7 +19,7 @@ use std::sync::Arc;
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
-use crate::tool::{AgentTool, AgentToolResult, ToolFuture};
+use crate::tool::{AgentTool, AgentToolResult, ToolFuture, permissive_object_schema};
 
 // ─── NoopTool ──────────────────────────────────────────────────────────────
 
@@ -55,13 +55,8 @@ impl AgentTool for NoopTool {
 
     fn parameters_schema(&self) -> &Value {
         // Accept any arguments (the tool won't execute them anyway).
-        static SCHEMA: std::sync::LazyLock<Value> = std::sync::LazyLock::new(|| {
-            serde_json::json!({
-                "type": "object",
-                "properties": {},
-                "additionalProperties": true
-            })
-        });
+        static SCHEMA: std::sync::LazyLock<Value> =
+            std::sync::LazyLock::new(permissive_object_schema);
         &SCHEMA
     }
 

@@ -7,13 +7,14 @@
 use crate::loop_::AgentEvent;
 use crate::stream::{AssistantMessageEvent, StreamErrorKind, StreamFn, StreamOptions};
 use crate::tool::{AgentTool, AgentToolResult, ToolFuture};
+use crate::tool::permissive_object_schema;
 use crate::types::{AgentContext, ModelSpec};
 use crate::types::{
     AgentMessage, AssistantMessage, ContentBlock, Cost, LlmMessage, StopReason, ToolResultMessage,
     Usage, UserMessage,
 };
 use futures::Stream;
-use serde_json::{Value, json};
+use serde_json::Value;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
@@ -264,11 +265,7 @@ impl MockTool {
     pub fn new(name: &str) -> Self {
         Self {
             tool_name: name.to_string(),
-            schema: json!({
-                "type": "object",
-                "properties": {},
-                "additionalProperties": true
-            }),
+            schema: permissive_object_schema(),
             result: Mutex::new(Some(AgentToolResult::text("mock result"))),
             delay: None,
             executed: Arc::new(AtomicBool::new(false)),

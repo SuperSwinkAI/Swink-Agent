@@ -9,8 +9,7 @@ use tokio::process::Command;
 use tokio_util::sync::CancellationToken;
 
 use super::MAX_OUTPUT_BYTES;
-use crate::schema::schema_for;
-use crate::tool::{AgentTool, AgentToolResult, ToolFuture, validate_schema};
+use crate::tool::{AgentTool, AgentToolResult, ToolFuture, validated_schema_for};
 
 /// Default timeout in milliseconds.
 const DEFAULT_TIMEOUT_MS: u64 = 30_000;
@@ -30,9 +29,9 @@ impl BashTool {
     /// Create a new `BashTool`.
     #[must_use]
     pub fn new() -> Self {
-        let schema = schema_for::<Params>();
-        debug_assert!(validate_schema(&schema).is_ok());
-        Self { schema }
+        Self {
+            schema: validated_schema_for::<Params>(),
+        }
     }
 }
 
