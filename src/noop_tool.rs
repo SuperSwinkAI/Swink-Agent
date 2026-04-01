@@ -14,14 +14,12 @@
 //! assert!(!tool.requires_approval());
 //! ```
 
-use std::future::Future;
-use std::pin::Pin;
 use std::sync::Arc;
 
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
-use crate::tool::{AgentTool, AgentToolResult};
+use crate::tool::{AgentTool, AgentToolResult, ToolFuture};
 
 // ─── NoopTool ──────────────────────────────────────────────────────────────
 
@@ -79,7 +77,7 @@ impl AgentTool for NoopTool {
         _on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
         _state: Arc<std::sync::RwLock<crate::SessionState>>,
         _credential: Option<crate::credential::ResolvedCredential>,
-    ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>> {
+    ) -> ToolFuture<'_> {
         let name = self.name.clone();
         Box::pin(async move {
             AgentToolResult::error(format!(

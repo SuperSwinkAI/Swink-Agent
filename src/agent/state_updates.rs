@@ -1,0 +1,142 @@
+use futures::{Stream, StreamExt};
+use std::pin::Pin;
+use std::sync::Arc;
+
+use crate::error::AgentError;
+use crate::loop_::AgentEvent;
+use crate::types::{AgentMessage, AgentResult, LlmMessage, StopReason, Usage};
+
+use super::Agent;
+
+impl Agent {
+    /// Collect a stream to completion, updating agent state along the way.
+    pub(super) async fn collect_stream(
+        &mut self,
+        mut stream: Pin<Box<dyn Stream<Item = AgentEvent> + Send>>,
+    ) -> Result<AgentResult, AgentError> {
+        let mut all_messages: Vec<AgentMessage> = Vec::new();
+        let mut state_messages = self.in_flight_llm_messages.take().unwrap_or_default();
+        let mut received_full_context = false;
+        let mut stop_reason = StopReason::Stop;
+        let mut usage = Usage::default();
+        let mut cost = crate::types::Cost::default();
+        let mut error: Option<String> = None;
+
+        while let Some(event) = stream.next().await {
+            self.dispatch_event(&event);
+            self.update_state_from_event(&event);
+
+            match event {
+                AgentEvent::TurnEnd {
+                    assistant_message,
+                    tool_results,
+                    ..
+                } => {
+                    stop_reason = assistant_message.stop_reason;
+                    usage += assistant_message.usage.clone();
+                    cost += assistant_message.cost.clone();
+                    if let Some(ref err) = assistant_message.error_message {
+                        error = Some(err.clone());
+                    }
+                    let assistant_llm = LlmMessage::Assistant(assistant_message);
+                    state_messages.push(AgentMessage::Llm(assistant_llm.clone()));
+                    all_messages.push(AgentMessage::Llm(assistant_llm));
+                    for tr in tool_results {
+                        state_messages.push(AgentMessage::Llm(LlmMessage::ToolResult(tr.clone())));
+                        all_messages.push(AgentMessage::Llm(LlmMessage::ToolResult(tr)));
+                    }
+                }
+                AgentEvent::AgentEnd { messages } => match Arc::try_unwrap(messages) {
+                    Ok(returned) => {
+                        self.state.messages = returned;
+                        received_full_context = true;
+                    }
+                    Err(messages) => {
+                        self.state.messages = clone_llm_messages(messages.as_ref());
+                        received_full_context = true;
+                    }
+                },
+                _ => {}
+            }
+        }
+
+        if !received_full_context {
+            self.state.messages = state_messages;
+        }
+        self.state.is_running = false;
+        self.state.error.clone_from(&error);
+        self.idle_notify.notify_waiters();
+
+        Ok(AgentResult {
+            messages: all_messages,
+            stop_reason,
+            usage,
+            cost,
+            error,
+        })
+    }
+
+    /// Processes a streaming event, updating [`Agent::state`] and notifying subscribers.
+    pub fn handle_stream_event(&mut self, event: &AgentEvent) {
+        self.dispatch_event(event);
+        self.update_state_from_event(event);
+
+        match event {
+            AgentEvent::TurnEnd {
+                assistant_message,
+                tool_results,
+                ..
+            } => {
+                let msgs = self.in_flight_llm_messages.get_or_insert_with(Vec::new);
+                msgs.push(AgentMessage::Llm(LlmMessage::Assistant(
+                    assistant_message.clone(),
+                )));
+                for tr in tool_results {
+                    msgs.push(AgentMessage::Llm(LlmMessage::ToolResult(tr.clone())));
+                }
+            }
+            AgentEvent::AgentEnd { messages } => {
+                self.state.messages = clone_llm_messages(messages.as_ref());
+                self.in_flight_llm_messages = None;
+                self.state.error = None;
+                self.idle_notify.notify_waiters();
+            }
+            _ => {}
+        }
+    }
+
+    fn update_state_from_event(&mut self, event: &AgentEvent) {
+        match event {
+            AgentEvent::MessageStart => {
+                self.state.stream_message = None;
+            }
+            AgentEvent::MessageEnd { message } => {
+                self.state.stream_message =
+                    Some(AgentMessage::Llm(LlmMessage::Assistant(message.clone())));
+            }
+            AgentEvent::ToolExecutionStart { id, .. } => {
+                self.state.pending_tool_calls.insert(id.clone());
+            }
+            AgentEvent::TurnEnd { .. } => {
+                self.state.pending_tool_calls.clear();
+                self.state.stream_message = None;
+            }
+            AgentEvent::AgentEnd { .. } => {
+                self.state.is_running = false;
+                self.state.pending_tool_calls.clear();
+                self.state.stream_message = None;
+            }
+            _ => {}
+        }
+    }
+}
+
+fn clone_llm_messages(messages: &[AgentMessage]) -> Vec<AgentMessage> {
+    messages
+        .iter()
+        .filter_map(|message| match message {
+            AgentMessage::Llm(llm) => Some(AgentMessage::Llm(llm.clone())),
+            AgentMessage::Custom(_) => None,
+        })
+        .collect()
+}

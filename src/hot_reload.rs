@@ -17,9 +17,7 @@
 //! ```
 
 use std::collections::HashMap;
-use std::future::Future;
 use std::path::{Path, PathBuf};
-use std::pin::Pin;
 use std::sync::Arc;
 
 use notify::{RecommendedWatcher, RecursiveMode, Watcher, Event, EventKind};
@@ -29,7 +27,7 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
-use crate::tool::{AgentTool, AgentToolResult};
+use crate::tool::{AgentTool, AgentToolResult, ToolFuture};
 use crate::tool_filter::ToolFilter;
 
 // ─── ScriptTool ────────────────────────────────────────────────────────────
@@ -159,7 +157,7 @@ impl AgentTool for ScriptTool {
         _on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
         _state: Arc<std::sync::RwLock<crate::SessionState>>,
         _credential: Option<crate::credential::ResolvedCredential>,
-    ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>> {
+    ) -> ToolFuture<'_> {
         let command = self.interpolate_command(&params);
         Box::pin(async move {
             if cancellation_token.is_cancelled() {

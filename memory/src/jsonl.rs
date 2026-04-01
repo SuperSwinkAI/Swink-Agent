@@ -6,8 +6,8 @@
 //! Concurrent writes to the same session may corrupt the file.
 //! Callers are expected to enforce single-writer access.
 
-use std::io::{self, BufRead, Read as _, Seek, Write};
-use std::path::PathBuf;
+use std::io::{self, BufRead, Seek, Write};
+use std::path::{Path, PathBuf};
 
 use swink_agent::{
     AgentMessage, CustomMessageRegistry, LlmMessage, deserialize_custom_message,
@@ -17,6 +17,167 @@ use swink_agent::{
 use crate::meta::SessionMeta;
 use crate::store::SessionStore;
 use crate::time::{format_session_id, now_utc};
+
+#[derive(Debug, Clone)]
+enum SessionRecord {
+    Llm(Box<LlmMessage>),
+    Custom(serde_json::Value),
+    State(serde_json::Value),
+}
+
+impl SessionRecord {
+    fn from_message(message: &AgentMessage, session_id: &str) -> Option<Self> {
+        match message {
+            AgentMessage::Llm(llm) => Some(Self::Llm(Box::new(llm.clone()))),
+            AgentMessage::Custom(custom) => {
+                let mut envelope = serialize_custom_message(custom.as_ref())?;
+                envelope
+                    .as_object_mut()
+                    .expect("custom message envelope must be an object")
+                    .insert("_custom".to_string(), serde_json::Value::Bool(true));
+                Some(Self::Custom(envelope))
+            }
+        }
+        .or_else(|| {
+            if let AgentMessage::Custom(custom) = message {
+                tracing::warn!(
+                    "skipping non-serializable CustomMessage in session {session_id}: {:?}",
+                    custom
+                );
+            }
+            None
+        })
+    }
+
+    const fn state(state: serde_json::Value) -> Self {
+        Self::State(state)
+    }
+
+    fn to_json_line(&self) -> io::Result<String> {
+        match self {
+            Self::Llm(message) => serde_json::to_string(message).map_err(io::Error::other),
+            Self::Custom(envelope) => serde_json::to_string(envelope).map_err(io::Error::other),
+            Self::State(state) => serde_json::to_string(&serde_json::json!({
+                "_state": true,
+                "data": state
+            }))
+            .map_err(io::Error::other),
+        }
+    }
+
+    fn parse(line: &str) -> io::Result<Self> {
+        let value: serde_json::Value = serde_json::from_str(line).map_err(io::Error::other)?;
+        if value.get("_state").and_then(serde_json::Value::as_bool) == Some(true) {
+            return Ok(Self::State(
+                value.get("data").cloned().unwrap_or(serde_json::Value::Null),
+            ));
+        }
+        if value.get("_custom").and_then(serde_json::Value::as_bool) == Some(true) {
+            return Ok(Self::Custom(value));
+        }
+        serde_json::from_value::<LlmMessage>(value)
+            .map(Box::new)
+            .map(Self::Llm)
+            .map_err(io::Error::other)
+    }
+}
+
+fn session_path(sessions_dir: &Path, id: &str) -> PathBuf {
+    sessions_dir.join(format!("{id}.jsonl"))
+}
+
+fn not_found(id: &str) -> io::Error {
+    io::Error::new(io::ErrorKind::NotFound, format!("session not found: {id}"))
+}
+
+fn empty_file() -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, "empty session file")
+}
+
+fn invalid_meta(error: impl std::fmt::Display) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::InvalidData,
+        format!("invalid session metadata: {error}"),
+    )
+}
+
+fn open_session_file(path: &Path, id: &str) -> io::Result<std::fs::File> {
+    let file = std::fs::File::open(path).map_err(|error| {
+        if error.kind() == io::ErrorKind::NotFound {
+            not_found(id)
+        } else {
+            error
+        }
+    })?;
+
+    if file.metadata()?.len() == 0 {
+        return Err(empty_file());
+    }
+
+    Ok(file)
+}
+
+fn read_meta_and_message_lines(path: &Path, id: &str) -> io::Result<(SessionMeta, Vec<String>)> {
+    let file = open_session_file(path, id)?;
+    let reader = io::BufReader::new(file);
+    let mut lines = reader.lines();
+
+    let meta_line = lines.next().ok_or_else(empty_file)??;
+    let meta = serde_json::from_str(&meta_line).map_err(invalid_meta)?;
+    let remaining_lines = lines.collect::<io::Result<Vec<_>>>()?;
+
+    Ok((meta, remaining_lines))
+}
+
+fn rewrite_session_file(path: &Path, meta: &SessionMeta, lines: &[String]) -> io::Result<()> {
+    let file = std::fs::File::create(path)?;
+    let mut writer = io::BufWriter::new(file);
+
+    serde_json::to_writer(&mut writer, meta).map_err(io::Error::other)?;
+    writeln!(writer)?;
+
+    for line in lines {
+        if !line.is_empty() {
+            writeln!(writer, "{line}")?;
+        }
+    }
+
+    writer.flush()?;
+    Ok(())
+}
+
+fn parse_message_record(
+    line: &str,
+    line_num: usize,
+    id: &str,
+    registry: Option<&CustomMessageRegistry>,
+) -> Option<AgentMessage> {
+    match SessionRecord::parse(line) {
+        Ok(SessionRecord::Llm(message)) => Some(AgentMessage::Llm(*message)),
+        Ok(SessionRecord::Custom(envelope)) => registry.and_then(|reg| {
+            match deserialize_custom_message(reg, &envelope) {
+                Ok(custom) => Some(AgentMessage::Custom(custom)),
+                Err(error) => {
+                    tracing::warn!(
+                        line = line_num,
+                        error = %error,
+                        "skipping unrestorable custom message in session {id}"
+                    );
+                    None
+                }
+            }
+        }),
+        Ok(SessionRecord::State(_)) => None,
+        Err(error) => {
+            tracing::warn!(
+                line = line_num,
+                error = %error,
+                "skipping unparseable line in session {id}"
+            );
+            None
+        }
+    }
+}
 
 /// Validate a session ID, rejecting unsafe filesystem characters.
 ///
@@ -74,7 +235,7 @@ impl SessionStore for JsonlSessionStore {
     fn save(&self, id: &str, meta: &SessionMeta, messages: &[LlmMessage]) -> io::Result<()> {
         validate_session_id(id)?;
 
-        let path = self.sessions_dir.join(format!("{id}.jsonl"));
+        let path = session_path(&self.sessions_dir, id);
 
         let file = std::fs::File::create(&path)?;
         let mut writer = io::BufWriter::new(file);
@@ -96,13 +257,10 @@ impl SessionStore for JsonlSessionStore {
     fn append(&self, id: &str, messages: &[LlmMessage]) -> io::Result<()> {
         validate_session_id(id)?;
 
-        let path = self.sessions_dir.join(format!("{id}.jsonl"));
+        let path = session_path(&self.sessions_dir, id);
 
         if !path.exists() {
-            return Err(io::Error::new(
-                io::ErrorKind::NotFound,
-                format!("session not found: {id}"),
-            ));
+            return Err(not_found(id));
         }
 
         // Read only line 1 to get current meta and its byte length.
@@ -137,33 +295,16 @@ impl SessionStore for JsonlSessionStore {
             file.write_all(new_line1.as_bytes())?;
             file.seek(io::SeekFrom::End(0))?;
             for msg in messages {
-                let json = serde_json::to_string(msg).map_err(io::Error::other)?;
+                let json = SessionRecord::Llm(Box::new(msg.clone())).to_json_line()?;
                 writeln!(file, "{json}")?;
             }
             file.flush()?;
         } else {
-            // Slow path: meta line length changed — full rewrite required.
-            let mut all_content = String::new();
-            {
-                let file = std::fs::File::open(&path)?;
-                let mut buf_reader = io::BufReader::new(file);
-                buf_reader.read_to_string(&mut all_content)?;
-            }
-
-            let lines: Vec<&str> = all_content.lines().collect();
-
-            let mut file = std::fs::File::create(&path)?;
-            writeln!(file, "{new_meta_line}")?;
-            for line in lines.iter().skip(1) {
-                if !line.is_empty() {
-                    writeln!(file, "{line}")?;
-                }
-            }
+            let (_, mut lines) = read_meta_and_message_lines(&path, id)?;
             for msg in messages {
-                let json = serde_json::to_string(msg).map_err(io::Error::other)?;
-                writeln!(file, "{json}")?;
+                lines.push(SessionRecord::Llm(Box::new(msg.clone())).to_json_line()?);
             }
-            file.flush()?;
+            rewrite_session_file(&path, &meta, &lines)?;
         }
 
         Ok(())
@@ -172,47 +313,23 @@ impl SessionStore for JsonlSessionStore {
     fn load(&self, id: &str) -> io::Result<(SessionMeta, Vec<LlmMessage>)> {
         validate_session_id(id)?;
 
-        let path = self.sessions_dir.join(format!("{id}.jsonl"));
-        let file = std::fs::File::open(&path).map_err(|e| {
-            if e.kind() == io::ErrorKind::NotFound {
-                io::Error::new(io::ErrorKind::NotFound, format!("session not found: {id}"))
-            } else {
-                e
-            }
-        })?;
-
-        // Check for empty file
-        let file_meta = file.metadata()?;
-        if file_meta.len() == 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "empty session file",
-            ));
-        }
-
-        let reader = io::BufReader::new(file);
-        let mut lines = reader.lines();
-
-        // First line: metadata
-        let meta_line = lines
-            .next()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "empty session file"))??;
-        let meta: SessionMeta = serde_json::from_str(&meta_line).map_err(|e| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("invalid session metadata: {e}"),
-            )
-        })?;
+        let path = session_path(&self.sessions_dir, id);
+        let (meta, lines) = read_meta_and_message_lines(&path, id)?;
 
         // Remaining lines: LlmMessages with corruption tolerance
         let mut messages = Vec::new();
-        for (line_num, line_result) in lines.enumerate() {
-            let line = line_result?;
+        for (line_num, line) in lines.into_iter().enumerate() {
             if line.trim().is_empty() {
                 continue;
             }
-            match serde_json::from_str::<LlmMessage>(&line) {
-                Ok(msg) => messages.push(msg),
+            match SessionRecord::parse(&line) {
+                Ok(SessionRecord::Llm(message)) => messages.push(*message),
+                Ok(SessionRecord::Custom(_) | SessionRecord::State(_)) => {
+                    tracing::warn!(
+                        line = line_num + 2,
+                        "skipping non-llm record in session {id}"
+                    );
+                }
                 Err(e) => {
                     tracing::warn!(
                         line = line_num + 2,
@@ -261,7 +378,7 @@ impl SessionStore for JsonlSessionStore {
 
     fn delete(&self, id: &str) -> io::Result<()> {
         validate_session_id(id)?;
-        let path = self.sessions_dir.join(format!("{id}.jsonl"));
+        let path = session_path(&self.sessions_dir, id);
         std::fs::remove_file(path)
     }
 
@@ -273,7 +390,7 @@ impl SessionStore for JsonlSessionStore {
     ) -> io::Result<()> {
         validate_session_id(id)?;
 
-        let path = self.sessions_dir.join(format!("{id}.jsonl"));
+        let path = session_path(&self.sessions_dir, id);
 
         let file = std::fs::File::create(&path)?;
         let mut writer = io::BufWriter::new(file);
@@ -284,28 +401,9 @@ impl SessionStore for JsonlSessionStore {
 
         // Subsequent lines: one message per line
         for msg in messages {
-            match msg {
-                AgentMessage::Llm(llm) => {
-                    serde_json::to_writer(&mut writer, llm).map_err(io::Error::other)?;
-                    writeln!(writer)?;
-                }
-                AgentMessage::Custom(custom) => {
-                    if let Some(mut envelope) = serialize_custom_message(custom.as_ref()) {
-                        // Tag the envelope so load_full can distinguish it from LlmMessage
-                        envelope
-                            .as_object_mut()
-                            .expect("envelope is an object")
-                            .insert("_custom".to_string(), serde_json::Value::Bool(true));
-                        serde_json::to_writer(&mut writer, &envelope)
-                            .map_err(io::Error::other)?;
-                        writeln!(writer)?;
-                    } else {
-                        tracing::warn!(
-                            "skipping non-serializable CustomMessage in session {id}: {:?}",
-                            custom
-                        );
-                    }
-                }
+            if let Some(record) = SessionRecord::from_message(msg, id) {
+                writer.write_all(record.to_json_line()?.as_bytes())?;
+                writeln!(writer)?;
             }
         }
 
@@ -320,84 +418,17 @@ impl SessionStore for JsonlSessionStore {
     ) -> io::Result<(SessionMeta, Vec<AgentMessage>)> {
         validate_session_id(id)?;
 
-        let path = self.sessions_dir.join(format!("{id}.jsonl"));
-        let file = std::fs::File::open(&path).map_err(|e| {
-            if e.kind() == io::ErrorKind::NotFound {
-                io::Error::new(io::ErrorKind::NotFound, format!("session not found: {id}"))
-            } else {
-                e
-            }
-        })?;
-
-        let file_meta = file.metadata()?;
-        if file_meta.len() == 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "empty session file",
-            ));
-        }
-
-        let reader = io::BufReader::new(file);
-        let mut lines = reader.lines();
-
-        // First line: metadata
-        let meta_line = lines
-            .next()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "empty session file"))??;
-        let meta: SessionMeta = serde_json::from_str(&meta_line).map_err(|e| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("invalid session metadata: {e}"),
-            )
-        })?;
+        let path = session_path(&self.sessions_dir, id);
+        let (meta, lines) = read_meta_and_message_lines(&path, id)?;
 
         // Remaining lines: LlmMessage or custom message envelopes
         let mut messages = Vec::new();
-        for (line_num, line_result) in lines.enumerate() {
-            let line = line_result?;
+        for (line_num, line) in lines.into_iter().enumerate() {
             if line.trim().is_empty() {
                 continue;
             }
-
-            // Try to parse as a JSON value first to check for _custom tag
-            match serde_json::from_str::<serde_json::Value>(&line) {
-                Ok(value) => {
-                    if value.get("_custom").and_then(serde_json::Value::as_bool) == Some(true) {
-                        // Custom message envelope
-                        if let Some(reg) = registry {
-                            match deserialize_custom_message(reg, &value) {
-                                Ok(custom) => messages.push(AgentMessage::Custom(custom)),
-                                Err(e) => {
-                                    tracing::warn!(
-                                        line = line_num + 2,
-                                        error = %e,
-                                        "skipping unrestorable custom message in session {id}"
-                                    );
-                                }
-                            }
-                        }
-                        // If no registry, silently skip custom messages
-                    } else {
-                        // Standard LlmMessage
-                        match serde_json::from_value::<LlmMessage>(value) {
-                            Ok(msg) => messages.push(AgentMessage::Llm(msg)),
-                            Err(e) => {
-                                tracing::warn!(
-                                    line = line_num + 2,
-                                    error = %e,
-                                    "skipping corrupted message line in session {id}"
-                                );
-                            }
-                        }
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        line = line_num + 2,
-                        error = %e,
-                        "skipping unparseable line in session {id}"
-                    );
-                }
+            if let Some(message) = parse_message_record(&line, line_num + 2, id, registry) {
+                messages.push(message);
             }
         }
 
@@ -407,33 +438,18 @@ impl SessionStore for JsonlSessionStore {
     fn save_state(&self, id: &str, state: &serde_json::Value) -> io::Result<()> {
         validate_session_id(id)?;
 
-        let path = self.sessions_dir.join(format!("{id}.jsonl"));
+        let path = session_path(&self.sessions_dir, id);
         if !path.exists() {
-            return Err(io::Error::new(
-                io::ErrorKind::NotFound,
-                format!("session not found: {id}"),
-            ));
+            return Err(not_found(id));
         }
 
-        // Read all lines, replace or append the state line.
-        let content = std::fs::read_to_string(&path)?;
-        let mut lines: Vec<String> = content.lines().map(String::from).collect();
-
-        let state_line = serde_json::to_string(&serde_json::json!({
-            "_state": true,
-            "data": state
-        }))
-        .map_err(io::Error::other)?;
+        let (meta, mut lines) = read_meta_and_message_lines(&path, id)?;
+        let state_line = SessionRecord::state(state.clone()).to_json_line()?;
 
         // Find existing _state line and replace, or append.
         let mut found = false;
         for line in &mut lines {
-            if line.contains("\"_state\"")
-                && serde_json::from_str::<serde_json::Value>(line)
-                    .ok()
-                    .and_then(|v| v.get("_state").and_then(serde_json::Value::as_bool))
-                    == Some(true)
-            {
+            if matches!(SessionRecord::parse(line), Ok(SessionRecord::State(_))) {
                 line.clone_from(&state_line);
                 found = true;
                 break;
@@ -442,33 +458,21 @@ impl SessionStore for JsonlSessionStore {
         if !found {
             lines.push(state_line);
         }
-
-        let mut file = std::fs::File::create(&path)?;
-        for line in &lines {
-            writeln!(file, "{line}")?;
-        }
-        file.flush()?;
-        Ok(())
+        rewrite_session_file(&path, &meta, &lines)
     }
 
     fn load_state(&self, id: &str) -> io::Result<Option<serde_json::Value>> {
         validate_session_id(id)?;
 
-        let path = self.sessions_dir.join(format!("{id}.jsonl"));
+        let path = session_path(&self.sessions_dir, id);
         if !path.exists() {
             return Ok(None);
         }
 
-        let file = std::fs::File::open(&path)?;
-        let reader = io::BufReader::new(file);
-
-        for line_result in reader.lines() {
-            let line = line_result?;
-            if line.contains("\"_state\"")
-                && let Ok(val) = serde_json::from_str::<serde_json::Value>(&line)
-                && val.get("_state").and_then(serde_json::Value::as_bool) == Some(true)
-            {
-                return Ok(val.get("data").cloned());
+        let (_, lines) = read_meta_and_message_lines(&path, id)?;
+        for line in lines {
+            if let Ok(SessionRecord::State(state)) = SessionRecord::parse(&line) {
+                return Ok(Some(state));
             }
         }
 

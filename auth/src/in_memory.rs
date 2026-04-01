@@ -1,11 +1,10 @@
 //! In-memory credential store backed by `Arc<RwLock<HashMap>>`.
 
 use std::collections::HashMap;
-use std::future::Future;
-use std::pin::Pin;
 use std::sync::{Arc, RwLock};
 
-use swink_agent::{Credential, CredentialError, CredentialStore};
+use swink_agent::credential::CredentialFuture;
+use swink_agent::{Credential, CredentialStore};
 
 /// Thread-safe in-memory credential store.
 ///
@@ -58,8 +57,7 @@ impl CredentialStore for InMemoryCredentialStore {
     fn get(
         &self,
         key: &str,
-    ) -> Pin<Box<dyn Future<Output = Result<Option<Credential>, CredentialError>> + Send + '_>>
-    {
+    ) -> CredentialFuture<'_, Option<Credential>> {
         let result = self
             .store
             .read()
@@ -73,7 +71,7 @@ impl CredentialStore for InMemoryCredentialStore {
         &self,
         key: &str,
         credential: Credential,
-    ) -> Pin<Box<dyn Future<Output = Result<(), CredentialError>> + Send + '_>> {
+    ) -> CredentialFuture<'_, ()> {
         self.store
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -84,7 +82,7 @@ impl CredentialStore for InMemoryCredentialStore {
     fn delete(
         &self,
         key: &str,
-    ) -> Pin<Box<dyn Future<Output = Result<(), CredentialError>> + Send + '_>> {
+    ) -> CredentialFuture<'_, ()> {
         self.store
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner)

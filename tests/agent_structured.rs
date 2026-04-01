@@ -243,6 +243,11 @@ async fn structured_output_fails_after_max_retries() {
         matches!(err, AgentError::StructuredOutputFailed { attempts, .. } if attempts == 3),
         "expected StructuredOutputFailed with 3 attempts, got {err:?}"
     );
+
+    assert!(
+        agent.state().tools.iter().all(|tool| tool.name() != "__structured_output"),
+        "synthetic structured output tool should always be removed after failure"
+    );
 }
 
 // ─── Multi-turn via prompt_stream + handle_stream_event ───────────────────

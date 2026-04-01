@@ -221,6 +221,10 @@ pub enum CredentialError {
     },
 }
 
+/// Boxed async result used by credential traits.
+pub type CredentialFuture<'a, T> =
+    Pin<Box<dyn Future<Output = Result<T, CredentialError>> + Send + 'a>>;
+
 // ─── CredentialStore trait ──────────────────────────────────────────────────
 
 /// Pluggable credential storage abstraction.
@@ -232,20 +236,20 @@ pub trait CredentialStore: Send + Sync {
     fn get(
         &self,
         key: &str,
-    ) -> Pin<Box<dyn Future<Output = Result<Option<Credential>, CredentialError>> + Send + '_>>;
+    ) -> CredentialFuture<'_, Option<Credential>>;
 
     /// Store or update a credential by key.
     fn set(
         &self,
         key: &str,
         credential: Credential,
-    ) -> Pin<Box<dyn Future<Output = Result<(), CredentialError>> + Send + '_>>;
+    ) -> CredentialFuture<'_, ()>;
 
     /// Delete a credential by key.
     fn delete(
         &self,
         key: &str,
-    ) -> Pin<Box<dyn Future<Output = Result<(), CredentialError>> + Send + '_>>;
+    ) -> CredentialFuture<'_, ()>;
 }
 
 // ─── CredentialResolver trait ───────────────────────────────────────────────
@@ -258,7 +262,7 @@ pub trait CredentialResolver: Send + Sync {
     fn resolve(
         &self,
         key: &str,
-    ) -> Pin<Box<dyn Future<Output = Result<ResolvedCredential, CredentialError>> + Send + '_>>;
+    ) -> CredentialFuture<'_, ResolvedCredential>;
 }
 
 // ─── AuthorizationHandler trait ─────────────────────────────────────────────
@@ -276,7 +280,7 @@ pub trait AuthorizationHandler: Send + Sync {
         &self,
         auth_url: &str,
         state: &str,
-    ) -> Pin<Box<dyn Future<Output = Result<String, CredentialError>> + Send + '_>>;
+    ) -> CredentialFuture<'_, String>;
 }
 
 // ─── Tests ──────────────────────────────────────────────────────────────────

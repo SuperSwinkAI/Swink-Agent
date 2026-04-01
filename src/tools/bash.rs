@@ -1,7 +1,5 @@
 //! Built-in tool for executing shell commands.
 
-use std::future::Future;
-use std::pin::Pin;
 use std::time::Duration;
 
 use schemars::JsonSchema;
@@ -12,7 +10,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::MAX_OUTPUT_BYTES;
 use crate::schema::schema_for;
-use crate::tool::{AgentTool, AgentToolResult, validate_schema};
+use crate::tool::{AgentTool, AgentToolResult, ToolFuture, validate_schema};
 
 /// Default timeout in milliseconds.
 const DEFAULT_TIMEOUT_MS: u64 = 30_000;
@@ -83,7 +81,7 @@ impl AgentTool for BashTool {
         _on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
         _state: std::sync::Arc<std::sync::RwLock<crate::SessionState>>,
         _credential: Option<crate::credential::ResolvedCredential>,
-    ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>> {
+    ) -> ToolFuture<'_> {
         Box::pin(async move {
             let parsed: Params = match serde_json::from_value(params) {
                 Ok(p) => p,

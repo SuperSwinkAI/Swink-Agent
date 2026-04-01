@@ -22,24 +22,23 @@
 //! ```
 
 use std::future::Future;
-use std::pin::Pin;
 use std::sync::Arc;
 
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
 use crate::schema::schema_for;
-use crate::tool::{AgentTool, AgentToolResult, validate_schema};
+use crate::tool::{AgentTool, AgentToolResult, ToolFuture, validate_schema};
 
 // ─── Type aliases for stored closures ───────────────────────────────────────
 
 type ExecuteFn = Arc<
-    dyn Fn(
+        dyn Fn(
             String,
             Value,
             CancellationToken,
             Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
-        ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send>>
+        ) -> ToolFuture<'static>
         + Send
         + Sync,
 >;
@@ -200,7 +199,7 @@ impl AgentTool for FnTool {
         on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
         _state: std::sync::Arc<std::sync::RwLock<crate::SessionState>>,
         _credential: Option<crate::credential::ResolvedCredential>,
-    ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>> {
+    ) -> ToolFuture<'_> {
         let fut = (self.execute_fn)(
             tool_call_id.to_owned(),
             params,

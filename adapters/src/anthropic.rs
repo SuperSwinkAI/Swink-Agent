@@ -21,6 +21,7 @@ use swink_agent::types::{
 
 use crate::base::AdapterBase;
 use crate::convert::extract_tool_schemas;
+use crate::sse::{SseLine as SharedSseLine, sse_lines};
 
 // ─── Request types ──────────────────────────────────────────────────────────
 
@@ -777,61 +778,28 @@ fn sse_event_lines(
     byte_stream: impl Stream<Item = Result<bytes::Bytes, reqwest::Error>> + Send + 'static,
 ) -> Pin<Box<dyn Stream<Item = SseLine> + Send + 'static>> {
     Box::pin(stream::unfold(
-        (Box::pin(byte_stream), String::new(), Option::<String>::None),
-        |(mut stream, mut buf, mut current_event)| async move {
+        (Box::pin(sse_lines(byte_stream)), Option::<String>::None),
+        |(mut stream, mut current_event)| async move {
             loop {
-                // Check if we have a complete line in the buffer
-                if let Some(pos) = buf.find('\n') {
-                    let line_end = if pos > 0 && buf.as_bytes().get(pos - 1) == Some(&b'\r') {
-                        pos - 1
-                    } else {
-                        pos
-                    };
-                    let line: String = buf[..line_end].to_string();
-                    buf.drain(..=pos);
-
-                    // Empty line = event separator; reset state
-                    if line.is_empty() {
+                match stream.next().await {
+                    Some(SharedSseLine::Empty | SharedSseLine::Done) => {
                         current_event = None;
-                        continue;
                     }
-
-                    // Parse event type
-                    if let Some(event_type) = line.strip_prefix("event: ") {
-                        current_event = Some(event_type.trim().to_string());
-                        continue;
+                    Some(SharedSseLine::Event(event_type)) => {
+                        current_event = Some(event_type);
                     }
-
-                    // Parse data line
-                    if let Some(data) = line.strip_prefix("data: ") {
-                        let data = data.trim();
+                    Some(SharedSseLine::Data(data)) => {
                         if !data.is_empty() {
                             let event_type = current_event
                                 .take()
                                 .unwrap_or_else(|| "unknown".to_string());
                             return Some((
-                                SseLine::Event {
-                                    event_type,
-                                    data: data.to_string(),
-                                },
-                                (stream, buf, current_event),
+                                SseLine::Event { event_type, data },
+                                (stream, current_event),
                             ));
                         }
-                        continue;
                     }
-
-                    // Skip comments and other lines
-                    continue;
-                }
-
-                // Need more data
-                if let Some(Ok(bytes)) = stream.next().await {
-                    match std::str::from_utf8(&bytes) {
-                        Ok(s) => buf.push_str(s),
-                        Err(_) => buf.push_str(&String::from_utf8_lossy(&bytes)),
-                    }
-                } else {
-                    return None;
+                    None => return None,
                 }
             }
         },

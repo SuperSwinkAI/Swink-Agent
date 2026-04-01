@@ -6,7 +6,7 @@
 
 use crate::loop_::AgentEvent;
 use crate::stream::{AssistantMessageEvent, StreamErrorKind, StreamFn, StreamOptions};
-use crate::tool::{AgentTool, AgentToolResult};
+use crate::tool::{AgentTool, AgentToolResult, ToolFuture};
 use crate::types::{AgentContext, ModelSpec};
 use crate::types::{
     AgentMessage, AssistantMessage, ContentBlock, Cost, LlmMessage, StopReason, ToolResultMessage,
@@ -14,7 +14,6 @@ use crate::types::{
 };
 use futures::Stream;
 use serde_json::{Value, json};
-use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
@@ -346,7 +345,7 @@ impl AgentTool for MockTool {
         _on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
         _state: std::sync::Arc<std::sync::RwLock<crate::SessionState>>,
         _credential: Option<crate::credential::ResolvedCredential>,
-    ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>> {
+    ) -> ToolFuture<'_> {
         self.executed.store(true, Ordering::SeqCst);
         self.execute_count.fetch_add(1, Ordering::SeqCst);
         let result = self

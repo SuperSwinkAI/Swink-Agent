@@ -43,6 +43,8 @@ MSRV **1.88** (edition 2024). Workspace deps centralized in root `Cargo.toml`.
 - `dispatch_event` catches panics via `catch_unwind` and **auto-removes** panicking subscribers (QA-discovered: originally panics were caught but subscribers were not removed).
 - `in_flight_llm_messages` filters out `CustomMessage` — they survive compaction but never reach the provider.
 - Queues use `Arc<Mutex<>>` with `PoisonError::into_inner()` — never panics on poisoned locks.
+- `LoopCheckpoint` is intentionally a resume payload, not a full `LoopState` snapshot: it stores context messages, queued follow-ups, model/system prompt, and session state, but not transient loop counters like `turn_index`, `usage`, `cost`, `overflow_signal`, or `last_assistant_message`.
+- Agent internals are split by concern under `src/agent/`: lifecycle helpers live in `control.rs`, event dispatch in `events.rs`, invocation flow in `invoke.rs`, state/tool mutation in `mutation.rs`, pause/resume in `checkpointing.rs`, stream state application in `state_updates.rs`, structured output in `structured_output.rs`, and queue helpers in `queueing.rs`.
 
 ### Agent Loop (`src/loop_.rs`)
 
@@ -58,6 +60,7 @@ MSRV **1.88** (edition 2024). Workspace deps centralized in root `Cargo.toml`.
 - `accumulate_message` enforces strict ordering: one Start, indexed content blocks, one terminal (Done/Error).
 - `partial_json` consumed on `ToolCallEnd` — parsed once. Empty string → `{}`, not null.
 - `AssistantMessageEvent::error()` is the canonical error constructor — adapters must use it.
+- `adapters/src/sse.rs` is the shared byte-to-SSE-line parser for both generic data-only adapters and Anthropic's event+data pairing logic; avoid reintroducing custom chunk splitters in provider modules.
 
 ### Context (`src/context.rs`)
 

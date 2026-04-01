@@ -21,6 +21,46 @@ async fn pause_when_not_running_returns_none() {
 }
 
 #[tokio::test]
+async fn pause_captures_pending_follow_up_messages() {
+    use futures::future::pending;
+
+    struct PendingStreamFn;
+
+    impl swink_agent::StreamFn for PendingStreamFn {
+        fn stream<'a>(
+            &'a self,
+            _model: &'a swink_agent::ModelSpec,
+            _context: &'a swink_agent::AgentContext,
+            _options: &'a swink_agent::StreamOptions,
+            _cancellation_token: tokio_util::sync::CancellationToken,
+        ) -> std::pin::Pin<Box<dyn futures::Stream<Item = swink_agent::AssistantMessageEvent> + Send + 'a>> {
+            Box::pin(futures::stream::once(async {
+                pending::<()>().await;
+                swink_agent::AssistantMessageEvent::error("unreachable")
+            }))
+        }
+    }
+
+    let stream_fn = Arc::new(PendingStreamFn);
+    let options = AgentOptions::new("Be helpful.", default_model(), stream_fn, default_convert);
+    let mut agent = Agent::new(options);
+
+    agent.follow_up(swink_agent::AgentMessage::Llm(swink_agent::LlmMessage::User(
+        swink_agent::UserMessage {
+            content: vec![swink_agent::ContentBlock::Text {
+                text: "queued follow-up".to_string(),
+            }],
+            timestamp: 1,
+            cache_hint: None,
+        },
+    )));
+
+    let _stream = agent.prompt_stream(vec![user_msg("start")]).unwrap();
+    let checkpoint = agent.pause().expect("pause should snapshot a running agent");
+    assert_eq!(checkpoint.pending_messages.len(), 1);
+}
+
+#[tokio::test]
 async fn resume_with_empty_checkpoint_returns_no_messages() {
     let mut agent = simple_agent(vec![text_only_events("hello")]);
     let checkpoint = LoopCheckpoint::new("prompt", "test", "test-model", &[]);
@@ -68,7 +108,6 @@ async fn resume_restores_messages_and_continues() {
         "test-model",
         agent.state().messages.as_slice(),
     )
-    .with_turn_index(1)
     .with_pending_messages(pending);
 
     // Resume from the checkpoint
@@ -128,26 +167,11 @@ async fn resume_while_running_returns_already_running() {
 #[test]
 fn loop_checkpoint_serde_stable() {
     let checkpoint = LoopCheckpoint::new("prompt", "anthropic", "claude-3", &[])
-        .with_turn_index(10)
-        .with_usage(swink_agent::Usage {
-            input: 500,
-            output: 200,
-            ..Default::default()
-        })
-        .with_cost(swink_agent::Cost {
-            input: 0.05,
-            output: 0.02,
-            ..Default::default()
-        })
-        .with_overflow_signal(true)
         .with_metadata("session", serde_json::json!("sess-abc"));
 
     let json = serde_json::to_string_pretty(&checkpoint).unwrap();
     let restored: LoopCheckpoint = serde_json::from_str(&json).unwrap();
 
-    assert_eq!(restored.turn_index, 10);
-    assert_eq!(restored.usage.input, 500);
-    assert!(restored.overflow_signal);
     assert_eq!(restored.system_prompt, "prompt");
     assert_eq!(restored.provider, "anthropic");
     assert_eq!(restored.model_id, "claude-3");
@@ -157,13 +181,14 @@ fn loop_checkpoint_serde_stable() {
 #[test]
 fn loop_checkpoint_to_standard_checkpoint_integration() {
     let msgs = vec![user_msg("hello")];
-    let checkpoint = LoopCheckpoint::new("sys", "prov", "mod", &msgs)
-        .with_turn_index(3)
-        .with_metadata("k", serde_json::json!("v"));
+    let checkpoint = LoopCheckpoint::new("sys", "prov", "mod", &msgs).with_metadata(
+        "k",
+        serde_json::json!("v"),
+    );
 
     let standard = checkpoint.to_checkpoint("my-id");
     assert_eq!(standard.id, "my-id");
-    assert_eq!(standard.turn_count, 3);
+    assert_eq!(standard.turn_count, 0);
     assert_eq!(standard.system_prompt, "sys");
     assert_eq!(standard.messages.len(), 1);
 }

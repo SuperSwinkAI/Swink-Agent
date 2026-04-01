@@ -10,6 +10,7 @@
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::pin::Pin;
+use std::collections::VecDeque;
 
 use futures::stream::{self, Stream, StreamExt as _};
 
@@ -166,6 +167,42 @@ pub fn sse_data_lines(
     sse_data_lines_with_callback(byte_stream, None)
 }
 
+/// Convert a byte stream into a stream of parsed SSE lines.
+///
+/// Unlike [`sse_data_lines`], this preserves `event:` labels and empty-line
+/// separators so callers with provider-specific pairing logic can reuse the
+/// shared parser instead of maintaining their own byte-buffer state machine.
+pub fn sse_lines(
+    byte_stream: impl Stream<Item = Result<bytes::Bytes, reqwest::Error>> + Send + 'static,
+) -> Pin<Box<dyn Stream<Item = SseLine> + Send + 'static>> {
+    Box::pin(stream::unfold(
+        (
+            Box::pin(byte_stream),
+            SseStreamParser::new(),
+            VecDeque::<SseLine>::new(),
+        ),
+        |(mut stream, mut parser, mut pending)| async move {
+            loop {
+                if let Some(line) = pending.pop_front() {
+                    return Some((line, (stream, parser, pending)));
+                }
+
+                if let Some(result) = stream.next().await {
+                    if let Ok(bytes) = result {
+                        pending.extend(parser.feed(&bytes));
+                    }
+                    continue;
+                }
+
+                pending.extend(parser.flush());
+                if pending.is_empty() {
+                    return None;
+                }
+            }
+        },
+    ))
+}
+
 /// Like [`sse_data_lines`] but with an optional raw-payload callback.
 pub fn sse_data_lines_with_callback(
     byte_stream: impl Stream<Item = Result<bytes::Bytes, reqwest::Error>> + Send + 'static,
@@ -173,43 +210,23 @@ pub fn sse_data_lines_with_callback(
 ) -> Pin<Box<dyn Stream<Item = SseLine> + Send + 'static>> {
     Box::pin(stream::unfold(
         (
-            Box::pin(byte_stream),
-            SseStreamParser::new(),
-            Vec::<SseLine>::new(),
+            Box::pin(sse_lines(byte_stream)),
             on_raw_payload,
         ),
-        |(mut stream, mut parser, mut pending, callback)| async move {
+        |(mut stream, callback)| async move {
             loop {
-                // Drain any pending parsed lines, yielding only Data/Done.
-                while let Some(line) = pending.first() {
-                    if matches!(line, SseLine::Data(_) | SseLine::Done) {
-                        let line = pending.remove(0);
-                        // Fire callback for Data lines before yielding
-                        if let (SseLine::Data(data), Some(cb)) = (&line, &callback) {
-                            let cb = AssertUnwindSafe(cb);
-                            let data = AssertUnwindSafe(data);
-                            let _ = catch_unwind(|| (cb)(&data));
-                        }
-                        return Some((line, (stream, parser, pending, callback)));
+                if let Some(line) = stream.next().await {
+                    if !matches!(line, SseLine::Data(_) | SseLine::Done) {
+                        continue;
                     }
-                    pending.remove(0);
-                }
-
-                // Pull more bytes from the underlying stream.
-                if let Some(result) = stream.next().await {
-                    if let Ok(bytes) = result {
-                        pending.extend(parser.feed(&bytes));
+                    if let (SseLine::Data(data), Some(cb)) = (&line, &callback) {
+                        let cb = AssertUnwindSafe(cb);
+                        let data = AssertUnwindSafe(data);
+                        let _ = catch_unwind(|| (cb)(&data));
                     }
-                    // On Err, skip the chunk and try the next one.
-                    continue;
+                    return Some((line, (stream, callback)));
                 }
-
-                // Stream ended — flush remaining buffer.
-                pending.extend(parser.flush());
-                if pending.is_empty() {
-                    return None;
-                }
-                // Loop back to drain the flushed lines.
+                return None;
             }
         },
     ))
@@ -217,6 +234,8 @@ pub fn sse_data_lines_with_callback(
 
 #[cfg(test)]
 mod tests {
+    use futures::StreamExt as _;
+
     use super::*;
 
     #[test]
@@ -381,14 +400,16 @@ mod tests {
         let byte_stream = futures::stream::iter(chunks);
         let mut data_stream = sse_data_lines_with_callback(byte_stream, Some(callback));
 
-        use futures::StreamExt as _;
         let first = data_stream.next().await;
         assert_eq!(first, Some(SseLine::Data("line1".to_string())));
         let second = data_stream.next().await;
         assert_eq!(second, Some(SseLine::Data("line2".to_string())));
 
-        let lines = captured.lock().unwrap();
-        assert_eq!(*lines, vec!["line1".to_string(), "line2".to_string()]);
+        let lines = {
+            let guard = captured.lock().unwrap();
+            guard.clone()
+        };
+        assert_eq!(lines, vec!["line1".to_string(), "line2".to_string()]);
     }
 
     #[tokio::test]
@@ -399,7 +420,6 @@ mod tests {
         let byte_stream = futures::stream::iter(chunks);
         let mut data_stream = sse_data_lines_with_callback(byte_stream, None);
 
-        use futures::StreamExt as _;
         let first = data_stream.next().await;
         assert_eq!(first, Some(SseLine::Data("hello".to_string())));
         let done = data_stream.next().await;
@@ -419,11 +439,29 @@ mod tests {
         let byte_stream = futures::stream::iter(chunks);
         let mut data_stream = sse_data_lines_with_callback(byte_stream, Some(callback));
 
-        use futures::StreamExt as _;
         // Should not panic — the callback panic is caught
         let first = data_stream.next().await;
         assert_eq!(first, Some(SseLine::Data("safe".to_string())));
         let second = data_stream.next().await;
         assert_eq!(second, Some(SseLine::Data("also_safe".to_string())));
+    }
+
+    #[tokio::test]
+    async fn sse_lines_preserves_events_and_separators() {
+        let chunks = vec![
+            Ok(bytes::Bytes::from("event: start\ndata: hello\n\ndata: [DONE]\n")),
+        ];
+        let byte_stream = futures::stream::iter(chunks);
+        let lines: Vec<_> = sse_lines(byte_stream).collect().await;
+
+        assert_eq!(
+            lines,
+            vec![
+                SseLine::Event("start".to_string()),
+                SseLine::Data("hello".to_string()),
+                SseLine::Empty,
+                SseLine::Done,
+            ]
+        );
     }
 }

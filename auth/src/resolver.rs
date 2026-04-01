@@ -2,8 +2,6 @@
 //! concurrent request deduplication.
 
 use std::collections::HashMap;
-use std::future::Future;
-use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -13,6 +11,7 @@ use futures::FutureExt;
 use tokio::sync::Mutex;
 use tracing::{debug, info};
 
+use swink_agent::credential::CredentialFuture;
 use swink_agent::{
     AuthorizationHandler, Credential, CredentialError, CredentialResolver, CredentialStore,
     ResolvedCredential,
@@ -98,10 +97,7 @@ impl DefaultCredentialResolver {
 }
 
 impl CredentialResolver for DefaultCredentialResolver {
-    fn resolve(
-        &self,
-        key: &str,
-    ) -> Pin<Box<dyn Future<Output = Result<ResolvedCredential, CredentialError>> + Send + '_>> {
+    fn resolve(&self, key: &str) -> CredentialFuture<'_, ResolvedCredential> {
         let key = key.to_string();
         Box::pin(async move {
             // Check for in-flight refresh for this key

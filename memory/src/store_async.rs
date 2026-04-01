@@ -10,24 +10,35 @@ use swink_agent::LlmMessage;
 use crate::meta::SessionMeta;
 
 /// A boxed future returned by [`AsyncSessionStore`] methods.
-type AsyncResult<'a, T> = Pin<Box<dyn Future<Output = io::Result<T>> + Send + 'a>>;
+pub type SessionStoreFuture<'a, T> = Pin<Box<dyn Future<Output = io::Result<T>> + Send + 'a>>;
+
+fn spawn_store_call<T: Send + 'static>(
+    f: impl FnOnce() -> io::Result<T> + Send + 'static,
+) -> SessionStoreFuture<'static, T> {
+    Box::pin(async move { tokio::task::spawn_blocking(f).await.map_err(io::Error::other)? })
+}
 
 /// Async session persistence for non-blocking backends (Redis, S3, cloud storage).
 pub trait AsyncSessionStore: Send + Sync {
     /// Persist a session asynchronously.
-    fn save(&self, id: &str, meta: &SessionMeta, messages: &[LlmMessage]) -> AsyncResult<'_, ()>;
+    fn save(
+        &self,
+        id: &str,
+        meta: &SessionMeta,
+        messages: &[LlmMessage],
+    ) -> SessionStoreFuture<'_, ()>;
 
     /// Append messages to an existing session asynchronously.
-    fn append(&self, id: &str, messages: &[LlmMessage]) -> AsyncResult<'_, ()>;
+    fn append(&self, id: &str, messages: &[LlmMessage]) -> SessionStoreFuture<'_, ()>;
 
     /// Load a session by ID asynchronously.
-    fn load(&self, id: &str) -> AsyncResult<'_, (SessionMeta, Vec<LlmMessage>)>;
+    fn load(&self, id: &str) -> SessionStoreFuture<'_, (SessionMeta, Vec<LlmMessage>)>;
 
     /// List all saved sessions asynchronously.
-    fn list(&self) -> AsyncResult<'_, Vec<SessionMeta>>;
+    fn list(&self) -> SessionStoreFuture<'_, Vec<SessionMeta>>;
 
     /// Delete a session by ID asynchronously.
-    fn delete(&self, id: &str) -> AsyncResult<'_, ()>;
+    fn delete(&self, id: &str) -> SessionStoreFuture<'_, ()>;
 }
 
 /// Adapter that wraps a synchronous [`SessionStore`](crate::store::SessionStore)
@@ -49,56 +60,41 @@ impl<S: crate::store::SessionStore + 'static> BlockingSessionStore<S> {
 }
 
 impl<S: crate::store::SessionStore + 'static> AsyncSessionStore for BlockingSessionStore<S> {
-    fn save(&self, id: &str, meta: &SessionMeta, messages: &[LlmMessage]) -> AsyncResult<'_, ()> {
+    fn save(
+        &self,
+        id: &str,
+        meta: &SessionMeta,
+        messages: &[LlmMessage],
+    ) -> SessionStoreFuture<'_, ()> {
         let inner = Arc::clone(&self.inner);
         let id = id.to_string();
         let meta = meta.clone();
         let messages = messages.to_vec();
-        Box::pin(async move {
-            tokio::task::spawn_blocking(move || inner.save(&id, &meta, &messages))
-                .await
-                .map_err(io::Error::other)?
-        })
+        spawn_store_call(move || inner.save(&id, &meta, &messages))
     }
 
-    fn append(&self, id: &str, messages: &[LlmMessage]) -> AsyncResult<'_, ()> {
+    fn append(&self, id: &str, messages: &[LlmMessage]) -> SessionStoreFuture<'_, ()> {
         let inner = Arc::clone(&self.inner);
         let id = id.to_string();
         let messages = messages.to_vec();
-        Box::pin(async move {
-            tokio::task::spawn_blocking(move || inner.append(&id, &messages))
-                .await
-                .map_err(io::Error::other)?
-        })
+        spawn_store_call(move || inner.append(&id, &messages))
     }
 
-    fn load(&self, id: &str) -> AsyncResult<'_, (SessionMeta, Vec<LlmMessage>)> {
+    fn load(&self, id: &str) -> SessionStoreFuture<'_, (SessionMeta, Vec<LlmMessage>)> {
         let inner = Arc::clone(&self.inner);
         let id = id.to_string();
-        Box::pin(async move {
-            tokio::task::spawn_blocking(move || inner.load(&id))
-                .await
-                .map_err(io::Error::other)?
-        })
+        spawn_store_call(move || inner.load(&id))
     }
 
-    fn list(&self) -> AsyncResult<'_, Vec<SessionMeta>> {
+    fn list(&self) -> SessionStoreFuture<'_, Vec<SessionMeta>> {
         let inner = Arc::clone(&self.inner);
-        Box::pin(async move {
-            tokio::task::spawn_blocking(move || inner.list())
-                .await
-                .map_err(io::Error::other)?
-        })
+        spawn_store_call(move || inner.list())
     }
 
-    fn delete(&self, id: &str) -> AsyncResult<'_, ()> {
+    fn delete(&self, id: &str) -> SessionStoreFuture<'_, ()> {
         let inner = Arc::clone(&self.inner);
         let id = id.to_string();
-        Box::pin(async move {
-            tokio::task::spawn_blocking(move || inner.delete(&id))
-                .await
-                .map_err(io::Error::other)?
-        })
+        spawn_store_call(move || inner.delete(&id))
     }
 }
 

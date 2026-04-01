@@ -1,9 +1,8 @@
 //! Shared test helpers for auth crate tests.
 
-use std::future::Future;
-use std::pin::Pin;
 use std::sync::Arc;
 
+use swink_agent::credential::CredentialFuture;
 use swink_agent::{AuthorizationHandler, CredentialError};
 
 /// Mock authorization handler that returns a fixed code.
@@ -26,7 +25,7 @@ impl AuthorizationHandler for MockAuthHandler {
         &self,
         _auth_url: &str,
         _state: &str,
-    ) -> Pin<Box<dyn Future<Output = Result<String, CredentialError>> + Send + '_>> {
+    ) -> CredentialFuture<'_, String> {
         let code = self.code.clone();
         Box::pin(async move { Ok(code) })
     }
@@ -42,7 +41,7 @@ impl AuthorizationHandler for FailingAuthHandler {
         &self,
         _auth_url: &str,
         _state: &str,
-    ) -> Pin<Box<dyn Future<Output = Result<String, CredentialError>> + Send + '_>> {
+    ) -> CredentialFuture<'_, String> {
         let reason = self.reason.clone();
         Box::pin(async move {
             Err(CredentialError::AuthorizationFailed {

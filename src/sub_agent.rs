@@ -4,8 +4,6 @@
 //! within a parent agent. On each `execute()` call, it constructs a fresh
 //! [`Agent`] from a factory closure, runs it, and maps the result.
 
-use std::future::Future;
-use std::pin::Pin;
 use std::sync::Arc;
 
 use serde_json::{Value, json};
@@ -13,7 +11,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::agent::{Agent, AgentOptions};
 use crate::stream::StreamFn;
-use crate::tool::{AgentTool, AgentToolResult};
+use crate::tool::{AgentTool, AgentToolResult, ToolFuture};
 use crate::types::{AgentResult, ContentBlock, ModelSpec, StopReason};
 
 // ─── Type aliases ───────────────────────────────────────────────────────────
@@ -178,7 +176,7 @@ impl AgentTool for SubAgent {
         _on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
         _state: std::sync::Arc<std::sync::RwLock<crate::SessionState>>,
         _credential: Option<crate::credential::ResolvedCredential>,
-    ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>> {
+    ) -> ToolFuture<'_> {
         let options = (self.options_factory)();
         let map_result = Arc::clone(&self.map_result);
         Box::pin(async move {

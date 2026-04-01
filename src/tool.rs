@@ -5,10 +5,12 @@
 //! [`validate_tool_arguments`] function for validating tool call arguments
 //! against a JSON Schema.
 
+use std::collections::HashMap;
 use std::fmt;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::{LazyLock, Mutex};
 
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -16,6 +18,9 @@ use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
 use crate::types::ContentBlock;
+
+static SCHEMA_VALIDATOR_CACHE: LazyLock<Mutex<HashMap<String, Arc<jsonschema::Validator>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 // ─── AgentToolResult ─────────────────────────────────────────────────────────
 
@@ -58,6 +63,9 @@ impl AgentToolResult {
         }
     }
 }
+
+/// A boxed future returned by [`AgentTool`] execution.
+pub type ToolFuture<'a> = Pin<Box<dyn Future<Output = AgentToolResult> + Send + 'a>>;
 
 // ─── Tool Metadata ──────────────────────────────────────────────────────────
 
@@ -162,7 +170,7 @@ pub trait AgentTool: Send + Sync {
         on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
         state: Arc<std::sync::RwLock<crate::SessionState>>,
         credential: Option<crate::credential::ResolvedCredential>,
-    ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>>;
+    ) -> ToolFuture<'_>;
 }
 
 // ─── IntoTool ────────────────────────────────────────────────────────────────
@@ -201,7 +209,7 @@ impl<T: AgentTool + 'static> IntoTool for T {
 /// Returns `Err(String)` when the schema document is invalid, with a
 /// human-readable description of the problem.
 pub fn validate_schema(schema: &Value) -> Result<(), String> {
-    jsonschema::validator_for(schema).map_err(|e| e.to_string())?;
+    compiled_validator(schema)?;
     Ok(())
 }
 
@@ -215,8 +223,7 @@ pub fn validate_schema(schema: &Value) -> Result<(), String> {
 /// Returns `Err(Vec<String>)` when the arguments fail schema validation,
 /// containing one human-readable error string per violation.
 pub fn validate_tool_arguments(schema: &Value, arguments: &Value) -> Result<(), Vec<String>> {
-    let validator =
-        jsonschema::validator_for(schema).map_err(|e| vec![format!("invalid schema: {e}")])?;
+    let validator = compiled_validator(schema).map_err(|e| vec![e])?;
 
     let errors: Vec<String> = validator
         .iter_errors(arguments)
@@ -228,6 +235,27 @@ pub fn validate_tool_arguments(schema: &Value, arguments: &Value) -> Result<(), 
     } else {
         Err(errors)
     }
+}
+
+fn compiled_validator(schema: &Value) -> Result<Arc<jsonschema::Validator>, String> {
+    let cache_key = serde_json::to_string(schema).map_err(|e| e.to_string())?;
+
+    {
+        let cache = SCHEMA_VALIDATOR_CACHE
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(validator) = cache.get(&cache_key) {
+            return Ok(Arc::clone(validator));
+        }
+    }
+
+    let compiled = Arc::new(jsonschema::validator_for(schema).map_err(|e| e.to_string())?);
+    let mut cache = SCHEMA_VALIDATOR_CACHE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    Ok(Arc::clone(
+        cache.entry(cache_key).or_insert_with(|| Arc::clone(&compiled)),
+    ))
 }
 
 /// Build an error result for an unknown tool name.
@@ -661,8 +689,6 @@ mod tests {
 
     #[test]
     fn agent_tool_metadata_defaults_to_none() {
-        use std::future::Future;
-        use std::pin::Pin;
         use tokio_util::sync::CancellationToken;
 
         struct MinimalTool;
@@ -688,7 +714,7 @@ mod tests {
                 _on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
                 _state: Arc<std::sync::RwLock<crate::SessionState>>,
                 _credential: Option<crate::credential::ResolvedCredential>,
-            ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>> {
+            ) -> ToolFuture<'_> {
                 Box::pin(async { AgentToolResult::text("ok") })
             }
         }
@@ -700,8 +726,6 @@ mod tests {
     // T025: auth_config default returns None
     #[test]
     fn agent_tool_auth_config_defaults_to_none() {
-        use std::future::Future;
-        use std::pin::Pin;
         use tokio_util::sync::CancellationToken;
 
         struct NoAuthTool;
@@ -719,7 +743,7 @@ mod tests {
                 _on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
                 _state: Arc<std::sync::RwLock<crate::SessionState>>,
                 _credential: Option<crate::credential::ResolvedCredential>,
-            ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>> {
+            ) -> ToolFuture<'_> {
                 Box::pin(async { AgentToolResult::text("ok") })
             }
         }
@@ -732,8 +756,6 @@ mod tests {
 
     #[test]
     fn approval_context_default_none() {
-        use std::future::Future;
-        use std::pin::Pin;
         use tokio_util::sync::CancellationToken;
 
         struct PlainTool;
@@ -751,7 +773,7 @@ mod tests {
                 _on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
                 _state: Arc<std::sync::RwLock<crate::SessionState>>,
                 _credential: Option<crate::credential::ResolvedCredential>,
-            ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>> {
+            ) -> ToolFuture<'_> {
                 Box::pin(async { AgentToolResult::text("ok") })
             }
         }
@@ -762,8 +784,6 @@ mod tests {
 
     #[test]
     fn approval_context_returns_value() {
-        use std::future::Future;
-        use std::pin::Pin;
         use tokio_util::sync::CancellationToken;
 
         struct ContextTool;
@@ -784,7 +804,7 @@ mod tests {
                 _on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
                 _state: Arc<std::sync::RwLock<crate::SessionState>>,
                 _credential: Option<crate::credential::ResolvedCredential>,
-            ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>> {
+            ) -> ToolFuture<'_> {
                 Box::pin(async { AgentToolResult::text("ok") })
             }
         }
@@ -797,8 +817,6 @@ mod tests {
 
     #[test]
     fn approval_context_panic_caught() {
-        use std::future::Future;
-        use std::pin::Pin;
         use tokio_util::sync::CancellationToken;
 
         struct PanickingTool;
@@ -819,7 +837,7 @@ mod tests {
                 _on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
                 _state: Arc<std::sync::RwLock<crate::SessionState>>,
                 _credential: Option<crate::credential::ResolvedCredential>,
-            ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>> {
+            ) -> ToolFuture<'_> {
                 Box::pin(async { AgentToolResult::text("ok") })
             }
         }

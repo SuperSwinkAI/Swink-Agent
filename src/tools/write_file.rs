@@ -1,15 +1,12 @@
 //! Built-in tool for writing content to a file.
 
-use std::future::Future;
-use std::pin::Pin;
-
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
 use crate::schema::schema_for;
-use crate::tool::{AgentTool, AgentToolResult, validate_schema};
+use crate::tool::{AgentTool, AgentToolResult, ToolFuture, validate_schema};
 use crate::types::ContentBlock;
 
 /// Built-in tool that writes content to a file, creating parent directories as
@@ -73,7 +70,7 @@ impl AgentTool for WriteFileTool {
         _on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
         _state: std::sync::Arc<std::sync::RwLock<crate::SessionState>>,
         _credential: Option<crate::credential::ResolvedCredential>,
-    ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>> {
+    ) -> ToolFuture<'_> {
         Box::pin(async move {
             let parsed: Params = match serde_json::from_value(params) {
                 Ok(p) => p,

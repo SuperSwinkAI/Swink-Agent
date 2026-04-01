@@ -105,7 +105,7 @@ pub use stream_middleware::StreamMiddleware;
 pub use sub_agent::SubAgent;
 pub use tool::{
     AgentTool, AgentToolResult, ApprovalMode, IntoTool, ToolApproval, ToolApprovalRequest,
-    ToolMetadata, ToolParameters, redact_sensitive_values, selective_approve, unknown_tool_result,
+    ToolFuture, ToolMetadata, ToolParameters, redact_sensitive_values, selective_approve, unknown_tool_result,
     validate_schema, validate_tool_arguments, validation_error_result,
 };
 pub use tool_execution_policy::{

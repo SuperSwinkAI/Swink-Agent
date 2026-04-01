@@ -20,6 +20,7 @@ use tokio::sync::{Notify, RwLock};
 use tracing::{debug, error, info};
 
 use crate::error::LocalModelError;
+use crate::lifecycle::{attach_progress_callback, emit_progress, wait_until_ready};
 use crate::preset::ModelPreset;
 use crate::progress::{ProgressCallbackFn, ProgressEvent};
 
@@ -131,10 +132,9 @@ impl EmbeddingModel {
     /// shared). **Must be called before cloning the model** — i.e., before passing it
     /// to a second thread or storing it in shared state.
     pub fn with_progress(mut self, cb: ProgressCallbackFn) -> Result<Self, LocalModelError> {
-        let inner = Arc::get_mut(&mut self.inner).ok_or_else(|| {
-            LocalModelError::inference("with_progress called after clone — Arc is shared")
+        attach_progress_callback(&mut self.inner, cb, |inner, cb| {
+            inner.progress_cb = Some(cb);
         })?;
-        inner.progress_cb = Some(cb);
         Ok(self)
     }
 
@@ -286,18 +286,11 @@ impl EmbeddingModel {
     }
 
     async fn wait_until_ready(&self) {
-        loop {
-            if self.is_ready().await {
-                return;
-            }
-            self.inner.ready_notify.notified().await;
-        }
+        wait_until_ready(&self.inner.ready_notify, || self.is_ready()).await;
     }
 
     fn notify_progress(&self, progress: ProgressEvent) {
-        if let Some(cb) = &self.inner.progress_cb {
-            cb(progress);
-        }
+        emit_progress(self.inner.progress_cb.as_ref(), progress);
     }
 }
 

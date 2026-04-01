@@ -20,20 +20,18 @@
 //! assert_eq!(logged.name(), "bash");
 //! ```
 
-use std::future::Future;
-use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
-use crate::tool::{AgentTool, AgentToolResult};
+use crate::tool::{AgentTool, AgentToolResult, ToolFuture};
 
 // ─── Type alias for the middleware closure ──────────────────────────────────
 
 type MiddlewareFn = Arc<
-    dyn Fn(
+        dyn Fn(
             Arc<dyn AgentTool>,
             String,
             Value,
@@ -41,7 +39,7 @@ type MiddlewareFn = Arc<
             Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
             std::sync::Arc<std::sync::RwLock<crate::SessionState>>,
             Option<crate::credential::ResolvedCredential>,
-        ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send>>
+        ) -> ToolFuture<'static>
         + Send
         + Sync,
 >;
@@ -72,7 +70,7 @@ impl ToolMiddleware {
                 Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
                 std::sync::Arc<std::sync::RwLock<crate::SessionState>>,
                 Option<crate::credential::ResolvedCredential>,
-            ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send>>
+            ) -> ToolFuture<'static>
             + Send
             + Sync
             + 'static,
@@ -160,7 +158,7 @@ impl AgentTool for ToolMiddleware {
         on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
         state: std::sync::Arc<std::sync::RwLock<crate::SessionState>>,
         credential: Option<crate::credential::ResolvedCredential>,
-    ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>> {
+    ) -> ToolFuture<'_> {
         let inner = self.inner.clone();
         let id = tool_call_id.to_owned();
         let fut = (self.middleware_fn)(inner, id, params, cancellation_token, on_update, state, credential);
@@ -219,7 +217,7 @@ mod tests {
             _on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
             _state: std::sync::Arc<std::sync::RwLock<crate::SessionState>>,
             _credential: Option<crate::credential::ResolvedCredential>,
-        ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>> {
+        ) -> ToolFuture<'_> {
             Box::pin(async { AgentToolResult::text("dummy result") })
         }
     }
@@ -300,7 +298,7 @@ mod tests {
                 _on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
                 _state: std::sync::Arc<std::sync::RwLock<crate::SessionState>>,
                 _credential: Option<crate::credential::ResolvedCredential>,
-            ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>> {
+            ) -> ToolFuture<'_> {
                 Box::pin(async move {
                     cancel.cancelled().await;
                     AgentToolResult::error("cancelled")

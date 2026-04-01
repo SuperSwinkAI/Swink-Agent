@@ -96,7 +96,7 @@ mod tests {
 
     use swink_agent::{AssistantMessage, Cost, StopReason, Usage};
 
-    type AsyncResult<'a, T> = Pin<Box<dyn Future<Output = io::Result<T>> + Send + 'a>>;
+    type CheckpointFuture<'a, T> = Pin<Box<dyn Future<Output = io::Result<T>> + Send + 'a>>;
 
     /// Minimal in-memory checkpoint store for testing.
     struct MockCheckpointStore {
@@ -112,7 +112,7 @@ mod tests {
     }
 
     impl CheckpointStore for MockCheckpointStore {
-        fn save_checkpoint(&self, checkpoint: &Checkpoint) -> AsyncResult<'_, ()> {
+        fn save_checkpoint(&self, checkpoint: &Checkpoint) -> CheckpointFuture<'_, ()> {
             let json = serde_json::to_string(checkpoint).unwrap();
             let id = checkpoint.id.clone();
             Box::pin(async move {
@@ -121,7 +121,7 @@ mod tests {
             })
         }
 
-        fn load_checkpoint(&self, id: &str) -> AsyncResult<'_, Option<Checkpoint>> {
+        fn load_checkpoint(&self, id: &str) -> CheckpointFuture<'_, Option<Checkpoint>> {
             let id = id.to_string();
             Box::pin(async move {
                 let guard = self.data.lock().unwrap();
@@ -129,13 +129,13 @@ mod tests {
             })
         }
 
-        fn list_checkpoints(&self) -> AsyncResult<'_, Vec<String>> {
+        fn list_checkpoints(&self) -> CheckpointFuture<'_, Vec<String>> {
             Box::pin(async move {
                 Ok(self.data.lock().unwrap().keys().cloned().collect())
             })
         }
 
-        fn delete_checkpoint(&self, id: &str) -> AsyncResult<'_, ()> {
+        fn delete_checkpoint(&self, id: &str) -> CheckpointFuture<'_, ()> {
             let id = id.to_string();
             Box::pin(async move {
                 self.data.lock().unwrap().remove(&id);

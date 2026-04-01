@@ -11,9 +11,69 @@ use std::pin::Pin;
 use serde::{Deserialize, Serialize};
 
 use crate::types::{
-    AgentMessage, AssistantMessage, Cost, CustomMessageRegistry, LlmMessage, Usage,
-    deserialize_custom_message, serialize_custom_message,
+    AgentMessage, Cost, CustomMessageRegistry, LlmMessage, Usage, deserialize_custom_message,
+    serialize_custom_message,
 };
+
+#[derive(Debug, Clone)]
+struct SerializedMessages {
+    llm_messages: Vec<LlmMessage>,
+    custom_messages: Vec<serde_json::Value>,
+}
+
+fn serialize_messages(messages: &[AgentMessage], kind: &str) -> SerializedMessages {
+    let mut llm_messages = Vec::new();
+    let mut custom_messages = Vec::new();
+
+    for message in messages {
+        match message {
+            AgentMessage::Llm(llm) => llm_messages.push(llm.clone()),
+            AgentMessage::Custom(custom) => {
+                if let Some(envelope) = serialize_custom_message(custom.as_ref()) {
+                    custom_messages.push(envelope);
+                } else {
+                    tracing::warn!(
+                        "skipping non-serializable CustomMessage in {kind}: {:?}",
+                        custom
+                    );
+                }
+            }
+        }
+    }
+
+    SerializedMessages {
+        llm_messages,
+        custom_messages,
+    }
+}
+
+fn restore_messages(
+    messages: &[LlmMessage],
+    custom_messages: &[serde_json::Value],
+    registry: Option<&CustomMessageRegistry>,
+    kind: &str,
+) -> Vec<AgentMessage> {
+    let mut result: Vec<AgentMessage> = messages.iter().cloned().map(AgentMessage::Llm).collect();
+
+    if let Some(reg) = registry {
+        for envelope in custom_messages {
+            match deserialize_custom_message(reg, envelope) {
+                Ok(custom) => result.push(AgentMessage::Custom(custom)),
+                Err(error) => {
+                    tracing::warn!(
+                        "failed to deserialize custom message from {kind}: {error}"
+                    );
+                }
+            }
+        }
+    }
+
+    result
+}
+
+fn restore_llm_messages(messages: &[LlmMessage]) -> Vec<AgentMessage> {
+    messages.iter().cloned().map(AgentMessage::Llm).collect()
+}
 
 // ─── Checkpoint ──────────────────────────────────────────────────────────────
 
@@ -70,32 +130,15 @@ impl Checkpoint {
         model_id: impl Into<String>,
         messages: &[AgentMessage],
     ) -> Self {
-        let mut llm_messages = Vec::new();
-        let mut custom_messages = Vec::new();
-
-        for m in messages {
-            match m {
-                AgentMessage::Llm(llm) => llm_messages.push(llm.clone()),
-                AgentMessage::Custom(custom) => {
-                    if let Some(envelope) = serialize_custom_message(custom.as_ref()) {
-                        custom_messages.push(envelope);
-                    } else {
-                        tracing::warn!(
-                            "skipping non-serializable CustomMessage in checkpoint: {:?}",
-                            custom
-                        );
-                    }
-                }
-            }
-        }
+        let serialized = serialize_messages(messages, "checkpoint");
 
         Self {
             id: id.into(),
             system_prompt: system_prompt.into(),
             provider: provider.into(),
             model_id: model_id.into(),
-            messages: llm_messages,
-            custom_messages,
+            messages: serialized.llm_messages,
+            custom_messages: serialized.custom_messages,
             turn_count: 0,
             usage: Usage::default(),
             cost: Cost::default(),
@@ -148,25 +191,7 @@ impl Checkpoint {
     /// cause errors.
     #[must_use]
     pub fn restore_messages(&self, registry: Option<&CustomMessageRegistry>) -> Vec<AgentMessage> {
-        let mut result: Vec<AgentMessage> = self
-            .messages
-            .iter()
-            .cloned()
-            .map(AgentMessage::Llm)
-            .collect();
-
-        if let Some(reg) = registry {
-            for envelope in &self.custom_messages {
-                match deserialize_custom_message(reg, envelope) {
-                    Ok(custom) => result.push(AgentMessage::Custom(custom)),
-                    Err(e) => {
-                        tracing::warn!("failed to deserialize custom message from checkpoint: {e}");
-                    }
-                }
-            }
-        }
-
-        result
+        restore_messages(&self.messages, &self.custom_messages, registry, "checkpoint")
     }
 }
 
@@ -175,8 +200,8 @@ impl Checkpoint {
 /// A serializable snapshot of the agent loop's in-flight state.
 ///
 /// Captures everything needed to pause a running loop and resume it later:
-/// messages, pending injections, turn counter, accumulated usage/cost,
-/// overflow signal, and the last assistant message. Created by
+/// messages, pending injections, system prompt, model, and session state.
+/// Created by
 /// [`Agent::pause`](crate::Agent::pause) and consumed by
 /// [`Agent::resume`](crate::Agent::resume).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -188,22 +213,12 @@ pub struct LoopCheckpoint {
     pub custom_messages: Vec<serde_json::Value>,
     /// Messages queued for injection into the next turn.
     pub pending_messages: Vec<LlmMessage>,
-    /// Whether the context overflow signal was active.
-    pub overflow_signal: bool,
-    /// The zero-based turn index at the time of pause.
-    pub turn_index: usize,
-    /// Accumulated token usage across all completed turns.
-    pub usage: Usage,
-    /// Accumulated cost across all completed turns.
-    pub cost: Cost,
     /// The system prompt active at the time of pause.
     pub system_prompt: String,
     /// Model provider name.
     pub provider: String,
     /// Model identifier.
     pub model_id: String,
-    /// The last assistant message (if any) for policy/hook continuity.
-    pub last_assistant_message: Option<AssistantMessage>,
     /// Unix timestamp when the checkpoint was created.
     pub created_at: u64,
     /// Arbitrary metadata for application-specific use.
@@ -226,37 +241,15 @@ impl LoopCheckpoint {
         model_id: impl Into<String>,
         messages: &[AgentMessage],
     ) -> Self {
-        let mut llm_messages = Vec::new();
-        let mut custom_messages = Vec::new();
-
-        for m in messages {
-            match m {
-                AgentMessage::Llm(llm) => llm_messages.push(llm.clone()),
-                AgentMessage::Custom(custom) => {
-                    if let Some(envelope) = serialize_custom_message(custom.as_ref()) {
-                        custom_messages.push(envelope);
-                    } else {
-                        tracing::warn!(
-                            "skipping non-serializable CustomMessage in loop checkpoint: {:?}",
-                            custom
-                        );
-                    }
-                }
-            }
-        }
+        let serialized = serialize_messages(messages, "loop checkpoint");
 
         Self {
-            messages: llm_messages,
-            custom_messages,
+            messages: serialized.llm_messages,
+            custom_messages: serialized.custom_messages,
             pending_messages: Vec::new(),
-            overflow_signal: false,
-            turn_index: 0,
-            usage: Usage::default(),
-            cost: Cost::default(),
             system_prompt: system_prompt.into(),
             provider: provider.into(),
             model_id: model_id.into(),
-            last_assistant_message: None,
             created_at: crate::util::now_timestamp(),
             metadata: HashMap::new(),
             state: None,
@@ -270,45 +263,10 @@ impl LoopCheckpoint {
         self
     }
 
-    /// Set the turn index.
-    #[must_use]
-    pub const fn with_turn_index(mut self, turn_index: usize) -> Self {
-        self.turn_index = turn_index;
-        self
-    }
-
-    /// Set accumulated usage.
-    #[must_use]
-    pub fn with_usage(mut self, usage: Usage) -> Self {
-        self.usage = usage;
-        self
-    }
-
-    /// Set accumulated cost.
-    #[must_use]
-    pub fn with_cost(mut self, cost: Cost) -> Self {
-        self.cost = cost;
-        self
-    }
-
     /// Set pending messages.
     #[must_use]
     pub fn with_pending_messages(mut self, pending: Vec<LlmMessage>) -> Self {
         self.pending_messages = pending;
-        self
-    }
-
-    /// Set the overflow signal.
-    #[must_use]
-    pub const fn with_overflow_signal(mut self, signal: bool) -> Self {
-        self.overflow_signal = signal;
-        self
-    }
-
-    /// Set the last assistant message.
-    #[must_use]
-    pub fn with_last_assistant_message(mut self, msg: AssistantMessage) -> Self {
-        self.last_assistant_message = Some(msg);
         self
     }
 
@@ -326,37 +284,18 @@ impl LoopCheckpoint {
     /// skipped.
     #[must_use]
     pub fn restore_messages(&self, registry: Option<&CustomMessageRegistry>) -> Vec<AgentMessage> {
-        let mut result: Vec<AgentMessage> = self
-            .messages
-            .iter()
-            .cloned()
-            .map(AgentMessage::Llm)
-            .collect();
-
-        if let Some(reg) = registry {
-            for envelope in &self.custom_messages {
-                match deserialize_custom_message(reg, envelope) {
-                    Ok(custom) => result.push(AgentMessage::Custom(custom)),
-                    Err(e) => {
-                        tracing::warn!(
-                            "failed to deserialize custom message from loop checkpoint: {e}"
-                        );
-                    }
-                }
-            }
-        }
-
-        result
+        restore_messages(
+            &self.messages,
+            &self.custom_messages,
+            registry,
+            "loop checkpoint",
+        )
     }
 
     /// Restore pending messages as `AgentMessage` values.
     #[must_use]
     pub fn restore_pending_messages(&self) -> Vec<AgentMessage> {
-        self.pending_messages
-            .iter()
-            .cloned()
-            .map(AgentMessage::Llm)
-            .collect()
+        restore_llm_messages(&self.pending_messages)
     }
 
     /// Convert this loop checkpoint into a standard [`Checkpoint`] for storage.
@@ -369,9 +308,9 @@ impl LoopCheckpoint {
             model_id: self.model_id.clone(),
             messages: self.messages.clone(),
             custom_messages: self.custom_messages.clone(),
-            turn_count: self.turn_index,
-            usage: self.usage.clone(),
-            cost: self.cost.clone(),
+            turn_count: 0,
+            usage: Usage::default(),
+            cost: Cost::default(),
             created_at: self.created_at,
             metadata: self.metadata.clone(),
             state: self.state.clone(),
@@ -382,23 +321,24 @@ impl LoopCheckpoint {
 // ─── CheckpointStore ─────────────────────────────────────────────────────────
 
 /// A boxed future returned by [`CheckpointStore`] methods.
-type AsyncResult<'a, T> = Pin<Box<dyn Future<Output = std::io::Result<T>> + Send + 'a>>;
+pub type CheckpointFuture<'a, T> =
+    Pin<Box<dyn Future<Output = std::io::Result<T>> + Send + 'a>>;
 
 /// Async trait for persisting and loading agent checkpoints.
 ///
 /// Implementations can back onto any storage: filesystem, database, cloud, etc.
 pub trait CheckpointStore: Send + Sync {
     /// Save a checkpoint. Overwrites any existing checkpoint with the same ID.
-    fn save_checkpoint(&self, checkpoint: &Checkpoint) -> AsyncResult<'_, ()>;
+    fn save_checkpoint(&self, checkpoint: &Checkpoint) -> CheckpointFuture<'_, ()>;
 
     /// Load a checkpoint by ID.
-    fn load_checkpoint(&self, id: &str) -> AsyncResult<'_, Option<Checkpoint>>;
+    fn load_checkpoint(&self, id: &str) -> CheckpointFuture<'_, Option<Checkpoint>>;
 
     /// List all checkpoint IDs, most recent first.
-    fn list_checkpoints(&self) -> AsyncResult<'_, Vec<String>>;
+    fn list_checkpoints(&self) -> CheckpointFuture<'_, Vec<String>>;
 
     /// Delete a checkpoint by ID.
-    fn delete_checkpoint(&self, id: &str) -> AsyncResult<'_, ()>;
+    fn delete_checkpoint(&self, id: &str) -> CheckpointFuture<'_, ()>;
 }
 
 // ─── Send + Sync assertions ─────────────────────────────────────────────────
@@ -415,6 +355,15 @@ const _: () = {
 mod tests {
     use super::*;
     use crate::types::{ContentBlock, UserMessage};
+
+    #[derive(Debug)]
+    struct TestCustom;
+
+    impl crate::types::CustomMessage for TestCustom {
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+    }
 
     fn sample_messages() -> Vec<AgentMessage> {
         vec![
@@ -445,13 +394,6 @@ mod tests {
     fn checkpoint_creation_skips_non_serializable_custom_messages() {
         let mut messages = sample_messages();
         // Add a custom message without type_name/to_json — should be skipped
-        #[derive(Debug)]
-        struct TestCustom;
-        impl crate::types::CustomMessage for TestCustom {
-            fn as_any(&self) -> &dyn std::any::Any {
-                self
-            }
-        }
         messages.push(AgentMessage::Custom(Box::new(TestCustom)));
 
         let checkpoint = Checkpoint::new(
@@ -635,7 +577,7 @@ mod tests {
     }
 
     impl CheckpointStore for InMemoryCheckpointStore {
-        fn save_checkpoint(&self, checkpoint: &Checkpoint) -> AsyncResult<'_, ()> {
+        fn save_checkpoint(&self, checkpoint: &Checkpoint) -> CheckpointFuture<'_, ()> {
             let json = serde_json::to_string(checkpoint).unwrap();
             let id = checkpoint.id.clone();
             Box::pin(async move {
@@ -647,7 +589,7 @@ mod tests {
             })
         }
 
-        fn load_checkpoint(&self, id: &str) -> AsyncResult<'_, Option<Checkpoint>> {
+        fn load_checkpoint(&self, id: &str) -> CheckpointFuture<'_, Option<Checkpoint>> {
             let id = id.to_string();
             Box::pin(async move {
                 let guard = self
@@ -665,7 +607,7 @@ mod tests {
             })
         }
 
-        fn list_checkpoints(&self) -> AsyncResult<'_, Vec<String>> {
+        fn list_checkpoints(&self) -> CheckpointFuture<'_, Vec<String>> {
             Box::pin(async move {
                 let guard = self
                     .data
@@ -675,7 +617,7 @@ mod tests {
             })
         }
 
-        fn delete_checkpoint(&self, id: &str) -> AsyncResult<'_, ()> {
+        fn delete_checkpoint(&self, id: &str) -> CheckpointFuture<'_, ()> {
             let id = id.to_string();
             Box::pin(async move {
                 self.data
@@ -734,21 +676,20 @@ mod tests {
     #[test]
     fn loop_checkpoint_creation_skips_non_serializable_custom_messages() {
         let mut messages = sample_messages();
-        #[derive(Debug)]
-        struct TestCustom;
-        impl crate::types::CustomMessage for TestCustom {
-            fn as_any(&self) -> &dyn std::any::Any {
-                self
-            }
-        }
         messages.push(AgentMessage::Custom(Box::new(TestCustom)));
 
         let cp = LoopCheckpoint::new("Be helpful.", "anthropic", "claude-sonnet", &messages)
-            .with_turn_index(5);
+            .with_pending_messages(vec![LlmMessage::User(UserMessage {
+                content: vec![ContentBlock::Text {
+                    text: "continue".to_string(),
+                }],
+                timestamp: 123,
+                cache_hint: None,
+            })]);
 
         assert_eq!(cp.messages.len(), 2);
         assert!(cp.custom_messages.is_empty());
-        assert_eq!(cp.turn_index, 5);
+        assert_eq!(cp.pending_messages.len(), 1);
         assert_eq!(cp.system_prompt, "Be helpful.");
         assert_eq!(cp.provider, "anthropic");
         assert_eq!(cp.model_id, "claude-sonnet");
@@ -758,29 +699,20 @@ mod tests {
     fn loop_checkpoint_serde_roundtrip() {
         let messages = sample_messages();
         let cp = LoopCheckpoint::new("System prompt", "openai", "gpt-4", &messages)
-            .with_turn_index(3)
-            .with_usage(Usage {
-                input: 200,
-                output: 100,
-                ..Default::default()
-            })
-            .with_cost(Cost {
-                input: 0.02,
-                output: 0.01,
-                ..Default::default()
-            })
-            .with_overflow_signal(true)
+            .with_pending_messages(vec![LlmMessage::User(UserMessage {
+                content: vec![ContentBlock::Text {
+                    text: "follow-up".to_string(),
+                }],
+                timestamp: 200,
+                cache_hint: None,
+            })])
             .with_metadata("workflow_id", serde_json::json!("wf-123"));
 
         let json = serde_json::to_string(&cp).unwrap();
         let restored: LoopCheckpoint = serde_json::from_str(&json).unwrap();
 
         assert_eq!(restored.messages.len(), 2);
-        assert_eq!(restored.turn_index, 3);
-        assert_eq!(restored.usage.input, 200);
-        assert_eq!(restored.usage.output, 100);
-        assert!((restored.cost.input - 0.02).abs() < f64::EPSILON);
-        assert!(restored.overflow_signal);
+        assert_eq!(restored.pending_messages.len(), 1);
         assert_eq!(restored.system_prompt, "System prompt");
         assert_eq!(restored.metadata["workflow_id"], "wf-123");
     }
@@ -826,49 +758,14 @@ mod tests {
     fn loop_checkpoint_to_standard_checkpoint() {
         let messages = sample_messages();
         let cp = LoopCheckpoint::new("prompt", "anthropic", "claude", &messages)
-            .with_turn_index(7)
-            .with_usage(Usage {
-                input: 50,
-                output: 25,
-                ..Default::default()
-            })
             .with_metadata("key", serde_json::json!("val"));
 
         let standard = cp.to_checkpoint("cp-from-loop");
         assert_eq!(standard.id, "cp-from-loop");
         assert_eq!(standard.system_prompt, "prompt");
-        assert_eq!(standard.turn_count, 7);
-        assert_eq!(standard.usage.input, 50);
+        assert_eq!(standard.turn_count, 0);
+        assert_eq!(standard.usage.input, 0);
         assert_eq!(standard.messages.len(), 2);
         assert_eq!(standard.metadata["key"], "val");
-    }
-
-    #[test]
-    fn loop_checkpoint_with_last_assistant_message() {
-        let assistant = crate::types::AssistantMessage {
-            content: vec![ContentBlock::Text {
-                text: "Hello!".to_string(),
-            }],
-            provider: "test".to_string(),
-            model_id: "test-model".to_string(),
-            usage: Usage::default(),
-            cost: Cost::default(),
-            stop_reason: crate::types::StopReason::Stop,
-            error_message: None,
-            timestamp: 300,
-            cache_hint: None,
-        };
-
-        let cp =
-            LoopCheckpoint::new("p", "p", "m", &[]).with_last_assistant_message(assistant.clone());
-
-        assert!(cp.last_assistant_message.is_some());
-        assert_eq!(cp.last_assistant_message.as_ref().unwrap().timestamp, 300);
-
-        // Verify serde roundtrip preserves last_assistant_message
-        let json = serde_json::to_string(&cp).unwrap();
-        let deser: LoopCheckpoint = serde_json::from_str(&json).unwrap();
-        assert!(deser.last_assistant_message.is_some());
-        assert_eq!(deser.last_assistant_message.unwrap().timestamp, 300);
     }
 }
