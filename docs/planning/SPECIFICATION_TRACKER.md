@@ -7,7 +7,7 @@
 - Provider Roadmap: [PROVIDER_EXPANSION_ROADMAP.md](PROVIDER_EXPANSION_ROADMAP.md)
 - Eval Roadmap: [EVAL.md](EVAL.md)
 
-**Current Focus:** 35 specs total — 32/35 have plans, 32/35 have tasks, 23/35 complete. Phase 0–2 done. Phase 3: 7/10 complete (015, 018 newly complete; 016, 017, 019 need plans). Phase 4: 3/4 complete (021 has extended tasks). Phase 5–6 done. Phase 7 done (031 + 032 complete). Phase 8: 033 complete, 034 + 035 ready for implementation. Next: plan remaining adapters (016, 017, 019); implement 034 + 035.
+**Current Focus:** 35 specs total — 32/35 have plans, 32/35 have tasks, 24/35 complete. Phase 0–2 done. Phase 3: 7/10 complete (016, 017, 019 need plans). Phase 4: 3/4 complete (021 has extended tasks). Phase 5–6 done. Phase 7 done. Phase 8: 033 + 034 complete, 035 ready for implementation. Next: plan remaining adapters (016, 017, 019); implement 035.
 
 > **Numbering System:** Spec numbers (001–035) are sequential identifiers that
 > never change. Phase numbers represent execution order and can be reassigned
@@ -285,7 +285,7 @@ ToolValidator, ToolCallTransformer) with a unified, configurable policy slot sys
 **Goal:** Workspace-level feature gates, session state persistence, and
 credential management — cross-cutting infrastructure for production readiness.
 
-**Status:** 3/3 specs planned, 3/3 have tasks, 1/3 complete, 3/3 specs defined
+**Status:** 3/3 specs planned, 3/3 have tasks, 2/3 complete, 3/3 specs defined
 
 ### Implementation Checklist
 
@@ -294,10 +294,10 @@ credential management — cross-cutting infrastructure for production readiness.
   - Branch: `033-workspace-feature-gates`
   - Status: Complete (25/25 tasks, merged to main)
   - Depends on: 3.1, 4.2
-- [ ] **8.2** Session State Store — Key-value state store per session, integrated with SessionStore and JSONL persistence
+- [x] **8.2** Session State Store — Key-value state store per session, integrated with SessionStore and JSONL persistence
   - Spec: `specs/034-session-state-store/spec.md`
   - Branch: `034-session-state-store`
-  - Status: Ready for implementation (0/93 tasks)
+  - Status: Complete (93/93 tasks, merged to main)
   - Depends on: 4.1
 - [ ] **8.3** Credential Management — OAuth2 refresh, credential provider trait, in-memory credential store, deduplication
   - Spec: `specs/035-credential-management/spec.md`
@@ -421,7 +421,7 @@ graph TD
     style W fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
     style X fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
     style Y fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
-    style Z fill:#fff,color:#000,stroke:#6b7280,stroke-width:2px
+    style Z fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
     style AA fill:#fff,color:#000,stroke:#6b7280,stroke-width:2px
 ```
 

@@ -178,7 +178,7 @@ pub async fn run_single_turn(
         )
         .await
         {
-            OverflowRecoveryResult::Recovered(result) => result,
+            OverflowRecoveryResult::Recovered(result) => *result,
             OverflowRecoveryResult::Failed(outcome) => return outcome,
         }
     } else {
@@ -233,7 +233,7 @@ pub async fn run_single_turn(
 /// Outcome of an in-place overflow recovery attempt.
 enum OverflowRecoveryResult {
     /// Recovery succeeded — the retry produced a new `StreamResult`.
-    Recovered(StreamResult),
+    Recovered(Box<StreamResult>),
     /// Recovery failed — the turn should exit with this outcome.
     Failed(TurnOutcome),
 }
@@ -272,22 +272,21 @@ async fn attempt_overflow_recovery(
 
     // Re-run async transformer with overflow=true
     let mut any_compacted = false;
-    if let Some(ref async_transformer) = config.async_transform_context {
-        if let Some(report) = async_transformer
+    if let Some(ref async_transformer) = config.async_transform_context
+        && let Some(report) = async_transformer
             .transform(&mut state.context_messages, true)
             .await
-        {
-            any_compacted = true;
-            let _ = emit(tx, AgentEvent::ContextCompacted { report }).await;
-        }
+    {
+        any_compacted = true;
+        let _ = emit(tx, AgentEvent::ContextCompacted { report }).await;
     }
 
     // Re-run sync transformer with overflow=true
-    if let Some(ref transformer) = config.transform_context {
-        if let Some(report) = transformer.transform(&mut state.context_messages, true) {
-            any_compacted = true;
-            let _ = emit(tx, AgentEvent::ContextCompacted { report }).await;
-        }
+    if let Some(ref transformer) = config.transform_context
+        && let Some(report) = transformer.transform(&mut state.context_messages, true)
+    {
+        any_compacted = true;
+        let _ = emit(tx, AgentEvent::ContextCompacted { report }).await;
     }
 
     // Reset overflow signal after transformers ran.
@@ -331,10 +330,10 @@ async fn attempt_overflow_recovery(
         return overflow_error(config, state, tx).await;
     }
 
-    OverflowRecoveryResult::Recovered(retry_result)
+    OverflowRecoveryResult::Recovered(Box::new(retry_result))
 }
 
-/// Build an overflow error message and emit TurnEnd + AgentEnd.
+/// Build an overflow error message and emit `TurnEnd` + `AgentEnd`.
 async fn overflow_error(
     config: &Arc<AgentLoopConfig>,
     state: &mut LoopState,
