@@ -14,7 +14,7 @@
 mod convert;
 pub mod embedding;
 pub mod error;
-mod lifecycle;
+pub(crate) mod loader;
 pub mod model;
 pub mod preset;
 pub mod progress;
