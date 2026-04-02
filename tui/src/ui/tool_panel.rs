@@ -105,7 +105,6 @@ impl ToolPanel {
         });
     }
 
-
     /// Advance the spinner and prune old completed tools (>10s) and resolved approvals (>2s).
     pub fn tick(&mut self) {
         self.spinner_frame = (self.spinner_frame + 1) % SPINNER.len();

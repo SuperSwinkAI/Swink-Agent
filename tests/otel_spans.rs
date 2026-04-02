@@ -20,8 +20,8 @@ use common::{MockStreamFn, MockTool, default_model, text_only_events, tool_call_
 use opentelemetry::trace::Status as OtelStatus;
 use swink_agent::{
     AgentEvent, AgentLoopConfig, AgentMessage, AssistantMessageEvent, ContentBlock,
-    DefaultRetryStrategy, LlmMessage, ModelFallback, ModelSpec, StopReason, StreamFn, StreamOptions,
-    UserMessage, agent_loop,
+    DefaultRetryStrategy, LlmMessage, ModelFallback, ModelSpec, StopReason, StreamFn,
+    StreamOptions, UserMessage, agent_loop,
 };
 
 type ConvertToLlmBoxed = Box<dyn Fn(&AgentMessage) -> Option<LlmMessage> + Send + Sync>;
@@ -94,8 +94,7 @@ fn setup_otel_tracing() -> (
 async fn otel_span_hierarchy() {
     let (exporter, _guard) = setup_otel_tracing();
 
-    let stream_fn: Arc<dyn StreamFn> =
-        Arc::new(MockStreamFn::new(vec![text_only_events("hello")]));
+    let stream_fn: Arc<dyn StreamFn> = Arc::new(MockStreamFn::new(vec![text_only_events("hello")]));
     let config = default_config(stream_fn);
 
     let stream = agent_loop(
@@ -131,11 +130,13 @@ async fn otel_span_hierarchy() {
     let llm_span = spans.iter().find(|s| s.name == "agent.llm_call").unwrap();
 
     assert_eq!(
-        turn_span.parent_span_id, run_span.span_context.span_id(),
+        turn_span.parent_span_id,
+        run_span.span_context.span_id(),
         "agent.turn should be child of agent.run"
     );
     assert_eq!(
-        llm_span.parent_span_id, turn_span.span_context.span_id(),
+        llm_span.parent_span_id,
+        turn_span.span_context.span_id(),
         "agent.llm_call should be child of agent.turn"
     );
 }
@@ -144,8 +145,7 @@ async fn otel_span_hierarchy() {
 async fn otel_span_attributes() {
     let (exporter, _guard) = setup_otel_tracing();
 
-    let stream_fn: Arc<dyn StreamFn> =
-        Arc::new(MockStreamFn::new(vec![text_only_events("hello")]));
+    let stream_fn: Arc<dyn StreamFn> = Arc::new(MockStreamFn::new(vec![text_only_events("hello")]));
     let config = default_config(stream_fn);
 
     let stream = agent_loop(
@@ -162,17 +162,25 @@ async fn otel_span_attributes() {
 
     // Check agent.turn has turn_index attribute
     let turn_span = spans.iter().find(|s| s.name == "agent.turn").unwrap();
-    let turn_attrs: Vec<(&opentelemetry::Key, &opentelemetry::Value)> =
-        turn_span.attributes.iter().map(|kv| (&kv.key, &kv.value)).collect();
+    let turn_attrs: Vec<(&opentelemetry::Key, &opentelemetry::Value)> = turn_span
+        .attributes
+        .iter()
+        .map(|kv| (&kv.key, &kv.value))
+        .collect();
     assert!(
-        turn_attrs.iter().any(|(k, _)| k.as_str() == "agent.turn_index"),
+        turn_attrs
+            .iter()
+            .any(|(k, _)| k.as_str() == "agent.turn_index"),
         "agent.turn should have agent.turn_index attribute, got: {turn_attrs:?}"
     );
 
     // Check agent.llm_call has model attribute
     let llm_span = spans.iter().find(|s| s.name == "agent.llm_call").unwrap();
-    let llm_attrs: Vec<(&opentelemetry::Key, &opentelemetry::Value)> =
-        llm_span.attributes.iter().map(|kv| (&kv.key, &kv.value)).collect();
+    let llm_attrs: Vec<(&opentelemetry::Key, &opentelemetry::Value)> = llm_span
+        .attributes
+        .iter()
+        .map(|kv| (&kv.key, &kv.value))
+        .collect();
     assert!(
         llm_attrs.iter().any(|(k, _)| k.as_str() == "agent.model"),
         "agent.llm_call should have agent.model attribute, got: {llm_attrs:?}"
@@ -211,8 +219,11 @@ async fn otel_tool_spans() {
 
     // Verify tool span has agent.tool.name attribute
     let tool_span = spans.iter().find(|s| s.name == "agent.tool").unwrap();
-    let tool_attrs: Vec<(&opentelemetry::Key, &opentelemetry::Value)> =
-        tool_span.attributes.iter().map(|kv| (&kv.key, &kv.value)).collect();
+    let tool_attrs: Vec<(&opentelemetry::Key, &opentelemetry::Value)> = tool_span
+        .attributes
+        .iter()
+        .map(|kv| (&kv.key, &kv.value))
+        .collect();
     assert!(
         tool_attrs
             .iter()
@@ -285,8 +296,7 @@ async fn otel_coexists_with_metrics_collector() {
     let (exporter, _guard) = setup_otel_tracing();
 
     let collector = Arc::new(FlagCollector(AtomicBool::new(false)));
-    let stream_fn: Arc<dyn StreamFn> =
-        Arc::new(MockStreamFn::new(vec![text_only_events("hello")]));
+    let stream_fn: Arc<dyn StreamFn> = Arc::new(MockStreamFn::new(vec![text_only_events("hello")]));
     let mut config = default_config(stream_fn);
     config.metrics_collector = Some(collector.clone());
 
@@ -359,7 +369,10 @@ async fn otel_model_fallback_spans() {
     let spans = exporter.get_finished_spans().unwrap();
 
     // Should have two agent.llm_call spans — one for primary (failed) and one for fallback.
-    let llm_spans: Vec<_> = spans.iter().filter(|s| s.name == "agent.llm_call").collect();
+    let llm_spans: Vec<_> = spans
+        .iter()
+        .filter(|s| s.name == "agent.llm_call")
+        .collect();
     assert_eq!(
         llm_spans.len(),
         2,
@@ -392,8 +405,7 @@ async fn otel_model_fallback_spans() {
         .iter()
         .find(|s| {
             s.attributes.iter().any(|kv| {
-                kv.key.as_str() == "agent.model"
-                    && format!("{:?}", kv.value).contains("test-model")
+                kv.key.as_str() == "agent.model" && format!("{:?}", kv.value).contains("test-model")
             })
         })
         .expect("expected primary model span");

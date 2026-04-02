@@ -188,10 +188,7 @@ fn is_cancellation_token(ty: &Type) -> bool {
 
 fn is_option_type(ty: &Type) -> bool {
     if let Type::Path(tp) = ty {
-        tp.path
-            .segments
-            .last()
-            .is_some_and(|s| s.ident == "Option")
+        tp.path.segments.last().is_some_and(|s| s.ident == "Option")
     } else {
         false
     }
@@ -206,8 +203,8 @@ fn rust_type_to_json_type(ty: &Type) -> &'static str {
     };
     match last.ident.to_string().as_str() {
         "bool" => "boolean",
-        "u8" | "u16" | "u32" | "u64" | "u128" | "usize" | "i8" | "i16" | "i32" | "i64"
-        | "i128" | "isize" => "integer",
+        "u8" | "u16" | "u32" | "u64" | "u128" | "usize" | "i8" | "i16" | "i32" | "i64" | "i128"
+        | "isize" => "integer",
         "f32" | "f64" => "number",
         "Vec" => "array",
         // String, str, Option, and any unknown types default to "string"

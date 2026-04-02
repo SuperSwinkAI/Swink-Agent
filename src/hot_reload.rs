@@ -20,7 +20,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use notify::{RecommendedWatcher, RecursiveMode, Watcher, Event, EventKind};
+use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::Deserialize;
 use serde_json::Value;
 use tokio::sync::mpsc;
@@ -430,14 +430,12 @@ command = "echo hello"
     #[test]
     fn duplicate_tool_names_last_write_wins() {
         // Simulate two ScriptTools with the same name
-        let tool1 = ScriptTool::from_toml(
-            r#"name = "dup" description = "First" command = "echo 1""#,
-        )
-        .unwrap();
-        let tool2 = ScriptTool::from_toml(
-            r#"name = "dup" description = "Second" command = "echo 2""#,
-        )
-        .unwrap();
+        let tool1 =
+            ScriptTool::from_toml(r#"name = "dup" description = "First" command = "echo 1""#)
+                .unwrap();
+        let tool2 =
+            ScriptTool::from_toml(r#"name = "dup" description = "Second" command = "echo 2""#)
+                .unwrap();
 
         let mut map: HashMap<PathBuf, ScriptTool> = HashMap::new();
         map.insert(PathBuf::from("/a.toml"), tool1);

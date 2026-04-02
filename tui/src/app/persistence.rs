@@ -78,13 +78,11 @@ impl App {
                                     .chars()
                                     .take(60)
                                     .collect::<String>();
-                                let mut dm =
-                                    DisplayMessage::new(MessageRole::ToolResult, content);
+                                let mut dm = DisplayMessage::new(MessageRole::ToolResult, content);
                                 dm.collapsed = true;
                                 dm.summary = summary;
-                                dm.diff_data = crate::ui::diff::DiffData::from_details(
-                                    &tool_result.details,
-                                );
+                                dm.diff_data =
+                                    crate::ui::diff::DiffData::from_details(&tool_result.details);
                                 self.messages.push(dm);
                             }
                         }

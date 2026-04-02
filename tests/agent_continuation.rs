@@ -299,7 +299,9 @@ async fn session_id_forwarding() {
 
 #[tokio::test]
 async fn get_api_key_forwarding() {
-    let capturing = Arc::new(MockApiKeyCapturingStreamFn::new(vec![text_only_events("ok")]));
+    let capturing = Arc::new(MockApiKeyCapturingStreamFn::new(vec![text_only_events(
+        "ok",
+    )]));
 
     let stream_fn: Arc<dyn StreamFn> = Arc::clone(&capturing) as Arc<dyn StreamFn>;
 

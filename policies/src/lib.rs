@@ -75,4 +75,6 @@ pub use content_filter::{ContentFilter, ContentFilterError, FilterRule};
 #[cfg(feature = "audit")]
 mod audit_logger;
 #[cfg(feature = "audit")]
-pub use audit_logger::{AuditCost, AuditLogger, AuditRecord, AuditSink, AuditUsage, JsonlAuditSink};
+pub use audit_logger::{
+    AuditCost, AuditLogger, AuditRecord, AuditSink, AuditUsage, JsonlAuditSink,
+};

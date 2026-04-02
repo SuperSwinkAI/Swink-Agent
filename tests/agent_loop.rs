@@ -7,8 +7,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use common::{
-    MockApiKeyCapturingStreamFn, MockContextCapturingStreamFn, MockStreamFn, MockTool, default_model,
-    text_only_events, tool_call_events,
+    MockApiKeyCapturingStreamFn, MockContextCapturingStreamFn, MockStreamFn, MockTool,
+    default_model, text_only_events, tool_call_events,
 };
 use futures::Stream;
 use futures::stream::StreamExt;
@@ -147,7 +147,9 @@ fn default_config(stream_fn: Arc<dyn StreamFn>) -> AgentLoopConfig {
         metrics_collector: None,
         fallback: None,
         tool_execution_policy: swink_agent::ToolExecutionPolicy::default(),
-        session_state: std::sync::Arc::new(std::sync::RwLock::new(swink_agent::SessionState::new())),
+        session_state: std::sync::Arc::new(
+            std::sync::RwLock::new(swink_agent::SessionState::new()),
+        ),
         credential_resolver: None,
         cache_config: None,
         cache_state: std::sync::Mutex::new(swink_agent::CacheState::default()),
@@ -842,7 +844,9 @@ async fn convert_to_llm_filter() {
         }
     }
 
-    let capturing_fn = Arc::new(MockContextCapturingStreamFn::new(vec![text_only_events("ok")]));
+    let capturing_fn = Arc::new(MockContextCapturingStreamFn::new(vec![text_only_events(
+        "ok",
+    )]));
 
     let stream_fn: Arc<dyn StreamFn> = Arc::clone(&capturing_fn) as Arc<dyn StreamFn>;
 

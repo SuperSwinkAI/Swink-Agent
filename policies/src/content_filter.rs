@@ -252,11 +252,7 @@ impl PostTurnPolicy for ContentFilter {
         "ContentFilter"
     }
 
-    fn evaluate(
-        &self,
-        _ctx: &PolicyContext<'_>,
-        turn: &TurnPolicyContext<'_>,
-    ) -> PolicyVerdict {
+    fn evaluate(&self, _ctx: &PolicyContext<'_>, turn: &TurnPolicyContext<'_>) -> PolicyVerdict {
         let text = ContentBlock::extract_text(&turn.assistant_message.content);
         let mut lowercase_text = None;
 
@@ -299,7 +295,11 @@ mod tests {
 
     use super::*;
 
-    fn make_policy_ctx<'a>(usage: &'a Usage, cost: &'a Cost, state: &'a swink_agent::SessionState) -> PolicyContext<'a> {
+    fn make_policy_ctx<'a>(
+        usage: &'a Usage,
+        cost: &'a Cost,
+        state: &'a swink_agent::SessionState,
+    ) -> PolicyContext<'a> {
         PolicyContext {
             turn_index: 0,
             accumulated_usage: usage,
@@ -427,9 +427,7 @@ mod tests {
         let turn = make_turn_ctx(&msg);
 
         let verdict = filter.evaluate(&ctx, &turn);
-        assert!(
-            matches!(verdict, PolicyVerdict::Stop(reason) if reason.contains("restricted"))
-        );
+        assert!(matches!(verdict, PolicyVerdict::Stop(reason) if reason.contains("restricted")));
     }
 
     #[test]

@@ -88,8 +88,16 @@ pub mod remote_preset_keys {
     pub mod xai {
         use super::RemotePresetKey;
 
-        pub const GROK_3: RemotePresetKey = RemotePresetKey::new("xai", "grok_3");
-        pub const GROK_3_FAST: RemotePresetKey = RemotePresetKey::new("xai", "grok_3_fast");
+        pub const GROK_4_20_REASONING: RemotePresetKey =
+            RemotePresetKey::new("xai", "grok_4_20_reasoning");
+        pub const GROK_4_20_NON_REASONING: RemotePresetKey =
+            RemotePresetKey::new("xai", "grok_4_20_non_reasoning");
+        pub const GROK_4_1_FAST_REASONING: RemotePresetKey =
+            RemotePresetKey::new("xai", "grok_4_1_fast_reasoning");
+        pub const GROK_4_1_FAST_NON_REASONING: RemotePresetKey =
+            RemotePresetKey::new("xai", "grok_4_1_fast_non_reasoning");
+        pub const GROK_4_20_MULTI_AGENT: RemotePresetKey =
+            RemotePresetKey::new("xai", "grok_4_20_multi_agent");
     }
 
     #[cfg(feature = "mistral")]
@@ -462,10 +470,34 @@ mod tests {
             "gpt-4o"
         );
         assert_eq!(
-            required_catalog_preset(remote_preset_keys::xai::GROK_3)
+            required_catalog_preset(remote_preset_keys::xai::GROK_4_20_REASONING)
                 .unwrap()
                 .model_id,
-            "grok-3"
+            "grok-4.20-0309-reasoning"
+        );
+        assert_eq!(
+            required_catalog_preset(remote_preset_keys::xai::GROK_4_20_NON_REASONING)
+                .unwrap()
+                .model_id,
+            "grok-4.20-0309-non-reasoning"
+        );
+        assert_eq!(
+            required_catalog_preset(remote_preset_keys::xai::GROK_4_1_FAST_REASONING)
+                .unwrap()
+                .model_id,
+            "grok-4-1-fast-reasoning"
+        );
+        assert_eq!(
+            required_catalog_preset(remote_preset_keys::xai::GROK_4_1_FAST_NON_REASONING)
+                .unwrap()
+                .model_id,
+            "grok-4-1-fast-non-reasoning"
+        );
+        assert_eq!(
+            required_catalog_preset(remote_preset_keys::xai::GROK_4_20_MULTI_AGENT)
+                .unwrap()
+                .model_id,
+            "grok-4.20-multi-agent-0309"
         );
         assert_eq!(
             required_catalog_preset(remote_preset_keys::mistral::MISTRAL_LARGE)

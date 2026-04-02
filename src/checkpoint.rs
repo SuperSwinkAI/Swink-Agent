@@ -121,9 +121,7 @@ fn restore_messages(
             match deserialize_custom_message(reg, envelope) {
                 Ok(custom) => result.push(AgentMessage::Custom(custom)),
                 Err(error) => {
-                    tracing::warn!(
-                        "failed to deserialize custom message from {kind}: {error}"
-                    );
+                    tracing::warn!("failed to deserialize custom message from {kind}: {error}");
                 }
             }
         }
@@ -527,8 +525,14 @@ mod tests {
 
         let restored = restored_cp.restore_messages(Some(&registry));
         assert_eq!(restored.len(), 3);
-        assert!(matches!(restored[0], AgentMessage::Llm(LlmMessage::User(_))));
-        assert!(matches!(restored[1], AgentMessage::Llm(LlmMessage::Assistant(_))));
+        assert!(matches!(
+            restored[0],
+            AgentMessage::Llm(LlmMessage::User(_))
+        ));
+        assert!(matches!(
+            restored[1],
+            AgentMessage::Llm(LlmMessage::Assistant(_))
+        ));
         let custom = restored[2].downcast_ref::<SerializableCustom>().unwrap();
         assert_eq!(custom.value, "hello");
 
@@ -905,10 +909,7 @@ mod tests {
         // message_order field to simulate a legacy checkpoint.
         let (registry, factory) = make_registry_and_custom("test");
 
-        let messages = vec![
-            user_msg("hi"),
-            AgentMessage::Custom(factory("legacy")),
-        ];
+        let messages = vec![user_msg("hi"), AgentMessage::Custom(factory("legacy"))];
 
         let checkpoint = Checkpoint::new("cp-legacy", "hello", "p", "m", &messages);
         // Serialize, strip message_order, deserialize — simulates old format
@@ -922,7 +923,10 @@ mod tests {
         let restored = legacy_cp.restore_messages(Some(&registry));
         // Legacy fallback: LLM first, then custom appended
         assert_eq!(restored.len(), 2);
-        assert!(matches!(restored[0], AgentMessage::Llm(LlmMessage::User(_))));
+        assert!(matches!(
+            restored[0],
+            AgentMessage::Llm(LlmMessage::User(_))
+        ));
         let order: Vec<String> = restored.iter().map(message_text).collect();
         assert_eq!(order, vec!["user:hi", "custom:legacy"]);
     }

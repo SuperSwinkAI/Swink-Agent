@@ -18,10 +18,7 @@ fn text_end_invalid_content_index() {
         AssistantMessageEvent::TextEnd { content_index: 0 },
     ];
     let err = accumulate_message(events, "p", "m").unwrap_err();
-    assert!(
-        err.contains("invalid content_index"),
-        "got: {err}"
-    );
+    assert!(err.contains("invalid content_index"), "got: {err}");
 }
 
 // ── 3. TextEnd on non-Text block (e.g. a ToolCall block) ──

@@ -62,25 +62,20 @@ impl Evaluator for ResponseMatcher {
                 }
                 Err(e) => (Score::fail(), format!("invalid regex: {e}")),
             },
-            ResponseCriteria::Custom(f) => {
-                match catch_unwind(AssertUnwindSafe(|| f(actual))) {
-                    Ok(score) => {
-                        let details = format!("custom score: {:.2}", score.value);
-                        (score, details)
-                    }
-                    Err(payload) => {
-                        let msg = payload
-                            .downcast_ref::<&str>()
-                            .copied()
-                            .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
-                            .unwrap_or("unknown panic");
-                        (
-                            Score::fail(),
-                            format!("custom matcher panicked: {msg}"),
-                        )
-                    }
+            ResponseCriteria::Custom(f) => match catch_unwind(AssertUnwindSafe(|| f(actual))) {
+                Ok(score) => {
+                    let details = format!("custom score: {:.2}", score.value);
+                    (score, details)
                 }
-            }
+                Err(payload) => {
+                    let msg = payload
+                        .downcast_ref::<&str>()
+                        .copied()
+                        .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+                        .unwrap_or("unknown panic");
+                    (Score::fail(), format!("custom matcher panicked: {msg}"))
+                }
+            },
         };
 
         Some(EvalMetricResult {

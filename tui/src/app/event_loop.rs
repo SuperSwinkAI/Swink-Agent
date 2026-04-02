@@ -78,7 +78,8 @@ impl App {
 
                 match result {
                     Ok(Some(content)) => {
-                        self.messages.push(DisplayMessage::new(MessageRole::User, content.clone()));
+                        self.messages
+                            .push(DisplayMessage::new(MessageRole::User, content.clone()));
                         self.trim_messages_to_recent_turns();
                         self.conversation.auto_scroll = true;
                         self.send_to_agent(content);

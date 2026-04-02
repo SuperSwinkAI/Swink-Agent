@@ -81,9 +81,7 @@ impl SessionState {
     pub fn set<T: Serialize>(&mut self, key: &str, value: T) {
         let val = serde_json::to_value(value).expect("value must be serializable");
         self.data.insert(key.to_string(), val.clone());
-        self.delta
-            .changes
-            .insert(key.to_string(), Some(val));
+        self.delta.changes.insert(key.to_string(), Some(val));
     }
 
     /// Remove a key. Records removal in delta. No-op if key absent.
@@ -139,8 +137,7 @@ impl SessionState {
     /// Restore from a JSON Value snapshot. Returns a new `SessionState` with
     /// empty delta.
     pub fn restore_from_snapshot(snapshot: Value) -> Self {
-        let data: HashMap<String, Value> =
-            serde_json::from_value(snapshot).unwrap_or_default();
+        let data: HashMap<String, Value> = serde_json::from_value(snapshot).unwrap_or_default();
         Self {
             data,
             delta: StateDelta::default(),
@@ -282,9 +279,7 @@ mod tests {
 
     #[test]
     fn delta_remove_set_is_some() {
-        let mut s = SessionState::with_data(
-            std::iter::once(("k".to_string(), json!(1))).collect(),
-        );
+        let mut s = SessionState::with_data(std::iter::once(("k".to_string(), json!(1))).collect());
         s.remove("k");
         s.set("k", 99);
         assert_eq!(s.delta().changes["k"], Some(json!(99)));
@@ -312,8 +307,7 @@ mod tests {
 
     #[test]
     fn with_data_pre_seeds_without_delta() {
-        let data: HashMap<String, Value> =
-            std::iter::once(("x".into(), json!(42))).collect();
+        let data: HashMap<String, Value> = std::iter::once(("x".into(), json!(42))).collect();
         let s = SessionState::with_data(data);
         assert_eq!(s.get::<i64>("x"), Some(42));
         assert!(s.delta().is_empty());

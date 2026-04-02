@@ -4,9 +4,7 @@ use std::sync::Arc;
 
 use crate::stream::AssistantMessageDelta;
 use crate::tool::AgentToolResult;
-use crate::types::{
-    AgentMessage, AssistantMessage, LlmMessage, ModelSpec, ToolResultMessage,
-};
+use crate::types::{AgentMessage, AssistantMessage, LlmMessage, ModelSpec, ToolResultMessage};
 
 // ─── TurnEndReason ───────────────────────────────────────────────────────────
 
@@ -127,9 +125,7 @@ pub enum AgentEvent {
 
     /// Emitted when session state delta is flushed (non-empty only).
     /// Fired immediately before `TurnEnd`.
-    StateChanged {
-        delta: crate::StateDelta,
-    },
+    StateChanged { delta: crate::StateDelta },
 
     /// Emitted when context caching acts on a turn (write or read).
     CacheAction {

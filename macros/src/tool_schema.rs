@@ -140,7 +140,11 @@ fn get_doc_comment(field: &syn::Field) -> Option<String> {
         })
         .collect();
 
-    if lines.is_empty() { None } else { Some(lines.join(" ")) }
+    if lines.is_empty() {
+        None
+    } else {
+        Some(lines.join(" "))
+    }
 }
 
 /// Map a Rust type to `(json_schema_type, is_option)`. Returns `None` for unsupported types.
@@ -154,8 +158,8 @@ fn map_type(ty: &Type) -> Option<(&'static str, bool)> {
     match ident.as_str() {
         "String" | "str" => Some(("string", false)),
         "bool" => Some(("boolean", false)),
-        "u8" | "u16" | "u32" | "u64" | "u128" | "usize" | "i8" | "i16" | "i32" | "i64"
-        | "i128" | "isize" => Some(("integer", false)),
+        "u8" | "u16" | "u32" | "u64" | "u128" | "usize" | "i8" | "i16" | "i32" | "i64" | "i128"
+        | "isize" => Some(("integer", false)),
         "f32" | "f64" => Some(("number", false)),
         "Option" => {
             if let syn::PathArguments::AngleBracketed(args) = &last.arguments

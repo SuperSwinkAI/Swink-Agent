@@ -20,8 +20,7 @@ use tokio_util::sync::CancellationToken;
 
 use swink_agent::{
     AgentContext, AgentEvent, AgentLoopConfig, AgentMessage, AssistantMessageEvent, ContentBlock,
-    DefaultRetryStrategy, LlmMessage, ModelSpec, StreamFn, StreamOptions, UserMessage,
-    agent_loop,
+    DefaultRetryStrategy, LlmMessage, ModelSpec, StreamFn, StreamOptions, UserMessage, agent_loop,
 };
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -84,16 +83,12 @@ fn large_user_msg(label: &str, token_count: usize) -> AgentMessage {
     }))
 }
 
-async fn collect_events(
-    stream: Pin<Box<dyn Stream<Item = AgentEvent> + Send>>,
-) -> Vec<AgentEvent> {
+async fn collect_events(stream: Pin<Box<dyn Stream<Item = AgentEvent> + Send>>) -> Vec<AgentEvent> {
     stream.collect().await
 }
 
 fn has_event(events: &[AgentEvent], name: &str) -> bool {
-    events
-        .iter()
-        .any(|e| common::event_variant_name(e) == name)
+    events.iter().any(|e| common::event_variant_name(e) == name)
 }
 
 fn count_events(events: &[AgentEvent], name: &str) -> usize {
@@ -116,11 +111,7 @@ impl swink_agent::AsyncContextTransformer for MockAsyncTransformer {
         &'a self,
         messages: &'a mut Vec<AgentMessage>,
         overflow: bool,
-    ) -> Pin<
-        Box<
-            dyn Future<Output = Option<swink_agent::CompactionReport>> + Send + 'a,
-        >,
-    > {
+    ) -> Pin<Box<dyn Future<Output = Option<swink_agent::CompactionReport>> + Send + 'a>> {
         self.overflow_flags.lock().unwrap().push(overflow);
         let compact = self.compact;
         Box::pin(async move {
@@ -233,13 +224,11 @@ async fn double_overflow_surfaces_error() {
     let mut config = default_config(stream_fn as Arc<dyn StreamFn>);
 
     // Compacting transformer that always removes some messages.
-    config.transform_context = Some(Arc::new(
-        |msgs: &mut Vec<AgentMessage>, overflow: bool| {
-            if overflow && msgs.len() > 1 {
-                msgs.truncate(1);
-            }
-        },
-    ));
+    config.transform_context = Some(Arc::new(|msgs: &mut Vec<AgentMessage>, overflow: bool| {
+        if overflow && msgs.len() > 1 {
+            msgs.truncate(1);
+        }
+    }));
 
     let mut initial_messages = Vec::new();
     for i in 0..5 {
@@ -335,13 +324,11 @@ async fn overflow_recovery_resets_per_turn() {
 
     let mut config = default_config(stream_fn as Arc<dyn StreamFn>);
     config.tools = vec![tool];
-    config.transform_context = Some(Arc::new(
-        |msgs: &mut Vec<AgentMessage>, overflow: bool| {
-            if overflow && msgs.len() > 1 {
-                msgs.truncate(1);
-            }
-        },
-    ));
+    config.transform_context = Some(Arc::new(|msgs: &mut Vec<AgentMessage>, overflow: bool| {
+        if overflow && msgs.len() > 1 {
+            msgs.truncate(1);
+        }
+    }));
 
     let mut initial_messages = Vec::new();
     for i in 0..5 {
@@ -493,13 +480,11 @@ async fn cancellation_during_recovery_aborts() {
     let mut config = default_config(stream_fn as Arc<dyn StreamFn>);
 
     // Compacting transformer so recovery tries.
-    config.transform_context = Some(Arc::new(
-        |msgs: &mut Vec<AgentMessage>, overflow: bool| {
-            if overflow && msgs.len() > 1 {
-                msgs.truncate(1);
-            }
-        },
-    ));
+    config.transform_context = Some(Arc::new(|msgs: &mut Vec<AgentMessage>, overflow: bool| {
+        if overflow && msgs.len() > 1 {
+            msgs.truncate(1);
+        }
+    }));
 
     let events = collect_events(agent_loop(
         vec![user_msg("msg1"), user_msg("msg2"), user_msg("msg3")],

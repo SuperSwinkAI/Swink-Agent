@@ -51,22 +51,31 @@ pub enum Credential {
 impl std::fmt::Debug for Credential {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::ApiKey { .. } => f.debug_struct("Credential::ApiKey").field("key", &"[REDACTED]").finish(),
-            Self::Bearer { expires_at, .. } => f.debug_struct("Credential::Bearer")
+            Self::ApiKey { .. } => f
+                .debug_struct("Credential::ApiKey")
+                .field("key", &"[REDACTED]")
+                .finish(),
+            Self::Bearer { expires_at, .. } => f
+                .debug_struct("Credential::Bearer")
                 .field("token", &"[REDACTED]")
                 .field("expires_at", expires_at)
                 .finish(),
-            Self::OAuth2 { expires_at, token_url, client_id, scopes, .. } => {
-                f.debug_struct("Credential::OAuth2")
-                    .field("access_token", &"[REDACTED]")
-                    .field("refresh_token", &"[REDACTED]")
-                    .field("expires_at", expires_at)
-                    .field("token_url", token_url)
-                    .field("client_id", client_id)
-                    .field("client_secret", &"[REDACTED]")
-                    .field("scopes", scopes)
-                    .finish()
-            }
+            Self::OAuth2 {
+                expires_at,
+                token_url,
+                client_id,
+                scopes,
+                ..
+            } => f
+                .debug_struct("Credential::OAuth2")
+                .field("access_token", &"[REDACTED]")
+                .field("refresh_token", &"[REDACTED]")
+                .field("expires_at", expires_at)
+                .field("token_url", token_url)
+                .field("client_id", client_id)
+                .field("client_secret", &"[REDACTED]")
+                .field("scopes", scopes)
+                .finish(),
         }
     }
 }
@@ -102,9 +111,18 @@ pub enum ResolvedCredential {
 impl std::fmt::Debug for ResolvedCredential {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::ApiKey(_) => f.debug_tuple("ResolvedCredential::ApiKey").field(&"[REDACTED]").finish(),
-            Self::Bearer(_) => f.debug_tuple("ResolvedCredential::Bearer").field(&"[REDACTED]").finish(),
-            Self::OAuth2AccessToken(_) => f.debug_tuple("ResolvedCredential::OAuth2AccessToken").field(&"[REDACTED]").finish(),
+            Self::ApiKey(_) => f
+                .debug_tuple("ResolvedCredential::ApiKey")
+                .field(&"[REDACTED]")
+                .finish(),
+            Self::Bearer(_) => f
+                .debug_tuple("ResolvedCredential::Bearer")
+                .field(&"[REDACTED]")
+                .finish(),
+            Self::OAuth2AccessToken(_) => f
+                .debug_tuple("ResolvedCredential::OAuth2AccessToken")
+                .field(&"[REDACTED]")
+                .finish(),
         }
     }
 }
@@ -233,23 +251,13 @@ pub type CredentialFuture<'a, T> =
 /// `Send + Sync` to allow sharing across `tokio::spawn` boundaries.
 pub trait CredentialStore: Send + Sync {
     /// Retrieve a credential by key.
-    fn get(
-        &self,
-        key: &str,
-    ) -> CredentialFuture<'_, Option<Credential>>;
+    fn get(&self, key: &str) -> CredentialFuture<'_, Option<Credential>>;
 
     /// Store or update a credential by key.
-    fn set(
-        &self,
-        key: &str,
-        credential: Credential,
-    ) -> CredentialFuture<'_, ()>;
+    fn set(&self, key: &str, credential: Credential) -> CredentialFuture<'_, ()>;
 
     /// Delete a credential by key.
-    fn delete(
-        &self,
-        key: &str,
-    ) -> CredentialFuture<'_, ()>;
+    fn delete(&self, key: &str) -> CredentialFuture<'_, ()>;
 }
 
 // ─── CredentialResolver trait ───────────────────────────────────────────────
@@ -259,10 +267,7 @@ pub trait CredentialStore: Send + Sync {
 pub trait CredentialResolver: Send + Sync {
     /// Resolve a credential by key. Returns the minimal secret value
     /// needed for the authenticated request.
-    fn resolve(
-        &self,
-        key: &str,
-    ) -> CredentialFuture<'_, ResolvedCredential>;
+    fn resolve(&self, key: &str) -> CredentialFuture<'_, ResolvedCredential>;
 }
 
 // ─── AuthorizationHandler trait ─────────────────────────────────────────────
@@ -276,11 +281,7 @@ pub trait AuthorizationHandler: Send + Sync {
     ///
     /// `state` is the CSRF token that the caller generated and appended to
     /// the authorization URL; implementations should verify it matches.
-    fn authorize(
-        &self,
-        auth_url: &str,
-        state: &str,
-    ) -> CredentialFuture<'_, String>;
+    fn authorize(&self, auth_url: &str, state: &str) -> CredentialFuture<'_, String>;
 }
 
 // ─── Tests ──────────────────────────────────────────────────────────────────
@@ -292,7 +293,9 @@ mod tests {
     // T023: Credential serde roundtrip
     #[test]
     fn credential_serde_roundtrip_api_key() {
-        let cred = Credential::ApiKey { key: "sk-test-123".into() };
+        let cred = Credential::ApiKey {
+            key: "sk-test-123".into(),
+        };
         let json = serde_json::to_string(&cred).unwrap();
         let decoded: Credential = serde_json::from_str(&json).unwrap();
         match decoded {
@@ -332,7 +335,13 @@ mod tests {
         let json = serde_json::to_string(&cred).unwrap();
         let decoded: Credential = serde_json::from_str(&json).unwrap();
         match decoded {
-            Credential::OAuth2 { access_token, refresh_token, client_id, scopes, .. } => {
+            Credential::OAuth2 {
+                access_token,
+                refresh_token,
+                client_id,
+                scopes,
+                ..
+            } => {
                 assert_eq!(access_token, "access-123");
                 assert_eq!(refresh_token.as_deref(), Some("refresh-456"));
                 assert_eq!(client_id, "client-1");
@@ -346,27 +355,53 @@ mod tests {
     #[test]
     fn credential_error_display_no_secrets() {
         let errors = vec![
-            CredentialError::NotFound { key: "my-key".into() },
-            CredentialError::Expired { key: "my-key".into() },
-            CredentialError::RefreshFailed { key: "my-key".into(), reason: "bad response".into() },
+            CredentialError::NotFound {
+                key: "my-key".into(),
+            },
+            CredentialError::Expired {
+                key: "my-key".into(),
+            },
+            CredentialError::RefreshFailed {
+                key: "my-key".into(),
+                reason: "bad response".into(),
+            },
             CredentialError::TypeMismatch {
                 key: "my-key".into(),
                 expected: CredentialType::Bearer,
                 actual: CredentialType::ApiKey,
             },
-            CredentialError::AuthorizationFailed { key: "my-key".into(), reason: "denied".into() },
-            CredentialError::AuthorizationTimeout { key: "my-key".into() },
-            CredentialError::Timeout { key: "my-key".into() },
+            CredentialError::AuthorizationFailed {
+                key: "my-key".into(),
+                reason: "denied".into(),
+            },
+            CredentialError::AuthorizationTimeout {
+                key: "my-key".into(),
+            },
+            CredentialError::Timeout {
+                key: "my-key".into(),
+            },
         ];
 
-        let secret_values = ["sk-test-123", "tok-abc", "access-123", "refresh-456", "secret"];
+        let secret_values = [
+            "sk-test-123",
+            "tok-abc",
+            "access-123",
+            "refresh-456",
+            "secret",
+        ];
         for err in &errors {
             let display = format!("{err}");
             for secret in &secret_values {
-                assert!(!display.contains(secret), "Display of {err:?} leaks secret {secret}");
+                assert!(
+                    !display.contains(secret),
+                    "Display of {err:?} leaks secret {secret}"
+                );
             }
             // Should contain the key name for diagnostics
-            assert!(display.contains("my-key"), "Display of {err:?} should contain key name");
+            assert!(
+                display.contains("my-key"),
+                "Display of {err:?} should contain key name"
+            );
         }
     }
 
@@ -376,7 +411,10 @@ mod tests {
         let api_key = Credential::ApiKey { key: "k".into() };
         assert_eq!(api_key.credential_type(), CredentialType::ApiKey);
 
-        let bearer = Credential::Bearer { token: "t".into(), expires_at: None };
+        let bearer = Credential::Bearer {
+            token: "t".into(),
+            expires_at: None,
+        };
         assert_eq!(bearer.credential_type(), CredentialType::Bearer);
 
         let oauth2 = Credential::OAuth2 {
@@ -394,7 +432,9 @@ mod tests {
     // T023 additional: Debug impl redacts secrets
     #[test]
     fn debug_impl_redacts_secrets() {
-        let cred = Credential::ApiKey { key: "super-secret".into() };
+        let cred = Credential::ApiKey {
+            key: "super-secret".into(),
+        };
         let debug = format!("{cred:?}");
         assert!(!debug.contains("super-secret"), "Debug leaks secret");
         assert!(debug.contains("[REDACTED]"));

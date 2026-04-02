@@ -8,9 +8,9 @@
 //! on `swink_agent` (core) types. Breaking changes to this module's API
 //! may occur without a major version bump.
 
+use std::collections::VecDeque;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::pin::Pin;
-use std::collections::VecDeque;
 
 use futures::stream::{self, Stream, StreamExt as _};
 
@@ -209,10 +209,7 @@ pub fn sse_data_lines_with_callback(
     on_raw_payload: Option<swink_agent::OnRawPayload>,
 ) -> Pin<Box<dyn Stream<Item = SseLine> + Send + 'static>> {
     Box::pin(stream::unfold(
-        (
-            Box::pin(sse_lines(byte_stream)),
-            on_raw_payload,
-        ),
+        (Box::pin(sse_lines(byte_stream)), on_raw_payload),
         |(mut stream, callback)| async move {
             loop {
                 if let Some(line) = stream.next().await {
@@ -394,9 +391,7 @@ mod tests {
             captured_clone.lock().unwrap().push(data.to_owned());
         });
 
-        let chunks = vec![
-            Ok(bytes::Bytes::from("data: line1\n\ndata: line2\n\n")),
-        ];
+        let chunks = vec![Ok(bytes::Bytes::from("data: line1\n\ndata: line2\n\n"))];
         let byte_stream = futures::stream::iter(chunks);
         let mut data_stream = sse_data_lines_with_callback(byte_stream, Some(callback));
 
@@ -414,9 +409,7 @@ mod tests {
 
     #[tokio::test]
     async fn on_raw_payload_none_no_overhead() {
-        let chunks = vec![
-            Ok(bytes::Bytes::from("data: hello\n\n")),
-        ];
+        let chunks = vec![Ok(bytes::Bytes::from("data: hello\n\n"))];
         let byte_stream = futures::stream::iter(chunks);
         let mut data_stream = sse_data_lines_with_callback(byte_stream, None);
 
@@ -433,9 +426,7 @@ mod tests {
             panic!("callback panic!");
         });
 
-        let chunks = vec![
-            Ok(bytes::Bytes::from("data: safe\n\ndata: also_safe\n\n")),
-        ];
+        let chunks = vec![Ok(bytes::Bytes::from("data: safe\n\ndata: also_safe\n\n"))];
         let byte_stream = futures::stream::iter(chunks);
         let mut data_stream = sse_data_lines_with_callback(byte_stream, Some(callback));
 
@@ -448,9 +439,9 @@ mod tests {
 
     #[tokio::test]
     async fn sse_lines_preserves_events_and_separators() {
-        let chunks = vec![
-            Ok(bytes::Bytes::from("event: start\ndata: hello\n\ndata: [DONE]\n")),
-        ];
+        let chunks = vec![Ok(bytes::Bytes::from(
+            "event: start\ndata: hello\n\ndata: [DONE]\n",
+        ))];
         let byte_stream = futures::stream::iter(chunks);
         let lines: Vec<_> = sse_lines(byte_stream).collect().await;
 

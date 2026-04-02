@@ -17,9 +17,9 @@
 
 **Purpose**: Update stale model catalog and remote preset constants to current Grok 4.x models
 
-- [ ] T001 Replace stale grok-3 and grok-3-fast presets with 5 current grok-4.x model entries in src/model_catalog.toml (grok-4.20-0309-reasoning, grok-4.20-0309-non-reasoning, grok-4-1-fast-reasoning, grok-4-1-fast-non-reasoning, grok-4.20-multi-agent-0309; all 2M context, capabilities: text/tools/images_in/streaming/structured_output)
-- [ ] T002 Update RemotePresetKey constants in adapters/src/remote_presets.rs: replace GROK_3/GROK_3_FAST with GROK_4_20_REASONING, GROK_4_20_NON_REASONING, GROK_4_1_FAST_REASONING, GROK_4_1_FAST_NON_REASONING, GROK_4_20_MULTI_AGENT
-- [ ] T003 Update the added_provider_presets_map_to_catalog_models test in adapters/src/remote_presets.rs to use new preset keys and verify correct model_id mapping
+- [x] T001 Replace stale grok-3 and grok-3-fast presets with 5 current grok-4.x model entries in src/model_catalog.toml (grok-4.20-0309-reasoning, grok-4.20-0309-non-reasoning, grok-4-1-fast-reasoning, grok-4-1-fast-non-reasoning, grok-4.20-multi-agent-0309; all 2M context, capabilities: text/tools/images_in/streaming/structured_output)
+- [x] T002 Update RemotePresetKey constants in adapters/src/remote_presets.rs: replace GROK_3/GROK_3_FAST with GROK_4_20_REASONING, GROK_4_20_NON_REASONING, GROK_4_1_FAST_REASONING, GROK_4_1_FAST_NON_REASONING, GROK_4_20_MULTI_AGENT
+- [x] T003 Update the added_provider_presets_map_to_catalog_models test in adapters/src/remote_presets.rs to use new preset keys and verify correct model_id mapping
 
 **Checkpoint**: `cargo test -p swink-agent-adapters --features xai` passes with updated catalog and preset constants
 

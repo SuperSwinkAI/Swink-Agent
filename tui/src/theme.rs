@@ -316,7 +316,6 @@ mod tests {
         ] {
             set_color_mode(mode);
             assert_ne!(bar_fg(), bar_bg(), "bar_fg == bar_bg in {mode:?}");
-
         }
         reset();
     }
@@ -330,5 +329,4 @@ mod tests {
         assert_eq!(cycle_color_mode(), ColorMode::Custom);
         reset();
     }
-
 }

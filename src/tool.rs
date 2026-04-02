@@ -279,7 +279,9 @@ fn compiled_validator(schema: &Value) -> Result<Arc<jsonschema::Validator>, Stri
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     Ok(Arc::clone(
-        cache.entry(cache_key).or_insert_with(|| Arc::clone(&compiled)),
+        cache
+            .entry(cache_key)
+            .or_insert_with(|| Arc::clone(&compiled)),
     ))
 }
 
@@ -359,9 +361,7 @@ pub enum ApprovalMode {
 /// Wraps an approval callback so that only tools with `requires_approval == true`
 /// go through the inner callback. All other tools are auto-approved.
 #[allow(clippy::type_complexity)]
-pub fn selective_approve<F>(
-    inner: F,
-) -> Box<ApproveToolFn>
+pub fn selective_approve<F>(inner: F) -> Box<ApproveToolFn>
 where
     F: Fn(ToolApprovalRequest) -> ApproveToolFuture + Send + Sync + 'static,
 {
@@ -751,10 +751,18 @@ mod tests {
         struct NoAuthTool;
 
         impl AgentTool for NoAuthTool {
-            fn name(&self) -> &'static str { "no-auth" }
-            fn label(&self) -> &'static str { "No Auth" }
-            fn description(&self) -> &'static str { "Tool with no auth" }
-            fn parameters_schema(&self) -> &Value { &Value::Null }
+            fn name(&self) -> &'static str {
+                "no-auth"
+            }
+            fn label(&self) -> &'static str {
+                "No Auth"
+            }
+            fn description(&self) -> &'static str {
+                "Tool with no auth"
+            }
+            fn parameters_schema(&self) -> &Value {
+                &Value::Null
+            }
             fn execute(
                 &self,
                 _tool_call_id: &str,
@@ -781,10 +789,18 @@ mod tests {
         struct PlainTool;
 
         impl AgentTool for PlainTool {
-            fn name(&self) -> &'static str { "plain" }
-            fn label(&self) -> &'static str { "Plain" }
-            fn description(&self) -> &'static str { "No context" }
-            fn parameters_schema(&self) -> &Value { &Value::Null }
+            fn name(&self) -> &'static str {
+                "plain"
+            }
+            fn label(&self) -> &'static str {
+                "Plain"
+            }
+            fn description(&self) -> &'static str {
+                "No context"
+            }
+            fn parameters_schema(&self) -> &Value {
+                &Value::Null
+            }
             fn execute(
                 &self,
                 _tool_call_id: &str,
@@ -809,10 +825,18 @@ mod tests {
         struct ContextTool;
 
         impl AgentTool for ContextTool {
-            fn name(&self) -> &'static str { "ctx" }
-            fn label(&self) -> &'static str { "Ctx" }
-            fn description(&self) -> &'static str { "With context" }
-            fn parameters_schema(&self) -> &Value { &Value::Null }
+            fn name(&self) -> &'static str {
+                "ctx"
+            }
+            fn label(&self) -> &'static str {
+                "Ctx"
+            }
+            fn description(&self) -> &'static str {
+                "With context"
+            }
+            fn parameters_schema(&self) -> &Value {
+                &Value::Null
+            }
             fn approval_context(&self, params: &Value) -> Option<Value> {
                 Some(json!({"preview": format!("Will process: {}", params)}))
             }
@@ -832,7 +856,12 @@ mod tests {
         let tool = ContextTool;
         let ctx = tool.approval_context(&json!({"file": "test.txt"}));
         assert!(ctx.is_some());
-        assert!(ctx.unwrap()["preview"].as_str().unwrap().contains("test.txt"));
+        assert!(
+            ctx.unwrap()["preview"]
+                .as_str()
+                .unwrap()
+                .contains("test.txt")
+        );
     }
 
     #[test]
@@ -842,10 +871,18 @@ mod tests {
         struct PanickingTool;
 
         impl AgentTool for PanickingTool {
-            fn name(&self) -> &'static str { "panicker" }
-            fn label(&self) -> &'static str { "Panicker" }
-            fn description(&self) -> &'static str { "Panics in context" }
-            fn parameters_schema(&self) -> &Value { &Value::Null }
+            fn name(&self) -> &'static str {
+                "panicker"
+            }
+            fn label(&self) -> &'static str {
+                "Panicker"
+            }
+            fn description(&self) -> &'static str {
+                "Panics in context"
+            }
+            fn parameters_schema(&self) -> &Value {
+                &Value::Null
+            }
             fn approval_context(&self, _params: &Value) -> Option<Value> {
                 panic!("oops");
             }

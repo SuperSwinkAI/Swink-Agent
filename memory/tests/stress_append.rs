@@ -72,7 +72,10 @@ fn slow_path_triggered_by_title_change() {
     // Append a few messages with the original (short) title — fast path
     for i in 0..5 {
         store
-            .append("slow_path", &[user_message(&format!("before title change {i}"))])
+            .append(
+                "slow_path",
+                &[user_message(&format!("before title change {i}"))],
+            )
             .unwrap();
     }
 
@@ -90,7 +93,10 @@ fn slow_path_triggered_by_title_change() {
     // appends will hit fast path again since meta byte length stabilizes).
     for i in 0..5 {
         store
-            .append("slow_path", &[assistant_message(&format!("after title change {i}"))])
+            .append(
+                "slow_path",
+                &[assistant_message(&format!("after title change {i}"))],
+            )
             .unwrap();
     }
 
