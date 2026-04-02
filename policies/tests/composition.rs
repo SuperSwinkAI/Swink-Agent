@@ -1,3 +1,9 @@
+#![cfg(all(
+    feature = "audit",
+    feature = "content-filter",
+    feature = "pii",
+    feature = "prompt-guard"
+))]
 //! Integration tests for policy composition.
 
 use swink_agent::{

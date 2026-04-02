@@ -5,9 +5,10 @@
 
 use std::pin::Pin;
 use std::sync::{Arc, RwLock};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use futures::stream::{self, Stream, StreamExt as _};
+use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};
 
@@ -47,18 +48,28 @@ impl std::fmt::Debug for AzureAuth {
     }
 }
 
-/// Cached `OAuth2` token for Entra ID authentication (used in Phase 5 / US3).
-#[allow(dead_code)]
+/// Refresh tokens proactively 5 minutes before expiry.
+const REFRESH_MARGIN: Duration = Duration::from_secs(300);
+
+/// Cached `OAuth2` token for Entra ID authentication.
 struct CachedToken {
     access_token: String,
     expires_at: Instant,
 }
 
+/// Response from the Microsoft identity platform token endpoint.
+#[derive(Deserialize)]
+struct TokenResponse {
+    access_token: String,
+    expires_in: u64,
+}
+
 pub struct AzureStreamFn {
     base: AdapterBase,
     auth: AzureAuth,
-    #[allow(dead_code)] // Used in Phase 5 (US3) for Entra ID token caching
     token_cache: Arc<RwLock<Option<CachedToken>>>,
+    /// Override token endpoint URL (for testing). `None` = use Microsoft default.
+    token_endpoint_override: Option<String>,
 }
 
 impl AzureStreamFn {
@@ -72,6 +83,95 @@ impl AzureStreamFn {
             base: AdapterBase::new(base_url.into().trim_end_matches('/').to_string(), api_key),
             auth,
             token_cache: Arc::new(RwLock::new(None)),
+            token_endpoint_override: None,
+        }
+    }
+
+    /// Set a custom token endpoint URL (for testing with wiremock).
+    #[must_use]
+    pub fn with_token_endpoint(mut self, url: impl Into<String>) -> Self {
+        self.token_endpoint_override = Some(url.into());
+        self
+    }
+}
+
+impl AzureStreamFn {
+    /// Acquire a fresh token from the Microsoft identity platform.
+    async fn acquire_token(
+        &self,
+        tenant_id: &str,
+        client_id: &str,
+        client_secret: &str,
+    ) -> Result<CachedToken, String> {
+        let token_url = self.token_url(tenant_id);
+        let params = [
+            ("grant_type", "client_credentials"),
+            ("client_id", client_id),
+            ("client_secret", client_secret),
+            ("scope", "https://cognitiveservices.azure.com/.default"),
+        ];
+
+        let resp = self
+            .base
+            .client
+            .post(&token_url)
+            .form(&params)
+            .send()
+            .await
+            .map_err(|e| format!("token request failed: {e}"))?;
+
+        if !resp.status().is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(format!("token endpoint returned error: {body}"));
+        }
+
+        let token_resp: TokenResponse = resp
+            .json()
+            .await
+            .map_err(|e| format!("failed to parse token response: {e}"))?;
+
+        Ok(CachedToken {
+            access_token: token_resp.access_token,
+            expires_at: Instant::now() + Duration::from_secs(token_resp.expires_in),
+        })
+    }
+
+    /// Get a valid token, refreshing if necessary.
+    async fn get_or_refresh_token(
+        &self,
+        tenant_id: &str,
+        client_id: &str,
+        client_secret: &str,
+    ) -> Result<String, String> {
+        // Check cache first
+        {
+            let cache = self.token_cache.read().unwrap_or_else(|e| e.into_inner());
+            if let Some(cached) = cache.as_ref() {
+                if Instant::now() + REFRESH_MARGIN < cached.expires_at {
+                    return Ok(cached.access_token.clone());
+                }
+            }
+        }
+
+        // Acquire new token
+        let token = self
+            .acquire_token(tenant_id, client_id, client_secret)
+            .await?;
+        let access_token = token.access_token.clone();
+
+        // Update cache
+        let mut cache = self.token_cache.write().unwrap_or_else(|e| e.into_inner());
+        *cache = Some(token);
+
+        Ok(access_token)
+    }
+
+    /// Build the token endpoint URL. Uses override if set, otherwise Microsoft default.
+    fn token_url(&self, tenant_id: &str) -> String {
+        if let Some(override_url) = &self.token_endpoint_override {
+            override_url.clone()
+        } else {
+            format!("https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token")
         }
     }
 }
@@ -169,12 +269,18 @@ async fn send_request(
             let api_key = options.api_key.as_deref().unwrap_or(key);
             request = request.header("api-key", api_key);
         }
-        AzureAuth::EntraId { .. } => {
-            // Entra ID token acquisition will be implemented in Phase 5 (US3).
-            // For now, if a runtime api_key override is provided, use it as a Bearer token.
-            if let Some(token) = options.api_key.as_deref() {
-                request = request.header("Authorization", format!("Bearer {token}"));
-            }
+        AzureAuth::EntraId {
+            tenant_id,
+            client_id,
+            client_secret,
+        } => {
+            let token = azure
+                .get_or_refresh_token(tenant_id, client_id, client_secret)
+                .await
+                .map_err(|e| {
+                    AssistantMessageEvent::error_network(format!("Azure token error: {e}"))
+                })?;
+            request = request.header("Authorization", format!("Bearer {token}"));
         }
     }
 

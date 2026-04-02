@@ -314,13 +314,17 @@ fn sequence_increments_on_save() {
     let store = JsonlSessionStore::new(tmp.path().to_path_buf()).unwrap();
 
     let meta = sample_meta("seq_test", "Sequence test");
-    store.save("seq_test", &meta, &[user_message("first")]).unwrap();
+    store
+        .save("seq_test", &meta, &[user_message("first")])
+        .unwrap();
 
     let (loaded1, _) = store.load("seq_test").unwrap();
     assert_eq!(loaded1.sequence, 1);
 
     // Save again with the loaded meta (sequence=1)
-    store.save("seq_test", &loaded1, &[user_message("second")]).unwrap();
+    store
+        .save("seq_test", &loaded1, &[user_message("second")])
+        .unwrap();
 
     let (loaded2, _) = store.load("seq_test").unwrap();
     assert_eq!(loaded2.sequence, 2);
@@ -332,17 +336,23 @@ fn optimistic_concurrency_rejects_stale_sequence() {
     let store = JsonlSessionStore::new(tmp.path().to_path_buf()).unwrap();
 
     let meta = sample_meta("conc_test", "Concurrency test");
-    store.save("conc_test", &meta, &[user_message("v1")]).unwrap();
+    store
+        .save("conc_test", &meta, &[user_message("v1")])
+        .unwrap();
 
     // Load meta (sequence=1)
     let (stale_meta, _) = store.load("conc_test").unwrap();
     assert_eq!(stale_meta.sequence, 1);
 
     // Simulate another writer saving (bumps sequence to 2)
-    store.save("conc_test", &stale_meta, &[user_message("v2")]).unwrap();
+    store
+        .save("conc_test", &stale_meta, &[user_message("v2")])
+        .unwrap();
 
     // Attempt save with stale meta (sequence=1, but file has sequence=2)
-    let err = store.save("conc_test", &stale_meta, &[user_message("v3")]).unwrap_err();
+    let err = store
+        .save("conc_test", &stale_meta, &[user_message("v3")])
+        .unwrap_err();
     assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
     assert!(err.to_string().contains("sequence conflict"));
 }
@@ -354,7 +364,11 @@ fn unsupported_future_version_returns_error() {
 
     // Write a JSONL file with version: 999
     let meta_json = r#"{"id":"future_001","title":"Future session","created_at":"2025-03-15T12:00:00Z","updated_at":"2025-03-15T12:00:00Z","version":999,"sequence":0}"#;
-    std::fs::write(tmp.path().join("future_001.jsonl"), format!("{meta_json}\n")).unwrap();
+    std::fs::write(
+        tmp.path().join("future_001.jsonl"),
+        format!("{meta_json}\n"),
+    )
+    .unwrap();
 
     let err = store.load("future_001").unwrap_err();
     assert_eq!(err.kind(), io::ErrorKind::InvalidData);
