@@ -243,7 +243,7 @@ fn build_extra_models(_primary_id: &str) -> Vec<(ModelSpec, Arc<dyn StreamFn>)> 
 }
 
 /// Append local model to extra models list when the `local` feature is enabled.
-#[allow(unused_variables)]
+#[allow(unused_variables, clippy::ptr_arg, clippy::needless_pass_by_ref_mut)]
 fn append_local_model(extra: &mut Vec<(ModelSpec, Arc<dyn StreamFn>)>) {
     #[cfg(feature = "local")]
     {

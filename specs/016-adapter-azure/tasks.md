@@ -92,16 +92,16 @@
 
 ### Implementation for User Story 3
 
-- [ ] T028 [US3] Implement `acquire_token` async function — POST to `https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token` with client credentials in `adapters/src/azure.rs`
-- [ ] T029 [US3] Implement `get_or_refresh_token` — check cache, acquire if empty/expired, cache result with `expires_at` derived from `expires_in` response field in `adapters/src/azure.rs`
-- [ ] T030 [US3] Add refresh margin constant (e.g., 300 seconds) — tokens refresh proactively before expiry in `adapters/src/azure.rs`
-- [ ] T031 [US3] Update `send_request` to call `get_or_refresh_token` when auth is `EntraId` and set `Authorization: Bearer {token}` header in `adapters/src/azure.rs`
-- [ ] T032 [US3] Add wiremock test: Entra ID token acquisition — mock token endpoint, verify POST params (grant_type, client_id, client_secret, scope) in `adapters/tests/azure.rs`
-- [ ] T033 [US3] Add wiremock test: token caching — two requests reuse same token (token endpoint called once) in `adapters/tests/azure.rs`
-- [ ] T034 [US3] Add wiremock test: token refresh — expired token triggers re-acquisition in `adapters/tests/azure.rs`
-- [ ] T035 [US3] Add wiremock test: Bearer token appears in Authorization header on API requests in `adapters/tests/azure.rs`
-- [ ] T036 [US3] Add wiremock test: URL constructed as `{base_url}/chat/completions` with deployment in base_url path in `adapters/tests/azure.rs`
-- [ ] T037 [US3] Run `cargo test -p swink-agent-adapters --features azure` to verify all US3 tests pass
+- [x] T028 [US3] Implement `acquire_token` async function — POST to `https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token` with client credentials in `adapters/src/azure.rs`
+- [x] T029 [US3] Implement `get_or_refresh_token` — check cache, acquire if empty/expired, cache result with `expires_at` derived from `expires_in` response field in `adapters/src/azure.rs`
+- [x] T030 [US3] Add refresh margin constant (e.g., 300 seconds) — tokens refresh proactively before expiry in `adapters/src/azure.rs`
+- [x] T031 [US3] Update `send_request` to call `get_or_refresh_token` when auth is `EntraId` and set `Authorization: Bearer {token}` header in `adapters/src/azure.rs`
+- [x] T032 [US3] Add wiremock test: Entra ID token acquisition — mock token endpoint, verify POST params (grant_type, client_id, client_secret, scope) in `adapters/tests/azure.rs`
+- [x] T033 [US3] Add wiremock test: token caching — two requests reuse same token (token endpoint called once) in `adapters/tests/azure.rs`
+- [x] T034 [US3] Add wiremock test: token refresh — expired token triggers re-acquisition in `adapters/tests/azure.rs`
+- [x] T035 [US3] Add wiremock test: Bearer token appears in Authorization header on API requests in `adapters/tests/azure.rs`
+- [x] T036 [US3] Add wiremock test: URL constructed as `{base_url}/chat/completions` with deployment in base_url path in `adapters/tests/azure.rs`
+- [x] T037 [US3] Run `cargo test -p swink-agent-adapters --features azure` to verify all US3 tests pass
 
 **Checkpoint**: Azure AD auth and deployment routing work end-to-end.
 

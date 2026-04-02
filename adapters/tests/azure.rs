@@ -5,8 +5,8 @@ mod common;
 
 use futures::StreamExt;
 use tokio_util::sync::CancellationToken;
-use wiremock::matchers::{header, method, path};
-use wiremock::{Mock, MockServer};
+use wiremock::matchers::{body_string_contains, header, method, path};
+use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use swink_agent::{AssistantMessageEvent, ModelSpec, StopReason, StreamFn, StreamOptions};
 use swink_agent_adapters::{AzureAuth, AzureStreamFn};
@@ -422,4 +422,237 @@ async fn tool_call_arguments_form_valid_json() {
         serde_json::from_str(&arguments).expect("tool call arguments should be valid JSON");
     assert_eq!(parsed["path"], "out.txt");
     assert_eq!(parsed["content"], "hello world");
+}
+
+// ── Phase 5: User Story 3 — Deployment Routing & Azure AD Auth ────────────
+
+/// Helper: standard SSE body for a simple successful response.
+fn simple_sse_body() -> String {
+    [
+        r#"data: {"choices":[{"delta":{"content":"ok"}}]}"#,
+        "",
+        r#"data: {"choices":[{"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1}}"#,
+        "",
+        "data: [DONE]",
+        "",
+    ]
+    .join("\n")
+}
+
+/// Helper: JSON body for a successful token response.
+fn token_response_body(access_token: &str, expires_in: u64) -> String {
+    serde_json::json!({
+        "access_token": access_token,
+        "token_type": "Bearer",
+        "expires_in": expires_in,
+    })
+    .to_string()
+}
+
+/// Helper: build an `AzureStreamFn` with Entra ID auth pointing at mock servers.
+fn entra_stream_fn(api_server: &MockServer, token_url: &str) -> AzureStreamFn {
+    AzureStreamFn::new(
+        api_server.uri(),
+        AzureAuth::EntraId {
+            tenant_id: "test-tenant".into(),
+            client_id: "test-client-id".into(),
+            client_secret: "test-client-secret".into(),
+        },
+    )
+    .with_token_endpoint(token_url.to_string())
+}
+
+// ── T032: Entra ID token acquisition — verify POST params ─────────────────
+
+#[tokio::test]
+async fn entra_id_token_acquisition_params() {
+    let token_server = MockServer::start().await;
+    let api_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/token"))
+        .and(body_string_contains("grant_type=client_credentials"))
+        .and(body_string_contains("client_id=test-client-id"))
+        .and(body_string_contains("client_secret=test-client-secret"))
+        .and(body_string_contains("scope=https"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_string(token_response_body("fresh-token", 3600)),
+        )
+        .expect(1)
+        .mount(&token_server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(sse_response(&simple_sse_body()))
+        .mount(&api_server)
+        .await;
+
+    let token_url = format!("{}/token", token_server.uri());
+    let stream_fn = entra_stream_fn(&api_server, &token_url);
+    let events = collect_events(&stream_fn).await;
+
+    assert!(events.iter().any(|e| matches!(
+        e,
+        AssistantMessageEvent::Done {
+            stop_reason: StopReason::Stop,
+            ..
+        }
+    )));
+}
+
+// ── T033: Token caching — two requests reuse same token ───────────────────
+
+#[tokio::test]
+async fn entra_id_token_caching() {
+    let token_server = MockServer::start().await;
+    let api_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/token"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(token_response_body("cached-token", 3600)),
+        )
+        .expect(1) // Token endpoint should be called exactly once
+        .mount(&token_server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(sse_response(&simple_sse_body()))
+        .mount(&api_server)
+        .await;
+
+    let token_url = format!("{}/token", token_server.uri());
+    let stream_fn = entra_stream_fn(&api_server, &token_url);
+
+    // First request
+    let events = collect_events(&stream_fn).await;
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, AssistantMessageEvent::Done { .. }))
+    );
+
+    // Second request — should reuse cached token (token endpoint not called again)
+    let events = collect_events(&stream_fn).await;
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, AssistantMessageEvent::Done { .. }))
+    );
+
+    // wiremock will verify expect(1) on drop
+}
+
+// ── T034: Token refresh — expired token triggers re-acquisition ───────────
+
+#[tokio::test]
+async fn entra_id_token_refresh_on_expiry() {
+    let token_server = MockServer::start().await;
+    let api_server = MockServer::start().await;
+
+    // Return a token that expires immediately (within the refresh margin)
+    Mock::given(method("POST"))
+        .and(path("/token"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                // expires_in=1 means it will be within REFRESH_MARGIN immediately
+                .set_body_string(token_response_body("short-lived-token", 1)),
+        )
+        .expect(2) // Should be called twice since first token expires immediately
+        .mount(&token_server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(sse_response(&simple_sse_body()))
+        .mount(&api_server)
+        .await;
+
+    let token_url = format!("{}/token", token_server.uri());
+    let stream_fn = entra_stream_fn(&api_server, &token_url);
+
+    // First request — acquires token
+    let events = collect_events(&stream_fn).await;
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, AssistantMessageEvent::Done { .. }))
+    );
+
+    // Second request — token is expired (within REFRESH_MARGIN), must re-acquire
+    let events = collect_events(&stream_fn).await;
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, AssistantMessageEvent::Done { .. }))
+    );
+}
+
+// ── T035: Bearer token appears in Authorization header ─────────��──────────
+
+#[tokio::test]
+async fn entra_id_bearer_token_in_auth_header() {
+    let token_server = MockServer::start().await;
+    let api_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/token"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(token_response_body("my-bearer-token", 3600)),
+        )
+        .mount(&token_server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .and(header("Authorization", "Bearer my-bearer-token"))
+        .respond_with(sse_response(&simple_sse_body()))
+        .expect(1)
+        .mount(&api_server)
+        .await;
+
+    let token_url = format!("{}/token", token_server.uri());
+    let stream_fn = entra_stream_fn(&api_server, &token_url);
+    let events = collect_events(&stream_fn).await;
+
+    // If the header didn't match, wiremock would return 404 → error event
+    assert!(events.iter().any(|e| matches!(
+        e,
+        AssistantMessageEvent::Done {
+            stop_reason: StopReason::Stop,
+            ..
+        }
+    )));
+}
+
+// ── T036: URL constructed as {base_url}/chat/completions ──────────────────
+
+#[tokio::test]
+async fn url_construction_with_deployment_path() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/openai/deployments/gpt-4/chat/completions"))
+        .and(header("api-key", "test-key"))
+        .respond_with(sse_response(&simple_sse_body()))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    // base_url includes the deployment path
+    let auth = AzureAuth::ApiKey("test-key".into());
+    let stream_fn = AzureStreamFn::new(format!("{}/openai/deployments/gpt-4", server.uri()), auth);
+    let events = collect_events(&stream_fn).await;
+
+    assert!(events.iter().any(|e| matches!(
+        e,
+        AssistantMessageEvent::Done {
+            stop_reason: StopReason::Stop,
+            ..
+        }
+    )));
 }

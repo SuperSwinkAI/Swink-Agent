@@ -25,8 +25,11 @@ pub trait SessionMigrator: Send + Sync {
     ///
     /// The implementation may modify, add, or remove entries. It must NOT
     /// modify `meta.version` — the runner handles that.
-    fn migrate(&self, meta: &SessionMeta, entries: Vec<SessionEntry>)
-        -> io::Result<Vec<SessionEntry>>;
+    fn migrate(
+        &self,
+        meta: &SessionMeta,
+        entries: Vec<SessionEntry>,
+    ) -> io::Result<Vec<SessionEntry>>;
 }
 
 /// The current schema version for new sessions.
