@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use swink_agent::LlmMessage;
 
+use crate::interrupt::InterruptState;
 use crate::meta::SessionMeta;
 
 /// A boxed future returned by [`AsyncSessionStore`] methods.
@@ -43,6 +44,15 @@ pub trait AsyncSessionStore: Send + Sync {
 
     /// Delete a session by ID asynchronously.
     fn delete(&self, id: &str) -> SessionStoreFuture<'_, ()>;
+
+    /// Persist interrupt state for a session asynchronously.
+    fn save_interrupt(&self, id: &str, state: &InterruptState) -> SessionStoreFuture<'_, ()>;
+
+    /// Load interrupt state for a session asynchronously.
+    fn load_interrupt(&self, id: &str) -> SessionStoreFuture<'_, Option<InterruptState>>;
+
+    /// Clear interrupt state for a session asynchronously.
+    fn clear_interrupt(&self, id: &str) -> SessionStoreFuture<'_, ()>;
 }
 
 /// Adapter that wraps a synchronous [`SessionStore`](crate::store::SessionStore)
@@ -99,6 +109,25 @@ impl<S: crate::store::SessionStore + 'static> AsyncSessionStore for BlockingSess
         let inner = Arc::clone(&self.inner);
         let id = id.to_string();
         spawn_store_call(move || inner.delete(&id))
+    }
+
+    fn save_interrupt(&self, id: &str, state: &InterruptState) -> SessionStoreFuture<'_, ()> {
+        let inner = Arc::clone(&self.inner);
+        let id = id.to_string();
+        let state = state.clone();
+        spawn_store_call(move || inner.save_interrupt(&id, &state))
+    }
+
+    fn load_interrupt(&self, id: &str) -> SessionStoreFuture<'_, Option<InterruptState>> {
+        let inner = Arc::clone(&self.inner);
+        let id = id.to_string();
+        spawn_store_call(move || inner.load_interrupt(&id))
+    }
+
+    fn clear_interrupt(&self, id: &str) -> SessionStoreFuture<'_, ()> {
+        let inner = Arc::clone(&self.inner);
+        let id = id.to_string();
+        spawn_store_call(move || inner.clear_interrupt(&id))
     }
 }
 

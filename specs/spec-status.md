@@ -23,7 +23,7 @@
 | 018-adapter-mistral             | ✓     | ✓  | ✓   | ✓ Complete |
 | 019-adapter-bedrock             | ✓     | ✓  | ✓   | ● 0/41 (0%) |
 | 020-adapter-proxy               | ✓     | ✓  | ✓   | ✓ Complete |
-| 021-memory-crate                | ✓     | ✓  | ✓   | ● 57/98 (58%) |
+| 021-memory-crate                | ✓     | ✓  | ✓   | ● 83/98 (84%) |
 | 022-local-llm-crate             | ✓     | ✓  | ✓   | ✓ Complete |
 | 023-eval-trajectory-matching    | ✓     | ✓  | ✓   | ✓ Complete |
 | 024-eval-runner-governance      | ✓     | ✓  | ✓   | ✓ Complete |
@@ -64,7 +64,7 @@
 <!-- feature: 018-adapter-mistral has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=42 tasks_completed=42 checklist_files=requirements.md -->
 <!-- feature: 019-adapter-bedrock has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=41 tasks_completed=0 checklist_files=requirements.md -->
 <!-- feature: 020-adapter-proxy has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=40 tasks_completed=40 checklist_files=requirements.md -->
-<!-- feature: 021-memory-crate has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=98 tasks_completed=57 checklist_files=requirements.md -->
+<!-- feature: 021-memory-crate has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=98 tasks_completed=83 checklist_files=requirements.md -->
 <!-- feature: 022-local-llm-crate has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=58 tasks_completed=58 checklist_files=requirements.md -->
 <!-- feature: 023-eval-trajectory-matching has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=40 tasks_completed=40 checklist_files=requirements.md -->
 <!-- feature: 024-eval-runner-governance has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=69 tasks_completed=69 checklist_files=requirements.md -->

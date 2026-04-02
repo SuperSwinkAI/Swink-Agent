@@ -4,6 +4,7 @@ use std::io;
 
 use swink_agent::{AgentMessage, CustomMessageRegistry, LlmMessage};
 
+use crate::interrupt::InterruptState;
 use crate::meta::SessionMeta;
 
 /// Pluggable session persistence.
@@ -70,5 +71,32 @@ pub trait SessionStore: Send + Sync {
     fn load_state(&self, id: &str) -> io::Result<Option<serde_json::Value>> {
         let _ = id;
         Ok(None)
+    }
+
+    /// Persist interrupt state for a session.
+    ///
+    /// Stores the interrupt as `{session_id}.interrupt.json`. Overwrites any
+    /// existing interrupt for the same session. Default: no-op.
+    fn save_interrupt(&self, id: &str, state: &InterruptState) -> io::Result<()> {
+        let _ = (id, state);
+        Ok(())
+    }
+
+    /// Load interrupt state for a session.
+    ///
+    /// Returns `Some` if an interrupt file exists, `None` otherwise.
+    /// Returns an error if the file exists but is corrupted. Default: `None`.
+    fn load_interrupt(&self, id: &str) -> io::Result<Option<InterruptState>> {
+        let _ = id;
+        Ok(None)
+    }
+
+    /// Clear interrupt state for a session.
+    ///
+    /// Deletes the `{session_id}.interrupt.json` file. Idempotent — safe to
+    /// call if no interrupt exists. Default: no-op.
+    fn clear_interrupt(&self, id: &str) -> io::Result<()> {
+        let _ = id;
+        Ok(())
     }
 }

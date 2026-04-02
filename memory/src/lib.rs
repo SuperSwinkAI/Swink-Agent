@@ -28,6 +28,7 @@
 
 pub mod compaction;
 pub mod entry;
+pub mod interrupt;
 pub mod jsonl;
 pub mod meta;
 pub mod migrate;
@@ -37,6 +38,7 @@ pub mod time;
 
 pub use compaction::{CompactionResult, SummarizingCompactor};
 pub use entry::SessionEntry;
+pub use interrupt::{InterruptState, PendingToolCall};
 pub use jsonl::JsonlSessionStore;
 pub use meta::SessionMeta;
 pub use migrate::SessionMigrator;
