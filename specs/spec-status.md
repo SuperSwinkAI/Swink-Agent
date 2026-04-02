@@ -1,5 +1,5 @@
 # Spec-Driven Development Status
-<!-- spec-status: project=Swink-Agent commit=8bd7e1ce8c61d4cb13d2b21d72146488cfed25d6 updated=2026-04-01T23:47:13Z -->
+<!-- spec-status: project=Swink-Agent commit=445de8efb409d8e981f6c3db7f8025d86445f2ca updated=2026-04-02T14:51:14Z -->
 
 | Feature                         | Specify | Plan | Tasks | Implement |
 |---------------------------------|---------|------|-------|-----------|
@@ -18,7 +18,7 @@
 | 013-adapter-openai              | ✓     | ✓  | ✓   | ✓ Complete |
 | 014-adapter-ollama              | ✓     | ✓  | ✓   | ✓ Complete |
 | 015-adapter-gemini              | ✓     | ✓  | ✓   | ✓ Complete |
-| 016-adapter-azure               | ✓     | -    | -     | -         |
+| 016-adapter-azure               | ✓     | ✓  | ✓   | ● 0/54 (0%) |
 | 017-adapter-xai                 | ✓     | -    | -     | -         |
 | 018-adapter-mistral             | ✓     | ✓  | ✓   | ✓ Complete |
 | 019-adapter-bedrock             | ✓     | -    | -     | -         |
@@ -40,6 +40,7 @@
 | 035-credential-management       | ✓     | ✓  | ✓   | ● 0/73 (0%) |
 | 036-artifact-service            | ✓     | -    | -     | -         |
 | 037-plugin-system               | ✓     | -    | -     | -         |
+| 038-mcp-integration             | ✓     | ✓  | ✓   | ● 0/49 (0%) |
 
 <!-- feature: 001-workspace-scaffold has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=false has_checklists=true tasks_total=24 tasks_completed=24 checklist_files=requirements.md -->
 <!-- feature: 002-foundation-types-errors has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=63 tasks_completed=63 checklist_files=requirements.md -->
@@ -56,7 +57,7 @@
 <!-- feature: 013-adapter-openai has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=73 tasks_completed=73 checklist_files=requirements.md -->
 <!-- feature: 014-adapter-ollama has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=74 tasks_completed=74 checklist_files=requirements.md -->
 <!-- feature: 015-adapter-gemini has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=44 tasks_completed=44 checklist_files=requirements.md -->
-<!-- feature: 016-adapter-azure has_spec=true has_plan=false has_tasks=false has_research=false has_data_model=false has_quickstart=false has_contracts=false has_checklists=true tasks_total=0 tasks_completed=0 checklist_files=requirements.md -->
+<!-- feature: 016-adapter-azure has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=54 tasks_completed=0 checklist_files=requirements.md -->
 <!-- feature: 017-adapter-xai has_spec=true has_plan=false has_tasks=false has_research=false has_data_model=false has_quickstart=false has_contracts=false has_checklists=true tasks_total=0 tasks_completed=0 checklist_files=requirements.md -->
 <!-- feature: 018-adapter-mistral has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=42 tasks_completed=42 checklist_files=requirements.md -->
 <!-- feature: 019-adapter-bedrock has_spec=true has_plan=false has_tasks=false has_research=false has_data_model=false has_quickstart=false has_contracts=false has_checklists=true tasks_total=0 tasks_completed=0 checklist_files=requirements.md -->
@@ -78,3 +79,4 @@
 <!-- feature: 035-credential-management has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=73 tasks_completed=0 checklist_files=requirements.md -->
 <!-- feature: 036-artifact-service has_spec=true has_plan=false has_tasks=false has_research=false has_data_model=false has_quickstart=false has_contracts=false has_checklists=true tasks_total=0 tasks_completed=0 checklist_files=requirements.md -->
 <!-- feature: 037-plugin-system has_spec=true has_plan=false has_tasks=false has_research=false has_data_model=false has_quickstart=false has_contracts=false has_checklists=true tasks_total=0 tasks_completed=0 checklist_files=requirements.md -->
+<!-- feature: 038-mcp-integration has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=49 tasks_completed=0 checklist_files=requirements.md -->
