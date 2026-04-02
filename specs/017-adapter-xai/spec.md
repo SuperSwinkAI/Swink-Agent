@@ -74,10 +74,10 @@ A developer encounters various error conditions when communicating with the xAI 
 
 ### Edge Cases
 
-- What happens when xAI returns response fields that differ from standard OpenAI format?
-- How does the adapter handle xAI-specific rate limiting patterns?
+- When xAI returns response fields that differ from standard OpenAI format, they are handled via lenient parsing (tolerant deserialization, unknown fields ignored) — no dedicated normalizer layer.
+- xAI rate limiting (HTTP 429) is handled by the shared error classifier + core retry backoff strategy; no `Retry-After` header extraction (consistent with other adapters).
 - What happens when the xAI API returns an error format different from OpenAI's error schema?
-- How does the adapter handle model names that are xAI-specific (e.g., Grok variants)?
+- xAI-specific model names (Grok variants) are handled via comprehensive model catalog presets covering all currently available models (Grok-2, Grok-2-mini, Grok-3, vision variants).
 
 ## Requirements *(mandatory)*
 
@@ -89,6 +89,7 @@ A developer encounters various error conditions when communicating with the xAI 
 - **FR-004**: The adapter MUST convert agent messages to the chat completions message format using the shared conversion trait.
 - **FR-005**: The adapter MUST classify HTTP errors using the shared error classifier (429 → rate limit, 401/403 → auth, 5xx → network, timeout → network).
 - **FR-006**: The adapter MUST handle xAI-specific response quirks gracefully without panics or data loss.
+- **FR-007**: The adapter MUST request usage/token data via `stream_options: { include_usage: true }` to enable budget policies and cost tracking.
 
 ### Key Entities
 
@@ -102,6 +103,15 @@ A developer encounters various error conditions when communicating with the xAI 
 - **SC-002**: Tool calls produce valid, parseable JSON arguments upon completion.
 - **SC-003**: The adapter correctly targets the xAI endpoint and authenticates successfully.
 - **SC-004**: All xAI error codes map to the correct agent error types consistently.
+
+## Clarifications
+
+### Session 2026-04-02
+
+- Q: What quirk-handling strategy should the xAI adapter use? → A: Lenient parsing only (like OpenAI adapter) — no normalizer layer; handle minor quirks via tolerant deserialization.
+- Q: How many xAI models should be added to the model catalog? → A: Comprehensive — all currently available Grok models (Grok-2, Grok-2-mini, Grok-3, vision variants).
+- Q: Should the xAI adapter request usage tracking in streaming responses? → A: Yes, request usage via `stream_options: { include_usage: true }` — enables token/cost tracking; ignored via lenient parsing if unsupported.
+- Q: Should the adapter extract `Retry-After` from xAI 429 responses? → A: No — rely on shared error classifier + core retry backoff, consistent with other adapters.
 
 ## Assumptions
 
