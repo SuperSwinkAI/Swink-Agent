@@ -32,12 +32,7 @@ pub trait SessionStore: Send + Sync {
     ///
     /// The default implementation filters to `LlmMessage` only and delegates
     /// to [`save`](Self::save).
-    fn save_full(
-        &self,
-        id: &str,
-        meta: &SessionMeta,
-        messages: &[AgentMessage],
-    ) -> io::Result<()> {
+    fn save_full(&self, id: &str, meta: &SessionMeta, messages: &[AgentMessage]) -> io::Result<()> {
         let llm_messages: Vec<LlmMessage> = messages
             .iter()
             .filter_map(|m| match m {

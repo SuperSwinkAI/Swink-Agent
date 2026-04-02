@@ -14,6 +14,7 @@ use swink_agent::{
     serialize_custom_message,
 };
 
+use crate::entry::SessionEntry;
 use crate::meta::SessionMeta;
 use crate::store::SessionStore;
 use crate::time::{format_session_id, now_utc};
@@ -69,7 +70,10 @@ impl SessionRecord {
         let value: serde_json::Value = serde_json::from_str(line).map_err(io::Error::other)?;
         if value.get("_state").and_then(serde_json::Value::as_bool) == Some(true) {
             return Ok(Self::State(
-                value.get("data").cloned().unwrap_or(serde_json::Value::Null),
+                value
+                    .get("data")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null),
             ));
         }
         if value.get("_custom").and_then(serde_json::Value::as_bool) == Some(true) {
@@ -221,8 +225,8 @@ fn parse_message_record(
 ) -> Option<AgentMessage> {
     match SessionRecord::parse(line) {
         Ok(SessionRecord::Llm(message)) => Some(AgentMessage::Llm(*message)),
-        Ok(SessionRecord::Custom(envelope)) => registry.and_then(|reg| {
-            match deserialize_custom_message(reg, &envelope) {
+        Ok(SessionRecord::Custom(envelope)) => {
+            registry.and_then(|reg| match deserialize_custom_message(reg, &envelope) {
                 Ok(custom) => Some(AgentMessage::Custom(custom)),
                 Err(error) => {
                     tracing::warn!(
@@ -232,32 +236,14 @@ fn parse_message_record(
                     );
                     None
                 }
-            }
-        }),
+            })
+        }
         Ok(SessionRecord::State(_)) => None,
         Err(error) => {
             tracing::warn!(
                 line = line_num,
                 error = %error,
                 "skipping unparseable line in session {id}"
-            );
-            None
-        }
-    }
-}
-
-fn parse_llm_message(line: &str, line_num: usize, id: &str) -> Option<LlmMessage> {
-    match SessionRecord::parse(line) {
-        Ok(SessionRecord::Llm(message)) => Some(*message),
-        Ok(SessionRecord::Custom(_) | SessionRecord::State(_)) => {
-            tracing::warn!(line = line_num, "skipping non-llm record in session {id}");
-            None
-        }
-        Err(error) => {
-            tracing::warn!(
-                line = line_num,
-                error = %error,
-                "skipping corrupted message line in session {id}"
             );
             None
         }
@@ -318,25 +304,12 @@ impl JsonlSessionStore {
 
 impl SessionStore for JsonlSessionStore {
     fn save(&self, id: &str, meta: &SessionMeta, messages: &[LlmMessage]) -> io::Result<()> {
-        validate_session_id(id)?;
-
-        let path = session_path(&self.sessions_dir, id);
-
-        let file = std::fs::File::create(&path)?;
-        let mut writer = io::BufWriter::new(file);
-
-        // First line: metadata
-        serde_json::to_writer(&mut writer, meta).map_err(io::Error::other)?;
-        writeln!(writer)?;
-
-        // Subsequent lines: one LlmMessage per line
-        for msg in messages {
-            serde_json::to_writer(&mut writer, msg).map_err(io::Error::other)?;
-            writeln!(writer)?;
-        }
-
-        writer.flush()?;
-        Ok(())
+        let entries: Vec<SessionEntry> = messages
+            .iter()
+            .cloned()
+            .map(SessionEntry::Message)
+            .collect();
+        self.save_entries(id, meta, &entries)
     }
 
     fn append(&self, id: &str, messages: &[LlmMessage]) -> io::Result<()> {
@@ -354,21 +327,14 @@ impl SessionStore for JsonlSessionStore {
     }
 
     fn load(&self, id: &str) -> io::Result<(SessionMeta, Vec<LlmMessage>)> {
-        validate_session_id(id)?;
-
-        let path = session_path(&self.sessions_dir, id);
-        let (meta, lines) = read_meta_and_message_lines(&path, id)?;
-
-        let messages = lines
+        let (meta, entries) = self.load_entries(id)?;
+        let messages = entries
             .into_iter()
-            .enumerate()
-            .filter_map(|(line_num, line)| {
-                (!line.trim().is_empty()).then_some(line).and_then(|line| {
-                    parse_llm_message(&line, line_num + 2, id)
-                })
+            .filter_map(|entry| match entry {
+                SessionEntry::Message(msg) => Some(msg),
+                _ => None,
             })
             .collect();
-
         Ok((meta, messages))
     }
 
@@ -411,12 +377,7 @@ impl SessionStore for JsonlSessionStore {
         std::fs::remove_file(path)
     }
 
-    fn save_full(
-        &self,
-        id: &str,
-        meta: &SessionMeta,
-        messages: &[AgentMessage],
-    ) -> io::Result<()> {
+    fn save_full(&self, id: &str, meta: &SessionMeta, messages: &[AgentMessage]) -> io::Result<()> {
         validate_session_id(id)?;
 
         let path = session_path(&self.sessions_dir, id);
@@ -501,6 +462,73 @@ impl SessionStore for JsonlSessionStore {
         }
 
         Ok(None)
+    }
+}
+
+impl JsonlSessionStore {
+    /// Save a session with rich entry types.
+    ///
+    /// Lines 2+ are [`SessionEntry`] values serialized with an `entry_type` tag.
+    pub fn save_entries(
+        &self,
+        id: &str,
+        meta: &SessionMeta,
+        entries: &[SessionEntry],
+    ) -> io::Result<()> {
+        validate_session_id(id)?;
+
+        let path = session_path(&self.sessions_dir, id);
+
+        let file = std::fs::File::create(&path)?;
+        let mut writer = io::BufWriter::new(file);
+
+        // First line: metadata
+        serde_json::to_writer(&mut writer, meta).map_err(io::Error::other)?;
+        writeln!(writer)?;
+
+        // Subsequent lines: one SessionEntry per line
+        for entry in entries {
+            serde_json::to_writer(&mut writer, entry).map_err(io::Error::other)?;
+            writeln!(writer)?;
+        }
+
+        writer.flush()?;
+        Ok(())
+    }
+
+    /// Load a session with rich entry types.
+    ///
+    /// Parses each line after metadata as a [`SessionEntry`]. Old-format lines
+    /// (raw `LlmMessage` without `entry_type`) are interpreted as
+    /// [`SessionEntry::Message`] for backward compatibility.
+    pub fn load_entries(&self, id: &str) -> io::Result<(SessionMeta, Vec<SessionEntry>)> {
+        validate_session_id(id)?;
+
+        let path = session_path(&self.sessions_dir, id);
+        let (meta, lines) = read_meta_and_message_lines(&path, id)?;
+
+        let entries = lines
+            .into_iter()
+            .enumerate()
+            .filter_map(|(line_num, line)| {
+                if line.trim().is_empty() {
+                    return None;
+                }
+                match SessionEntry::parse(&line) {
+                    Ok(entry) => Some(entry),
+                    Err(error) => {
+                        tracing::warn!(
+                            line = line_num + 2,
+                            error = %error,
+                            "skipping unparseable entry in session {id}"
+                        );
+                        None
+                    }
+                }
+            })
+            .collect();
+
+        Ok((meta, entries))
     }
 }
 
@@ -624,8 +652,7 @@ mod tests {
             }),
         );
 
-        let (loaded_meta, loaded_messages) =
-            store.load_full("test-full", Some(&registry)).unwrap();
+        let (loaded_meta, loaded_messages) = store.load_full("test-full", Some(&registry)).unwrap();
         assert_eq!(loaded_meta.id, "test-full");
         assert_eq!(loaded_messages.len(), 3);
         assert!(matches!(
@@ -639,9 +666,7 @@ mod tests {
         ));
 
         // Verify custom message content via downcast
-        let custom = loaded_messages[1]
-            .downcast_ref::<TestCustomMsg>()
-            .unwrap();
+        let custom = loaded_messages[1].downcast_ref::<TestCustomMsg>().unwrap();
         assert_eq!(custom.data, "custom-payload");
 
         // Load without registry — custom messages skipped

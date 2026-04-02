@@ -25,6 +25,7 @@
 //! ```
 
 pub mod compaction;
+pub mod entry;
 pub mod jsonl;
 pub mod meta;
 pub mod store;
@@ -32,6 +33,7 @@ pub mod store_async;
 pub mod time;
 
 pub use compaction::{CompactionResult, SummarizingCompactor};
+pub use entry::SessionEntry;
 pub use jsonl::JsonlSessionStore;
 pub use meta::SessionMeta;
 pub use store::SessionStore;

@@ -179,16 +179,16 @@
 
 ### Tests for User Story 6
 
-- [ ] T058 [P] [US6] Integration test `rich_entries_roundtrip` in `memory/tests/round_trip.rs`: save session with Message, ModelChange, Label, and Custom entries, load, verify all preserved in order with correct data
-- [ ] T059 [P] [US6] Integration test `rich_entries_backward_compat` in `memory/tests/round_trip.rs`: create an old-format JSONL file (raw LlmMessage lines without `entry_type`), load, verify all lines interpreted as `SessionEntry::Message`
-- [ ] T060 [P] [US6] Unit test `session_entry_serde_roundtrip` in `memory/src/entry.rs` tests: serialize/deserialize each variant, verify discriminator and fields preserved
-- [ ] T060b [P] [US6] Unit test `rich_entries_excluded_from_llm_context` in `memory/src/entry.rs` tests: verify that `SessionEntry::messages()` (or equivalent filter method) only returns `Message` variants, excluding `ModelChange`, `Label`, `Compaction`, `Custom` entries (covers FR-012)
+- [x] T058 [P] [US6] Integration test `rich_entries_roundtrip` in `memory/tests/round_trip.rs`: save session with Message, ModelChange, Label, and Custom entries, load, verify all preserved in order with correct data
+- [x] T059 [P] [US6] Integration test `rich_entries_backward_compat` in `memory/tests/round_trip.rs`: create an old-format JSONL file (raw LlmMessage lines without `entry_type`), load, verify all lines interpreted as `SessionEntry::Message`
+- [x] T060 [P] [US6] Unit test `session_entry_serde_roundtrip` in `memory/src/entry.rs` tests: serialize/deserialize each variant, verify discriminator and fields preserved
+- [x] T060b [P] [US6] Unit test `rich_entries_excluded_from_llm_context` in `memory/src/entry.rs` tests: verify that `SessionEntry::messages()` (or equivalent filter method) only returns `Message` variants, excluding `ModelChange`, `Label`, `Compaction`, `Custom` entries (covers FR-012)
 
 ### Implementation for User Story 6
 
-- [ ] T061 [US6] Implement `SessionEntry` enum in `memory/src/entry.rs` with serde tagged serialization (`#[serde(tag = "entry_type")]`). Implement custom deserialization fallback for old-format lines (no `entry_type` → `Message`).
-- [ ] T062 [US6] Update `JsonlSessionStore::save()` and `load()` in `memory/src/jsonl.rs` to use `SessionEntry` instead of raw `LlmMessage`. Lines 2+ become `SessionEntry` values.
-- [ ] T063 [US6] Add `entry.rs` module declaration and re-export `SessionEntry` from `memory/src/lib.rs`.
+- [x] T061 [US6] Implement `SessionEntry` enum in `memory/src/entry.rs` with serde tagged serialization (`#[serde(tag = "entry_type")]`). Implement custom deserialization fallback for old-format lines (no `entry_type` → `Message`).
+- [x] T062 [US6] Update `JsonlSessionStore::save()` and `load()` in `memory/src/jsonl.rs` to use `SessionEntry` instead of raw `LlmMessage`. Lines 2+ become `SessionEntry` values.
+- [x] T063 [US6] Add `entry.rs` module declaration and re-export `SessionEntry` from `memory/src/lib.rs`.
 
 **Checkpoint**: US6 complete — sessions can store rich non-message entries
 

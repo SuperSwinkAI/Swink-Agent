@@ -1,11 +1,12 @@
-//! Integration tests for session save/load round-trips (US1, US4).
+//! Integration tests for session save/load round-trips (US1, US4, US6).
 
 mod common;
 
 use std::io;
 
 use chrono::DateTime;
-use swink_agent_memory::{JsonlSessionStore, SessionMeta, SessionStore};
+use swink_agent::{LlmMessage, ModelSpec};
+use swink_agent_memory::{JsonlSessionStore, SessionEntry, SessionMeta, SessionStore};
 
 use common::{assistant_message, sample_meta, sample_meta_with_times, user_message};
 
@@ -180,4 +181,103 @@ fn list_empty_store_returns_empty() {
 
     let sessions = store.list().unwrap();
     assert!(sessions.is_empty());
+}
+
+// --- US6: Rich Session Entry Types ---
+
+#[test]
+fn rich_entries_roundtrip() {
+    let tmp = tempfile::tempdir().unwrap();
+    let store = JsonlSessionStore::new(tmp.path().to_path_buf()).unwrap();
+
+    let meta = sample_meta("rich_001", "Rich entries test");
+    let entries = vec![
+        SessionEntry::Message(user_message("hello")),
+        SessionEntry::ModelChange {
+            from: ModelSpec {
+                provider: "openai".to_string(),
+                model_id: "gpt-4".to_string(),
+                ..ModelSpec::new("", "")
+            },
+            to: ModelSpec {
+                provider: "anthropic".to_string(),
+                model_id: "claude-3".to_string(),
+                ..ModelSpec::new("", "")
+            },
+            timestamp: 100,
+        },
+        SessionEntry::Label {
+            text: "important point".to_string(),
+            message_index: 0,
+            timestamp: 200,
+        },
+        SessionEntry::Custom {
+            type_name: "my_event".to_string(),
+            data: serde_json::json!({"key": "value"}),
+            timestamp: 300,
+        },
+    ];
+
+    store.save_entries("rich_001", &meta, &entries).unwrap();
+    let (loaded_meta, loaded_entries) = store.load_entries("rich_001").unwrap();
+
+    assert_eq!(loaded_meta, meta);
+    assert_eq!(loaded_entries.len(), 4);
+    assert!(matches!(
+        loaded_entries[0],
+        SessionEntry::Message(LlmMessage::User(_))
+    ));
+    assert!(matches!(
+        loaded_entries[1],
+        SessionEntry::ModelChange { .. }
+    ));
+    assert!(matches!(loaded_entries[2], SessionEntry::Label { .. }));
+    assert!(matches!(loaded_entries[3], SessionEntry::Custom { .. }));
+
+    // Verify data preserved
+    if let SessionEntry::ModelChange {
+        from,
+        to,
+        timestamp,
+    } = &loaded_entries[1]
+    {
+        assert_eq!(from.provider, "openai");
+        assert_eq!(to.provider, "anthropic");
+        assert_eq!(*timestamp, 100);
+    }
+
+    // load() (LlmMessage-only) should return only the Message entry
+    let (_, messages) = store.load("rich_001").unwrap();
+    assert_eq!(messages.len(), 1);
+}
+
+#[test]
+fn rich_entries_backward_compat() {
+    let tmp = tempfile::tempdir().unwrap();
+    let store = JsonlSessionStore::new(tmp.path().to_path_buf()).unwrap();
+
+    // Create an old-format JSONL file: meta line + raw LlmMessage lines (no entry_type)
+    let meta = sample_meta("compat_001", "Old format session");
+    let msg1 = user_message("first message");
+    let msg2 = assistant_message("second message");
+
+    let meta_json = serde_json::to_string(&meta).unwrap();
+    let msg1_json = serde_json::to_string(&msg1).unwrap();
+    let msg2_json = serde_json::to_string(&msg2).unwrap();
+
+    let file_content = format!("{meta_json}\n{msg1_json}\n{msg2_json}\n");
+    std::fs::write(tmp.path().join("compat_001.jsonl"), file_content).unwrap();
+
+    // load_entries should interpret old-format lines as SessionEntry::Message
+    let (loaded_meta, entries) = store.load_entries("compat_001").unwrap();
+    assert_eq!(loaded_meta, meta);
+    assert_eq!(entries.len(), 2);
+    assert!(matches!(
+        entries[0],
+        SessionEntry::Message(LlmMessage::User(_))
+    ));
+    assert!(matches!(
+        entries[1],
+        SessionEntry::Message(LlmMessage::Assistant(_))
+    ));
 }

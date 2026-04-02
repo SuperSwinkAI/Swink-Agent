@@ -15,7 +15,11 @@ pub type SessionStoreFuture<'a, T> = Pin<Box<dyn Future<Output = io::Result<T>> 
 fn spawn_store_call<T: Send + 'static>(
     f: impl FnOnce() -> io::Result<T> + Send + 'static,
 ) -> SessionStoreFuture<'static, T> {
-    Box::pin(async move { tokio::task::spawn_blocking(f).await.map_err(io::Error::other)? })
+    Box::pin(async move {
+        tokio::task::spawn_blocking(f)
+            .await
+            .map_err(io::Error::other)?
+    })
 }
 
 /// Async session persistence for non-blocking backends (Redis, S3, cloud storage).
