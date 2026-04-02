@@ -59,8 +59,8 @@ pub use agent::{
 pub use async_context_transformer::{AsyncContextTransformer, AsyncTransformFuture};
 pub use checkpoint::{Checkpoint, CheckpointFuture, CheckpointStore, LoopCheckpoint};
 pub use config::{
-    AgentConfig, ApprovalModeConfig, BudgetGuardConfig, FollowUpModeConfig, RetryConfig,
-    SteeringModeConfig, StreamOptionsConfig,
+    AgentConfig, ApprovalModeConfig, FollowUpModeConfig, RetryConfig, SteeringModeConfig,
+    StreamOptionsConfig,
 };
 #[allow(deprecated)]
 pub use context::{DefaultTokenCounter, TokenCounter, estimate_tokens, is_context_overflow, sliding_window};
