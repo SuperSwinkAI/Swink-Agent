@@ -113,6 +113,18 @@ A library consumer wants to remove artifacts that are no longer needed — eithe
 - What happens when artifact content is empty (zero bytes)? Empty artifacts are valid. A zero-byte artifact is saved and loaded correctly with size 0.
 - What happens when the artifact store is not configured on the agent? Tools that require artifact access receive no store reference and return an error indicating artifacts are not enabled. The agent loop itself is unaffected.
 
+## Clarifications
+
+### Session 2026-04-02
+
+- Q: How should `ArtifactSaved` integrate with the event system? → A: New `AgentEvent::ArtifactSaved` variant on the existing enum, behind the feature gate.
+- Q: How should streaming I/O be exposed for implementations that support it? → A: Separate `StreamingArtifactStore` extension trait; base `ArtifactStore` uses `Vec<u8>` only.
+- Q: How should artifact tool feature gating relate to existing gates? → A: New `artifact-tools` feature (depends on `artifact-store` feature); independent of `builtin-tools`.
+- Q: Should the `ArtifactStore` trait require `Send + Sync`? → A: Yes, `ArtifactStore: Send + Sync` required, matching existing trait patterns (`AgentTool`, policy traits).
+- Q: How do tools get access to the artifact store at execution time? → A: Tools capture `Arc<dyn ArtifactStore>` at construction time; no changes to the core tool execution context.
+- Q: Should the artifacts crate ship a built-in `InMemoryArtifactStore`? → A: Yes, always available (not feature-gated), matching project patterns like `InMemoryVersionStore`.
+- Q: Should artifact store operations emit tracing spans? → A: Implementations emit `tracing` spans/events; not a trait requirement.
+
 ## Requirements *(mandatory)*
 
 ### Functional Requirements
@@ -125,15 +137,17 @@ A library consumer wants to remove artifacts that are no longer needed — eithe
 - **FR-006**: Artifact data MUST include raw byte content, a MIME content type string, and an arbitrary string-to-string metadata map for consumer-defined key-value pairs.
 - **FR-007**: Each saved version MUST be described by a version record containing: artifact name, version number (monotonically increasing per artifact per session, starting at 1), creation timestamp, byte size, and content type.
 - **FR-008**: Artifact names MUST be validated: only alphanumeric characters, hyphens, underscores, dots, and forward slashes are allowed. Names MUST NOT be empty. Invalid names MUST return an error on save.
-- **FR-009**: The `ArtifactStore` trait methods MUST be asynchronous to support both local filesystem and remote storage implementations.
+- **FR-009**: The `ArtifactStore` trait methods MUST be asynchronous and the trait MUST require `Send + Sync` bounds to support concurrent tool execution and multi-agent scenarios.
 - **FR-010**: A built-in filesystem-backed implementation MUST be provided that stores artifacts as files organized by session ID and artifact name, with version-numbered filenames and a metadata sidecar file.
 - **FR-011**: The filesystem implementation MUST handle concurrent access safely — concurrent saves to the same artifact MUST produce sequential version numbers without data corruption.
 - **FR-012**: The artifact store MUST be injectable into the agent via configuration, similar to how session stores are configured. If no artifact store is configured, artifact functionality is unavailable but the agent operates normally.
-- **FR-013**: Built-in artifact tools (save, load, list) MUST be provided that allow the LLM to manage artifacts during a conversation. These tools MUST be feature-gated independently from the core artifact store trait.
-- **FR-014**: An `ArtifactSaved` event MUST be emitted via the agent's event system whenever an artifact version is successfully saved, containing the session ID, artifact name, and version number.
+- **FR-013**: Built-in artifact tools (save, load, list) MUST be provided that allow the LLM to manage artifacts during a conversation. These tools MUST be feature-gated independently from the core artifact store trait. Tools MUST capture `Arc<dyn ArtifactStore>` at construction time rather than receiving it via the tool execution context.
+- **FR-018**: An `InMemoryArtifactStore` implementation MUST be provided in the artifacts crate, always available (not feature-gated), for use in tests and lightweight scenarios.
+- **FR-019**: Built-in artifact store implementations (`FileArtifactStore`, `InMemoryArtifactStore`) MUST emit `tracing` spans and events for diagnostic observability. Tracing is NOT a requirement of the `ArtifactStore` trait itself.
+- **FR-014**: An `ArtifactSaved` event MUST be emitted as a new variant on the existing `AgentEvent` enum (behind the `artifact-store` feature gate) whenever an artifact version is successfully saved, containing the session ID, artifact name, and version number.
 - **FR-015**: The artifact store MUST operate independently of the session message store. Artifacts MUST NOT be serialized into the conversation message stream.
-- **FR-016**: The `ArtifactStore` trait MUST support efficient handling of large artifacts. Implementations MAY provide streaming I/O as an optimization. The base trait MUST work with full byte vectors as the minimum API surface.
-- **FR-017**: The artifact service MUST be feature-gated so that projects not using artifacts incur no compile-time or runtime cost.
+- **FR-016**: The `ArtifactStore` trait MUST support efficient handling of large artifacts. The base trait MUST work with full byte vectors (`Vec<u8>`) as the minimum API surface. A separate `StreamingArtifactStore` extension trait MUST be defined for implementations that support incremental I/O; implementing it is optional.
+- **FR-017**: The artifact service MUST be feature-gated with an `artifact-store` feature for the core trait and storage. Built-in artifact tools MUST be gated under a separate `artifact-tools` feature that depends on `artifact-store` and is independent of the existing `builtin-tools` feature.
 
 ### Key Entities
 
@@ -142,6 +156,7 @@ A library consumer wants to remove artifacts that are no longer needed — eithe
 - **ArtifactVersion**: A record describing a specific saved version — name, version number, timestamp, size, content type. Returned on save as confirmation. Used for version discovery.
 - **ArtifactMeta**: Summary metadata for an artifact across all its versions — name, latest version number, creation and update timestamps. Used in list results without loading content.
 - **FileArtifactStore**: The built-in filesystem implementation. Organizes artifacts as versioned files under a configurable root directory.
+- **InMemoryArtifactStore**: A built-in in-memory implementation for testing and lightweight use. Always available (not feature-gated).
 
 ## Success Criteria *(mandatory)*
 

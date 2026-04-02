@@ -198,6 +198,8 @@ MSRV **1.88** (edition 2024). Workspace deps centralized in root `Cargo.toml`.
 - Rust 1.88 (edition 2024) + `swink-agent` (core), `swink-agent-adapters` (shared infra: `openai_compat`, `classify`, `sse`, `convert`, `base`) (017-adapter-xai)
 - N/A (stateless adapter) (017-adapter-xai)
 - Rust 1.88 (edition 2024) + `swink-agent` (core), `swink-agent-adapters` (shared infra), `sha2`/`hmac` (SigV4 signing), `chrono` (timestamps), `aws-smithy-eventstream` (NEW — event-stream frame decoding), `aws-smithy-types` (NEW — event-stream types) (019-adapter-bedrock)
+- Rust 1.88 (edition 2024) + `serde`, `serde_json`, `tokio` (fs + sync), `chrono` (timestamps), `tracing` (diagnostics), `thiserror` (errors), `futures` (streaming trait), `schemars` (tool schemas) — all workspace deps (036-artifact-service)
+- Local filesystem (versioned files + JSON metadata sidecar); in-memory (`HashMap`) for testing (036-artifact-service)
 
 ## Recent Changes
 - 001-workspace-scaffold: Added Rust 1.88 (edition 2024) + serde, serde_json, tokio, futures, thiserror, uuid, reqwest, jsonschema, schemars, rand, tracing, toml (all centralized in workspace `[workspace.dependencies]`)
