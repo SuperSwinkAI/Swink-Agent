@@ -7,9 +7,9 @@
 - Provider Roadmap: [PROVIDER_EXPANSION_ROADMAP.md](PROVIDER_EXPANSION_ROADMAP.md)
 - Eval Roadmap: [EVAL.md](EVAL.md)
 
-**Current Focus:** 35 specs total — 32/35 have plans, 32/35 have tasks, 25/35 complete. Phase 0–2 done. Phase 3: 7/10 complete (016, 017, 019 need plans). Phase 4: 3/4 complete (021 has extended tasks). Phase 5–7 done. Phase 8 done (033 + 034 + 035 complete). Next: plan remaining adapters (016, 017, 019); continue extended requirements on partially-complete specs.
+**Current Focus:** 40 specs total — 40/40 have plans, 40/40 have tasks, 30/40 complete. Phase 0–2 done. Phase 3: 7/10 complete (016 at 43%, 017 at 18%, 019 at 0%). Phase 4: 3/4 complete (021 at 58%). Phase 5–8 done. Phase 9: 5 new specs (036–040) at 0%. Next: continue adapter implementations (016, 017, 019); finish memory crate (021); begin Phase 9 (artifact service, plugin system, MCP, multi-agent patterns, transfer/handoff).
 
-> **Numbering System:** Spec numbers (001–035) are sequential identifiers that
+> **Numbering System:** Spec numbers (001–040) are sequential identifiers that
 > never change. Phase numbers represent execution order and can be reassigned
 > as priorities shift.
 
@@ -77,17 +77,17 @@ primitives, and loop governance — capabilities that enhance the core engine.
 - [x] **2.1** Context Management — Sliding window pruning, transform hooks (sync/async), versioned history, convert_to_llm pipeline (§5, §10.1)
   - Spec: `specs/006-context-management/spec.md`
   - Branch: `006-context-management`
-  - Status: Complete (46/76 tasks, merged to main — extended requirements pending)
+  - Status: Complete (76/76 tasks, merged to main)
   - Depends on: 0.2
 - [x] **2.2** Tool System Extensions — Transformer, validator, middleware, execution policies, FnTool, builtin tools (§4)
   - Spec: `specs/007-tool-system-extensions/spec.md`
   - Branch: `007-tool-system-extensions`
-  - Status: Complete (64/98 tasks, merged to main — extended requirements pending)
+  - Status: Complete (98/98 tasks, merged to main)
   - Depends on: 0.3
 - [x] **2.3** Model Catalog, Presets & Fallback — TOML-driven catalog, preset-to-connection resolution, automatic fallback chain
   - Spec: `specs/008-model-catalog-presets/spec.md`
   - Branch: `008-model-catalog-presets`
-  - Status: Complete (30/44 tasks, merged to main — extended requirements pending)
+  - Status: Complete (44/44 tasks, merged to main)
   - Depends on: 0.3
 - [x] **2.4** Multi-Agent System — AgentRegistry, AgentMailbox, AgentOrchestrator, SubAgent tool wrapper
   - Spec: `specs/009-multi-agent-system/spec.md`
@@ -97,7 +97,7 @@ primitives, and loop governance — capabilities that enhance the core engine.
 - [x] **2.5** Loop Policies & Observability — LoopPolicy, StreamMiddleware, MetricsCollector, PostTurnHook, BudgetGuard, Checkpoint
   - Spec: `specs/010-loop-policies-observability/spec.md`
   - Branch: `010-loop-policies-observability`
-  - Status: Complete (72/95 tasks, merged to main — extended requirements pending)
+  - Status: Complete (95/95 tasks, merged to main)
   - Depends on: 1.1
 
 ---
@@ -107,14 +107,14 @@ primitives, and loop governance — capabilities that enhance the core engine.
 **Goal:** LLM provider adapters — shared infrastructure and one adapter per
 provider. Each adapter implements StreamFn for its provider's streaming protocol.
 
-**Status:** 7/10 specs planned, 7/10 have tasks, 7/10 complete, 10/10 specs defined
+**Status:** 10/10 specs planned, 10/10 have tasks, 7/10 complete, 10/10 specs defined
 
 ### Implementation Checklist
 
 - [x] **3.1** Adapter Shared Infrastructure — MessageConverter trait, HttpErrorClassifier, SSE parsing, remote preset construction (§15.1)
   - Spec: `specs/011-adapter-shared-infra/spec.md`
   - Branch: `011-adapter-shared-infra`
-  - Status: Complete (40/63 tasks, merged to main — extended requirements pending)
+  - Status: Complete (63/63 tasks, merged to main)
   - Depends on: 0.3
 - [x] **3.2** Adapter: Anthropic — AnthropicStreamFn, /v1/messages SSE, thinking blocks with budget control (§15.1)
   - Spec: `specs/012-adapter-anthropic/spec.md`
@@ -139,12 +139,12 @@ provider. Each adapter implements StreamFn for its provider's streaming protocol
 - [ ] **3.6** Adapter: Azure OpenAI — AzureStreamFn, deployment routing, API versioning (§15.1)
   - Spec: `specs/016-adapter-azure/spec.md`
   - Branch: `016-adapter-azure`
-  - Status: Specify complete — needs plan + tasks
+  - Status: In Progress (23/54 tasks, 43%)
   - Depends on: 3.1
 - [ ] **3.7** Adapter: xAI — XAiStreamFn, xAI (Grok) SSE (§15.1)
   - Spec: `specs/017-adapter-xai/spec.md`
   - Branch: `017-adapter-xai`
-  - Status: Specify complete — needs plan + tasks
+  - Status: In Progress (3/17 tasks, 18%)
   - Depends on: 3.1
 - [x] **3.8** Adapter: Mistral — MistralStreamFn, Mistral API SSE (§15.1)
   - Spec: `specs/018-adapter-mistral/spec.md`
@@ -154,7 +154,7 @@ provider. Each adapter implements StreamFn for its provider's streaming protocol
 - [ ] **3.9** Adapter: AWS Bedrock — BedrockStreamFn, SSE, AWS SigV4 signing (§15.1)
   - Spec: `specs/019-adapter-bedrock/spec.md`
   - Branch: `019-adapter-bedrock`
-  - Status: Specify complete — needs plan + tasks
+  - Status: Ready for implementation (0/41 tasks)
   - Depends on: 3.1
 - [x] **3.10** Adapter: Proxy — ProxyStreamFn, SSE, bearer auth, typed delta events (§7.4, §15.1)
   - Spec: `specs/020-adapter-proxy/spec.md`
@@ -173,14 +173,14 @@ After **3.1 Shared Infrastructure** completes, all 9 provider adapters (3.2–3.
 **Goal:** Standalone crates for session persistence, on-device inference, and
 evaluation — each depends only on the core library.
 
-**Status:** 4/4 specs planned, 4/4 have tasks, 4/4 complete, 4/4 specs defined
+**Status:** 4/4 specs planned, 4/4 have tasks, 3/4 complete, 4/4 specs defined
 
 ### Implementation Checklist
 
-- [x] **4.1** Memory Crate — SessionStore (sync/async), JsonlSessionStore, SummarizingCompactor, session metadata
+- [ ] **4.1** Memory Crate — SessionStore (sync/async), JsonlSessionStore, SummarizingCompactor, session metadata
   - Spec: `specs/021-memory-crate/spec.md`
   - Branch: `021-memory-crate`
-  - Status: Complete (57/98 tasks, merged to main — extended requirements pending)
+  - Status: In Progress (57/98 tasks, 58%)
   - Depends on: 0.2
 - [x] **4.2** Local LLM Crate — LocalModel (SmolLM3-3B), LocalStreamFn, EmbeddingModel, presets, progress reporting
   - Spec: `specs/022-local-llm-crate/spec.md`
@@ -307,6 +307,48 @@ credential management — cross-cutting infrastructure for production readiness.
 
 ---
 
+## Phase 9: Extensibility & Composition
+
+**Goal:** Artifact persistence, plugin composition, MCP tool interop, multi-agent
+orchestration patterns, and agent-to-agent handoff — capabilities that make the
+agent framework composable and extensible for production use cases.
+
+**Status:** 5/5 specs planned, 5/5 have tasks, 0/5 complete, 5/5 specs defined
+
+### Implementation Checklist
+
+- [ ] **9.1** Artifact Service — Versioned artifact storage, filesystem + in-memory backends, session-independent persistence
+  - Spec: `specs/036-artifact-service/spec.md`
+  - Branch: `036-artifact-service`
+  - Status: Ready for implementation (0/81 tasks)
+  - Depends on: 0.2, 2.2
+- [ ] **9.2** Plugin System — Plugin trait, bundled policy/tool/event registration, priority-ordered composition
+  - Spec: `specs/037-plugin-system/spec.md`
+  - Branch: `037-plugin-system`
+  - Status: Ready for implementation (0/47 tasks)
+  - Depends on: 7.1, 2.2
+- [ ] **9.3** MCP Integration — MCP server connections (stdio/SSE), tool discovery, namespaced registration, policy integration
+  - Spec: `specs/038-mcp-integration/spec.md`
+  - Branch: `038-mcp-integration`
+  - Status: Ready for implementation (0/49 tasks)
+  - Depends on: 2.2
+- [ ] **9.4** Multi-Agent Patterns — Pipeline primitives (sequential, parallel, loop), merge strategies, pipeline registry
+  - Spec: `specs/039-multi-agent-patterns/spec.md`
+  - Branch: `039-multi-agent-patterns`
+  - Status: Ready for implementation (0/66 tasks)
+  - Depends on: 2.4
+- [ ] **9.5** TransferToAgent Tool & Handoff Safety — Transfer tool, allowed-target validation, circular transfer detection, transfer events
+  - Spec: `specs/040-agent-transfer-handoff/spec.md`
+  - Branch: `040-agent-transfer-handoff`
+  - Status: Ready for implementation (0/49 tasks)
+  - Depends on: 2.4
+
+### Parallel Opportunities
+
+After their respective dependencies are met, 9.1 (Artifact Service), 9.2 (Plugin System), 9.3 (MCP Integration), 9.4 (Multi-Agent Patterns), and 9.5 (Transfer/Handoff) can all proceed in parallel — they are independent feature verticals.
+
+---
+
 ## Dependencies
 
 ```mermaid
@@ -365,6 +407,14 @@ graph TD
         AA["8.3 Credentials"]
     end
 
+    subgraph Phase 9: Extensibility
+        AB["9.1 Artifact Service"]
+        AC["9.2 Plugin System"]
+        AD["9.3 MCP Integration"]
+        AE["9.4 Multi-Agent Patterns"]
+        AF["9.5 Transfer/Handoff"]
+    end
+
     A --> B
     B --> C
     B --> F
@@ -395,6 +445,13 @@ graph TD
     E --> V
     F --> V
     G --> V
+    B --> AB
+    G --> AB
+    W --> AC
+    G --> AC
+    G --> AD
+    I --> AE
+    I --> AF
 
     style A fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
     style B fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
@@ -407,7 +464,7 @@ graph TD
     style I fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
     style J fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
     style K fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
-    style L fill:#fff,color:#000,stroke:#6b7280,stroke-width:2px
+    style L fill:#eab308,color:#000,stroke:#ca8a04,stroke-width:2px
     style M fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
     style N fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
     style O fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
@@ -423,6 +480,11 @@ graph TD
     style Y fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
     style Z fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
     style AA fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
+    style AB fill:#fff,color:#000,stroke:#6b7280,stroke-width:2px
+    style AC fill:#fff,color:#000,stroke:#6b7280,stroke-width:2px
+    style AD fill:#fff,color:#000,stroke:#6b7280,stroke-width:2px
+    style AE fill:#fff,color:#000,stroke:#6b7280,stroke-width:2px
+    style AF fill:#fff,color:#000,stroke:#6b7280,stroke-width:2px
 ```
 
 > ⬜ Not started · 🟢 Complete · 🟡 In progress · 🔴 Blocked
@@ -456,3 +518,7 @@ After **4.1 Memory** completes:
 
 After **3.1 Shared Infra** completes:
 - **Track H (Credentials):** 8.3 Credential Management (can proceed in parallel with adapters)
+
+After **Phase 2** completes (all dependencies met):
+- **Track I (Extensibility):** 9.1 Artifact Service, 9.2 Plugin System, 9.3 MCP Integration (all in parallel)
+- **Track J (Composition):** 9.4 Multi-Agent Patterns, 9.5 Transfer/Handoff (both in parallel, depend on 2.4)
