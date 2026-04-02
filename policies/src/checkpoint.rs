@@ -4,9 +4,10 @@
 use std::sync::Arc;
 
 use swink_agent::{
-    Checkpoint, CheckpointFuture, CheckpointStore, PolicyContext, PolicyVerdict, PostTurnPolicy,
-    TurnPolicyContext,
+    Checkpoint, CheckpointStore, PolicyContext, PolicyVerdict, PostTurnPolicy, TurnPolicyContext,
 };
+#[cfg(test)]
+use swink_agent::CheckpointFuture;
 
 /// Persists agent state after each turn via a [`CheckpointStore`].
 ///

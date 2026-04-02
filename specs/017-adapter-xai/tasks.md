@@ -33,10 +33,10 @@
 
 ### Implementation for User Story 1
 
-- [ ] T004 [US1] Create adapters/tests/xai_live.rs with module-level cfg gate, imports, constants (TIMEOUT = 30s), and helper functions: xai_key() (reads XAI_API_KEY via dotenvy), cheap_model() (grok-4-1-fast-non-reasoning), simple_context(), collect_events(), event_name()
-- [ ] T005 [US1] Add live_text_stream test in adapters/tests/xai_live.rs: send simple prompt, assert Start/TextStart/TextDelta/TextEnd/Done events present and assembled text is non-empty
-- [ ] T006 [US1] Add live_usage_and_cost test in adapters/tests/xai_live.rs: send simple prompt, assert Done event contains non-zero input and output token counts
-- [ ] T007 [US1] Add live_stop_reason_mapping test in adapters/tests/xai_live.rs: send simple prompt, assert Done event has StopReason::Stop
+- [x] T004 [US1] Create adapters/tests/xai_live.rs with module-level cfg gate, imports, constants (TIMEOUT = 30s), and helper functions: xai_key() (reads XAI_API_KEY via dotenvy), cheap_model() (grok-4-1-fast-non-reasoning), simple_context(), collect_events(), event_name()
+- [x] T005 [US1] Add live_text_stream test in adapters/tests/xai_live.rs: send simple prompt, assert Start/TextStart/TextDelta/TextEnd/Done events present and assembled text is non-empty
+- [x] T006 [US1] Add live_usage_and_cost test in adapters/tests/xai_live.rs: send simple prompt, assert Done event contains non-zero input and output token counts
+- [x] T007 [US1] Add live_stop_reason_mapping test in adapters/tests/xai_live.rs: send simple prompt, assert Done event has StopReason::Stop
 
 **Checkpoint**: `cargo test -p swink-agent-adapters --test xai_live -- --ignored` passes for text streaming tests (requires XAI_API_KEY)
 
@@ -50,9 +50,9 @@
 
 ### Implementation for User Story 2
 
-- [ ] T008 [US2] Add DummyTool struct (get_weather) in adapters/tests/xai_live.rs implementing AgentTool with JSON schema for city parameter
-- [ ] T009 [US2] Add live_tool_use_stream test in adapters/tests/xai_live.rs: send prompt with get_weather tool, assert ToolCallStart with name "get_weather", ToolCallEnd present, and StopReason::ToolUse
-- [ ] T010 [US2] Add live_multi_turn_context test in adapters/tests/xai_live.rs: send two-turn conversation (introduce name, then ask for recall), assert second reply contains the introduced name
+- [x] T008 [US2] Add DummyTool struct (get_weather) in adapters/tests/xai_live.rs implementing AgentTool with JSON schema for city parameter
+- [x] T009 [US2] Add live_tool_use_stream test in adapters/tests/xai_live.rs: send prompt with get_weather tool, assert ToolCallStart with name "get_weather", ToolCallEnd present, and StopReason::ToolUse
+- [x] T010 [US2] Add live_multi_turn_context test in adapters/tests/xai_live.rs: send two-turn conversation (introduce name, then ask for recall), assert second reply contains the introduced name
 
 **Checkpoint**: `cargo test -p swink-agent-adapters --test xai_live -- --ignored` passes for all tool call tests
 
@@ -66,7 +66,7 @@
 
 ### Implementation for User Story 3
 
-- [ ] T011 [US3] Add live_invalid_key_returns_auth_error test in adapters/tests/xai_live.rs: create XAiStreamFn with bogus key, assert Error event with auth-related message
+- [x] T011 [US3] Add live_invalid_key_returns_auth_error test in adapters/tests/xai_live.rs: create XAiStreamFn with bogus key, assert Error event with auth-related message
 
 **Checkpoint**: Auth error test passes confirming correct endpoint targeting and error classification
 
@@ -80,7 +80,7 @@
 
 ### Implementation for User Story 4
 
-- [ ] T012 [US4] Verify error classification is handled by existing shared infra in adapters/src/classify.rs — no xAI-specific error handling code needed (covered by T011 auth error test and shared classifier unit tests)
+- [x] T012 [US4] Verify error classification is handled by existing shared infra in adapters/src/classify.rs — no xAI-specific error handling code needed (covered by T011 auth error test and shared classifier unit tests)
 
 **Checkpoint**: All error classification verified through existing shared tests + live auth error test
 
@@ -90,11 +90,11 @@
 
 **Purpose**: Build verification, clippy clean, feature-gate isolation
 
-- [ ] T013 Run cargo build --workspace and verify clean compilation
-- [ ] T014 Run cargo test --workspace and verify all tests pass
-- [ ] T015 Run cargo clippy --workspace -- -D warnings and verify zero warnings
-- [ ] T016 Run cargo test -p swink-agent-adapters --no-default-features --features xai and verify xai feature compiles and runs in isolation
-- [ ] T017 Update adapters/CLAUDE.md to change xai status from "Stub" to "Implemented" in the feature gates table
+- [x] T013 Run cargo build --workspace and verify clean compilation
+- [x] T014 Run cargo test --workspace and verify all tests pass
+- [x] T015 Run cargo clippy --workspace -- -D warnings and verify zero warnings
+- [x] T016 Run cargo test -p swink-agent-adapters --no-default-features --features xai and verify xai feature compiles and runs in isolation
+- [x] T017 Update adapters/CLAUDE.md to change xai status from "Stub" to "Implemented" in the feature gates table
 
 ---
 
