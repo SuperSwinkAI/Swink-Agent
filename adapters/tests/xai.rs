@@ -36,7 +36,7 @@ async fn xai_wrapper_streams_chat_completions() {
     let stream_fn = XAiStreamFn::new(server.uri(), "test-key");
     let events = stream_fn
         .stream(
-            &ModelSpec::new("xai", "grok-3"),
+            &ModelSpec::new("xai", "grok-4-1-fast-non-reasoning"),
             &AgentContext {
                 system_prompt: String::new(),
                 messages: Vec::new(),

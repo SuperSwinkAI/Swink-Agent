@@ -269,30 +269,69 @@ base_url_env_var = "XAI_BASE_URL"
 default_base_url = "https://api.x.ai"
 
 [[providers.presets]]
-id = "grok_3"
-display_name = "xAI Grok 3"
+id = "grok_4_20_reasoning"
+display_name = "xAI Grok 4.20 Reasoning"
 group = "grok"
-model_id = "grok-3"
+model_id = "grok-4.20-0309-reasoning"
 api_version = "v1"
-capabilities = ["text", "tools", "images_in", "streaming"]
+capabilities = ["text", "tools", "images_in", "streaming", "structured_output"]
 status = "ga"
-context_window_tokens = 131072
+context_window_tokens = 2000000
 max_output_tokens = 16384
-cost_per_million_input = 3.0
-cost_per_million_output = 15.0
+cost_per_million_input = 2.0
+cost_per_million_output = 6.0
 
 [[providers.presets]]
-id = "grok_3_fast"
-display_name = "xAI Grok 3 Fast"
+id = "grok_4_20_non_reasoning"
+display_name = "xAI Grok 4.20 Non-Reasoning"
 group = "grok"
-model_id = "grok-3-fast"
+model_id = "grok-4.20-0309-non-reasoning"
 api_version = "v1"
-capabilities = ["text", "tools", "images_in", "streaming"]
+capabilities = ["text", "tools", "images_in", "streaming", "structured_output"]
 status = "ga"
-context_window_tokens = 131072
+context_window_tokens = 2000000
 max_output_tokens = 16384
-cost_per_million_input = 5.0
-cost_per_million_output = 25.0
+cost_per_million_input = 2.0
+cost_per_million_output = 6.0
+
+[[providers.presets]]
+id = "grok_4_1_fast_reasoning"
+display_name = "xAI Grok 4.1 Fast Reasoning"
+group = "grok"
+model_id = "grok-4-1-fast-reasoning"
+api_version = "v1"
+capabilities = ["text", "tools", "images_in", "streaming", "structured_output"]
+status = "ga"
+context_window_tokens = 2000000
+max_output_tokens = 16384
+cost_per_million_input = 0.2
+cost_per_million_output = 0.5
+
+[[providers.presets]]
+id = "grok_4_1_fast_non_reasoning"
+display_name = "xAI Grok 4.1 Fast Non-Reasoning"
+group = "grok"
+model_id = "grok-4-1-fast-non-reasoning"
+api_version = "v1"
+capabilities = ["text", "tools", "images_in", "streaming", "structured_output"]
+status = "ga"
+context_window_tokens = 2000000
+max_output_tokens = 16384
+cost_per_million_input = 0.2
+cost_per_million_output = 0.5
+
+[[providers.presets]]
+id = "grok_4_20_multi_agent"
+display_name = "xAI Grok 4.20 Multi-Agent"
+group = "grok"
+model_id = "grok-4.20-multi-agent-0309"
+api_version = "v1"
+capabilities = ["text", "tools", "images_in", "streaming", "structured_output"]
+status = "ga"
+context_window_tokens = 2000000
+max_output_tokens = 16384
+cost_per_million_input = 2.0
+cost_per_million_output = 6.0
 
 [[providers]]
 key = "mistral"
