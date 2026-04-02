@@ -23,7 +23,7 @@ jobs:
       - run: cargo fmt --check
 
       - name: Spell check
-        uses: crate-ci/typos-action@v1
+        uses: crate-ci/typos@v1
 
       - run: cargo clippy --workspace -- -D warnings
 
@@ -79,7 +79,10 @@ jobs:
 
       - run: cargo binstall --no-confirm cargo-semver-checks
 
-      - run: cargo semver-checks --workspace
+      - name: Fetch main branch for baseline
+        run: git fetch origin main
+
+      - run: cargo semver-checks --workspace --baseline-rev origin/main
 
   msrv:
     runs-on: ubuntu-latest

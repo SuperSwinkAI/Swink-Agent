@@ -26,7 +26,7 @@ proxy = []
 azure = []
 bedrock = ["dep:sha2", "dep:hmac", "dep:chrono"]
 mistral = []
-xai = []
+xai = ["openai"]
 
 [dependencies]
 swink-agent = { path = ".." }
