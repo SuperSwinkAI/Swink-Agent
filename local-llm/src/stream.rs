@@ -16,7 +16,8 @@ use tracing::{debug, error};
 use swink_agent::stream::{AssistantMessageEvent, StreamFn, StreamOptions};
 use swink_agent::types::{AgentContext, Cost, ModelSpec, StopReason, Usage};
 
-use crate::model::{InternalModelState, LocalModel};
+use crate::loader::LoaderState;
+use crate::model::LocalModel;
 
 // ─── LocalStreamFn ──────────────────────────────────────────────────────────
 
@@ -116,7 +117,7 @@ fn local_stream<'a>(
             }
         };
 
-        let InternalModelState::Ready { runner } = &*state_guard else {
+        let LoaderState::Ready { runner } = &*state_guard else {
             return stream::iter(vec![AssistantMessageEvent::error(
                 "model in unexpected state",
             )])

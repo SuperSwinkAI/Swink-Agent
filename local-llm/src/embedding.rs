@@ -1,31 +1,18 @@
 //! Local embedding model for text vectorization.
 //!
-//! [`EmbeddingModel`] wraps a mistral.rs embedding model behind `Arc` for
-//! cheap cloning and concurrent access. Lazily downloaded from `HuggingFace`
-//! on first use, same pattern as [`LocalModel`](crate::model::LocalModel).
-//!
-//! # Structural similarity with `model.rs`
-//!
-//! This module intentionally mirrors the `Arc<Inner>` + state-machine pattern
-//! used in [`crate::model`]. Both modules manage a lazily-loaded mistral.rs
-//! model behind `Arc` with `RwLock`-guarded state, `Notify`-based readiness
-//! signalling, and progress callbacks. They diverge in their public APIs
-//! (`embed()`/`embed_batch()` here vs `runner()` + streaming chat completion
-//! in model) and in their underlying runner types (`EmbeddingModelBuilder`
-//! for vectorization vs `GgufModelBuilder` for chat).
+//! `EmbeddingModel` is a thin typed wrapper over the shared lazy-loader,
+//! providing the embedding-specific build logic (via
+//! `mistralrs::EmbeddingModelBuilder`) as a `LoaderBackend` implementation.
 
-use std::sync::Arc;
+use std::future::Future;
+use std::pin::Pin;
 
-use tokio::sync::{Notify, RwLock};
-use tracing::{debug, error, info};
+use tracing::{debug, error};
 
 use crate::error::LocalModelError;
-use crate::lifecycle::{
-    LoadStateCheck, attach_progress_callback, classify_load_state, emit_progress,
-    set_failed_and_notify, wait_until_ready,
-};
+use crate::loader::{LazyLoader, LoaderBackend, LoaderState};
 use crate::preset::ModelPreset;
-use crate::progress::{ProgressCallbackFn, ProgressEvent};
+use crate::progress::ProgressCallbackFn;
 
 // ─── EmbeddingConfig ────────────────────────────────────────────────────────
 
@@ -56,26 +43,47 @@ impl Default for EmbeddingConfig {
     }
 }
 
-// ─── EmbeddingModelState ────────────────────────────────────────────────────
+// ─── EmbeddingBackend ──────────────────────────────────────────────────────────
 
-/// Internal state machine for embedding model lifecycle.
-enum EmbeddingModelState {
-    Unloaded,
-    Downloading,
-    Loading,
-    Ready { runner: mistralrs::Model },
-    Failed { error: String },
-}
+/// [`LoaderBackend`] for embedding models: downloads and builds via
+/// `EmbeddingModelBuilder` (which handles its own download internally).
+pub(crate) struct EmbeddingBackend;
 
-impl std::fmt::Debug for EmbeddingModelState {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Unloaded => write!(f, "Unloaded"),
-            Self::Downloading => write!(f, "Downloading"),
-            Self::Loading => write!(f, "Loading"),
-            Self::Ready { .. } => write!(f, "Ready"),
-            Self::Failed { error } => write!(f, "Failed({error})"),
-        }
+impl LoaderBackend for EmbeddingBackend {
+    type Config = EmbeddingConfig;
+    /// Embedding builder handles its own download, so no intermediate artifact.
+    type Artifact = ();
+
+    fn download(
+        config: &EmbeddingConfig,
+        _progress_cb: Option<ProgressCallbackFn>,
+    ) -> Pin<Box<dyn Future<Output = Result<Self::Artifact, LocalModelError>> + Send + '_>> {
+        Box::pin(async move {
+            tracing::info!(repo = %config.repo_id, "downloading embedding model");
+            // EmbeddingModelBuilder handles its own download — nothing to do here.
+            Ok(())
+        })
+    }
+
+    fn build(
+        config: &EmbeddingConfig,
+        _artifact: Self::Artifact,
+        _progress_cb: Option<ProgressCallbackFn>,
+    ) -> Pin<Box<dyn Future<Output = Result<mistralrs::Model, LocalModelError>> + Send + '_>> {
+        Box::pin(async move {
+            mistralrs::EmbeddingModelBuilder::new(config.repo_id.clone())
+                .build()
+                .await
+                .map_err(|e| {
+                    let msg = format!("embedding model loading failed: {e}");
+                    error!(%msg);
+                    LocalModelError::loading_message(msg)
+                })
+        })
+    }
+
+    fn label() -> &'static str {
+        "embedding model"
     }
 }
 
@@ -83,24 +91,17 @@ impl std::fmt::Debug for EmbeddingModelState {
 
 /// A lazily-loaded local embedding model for text vectorization.
 ///
-/// Wraps `Arc<EmbeddingModelInner>` for cheap cloning — multiple tasks can
+/// Wraps a shared lazy-loader for cheap cloning — multiple tasks can
 /// share the same loaded model concurrently.
 #[derive(Clone)]
 pub struct EmbeddingModel {
-    inner: Arc<EmbeddingModelInner>,
-}
-
-struct EmbeddingModelInner {
-    state: RwLock<EmbeddingModelState>,
-    ready_notify: Notify,
-    config: EmbeddingConfig,
-    progress_cb: Option<ProgressCallbackFn>,
+    loader: LazyLoader<EmbeddingBackend>,
 }
 
 impl std::fmt::Debug for EmbeddingModel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("EmbeddingModel")
-            .field("config", &self.inner.config)
+            .field("config", &self.loader.config())
             .finish_non_exhaustive()
     }
 }
@@ -110,18 +111,11 @@ impl EmbeddingModel {
     #[must_use]
     pub fn new(config: EmbeddingConfig) -> Self {
         Self {
-            inner: Arc::new(EmbeddingModelInner {
-                state: RwLock::new(EmbeddingModelState::Unloaded),
-                ready_notify: Notify::new(),
-                config,
-                progress_cb: None,
-            }),
+            loader: LazyLoader::new(config),
         }
     }
 
     /// Create an `EmbeddingModel` from a [`ModelPreset`].
-    ///
-    /// Equivalent to `EmbeddingModel::new(preset.embedding_config())`.
     #[must_use]
     pub fn from_preset(preset: ModelPreset) -> Self {
         Self::new(preset.embedding_config())
@@ -132,136 +126,28 @@ impl EmbeddingModel {
     /// # Errors
     ///
     /// Returns `Err` if this instance has already been cloned (the internal `Arc` is
-    /// shared). **Must be called before cloning the model** — i.e., before passing it
-    /// to a second thread or storing it in shared state.
+    /// shared). **Must be called before cloning the model**.
     pub fn with_progress(mut self, cb: ProgressCallbackFn) -> Result<Self, LocalModelError> {
-        attach_progress_callback(&mut self.inner, cb, |inner, cb| {
-            inner.progress_cb = Some(cb);
-        })?;
+        self.loader = self.loader.with_progress(cb)?;
         Ok(self)
     }
 
     /// Returns `true` if the model is loaded and ready.
     pub async fn is_ready(&self) -> bool {
-        matches!(
-            *self.inner.state.read().await,
-            EmbeddingModelState::Ready { .. }
-        )
+        self.loader.is_ready().await
     }
 
     /// Idempotent: download → load → ready.
     pub async fn ensure_ready(&self) -> Result<(), LocalModelError> {
-        // Fast path.
-        {
-            let state = self.inner.state.read().await;
-            match classify_load_state(
-                &*state,
-                |state| matches!(state, EmbeddingModelState::Ready { .. }),
-                |state| match state {
-                    EmbeddingModelState::Failed { error } => Some(error.clone()),
-                    _ => None,
-                },
-                |state| {
-                    matches!(
-                        state,
-                        EmbeddingModelState::Downloading | EmbeddingModelState::Loading
-                    )
-                },
-            ) {
-                LoadStateCheck::Ready => return Ok(()),
-                LoadStateCheck::Failed(error) => {
-                    return Err(LocalModelError::loading_message(error));
-                }
-                LoadStateCheck::Waiting => {
-                    drop(state);
-                    self.wait_until_ready().await;
-                    return Ok(());
-                }
-                LoadStateCheck::Unloaded => {}
-            }
-        }
-
-        // Slow path: acquire write lock.
-        let mut state = self.inner.state.write().await;
-
-        // Double-check.
-        match classify_load_state(
-            &*state,
-            |state| matches!(state, EmbeddingModelState::Ready { .. }),
-            |state| match state {
-                EmbeddingModelState::Failed { error } => Some(error.clone()),
-                _ => None,
-            },
-            |state| {
-                matches!(
-                    state,
-                    EmbeddingModelState::Downloading | EmbeddingModelState::Loading
-                )
-            },
-        ) {
-            LoadStateCheck::Ready => return Ok(()),
-            LoadStateCheck::Failed(error) => {
-                return Err(LocalModelError::loading_message(error));
-            }
-            LoadStateCheck::Waiting => {
-                drop(state);
-                self.wait_until_ready().await;
-                return Ok(());
-            }
-            LoadStateCheck::Unloaded => {}
-        }
-
-        *state = EmbeddingModelState::Downloading;
-        self.notify_progress(ProgressEvent::DownloadProgress {
-            bytes_downloaded: 0,
-            total_bytes: None,
-        });
-
-        info!(
-            repo = %self.inner.config.repo_id,
-            "downloading embedding model"
-        );
-
-        self.notify_progress(ProgressEvent::DownloadComplete);
-
-        // Build the embedding model via mistral.rs.
-        *state = EmbeddingModelState::Loading;
-        self.notify_progress(ProgressEvent::LoadingProgress {
-            message: "loading embedding model".to_string(),
-        });
-
-        let runner = mistralrs::EmbeddingModelBuilder::new(self.inner.config.repo_id.clone())
-            .build()
-            .await
-            .map_err(|e| {
-                let msg = format!("embedding model loading failed: {e}");
-                error!(%msg);
-                set_failed_and_notify(
-                    &mut *state,
-                    &self.inner.ready_notify,
-                    msg,
-                    |state, error| *state = EmbeddingModelState::Failed { error },
-                )
-            })?;
-
-        info!("embedding model ready");
-        *state = EmbeddingModelState::Ready { runner };
-        drop(state);
-        self.notify_progress(ProgressEvent::LoadingComplete);
-        self.inner.ready_notify.notify_waiters();
-
-        Ok(())
+        self.loader.ensure_ready().await
     }
 
     /// Embed a single text, returning a fixed-dimensional vector.
-    ///
-    /// Returns `Err(LocalModelError::Embedding)` if the input exceeds the
-    /// model's maximum input length.
     pub async fn embed(&self, text: &str) -> Result<Vec<f32>, LocalModelError> {
         self.ensure_ready().await?;
 
-        let state = self.inner.state.read().await;
-        let EmbeddingModelState::Ready { runner } = &*state else {
+        let state = self.loader.runner().await?;
+        let LoaderState::Ready { runner } = &*state else {
             return Err(LocalModelError::NotReady);
         };
 
@@ -274,13 +160,11 @@ impl EmbeddingModel {
     }
 
     /// Embed a batch of texts, returning one vector per input.
-    ///
-    /// Fails on first invalid input (e.g. text exceeding max length).
     pub async fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, LocalModelError> {
         self.ensure_ready().await?;
 
-        let state = self.inner.state.read().await;
-        let EmbeddingModelState::Ready { runner } = &*state else {
+        let state = self.loader.runner().await?;
+        let LoaderState::Ready { runner } = &*state else {
             return Err(LocalModelError::NotReady);
         };
 
@@ -302,23 +186,12 @@ impl EmbeddingModel {
 
     /// Drop the loaded model, returning to `Unloaded` state.
     pub async fn unload(&self) {
-        let mut state = self.inner.state.write().await;
-        *state = EmbeddingModelState::Unloaded;
-        drop(state);
-        info!("embedding model unloaded");
+        self.loader.unload().await;
     }
 
     /// Access the configuration.
     pub fn config(&self) -> &EmbeddingConfig {
-        &self.inner.config
-    }
-
-    async fn wait_until_ready(&self) {
-        wait_until_ready(&self.inner.ready_notify, || self.is_ready()).await;
-    }
-
-    fn notify_progress(&self, progress: ProgressEvent) {
-        emit_progress(self.inner.progress_cb.as_ref(), progress);
+        self.loader.config()
     }
 }
 
@@ -332,6 +205,8 @@ const _: () = {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
 
     #[test]
