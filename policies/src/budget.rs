@@ -102,7 +102,11 @@ mod tests {
     use super::*;
     use swink_agent::{Cost, Usage};
 
-    fn make_ctx<'a>(usage: &'a Usage, cost: &'a Cost, state: &'a swink_agent::SessionState) -> PolicyContext<'a> {
+    fn make_ctx<'a>(
+        usage: &'a Usage,
+        cost: &'a Cost,
+        state: &'a swink_agent::SessionState,
+    ) -> PolicyContext<'a> {
         PolicyContext {
             turn_index: 0,
             accumulated_usage: usage,
@@ -122,8 +126,15 @@ mod tests {
     #[test]
     fn no_limits_returns_continue() {
         let policy = BudgetPolicy::new();
-        let usage = Usage { input: 1000, output: 500, ..Default::default() };
-        let cost = Cost { total: 10.0, ..Default::default() };
+        let usage = Usage {
+            input: 1000,
+            output: 500,
+            ..Default::default()
+        };
+        let cost = Cost {
+            total: 10.0,
+            ..Default::default()
+        };
         let state = swink_agent::SessionState::new();
         let ctx = make_ctx(&usage, &cost, &state);
         assert!(matches!(policy.evaluate(&ctx), PolicyVerdict::Continue));
@@ -133,7 +144,10 @@ mod tests {
     fn cost_exceeded_returns_stop() {
         let policy = BudgetPolicy::new().max_cost(1.0);
         let usage = Usage::default();
-        let cost = Cost { total: 1.5, ..Default::default() };
+        let cost = Cost {
+            total: 1.5,
+            ..Default::default()
+        };
         let state = swink_agent::SessionState::new();
         let ctx = make_ctx(&usage, &cost, &state);
         assert!(matches!(policy.evaluate(&ctx), PolicyVerdict::Stop(_)));
@@ -143,7 +157,10 @@ mod tests {
     fn cost_not_exceeded_returns_continue() {
         let policy = BudgetPolicy::new().max_cost(5.0);
         let usage = Usage::default();
-        let cost = Cost { total: 4.99, ..Default::default() };
+        let cost = Cost {
+            total: 4.99,
+            ..Default::default()
+        };
         let state = swink_agent::SessionState::new();
         let ctx = make_ctx(&usage, &cost, &state);
         assert!(matches!(policy.evaluate(&ctx), PolicyVerdict::Continue));
@@ -152,7 +169,10 @@ mod tests {
     #[test]
     fn token_exceeded_returns_stop() {
         let policy = BudgetPolicy::new().max_input(100);
-        let usage = Usage { input: 150, ..Default::default() };
+        let usage = Usage {
+            input: 150,
+            ..Default::default()
+        };
         let cost = Cost::default();
         let state = swink_agent::SessionState::new();
         let ctx = make_ctx(&usage, &cost, &state);
@@ -163,7 +183,10 @@ mod tests {
     fn boundary_value_at_limit() {
         let policy = BudgetPolicy::new().max_cost(1.0);
         let usage = Usage::default();
-        let cost = Cost { total: 1.0, ..Default::default() };
+        let cost = Cost {
+            total: 1.0,
+            ..Default::default()
+        };
         let state = swink_agent::SessionState::new();
         let ctx = make_ctx(&usage, &cost, &state);
         // At exactly the limit, should stop (>= comparison)

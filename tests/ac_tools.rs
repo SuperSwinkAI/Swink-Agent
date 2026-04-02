@@ -192,11 +192,7 @@ async fn tool_execution_with_valid_args() {
     // Verify tool result content appears in messages
     let tool_result_content = result.messages.iter().find_map(|msg| {
         if let AgentMessage::Llm(LlmMessage::ToolResult(tr)) = msg {
-            if tr.is_error {
-                None
-            } else {
-                Some(&tr.content)
-            }
+            if tr.is_error { None } else { Some(&tr.content) }
         } else {
             None
         }

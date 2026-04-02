@@ -8,9 +8,7 @@ use chrono::Utc;
 use serde::Serialize;
 use unicode_truncate::UnicodeTruncateStr;
 
-use swink_agent::{
-    ContentBlock, PolicyContext, PolicyVerdict, PostTurnPolicy, TurnPolicyContext,
-};
+use swink_agent::{ContentBlock, PolicyContext, PolicyVerdict, PostTurnPolicy, TurnPolicyContext};
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -98,11 +96,7 @@ impl PostTurnPolicy for AuditLogger {
         "audit-logger"
     }
 
-    fn evaluate(
-        &self,
-        ctx: &PolicyContext<'_>,
-        turn: &TurnPolicyContext<'_>,
-    ) -> PolicyVerdict {
+    fn evaluate(&self, ctx: &PolicyContext<'_>, turn: &TurnPolicyContext<'_>) -> PolicyVerdict {
         let full_text = ContentBlock::extract_text(&turn.assistant_message.content);
         let content_summary = truncate_to_chars(&full_text, 200);
 
@@ -163,8 +157,7 @@ impl AuditSink for JsonlAuditSink {
                 .create(true)
                 .append(true)
                 .open(&self.path)?;
-            let json = serde_json::to_string(record)
-                .map_err(std::io::Error::other)?;
+            let json = serde_json::to_string(record).map_err(std::io::Error::other)?;
             writeln!(file, "{json}")?;
             Ok(())
         })();
@@ -236,7 +229,11 @@ mod tests {
         }
     }
 
-    fn make_ctx<'a>(usage: &'a Usage, cost: &'a Cost, state: &'a swink_agent::SessionState) -> PolicyContext<'a> {
+    fn make_ctx<'a>(
+        usage: &'a Usage,
+        cost: &'a Cost,
+        state: &'a swink_agent::SessionState,
+    ) -> PolicyContext<'a> {
         PolicyContext {
             turn_index: 3,
             accumulated_usage: usage,

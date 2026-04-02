@@ -55,8 +55,9 @@ impl PiiRedactor {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            patterns: compile_named_regexes(default_patterns(), |name, regex| {
-                PiiPattern { name, regex }
+            patterns: compile_named_regexes(default_patterns(), |name, regex| PiiPattern {
+                name,
+                regex,
             })
             .expect("default PII pattern must compile"),
             mode: PiiMode::default(),
@@ -111,10 +112,7 @@ const fn default_patterns() -> &'static [(&'static str, &'static str)] {
             r"(\+1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}",
         ),
         ("ssn", r"\d{3}-\d{2}-\d{4}"),
-        (
-            "credit_card",
-            r"\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}",
-        ),
+        ("credit_card", r"\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}"),
         ("ipv4", r"\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}"),
     ]
 }
@@ -125,14 +123,13 @@ impl PostTurnPolicy for PiiRedactor {
         "pii-redactor"
     }
 
-    fn evaluate(
-        &self,
-        _ctx: &PolicyContext<'_>,
-        turn: &TurnPolicyContext<'_>,
-    ) -> PolicyVerdict {
+    fn evaluate(&self, _ctx: &PolicyContext<'_>, turn: &TurnPolicyContext<'_>) -> PolicyVerdict {
         let text = ContentBlock::extract_text(&turn.assistant_message.content);
 
-        let first_match = self.patterns.iter().find(|pattern| pattern.regex.is_match(&text));
+        let first_match = self
+            .patterns
+            .iter()
+            .find(|pattern| pattern.regex.is_match(&text));
         let Some(first_match) = first_match else {
             return PolicyVerdict::Continue;
         };
@@ -150,9 +147,7 @@ impl PostTurnPolicy for PiiRedactor {
 
                 let orig = &turn.assistant_message;
                 let msg = AssistantMessage {
-                    content: vec![ContentBlock::Text {
-                        text: redacted,
-                    }],
+                    content: vec![ContentBlock::Text { text: redacted }],
                     provider: orig.provider.clone(),
                     model_id: orig.model_id.clone(),
                     usage: orig.usage.clone(),
@@ -180,9 +175,7 @@ mod tests {
 
     fn make_turn_ctx(text: &str) -> (AssistantMessage, Vec<ToolResultMessage>) {
         let msg = AssistantMessage {
-            content: vec![ContentBlock::Text {
-                text: text.into(),
-            }],
+            content: vec![ContentBlock::Text { text: text.into() }],
             provider: "test".into(),
             model_id: "test-model".into(),
             usage: Usage::default(),
@@ -273,8 +266,7 @@ mod tests {
     #[test]
     fn redacts_multiple_pii_types() {
         let policy = PiiRedactor::new();
-        let verdict =
-            evaluate_text(&policy, "Email alice@test.org and call 555-123-4567 please");
+        let verdict = evaluate_text(&policy, "Email alice@test.org and call 555-123-4567 please");
         assert_redacted(verdict, "Email [REDACTED] and call [REDACTED] please");
     }
 
@@ -287,10 +279,7 @@ mod tests {
             &policy,
             "user@mail.com called from 555-111-2222 and 555-333-4444",
         );
-        assert_redacted(
-            verdict,
-            "[REDACTED] called from [REDACTED] and [REDACTED]",
-        );
+        assert_redacted(verdict, "[REDACTED] called from [REDACTED] and [REDACTED]");
     }
 
     #[test]

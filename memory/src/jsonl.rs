@@ -69,7 +69,10 @@ impl SessionRecord {
         let value: serde_json::Value = serde_json::from_str(line).map_err(io::Error::other)?;
         if value.get("_state").and_then(serde_json::Value::as_bool) == Some(true) {
             return Ok(Self::State(
-                value.get("data").cloned().unwrap_or(serde_json::Value::Null),
+                value
+                    .get("data")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null),
             ));
         }
         if value.get("_custom").and_then(serde_json::Value::as_bool) == Some(true) {
@@ -221,8 +224,8 @@ fn parse_message_record(
 ) -> Option<AgentMessage> {
     match SessionRecord::parse(line) {
         Ok(SessionRecord::Llm(message)) => Some(AgentMessage::Llm(*message)),
-        Ok(SessionRecord::Custom(envelope)) => registry.and_then(|reg| {
-            match deserialize_custom_message(reg, &envelope) {
+        Ok(SessionRecord::Custom(envelope)) => {
+            registry.and_then(|reg| match deserialize_custom_message(reg, &envelope) {
                 Ok(custom) => Some(AgentMessage::Custom(custom)),
                 Err(error) => {
                     tracing::warn!(
@@ -232,8 +235,8 @@ fn parse_message_record(
                     );
                     None
                 }
-            }
-        }),
+            })
+        }
         Ok(SessionRecord::State(_)) => None,
         Err(error) => {
             tracing::warn!(
@@ -363,9 +366,9 @@ impl SessionStore for JsonlSessionStore {
             .into_iter()
             .enumerate()
             .filter_map(|(line_num, line)| {
-                (!line.trim().is_empty()).then_some(line).and_then(|line| {
-                    parse_llm_message(&line, line_num + 2, id)
-                })
+                (!line.trim().is_empty())
+                    .then_some(line)
+                    .and_then(|line| parse_llm_message(&line, line_num + 2, id))
             })
             .collect();
 
@@ -411,12 +414,7 @@ impl SessionStore for JsonlSessionStore {
         std::fs::remove_file(path)
     }
 
-    fn save_full(
-        &self,
-        id: &str,
-        meta: &SessionMeta,
-        messages: &[AgentMessage],
-    ) -> io::Result<()> {
+    fn save_full(&self, id: &str, meta: &SessionMeta, messages: &[AgentMessage]) -> io::Result<()> {
         validate_session_id(id)?;
 
         let path = session_path(&self.sessions_dir, id);
@@ -624,8 +622,7 @@ mod tests {
             }),
         );
 
-        let (loaded_meta, loaded_messages) =
-            store.load_full("test-full", Some(&registry)).unwrap();
+        let (loaded_meta, loaded_messages) = store.load_full("test-full", Some(&registry)).unwrap();
         assert_eq!(loaded_meta.id, "test-full");
         assert_eq!(loaded_messages.len(), 3);
         assert!(matches!(
@@ -639,9 +636,7 @@ mod tests {
         ));
 
         // Verify custom message content via downcast
-        let custom = loaded_messages[1]
-            .downcast_ref::<TestCustomMsg>()
-            .unwrap();
+        let custom = loaded_messages[1].downcast_ref::<TestCustomMsg>().unwrap();
         assert_eq!(custom.data, "custom-payload");
 
         // Load without registry — custom messages skipped

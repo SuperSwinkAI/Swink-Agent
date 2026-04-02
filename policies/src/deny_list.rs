@@ -40,10 +40,7 @@ impl PreDispatchPolicy for ToolDenyListPolicy {
         tool: &mut ToolPolicyContext<'_>,
     ) -> PreDispatchVerdict {
         if self.denied.contains(tool.tool_name) {
-            PreDispatchVerdict::Skip(format!(
-                "tool '{}' is denied by policy",
-                tool.tool_name
-            ))
+            PreDispatchVerdict::Skip(format!("tool '{}' is denied by policy", tool.tool_name))
         } else {
             PreDispatchVerdict::Continue
         }
@@ -55,7 +52,11 @@ mod tests {
     use super::*;
     use swink_agent::{Cost, Usage};
 
-    fn make_ctx<'a>(usage: &'a Usage, cost: &'a Cost, state: &'a swink_agent::SessionState) -> PolicyContext<'a> {
+    fn make_ctx<'a>(
+        usage: &'a Usage,
+        cost: &'a Cost,
+        state: &'a swink_agent::SessionState,
+    ) -> PolicyContext<'a> {
         PolicyContext {
             turn_index: 0,
             accumulated_usage: usage,

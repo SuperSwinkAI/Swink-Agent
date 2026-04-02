@@ -298,10 +298,7 @@ impl<'de> Deserialize<'de> for AgentMessage {
             "custom" => Err(serde::de::Error::custom(
                 "cannot deserialize AgentMessage::Custom (requires runtime type info)",
             )),
-            other => Err(serde::de::Error::unknown_variant(
-                other,
-                &["llm", "custom"],
-            )),
+            other => Err(serde::de::Error::unknown_variant(other, &["llm", "custom"])),
         }
     }
 }

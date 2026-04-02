@@ -91,10 +91,7 @@ async fn main() {
 
     // ── Run the agent with follow-ups to demonstrate turn limiting ──
 
-    let result = agent
-        .prompt_text("Hello!")
-        .await
-        .expect("prompt failed");
+    let result = agent.prompt_text("Hello!").await.expect("prompt failed");
     println!("Turn 1: {}", result.assistant_text());
 
     let result = agent.continue_async().await.expect("continue failed");

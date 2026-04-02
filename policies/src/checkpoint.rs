@@ -62,11 +62,7 @@ impl PostTurnPolicy for CheckpointPolicy {
         "checkpoint"
     }
 
-    fn evaluate(
-        &self,
-        ctx: &PolicyContext<'_>,
-        _turn: &TurnPolicyContext<'_>,
-    ) -> PolicyVerdict {
+    fn evaluate(&self, ctx: &PolicyContext<'_>, _turn: &TurnPolicyContext<'_>) -> PolicyVerdict {
         let checkpoint = Checkpoint::new(
             format!("turn-{}", ctx.turn_index),
             String::new(), // system_prompt not available in PolicyContext
@@ -128,9 +124,7 @@ mod tests {
         }
 
         fn list_checkpoints(&self) -> CheckpointFuture<'_, Vec<String>> {
-            Box::pin(async move {
-                Ok(self.data.lock().unwrap().keys().cloned().collect())
-            })
+            Box::pin(async move { Ok(self.data.lock().unwrap().keys().cloned().collect()) })
         }
 
         fn delete_checkpoint(&self, id: &str) -> CheckpointFuture<'_, ()> {

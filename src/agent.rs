@@ -31,6 +31,7 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 
+use crate::agent_id::AgentId;
 use crate::agent_options::{
     ApproveToolArc, AsyncTransformContextArc, CheckpointStoreArc, ConvertToLlmFn, GetApiKeyArc,
     TransformContextArc,
@@ -38,7 +39,6 @@ use crate::agent_options::{
 use crate::agent_subscriptions::ListenerRegistry;
 use crate::error::AgentError;
 use crate::message_provider::MessageProvider;
-use crate::agent_id::AgentId;
 use crate::retry::RetryStrategy;
 use crate::stream::{StreamFn, StreamOptions};
 use crate::tool::{AgentTool, ApprovalMode};
@@ -292,7 +292,6 @@ impl Agent {
     pub const fn session_state(&self) -> &Arc<std::sync::RwLock<crate::SessionState>> {
         &self.session_state
     }
-
 }
 
 impl std::fmt::Debug for Agent {

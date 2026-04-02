@@ -5,9 +5,7 @@ mod common;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-use swink_agent::{
-    Agent, AgentEvent, AgentOptions, SlidingWindowTransformer, message_provider,
-};
+use swink_agent::{Agent, AgentEvent, AgentOptions, SlidingWindowTransformer, message_provider};
 
 use common::{default_convert, default_model, text_events, user_msg};
 
@@ -24,9 +22,9 @@ async fn many_turns_with_compaction() {
 
     // Use a very small token budget so compaction fires frequently.
     let transformer = SlidingWindowTransformer::new(
-        200,  // normal_budget — very small to force compaction
-        100,  // overflow_budget
-        1,    // anchor — preserve only the first message
+        200, // normal_budget — very small to force compaction
+        100, // overflow_budget
+        1,   // anchor — preserve only the first message
     );
 
     // Pre-build all follow-up messages.
@@ -64,16 +62,14 @@ async fn many_turns_with_compaction() {
     let turn_start_clone = Arc::clone(&turn_start_count);
     let compacted_clone = Arc::clone(&compacted_count);
 
-    agent.subscribe(move |event: &AgentEvent| {
-        match event {
-            AgentEvent::TurnStart => {
-                turn_start_clone.fetch_add(1, Ordering::SeqCst);
-            }
-            AgentEvent::ContextCompacted { .. } => {
-                compacted_clone.fetch_add(1, Ordering::SeqCst);
-            }
-            _ => {}
+    agent.subscribe(move |event: &AgentEvent| match event {
+        AgentEvent::TurnStart => {
+            turn_start_clone.fetch_add(1, Ordering::SeqCst);
         }
+        AgentEvent::ContextCompacted { .. } => {
+            compacted_clone.fetch_add(1, Ordering::SeqCst);
+        }
+        _ => {}
     });
 
     // Run with initial message and a generous timeout.

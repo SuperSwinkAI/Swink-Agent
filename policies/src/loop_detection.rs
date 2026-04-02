@@ -73,7 +73,10 @@ impl LoopDetectionPolicy {
 
     /// Check if the last `lookback` turns all have the same fingerprint.
     fn is_stuck(&self) -> bool {
-        let history = self.history.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let history = self
+            .history
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if history.len() < self.lookback {
             return false;
         }
@@ -109,14 +112,13 @@ impl PostTurnPolicy for LoopDetectionPolicy {
         "loop_detection"
     }
 
-    fn evaluate(
-        &self,
-        _ctx: &PolicyContext<'_>,
-        turn: &TurnPolicyContext<'_>,
-    ) -> PolicyVerdict {
+    fn evaluate(&self, _ctx: &PolicyContext<'_>, turn: &TurnPolicyContext<'_>) -> PolicyVerdict {
         let fingerprint = Self::extract_fingerprint(turn);
 
-        let mut history = self.history.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut history = self
+            .history
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         history.push_back(fingerprint);
         // Keep only lookback + 1 entries (we need lookback for comparison)
         while history.len() > self.lookback + 1 {
@@ -130,15 +132,13 @@ impl PostTurnPolicy for LoopDetectionPolicy {
                     PolicyVerdict::Stop("loop detected: repeated tool call pattern".to_string())
                 }
                 LoopDetectionAction::Inject(message) => {
-                    let steering_msg = AgentMessage::Llm(
-                        LlmMessage::User(UserMessage {
-                            content: vec![ContentBlock::Text {
-                                text: message.clone(),
-                            }],
-                            timestamp: now_timestamp(),
-                            cache_hint: None,
-                        }),
-                    );
+                    let steering_msg = AgentMessage::Llm(LlmMessage::User(UserMessage {
+                        content: vec![ContentBlock::Text {
+                            text: message.clone(),
+                        }],
+                        timestamp: now_timestamp(),
+                        cache_hint: None,
+                    }));
                     PolicyVerdict::Inject(vec![steering_msg])
                 }
             }
@@ -153,7 +153,11 @@ mod tests {
     use super::*;
     use swink_agent::{AssistantMessage, ContentBlock, Cost, StopReason, Usage};
 
-    fn make_ctx<'a>(usage: &'a Usage, cost: &'a Cost, state: &'a swink_agent::SessionState) -> PolicyContext<'a> {
+    fn make_ctx<'a>(
+        usage: &'a Usage,
+        cost: &'a Cost,
+        state: &'a swink_agent::SessionState,
+    ) -> PolicyContext<'a> {
         PolicyContext {
             turn_index: 0,
             accumulated_usage: usage,
@@ -193,7 +197,9 @@ mod tests {
     fn tool_result(id: &str, text: &str) -> swink_agent::ToolResultMessage {
         swink_agent::ToolResultMessage {
             tool_call_id: id.to_string(),
-            content: vec![ContentBlock::Text { text: text.to_string() }],
+            content: vec![ContentBlock::Text {
+                text: text.to_string(),
+            }],
             is_error: false,
             timestamp: 0,
             details: serde_json::Value::Null,
@@ -212,15 +218,24 @@ mod tests {
 
         let results1 = vec![tool_result("bash_1", "output1")];
         let turn1 = make_turn_ctx(&msg, &results1);
-        assert!(matches!(policy.evaluate(&ctx, &turn1), PolicyVerdict::Continue));
+        assert!(matches!(
+            policy.evaluate(&ctx, &turn1),
+            PolicyVerdict::Continue
+        ));
 
         let results2 = vec![tool_result("bash_2", "output2")];
         let turn2 = make_turn_ctx(&msg, &results2);
-        assert!(matches!(policy.evaluate(&ctx, &turn2), PolicyVerdict::Continue));
+        assert!(matches!(
+            policy.evaluate(&ctx, &turn2),
+            PolicyVerdict::Continue
+        ));
 
         let results3 = vec![tool_result("bash_3", "output3")];
         let turn3 = make_turn_ctx(&msg, &results3);
-        assert!(matches!(policy.evaluate(&ctx, &turn3), PolicyVerdict::Continue));
+        assert!(matches!(
+            policy.evaluate(&ctx, &turn3),
+            PolicyVerdict::Continue
+        ));
     }
 
     #[test]
@@ -249,8 +264,7 @@ mod tests {
 
     #[test]
     fn repeat_with_steering_returns_inject() {
-        let policy = LoopDetectionPolicy::new(2)
-            .with_steering("Try something different");
+        let policy = LoopDetectionPolicy::new(2).with_steering("Try something different");
         let usage = Usage::default();
         let cost = Cost::default();
         let state = swink_agent::SessionState::new();

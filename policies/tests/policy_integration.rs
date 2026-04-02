@@ -5,8 +5,7 @@ mod common;
 use std::sync::Arc;
 
 use swink_agent::{
-    AgentOptions, AssistantMessageEvent, Cost, StopReason, SubAgent, Usage,
-    stream::StreamFn,
+    AgentOptions, AssistantMessageEvent, Cost, StopReason, SubAgent, Usage, stream::StreamFn,
 };
 use swink_agent_policies::{BudgetPolicy, MaxTurnsPolicy};
 

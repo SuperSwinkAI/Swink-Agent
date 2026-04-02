@@ -72,10 +72,24 @@ fn us4_exact_match_pass_and_fail() {
     });
 
     let pass = mock_invocation_with_response(&[], "42");
-    assert_eq!(ResponseMatcher.evaluate(&case, &pass).unwrap().score.verdict(), Verdict::Pass);
+    assert_eq!(
+        ResponseMatcher
+            .evaluate(&case, &pass)
+            .unwrap()
+            .score
+            .verdict(),
+        Verdict::Pass
+    );
 
     let fail = mock_invocation_with_response(&[], "43");
-    assert_eq!(ResponseMatcher.evaluate(&case, &fail).unwrap().score.verdict(), Verdict::Fail);
+    assert_eq!(
+        ResponseMatcher
+            .evaluate(&case, &fail)
+            .unwrap()
+            .score
+            .verdict(),
+        Verdict::Fail
+    );
 }
 
 /// AS-4.2: Contains match pass and fail.
@@ -86,10 +100,24 @@ fn us4_contains_match_pass_and_fail() {
     });
 
     let pass = mock_invocation_with_response(&[], "operation success!");
-    assert_eq!(ResponseMatcher.evaluate(&case, &pass).unwrap().score.verdict(), Verdict::Pass);
+    assert_eq!(
+        ResponseMatcher
+            .evaluate(&case, &pass)
+            .unwrap()
+            .score
+            .verdict(),
+        Verdict::Pass
+    );
 
     let fail = mock_invocation_with_response(&[], "operation failed");
-    assert_eq!(ResponseMatcher.evaluate(&case, &fail).unwrap().score.verdict(), Verdict::Fail);
+    assert_eq!(
+        ResponseMatcher
+            .evaluate(&case, &fail)
+            .unwrap()
+            .score
+            .verdict(),
+        Verdict::Fail
+    );
 }
 
 /// AS-4.3: Regex match pass and fail.
@@ -100,10 +128,24 @@ fn us4_regex_match_pass_and_fail() {
     });
 
     let pass = mock_invocation_with_response(&[], "42 files processed");
-    assert_eq!(ResponseMatcher.evaluate(&case, &pass).unwrap().score.verdict(), Verdict::Pass);
+    assert_eq!(
+        ResponseMatcher
+            .evaluate(&case, &pass)
+            .unwrap()
+            .score
+            .verdict(),
+        Verdict::Pass
+    );
 
     let fail = mock_invocation_with_response(&[], "no files");
-    assert_eq!(ResponseMatcher.evaluate(&case, &fail).unwrap().score.verdict(), Verdict::Fail);
+    assert_eq!(
+        ResponseMatcher
+            .evaluate(&case, &fail)
+            .unwrap()
+            .score
+            .verdict(),
+        Verdict::Fail
+    );
 }
 
 /// AS-4.4: Custom function match pass and fail.
@@ -118,10 +160,24 @@ fn us4_custom_fn_pass_and_fail() {
     })));
 
     let pass = mock_invocation_with_response(&[], "task done");
-    assert_eq!(ResponseMatcher.evaluate(&case, &pass).unwrap().score.verdict(), Verdict::Pass);
+    assert_eq!(
+        ResponseMatcher
+            .evaluate(&case, &pass)
+            .unwrap()
+            .score
+            .verdict(),
+        Verdict::Pass
+    );
 
     let fail = mock_invocation_with_response(&[], "task in progress");
-    assert_eq!(ResponseMatcher.evaluate(&case, &fail).unwrap().score.verdict(), Verdict::Fail);
+    assert_eq!(
+        ResponseMatcher
+            .evaluate(&case, &fail)
+            .unwrap()
+            .score
+            .verdict(),
+        Verdict::Fail
+    );
 }
 
 /// AS-4.5: Custom criterion combining multiple sub-checks.
@@ -138,10 +194,24 @@ fn us4_custom_composite_criterion() {
     })));
 
     let pass = mock_invocation_with_response(&[], "Summary: done. total: 5");
-    assert_eq!(ResponseMatcher.evaluate(&case, &pass).unwrap().score.verdict(), Verdict::Pass);
+    assert_eq!(
+        ResponseMatcher
+            .evaluate(&case, &pass)
+            .unwrap()
+            .score
+            .verdict(),
+        Verdict::Pass
+    );
 
     let fail = mock_invocation_with_response(&[], "Summary: done.");
-    assert_eq!(ResponseMatcher.evaluate(&case, &fail).unwrap().score.verdict(), Verdict::Fail);
+    assert_eq!(
+        ResponseMatcher
+            .evaluate(&case, &fail)
+            .unwrap()
+            .score
+            .verdict(),
+        Verdict::Fail
+    );
 }
 
 /// Edge case: Invalid regex returns `Score::fail` with compilation error.
@@ -154,7 +224,10 @@ fn us4_invalid_regex_fails_with_diagnostic() {
     let result = ResponseMatcher.evaluate(&case, &invocation).unwrap();
     assert_eq!(result.score.verdict(), Verdict::Fail);
     let details = result.details.unwrap();
-    assert!(details.contains("invalid regex"), "expected regex error, got: {details}");
+    assert!(
+        details.contains("invalid regex"),
+        "expected regex error, got: {details}"
+    );
 }
 
 /// Edge case: Custom function panic caught and reported as failure.
@@ -167,8 +240,14 @@ fn us4_custom_fn_panic_caught() {
     let result = ResponseMatcher.evaluate(&case, &invocation).unwrap();
     assert_eq!(result.score.verdict(), Verdict::Fail);
     let details = result.details.unwrap();
-    assert!(details.contains("panicked"), "expected panic in details, got: {details}");
-    assert!(details.contains("oops"), "expected panic message, got: {details}");
+    assert!(
+        details.contains("panicked"),
+        "expected panic in details, got: {details}"
+    );
+    assert!(
+        details.contains("oops"),
+        "expected panic message, got: {details}"
+    );
 }
 
 /// Edge case: `None` `final_response` falls back to empty string.
@@ -179,5 +258,9 @@ fn us4_none_response_falls_back_to_empty() {
     });
     let invocation = mock_invocation(&[], None, 0.0, 0);
     let result = ResponseMatcher.evaluate(&case, &invocation).unwrap();
-    assert_eq!(result.score.verdict(), Verdict::Pass, "empty expected should match None response");
+    assert_eq!(
+        result.score.verdict(),
+        Verdict::Pass,
+        "empty expected should match None response"
+    );
 }

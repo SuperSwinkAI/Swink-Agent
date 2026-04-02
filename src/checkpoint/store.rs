@@ -85,8 +85,8 @@ mod tests {
     #[tokio::test]
     async fn in_memory_checkpoint_store_roundtrip() {
         let store = InMemoryCheckpointStore::new();
-        let checkpoint = Checkpoint::new("cp-store-test", "prompt", "provider", "model", &[])
-            .with_turn_count(2);
+        let checkpoint =
+            Checkpoint::new("cp-store-test", "prompt", "provider", "model", &[]).with_turn_count(2);
 
         store.save_checkpoint(&checkpoint).await.unwrap();
 

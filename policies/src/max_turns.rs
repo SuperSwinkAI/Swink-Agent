@@ -68,7 +68,12 @@ mod tests {
     use super::*;
     use swink_agent::{Cost, Usage};
 
-    fn make_ctx_at_turn<'a>(turn: usize, usage: &'a Usage, cost: &'a Cost, state: &'a swink_agent::SessionState) -> PolicyContext<'a> {
+    fn make_ctx_at_turn<'a>(
+        turn: usize,
+        usage: &'a Usage,
+        cost: &'a Cost,
+        state: &'a swink_agent::SessionState,
+    ) -> PolicyContext<'a> {
         PolicyContext {
             turn_index: turn,
             accumulated_usage: usage,
@@ -87,7 +92,10 @@ mod tests {
         let cost = Cost::default();
         let state = swink_agent::SessionState::new();
         let ctx = make_ctx_at_turn(5, &usage, &cost, &state);
-        assert!(matches!(PreTurnPolicy::evaluate(&policy, &ctx), PolicyVerdict::Stop(_)));
+        assert!(matches!(
+            PreTurnPolicy::evaluate(&policy, &ctx),
+            PolicyVerdict::Stop(_)
+        ));
     }
 
     #[test]
@@ -97,7 +105,10 @@ mod tests {
         let cost = Cost::default();
         let state = swink_agent::SessionState::new();
         let ctx = make_ctx_at_turn(4, &usage, &cost, &state);
-        assert!(matches!(PreTurnPolicy::evaluate(&policy, &ctx), PolicyVerdict::Continue));
+        assert!(matches!(
+            PreTurnPolicy::evaluate(&policy, &ctx),
+            PolicyVerdict::Continue
+        ));
     }
 
     #[test]

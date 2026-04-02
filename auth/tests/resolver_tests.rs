@@ -12,10 +12,13 @@ use swink_agent_auth::{DefaultCredentialResolver, InMemoryCredentialStore};
 // T030: Resolve API key
 #[tokio::test]
 async fn resolve_api_key() {
-    let store: Arc<dyn swink_agent::CredentialStore> = Arc::new(
-        InMemoryCredentialStore::empty()
-            .with_credential("github", Credential::ApiKey { key: "ghp_test".into() }),
-    );
+    let store: Arc<dyn swink_agent::CredentialStore> =
+        Arc::new(InMemoryCredentialStore::empty().with_credential(
+            "github",
+            Credential::ApiKey {
+                key: "ghp_test".into(),
+            },
+        ));
     let resolver = DefaultCredentialResolver::new(store);
 
     let result = resolver.resolve("github").await.unwrap();
@@ -44,16 +47,14 @@ async fn resolve_missing_key_returns_not_found() {
 #[tokio::test]
 async fn bearer_future_expiry_resolves() {
     let future_time = Utc::now() + chrono::Duration::hours(1);
-    let store: Arc<dyn swink_agent::CredentialStore> = Arc::new(
-        InMemoryCredentialStore::empty()
-            .with_credential(
-                "api",
-                Credential::Bearer {
-                    token: "tok-valid".into(),
-                    expires_at: Some(future_time),
-                },
-            ),
-    );
+    let store: Arc<dyn swink_agent::CredentialStore> =
+        Arc::new(InMemoryCredentialStore::empty().with_credential(
+            "api",
+            Credential::Bearer {
+                token: "tok-valid".into(),
+                expires_at: Some(future_time),
+            },
+        ));
     let resolver = DefaultCredentialResolver::new(store);
 
     let result = resolver.resolve("api").await.unwrap();
@@ -67,16 +68,14 @@ async fn bearer_future_expiry_resolves() {
 #[tokio::test]
 async fn bearer_past_expiry_returns_expired() {
     let past_time = Utc::now() - chrono::Duration::hours(1);
-    let store: Arc<dyn swink_agent::CredentialStore> = Arc::new(
-        InMemoryCredentialStore::empty()
-            .with_credential(
-                "api",
-                Credential::Bearer {
-                    token: "tok-old".into(),
-                    expires_at: Some(past_time),
-                },
-            ),
-    );
+    let store: Arc<dyn swink_agent::CredentialStore> =
+        Arc::new(InMemoryCredentialStore::empty().with_credential(
+            "api",
+            Credential::Bearer {
+                token: "tok-old".into(),
+                expires_at: Some(past_time),
+            },
+        ));
     let resolver = DefaultCredentialResolver::new(store);
 
     let err = resolver.resolve("api").await.unwrap_err();
@@ -91,16 +90,14 @@ async fn bearer_past_expiry_returns_expired() {
 // T039: Bearer with no expiry resolves (FR-022)
 #[tokio::test]
 async fn bearer_no_expiry_resolves() {
-    let store: Arc<dyn swink_agent::CredentialStore> = Arc::new(
-        InMemoryCredentialStore::empty()
-            .with_credential(
-                "api",
-                Credential::Bearer {
-                    token: "tok-forever".into(),
-                    expires_at: None,
-                },
-            ),
-    );
+    let store: Arc<dyn swink_agent::CredentialStore> =
+        Arc::new(InMemoryCredentialStore::empty().with_credential(
+            "api",
+            Credential::Bearer {
+                token: "tok-forever".into(),
+                expires_at: None,
+            },
+        ));
     let resolver = DefaultCredentialResolver::new(store);
 
     let result = resolver.resolve("api").await.unwrap();
@@ -115,16 +112,14 @@ async fn bearer_no_expiry_resolves() {
 async fn bearer_within_buffer_treated_as_expired() {
     // Default buffer is 60s — token expires in 30s (within buffer)
     let soon = Utc::now() + chrono::Duration::seconds(30);
-    let store: Arc<dyn swink_agent::CredentialStore> = Arc::new(
-        InMemoryCredentialStore::empty()
-            .with_credential(
-                "api",
-                Credential::Bearer {
-                    token: "tok-soon".into(),
-                    expires_at: Some(soon),
-                },
-            ),
-    );
+    let store: Arc<dyn swink_agent::CredentialStore> =
+        Arc::new(InMemoryCredentialStore::empty().with_credential(
+            "api",
+            Credential::Bearer {
+                token: "tok-soon".into(),
+                expires_at: Some(soon),
+            },
+        ));
     let resolver = DefaultCredentialResolver::new(store);
 
     let err = resolver.resolve("api").await.unwrap_err();
@@ -140,18 +135,16 @@ async fn bearer_within_buffer_treated_as_expired() {
 async fn custom_expiry_buffer_respected() {
     // Token expires in 90s, custom buffer is 120s — should be treated as expired
     let time = Utc::now() + chrono::Duration::seconds(90);
-    let store: Arc<dyn swink_agent::CredentialStore> = Arc::new(
-        InMemoryCredentialStore::empty()
-            .with_credential(
-                "api",
-                Credential::Bearer {
-                    token: "tok".into(),
-                    expires_at: Some(time),
-                },
-            ),
-    );
-    let resolver = DefaultCredentialResolver::new(store)
-        .with_expiry_buffer(Duration::from_secs(120));
+    let store: Arc<dyn swink_agent::CredentialStore> =
+        Arc::new(InMemoryCredentialStore::empty().with_credential(
+            "api",
+            Credential::Bearer {
+                token: "tok".into(),
+                expires_at: Some(time),
+            },
+        ));
+    let resolver =
+        DefaultCredentialResolver::new(store).with_expiry_buffer(Duration::from_secs(120));
 
     let err = resolver.resolve("api").await.unwrap_err();
     let err_str = format!("{err}");
@@ -167,21 +160,19 @@ async fn custom_expiry_buffer_respected() {
 #[tokio::test]
 async fn valid_oauth2_resolves() {
     let future_time = Utc::now() + chrono::Duration::hours(1);
-    let store: Arc<dyn swink_agent::CredentialStore> = Arc::new(
-        InMemoryCredentialStore::empty()
-            .with_credential(
-                "oauth",
-                Credential::OAuth2 {
-                    access_token: "access-good".into(),
-                    refresh_token: Some("refresh".into()),
-                    expires_at: Some(future_time),
-                    token_url: "https://auth.example.com/token".into(),
-                    client_id: "client-1".into(),
-                    client_secret: None,
-                    scopes: vec![],
-                },
-            ),
-    );
+    let store: Arc<dyn swink_agent::CredentialStore> =
+        Arc::new(InMemoryCredentialStore::empty().with_credential(
+            "oauth",
+            Credential::OAuth2 {
+                access_token: "access-good".into(),
+                refresh_token: Some("refresh".into()),
+                expires_at: Some(future_time),
+                token_url: "https://auth.example.com/token".into(),
+                client_id: "client-1".into(),
+                client_secret: None,
+                scopes: vec![],
+            },
+        ));
     let resolver = DefaultCredentialResolver::new(store);
 
     let result = resolver.resolve("oauth").await.unwrap();
@@ -195,21 +186,19 @@ async fn valid_oauth2_resolves() {
 #[tokio::test]
 async fn expired_oauth2_no_refresh_returns_expired() {
     let past = Utc::now() - chrono::Duration::hours(1);
-    let store: Arc<dyn swink_agent::CredentialStore> = Arc::new(
-        InMemoryCredentialStore::empty()
-            .with_credential(
-                "oauth",
-                Credential::OAuth2 {
-                    access_token: "old".into(),
-                    refresh_token: None,
-                    expires_at: Some(past),
-                    token_url: "https://auth.example.com/token".into(),
-                    client_id: "client-1".into(),
-                    client_secret: None,
-                    scopes: vec![],
-                },
-            ),
-    );
+    let store: Arc<dyn swink_agent::CredentialStore> =
+        Arc::new(InMemoryCredentialStore::empty().with_credential(
+            "oauth",
+            Credential::OAuth2 {
+                access_token: "old".into(),
+                refresh_token: None,
+                expires_at: Some(past),
+                token_url: "https://auth.example.com/token".into(),
+                client_id: "client-1".into(),
+                client_secret: None,
+                scopes: vec![],
+            },
+        ));
     let resolver = DefaultCredentialResolver::new(store);
 
     let err = resolver.resolve("oauth").await.unwrap_err();
@@ -239,21 +228,19 @@ async fn missing_credential_no_handler_returns_not_found() {
 #[tokio::test]
 async fn pre_provisioned_oauth2_resolves_without_handler() {
     let future_time = Utc::now() + chrono::Duration::hours(1);
-    let store: Arc<dyn swink_agent::CredentialStore> = Arc::new(
-        InMemoryCredentialStore::empty()
-            .with_credential(
-                "service",
-                Credential::OAuth2 {
-                    access_token: "svc-token".into(),
-                    refresh_token: Some("svc-refresh".into()),
-                    expires_at: Some(future_time),
-                    token_url: "https://auth.example.com/token".into(),
-                    client_id: "svc-client".into(),
-                    client_secret: Some("svc-secret".into()),
-                    scopes: vec![],
-                },
-            ),
-    );
+    let store: Arc<dyn swink_agent::CredentialStore> =
+        Arc::new(InMemoryCredentialStore::empty().with_credential(
+            "service",
+            Credential::OAuth2 {
+                access_token: "svc-token".into(),
+                refresh_token: Some("svc-refresh".into()),
+                expires_at: Some(future_time),
+                token_url: "https://auth.example.com/token".into(),
+                client_id: "svc-client".into(),
+                client_secret: Some("svc-secret".into()),
+                scopes: vec![],
+            },
+        ));
     // No authorization handler
     let resolver = DefaultCredentialResolver::new(store);
 
@@ -268,21 +255,19 @@ async fn pre_provisioned_oauth2_resolves_without_handler() {
 #[tokio::test]
 async fn expired_no_refresh_no_handler_returns_expired() {
     let past = Utc::now() - chrono::Duration::hours(1);
-    let store: Arc<dyn swink_agent::CredentialStore> = Arc::new(
-        InMemoryCredentialStore::empty()
-            .with_credential(
-                "service",
-                Credential::OAuth2 {
-                    access_token: "old".into(),
-                    refresh_token: None,
-                    expires_at: Some(past),
-                    token_url: "https://auth.example.com/token".into(),
-                    client_id: "svc".into(),
-                    client_secret: None,
-                    scopes: vec![],
-                },
-            ),
-    );
+    let store: Arc<dyn swink_agent::CredentialStore> =
+        Arc::new(InMemoryCredentialStore::empty().with_credential(
+            "service",
+            Credential::OAuth2 {
+                access_token: "old".into(),
+                refresh_token: None,
+                expires_at: Some(past),
+                token_url: "https://auth.example.com/token".into(),
+                client_id: "svc".into(),
+                client_secret: None,
+                scopes: vec![],
+            },
+        ));
     let resolver = DefaultCredentialResolver::new(store);
 
     let err = resolver.resolve("service").await.unwrap_err();

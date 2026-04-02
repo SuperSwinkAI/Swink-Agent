@@ -162,7 +162,10 @@ impl crate::tool::AgentTool for StructuredOutputTool {
     }
 }
 
-fn extract_structured_output(result: &crate::types::AgentResult, schema: &Value) -> Result<Value, String> {
+fn extract_structured_output(
+    result: &crate::types::AgentResult,
+    schema: &Value,
+) -> Result<Value, String> {
     for msg in &result.messages {
         if let AgentMessage::Llm(LlmMessage::Assistant(assistant)) = msg {
             for block in &assistant.content {

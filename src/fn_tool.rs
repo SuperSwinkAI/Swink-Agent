@@ -35,7 +35,7 @@ use crate::tool::{
 // ─── Type aliases for stored closures ───────────────────────────────────────
 
 type ExecuteFn = Arc<
-        dyn Fn(
+    dyn Fn(
             String,
             Value,
             CancellationToken,
@@ -250,7 +250,14 @@ mod tests {
     async fn default_execute_returns_error() {
         let tool = sample_tool();
         let result = tool
-            .execute("{}", json!({}), CancellationToken::new(), None, std::sync::Arc::new(std::sync::RwLock::new(crate::SessionState::new())), None)
+            .execute(
+                "{}",
+                json!({}),
+                CancellationToken::new(),
+                None,
+                std::sync::Arc::new(std::sync::RwLock::new(crate::SessionState::new())),
+                None,
+            )
             .await;
         assert!(result.is_error);
     }
@@ -313,7 +320,14 @@ mod tests {
             );
 
         let result = tool
-            .execute("call_42", json!({}), CancellationToken::new(), None, std::sync::Arc::new(std::sync::RwLock::new(crate::SessionState::new())), None)
+            .execute(
+                "call_42",
+                json!({}),
+                CancellationToken::new(),
+                None,
+                std::sync::Arc::new(std::sync::RwLock::new(crate::SessionState::new())),
+                None,
+            )
             .await;
         assert!(!result.is_error);
     }

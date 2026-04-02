@@ -12,9 +12,8 @@ pub use crate::{
     ContextVersionMeta, ContextVersionStore, Cost, DefaultTokenCounter, Emission, EventForwarderFn,
     FnTool, InMemoryVersionStore, IntoTool, LlmMessage, LoopCheckpoint, MetricsCollector,
     ModelConnection, ModelConnections, ModelConnectionsBuilder, ModelFallback, ModelSpec,
-    StopReason, StreamErrorKind,
-    StreamFn, StreamMiddleware, StreamOptions, SubAgent, TokenCounter, Usage, UserMessage,
-    VersioningTransformer,
+    StopReason, StreamErrorKind, StreamFn, StreamMiddleware, StreamOptions, SubAgent, TokenCounter,
+    Usage, UserMessage, VersioningTransformer,
 };
 
 #[cfg(feature = "builtin-tools")]

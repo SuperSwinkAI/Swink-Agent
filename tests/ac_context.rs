@@ -194,13 +194,15 @@ async fn context_overflow_triggers_retry() {
     let padding = "x".repeat(400); // 400 chars = ~100 tokens
     let mut messages = Vec::new();
     for i in 0..5 {
-        messages.push(AgentMessage::Llm(LlmMessage::User(swink_agent::UserMessage {
-            content: vec![ContentBlock::Text {
-                text: format!("msg{i}:{padding}"),
-            }],
-            timestamp: 0,
-            cache_hint: None,
-        })));
+        messages.push(AgentMessage::Llm(LlmMessage::User(
+            swink_agent::UserMessage {
+                content: vec![ContentBlock::Text {
+                    text: format!("msg{i}:{padding}"),
+                }],
+                timestamp: 0,
+                cache_hint: None,
+            },
+        )));
     }
 
     let result = agent.prompt_async(messages).await.unwrap();

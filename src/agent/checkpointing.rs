@@ -5,8 +5,8 @@ use crate::checkpoint::{Checkpoint, CheckpointStore};
 use crate::error::AgentError;
 use crate::loop_::AgentEvent;
 
-use super::queueing::llm_messages_from_queue;
 use super::Agent;
+use super::queueing::llm_messages_from_queue;
 
 impl Agent {
     // ── Checkpointing ────────────────────────────────────────────────────
@@ -52,7 +52,9 @@ impl Agent {
     /// full restoration including custom messages.
     pub fn restore_from_checkpoint(&mut self, checkpoint: &Checkpoint) {
         self.state.messages = checkpoint.restore_messages(None);
-        self.state.system_prompt.clone_from(&checkpoint.system_prompt);
+        self.state
+            .system_prompt
+            .clone_from(&checkpoint.system_prompt);
         self.state.model.provider.clone_from(&checkpoint.provider);
         self.state.model.model_id.clone_from(&checkpoint.model_id);
 
@@ -159,7 +161,9 @@ impl Agent {
         checkpoint: &crate::checkpoint::LoopCheckpoint,
     ) -> Result<(), AgentError> {
         self.state.messages = checkpoint.restore_messages(None);
-        self.state.system_prompt.clone_from(&checkpoint.system_prompt);
+        self.state
+            .system_prompt
+            .clone_from(&checkpoint.system_prompt);
         self.state.model.provider.clone_from(&checkpoint.provider);
         self.state.model.model_id.clone_from(&checkpoint.model_id);
 

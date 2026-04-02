@@ -136,7 +136,9 @@ fn make_config(
         metrics_collector: None,
         fallback: None,
         tool_execution_policy: policy,
-        session_state: std::sync::Arc::new(std::sync::RwLock::new(swink_agent::SessionState::new())),
+        session_state: std::sync::Arc::new(
+            std::sync::RwLock::new(swink_agent::SessionState::new()),
+        ),
         credential_resolver: None,
         cache_config: None,
         cache_state: std::sync::Mutex::new(swink_agent::CacheState::default()),

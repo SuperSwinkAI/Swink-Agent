@@ -9,12 +9,14 @@ mod common;
 use std::sync::Arc;
 use std::time::Duration;
 
-use common::{EventCollector, MockTool, default_convert, default_model, text_only_events, user_msg};
+use common::{
+    EventCollector, MockTool, default_convert, default_model, text_only_events, user_msg,
+};
 
+use swink_agent::testing::ScriptedStreamFn;
 use swink_agent::{
     Agent, AgentOptions, AssistantMessageEvent, DefaultRetryStrategy, StreamFn, accumulate_message,
 };
-use swink_agent::testing::ScriptedStreamFn;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 1 — Malformed JSON tool call produces accumulation error
@@ -110,8 +112,7 @@ async fn many_tool_calls_no_dropped_events() {
         calls.push((id.as_str(), "mock_tool", "{}"));
     }
 
-    let tool_response =
-        swink_agent::testing::tool_call_events_multi(&calls);
+    let tool_response = swink_agent::testing::tool_call_events_multi(&calls);
     // After tool execution, the agent will call the LLM again — give it a text reply.
     let final_response = text_only_events("done");
 
@@ -136,19 +137,13 @@ async fn many_tool_calls_no_dropped_events() {
     );
 
     // Verify we got tool execution events for each tool call.
-    let tool_exec_starts = events
-        .iter()
-        .filter(|e| *e == "ToolExecutionStart")
-        .count();
+    let tool_exec_starts = events.iter().filter(|e| *e == "ToolExecutionStart").count();
     assert_eq!(
         tool_exec_starts, num_calls,
         "expected {num_calls} ToolExecutionStart events, got {tool_exec_starts}"
     );
 
-    let tool_exec_ends = events
-        .iter()
-        .filter(|e| *e == "ToolExecutionEnd")
-        .count();
+    let tool_exec_ends = events.iter().filter(|e| *e == "ToolExecutionEnd").count();
     assert_eq!(
         tool_exec_ends, num_calls,
         "expected {num_calls} ToolExecutionEnd events, got {tool_exec_ends}"
@@ -161,9 +156,7 @@ async fn many_tool_calls_no_dropped_events() {
 
 #[tokio::test]
 async fn dropped_subscriber_does_not_panic() {
-    let stream_fn = Arc::new(ScriptedStreamFn::new(vec![text_only_events(
-        "hello world",
-    )]));
+    let stream_fn = Arc::new(ScriptedStreamFn::new(vec![text_only_events("hello world")]));
     let mut agent = make_agent(stream_fn);
 
     // Subscribe then immediately drop the subscription handle.

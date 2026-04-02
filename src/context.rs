@@ -649,7 +649,11 @@ mod tests {
     #[test]
     fn overflow_within_budget_returns_false() {
         let messages = vec![text_message(&"x".repeat(400))]; // 100 tokens
-        assert!(!is_context_overflow(&messages, &model_with_window(1000), None));
+        assert!(!is_context_overflow(
+            &messages,
+            &model_with_window(1000),
+            None
+        ));
     }
 
     #[test]
@@ -658,7 +662,11 @@ mod tests {
             text_message(&"x".repeat(400)), // 100 tokens
             text_message(&"x".repeat(400)), // 100 tokens
         ];
-        assert!(is_context_overflow(&messages, &model_with_window(150), None));
+        assert!(is_context_overflow(
+            &messages,
+            &model_with_window(150),
+            None
+        ));
     }
 
     #[test]
@@ -677,12 +685,20 @@ mod tests {
             Some(&CharCounter)
         ));
         // With default counter: 400/4 = 100 tokens < 300
-        assert!(!is_context_overflow(&messages, &model_with_window(300), None));
+        assert!(!is_context_overflow(
+            &messages,
+            &model_with_window(300),
+            None
+        ));
     }
 
     #[test]
     fn overflow_empty_messages_returns_false() {
         let messages: Vec<AgentMessage> = vec![];
-        assert!(!is_context_overflow(&messages, &model_with_window(100), None));
+        assert!(!is_context_overflow(
+            &messages,
+            &model_with_window(100),
+            None
+        ));
     }
 }

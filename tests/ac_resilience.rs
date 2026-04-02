@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use common::{
-    MockContextCapturingStreamFn, EventCollector, MockStreamFn, MockTool, default_convert,
+    EventCollector, MockContextCapturingStreamFn, MockStreamFn, MockTool, default_convert,
     default_model, error_events, text_only_events, tool_call_events, user_msg,
 };
 use futures::stream::StreamExt;

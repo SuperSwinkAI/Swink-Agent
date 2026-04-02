@@ -14,9 +14,7 @@ use tokio_util::sync::CancellationToken;
 use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-use swink_agent::types::{
-    AssistantMessage, ContentBlock, ToolResultMessage, UserMessage,
-};
+use swink_agent::types::{AssistantMessage, ContentBlock, ToolResultMessage, UserMessage};
 use swink_agent::{
     AgentContext, AgentMessage, AgentTool, AgentToolResult, AssistantMessageEvent, LlmMessage,
     ModelSpec, StopReason, StreamFn, StreamOptions,
@@ -467,9 +465,10 @@ async fn tool_call_id_format_in_request() {
     let context = AgentContext {
         system_prompt: String::new(),
         messages: vec![
-            AgentMessage::Llm(LlmMessage::Assistant(
-                make_assistant_with_tool_call("call_abc123xyz456", "bash"),
-            )),
+            AgentMessage::Llm(LlmMessage::Assistant(make_assistant_with_tool_call(
+                "call_abc123xyz456",
+                "bash",
+            ))),
             AgentMessage::Llm(LlmMessage::ToolResult(make_tool_result(
                 "call_abc123xyz456",
                 "result",
@@ -502,7 +501,10 @@ async fn tool_call_id_format_in_request() {
         .find(|m| m["role"] == "tool")
         .expect("missing tool message");
     let tool_call_id = tool_msg["tool_call_id"].as_str().unwrap();
-    assert_eq!(tool_call_id, tc_id, "tool result ID must match assistant ID");
+    assert_eq!(
+        tool_call_id, tc_id,
+        "tool result ID must match assistant ID"
+    );
 }
 
 #[tokio::test]
@@ -610,9 +612,11 @@ async fn endpoint_url_trailing_slash() {
 
     let sf = MistralStreamFn::new(format!("{}/", server.uri()), "test-key");
     let events = collect_events(&sf).await;
-    assert!(events
-        .iter()
-        .any(|e| matches!(e, AssistantMessageEvent::Start)));
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, AssistantMessageEvent::Start))
+    );
 }
 
 #[tokio::test]
@@ -639,9 +643,11 @@ async fn bearer_auth_header() {
 
     let sf = MistralStreamFn::new(server.uri(), "my-secret-key");
     let events = collect_events(&sf).await;
-    assert!(events
-        .iter()
-        .any(|e| matches!(e, AssistantMessageEvent::Start)));
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, AssistantMessageEvent::Start))
+    );
 }
 
 #[tokio::test]
@@ -825,7 +831,10 @@ async fn text_then_tool() {
     let events = collect_events(&sf).await;
 
     let types: Vec<&str> = events.iter().map(|e| event_name(e)).collect();
-    let text_end_pos = types.iter().position(|&t| t == "TextEnd").expect("missing TextEnd");
+    let text_end_pos = types
+        .iter()
+        .position(|&t| t == "TextEnd")
+        .expect("missing TextEnd");
     let tool_start_pos = types
         .iter()
         .position(|&t| t == "ToolCallStart")
@@ -873,9 +882,11 @@ async fn api_key_override_in_options() {
     let token = CancellationToken::new();
     let events: Vec<_> = sf.stream(&model, &context, &options, token).collect().await;
 
-    assert!(events
-        .iter()
-        .any(|e| matches!(e, AssistantMessageEvent::Start)));
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, AssistantMessageEvent::Start))
+    );
 }
 
 #[tokio::test]

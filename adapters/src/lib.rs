@@ -34,7 +34,12 @@ pub mod convert;
 )]
 mod finalize;
 #[cfg_attr(
-    not(any(feature = "openai", feature = "azure", feature = "mistral", feature = "xai")),
+    not(any(
+        feature = "openai",
+        feature = "azure",
+        feature = "mistral",
+        feature = "xai"
+    )),
     allow(dead_code)
 )]
 mod openai_compat;

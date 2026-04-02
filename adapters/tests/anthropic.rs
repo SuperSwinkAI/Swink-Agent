@@ -304,10 +304,7 @@ async fn anthropic_http_401() {
         err.contains("auth error"),
         "expected 'auth error', got: {err}"
     );
-    assert!(
-        err.contains("401"),
-        "expected '401' mention, got: {err}"
-    );
+    assert!(err.contains("401"), "expected '401' mention, got: {err}");
 }
 
 #[tokio::test]
@@ -343,10 +340,7 @@ async fn anthropic_http_529() {
 
     let err = find_error_message(&events).expect("expected error event");
     // 529 is mapped to a network/server error via the Anthropic-specific override
-    assert!(
-        err.contains("529"),
-        "expected '529' mention, got: {err}"
-    );
+    assert!(err.contains("529"), "expected '529' mention, got: {err}");
     assert!(
         err.contains("Overloaded"),
         "expected body content, got: {err}"

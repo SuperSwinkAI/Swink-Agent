@@ -94,7 +94,8 @@ impl MessageProvider for QueueMessageProvider {
 pub(super) fn llm_messages_from_queue(
     queue: &Arc<Mutex<VecDeque<AgentMessage>>>,
 ) -> Vec<LlmMessage> {
-    queue.lock()
+    queue
+        .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .iter()
         .filter_map(|msg| match msg {
@@ -104,10 +105,7 @@ pub(super) fn llm_messages_from_queue(
         .collect()
 }
 
-fn drain_queue(
-    queue: &Mutex<VecDeque<AgentMessage>>,
-    one_at_a_time: bool,
-) -> Vec<AgentMessage> {
+fn drain_queue(queue: &Mutex<VecDeque<AgentMessage>>, one_at_a_time: bool) -> Vec<AgentMessage> {
     let mut guard = queue
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);

@@ -116,7 +116,8 @@ impl ContextTransformer for SlidingWindowTransformer {
 
         let effective_anchor = self.anchor.max(self.cached_prefix_len);
         let counter_ref = self.token_counter.as_deref();
-        let mut report = compact_sliding_window_with(messages, budget, effective_anchor, counter_ref)?;
+        let mut report =
+            compact_sliding_window_with(messages, budget, effective_anchor, counter_ref)?;
         report.overflow = overflow;
         Some(report)
     }

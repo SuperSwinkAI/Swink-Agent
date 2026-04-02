@@ -22,7 +22,7 @@ use std::sync::Arc;
 
 use tracing::{debug, warn};
 
-use crate::types::{AgentMessage, AssistantMessage, StopReason, ToolResultMessage, Usage, Cost};
+use crate::types::{AgentMessage, AssistantMessage, Cost, StopReason, ToolResultMessage, Usage};
 
 // ─── Verdict Enums ──────────────────────────────────────────────────────────
 
@@ -155,11 +155,7 @@ pub trait PostTurnPolicy: Send + Sync {
     /// Policy identifier for tracing and debugging.
     fn name(&self) -> &str;
     /// Evaluate the policy. Returns [`PolicyVerdict`].
-    fn evaluate(
-        &self,
-        ctx: &PolicyContext<'_>,
-        turn: &TurnPolicyContext<'_>,
-    ) -> PolicyVerdict;
+    fn evaluate(&self, ctx: &PolicyContext<'_>, turn: &TurnPolicyContext<'_>) -> PolicyVerdict;
 }
 
 /// Slot 4: Evaluated after the inner loop exits, before follow-up polling.
@@ -179,10 +175,7 @@ pub trait PostLoopPolicy: Send + Sync {
 /// - **Stop** short-circuits: first Stop wins, remaining policies don't run.
 /// - **Inject** accumulates: all non-short-circuited policies contribute messages.
 /// - **Panics** are caught via `catch_unwind` and treated as Continue.
-pub fn run_policies(
-    policies: &[Arc<dyn PreTurnPolicy>],
-    ctx: &PolicyContext<'_>,
-) -> PolicyVerdict {
+pub fn run_policies(policies: &[Arc<dyn PreTurnPolicy>], ctx: &PolicyContext<'_>) -> PolicyVerdict {
     run_policies_inner(policies.iter().map(std::convert::AsRef::as_ref), ctx)
 }
 
@@ -196,9 +189,7 @@ pub fn run_post_turn_policies(
 
     for policy in policies {
         let policy_name = policy.name().to_string();
-        let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
-            policy.evaluate(ctx, turn)
-        }));
+        let result = std::panic::catch_unwind(AssertUnwindSafe(|| policy.evaluate(ctx, turn)));
 
         match result {
             Ok(PolicyVerdict::Continue) => {}
@@ -231,9 +222,7 @@ pub fn run_post_loop_policies(
 
     for policy in policies {
         let policy_name = policy.name().to_string();
-        let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
-            policy.evaluate(ctx)
-        }));
+        let result = std::panic::catch_unwind(AssertUnwindSafe(|| policy.evaluate(ctx)));
 
         match result {
             Ok(PolicyVerdict::Continue) => {}
@@ -266,9 +255,7 @@ fn run_policies_inner<'a>(
 
     for policy in policies {
         let policy_name = policy.name().to_string();
-        let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
-            policy.evaluate(ctx)
-        }));
+        let result = std::panic::catch_unwind(AssertUnwindSafe(|| policy.evaluate(ctx)));
 
         match result {
             Ok(PolicyVerdict::Continue) => {}
@@ -307,9 +294,7 @@ pub fn run_pre_dispatch_policies(
 
     for policy in policies {
         let policy_name = policy.name().to_string();
-        let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
-            policy.evaluate(ctx, tool)
-        }));
+        let result = std::panic::catch_unwind(AssertUnwindSafe(|| policy.evaluate(ctx, tool)));
 
         match result {
             Ok(PreDispatchVerdict::Continue) => {}
@@ -367,7 +352,9 @@ mod tests {
     }
 
     impl PreTurnPolicy for TestPolicy {
-        fn name(&self) -> &str { &self.policy_name }
+        fn name(&self) -> &str {
+            &self.policy_name
+        }
         fn evaluate(&self, _ctx: &PolicyContext<'_>) -> PolicyVerdict {
             self.call_count.fetch_add(1, Ordering::SeqCst);
             (self.make_verdict)()
@@ -376,7 +363,9 @@ mod tests {
 
     struct PanickingPolicy;
     impl PreTurnPolicy for PanickingPolicy {
-        fn name(&self) -> &'static str { "panicker" }
+        fn name(&self) -> &'static str {
+            "panicker"
+        }
         fn evaluate(&self, _ctx: &PolicyContext<'_>) -> PolicyVerdict {
             panic!("policy intentionally panicked");
         }
@@ -403,8 +392,14 @@ mod tests {
     }
 
     impl PreDispatchPolicy for TestPreDispatchPolicy {
-        fn name(&self) -> &str { &self.policy_name }
-        fn evaluate(&self, _ctx: &PolicyContext<'_>, _tool: &mut ToolPolicyContext<'_>) -> PreDispatchVerdict {
+        fn name(&self) -> &str {
+            &self.policy_name
+        }
+        fn evaluate(
+            &self,
+            _ctx: &PolicyContext<'_>,
+            _tool: &mut ToolPolicyContext<'_>,
+        ) -> PreDispatchVerdict {
             self.call_count.fetch_add(1, Ordering::SeqCst);
             (self.make_verdict)()
         }
@@ -412,16 +407,28 @@ mod tests {
 
     struct PanickingPreDispatchPolicy;
     impl PreDispatchPolicy for PanickingPreDispatchPolicy {
-        fn name(&self) -> &'static str { "panicker" }
-        fn evaluate(&self, _ctx: &PolicyContext<'_>, _tool: &mut ToolPolicyContext<'_>) -> PreDispatchVerdict {
+        fn name(&self) -> &'static str {
+            "panicker"
+        }
+        fn evaluate(
+            &self,
+            _ctx: &PolicyContext<'_>,
+            _tool: &mut ToolPolicyContext<'_>,
+        ) -> PreDispatchVerdict {
             panic!("pre-dispatch policy panicked");
         }
     }
 
     struct MutatingPreDispatchPolicy;
     impl PreDispatchPolicy for MutatingPreDispatchPolicy {
-        fn name(&self) -> &'static str { "mutator" }
-        fn evaluate(&self, _ctx: &PolicyContext<'_>, tool: &mut ToolPolicyContext<'_>) -> PreDispatchVerdict {
+        fn name(&self) -> &'static str {
+            "mutator"
+        }
+        fn evaluate(
+            &self,
+            _ctx: &PolicyContext<'_>,
+            tool: &mut ToolPolicyContext<'_>,
+        ) -> PreDispatchVerdict {
             if let Some(obj) = tool.arguments.as_object_mut() {
                 obj.insert("injected".to_string(), serde_json::json!("by_policy"));
             }
@@ -433,8 +440,14 @@ mod tests {
         expected_key: String,
     }
     impl PreDispatchPolicy for VerifyingPreDispatchPolicy {
-        fn name(&self) -> &'static str { "verifier" }
-        fn evaluate(&self, _ctx: &PolicyContext<'_>, tool: &mut ToolPolicyContext<'_>) -> PreDispatchVerdict {
+        fn name(&self) -> &'static str {
+            "verifier"
+        }
+        fn evaluate(
+            &self,
+            _ctx: &PolicyContext<'_>,
+            tool: &mut ToolPolicyContext<'_>,
+        ) -> PreDispatchVerdict {
             if tool.arguments.get(&self.expected_key).is_some() {
                 PreDispatchVerdict::Continue
             } else {
@@ -455,7 +468,11 @@ mod tests {
         (Usage::default(), Cost::default())
     }
 
-    fn make_ctx<'a>(usage: &'a Usage, cost: &'a Cost, state: &'a crate::SessionState) -> PolicyContext<'a> {
+    fn make_ctx<'a>(
+        usage: &'a Usage,
+        cost: &'a Cost,
+        state: &'a crate::SessionState,
+    ) -> PolicyContext<'a> {
         PolicyContext {
             turn_index: 0,
             accumulated_usage: usage,
@@ -526,7 +543,9 @@ mod tests {
 
     #[test]
     fn single_stop_short_circuits() {
-        let p1 = Arc::new(TestPolicy::new("stopper", || PolicyVerdict::Stop("done".into())));
+        let p1 = Arc::new(TestPolicy::new("stopper", || {
+            PolicyVerdict::Stop("done".into())
+        }));
         let p2 = Arc::new(TestPolicy::new("never_called", || PolicyVerdict::Continue));
         let policies: Vec<Arc<dyn PreTurnPolicy>> = vec![p1.clone(), p2.clone()];
         let (usage, cost) = test_context();
@@ -562,7 +581,9 @@ mod tests {
         let p1 = Arc::new(TestPolicy::new("injector", || {
             PolicyVerdict::Inject(vec![test_message()])
         }));
-        let p2 = Arc::new(TestPolicy::new("stopper", || PolicyVerdict::Stop("halt".into())));
+        let p2 = Arc::new(TestPolicy::new("stopper", || {
+            PolicyVerdict::Stop("halt".into())
+        }));
         let policies: Vec<Arc<dyn PreTurnPolicy>> = vec![p1, p2];
         let (usage, cost) = test_context();
         let state = crate::SessionState::new();
@@ -604,8 +625,12 @@ mod tests {
 
     #[test]
     fn pre_dispatch_skip_short_circuits() {
-        let p1 = Arc::new(TestPreDispatchPolicy::new("skipper", || PreDispatchVerdict::Skip("denied".into())));
-        let p2 = Arc::new(TestPreDispatchPolicy::new("never", || PreDispatchVerdict::Continue));
+        let p1 = Arc::new(TestPreDispatchPolicy::new("skipper", || {
+            PreDispatchVerdict::Skip("denied".into())
+        }));
+        let p2 = Arc::new(TestPreDispatchPolicy::new("never", || {
+            PreDispatchVerdict::Continue
+        }));
         let policies: Vec<Arc<dyn PreDispatchPolicy>> = vec![p1.clone(), p2.clone()];
         let (usage, cost) = test_context();
         let state = crate::SessionState::new();
@@ -624,8 +649,12 @@ mod tests {
 
     #[test]
     fn pre_dispatch_stop_short_circuits() {
-        let p1 = Arc::new(TestPreDispatchPolicy::new("stopper", || PreDispatchVerdict::Stop("halt".into())));
-        let p2 = Arc::new(TestPreDispatchPolicy::new("never", || PreDispatchVerdict::Continue));
+        let p1 = Arc::new(TestPreDispatchPolicy::new("stopper", || {
+            PreDispatchVerdict::Stop("halt".into())
+        }));
+        let p2 = Arc::new(TestPreDispatchPolicy::new("never", || {
+            PreDispatchVerdict::Continue
+        }));
         let policies: Vec<Arc<dyn PreDispatchPolicy>> = vec![p1, p2.clone()];
         let (usage, cost) = test_context();
         let state = crate::SessionState::new();
@@ -669,7 +698,9 @@ mod tests {
     #[test]
     fn pre_dispatch_panic_caught_returns_continue() {
         let p1: Arc<dyn PreDispatchPolicy> = Arc::new(PanickingPreDispatchPolicy);
-        let p2 = Arc::new(TestPreDispatchPolicy::new("after", || PreDispatchVerdict::Continue));
+        let p2 = Arc::new(TestPreDispatchPolicy::new("after", || {
+            PreDispatchVerdict::Continue
+        }));
         let policies: Vec<Arc<dyn PreDispatchPolicy>> = vec![p1, p2.clone()];
         let (usage, cost) = test_context();
         let state = crate::SessionState::new();

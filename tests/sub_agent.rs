@@ -33,7 +33,9 @@ async fn sub_agent_runs_and_returns_text() {
 
     let params = serde_json::json!({ "prompt": "what is rust?" });
     let ct = CancellationToken::new();
-    let result = sub.execute("call-1", params, ct, None, test_state(), None).await;
+    let result = sub
+        .execute("call-1", params, ct, None, test_state(), None)
+        .await;
 
     assert!(!result.is_error);
     let text = ContentBlock::extract_text(&result.content);
@@ -66,7 +68,9 @@ async fn sub_agent_error_maps_to_tool_error() {
 
     let params = serde_json::json!({ "prompt": "do something" });
     let ct = CancellationToken::new();
-    let result = sub.execute("call-2", params, ct, None, test_state(), None).await;
+    let result = sub
+        .execute("call-2", params, ct, None, test_state(), None)
+        .await;
 
     // The result should contain text (even error-stopped agents produce text)
     // OR it should be an error. The exact behavior depends on how the agent
@@ -91,7 +95,9 @@ async fn sub_agent_cancellation() {
     let ct = CancellationToken::new();
     // Cancel immediately
     ct.cancel();
-    let result = sub.execute("call-3", params, ct, None, test_state(), None).await;
+    let result = sub
+        .execute("call-3", params, ct, None, test_state(), None)
+        .await;
 
     assert!(result.is_error);
     let text = ContentBlock::extract_text(&result.content);
@@ -140,7 +146,16 @@ async fn default_map_result_with_error_and_no_message() {
         .with_options(move || AgentOptions::new_simple("sys", default_model(), Arc::clone(&sfn2)));
 
     let ct = CancellationToken::new();
-    let result = sub2.execute("c1", json!({"prompt": "go"}), ct, None, std::sync::Arc::new(std::sync::RwLock::new(swink_agent::SessionState::new())), None).await;
+    let result = sub2
+        .execute(
+            "c1",
+            json!({"prompt": "go"}),
+            ct,
+            None,
+            std::sync::Arc::new(std::sync::RwLock::new(swink_agent::SessionState::new())),
+            None,
+        )
+        .await;
 
     assert!(result.is_error);
     let text = ContentBlock::extract_text(&result.content);
@@ -177,7 +192,14 @@ async fn default_map_result_with_no_assistant_messages() {
 
     let ct = CancellationToken::new();
     let result = sub
-        .execute("c1", json!({"prompt": "hello"}), ct, None, std::sync::Arc::new(std::sync::RwLock::new(swink_agent::SessionState::new())), None)
+        .execute(
+            "c1",
+            json!({"prompt": "hello"}),
+            ct,
+            None,
+            std::sync::Arc::new(std::sync::RwLock::new(swink_agent::SessionState::new())),
+            None,
+        )
         .await;
 
     assert!(*called.lock().unwrap());
@@ -197,7 +219,16 @@ async fn custom_map_result() {
         .with_map_result(|_result| AgentToolResult::text("custom mapped"));
 
     let ct = CancellationToken::new();
-    let result = sub.execute("c1", json!({"prompt": "go"}), ct, None, std::sync::Arc::new(std::sync::RwLock::new(swink_agent::SessionState::new())), None).await;
+    let result = sub
+        .execute(
+            "c1",
+            json!({"prompt": "go"}),
+            ct,
+            None,
+            std::sync::Arc::new(std::sync::RwLock::new(swink_agent::SessionState::new())),
+            None,
+        )
+        .await;
 
     assert!(!result.is_error);
     let text = ContentBlock::extract_text(&result.content);
@@ -231,7 +262,16 @@ async fn execute_with_empty_prompt() {
         .with_options(move || AgentOptions::new_simple("sys", default_model(), Arc::clone(&sfn)));
 
     let ct = CancellationToken::new();
-    let result = sub.execute("c1", json!({"prompt": ""}), ct, None, std::sync::Arc::new(std::sync::RwLock::new(swink_agent::SessionState::new())), None).await;
+    let result = sub
+        .execute(
+            "c1",
+            json!({"prompt": ""}),
+            ct,
+            None,
+            std::sync::Arc::new(std::sync::RwLock::new(swink_agent::SessionState::new())),
+            None,
+        )
+        .await;
 
     // Should still complete without panic
     let text = ContentBlock::extract_text(&result.content);
@@ -250,7 +290,16 @@ async fn execute_with_missing_prompt_param() {
 
     let ct = CancellationToken::new();
     // params has no "prompt" key — as_str() returns None, unwrap_or("") kicks in
-    let result = sub.execute("c1", json!({"other": "value"}), ct, None, std::sync::Arc::new(std::sync::RwLock::new(swink_agent::SessionState::new())), None).await;
+    let result = sub
+        .execute(
+            "c1",
+            json!({"other": "value"}),
+            ct,
+            None,
+            std::sync::Arc::new(std::sync::RwLock::new(swink_agent::SessionState::new())),
+            None,
+        )
+        .await;
 
     // Should still complete without panic (empty string used as prompt)
     let text = ContentBlock::extract_text(&result.content);

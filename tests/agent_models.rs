@@ -310,7 +310,10 @@ async fn set_model_swaps_stream_fn() {
             primary_sfn as Arc<dyn StreamFn>,
             default_convert,
         )
-        .with_available_models(vec![(extra.clone(), extra_sfn.clone() as Arc<dyn StreamFn>)]),
+        .with_available_models(vec![(
+            extra.clone(),
+            extra_sfn.clone() as Arc<dyn StreamFn>,
+        )]),
     );
 
     agent.set_model(extra.clone());
@@ -365,7 +368,10 @@ async fn set_model_with_stream_bypasses_available() {
     ));
 
     // set_model_with_stream bypasses available_models.
-    agent.set_model_with_stream(explicit_model.clone(), explicit_sfn.clone() as Arc<dyn StreamFn>);
+    agent.set_model_with_stream(
+        explicit_model.clone(),
+        explicit_sfn.clone() as Arc<dyn StreamFn>,
+    );
     assert_eq!(agent.state().model, explicit_model);
 
     let _result = agent.prompt_async(vec![user_msg("hello")]).await.unwrap();
@@ -415,7 +421,10 @@ fn set_model_emits_model_cycled_event() {
     agent.set_model(extra.clone());
 
     let received_len = events.lock().unwrap().len();
-    assert_eq!(received_len, 1, "should receive exactly one ModelCycled event");
+    assert_eq!(
+        received_len, 1,
+        "should receive exactly one ModelCycled event"
+    );
 
     let old = captured_old.lock().unwrap().clone().unwrap();
     let new = captured_new.lock().unwrap().clone().unwrap();
