@@ -17,21 +17,46 @@ mod store;
 
 pub use store::{CheckpointFuture, CheckpointStore};
 
+/// Tracks the original position of each message in the sequence.
+///
+/// During serialization, LLM and custom messages are stored in separate
+/// vectors for backward compatibility. `MessageSlot` records the original
+/// ordering so that `restore_messages` can reconstruct the interleaved
+/// sequence faithfully.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind")]
+enum MessageSlot {
+    /// An LLM message at the given index in the `messages` vector.
+    Llm { index: usize },
+    /// A custom message at the given index in the `custom_messages` vector.
+    Custom { index: usize },
+}
+
 #[derive(Debug, Clone)]
 struct SerializedMessages {
     llm_messages: Vec<LlmMessage>,
     custom_messages: Vec<serde_json::Value>,
+    message_order: Vec<MessageSlot>,
 }
 
 fn serialize_messages(messages: &[AgentMessage], kind: &str) -> SerializedMessages {
     let mut llm_messages = Vec::new();
     let mut custom_messages = Vec::new();
+    let mut message_order = Vec::new();
 
     for message in messages {
         match message {
-            AgentMessage::Llm(llm) => llm_messages.push(llm.clone()),
+            AgentMessage::Llm(llm) => {
+                message_order.push(MessageSlot::Llm {
+                    index: llm_messages.len(),
+                });
+                llm_messages.push(llm.clone());
+            }
             AgentMessage::Custom(custom) => {
                 if let Some(envelope) = serialize_custom_message(custom.as_ref()) {
+                    message_order.push(MessageSlot::Custom {
+                        index: custom_messages.len(),
+                    });
                     custom_messages.push(envelope);
                 } else {
                     tracing::warn!(
@@ -46,15 +71,49 @@ fn serialize_messages(messages: &[AgentMessage], kind: &str) -> SerializedMessag
     SerializedMessages {
         llm_messages,
         custom_messages,
+        message_order,
     }
 }
 
 fn restore_messages(
     messages: &[LlmMessage],
     custom_messages: &[serde_json::Value],
+    message_order: &[MessageSlot],
     registry: Option<&CustomMessageRegistry>,
     kind: &str,
 ) -> Vec<AgentMessage> {
+    // If message_order is present, use it to reconstruct the original sequence.
+    // Otherwise fall back to legacy behavior (LLM first, then custom) for
+    // backward compatibility with checkpoints created before this fix.
+    if !message_order.is_empty() {
+        let mut result = Vec::with_capacity(message_order.len());
+        for slot in message_order {
+            match slot {
+                MessageSlot::Llm { index } => {
+                    if let Some(llm) = messages.get(*index) {
+                        result.push(AgentMessage::Llm(llm.clone()));
+                    }
+                }
+                MessageSlot::Custom { index } => {
+                    if let Some(reg) = registry
+                        && let Some(envelope) = custom_messages.get(*index)
+                    {
+                        match deserialize_custom_message(reg, envelope) {
+                            Ok(custom) => result.push(AgentMessage::Custom(custom)),
+                            Err(error) => {
+                                tracing::warn!(
+                                    "failed to deserialize custom message from {kind}: {error}"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return result;
+    }
+
+    // Legacy fallback: LLM messages first, then custom messages appended.
     let mut result: Vec<AgentMessage> = messages.iter().cloned().map(AgentMessage::Llm).collect();
 
     if let Some(reg) = registry {
@@ -99,6 +158,12 @@ pub struct Checkpoint {
     /// Serialized custom messages (envelopes with `type` and `data` fields).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub custom_messages: Vec<serde_json::Value>,
+    /// Records the original interleaved order of LLM and custom messages.
+    ///
+    /// Empty for checkpoints created before ordering support was added;
+    /// `restore_messages` falls back to legacy (LLM-first) behavior in that case.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    message_order: Vec<MessageSlot>,
     /// Number of completed turns at the time of checkpointing.
     pub turn_count: usize,
     /// Accumulated token usage.
@@ -141,6 +206,7 @@ impl Checkpoint {
             model_id: model_id.into(),
             messages: serialized.llm_messages,
             custom_messages: serialized.custom_messages,
+            message_order: serialized.message_order,
             turn_count: 0,
             usage: Usage::default(),
             cost: Cost::default(),
@@ -185,15 +251,23 @@ impl Checkpoint {
         self
     }
 
-    /// Restore all messages as `AgentMessage` values.
+    /// Restore all messages as `AgentMessage` values, preserving their
+    /// original interleaved order.
     ///
-    /// LLM messages are returned first, followed by any deserialized custom
-    /// messages. If `registry` is `None`, custom messages are silently
-    /// skipped. Deserialization failures are logged as warnings but do not
-    /// cause errors.
+    /// If `registry` is `None`, custom messages are silently skipped.
+    /// Deserialization failures are logged as warnings but do not cause errors.
+    ///
+    /// For checkpoints created before ordering support, falls back to
+    /// legacy behavior (LLM messages first, then custom messages appended).
     #[must_use]
     pub fn restore_messages(&self, registry: Option<&CustomMessageRegistry>) -> Vec<AgentMessage> {
-        restore_messages(&self.messages, &self.custom_messages, registry, "checkpoint")
+        restore_messages(
+            &self.messages,
+            &self.custom_messages,
+            &self.message_order,
+            registry,
+            "checkpoint",
+        )
     }
 }
 
@@ -213,6 +287,9 @@ pub struct LoopCheckpoint {
     /// Serialized custom messages (envelopes with `type` and `data` fields).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub custom_messages: Vec<serde_json::Value>,
+    /// Records the original interleaved order of LLM and custom messages.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    message_order: Vec<MessageSlot>,
     /// Messages queued for injection into the next turn.
     pub pending_messages: Vec<LlmMessage>,
     /// The system prompt active at the time of pause.
@@ -248,6 +325,7 @@ impl LoopCheckpoint {
         Self {
             messages: serialized.llm_messages,
             custom_messages: serialized.custom_messages,
+            message_order: serialized.message_order,
             pending_messages: Vec::new(),
             system_prompt: system_prompt.into(),
             provider: provider.into(),
@@ -279,16 +357,16 @@ impl LoopCheckpoint {
         self
     }
 
-    /// Restore all messages as `AgentMessage` values.
+    /// Restore all messages as `AgentMessage` values, preserving their
+    /// original interleaved order.
     ///
-    /// LLM messages are returned first, followed by any deserialized custom
-    /// messages. If `registry` is `None`, custom messages are silently
-    /// skipped.
+    /// If `registry` is `None`, custom messages are silently skipped.
     #[must_use]
     pub fn restore_messages(&self, registry: Option<&CustomMessageRegistry>) -> Vec<AgentMessage> {
         restore_messages(
             &self.messages,
             &self.custom_messages,
+            &self.message_order,
             registry,
             "loop checkpoint",
         )
@@ -310,6 +388,7 @@ impl LoopCheckpoint {
             model_id: self.model_id.clone(),
             messages: self.messages.clone(),
             custom_messages: self.custom_messages.clone(),
+            message_order: self.message_order.clone(),
             turn_count: 0,
             usage: Usage::default(),
             cost: Cost::default(),
@@ -638,5 +717,232 @@ mod tests {
         assert_eq!(standard.usage.input, 0);
         assert_eq!(standard.messages.len(), 2);
         assert_eq!(standard.metadata["key"], "val");
+    }
+
+    // ─── Interleaved ordering regression tests (issue #51) ──────────────
+
+    fn make_registry_and_custom(
+        tag: &str,
+    ) -> (
+        CustomMessageRegistry,
+        impl Fn(&str) -> Box<dyn crate::types::CustomMessage>,
+    ) {
+        #[derive(Debug, Clone, PartialEq)]
+        struct TaggedCustom {
+            tag: String,
+        }
+
+        impl crate::types::CustomMessage for TaggedCustom {
+            fn as_any(&self) -> &dyn std::any::Any {
+                self
+            }
+            fn type_name(&self) -> Option<&str> {
+                Some("TaggedCustom")
+            }
+            fn to_json(&self) -> Option<serde_json::Value> {
+                Some(serde_json::json!({ "tag": self.tag }))
+            }
+        }
+
+        let _ = tag; // suppress unused warning
+        let mut registry = CustomMessageRegistry::new();
+        registry.register(
+            "TaggedCustom",
+            Box::new(|val: serde_json::Value| {
+                let tag = val
+                    .get("tag")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| "missing tag".to_string())?;
+                Ok(Box::new(TaggedCustom {
+                    tag: tag.to_string(),
+                }) as Box<dyn crate::types::CustomMessage>)
+            }),
+        );
+
+        let factory = |tag: &str| -> Box<dyn crate::types::CustomMessage> {
+            Box::new(TaggedCustom {
+                tag: tag.to_string(),
+            })
+        };
+
+        (registry, factory)
+    }
+
+    fn user_msg(text: &str) -> AgentMessage {
+        AgentMessage::Llm(LlmMessage::User(UserMessage {
+            content: vec![ContentBlock::Text {
+                text: text.to_string(),
+            }],
+            timestamp: 0,
+            cache_hint: None,
+        }))
+    }
+
+    fn assistant_msg(text: &str) -> AgentMessage {
+        AgentMessage::Llm(LlmMessage::Assistant(crate::types::AssistantMessage {
+            content: vec![ContentBlock::Text {
+                text: text.to_string(),
+            }],
+            provider: "test".to_string(),
+            model_id: "test-model".to_string(),
+            usage: Usage::default(),
+            cost: Cost::default(),
+            stop_reason: crate::types::StopReason::Stop,
+            error_message: None,
+            timestamp: 0,
+            cache_hint: None,
+        }))
+    }
+
+    /// Extracts text from an `AgentMessage` for assertion purposes.
+    fn message_text(msg: &AgentMessage) -> String {
+        match msg {
+            AgentMessage::Llm(LlmMessage::User(u)) => match &u.content[0] {
+                ContentBlock::Text { text } => format!("user:{text}"),
+                _ => "user:?".to_string(),
+            },
+            AgentMessage::Llm(LlmMessage::Assistant(a)) => match &a.content[0] {
+                ContentBlock::Text { text } => format!("assistant:{text}"),
+                _ => "assistant:?".to_string(),
+            },
+            AgentMessage::Custom(c) => {
+                if let Some(json) = c.to_json() {
+                    format!("custom:{}", json["tag"].as_str().unwrap_or("?"))
+                } else {
+                    "custom:?".to_string()
+                }
+            }
+            _ => "other".to_string(),
+        }
+    }
+
+    #[test]
+    fn checkpoint_preserves_interleaved_custom_message_order() {
+        let (registry, factory) = make_registry_and_custom("test");
+
+        // Interleaved: User, Custom("A"), Assistant, Custom("B"), User
+        let messages = vec![
+            user_msg("hello"),
+            AgentMessage::Custom(factory("A")),
+            assistant_msg("hi"),
+            AgentMessage::Custom(factory("B")),
+            user_msg("thanks"),
+        ];
+
+        let checkpoint = Checkpoint::new("cp-order", "prompt", "p", "m", &messages);
+
+        // Serde roundtrip
+        let json = serde_json::to_string(&checkpoint).unwrap();
+        let restored_cp: Checkpoint = serde_json::from_str(&json).unwrap();
+
+        let restored = restored_cp.restore_messages(Some(&registry));
+        let order: Vec<String> = restored.iter().map(message_text).collect();
+
+        assert_eq!(
+            order,
+            vec![
+                "user:hello",
+                "custom:A",
+                "assistant:hi",
+                "custom:B",
+                "user:thanks",
+            ],
+            "interleaved custom messages must preserve their original position"
+        );
+    }
+
+    #[test]
+    fn loop_checkpoint_preserves_interleaved_custom_message_order() {
+        let (registry, factory) = make_registry_and_custom("test");
+
+        let messages = vec![
+            user_msg("q1"),
+            AgentMessage::Custom(factory("mid")),
+            assistant_msg("a1"),
+        ];
+
+        let cp = LoopCheckpoint::new("prompt", "p", "m", &messages);
+
+        let json = serde_json::to_string(&cp).unwrap();
+        let restored_cp: LoopCheckpoint = serde_json::from_str(&json).unwrap();
+
+        let restored = restored_cp.restore_messages(Some(&registry));
+        let order: Vec<String> = restored.iter().map(message_text).collect();
+
+        assert_eq!(
+            order,
+            vec!["user:q1", "custom:mid", "assistant:a1"],
+            "LoopCheckpoint must preserve interleaved custom message order"
+        );
+    }
+
+    #[test]
+    fn loop_checkpoint_to_checkpoint_preserves_order() {
+        let (registry, factory) = make_registry_and_custom("test");
+
+        let messages = vec![
+            AgentMessage::Custom(factory("first")),
+            user_msg("hello"),
+            AgentMessage::Custom(factory("second")),
+        ];
+
+        let loop_cp = LoopCheckpoint::new("prompt", "p", "m", &messages);
+        let standard = loop_cp.to_checkpoint("cp-conv");
+
+        let restored = standard.restore_messages(Some(&registry));
+        let order: Vec<String> = restored.iter().map(message_text).collect();
+
+        assert_eq!(
+            order,
+            vec!["custom:first", "user:hello", "custom:second"],
+            "to_checkpoint conversion must preserve message order"
+        );
+    }
+
+    #[test]
+    fn backward_compat_no_message_order_field() {
+        // Create a checkpoint with interleaved messages, then strip the
+        // message_order field to simulate a legacy checkpoint.
+        let (registry, factory) = make_registry_and_custom("test");
+
+        let messages = vec![
+            user_msg("hi"),
+            AgentMessage::Custom(factory("legacy")),
+        ];
+
+        let checkpoint = Checkpoint::new("cp-legacy", "hello", "p", "m", &messages);
+        // Serialize, strip message_order, deserialize — simulates old format
+        let mut json_val = serde_json::to_value(&checkpoint).unwrap();
+        json_val.as_object_mut().unwrap().remove("message_order");
+        let legacy_cp: Checkpoint = serde_json::from_value(json_val).unwrap();
+
+        // message_order should be empty (stripped)
+        assert!(legacy_cp.message_order.is_empty());
+
+        let restored = legacy_cp.restore_messages(Some(&registry));
+        // Legacy fallback: LLM first, then custom appended
+        assert_eq!(restored.len(), 2);
+        assert!(matches!(restored[0], AgentMessage::Llm(LlmMessage::User(_))));
+        let order: Vec<String> = restored.iter().map(message_text).collect();
+        assert_eq!(order, vec!["user:hi", "custom:legacy"]);
+    }
+
+    #[test]
+    fn restore_without_registry_skips_custom_in_ordered_mode() {
+        let (_registry, factory) = make_registry_and_custom("test");
+
+        let messages = vec![
+            user_msg("hello"),
+            AgentMessage::Custom(factory("skipped")),
+            assistant_msg("world"),
+        ];
+
+        let checkpoint = Checkpoint::new("cp-no-reg", "prompt", "p", "m", &messages);
+        let restored = checkpoint.restore_messages(None);
+
+        // Custom messages are skipped when no registry is provided
+        assert_eq!(restored.len(), 2);
+        let order: Vec<String> = restored.iter().map(message_text).collect();
+        assert_eq!(order, vec!["user:hello", "assistant:world"]);
     }
 }
