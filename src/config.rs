@@ -122,22 +122,6 @@ impl StreamOptionsConfig {
     }
 }
 
-// ─── BudgetGuardConfig ───────────────────────────────────────────────────────
-
-/// Serializable budget configuration for `BudgetPolicy` (in `swink-agent-policies`).
-///
-/// Retained for config persistence and round-tripping. Use
-/// `BudgetPolicy` from the `swink-agent-policies` crate at runtime.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BudgetGuardConfig {
-    /// Maximum total cost before blocking further LLM calls.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_cost: Option<f64>,
-    /// Maximum total tokens before blocking further LLM calls.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_tokens: Option<u64>,
-}
-
 // ─── SteeringMode / FollowUpMode serde wrappers ─────────────────────────────
 
 /// Serializable mirror of [`SteeringMode`](crate::SteeringMode).
@@ -281,19 +265,6 @@ pub struct AgentConfig {
     #[serde(default)]
     pub approval_mode: ApprovalModeConfig,
 
-    /// Model specs available for model cycling (stream functions are not
-    /// serializable, so only the specs are stored).
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub available_models: Vec<ModelSpec>,
-
-    /// Fallback model specs (stream functions are not serializable).
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub fallback_models: Vec<ModelSpec>,
-
-    /// Budget guard limits.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub budget_guard: Option<BudgetGuardConfig>,
-
     /// Arbitrary extension data for application-specific config.
     #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
     pub extra: serde_json::Value,
@@ -331,10 +302,6 @@ impl AgentConfig {
         opts.follow_up_mode = self.follow_up_mode.into();
         opts.structured_output_max_retries = self.structured_output_max_retries;
         opts.approval_mode = self.approval_mode.into();
-        // budget_guard field is retained for config round-tripping but is no
-        // longer applied at runtime — use BudgetPolicy via with_pre_turn_policy
-        // instead.
-        let _ = &self.budget_guard;
 
         // Clear the default transform_context — the caller may want to re-attach
         // their own, and `from_config` should not silently override.
@@ -356,18 +323,6 @@ impl crate::agent::AgentOptions {
     pub fn to_config(&self) -> AgentConfig {
         let tool_names: Vec<String> = self.tools.iter().map(|t| t.name().to_string()).collect();
 
-        let fallback_models: Vec<ModelSpec> = self
-            .fallback
-            .as_ref()
-            .map(|fb| fb.models().iter().map(|(m, _)| m.clone()).collect())
-            .unwrap_or_default();
-
-        let available_models: Vec<ModelSpec> = self
-            .available_models
-            .iter()
-            .map(|(m, _)| m.clone())
-            .collect();
-
         // Attempt to extract retry params from a DefaultRetryStrategy. If the
         // caller used a custom RetryStrategy we fall back to defaults.
         let retry = downcast_retry_config(&*self.retry_strategy);
@@ -382,9 +337,6 @@ impl crate::agent::AgentOptions {
             follow_up_mode: self.follow_up_mode.into(),
             structured_output_max_retries: self.structured_output_max_retries,
             approval_mode: self.approval_mode.into(),
-            available_models,
-            fallback_models,
-            budget_guard: None,
             extra: serde_json::Value::Null,
         }
     }
@@ -422,7 +374,6 @@ const _: () = {
     assert_send_sync::<AgentConfig>();
     assert_send_sync::<RetryConfig>();
     assert_send_sync::<StreamOptionsConfig>();
-    assert_send_sync::<BudgetGuardConfig>();
     assert_send_sync::<SteeringModeConfig>();
     assert_send_sync::<FollowUpModeConfig>();
     assert_send_sync::<ApprovalModeConfig>();
@@ -510,18 +461,6 @@ mod tests {
     }
 
     #[test]
-    fn budget_guard_config_roundtrip() {
-        let config = BudgetGuardConfig {
-            max_cost: Some(5.0),
-            max_tokens: Some(100_000),
-        };
-        let json = serde_json::to_string(&config).unwrap();
-        let restored: BudgetGuardConfig = serde_json::from_str(&json).unwrap();
-        assert_eq!(restored.max_cost, Some(5.0));
-        assert_eq!(restored.max_tokens, Some(100_000));
-    }
-
-    #[test]
     fn agent_config_serde_roundtrip() {
         let config = AgentConfig {
             system_prompt: "Be helpful.".into(),
@@ -545,12 +484,6 @@ mod tests {
             follow_up_mode: FollowUpModeConfig::All,
             structured_output_max_retries: 5,
             approval_mode: ApprovalModeConfig::Smart,
-            available_models: vec![ModelSpec::new("openai", "gpt-4o")],
-            fallback_models: vec![ModelSpec::new("openai", "gpt-4o-mini")],
-            budget_guard: Some(BudgetGuardConfig {
-                max_cost: Some(10.0),
-                max_tokens: None,
-            }),
             extra: serde_json::json!({"custom_key": "custom_value"}),
         };
 
@@ -569,9 +502,6 @@ mod tests {
         assert_eq!(restored.follow_up_mode, FollowUpModeConfig::All);
         assert_eq!(restored.structured_output_max_retries, 5);
         assert_eq!(restored.approval_mode, ApprovalModeConfig::Smart);
-        assert_eq!(restored.available_models.len(), 1);
-        assert_eq!(restored.fallback_models.len(), 1);
-        assert!(restored.budget_guard.is_some());
         assert_eq!(restored.extra["custom_key"], "custom_value");
     }
 
@@ -593,7 +523,65 @@ mod tests {
         assert!(config.tool_names.is_empty());
         assert_eq!(config.retry.max_attempts, 3); // default
         assert_eq!(config.structured_output_max_retries, 3); // default
-        assert!(config.budget_guard.is_none());
+    }
+
+    #[test]
+    fn old_json_with_removed_fields_still_deserializes() {
+        // Configs saved before these fields were removed should still load.
+        let json = r#"{
+            "system_prompt": "Hello",
+            "model": { "provider": "openai", "model_id": "gpt-4", "thinking_level": "off" },
+            "available_models": [{ "provider": "openai", "model_id": "gpt-4o", "thinking_level": "off" }],
+            "fallback_models": [{ "provider": "openai", "model_id": "gpt-4o-mini", "thinking_level": "off" }],
+            "budget_guard": { "max_cost": 10.0, "max_tokens": 100000 }
+        }"#;
+        let config: AgentConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.system_prompt, "Hello");
+        assert_eq!(config.model.provider, "openai");
+    }
+
+    #[test]
+    fn config_round_trip_only_contains_restorable_fields() {
+        // Every field in AgentConfig must be faithfully restored by
+        // into_agent_options(). This test guards against adding fields
+        // that serialize but silently drop on restore.
+        let config = AgentConfig {
+            system_prompt: "test".into(),
+            model: ModelSpec::new("anthropic", "claude-sonnet"),
+            tool_names: vec!["bash".into()],
+            retry: RetryConfig {
+                max_attempts: 7,
+                base_delay_ms: 500,
+                max_delay_ms: 10_000,
+                multiplier: 1.5,
+                jitter: false,
+            },
+            stream_options: StreamOptionsConfig {
+                temperature: Some(0.3),
+                max_tokens: Some(2048),
+                session_id: Some("s1".into()),
+                transport: StreamTransport::Sse,
+            },
+            steering_mode: SteeringModeConfig::All,
+            follow_up_mode: FollowUpModeConfig::All,
+            structured_output_max_retries: 10,
+            approval_mode: ApprovalModeConfig::Bypassed,
+            extra: serde_json::json!({"k": "v"}),
+        };
+
+        let stream_fn: std::sync::Arc<dyn crate::stream::StreamFn> =
+            std::sync::Arc::new(crate::testing::MockStreamFn::new(vec![]));
+        let opts = config.clone().into_agent_options(stream_fn, crate::agent::default_convert);
+
+        assert_eq!(opts.system_prompt, config.system_prompt);
+        assert_eq!(opts.model.provider, config.model.provider);
+        assert_eq!(opts.model.model_id, config.model.model_id);
+        assert_eq!(opts.stream_options.temperature, config.stream_options.temperature);
+        assert_eq!(opts.stream_options.max_tokens, config.stream_options.max_tokens);
+        assert_eq!(opts.structured_output_max_retries, config.structured_output_max_retries);
+        assert!(matches!(opts.steering_mode, crate::agent::SteeringMode::All));
+        assert!(matches!(opts.follow_up_mode, crate::agent::FollowUpMode::All));
+        assert!(matches!(opts.approval_mode, crate::tool::ApprovalMode::Bypassed));
     }
 
     #[test]
