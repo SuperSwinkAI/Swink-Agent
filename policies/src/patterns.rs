@@ -1,13 +1,16 @@
 use regex::Regex;
 
+#[cfg(any(feature = "pii", feature = "content-filter"))]
 pub fn compile_regex(pattern: &str) -> Result<Regex, regex::Error> {
     Regex::new(pattern)
 }
 
+#[cfg(feature = "prompt-guard")]
 pub fn compile_case_insensitive_regex(pattern: &str) -> Result<Regex, regex::Error> {
-    compile_regex(&format!("(?i){pattern}"))
+    Regex::new(&format!("(?i){pattern}"))
 }
 
+#[cfg(feature = "pii")]
 pub fn compile_named_regexes<T, F>(
     defs: &[(&str, &str)],
     mut build: F,
