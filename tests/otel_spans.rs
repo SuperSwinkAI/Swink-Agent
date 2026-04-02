@@ -17,9 +17,11 @@ use tokio_util::sync::CancellationToken;
 use tracing_subscriber::prelude::*;
 
 use common::{MockStreamFn, MockTool, default_model, text_only_events, tool_call_events};
+use opentelemetry::trace::Status as OtelStatus;
 use swink_agent::{
-    AgentEvent, AgentLoopConfig, AgentMessage, ContentBlock, DefaultRetryStrategy, LlmMessage,
-    StreamFn, StreamOptions, UserMessage, agent_loop,
+    AgentEvent, AgentLoopConfig, AgentMessage, AssistantMessageEvent, ContentBlock,
+    DefaultRetryStrategy, LlmMessage, ModelFallback, ModelSpec, StopReason, StreamFn, StreamOptions,
+    UserMessage, agent_loop,
 };
 
 type ConvertToLlmBoxed = Box<dyn Fn(&AgentMessage) -> Option<LlmMessage> + Send + Sync>;
@@ -309,5 +311,111 @@ async fn otel_coexists_with_metrics_collector() {
     assert!(
         collector.0.load(Ordering::SeqCst),
         "MetricsCollector should also have received metrics"
+    );
+}
+
+#[tokio::test]
+async fn otel_model_fallback_spans() {
+    let (exporter, _guard) = setup_otel_tracing();
+
+    // Primary model returns a retryable error (rate limit).
+    let primary_stream = Arc::new(MockStreamFn::new(vec![vec![
+        AssistantMessageEvent::Start,
+        AssistantMessageEvent::Error {
+            stop_reason: StopReason::Error,
+            error_message: "rate limit exceeded 429".to_string(),
+            usage: None,
+            error_kind: None,
+        },
+    ]]));
+
+    // Fallback model succeeds.
+    let fallback_model = ModelSpec::new("test", "fallback-model");
+    let fallback_stream: Arc<dyn StreamFn> =
+        Arc::new(MockStreamFn::new(vec![text_only_events("ok")]));
+
+    let fallback = ModelFallback::new(vec![(fallback_model.clone(), fallback_stream)]);
+
+    let mut config = default_config(primary_stream);
+    // Exhaust retries immediately so fallback triggers.
+    config.retry_strategy = Box::new(
+        DefaultRetryStrategy::default()
+            .with_max_attempts(1)
+            .with_jitter(false)
+            .with_base_delay(Duration::from_millis(1)),
+    );
+    config.fallback = Some(fallback);
+
+    let stream = agent_loop(
+        vec![user_msg("hi")],
+        "system".to_string(),
+        config,
+        CancellationToken::new(),
+    );
+    let _events: Vec<AgentEvent> = stream.collect().await;
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let spans = exporter.get_finished_spans().unwrap();
+
+    // Should have two agent.llm_call spans — one for primary (failed) and one for fallback.
+    let llm_spans: Vec<_> = spans.iter().filter(|s| s.name == "agent.llm_call").collect();
+    assert_eq!(
+        llm_spans.len(),
+        2,
+        "expected 2 agent.llm_call spans (primary + fallback), got {}: {:?}",
+        llm_spans.len(),
+        llm_spans.iter().map(|s| &s.name).collect::<Vec<_>>()
+    );
+
+    // Both should be children of the same agent.turn span.
+    let turn_span = spans
+        .iter()
+        .find(|s| s.name == "agent.turn")
+        .expect("expected agent.turn span");
+    for llm_span in &llm_spans {
+        assert_eq!(
+            llm_span.parent_span_id,
+            turn_span.span_context.span_id(),
+            "agent.llm_call span for model {:?} should be child of agent.turn",
+            llm_span
+                .attributes
+                .iter()
+                .find(|kv| kv.key.as_str() == "agent.model")
+                .map(|kv| format!("{:?}", kv.value))
+                .unwrap_or_default()
+        );
+    }
+
+    // The failed primary span should have error status.
+    let primary_span = llm_spans
+        .iter()
+        .find(|s| {
+            s.attributes.iter().any(|kv| {
+                kv.key.as_str() == "agent.model"
+                    && format!("{:?}", kv.value).contains("test-model")
+            })
+        })
+        .expect("expected primary model span");
+    assert!(
+        matches!(primary_span.status, OtelStatus::Error { .. }),
+        "primary model span should have error status, got: {:?}",
+        primary_span.status
+    );
+
+    // The fallback span should have the fallback model name.
+    let fallback_span = llm_spans
+        .iter()
+        .find(|s| {
+            s.attributes.iter().any(|kv| {
+                kv.key.as_str() == "agent.model"
+                    && format!("{:?}", kv.value).contains("fallback-model")
+            })
+        })
+        .expect("expected fallback model span");
+    // Fallback span should NOT have error status.
+    assert!(
+        !matches!(fallback_span.status, OtelStatus::Error { .. }),
+        "fallback model span should not have error status"
     );
 }
