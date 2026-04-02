@@ -118,6 +118,8 @@ pub enum StreamErrorKind {
     Auth,
     /// Transient network or server error (connection drop, 5xx, etc.).
     Network,
+    /// Provider safety/content filter blocked the response.
+    ContentFiltered,
 }
 
 // ─── AssistantMessageEvent ───────────────────────────────────────────────────
@@ -246,6 +248,19 @@ impl AssistantMessageEvent {
             error_message: message.into(),
             usage: None,
             error_kind: Some(StreamErrorKind::Network),
+        }
+    }
+
+    /// Create a content-filtered error event.
+    ///
+    /// Sets [`StreamErrorKind::ContentFiltered`] so the agent loop can
+    /// treat this as a non-retryable safety policy violation.
+    pub fn error_content_filtered(message: impl Into<String>) -> Self {
+        Self::Error {
+            stop_reason: StopReason::Error,
+            error_message: message.into(),
+            usage: None,
+            error_kind: Some(StreamErrorKind::ContentFiltered),
         }
     }
 
@@ -643,6 +658,22 @@ mod tests {
     }
 
     #[test]
+    fn error_content_filtered_constructor_sets_kind() {
+        let event = AssistantMessageEvent::error_content_filtered("blocked by safety filter");
+        match event {
+            AssistantMessageEvent::Error {
+                error_kind,
+                error_message,
+                ..
+            } => {
+                assert_eq!(error_kind, Some(StreamErrorKind::ContentFiltered));
+                assert_eq!(error_message, "blocked by safety filter");
+            }
+            other => panic!("expected Error, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn text_response_produces_valid_event_sequence() {
         let events = AssistantMessageEvent::text_response("hello world");
         assert_eq!(events.len(), 5);
@@ -679,10 +710,7 @@ mod tests {
         let events = AssistantMessageEvent::text_response("accumulated text");
         let msg = accumulate_message(events, "test", "test-model").expect("accumulation failed");
         assert_eq!(msg.content.len(), 1);
-        assert_eq!(
-            ContentBlock::extract_text(&msg.content),
-            "accumulated text"
-        );
+        assert_eq!(ContentBlock::extract_text(&msg.content), "accumulated text");
         assert_eq!(msg.stop_reason, StopReason::Stop);
     }
 }

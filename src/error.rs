@@ -87,6 +87,14 @@ pub enum AgentError {
     /// retries with `CacheHint::Write`.
     #[error("provider cache miss")]
     CacheMiss,
+
+    /// Provider safety / content filter blocked the response.
+    ///
+    /// Non-retryable — the input triggered a provider-side content policy.
+    /// Callers can match on this variant to distinguish safety blocks from
+    /// auth or network errors.
+    #[error("content filtered by provider safety policy")]
+    ContentFiltered,
 }
 
 impl AgentError {
@@ -164,5 +172,15 @@ mod tests {
     fn plugin_error_not_retryable() {
         let err = AgentError::plugin("test", std::io::Error::other("fail"));
         assert!(!err.is_retryable());
+    }
+
+    #[test]
+    fn content_filtered_not_retryable() {
+        let err = AgentError::ContentFiltered;
+        assert!(!err.is_retryable());
+        assert_eq!(
+            format!("{err}"),
+            "content filtered by provider safety policy"
+        );
     }
 }

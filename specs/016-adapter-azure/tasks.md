@@ -17,8 +17,8 @@
 
 **Purpose**: No new project setup needed — adapter crate and feature gate already exist. This phase covers preparatory verification.
 
-- [ ] T001 Verify `azure` feature flag compiles cleanly with `cargo check -p swink-agent-adapters --features azure`
-- [ ] T002 Verify existing `adapters/src/azure.rs` stub builds and existing tests pass with `cargo test -p swink-agent-adapters`
+- [x] T001 Verify `azure` feature flag compiles cleanly with `cargo check -p swink-agent-adapters --features azure`
+- [x] T002 Verify existing `adapters/src/azure.rs` stub builds and existing tests pass with `cargo test -p swink-agent-adapters`
 
 ---
 
@@ -28,14 +28,14 @@
 
 **CRITICAL**: No user story work can begin until this phase is complete.
 
-- [ ] T003 Add `ContentFiltered` variant to `StreamErrorKind` enum in `src/stream.rs`
-- [ ] T004 Add `error_content_filtered(message)` constructor to `AssistantMessageEvent` in `src/stream.rs`
-- [ ] T005 Add unit test for `error_content_filtered` constructor in `src/stream.rs` (follows existing `error_throttled`/`error_auth` test pattern)
-- [ ] T006 Add `ContentFiltered` variant to `AgentError` enum in `src/error.rs` with `#[error("content filtered by provider safety policy")]`
-- [ ] T007 Verify `AgentError::ContentFiltered` is non-retryable — add test in `src/error.rs` asserting `is_retryable()` returns false
-- [ ] T008 Map `StreamErrorKind::ContentFiltered` to `AgentError::ContentFiltered` in agent loop error handling in `src/loop_.rs`
-- [ ] T009 Re-export `ContentFiltered` variant — verify it's accessible via `swink_agent::error::AgentError::ContentFiltered` and `swink_agent::stream::StreamErrorKind::ContentFiltered`
-- [ ] T010 Run `cargo test --workspace` and `cargo clippy --workspace -- -D warnings` to verify no regressions
+- [x] T003 Add `ContentFiltered` variant to `StreamErrorKind` enum in `src/stream.rs`
+- [x] T004 Add `error_content_filtered(message)` constructor to `AssistantMessageEvent` in `src/stream.rs`
+- [x] T005 Add unit test for `error_content_filtered` constructor in `src/stream.rs` (follows existing `error_throttled`/`error_auth` test pattern)
+- [x] T006 Add `ContentFiltered` variant to `AgentError` enum in `src/error.rs` with `#[error("content filtered by provider safety policy")]`
+- [x] T007 Verify `AgentError::ContentFiltered` is non-retryable — add test in `src/error.rs` asserting `is_retryable()` returns false
+- [x] T008 Map `StreamErrorKind::ContentFiltered` to `AgentError::ContentFiltered` in agent loop error handling in `src/loop_.rs`
+- [x] T009 Re-export `ContentFiltered` variant — verify it's accessible via `swink_agent::error::AgentError::ContentFiltered` and `swink_agent::stream::StreamErrorKind::ContentFiltered`
+- [x] T010 Run `cargo test --workspace` and `cargo clippy --workspace -- -D warnings` to verify no regressions
 
 **Checkpoint**: Core crate now supports ContentFiltered errors — adapter work can begin.
 

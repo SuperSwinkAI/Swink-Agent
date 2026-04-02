@@ -12,9 +12,9 @@ mod tool_dispatch;
 mod turn;
 mod types;
 
-pub use types::*;
 pub use config::AgentLoopConfig;
 pub use event::{AgentEvent, TurnEndReason};
+pub use types::*;
 
 use std::error::Error as _;
 use std::pin::Pin;
@@ -27,6 +27,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, info, info_span};
 
 use crate::error::AgentError;
+use crate::stream::StreamErrorKind;
 use crate::types::{AgentMessage, AssistantMessage, ModelSpec, StopReason};
 use crate::util::now_timestamp;
 
@@ -34,7 +35,9 @@ use crate::util::now_timestamp;
 
 /// Sentinel value used to signal context overflow between `handle_stream_result`
 /// and `run_single_turn`.
-#[deprecated(note = "Overflow recovery now happens in-place in run_single_turn. Retained for backward compatibility.")]
+#[deprecated(
+    note = "Overflow recovery now happens in-place in run_single_turn. Retained for backward compatibility."
+)]
 #[allow(dead_code)]
 pub const CONTEXT_OVERFLOW_SENTINEL: &str = "__context_overflow__";
 
@@ -175,7 +178,10 @@ async fn run_loop_inner(
                     };
 
                     let state_snapshot = {
-                        let guard = config.session_state.read().unwrap_or_else(std::sync::PoisonError::into_inner);
+                        let guard = config
+                            .session_state
+                            .read()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner);
                         guard.clone()
                     };
                     let policy_ctx = PolicyContext {
@@ -192,11 +198,8 @@ async fn run_loop_inner(
                         tool_results: &state.last_tool_results,
                         stop_reason: msg.stop_reason,
                     };
-                    match run_post_turn_policies(
-                        &config.post_turn_policies,
-                        &policy_ctx,
-                        &turn_ctx,
-                    ) {
+                    match run_post_turn_policies(&config.post_turn_policies, &policy_ctx, &turn_ctx)
+                    {
                         PolicyVerdict::Continue => {}
                         PolicyVerdict::Stop(reason) => {
                             info!("post-turn policy stopped agent: {reason}");
@@ -218,7 +221,10 @@ async fn run_loop_inner(
                 use crate::policy::{PolicyContext, PolicyVerdict, run_post_loop_policies};
 
                 let state_snapshot = {
-                    let guard = config.session_state.read().unwrap_or_else(std::sync::PoisonError::into_inner);
+                    let guard = config
+                        .session_state
+                        .read()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
                     guard.clone()
                 };
                 let policy_ctx = PolicyContext {
@@ -327,7 +333,32 @@ pub fn format_error_with_sources(error: &AgentError) -> String {
 }
 
 /// Classify an `AssistantMessageEvent::Error` into a `AgentError`.
-pub fn classify_stream_error(error_message: &str, stop_reason: StopReason) -> AgentError {
+///
+/// When `error_kind` is present, structural classification takes priority
+/// over string matching on the error message.
+pub fn classify_stream_error(
+    error_message: &str,
+    stop_reason: StopReason,
+    error_kind: Option<StreamErrorKind>,
+) -> AgentError {
+    // Prefer structural classification when the adapter provides it
+    if let Some(kind) = error_kind {
+        return match kind {
+            StreamErrorKind::Throttled => AgentError::ModelThrottled,
+            StreamErrorKind::ContextWindowExceeded => AgentError::ContextWindowOverflow {
+                model: String::new(),
+            },
+            StreamErrorKind::Auth => AgentError::StreamError {
+                source: Box::new(std::io::Error::other(error_message.to_string())),
+            },
+            StreamErrorKind::Network => {
+                AgentError::network(std::io::Error::other(error_message.to_string()))
+            }
+            StreamErrorKind::ContentFiltered => AgentError::ContentFiltered,
+        };
+    }
+
+    // Fallback to string matching for adapters that don't set error_kind
     let lower = error_message.to_lowercase();
     if lower.contains("context window") || lower.contains("context_length_exceeded") {
         return AgentError::ContextWindowOverflow {
@@ -337,8 +368,14 @@ pub fn classify_stream_error(error_message: &str, stop_reason: StopReason) -> Ag
     if lower.contains("rate limit") || lower.contains("429") || lower.contains("throttl") {
         return AgentError::ModelThrottled;
     }
-    if lower.contains("cache miss") || lower.contains("cache not found") || lower.contains("cache_miss") {
+    if lower.contains("cache miss")
+        || lower.contains("cache not found")
+        || lower.contains("cache_miss")
+    {
         return AgentError::CacheMiss;
+    }
+    if lower.contains("content filter") || lower.contains("content_filter") {
+        return AgentError::ContentFiltered;
     }
     if stop_reason == StopReason::Aborted {
         return AgentError::Aborted;
@@ -354,9 +391,14 @@ mod tests {
 
     #[test]
     fn classify_cache_miss_variants() {
-        let cases = ["cache miss", "Cache Miss detected", "provider cache_miss", "cache not found"];
+        let cases = [
+            "cache miss",
+            "Cache Miss detected",
+            "provider cache_miss",
+            "cache not found",
+        ];
         for msg in cases {
-            let err = classify_stream_error(msg, StopReason::Error);
+            let err = classify_stream_error(msg, StopReason::Error, None);
             assert!(
                 matches!(err, AgentError::CacheMiss),
                 "expected CacheMiss for \"{msg}\", got {err:?}"
@@ -367,7 +409,36 @@ mod tests {
 
     #[test]
     fn classify_non_cache_miss() {
-        let err = classify_stream_error("internal server error", StopReason::Error);
+        let err = classify_stream_error("internal server error", StopReason::Error, None);
         assert!(!matches!(err, AgentError::CacheMiss));
+    }
+
+    #[test]
+    fn classify_content_filtered_by_kind() {
+        let err = classify_stream_error(
+            "response blocked",
+            StopReason::Error,
+            Some(StreamErrorKind::ContentFiltered),
+        );
+        assert!(matches!(err, AgentError::ContentFiltered));
+        assert!(!err.is_retryable());
+    }
+
+    #[test]
+    fn classify_content_filtered_by_string() {
+        let err =
+            classify_stream_error("content filter violation detected", StopReason::Error, None);
+        assert!(matches!(err, AgentError::ContentFiltered));
+        assert!(!err.is_retryable());
+    }
+
+    #[test]
+    fn classify_throttled_by_kind() {
+        let err = classify_stream_error(
+            "some error",
+            StopReason::Error,
+            Some(StreamErrorKind::Throttled),
+        );
+        assert!(matches!(err, AgentError::ModelThrottled));
     }
 }
