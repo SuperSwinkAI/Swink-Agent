@@ -227,19 +227,19 @@
 
 ### Tests for User Story 8
 
-- [ ] T072 [P] [US8] Integration test `interrupt_save_and_load_roundtrip` in `memory/tests/round_trip.rs`: save interrupt with 2 pending tool calls, load, verify all fields match
-- [ ] T073 [P] [US8] Integration test `interrupt_none_when_not_saved` in `memory/tests/round_trip.rs`: load interrupt for session without one, verify `None` returned
-- [ ] T074 [P] [US8] Integration test `interrupt_cleared_after_resume` in `memory/tests/round_trip.rs`: save interrupt, clear it, load, verify `None`
-- [ ] T075 [P] [US8] Integration test `delete_session_also_deletes_interrupt` in `memory/tests/round_trip.rs`: save session + interrupt, delete session, verify interrupt file also gone
-- [ ] T075b [P] [US8] Integration test `corrupted_interrupt_returns_error` in `memory/tests/round_trip.rs`: write garbage to `{session_id}.interrupt.json`, call `load_interrupt`, verify `InvalidData` error returned
+- [x] T072 [P] [US8] Integration test `interrupt_save_and_load_roundtrip` in `memory/tests/round_trip.rs`: save interrupt with 2 pending tool calls, load, verify all fields match
+- [x] T073 [P] [US8] Integration test `interrupt_none_when_not_saved` in `memory/tests/round_trip.rs`: load interrupt for session without one, verify `None` returned
+- [x] T074 [P] [US8] Integration test `interrupt_cleared_after_resume` in `memory/tests/round_trip.rs`: save interrupt, clear it, load, verify `None`
+- [x] T075 [P] [US8] Integration test `delete_session_also_deletes_interrupt` in `memory/tests/round_trip.rs`: save session + interrupt, delete session, verify interrupt file also gone
+- [x] T075b [P] [US8] Integration test `corrupted_interrupt_returns_error` in `memory/tests/round_trip.rs`: write garbage to `{session_id}.interrupt.json`, call `load_interrupt`, verify `InvalidData` error returned
 
 ### Implementation for User Story 8
 
-- [ ] T076 [US8] Implement `InterruptState` and `PendingToolCall` structs in `memory/src/interrupt.rs`. Derive `Serialize`, `Deserialize`.
-- [ ] T077 [US8] Add `save_interrupt`, `load_interrupt`, `clear_interrupt` methods to `SessionStore` trait in `memory/src/store.rs`.
-- [ ] T078 [US8] Implement interrupt methods in `JsonlSessionStore`: persist as `{session_id}.interrupt.json`, delete on `clear_interrupt` and `delete`.
-- [ ] T079 [US8] Add interrupt methods to `AsyncSessionStore` trait and `BlockingSessionStore` adapter in `memory/src/store_async.rs`.
-- [ ] T080 [US8] Re-export `InterruptState`, `PendingToolCall` from `memory/src/lib.rs`.
+- [x] T076 [US8] Implement `InterruptState` and `PendingToolCall` structs in `memory/src/interrupt.rs`. Derive `Serialize`, `Deserialize`.
+- [x] T077 [US8] Add `save_interrupt`, `load_interrupt`, `clear_interrupt` methods to `SessionStore` trait in `memory/src/store.rs`.
+- [x] T078 [US8] Implement interrupt methods in `JsonlSessionStore`: persist as `{session_id}.interrupt.json`, delete on `clear_interrupt` and `delete`.
+- [x] T079 [US8] Add interrupt methods to `AsyncSessionStore` trait and `BlockingSessionStore` adapter in `memory/src/store_async.rs`.
+- [x] T080 [US8] Re-export `InterruptState`, `PendingToolCall` from `memory/src/lib.rs`.
 
 **Checkpoint**: US8 complete — agent interrupts persist across restarts
 

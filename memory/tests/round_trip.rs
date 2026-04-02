@@ -6,7 +6,9 @@ use std::io;
 
 use chrono::DateTime;
 use swink_agent::{LlmMessage, ModelSpec};
-use swink_agent_memory::{JsonlSessionStore, SessionEntry, SessionMeta, SessionStore};
+use swink_agent_memory::{
+    InterruptState, JsonlSessionStore, PendingToolCall, SessionEntry, SessionMeta, SessionStore,
+};
 
 use common::{assistant_message, sample_meta, sample_meta_with_times, user_message};
 
@@ -373,4 +375,115 @@ fn unsupported_future_version_returns_error() {
     let err = store.load("future_001").unwrap_err();
     assert_eq!(err.kind(), io::ErrorKind::InvalidData);
     assert!(err.to_string().contains("unsupported session version 999"));
+}
+
+// --- US8: Interrupt State Persistence ---
+
+fn sample_interrupt() -> InterruptState {
+    InterruptState {
+        interrupted_at: 1_710_500_000,
+        pending_tool_calls: vec![
+            PendingToolCall {
+                tool_call_id: "tc_1".to_string(),
+                tool_name: "bash".to_string(),
+                arguments: serde_json::json!({"command": "ls -la"}),
+            },
+            PendingToolCall {
+                tool_call_id: "tc_2".to_string(),
+                tool_name: "read_file".to_string(),
+                arguments: serde_json::json!({"path": "/tmp/foo.txt"}),
+            },
+        ],
+        context_snapshot: vec![user_message("hello"), assistant_message("hi")],
+        system_prompt: "You are a helpful assistant.".to_string(),
+        model: ModelSpec::new("openai", "gpt-4"),
+    }
+}
+
+#[test]
+fn interrupt_save_and_load_roundtrip() {
+    let tmp = tempfile::tempdir().unwrap();
+    let store = JsonlSessionStore::new(tmp.path().to_path_buf()).unwrap();
+
+    let meta = sample_meta("int_001", "Interrupt test");
+    store.save("int_001", &meta, &[user_message("hi")]).unwrap();
+
+    let state = sample_interrupt();
+    store.save_interrupt("int_001", &state).unwrap();
+
+    let loaded = store.load_interrupt("int_001").unwrap();
+    assert!(loaded.is_some());
+    let loaded = loaded.unwrap();
+    assert_eq!(loaded.interrupted_at, 1_710_500_000);
+    assert_eq!(loaded.pending_tool_calls.len(), 2);
+    assert_eq!(loaded.pending_tool_calls[0].tool_name, "bash");
+    assert_eq!(loaded.pending_tool_calls[1].tool_name, "read_file");
+    assert_eq!(loaded.context_snapshot.len(), 2);
+    assert_eq!(loaded.system_prompt, "You are a helpful assistant.");
+    assert_eq!(loaded.model.provider, "openai");
+    assert_eq!(loaded.model.model_id, "gpt-4");
+}
+
+#[test]
+fn interrupt_none_when_not_saved() {
+    let tmp = tempfile::tempdir().unwrap();
+    let store = JsonlSessionStore::new(tmp.path().to_path_buf()).unwrap();
+
+    let result = store.load_interrupt("no_such_session").unwrap();
+    assert!(result.is_none());
+}
+
+#[test]
+fn interrupt_cleared_after_resume() {
+    let tmp = tempfile::tempdir().unwrap();
+    let store = JsonlSessionStore::new(tmp.path().to_path_buf()).unwrap();
+
+    let meta = sample_meta("int_clear", "Clear test");
+    store
+        .save("int_clear", &meta, &[user_message("hi")])
+        .unwrap();
+
+    let state = sample_interrupt();
+    store.save_interrupt("int_clear", &state).unwrap();
+    assert!(store.load_interrupt("int_clear").unwrap().is_some());
+
+    store.clear_interrupt("int_clear").unwrap();
+    assert!(store.load_interrupt("int_clear").unwrap().is_none());
+}
+
+#[test]
+fn delete_session_also_deletes_interrupt() {
+    let tmp = tempfile::tempdir().unwrap();
+    let store = JsonlSessionStore::new(tmp.path().to_path_buf()).unwrap();
+
+    let meta = sample_meta("int_del", "Delete cascade test");
+    store.save("int_del", &meta, &[user_message("hi")]).unwrap();
+
+    let state = sample_interrupt();
+    store.save_interrupt("int_del", &state).unwrap();
+
+    // Verify interrupt file exists
+    assert!(tmp.path().join("int_del.interrupt.json").exists());
+
+    store.delete("int_del").unwrap();
+
+    // Both session and interrupt should be gone
+    assert!(!tmp.path().join("int_del.jsonl").exists());
+    assert!(!tmp.path().join("int_del.interrupt.json").exists());
+}
+
+#[test]
+fn corrupted_interrupt_returns_error() {
+    let tmp = tempfile::tempdir().unwrap();
+    let store = JsonlSessionStore::new(tmp.path().to_path_buf()).unwrap();
+
+    // Write garbage to interrupt file
+    std::fs::write(
+        tmp.path().join("corrupt_int.interrupt.json"),
+        "this is not valid json{{{",
+    )
+    .unwrap();
+
+    let err = store.load_interrupt("corrupt_int").unwrap_err();
+    assert_eq!(err.kind(), io::ErrorKind::InvalidData);
 }

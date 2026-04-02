@@ -15,6 +15,7 @@ use swink_agent::{
 };
 
 use crate::entry::SessionEntry;
+use crate::interrupt::InterruptState;
 use crate::meta::SessionMeta;
 use crate::store::SessionStore;
 use crate::time::{format_session_id, now_utc};
@@ -88,6 +89,10 @@ impl SessionRecord {
 
 fn session_path(sessions_dir: &Path, id: &str) -> PathBuf {
     sessions_dir.join(format!("{id}.jsonl"))
+}
+
+fn interrupt_path(sessions_dir: &Path, id: &str) -> PathBuf {
+    sessions_dir.join(format!("{id}.interrupt.json"))
 }
 
 fn not_found(id: &str) -> io::Error {
@@ -410,7 +415,13 @@ impl SessionStore for JsonlSessionStore {
     fn delete(&self, id: &str) -> io::Result<()> {
         validate_session_id(id)?;
         let path = session_path(&self.sessions_dir, id);
-        std::fs::remove_file(path)
+        std::fs::remove_file(path)?;
+        // Cascade-delete the interrupt file if it exists
+        let int_path = interrupt_path(&self.sessions_dir, id);
+        if int_path.exists() {
+            std::fs::remove_file(int_path)?;
+        }
+        Ok(())
     }
 
     fn save_full(&self, id: &str, meta: &SessionMeta, messages: &[AgentMessage]) -> io::Result<()> {
@@ -515,6 +526,39 @@ impl SessionStore for JsonlSessionStore {
         }
 
         Ok(None)
+    }
+
+    fn save_interrupt(&self, id: &str, state: &InterruptState) -> io::Result<()> {
+        validate_session_id(id)?;
+        let path = interrupt_path(&self.sessions_dir, id);
+        let file = std::fs::File::create(&path)?;
+        let writer = io::BufWriter::new(file);
+        serde_json::to_writer_pretty(writer, state).map_err(io::Error::other)
+    }
+
+    fn load_interrupt(&self, id: &str) -> io::Result<Option<InterruptState>> {
+        validate_session_id(id)?;
+        let path = interrupt_path(&self.sessions_dir, id);
+        if !path.exists() {
+            return Ok(None);
+        }
+        let contents = std::fs::read_to_string(&path)?;
+        let state: InterruptState = serde_json::from_str(&contents).map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("corrupted interrupt file for session {id}: {e}"),
+            )
+        })?;
+        Ok(Some(state))
+    }
+
+    fn clear_interrupt(&self, id: &str) -> io::Result<()> {
+        validate_session_id(id)?;
+        let path = interrupt_path(&self.sessions_dir, id);
+        if path.exists() {
+            std::fs::remove_file(path)?;
+        }
+        Ok(())
     }
 }
 
