@@ -14,6 +14,16 @@ pub struct SessionMeta {
     pub created_at: DateTime<Utc>,
     /// When the session was last updated.
     pub updated_at: DateTime<Utc>,
+    /// Schema version for migration support. Defaults to 1.
+    #[serde(default = "default_version")]
+    pub version: u32,
+    /// Optimistic concurrency sequence number. Incremented on every write.
+    #[serde(default)]
+    pub sequence: u64,
+}
+
+const fn default_version() -> u32 {
+    1
 }
 
 #[cfg(test)]
@@ -27,6 +37,8 @@ mod tests {
             title: "Test session".to_string(),
             created_at: DateTime::from_timestamp(1_710_500_000, 0).unwrap().to_utc(),
             updated_at: DateTime::from_timestamp(1_710_500_100, 0).unwrap().to_utc(),
+            version: 1,
+            sequence: 0,
         };
 
         let json = serde_json::to_string(&meta).unwrap();
@@ -42,6 +54,8 @@ mod tests {
             title: "Session A".to_string(),
             created_at: DateTime::from_timestamp(100, 0).unwrap().to_utc(),
             updated_at: DateTime::from_timestamp(200, 0).unwrap().to_utc(),
+            version: 1,
+            sequence: 0,
         };
         let b = a.clone();
         assert_eq!(a, b);

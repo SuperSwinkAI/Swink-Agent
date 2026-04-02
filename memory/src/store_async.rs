@@ -121,6 +121,8 @@ mod tests {
             title: "Async test".to_string(),
             created_at: now,
             updated_at: now,
+            version: 1,
+            sequence: 0,
         };
 
         // Save via async adapter.

@@ -23,7 +23,10 @@ fn save_and_load_roundtrip() {
     store.save("test_001", &meta, &messages).unwrap();
 
     let (loaded_meta, loaded_msgs) = store.load("test_001").unwrap();
-    assert_eq!(loaded_meta, meta);
+    assert_eq!(loaded_meta.id, meta.id);
+    assert_eq!(loaded_meta.title, meta.title);
+    assert_eq!(loaded_meta.version, 1);
+    assert_eq!(loaded_meta.sequence, 1); // incremented on save
     assert_eq!(loaded_msgs.len(), 2);
 }
 
@@ -36,9 +39,11 @@ fn save_overwrites_existing_session() {
     let msgs1 = vec![user_message("first")];
     store.save("overwrite_test", &meta1, &msgs1).unwrap();
 
+    // Load to get updated sequence after first save
+    let (saved_meta, _) = store.load("overwrite_test").unwrap();
     let meta2 = SessionMeta {
         title: "Version 2".to_string(),
-        ..meta1
+        ..saved_meta
     };
     let msgs2 = vec![user_message("second"), user_message("third")];
     store.save("overwrite_test", &meta2, &msgs2).unwrap();
@@ -221,7 +226,9 @@ fn rich_entries_roundtrip() {
     store.save_entries("rich_001", &meta, &entries).unwrap();
     let (loaded_meta, loaded_entries) = store.load_entries("rich_001").unwrap();
 
-    assert_eq!(loaded_meta, meta);
+    assert_eq!(loaded_meta.id, meta.id);
+    assert_eq!(loaded_meta.title, meta.title);
+    assert_eq!(loaded_meta.sequence, 1); // incremented on save
     assert_eq!(loaded_entries.len(), 4);
     assert!(matches!(
         loaded_entries[0],
@@ -280,4 +287,76 @@ fn rich_entries_backward_compat() {
         entries[1],
         SessionEntry::Message(LlmMessage::Assistant(_))
     ));
+}
+
+// --- US7: Session Versioning ---
+
+#[test]
+fn version_defaults_for_old_sessions() {
+    let tmp = tempfile::tempdir().unwrap();
+    let store = JsonlSessionStore::new(tmp.path().to_path_buf()).unwrap();
+
+    // Write an old-format JSONL file without version/sequence fields
+    let meta_json = r#"{"id":"old_001","title":"Old session","created_at":"2025-03-15T12:00:00Z","updated_at":"2025-03-15T12:00:00Z"}"#;
+    let msg_json = serde_json::to_string(&user_message("hello")).unwrap();
+    let content = format!("{meta_json}\n{msg_json}\n");
+    std::fs::write(tmp.path().join("old_001.jsonl"), content).unwrap();
+
+    let (loaded_meta, msgs) = store.load("old_001").unwrap();
+    assert_eq!(loaded_meta.version, 1); // default
+    assert_eq!(loaded_meta.sequence, 0); // default
+    assert_eq!(msgs.len(), 1);
+}
+
+#[test]
+fn sequence_increments_on_save() {
+    let tmp = tempfile::tempdir().unwrap();
+    let store = JsonlSessionStore::new(tmp.path().to_path_buf()).unwrap();
+
+    let meta = sample_meta("seq_test", "Sequence test");
+    store.save("seq_test", &meta, &[user_message("first")]).unwrap();
+
+    let (loaded1, _) = store.load("seq_test").unwrap();
+    assert_eq!(loaded1.sequence, 1);
+
+    // Save again with the loaded meta (sequence=1)
+    store.save("seq_test", &loaded1, &[user_message("second")]).unwrap();
+
+    let (loaded2, _) = store.load("seq_test").unwrap();
+    assert_eq!(loaded2.sequence, 2);
+}
+
+#[test]
+fn optimistic_concurrency_rejects_stale_sequence() {
+    let tmp = tempfile::tempdir().unwrap();
+    let store = JsonlSessionStore::new(tmp.path().to_path_buf()).unwrap();
+
+    let meta = sample_meta("conc_test", "Concurrency test");
+    store.save("conc_test", &meta, &[user_message("v1")]).unwrap();
+
+    // Load meta (sequence=1)
+    let (stale_meta, _) = store.load("conc_test").unwrap();
+    assert_eq!(stale_meta.sequence, 1);
+
+    // Simulate another writer saving (bumps sequence to 2)
+    store.save("conc_test", &stale_meta, &[user_message("v2")]).unwrap();
+
+    // Attempt save with stale meta (sequence=1, but file has sequence=2)
+    let err = store.save("conc_test", &stale_meta, &[user_message("v3")]).unwrap_err();
+    assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
+    assert!(err.to_string().contains("sequence conflict"));
+}
+
+#[test]
+fn unsupported_future_version_returns_error() {
+    let tmp = tempfile::tempdir().unwrap();
+    let store = JsonlSessionStore::new(tmp.path().to_path_buf()).unwrap();
+
+    // Write a JSONL file with version: 999
+    let meta_json = r#"{"id":"future_001","title":"Future session","created_at":"2025-03-15T12:00:00Z","updated_at":"2025-03-15T12:00:00Z","version":999,"sequence":0}"#;
+    std::fs::write(tmp.path().join("future_001.jsonl"), format!("{meta_json}\n")).unwrap();
+
+    let err = store.load("future_001").unwrap_err();
+    assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    assert!(err.to_string().contains("unsupported session version 999"));
 }

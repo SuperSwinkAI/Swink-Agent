@@ -18,7 +18,9 @@ async fn async_save_and_load_roundtrip() {
     store.save("async_rt", &meta, &messages).await.unwrap();
 
     let (loaded_meta, loaded_msgs) = store.load("async_rt").await.unwrap();
-    assert_eq!(loaded_meta, meta);
+    assert_eq!(loaded_meta.id, meta.id);
+    assert_eq!(loaded_meta.title, meta.title);
+    assert_eq!(loaded_meta.sequence, 1); // incremented on save
     assert_eq!(loaded_msgs.len(), 1);
 }
 

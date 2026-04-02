@@ -25,6 +25,8 @@ impl App {
             title: self.model_name.clone(),
             created_at: now,
             updated_at: now,
+            version: 1,
+            sequence: 0,
         };
         // Filter AgentMessages to LlmMessages for storage.
         let llm_messages: Vec<LlmMessage> = state

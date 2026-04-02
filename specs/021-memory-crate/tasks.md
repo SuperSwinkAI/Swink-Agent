@@ -202,18 +202,18 @@
 
 ### Tests for User Story 7
 
-- [ ] T064 [P] [US7] Integration test `version_defaults_for_old_sessions` in `memory/tests/round_trip.rs`: create JSONL without version/sequence fields, load, verify defaults (version=1, sequence=0)
-- [ ] T065 [P] [US7] Integration test `sequence_increments_on_save` in `memory/tests/round_trip.rs`: save session, verify sequence=1, save again, verify sequence=2
-- [ ] T066 [P] [US7] Integration test `optimistic_concurrency_rejects_stale_sequence` in `memory/tests/round_trip.rs`: save session (sequence becomes 1), load meta (sequence=1), simulate another writer by saving again (sequence becomes 2), then attempt save with the stale loaded meta (sequence=1) — verify conflict error returned
-- [ ] T067 [P] [US7] Unit test `migrator_upgrades_session` in `memory/src/migrate.rs` tests: implement a test migrator v1→v2, apply to v1 session, verify entries transformed and version updated
-- [ ] T067b [P] [US7] Integration test `unsupported_future_version_returns_error` in `memory/tests/round_trip.rs`: create a JSONL file with `version: 999`, attempt load, verify error indicating unsupported version
+- [x] T064 [P] [US7] Integration test `version_defaults_for_old_sessions` in `memory/tests/round_trip.rs`: create JSONL without version/sequence fields, load, verify defaults (version=1, sequence=0)
+- [x] T065 [P] [US7] Integration test `sequence_increments_on_save` in `memory/tests/round_trip.rs`: save session, verify sequence=1, save again, verify sequence=2
+- [x] T066 [P] [US7] Integration test `optimistic_concurrency_rejects_stale_sequence` in `memory/tests/round_trip.rs`: save session (sequence becomes 1), load meta (sequence=1), simulate another writer by saving again (sequence becomes 2), then attempt save with the stale loaded meta (sequence=1) — verify conflict error returned
+- [x] T067 [P] [US7] Unit test `migrator_upgrades_session` in `memory/src/migrate.rs` tests: implement a test migrator v1→v2, apply to v1 session, verify entries transformed and version updated
+- [x] T067b [P] [US7] Integration test `unsupported_future_version_returns_error` in `memory/tests/round_trip.rs`: create a JSONL file with `version: 999`, attempt load, verify error indicating unsupported version
 
 ### Implementation for User Story 7
 
-- [ ] T068 [US7] Add `version: u32` and `sequence: u64` fields to `SessionMeta` in `memory/src/meta.rs` with `#[serde(default)]` for backward compatibility.
-- [ ] T069 [US7] Update `JsonlSessionStore::save()` to increment `sequence` on every write. Before writing, compare `meta.sequence` against the stored file's sequence — reject with an error if they don't match (optimistic concurrency). New sessions (no existing file) skip the check.
-- [ ] T070 [US7] Implement `SessionMigrator` trait in `memory/src/migrate.rs`. Add migration runner to `JsonlSessionStore::load()` — check version, run applicable migrators in order.
-- [ ] T071 [US7] Re-export `SessionMigrator` from `memory/src/lib.rs`.
+- [x] T068 [US7] Add `version: u32` and `sequence: u64` fields to `SessionMeta` in `memory/src/meta.rs` with `#[serde(default)]` for backward compatibility.
+- [x] T069 [US7] Update `JsonlSessionStore::save()` to increment `sequence` on every write. Before writing, compare `meta.sequence` against the stored file's sequence — reject with an error if they don't match (optimistic concurrency). New sessions (no existing file) skip the check.
+- [x] T070 [US7] Implement `SessionMigrator` trait in `memory/src/migrate.rs`. Add migration runner to `JsonlSessionStore::load()` — check version, run applicable migrators in order.
+- [x] T071 [US7] Re-export `SessionMigrator` from `memory/src/lib.rs`.
 
 **Checkpoint**: US7 complete — sessions are versioned with migration support and optimistic concurrency
 
