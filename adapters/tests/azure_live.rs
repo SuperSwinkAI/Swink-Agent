@@ -8,7 +8,7 @@ use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 
 use swink_agent::{AgentContext, AssistantMessageEvent, ModelSpec, StreamFn, StreamOptions};
-use swink_agent_adapters::AzureStreamFn;
+use swink_agent_adapters::{AzureAuth, AzureStreamFn};
 
 const TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -16,7 +16,7 @@ fn stream_fn() -> AzureStreamFn {
     dotenvy::dotenv().ok();
     AzureStreamFn::new(
         std::env::var("AZURE_BASE_URL").expect("AZURE_BASE_URL must be set"),
-        std::env::var("AZURE_API_KEY").expect("AZURE_API_KEY must be set"),
+        AzureAuth::ApiKey(std::env::var("AZURE_API_KEY").expect("AZURE_API_KEY must be set")),
     )
 }
 
