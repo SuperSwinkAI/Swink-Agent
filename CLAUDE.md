@@ -191,6 +191,8 @@ MSRV **1.88** (edition 2024). Workspace deps centralized in root `Cargo.toml`.
 - In-memory only (`Arc<RwLock<HashMap>>>`). No persistent storage built-in. (035-credential-management)
 - Rust 1.88, edition 2024 + `swink-agent` core types (policy traits, AgentTool, AgentEvent), `tracing` (diagnostics) (037-plugin-system)
 - N/A (in-memory registry only) (037-plugin-system)
+- Rust 1.88 (edition 2024) + `rmcp` (official MCP SDK — stdio, SSE, tool discovery, tool invocation), `swink-agent` (core types: `AgentTool`, `AgentToolResult`, `ContentBlock`, `AgentEvent`), `tokio` (async runtime, subprocess management), `serde`/`serde_json` (serialization), `thiserror` (errors), `tracing` (diagnostics) (038-mcp-integration)
+- N/A (in-memory state only — connection handles and discovered tool lists) (038-mcp-integration)
 
 ## Recent Changes
 - 001-workspace-scaffold: Added Rust 1.88 (edition 2024) + serde, serde_json, tokio, futures, thiserror, uuid, reqwest, jsonschema, schemars, rand, tracing, toml (all centralized in workspace `[workspace.dependencies]`)
