@@ -31,7 +31,7 @@ use crate::tool::{AgentTool, AgentToolResult, ToolFuture};
 // ─── Type alias for the middleware closure ──────────────────────────────────
 
 type MiddlewareFn = Arc<
-        dyn Fn(
+    dyn Fn(
             Arc<dyn AgentTool>,
             String,
             Value,
@@ -86,20 +86,23 @@ impl ToolMiddleware {
     /// If the inner tool does not complete within `timeout`, an error result
     /// is returned.
     pub fn with_timeout(inner: Arc<dyn AgentTool>, timeout: Duration) -> Self {
-        Self::new(inner, move |tool, id, params, cancel, on_update, state, credential| {
-            Box::pin(async move {
-                tokio::select! {
-                    result = tool.execute(&id, params, cancel.clone(), on_update, state, credential) => result,
-                    () = tokio::time::sleep(timeout) => {
-                        cancel.cancel();
-                        AgentToolResult::error(format!(
-                            "tool timed out after {}ms",
-                            timeout.as_millis()
-                        ))
+        Self::new(
+            inner,
+            move |tool, id, params, cancel, on_update, state, credential| {
+                Box::pin(async move {
+                    tokio::select! {
+                        result = tool.execute(&id, params, cancel.clone(), on_update, state, credential) => result,
+                        () = tokio::time::sleep(timeout) => {
+                            cancel.cancel();
+                            AgentToolResult::error(format!(
+                                "tool timed out after {}ms",
+                                timeout.as_millis()
+                            ))
+                        }
                     }
-                }
-            })
-        })
+                })
+            },
+        )
     }
 
     /// Create a middleware that calls a logging callback before and after
@@ -112,16 +115,21 @@ impl ToolMiddleware {
         F: Fn(&str, &str, bool) + Send + Sync + 'static,
     {
         let callback = Arc::new(callback);
-        Self::new(inner, move |tool, id, params, cancel, on_update, state, credential| {
-            let cb = callback.clone();
-            let name = tool.name().to_owned();
-            Box::pin(async move {
-                cb(&name, &id, true);
-                let result = tool.execute(&id, params, cancel, on_update, state, credential).await;
-                cb(&name, &id, false);
-                result
-            })
-        })
+        Self::new(
+            inner,
+            move |tool, id, params, cancel, on_update, state, credential| {
+                let cb = callback.clone();
+                let name = tool.name().to_owned();
+                Box::pin(async move {
+                    cb(&name, &id, true);
+                    let result = tool
+                        .execute(&id, params, cancel, on_update, state, credential)
+                        .await;
+                    cb(&name, &id, false);
+                    result
+                })
+            },
+        )
     }
 }
 
@@ -161,7 +169,15 @@ impl AgentTool for ToolMiddleware {
     ) -> ToolFuture<'_> {
         let inner = self.inner.clone();
         let id = tool_call_id.to_owned();
-        let fut = (self.middleware_fn)(inner, id, params, cancellation_token, on_update, state, credential);
+        let fut = (self.middleware_fn)(
+            inner,
+            id,
+            params,
+            cancellation_token,
+            on_update,
+            state,
+            credential,
+        );
         Box::pin(fut)
     }
 }
@@ -225,9 +241,15 @@ mod tests {
     #[test]
     fn metadata_delegates_to_inner() {
         let inner: Arc<dyn AgentTool> = Arc::new(DummyTool);
-        let mw = ToolMiddleware::new(inner, |tool, id, params, cancel, on_update, state, credential| {
-            Box::pin(async move { tool.execute(&id, params, cancel, on_update, state, credential).await })
-        });
+        let mw = ToolMiddleware::new(
+            inner,
+            |tool, id, params, cancel, on_update, state, credential| {
+                Box::pin(async move {
+                    tool.execute(&id, params, cancel, on_update, state, credential)
+                        .await
+                })
+            },
+        );
 
         assert_eq!(mw.name(), "dummy");
         assert_eq!(mw.label(), "Dummy");
@@ -245,16 +267,27 @@ mod tests {
         let counter_clone = counter.clone();
 
         let inner: Arc<dyn AgentTool> = Arc::new(DummyTool);
-        let mw = ToolMiddleware::new(inner, move |tool, id, params, cancel, on_update, state, credential| {
-            let c = counter_clone.clone();
-            Box::pin(async move {
-                c.fetch_add(1, Ordering::SeqCst);
-                tool.execute(&id, params, cancel, on_update, state, credential).await
-            })
-        });
+        let mw = ToolMiddleware::new(
+            inner,
+            move |tool, id, params, cancel, on_update, state, credential| {
+                let c = counter_clone.clone();
+                Box::pin(async move {
+                    c.fetch_add(1, Ordering::SeqCst);
+                    tool.execute(&id, params, cancel, on_update, state, credential)
+                        .await
+                })
+            },
+        );
 
         let result = mw
-            .execute("id", json!({}), CancellationToken::new(), None, test_state(), None)
+            .execute(
+                "id",
+                json!({}),
+                CancellationToken::new(),
+                None,
+                test_state(),
+                None,
+            )
             .await;
         assert!(!result.is_error);
         assert_eq!(counter.load(Ordering::SeqCst), 1);
@@ -263,12 +296,25 @@ mod tests {
     #[tokio::test]
     async fn call_through_returns_inner_result() {
         let inner: Arc<dyn AgentTool> = Arc::new(DummyTool);
-        let mw = ToolMiddleware::new(inner, |tool, id, params, cancel, on_update, state, credential| {
-            Box::pin(async move { tool.execute(&id, params, cancel, on_update, state, credential).await })
-        });
+        let mw = ToolMiddleware::new(
+            inner,
+            |tool, id, params, cancel, on_update, state, credential| {
+                Box::pin(async move {
+                    tool.execute(&id, params, cancel, on_update, state, credential)
+                        .await
+                })
+            },
+        );
 
         let result = mw
-            .execute("id", json!({}), CancellationToken::new(), None, test_state(), None)
+            .execute(
+                "id",
+                json!({}),
+                CancellationToken::new(),
+                None,
+                test_state(),
+                None,
+            )
             .await;
         assert!(!result.is_error);
     }
@@ -310,7 +356,14 @@ mod tests {
         let mw = ToolMiddleware::with_timeout(inner, Duration::from_millis(10));
 
         let result = mw
-            .execute("id", json!({}), CancellationToken::new(), None, test_state(), None)
+            .execute(
+                "id",
+                json!({}),
+                CancellationToken::new(),
+                None,
+                test_state(),
+                None,
+            )
             .await;
         assert!(result.is_error);
     }
@@ -325,8 +378,15 @@ mod tests {
             calls_clone.fetch_add(1, Ordering::SeqCst);
         });
 
-        mw.execute("id", json!({}), CancellationToken::new(), None, test_state(), None)
-            .await;
+        mw.execute(
+            "id",
+            json!({}),
+            CancellationToken::new(),
+            None,
+            test_state(),
+            None,
+        )
+        .await;
 
         // Should be called twice — once before, once after.
         assert_eq!(calls.load(Ordering::SeqCst), 2);

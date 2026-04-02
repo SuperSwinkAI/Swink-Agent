@@ -564,8 +564,7 @@ fn hex_encode(bytes: &[u8]) -> String {
 type HmacSha256 = Hmac<Sha256>;
 
 fn hmac_sha256(key: &[u8], data: &[u8]) -> [u8; 32] {
-    let mut mac =
-        HmacSha256::new_from_slice(key).expect("HMAC accepts any key size");
+    let mut mac = HmacSha256::new_from_slice(key).expect("HMAC accepts any key size");
     mac.update(data);
     mac.finalize().into_bytes().into()
 }
@@ -585,8 +584,7 @@ mod tests {
         let key = b"Jefe";
         let data = b"what do ya want for nothing?";
         let result = hmac_sha256(key, data);
-        let expected =
-            "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843";
+        let expected = "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843";
         assert_eq!(hex_encode(&result), expected);
     }
 

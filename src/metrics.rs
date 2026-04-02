@@ -73,10 +73,7 @@ pub type MetricsFuture<'a> = Pin<Box<dyn Future<Output = ()> + Send + 'a>>;
 /// ```
 pub trait MetricsCollector: Send + Sync {
     /// Called at the end of each turn with the collected metrics.
-    fn on_metrics<'a>(
-        &'a self,
-        metrics: &'a TurnMetrics,
-    ) -> MetricsFuture<'a>;
+    fn on_metrics<'a>(&'a self, metrics: &'a TurnMetrics) -> MetricsFuture<'a>;
 }
 
 // ─── Compile-time Send + Sync assertions ────────────────────────────────────
@@ -98,10 +95,7 @@ mod tests {
     }
 
     impl MetricsCollector for CountingCollector {
-        fn on_metrics<'a>(
-            &'a self,
-            _metrics: &'a TurnMetrics,
-        ) -> MetricsFuture<'a> {
+        fn on_metrics<'a>(&'a self, _metrics: &'a TurnMetrics) -> MetricsFuture<'a> {
             Box::pin(async move {
                 self.count.fetch_add(1, Ordering::SeqCst);
             })

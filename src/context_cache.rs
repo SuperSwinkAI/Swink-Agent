@@ -144,7 +144,12 @@ mod tests {
         let mut state = CacheState::new();
         let config = test_config(3);
         let hint = state.advance_turn(&config);
-        assert_eq!(hint, CacheHint::Write { ttl: Duration::from_secs(600) });
+        assert_eq!(
+            hint,
+            CacheHint::Write {
+                ttl: Duration::from_secs(600)
+            }
+        );
     }
 
     #[test]
@@ -165,7 +170,12 @@ mod tests {
         state.advance_turn(&config); // turn 3: Read
         // turn 4: should refresh (turns_since_write == 3 == cache_intervals)
         let hint = state.advance_turn(&config);
-        assert_eq!(hint, CacheHint::Write { ttl: Duration::from_secs(600) });
+        assert_eq!(
+            hint,
+            CacheHint::Write {
+                ttl: Duration::from_secs(600)
+            }
+        );
     }
 
     #[test]
@@ -176,7 +186,12 @@ mod tests {
         state.advance_turn(&config); // Read
         state.reset(); // adapter-reported cache miss
         let hint = state.advance_turn(&config);
-        assert_eq!(hint, CacheHint::Write { ttl: Duration::from_secs(600) });
+        assert_eq!(
+            hint,
+            CacheHint::Write {
+                ttl: Duration::from_secs(600)
+            }
+        );
     }
 
     #[test]
@@ -199,7 +214,9 @@ mod tests {
 
     #[test]
     fn serde_round_trip_write_hint() {
-        let hint = CacheHint::Write { ttl: Duration::from_secs(600) };
+        let hint = CacheHint::Write {
+            ttl: Duration::from_secs(600),
+        };
         let json = serde_json::to_string(&hint).unwrap();
         let back: CacheHint = serde_json::from_str(&json).unwrap();
         assert_eq!(hint, back);

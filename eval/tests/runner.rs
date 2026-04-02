@@ -7,9 +7,7 @@ use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
 use swink_agent::{Agent, AgentOptions, ModelSpec, testing::SimpleMockStreamFn};
-use swink_agent_eval::{
-    AgentFactory, EvalCase, EvalError, EvalRunner, EvalSet, Verdict,
-};
+use swink_agent_eval::{AgentFactory, EvalCase, EvalError, EvalRunner, EvalSet, Verdict};
 
 /// Factory that creates agents with a deterministic mock stream returning the
 /// given tokens as a text-only response.
@@ -26,10 +24,7 @@ impl MockFactory {
 }
 
 impl AgentFactory for MockFactory {
-    fn create_agent(
-        &self,
-        case: &EvalCase,
-    ) -> Result<(Agent, CancellationToken), EvalError> {
+    fn create_agent(&self, case: &EvalCase) -> Result<(Agent, CancellationToken), EvalError> {
         let cancel = CancellationToken::new();
         let stream_fn = Arc::new(SimpleMockStreamFn::new(self.tokens.clone()));
         let model = ModelSpec::new("test", "test-model");
@@ -43,10 +38,7 @@ impl AgentFactory for MockFactory {
 struct FailingFactory;
 
 impl AgentFactory for FailingFactory {
-    fn create_agent(
-        &self,
-        _case: &EvalCase,
-    ) -> Result<(Agent, CancellationToken), EvalError> {
+    fn create_agent(&self, _case: &EvalCase) -> Result<(Agent, CancellationToken), EvalError> {
         Err(EvalError::invalid_case("factory forced failure"))
     }
 }
@@ -86,7 +78,11 @@ async fn run_set_multi_case_produces_per_case_scores() {
         "all cases should be accounted for"
     );
     // Each case should have its ID preserved.
-    let ids: Vec<_> = result.case_results.iter().map(|r| r.case_id.as_str()).collect();
+    let ids: Vec<_> = result
+        .case_results
+        .iter()
+        .map(|r| r.case_id.as_str())
+        .collect();
     assert_eq!(ids, vec!["a", "b", "c"]);
 }
 
@@ -123,7 +119,11 @@ async fn case_failure_recorded_and_suite_continues() {
     let result = runner.run_set(&eval_set, &FailingFactory).await.unwrap();
 
     // All three cases should be present as failed results.
-    assert_eq!(result.case_results.len(), 3, "all cases should have results");
+    assert_eq!(
+        result.case_results.len(),
+        3,
+        "all cases should have results"
+    );
     assert_eq!(result.summary.total_cases, 3);
     assert_eq!(result.summary.failed, 3);
     assert_eq!(result.summary.passed, 0);
@@ -137,7 +137,13 @@ async fn case_failure_recorded_and_suite_continues() {
             .iter()
             .find(|m| m.evaluator_name == "error")
             .expect("should have error metric");
-        assert!(error_metric.details.as_ref().unwrap().contains("factory forced failure"));
+        assert!(
+            error_metric
+                .details
+                .as_ref()
+                .unwrap()
+                .contains("factory forced failure")
+        );
     }
 }
 

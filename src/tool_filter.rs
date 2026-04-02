@@ -47,10 +47,7 @@ impl ToolPattern {
     #[must_use]
     pub fn parse(pattern: &str) -> Self {
         if pattern.starts_with('^') || pattern.ends_with('$') {
-            Regex::new(pattern).map_or_else(
-                |_| Self::Exact(pattern.to_string()),
-                Self::Regex,
-            )
+            Regex::new(pattern).map_or_else(|_| Self::Exact(pattern.to_string()), Self::Regex)
         } else if pattern.contains('*') || pattern.contains('?') {
             Self::Glob(pattern.to_string())
         } else {
@@ -247,16 +244,14 @@ mod tests {
 
     #[test]
     fn allowed_only_restricts_to_matching() {
-        let filter = ToolFilter::new()
-            .with_allowed(vec![ToolPattern::parse("bash")]);
+        let filter = ToolFilter::new().with_allowed(vec![ToolPattern::parse("bash")]);
         assert!(filter.is_allowed("bash"));
         assert!(!filter.is_allowed("read_file"));
     }
 
     #[test]
     fn rejected_only_excludes_matching() {
-        let filter = ToolFilter::new()
-            .with_rejected(vec![ToolPattern::parse("bash")]);
+        let filter = ToolFilter::new().with_rejected(vec![ToolPattern::parse("bash")]);
         assert!(!filter.is_allowed("bash"));
         assert!(filter.is_allowed("read_file"));
     }
@@ -272,6 +267,9 @@ mod tests {
     fn parse_detects_pattern_type() {
         assert!(matches!(ToolPattern::parse("exact"), ToolPattern::Exact(_)));
         assert!(matches!(ToolPattern::parse("glob_*"), ToolPattern::Glob(_)));
-        assert!(matches!(ToolPattern::parse("^regex$"), ToolPattern::Regex(_)));
+        assert!(matches!(
+            ToolPattern::parse("^regex$"),
+            ToolPattern::Regex(_)
+        ));
     }
 }

@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use swink_agent::{AgentOptions, AgentOrchestrator};
 
-use common::{default_convert, default_model, text_events, MockStreamFn};
+use common::{MockStreamFn, default_convert, default_model, text_events};
 
 fn make_agent_options(name: &str) -> AgentOptions {
     let reply = format!("I am {name}");
@@ -51,7 +51,10 @@ async fn five_agents_three_concurrent_requests() {
     })
     .await;
 
-    assert!(result.is_ok(), "orchestrator requests timed out (deadlock?)");
+    assert!(
+        result.is_ok(),
+        "orchestrator requests timed out (deadlock?)"
+    );
 
     let (r0, r1, r2) = result.unwrap();
     assert!(r0.is_ok(), "agent_0 returned error: {:?}", r0.err());

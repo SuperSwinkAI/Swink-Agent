@@ -14,11 +14,13 @@ use tracing::debug;
 use crate::types::{AgentMessage, LlmMessage, StopReason};
 
 use super::stream::stream_with_retry;
+use super::turn::{
+    build_snapshot, emit_turn_end_and_agent_end, handle_cancellation, run_context_transformers,
+};
 use super::{
     AgentEvent, AgentLoopConfig, LoopState, StreamResult, TurnEndReason, TurnOutcome,
     build_error_message, emit,
 };
-use super::turn::{build_snapshot, emit_turn_end_and_agent_end, handle_cancellation, run_context_transformers};
 
 /// Outcome of an in-place overflow recovery attempt.
 pub(super) enum OverflowRecoveryResult {
@@ -61,7 +63,8 @@ pub(super) async fn attempt_overflow_recovery(
     state.overflow_signal = true;
 
     // Re-run transformers with overflow=true
-    let any_compacted = run_context_transformers(config, &mut state.context_messages, true, tx).await;
+    let any_compacted =
+        run_context_transformers(config, &mut state.context_messages, true, tx).await;
     state.overflow_signal = false;
 
     // Guard 3: Transformers ran but neither reported compaction — no point retrying.
@@ -72,9 +75,7 @@ pub(super) async fn attempt_overflow_recovery(
 
     // Check cancellation before retrying.
     if cancellation_token.is_cancelled() {
-        return OverflowRecoveryResult::Failed(
-            handle_cancellation(config, state, tx).await,
-        );
+        return OverflowRecoveryResult::Failed(handle_cancellation(config, state, tx).await);
     }
 
     // Re-run convert-to-LLM pipeline with compacted context.

@@ -28,9 +28,7 @@ use swink_agent::types::{AgentContext, AgentMessage, ModelSpec};
 
 use crate::base::AdapterBase;
 use crate::convert;
-use crate::openai_compat::{
-    OaiConverter, OaiMessage, build_oai_tools, parse_oai_sse_stream,
-};
+use crate::openai_compat::{OaiConverter, OaiMessage, build_oai_tools, parse_oai_sse_stream};
 
 /// Charset for generating Mistral-compatible 9-char tool call IDs.
 const MISTRAL_ID_CHARSET: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
@@ -248,9 +246,7 @@ async fn send_request(
         .json(&body)
         .send()
         .await
-        .map_err(|e| {
-            AssistantMessageEvent::error_network(format!("Mistral connection error: {e}"))
-        })
+        .map_err(|e| AssistantMessageEvent::error_network(format!("Mistral connection error: {e}")))
 }
 
 // ─── Message conversion ────────────────────────────────────────────────────

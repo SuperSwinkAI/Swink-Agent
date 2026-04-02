@@ -18,16 +18,14 @@ impl MockAuthHandler {
     }
 
     pub fn failing(reason: impl Into<String>) -> Arc<FailingAuthHandler> {
-        Arc::new(FailingAuthHandler { reason: reason.into() })
+        Arc::new(FailingAuthHandler {
+            reason: reason.into(),
+        })
     }
 }
 
 impl AuthorizationHandler for MockAuthHandler {
-    fn authorize(
-        &self,
-        _auth_url: &str,
-        _state: &str,
-    ) -> CredentialFuture<'_, String> {
+    fn authorize(&self, _auth_url: &str, _state: &str) -> CredentialFuture<'_, String> {
         let code = self.code.clone();
         Box::pin(async move { Ok(code) })
     }
@@ -39,11 +37,7 @@ pub struct FailingAuthHandler {
 }
 
 impl AuthorizationHandler for FailingAuthHandler {
-    fn authorize(
-        &self,
-        _auth_url: &str,
-        _state: &str,
-    ) -> CredentialFuture<'_, String> {
+    fn authorize(&self, _auth_url: &str, _state: &str) -> CredentialFuture<'_, String> {
         let reason = self.reason.clone();
         Box::pin(async move {
             Err(CredentialError::AuthorizationFailed {

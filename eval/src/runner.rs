@@ -6,7 +6,9 @@
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
-use swink_agent::{Agent, AssistantMessage, ContentBlock, Cost, ModelSpec, StopReason, Usage, UserMessage};
+use swink_agent::{
+    Agent, AssistantMessage, ContentBlock, Cost, ModelSpec, StopReason, Usage, UserMessage,
+};
 
 use crate::error::EvalError;
 use crate::evaluator::EvaluatorRegistry;

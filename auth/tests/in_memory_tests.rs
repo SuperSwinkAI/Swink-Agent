@@ -12,7 +12,9 @@ async fn get_returns_seeded_credential() {
     let mut creds = HashMap::new();
     creds.insert(
         "github".to_string(),
-        Credential::ApiKey { key: "ghp_abc123".into() },
+        Credential::ApiKey {
+            key: "ghp_abc123".into(),
+        },
     );
     let store = InMemoryCredentialStore::new(creds);
 
@@ -38,7 +40,12 @@ async fn set_and_delete_roundtrip() {
 
     // Set
     store
-        .set("test-key", Credential::ApiKey { key: "secret".into() })
+        .set(
+            "test-key",
+            Credential::ApiKey {
+                key: "secret".into(),
+            },
+        )
         .await
         .unwrap();
 
@@ -68,10 +75,12 @@ async fn with_credential_builder() {
 // T029: thread safety — concurrent reads and writes
 #[tokio::test]
 async fn thread_safety_concurrent_access() {
-    let store = Arc::new(
-        InMemoryCredentialStore::empty()
-            .with_credential("shared", Credential::ApiKey { key: "initial".into() }),
-    );
+    let store = Arc::new(InMemoryCredentialStore::empty().with_credential(
+        "shared",
+        Credential::ApiKey {
+            key: "initial".into(),
+        },
+    ));
 
     let mut handles = Vec::new();
 
@@ -91,7 +100,9 @@ async fn thread_safety_concurrent_access() {
             store
                 .set(
                     &format!("key-{i}"),
-                    Credential::ApiKey { key: format!("val-{i}") },
+                    Credential::ApiKey {
+                        key: format!("val-{i}"),
+                    },
                 )
                 .await
                 .unwrap();
@@ -113,8 +124,18 @@ async fn thread_safety_concurrent_access() {
 #[test]
 fn debug_impl_shows_count_not_values() {
     let store = InMemoryCredentialStore::empty()
-        .with_credential("k1", Credential::ApiKey { key: "secret-value".into() })
-        .with_credential("k2", Credential::ApiKey { key: "another-secret".into() });
+        .with_credential(
+            "k1",
+            Credential::ApiKey {
+                key: "secret-value".into(),
+            },
+        )
+        .with_credential(
+            "k2",
+            Credential::ApiKey {
+                key: "another-secret".into(),
+            },
+        );
 
     let debug = format!("{store:?}");
     assert!(debug.contains("credential_count"));

@@ -492,8 +492,10 @@ mod tests {
 
     #[test]
     fn find_preset_by_model_id_unknown_returns_none() {
-        assert!(model_catalog()
-            .find_preset_by_model_id("nonexistent")
-            .is_none());
+        assert!(
+            model_catalog()
+                .find_preset_by_model_id("nonexistent")
+                .is_none()
+        );
     }
 }

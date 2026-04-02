@@ -48,8 +48,7 @@ async fn expired_oauth2_triggers_refresh() {
 
     let token_url = format!("{}/token", mock_server.uri());
     let store = store(
-        InMemoryCredentialStore::empty()
-            .with_credential("oauth-key", expired_oauth2(&token_url)),
+        InMemoryCredentialStore::empty().with_credential("oauth-key", expired_oauth2(&token_url)),
     );
     let resolver = DefaultCredentialResolver::new(Arc::clone(&store));
 
@@ -64,7 +63,11 @@ async fn expired_oauth2_triggers_refresh() {
     // Verify the store was updated
     let updated = store.get("oauth-key").await.unwrap().unwrap();
     match updated {
-        Credential::OAuth2 { access_token, refresh_token, .. } => {
+        Credential::OAuth2 {
+            access_token,
+            refresh_token,
+            ..
+        } => {
             assert_eq!(access_token, "new-access-token");
             assert_eq!(refresh_token.as_deref(), Some("new-refresh-token"));
         }
@@ -87,8 +90,7 @@ async fn refresh_failure_returns_error() {
 
     let token_url = format!("{}/token", mock_server.uri());
     let store = Arc::new(
-        InMemoryCredentialStore::empty()
-            .with_credential("oauth-key", expired_oauth2(&token_url)),
+        InMemoryCredentialStore::empty().with_credential("oauth-key", expired_oauth2(&token_url)),
     );
     let resolver = DefaultCredentialResolver::new(store);
 
@@ -123,8 +125,7 @@ async fn concurrent_refresh_deduplication() {
 
     let token_url = format!("{}/token", mock_server.uri());
     let store = store(
-        InMemoryCredentialStore::empty()
-            .with_credential("shared", expired_oauth2(&token_url)),
+        InMemoryCredentialStore::empty().with_credential("shared", expired_oauth2(&token_url)),
     );
     let resolver = Arc::new(DefaultCredentialResolver::new(store));
 
@@ -197,10 +198,8 @@ async fn pre_provisioned_expired_auto_refreshes() {
         .await;
 
     let token_url = format!("{}/token", mock_server.uri());
-    let store = store(
-        InMemoryCredentialStore::empty()
-            .with_credential("svc", expired_oauth2(&token_url)),
-    );
+    let store =
+        store(InMemoryCredentialStore::empty().with_credential("svc", expired_oauth2(&token_url)));
     // No authorization handler — headless mode
     let resolver = DefaultCredentialResolver::new(store);
 

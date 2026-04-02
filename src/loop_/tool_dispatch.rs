@@ -144,7 +144,10 @@ pub async fn execute_tools_concurrently(
             };
 
             let state_snapshot = {
-                let guard = config.session_state.read().unwrap_or_else(std::sync::PoisonError::into_inner);
+                let guard = config
+                    .session_state
+                    .read()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 guard.clone()
             };
             let policy_ctx = PolicyContext {
@@ -204,7 +207,17 @@ pub async fn execute_tools_concurrently(
             let requires_approval = tool_map
                 .get(tc.name.as_str())
                 .is_some_and(|t| t.requires_approval());
-            match check_approval(approve_fn, tc, idx, requires_approval, &tool_map, &results, tx).await {
+            match check_approval(
+                approve_fn,
+                tc,
+                idx,
+                requires_approval,
+                &tool_map,
+                &results,
+                tx,
+            )
+            .await
+            {
                 ApprovalOutcome::Approved => {}
                 ApprovalOutcome::ApprovedWith(new_params) => {
                     effective_arguments = new_params;
@@ -512,17 +525,15 @@ async fn check_approval(
     }
 
     // Resolve approval context with panic safety.
-    let approval_context = tool_map
-        .get(tc.name.as_str())
-        .and_then(|tool| {
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                tool.approval_context(&tc.arguments)
-            }))
-            .unwrap_or_else(|_| {
-                tracing::warn!(tool_name = %tc.name, "approval_context() panicked — using None");
-                None
-            })
-        });
+    let approval_context = tool_map.get(tc.name.as_str()).and_then(|tool| {
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            tool.approval_context(&tc.arguments)
+        }))
+        .unwrap_or_else(|_| {
+            tracing::warn!(tool_name = %tc.name, "approval_context() panicked — using None");
+            None
+        })
+    });
 
     let request = ToolApprovalRequest {
         tool_call_id: tc.id.clone(),
@@ -620,16 +631,22 @@ async fn dispatch_single_tool(
             } else {
                 // ── Credential resolution (zero overhead when no auth_config) ──
                 match resolve_credential(&tool, &config_clone, &tool_call_id).await {
-                    Err(cred_error) => {
-                        (AgentToolResult::error(format!("{cred_error}")), true)
-                    }
+                    Err(cred_error) => (AgentToolResult::error(format!("{cred_error}")), true),
                     Ok(credential) => {
                         let on_update_tx = tx_clone.clone();
                         let on_update = Box::new(move |partial: AgentToolResult| {
-                            let _ = on_update_tx.try_send(AgentEvent::ToolExecutionUpdate { partial });
+                            let _ =
+                                on_update_tx.try_send(AgentEvent::ToolExecutionUpdate { partial });
                         });
                         let result = tool
-                            .execute(&tool_call_id, arguments, child_token, Some(on_update), config_clone.session_state.clone(), credential)
+                            .execute(
+                                &tool_call_id,
+                                arguments,
+                                child_token,
+                                Some(on_update),
+                                config_clone.session_state.clone(),
+                                credential,
+                            )
                             .await;
                         let is_error = result.is_error;
                         (result, is_error)
@@ -713,9 +730,15 @@ async fn resolve_credential(
 
     // Type mismatch check (FR-018)
     let actual_type = match &credential {
-        crate::credential::ResolvedCredential::ApiKey(_) => crate::credential::CredentialType::ApiKey,
-        crate::credential::ResolvedCredential::Bearer(_) => crate::credential::CredentialType::Bearer,
-        crate::credential::ResolvedCredential::OAuth2AccessToken(_) => crate::credential::CredentialType::OAuth2,
+        crate::credential::ResolvedCredential::ApiKey(_) => {
+            crate::credential::CredentialType::ApiKey
+        }
+        crate::credential::ResolvedCredential::Bearer(_) => {
+            crate::credential::CredentialType::Bearer
+        }
+        crate::credential::ResolvedCredential::OAuth2AccessToken(_) => {
+            crate::credential::CredentialType::OAuth2
+        }
     };
     if actual_type != auth_config.credential_type {
         return Err(crate::credential::CredentialError::TypeMismatch {

@@ -15,8 +15,8 @@ use super::overflow::{OverflowRecoveryResult, attempt_overflow_recovery};
 use super::stream::{capability_filter_tools, stream_with_retry};
 use super::tool_dispatch::execute_tools_concurrently;
 use super::{
-    AgentEvent, AgentLoopConfig, LoopState, StreamResult, ToolCallInfo,
-    ToolExecOutcome, TurnEndReason, TurnOutcome, build_abort_message, emit,
+    AgentEvent, AgentLoopConfig, LoopState, StreamResult, ToolCallInfo, ToolExecOutcome,
+    TurnEndReason, TurnOutcome, build_abort_message, emit,
 };
 
 /// Run a single turn of the inner loop: inject pending messages, transform
@@ -58,7 +58,10 @@ pub async fn run_single_turn(
         use tracing::info;
 
         let state_snapshot = {
-            let guard = config.session_state.read().unwrap_or_else(std::sync::PoisonError::into_inner);
+            let guard = config
+                .session_state
+                .read()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             guard.clone()
         };
         let policy_ctx = PolicyContext {
@@ -103,7 +106,13 @@ pub async fn run_single_turn(
     let _turn_guard = turn_span.enter();
 
     // ii. Run context transformers (async first, then sync)
-    run_context_transformers(config, &mut state.context_messages, state.overflow_signal, tx).await;
+    run_context_transformers(
+        config,
+        &mut state.context_messages,
+        state.overflow_signal,
+        tx,
+    )
+    .await;
     state.overflow_signal = false;
 
     // ii-c. Annotate context messages with cache hints if caching is configured
@@ -145,23 +154,33 @@ pub async fn run_single_turn(
 
         // Emit CacheAction event (after guard is dropped)
         if let Some((hint, prefix_tokens)) = cache_event {
-            let _ = emit(tx, AgentEvent::CacheAction { hint, prefix_tokens }).await;
+            let _ = emit(
+                tx,
+                AgentEvent::CacheAction {
+                    hint,
+                    prefix_tokens,
+                },
+            )
+            .await;
         }
     }
 
     // ii-d. Inject dynamic system prompt as a user-role message (non-cacheable)
-    let dynamic_prompt_injected = config.dynamic_system_prompt.as_ref().and_then(|dynamic_fn| {
-        let dynamic_text = dynamic_fn();
-        if dynamic_text.is_empty() {
-            None
-        } else {
-            Some(LlmMessage::User(crate::types::UserMessage {
-                content: vec![ContentBlock::Text { text: dynamic_text }],
-                timestamp: crate::util::now_timestamp(),
-                cache_hint: None,
-            }))
-        }
-    });
+    let dynamic_prompt_injected = config
+        .dynamic_system_prompt
+        .as_ref()
+        .and_then(|dynamic_fn| {
+            let dynamic_text = dynamic_fn();
+            if dynamic_text.is_empty() {
+                None
+            } else {
+                Some(LlmMessage::User(crate::types::UserMessage {
+                    content: vec![ContentBlock::Text { text: dynamic_text }],
+                    timestamp: crate::util::now_timestamp(),
+                    cache_hint: None,
+                }))
+            }
+        });
 
     // iii. Apply convert_to_llm to filter messages for the provider
     let mut llm_messages: Vec<LlmMessage> = state
@@ -246,7 +265,10 @@ pub async fn run_single_turn(
     };
 
     // Record OTel-compatible attributes on the turn span.
-    turn_span.record("agent.stop_reason", tracing::field::debug(&assistant_message.stop_reason));
+    turn_span.record(
+        "agent.stop_reason",
+        tracing::field::debug(&assistant_message.stop_reason),
+    );
 
     // vii. Check stop_reason for error/aborted
     if matches!(
@@ -389,7 +411,11 @@ pub(super) async fn emit_turn_end_and_agent_end(
 ///
 /// Extracts LLM messages from `context_messages`, using the accumulated
 /// usage/cost and the given stop reason.
-pub(super) fn build_snapshot(state: &LoopState, stop_reason: StopReason, state_delta: Option<crate::StateDelta>) -> TurnSnapshot {
+pub(super) fn build_snapshot(
+    state: &LoopState,
+    stop_reason: StopReason,
+    state_delta: Option<crate::StateDelta>,
+) -> TurnSnapshot {
     let llm_messages: Vec<LlmMessage> = state
         .context_messages
         .iter()
@@ -414,13 +440,22 @@ async fn flush_state_delta(
     tx: &mpsc::Sender<AgentEvent>,
 ) -> Option<crate::StateDelta> {
     let delta = {
-        let mut s = config.session_state.write().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut s = config
+            .session_state
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         s.flush_delta()
     };
     if delta.is_empty() {
         None
     } else {
-        let _ = emit(tx, AgentEvent::StateChanged { delta: delta.clone() }).await;
+        let _ = emit(
+            tx,
+            AgentEvent::StateChanged {
+                delta: delta.clone(),
+            },
+        )
+        .await;
         Some(delta)
     }
 }
@@ -712,9 +747,7 @@ async fn handle_tool_calls(
     }
 
     // Poll steering if not already interrupted
-    if !steering_interrupted
-        && let Some(ref provider) = config.message_provider
-    {
+    if !steering_interrupted && let Some(ref provider) = config.message_provider {
         let msgs = provider.poll_steering();
         if !msgs.is_empty() {
             state.pending_messages.extend(msgs);

@@ -19,8 +19,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 1. Choose named helpers instead of hand-typing provider/model/base-url strings.
     let connections = ModelConnections::builder()
-        .primary(build_remote_connection(remote_preset_keys::anthropic::SONNET_46)?)
-        .fallback(build_remote_connection(remote_preset_keys::openai::GPT_4_1)?)
+        .primary(build_remote_connection(
+            remote_preset_keys::anthropic::SONNET_46,
+        )?)
+        .fallback(build_remote_connection(
+            remote_preset_keys::openai::GPT_4_1,
+        )?)
         .fallback(default_local_connection()?)
         .build();
 

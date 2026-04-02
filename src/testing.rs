@@ -6,8 +6,8 @@
 
 use crate::loop_::AgentEvent;
 use crate::stream::{AssistantMessageEvent, StreamErrorKind, StreamFn, StreamOptions};
-use crate::tool::{AgentTool, AgentToolResult, ToolFuture};
 use crate::tool::permissive_object_schema;
+use crate::tool::{AgentTool, AgentToolResult, ToolFuture};
 use crate::types::{AgentContext, ModelSpec};
 use crate::types::{
     AgentMessage, AssistantMessage, ContentBlock, Cost, LlmMessage, StopReason, ToolResultMessage,

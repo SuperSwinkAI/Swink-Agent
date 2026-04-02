@@ -12,9 +12,7 @@ use common::{
 use futures::stream::StreamExt;
 use serde_json::json;
 
-use swink_agent::{
-    Agent, AgentError, AgentOptions, DefaultRetryStrategy, StopReason, StreamFn,
-};
+use swink_agent::{Agent, AgentError, AgentOptions, DefaultRetryStrategy, StopReason, StreamFn};
 
 // ─── Helpers ─────────────────────────────────────────────────────────────
 
@@ -245,7 +243,11 @@ async fn structured_output_fails_after_max_retries() {
     );
 
     assert!(
-        agent.state().tools.iter().all(|tool| tool.name() != "__structured_output"),
+        agent
+            .state()
+            .tools
+            .iter()
+            .all(|tool| tool.name() != "__structured_output"),
         "synthetic structured output tool should always be removed after failure"
     );
 }

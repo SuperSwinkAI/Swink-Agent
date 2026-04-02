@@ -499,8 +499,14 @@ impl AgentOptions {
 
     /// Add a single key-value pair to initial state.
     #[must_use]
-    pub fn with_state_entry(mut self, key: impl Into<String>, value: impl serde::Serialize) -> Self {
-        let state = self.session_state.get_or_insert_with(crate::SessionState::new);
+    pub fn with_state_entry(
+        mut self,
+        key: impl Into<String>,
+        value: impl serde::Serialize,
+    ) -> Self {
+        let state = self
+            .session_state
+            .get_or_insert_with(crate::SessionState::new);
         state.set(&key.into(), value);
         // Flush delta so pre-seeded entries don't appear as mutations (baseline semantics).
         state.flush_delta();

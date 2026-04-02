@@ -7,8 +7,6 @@ use thiserror::Error;
 
 #[cfg(feature = "anthropic")]
 use crate::AnthropicStreamFn;
-#[cfg(feature = "azure")]
-use crate::AzureStreamFn;
 #[cfg(feature = "bedrock")]
 use crate::BedrockStreamFn;
 #[cfg(feature = "gemini")]
@@ -19,6 +17,8 @@ use crate::MistralStreamFn;
 use crate::OpenAiStreamFn;
 #[cfg(feature = "xai")]
 use crate::XAiStreamFn;
+#[cfg(feature = "azure")]
+use crate::{AzureAuth, AzureStreamFn};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct RemotePresetKey {
@@ -88,36 +88,37 @@ pub mod remote_preset_keys {
     pub mod xai {
         use super::RemotePresetKey;
 
-        pub const GROK_3: RemotePresetKey = RemotePresetKey::new("xai", "grok_3");
-        pub const GROK_3_FAST: RemotePresetKey = RemotePresetKey::new("xai", "grok_3_fast");
+        pub const GROK_4_20_REASONING: RemotePresetKey =
+            RemotePresetKey::new("xai", "grok_4_20_reasoning");
+        pub const GROK_4_20_NON_REASONING: RemotePresetKey =
+            RemotePresetKey::new("xai", "grok_4_20_non_reasoning");
+        pub const GROK_4_1_FAST_REASONING: RemotePresetKey =
+            RemotePresetKey::new("xai", "grok_4_1_fast_reasoning");
+        pub const GROK_4_1_FAST_NON_REASONING: RemotePresetKey =
+            RemotePresetKey::new("xai", "grok_4_1_fast_non_reasoning");
+        pub const GROK_4_20_MULTI_AGENT: RemotePresetKey =
+            RemotePresetKey::new("xai", "grok_4_20_multi_agent");
     }
 
     #[cfg(feature = "mistral")]
     pub mod mistral {
         use super::RemotePresetKey;
 
-        pub const MISTRAL_LARGE: RemotePresetKey =
-            RemotePresetKey::new("mistral", "mistral_large");
+        pub const MISTRAL_LARGE: RemotePresetKey = RemotePresetKey::new("mistral", "mistral_large");
         pub const MISTRAL_MEDIUM: RemotePresetKey =
             RemotePresetKey::new("mistral", "mistral_medium");
-        pub const MISTRAL_SMALL: RemotePresetKey =
-            RemotePresetKey::new("mistral", "mistral_small");
-        pub const MINISTRAL_3B: RemotePresetKey =
-            RemotePresetKey::new("mistral", "ministral_3b");
-        pub const MINISTRAL_8B: RemotePresetKey =
-            RemotePresetKey::new("mistral", "ministral_8b");
-        pub const MINISTRAL_14B: RemotePresetKey =
-            RemotePresetKey::new("mistral", "ministral_14b");
+        pub const MISTRAL_SMALL: RemotePresetKey = RemotePresetKey::new("mistral", "mistral_small");
+        pub const MINISTRAL_3B: RemotePresetKey = RemotePresetKey::new("mistral", "ministral_3b");
+        pub const MINISTRAL_8B: RemotePresetKey = RemotePresetKey::new("mistral", "ministral_8b");
+        pub const MINISTRAL_14B: RemotePresetKey = RemotePresetKey::new("mistral", "ministral_14b");
         pub const MAGISTRAL_MEDIUM: RemotePresetKey =
             RemotePresetKey::new("mistral", "magistral_medium");
         pub const MAGISTRAL_SMALL: RemotePresetKey =
             RemotePresetKey::new("mistral", "magistral_small");
         pub const CODESTRAL: RemotePresetKey = RemotePresetKey::new("mistral", "codestral");
         pub const DEVSTRAL: RemotePresetKey = RemotePresetKey::new("mistral", "devstral");
-        pub const PIXTRAL_LARGE: RemotePresetKey =
-            RemotePresetKey::new("mistral", "pixtral_large");
-        pub const PIXTRAL_12B: RemotePresetKey =
-            RemotePresetKey::new("mistral", "pixtral_12b");
+        pub const PIXTRAL_LARGE: RemotePresetKey = RemotePresetKey::new("mistral", "pixtral_large");
+        pub const PIXTRAL_12B: RemotePresetKey = RemotePresetKey::new("mistral", "pixtral_12b");
     }
 
     #[cfg(feature = "bedrock")]
@@ -261,7 +262,11 @@ fn build_remote_connection_from_values(
             preset.api_version.clone().unwrap_or(ApiVersion::V1beta),
         )),
         #[cfg(feature = "azure")]
-        "azure" => Arc::new(AzureStreamFn::new(resolved_base_url()?, &api_key)),
+        #[allow(clippy::redundant_clone)] // Clone needed when multiple adapter features enabled
+        "azure" => Arc::new(AzureStreamFn::new(
+            resolved_base_url()?,
+            AzureAuth::ApiKey(api_key.clone()),
+        )),
         #[cfg(feature = "xai")]
         "xai" => Arc::new(XAiStreamFn::new(resolved_base_url()?, &api_key)),
         #[cfg(feature = "mistral")]
@@ -450,7 +455,12 @@ mod tests {
         assert!(preset("nonexistent-model-xyz").is_none());
     }
 
-    #[cfg(all(feature = "azure", feature = "xai", feature = "mistral", feature = "bedrock"))]
+    #[cfg(all(
+        feature = "azure",
+        feature = "xai",
+        feature = "mistral",
+        feature = "bedrock"
+    ))]
     #[test]
     fn added_provider_presets_map_to_catalog_models() {
         assert_eq!(
@@ -460,10 +470,34 @@ mod tests {
             "gpt-4o"
         );
         assert_eq!(
-            required_catalog_preset(remote_preset_keys::xai::GROK_3)
+            required_catalog_preset(remote_preset_keys::xai::GROK_4_20_REASONING)
                 .unwrap()
                 .model_id,
-            "grok-3"
+            "grok-4.20-0309-reasoning"
+        );
+        assert_eq!(
+            required_catalog_preset(remote_preset_keys::xai::GROK_4_20_NON_REASONING)
+                .unwrap()
+                .model_id,
+            "grok-4.20-0309-non-reasoning"
+        );
+        assert_eq!(
+            required_catalog_preset(remote_preset_keys::xai::GROK_4_1_FAST_REASONING)
+                .unwrap()
+                .model_id,
+            "grok-4-1-fast-reasoning"
+        );
+        assert_eq!(
+            required_catalog_preset(remote_preset_keys::xai::GROK_4_1_FAST_NON_REASONING)
+                .unwrap()
+                .model_id,
+            "grok-4-1-fast-non-reasoning"
+        );
+        assert_eq!(
+            required_catalog_preset(remote_preset_keys::xai::GROK_4_20_MULTI_AGENT)
+                .unwrap()
+                .model_id,
+            "grok-4.20-multi-agent-0309"
         );
         assert_eq!(
             required_catalog_preset(remote_preset_keys::mistral::MISTRAL_LARGE)

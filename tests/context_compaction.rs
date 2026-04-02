@@ -97,7 +97,9 @@ fn default_config(stream_fn: Arc<dyn StreamFn>) -> AgentLoopConfig {
         metrics_collector: None,
         fallback: None,
         tool_execution_policy: swink_agent::ToolExecutionPolicy::default(),
-        session_state: std::sync::Arc::new(std::sync::RwLock::new(swink_agent::SessionState::new())),
+        session_state: std::sync::Arc::new(
+            std::sync::RwLock::new(swink_agent::SessionState::new()),
+        ),
         credential_resolver: None,
         cache_config: None,
         cache_state: std::sync::Mutex::new(swink_agent::CacheState::default()),
@@ -124,9 +126,7 @@ async fn collect_events(stream: Pin<Box<dyn Stream<Item = AgentEvent> + Send>>) 
 
 /// Check if events contain a specific variant by name.
 fn has_event(events: &[AgentEvent], name: &str) -> bool {
-    events
-        .iter()
-        .any(|e| common::event_variant_name(e) == name)
+    events.iter().any(|e| common::event_variant_name(e) == name)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

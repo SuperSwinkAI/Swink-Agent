@@ -3,7 +3,7 @@
 mod common;
 
 use swink_agent_eval::{
-    Evaluator, EvaluatorRegistry, EvalCase, EvalMetricResult, Invocation, Score,
+    EvalCase, EvalMetricResult, Evaluator, EvaluatorRegistry, Invocation, Score,
 };
 
 fn minimal_case() -> EvalCase {
@@ -69,17 +69,19 @@ impl Evaluator for ReturnsNone {
 fn registry_with_defaults_has_four_evaluators() {
     let registry = EvaluatorRegistry::with_defaults();
     let invocation = common::mock_invocation(&["read", "write"], Some("hello"), 0.01, 500);
-    let case = common::case_with_trajectory(vec![
-        swink_agent_eval::ExpectedToolCall {
-            tool_name: "read".to_string(),
-            arguments: None,
-        },
-    ]);
+    let case = common::case_with_trajectory(vec![swink_agent_eval::ExpectedToolCall {
+        tool_name: "read".to_string(),
+        arguments: None,
+    }]);
     let results = registry.evaluate(&case, &invocation);
     // with_defaults registers: trajectory, budget, response, efficiency
     // trajectory applies (has expected_trajectory), efficiency applies (has tool calls)
     // budget does not apply (no budget constraints), response does not apply (no expected_response)
-    assert_eq!(results.len(), 2, "trajectory + efficiency should produce results");
+    assert_eq!(
+        results.len(),
+        2,
+        "trajectory + efficiency should produce results"
+    );
     let names: Vec<_> = results.iter().map(|r| r.evaluator_name.as_str()).collect();
     assert!(names.contains(&"trajectory"));
     assert!(names.contains(&"efficiency"));

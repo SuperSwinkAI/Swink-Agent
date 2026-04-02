@@ -18,7 +18,6 @@ impl ProgressCollector {
     pub fn events(&self) -> Vec<ProgressEvent> {
         self.events.lock().unwrap().clone()
     }
-
 }
 
 /// Create a [`ProgressCallbackFn`] and its paired [`ProgressCollector`].
@@ -31,4 +30,3 @@ pub fn progress_collector() -> (ProgressCallbackFn, ProgressCollector) {
     let collector = ProgressCollector { events };
     (cb, collector)
 }
-

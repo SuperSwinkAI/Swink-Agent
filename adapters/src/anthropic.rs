@@ -252,13 +252,17 @@ async fn send_request(
     // Apply cache strategy: inject cache_control on system prompt and last tool def
     let system = if use_caching {
         if let Some(last) = tools.last_mut() {
-            last.cache_control = Some(CacheControl { r#type: "ephemeral" });
+            last.cache_control = Some(CacheControl {
+                r#type: "ephemeral",
+            });
         }
         system_text.map(|text| {
             serde_json::to_value(vec![SystemBlock {
                 r#type: "text",
                 text,
-                cache_control: Some(CacheControl { r#type: "ephemeral" }),
+                cache_control: Some(CacheControl {
+                    r#type: "ephemeral",
+                }),
             }])
             .unwrap_or(Value::Null)
         })

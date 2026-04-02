@@ -55,10 +55,7 @@ pub trait ToolExecutionStrategy: Send + Sync {
     /// Each inner `Vec<usize>` contains indices (into the original tool call
     /// slice) that should execute concurrently. The outer `Vec` is processed
     /// sequentially — group 0 completes before group 1 starts, etc.
-    fn partition(
-        &self,
-        tool_calls: &[ToolCallSummary<'_>],
-    ) -> ToolExecutionStrategyFuture<'_>;
+    fn partition(&self, tool_calls: &[ToolCallSummary<'_>]) -> ToolExecutionStrategyFuture<'_>;
 }
 
 // ─── ToolExecutionPolicy ─────────────────────────────────────────────────────

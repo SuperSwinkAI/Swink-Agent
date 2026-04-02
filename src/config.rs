@@ -571,17 +571,37 @@ mod tests {
 
         let stream_fn: std::sync::Arc<dyn crate::stream::StreamFn> =
             std::sync::Arc::new(crate::testing::MockStreamFn::new(vec![]));
-        let opts = config.clone().into_agent_options(stream_fn, crate::agent::default_convert);
+        let opts = config
+            .clone()
+            .into_agent_options(stream_fn, crate::agent::default_convert);
 
         assert_eq!(opts.system_prompt, config.system_prompt);
         assert_eq!(opts.model.provider, config.model.provider);
         assert_eq!(opts.model.model_id, config.model.model_id);
-        assert_eq!(opts.stream_options.temperature, config.stream_options.temperature);
-        assert_eq!(opts.stream_options.max_tokens, config.stream_options.max_tokens);
-        assert_eq!(opts.structured_output_max_retries, config.structured_output_max_retries);
-        assert!(matches!(opts.steering_mode, crate::agent::SteeringMode::All));
-        assert!(matches!(opts.follow_up_mode, crate::agent::FollowUpMode::All));
-        assert!(matches!(opts.approval_mode, crate::tool::ApprovalMode::Bypassed));
+        assert_eq!(
+            opts.stream_options.temperature,
+            config.stream_options.temperature
+        );
+        assert_eq!(
+            opts.stream_options.max_tokens,
+            config.stream_options.max_tokens
+        );
+        assert_eq!(
+            opts.structured_output_max_retries,
+            config.structured_output_max_retries
+        );
+        assert!(matches!(
+            opts.steering_mode,
+            crate::agent::SteeringMode::All
+        ));
+        assert!(matches!(
+            opts.follow_up_mode,
+            crate::agent::FollowUpMode::All
+        ));
+        assert!(matches!(
+            opts.approval_mode,
+            crate::tool::ApprovalMode::Bypassed
+        ));
     }
 
     #[test]

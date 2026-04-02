@@ -33,7 +33,9 @@ async fn pause_captures_pending_follow_up_messages() {
             _context: &'a swink_agent::AgentContext,
             _options: &'a swink_agent::StreamOptions,
             _cancellation_token: tokio_util::sync::CancellationToken,
-        ) -> std::pin::Pin<Box<dyn futures::Stream<Item = swink_agent::AssistantMessageEvent> + Send + 'a>> {
+        ) -> std::pin::Pin<
+            Box<dyn futures::Stream<Item = swink_agent::AssistantMessageEvent> + Send + 'a>,
+        > {
             Box::pin(futures::stream::once(async {
                 pending::<()>().await;
                 swink_agent::AssistantMessageEvent::error("unreachable")
@@ -45,18 +47,20 @@ async fn pause_captures_pending_follow_up_messages() {
     let options = AgentOptions::new("Be helpful.", default_model(), stream_fn, default_convert);
     let mut agent = Agent::new(options);
 
-    agent.follow_up(swink_agent::AgentMessage::Llm(swink_agent::LlmMessage::User(
-        swink_agent::UserMessage {
+    agent.follow_up(swink_agent::AgentMessage::Llm(
+        swink_agent::LlmMessage::User(swink_agent::UserMessage {
             content: vec![swink_agent::ContentBlock::Text {
                 text: "queued follow-up".to_string(),
             }],
             timestamp: 1,
             cache_hint: None,
-        },
-    )));
+        }),
+    ));
 
     let _stream = agent.prompt_stream(vec![user_msg("start")]).unwrap();
-    let checkpoint = agent.pause().expect("pause should snapshot a running agent");
+    let checkpoint = agent
+        .pause()
+        .expect("pause should snapshot a running agent");
     assert_eq!(checkpoint.pending_messages.len(), 1);
 }
 
@@ -181,10 +185,8 @@ fn loop_checkpoint_serde_stable() {
 #[test]
 fn loop_checkpoint_to_standard_checkpoint_integration() {
     let msgs = vec![user_msg("hello")];
-    let checkpoint = LoopCheckpoint::new("sys", "prov", "mod", &msgs).with_metadata(
-        "k",
-        serde_json::json!("v"),
-    );
+    let checkpoint =
+        LoopCheckpoint::new("sys", "prov", "mod", &msgs).with_metadata("k", serde_json::json!("v"));
 
     let standard = checkpoint.to_checkpoint("my-id");
     assert_eq!(standard.id, "my-id");

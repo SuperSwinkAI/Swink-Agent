@@ -36,9 +36,7 @@ fn minimal_snapshot() -> TurnSnapshot {
     TurnSnapshot {
         turn_index: 0,
         messages: Arc::new(vec![LlmMessage::User(UserMessage {
-            content: vec![ContentBlock::Text {
-                text: "hi".into(),
-            }],
+            content: vec![ContentBlock::Text { text: "hi".into() }],
             timestamp: 0,
             cache_hint: None,
         })]),
@@ -69,9 +67,7 @@ fn all_agent_event_variants_serialize_to_json() {
                 assistant_message: minimal_assistant_message(),
                 tool_results: vec![ToolResultMessage {
                     tool_call_id: "tc1".into(),
-                    content: vec![ContentBlock::Text {
-                        text: "ok".into(),
-                    }],
+                    content: vec![ContentBlock::Text { text: "ok".into() }],
                     is_error: false,
                     timestamp: 0,
                     details: json!(null),
@@ -86,9 +82,7 @@ fn all_agent_event_variants_serialize_to_json() {
             AgentEvent::BeforeLlmCall {
                 system_prompt: "You are helpful.".into(),
                 messages: vec![LlmMessage::User(UserMessage {
-                    content: vec![ContentBlock::Text {
-                        text: "hi".into(),
-                    }],
+                    content: vec![ContentBlock::Text { text: "hi".into() }],
                     timestamp: 0,
                     cache_hint: None,
                 })],
@@ -355,9 +349,7 @@ fn agent_event_roundtrip_all_variants() {
                 assistant_message: minimal_assistant_message(),
                 tool_results: vec![ToolResultMessage {
                     tool_call_id: "tc1".into(),
-                    content: vec![ContentBlock::Text {
-                        text: "ok".into(),
-                    }],
+                    content: vec![ContentBlock::Text { text: "ok".into() }],
                     is_error: false,
                     timestamp: 0,
                     details: json!(null),
@@ -372,9 +364,7 @@ fn agent_event_roundtrip_all_variants() {
             AgentEvent::BeforeLlmCall {
                 system_prompt: "You are helpful.".into(),
                 messages: vec![LlmMessage::User(UserMessage {
-                    content: vec![ContentBlock::Text {
-                        text: "hi".into(),
-                    }],
+                    content: vec![ContentBlock::Text { text: "hi".into() }],
                     timestamp: 0,
                     cache_hint: None,
                 })],
@@ -486,9 +476,8 @@ fn agent_event_roundtrip_all_variants() {
 
     for (label, event) in &events {
         let json = serde_json::to_value(event).unwrap();
-        let deserialized: AgentEvent = serde_json::from_value(json.clone()).unwrap_or_else(|e| {
-            panic!("Failed to deserialize AgentEvent variant '{label}': {e}")
-        });
+        let deserialized: AgentEvent = serde_json::from_value(json.clone())
+            .unwrap_or_else(|e| panic!("Failed to deserialize AgentEvent variant '{label}': {e}"));
         // Compare by re-serializing — exact equality may not hold for all types.
         let reserialized = serde_json::to_value(&deserialized).unwrap();
         assert_eq!(

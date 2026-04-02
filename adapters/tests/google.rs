@@ -264,7 +264,11 @@ async fn google_multiple_tool_calls() {
         })
         .collect();
 
-    assert_eq!(tool_starts.len(), 2, "expected 2 tool calls: {tool_starts:?}");
+    assert_eq!(
+        tool_starts.len(),
+        2,
+        "expected 2 tool calls: {tool_starts:?}"
+    );
     assert_eq!(tool_starts[0].1, "c1");
     assert_eq!(tool_starts[0].2, "get_weather");
     assert_eq!(tool_starts[1].1, "c2");
@@ -294,8 +298,10 @@ async fn google_http_429_maps_to_throttled() {
     let events = collect_events(&stream_fn).await;
 
     let msg = find_error_message(&events).expect("expected error event");
-    assert!(msg.contains("throttled") || msg.contains("rate") || msg.contains("429"),
-        "expected throttled error, got: {msg}");
+    assert!(
+        msg.contains("throttled") || msg.contains("rate") || msg.contains("429"),
+        "expected throttled error, got: {msg}"
+    );
 }
 
 // T030: HTTP 401 → auth
@@ -311,8 +317,10 @@ async fn google_http_401_maps_to_auth() {
     let events = collect_events(&stream_fn).await;
 
     let msg = find_error_message(&events).expect("expected error event");
-    assert!(msg.contains("auth") || msg.contains("401"),
-        "expected auth error, got: {msg}");
+    assert!(
+        msg.contains("auth") || msg.contains("401"),
+        "expected auth error, got: {msg}"
+    );
 }
 
 // T031: HTTP 403 → auth
@@ -328,8 +336,10 @@ async fn google_http_403_maps_to_auth() {
     let events = collect_events(&stream_fn).await;
 
     let msg = find_error_message(&events).expect("expected error event");
-    assert!(msg.contains("auth") || msg.contains("403"),
-        "expected auth error, got: {msg}");
+    assert!(
+        msg.contains("auth") || msg.contains("403"),
+        "expected auth error, got: {msg}"
+    );
 }
 
 // T032: HTTP 500 → network
@@ -345,8 +355,10 @@ async fn google_http_500_maps_to_network() {
     let events = collect_events(&stream_fn).await;
 
     let msg = find_error_message(&events).expect("expected error event");
-    assert!(msg.contains("500") || msg.contains("Google"),
-        "expected network error, got: {msg}");
+    assert!(
+        msg.contains("500") || msg.contains("Google"),
+        "expected network error, got: {msg}"
+    );
 }
 
 // T033: Connection error → network
@@ -357,8 +369,10 @@ async fn google_connection_error_maps_to_network() {
     let events = collect_events(&stream_fn).await;
 
     let msg = find_error_message(&events).expect("expected error event");
-    assert!(msg.contains("connection") || msg.contains("Google connection"),
-        "expected network error, got: {msg}");
+    assert!(
+        msg.contains("connection") || msg.contains("Google connection"),
+        "expected network error, got: {msg}"
+    );
 }
 
 // T034: SAFETY finish reason → error event
@@ -386,8 +400,14 @@ async fn google_safety_finish_reason_emits_error() {
     let events = collect_events(&stream_fn).await;
 
     let types: Vec<_> = events.iter().map(event_name).collect();
-    assert!(types.contains(&"Error"), "expected Error event for SAFETY finish reason: {types:?}");
+    assert!(
+        types.contains(&"Error"),
+        "expected Error event for SAFETY finish reason: {types:?}"
+    );
 
     let msg = find_error_message(&events).expect("expected error message");
-    assert!(msg.contains("safety"), "error message should mention safety: {msg}");
+    assert!(
+        msg.contains("safety"),
+        "error message should mention safety: {msg}"
+    );
 }

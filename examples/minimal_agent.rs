@@ -7,9 +7,7 @@
 //! Run: `cargo run --example minimal_agent`
 //! Requires: `ANTHROPIC_API_KEY` (or swap the preset for OpenAI/Ollama).
 
-use swink_agent::{
-    Agent, AgentMessage, AgentOptions, ContentBlock, LlmMessage, ModelConnections,
-};
+use swink_agent::{Agent, AgentMessage, AgentOptions, ContentBlock, LlmMessage, ModelConnections};
 use swink_agent_adapters::{build_remote_connection, remote_preset_keys};
 
 #[tokio::main]

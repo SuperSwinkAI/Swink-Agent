@@ -34,7 +34,12 @@ pub mod convert;
 )]
 mod finalize;
 #[cfg_attr(
-    not(any(feature = "openai", feature = "azure", feature = "mistral", feature = "xai")),
+    not(any(
+        feature = "openai",
+        feature = "azure",
+        feature = "mistral",
+        feature = "xai"
+    )),
     allow(dead_code)
 )]
 mod openai_compat;
@@ -82,7 +87,7 @@ pub use proxy::ProxyStreamFn;
 #[cfg(feature = "azure")]
 mod azure;
 #[cfg(feature = "azure")]
-pub use azure::AzureStreamFn;
+pub use azure::{AzureAuth, AzureStreamFn};
 
 #[cfg(feature = "bedrock")]
 mod bedrock;

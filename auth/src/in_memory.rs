@@ -54,10 +54,7 @@ impl std::fmt::Debug for InMemoryCredentialStore {
 }
 
 impl CredentialStore for InMemoryCredentialStore {
-    fn get(
-        &self,
-        key: &str,
-    ) -> CredentialFuture<'_, Option<Credential>> {
+    fn get(&self, key: &str) -> CredentialFuture<'_, Option<Credential>> {
         let result = self
             .store
             .read()
@@ -67,11 +64,7 @@ impl CredentialStore for InMemoryCredentialStore {
         Box::pin(std::future::ready(Ok(result)))
     }
 
-    fn set(
-        &self,
-        key: &str,
-        credential: Credential,
-    ) -> CredentialFuture<'_, ()> {
+    fn set(&self, key: &str, credential: Credential) -> CredentialFuture<'_, ()> {
         self.store
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -79,10 +72,7 @@ impl CredentialStore for InMemoryCredentialStore {
         Box::pin(std::future::ready(Ok(())))
     }
 
-    fn delete(
-        &self,
-        key: &str,
-    ) -> CredentialFuture<'_, ()> {
+    fn delete(&self, key: &str) -> CredentialFuture<'_, ()> {
         self.store
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner)

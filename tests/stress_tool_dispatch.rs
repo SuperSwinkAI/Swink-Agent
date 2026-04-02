@@ -2,15 +2,15 @@
 
 mod common;
 
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use swink_agent::{Agent, AgentEvent, AgentOptions};
 
 use common::{
-    default_convert, default_model, text_events, tool_call_events_multi, user_msg, MockTool,
-    MockStreamFn,
+    MockStreamFn, MockTool, default_convert, default_model, text_events, tool_call_events_multi,
+    user_msg,
 };
 
 const TOOL_COUNT: usize = 50;
@@ -28,10 +28,7 @@ async fn fifty_concurrent_tool_calls() {
         .collect();
 
     // First response: 50 tool calls. Second response: text-only "done".
-    let responses = vec![
-        tool_call_events_multi(&call_refs),
-        text_events("done"),
-    ];
+    let responses = vec![tool_call_events_multi(&call_refs), text_events("done")];
 
     let stream_fn = Arc::new(MockStreamFn::new(responses));
 
@@ -39,7 +36,8 @@ async fn fifty_concurrent_tool_calls() {
     let tools: Vec<Arc<dyn swink_agent::AgentTool>> = (0..TOOL_COUNT)
         .map(|i| {
             Arc::new(
-                MockTool::new(&format!("tool_{i}")).with_delay(Duration::from_millis(TOOL_DELAY_MS)),
+                MockTool::new(&format!("tool_{i}"))
+                    .with_delay(Duration::from_millis(TOOL_DELAY_MS)),
             ) as Arc<dyn swink_agent::AgentTool>
         })
         .collect();
@@ -60,16 +58,14 @@ async fn fifty_concurrent_tool_calls() {
     let start_clone = Arc::clone(&exec_start_count);
     let end_clone = Arc::clone(&exec_end_count);
 
-    agent.subscribe(move |event: &AgentEvent| {
-        match event {
-            AgentEvent::ToolExecutionStart { .. } => {
-                start_clone.fetch_add(1, Ordering::SeqCst);
-            }
-            AgentEvent::ToolExecutionEnd { .. } => {
-                end_clone.fetch_add(1, Ordering::SeqCst);
-            }
-            _ => {}
+    agent.subscribe(move |event: &AgentEvent| match event {
+        AgentEvent::ToolExecutionStart { .. } => {
+            start_clone.fetch_add(1, Ordering::SeqCst);
         }
+        AgentEvent::ToolExecutionEnd { .. } => {
+            end_clone.fetch_add(1, Ordering::SeqCst);
+        }
+        _ => {}
     });
 
     let start = Instant::now();

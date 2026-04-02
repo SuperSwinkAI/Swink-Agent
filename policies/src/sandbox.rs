@@ -41,10 +41,7 @@ impl SandboxPolicy {
 
     /// Override the argument field names to check for file paths.
     #[must_use]
-    pub fn with_path_fields(
-        mut self,
-        fields: impl IntoIterator<Item = impl Into<String>>,
-    ) -> Self {
+    pub fn with_path_fields(mut self, fields: impl IntoIterator<Item = impl Into<String>>) -> Self {
         self.path_fields = fields.into_iter().map(Into::into).collect();
         self
     }
@@ -87,14 +84,15 @@ impl PreDispatchPolicy for SandboxPolicy {
 
         for field_name in &self.path_fields {
             if let Some(serde_json::Value::String(path_str)) = obj.get(field_name.as_str())
-                && !self.is_path_allowed(path_str) {
-                    return PreDispatchVerdict::Skip(format!(
-                        "path '{}' in field '{}' is outside allowed root '{}'",
-                        path_str,
-                        field_name,
-                        self.allowed_root.display()
-                    ));
-                }
+                && !self.is_path_allowed(path_str)
+            {
+                return PreDispatchVerdict::Skip(format!(
+                    "path '{}' in field '{}' is outside allowed root '{}'",
+                    path_str,
+                    field_name,
+                    self.allowed_root.display()
+                ));
+            }
         }
 
         PreDispatchVerdict::Continue
@@ -106,7 +104,11 @@ mod tests {
     use super::*;
     use swink_agent::{Cost, Usage};
 
-    fn make_ctx<'a>(usage: &'a Usage, cost: &'a Cost, state: &'a swink_agent::SessionState) -> PolicyContext<'a> {
+    fn make_ctx<'a>(
+        usage: &'a Usage,
+        cost: &'a Cost,
+        state: &'a swink_agent::SessionState,
+    ) -> PolicyContext<'a> {
         PolicyContext {
             turn_index: 0,
             accumulated_usage: usage,
@@ -189,8 +191,8 @@ mod tests {
 
     #[test]
     fn custom_path_fields() {
-        let policy = SandboxPolicy::new("/tmp/workspace")
-            .with_path_fields(["target_dir", "output"]);
+        let policy =
+            SandboxPolicy::new("/tmp/workspace").with_path_fields(["target_dir", "output"]);
         let usage = Usage::default();
         let cost = Cost::default();
         let state = swink_agent::SessionState::new();

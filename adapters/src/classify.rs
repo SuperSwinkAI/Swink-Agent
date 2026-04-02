@@ -177,10 +177,7 @@ mod tests {
                 assert!(error_message.contains("TestProvider"));
                 assert!(error_message.contains("401"));
                 assert!(error_message.contains("bad key"));
-                assert_eq!(
-                    error_kind,
-                    Some(swink_agent::stream::StreamErrorKind::Auth)
-                );
+                assert_eq!(error_kind, Some(swink_agent::stream::StreamErrorKind::Auth));
             }
             other => panic!("expected Error, got {other:?}"),
         }

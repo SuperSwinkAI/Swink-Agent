@@ -62,7 +62,9 @@ impl PromptInjectionGuard {
     /// to add custom patterns.
     #[must_use]
     pub const fn without_defaults() -> Self {
-        Self { patterns: Vec::new() }
+        Self {
+            patterns: Vec::new(),
+        }
     }
 
     /// Adds a custom case-insensitive pattern to the guard.
@@ -151,10 +153,7 @@ const fn default_patterns() -> &'static [(&'static str, &'static str)] {
             r"disregard\s+your\s+system\s+prompt",
         ),
         ("you_are_now_a", r"you\s+are\s+now\s+a\b"),
-        (
-            "forget_your_instructions",
-            r"forget\s+your\s+instructions",
-        ),
+        ("forget_your_instructions", r"forget\s+your\s+instructions"),
         (
             "override_your_programming",
             r"override\s+your\s+programming",
@@ -278,7 +277,10 @@ mod tests {
         let ctx = make_policy_ctx(&messages, &usage, &cost, &state);
 
         assert!(
-            matches!(PreTurnPolicy::evaluate(&guard, &ctx), PolicyVerdict::Continue),
+            matches!(
+                PreTurnPolicy::evaluate(&guard, &ctx),
+                PolicyVerdict::Continue
+            ),
             "benign message should not be blocked"
         );
     }
@@ -286,13 +288,15 @@ mod tests {
     #[test]
     fn default_patterns_allow_partial_match() {
         let guard = PromptInjectionGuard::new();
-        let (messages, usage, cost) =
-            user_ctx("please ignore the previous error and try again");
+        let (messages, usage, cost) = user_ctx("please ignore the previous error and try again");
         let state = swink_agent::SessionState::new();
         let ctx = make_policy_ctx(&messages, &usage, &cost, &state);
 
         assert!(
-            matches!(PreTurnPolicy::evaluate(&guard, &ctx), PolicyVerdict::Continue),
+            matches!(
+                PreTurnPolicy::evaluate(&guard, &ctx),
+                PolicyVerdict::Continue
+            ),
             "partial match on benign phrase should not be blocked"
         );
     }
@@ -326,7 +330,10 @@ mod tests {
         let ctx = make_policy_ctx(&messages, &usage, &cost, &state);
 
         assert!(
-            matches!(PreTurnPolicy::evaluate(&guard, &ctx), PolicyVerdict::Continue),
+            matches!(
+                PreTurnPolicy::evaluate(&guard, &ctx),
+                PolicyVerdict::Continue
+            ),
             "empty message should not be blocked"
         );
     }
@@ -341,7 +348,10 @@ mod tests {
         let state = swink_agent::SessionState::new();
         let ctx = make_policy_ctx(&messages, &usage, &cost, &state);
         assert!(
-            matches!(PreTurnPolicy::evaluate(&guard, &ctx), PolicyVerdict::Continue),
+            matches!(
+                PreTurnPolicy::evaluate(&guard, &ctx),
+                PolicyVerdict::Continue
+            ),
             "without_defaults should not have default patterns"
         );
 
