@@ -81,12 +81,9 @@ fn slow_path_triggered_by_title_change() {
 
     // Change the title to something longer, triggering the slow path on next append.
     // We do this by saving the full session with the new meta + all existing messages.
-    let (_, existing) = store.load("slow_path").unwrap();
-    let new_meta = sample_meta(
-        "slow_path",
-        "a much longer title that changes meta line byte length",
-    );
-    store.save("slow_path", &new_meta, &existing).unwrap();
+    let (mut loaded_meta, existing) = store.load("slow_path").unwrap();
+    loaded_meta.title = "a much longer title that changes meta line byte length".to_string();
+    store.save("slow_path", &loaded_meta, &existing).unwrap();
 
     // Append more messages after the title change — slow path on the first one
     // (meta line length differs from what's on disk after the save, but subsequent

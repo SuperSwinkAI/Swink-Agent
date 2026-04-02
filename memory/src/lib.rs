@@ -20,6 +20,8 @@
 //!     title: "My session".into(),
 //!     created_at: now_utc(),
 //!     updated_at: now_utc(),
+//!     version: 1,
+//!     sequence: 0,
 //! };
 //! store.save(&id, &meta, &messages)?;
 //! ```
@@ -28,6 +30,7 @@ pub mod compaction;
 pub mod entry;
 pub mod jsonl;
 pub mod meta;
+pub mod migrate;
 pub mod store;
 pub mod store_async;
 pub mod time;
@@ -36,6 +39,7 @@ pub use compaction::{CompactionResult, SummarizingCompactor};
 pub use entry::SessionEntry;
 pub use jsonl::JsonlSessionStore;
 pub use meta::SessionMeta;
+pub use migrate::SessionMigrator;
 pub use store::SessionStore;
 pub use store_async::{AsyncSessionStore, BlockingSessionStore, SessionStoreFuture};
 pub use time::{format_session_id, now_utc};

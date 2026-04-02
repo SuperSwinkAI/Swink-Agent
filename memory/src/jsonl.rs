@@ -94,6 +94,28 @@ fn not_found(id: &str) -> io::Error {
     io::Error::new(io::ErrorKind::NotFound, format!("session not found: {id}"))
 }
 
+fn sequence_conflict(id: &str, expected: u64, actual: u64) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::AlreadyExists,
+        format!("sequence conflict for session {id}: expected {expected}, found {actual}"),
+    )
+}
+
+/// Check optimistic concurrency: if file exists, verify the caller's sequence
+/// matches the stored sequence. Returns `Ok(())` if the file doesn't exist
+/// (new session) or sequences match; `Err` on conflict.
+fn check_sequence(sessions_dir: &Path, id: &str, caller_sequence: u64) -> io::Result<()> {
+    let path = session_path(sessions_dir, id);
+    if !path.exists() {
+        return Ok(());
+    }
+    let (stored_meta, _) = read_meta_with_line_len(&path, id)?;
+    if stored_meta.sequence != caller_sequence {
+        return Err(sequence_conflict(id, caller_sequence, stored_meta.sequence));
+    }
+    Ok(())
+}
+
 fn empty_file() -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, "empty session file")
 }
@@ -278,6 +300,7 @@ fn validate_session_id(id: &str) -> io::Result<()> {
 /// Callers are expected to enforce single-writer access.
 pub struct JsonlSessionStore {
     sessions_dir: PathBuf,
+    migrators: Vec<Box<dyn crate::migrate::SessionMigrator>>,
 }
 
 impl JsonlSessionStore {
@@ -286,7 +309,20 @@ impl JsonlSessionStore {
     /// Creates the directory (and parents) if it does not exist.
     pub fn new(sessions_dir: PathBuf) -> io::Result<Self> {
         std::fs::create_dir_all(&sessions_dir)?;
-        Ok(Self { sessions_dir })
+        Ok(Self {
+            sessions_dir,
+            migrators: Vec::new(),
+        })
+    }
+
+    /// Register session migrators for automatic schema upgrades on load.
+    #[must_use]
+    pub fn with_migrators(
+        mut self,
+        migrators: Vec<Box<dyn crate::migrate::SessionMigrator>>,
+    ) -> Self {
+        self.migrators = migrators;
+        self
     }
 
     /// Default sessions directory: `<config_dir>/swink-agent/sessions`.
@@ -379,14 +415,19 @@ impl SessionStore for JsonlSessionStore {
 
     fn save_full(&self, id: &str, meta: &SessionMeta, messages: &[AgentMessage]) -> io::Result<()> {
         validate_session_id(id)?;
+        check_sequence(&self.sessions_dir, id, meta.sequence)?;
 
         let path = session_path(&self.sessions_dir, id);
+
+        // Increment sequence for the write
+        let mut write_meta = meta.clone();
+        write_meta.sequence += 1;
 
         let file = std::fs::File::create(&path)?;
         let mut writer = io::BufWriter::new(file);
 
         // First line: metadata
-        serde_json::to_writer(&mut writer, meta).map_err(io::Error::other)?;
+        serde_json::to_writer(&mut writer, &write_meta).map_err(io::Error::other)?;
         writeln!(writer)?;
 
         // Subsequent lines: one message per line
@@ -410,6 +451,18 @@ impl SessionStore for JsonlSessionStore {
 
         let path = session_path(&self.sessions_dir, id);
         let (meta, lines) = read_meta_and_message_lines(&path, id)?;
+
+        // Check version
+        if meta.version > crate::migrate::CURRENT_VERSION {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "unsupported session version {} (current: {})",
+                    meta.version,
+                    crate::migrate::CURRENT_VERSION
+                ),
+            ));
+        }
 
         // Remaining lines: LlmMessage or custom message envelopes
         let mut messages = Vec::new();
@@ -476,14 +529,19 @@ impl JsonlSessionStore {
         entries: &[SessionEntry],
     ) -> io::Result<()> {
         validate_session_id(id)?;
+        check_sequence(&self.sessions_dir, id, meta.sequence)?;
 
         let path = session_path(&self.sessions_dir, id);
+
+        // Increment sequence for the write
+        let mut write_meta = meta.clone();
+        write_meta.sequence += 1;
 
         let file = std::fs::File::create(&path)?;
         let mut writer = io::BufWriter::new(file);
 
         // First line: metadata
-        serde_json::to_writer(&mut writer, meta).map_err(io::Error::other)?;
+        serde_json::to_writer(&mut writer, &write_meta).map_err(io::Error::other)?;
         writeln!(writer)?;
 
         // Subsequent lines: one SessionEntry per line
@@ -505,9 +563,9 @@ impl JsonlSessionStore {
         validate_session_id(id)?;
 
         let path = session_path(&self.sessions_dir, id);
-        let (meta, lines) = read_meta_and_message_lines(&path, id)?;
+        let (mut meta, lines) = read_meta_and_message_lines(&path, id)?;
 
-        let entries = lines
+        let mut entries: Vec<SessionEntry> = lines
             .into_iter()
             .enumerate()
             .filter_map(|(line_num, line)| {
@@ -527,6 +585,20 @@ impl JsonlSessionStore {
                 }
             })
             .collect();
+
+        // Run migrations if needed
+        if !self.migrators.is_empty() {
+            crate::migrate::run_migrations(&mut meta, &mut entries, &self.migrators)?;
+        } else if meta.version > crate::migrate::CURRENT_VERSION {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "unsupported session version {} (current: {})",
+                    meta.version,
+                    crate::migrate::CURRENT_VERSION
+                ),
+            ));
+        }
 
         Ok((meta, entries))
     }
@@ -613,6 +685,8 @@ mod tests {
             updated_at: chrono::DateTime::from_timestamp(1_710_500_000, 0)
                 .unwrap()
                 .to_utc(),
+            version: 1,
+            sequence: 0,
         };
 
         let messages: Vec<AgentMessage> = vec![
@@ -691,6 +765,8 @@ mod tests {
             title: "State".to_string(),
             created_at: now,
             updated_at: now,
+            version: 1,
+            sequence: 0,
         };
 
         let initial_messages = vec![LlmMessage::User(swink_agent::UserMessage {

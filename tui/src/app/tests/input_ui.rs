@@ -218,6 +218,8 @@ async fn load_session_keeps_full_agent_state_but_trims_visible_history() {
         title: "mock-model".to_string(),
         created_at: now,
         updated_at: now,
+        version: 1,
+        sequence: 0,
     };
     store.save(session_id, &meta, &llm_messages).unwrap();
 

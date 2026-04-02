@@ -44,6 +44,8 @@ pub fn sample_meta(id: &str, title: &str) -> SessionMeta {
         title: title.to_string(),
         created_at: now,
         updated_at: now,
+        version: 1,
+        sequence: 0,
     }
 }
 
@@ -59,5 +61,7 @@ pub fn sample_meta_with_times(
         title: title.to_string(),
         created_at,
         updated_at,
+        version: 1,
+        sequence: 0,
     }
 }
