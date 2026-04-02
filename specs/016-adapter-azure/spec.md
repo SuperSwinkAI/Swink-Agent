@@ -9,7 +9,7 @@
 
 ### User Story 1 - Stream Text Responses from Azure OpenAI (Priority: P1)
 
-A developer configures the Azure adapter with a resource endpoint, deployment name, API key, and API version and sends a conversation to the Azure OpenAI chat completions endpoint. The adapter streams back text content in real time as Server-Sent Events, delivering each text delta to the agent loop as it arrives.
+A developer configures the Azure adapter with a resource endpoint, deployment name, and credentials (API key or Azure AD) and sends a conversation to the Azure OpenAI v1 GA chat completions endpoint. The adapter streams back text content in real time as Server-Sent Events, delivering each text delta to the agent loop as it arrives.
 
 **Why this priority**: Streaming text is the fundamental capability — without it, the adapter has no value.
 
@@ -17,7 +17,7 @@ A developer configures the Azure adapter with a resource endpoint, deployment na
 
 **Acceptance Scenarios**:
 
-1. **Given** valid Azure credentials, a deployment name, and an API version, **When** a conversation is sent, **Then** text content streams back incrementally via SSE.
+1. **Given** valid Azure credentials and a deployment name, **When** a conversation is sent, **Then** text content streams back incrementally via SSE.
 2. **Given** a streaming response, **When** all deltas have arrived, **Then** the assembled message matches what the deployment produced.
 3. **Given** a streaming response, **When** the stream ends with a `[DONE]` sentinel, **Then** a terminal event signals completion.
 
@@ -39,19 +39,19 @@ A developer sends a conversation with tool definitions to the Azure OpenAI deplo
 
 ---
 
-### User Story 3 - Route Requests to Azure Deployments with API Versioning (Priority: P2)
+### User Story 3 - Route Requests to Azure Deployments (Priority: P2)
 
-A developer configures the Azure adapter with a resource endpoint and deployment name rather than a generic base URL. The adapter constructs the correct Azure-specific URL path that includes the deployment name and API version as a query parameter. This deployment-oriented routing is distinct from standard OpenAI routing, where the model is specified in the request body.
+A developer configures the Azure adapter with a resource endpoint and deployment name rather than a generic base URL. The adapter constructs the correct Azure v1 GA URL path that includes the deployment name. This deployment-oriented routing is distinct from standard OpenAI routing, where the model is specified in the request body.
 
-**Why this priority**: Deployment routing and API versioning are what distinguish Azure from standard OpenAI, but the streaming protocol itself is similar.
+**Why this priority**: Deployment routing is what distinguishes Azure from standard OpenAI, but the streaming protocol itself is similar.
 
-**Independent Test**: Can be tested by verifying that the adapter constructs the correct URL from the resource endpoint, deployment name, and API version.
+**Independent Test**: Can be tested by verifying that the adapter constructs the correct URL from the resource endpoint and deployment name.
 
 **Acceptance Scenarios**:
 
 1. **Given** a resource endpoint and deployment name, **When** a request is made, **Then** the URL includes the deployment name in the path.
-2. **Given** an API version, **When** a request is made, **Then** the API version is included as a query parameter.
-3. **Given** Azure credentials, **When** a request is made, **Then** the authentication header uses the Azure-specific key header.
+2. **Given** Azure API key credentials, **When** a request is made, **Then** the `api-key` header is set.
+3. **Given** Azure AD credentials, **When** a request is made, **Then** a Bearer token is acquired and sent in the `Authorization` header.
 
 ---
 
@@ -68,7 +68,7 @@ A developer encounters various error conditions when communicating with the Azur
 1. **Given** an HTTP 429 response from Azure, **When** classified, **Then** it maps to a rate-limit error (retryable) with retry-after timing if provided.
 2. **Given** an HTTP 401 response, **When** classified, **Then** it maps to an authentication error (not retryable).
 3. **Given** a deployment-not-found (404) error, **When** classified, **Then** it maps to a non-retryable error.
-4. **Given** a content filter violation, **When** classified, **Then** it maps to an appropriate error type.
+4. **Given** a content filter violation, **When** classified, **Then** it maps to a distinct `ContentFiltered` error type (not retryable, distinguishable from auth/network errors).
 
 ---
 
@@ -76,9 +76,20 @@ A developer encounters various error conditions when communicating with the Azur
 
 - What happens when the specified deployment does not exist — is the 404 error clearly distinguished from other 404s?
 - How does the adapter handle Azure content filter violations that block a response mid-stream?
-- What happens when the API version is not supported by the deployment?
+- What happens when the deployment does not support the v1 GA API?
 - How does the adapter handle Azure-specific rate limiting headers (which may differ from standard OpenAI)?
 - What happens when the Azure resource endpoint URL has a trailing slash?
+
+## Clarifications
+
+### Session 2026-04-02
+
+- Q: Should the adapter support Azure AD / Entra ID auth in addition to API key auth? → A: Yes — support API key AND full Azure AD token acquisition (OAuth2 client credentials flow). Do not defer to spec 035; the adapter owns its own auth. Spec 035's design may be revised to align.
+- Q: Which Azure OpenAI API generation should the adapter target — legacy versioned or v1 GA? → A: v1 GA API only (no `api-version` query param required). Legacy versioned API is not supported.
+- Q: How should Azure content filter violations be surfaced? → A: Map to a distinct `ContentFiltered` error type so callers can distinguish policy blocks from network/auth errors and decide on retry strategy.
+- Q: Should `ContentFiltered` be a core `AgentError` variant or adapter-local? → A: New `AgentError::ContentFiltered` variant in core, available to all adapters (Anthropic, OpenAI, Gemini all have safety filters too).
+- Q: Should Azure AD token acquisition use a separate reqwest::Client or reuse the main one? → A: Reuse the same `reqwest::Client` — one fewer allocation, shared connection pooling.
+- Q: How much should the Azure adapter reuse from `openai_compat` shared infra? → A: Maximum reuse. Only customize URL construction, auth headers, and content filter detection. Delegate SSE parsing, message conversion, and tool call accumulation to `openai_compat`.
 
 ## Requirements *(mandatory)*
 
@@ -87,15 +98,20 @@ A developer encounters various error conditions when communicating with the Azur
 - **FR-001**: The adapter MUST stream text responses from the Azure OpenAI chat completions endpoint via SSE, emitting incremental text deltas.
 - **FR-002**: The adapter MUST stream tool call responses, emitting tool name, tool call ID, argument deltas, and completion events.
 - **FR-003**: The adapter MUST construct deployment-oriented URLs from the resource endpoint and deployment name.
-- **FR-004**: The adapter MUST include the API version as a query parameter on all requests.
-- **FR-005**: The adapter MUST use Azure-specific authentication headers.
+- **FR-004**: The adapter MUST target the Azure OpenAI v1 GA API, which does not require an `api-version` query parameter. Legacy versioned API endpoints are not supported.
+- **FR-005**: The adapter MUST support two authentication methods: (a) API key via the `api-key` header, and (b) Azure AD / Entra ID via OAuth2 client credentials flow, sending a Bearer token in the `Authorization` header.
+- **FR-005a**: When using Azure AD auth, the adapter MUST acquire and refresh OAuth2 tokens using tenant ID, client ID, and client secret, targeting the `https://cognitiveservices.azure.com/.default` scope.
+- **FR-005b**: The adapter MUST cache acquired tokens and refresh them before expiry without blocking in-flight requests.
 - **FR-006**: The adapter MUST convert agent messages to the OpenAI chat completions format using the shared conversion trait.
 - **FR-007**: The adapter MUST classify HTTP errors using the shared error classifier (429 → rate limit, 401/403 → auth, 404 → non-retryable, 5xx → network, timeout → network).
+- **FR-008**: The adapter MUST map Azure content filter violations (finish reason `content_filter` or `content_filter_results` in SSE chunks) to the core `AgentError::ContentFiltered` error type, not a generic error.
+- **FR-009**: The adapter MUST delegate SSE parsing, message conversion, and tool call accumulation to the `openai_compat` shared infrastructure. Only URL construction, auth headers, and content filter detection are Azure-specific.
 
 ### Key Entities
 
 - **AzureStreamFn**: The streaming function that connects to an Azure OpenAI deployment and produces assistant message events.
-- **Deployment Configuration**: The combination of resource endpoint, deployment name, and API version that identifies an Azure OpenAI deployment.
+- **Deployment Configuration**: The combination of resource endpoint and deployment name that identifies an Azure OpenAI deployment (v1 GA API; no version parameter needed).
+- **AzureAuth**: Authentication credential enum — either an API key or Azure AD credentials (tenant ID, client ID, client secret) for OAuth2 token acquisition.
 
 ## Success Criteria *(mandatory)*
 
@@ -103,12 +119,15 @@ A developer encounters various error conditions when communicating with the Azur
 
 - **SC-001**: Text responses stream incrementally — each delta arrives as a separate event, not buffered until completion.
 - **SC-002**: Tool calls produce valid, parseable JSON arguments upon completion.
-- **SC-003**: Deployment-oriented URLs are correctly constructed from resource endpoint, deployment name, and API version.
-- **SC-004**: All Azure error codes map to the correct agent error types consistently.
+- **SC-003**: Deployment-oriented URLs are correctly constructed from resource endpoint and deployment name using the v1 GA API format.
+- **SC-004**: All Azure error codes map to the correct agent error types consistently, including `ContentFiltered` for safety filter violations.
 
 ## Assumptions
 
-- Azure OpenAI uses the same SSE streaming protocol and message format as standard OpenAI, but with different URL routing and authentication.
+- Azure OpenAI v1 GA API uses the same SSE streaming protocol and message format as standard OpenAI, but with different URL routing and authentication.
 - The shared conversion trait and error classifier from the adapter shared infrastructure (spec 011) are available.
-- The adapter does not manage API key storage — credentials are provided by the caller.
-- Azure content filter violations are treated as error conditions.
+- The `openai_compat` shared infrastructure handles SSE parsing, message conversion, and tool call accumulation — the Azure adapter only adds URL routing, auth, and content filter detection on top.
+- Credentials (API key or Azure AD client credentials) are provided by the caller. The adapter manages token acquisition and caching for Azure AD but does not persist credentials to disk.
+- The Azure AD token acquisition reuses the same `reqwest::Client` instance as the main OpenAI API calls.
+- Azure content filter violations are surfaced as a distinct `ContentFiltered` error type (non-retryable).
+- A new `AgentError::ContentFiltered` variant will be added to the core crate as a cross-cutting change (benefits all adapters with safety filters).
