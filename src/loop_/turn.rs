@@ -208,26 +208,16 @@ pub async fn run_single_turn(
 
     let turn_start = Instant::now();
     let llm_start = Instant::now();
-    let llm_span = info_span!(
-        "agent.llm_call",
-        agent.model = %config.model.model_id,
-        agent.tokens.input = tracing::field::Empty,
-        agent.tokens.output = tracing::field::Empty,
-        agent.cost.total = tracing::field::Empty,
-    );
-    let stream_result = {
-        let _llm_guard = llm_span.enter();
-        stream_with_retry(
-            config,
-            &agent_context,
-            &llm_messages,
-            system_prompt,
-            api_key.clone(),
-            cancellation_token,
-            tx,
-        )
-        .await
-    };
+    let stream_result = stream_with_retry(
+        config,
+        &agent_context,
+        &llm_messages,
+        system_prompt,
+        api_key.clone(),
+        cancellation_token,
+        tx,
+    )
+    .await;
     let llm_call_duration = llm_start.elapsed();
 
     // ─── Emergency in-place overflow recovery (T069/T070) ───────────────
@@ -255,10 +245,7 @@ pub async fn run_single_turn(
         return TurnOutcome::Return;
     };
 
-    // Record OTel-compatible attributes on the LLM call and turn spans.
-    llm_span.record("agent.tokens.input", assistant_message.usage.input);
-    llm_span.record("agent.tokens.output", assistant_message.usage.output);
-    llm_span.record("agent.cost.total", assistant_message.cost.total);
+    // Record OTel-compatible attributes on the turn span.
     turn_span.record("agent.stop_reason", tracing::field::debug(&assistant_message.stop_reason));
 
     // vii. Check stop_reason for error/aborted

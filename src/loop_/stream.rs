@@ -4,7 +4,7 @@ use std::sync::Arc;
 use futures::StreamExt;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, info_span, warn};
 
 use crate::error::AgentError;
 use crate::stream::{
@@ -147,6 +147,16 @@ async fn stream_with_retry_single(
     cancellation_token: &CancellationToken,
     tx: &mpsc::Sender<AgentEvent>,
 ) -> StreamResult {
+    let llm_span = info_span!(
+        "agent.llm_call",
+        agent.model = %model.model_id,
+        agent.tokens.input = tracing::field::Empty,
+        agent.tokens.output = tracing::field::Empty,
+        agent.cost.total = tracing::field::Empty,
+        otel.status_code = tracing::field::Empty,
+    );
+    let _llm_guard = llm_span.enter();
+
     let mut attempt: u32 = 0;
 
     loop {
@@ -201,13 +211,22 @@ async fn stream_with_retry_single(
                     tokio::time::sleep(delay).await;
                     continue;
                 }
-                StreamErrorAction::FatalError(msg) => return msg,
+                StreamErrorAction::FatalError(msg) => {
+                    llm_span.record("otel.status_code", "ERROR");
+                    return msg;
+                }
                 StreamErrorAction::ChannelClosed => return StreamResult::ChannelClosed,
             }
         }
 
         // Success: accumulate and emit
-        return finalize_stream_message(model, events, tx).await;
+        let result = finalize_stream_message(model, events, tx).await;
+        if let StreamResult::Message(ref msg) = result {
+            llm_span.record("agent.tokens.input", msg.usage.input);
+            llm_span.record("agent.tokens.output", msg.usage.output);
+            llm_span.record("agent.cost.total", msg.cost.total);
+        }
+        return result;
     }
 }
 
