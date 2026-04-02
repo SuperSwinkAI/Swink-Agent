@@ -1,8 +1,8 @@
 //! Local embedding model for text vectorization.
 //!
-//! [`EmbeddingModel`] is a thin typed wrapper over [`crate::loader::LazyLoader`],
+//! `EmbeddingModel` is a thin typed wrapper over the shared lazy-loader,
 //! providing the embedding-specific build logic (via
-//! `mistralrs::EmbeddingModelBuilder`) as a [`LoaderBackend`] implementation.
+//! `mistralrs::EmbeddingModelBuilder`) as a `LoaderBackend` implementation.
 
 use std::future::Future;
 use std::pin::Pin;
@@ -91,7 +91,7 @@ impl LoaderBackend for EmbeddingBackend {
 
 /// A lazily-loaded local embedding model for text vectorization.
 ///
-/// Wraps a [`LazyLoader`] for cheap cloning — multiple tasks can
+/// Wraps a shared lazy-loader for cheap cloning — multiple tasks can
 /// share the same loaded model concurrently.
 #[derive(Clone)]
 pub struct EmbeddingModel {

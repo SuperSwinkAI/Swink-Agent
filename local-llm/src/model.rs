@@ -1,8 +1,8 @@
 //! Local model management with lazy download and loading.
 //!
-//! [`LocalModel`] is a thin typed wrapper over [`crate::loader::LazyLoader`],
+//! `LocalModel` is a thin typed wrapper over the shared lazy-loader,
 //! providing the chat-model–specific download (via `hf-hub`) and build
-//! (via `mistralrs::GgufModelBuilder`) logic as a [`LoaderBackend`]
+//! (via `mistralrs::GgufModelBuilder`) logic as a `LoaderBackend`
 //! implementation.
 
 use std::future::Future;
@@ -182,7 +182,7 @@ impl LoaderBackend for ChatBackend {
 
 /// A lazily-loaded local LLM backed by mistral.rs GGUF inference.
 ///
-/// Wraps a [`LazyLoader`] for cheap cloning — multiple tasks can
+/// Wraps a shared lazy-loader for cheap cloning — multiple tasks can
 /// share the same loaded model concurrently.
 #[derive(Clone)]
 pub struct LocalModel {
