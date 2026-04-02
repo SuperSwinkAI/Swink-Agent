@@ -3,13 +3,13 @@
 **Feature Branch**: `019-adapter-bedrock`
 **Created**: 2026-03-20
 **Status**: Draft
-**Input**: BedrockStreamFn for AWS Bedrock via SSE. AWS SigV4 request signing. References: PRD §15.1, HLD Adapters.
+**Input**: BedrockStreamFn for AWS Bedrock via ConverseStream (AWS event-stream encoding). AWS SigV4 request signing. References: PRD §15.1, HLD Adapters.
 
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Stream Text Responses from AWS Bedrock (Priority: P1)
 
-A developer configures the Bedrock adapter with AWS credentials, a region, and a model ID and sends a conversation to the Bedrock streaming endpoint. The adapter streams back text content in real time as Server-Sent Events, delivering each text delta to the agent loop as it arrives. The developer sees assistant responses appear incrementally.
+A developer configures the Bedrock adapter with AWS credentials, a region, and a model ID and sends a conversation to the Bedrock streaming endpoint. The adapter streams back text content in real time via the ConverseStream API (AWS event-stream encoding), delivering each text delta to the agent loop as it arrives. The developer sees assistant responses appear incrementally.
 
 **Why this priority**: Streaming text is the fundamental capability — without it, the adapter has no value.
 
@@ -17,7 +17,7 @@ A developer configures the Bedrock adapter with AWS credentials, a region, and a
 
 **Acceptance Scenarios**:
 
-1. **Given** valid AWS credentials, a region, and a model ID, **When** a conversation is sent, **Then** text content streams back incrementally via SSE.
+1. **Given** valid AWS credentials, a region, and a model ID, **When** a conversation is sent, **Then** text content streams back incrementally via the ConverseStream API.
 2. **Given** a streaming response, **When** all deltas have arrived, **Then** the assembled message matches what the model produced.
 3. **Given** a streaming response, **When** the stream completes normally, **Then** a terminal event signals completion.
 
@@ -74,23 +74,24 @@ A developer encounters various error conditions when communicating with the Bedr
 
 ### Edge Cases
 
-- What happens when AWS credentials expire mid-stream — does the error surface clearly?
-- How does the adapter handle Bedrock-specific error codes that differ from standard HTTP error patterns?
-- What happens when the specified model ID is not available in the configured region?
-- How does the adapter handle Bedrock's content moderation responses that block output?
-- What happens when the SigV4 signing clock is skewed relative to the server?
+- AWS credentials expiring mid-stream: the ConverseStream connection is already authenticated at request time, so mid-stream expiry does not affect an in-flight response. Subsequent requests with expired creds surface as auth error (403).
+- Bedrock-specific error codes (e.g., `ModelNotReadyException`, `ModelTimeoutException`) are classified by HTTP status code via the shared classifier; the error body is included in the message for diagnostics.
+- Model ID not available in the configured region: Bedrock returns HTTP 400 or 404; classified as non-retryable error with descriptive message including region and model ID.
+- Bedrock content moderation (`GUARDRAIL_INTERVENED` stop reason) maps to `ContentFiltered` error type, consistent with Azure adapter. Not retryable; distinguishable from auth/network errors.
+- SigV4 clock skew (`RequestTimeTooSkewed`, HTTP 403) surfaces as auth error with descriptive message via shared classifier. No auto-retry with corrected timestamp — clock skew is a deployment-environment issue.
 
 ## Requirements *(mandatory)*
 
 ### Functional Requirements
 
-- **FR-001**: The adapter MUST stream text responses from the Bedrock streaming endpoint via SSE, emitting incremental text deltas.
+- **FR-001**: The adapter MUST stream text responses from the Bedrock ConverseStream endpoint (AWS event-stream binary encoding), emitting incremental text deltas.
 - **FR-002**: The adapter MUST stream tool call responses, emitting tool name, argument deltas, and completion events.
 - **FR-003**: The adapter MUST sign all requests using AWS Signature Version 4 with the provided credentials and region.
 - **FR-004**: The adapter MUST support temporary credentials (session tokens) in the SigV4 signing process.
 - **FR-005**: The adapter MUST convert agent messages to the Bedrock message format using the shared conversion trait.
 - **FR-006**: The adapter MUST classify errors using the shared error classifier (throttling → rate limit, access denied → auth, 5xx → network, timeout → network).
 - **FR-007**: The adapter MUST construct Bedrock-specific endpoint URLs from the region and model ID.
+- **FR-008**: The adapter MUST parse the AWS event-stream binary protocol using the `aws-smithy-eventstream` crate for response framing and CRC validation.
 
 ### Key Entities
 
@@ -106,9 +107,19 @@ A developer encounters various error conditions when communicating with the Bedr
 - **SC-003**: All requests include valid SigV4 authorization headers accepted by the Bedrock service.
 - **SC-004**: All Bedrock error codes map to the correct agent error types consistently.
 
+## Clarifications
+
+### Session 2026-04-02
+
+- Q: Which streaming approach should the adapter use? → A: Streaming `ConverseStream` API with AWS event-stream binary protocol parsing — true incremental delivery, not the non-streaming `Converse` API.
+- Q: How should the adapter parse the AWS event-stream binary protocol? → A: Use `aws-smithy-eventstream` crate (AWS's official parser) for binary framing + CRC validation.
+- Q: How should Bedrock content moderation blocks be surfaced? → A: Map `GUARDRAIL_INTERVENED` stop reason to `ContentFiltered` error type, consistent with Azure adapter.
+- Q: What scope of models should the catalog include? → A: Comprehensive — all available models across all providers on Bedrock (Anthropic, Meta, Mistral, Amazon, AI21, Cohere, etc.).
+- Q: How should the adapter handle SigV4 clock skew errors? → A: Surface as auth error with descriptive message — consistent with shared classifier's 403 handling; caller diagnoses.
+
 ## Assumptions
 
-- AWS Bedrock uses Server-Sent Events for streaming.
+- AWS Bedrock uses the ConverseStream API with AWS event-stream binary encoding (`application/vnd.amazon.eventstream`) for streaming — not standard SSE.
 - SigV4 signing is required for all Bedrock requests — there is no alternative authentication method.
 - The shared conversion trait and error classifier from the adapter shared infrastructure (spec 011) are available.
 - The adapter does not manage AWS credential lifecycle (rotation, refresh) — credentials are provided by the caller.
