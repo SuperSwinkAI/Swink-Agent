@@ -202,6 +202,8 @@ MSRV **1.88** (edition 2024). Workspace deps centralized in root `Cargo.toml`.
 - Local filesystem (versioned files + JSON metadata sidecar); in-memory (`HashMap`) for testing (036-artifact-service)
 - Rust 1.88 (edition 2024) + `swink-agent` (path = ".."), `tokio` (async runtime), `tokio-util` (CancellationToken), `serde`/`serde_json` (serialization), `regex` (exit conditions), `uuid` (PipelineId generation), `tracing` (diagnostics), `thiserror` (error types) (039-multi-agent-patterns)
 - N/A (in-memory registries only) (039-multi-agent-patterns)
+- Rust 1.88 (edition 2024) + `swink-agent` core types (`AgentTool`, `AgentRegistry`, `StopReason`, `AgentToolResult`, `AgentResult`), `serde`/`serde_json` (serialization), `schemars` (tool schema), `tokio-util` (CancellationToken) (040-agent-transfer-handoff)
+- N/A (in-memory only) (040-agent-transfer-handoff)
 
 ## Recent Changes
 - 001-workspace-scaffold: Added Rust 1.88 (edition 2024) + serde, serde_json, tokio, futures, thiserror, uuid, reqwest, jsonschema, schemars, rand, tracing, toml (all centralized in workspace `[workspace.dependencies]`)
