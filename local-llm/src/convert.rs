@@ -5,9 +5,9 @@
 //! iteration / pattern-matching, while this module supplies the
 //! mistral.rs-specific construction.
 
-use mistralrs::{TextMessageRole, TextMessages, Tool};
+use mistralrs::{TextMessageRole, TextMessages};
 
-use swink_agent::convert::{MessageConverter, convert_messages, extract_tool_schemas};
+use swink_agent::convert::{MessageConverter, convert_messages};
 use swink_agent::types::{
     AgentContext, AssistantMessage, ContentBlock, ToolResultMessage, UserMessage,
 };
@@ -75,97 +75,24 @@ pub fn convert_context_messages(context: &AgentContext) -> TextMessages {
     messages
 }
 
-/// Convert agent tools into mistral.rs [`Tool`] definitions.
-///
-/// Each tool's `name()`, `description()`, and `parameters_schema()` are
-/// mapped to the OpenAI-compatible function calling format that mistral.rs
-/// expects.
-#[allow(dead_code)] // Will be used when tool calling is wired into the stream.
-pub fn convert_tools(context: &AgentContext) -> Vec<Tool> {
-    extract_tool_schemas(&context.tools)
-        .into_iter()
-        .map(|schema| {
-            let function = serde_json::json!({
-                "type": "function",
-                "function": {
-                    "name": schema.name,
-                    "description": schema.description,
-                    "parameters": schema.parameters,
-                }
-            });
-            serde_json::from_value::<Tool>(function).unwrap_or_else(|e| {
-                tracing::warn!(
-                    tool = %schema.name,
-                    error = %e,
-                    "failed to convert tool schema, using empty"
-                );
-                serde_json::from_value::<Tool>(serde_json::json!({
-                    "type": "function",
-                    "function": {
-                        "name": schema.name,
-                        "description": schema.description,
-                        "parameters": {"type": "object", "properties": {}}
-                    }
-                }))
-                .expect("fallback tool schema must be valid")
-            })
-        })
-        .collect()
-}
-
-/// Serialize tools to JSON strings for the `tool_schemas` parameter.
-#[allow(dead_code)] // Used in tests; will be used in production when tool calling is wired in.
-pub fn tool_schemas_json(context: &AgentContext) -> Vec<String> {
-    extract_tool_schemas(&context.tools)
-        .into_iter()
-        .map(|schema| {
-            serde_json::json!({
-                "type": "function",
-                "function": {
-                    "name": schema.name,
-                    "description": schema.description,
-                    "parameters": schema.parameters,
-                }
-            })
-            .to_string()
-        })
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
 
-    use serde_json::{Value, json};
-    use swink_agent::testing::{self, assistant_msg, tool_result_msg, user_msg};
-    use swink_agent::tool::AgentTool;
+    use serde_json::json;
+    use swink_agent::testing::{assistant_msg, tool_result_msg, user_msg};
     use swink_agent::types::{
         AgentMessage, AssistantMessage, ContentBlock, Cost, LlmMessage, StopReason,
-        ToolResultMessage, Usage,
+        ToolResultMessage, Usage, UserMessage,
     };
-
-    fn mock_tool() -> testing::MockTool {
-        testing::MockTool::new("mock_tool").with_schema(json!({
-            "type": "object",
-            "properties": {
-                "input": { "type": "string" }
-            },
-            "required": ["input"]
-        }))
-    }
 
     // ── Helpers ───────────────────────────────────────────────────────────
 
-    fn make_context(
-        system: &str,
-        messages: Vec<AgentMessage>,
-        tools: Vec<Arc<dyn AgentTool>>,
-    ) -> AgentContext {
+    fn make_context(system: &str, messages: Vec<AgentMessage>) -> AgentContext {
         AgentContext {
             system_prompt: system.to_string(),
             messages,
-            tools,
+            tools: vec![],
         }
     }
 
@@ -173,14 +100,14 @@ mod tests {
 
     #[test]
     fn empty_context_produces_empty_messages() {
-        let ctx = make_context("", vec![], vec![]);
+        let ctx = make_context("", vec![]);
         let _msgs = convert_context_messages(&ctx);
         // TextMessages doesn't expose length, but it shouldn't panic.
     }
 
     #[test]
     fn system_prompt_is_included() {
-        let ctx = make_context("You are helpful.", vec![], vec![]);
+        let ctx = make_context("You are helpful.", vec![]);
         let _msgs = convert_context_messages(&ctx);
         // System prompt is set — no panic.
     }
@@ -194,7 +121,6 @@ mod tests {
                 assistant_msg("hi"),
                 tool_result_msg("tc1", "result"),
             ],
-            vec![],
         );
         let _msgs = convert_context_messages(&ctx);
         // All message types handled — no panic.
@@ -219,23 +145,9 @@ mod tests {
                 AgentMessage::Custom(Box::new(Custom)),
                 user_msg("after"),
             ],
-            vec![],
         );
         let _msgs = convert_context_messages(&ctx);
         // Custom skipped — no panic.
-    }
-
-    #[test]
-    fn tool_schemas_generated() {
-        let ctx = make_context(
-            "",
-            vec![],
-            vec![Arc::new(mock_tool()) as Arc<dyn AgentTool>],
-        );
-        let schemas = tool_schemas_json(&ctx);
-        assert_eq!(schemas.len(), 1);
-        let schema: Value = serde_json::from_str(&schemas[0]).unwrap();
-        assert_eq!(schema["function"]["name"], "mock_tool");
     }
 
     #[test]
@@ -251,16 +163,14 @@ mod tests {
             timestamp: 0,
             cache_hint: None,
         }));
-        let ctx = make_context("", vec![msg], vec![]);
+        let ctx = make_context("", vec![msg]);
         let _msgs = convert_context_messages(&ctx);
         // Empty content blocks produce empty text — no panic.
     }
 
     #[test]
     fn tool_result_includes_call_id() {
-        // Verify the tool_call_id is embedded in the converted message content.
-        let ctx = make_context("", vec![tool_result_msg("tc-42", "file contents")], vec![]);
-        // Conversion should not panic; the tool_call_id is formatted into the text.
+        let ctx = make_context("", vec![tool_result_msg("tc-42", "file contents")]);
         let _msgs = convert_context_messages(&ctx);
     }
 
@@ -278,7 +188,7 @@ mod tests {
             timestamp: 0,
             cache_hint: None,
         }));
-        let ctx = make_context("", vec![msg], vec![]);
+        let ctx = make_context("", vec![msg]);
         let _msgs = convert_context_messages(&ctx);
         // Multiple text blocks concatenated — no panic.
     }
@@ -304,27 +214,9 @@ mod tests {
             timestamp: 0,
             cache_hint: None,
         }));
-        let ctx = make_context("", vec![msg], vec![]);
+        let ctx = make_context("", vec![msg]);
         // Only Text blocks are extracted — others silently ignored.
         let _msgs = convert_context_messages(&ctx);
-    }
-
-    #[test]
-    fn convert_tools_produces_valid_tool_definitions() {
-        let ctx = make_context(
-            "",
-            vec![],
-            vec![Arc::new(mock_tool()) as Arc<dyn AgentTool>],
-        );
-        let tools = convert_tools(&ctx);
-        assert_eq!(tools.len(), 1);
-    }
-
-    #[test]
-    fn convert_tools_empty_context() {
-        let ctx = make_context("", vec![], vec![]);
-        let tools = convert_tools(&ctx);
-        assert!(tools.is_empty());
     }
 
     #[test]
@@ -339,7 +231,7 @@ mod tests {
             details: serde_json::Value::Null,
             cache_hint: None,
         }));
-        let ctx = make_context("", vec![msg], vec![]);
+        let ctx = make_context("", vec![msg]);
         let _msgs = convert_context_messages(&ctx);
         // Error tool results convert without panic.
     }
