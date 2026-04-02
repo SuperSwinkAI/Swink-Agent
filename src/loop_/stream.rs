@@ -130,7 +130,7 @@ fn is_fallback_eligible_error(error_message: Option<&str>) -> bool {
     let Some(msg) = error_message else {
         return false;
     };
-    let harness_error = classify_stream_error(msg, StopReason::Error);
+    let harness_error = classify_stream_error(msg, StopReason::Error, None);
     harness_error.is_retryable()
 }
 
@@ -202,9 +202,17 @@ async fn stream_with_retry_single(
         };
 
         // Handle error events
-        if let Some((stop_reason, error_message, _usage)) = had_error {
-            let retry_result =
-                handle_stream_error(model, config, &stop_reason, &error_message, attempt, tx).await;
+        if let Some((stop_reason, error_message, _usage, error_kind)) = had_error {
+            let retry_result = handle_stream_error(
+                model,
+                config,
+                &stop_reason,
+                &error_message,
+                error_kind,
+                attempt,
+                tx,
+            )
+            .await;
             match retry_result {
                 StreamErrorAction::ContextOverflow => return StreamResult::ContextOverflow,
                 StreamErrorAction::Retry(delay) => {
@@ -246,7 +254,12 @@ enum StreamAttemptResult {
     /// Events were collected successfully (may include an error event).
     Collected {
         events: Vec<AssistantMessageEvent>,
-        error: Option<(StopReason, String, Option<crate::types::Usage>)>,
+        error: Option<(
+            StopReason,
+            String,
+            Option<crate::types::Usage>,
+            Option<crate::stream::StreamErrorKind>,
+        )>,
     },
     /// Early exit due to cancellation or channel close.
     EarlyExit(StreamResult),
@@ -274,7 +287,12 @@ async fn stream_single_attempt(
     );
 
     let mut events: Vec<AssistantMessageEvent> = Vec::new();
-    let mut had_error: Option<(StopReason, String, Option<crate::types::Usage>)> = None;
+    let mut had_error: Option<(
+        StopReason,
+        String,
+        Option<crate::types::Usage>,
+        Option<crate::stream::StreamErrorKind>,
+    )> = None;
 
     while let Some(event) = stream.next().await {
         if cancellation_token.is_cancelled() {
@@ -291,10 +309,15 @@ async fn stream_single_attempt(
             stop_reason,
             error_message,
             usage,
-            ..
+            error_kind,
         } = &event
         {
-            had_error = Some((*stop_reason, error_message.clone(), usage.clone()));
+            had_error = Some((
+                *stop_reason,
+                error_message.clone(),
+                usage.clone(),
+                *error_kind,
+            ));
         }
 
         events.push(event);
@@ -351,10 +374,11 @@ async fn handle_stream_error(
     config: &Arc<AgentLoopConfig>,
     stop_reason: &StopReason,
     error_message: &str,
+    error_kind: Option<crate::stream::StreamErrorKind>,
     attempt: u32,
     tx: &mpsc::Sender<AgentEvent>,
 ) -> StreamErrorAction {
-    let harness_error = classify_stream_error(error_message, *stop_reason);
+    let harness_error = classify_stream_error(error_message, *stop_reason, error_kind);
 
     // Context window overflow — signal and retry
     if matches!(harness_error, AgentError::ContextWindowOverflow { .. }) {
