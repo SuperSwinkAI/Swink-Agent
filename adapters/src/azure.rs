@@ -4,6 +4,8 @@
 //! It reuses the shared OAI-compatible SSE parsing from [`openai_compat`].
 
 use std::pin::Pin;
+use std::sync::{Arc, RwLock};
+use std::time::Instant;
 
 use futures::stream::{self, Stream, StreamExt as _};
 use tokio_util::sync::CancellationToken;
@@ -18,15 +20,58 @@ use crate::openai_compat::{
     OaiChatRequest, OaiConverter, OaiStreamOptions, build_oai_tools, parse_oai_sse_stream,
 };
 
+/// Authentication method for Azure `OpenAI` deployments.
+#[derive(Clone)]
+pub enum AzureAuth {
+    /// API key authentication via the `api-key` header.
+    ApiKey(String),
+    /// Azure AD / Entra ID `OAuth2` client credentials flow.
+    EntraId {
+        tenant_id: String,
+        client_id: String,
+        client_secret: String,
+    },
+}
+
+impl std::fmt::Debug for AzureAuth {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ApiKey(_) => f.debug_tuple("ApiKey").field(&"[REDACTED]").finish(),
+            Self::EntraId { .. } => f
+                .debug_struct("EntraId")
+                .field("tenant_id", &"[REDACTED]")
+                .field("client_id", &"[REDACTED]")
+                .field("client_secret", &"[REDACTED]")
+                .finish(),
+        }
+    }
+}
+
+/// Cached `OAuth2` token for Entra ID authentication (used in Phase 5 / US3).
+#[allow(dead_code)]
+struct CachedToken {
+    access_token: String,
+    expires_at: Instant,
+}
+
 pub struct AzureStreamFn {
     base: AdapterBase,
+    auth: AzureAuth,
+    #[allow(dead_code)] // Used in Phase 5 (US3) for Entra ID token caching
+    token_cache: Arc<RwLock<Option<CachedToken>>>,
 }
 
 impl AzureStreamFn {
     #[must_use]
-    pub fn new(base_url: impl Into<String>, api_key: impl Into<String>) -> Self {
+    pub fn new(base_url: impl Into<String>, auth: AzureAuth) -> Self {
+        let api_key = match &auth {
+            AzureAuth::ApiKey(key) => key.clone(),
+            AzureAuth::EntraId { .. } => String::new(),
+        };
         Self {
             base: AdapterBase::new(base_url.into().trim_end_matches('/').to_string(), api_key),
+            auth,
+            token_cache: Arc::new(RwLock::new(None)),
         }
     }
 }
@@ -35,7 +80,7 @@ impl std::fmt::Debug for AzureStreamFn {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AzureStreamFn")
             .field("base_url", &self.base.base_url)
-            .field("api_key", &"[REDACTED]")
+            .field("auth", &self.auth)
             .finish_non_exhaustive()
     }
 }
@@ -117,14 +162,23 @@ async fn send_request(
         tool_choice,
     };
 
-    let api_key = options.api_key.as_deref().unwrap_or(&azure.base.api_key);
+    let mut request = azure.base.client.post(&url).json(&body);
 
-    azure
-        .base
-        .client
-        .post(&url)
-        .header("api-key", api_key)
-        .json(&body)
+    match &azure.auth {
+        AzureAuth::ApiKey(key) => {
+            let api_key = options.api_key.as_deref().unwrap_or(key);
+            request = request.header("api-key", api_key);
+        }
+        AzureAuth::EntraId { .. } => {
+            // Entra ID token acquisition will be implemented in Phase 5 (US3).
+            // For now, if a runtime api_key override is provided, use it as a Bearer token.
+            if let Some(token) = options.api_key.as_deref() {
+                request = request.header("Authorization", format!("Bearer {token}"));
+            }
+        }
+    }
+
+    request
         .send()
         .await
         .map_err(|e| AssistantMessageEvent::error_network(format!("Azure connection error: {e}")))

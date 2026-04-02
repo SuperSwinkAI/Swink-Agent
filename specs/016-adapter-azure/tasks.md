@@ -49,19 +49,19 @@
 
 ### Implementation for User Story 1
 
-- [ ] T011 [US1] Define `AzureAuth` enum with `ApiKey(String)` and `EntraId { tenant_id, client_id, client_secret }` variants in `adapters/src/azure.rs`
-- [ ] T012 [US1] Implement `Clone` for `AzureAuth` and `Debug` that redacts secrets in `adapters/src/azure.rs`
-- [ ] T013 [US1] Update `AzureStreamFn` struct to hold `auth: AzureAuth` and `token_cache: Arc<RwLock<Option<CachedToken>>>` in `adapters/src/azure.rs`
-- [ ] T014 [US1] Define internal `CachedToken` struct with `access_token: String` and `expires_at: Instant` in `adapters/src/azure.rs`
-- [ ] T015 [US1] Update `AzureStreamFn::new()` constructor to accept `(base_url, AzureAuth)` instead of `(base_url, api_key)` in `adapters/src/azure.rs`
-- [ ] T016 [US1] Update `Debug` impl for `AzureStreamFn` to redact all credential fields in `adapters/src/azure.rs`
-- [ ] T017 [US1] Update `send_request` to select auth header based on `AzureAuth` variant — `api-key` header for `ApiKey`, `Authorization: Bearer` for `EntraId` in `adapters/src/azure.rs`
-- [ ] T018 [US1] Re-export `AzureAuth` from `adapters/src/lib.rs` under `#[cfg(feature = "azure")]`
-- [ ] T019 [US1] Add wiremock test: text streaming with API key auth — verify SSE text deltas arrive incrementally in `adapters/tests/azure.rs`
-- [ ] T020 [US1] Add wiremock test: verify `api-key` header is set correctly on requests in `adapters/tests/azure.rs`
-- [ ] T021 [US1] Add wiremock test: verify trailing slash in base URL is stripped in `adapters/tests/azure.rs`
-- [ ] T022 [US1] Add wiremock test: verify `[DONE]` sentinel produces terminal Done event in `adapters/tests/azure.rs`
-- [ ] T023 [US1] Run `cargo test -p swink-agent-adapters --features azure` to verify all US1 tests pass
+- [x] T011 [US1] Define `AzureAuth` enum with `ApiKey(String)` and `EntraId { tenant_id, client_id, client_secret }` variants in `adapters/src/azure.rs`
+- [x] T012 [US1] Implement `Clone` for `AzureAuth` and `Debug` that redacts secrets in `adapters/src/azure.rs`
+- [x] T013 [US1] Update `AzureStreamFn` struct to hold `auth: AzureAuth` and `token_cache: Arc<RwLock<Option<CachedToken>>>` in `adapters/src/azure.rs`
+- [x] T014 [US1] Define internal `CachedToken` struct with `access_token: String` and `expires_at: Instant` in `adapters/src/azure.rs`
+- [x] T015 [US1] Update `AzureStreamFn::new()` constructor to accept `(base_url, AzureAuth)` instead of `(base_url, api_key)` in `adapters/src/azure.rs`
+- [x] T016 [US1] Update `Debug` impl for `AzureStreamFn` to redact all credential fields in `adapters/src/azure.rs`
+- [x] T017 [US1] Update `send_request` to select auth header based on `AzureAuth` variant — `api-key` header for `ApiKey`, `Authorization: Bearer` for `EntraId` in `adapters/src/azure.rs`
+- [x] T018 [US1] Re-export `AzureAuth` from `adapters/src/lib.rs` under `#[cfg(feature = "azure")]`
+- [x] T019 [US1] Add wiremock test: text streaming with API key auth — verify SSE text deltas arrive incrementally in `adapters/tests/azure.rs`
+- [x] T020 [US1] Add wiremock test: verify `api-key` header is set correctly on requests in `adapters/tests/azure.rs`
+- [x] T021 [US1] Add wiremock test: verify trailing slash in base URL is stripped in `adapters/tests/azure.rs`
+- [x] T022 [US1] Add wiremock test: verify `[DONE]` sentinel produces terminal Done event in `adapters/tests/azure.rs`
+- [x] T023 [US1] Run `cargo test -p swink-agent-adapters --features azure` to verify all US1 tests pass
 
 **Checkpoint**: Text streaming with API key auth works end-to-end. MVP complete.
 

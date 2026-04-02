@@ -7,8 +7,6 @@ use thiserror::Error;
 
 #[cfg(feature = "anthropic")]
 use crate::AnthropicStreamFn;
-#[cfg(feature = "azure")]
-use crate::AzureStreamFn;
 #[cfg(feature = "bedrock")]
 use crate::BedrockStreamFn;
 #[cfg(feature = "gemini")]
@@ -19,6 +17,8 @@ use crate::MistralStreamFn;
 use crate::OpenAiStreamFn;
 #[cfg(feature = "xai")]
 use crate::XAiStreamFn;
+#[cfg(feature = "azure")]
+use crate::{AzureAuth, AzureStreamFn};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct RemotePresetKey {
@@ -96,28 +96,21 @@ pub mod remote_preset_keys {
     pub mod mistral {
         use super::RemotePresetKey;
 
-        pub const MISTRAL_LARGE: RemotePresetKey =
-            RemotePresetKey::new("mistral", "mistral_large");
+        pub const MISTRAL_LARGE: RemotePresetKey = RemotePresetKey::new("mistral", "mistral_large");
         pub const MISTRAL_MEDIUM: RemotePresetKey =
             RemotePresetKey::new("mistral", "mistral_medium");
-        pub const MISTRAL_SMALL: RemotePresetKey =
-            RemotePresetKey::new("mistral", "mistral_small");
-        pub const MINISTRAL_3B: RemotePresetKey =
-            RemotePresetKey::new("mistral", "ministral_3b");
-        pub const MINISTRAL_8B: RemotePresetKey =
-            RemotePresetKey::new("mistral", "ministral_8b");
-        pub const MINISTRAL_14B: RemotePresetKey =
-            RemotePresetKey::new("mistral", "ministral_14b");
+        pub const MISTRAL_SMALL: RemotePresetKey = RemotePresetKey::new("mistral", "mistral_small");
+        pub const MINISTRAL_3B: RemotePresetKey = RemotePresetKey::new("mistral", "ministral_3b");
+        pub const MINISTRAL_8B: RemotePresetKey = RemotePresetKey::new("mistral", "ministral_8b");
+        pub const MINISTRAL_14B: RemotePresetKey = RemotePresetKey::new("mistral", "ministral_14b");
         pub const MAGISTRAL_MEDIUM: RemotePresetKey =
             RemotePresetKey::new("mistral", "magistral_medium");
         pub const MAGISTRAL_SMALL: RemotePresetKey =
             RemotePresetKey::new("mistral", "magistral_small");
         pub const CODESTRAL: RemotePresetKey = RemotePresetKey::new("mistral", "codestral");
         pub const DEVSTRAL: RemotePresetKey = RemotePresetKey::new("mistral", "devstral");
-        pub const PIXTRAL_LARGE: RemotePresetKey =
-            RemotePresetKey::new("mistral", "pixtral_large");
-        pub const PIXTRAL_12B: RemotePresetKey =
-            RemotePresetKey::new("mistral", "pixtral_12b");
+        pub const PIXTRAL_LARGE: RemotePresetKey = RemotePresetKey::new("mistral", "pixtral_large");
+        pub const PIXTRAL_12B: RemotePresetKey = RemotePresetKey::new("mistral", "pixtral_12b");
     }
 
     #[cfg(feature = "bedrock")]
@@ -261,7 +254,11 @@ fn build_remote_connection_from_values(
             preset.api_version.clone().unwrap_or(ApiVersion::V1beta),
         )),
         #[cfg(feature = "azure")]
-        "azure" => Arc::new(AzureStreamFn::new(resolved_base_url()?, &api_key)),
+        #[allow(clippy::redundant_clone)] // Clone needed when multiple adapter features enabled
+        "azure" => Arc::new(AzureStreamFn::new(
+            resolved_base_url()?,
+            AzureAuth::ApiKey(api_key.clone()),
+        )),
         #[cfg(feature = "xai")]
         "xai" => Arc::new(XAiStreamFn::new(resolved_base_url()?, &api_key)),
         #[cfg(feature = "mistral")]
@@ -450,7 +447,12 @@ mod tests {
         assert!(preset("nonexistent-model-xyz").is_none());
     }
 
-    #[cfg(all(feature = "azure", feature = "xai", feature = "mistral", feature = "bedrock"))]
+    #[cfg(all(
+        feature = "azure",
+        feature = "xai",
+        feature = "mistral",
+        feature = "bedrock"
+    ))]
     #[test]
     fn added_provider_presets_map_to_catalog_models() {
         assert_eq!(
