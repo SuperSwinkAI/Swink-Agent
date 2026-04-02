@@ -8,6 +8,7 @@ use tokio_util::sync::CancellationToken;
 use wiremock::matchers::{body_string_contains, header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
+use swink_agent::stream::StreamErrorKind;
 use swink_agent::{AssistantMessageEvent, ModelSpec, StopReason, StreamFn, StreamOptions};
 use swink_agent_adapters::{AzureAuth, AzureStreamFn};
 
@@ -655,4 +656,278 @@ async fn url_construction_with_deployment_path() {
             ..
         }
     )));
+}
+
+// ── Phase 6: User Story 4 — Error Handling & Content Filtering ────────────
+
+// ── T040: HTTP 429 → rate-limit error (retryable) ─────────────────────────
+
+#[tokio::test]
+async fn http_429_rate_limit_error() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(429)
+                .set_body_string(r#"{"error":{"message":"Rate limit exceeded"}}"#),
+        )
+        .mount(&server)
+        .await;
+
+    let auth = AzureAuth::ApiKey("test-key".into());
+    let stream_fn = AzureStreamFn::new(server.uri(), auth);
+    let events = collect_events(&stream_fn).await;
+
+    let error_event = events
+        .iter()
+        .find(|e| matches!(e, AssistantMessageEvent::Error { .. }));
+    assert!(error_event.is_some(), "expected an Error event for HTTP 429");
+    match error_event.unwrap() {
+        AssistantMessageEvent::Error { error_kind, .. } => {
+            assert_eq!(*error_kind, Some(StreamErrorKind::Throttled));
+        }
+        _ => unreachable!(),
+    }
+}
+
+// ── T041: HTTP 401 → auth error (not retryable) ───────────────────────────
+
+#[tokio::test]
+async fn http_401_auth_error() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(401)
+                .set_body_string(r#"{"error":{"message":"Invalid key"}}"#),
+        )
+        .mount(&server)
+        .await;
+
+    let auth = AzureAuth::ApiKey("bad-key".into());
+    let stream_fn = AzureStreamFn::new(server.uri(), auth);
+    let events = collect_events(&stream_fn).await;
+
+    let error_event = events
+        .iter()
+        .find(|e| matches!(e, AssistantMessageEvent::Error { .. }));
+    assert!(error_event.is_some(), "expected an Error event for HTTP 401");
+    match error_event.unwrap() {
+        AssistantMessageEvent::Error { error_kind, .. } => {
+            assert_eq!(*error_kind, Some(StreamErrorKind::Auth));
+        }
+        _ => unreachable!(),
+    }
+}
+
+// ── T042: HTTP 404 → non-retryable error ──────────────────────────────────
+
+#[tokio::test]
+async fn http_404_non_retryable_error() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(404)
+                .set_body_string(r#"{"error":{"message":"Deployment not found"}}"#),
+        )
+        .mount(&server)
+        .await;
+
+    let auth = AzureAuth::ApiKey("test-key".into());
+    let stream_fn = AzureStreamFn::new(server.uri(), auth);
+    let events = collect_events(&stream_fn).await;
+
+    // 404 is a client error, not classified as auth/throttle/network
+    let error_event = events
+        .iter()
+        .find(|e| matches!(e, AssistantMessageEvent::Error { .. }));
+    assert!(error_event.is_some(), "expected an Error event for HTTP 404");
+    match error_event.unwrap() {
+        AssistantMessageEvent::Error {
+            error_kind,
+            error_message,
+            ..
+        } => {
+            // 404 has no specific StreamErrorKind — generic client error
+            assert_eq!(*error_kind, None);
+            assert!(
+                error_message.contains("404"),
+                "error message should contain status code"
+            );
+        }
+        _ => unreachable!(),
+    }
+}
+
+// ── T043: HTTP 500 → network error (retryable) ───────────────────────────
+
+#[tokio::test]
+async fn http_500_network_error() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(500)
+                .set_body_string(r#"{"error":{"message":"Server error"}}"#),
+        )
+        .mount(&server)
+        .await;
+
+    let auth = AzureAuth::ApiKey("test-key".into());
+    let stream_fn = AzureStreamFn::new(server.uri(), auth);
+    let events = collect_events(&stream_fn).await;
+
+    let error_event = events
+        .iter()
+        .find(|e| matches!(e, AssistantMessageEvent::Error { .. }));
+    assert!(error_event.is_some(), "expected an Error event for HTTP 500");
+    match error_event.unwrap() {
+        AssistantMessageEvent::Error { error_kind, .. } => {
+            assert_eq!(*error_kind, Some(StreamErrorKind::Network));
+        }
+        _ => unreachable!(),
+    }
+}
+
+// ── T044: SSE stream finish_reason "content_filter" → ContentFiltered ─────
+
+#[tokio::test]
+async fn sse_content_filter_finish_reason() {
+    let body = [
+        r#"data: {"choices":[{"delta":{"content":"partial"}}]}"#,
+        "",
+        r#"data: {"choices":[{"delta":{},"finish_reason":"content_filter"}],"usage":{"prompt_tokens":5,"completion_tokens":1}}"#,
+        "",
+        "data: [DONE]",
+        "",
+    ]
+    .join("\n");
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(sse_response(&body))
+        .mount(&server)
+        .await;
+
+    let auth = AzureAuth::ApiKey("test-key".into());
+    let stream_fn = AzureStreamFn::new(server.uri(), auth);
+    let events = collect_events(&stream_fn).await;
+
+    let error_event = events
+        .iter()
+        .find(|e| matches!(e, AssistantMessageEvent::Error { .. }));
+    assert!(
+        error_event.is_some(),
+        "expected ContentFiltered error event, got: {events:?}"
+    );
+    match error_event.unwrap() {
+        AssistantMessageEvent::Error {
+            error_kind,
+            error_message,
+            ..
+        } => {
+            assert_eq!(*error_kind, Some(StreamErrorKind::ContentFiltered));
+            assert!(
+                error_message.contains("content filter"),
+                "message should mention content filter: {error_message}"
+            );
+        }
+        _ => unreachable!(),
+    }
+}
+
+// ── T045: HTTP error body with ContentFilterBlocked → ContentFiltered ──────
+
+#[tokio::test]
+async fn http_error_content_filter_blocked() {
+    let error_body = serde_json::json!({
+        "error": {
+            "code": "ContentFilterBlocked",
+            "message": "The response was filtered due to the prompt triggering Azure content management policy."
+        }
+    })
+    .to_string();
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(400).set_body_string(&error_body))
+        .mount(&server)
+        .await;
+
+    let auth = AzureAuth::ApiKey("test-key".into());
+    let stream_fn = AzureStreamFn::new(server.uri(), auth);
+    let events = collect_events(&stream_fn).await;
+
+    let error_event = events
+        .iter()
+        .find(|e| matches!(e, AssistantMessageEvent::Error { .. }));
+    assert!(
+        error_event.is_some(),
+        "expected ContentFiltered error event, got: {events:?}"
+    );
+    match error_event.unwrap() {
+        AssistantMessageEvent::Error {
+            error_kind,
+            error_message,
+            ..
+        } => {
+            assert_eq!(*error_kind, Some(StreamErrorKind::ContentFiltered));
+            assert!(
+                error_message.contains("content filter"),
+                "message should mention content filter: {error_message}"
+            );
+        }
+        _ => unreachable!(),
+    }
+}
+
+// ── T046: Entra ID token endpoint failure → network error ─────────────────
+
+#[tokio::test]
+async fn entra_id_token_endpoint_failure() {
+    let token_server = MockServer::start().await;
+    let api_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/token"))
+        .respond_with(ResponseTemplate::new(500).set_body_string("Internal Server Error"))
+        .mount(&token_server)
+        .await;
+
+    // API server should never be called since token acquisition fails
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(sse_response(&simple_sse_body()))
+        .expect(0)
+        .mount(&api_server)
+        .await;
+
+    let token_url = format!("{}/token", token_server.uri());
+    let stream_fn = entra_stream_fn(&api_server, &token_url);
+    let events = collect_events(&stream_fn).await;
+
+    let error_event = events
+        .iter()
+        .find(|e| matches!(e, AssistantMessageEvent::Error { .. }));
+    assert!(
+        error_event.is_some(),
+        "expected an Error event for token failure, got: {events:?}"
+    );
+    match error_event.unwrap() {
+        AssistantMessageEvent::Error {
+            error_kind,
+            error_message,
+            ..
+        } => {
+            assert_eq!(*error_kind, Some(StreamErrorKind::Network));
+            assert!(
+                error_message.contains("token"),
+                "error message should mention token: {error_message}"
+            );
+        }
+        _ => unreachable!(),
+    }
 }
