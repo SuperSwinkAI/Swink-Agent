@@ -11,7 +11,7 @@ use wiremock::{Mock, MockServer};
 use swink_agent::{AssistantMessageEvent, ModelSpec, StopReason, StreamFn, StreamOptions};
 use swink_agent_adapters::{AzureAuth, AzureStreamFn};
 
-use common::{sse_response, test_context};
+use common::{event_name, sse_response, test_context};
 
 fn test_model() -> ModelSpec {
     ModelSpec::new("azure", "gpt-5.4")
@@ -239,4 +239,187 @@ fn azure_stream_fn_debug_redacts_credentials() {
         debug_str.contains("myresource"),
         "base_url should be visible"
     );
+}
+
+// ── Phase 4: User Story 2 — Tool Call Streaming ────────────────────────────
+
+// ── T024: Tool call streaming — verify ToolCallStart, ToolCallDelta, ToolCallEnd ──
+
+#[tokio::test]
+async fn tool_call_stream_events() {
+    let body = [
+        r#"data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_abc123","function":{"name":"bash","arguments":""}}]},"index":0}]}"#,
+        "",
+        r#"data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"cmd\":"}}]},"index":0}]}"#,
+        "",
+        r#"data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"ls\"}"}}]},"index":0}]}"#,
+        "",
+        r#"data: {"choices":[{"delta":{},"finish_reason":"tool_calls","index":0}],"usage":{"prompt_tokens":10,"completion_tokens":20}}"#,
+        "",
+        "data: [DONE]",
+        "",
+        "",
+    ]
+    .join("\n");
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .and(header("api-key", "test-key"))
+        .respond_with(sse_response(&body))
+        .mount(&server)
+        .await;
+
+    let auth = AzureAuth::ApiKey("test-key".into());
+    let stream_fn = AzureStreamFn::new(server.uri(), auth);
+    let events = collect_events(&stream_fn).await;
+
+    let types: Vec<&str> = events.iter().map(|e| event_name(e)).collect();
+    assert!(
+        types.contains(&"ToolCallStart"),
+        "missing ToolCallStart: {types:?}"
+    );
+    assert!(
+        types.contains(&"ToolCallDelta"),
+        "missing ToolCallDelta: {types:?}"
+    );
+    assert!(
+        types.contains(&"ToolCallEnd"),
+        "missing ToolCallEnd: {types:?}"
+    );
+
+    // Verify tool call start details
+    let start = events.iter().find_map(|e| match e {
+        AssistantMessageEvent::ToolCallStart { id, name, .. } => Some((id.clone(), name.clone())),
+        _ => None,
+    });
+    assert_eq!(start, Some(("call_abc123".to_string(), "bash".to_string())));
+
+    // Verify stop reason is ToolUse
+    let done = events.iter().find_map(|e| match e {
+        AssistantMessageEvent::Done { stop_reason, .. } => Some(*stop_reason),
+        _ => None,
+    });
+    assert_eq!(done, Some(StopReason::ToolUse));
+}
+
+// ── T025: Multiple parallel tool calls — separate indexed blocks ────────────
+
+#[tokio::test]
+async fn multiple_parallel_tool_calls() {
+    let body = [
+        // First tool call starts
+        r#"data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_first","function":{"name":"bash","arguments":""}}]},"index":0}]}"#,
+        "",
+        r#"data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"cmd\":\"ls\"}"}}]},"index":0}]}"#,
+        "",
+        // Second tool call starts
+        r#"data: {"choices":[{"delta":{"tool_calls":[{"index":1,"id":"call_second","function":{"name":"read_file","arguments":""}}]},"index":0}]}"#,
+        "",
+        r#"data: {"choices":[{"delta":{"tool_calls":[{"index":1,"function":{"arguments":"{\"path\":\"foo.txt\"}"}}]},"index":0}]}"#,
+        "",
+        r#"data: {"choices":[{"delta":{},"finish_reason":"tool_calls","index":0}],"usage":{"prompt_tokens":10,"completion_tokens":30}}"#,
+        "",
+        "data: [DONE]",
+        "",
+        "",
+    ]
+    .join("\n");
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .and(header("api-key", "test-key"))
+        .respond_with(sse_response(&body))
+        .mount(&server)
+        .await;
+
+    let auth = AzureAuth::ApiKey("test-key".into());
+    let stream_fn = AzureStreamFn::new(server.uri(), auth);
+    let events = collect_events(&stream_fn).await;
+
+    // Collect all ToolCallStart events
+    let tool_starts: Vec<(usize, String, String)> = events
+        .iter()
+        .filter_map(|e| match e {
+            AssistantMessageEvent::ToolCallStart {
+                content_index,
+                id,
+                name,
+            } => Some((*content_index, id.clone(), name.clone())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(tool_starts.len(), 2, "expected 2 ToolCallStart events");
+    assert_eq!(tool_starts[0].2, "bash");
+    assert_eq!(tool_starts[1].2, "read_file");
+
+    // Content indices should be sequential
+    assert_eq!(tool_starts[0].0, 0, "first tool at content_index 0");
+    assert_eq!(tool_starts[1].0, 1, "second tool at content_index 1");
+
+    // Both tool calls should be ended
+    let tool_end_count = events
+        .iter()
+        .filter(|e| matches!(e, AssistantMessageEvent::ToolCallEnd { .. }))
+        .count();
+    assert_eq!(tool_end_count, 2, "expected 2 ToolCallEnd events");
+
+    // Stop reason should be ToolUse
+    let done = events.iter().find_map(|e| match e {
+        AssistantMessageEvent::Done { stop_reason, .. } => Some(*stop_reason),
+        _ => None,
+    });
+    assert_eq!(done, Some(StopReason::ToolUse));
+}
+
+// ── T026: Tool call arguments form valid JSON upon ToolCallEnd ──────────────
+
+#[tokio::test]
+async fn tool_call_arguments_form_valid_json() {
+    let body = [
+        r#"data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_json","function":{"name":"write_file","arguments":""}}]},"index":0}]}"#,
+        "",
+        r#"data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"path\":"}}]},"index":0}]}"#,
+        "",
+        r#"data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"out.txt\","}}]},"index":0}]}"#,
+        "",
+        r#"data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"content\":"}}]},"index":0}]}"#,
+        "",
+        r#"data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"hello world\"}"}}]},"index":0}]}"#,
+        "",
+        r#"data: {"choices":[{"delta":{},"finish_reason":"tool_calls","index":0}],"usage":{"prompt_tokens":8,"completion_tokens":15}}"#,
+        "",
+        "data: [DONE]",
+        "",
+        "",
+    ]
+    .join("\n");
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .and(header("api-key", "test-key"))
+        .respond_with(sse_response(&body))
+        .mount(&server)
+        .await;
+
+    let auth = AzureAuth::ApiKey("test-key".into());
+    let stream_fn = AzureStreamFn::new(server.uri(), auth);
+    let events = collect_events(&stream_fn).await;
+
+    // Collect all argument deltas
+    let arguments: String = events
+        .iter()
+        .filter_map(|e| match e {
+            AssistantMessageEvent::ToolCallDelta { delta, .. } => Some(delta.as_str()),
+            _ => None,
+        })
+        .collect();
+
+    // Verify combined arguments form valid JSON
+    let parsed: serde_json::Value =
+        serde_json::from_str(&arguments).expect("tool call arguments should be valid JSON");
+    assert_eq!(parsed["path"], "out.txt");
+    assert_eq!(parsed["content"], "hello world");
 }

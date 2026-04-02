@@ -75,10 +75,10 @@
 
 ### Implementation for User Story 2
 
-- [ ] T024 [US2] Add wiremock test: tool call streaming — verify ToolCallStart, ToolCallDelta, ToolCallEnd events with correct tool name and ID in `adapters/tests/azure.rs`
-- [ ] T025 [US2] Add wiremock test: multiple parallel tool calls — verify each emitted as separate indexed block in `adapters/tests/azure.rs`
-- [ ] T026 [US2] Add wiremock test: tool call arguments form valid JSON upon ToolCallEnd in `adapters/tests/azure.rs`
-- [ ] T027 [US2] Run `cargo test -p swink-agent-adapters --features azure` to verify all US2 tests pass
+- [x] T024 [US2] Add wiremock test: tool call streaming — verify ToolCallStart, ToolCallDelta, ToolCallEnd events with correct tool name and ID in `adapters/tests/azure.rs`
+- [x] T025 [US2] Add wiremock test: multiple parallel tool calls — verify each emitted as separate indexed block in `adapters/tests/azure.rs`
+- [x] T026 [US2] Add wiremock test: tool call arguments form valid JSON upon ToolCallEnd in `adapters/tests/azure.rs`
+- [x] T027 [US2] Run `cargo test -p swink-agent-adapters --features azure` to verify all US2 tests pass
 
 **Checkpoint**: Tool call streaming works. No adapter code changes needed — `openai_compat` handles tool calls already.
 
