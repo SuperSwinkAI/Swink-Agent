@@ -4,7 +4,7 @@
 use std::sync::Arc;
 
 use swink_agent::{
-    Checkpoint, CheckpointFuture, CheckpointStore, PolicyContext, PolicyVerdict, PostTurnPolicy,
+    Checkpoint, CheckpointStore, PolicyContext, PolicyVerdict, PostTurnPolicy,
     TurnPolicyContext,
 };
 

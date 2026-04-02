@@ -9,7 +9,7 @@ repository = "https://github.com/SuperSwinkAI/Swink-Agent"
 keywords = ["llm", "agent", "policy", "security", "audit"]
 
 [features]
-default = []
+default = ["all"]
 full = ["all"]
 all = ["budget", "max-turns", "deny-list", "sandbox", "loop-detection", "checkpoint", "prompt-guard", "pii", "content-filter", "audit"]
 budget = []
@@ -39,6 +39,10 @@ serde_json = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["full", "test-util"] }
 tokio-util = { workspace = true }
+
+[[example]]
+name = "with_policies"
+required-features = ["budget", "max-turns", "deny-list", "loop-detection"]
 
 [lints.rust]
 unsafe_code = "forbid"

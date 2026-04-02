@@ -2,7 +2,7 @@
 
 ## Scope
 
-`adapters/` — StreamFn implementations for 9 LLM providers (6 implemented, 3 stubs). Separate crate to keep provider-specific deps out of core.
+`adapters/` — StreamFn implementations for 9 LLM providers (7 implemented, 2 stubs). Separate crate to keep provider-specific deps out of core.
 
 ## Feature Gates
 
@@ -29,7 +29,7 @@ swink-agent-adapters = {}
 | `azure` | `azure.rs` | — | Stub |
 | `bedrock` | `bedrock.rs` | `sha2` | Stub |
 | `mistral` | `mistral.rs` | — | Implemented |
-| `xai` | `xai.rs` | — | Stub |
+| `xai` | `xai.rs` | — | Implemented |
 
 **Always compiled** (shared infra): `base`, `sse`, `classify`, `convert`, `finalize`, `openai_compat`, `remote_presets`.
 

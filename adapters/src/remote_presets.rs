@@ -262,7 +262,8 @@ fn build_remote_connection_from_values(
             preset.api_version.clone().unwrap_or(ApiVersion::V1beta),
         )),
         #[cfg(feature = "azure")]
-        #[allow(clippy::redundant_clone)] // Clone needed when multiple adapter features enabled
+        #[allow(clippy::redundant_clone)]
+        // Clone needed when multiple adapter features enabled
         "azure" => Arc::new(AzureStreamFn::new(
             resolved_base_url()?,
             AzureAuth::ApiKey(api_key.clone()),
