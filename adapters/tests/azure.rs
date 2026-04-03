@@ -681,7 +681,10 @@ async fn http_429_rate_limit_error() {
     let error_event = events
         .iter()
         .find(|e| matches!(e, AssistantMessageEvent::Error { .. }));
-    assert!(error_event.is_some(), "expected an Error event for HTTP 429");
+    assert!(
+        error_event.is_some(),
+        "expected an Error event for HTTP 429"
+    );
     match error_event.unwrap() {
         AssistantMessageEvent::Error { error_kind, .. } => {
             assert_eq!(*error_kind, Some(StreamErrorKind::Throttled));
@@ -698,8 +701,7 @@ async fn http_401_auth_error() {
     Mock::given(method("POST"))
         .and(path("/chat/completions"))
         .respond_with(
-            ResponseTemplate::new(401)
-                .set_body_string(r#"{"error":{"message":"Invalid key"}}"#),
+            ResponseTemplate::new(401).set_body_string(r#"{"error":{"message":"Invalid key"}}"#),
         )
         .mount(&server)
         .await;
@@ -711,7 +713,10 @@ async fn http_401_auth_error() {
     let error_event = events
         .iter()
         .find(|e| matches!(e, AssistantMessageEvent::Error { .. }));
-    assert!(error_event.is_some(), "expected an Error event for HTTP 401");
+    assert!(
+        error_event.is_some(),
+        "expected an Error event for HTTP 401"
+    );
     match error_event.unwrap() {
         AssistantMessageEvent::Error { error_kind, .. } => {
             assert_eq!(*error_kind, Some(StreamErrorKind::Auth));
@@ -742,7 +747,10 @@ async fn http_404_non_retryable_error() {
     let error_event = events
         .iter()
         .find(|e| matches!(e, AssistantMessageEvent::Error { .. }));
-    assert!(error_event.is_some(), "expected an Error event for HTTP 404");
+    assert!(
+        error_event.is_some(),
+        "expected an Error event for HTTP 404"
+    );
     match error_event.unwrap() {
         AssistantMessageEvent::Error {
             error_kind,
@@ -768,8 +776,7 @@ async fn http_500_network_error() {
     Mock::given(method("POST"))
         .and(path("/chat/completions"))
         .respond_with(
-            ResponseTemplate::new(500)
-                .set_body_string(r#"{"error":{"message":"Server error"}}"#),
+            ResponseTemplate::new(500).set_body_string(r#"{"error":{"message":"Server error"}}"#),
         )
         .mount(&server)
         .await;
@@ -781,7 +788,10 @@ async fn http_500_network_error() {
     let error_event = events
         .iter()
         .find(|e| matches!(e, AssistantMessageEvent::Error { .. }));
-    assert!(error_event.is_some(), "expected an Error event for HTTP 500");
+    assert!(
+        error_event.is_some(),
+        "expected an Error event for HTTP 500"
+    );
     match error_event.unwrap() {
         AssistantMessageEvent::Error { error_kind, .. } => {
             assert_eq!(*error_kind, Some(StreamErrorKind::Network));

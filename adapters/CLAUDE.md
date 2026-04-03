@@ -26,7 +26,7 @@ swink-agent-adapters = {}
 | `ollama` | `ollama.rs` | — | Implemented |
 | `gemini` | `google.rs` | — | Implemented |
 | `proxy` | `proxy.rs` | — | Implemented |
-| `azure` | `azure.rs` | — | Stub |
+| `azure` | `azure.rs` | — | Implemented |
 | `bedrock` | `bedrock.rs` | `sha2` | Stub |
 | `mistral` | `mistral.rs` | — | Implemented |
 | `xai` | `xai.rs` | — | Implemented |
@@ -53,13 +53,15 @@ swink-agent-adapters = {}
 | OpenAI | SSE | `/v1/chat/completions` | `data: [DONE]` |
 | Ollama | NDJSON | `/api/chat` | `done: true` in object |
 | Mistral | SSE | `/v1/chat/completions` | `data: [DONE]` |
+| Azure | SSE | `{base_url}/chat/completions` | `data: [DONE]` |
 | Proxy | SSE | `{base_url}/v1/stream` | `type: done`/`type: error` |
 
 ## Lessons Learned
 
 - **Anthropic thinking blocks** — budget = `thinking_level` + `thinking_budgets` map, capped to `max_tokens - 1`. Stripped from outgoing requests (API rejects them). SSE state machine (`SseStreamState`) remaps block indices because provider indices don't match harness indices after filtering.
 - **OpenAI adapter is multi-provider** — works with any `/v1/chat/completions`-compatible endpoint (vLLM, LM Studio, Groq, Together, etc.).
-- **Auth** — Anthropic: `x-api-key`. OpenAI: `Authorization: Bearer`. Ollama: none. Mistral: `Authorization: Bearer`.
+- **Auth** — Anthropic: `x-api-key`. OpenAI: `Authorization: Bearer`. Ollama: none. Mistral: `Authorization: Bearer`. Azure: `api-key` header (API key) or `Authorization: Bearer` (Entra ID OAuth2).
+- **Azure adapter** — reuses `openai_compat` for SSE parsing and tool calls. Azure-specific: URL construction (`{base_url}/chat/completions`), dual auth (`AzureAuth::ApiKey` / `AzureAuth::EntraId`), content filter detection (`finish_reason: "content_filter"` in stream, `ContentFilterBlocked` in HTTP error body → `ContentFiltered` error). Entra ID tokens cached with 5-min proactive refresh margin.
 - **Mistral API divergences from OpenAI** — Tool call IDs must be exactly 9-char `[a-zA-Z0-9]` (Mistral rejects OpenAI-style `call_*` IDs with HTTP 422). `stream_options` field rejected (usage comes automatically in final chunk). Must use `max_tokens` not `max_completion_tokens`. `finish_reason: "model_length"` is Mistral-specific (mapped to `Length` in shared parser). User messages cannot immediately follow tool messages (synthetic assistant message inserted). Adapter holds `AdapterBase` directly (Azure pattern) with custom `MistralChatRequest` and `MistralIdMap` for bidirectional ID remapping.
 
 ## Live Tests
@@ -69,6 +71,7 @@ cargo test -p swink-agent-adapters -- --ignored          # all
 cargo test -p swink-agent-adapters --test anthropic_live -- --ignored
 cargo test -p swink-agent-adapters --test openai_live -- --ignored
 cargo test -p swink-agent-adapters --test mistral_live -- --ignored
+cargo test -p swink-agent-adapters --test azure_live -- --ignored
 ```
 
 Live tests are `#[ignore]`, use cheap models, 30s timeout, validate event sequences not text content. `.env` loaded via dotenvy.
