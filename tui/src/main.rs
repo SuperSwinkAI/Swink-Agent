@@ -127,7 +127,8 @@ fn try_proxy() -> Option<ModelConnections> {
         .as_ref()
         .and_then(credentials::credential)
         .unwrap_or_default();
-    let model_id = std::env::var("LLM_MODEL").unwrap_or_else(|_| "claude-sonnet-4-6".to_string());
+    let model_id =
+        std::env::var("LLM_MODEL").unwrap_or_else(|_| "claude-sonnet-4-20250514".to_string());
     let stream_fn: Arc<dyn StreamFn> = Arc::new(ProxyStreamFn::new(&base_url, &api_key));
     let model = ModelSpec::new("proxy", &model_id);
 
@@ -192,9 +193,7 @@ fn try_catalog_provider(provider_key: &str, model_env: &str) -> Option<ModelConn
     }
 
     #[cfg(feature = "local")]
-    {
-        builder = append_local_fallback(builder);
-    }
+    let builder = append_local_fallback(builder);
 
     Some(builder.build())
 }
