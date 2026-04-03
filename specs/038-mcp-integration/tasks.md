@@ -73,16 +73,16 @@
 
 ### Tests for User Story 2
 
-- [ ] T019 [P] [US2] Write test in mcp/tests/manager_test.rs: connect to two mock servers with prefixes, verify tools are prefixed correctly (prefix_toolname)
-- [ ] T020 [P] [US2] Write test in mcp/tests/manager_test.rs: connect to three servers where one fails, verify other two servers' tools are available
-- [ ] T021 [P] [US2] Write test in mcp/tests/manager_test.rs: connect two servers without prefixes that have same tool name, verify McpError::ToolNameCollision
+- [x] T019 [P] [US2] Write test in mcp/tests/manager_test.rs: connect to two mock servers with prefixes, verify tools are prefixed correctly (prefix_toolname)
+- [x] T020 [P] [US2] Write test in mcp/tests/manager_test.rs: connect to three servers where one fails, verify other two servers' tools are available
+- [x] T021 [P] [US2] Write test in mcp/tests/manager_test.rs: connect two servers without prefixes that have same tool name, verify McpError::ToolNameCollision
 
 ### Implementation for User Story 2
 
-- [ ] T022 [US2] Create mcp/src/manager.rs with McpManager struct: holds Vec<McpServerConfig>, Vec<McpConnection>, and flattened Vec<Arc<dyn AgentTool>>
-- [ ] T023 [US2] Implement McpManager::new(configs) and McpManager::connect_all() in mcp/src/manager.rs: iterate configs, call McpConnection::connect() for each, collect tools, apply prefixes, detect name collisions across servers, log failures and continue with partial results
-- [ ] T024 [US2] Implement McpManager::tools() returning Vec<Arc<dyn AgentTool>> and McpManager::shutdown() for graceful cleanup in mcp/src/manager.rs
-- [ ] T025 [US2] Implement tool name collision detection in McpManager::connect_all(): after collecting all tools, check for duplicate names and return McpError::ToolNameCollision with server names
+- [x] T022 [US2] Create mcp/src/manager.rs with McpManager struct: holds Vec<McpServerConfig>, Vec<McpConnection>, and flattened Vec<Arc<dyn AgentTool>>
+- [x] T023 [US2] Implement McpManager::new(configs) and McpManager::connect_all() in mcp/src/manager.rs: iterate configs, call McpConnection::connect() for each, collect tools, apply prefixes, detect name collisions across servers, log failures and continue with partial results
+- [x] T024 [US2] Implement McpManager::tools() returning Vec<Arc<dyn AgentTool>> and McpManager::shutdown() for graceful cleanup in mcp/src/manager.rs
+- [x] T025 [US2] Implement tool name collision detection in McpManager::connect_all(): after collecting all tools, check for duplicate names and return McpError::ToolNameCollision with server names
 
 **Checkpoint**: Multi-server orchestration works — tools from multiple servers coexist with prefix namespacing
 

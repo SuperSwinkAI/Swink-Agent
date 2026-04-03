@@ -61,6 +61,39 @@ impl McpConnection {
         }
     }
 
+    /// Create a connection from a pre-established rmcp service.
+    ///
+    /// Performs tool discovery on the already-connected service. Useful for
+    /// testing with in-process mock servers or when the transport is managed
+    /// externally.
+    pub async fn from_service(
+        config: McpServerConfig,
+        service: RunningService<RoleClient, ClientInfo>,
+    ) -> Result<Self, McpError> {
+        let discovered_tools =
+            service
+                .peer()
+                .list_all_tools()
+                .await
+                .map_err(|e| McpError::ConnectionFailed {
+                    server: config.name.clone(),
+                    reason: format!("tool discovery failed: {e}"),
+                })?;
+
+        info!(
+            server = %config.name,
+            tool_count = discovered_tools.len(),
+            "MCP server connected via provided service, tools discovered"
+        );
+
+        Ok(Self {
+            config,
+            discovered_tools,
+            status: McpConnectionStatus::Connected,
+            service: Some(service),
+        })
+    }
+
     /// Connect to an MCP server using the configured transport.
     ///
     /// Currently supports stdio transport only. SSE transport will be added

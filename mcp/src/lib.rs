@@ -32,9 +32,11 @@ mod connection;
 pub mod convert;
 mod error;
 pub mod event;
+mod manager;
 mod tool;
 
 pub use config::{McpServerConfig, McpTransport, ToolFilter};
 pub use connection::{McpConnection, McpConnectionStatus};
 pub use error::McpError;
+pub use manager::McpManager;
 pub use tool::McpTool;
