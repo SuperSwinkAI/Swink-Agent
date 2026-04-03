@@ -11,7 +11,7 @@ fn server_config_construction() {
         transport: McpTransport::Stdio {
             command: "echo".into(),
             args: vec!["hello".into()],
-            env: Default::default(),
+            env: std::collections::HashMap::default(),
         },
         tool_prefix: Some("test".into()),
         tool_filter: None,
@@ -95,7 +95,7 @@ fn config_serialization_roundtrip() {
         transport: McpTransport::Stdio {
             command: "npx".into(),
             args: vec!["-y".into(), "mcp-server".into()],
-            env: Default::default(),
+            env: std::collections::HashMap::default(),
         },
         tool_prefix: Some("fs".into()),
         tool_filter: Some(ToolFilter {
