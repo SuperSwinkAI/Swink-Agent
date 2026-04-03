@@ -58,22 +58,22 @@
 
 ### Tests for User Story 1
 
-- [ ] T016 [P] [US1] Write test `save_creates_version_one` in `artifacts/tests/memory_store.rs` — save artifact, assert version 1, correct size/content_type
-- [ ] T017 [P] [US1] Write test `save_same_name_increments_version` in `artifacts/tests/memory_store.rs` — save twice, assert versions 1 and 2
-- [ ] T018 [P] [US1] Write test `load_returns_latest_version` in `artifacts/tests/memory_store.rs` — save 3 versions, `load` returns version 3
-- [ ] T019 [P] [US1] Write test `load_version_returns_specific` in `artifacts/tests/memory_store.rs` — save 3 versions, `load_version(1)` returns version 1 content
-- [ ] T020 [P] [US1] Write test `load_nonexistent_returns_none` in `artifacts/tests/memory_store.rs` — `load` unknown name returns `None`
-- [ ] T021 [P] [US1] Write test `load_version_nonexistent_returns_none` in `artifacts/tests/memory_store.rs` — `load_version(99)` returns `None`
-- [ ] T022 [P] [US1] Write test `save_validates_name` in `artifacts/tests/memory_store.rs` — invalid name returns `ArtifactError::InvalidName`
-- [ ] T023 [P] [US1] Write test `save_empty_content_succeeds` in `artifacts/tests/memory_store.rs` — zero-byte artifact saves correctly
+- [x] T016 [P] [US1] Write test `save_creates_version_one` in `artifacts/tests/memory_store.rs` — save artifact, assert version 1, correct size/content_type
+- [x] T017 [P] [US1] Write test `save_same_name_increments_version` in `artifacts/tests/memory_store.rs` — save twice, assert versions 1 and 2
+- [x] T018 [P] [US1] Write test `load_returns_latest_version` in `artifacts/tests/memory_store.rs` — save 3 versions, `load` returns version 3
+- [x] T019 [P] [US1] Write test `load_version_returns_specific` in `artifacts/tests/memory_store.rs` — save 3 versions, `load_version(1)` returns version 1 content
+- [x] T020 [P] [US1] Write test `load_nonexistent_returns_none` in `artifacts/tests/memory_store.rs` — `load` unknown name returns `None`
+- [x] T021 [P] [US1] Write test `load_version_nonexistent_returns_none` in `artifacts/tests/memory_store.rs` — `load_version(99)` returns `None`
+- [x] T022 [P] [US1] Write test `save_validates_name` in `artifacts/tests/memory_store.rs` — invalid name returns `ArtifactError::InvalidName`
+- [x] T023 [P] [US1] Write test `save_empty_content_succeeds` in `artifacts/tests/memory_store.rs` — zero-byte artifact saves correctly
 
 ### Implementation for User Story 1
 
-- [ ] T024 [US1] Implement `InMemoryArtifactStore` struct in `artifacts/src/memory_store.rs` — `Arc<tokio::sync::Mutex<HashMap<String, HashMap<String, Vec<(ArtifactVersion, ArtifactData)>>>>>`, `new()` constructor
-- [ ] T025 [US1] Implement `ArtifactStore::save` for `InMemoryArtifactStore` in `artifacts/src/memory_store.rs` — validate name, increment version, store data, emit `tracing::debug!`
-- [ ] T026 [US1] Implement `ArtifactStore::load` and `ArtifactStore::load_version` for `InMemoryArtifactStore` in `artifacts/src/memory_store.rs`
-- [ ] T027 [US1] Re-export `InMemoryArtifactStore` from `artifacts/src/lib.rs`
-- [ ] T028 [US1] Run all US1 tests — verify they pass
+- [x] T024 [US1] Implement `InMemoryArtifactStore` struct in `artifacts/src/memory_store.rs` — `Arc<tokio::sync::Mutex<HashMap<String, HashMap<String, Vec<(ArtifactVersion, ArtifactData)>>>>>`, `new()` constructor
+- [x] T025 [US1] Implement `ArtifactStore::save` for `InMemoryArtifactStore` in `artifacts/src/memory_store.rs` — validate name, increment version, store data, emit `tracing::debug!`
+- [x] T026 [US1] Implement `ArtifactStore::load` and `ArtifactStore::load_version` for `InMemoryArtifactStore` in `artifacts/src/memory_store.rs`
+- [x] T027 [US1] Re-export `InMemoryArtifactStore` from `artifacts/src/lib.rs`
+- [x] T028 [US1] Run all US1 tests — verify they pass
 
 **Checkpoint**: `InMemoryArtifactStore` saves and loads versioned artifacts. All US1 tests pass.
 
