@@ -19,11 +19,11 @@
 
 **Purpose**: Create the `swink-agent-artifacts` workspace crate and add feature gates to the core crate.
 
-- [ ] T001 Create `artifacts/` directory and `artifacts/Cargo.toml` with workspace deps (`serde`, `serde_json`, `tokio`, `chrono`, `tracing`, `thiserror`, `futures`, `bytes`) and dependency on `swink-agent` with `artifact-store` feature
-- [ ] T002 Add `"artifacts"` to workspace members in root `Cargo.toml`
-- [ ] T003 Add `artifact-store` and `artifact-tools` features to core crate `Cargo.toml` (`artifact-tools` depends on `artifact-store`); add `chrono` dep (already workspace dep)
-- [ ] T004 Create `artifacts/src/lib.rs` with `#![forbid(unsafe_code)]` and placeholder module declarations
-- [ ] T005 Create `src/artifact.rs` with `#[cfg(feature = "artifact-store")]` module stub in `src/lib.rs`
+- [x] T001 Create `artifacts/` directory and `artifacts/Cargo.toml` with workspace deps (`serde`, `serde_json`, `tokio`, `chrono`, `tracing`, `thiserror`, `futures`, `bytes`) and dependency on `swink-agent` with `artifact-store` feature
+- [x] T002 Add `"artifacts"` to workspace members in root `Cargo.toml`
+- [x] T003 Add `artifact-store` and `artifact-tools` features to core crate `Cargo.toml` (`artifact-tools` depends on `artifact-store`); add `chrono` dep (already workspace dep)
+- [x] T004 Create `artifacts/src/lib.rs` with `#![forbid(unsafe_code)]` and placeholder module declarations
+- [x] T005 Create `src/artifact.rs` with `#[cfg(feature = "artifact-store")]` module stub in `src/lib.rs`
 
 **Checkpoint**: Workspace compiles with `cargo build --workspace`. Feature gates are wired but empty.
 

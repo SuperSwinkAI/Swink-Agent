@@ -19,6 +19,8 @@ mod event_forwarder;
 mod fallback;
 mod fn_tool;
 mod handle;
+#[cfg(feature = "artifact-store")]
+mod artifact;
 #[cfg(feature = "hot-reload")]
 pub mod hot_reload;
 mod loop_;
@@ -141,6 +143,10 @@ pub use types::{
 };
 pub use util::now_timestamp;
 
+#[cfg(feature = "artifact-store")]
+pub use artifact::{
+    ArtifactData, ArtifactError, ArtifactMeta, ArtifactStore, ArtifactVersion,
+};
 pub use display::{CoreDisplayMessage, DisplayRole, IntoDisplayMessages};
 #[cfg(feature = "plugins")]
 pub use plugin::{NamespacedTool, Plugin, PluginRegistry};
