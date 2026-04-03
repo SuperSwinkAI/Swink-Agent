@@ -345,16 +345,36 @@ impl JsonlSessionStore {
 }
 
 impl SessionStore for JsonlSessionStore {
-    fn save(&self, id: &str, meta: &SessionMeta, messages: &[LlmMessage]) -> io::Result<()> {
-        let entries: Vec<SessionEntry> = messages
-            .iter()
-            .cloned()
-            .map(SessionEntry::Message)
-            .collect();
-        self.save_entries(id, meta, &entries)
+    fn save(&self, id: &str, meta: &SessionMeta, messages: &[AgentMessage]) -> io::Result<()> {
+        validate_session_id(id)?;
+        check_sequence(&self.sessions_dir, id, meta.sequence)?;
+
+        let path = session_path(&self.sessions_dir, id);
+
+        // Increment sequence for the write
+        let mut write_meta = meta.clone();
+        write_meta.sequence += 1;
+
+        let file = std::fs::File::create(&path)?;
+        let mut writer = io::BufWriter::new(file);
+
+        // First line: metadata
+        serde_json::to_writer(&mut writer, &write_meta).map_err(io::Error::other)?;
+        writeln!(writer)?;
+
+        // Subsequent lines: one message per line
+        for msg in messages {
+            if let Some(record) = SessionRecord::from_message(msg, id) {
+                writer.write_all(record.to_json_line()?.as_bytes())?;
+                writeln!(writer)?;
+            }
+        }
+
+        writer.flush()?;
+        Ok(())
     }
 
-    fn append(&self, id: &str, messages: &[LlmMessage]) -> io::Result<()> {
+    fn append(&self, id: &str, messages: &[AgentMessage]) -> io::Result<()> {
         validate_session_id(id)?;
 
         let path = session_path(&self.sessions_dir, id);
@@ -363,20 +383,52 @@ impl SessionStore for JsonlSessionStore {
             id,
             messages
                 .iter()
-                .cloned()
-                .map(|message| SessionRecord::Llm(Box::new(message))),
+                .filter_map(|msg| SessionRecord::from_message(msg, id)),
         )
     }
 
-    fn load(&self, id: &str) -> io::Result<(SessionMeta, Vec<LlmMessage>)> {
-        let (meta, entries) = self.load_entries(id)?;
-        let messages = entries
-            .into_iter()
-            .filter_map(|entry| match entry {
-                SessionEntry::Message(msg) => Some(msg),
-                _ => None,
-            })
-            .collect();
+    fn load(
+        &self,
+        id: &str,
+        registry: Option<&CustomMessageRegistry>,
+    ) -> io::Result<(SessionMeta, Vec<AgentMessage>)> {
+        validate_session_id(id)?;
+
+        let path = session_path(&self.sessions_dir, id);
+        let (meta, lines) = read_meta_and_message_lines(&path, id)?;
+
+        // Check version
+        if meta.version > crate::migrate::CURRENT_VERSION {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "unsupported session version {} (current: {})",
+                    meta.version,
+                    crate::migrate::CURRENT_VERSION
+                ),
+            ));
+        }
+
+        // Parse lines using dual strategy: try SessionRecord first (handles
+        // raw LlmMessage and _custom/_state markers), then fall back to
+        // SessionEntry parsing (handles entry_type-tagged lines from
+        // save_entries). This ensures backward and forward compatibility.
+        let mut messages = Vec::new();
+        for (line_num, line) in lines.into_iter().enumerate() {
+            if line.trim().is_empty() {
+                continue;
+            }
+            // Try SessionRecord parse first (raw format)
+            if let Some(message) = parse_message_record(&line, line_num + 2, id, registry) {
+                messages.push(message);
+                continue;
+            }
+            // Fall back to SessionEntry parse (tagged format)
+            if let Ok(SessionEntry::Message(llm_msg)) = SessionEntry::parse(&line) {
+                messages.push(AgentMessage::Llm(llm_msg));
+            }
+        }
+
         Ok((meta, messages))
     }
 
@@ -423,71 +475,6 @@ impl SessionStore for JsonlSessionStore {
             std::fs::remove_file(int_path)?;
         }
         Ok(())
-    }
-
-    fn save_full(&self, id: &str, meta: &SessionMeta, messages: &[AgentMessage]) -> io::Result<()> {
-        validate_session_id(id)?;
-        check_sequence(&self.sessions_dir, id, meta.sequence)?;
-
-        let path = session_path(&self.sessions_dir, id);
-
-        // Increment sequence for the write
-        let mut write_meta = meta.clone();
-        write_meta.sequence += 1;
-
-        let file = std::fs::File::create(&path)?;
-        let mut writer = io::BufWriter::new(file);
-
-        // First line: metadata
-        serde_json::to_writer(&mut writer, &write_meta).map_err(io::Error::other)?;
-        writeln!(writer)?;
-
-        // Subsequent lines: one message per line
-        for msg in messages {
-            if let Some(record) = SessionRecord::from_message(msg, id) {
-                writer.write_all(record.to_json_line()?.as_bytes())?;
-                writeln!(writer)?;
-            }
-        }
-
-        writer.flush()?;
-        Ok(())
-    }
-
-    fn load_full(
-        &self,
-        id: &str,
-        registry: Option<&CustomMessageRegistry>,
-    ) -> io::Result<(SessionMeta, Vec<AgentMessage>)> {
-        validate_session_id(id)?;
-
-        let path = session_path(&self.sessions_dir, id);
-        let (meta, lines) = read_meta_and_message_lines(&path, id)?;
-
-        // Check version
-        if meta.version > crate::migrate::CURRENT_VERSION {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!(
-                    "unsupported session version {} (current: {})",
-                    meta.version,
-                    crate::migrate::CURRENT_VERSION
-                ),
-            ));
-        }
-
-        // Remaining lines: LlmMessage or custom message envelopes
-        let mut messages = Vec::new();
-        for (line_num, line) in lines.into_iter().enumerate() {
-            if line.trim().is_empty() {
-                continue;
-            }
-            if let Some(message) = parse_message_record(&line, line_num + 2, id, registry) {
-                messages.push(message);
-            }
-        }
-
-        Ok((meta, messages))
     }
 
     fn save_state(&self, id: &str, state: &serde_json::Value) -> io::Result<()> {
@@ -577,11 +564,7 @@ impl SessionStore for JsonlSessionStore {
         // Filter by timestamp (entry timestamps are epoch seconds)
         if let Some(after) = options.after_timestamp {
             let after_secs = after.timestamp().cast_unsigned();
-            entries.retain(|entry| {
-                entry
-                    .timestamp()
-                    .is_some_and(|ts| ts > after_secs)
-            });
+            entries.retain(|entry| entry.timestamp().is_some_and(|ts| ts > after_secs));
         }
 
         // Truncate to last N
@@ -730,7 +713,7 @@ mod tests {
     }
 
     #[test]
-    fn save_full_load_full_roundtrip_with_custom_messages() {
+    fn save_load_roundtrip_with_custom_messages() {
         use swink_agent::{AgentMessage, CustomMessage, CustomMessageRegistry};
 
         #[derive(Debug)]
@@ -786,7 +769,7 @@ mod tests {
             })),
         ];
 
-        store.save_full("test-full", &meta, &messages).unwrap();
+        store.save("test-full", &meta, &messages).unwrap();
 
         // Load with registry — custom message restored
         let mut registry = CustomMessageRegistry::new();
@@ -803,7 +786,7 @@ mod tests {
             }),
         );
 
-        let (loaded_meta, loaded_messages) = store.load_full("test-full", Some(&registry)).unwrap();
+        let (loaded_meta, loaded_messages) = store.load("test-full", Some(&registry)).unwrap();
         assert_eq!(loaded_meta.id, "test-full");
         assert_eq!(loaded_messages.len(), 3);
         assert!(matches!(
@@ -821,14 +804,10 @@ mod tests {
         assert_eq!(custom.data, "custom-payload");
 
         // Load without registry — custom messages skipped
-        let (_, loaded_no_reg) = store.load_full("test-full", None).unwrap();
+        let (_, loaded_no_reg) = store.load("test-full", None).unwrap();
         assert_eq!(loaded_no_reg.len(), 2);
         assert!(matches!(loaded_no_reg[0], AgentMessage::Llm(_)));
         assert!(matches!(loaded_no_reg[1], AgentMessage::Llm(_)));
-
-        // Regular load() still works (skips custom lines with warning)
-        let (_, llm_only) = store.load("test-full").unwrap();
-        assert_eq!(llm_only.len(), 2);
     }
 
     #[test]
@@ -846,31 +825,35 @@ mod tests {
             sequence: 0,
         };
 
-        let initial_messages = vec![LlmMessage::User(swink_agent::UserMessage {
-            content: vec![swink_agent::ContentBlock::Text {
-                text: "hello".to_string(),
-            }],
-            timestamp: 1,
-            cache_hint: None,
-        })];
+        let initial_messages: Vec<AgentMessage> = vec![AgentMessage::Llm(LlmMessage::User(
+            swink_agent::UserMessage {
+                content: vec![swink_agent::ContentBlock::Text {
+                    text: "hello".to_string(),
+                }],
+                timestamp: 1,
+                cache_hint: None,
+            },
+        ))];
         store.save("test-state", &meta, &initial_messages).unwrap();
         store
             .save_state("test-state", &serde_json::json!({ "cursor": 1 }))
             .unwrap();
 
-        let appended_messages = vec![LlmMessage::User(swink_agent::UserMessage {
-            content: vec![swink_agent::ContentBlock::Text {
-                text: "world".to_string(),
-            }],
-            timestamp: 2,
-            cache_hint: None,
-        })];
+        let appended_messages: Vec<AgentMessage> = vec![AgentMessage::Llm(LlmMessage::User(
+            swink_agent::UserMessage {
+                content: vec![swink_agent::ContentBlock::Text {
+                    text: "world".to_string(),
+                }],
+                timestamp: 2,
+                cache_hint: None,
+            },
+        ))];
         store.append("test-state", &appended_messages).unwrap();
 
         let state = store.load_state("test-state").unwrap();
         assert_eq!(state, Some(serde_json::json!({ "cursor": 1 })));
 
-        let (_, messages) = store.load("test-state").unwrap();
+        let (_, messages) = store.load("test-state", None).unwrap();
         assert_eq!(messages.len(), 2);
     }
 }

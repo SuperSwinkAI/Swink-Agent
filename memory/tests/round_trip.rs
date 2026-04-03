@@ -11,7 +11,10 @@ use swink_agent_memory::{
     SessionStore,
 };
 
-use common::{assistant_message, sample_meta, sample_meta_with_times, user_message, user_message_at};
+use common::{
+    assistant_message, llm_assistant_message, llm_user_message, sample_meta,
+    sample_meta_with_times, user_message, user_message_at,
+};
 
 // --- US1: Save and Load ---
 
@@ -25,7 +28,7 @@ fn save_and_load_roundtrip() {
 
     store.save("test_001", &meta, &messages).unwrap();
 
-    let (loaded_meta, loaded_msgs) = store.load("test_001").unwrap();
+    let (loaded_meta, loaded_msgs) = store.load("test_001", None).unwrap();
     assert_eq!(loaded_meta.id, meta.id);
     assert_eq!(loaded_meta.title, meta.title);
     assert_eq!(loaded_meta.version, 1);
@@ -43,7 +46,7 @@ fn save_overwrites_existing_session() {
     store.save("overwrite_test", &meta1, &msgs1).unwrap();
 
     // Load to get updated sequence after first save
-    let (saved_meta, _) = store.load("overwrite_test").unwrap();
+    let (saved_meta, _) = store.load("overwrite_test", None).unwrap();
     let meta2 = SessionMeta {
         title: "Version 2".to_string(),
         ..saved_meta
@@ -51,7 +54,7 @@ fn save_overwrites_existing_session() {
     let msgs2 = vec![user_message("second"), user_message("third")];
     store.save("overwrite_test", &meta2, &msgs2).unwrap();
 
-    let (loaded_meta, loaded_msgs) = store.load("overwrite_test").unwrap();
+    let (loaded_meta, loaded_msgs) = store.load("overwrite_test", None).unwrap();
     assert_eq!(loaded_meta.title, "Version 2");
     assert_eq!(loaded_msgs.len(), 2);
 }
@@ -61,7 +64,7 @@ fn load_nonexistent_session_returns_not_found() {
     let tmp = tempfile::tempdir().unwrap();
     let store = JsonlSessionStore::new(tmp.path().to_path_buf()).unwrap();
 
-    let err = store.load("nonexistent").unwrap_err();
+    let err = store.load("nonexistent", None).unwrap_err();
     assert_eq!(err.kind(), io::ErrorKind::NotFound);
 }
 
@@ -73,7 +76,7 @@ fn load_empty_file_returns_invalid_data() {
     // Create an empty .jsonl file
     std::fs::write(tmp.path().join("empty.jsonl"), "").unwrap();
 
-    let err = store.load("empty").unwrap_err();
+    let err = store.load("empty", None).unwrap_err();
     assert_eq!(err.kind(), io::ErrorKind::InvalidData);
 }
 
@@ -90,7 +93,7 @@ fn save_and_load_preserves_message_content() {
     ];
 
     store.save("content_test", &meta, &messages).unwrap();
-    let (_, loaded_msgs) = store.load("content_test").unwrap();
+    let (_, loaded_msgs) = store.load("content_test", None).unwrap();
 
     assert_eq!(loaded_msgs.len(), 3);
     // Verify content is preserved by checking serialization roundtrip
@@ -119,7 +122,7 @@ fn invalid_session_id_rejected_on_load() {
     let store = JsonlSessionStore::new(tmp.path().to_path_buf()).unwrap();
 
     for bad_id in &["foo/bar", "foo\\bar", "..secret", "null\0byte", ""] {
-        let err = store.load(bad_id).unwrap_err();
+        let err = store.load(bad_id, None).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::InvalidInput, "id={bad_id:?}");
     }
 }
@@ -175,7 +178,7 @@ fn delete_removes_session() {
 
     store.delete("to_delete").unwrap();
 
-    let err = store.load("to_delete").unwrap_err();
+    let err = store.load("to_delete", None).unwrap_err();
     assert_eq!(err.kind(), io::ErrorKind::NotFound);
 
     let sessions = store.list().unwrap();
@@ -200,7 +203,7 @@ fn rich_entries_roundtrip() {
 
     let meta = sample_meta("rich_001", "Rich entries test");
     let entries = vec![
-        SessionEntry::Message(user_message("hello")),
+        SessionEntry::Message(llm_user_message("hello")),
         SessionEntry::ModelChange {
             from: ModelSpec {
                 provider: "openai".to_string(),
@@ -257,7 +260,7 @@ fn rich_entries_roundtrip() {
     }
 
     // load() (LlmMessage-only) should return only the Message entry
-    let (_, messages) = store.load("rich_001").unwrap();
+    let (_, messages) = store.load("rich_001", None).unwrap();
     assert_eq!(messages.len(), 1);
 }
 
@@ -268,8 +271,8 @@ fn rich_entries_backward_compat() {
 
     // Create an old-format JSONL file: meta line + raw LlmMessage lines (no entry_type)
     let meta = sample_meta("compat_001", "Old format session");
-    let msg1 = user_message("first message");
-    let msg2 = assistant_message("second message");
+    let msg1 = llm_user_message("first message");
+    let msg2 = llm_assistant_message("second message");
 
     let meta_json = serde_json::to_string(&meta).unwrap();
     let msg1_json = serde_json::to_string(&msg1).unwrap();
@@ -301,11 +304,11 @@ fn version_defaults_for_old_sessions() {
 
     // Write an old-format JSONL file without version/sequence fields
     let meta_json = r#"{"id":"old_001","title":"Old session","created_at":"2025-03-15T12:00:00Z","updated_at":"2025-03-15T12:00:00Z"}"#;
-    let msg_json = serde_json::to_string(&user_message("hello")).unwrap();
+    let msg_json = serde_json::to_string(&llm_user_message("hello")).unwrap();
     let content = format!("{meta_json}\n{msg_json}\n");
     std::fs::write(tmp.path().join("old_001.jsonl"), content).unwrap();
 
-    let (loaded_meta, msgs) = store.load("old_001").unwrap();
+    let (loaded_meta, msgs) = store.load("old_001", None).unwrap();
     assert_eq!(loaded_meta.version, 1); // default
     assert_eq!(loaded_meta.sequence, 0); // default
     assert_eq!(msgs.len(), 1);
@@ -321,7 +324,7 @@ fn sequence_increments_on_save() {
         .save("seq_test", &meta, &[user_message("first")])
         .unwrap();
 
-    let (loaded1, _) = store.load("seq_test").unwrap();
+    let (loaded1, _) = store.load("seq_test", None).unwrap();
     assert_eq!(loaded1.sequence, 1);
 
     // Save again with the loaded meta (sequence=1)
@@ -329,7 +332,7 @@ fn sequence_increments_on_save() {
         .save("seq_test", &loaded1, &[user_message("second")])
         .unwrap();
 
-    let (loaded2, _) = store.load("seq_test").unwrap();
+    let (loaded2, _) = store.load("seq_test", None).unwrap();
     assert_eq!(loaded2.sequence, 2);
 }
 
@@ -344,7 +347,7 @@ fn optimistic_concurrency_rejects_stale_sequence() {
         .unwrap();
 
     // Load meta (sequence=1)
-    let (stale_meta, _) = store.load("conc_test").unwrap();
+    let (stale_meta, _) = store.load("conc_test", None).unwrap();
     assert_eq!(stale_meta.sequence, 1);
 
     // Simulate another writer saving (bumps sequence to 2)
@@ -373,7 +376,7 @@ fn unsupported_future_version_returns_error() {
     )
     .unwrap();
 
-    let err = store.load("future_001").unwrap_err();
+    let err = store.load("future_001", None).unwrap_err();
     assert_eq!(err.kind(), io::ErrorKind::InvalidData);
     assert!(err.to_string().contains("unsupported session version 999"));
 }
@@ -395,7 +398,7 @@ fn sample_interrupt() -> InterruptState {
                 arguments: serde_json::json!({"path": "/tmp/foo.txt"}),
             },
         ],
-        context_snapshot: vec![user_message("hello"), assistant_message("hi")],
+        context_snapshot: vec![llm_user_message("hello"), llm_assistant_message("hi")],
         system_prompt: "You are a helpful assistant.".to_string(),
         model: ModelSpec::new("openai", "gpt-4"),
     }
@@ -549,7 +552,7 @@ fn load_by_entry_type() {
 
     let meta = sample_meta("filter_type", "Entry type filter test");
     let entries = vec![
-        SessionEntry::Message(user_message("hello")),
+        SessionEntry::Message(llm_user_message("hello")),
         SessionEntry::ModelChange {
             from: ModelSpec::new("a", "a"),
             to: ModelSpec::new("b", "b"),
@@ -560,12 +563,10 @@ fn load_by_entry_type() {
             message_index: 0,
             timestamp: 200,
         },
-        SessionEntry::Message(user_message("world")),
+        SessionEntry::Message(llm_user_message("world")),
     ];
 
-    store
-        .save_entries("filter_type", &meta, &entries)
-        .unwrap();
+    store.save_entries("filter_type", &meta, &entries).unwrap();
 
     let options = LoadOptions {
         entry_types: Some(vec!["message".to_string()]),
@@ -583,18 +584,16 @@ fn load_options_all_none_returns_full() {
 
     let meta = sample_meta("filter_none", "Default options test");
     let entries = vec![
-        SessionEntry::Message(user_message("hello")),
+        SessionEntry::Message(llm_user_message("hello")),
         SessionEntry::Label {
             text: "note".to_string(),
             message_index: 0,
             timestamp: 100,
         },
-        SessionEntry::Message(user_message("world")),
+        SessionEntry::Message(llm_user_message("world")),
     ];
 
-    store
-        .save_entries("filter_none", &meta, &entries)
-        .unwrap();
+    store.save_entries("filter_none", &meta, &entries).unwrap();
 
     let options = LoadOptions::default();
     let (_, loaded) = store.load_with_options("filter_none", &options).unwrap();

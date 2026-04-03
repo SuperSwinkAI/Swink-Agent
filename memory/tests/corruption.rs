@@ -54,7 +54,7 @@ fn corrupted_line_recovers_remaining_messages() {
     std::fs::write(&path, lines.join("\n")).unwrap();
 
     // Load should recover 4 of 5 messages
-    let (loaded_meta, loaded_msgs) = store.load("corrupt_test").unwrap();
+    let (loaded_meta, loaded_msgs) = store.load("corrupt_test", None).unwrap();
     assert_eq!(loaded_meta.id, "corrupt_test");
     assert_eq!(loaded_msgs.len(), 4);
 }
@@ -71,7 +71,7 @@ fn all_message_lines_corrupted_returns_empty_messages() {
     std::fs::write(tmp.path().join("all_corrupt.jsonl"), &content).unwrap();
 
     let store = JsonlSessionStore::new(tmp.path().to_path_buf()).unwrap();
-    let (loaded_meta, loaded_msgs) = store.load("all_corrupt").unwrap();
+    let (loaded_meta, loaded_msgs) = store.load("all_corrupt", None).unwrap();
     assert_eq!(loaded_meta.id, "all_corrupt");
     assert!(loaded_msgs.is_empty());
 }
@@ -103,6 +103,6 @@ fn append_does_not_rewrite_file() {
     );
 
     // Verify all 5 messages are present
-    let (_, loaded_msgs) = store.load("append_test").unwrap();
+    let (_, loaded_msgs) = store.load("append_test", None).unwrap();
     assert_eq!(loaded_msgs.len(), 5);
 }
