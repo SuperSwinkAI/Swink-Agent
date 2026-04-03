@@ -117,53 +117,6 @@ struct BedrockToolResultContent {
     text: String,
 }
 
-// Old non-streaming response types — kept for backward compat; will be
-// removed in Phase 8 (T041).
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[allow(dead_code)]
-struct BedrockResponse {
-    output: Option<BedrockOutput>,
-    #[serde(default)]
-    stop_reason: Option<String>,
-    #[serde(default)]
-    usage: Option<BedrockUsage>,
-}
-
-#[derive(Debug, Deserialize)]
-#[allow(dead_code)]
-struct BedrockOutput {
-    message: Option<BedrockOutputMessage>,
-}
-
-#[derive(Debug, Deserialize)]
-#[allow(dead_code)]
-struct BedrockOutputMessage {
-    #[serde(default)]
-    content: Vec<BedrockOutputContentBlock>,
-}
-
-#[derive(Debug, Default, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[allow(dead_code)]
-struct BedrockOutputContentBlock {
-    #[serde(default)]
-    text: Option<String>,
-    #[serde(default)]
-    tool_use: Option<BedrockToolUse>,
-}
-
-#[derive(Debug, Default, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[allow(clippy::struct_field_names)]
-struct BedrockUsage {
-    #[serde(default)]
-    input_tokens: u64,
-    #[serde(default)]
-    output_tokens: u64,
-    #[serde(default)]
-    total_tokens: u64,
-}
 
 // --- Streaming event deserialization types ---
 
@@ -930,67 +883,6 @@ fn convert_messages(messages: &[AgentMessage]) -> Vec<BedrockMessage> {
     result
 }
 
-// Old non-streaming response conversion — kept for backward compat; will be
-// removed in Phase 8 (T041).
-#[allow(dead_code)]
-fn response_to_events(response: BedrockResponse) -> Vec<AssistantMessageEvent> {
-    let mut events = vec![AssistantMessageEvent::Start];
-    let mut content_index = 0usize;
-
-    if let Some(output) = response.output
-        && let Some(message) = output.message
-    {
-        for block in message.content {
-            if let Some(text) = block.text {
-                events.push(AssistantMessageEvent::TextStart { content_index });
-                if !text.is_empty() {
-                    events.push(AssistantMessageEvent::TextDelta {
-                        content_index,
-                        delta: text,
-                    });
-                }
-                events.push(AssistantMessageEvent::TextEnd { content_index });
-                content_index += 1;
-            } else if let Some(tool_use) = block.tool_use {
-                events.push(AssistantMessageEvent::ToolCallStart {
-                    content_index,
-                    id: tool_use.tool_use_id,
-                    name: tool_use.name,
-                });
-                let arguments = tool_use.input.to_string();
-                if !arguments.is_empty() {
-                    events.push(AssistantMessageEvent::ToolCallDelta {
-                        content_index,
-                        delta: arguments,
-                    });
-                }
-                events.push(AssistantMessageEvent::ToolCallEnd { content_index });
-                content_index += 1;
-            }
-        }
-    }
-
-    let usage = response.usage.unwrap_or_default();
-    events.push(AssistantMessageEvent::Done {
-        stop_reason: match response.stop_reason.as_deref() {
-            Some("tool_use") => StopReason::ToolUse,
-            Some("max_tokens") => StopReason::Length,
-            _ => StopReason::Stop,
-        },
-        usage: Usage {
-            input: usage.input_tokens,
-            output: usage.output_tokens,
-            total: if usage.total_tokens == 0 {
-                usage.input_tokens + usage.output_tokens
-            } else {
-                usage.total_tokens
-            },
-            ..Usage::default()
-        },
-        cost: Cost::default(),
-    });
-    events
-}
 
 fn amz_dates() -> (String, String) {
     let now = Utc::now();

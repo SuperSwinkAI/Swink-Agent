@@ -118,12 +118,12 @@
 
 **Purpose**: Expand Bedrock model presets from 5 to ~50 models across all provider families
 
-- [ ] T030 [P] Update Bedrock provider presets in src/model_catalog.toml: add Anthropic models (Opus 4.6, Sonnet 4.6, Haiku 4.5, 3.7 Sonnet, 3.5 Sonnet v2, 3.5 Haiku, 3 Opus, 3 Haiku) — update existing Sonnet 4.5 entry if needed
-- [ ] T031 [P] Add Meta Llama models to Bedrock presets in src/model_catalog.toml: Llama 4 Scout, 3.3 70B, 3.2 (90B/11B/3B/1B), 3.1 (405B/70B/8B) — update existing Maverick entry
-- [ ] T032 [P] Add Amazon Nova models to Bedrock presets in src/model_catalog.toml: Nova 2 Pro, 2 Lite, Lite v1, Micro v1, Premier v1 — update existing Nova Pro entry
-- [ ] T033 [P] Add Mistral models to Bedrock presets in src/model_catalog.toml: Large 3 (2512), Large (2407), Ministral 3 (14B/8B/3B), Small, Mixtral 8x7B, 7B — update existing Pixtral Large entry
-- [ ] T034 [P] Add DeepSeek, AI21, Cohere, OpenAI, Qwen, Writer, and other provider models to Bedrock presets in src/model_catalog.toml
-- [ ] T035 Update `remote_presets.rs` preset key constants in `pub mod bedrock` to include all new model presets, and update the `added_provider_presets_map_to_catalog_models` test
+- [x] T030 [P] Update Bedrock provider presets in src/model_catalog.toml: add Anthropic models (Opus 4.6, Sonnet 4.6, Haiku 4.5, 3.7 Sonnet, 3.5 Sonnet v2, 3.5 Haiku, 3 Opus, 3 Haiku) — update existing Sonnet 4.5 entry if needed
+- [x] T031 [P] Add Meta Llama models to Bedrock presets in src/model_catalog.toml: Llama 4 Scout, 3.3 70B, 3.2 (90B/11B/3B/1B), 3.1 (405B/70B/8B) — update existing Maverick entry
+- [x] T032 [P] Add Amazon Nova models to Bedrock presets in src/model_catalog.toml: Nova 2 Pro, 2 Lite, Lite v1, Micro v1, Premier v1 — update existing Nova Pro entry
+- [x] T033 [P] Add Mistral models to Bedrock presets in src/model_catalog.toml: Large 3 (2512), Large (2407), Ministral 3 (14B/8B/3B), Small, Mixtral 8x7B, 7B — update existing Pixtral Large entry
+- [x] T034 [P] Add DeepSeek, AI21, Cohere, OpenAI, Qwen, Writer, and other provider models to Bedrock presets in src/model_catalog.toml
+- [x] T035 Update `remote_presets.rs` preset key constants in `pub mod bedrock` to include all new model presets, and update the `added_provider_presets_map_to_catalog_models` test
 
 **Checkpoint**: `cargo test -p swink-agent-adapters --features bedrock` passes with expanded catalog; all preset keys map to valid catalog entries
 
@@ -133,12 +133,12 @@
 
 **Purpose**: Build verification, clippy clean, feature-gate isolation, documentation
 
-- [ ] T036 Run `cargo build --workspace` and verify clean compilation
-- [ ] T037 Run `cargo test --workspace` and verify all tests pass
-- [ ] T038 Run `cargo clippy --workspace -- -D warnings` and verify zero warnings
-- [ ] T039 Run `cargo test -p swink-agent-adapters --no-default-features --features bedrock` and verify bedrock feature compiles and runs in isolation
-- [ ] T040 Update adapters/CLAUDE.md to change bedrock status from "Stub" to "Implemented" in the feature gates table, update extra deps to include `aws-smithy-eventstream`, `aws-smithy-types`
-- [ ] T041 Remove old non-streaming `BedrockResponse`, `BedrockOutput`, `BedrockOutputMessage`, `BedrockOutputContentBlock` types from adapters/src/bedrock.rs (replaced by streaming event types)
+- [x] T036 Run `cargo build --workspace` and verify clean compilation
+- [x] T037 Run `cargo test --workspace` and verify all tests pass
+- [x] T038 Run `cargo clippy --workspace -- -D warnings` and verify zero warnings
+- [x] T039 Run `cargo test -p swink-agent-adapters --no-default-features --features bedrock` and verify bedrock feature compiles and runs in isolation
+- [x] T040 Update adapters/CLAUDE.md to change bedrock status from "Stub" to "Implemented" in the feature gates table, update extra deps to include `aws-smithy-eventstream`, `aws-smithy-types`
+- [x] T041 Remove old non-streaming `BedrockResponse`, `BedrockOutput`, `BedrockOutputMessage`, `BedrockOutputContentBlock` types from adapters/src/bedrock.rs (replaced by streaming event types)
 
 ---
 

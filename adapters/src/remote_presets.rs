@@ -125,16 +125,99 @@ pub mod remote_preset_keys {
     pub mod bedrock {
         use super::RemotePresetKey;
 
+        // Anthropic
+        pub const ANTHROPIC_CLAUDE_OPUS_46: RemotePresetKey =
+            RemotePresetKey::new("bedrock", "anthropic_claude_opus_46");
+        pub const ANTHROPIC_CLAUDE_SONNET_46: RemotePresetKey =
+            RemotePresetKey::new("bedrock", "anthropic_claude_sonnet_46");
         pub const ANTHROPIC_CLAUDE_SONNET_45: RemotePresetKey =
             RemotePresetKey::new("bedrock", "anthropic_claude_sonnet_45");
+        pub const ANTHROPIC_CLAUDE_HAIKU_45: RemotePresetKey =
+            RemotePresetKey::new("bedrock", "anthropic_claude_haiku_45");
+        pub const ANTHROPIC_CLAUDE_37_SONNET: RemotePresetKey =
+            RemotePresetKey::new("bedrock", "anthropic_claude_37_sonnet");
+        pub const ANTHROPIC_CLAUDE_35_SONNET_V2: RemotePresetKey =
+            RemotePresetKey::new("bedrock", "anthropic_claude_35_sonnet_v2");
+        pub const ANTHROPIC_CLAUDE_35_HAIKU: RemotePresetKey =
+            RemotePresetKey::new("bedrock", "anthropic_claude_35_haiku");
+        pub const ANTHROPIC_CLAUDE_3_OPUS: RemotePresetKey =
+            RemotePresetKey::new("bedrock", "anthropic_claude_3_opus");
+        pub const ANTHROPIC_CLAUDE_3_HAIKU: RemotePresetKey =
+            RemotePresetKey::new("bedrock", "anthropic_claude_3_haiku");
+
+        // Meta Llama
+        pub const META_LLAMA_4_SCOUT: RemotePresetKey =
+            RemotePresetKey::new("bedrock", "meta_llama_4_scout");
         pub const META_LLAMA_4_MAVERICK: RemotePresetKey =
             RemotePresetKey::new("bedrock", "meta_llama_4_maverick");
-        pub const MISTRAL_PIXTRAL_LARGE: RemotePresetKey =
-            RemotePresetKey::new("bedrock", "mistral_pixtral_large");
+        pub const META_LLAMA_33_70B: RemotePresetKey =
+            RemotePresetKey::new("bedrock", "meta_llama_33_70b");
+        pub const META_LLAMA_32_90B: RemotePresetKey =
+            RemotePresetKey::new("bedrock", "meta_llama_32_90b");
+        pub const META_LLAMA_32_11B: RemotePresetKey =
+            RemotePresetKey::new("bedrock", "meta_llama_32_11b");
+        pub const META_LLAMA_32_3B: RemotePresetKey =
+            RemotePresetKey::new("bedrock", "meta_llama_32_3b");
+        pub const META_LLAMA_32_1B: RemotePresetKey =
+            RemotePresetKey::new("bedrock", "meta_llama_32_1b");
+        pub const META_LLAMA_31_405B: RemotePresetKey =
+            RemotePresetKey::new("bedrock", "meta_llama_31_405b");
+        pub const META_LLAMA_31_70B: RemotePresetKey =
+            RemotePresetKey::new("bedrock", "meta_llama_31_70b");
+        pub const META_LLAMA_31_8B: RemotePresetKey =
+            RemotePresetKey::new("bedrock", "meta_llama_31_8b");
+
+        // Amazon Nova
+        pub const AMAZON_NOVA_2_PRO: RemotePresetKey =
+            RemotePresetKey::new("bedrock", "amazon_nova_2_pro");
+        pub const AMAZON_NOVA_2_LITE: RemotePresetKey =
+            RemotePresetKey::new("bedrock", "amazon_nova_2_lite");
         pub const AMAZON_NOVA_PRO: RemotePresetKey =
             RemotePresetKey::new("bedrock", "amazon_nova_pro");
+        pub const AMAZON_NOVA_LITE: RemotePresetKey =
+            RemotePresetKey::new("bedrock", "amazon_nova_lite");
+        pub const AMAZON_NOVA_MICRO: RemotePresetKey =
+            RemotePresetKey::new("bedrock", "amazon_nova_micro");
+        pub const AMAZON_NOVA_PREMIER: RemotePresetKey =
+            RemotePresetKey::new("bedrock", "amazon_nova_premier");
+
+        // Mistral
+        pub const MISTRAL_LARGE_3: RemotePresetKey =
+            RemotePresetKey::new("bedrock", "mistral_large_3");
+        pub const MISTRAL_LARGE_2407: RemotePresetKey =
+            RemotePresetKey::new("bedrock", "mistral_large_2407");
+        pub const MISTRAL_PIXTRAL_LARGE: RemotePresetKey =
+            RemotePresetKey::new("bedrock", "mistral_pixtral_large");
+        pub const MISTRAL_SMALL: RemotePresetKey =
+            RemotePresetKey::new("bedrock", "mistral_small");
+        pub const MISTRAL_MIXTRAL_8X7B: RemotePresetKey =
+            RemotePresetKey::new("bedrock", "mistral_mixtral_8x7b");
+        pub const MISTRAL_7B: RemotePresetKey =
+            RemotePresetKey::new("bedrock", "mistral_7b");
+
+        // DeepSeek
+        pub const DEEPSEEK_R1: RemotePresetKey =
+            RemotePresetKey::new("bedrock", "deepseek_r1");
+
+        // AI21
         pub const AI21_JAMBA_1_5_LARGE: RemotePresetKey =
             RemotePresetKey::new("bedrock", "ai21_jamba_1_5_large");
+        pub const AI21_JAMBA_1_5_MINI: RemotePresetKey =
+            RemotePresetKey::new("bedrock", "ai21_jamba_1_5_mini");
+        pub const AI21_JAMBA_INSTRUCT: RemotePresetKey =
+            RemotePresetKey::new("bedrock", "ai21_jamba_instruct");
+
+        // Cohere
+        pub const COHERE_COMMAND_R_PLUS: RemotePresetKey =
+            RemotePresetKey::new("bedrock", "cohere_command_r_plus");
+        pub const COHERE_COMMAND_R: RemotePresetKey =
+            RemotePresetKey::new("bedrock", "cohere_command_r");
+
+        // Writer
+        pub const WRITER_PALMYRA_X5: RemotePresetKey =
+            RemotePresetKey::new("bedrock", "writer_palmyra_x5");
+        pub const WRITER_PALMYRA_X4: RemotePresetKey =
+            RemotePresetKey::new("bedrock", "writer_palmyra_x4");
     }
 }
 
@@ -524,12 +607,62 @@ mod tests {
                 .model_id,
             "pixtral-large-2411"
         );
+        // Bedrock — spot-check one model from each provider group
+        assert_eq!(
+            required_catalog_preset(remote_preset_keys::bedrock::ANTHROPIC_CLAUDE_OPUS_46)
+                .unwrap()
+                .group
+                .as_deref(),
+            Some("anthropic")
+        );
+        assert_eq!(
+            required_catalog_preset(remote_preset_keys::bedrock::META_LLAMA_4_SCOUT)
+                .unwrap()
+                .group
+                .as_deref(),
+            Some("meta")
+        );
         assert_eq!(
             required_catalog_preset(remote_preset_keys::bedrock::AMAZON_NOVA_PRO)
                 .unwrap()
                 .group
                 .as_deref(),
             Some("amazon")
+        );
+        assert_eq!(
+            required_catalog_preset(remote_preset_keys::bedrock::MISTRAL_LARGE_3)
+                .unwrap()
+                .group
+                .as_deref(),
+            Some("mistral")
+        );
+        assert_eq!(
+            required_catalog_preset(remote_preset_keys::bedrock::DEEPSEEK_R1)
+                .unwrap()
+                .group
+                .as_deref(),
+            Some("deepseek")
+        );
+        assert_eq!(
+            required_catalog_preset(remote_preset_keys::bedrock::AI21_JAMBA_1_5_LARGE)
+                .unwrap()
+                .group
+                .as_deref(),
+            Some("ai21")
+        );
+        assert_eq!(
+            required_catalog_preset(remote_preset_keys::bedrock::COHERE_COMMAND_R_PLUS)
+                .unwrap()
+                .group
+                .as_deref(),
+            Some("cohere")
+        );
+        assert_eq!(
+            required_catalog_preset(remote_preset_keys::bedrock::WRITER_PALMYRA_X5)
+                .unwrap()
+                .group
+                .as_deref(),
+            Some("writer")
         );
     }
 }
