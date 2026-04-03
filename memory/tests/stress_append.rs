@@ -4,6 +4,7 @@ mod common;
 
 use std::time::Instant;
 
+use swink_agent::{AgentMessage, LlmMessage};
 use swink_agent_memory::{JsonlSessionStore, SessionStore};
 
 use common::{assistant_message, sample_meta, user_message};
@@ -30,12 +31,12 @@ fn sequential_append_500_messages() {
 
     let elapsed = start.elapsed();
 
-    let (_, loaded) = store.load("stress_500").unwrap();
+    let (_, loaded) = store.load("stress_500", None).unwrap();
     assert_eq!(loaded.len(), 501); // 1 seed + 500 appended
 
     // Verify ordering: first message is the seed
     let first_text = match &loaded[0] {
-        swink_agent::LlmMessage::User(u) => match &u.content[0] {
+        AgentMessage::Llm(LlmMessage::User(u)) => match &u.content[0] {
             swink_agent::ContentBlock::Text { text } => text.clone(),
             _ => panic!("unexpected content block"),
         },
@@ -45,7 +46,7 @@ fn sequential_append_500_messages() {
 
     // Verify last message
     let last_text = match &loaded[500] {
-        swink_agent::LlmMessage::Assistant(a) => match &a.content[0] {
+        AgentMessage::Llm(LlmMessage::Assistant(a)) => match &a.content[0] {
             swink_agent::ContentBlock::Text { text } => text.clone(),
             _ => panic!("unexpected content block"),
         },
@@ -81,7 +82,7 @@ fn slow_path_triggered_by_title_change() {
 
     // Change the title to something longer, triggering the slow path on next append.
     // We do this by saving the full session with the new meta + all existing messages.
-    let (mut loaded_meta, existing) = store.load("slow_path").unwrap();
+    let (mut loaded_meta, existing) = store.load("slow_path", None).unwrap();
     loaded_meta.title = "a much longer title that changes meta line byte length".to_string();
     store.save("slow_path", &loaded_meta, &existing).unwrap();
 
@@ -97,7 +98,7 @@ fn slow_path_triggered_by_title_change() {
             .unwrap();
     }
 
-    let (loaded_meta, loaded) = store.load("slow_path").unwrap();
+    let (loaded_meta, loaded) = store.load("slow_path", None).unwrap();
 
     // 2 seed + 5 before + 5 after = 12
     assert_eq!(loaded.len(), 12);
@@ -109,15 +110,15 @@ fn slow_path_triggered_by_title_change() {
     // Verify ordering: seed messages first, then before-change, then after-change
     let text_at = |idx: usize| -> String {
         match &loaded[idx] {
-            swink_agent::LlmMessage::User(u) => match &u.content[0] {
+            AgentMessage::Llm(LlmMessage::User(u)) => match &u.content[0] {
                 swink_agent::ContentBlock::Text { text } => text.clone(),
                 other => panic!("unexpected content block at {idx}: {other:?}"),
             },
-            swink_agent::LlmMessage::Assistant(a) => match &a.content[0] {
+            AgentMessage::Llm(LlmMessage::Assistant(a)) => match &a.content[0] {
                 swink_agent::ContentBlock::Text { text } => text.clone(),
                 other => panic!("unexpected content block at {idx}: {other:?}"),
             },
-            other @ swink_agent::LlmMessage::ToolResult(_) => {
+            other => {
                 panic!("unexpected message type at {idx}: {other:?}")
             }
         }
@@ -157,7 +158,7 @@ fn append_performance_no_quadratic_regression() {
     }
     let last_100 = t2.elapsed();
 
-    let (_, loaded) = store.load("perf_guard").unwrap();
+    let (_, loaded) = store.load("perf_guard", None).unwrap();
     assert_eq!(loaded.len(), 200);
 
     // The last 100 appends operate on a larger file, so some slowdown is expected

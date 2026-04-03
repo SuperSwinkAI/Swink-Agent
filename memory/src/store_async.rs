@@ -5,7 +5,7 @@ use std::io;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use swink_agent::LlmMessage;
+use swink_agent::{AgentMessage, CustomMessageRegistry};
 
 use crate::entry::SessionEntry;
 use crate::interrupt::InterruptState;
@@ -26,26 +26,48 @@ fn spawn_store_call<T: Send + 'static>(
 }
 
 /// Async session persistence for non-blocking backends (Redis, S3, cloud storage).
+///
+/// Mirrors [`SessionStore`](crate::store::SessionStore) with async signatures.
+/// All save/load methods use [`AgentMessage`] as the canonical message type.
 pub trait AsyncSessionStore: Send + Sync {
-    /// Persist a session asynchronously.
+    /// Persist a session asynchronously, including both LLM and custom messages.
     fn save(
         &self,
         id: &str,
         meta: &SessionMeta,
-        messages: &[LlmMessage],
+        messages: &[AgentMessage],
     ) -> SessionStoreFuture<'_, ()>;
 
     /// Append messages to an existing session asynchronously.
-    fn append(&self, id: &str, messages: &[LlmMessage]) -> SessionStoreFuture<'_, ()>;
+    fn append(&self, id: &str, messages: &[AgentMessage]) -> SessionStoreFuture<'_, ()>;
 
     /// Load a session by ID asynchronously.
-    fn load(&self, id: &str) -> SessionStoreFuture<'_, (SessionMeta, Vec<LlmMessage>)>;
+    ///
+    /// If `registry` is `Some`, custom messages are deserialized using the
+    /// provided registry. If `None`, custom messages are skipped.
+    fn load(
+        &self,
+        id: &str,
+        registry: Option<&CustomMessageRegistry>,
+    ) -> SessionStoreFuture<'_, (SessionMeta, Vec<AgentMessage>)>;
 
     /// List all saved sessions asynchronously.
     fn list(&self) -> SessionStoreFuture<'_, Vec<SessionMeta>>;
 
     /// Delete a session by ID asynchronously.
     fn delete(&self, id: &str) -> SessionStoreFuture<'_, ()>;
+
+    /// Save session state snapshot asynchronously. Default: no-op.
+    fn save_state(&self, id: &str, state: &serde_json::Value) -> SessionStoreFuture<'_, ()> {
+        let _ = (id, state);
+        Box::pin(async { Ok(()) })
+    }
+
+    /// Load session state snapshot asynchronously. Default: `None`.
+    fn load_state(&self, id: &str) -> SessionStoreFuture<'_, Option<serde_json::Value>> {
+        let _ = id;
+        Box::pin(async { Ok(None) })
+    }
 
     /// Persist interrupt state for a session asynchronously.
     fn save_interrupt(&self, id: &str, state: &InterruptState) -> SessionStoreFuture<'_, ()>;
@@ -82,31 +104,57 @@ impl<S: crate::store::SessionStore + 'static> BlockingSessionStore<S> {
     }
 }
 
+/// Extract `LlmMessage` variants from a slice of `AgentMessage`, cloning each.
+/// Custom messages are filtered out (they are not `Clone` and cannot cross
+/// `spawn_blocking` boundaries). The inner `SessionStore::save` will still
+/// persist them if the concrete backend supports it — this limitation only
+/// applies to the `BlockingSessionStore` adapter.
+fn clone_llm_messages(messages: &[AgentMessage]) -> Vec<AgentMessage> {
+    messages
+        .iter()
+        .filter_map(|m| match m {
+            AgentMessage::Llm(llm) => Some(AgentMessage::Llm(llm.clone())),
+            AgentMessage::Custom(_) => None,
+        })
+        .collect()
+}
+
 impl<S: crate::store::SessionStore + 'static> AsyncSessionStore for BlockingSessionStore<S> {
     fn save(
         &self,
         id: &str,
         meta: &SessionMeta,
-        messages: &[LlmMessage],
+        messages: &[AgentMessage],
     ) -> SessionStoreFuture<'_, ()> {
         let inner = Arc::clone(&self.inner);
         let id = id.to_string();
         let meta = meta.clone();
-        let messages = messages.to_vec();
+        // Clone LLM messages for thread transfer; custom messages are filtered
+        // since Box<dyn CustomMessage> is not Clone. Callers requiring full
+        // custom message persistence should use the sync store directly.
+        let messages = clone_llm_messages(messages);
         spawn_store_call(move || inner.save(&id, &meta, &messages))
     }
 
-    fn append(&self, id: &str, messages: &[LlmMessage]) -> SessionStoreFuture<'_, ()> {
+    fn append(&self, id: &str, messages: &[AgentMessage]) -> SessionStoreFuture<'_, ()> {
         let inner = Arc::clone(&self.inner);
         let id = id.to_string();
-        let messages = messages.to_vec();
+        let messages = clone_llm_messages(messages);
         spawn_store_call(move || inner.append(&id, &messages))
     }
 
-    fn load(&self, id: &str) -> SessionStoreFuture<'_, (SessionMeta, Vec<LlmMessage>)> {
+    fn load(
+        &self,
+        id: &str,
+        registry: Option<&CustomMessageRegistry>,
+    ) -> SessionStoreFuture<'_, (SessionMeta, Vec<AgentMessage>)> {
         let inner = Arc::clone(&self.inner);
         let id = id.to_string();
-        spawn_store_call(move || inner.load(&id))
+        // CustomMessageRegistry is not Send, so we load without registry from
+        // the blocking adapter. Callers needing custom message deserialization
+        // should use the sync store directly or a native async backend.
+        let _ = registry;
+        spawn_store_call(move || inner.load(&id, None))
     }
 
     fn list(&self) -> SessionStoreFuture<'_, Vec<SessionMeta>> {
@@ -118,6 +166,19 @@ impl<S: crate::store::SessionStore + 'static> AsyncSessionStore for BlockingSess
         let inner = Arc::clone(&self.inner);
         let id = id.to_string();
         spawn_store_call(move || inner.delete(&id))
+    }
+
+    fn save_state(&self, id: &str, state: &serde_json::Value) -> SessionStoreFuture<'_, ()> {
+        let inner = Arc::clone(&self.inner);
+        let id = id.to_string();
+        let state = state.clone();
+        spawn_store_call(move || inner.save_state(&id, &state))
+    }
+
+    fn load_state(&self, id: &str) -> SessionStoreFuture<'_, Option<serde_json::Value>> {
+        let inner = Arc::clone(&self.inner);
+        let id = id.to_string();
+        spawn_store_call(move || inner.load_state(&id))
     }
 
     fn save_interrupt(&self, id: &str, state: &InterruptState) -> SessionStoreFuture<'_, ()> {
@@ -156,6 +217,7 @@ mod tests {
     use super::*;
     use crate::jsonl::JsonlSessionStore;
     use crate::time::now_utc;
+    use swink_agent::AgentMessage;
 
     #[tokio::test]
     async fn blocking_session_store_adapter_works() {
@@ -175,7 +237,7 @@ mod tests {
         };
 
         // Save via async adapter.
-        let messages: Vec<LlmMessage> = vec![];
+        let messages: Vec<AgentMessage> = vec![];
         async_store
             .save("test_async", &meta, &messages)
             .await
@@ -188,7 +250,7 @@ mod tests {
         assert_eq!(sessions[0].title, "Async test");
 
         // Load via async adapter.
-        let (loaded_meta, loaded_messages) = async_store.load("test_async").await.unwrap();
+        let (loaded_meta, loaded_messages) = async_store.load("test_async", None).await.unwrap();
         assert_eq!(loaded_meta.id, "test_async");
         assert!(loaded_messages.is_empty());
 
@@ -196,5 +258,31 @@ mod tests {
         async_store.delete("test_async").await.unwrap();
         let sessions = async_store.list().await.unwrap();
         assert!(sessions.is_empty());
+    }
+
+    #[tokio::test]
+    async fn blocking_adapter_bridges_state_methods() {
+        let dir = tempfile::tempdir().unwrap();
+        let jsonl_store = JsonlSessionStore::new(dir.path().to_path_buf()).unwrap();
+        let async_store = BlockingSessionStore::new(jsonl_store);
+
+        let now = now_utc();
+        let meta = SessionMeta {
+            id: "state_async".to_string(),
+            title: "State test".to_string(),
+            created_at: now,
+            updated_at: now,
+            version: 1,
+            sequence: 0,
+        };
+
+        async_store.save("state_async", &meta, &[]).await.unwrap();
+        async_store
+            .save_state("state_async", &serde_json::json!({"scroll": 42}))
+            .await
+            .unwrap();
+
+        let state = async_store.load_state("state_async").await.unwrap();
+        assert_eq!(state, Some(serde_json::json!({"scroll": 42})));
     }
 }

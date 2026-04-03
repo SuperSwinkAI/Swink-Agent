@@ -28,16 +28,7 @@ impl App {
             version: 1,
             sequence: 0,
         };
-        // Filter AgentMessages to LlmMessages for storage.
-        let llm_messages: Vec<LlmMessage> = state
-            .messages
-            .iter()
-            .filter_map(|m| match m {
-                AgentMessage::Llm(llm) => Some(llm.clone()),
-                AgentMessage::Custom(_) => None,
-            })
-            .collect();
-        let _ = store.save(&self.session_id, &meta, &llm_messages);
+        let _ = store.save(&self.session_id, &meta, &state.messages);
     }
 
     pub(super) fn save_session(&mut self) {
@@ -53,24 +44,24 @@ impl App {
             return;
         };
         info!(session_id = %id, "loading session");
-        match store.load(id) {
+        match store.load(id, None) {
             Ok((meta, messages)) => {
                 self.messages.clear();
                 for msg in &messages {
                     match msg {
-                        LlmMessage::User(user) => {
+                        AgentMessage::Llm(LlmMessage::User(user)) => {
                             self.messages.push(DisplayMessage::new(
                                 MessageRole::User,
                                 ContentBlock::extract_text(&user.content),
                             ));
                         }
-                        LlmMessage::Assistant(assistant) => {
+                        AgentMessage::Llm(LlmMessage::Assistant(assistant)) => {
                             self.messages.push(DisplayMessage::new(
                                 MessageRole::Assistant,
                                 ContentBlock::extract_text(&assistant.content),
                             ));
                         }
-                        LlmMessage::ToolResult(tool_result) => {
+                        AgentMessage::Llm(LlmMessage::ToolResult(tool_result)) => {
                             let content = ContentBlock::extract_text(&tool_result.content);
                             if !content.is_empty() {
                                 let summary = content
@@ -88,6 +79,9 @@ impl App {
                                 self.messages.push(dm);
                             }
                         }
+                        AgentMessage::Custom(_) => {
+                            // Custom messages are not displayed in the TUI
+                        }
                     }
                 }
                 self.session_id = id.to_string();
@@ -95,10 +89,7 @@ impl App {
                 self.conversation = ConversationView::new();
                 self.trim_messages_to_recent_turns();
                 if let Some(agent) = &mut self.agent {
-                    // Convert LlmMessages back to AgentMessages for the agent.
-                    let agent_messages: Vec<AgentMessage> =
-                        messages.into_iter().map(AgentMessage::Llm).collect();
-                    agent.set_messages(agent_messages);
+                    agent.set_messages(messages);
                 }
                 self.push_system_message(format!(
                     "Loaded session: {} ({} messages)",

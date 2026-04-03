@@ -4,24 +4,24 @@
 
 use chrono::{DateTime, Utc};
 use swink_agent::{
-    AssistantMessage, ContentBlock, Cost, LlmMessage, StopReason, Usage, UserMessage,
+    AgentMessage, AssistantMessage, ContentBlock, Cost, LlmMessage, StopReason, Usage, UserMessage,
 };
 use swink_agent_memory::SessionMeta;
 
-/// Create a sample `UserMessage` with the given text.
-pub fn user_message(text: &str) -> LlmMessage {
-    LlmMessage::User(UserMessage {
+/// Create a sample `UserMessage` wrapped as `AgentMessage`.
+pub fn user_message(text: &str) -> AgentMessage {
+    AgentMessage::Llm(LlmMessage::User(UserMessage {
         content: vec![ContentBlock::Text {
             text: text.to_owned(),
         }],
         timestamp: 0,
         cache_hint: None,
-    })
+    }))
 }
 
-/// Create a sample `AssistantMessage` with the given text.
-pub fn assistant_message(text: &str) -> LlmMessage {
-    LlmMessage::Assistant(AssistantMessage {
+/// Create a sample `AssistantMessage` wrapped as `AgentMessage`.
+pub fn assistant_message(text: &str) -> AgentMessage {
+    AgentMessage::Llm(LlmMessage::Assistant(AssistantMessage {
         content: vec![ContentBlock::Text {
             text: text.to_owned(),
         }],
@@ -33,16 +33,46 @@ pub fn assistant_message(text: &str) -> LlmMessage {
         error_message: None,
         timestamp: 0,
         cache_hint: None,
-    })
+    }))
 }
 
-/// Create a sample `UserMessage` with the given text and timestamp.
+/// Create a sample `UserMessage` with timestamp, as raw `LlmMessage`.
+///
+/// Used for `SessionEntry::Message` which takes `LlmMessage` directly.
 pub fn user_message_at(text: &str, timestamp: u64) -> LlmMessage {
     LlmMessage::User(UserMessage {
         content: vec![ContentBlock::Text {
             text: text.to_owned(),
         }],
         timestamp,
+        cache_hint: None,
+    })
+}
+
+/// Create a raw `LlmMessage::User` for use with `SessionEntry::Message`.
+pub fn llm_user_message(text: &str) -> LlmMessage {
+    LlmMessage::User(UserMessage {
+        content: vec![ContentBlock::Text {
+            text: text.to_owned(),
+        }],
+        timestamp: 0,
+        cache_hint: None,
+    })
+}
+
+/// Create a raw `LlmMessage::Assistant` for use with `SessionEntry::Message`.
+pub fn llm_assistant_message(text: &str) -> LlmMessage {
+    LlmMessage::Assistant(AssistantMessage {
+        content: vec![ContentBlock::Text {
+            text: text.to_owned(),
+        }],
+        provider: "test".to_string(),
+        model_id: "test-model".to_string(),
+        usage: Usage::default(),
+        cost: Cost::default(),
+        stop_reason: StopReason::Stop,
+        error_message: None,
+        timestamp: 0,
         cache_hint: None,
     })
 }

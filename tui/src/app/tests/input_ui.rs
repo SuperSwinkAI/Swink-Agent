@@ -4,7 +4,6 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKi
 use ratatui::layout::Rect;
 use tempfile::tempdir;
 
-use swink_agent::LlmMessage;
 use swink_agent::testing::ScriptedStreamFn;
 
 use crate::config::TuiConfig;
@@ -203,14 +202,6 @@ async fn load_session_keeps_full_agent_state_but_trims_visible_history() {
         full_messages.push(make_user_agent_message(&format!("user {turn}")));
         full_messages.push(make_assistant_agent_message(&format!("assistant {turn}")));
     }
-    // Convert AgentMessages to LlmMessages for the store.
-    let llm_messages: Vec<LlmMessage> = full_messages
-        .iter()
-        .filter_map(|m| match m {
-            swink_agent::AgentMessage::Llm(llm) => Some(llm.clone()),
-            swink_agent::AgentMessage::Custom(_) => None,
-        })
-        .collect();
     let session_id = "session-1";
     let now = swink_agent_memory::now_utc();
     let meta = SessionMeta {
@@ -221,7 +212,7 @@ async fn load_session_keeps_full_agent_state_but_trims_visible_history() {
         version: 1,
         sequence: 0,
     };
-    store.save(session_id, &meta, &llm_messages).unwrap();
+    store.save(session_id, &meta, &full_messages).unwrap();
 
     let stream_fn = Arc::new(ScriptedStreamFn::new(vec![]));
     let agent = make_test_agent(stream_fn);
