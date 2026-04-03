@@ -164,3 +164,32 @@ pub async fn spawn_mock_server_with_client(
         .await
         .expect("client connection should succeed")
 }
+
+/// Spawn an in-process MCP server and return a fully-formed `McpConnection`.
+///
+/// This creates an in-memory duplex, spawns the mock server, connects a client,
+/// and wraps it in an `McpConnection` with tool discovery already performed.
+pub async fn spawn_mock_connection(
+    server_name: &str,
+    tool_prefix: Option<&str>,
+    mock_tools: Vec<MockToolDef>,
+) -> swink_agent_mcp::McpConnection {
+    let mock_config = MockServerConfig::new(mock_tools);
+    let service = spawn_mock_server_with_client(&mock_config).await;
+
+    let mcp_config = swink_agent_mcp::McpServerConfig {
+        name: server_name.to_string(),
+        transport: swink_agent_mcp::McpTransport::Stdio {
+            command: "mock".into(),
+            args: vec![],
+            env: HashMap::default(),
+        },
+        tool_prefix: tool_prefix.map(String::from),
+        tool_filter: None,
+        requires_approval: false,
+    };
+
+    swink_agent_mcp::McpConnection::from_service(mcp_config, service)
+        .await
+        .expect("mock connection should succeed")
+}
