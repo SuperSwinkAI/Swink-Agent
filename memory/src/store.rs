@@ -22,8 +22,8 @@ pub trait SessionStore: Send + Sync {
     ///
     /// Overwrites any existing session with the same ID. Custom messages that
     /// cannot be serialized are logged and skipped — callers should ensure
-    /// custom types implement [`CustomMessage::to_json`] and
-    /// [`CustomMessage::type_name`].
+    /// custom types implement `CustomMessage::to_json` and
+    /// `CustomMessage::type_name`.
     fn save(&self, id: &str, meta: &SessionMeta, messages: &[AgentMessage]) -> io::Result<()>;
 
     /// Append messages to an existing session without rewriting the entire file.
