@@ -253,18 +253,18 @@
 
 ### Tests for User Story 9
 
-- [ ] T081 [P] [US9] Integration test `load_last_n_entries` in `memory/tests/round_trip.rs`: save 50 entries, load with `last_n_entries: Some(10)`, verify exactly 10 returned (the last 10)
-- [ ] T082 [P] [US9] Integration test `load_after_timestamp` in `memory/tests/round_trip.rs`: save entries with timestamps T1–T50, load with `after_timestamp: Some(T25)`, verify only entries after T25 returned
-- [ ] T083 [P] [US9] Integration test `load_by_entry_type` in `memory/tests/round_trip.rs`: save mixed entries (messages + model changes + labels), load with `entry_types: Some(vec!["message"])`, verify only message entries returned
-- [ ] T084 [P] [US9] Integration test `load_options_all_none_returns_full` in `memory/tests/round_trip.rs`: load with `LoadOptions::default()`, verify full session returned
+- [x] T081 [P] [US9] Integration test `load_last_n_entries` in `memory/tests/round_trip.rs`: save 50 entries, load with `last_n_entries: Some(10)`, verify exactly 10 returned (the last 10)
+- [x] T082 [P] [US9] Integration test `load_after_timestamp` in `memory/tests/round_trip.rs`: save entries with timestamps T1–T50, load with `after_timestamp: Some(T25)`, verify only entries after T25 returned
+- [x] T083 [P] [US9] Integration test `load_by_entry_type` in `memory/tests/round_trip.rs`: save mixed entries (messages + model changes + labels), load with `entry_types: Some(vec!["message"])`, verify only message entries returned
+- [x] T084 [P] [US9] Integration test `load_options_all_none_returns_full` in `memory/tests/round_trip.rs`: load with `LoadOptions::default()`, verify full session returned
 
 ### Implementation for User Story 9
 
-- [ ] T085 [US9] Implement `LoadOptions` struct in `memory/src/load_options.rs`. Derive `Debug`, `Clone`, `Default`.
-- [ ] T086 [US9] Add `load_with_options(&self, id: &str, options: &LoadOptions) -> io::Result<(SessionMeta, Vec<SessionEntry>)>` method to `SessionStore` trait.
-- [ ] T087 [US9] Implement `load_with_options` in `JsonlSessionStore`: read all entries, apply filters in memory (last_n via truncation, after_timestamp via comparison, entry_types via discriminator match).
-- [ ] T088 [US9] Add `load_with_options` to `AsyncSessionStore` and `BlockingSessionStore` adapter.
-- [ ] T089 [US9] Re-export `LoadOptions` from `memory/src/lib.rs`.
+- [x] T085 [US9] Implement `LoadOptions` struct in `memory/src/load_options.rs`. Derive `Debug`, `Clone`, `Default`.
+- [x] T086 [US9] Add `load_with_options(&self, id: &str, options: &LoadOptions) -> io::Result<(SessionMeta, Vec<SessionEntry>)>` method to `SessionStore` trait.
+- [x] T087 [US9] Implement `load_with_options` in `JsonlSessionStore`: read all entries, apply filters in memory (last_n via truncation, after_timestamp via comparison, entry_types via discriminator match).
+- [x] T088 [US9] Add `load_with_options` to `AsyncSessionStore` and `BlockingSessionStore` adapter.
+- [x] T089 [US9] Re-export `LoadOptions` from `memory/src/lib.rs`.
 
 **Checkpoint**: US9 complete — partial session loading avoids full-file reads for large sessions
 
@@ -282,11 +282,11 @@
 - [x] T055 Run `cargo clippy -p swink-agent-memory -- -D warnings` — fix any warnings
 - [x] T056 Run `cargo test --workspace` — verify no regressions in other crates
 - [x] T057 Run `cargo clippy --workspace -- -D warnings` — verify no workspace-wide warnings
-- [ ] T090 Verify all new public types re-exported from `memory/src/lib.rs`: `SessionEntry`, `InterruptState`, `PendingToolCall`, `SessionMigrator`, `LoadOptions`
-- [ ] T091 Add compile-time `Send + Sync` assertions for `SessionEntry`, `InterruptState`, `PendingToolCall`, `LoadOptions`
-- [ ] T092 Run `cargo build -p swink-agent-memory` — fix any compilation errors from new features
-- [ ] T093 Run `cargo test -p swink-agent-memory` — fix any test failures from new features
-- [ ] T094 Run `cargo clippy -p swink-agent-memory -- -D warnings` — fix any warnings
+- [x] T090 Verify all new public types re-exported from `memory/src/lib.rs`: `SessionEntry`, `InterruptState`, `PendingToolCall`, `SessionMigrator`, `LoadOptions`
+- [x] T091 Add compile-time `Send + Sync` assertions for `SessionEntry`, `InterruptState`, `PendingToolCall`, `LoadOptions`
+- [x] T092 Run `cargo build -p swink-agent-memory` — fix any compilation errors from new features
+- [x] T093 Run `cargo test -p swink-agent-memory` — fix any test failures from new features
+- [x] T094 Run `cargo clippy -p swink-agent-memory -- -D warnings` — fix any warnings
 - [ ] T095 Validate quickstart.md new examples (rich entries, interrupt, filtered load) match actual API
 
 **Checkpoint**: All tests pass, clippy clean, workspace builds successfully

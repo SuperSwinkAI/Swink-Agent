@@ -36,6 +36,17 @@ pub fn assistant_message(text: &str) -> LlmMessage {
     })
 }
 
+/// Create a sample `UserMessage` with the given text and timestamp.
+pub fn user_message_at(text: &str, timestamp: u64) -> LlmMessage {
+    LlmMessage::User(UserMessage {
+        content: vec![ContentBlock::Text {
+            text: text.to_owned(),
+        }],
+        timestamp,
+        cache_hint: None,
+    })
+}
+
 /// Create a sample `SessionMeta` with the given id and title.
 pub fn sample_meta(id: &str, title: &str) -> SessionMeta {
     let now = Utc::now();

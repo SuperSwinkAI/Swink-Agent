@@ -1,4 +1,4 @@
-//! Integration tests for session save/load round-trips (US1, US4, US6).
+//! Integration tests for session save/load round-trips (US1, US4, US6, US7, US8, US9).
 
 mod common;
 
@@ -7,10 +7,11 @@ use std::io;
 use chrono::DateTime;
 use swink_agent::{LlmMessage, ModelSpec};
 use swink_agent_memory::{
-    InterruptState, JsonlSessionStore, PendingToolCall, SessionEntry, SessionMeta, SessionStore,
+    InterruptState, JsonlSessionStore, LoadOptions, PendingToolCall, SessionEntry, SessionMeta,
+    SessionStore,
 };
 
-use common::{assistant_message, sample_meta, sample_meta_with_times, user_message};
+use common::{assistant_message, sample_meta, sample_meta_with_times, user_message, user_message_at};
 
 // --- US1: Save and Load ---
 
@@ -486,4 +487,116 @@ fn corrupted_interrupt_returns_error() {
 
     let err = store.load_interrupt("corrupt_int").unwrap_err();
     assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+}
+
+// --- US9: Filtered Session Retrieval ---
+
+#[test]
+fn load_last_n_entries() {
+    let tmp = tempfile::tempdir().unwrap();
+    let store = JsonlSessionStore::new(tmp.path().to_path_buf()).unwrap();
+
+    let meta = sample_meta("filter_n", "Last N test");
+    let entries: Vec<SessionEntry> = (0..50)
+        .map(|i| SessionEntry::Message(user_message_at(&format!("msg_{i}"), i)))
+        .collect();
+
+    store.save_entries("filter_n", &meta, &entries).unwrap();
+
+    let options = LoadOptions {
+        last_n_entries: Some(10),
+        ..Default::default()
+    };
+    let (_, loaded) = store.load_with_options("filter_n", &options).unwrap();
+    assert_eq!(loaded.len(), 10);
+
+    // Verify they are the last 10 entries (timestamps 40..49)
+    for (i, entry) in loaded.iter().enumerate() {
+        assert_eq!(entry.timestamp(), Some(40 + i as u64));
+    }
+}
+
+#[test]
+fn load_after_timestamp() {
+    let tmp = tempfile::tempdir().unwrap();
+    let store = JsonlSessionStore::new(tmp.path().to_path_buf()).unwrap();
+
+    let meta = sample_meta("filter_ts", "After timestamp test");
+    let entries: Vec<SessionEntry> = (1..=50)
+        .map(|i| SessionEntry::Message(user_message_at(&format!("msg_{i}"), i)))
+        .collect();
+
+    store.save_entries("filter_ts", &meta, &entries).unwrap();
+
+    let after = DateTime::from_timestamp(25, 0).unwrap().to_utc();
+    let options = LoadOptions {
+        after_timestamp: Some(after),
+        ..Default::default()
+    };
+    let (_, loaded) = store.load_with_options("filter_ts", &options).unwrap();
+    assert_eq!(loaded.len(), 25); // entries with timestamps 26..50
+
+    // Verify all entries have timestamps > 25
+    for entry in &loaded {
+        assert!(entry.timestamp().unwrap() > 25);
+    }
+}
+
+#[test]
+fn load_by_entry_type() {
+    let tmp = tempfile::tempdir().unwrap();
+    let store = JsonlSessionStore::new(tmp.path().to_path_buf()).unwrap();
+
+    let meta = sample_meta("filter_type", "Entry type filter test");
+    let entries = vec![
+        SessionEntry::Message(user_message("hello")),
+        SessionEntry::ModelChange {
+            from: ModelSpec::new("a", "a"),
+            to: ModelSpec::new("b", "b"),
+            timestamp: 100,
+        },
+        SessionEntry::Label {
+            text: "bookmark".to_string(),
+            message_index: 0,
+            timestamp: 200,
+        },
+        SessionEntry::Message(user_message("world")),
+    ];
+
+    store
+        .save_entries("filter_type", &meta, &entries)
+        .unwrap();
+
+    let options = LoadOptions {
+        entry_types: Some(vec!["message".to_string()]),
+        ..Default::default()
+    };
+    let (_, loaded) = store.load_with_options("filter_type", &options).unwrap();
+    assert_eq!(loaded.len(), 2);
+    assert!(loaded.iter().all(|e| matches!(e, SessionEntry::Message(_))));
+}
+
+#[test]
+fn load_options_all_none_returns_full() {
+    let tmp = tempfile::tempdir().unwrap();
+    let store = JsonlSessionStore::new(tmp.path().to_path_buf()).unwrap();
+
+    let meta = sample_meta("filter_none", "Default options test");
+    let entries = vec![
+        SessionEntry::Message(user_message("hello")),
+        SessionEntry::Label {
+            text: "note".to_string(),
+            message_index: 0,
+            timestamp: 100,
+        },
+        SessionEntry::Message(user_message("world")),
+    ];
+
+    store
+        .save_entries("filter_none", &meta, &entries)
+        .unwrap();
+
+    let options = LoadOptions::default();
+    let (_, loaded) = store.load_with_options("filter_none", &options).unwrap();
+    assert_eq!(loaded.len(), 3);
 }

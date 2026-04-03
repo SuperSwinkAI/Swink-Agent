@@ -16,6 +16,7 @@ use swink_agent::{
 
 use crate::entry::SessionEntry;
 use crate::interrupt::InterruptState;
+use crate::load_options::LoadOptions;
 use crate::meta::SessionMeta;
 use crate::store::SessionStore;
 use crate::time::{format_session_id, now_utc};
@@ -559,6 +560,38 @@ impl SessionStore for JsonlSessionStore {
             std::fs::remove_file(path)?;
         }
         Ok(())
+    }
+
+    fn load_with_options(
+        &self,
+        id: &str,
+        options: &LoadOptions,
+    ) -> io::Result<(SessionMeta, Vec<SessionEntry>)> {
+        let (meta, mut entries) = self.load_entries(id)?;
+
+        // Filter by entry type
+        if let Some(ref types) = options.entry_types {
+            entries.retain(|entry| types.iter().any(|t| t == entry.entry_type_name()));
+        }
+
+        // Filter by timestamp (entry timestamps are epoch seconds)
+        if let Some(after) = options.after_timestamp {
+            let after_secs = after.timestamp().cast_unsigned();
+            entries.retain(|entry| {
+                entry
+                    .timestamp()
+                    .is_some_and(|ts| ts > after_secs)
+            });
+        }
+
+        // Truncate to last N
+        if let Some(n) = options.last_n_entries
+            && entries.len() > n
+        {
+            entries.drain(..entries.len() - n);
+        }
+
+        Ok((meta, entries))
     }
 }
 

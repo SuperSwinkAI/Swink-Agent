@@ -37,6 +37,12 @@ pub struct InterruptState {
     pub model: ModelSpec,
 }
 
+const _: () = {
+    const fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<InterruptState>();
+    assert_send_sync::<PendingToolCall>();
+};
+
 #[cfg(test)]
 mod tests {
     use super::*;
