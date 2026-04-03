@@ -32,7 +32,7 @@ serde_yaml = { workspace = true, optional = true }
 yaml = ["serde_yaml"]
 
 [dev-dependencies]
-swink-agent = { path = ".." }
+swink-agent = { path = "..", features = ["testkit"] }
 tempfile.workspace = true
 tokio = { workspace = true, features = ["full", "test-util"] }
 pretty_assertions.workspace = true
