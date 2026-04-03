@@ -12,6 +12,7 @@ use tracing::warn;
 
 use crate::config::McpServerConfig;
 use crate::connection::McpConnection;
+use crate::convert;
 use crate::error::McpError;
 use crate::tool::McpTool;
 
@@ -81,6 +82,13 @@ impl McpManager {
             let config = &conn.config;
 
             for tool_def in &conn.discovered_tools {
+                // Apply tool filter if configured. Filter on original (unprefixed) name.
+                let (original_name, _, _) = convert::tool_definition(tool_def);
+                if let Some(ref filter) = config.tool_filter
+                    && !filter.matches(&original_name)
+                {
+                    continue;
+                }
                 let mcp_tool = McpTool::new(
                     tool_def,
                     config.tool_prefix.as_deref(),
@@ -119,6 +127,13 @@ impl McpManager {
                     let conn = Arc::new(connection);
 
                     for tool_def in &conn.discovered_tools {
+                        // Apply tool filter if configured. Filter on original (unprefixed) name.
+                        let (original_name, _, _) = convert::tool_definition(tool_def);
+                        if let Some(ref filter) = config.tool_filter
+                            && !filter.matches(&original_name)
+                        {
+                            continue;
+                        }
                         let mcp_tool = McpTool::new(
                             tool_def,
                             config.tool_prefix.as_deref(),
@@ -169,6 +184,17 @@ impl McpManager {
                 }
             }
         }
+    }
+}
+
+impl Drop for McpManager {
+    fn drop(&mut self) {
+        // Release tool Arc references so connection refcounts can decrease.
+        self.tools.clear();
+        // Dropping Arc<McpConnection> releases connections.
+        // For stdio transport, rmcp's ChildWithCleanup terminates the subprocess on drop.
+        // For SSE transport, the HTTP connection is dropped.
+        self.connections.clear();
     }
 }
 

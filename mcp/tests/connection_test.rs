@@ -65,13 +65,30 @@ async fn connect_to_nonexistent_server_returns_spawn_failed() {
     );
 }
 
-/// Verify SSE transport returns a clear not-yet-implemented error.
+/// T035: Connect to mock SSE MCP server, verify tool discovery works over HTTP.
 #[tokio::test]
-async fn connect_sse_returns_not_implemented() {
+async fn connect_sse_discovers_tools() {
+    use rmcp::transport::sse_server::SseServer;
+
+    // Bind to a random port.
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    drop(listener);
+
+    // Start the mock SSE server.
+    let sse_server = SseServer::serve(addr)
+        .await
+        .expect("SSE server should bind");
+    let mock_cfg = common::MockServerConfig::new(vec![]);
+    let ct = sse_server.with_service(move || common::MockMcpServer::from_config(&mock_cfg));
+
+    // Brief pause to ensure server is ready.
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
     let config = McpServerConfig {
-        name: "remote-server".into(),
+        name: "sse-test-server".into(),
         transport: McpTransport::Sse {
-            url: "http://localhost:9999/mcp".into(),
+            url: format!("http://{addr}/sse"),
             bearer_token: None,
         },
         tool_prefix: None,
@@ -79,11 +96,54 @@ async fn connect_sse_returns_not_implemented() {
         requires_approval: false,
     };
 
-    let result = McpConnection::connect(config).await;
-    assert!(result.is_err());
-    let err_msg = result.unwrap_err().to_string();
+    let conn = McpConnection::connect(config).await
+        .expect("SSE connection should succeed");
+
+    assert_eq!(conn.status, swink_agent_mcp::McpConnectionStatus::Connected);
     assert!(
-        err_msg.contains("SSE transport not yet implemented"),
-        "should indicate SSE is not yet supported, got: {err_msg}"
+        !conn.discovered_tools.is_empty(),
+        "should discover tools from SSE server"
     );
+    let names: Vec<_> = conn.discovered_tools.iter().map(|t| t.name.as_ref()).collect();
+    assert!(names.contains(&"echo"), "should discover echo tool, got: {names:?}");
+
+    ct.cancel();
+}
+
+/// T036: Connect to SSE server with bearer token — connection succeeds
+/// (mock server doesn't validate auth, so we verify no transport error).
+#[tokio::test]
+async fn connect_sse_with_bearer_token_succeeds() {
+    use rmcp::transport::sse_server::SseServer;
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    drop(listener);
+
+    let sse_server = SseServer::serve(addr)
+        .await
+        .expect("SSE server should bind");
+    let mock_cfg = common::MockServerConfig::new(vec![]);
+    let ct = sse_server.with_service(move || common::MockMcpServer::from_config(&mock_cfg));
+
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    let config = McpServerConfig {
+        name: "sse-auth-test-server".into(),
+        transport: McpTransport::Sse {
+            url: format!("http://{addr}/sse"),
+            bearer_token: Some("test-bearer-token-123".into()),
+        },
+        tool_prefix: None,
+        tool_filter: None,
+        requires_approval: false,
+    };
+
+    let conn = McpConnection::connect(config).await
+        .expect("SSE connection with bearer token should succeed");
+
+    assert_eq!(conn.status, swink_agent_mcp::McpConnectionStatus::Connected);
+    assert!(!conn.discovered_tools.is_empty());
+
+    ct.cancel();
 }
