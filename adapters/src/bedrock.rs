@@ -597,11 +597,13 @@ impl BedrockStreamFn {
                                                     Err(err) => events.push(err),
                                                 }
                                             }
-                                            return if events.is_empty() {
-                                                None
-                                            } else {
-                                                Some((events, StreamUnfoldState::Done))
-                                            };
+                                            if events.is_empty() {
+                                                // Stream ended without any terminal event
+                                                events.push(AssistantMessageEvent::error_network(
+                                                    "Bedrock stream ended unexpectedly",
+                                                ));
+                                            }
+                                            return Some((events, StreamUnfoldState::Done));
                                         }
                                     }
                                 }
@@ -684,7 +686,24 @@ fn process_smithy_message(
 
     // Handle normal event frames
     event_type.map_or_else(Vec::new, |et| {
-        parse_event_frame(&et, message.payload(), state).unwrap_or_default()
+        parse_event_frame(&et, message.payload(), state).unwrap_or_else(|| {
+            // parse_event_frame returns None for unknown events (benign) or
+            // JSON deserialization failures (potentially problematic).
+            if matches!(
+                et.as_str(),
+                "messageStart"
+                    | "contentBlockStart"
+                    | "contentBlockDelta"
+                    | "contentBlockStop"
+                    | "metadata"
+            ) {
+                warn!(
+                    event_type = %et,
+                    "Bedrock event deserialization failed for known event type"
+                );
+            }
+            vec![]
+        })
     })
 }
 

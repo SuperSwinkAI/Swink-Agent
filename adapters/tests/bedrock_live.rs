@@ -6,18 +6,15 @@
 //! Requires `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and `AWS_REGION`
 //! in `.env` or environment.
 
-use std::sync::Arc;
 use std::time::Duration;
 
 use futures::StreamExt;
-use serde_json::json;
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 
 use swink_agent::{
-    AgentContext, AgentMessage, AgentTool, AgentToolResult, AssistantMessage,
-    AssistantMessageEvent, ContentBlock, Cost, LlmMessage, ModelSpec, StopReason, StreamFn,
-    StreamOptions, Usage, UserMessage,
+    AgentContext, AgentMessage, AssistantMessageEvent, ContentBlock, LlmMessage, ModelSpec,
+    StreamFn, StreamOptions, UserMessage,
 };
 use swink_agent_adapters::BedrockStreamFn;
 
