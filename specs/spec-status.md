@@ -18,7 +18,7 @@
 | 013-adapter-openai              | ✓     | ✓  | ✓   | ✓ Complete |
 | 014-adapter-ollama              | ✓     | ✓  | ✓   | ✓ Complete |
 | 015-adapter-gemini              | ✓     | ✓  | ✓   | ✓ Complete |
-| 016-adapter-azure               | ✓     | ✓  | ✓   | ● 23/54 (42%) |
+| 016-adapter-azure               | ✓     | ✓  | ✓   | ● 47/54 (87%) |
 | 017-adapter-xai                 | ✓     | ✓  | ✓   | ✓ Complete |
 | 018-adapter-mistral             | ✓     | ✓  | ✓   | ✓ Complete |
 | 019-adapter-bedrock             | ✓     | ✓  | ✓   | ● 0/41 (0%) |
@@ -59,7 +59,7 @@
 <!-- feature: 013-adapter-openai has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=73 tasks_completed=73 checklist_files=requirements.md -->
 <!-- feature: 014-adapter-ollama has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=74 tasks_completed=74 checklist_files=requirements.md -->
 <!-- feature: 015-adapter-gemini has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=44 tasks_completed=44 checklist_files=requirements.md -->
-<!-- feature: 016-adapter-azure has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=54 tasks_completed=23 checklist_files=requirements.md -->
+<!-- feature: 016-adapter-azure has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=54 tasks_completed=47 checklist_files=requirements.md -->
 <!-- feature: 017-adapter-xai has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=17 tasks_completed=17 checklist_files=requirements.md -->
 <!-- feature: 018-adapter-mistral has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=42 tasks_completed=42 checklist_files=requirements.md -->
 <!-- feature: 019-adapter-bedrock has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=41 tasks_completed=0 checklist_files=requirements.md -->

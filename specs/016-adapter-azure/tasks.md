@@ -115,16 +115,16 @@
 
 ### Implementation for User Story 4
 
-- [ ] T038 [US4] Add content filter detection in Azure stream — check `finish_reason: "content_filter"` in SSE chunks and emit `error_content_filtered` event in `adapters/src/azure.rs`
-- [ ] T039 [US4] Add Azure error body parsing — detect `error.code: "ContentFilterBlocked"` in HTTP error responses and emit `error_content_filtered` in `adapters/src/azure.rs`
-- [ ] T040 [US4] Add wiremock test: HTTP 429 → rate-limit error (retryable) with retry-after in `adapters/tests/azure.rs`
-- [ ] T041 [US4] Add wiremock test: HTTP 401 → auth error (not retryable) in `adapters/tests/azure.rs`
-- [ ] T042 [US4] Add wiremock test: HTTP 404 → non-retryable error in `adapters/tests/azure.rs`
-- [ ] T043 [US4] Add wiremock test: HTTP 500 → network error (retryable) in `adapters/tests/azure.rs`
-- [ ] T044 [US4] Add wiremock test: SSE stream with `finish_reason: "content_filter"` → ContentFiltered error event in `adapters/tests/azure.rs`
-- [ ] T045 [US4] Add wiremock test: HTTP error body with `ContentFilterBlocked` code → ContentFiltered error event in `adapters/tests/azure.rs`
-- [ ] T046 [US4] Add wiremock test: Entra ID token endpoint failure → network error in `adapters/tests/azure.rs`
-- [ ] T047 [US4] Run `cargo test -p swink-agent-adapters --features azure` to verify all US4 tests pass
+- [x] T038 [US4] Add content filter detection in Azure stream — check `finish_reason: "content_filter"` in SSE chunks and emit `error_content_filtered` event in `adapters/src/azure.rs`
+- [x] T039 [US4] Add Azure error body parsing — detect `error.code: "ContentFilterBlocked"` in HTTP error responses and emit `error_content_filtered` in `adapters/src/azure.rs`
+- [x] T040 [US4] Add wiremock test: HTTP 429 → rate-limit error (retryable) with retry-after in `adapters/tests/azure.rs`
+- [x] T041 [US4] Add wiremock test: HTTP 401 → auth error (not retryable) in `adapters/tests/azure.rs`
+- [x] T042 [US4] Add wiremock test: HTTP 404 → non-retryable error in `adapters/tests/azure.rs`
+- [x] T043 [US4] Add wiremock test: HTTP 500 → network error (retryable) in `adapters/tests/azure.rs`
+- [x] T044 [US4] Add wiremock test: SSE stream with `finish_reason: "content_filter"` → ContentFiltered error event in `adapters/tests/azure.rs`
+- [x] T045 [US4] Add wiremock test: HTTP error body with `ContentFilterBlocked` code → ContentFiltered error event in `adapters/tests/azure.rs`
+- [x] T046 [US4] Add wiremock test: Entra ID token endpoint failure → network error in `adapters/tests/azure.rs`
+- [x] T047 [US4] Run `cargo test -p swink-agent-adapters --features azure` to verify all US4 tests pass
 
 **Checkpoint**: All error scenarios correctly classified. Content filter violations surface as distinct error type.
 

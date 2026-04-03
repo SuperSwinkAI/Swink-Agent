@@ -221,6 +221,15 @@ fn azure_stream<'a>(
             let code = status.as_u16();
             let body = response.text().await.unwrap_or_default();
             warn!(status = code, "Azure HTTP error");
+
+            // Detect Azure content filter violations in error body
+            if is_content_filter_error(&body) {
+                let event = AssistantMessageEvent::error_content_filtered(format!(
+                    "Azure content filter blocked request (HTTP {code})"
+                ));
+                return stream::iter(vec![event]).left_stream();
+            }
+
             let event = crate::classify::error_event_from_status(code, &body, "Azure");
             return stream::iter(vec![event]).left_stream();
         }
@@ -288,6 +297,17 @@ async fn send_request(
         .send()
         .await
         .map_err(|e| AssistantMessageEvent::error_network(format!("Azure connection error: {e}")))
+}
+
+/// Check if an HTTP error body contains an Azure content filter violation.
+///
+/// Azure returns `error.code: "ContentFilterBlocked"` when the request
+/// or response triggers content safety filters.
+fn is_content_filter_error(body: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|v| v.get("error")?.get("code")?.as_str().map(String::from))
+        .is_some_and(|code| code == "ContentFilterBlocked")
 }
 
 const _: () = {
