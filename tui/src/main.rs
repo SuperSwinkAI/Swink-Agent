@@ -5,8 +5,12 @@ use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use swink_agent::{AgentOptions, ModelSpec, StreamFn};
-use swink_agent_adapters::{AnthropicStreamFn, OllamaStreamFn, OpenAiStreamFn, ProxyStreamFn};
+use swink_agent::{
+    AgentOptions, CatalogPreset, ModelConnection, ModelConnections, ModelSpec, StreamFn,
+};
+use swink_agent_adapters::{
+    AnthropicStreamFn, OllamaStreamFn, OpenAiStreamFn, ProxyStreamFn, remote_presets,
+};
 
 use swink_agent_tui::{
     TuiConfig, credentials, launch, resolve_system_prompt, restore_terminal, setup_terminal, wizard,
@@ -76,182 +80,259 @@ fn run(
     })
 }
 
-/// Build agent options from environment variables.
+/// Build agent options using catalog-driven model construction.
 ///
-/// Supports four providers (checked in priority order):
+/// Providers are checked in priority order:
+/// 1. **Proxy** — `LLM_BASE_URL` set (custom SSE endpoint)
+/// 2. **`OpenAI`** — `OPENAI_API_KEY` env or keychain
+/// 3. **`Anthropic`** — `ANTHROPIC_API_KEY` env or keychain
+/// 4. **Local** — on-device inference (when `local` feature enabled)
+/// 5. **Ollama** — local Ollama instance (default fallback)
 ///
-/// **Proxy (custom SSE endpoint) — highest priority:**
-/// - `LLM_BASE_URL` — proxy endpoint (takes priority if set)
-/// - `LLM_API_KEY` — bearer token
-/// - `LLM_MODEL` — model identifier
-///
-/// **OpenAI (or any OpenAI-compatible API):**
-/// - `OPENAI_API_KEY` — API key (env var or keychain)
-/// - `OPENAI_BASE_URL` — API base URL (default: `https://api.openai.com`)
-/// - `OPENAI_MODEL` — model name (default: `gpt-4o`)
-///
-/// **Anthropic (native Claude API):**
-/// - `ANTHROPIC_API_KEY` — API key (env var or keychain)
-/// - `ANTHROPIC_BASE_URL` — API base URL (default: `https://api.anthropic.com`)
-/// - `ANTHROPIC_MODEL` — model name (default: `claude-sonnet-4-20250514`)
-///
-/// **Ollama (default) — lowest priority:**
-/// - `OLLAMA_HOST` — Ollama server URL (default: `http://localhost:11434`)
-/// - `OLLAMA_MODEL` — model name (default: `llama3.2`)
-#[allow(clippy::doc_markdown)] // "OpenAI" is a proper noun, not code.
+/// Model IDs and base URLs are resolved from the shared model catalog.
+/// Provider-specific env var overrides (`OPENAI_MODEL`, `ANTHROPIC_MODEL`, etc.)
+/// are still respected for backward compatibility.
 fn create_options(system_prompt: String) -> AgentOptions {
-    // Check for proxy mode first (highest priority)
-    if let Ok(base_url) = std::env::var("LLM_BASE_URL") {
-        let proxy_provider = credentials::providers()
-            .into_iter()
-            .find(|p| p.key_name == "proxy");
-        let api_key = proxy_provider
-            .as_ref()
-            .and_then(credentials::credential)
-            .unwrap_or_default();
-        let model_id =
-            std::env::var("LLM_MODEL").unwrap_or_else(|_| "claude-sonnet-4-20250514".to_string());
-        let proxy: Arc<dyn StreamFn> = Arc::new(ProxyStreamFn::new(&base_url, &api_key));
-        let model = ModelSpec::new("proxy", &model_id);
-        let extra = build_extra_models(&model_id);
-        return build_options(system_prompt, model, proxy, extra);
+    AgentOptions::from_connections(system_prompt, resolve_connections())
+}
+
+/// Resolve model connections by trying providers in priority order.
+fn resolve_connections() -> ModelConnections {
+    if let Some(conns) = try_proxy() {
+        return conns;
+    }
+    if let Some(conns) = try_catalog_provider("openai", "OPENAI_MODEL") {
+        return conns;
+    }
+    if let Some(conns) = try_catalog_provider("anthropic", "ANTHROPIC_MODEL") {
+        return conns;
     }
 
-    // Check for OpenAI (second priority)
-    let openai_provider = credentials::providers()
-        .into_iter()
-        .find(|p| p.key_name == "openai");
-    let openai_key = openai_provider.as_ref().and_then(credentials::credential);
-    if let Some(api_key) = openai_key {
-        let base_url = std::env::var("OPENAI_BASE_URL")
-            .unwrap_or_else(|_| "https://api.openai.com".to_string());
-        let model_id = std::env::var("OPENAI_MODEL").unwrap_or_else(|_| "gpt-4o".to_string());
-        let openai: Arc<dyn StreamFn> = Arc::new(OpenAiStreamFn::new(&base_url, &api_key));
-        let model = ModelSpec::new("openai", &model_id);
-        let mut extra = openai_extra_models(&model_id, &openai);
-        append_local_model(&mut extra);
-        return build_options(system_prompt, model, openai, extra);
-    }
-
-    // Check for Anthropic (third priority)
-    let anthropic_provider = credentials::providers()
-        .into_iter()
-        .find(|p| p.key_name == "anthropic");
-    let anthropic_key = anthropic_provider
-        .as_ref()
-        .and_then(credentials::credential);
-    if let Some(api_key) = anthropic_key {
-        let base_url = std::env::var("ANTHROPIC_BASE_URL")
-            .unwrap_or_else(|_| "https://api.anthropic.com".to_string());
-        let model_id = std::env::var("ANTHROPIC_MODEL")
-            .unwrap_or_else(|_| "claude-sonnet-4-20250514".to_string());
-        let anthropic: Arc<dyn StreamFn> = Arc::new(AnthropicStreamFn::new(&base_url, &api_key));
-        let model = ModelSpec::new("anthropic", &model_id);
-        let mut extra = anthropic_extra_models(&model_id, &anthropic);
-        append_local_model(&mut extra);
-        return build_options(system_prompt, model, anthropic, extra);
-    }
-
-    // Local model (fourth priority — before Ollama fallback)
     #[cfg(feature = "local")]
     {
-        let config = swink_agent_local_llm::ModelConfig::default();
-        let local_model = swink_agent_local_llm::LocalModel::new(config);
-        let local: Arc<dyn StreamFn> = Arc::new(swink_agent_local_llm::LocalStreamFn::new(
-            Arc::new(local_model),
-        ));
-        let model = ModelSpec::new("local", "SmolLM3-3B-Q4_K_M");
-        return build_options(system_prompt, model, local, Vec::new());
+        return local_connections();
     }
 
-    // Default: Ollama (lowest priority — only when `local` feature is disabled)
     #[allow(unreachable_code)]
-    {
-        let host =
-            std::env::var("OLLAMA_HOST").unwrap_or_else(|_| "http://localhost:11434".to_string());
-        let model_id = std::env::var("OLLAMA_MODEL").unwrap_or_else(|_| "llama3.2".to_string());
-        let ollama: Arc<dyn StreamFn> = Arc::new(OllamaStreamFn::new(&host));
-        let model = ModelSpec::new("ollama", &model_id);
-        let mut extra = ollama_extra_models(&model_id, &ollama);
-        append_local_model(&mut extra);
-        build_options(system_prompt, model, ollama, extra)
+    ollama_connections()
+}
+
+/// Build connections for proxy mode (highest priority, not in catalog).
+fn try_proxy() -> Option<ModelConnections> {
+    let base_url = std::env::var("LLM_BASE_URL").ok()?;
+    let proxy_provider = credentials::providers()
+        .into_iter()
+        .find(|p| p.key_name == "proxy");
+    let api_key = proxy_provider
+        .as_ref()
+        .and_then(credentials::credential)
+        .unwrap_or_default();
+    let model_id =
+        std::env::var("LLM_MODEL").unwrap_or_else(|_| "claude-sonnet-4-20250514".to_string());
+    let stream_fn: Arc<dyn StreamFn> = Arc::new(ProxyStreamFn::new(&base_url, &api_key));
+    let model = ModelSpec::new("proxy", &model_id);
+
+    Some(
+        ModelConnections::builder()
+            .primary(ModelConnection::new(model, stream_fn))
+            .build(),
+    )
+}
+
+/// Build connections for a catalog-backed remote provider.
+///
+/// Resolves credentials via the TUI keychain/env system, then uses the model
+/// catalog to discover available models and default base URLs — eliminating
+/// hardcoded model lists and URLs.
+fn try_catalog_provider(provider_key: &str, model_env: &str) -> Option<ModelConnections> {
+    let cred_provider = credentials::providers()
+        .into_iter()
+        .find(|p| p.key_name == provider_key)?;
+    let api_key = credentials::credential(&cred_provider)?;
+
+    let presets = remote_presets(Some(provider_key));
+    if presets.is_empty() {
+        return None;
+    }
+
+    // Resolve base URL: env override > catalog default
+    let base_url_env = presets[0]
+        .base_url_env_var
+        .as_deref()
+        .and_then(|var| std::env::var(var).ok());
+    let base_url = base_url_env
+        .as_deref()
+        .or(presets[0].default_base_url.as_deref())?;
+
+    let stream_fn: Arc<dyn StreamFn> = build_stream_fn(provider_key, base_url, &api_key)?;
+
+    // Determine primary model: env override > first catalog preset
+    let model_override = std::env::var(model_env).ok();
+    let primary_model_id = model_override.as_deref().unwrap_or(&presets[0].model_id);
+
+    // Find the catalog preset matching the primary model (for capabilities metadata)
+    let primary_spec = presets
+        .iter()
+        .find(|p| p.model_id == primary_model_id)
+        .map_or_else(
+            || ModelSpec::new(provider_key, primary_model_id),
+            CatalogPreset::model_spec,
+        );
+
+    let mut builder = ModelConnections::builder()
+        .primary(ModelConnection::new(primary_spec, Arc::clone(&stream_fn)));
+
+    // Add remaining catalog presets as fallbacks (excluding primary)
+    for preset in &presets {
+        if preset.model_id != primary_model_id {
+            builder = builder.fallback(ModelConnection::new(
+                preset.model_spec(),
+                Arc::clone(&stream_fn),
+            ));
+        }
+    }
+
+    #[cfg(feature = "local")]
+    let builder = append_local_fallback(builder);
+
+    Some(builder.build())
+}
+
+/// Construct the appropriate `StreamFn` for a provider.
+fn build_stream_fn(provider_key: &str, base_url: &str, api_key: &str) -> Option<Arc<dyn StreamFn>> {
+    match provider_key {
+        "openai" => Some(Arc::new(OpenAiStreamFn::new(base_url, api_key))),
+        "anthropic" => Some(Arc::new(AnthropicStreamFn::new(base_url, api_key))),
+        _ => None,
     }
 }
 
-fn build_options(
-    system_prompt: String,
-    model: ModelSpec,
-    stream_fn: Arc<dyn StreamFn>,
-    extra_models: Vec<(ModelSpec, Arc<dyn StreamFn>)>,
-) -> AgentOptions {
-    AgentOptions::new(
-        system_prompt,
-        model,
-        stream_fn,
-        swink_agent::default_convert,
-    )
-    .with_available_models(extra_models)
+/// Build connections for local on-device inference.
+#[cfg(feature = "local")]
+fn local_connections() -> ModelConnections {
+    let config = swink_agent_local_llm::ModelConfig::default();
+    let local_model = swink_agent_local_llm::LocalModel::new(config);
+    let local: Arc<dyn StreamFn> = Arc::new(swink_agent_local_llm::LocalStreamFn::new(Arc::new(
+        local_model,
+    )));
+    let catalog = model_catalog();
+    let model = catalog
+        .preset("local", "smollm3_3b")
+        .map(|p| p.model_spec())
+        .unwrap_or_else(|| ModelSpec::new("local", "SmolLM3-3B-Q4_K_M"));
+
+    ModelConnections::builder()
+        .primary(ModelConnection::new(model, local))
+        .build()
 }
 
-/// Build extra Anthropic models for cycling, excluding the primary model.
-fn anthropic_extra_models(
-    primary_id: &str,
-    stream_fn: &Arc<dyn StreamFn>,
-) -> Vec<(ModelSpec, Arc<dyn StreamFn>)> {
-    let candidates = [
-        "claude-sonnet-4-20250514",
-        "claude-opus-4-20250514",
-        "claude-haiku-3-5-20241022",
-    ];
-    candidates
-        .into_iter()
-        .filter(|id| *id != primary_id)
-        .map(|id| (ModelSpec::new("anthropic", id), Arc::clone(stream_fn)))
-        .collect()
-}
+/// Build connections for Ollama (lowest priority fallback).
+fn ollama_connections() -> ModelConnections {
+    let host =
+        std::env::var("OLLAMA_HOST").unwrap_or_else(|_| "http://localhost:11434".to_string());
+    let model_id = std::env::var("OLLAMA_MODEL").unwrap_or_else(|_| "llama3.2".to_string());
+    let stream_fn: Arc<dyn StreamFn> = Arc::new(OllamaStreamFn::new(&host));
+    let model = ModelSpec::new("ollama", &model_id);
 
-#[allow(clippy::doc_markdown)]
-/// Build extra OpenAI models for cycling, excluding the primary model.
-fn openai_extra_models(
-    primary_id: &str,
-    stream_fn: &Arc<dyn StreamFn>,
-) -> Vec<(ModelSpec, Arc<dyn StreamFn>)> {
-    let candidates = ["gpt-4o", "gpt-4o-mini", "o3-mini"];
-    candidates
-        .into_iter()
-        .filter(|id| *id != primary_id)
-        .map(|id| (ModelSpec::new("openai", id), Arc::clone(stream_fn)))
-        .collect()
-}
+    let builder = ModelConnections::builder().primary(ModelConnection::new(model, stream_fn));
 
-/// Build extra Ollama models for cycling, excluding the primary model.
-fn ollama_extra_models(
-    primary_id: &str,
-    stream_fn: &Arc<dyn StreamFn>,
-) -> Vec<(ModelSpec, Arc<dyn StreamFn>)> {
-    let candidates = ["llama3.2"];
-    candidates
-        .into_iter()
-        .filter(|id| *id != primary_id)
-        .map(|id| (ModelSpec::new("ollama", id), Arc::clone(stream_fn)))
-        .collect()
-}
-
-/// Build extra models for proxy mode (no cycling — we don't know the provider).
-fn build_extra_models(_primary_id: &str) -> Vec<(ModelSpec, Arc<dyn StreamFn>)> {
-    Vec::new()
-}
-
-/// Append local model to extra models list when the `local` feature is enabled.
-#[allow(unused_variables, clippy::ptr_arg, clippy::needless_pass_by_ref_mut)]
-fn append_local_model(extra: &mut Vec<(ModelSpec, Arc<dyn StreamFn>)>) {
     #[cfg(feature = "local")]
-    {
-        let config = swink_agent_local_llm::ModelConfig::default();
-        let local_model = swink_agent_local_llm::LocalModel::new(config);
-        let local_sfn: Arc<dyn StreamFn> = Arc::new(swink_agent_local_llm::LocalStreamFn::new(
-            Arc::new(local_model),
-        ));
-        extra.push((ModelSpec::new("local", "SmolLM3-3B-Q4_K_M"), local_sfn));
+    let builder = append_local_fallback(builder);
+
+    builder.build()
+}
+
+/// Append local model as a fallback when the `local` feature is enabled.
+#[cfg(feature = "local")]
+fn append_local_fallback(
+    builder: swink_agent::ModelConnectionsBuilder,
+) -> swink_agent::ModelConnectionsBuilder {
+    let config = swink_agent_local_llm::ModelConfig::default();
+    let local_model = swink_agent_local_llm::LocalModel::new(config);
+    let local: Arc<dyn StreamFn> = Arc::new(swink_agent_local_llm::LocalStreamFn::new(Arc::new(
+        local_model,
+    )));
+    let catalog = model_catalog();
+    let model = catalog
+        .preset("local", "smollm3_3b")
+        .map(|p| p.model_spec())
+        .unwrap_or_else(|| ModelSpec::new("local", "SmolLM3-3B-Q4_K_M"));
+
+    builder.fallback(ModelConnection::new(model, local))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn build_stream_fn_returns_openai_for_openai_key() {
+        let sfn = build_stream_fn("openai", "https://api.openai.com", "test-key");
+        assert!(sfn.is_some(), "openai provider should produce a StreamFn");
+    }
+
+    #[test]
+    fn build_stream_fn_returns_anthropic_for_anthropic_key() {
+        let sfn = build_stream_fn("anthropic", "https://api.anthropic.com", "test-key");
+        assert!(
+            sfn.is_some(),
+            "anthropic provider should produce a StreamFn"
+        );
+    }
+
+    #[test]
+    fn build_stream_fn_returns_none_for_unknown_provider() {
+        let sfn = build_stream_fn("unknown_provider", "https://example.com", "key");
+        assert!(sfn.is_none(), "unknown provider should return None");
+    }
+
+    #[test]
+    fn catalog_presets_contain_expected_providers() {
+        let anthropic_presets = remote_presets(Some("anthropic"));
+        assert!(
+            !anthropic_presets.is_empty(),
+            "catalog should have anthropic presets"
+        );
+        assert!(
+            anthropic_presets
+                .iter()
+                .any(|p| p.model_id.contains("claude")),
+            "anthropic presets should contain claude models"
+        );
+
+        let openai_presets = remote_presets(Some("openai"));
+        assert!(
+            !openai_presets.is_empty(),
+            "catalog should have openai presets"
+        );
+        assert!(
+            openai_presets.iter().any(|p| p.model_id == "gpt-4o"),
+            "openai presets should contain gpt-4o"
+        );
+    }
+
+    #[test]
+    fn catalog_presets_provide_model_specs_with_capabilities() {
+        let presets = remote_presets(Some("anthropic"));
+        let sonnet = presets
+            .iter()
+            .find(|p| p.model_id.contains("sonnet"))
+            .expect("catalog should have a sonnet preset");
+        let spec = sonnet.model_spec();
+        assert_eq!(spec.provider, "anthropic");
+        assert!(
+            spec.capabilities
+                .as_ref()
+                .map_or(false, |c| c.supports_tool_use),
+            "sonnet should support tool use"
+        );
+    }
+
+    #[test]
+    fn try_proxy_returns_none_without_env_var() {
+        // LLM_BASE_URL is not normally set in test environments
+        if std::env::var("LLM_BASE_URL").is_err() {
+            assert!(try_proxy().is_none());
+        }
     }
 }
