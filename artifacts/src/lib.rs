@@ -2,7 +2,7 @@
 
 //! Versioned artifact storage for swink-agent sessions.
 //!
-//! Provides [`InMemoryArtifactStore`] for testing and [`FileArtifactStore`] for
+//! Provides [`InMemoryArtifactStore`] for testing and `FileArtifactStore` for
 //! persistent storage. Both implement the [`swink_agent::ArtifactStore`] trait
 //! defined in the core crate behind the `artifact-store` feature gate.
 
