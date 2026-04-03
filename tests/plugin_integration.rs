@@ -577,6 +577,70 @@ async fn no_plugins_direct_policies_behave_identically() {
     );
 }
 
+// ─── Phase 6: User Story 4 — Registry Introspection ──────────────────────
+
+// ─── T026: agent.plugins() returns all plugins in priority order ─────────
+
+#[test]
+fn agent_plugins_returns_all_in_priority_order() {
+    let p_low: Arc<dyn Plugin> = Arc::new(OrderedPolicyPlugin::new(
+        "low",
+        1,
+        Arc::new(AtomicUsize::new(0)),
+    ));
+    let p_mid: Arc<dyn Plugin> = Arc::new(OrderedPolicyPlugin::new(
+        "mid",
+        5,
+        Arc::new(AtomicUsize::new(0)),
+    ));
+    let p_high: Arc<dyn Plugin> = Arc::new(OrderedPolicyPlugin::new(
+        "high",
+        10,
+        Arc::new(AtomicUsize::new(0)),
+    ));
+
+    // Register in low→mid→high order; plugins() should return high→mid→low.
+    let agent = make_agent_with_plugins(vec![p_low, p_mid, p_high]);
+
+    let names: Vec<&str> = agent.plugins().iter().map(|p| p.name()).collect();
+    assert_eq!(
+        names,
+        vec!["high", "mid", "low"],
+        "plugins() should return all plugins sorted by priority descending"
+    );
+}
+
+// ─── T027: agent.plugin("name") returns correct plugin reference ─────────
+
+#[test]
+fn agent_plugin_by_name_returns_correct_reference() {
+    let p_alpha: Arc<dyn Plugin> = Arc::new(ToolPlugin::new("alpha", &["save"]));
+    let p_beta: Arc<dyn Plugin> = Arc::new(ToolPlugin::new("beta", &["load"]));
+
+    let agent = make_agent_with_plugins(vec![p_alpha, p_beta]);
+
+    let found = agent.plugin("beta");
+    assert!(found.is_some(), "plugin 'beta' should be found");
+    assert_eq!(found.unwrap().name(), "beta");
+
+    let found_alpha = agent.plugin("alpha");
+    assert!(found_alpha.is_some(), "plugin 'alpha' should be found");
+    assert_eq!(found_alpha.unwrap().name(), "alpha");
+}
+
+// ─── T028: agent.plugin("nonexistent") returns None ──────────────────────
+
+#[test]
+fn agent_plugin_nonexistent_returns_none() {
+    let p: Arc<dyn Plugin> = Arc::new(ToolPlugin::new("existing", &["tool1"]));
+    let agent = make_agent_with_plugins(vec![p]);
+
+    assert!(
+        agent.plugin("nonexistent").is_none(),
+        "looking up a nonexistent plugin should return None"
+    );
+}
+
 // ─── T024: Plugin Stop prevents ALL direct policies from evaluating ────
 
 #[tokio::test]
