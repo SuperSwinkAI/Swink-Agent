@@ -158,6 +158,17 @@ pub enum AgentEvent {
         is_error: bool,
     },
 
+    /// Emitted when an artifact version is successfully saved.
+    #[cfg(feature = "artifact-store")]
+    ArtifactSaved {
+        /// The session this artifact belongs to.
+        session_id: String,
+        /// The artifact name.
+        name: String,
+        /// The version number that was saved.
+        version: u32,
+    },
+
     /// A custom event emitted via [`Agent::emit`](crate::Agent::emit).
     Custom(crate::emit::Emission),
 }

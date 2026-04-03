@@ -35,16 +35,16 @@
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete.
 
-- [ ] T006 Define `ArtifactError` enum (`InvalidName`, `Storage`, `NotConfigured`) with `thiserror` derives in `src/artifact.rs`
-- [ ] T007 [P] Define `ArtifactData` struct (`content: Vec<u8>`, `content_type: String`, `metadata: HashMap<String, String>`) with serde derives in `src/artifact.rs`
-- [ ] T008 [P] Define `ArtifactVersion` struct (`name`, `version: u32`, `created_at: DateTime<Utc>`, `size: usize`, `content_type`) with serde derives in `src/artifact.rs`
-- [ ] T009 [P] Define `ArtifactMeta` struct (`name`, `latest_version: u32`, `created_at`, `updated_at`, `content_type`) with serde derives in `src/artifact.rs`
-- [ ] T010 Define `ArtifactStore` async trait (`save`, `load`, `load_version`, `list`, `delete`) with `Send + Sync` bounds in `src/artifact.rs` per contracts/public-api.md signatures
-- [ ] T011 Implement `validate_artifact_name` function in `artifacts/src/validate.rs` — allowed chars `[a-zA-Z0-9\-_./]`, no empty, no leading/trailing `/`, no `//`
-- [ ] T012 [P] Write unit tests for `validate_artifact_name` in `artifacts/src/validate.rs` — valid names, invalid chars, empty, leading/trailing slash, consecutive slashes, path traversal (`../`)
-- [ ] T013 Add `AgentEvent::ArtifactSaved { session_id, name, version }` variant to `src/loop_/event.rs` behind `#[cfg(feature = "artifact-store")]`
-- [ ] T014 Add re-exports of `ArtifactStore`, `ArtifactData`, `ArtifactVersion`, `ArtifactMeta`, `ArtifactError`, `validate_artifact_name` in `src/lib.rs` behind `#[cfg(feature = "artifact-store")]`
-- [ ] T015 Verify `cargo build --workspace` and `cargo test --workspace` pass with both features enabled and disabled
+- [x] T006 Define `ArtifactError` enum (`InvalidName`, `Storage`, `NotConfigured`) with `thiserror` derives in `src/artifact.rs`
+- [x] T007 [P] Define `ArtifactData` struct (`content: Vec<u8>`, `content_type: String`, `metadata: HashMap<String, String>`) with serde derives in `src/artifact.rs`
+- [x] T008 [P] Define `ArtifactVersion` struct (`name`, `version: u32`, `created_at: DateTime<Utc>`, `size: usize`, `content_type`) with serde derives in `src/artifact.rs`
+- [x] T009 [P] Define `ArtifactMeta` struct (`name`, `latest_version: u32`, `created_at`, `updated_at`, `content_type`) with serde derives in `src/artifact.rs`
+- [x] T010 Define `ArtifactStore` async trait (`save`, `load`, `load_version`, `list`, `delete`) with `Send + Sync` bounds in `src/artifact.rs` per contracts/public-api.md signatures
+- [x] T011 Implement `validate_artifact_name` function in `artifacts/src/validate.rs` — allowed chars `[a-zA-Z0-9\-_./]`, no empty, no leading/trailing `/`, no `//`
+- [x] T012 [P] Write unit tests for `validate_artifact_name` in `artifacts/src/validate.rs` — valid names, invalid chars, empty, leading/trailing slash, consecutive slashes, path traversal (`../`)
+- [x] T013 Add `AgentEvent::ArtifactSaved { session_id, name, version }` variant to `src/loop_/event.rs` behind `#[cfg(feature = "artifact-store")]`
+- [x] T014 Add re-exports of `ArtifactStore`, `ArtifactData`, `ArtifactVersion`, `ArtifactMeta`, `ArtifactError`, `validate_artifact_name` in `src/lib.rs` behind `#[cfg(feature = "artifact-store")]`
+- [x] T015 Verify `cargo build --workspace` and `cargo test --workspace` pass with both features enabled and disabled
 
 **Checkpoint**: Foundation ready — core trait and types compile, validation tested, event variant wired.
 

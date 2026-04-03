@@ -3,6 +3,8 @@ mod agent;
 mod agent_id;
 pub mod agent_options;
 pub(crate) mod agent_subscriptions;
+#[cfg(feature = "artifact-store")]
+pub mod artifact;
 mod async_context_transformer;
 mod checkpoint;
 mod config;
@@ -19,8 +21,6 @@ mod event_forwarder;
 mod fallback;
 mod fn_tool;
 mod handle;
-#[cfg(feature = "artifact-store")]
-mod artifact;
 #[cfg(feature = "hot-reload")]
 pub mod hot_reload;
 mod loop_;
@@ -146,6 +146,7 @@ pub use util::now_timestamp;
 #[cfg(feature = "artifact-store")]
 pub use artifact::{
     ArtifactData, ArtifactError, ArtifactMeta, ArtifactStore, ArtifactVersion,
+    validate_artifact_name,
 };
 pub use display::{CoreDisplayMessage, DisplayRole, IntoDisplayMessages};
 #[cfg(feature = "plugins")]
