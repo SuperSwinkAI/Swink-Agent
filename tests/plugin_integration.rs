@@ -852,3 +852,138 @@ async fn plugin_stop_prevents_all_direct_policies() {
         "direct policy B should not fire after plugin Stop verdict"
     );
 }
+
+// ─── Phase 8: User Story 7 — Plugin Tool Contribution ──────────────────
+
+// ─── T035: Plugin tools appear as "{plugin_name}.{tool_name}" ───────────
+
+#[test]
+fn plugin_tools_namespaced_format() {
+    let plugin: Arc<dyn Plugin> = Arc::new(ToolPlugin::new("analyzer", &["scan", "report"]));
+
+    let agent = make_agent_with_plugins(vec![plugin]);
+
+    let tool_names: Vec<&str> = agent.state().tools.iter().map(|t| t.name()).collect();
+    assert!(
+        tool_names.contains(&"analyzer.scan"),
+        "expected 'analyzer.scan', got: {tool_names:?}"
+    );
+    assert!(
+        tool_names.contains(&"analyzer.report"),
+        "expected 'analyzer.report', got: {tool_names:?}"
+    );
+}
+
+// ─── T036: Two plugins with same-named tools — distinct namespaces ──────
+
+#[test]
+fn two_plugins_same_tool_names_distinct_namespaces() {
+    let plugin_a: Arc<dyn Plugin> = Arc::new(ToolPlugin::new("alpha", &["run"]));
+    let plugin_b: Arc<dyn Plugin> = Arc::new(ToolPlugin::new("beta", &["run"]));
+
+    let agent = make_agent_with_plugins(vec![plugin_a, plugin_b]);
+
+    let tool_names: Vec<&str> = agent.state().tools.iter().map(|t| t.name()).collect();
+    assert!(
+        tool_names.contains(&"alpha.run"),
+        "expected 'alpha.run', got: {tool_names:?}"
+    );
+    assert!(
+        tool_names.contains(&"beta.run"),
+        "expected 'beta.run', got: {tool_names:?}"
+    );
+    // Both should coexist — no collision.
+    assert_eq!(
+        tool_names.iter().filter(|&&n| n == "alpha.run").count(),
+        1,
+        "alpha.run should appear exactly once"
+    );
+    assert_eq!(
+        tool_names.iter().filter(|&&n| n == "beta.run").count(),
+        1,
+        "beta.run should appear exactly once"
+    );
+}
+
+// ─── T037: Direct tool takes precedence over namespaced plugin tool ─────
+
+#[test]
+fn direct_tool_found_first_over_namespaced_plugin_tool() {
+    // Create a direct tool named "myns.fetch" and a plugin named "myns" contributing "fetch".
+    // The direct tool should be found first by find_tool.
+
+    let direct_tool: Arc<dyn AgentTool> = Arc::new(PluginStubTool::new("myns.fetch"));
+    let plugin: Arc<dyn Plugin> = Arc::new(ToolPlugin::new("myns", &["fetch"]));
+
+    let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("hello")]));
+    let options = AgentOptions::new("test", default_model(), stream_fn, default_convert)
+        .with_tools(vec![direct_tool])
+        .with_plugin(plugin);
+
+    let agent = Agent::new(options);
+
+    // The direct tool is first in the list (direct tools before plugin tools).
+    let tool_names: Vec<&str> = agent.state().tools.iter().map(|t| t.name()).collect();
+    // Both should exist.
+    let count = tool_names.iter().filter(|&&n| n == "myns.fetch").count();
+    assert_eq!(
+        count, 2,
+        "both direct and namespaced tool should be present, got {count}"
+    );
+
+    // find_tool returns the first match — should be the direct tool.
+    let found = agent.find_tool("myns.fetch");
+    assert!(found.is_some(), "find_tool should find 'myns.fetch'");
+
+    // Verify it's the direct tool (not the NamespacedTool wrapper).
+    // NamespacedTool has description "plugin stub tool" and label "myns.fetch" (overridden).
+    // Direct PluginStubTool has label "myns.fetch" (set in constructor).
+    // Both have the same description, so check order by position.
+    let first_idx = tool_names.iter().position(|&n| n == "myns.fetch").unwrap();
+    assert_eq!(
+        first_idx, 0,
+        "direct tool should be at index 0 (before plugin tools), got {first_idx}"
+    );
+}
+
+// ─── T038: Verify tool merge order — direct first, then plugin ──────────
+// (Verification task — confirmed by T037 above: direct tools at lower indices,
+//  plugin tools appended after.)
+
+// ─── Phase 9: User Story 6 — Plugin Removal ────────────────────────────
+
+// ─── T039: Unregister plugin — contributions absent after Agent::new() ──
+
+#[test]
+fn unregistered_plugin_contributions_absent() {
+    use swink_agent::plugin::PluginRegistry;
+
+    let mut registry = PluginRegistry::new();
+    let plugin_a: Arc<dyn Plugin> = Arc::new(ToolPlugin::new("keep", &["tool_a"]));
+    let plugin_b: Arc<dyn Plugin> = Arc::new(ToolPlugin::new("remove", &["tool_b"]));
+    registry.register(plugin_a);
+    registry.register(plugin_b);
+
+    // Unregister "remove".
+    registry.unregister("remove");
+
+    // Build agent with remaining plugins only.
+    let plugins: Vec<Arc<dyn Plugin>> = registry.list().into_iter().cloned().collect();
+    let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("hello")]));
+    let options = AgentOptions::new("test", default_model(), stream_fn, default_convert)
+        .with_plugins(plugins);
+    let agent = Agent::new(options);
+
+    let tool_names: Vec<&str> = agent.state().tools.iter().map(|t| t.name()).collect();
+    assert!(
+        tool_names.contains(&"keep.tool_a"),
+        "kept plugin's tools should be present: {tool_names:?}"
+    );
+    assert!(
+        !tool_names.iter().any(|&n| n.contains("remove")),
+        "removed plugin's tools should be absent: {tool_names:?}"
+    );
+}
+
+// ─── T040: Unregister nonexistent name — succeeds silently ──────────────
+// (Already covered in tests/plugin_registry.rs: `registry_unregister_nonexistent_is_noop`)

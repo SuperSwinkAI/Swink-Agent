@@ -153,13 +153,13 @@
 
 ### Tests for User Story 7
 
-- [ ] T035 [US7] Write test: plugin tools appear as `"{plugin_name}.{tool_name}"` in agent tool list in `tests/plugin_integration.rs`
-- [ ] T036 [P] [US7] Write test: two plugins contributing same-named tools — both appear with distinct namespace prefixes in `tests/plugin_integration.rs`
-- [ ] T037 [P] [US7] Write test: direct tool with same name as namespaced plugin tool — direct tool found first when dispatching in `tests/plugin_integration.rs`
+- [x] T035 [US7] Write test: plugin tools appear as `"{plugin_name}.{tool_name}"` in agent tool list in `tests/plugin_integration.rs`
+- [x] T036 [P] [US7] Write test: two plugins contributing same-named tools — both appear with distinct namespace prefixes in `tests/plugin_integration.rs`
+- [x] T037 [P] [US7] Write test: direct tool with same name as namespaced plugin tool — direct tool found first when dispatching in `tests/plugin_integration.rs`
 
 ### Implementation for User Story 7
 
-- [ ] T038 [US7] Verify tool merge order in `Agent::new()`: direct tools first, then namespaced plugin tools appended in `src/agent.rs`
+- [x] T038 [US7] Verify tool merge order in `Agent::new()`: direct tools first, then namespaced plugin tools appended in `src/agent.rs`
 
 **Checkpoint**: Plugin tools are correctly namespaced and merged.
 
@@ -173,12 +173,12 @@
 
 ### Tests for User Story 6
 
-- [ ] T039 [US6] Write test: unregister plugin by name — verify its contributions are absent after Agent::new() in `tests/plugin_integration.rs`
-- [ ] T040 [P] [US6] Write test: unregister nonexistent name — succeeds silently in `tests/plugin_registry.rs`
+- [x] T039 [US6] Write test: unregister plugin by name — verify its contributions are absent after Agent::new() in `tests/plugin_integration.rs`
+- [x] T040 [P] [US6] Write test: unregister nonexistent name — succeeds silently in `tests/plugin_registry.rs`
 
 ### Implementation for User Story 6
 
-- [ ] T041 [US6] Verify `PluginRegistry::unregister()` removes plugin from the vec and subsequent `Agent::new()` does not include its contributions (should already work from Phase 2 registry + Phase 3 merge logic)
+- [x] T041 [US6] Verify `PluginRegistry::unregister()` removes plugin from the vec and subsequent `Agent::new()` does not include its contributions (should already work from Phase 2 registry + Phase 3 merge logic)
 
 **Checkpoint**: Plugin removal works at configuration time.
 
