@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "adapters", "auth", "eval", "local-llm", "macros", "mcp", "memory", "policies", "tui", "xtask"]
+members = [".", "adapters", "artifacts", "auth", "eval", "local-llm", "macros", "mcp", "memory", "policies", "tui", "xtask"]
 resolver = "2"
 
 [workspace.dependencies]
@@ -62,6 +62,8 @@ rustdoc-args = ["--cfg", "docsrs"]
 default = ["builtin-tools"]
 builtin-tools = []
 testkit = []
+artifact-store = []
+artifact-tools = ["artifact-store"]
 hot-reload = ["dep:notify"]
 tiktoken = ["dep:tiktoken-rs"]
 plugins = []

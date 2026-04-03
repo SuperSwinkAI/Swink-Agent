@@ -1,0 +1,108 @@
+//! Core artifact types and trait, gated behind the `artifact-store` feature.
+
+use std::collections::HashMap;
+
+use chrono::{DateTime, Utc};
+
+// ─── Error ──────────────────────────────────────────────────────────────────
+
+/// Errors from artifact operations.
+#[derive(Debug, thiserror::Error)]
+pub enum ArtifactError {
+    #[error("invalid artifact name '{name}': {reason}")]
+    InvalidName { name: String, reason: String },
+
+    #[error("artifact storage error: {0}")]
+    Storage(#[from] Box<dyn std::error::Error + Send + Sync>),
+
+    #[error("artifact store not configured")]
+    NotConfigured,
+}
+
+// ─── Types ──────────────────────────────────────────────────────────────────
+
+/// Content payload for an artifact save operation.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ArtifactData {
+    pub content: Vec<u8>,
+    pub content_type: String,
+    #[serde(default)]
+    pub metadata: HashMap<String, String>,
+}
+
+/// Record describing a specific saved version.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ArtifactVersion {
+    pub name: String,
+    pub version: u32,
+    pub created_at: DateTime<Utc>,
+    pub size: usize,
+    pub content_type: String,
+}
+
+/// Summary metadata for an artifact (used in list results).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ArtifactMeta {
+    pub name: String,
+    pub latest_version: u32,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub content_type: String,
+}
+
+// ─── Trait ───────────────────────────────────────────────────────────────────
+
+/// Pluggable storage backend for session-attached versioned artifacts.
+///
+/// All methods are scoped by session ID. Implementations must be safe for
+/// concurrent use from multiple tools within the same agent.
+pub trait ArtifactStore: Send + Sync {
+    /// Save content as a new version of the named artifact.
+    ///
+    /// Returns the version record on success. Version numbers are
+    /// monotonically increasing per artifact per session, starting at 1.
+    fn save(
+        &self,
+        session_id: &str,
+        name: &str,
+        data: ArtifactData,
+    ) -> impl std::future::Future<Output = Result<ArtifactVersion, ArtifactError>> + Send;
+
+    /// Load the latest version of the named artifact.
+    ///
+    /// Returns `None` if the artifact does not exist.
+    fn load(
+        &self,
+        session_id: &str,
+        name: &str,
+    ) -> impl std::future::Future<Output = Result<Option<(ArtifactData, ArtifactVersion)>, ArtifactError>>
+           + Send;
+
+    /// Load a specific version of the named artifact.
+    ///
+    /// Returns `None` if the artifact or version does not exist.
+    fn load_version(
+        &self,
+        session_id: &str,
+        name: &str,
+        version: u32,
+    ) -> impl std::future::Future<Output = Result<Option<(ArtifactData, ArtifactVersion)>, ArtifactError>>
+           + Send;
+
+    /// List metadata for all artifacts in a session.
+    ///
+    /// Returns an empty vec if the session has no artifacts.
+    fn list(
+        &self,
+        session_id: &str,
+    ) -> impl std::future::Future<Output = Result<Vec<ArtifactMeta>, ArtifactError>> + Send;
+
+    /// Delete all versions of the named artifact.
+    ///
+    /// Succeeds silently if the artifact does not exist (idempotent).
+    fn delete(
+        &self,
+        session_id: &str,
+        name: &str,
+    ) -> impl std::future::Future<Output = Result<(), ArtifactError>> + Send;
+}

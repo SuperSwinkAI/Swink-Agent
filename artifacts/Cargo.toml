@@ -1,0 +1,34 @@
+[package]
+name = "swink-agent-artifacts"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "Versioned artifact storage for swink-agent sessions"
+license = "MIT"
+repository = "https://github.com/SuperSwinkAI/Swink-Agent"
+
+[dependencies]
+swink-agent = { path = "..", features = ["artifact-store"] }
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+chrono.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+futures.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full", "test-util"] }
+tempfile.workspace = true
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
