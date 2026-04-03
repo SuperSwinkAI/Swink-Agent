@@ -49,6 +49,7 @@ pub mod tools;
 pub mod types;
 mod util;
 
+#[cfg(feature = "testkit")]
 pub mod testing;
 
 pub mod prelude;

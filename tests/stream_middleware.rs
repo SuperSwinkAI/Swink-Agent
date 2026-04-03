@@ -1,3 +1,4 @@
+#![cfg(feature = "testkit")]
 //! Integration tests for `StreamMiddleware`.
 
 mod common;

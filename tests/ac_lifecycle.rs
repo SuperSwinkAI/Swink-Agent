@@ -1,3 +1,4 @@
+#![cfg(feature = "testkit")]
 //! Integration tests for User Story 1: Core Agent Lifecycle and Events.
 //!
 //! Tests T004-T010 covering agent creation, message processing, lifecycle

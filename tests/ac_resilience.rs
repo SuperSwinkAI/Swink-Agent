@@ -1,3 +1,4 @@
+#![cfg(feature = "testkit")]
 //! Integration tests for User Story 4: Retry, Steering, and Abort.
 //!
 //! Tests T026–T032 covering acceptance criteria AC 17–AC 22.

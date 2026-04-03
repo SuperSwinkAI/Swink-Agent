@@ -1,3 +1,4 @@
+#![cfg(feature = "testkit")]
 //! Model management, tool add/remove, and multi-instance tests.
 
 mod common;

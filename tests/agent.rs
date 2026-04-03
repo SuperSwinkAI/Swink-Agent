@@ -1,3 +1,4 @@
+#![cfg(feature = "testkit")]
 //! Phase 4: Integration tests for the [`Agent`] public API.
 
 mod common;

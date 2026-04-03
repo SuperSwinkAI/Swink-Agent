@@ -1,3 +1,4 @@
+#![cfg(feature = "testkit")]
 //! Tests that every `AgentEvent` variant serializes to JSON without error.
 
 mod common;

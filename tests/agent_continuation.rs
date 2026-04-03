@@ -1,3 +1,4 @@
+#![cfg(feature = "testkit")]
 //! Continuation and multi-turn tests for the [`Agent`] public API.
 
 mod common;

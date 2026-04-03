@@ -46,7 +46,7 @@ full = ["local"]
 local = ["dep:swink-agent-local-llm"]
 
 [dev-dependencies]
-swink-agent = { path = ".." }
+swink-agent = { path = "..", features = ["testkit"] }
 tempfile.workspace = true
 tokio-util.workspace = true
 

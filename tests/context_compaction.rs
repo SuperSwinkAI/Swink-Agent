@@ -1,3 +1,4 @@
+#![cfg(feature = "testkit")]
 //! End-to-end integration tests verifying that context compaction actually
 //! happens after overflow, not just that the overflow flag is passed.
 

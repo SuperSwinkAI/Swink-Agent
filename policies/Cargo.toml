@@ -34,6 +34,7 @@ tracing = { workspace = true }
 unicode-truncate = { version = "2", optional = true }
 
 [dev-dependencies]
+swink-agent = { path = "..", features = ["testkit"] }
 futures = { workspace = true }
 serde_json = { workspace = true }
 tempfile = { workspace = true }

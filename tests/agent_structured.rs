@@ -1,3 +1,4 @@
+#![cfg(feature = "testkit")]
 //! Structured output, subscriber, and `prompt_stream/handle_stream_event` tests.
 
 mod common;

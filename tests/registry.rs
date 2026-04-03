@@ -1,3 +1,4 @@
+#![cfg(feature = "testkit")]
 use std::sync::Arc;
 
 use swink_agent::{Agent, AgentOptions, AgentRegistry};

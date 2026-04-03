@@ -1,3 +1,4 @@
+#![cfg(feature = "testkit")]
 //! Tests for the tool approval gate feature.
 
 mod common;

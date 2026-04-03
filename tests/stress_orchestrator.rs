@@ -1,3 +1,4 @@
+#![cfg(feature = "testkit")]
 //! Stress test: concurrent requests to multiple orchestrated agents.
 
 mod common;
