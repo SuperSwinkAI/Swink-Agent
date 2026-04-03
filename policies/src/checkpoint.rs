@@ -11,9 +11,11 @@ use swink_agent::{
 
 /// Persists agent state after each turn via a [`CheckpointStore`].
 ///
-/// Uses `tokio::spawn` (fire-and-forget) to avoid blocking the sync
-/// policy evaluation loop. Captures a `tokio::runtime::Handle` at
-/// construction time.
+/// Uses `tokio::spawn` to avoid blocking the sync policy evaluation loop.
+/// Captures a `tokio::runtime::Handle` at construction time.
+///
+/// The checkpoint includes the real system prompt, model identity, and full
+/// message history from the turn context.
 ///
 /// Always returns [`PolicyVerdict::Continue`] — persistence is a side effect.
 ///
@@ -63,13 +65,13 @@ impl PostTurnPolicy for CheckpointPolicy {
         "checkpoint"
     }
 
-    fn evaluate(&self, ctx: &PolicyContext<'_>, _turn: &TurnPolicyContext<'_>) -> PolicyVerdict {
+    fn evaluate(&self, ctx: &PolicyContext<'_>, turn: &TurnPolicyContext<'_>) -> PolicyVerdict {
         let checkpoint = Checkpoint::new(
             format!("turn-{}", ctx.turn_index),
-            String::new(), // system_prompt not available in PolicyContext
-            String::new(), // provider
-            String::new(), // model_id
-            &[],           // messages snapshot not available in PolicyContext
+            turn.system_prompt,
+            &turn.model_spec.provider,
+            &turn.model_spec.model_id,
+            turn.context_messages,
         )
         .with_turn_count(ctx.turn_index)
         .with_usage(ctx.accumulated_usage.clone())
@@ -91,7 +93,7 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
 
-    use swink_agent::{AssistantMessage, Cost, StopReason, Usage};
+    use swink_agent::{AgentMessage, AssistantMessage, Cost, ModelSpec, StopReason, Usage};
 
     /// Minimal in-memory checkpoint store for testing.
     struct MockCheckpointStore {
@@ -103,6 +105,11 @@ mod tests {
             Self {
                 data: std::sync::Mutex::new(HashMap::new()),
             }
+        }
+
+        fn get(&self, id: &str) -> Option<Checkpoint> {
+            let guard = self.data.lock().unwrap();
+            guard.get(id).map(|s| serde_json::from_str(s).unwrap())
         }
     }
 
@@ -137,6 +144,40 @@ mod tests {
         }
     }
 
+    fn sample_model_spec() -> ModelSpec {
+        ModelSpec::new("anthropic", "claude-sonnet-4-20250514")
+    }
+
+    fn sample_assistant_message() -> AssistantMessage {
+        AssistantMessage {
+            content: vec![swink_agent::ContentBlock::Text {
+                text: "Hello!".to_string(),
+            }],
+            provider: "anthropic".to_string(),
+            model_id: "claude-sonnet-4-20250514".to_string(),
+            usage: Usage::default(),
+            cost: Cost::default(),
+            stop_reason: StopReason::Stop,
+            error_message: None,
+            timestamp: 0,
+            cache_hint: None,
+        }
+    }
+
+    fn sample_messages() -> Vec<AgentMessage> {
+        use swink_agent::{ContentBlock, LlmMessage, UserMessage};
+        vec![
+            AgentMessage::Llm(LlmMessage::User(UserMessage {
+                content: vec![ContentBlock::Text {
+                    text: "What is 2+2?".to_string(),
+                }],
+                timestamp: 100,
+                cache_hint: None,
+            })),
+            AgentMessage::Llm(LlmMessage::Assistant(sample_assistant_message())),
+        ]
+    }
+
     #[test]
     fn name_returns_checkpoint() {
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -167,24 +208,197 @@ mod tests {
             new_messages: &[],
             state: &state,
         };
-        let msg = AssistantMessage {
-            content: vec![],
-            provider: String::new(),
-            model_id: String::new(),
-            usage: Usage::default(),
-            cost: Cost::default(),
-            stop_reason: StopReason::Stop,
-            error_message: None,
-            timestamp: 0,
-            cache_hint: None,
-        };
+        let msg = sample_assistant_message();
+        let model = sample_model_spec();
+        let messages = sample_messages();
         let turn = TurnPolicyContext {
             assistant_message: &msg,
             tool_results: &[],
             stop_reason: StopReason::Stop,
+            system_prompt: "Be helpful.",
+            model_spec: &model,
+            context_messages: &messages,
         };
 
         let result = policy.evaluate(&ctx, &turn);
         assert!(matches!(result, PolicyVerdict::Continue));
+    }
+
+    #[tokio::test]
+    async fn checkpoint_contains_system_prompt() {
+        let store = Arc::new(MockCheckpointStore::new());
+        let policy = CheckpointPolicy::new(store.clone() as Arc<dyn CheckpointStore>);
+
+        let usage = Usage::default();
+        let cost = Cost::default();
+        let state = swink_agent::SessionState::new();
+        let ctx = PolicyContext {
+            turn_index: 0,
+            accumulated_usage: &usage,
+            accumulated_cost: &cost,
+            message_count: 2,
+            overflow_signal: false,
+            new_messages: &[],
+            state: &state,
+        };
+        let msg = sample_assistant_message();
+        let model = sample_model_spec();
+        let messages = sample_messages();
+        let turn = TurnPolicyContext {
+            assistant_message: &msg,
+            tool_results: &[],
+            stop_reason: StopReason::Stop,
+            system_prompt: "You are a helpful math tutor.",
+            model_spec: &model,
+            context_messages: &messages,
+        };
+
+        policy.evaluate(&ctx, &turn);
+        // Let spawned task complete
+        tokio::task::yield_now().await;
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        let cp = store.get("turn-0").expect("checkpoint should exist");
+        assert_eq!(cp.system_prompt, "You are a helpful math tutor.");
+    }
+
+    #[tokio::test]
+    async fn checkpoint_contains_model_identity() {
+        let store = Arc::new(MockCheckpointStore::new());
+        let policy = CheckpointPolicy::new(store.clone() as Arc<dyn CheckpointStore>);
+
+        let usage = Usage::default();
+        let cost = Cost::default();
+        let state = swink_agent::SessionState::new();
+        let ctx = PolicyContext {
+            turn_index: 1,
+            accumulated_usage: &usage,
+            accumulated_cost: &cost,
+            message_count: 2,
+            overflow_signal: false,
+            new_messages: &[],
+            state: &state,
+        };
+        let msg = sample_assistant_message();
+        let model = sample_model_spec();
+        let messages = sample_messages();
+        let turn = TurnPolicyContext {
+            assistant_message: &msg,
+            tool_results: &[],
+            stop_reason: StopReason::Stop,
+            system_prompt: "prompt",
+            model_spec: &model,
+            context_messages: &messages,
+        };
+
+        policy.evaluate(&ctx, &turn);
+        tokio::task::yield_now().await;
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        let cp = store.get("turn-1").expect("checkpoint should exist");
+        assert_eq!(cp.provider, "anthropic");
+        assert_eq!(cp.model_id, "claude-sonnet-4-20250514");
+    }
+
+    #[tokio::test]
+    async fn checkpoint_contains_message_history() {
+        let store = Arc::new(MockCheckpointStore::new());
+        let policy = CheckpointPolicy::new(store.clone() as Arc<dyn CheckpointStore>);
+
+        let usage = Usage::default();
+        let cost = Cost::default();
+        let state = swink_agent::SessionState::new();
+        let ctx = PolicyContext {
+            turn_index: 0,
+            accumulated_usage: &usage,
+            accumulated_cost: &cost,
+            message_count: 2,
+            overflow_signal: false,
+            new_messages: &[],
+            state: &state,
+        };
+        let msg = sample_assistant_message();
+        let model = sample_model_spec();
+        let messages = sample_messages();
+        let turn = TurnPolicyContext {
+            assistant_message: &msg,
+            tool_results: &[],
+            stop_reason: StopReason::Stop,
+            system_prompt: "prompt",
+            model_spec: &model,
+            context_messages: &messages,
+        };
+
+        policy.evaluate(&ctx, &turn);
+        tokio::task::yield_now().await;
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        let cp = store.get("turn-0").expect("checkpoint should exist");
+        assert_eq!(
+            cp.messages.len(),
+            2,
+            "should contain both user and assistant messages"
+        );
+    }
+
+    #[tokio::test]
+    async fn checkpoint_roundtrip_save_load() {
+        let store = Arc::new(MockCheckpointStore::new());
+        let policy = CheckpointPolicy::new(store.clone() as Arc<dyn CheckpointStore>);
+
+        let usage = Usage {
+            input: 100,
+            output: 50,
+            ..Default::default()
+        };
+        let cost = Cost {
+            input: 0.01,
+            output: 0.005,
+            ..Default::default()
+        };
+        let state = swink_agent::SessionState::new();
+        let ctx = PolicyContext {
+            turn_index: 3,
+            accumulated_usage: &usage,
+            accumulated_cost: &cost,
+            message_count: 2,
+            overflow_signal: false,
+            new_messages: &[],
+            state: &state,
+        };
+        let msg = sample_assistant_message();
+        let model = sample_model_spec();
+        let messages = sample_messages();
+        let turn = TurnPolicyContext {
+            assistant_message: &msg,
+            tool_results: &[],
+            stop_reason: StopReason::Stop,
+            system_prompt: "You are a math tutor.",
+            model_spec: &model,
+            context_messages: &messages,
+        };
+
+        policy.evaluate(&ctx, &turn);
+        tokio::task::yield_now().await;
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        // Load via the CheckpointStore trait
+        let loaded = store
+            .load_checkpoint("turn-3")
+            .await
+            .expect("load should succeed")
+            .expect("checkpoint should exist");
+
+        assert_eq!(loaded.system_prompt, "You are a math tutor.");
+        assert_eq!(loaded.provider, "anthropic");
+        assert_eq!(loaded.model_id, "claude-sonnet-4-20250514");
+        assert_eq!(loaded.messages.len(), 2);
+        assert_eq!(loaded.turn_count, 3);
+        assert_eq!(loaded.usage.input, 100);
+        assert_eq!(loaded.usage.output, 50);
+
+        // Restore messages and verify content
+        let restored = loaded.restore_messages(None);
+        assert_eq!(restored.len(), 2);
     }
 }

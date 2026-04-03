@@ -80,10 +80,14 @@ fn all_policies_compose() {
     // PostTurn: all policies evaluate without interference
     let msg = make_assistant_msg("This is a clean response with no PII or blocked terms.");
     let tool_results: Vec<ToolResultMessage> = vec![];
+    let model = swink_agent::ModelSpec::new("test", "test-model");
     let turn_ctx = TurnPolicyContext {
         assistant_message: &msg,
         tool_results: &tool_results,
         stop_reason: StopReason::Stop,
+        system_prompt: "",
+        model_spec: &model,
+        context_messages: &[],
     };
 
     assert!(matches!(

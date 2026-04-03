@@ -205,10 +205,15 @@ mod tests {
             new_messages: &[],
             state: &state,
         };
+        static MODEL: std::sync::LazyLock<swink_agent::ModelSpec> =
+            std::sync::LazyLock::new(|| swink_agent::ModelSpec::new("test", "test-model"));
         let turn = TurnPolicyContext {
             assistant_message: &msg,
             tool_results: &results,
             stop_reason: StopReason::Stop,
+            system_prompt: "",
+            model_spec: &MODEL,
+            context_messages: &[],
         };
         policy.evaluate(&ctx, &turn)
     }

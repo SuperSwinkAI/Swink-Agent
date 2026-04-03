@@ -312,10 +312,15 @@ mod tests {
     }
 
     fn make_turn_ctx(msg: &AssistantMessage) -> TurnPolicyContext<'_> {
+        static MODEL: std::sync::LazyLock<swink_agent::ModelSpec> =
+            std::sync::LazyLock::new(|| swink_agent::ModelSpec::new("test", "test-model"));
         TurnPolicyContext {
             assistant_message: msg,
             tool_results: &[],
             stop_reason: StopReason::Stop,
+            system_prompt: "",
+            model_spec: &MODEL,
+            context_messages: &[],
         }
     }
 
