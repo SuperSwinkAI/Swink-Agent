@@ -50,14 +50,14 @@
 
 ### Implementation for User Story 1
 
-- [ ] T010 [US1] Replace the `converse()` method with `converse_stream()` in adapters/src/bedrock.rs: change URL path from `/model/{id}/converse` to `/model/{id}/converse-stream`, read response as `bytes_stream()`, feed into `MessageFrameDecoder`, yield `AssistantMessageEvent`s via `stream::unfold` with `BedrockStreamState`
-- [ ] T011 [US1] Update the `StreamFn::stream()` impl in adapters/src/bedrock.rs to call `converse_stream()` instead of `converse()`, integrating `tokio::select!` for cancellation_token support in the streaming loop
-- [ ] T012 [US1] Wire up `messageStart` → `Start`, `contentBlockStart(text)` → `TextStart`, `contentBlockDelta(text)` → `TextDelta`, `contentBlockStop` → `TextEnd`, `metadata` → `Done` event mapping in `parse_event_frame()` for text blocks
-- [ ] T013 [US1] Handle `messageStop` event in `parse_event_frame()`: capture `stopReason` into `BedrockStreamState`, emit `Done` event with usage from subsequent `metadata` event
-- [ ] T014 [US1] Add unit test `text_event_stream_parsing` in adapters/src/bedrock.rs that constructs mock event-stream frames for a text response and verifies correct `AssistantMessageEvent` sequence (Start, TextStart, TextDelta, TextEnd, Done)
-- [ ] T015 [US1] Create adapters/tests/bedrock_live.rs with module-level cfg gate, imports, constants (TIMEOUT = 30s), and helper functions: `aws_creds()` (reads AWS env vars via dotenvy), `cheap_model()` (cheapest available model), `simple_context()`, `collect_events()`, `event_name()`
-- [ ] T016 [US1] Add `live_text_stream` test in adapters/tests/bedrock_live.rs: send simple prompt, assert Start/TextStart/TextDelta/TextEnd/Done events present and assembled text is non-empty
-- [ ] T017 [US1] Add `live_usage_and_cost` test in adapters/tests/bedrock_live.rs: send simple prompt, assert Done event contains non-zero input and output token counts
+- [x] T010 [US1] Replace the `converse()` method with `converse_stream()` in adapters/src/bedrock.rs: change URL path from `/model/{id}/converse` to `/model/{id}/converse-stream`, read response as `bytes_stream()`, feed into `MessageFrameDecoder`, yield `AssistantMessageEvent`s via `stream::unfold` with `BedrockStreamState`
+- [x] T011 [US1] Update the `StreamFn::stream()` impl in adapters/src/bedrock.rs to call `converse_stream()` instead of `converse()`, integrating `tokio::select!` for cancellation_token support in the streaming loop
+- [x] T012 [US1] Wire up `messageStart` → `Start`, `contentBlockStart(text)` → `TextStart`, `contentBlockDelta(text)` → `TextDelta`, `contentBlockStop` → `TextEnd`, `metadata` → `Done` event mapping in `parse_event_frame()` for text blocks
+- [x] T013 [US1] Handle `messageStop` event in `parse_event_frame()`: capture `stopReason` into `BedrockStreamState`, emit `Done` event with usage from subsequent `metadata` event
+- [x] T014 [US1] Add unit test `text_event_stream_parsing` in adapters/src/bedrock.rs that constructs mock event-stream frames for a text response and verifies correct `AssistantMessageEvent` sequence (Start, TextStart, TextDelta, TextEnd, Done)
+- [x] T015 [US1] Create adapters/tests/bedrock_live.rs with module-level cfg gate, imports, constants (TIMEOUT = 30s), and helper functions: `aws_creds()` (reads AWS env vars via dotenvy), `cheap_model()` (cheapest available model), `simple_context()`, `collect_events()`, `event_name()`
+- [x] T016 [US1] Add `live_text_stream` test in adapters/tests/bedrock_live.rs: send simple prompt, assert Start/TextStart/TextDelta/TextEnd/Done events present and assembled text is non-empty
+- [x] T017 [US1] Add `live_usage_and_cost` test in adapters/tests/bedrock_live.rs: send simple prompt, assert Done event contains non-zero input and output token counts
 
 **Checkpoint**: `cargo test -p swink-agent-adapters --features bedrock` passes; live text streaming tests pass with AWS credentials
 
@@ -89,9 +89,9 @@
 
 ### Implementation for User Story 3
 
-- [ ] T023 [US3] Verify that the existing SigV4 signing in `converse_stream()` correctly signs the `/converse-stream` URL path (update path in signing if it was hardcoded to `/converse`)
+- [x] T023 [US3] Verify that the existing SigV4 signing in `converse_stream()` correctly signs the `/converse-stream` URL path (update path in signing if it was hardcoded to `/converse`)
 - [ ] T024 [US3] Add unit test `sigv4_signs_converse_stream_path` in adapters/src/bedrock.rs that verifies the canonical request uses the `/model/{id}/converse-stream` path
-- [ ] T025 [US3] Add `live_invalid_creds_returns_auth_error` test in adapters/tests/bedrock_live.rs: create BedrockStreamFn with bogus credentials, assert Error event with auth-related message
+- [x] T025 [US3] Add `live_invalid_creds_returns_auth_error` test in adapters/tests/bedrock_live.rs: create BedrockStreamFn with bogus credentials, assert Error event with auth-related message
 
 **Checkpoint**: SigV4 signing verified for streaming endpoint; auth error test passes
 
@@ -105,10 +105,10 @@
 
 ### Implementation for User Story 4
 
-- [ ] T026 [US4] Handle event-stream exception frames (`:message-type` = `"exception"`) in the streaming loop in adapters/src/bedrock.rs: extract `:exception-type` header and payload, emit appropriate error event
-- [ ] T027 [US4] Add `guardrail_intervened` handling in `map_stop_reason()` in adapters/src/bedrock.rs: when stopReason is `guardrail_intervened`, emit `ContentFiltered` error event instead of normal Done
-- [ ] T028 [US4] Add unit test `exception_frame_handling` in adapters/src/bedrock.rs that constructs a mock exception frame (`:message-type` = `"exception"`, `:exception-type` = `"throttlingException"`) and verifies it maps to a throttled error event
-- [ ] T029 [US4] Add unit test `guardrail_intervened_maps_to_content_filtered` in adapters/src/bedrock.rs that verifies `guardrail_intervened` stop reason produces a ContentFiltered error event
+- [x] T026 [US4] Handle event-stream exception frames (`:message-type` = `"exception"`) in the streaming loop in adapters/src/bedrock.rs: extract `:exception-type` header and payload, emit appropriate error event
+- [x] T027 [US4] Add `guardrail_intervened` handling in `map_stop_reason()` in adapters/src/bedrock.rs: when stopReason is `guardrail_intervened`, emit `ContentFiltered` error event instead of normal Done
+- [x] T028 [US4] Add unit test `exception_frame_handling` in adapters/src/bedrock.rs that constructs a mock exception frame (`:message-type` = `"exception"`, `:exception-type` = `"throttlingException"`) and verifies it maps to a throttled error event
+- [x] T029 [US4] Add unit test `guardrail_intervened_maps_to_content_filtered` in adapters/src/bedrock.rs that verifies `guardrail_intervened` stop reason produces a ContentFiltered error event
 
 **Checkpoint**: All error paths covered; exception frames and guardrail blocks handled correctly
 

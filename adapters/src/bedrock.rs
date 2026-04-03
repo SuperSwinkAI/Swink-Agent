@@ -1,11 +1,14 @@
 //! AWS Bedrock adapter.
 //!
-//! Uses the Bedrock `Converse` API and maps the response into the harness
-//! event protocol. v1 emits full-message text/tool events after a signed
-//! request completes.
+//! Uses the Bedrock `ConverseStream` API and maps event-stream frames into
+//! the harness event protocol. Responses arrive as binary event-stream frames
+//! decoded by `aws-smithy-eventstream`.
 
 use std::pin::Pin;
 
+use aws_smithy_eventstream::frame::{DecodedFrame, MessageFrameDecoder};
+use aws_smithy_types::event_stream::HeaderValue;
+use bytes::BytesMut;
 use chrono::Utc;
 use futures::stream::{self, Stream, StreamExt as _};
 use hmac::{Hmac, KeyInit, Mac};
@@ -22,6 +25,7 @@ use swink_agent::types::{
 };
 
 use crate::convert::extract_tool_schemas;
+use crate::finalize::{self, OpenBlock, StreamFinalize};
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -113,8 +117,11 @@ struct BedrockToolResultContent {
     text: String,
 }
 
+// Old non-streaming response types — kept for backward compat; will be
+// removed in Phase 8 (T041).
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
 struct BedrockResponse {
     output: Option<BedrockOutput>,
     #[serde(default)]
@@ -124,11 +131,13 @@ struct BedrockResponse {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct BedrockOutput {
     message: Option<BedrockOutputMessage>,
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct BedrockOutputMessage {
     #[serde(default)]
     content: Vec<BedrockOutputContentBlock>,
@@ -136,6 +145,7 @@ struct BedrockOutputMessage {
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
 struct BedrockOutputContentBlock {
     #[serde(default)]
     text: Option<String>,
@@ -156,12 +166,10 @@ struct BedrockUsage {
 }
 
 // --- Streaming event deserialization types ---
-// These types are used by `parse_event_frame()` which will be wired into the
-// streaming path in Phase 3. For now they are exercised only in unit tests.
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
 struct MessageStartEvent {
+    #[allow(dead_code)]
     role: String,
 }
 
@@ -216,7 +224,9 @@ struct MessageStopEvent {
 #[derive(Debug, Deserialize)]
 struct MetadataEvent {
     usage: BedrockStreamUsage,
+    // Deserialized for completeness but not currently used.
     #[serde(default)]
+    #[allow(dead_code)]
     metrics: Option<BedrockMetrics>,
 }
 
@@ -234,6 +244,7 @@ struct BedrockStreamUsage {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
 struct BedrockMetrics {
     #[serde(default)]
     latency_ms: u64,
@@ -262,6 +273,20 @@ impl BedrockStreamState {
             stop_reason: None,
             usage: None,
             content_index: 0,
+        }
+    }
+}
+
+impl StreamFinalize for BedrockStreamState {
+    fn drain_open_blocks(&mut self) -> Vec<OpenBlock> {
+        match self.current_block_type.take() {
+            Some(BlockType::Text) => vec![OpenBlock::Text {
+                content_index: self.content_index,
+            }],
+            Some(BlockType::ToolUse) => vec![OpenBlock::ToolCall {
+                content_index: self.content_index,
+            }],
+            None => vec![],
         }
     }
 }
@@ -336,36 +361,24 @@ impl StreamFn for BedrockStreamFn {
         options: &'a StreamOptions,
         cancellation_token: CancellationToken,
     ) -> Pin<Box<dyn Stream<Item = AssistantMessageEvent> + Send + 'a>> {
-        Box::pin(
-            stream::once(async move {
-                if cancellation_token.is_cancelled() {
-                    return vec![AssistantMessageEvent::error_network(
-                        "Bedrock request cancelled",
-                    )];
-                }
-
-                self.converse(model, context, options)
-                    .await
-                    .unwrap_or_else(|event| vec![event])
-            })
-            .flat_map(stream::iter),
-        )
+        self.converse_stream(model, context, options, cancellation_token)
     }
 }
 
 impl BedrockStreamFn {
-    async fn converse(
+    /// Build and sign a `ConverseStream` request, returning the streaming response.
+    async fn send_converse_stream(
         &self,
         model: &ModelSpec,
         context: &AgentContext,
         options: &StreamOptions,
-    ) -> Result<Vec<AssistantMessageEvent>, AssistantMessageEvent> {
+    ) -> Result<reqwest::Response, AssistantMessageEvent> {
         let body = build_request(context, options);
         let body_json = serde_json::to_vec(&body)
             .map_err(|e| AssistantMessageEvent::error(format!("Bedrock JSON error: {e}")))?;
-        let path = format!("/model/{}/converse", model.model_id);
+        let path = format!("/model/{}/converse-stream", model.model_id);
         let url = format!("{}{}", self.base_url, path);
-        debug!(%url, model = %model.model_id, "sending Bedrock converse request");
+        debug!(%url, model = %model.model_id, "sending Bedrock converse-stream request");
 
         let (amz_date, date_stamp) = amz_dates();
         let host = reqwest::Url::parse(&url)
@@ -427,14 +440,252 @@ impl BedrockStreamFn {
             ));
         }
 
-        let body = response.text().await.map_err(|e| {
-            AssistantMessageEvent::error_network(format!("Bedrock response read error: {e}"))
-        })?;
-        let parsed: BedrockResponse = serde_json::from_str(&body)
-            .map_err(|e| AssistantMessageEvent::error(format!("Bedrock JSON parse error: {e}")))?;
-
-        Ok(response_to_events(parsed))
+        Ok(response)
     }
+
+    /// Stream events from the Bedrock `ConverseStream` API.
+    ///
+    /// Reads the response as a binary event-stream, decodes frames with
+    /// `MessageFrameDecoder`, and maps each frame through `parse_event_frame`.
+    #[allow(clippy::too_many_lines)]
+    fn converse_stream<'a>(
+        &'a self,
+        model: &'a ModelSpec,
+        context: &'a AgentContext,
+        options: &'a StreamOptions,
+        cancellation_token: CancellationToken,
+    ) -> Pin<Box<dyn Stream<Item = AssistantMessageEvent> + Send + 'a>> {
+        Box::pin(stream::unfold(
+            StreamUnfoldState::Init {
+                model,
+                context,
+                options,
+                cancellation_token,
+            },
+            move |unfold_state| async move {
+                match unfold_state {
+                    StreamUnfoldState::Init {
+                        model,
+                        context,
+                        options,
+                        cancellation_token,
+                    } => {
+                        if cancellation_token.is_cancelled() {
+                            return Some((
+                                vec![AssistantMessageEvent::error_network(
+                                    "Bedrock request cancelled",
+                                )],
+                                StreamUnfoldState::Done,
+                            ));
+                        }
+
+                        match self.send_converse_stream(model, context, options).await {
+                            Ok(response) => {
+                                let byte_stream = response.bytes_stream();
+                                Some((
+                                    vec![],
+                                    StreamUnfoldState::Streaming {
+                                        byte_stream: Box::pin(byte_stream),
+                                        decoder: MessageFrameDecoder::new(),
+                                        buffer: BytesMut::new(),
+                                        state: BedrockStreamState::new(),
+                                        cancellation_token,
+                                    },
+                                ))
+                            }
+                            Err(err_event) => {
+                                Some((vec![err_event], StreamUnfoldState::Done))
+                            }
+                        }
+                    }
+                    StreamUnfoldState::Streaming {
+                        mut byte_stream,
+                        mut decoder,
+                        mut buffer,
+                        mut state,
+                        cancellation_token,
+                    } => {
+                        loop {
+                            // Try to decode a frame from the buffer first
+                            match decoder.decode_frame(&mut buffer) {
+                                Ok(DecodedFrame::Complete(message)) => {
+                                    let events = process_smithy_message(
+                                        &message, &mut state,
+                                    );
+                                    if !events.is_empty() {
+                                        // Check if this was the final Done event
+                                        let is_done = events.iter().any(|e| {
+                                            matches!(
+                                                e,
+                                                AssistantMessageEvent::Done { .. }
+                                                    | AssistantMessageEvent::Error { .. }
+                                            )
+                                        });
+                                        if is_done {
+                                            return Some((
+                                                events,
+                                                StreamUnfoldState::Done,
+                                            ));
+                                        }
+                                        return Some((
+                                            events,
+                                            StreamUnfoldState::Streaming {
+                                                byte_stream,
+                                                decoder,
+                                                buffer,
+                                                state,
+                                                cancellation_token,
+                                            },
+                                        ));
+                                    }
+                                    // No events from this frame (e.g. messageStop),
+                                    // continue decoding
+                                    continue;
+                                }
+                                Ok(DecodedFrame::Incomplete) => {
+                                    // Need more data — fall through to read from stream
+                                }
+                                Err(e) => {
+                                    warn!(error = %e, "Bedrock event-stream decode error");
+                                    let mut events = finalize::finalize_blocks(&mut state);
+                                    events.push(AssistantMessageEvent::error(format!(
+                                        "Bedrock event-stream decode error: {e}"
+                                    )));
+                                    return Some((events, StreamUnfoldState::Done));
+                                }
+                            }
+
+                            // Read more bytes from the network
+                            tokio::select! {
+                                biased;
+                                () = cancellation_token.cancelled() => {
+                                    let mut events = finalize::finalize_blocks(&mut state);
+                                    events.push(AssistantMessageEvent::error_network(
+                                        "Bedrock stream cancelled",
+                                    ));
+                                    return Some((events, StreamUnfoldState::Done));
+                                }
+                                chunk = byte_stream.next() => {
+                                    match chunk {
+                                        Some(Ok(bytes)) => {
+                                            buffer.extend_from_slice(&bytes);
+                                            // Loop back to try decoding
+                                        }
+                                        Some(Err(e)) => {
+                                            let mut events = finalize::finalize_blocks(&mut state);
+                                            events.push(AssistantMessageEvent::error_network(
+                                                format!("Bedrock stream read error: {e}"),
+                                            ));
+                                            return Some((events, StreamUnfoldState::Done));
+                                        }
+                                        None => {
+                                            // Stream ended — emit Done if we haven't yet
+                                            let mut events = finalize::finalize_blocks(&mut state);
+                                            if !events.is_empty() || state.stop_reason.is_some() {
+                                                let usage = state.usage.take().unwrap_or_default();
+                                                let stop_reason = map_stop_reason(
+                                                    state.stop_reason.as_deref(),
+                                                );
+                                                match stop_reason {
+                                                    Ok(sr) => events.push(
+                                                        AssistantMessageEvent::Done {
+                                                            stop_reason: sr,
+                                                            usage,
+                                                            cost: Cost::default(),
+                                                        },
+                                                    ),
+                                                    Err(err) => events.push(err),
+                                                }
+                                            }
+                                            return if events.is_empty() {
+                                                None
+                                            } else {
+                                                Some((events, StreamUnfoldState::Done))
+                                            };
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    StreamUnfoldState::Done => None,
+                }
+            },
+        )
+        .flat_map(stream::iter))
+    }
+}
+
+/// Internal state machine for the `stream::unfold` streaming loop.
+enum StreamUnfoldState<'a> {
+    Init {
+        model: &'a ModelSpec,
+        context: &'a AgentContext,
+        options: &'a StreamOptions,
+        cancellation_token: CancellationToken,
+    },
+    Streaming {
+        byte_stream: Pin<Box<dyn Stream<Item = Result<bytes::Bytes, reqwest::Error>> + Send + 'a>>,
+        decoder: MessageFrameDecoder,
+        buffer: BytesMut,
+        state: BedrockStreamState,
+        cancellation_token: CancellationToken,
+    },
+    Done,
+}
+
+/// Extract event-type and message-type headers from a smithy `Message` and
+/// dispatch to `parse_event_frame`.
+fn process_smithy_message(
+    message: &aws_smithy_types::event_stream::Message,
+    state: &mut BedrockStreamState,
+) -> Vec<AssistantMessageEvent> {
+    let mut event_type = None;
+    let mut message_type = None;
+    let mut exception_type = None;
+
+    for header in message.headers() {
+        let name = header.name().as_str();
+        match name {
+            ":event-type" => {
+                if let HeaderValue::String(val) = header.value() {
+                    event_type = Some(val.as_str().to_string());
+                }
+            }
+            ":message-type" => {
+                if let HeaderValue::String(val) = header.value() {
+                    message_type = Some(val.as_str().to_string());
+                }
+            }
+            ":exception-type" => {
+                if let HeaderValue::String(val) = header.value() {
+                    exception_type = Some(val.as_str().to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // Handle exception frames
+    if message_type.as_deref() == Some("exception") {
+        let exc_type = exception_type.as_deref().unwrap_or("unknown");
+        let payload_str = std::str::from_utf8(message.payload()).unwrap_or("(binary)");
+        warn!(exception_type = exc_type, "Bedrock exception frame");
+        let is_throttled = exc_type.to_lowercase().contains("throttl");
+        if is_throttled {
+            return vec![AssistantMessageEvent::error_throttled(format!(
+                "Bedrock throttled: {payload_str}"
+            ))];
+        }
+        return vec![AssistantMessageEvent::error(format!(
+            "Bedrock exception ({exc_type}): {payload_str}"
+        ))];
+    }
+
+    // Handle normal event frames
+    event_type.map_or_else(Vec::new, |et| {
+        parse_event_frame(&et, message.payload(), state).unwrap_or_default()
+    })
 }
 
 fn parse_event_frame(
@@ -659,6 +910,9 @@ fn convert_messages(messages: &[AgentMessage]) -> Vec<BedrockMessage> {
     result
 }
 
+// Old non-streaming response conversion — kept for backward compat; will be
+// removed in Phase 8 (T041).
+#[allow(dead_code)]
 fn response_to_events(response: BedrockResponse) -> Vec<AssistantMessageEvent> {
     let mut events = vec![AssistantMessageEvent::Start];
     let mut content_index = 0usize;
@@ -971,5 +1225,164 @@ mod tests {
         let payload = br#"{"usage":{"inputTokens":5,"outputTokens":0,"totalTokens":5}}"#;
         let events = parse_event_frame("metadata", payload, &mut state).unwrap();
         assert!(matches!(events[0], AssistantMessageEvent::Error { .. }));
+    }
+
+    /// Build a smithy event-stream `Message` with the given event-type header
+    /// and JSON payload. Used to simulate Bedrock ConverseStream frames.
+    fn make_event_message(
+        event_type: &str,
+        payload: &[u8],
+    ) -> aws_smithy_types::event_stream::Message {
+        use aws_smithy_types::event_stream::{Header, HeaderValue, Message};
+        Message::new_from_parts(
+            vec![
+                Header::new(":message-type", HeaderValue::String("event".into())),
+                Header::new(":event-type", HeaderValue::String(event_type.into())),
+            ],
+            payload.to_vec().into(),
+        )
+    }
+
+    /// Build a smithy exception `Message`.
+    fn make_exception_message(
+        exception_type: &str,
+        payload: &[u8],
+    ) -> aws_smithy_types::event_stream::Message {
+        use aws_smithy_types::event_stream::{Header, HeaderValue, Message};
+        Message::new_from_parts(
+            vec![
+                Header::new(":message-type", HeaderValue::String("exception".into())),
+                Header::new(
+                    ":exception-type",
+                    HeaderValue::String(exception_type.into()),
+                ),
+            ],
+            payload.to_vec().into(),
+        )
+    }
+
+    #[test]
+    fn text_event_stream_parsing() {
+        let mut state = BedrockStreamState::new();
+
+        // 1. messageStart
+        let msg = make_event_message("messageStart", br#"{"role":"assistant"}"#);
+        let events = process_smithy_message(&msg, &mut state);
+        assert_eq!(events.len(), 1);
+        assert!(matches!(events[0], AssistantMessageEvent::Start));
+
+        // 2. contentBlockStart (text)
+        let msg = make_event_message(
+            "contentBlockStart",
+            br#"{"contentBlockIndex":0,"start":{"type":"text"}}"#,
+        );
+        let events = process_smithy_message(&msg, &mut state);
+        assert_eq!(events.len(), 1);
+        assert!(matches!(
+            events[0],
+            AssistantMessageEvent::TextStart { content_index: 0 }
+        ));
+
+        // 3. contentBlockDelta (text)
+        let msg = make_event_message(
+            "contentBlockDelta",
+            br#"{"contentBlockIndex":0,"delta":{"type":"text","text":"Hello, world!"}}"#,
+        );
+        let events = process_smithy_message(&msg, &mut state);
+        assert_eq!(events.len(), 1);
+        assert!(matches!(
+            &events[0],
+            AssistantMessageEvent::TextDelta { content_index: 0, delta }
+                if delta == "Hello, world!"
+        ));
+
+        // 4. contentBlockStop
+        let msg = make_event_message("contentBlockStop", br#"{"contentBlockIndex":0}"#);
+        let events = process_smithy_message(&msg, &mut state);
+        assert_eq!(events.len(), 1);
+        assert!(matches!(
+            events[0],
+            AssistantMessageEvent::TextEnd { content_index: 0 }
+        ));
+
+        // 5. messageStop (no events emitted, captures stop_reason)
+        let msg = make_event_message("messageStop", br#"{"stopReason":"end_turn"}"#);
+        let events = process_smithy_message(&msg, &mut state);
+        assert!(events.is_empty());
+        assert_eq!(state.stop_reason.as_deref(), Some("end_turn"));
+
+        // 6. metadata → Done
+        let msg = make_event_message(
+            "metadata",
+            br#"{"usage":{"inputTokens":15,"outputTokens":25,"totalTokens":40}}"#,
+        );
+        let events = process_smithy_message(&msg, &mut state);
+        assert_eq!(events.len(), 1);
+        assert!(matches!(
+            &events[0],
+            AssistantMessageEvent::Done {
+                stop_reason: StopReason::Stop,
+                usage,
+                ..
+            } if usage.input == 15 && usage.output == 25 && usage.total == 40
+        ));
+    }
+
+    #[test]
+    fn exception_frame_handling() {
+        let mut state = BedrockStreamState::new();
+        let msg = make_exception_message("throttlingException", br#"{"message":"Rate exceeded"}"#);
+        let events = process_smithy_message(&msg, &mut state);
+        assert_eq!(events.len(), 1);
+        assert!(matches!(events[0], AssistantMessageEvent::Error { .. }));
+    }
+
+    #[test]
+    fn guardrail_intervened_maps_to_content_filtered() {
+        let mut state = BedrockStreamState::new();
+
+        // messageStop with guardrail_intervened
+        let msg = make_event_message("messageStop", br#"{"stopReason":"guardrail_intervened"}"#);
+        let _ = process_smithy_message(&msg, &mut state);
+        assert_eq!(state.stop_reason.as_deref(), Some("guardrail_intervened"));
+
+        // metadata should emit error, not Done
+        let msg = make_event_message(
+            "metadata",
+            br#"{"usage":{"inputTokens":5,"outputTokens":0,"totalTokens":5}}"#,
+        );
+        let events = process_smithy_message(&msg, &mut state);
+        assert_eq!(events.len(), 1);
+        assert!(matches!(events[0], AssistantMessageEvent::Error { .. }));
+    }
+
+    #[test]
+    fn stream_finalize_closes_open_text_block() {
+        let mut state = BedrockStreamState::new();
+        state.current_block_type = Some(BlockType::Text);
+        state.content_index = 2;
+        let blocks = state.drain_open_blocks();
+        assert_eq!(blocks.len(), 1);
+        assert!(matches!(blocks[0], OpenBlock::Text { content_index: 2 }));
+    }
+
+    #[test]
+    fn stream_finalize_closes_open_tool_block() {
+        let mut state = BedrockStreamState::new();
+        state.current_block_type = Some(BlockType::ToolUse);
+        state.content_index = 1;
+        let blocks = state.drain_open_blocks();
+        assert_eq!(blocks.len(), 1);
+        assert!(matches!(
+            blocks[0],
+            OpenBlock::ToolCall { content_index: 1 }
+        ));
+    }
+
+    #[test]
+    fn stream_finalize_empty_when_no_open_blocks() {
+        let mut state = BedrockStreamState::new();
+        let blocks = state.drain_open_blocks();
+        assert!(blocks.is_empty());
     }
 }
