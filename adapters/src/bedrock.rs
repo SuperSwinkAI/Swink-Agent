@@ -28,9 +28,16 @@ use crate::convert::extract_tool_schemas;
 struct BedrockRequest {
     messages: Vec<BedrockMessage>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    system: Option<Vec<BedrockSystemBlock>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     inference_config: Option<BedrockInferenceConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tool_config: Option<BedrockToolConfig>,
+}
+
+#[derive(Debug, Serialize)]
+struct BedrockSystemBlock {
+    text: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -146,6 +153,117 @@ struct BedrockUsage {
     output_tokens: u64,
     #[serde(default)]
     total_tokens: u64,
+}
+
+// --- Streaming event deserialization types ---
+// These types are used by `parse_event_frame()` which will be wired into the
+// streaming path in Phase 3. For now they are exercised only in unit tests.
+
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+struct MessageStartEvent {
+    role: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ContentBlockStartEvent {
+    content_block_index: usize,
+    start: StartBlock,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+enum StartBlock {
+    #[serde(rename = "text")]
+    Text,
+    #[serde(rename = "toolUse")]
+    ToolUse {
+        #[serde(rename = "toolUseId")]
+        tool_use_id: String,
+        name: String,
+    },
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ContentBlockDeltaEvent {
+    content_block_index: usize,
+    delta: DeltaBlock,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+enum DeltaBlock {
+    #[serde(rename = "text")]
+    Text { text: String },
+    #[serde(rename = "toolUse")]
+    ToolUse { input: String },
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ContentBlockStopEvent {
+    content_block_index: usize,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MessageStopEvent {
+    stop_reason: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct MetadataEvent {
+    usage: BedrockStreamUsage,
+    #[serde(default)]
+    metrics: Option<BedrockMetrics>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[allow(clippy::struct_field_names)]
+struct BedrockStreamUsage {
+    #[serde(default)]
+    input_tokens: u64,
+    #[serde(default)]
+    output_tokens: u64,
+    #[serde(default)]
+    total_tokens: u64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BedrockMetrics {
+    #[serde(default)]
+    latency_ms: u64,
+}
+
+// --- Streaming state ---
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BlockType {
+    Text,
+    ToolUse,
+}
+
+#[derive(Debug)]
+struct BedrockStreamState {
+    current_block_type: Option<BlockType>,
+    stop_reason: Option<String>,
+    usage: Option<Usage>,
+    content_index: usize,
+}
+
+impl BedrockStreamState {
+    const fn new() -> Self {
+        Self {
+            current_block_type: None,
+            stop_reason: None,
+            usage: None,
+            content_index: 0,
+        }
+    }
 }
 
 pub struct BedrockStreamFn {
@@ -319,8 +437,112 @@ impl BedrockStreamFn {
     }
 }
 
+fn parse_event_frame(
+    event_type: &str,
+    payload: &[u8],
+    state: &mut BedrockStreamState,
+) -> Option<Vec<AssistantMessageEvent>> {
+    match event_type {
+        "messageStart" => {
+            let _event: MessageStartEvent = serde_json::from_slice(payload).ok()?;
+            Some(vec![AssistantMessageEvent::Start])
+        }
+        "contentBlockStart" => {
+            let event: ContentBlockStartEvent = serde_json::from_slice(payload).ok()?;
+            state.content_index = event.content_block_index;
+            match event.start {
+                StartBlock::Text => {
+                    state.current_block_type = Some(BlockType::Text);
+                    Some(vec![AssistantMessageEvent::TextStart {
+                        content_index: event.content_block_index,
+                    }])
+                }
+                StartBlock::ToolUse { tool_use_id, name } => {
+                    state.current_block_type = Some(BlockType::ToolUse);
+                    Some(vec![AssistantMessageEvent::ToolCallStart {
+                        content_index: event.content_block_index,
+                        id: tool_use_id,
+                        name,
+                    }])
+                }
+            }
+        }
+        "contentBlockDelta" => {
+            let event: ContentBlockDeltaEvent = serde_json::from_slice(payload).ok()?;
+            match event.delta {
+                DeltaBlock::Text { text } => Some(vec![AssistantMessageEvent::TextDelta {
+                    content_index: event.content_block_index,
+                    delta: text,
+                }]),
+                DeltaBlock::ToolUse { input } => Some(vec![AssistantMessageEvent::ToolCallDelta {
+                    content_index: event.content_block_index,
+                    delta: input,
+                }]),
+            }
+        }
+        "contentBlockStop" => {
+            let event: ContentBlockStopEvent = serde_json::from_slice(payload).ok()?;
+            let evt = match state.current_block_type {
+                Some(BlockType::Text) => AssistantMessageEvent::TextEnd {
+                    content_index: event.content_block_index,
+                },
+                Some(BlockType::ToolUse) => AssistantMessageEvent::ToolCallEnd {
+                    content_index: event.content_block_index,
+                },
+                None => return None,
+            };
+            state.current_block_type = None;
+            Some(vec![evt])
+        }
+        "messageStop" => {
+            let event: MessageStopEvent = serde_json::from_slice(payload).ok()?;
+            state.stop_reason = Some(event.stop_reason);
+            None
+        }
+        "metadata" => {
+            let event: MetadataEvent = serde_json::from_slice(payload).ok()?;
+            let usage = Usage {
+                input: event.usage.input_tokens,
+                output: event.usage.output_tokens,
+                total: if event.usage.total_tokens == 0 {
+                    event.usage.input_tokens + event.usage.output_tokens
+                } else {
+                    event.usage.total_tokens
+                },
+                ..Usage::default()
+            };
+            let stop_reason = map_stop_reason(state.stop_reason.as_deref());
+            match stop_reason {
+                Ok(stop_reason) => Some(vec![AssistantMessageEvent::Done {
+                    stop_reason,
+                    usage,
+                    cost: Cost::default(),
+                }]),
+                Err(error_event) => Some(vec![error_event]),
+            }
+        }
+        _ => {
+            debug!(event_type, "unknown Bedrock event type, skipping");
+            None
+        }
+    }
+}
+
+#[allow(clippy::result_large_err)]
+fn map_stop_reason(reason: Option<&str>) -> Result<StopReason, AssistantMessageEvent> {
+    match reason {
+        Some("tool_use") => Ok(StopReason::ToolUse),
+        Some("max_tokens") => Ok(StopReason::Length),
+        Some("guardrail_intervened") => Err(AssistantMessageEvent::error(
+            "Bedrock content filter: guardrail intervened",
+        )),
+        // end_turn, stop_sequence, None, and any unknown reason all map to Stop
+        _ => Ok(StopReason::Stop),
+    }
+}
+
 fn build_request(context: &AgentContext, options: &StreamOptions) -> BedrockRequest {
-    let messages = convert_messages(&context.messages);
+    let mut messages = convert_messages(&context.messages);
     let inference_config = Some(BedrockInferenceConfig {
         temperature: options.temperature,
         max_tokens: options.max_tokens,
@@ -339,20 +561,14 @@ fn build_request(context: &AgentContext, options: &StreamOptions) -> BedrockRequ
         .collect::<Vec<_>>();
     let tool_config = (!tools.is_empty()).then_some(BedrockToolConfig { tools });
 
-    let mut messages = if context.system_prompt.is_empty() {
-        messages
+    let system = if context.system_prompt.is_empty() {
+        None
     } else {
-        let mut messages = Vec::with_capacity(messages.len() + 1);
-        messages.push(BedrockMessage {
-            role: "user".to_string(),
-            content: vec![BedrockContentBlock {
-                text: Some(context.system_prompt.clone()),
-                ..BedrockContentBlock::default()
-            }],
-        });
-        messages.extend(convert_messages(&context.messages));
-        messages
+        Some(vec![BedrockSystemBlock {
+            text: context.system_prompt.clone(),
+        }])
     };
+
     if messages.is_empty() {
         messages.push(BedrockMessage {
             role: "user".to_string(),
@@ -365,6 +581,7 @@ fn build_request(context: &AgentContext, options: &StreamOptions) -> BedrockRequ
 
     BedrockRequest {
         messages,
+        system,
         inference_config,
         tool_config,
     }
@@ -596,5 +813,163 @@ mod tests {
         assert_eq!(&amz_date[8..9], "T");
         assert_eq!(date_stamp.len(), 8);
         assert!(date_stamp.chars().all(|c| c.is_ascii_digit()));
+    }
+
+    #[test]
+    fn parse_message_start_event() {
+        let mut state = BedrockStreamState::new();
+        let payload = br#"{"role":"assistant"}"#;
+        let events = parse_event_frame("messageStart", payload, &mut state);
+        assert!(matches!(
+            events.as_deref(),
+            Some([AssistantMessageEvent::Start])
+        ));
+    }
+
+    #[test]
+    fn parse_text_content_block_events() {
+        let mut state = BedrockStreamState::new();
+
+        // contentBlockStart with text
+        let payload = br#"{"contentBlockIndex":0,"start":{"type":"text"}}"#;
+        let events = parse_event_frame("contentBlockStart", payload, &mut state).unwrap();
+        assert!(matches!(
+            events[0],
+            AssistantMessageEvent::TextStart { content_index: 0 }
+        ));
+        assert_eq!(state.current_block_type, Some(BlockType::Text));
+
+        // contentBlockDelta with text
+        let payload = br#"{"contentBlockIndex":0,"delta":{"type":"text","text":"Hello"}}"#;
+        let events = parse_event_frame("contentBlockDelta", payload, &mut state).unwrap();
+        assert!(matches!(
+            &events[0],
+            AssistantMessageEvent::TextDelta { content_index: 0, delta } if delta == "Hello"
+        ));
+
+        // contentBlockStop
+        let payload = br#"{"contentBlockIndex":0}"#;
+        let events = parse_event_frame("contentBlockStop", payload, &mut state).unwrap();
+        assert!(matches!(
+            events[0],
+            AssistantMessageEvent::TextEnd { content_index: 0 }
+        ));
+        assert_eq!(state.current_block_type, None);
+    }
+
+    #[test]
+    fn parse_tool_use_content_block_events() {
+        let mut state = BedrockStreamState::new();
+
+        // contentBlockStart with toolUse
+        let payload = br#"{"contentBlockIndex":1,"start":{"type":"toolUse","toolUseId":"tc_123","name":"get_weather"}}"#;
+        let events = parse_event_frame("contentBlockStart", payload, &mut state).unwrap();
+        assert!(matches!(
+            &events[0],
+            AssistantMessageEvent::ToolCallStart { content_index: 1, id, name }
+                if id == "tc_123" && name == "get_weather"
+        ));
+        assert_eq!(state.current_block_type, Some(BlockType::ToolUse));
+
+        // contentBlockDelta with toolUse input
+        let payload =
+            br#"{"contentBlockIndex":1,"delta":{"type":"toolUse","input":"{\"city\":\"SF\"}"}}"#;
+        let events = parse_event_frame("contentBlockDelta", payload, &mut state).unwrap();
+        assert!(matches!(
+            &events[0],
+            AssistantMessageEvent::ToolCallDelta { content_index: 1, delta }
+                if delta == r#"{"city":"SF"}"#
+        ));
+
+        // contentBlockStop
+        let payload = br#"{"contentBlockIndex":1}"#;
+        let events = parse_event_frame("contentBlockStop", payload, &mut state).unwrap();
+        assert!(matches!(
+            events[0],
+            AssistantMessageEvent::ToolCallEnd { content_index: 1 }
+        ));
+    }
+
+    #[test]
+    fn parse_message_stop_and_metadata() {
+        let mut state = BedrockStreamState::new();
+
+        // messageStop captures stop_reason
+        let payload = br#"{"stopReason":"end_turn"}"#;
+        let events = parse_event_frame("messageStop", payload, &mut state);
+        assert!(events.is_none());
+        assert_eq!(state.stop_reason.as_deref(), Some("end_turn"));
+
+        // metadata emits Done
+        let payload = br#"{"usage":{"inputTokens":10,"outputTokens":20,"totalTokens":30},"metrics":{"latencyMs":150}}"#;
+        let events = parse_event_frame("metadata", payload, &mut state).unwrap();
+        assert!(matches!(
+            &events[0],
+            AssistantMessageEvent::Done { stop_reason: StopReason::Stop, usage, .. }
+                if usage.input == 10 && usage.output == 20 && usage.total == 30
+        ));
+    }
+
+    #[test]
+    fn map_stop_reason_variants() {
+        assert_eq!(map_stop_reason(Some("end_turn")).unwrap(), StopReason::Stop);
+        assert_eq!(
+            map_stop_reason(Some("stop_sequence")).unwrap(),
+            StopReason::Stop
+        );
+        assert_eq!(
+            map_stop_reason(Some("tool_use")).unwrap(),
+            StopReason::ToolUse
+        );
+        assert_eq!(
+            map_stop_reason(Some("max_tokens")).unwrap(),
+            StopReason::Length
+        );
+        assert_eq!(map_stop_reason(None).unwrap(), StopReason::Stop);
+        assert!(map_stop_reason(Some("guardrail_intervened")).is_err());
+    }
+
+    #[test]
+    fn build_request_uses_system_field() {
+        let context = AgentContext {
+            system_prompt: "You are a helpful assistant.".to_string(),
+            messages: vec![AgentMessage::Llm(LlmMessage::User(
+                swink_agent::types::UserMessage {
+                    content: vec![ContentBlock::Text {
+                        text: "Hello".to_string(),
+                    }],
+                    timestamp: 0,
+                    cache_hint: None,
+                },
+            ))],
+            tools: vec![],
+        };
+        let options = StreamOptions::default();
+        let request = build_request(&context, &options);
+        assert!(request.system.is_some());
+        assert_eq!(
+            request.system.unwrap()[0].text,
+            "You are a helpful assistant."
+        );
+        // Should NOT have system prompt as first user message
+        assert_eq!(request.messages.len(), 1);
+        assert_eq!(request.messages[0].role, "user");
+    }
+
+    #[test]
+    fn parse_unknown_event_returns_none() {
+        let mut state = BedrockStreamState::new();
+        let events = parse_event_frame("someUnknownEvent", b"{}", &mut state);
+        assert!(events.is_none());
+    }
+
+    #[test]
+    fn guardrail_intervened_emits_error() {
+        let mut state = BedrockStreamState::new();
+        state.stop_reason = Some("guardrail_intervened".to_string());
+
+        let payload = br#"{"usage":{"inputTokens":5,"outputTokens":0,"totalTokens":5}}"#;
+        let events = parse_event_frame("metadata", payload, &mut state).unwrap();
+        assert!(matches!(events[0], AssistantMessageEvent::Error { .. }));
     }
 }

@@ -31,6 +31,8 @@ insta = { version = "1", features = ["json"] }
 syn = { version = "2", features = ["full", "extra-traits"] }
 quote = "1"
 proc-macro2 = "1"
+aws-smithy-eventstream = "0.60"
+aws-smithy-types = "1"
 
 [package]
 name = "swink-agent"

@@ -24,7 +24,7 @@ ollama = []
 gemini = []
 proxy = []
 azure = []
-bedrock = ["dep:sha2", "dep:hmac", "dep:chrono"]
+bedrock = ["dep:sha2", "dep:hmac", "dep:chrono", "dep:aws-smithy-eventstream", "dep:aws-smithy-types"]
 mistral = []
 xai = ["openai"]
 
@@ -42,6 +42,8 @@ thiserror.workspace = true
 sha2 = { workspace = true, optional = true }
 hmac = { workspace = true, optional = true }
 chrono = { workspace = true, optional = true }
+aws-smithy-eventstream = { workspace = true, optional = true }
+aws-smithy-types = { workspace = true, optional = true }
 bytes = "1"
 
 [dev-dependencies]
