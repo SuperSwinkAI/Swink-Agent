@@ -89,10 +89,15 @@ pub trait AsyncSessionStore: Send + Sync {
 /// Adapter that wraps a synchronous [`SessionStore`](crate::store::SessionStore)
 /// as an [`AsyncSessionStore`] by running sync methods via `tokio::task::spawn_blocking`.
 ///
+/// Custom messages are preserved faithfully: `save`/`append` snapshot custom
+/// messages to their JSON envelope before crossing the thread boundary, and
+/// `load` uses the stored registry to restore them.
+///
 /// Concurrent writes to the same session may corrupt the file.
 /// Callers are expected to enforce single-writer access.
 pub struct BlockingSessionStore<S: crate::store::SessionStore + 'static> {
     inner: Arc<S>,
+    registry: Option<Arc<CustomMessageRegistry>>,
 }
 
 impl<S: crate::store::SessionStore + 'static> BlockingSessionStore<S> {
@@ -100,21 +105,65 @@ impl<S: crate::store::SessionStore + 'static> BlockingSessionStore<S> {
     pub fn new(store: S) -> Self {
         Self {
             inner: Arc::new(store),
+            registry: None,
         }
+    }
+
+    /// Attach a [`CustomMessageRegistry`] for deserializing custom messages on load.
+    ///
+    /// Without a registry, the per-call `registry` argument to [`AsyncSessionStore::load`]
+    /// is ignored because `&CustomMessageRegistry` cannot cross `spawn_blocking`
+    /// boundaries. Providing a registry here ensures custom messages survive the
+    /// blocking adapter round-trip.
+    #[must_use]
+    pub fn with_registry(mut self, registry: Arc<CustomMessageRegistry>) -> Self {
+        self.registry = Some(registry);
+        self
     }
 }
 
-/// Extract `LlmMessage` variants from a slice of `AgentMessage`, cloning each.
-/// Custom messages are filtered out (they are not `Clone` and cannot cross
-/// `spawn_blocking` boundaries). The inner `SessionStore::save` will still
-/// persist them if the concrete backend supports it — this limitation only
-/// applies to the `BlockingSessionStore` adapter.
-fn clone_llm_messages(messages: &[AgentMessage]) -> Vec<AgentMessage> {
+/// A lightweight [`CustomMessage`] stand-in that holds pre-serialized data.
+///
+/// Used to ferry custom messages across `spawn_blocking` boundaries. The
+/// original `Box<dyn CustomMessage>` is not `Clone`, so we snapshot its
+/// `type_name()` and `to_json()` output, which *are* `Clone + Send`.
+#[derive(Debug, Clone)]
+struct SerializedCustomMessage {
+    name: String,
+    json: serde_json::Value,
+}
+
+impl swink_agent::CustomMessage for SerializedCustomMessage {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+    fn type_name(&self) -> Option<&str> {
+        Some(&self.name)
+    }
+    fn to_json(&self) -> Option<serde_json::Value> {
+        Some(self.json.clone())
+    }
+}
+
+/// Clone messages for transfer across `spawn_blocking`.
+///
+/// `Llm` variants are cloned directly. `Custom` variants are snapshot-serialized
+/// into [`SerializedCustomMessage`] wrappers so the sync store can persist them
+/// faithfully. Custom messages that lack `type_name()` or `to_json()` are
+/// skipped with a warning — matching the sync store's own behaviour.
+fn clone_messages_for_blocking(messages: &[AgentMessage]) -> Vec<AgentMessage> {
     messages
         .iter()
         .filter_map(|m| match m {
             AgentMessage::Llm(llm) => Some(AgentMessage::Llm(llm.clone())),
-            AgentMessage::Custom(_) => None,
+            AgentMessage::Custom(custom) => {
+                let name = custom.type_name()?;
+                let json = custom.to_json()?;
+                Some(AgentMessage::Custom(Box::new(SerializedCustomMessage {
+                    name: name.to_string(),
+                    json,
+                })))
+            }
         })
         .collect()
 }
@@ -129,32 +178,30 @@ impl<S: crate::store::SessionStore + 'static> AsyncSessionStore for BlockingSess
         let inner = Arc::clone(&self.inner);
         let id = id.to_string();
         let meta = meta.clone();
-        // Clone LLM messages for thread transfer; custom messages are filtered
-        // since Box<dyn CustomMessage> is not Clone. Callers requiring full
-        // custom message persistence should use the sync store directly.
-        let messages = clone_llm_messages(messages);
+        let messages = clone_messages_for_blocking(messages);
         spawn_store_call(move || inner.save(&id, &meta, &messages))
     }
 
     fn append(&self, id: &str, messages: &[AgentMessage]) -> SessionStoreFuture<'_, ()> {
         let inner = Arc::clone(&self.inner);
         let id = id.to_string();
-        let messages = clone_llm_messages(messages);
+        let messages = clone_messages_for_blocking(messages);
         spawn_store_call(move || inner.append(&id, &messages))
     }
 
     fn load(
         &self,
         id: &str,
-        registry: Option<&CustomMessageRegistry>,
+        _registry: Option<&CustomMessageRegistry>,
     ) -> SessionStoreFuture<'_, (SessionMeta, Vec<AgentMessage>)> {
         let inner = Arc::clone(&self.inner);
         let id = id.to_string();
-        // CustomMessageRegistry is not Send, so we load without registry from
-        // the blocking adapter. Callers needing custom message deserialization
-        // should use the sync store directly or a native async backend.
-        let _ = registry;
-        spawn_store_call(move || inner.load(&id, None))
+        // Use the stored registry (set via `with_registry`) because a bare
+        // `&CustomMessageRegistry` reference cannot cross `spawn_blocking`.
+        // The per-call `_registry` parameter is accepted for trait conformance
+        // but the stored `Arc` takes precedence.
+        let registry = self.registry.clone();
+        spawn_store_call(move || inner.load(&id, registry.as_deref()))
     }
 
     fn list(&self) -> SessionStoreFuture<'_, Vec<SessionMeta>> {
@@ -284,5 +331,169 @@ mod tests {
 
         let state = async_store.load_state("state_async").await.unwrap();
         assert_eq!(state, Some(serde_json::json!({"scroll": 42})));
+    }
+
+    // ── Helper for custom-message regression tests ──────────────────────
+
+    #[derive(Debug)]
+    struct TestCustomMsg {
+        data: String,
+    }
+
+    impl swink_agent::CustomMessage for TestCustomMsg {
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+        fn type_name(&self) -> Option<&str> {
+            Some("TestCustomMsg")
+        }
+        fn to_json(&self) -> Option<serde_json::Value> {
+            Some(serde_json::json!({ "data": self.data }))
+        }
+    }
+
+    fn test_registry() -> CustomMessageRegistry {
+        let mut registry = CustomMessageRegistry::new();
+        registry.register(
+            "TestCustomMsg",
+            Box::new(|val: serde_json::Value| {
+                let data = val
+                    .get("data")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| "missing data".to_string())?;
+                Ok(Box::new(TestCustomMsg {
+                    data: data.to_string(),
+                }) as Box<dyn swink_agent::CustomMessage>)
+            }),
+        );
+        registry
+    }
+
+    fn test_meta(id: &str) -> SessionMeta {
+        let now = now_utc();
+        SessionMeta {
+            id: id.to_string(),
+            title: "Test".to_string(),
+            created_at: now,
+            updated_at: now,
+            version: 1,
+            sequence: 0,
+        }
+    }
+
+    // ── Regression tests for #104 ───────────────────────────────────────
+
+    #[tokio::test]
+    async fn blocking_adapter_preserves_custom_messages() {
+        let dir = tempfile::tempdir().unwrap();
+        let jsonl_store = JsonlSessionStore::new(dir.path().to_path_buf()).unwrap();
+        let registry = Arc::new(test_registry());
+
+        let async_store =
+            BlockingSessionStore::new(jsonl_store).with_registry(Arc::clone(&registry));
+
+        let messages: Vec<AgentMessage> = vec![
+            AgentMessage::Llm(swink_agent::LlmMessage::User(swink_agent::UserMessage {
+                content: vec![swink_agent::ContentBlock::Text {
+                    text: "hello".to_string(),
+                }],
+                timestamp: 1,
+                cache_hint: None,
+            })),
+            AgentMessage::Custom(Box::new(TestCustomMsg {
+                data: "preserved".to_string(),
+            })),
+            AgentMessage::Llm(swink_agent::LlmMessage::User(swink_agent::UserMessage {
+                content: vec![swink_agent::ContentBlock::Text {
+                    text: "world".to_string(),
+                }],
+                timestamp: 2,
+                cache_hint: None,
+            })),
+        ];
+
+        let meta = test_meta("custom_save");
+        async_store
+            .save("custom_save", &meta, &messages)
+            .await
+            .unwrap();
+
+        // Load back through the blocking adapter — custom messages must survive.
+        let (_, loaded) = async_store.load("custom_save", None).await.unwrap();
+        assert_eq!(loaded.len(), 3, "all three messages must be loaded");
+        assert!(matches!(loaded[0], AgentMessage::Llm(_)));
+        assert!(matches!(loaded[1], AgentMessage::Custom(_)));
+        assert!(matches!(loaded[2], AgentMessage::Llm(_)));
+
+        let custom = loaded[1].downcast_ref::<TestCustomMsg>().unwrap();
+        assert_eq!(custom.data, "preserved");
+    }
+
+    #[tokio::test]
+    async fn blocking_adapter_passes_registry_on_load() {
+        let dir = tempfile::tempdir().unwrap();
+        let registry = Arc::new(test_registry());
+
+        // Save directly via the sync store so we know the data is correct.
+        {
+            let sync_store = JsonlSessionStore::new(dir.path().to_path_buf()).unwrap();
+            let meta = test_meta("reg_load");
+            let messages: Vec<AgentMessage> = vec![AgentMessage::Custom(Box::new(TestCustomMsg {
+                data: "via-registry".to_string(),
+            }))];
+            crate::store::SessionStore::save(&sync_store, "reg_load", &meta, &messages).unwrap();
+        }
+
+        // Load through the blocking adapter with a registry — must restore the custom message.
+        let jsonl_store = JsonlSessionStore::new(dir.path().to_path_buf()).unwrap();
+        let async_store = BlockingSessionStore::new(jsonl_store).with_registry(registry);
+        let (_, loaded) = async_store.load("reg_load", None).await.unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert!(matches!(loaded[0], AgentMessage::Custom(_)));
+        let custom = loaded[0].downcast_ref::<TestCustomMsg>().unwrap();
+        assert_eq!(custom.data, "via-registry");
+    }
+
+    #[tokio::test]
+    async fn blocking_adapter_append_preserves_custom_messages() {
+        let dir = tempfile::tempdir().unwrap();
+        let jsonl_store = JsonlSessionStore::new(dir.path().to_path_buf()).unwrap();
+        let registry = Arc::new(test_registry());
+
+        let async_store =
+            BlockingSessionStore::new(jsonl_store).with_registry(Arc::clone(&registry));
+
+        // Create session with an LLM message.
+        let meta = test_meta("custom_append");
+        let initial: Vec<AgentMessage> = vec![AgentMessage::Llm(swink_agent::LlmMessage::User(
+            swink_agent::UserMessage {
+                content: vec![swink_agent::ContentBlock::Text {
+                    text: "start".to_string(),
+                }],
+                timestamp: 1,
+                cache_hint: None,
+            },
+        ))];
+        async_store
+            .save("custom_append", &meta, &initial)
+            .await
+            .unwrap();
+
+        // Append a custom message via the blocking adapter.
+        let appended: Vec<AgentMessage> = vec![AgentMessage::Custom(Box::new(TestCustomMsg {
+            data: "appended".to_string(),
+        }))];
+        async_store
+            .append("custom_append", &appended)
+            .await
+            .unwrap();
+
+        // Reload and verify the custom message survived.
+        let (_, loaded) = async_store.load("custom_append", None).await.unwrap();
+        assert_eq!(loaded.len(), 2);
+        assert!(matches!(loaded[0], AgentMessage::Llm(_)));
+        assert!(matches!(loaded[1], AgentMessage::Custom(_)));
+        let custom = loaded[1].downcast_ref::<TestCustomMsg>().unwrap();
+        assert_eq!(custom.data, "appended");
     }
 }
