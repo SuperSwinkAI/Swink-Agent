@@ -92,13 +92,13 @@
 
 ### Tests for User Story 3
 
-- [ ] T022 [US3] Write test: agent with direct policy and plugin policy — verify plugin policy runs first, then direct policy in `tests/plugin_integration.rs`
-- [ ] T023 [P] [US3] Write test: agent with direct policies only (no plugins) — verify zero behavioral change in `tests/plugin_integration.rs`
-- [ ] T024 [P] [US3] Write test: plugin Stop verdict prevents direct policies from evaluating in `tests/plugin_integration.rs`
+- [x] T022 [US3] Write test: agent with direct policy and plugin policy — verify plugin policy runs first, then direct policy in `tests/plugin_integration.rs`
+- [x] T023 [P] [US3] Write test: agent with direct policies only (no plugins) — verify zero behavioral change in `tests/plugin_integration.rs`
+- [x] T024 [P] [US3] Write test: plugin Stop verdict prevents direct policies from evaluating in `tests/plugin_integration.rs`
 
 ### Implementation for User Story 3
 
-- [ ] T025 [US3] Verify merge order in `Agent::new()`: plugin policies prepended, direct policies appended — adjust if needed in `src/agent.rs`
+- [x] T025 [US3] Verify merge order in `Agent::new()`: plugin policies prepended, direct policies appended — adjust if needed in `src/agent.rs`
 
 **Checkpoint**: Backward compatibility confirmed. Mixed plugin + direct policy configurations work correctly.
 
