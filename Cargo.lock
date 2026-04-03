@@ -6657,7 +6657,7 @@ checksum = "0baa01c3efebe4050c7bb999ae87d5b17256b7f71391389e5fc08cdcd98ad550"
 dependencies = [
  "bytes",
  "futures-util",
- "http-body",
+ "http-body 1.0.1",
  "http-body-util",
  "pin-project-lite",
 ]
