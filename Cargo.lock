@@ -6924,6 +6924,7 @@ name = "swink-agent-mcp"
 version = "0.4.2"
 dependencies = [
  "rmcp",
+ "schemars 1.2.1",
  "serde",
  "serde_json",
  "swink-agent",

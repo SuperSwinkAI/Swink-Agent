@@ -3,8 +3,13 @@
 //! Provides utilities to spawn in-process mock MCP servers that advertise
 //! configurable tools and return configurable results.
 
-use std::collections::HashMap;
+#![allow(dead_code, clippy::unused_self, clippy::missing_const_for_fn)]
 
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use rmcp::model::{ServerCapabilities, ServerInfo};
+use rmcp::{ServerHandler, tool};
 use serde_json::Value;
 
 /// Configuration for a single mock tool.
@@ -68,7 +73,7 @@ impl MockToolDef {
 pub struct MockServerConfig {
     /// Tools to advertise.
     pub tools: Vec<MockToolDef>,
-    /// Custom tool results keyed by `(tool_name, serialized_args)`.
+    /// Custom tool results keyed by tool name.
     pub custom_results: HashMap<String, MockToolDef>,
 }
 
@@ -88,4 +93,74 @@ impl MockServerConfig {
             custom_results: HashMap::new(),
         }
     }
+}
+
+/// A mock MCP server that advertises configurable tools.
+///
+/// Uses rmcp's tool macro system to implement `ServerHandler`.
+#[derive(Debug, Clone)]
+pub struct MockMcpServer {
+    /// Map of tool name to (result text, is error).
+    results: Arc<HashMap<String, (String, bool)>>,
+}
+
+impl MockMcpServer {
+    pub fn from_config(config: &MockServerConfig) -> Self {
+        let mut results = HashMap::new();
+        for tool_def in &config.tools {
+            results.insert(
+                tool_def.name.clone(),
+                (tool_def.result_text.clone(), tool_def.is_error),
+            );
+        }
+        Self {
+            results: Arc::new(results),
+        }
+    }
+}
+
+#[tool(tool_box)]
+impl MockMcpServer {
+    /// A generic echo tool for testing — returns whatever text it receives.
+    #[tool(description = "Echo the input back")]
+    fn echo(&self, #[tool(param)] text: String) -> String {
+        text
+    }
+}
+
+#[tool(tool_box)]
+impl ServerHandler for MockMcpServer {
+    fn get_info(&self) -> ServerInfo {
+        ServerInfo {
+            instructions: Some("Mock MCP server for testing".into()),
+            capabilities: ServerCapabilities::builder().enable_tools().build(),
+            ..ServerInfo::default()
+        }
+    }
+}
+
+/// Spawn an in-process MCP server and connect a client, returning the running client service.
+///
+/// Uses `tokio::io::duplex()` to create an in-memory bidirectional channel.
+pub async fn spawn_mock_server_with_client(
+    config: &MockServerConfig,
+) -> rmcp::service::RunningService<rmcp::service::RoleClient, rmcp::model::ClientInfo> {
+    use rmcp::service::ServiceExt;
+
+    let server = MockMcpServer::from_config(config);
+
+    // Create in-memory duplex streams.
+    let (client_stream, server_stream) = tokio::io::duplex(4096);
+
+    // Spawn the server on one end of the duplex.
+    let _server_handle = tokio::spawn(async move {
+        let _ = server.serve(server_stream).await;
+    });
+
+    // Connect the client on the other end.
+    let client_info = rmcp::model::ClientInfo::default();
+    client_info
+        .serve(client_stream)
+        .await
+        .expect("client connection should succeed")
 }

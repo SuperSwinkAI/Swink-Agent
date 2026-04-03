@@ -48,18 +48,18 @@
 
 ### Tests for User Story 1
 
-- [ ] T010 [P] [US1] Write test in mcp/tests/connection_test.rs: connect to mock stdio MCP server, verify connection succeeds and tools are discovered
-- [ ] T011 [P] [US1] Write test in mcp/tests/tool_test.rs: create McpTool from discovered tool, verify name(), description(), parameters_schema() return correct values from MCP server
-- [ ] T012 [P] [US1] Write test in mcp/tests/tool_test.rs: execute McpTool, verify call is forwarded to MCP server and result is converted to AgentToolResult
-- [ ] T013 [P] [US1] Write test in mcp/tests/connection_test.rs: attempt connection to non-existent server, verify graceful error with McpError::SpawnFailed
+- [x] T010 [P] [US1] Write test in mcp/tests/connection_test.rs: connect to mock stdio MCP server, verify connection succeeds and tools are discovered
+- [x] T011 [P] [US1] Write test in mcp/tests/tool_test.rs: create McpTool from discovered tool, verify name(), description(), parameters_schema() return correct values from MCP server
+- [x] T012 [P] [US1] Write test in mcp/tests/tool_test.rs: execute McpTool, verify call is forwarded to MCP server and result is converted to AgentToolResult
+- [x] T013 [P] [US1] Write test in mcp/tests/connection_test.rs: attempt connection to non-existent server, verify graceful error with McpError::SpawnFailed
 
 ### Implementation for User Story 1
 
-- [ ] T014 [US1] Create mcp/src/connection.rs with McpConnection struct: holds McpServerConfig, rmcp RunningService, discovered tools Vec, and McpConnectionStatus enum (Connected, Disconnected)
-- [ ] T015 [US1] Implement McpConnection::connect() for stdio transport: spawn subprocess via rmcp TokioChildProcessBuilder with configured command, args, and env vars, call peer().list_all_tools(), store discovered tools
-- [ ] T016 [US1] Create mcp/src/tool.rs with McpTool struct implementing AgentTool trait: name() returns prefixed name, description() and parameters_schema() from MCP Tool definition, metadata() returns ToolMetadata::with_namespace(server_name), requires_approval() returns config value
-- [ ] T017 [US1] Implement McpTool::execute() in mcp/src/tool.rs: construct CallToolRequestParams from params Value, call connection.peer().call_tool(), convert CallToolResult to AgentToolResult via convert module, respect cancellation token via tokio::select!
-- [ ] T018 [US1] Create mcp/src/event.rs with helper functions for emitting MCP AgentEvent variants through a provided event dispatcher closure
+- [x] T014 [US1] Create mcp/src/connection.rs with McpConnection struct: holds McpServerConfig, rmcp RunningService, discovered tools Vec, and McpConnectionStatus enum (Connected, Disconnected)
+- [x] T015 [US1] Implement McpConnection::connect() for stdio transport: spawn subprocess via rmcp TokioChildProcessBuilder with configured command, args, and env vars, call peer().list_all_tools(), store discovered tools
+- [x] T016 [US1] Create mcp/src/tool.rs with McpTool struct implementing AgentTool trait: name() returns prefixed name, description() and parameters_schema() from MCP Tool definition, metadata() returns ToolMetadata::with_namespace(server_name), requires_approval() returns config value
+- [x] T017 [US1] Implement McpTool::execute() in mcp/src/tool.rs: construct CallToolRequestParams from params Value, call connection.peer().call_tool(), convert CallToolResult to AgentToolResult via convert module, respect cancellation token via tokio::select!
+- [x] T018 [US1] Create mcp/src/event.rs with helper functions for emitting MCP AgentEvent variants through a provided event dispatcher closure
 
 **Checkpoint**: Single MCP server connection works end-to-end — tools discovered and callable
 

@@ -28,9 +28,13 @@
 #![forbid(unsafe_code)]
 
 mod config;
+mod connection;
 pub mod convert;
 mod error;
 pub mod event;
+mod tool;
 
 pub use config::{McpServerConfig, McpTransport, ToolFilter};
+pub use connection::{McpConnection, McpConnectionStatus};
 pub use error::McpError;
+pub use tool::McpTool;
