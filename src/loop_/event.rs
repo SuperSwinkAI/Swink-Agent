@@ -133,6 +133,31 @@ pub enum AgentEvent {
         prefix_tokens: usize,
     },
 
+    /// Emitted when an MCP server connects successfully.
+    McpServerConnected { server_name: String },
+
+    /// Emitted when an MCP server disconnects.
+    McpServerDisconnected { server_name: String, reason: String },
+
+    /// Emitted when tools are discovered from an MCP server.
+    McpToolsDiscovered {
+        server_name: String,
+        tool_count: usize,
+    },
+
+    /// Emitted when an MCP tool call begins execution.
+    McpToolCallStarted {
+        server_name: String,
+        tool_name: String,
+    },
+
+    /// Emitted when an MCP tool call completes.
+    McpToolCallCompleted {
+        server_name: String,
+        tool_name: String,
+        is_error: bool,
+    },
+
     /// A custom event emitted via [`Agent::emit`](crate::Agent::emit).
     Custom(crate::emit::Emission),
 }

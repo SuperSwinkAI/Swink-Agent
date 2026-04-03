@@ -635,5 +635,10 @@ pub fn event_variant_name(event: &AgentEvent) -> String {
         AgentEvent::ModelCycled { .. } => "ModelCycled".into(),
         AgentEvent::StateChanged { .. } => "StateChanged".into(),
         AgentEvent::CacheAction { .. } => "CacheAction".into(),
+        AgentEvent::McpServerConnected { .. } => "McpServerConnected".into(),
+        AgentEvent::McpServerDisconnected { .. } => "McpServerDisconnected".into(),
+        AgentEvent::McpToolsDiscovered { .. } => "McpToolsDiscovered".into(),
+        AgentEvent::McpToolCallStarted { .. } => "McpToolCallStarted".into(),
+        AgentEvent::McpToolCallCompleted { .. } => "McpToolCallCompleted".into(),
     }
 }

@@ -1,0 +1,37 @@
+[package]
+name = "swink-agent-mcp"
+version = "0.4.2"
+edition = "2024"
+rust-version = "1.88"
+description = "MCP (Model Context Protocol) integration for swink-agent"
+license = "MIT"
+repository = "https://github.com/SuperSwinkAI/Swink-Agent"
+keywords = ["llm", "agent", "mcp", "tools", "protocol"]
+
+[dependencies]
+swink-agent = { path = ".." }
+rmcp = { version = "0.1", features = ["client", "transport-sse", "transport-child-process"] }
+tokio.workspace = true
+tokio-util.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+rmcp = { version = "0.1", features = ["client", "transport-sse", "transport-child-process"] }
+swink-agent = { path = ".." }
+tokio = { workspace = true, features = ["full", "test-util"] }
+serde_json.workspace = true
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"

@@ -40,7 +40,7 @@
 | 035-credential-management       | ✓     | ✓  | ✓   | ✓ Complete |
 | 036-artifact-service            | ✓     | ✓  | ✓   | ● 0/81 (0%) |
 | 037-plugin-system               | ✓     | ✓  | ✓   | ● 0/47 (0%) |
-| 038-mcp-integration             | ✓     | ✓  | ✓   | ● 0/49 (0%) |
+| 038-mcp-integration             | ✓     | ✓  | ✓   | ● 9/49 (18%) |
 | 039-multi-agent-patterns        | ✓     | ✓  | ✓   | ● 0/66 (0%) |
 | 040-agent-transfer-handoff      | ✓     | ✓  | ✓   | ● 0/49 (0%) |
 
@@ -81,6 +81,6 @@
 <!-- feature: 035-credential-management has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=73 tasks_completed=73 checklist_files=requirements.md -->
 <!-- feature: 036-artifact-service has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=81 tasks_completed=0 checklist_files=requirements.md -->
 <!-- feature: 037-plugin-system has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=47 tasks_completed=0 checklist_files=requirements.md -->
-<!-- feature: 038-mcp-integration has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=49 tasks_completed=0 checklist_files=requirements.md -->
+<!-- feature: 038-mcp-integration has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=49 tasks_completed=9 checklist_files=requirements.md -->
 <!-- feature: 039-multi-agent-patterns has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=66 tasks_completed=0 checklist_files=requirements.md -->
 <!-- feature: 040-agent-transfer-handoff has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=49 tasks_completed=0 checklist_files=requirements.md -->
