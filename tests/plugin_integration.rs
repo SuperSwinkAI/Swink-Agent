@@ -641,6 +641,169 @@ fn agent_plugin_nonexistent_returns_none() {
     );
 }
 
+// ─── Phase 7: User Story 5 — Initialization Callback ───────────────────
+
+/// A plugin that tracks on_init calls.
+struct InitPlugin {
+    name: String,
+    priority: i32,
+    init_called: Arc<AtomicBool>,
+    init_order: Arc<AtomicUsize>,
+}
+
+impl InitPlugin {
+    fn new(name: &str, init_called: Arc<AtomicBool>) -> Self {
+        Self {
+            name: name.to_owned(),
+            priority: 0,
+            init_called,
+            init_order: Arc::new(AtomicUsize::new(usize::MAX)),
+        }
+    }
+
+    fn with_priority(mut self, priority: i32) -> Self {
+        self.priority = priority;
+        self
+    }
+
+    fn with_order(mut self, init_order: Arc<AtomicUsize>) -> Self {
+        self.init_order = init_order;
+        self
+    }
+}
+
+impl Plugin for InitPlugin {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn priority(&self) -> i32 {
+        self.priority
+    }
+
+    fn on_init(&self, _agent: &Agent) {
+        self.init_called.store(true, Ordering::SeqCst);
+        let seq = GLOBAL_ORDER.fetch_add(1, Ordering::SeqCst);
+        self.init_order.store(seq, Ordering::SeqCst);
+    }
+}
+
+/// A plugin whose on_init panics, but still contributes a post-turn policy.
+struct PanickingInitPlugin {
+    name: String,
+    fired: Arc<AtomicBool>,
+}
+
+impl PanickingInitPlugin {
+    fn new(name: &str, fired: Arc<AtomicBool>) -> Self {
+        Self {
+            name: name.to_owned(),
+            fired,
+        }
+    }
+}
+
+impl Plugin for PanickingInitPlugin {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn on_init(&self, _agent: &Agent) {
+        panic!("intentional panic in on_init");
+    }
+
+    fn post_turn_policies(&self) -> Vec<Arc<dyn PostTurnPolicy>> {
+        let fired = Arc::clone(&self.fired);
+        vec![Arc::new(RecordingPostTurnPolicy { fired })]
+    }
+}
+
+// ─── T031: Plugin on_init is called once during Agent::new() ───────────
+
+#[test]
+fn plugin_on_init_called_once_during_agent_new() {
+    let init_called = Arc::new(AtomicBool::new(false));
+    let plugin: Arc<dyn Plugin> = Arc::new(InitPlugin::new("init-test", Arc::clone(&init_called)));
+
+    let _agent = make_agent_with_plugins(vec![plugin]);
+
+    assert!(
+        init_called.load(Ordering::SeqCst),
+        "on_init should have been called during Agent::new()"
+    );
+}
+
+// ─── T032: Multiple plugins — on_init fires in priority order ──────────
+
+#[test]
+fn plugin_on_init_fires_in_priority_order() {
+    GLOBAL_ORDER.store(0, Ordering::SeqCst);
+
+    let low_called = Arc::new(AtomicBool::new(false));
+    let high_called = Arc::new(AtomicBool::new(false));
+    let low_order = Arc::new(AtomicUsize::new(usize::MAX));
+    let high_order = Arc::new(AtomicUsize::new(usize::MAX));
+
+    let low_plugin: Arc<dyn Plugin> = Arc::new(
+        InitPlugin::new("low-init", Arc::clone(&low_called))
+            .with_priority(1)
+            .with_order(Arc::clone(&low_order)),
+    );
+    let high_plugin: Arc<dyn Plugin> = Arc::new(
+        InitPlugin::new("high-init", Arc::clone(&high_called))
+            .with_priority(10)
+            .with_order(Arc::clone(&high_order)),
+    );
+
+    // Register low first, high second — priority should determine init order.
+    let _agent = make_agent_with_plugins(vec![low_plugin, high_plugin]);
+
+    assert!(
+        low_called.load(Ordering::SeqCst),
+        "low plugin on_init should have been called"
+    );
+    assert!(
+        high_called.load(Ordering::SeqCst),
+        "high plugin on_init should have been called"
+    );
+
+    let high_seq = high_order.load(Ordering::SeqCst);
+    let low_seq = low_order.load(Ordering::SeqCst);
+
+    assert!(
+        high_seq < low_seq,
+        "high-priority plugin on_init should fire first: high={high_seq}, low={low_seq}"
+    );
+}
+
+// ─── T033: Panicking on_init is caught, agent continues, policies active ─
+
+#[tokio::test]
+async fn panicking_on_init_caught_agent_continues() {
+    let policy_fired = Arc::new(AtomicBool::new(false));
+
+    // Plugin whose on_init panics but contributes a post-turn policy.
+    let panicking: Arc<dyn Plugin> = Arc::new(PanickingInitPlugin::new(
+        "panicker",
+        Arc::clone(&policy_fired),
+    ));
+
+    let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("hello")]));
+    let options = AgentOptions::new("test", default_model(), stream_fn, default_convert)
+        .with_plugin(panicking);
+
+    // Agent construction should NOT panic.
+    let mut agent = Agent::new(options);
+
+    // Run a conversation — the panicking plugin's policy should still be active.
+    let _ = agent.prompt_async(vec![user_msg("hi")]).await;
+
+    assert!(
+        policy_fired.load(Ordering::SeqCst),
+        "panicking plugin's post-turn policy should still fire after on_init panic"
+    );
+}
+
 // ─── T024: Plugin Stop prevents ALL direct policies from evaluating ────
 
 #[tokio::test]
