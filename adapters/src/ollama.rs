@@ -369,7 +369,7 @@ fn parse_ndjson_stream(
                             // Stream ended without done=true
                             done = true;
                             let mut events = crate::finalize::finalize_blocks(&mut state);
-                            events.push(AssistantMessageEvent::error("Ollama stream ended unexpectedly"));
+                            events.push(AssistantMessageEvent::error_network("Ollama stream ended unexpectedly"));
                             Some((events, (lines, token, state, done, false)))
                         }
                         Some(line) => {
@@ -379,7 +379,7 @@ fn parse_ndjson_stream(
                                     error!(error = %e, "Ollama JSON parse error");
                                     done = true;
                                     let mut events = crate::finalize::finalize_blocks(&mut state);
-                                    events.push(AssistantMessageEvent::error(format!("Ollama JSON parse error: {e}")));
+                                    events.push(AssistantMessageEvent::error_network(format!("Ollama JSON parse error: {e}")));
                                     return Some((events, (lines, token, state, done, false)));
                                 }
                             };
@@ -739,6 +739,7 @@ mod tests {
                 cost: Cost::default(),
                 stop_reason: StopReason::ToolUse,
                 error_message: None,
+                error_kind: None,
                 timestamp: 0,
                 cache_hint: None,
             },

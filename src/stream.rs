@@ -108,7 +108,8 @@ impl std::fmt::Debug for StreamOptions {
 /// Adapters can attach a `StreamErrorKind` to an `Error` event so the agent
 /// loop can classify errors structurally instead of relying on string matching.
 #[non_exhaustive]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum StreamErrorKind {
     /// The provider throttled the request (HTTP 429 / rate limit).
     Throttled,
@@ -360,6 +361,7 @@ pub fn accumulate_message(
     let mut usage: Option<Usage> = None;
     let mut cost: Option<Cost> = None;
     let mut error_message: Option<String> = None;
+    let mut error_kind: Option<StreamErrorKind> = None;
     let mut saw_start = false;
     let mut saw_terminal = false;
 
@@ -577,10 +579,11 @@ pub fn accumulate_message(
                 stop_reason: sr,
                 error_message: em,
                 usage: u,
-                error_kind: _,
+                error_kind: ek,
             } => {
                 stop_reason = Some(sr);
                 error_message = Some(em);
+                error_kind = ek;
                 if let Some(u) = u {
                     usage = Some(u);
                 }
@@ -602,6 +605,7 @@ pub fn accumulate_message(
         cost: cost.unwrap_or_default(),
         stop_reason,
         error_message,
+        error_kind,
         timestamp,
         cache_hint: None,
     })

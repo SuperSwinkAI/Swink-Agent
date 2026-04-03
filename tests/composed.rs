@@ -312,8 +312,8 @@ async fn context_overflow_triggers_retry_with_tools() {
             AssistantMessageEvent::Error {
                 stop_reason: StopReason::Error,
                 error_message: "context window exceeded".to_string(),
-                usage: None,
                 error_kind: None,
+                usage: None,
             },
         ],
         tool_call_events("tc2", "my_tool", "{}"),

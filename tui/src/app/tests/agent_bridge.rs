@@ -159,6 +159,7 @@ async fn message_end_updates_context_tokens_used() {
         cost: Cost::default(),
         stop_reason: StopReason::Stop,
         error_message: None,
+        error_kind: None,
         timestamp: 0,
         cache_hint: None,
     };
@@ -191,8 +192,8 @@ async fn error_response_allows_retry() {
             AssistantMessageEvent::Error {
                 stop_reason: StopReason::Error,
                 error_message: "something broke".to_string(),
-                usage: None,
                 error_kind: None,
+                usage: None,
             },
         ],
         text_events("recovered"),

@@ -67,6 +67,7 @@ fn make_assistant_with_tool_call(tool_call_id: &str, tool_name: &str) -> Assista
         model_id: String::new(),
         provider: String::new(),
         error_message: None,
+        error_kind: None,
         timestamp: 0,
         cache_hint: None,
     }

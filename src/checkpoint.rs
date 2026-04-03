@@ -440,6 +440,7 @@ mod tests {
                 cost: Cost::default(),
                 stop_reason: crate::types::StopReason::Stop,
                 error_message: None,
+                error_kind: None,
                 timestamp: 101,
                 cache_hint: None,
             })),
@@ -793,6 +794,7 @@ mod tests {
             cost: Cost::default(),
             stop_reason: crate::types::StopReason::Stop,
             error_message: None,
+            error_kind: None,
             timestamp: 0,
             cache_hint: None,
         }))

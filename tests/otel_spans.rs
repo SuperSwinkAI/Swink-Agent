@@ -335,8 +335,8 @@ async fn otel_model_fallback_spans() {
         AssistantMessageEvent::Error {
             stop_reason: StopReason::Error,
             error_message: "rate limit exceeded 429".to_string(),
-            usage: None,
             error_kind: None,
+            usage: None,
         },
     ]]));
 

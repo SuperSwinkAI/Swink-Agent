@@ -508,7 +508,7 @@ pub fn parse_oai_sse_stream(
                                         cost: Cost::default(),
                                     });
                                 } else {
-                                    events.push(AssistantMessageEvent::error(
+                                    events.push(AssistantMessageEvent::error_network(
                                         format!("{provider} stream ended unexpectedly"),
                                     ));
                                 }
@@ -534,7 +534,7 @@ pub fn parse_oai_sse_stream(
                                         error!(error = %e, "{provider} JSON parse error");
                                         done = true;
                                         let mut events = crate::finalize::finalize_blocks(&mut state);
-                                        events.push(AssistantMessageEvent::error(format!(
+                                        events.push(AssistantMessageEvent::error_network(format!(
                                             "{provider} JSON parse error: {e}"
                                         )));
                                         return Some((events, (lines, token, state, done, false)));

@@ -291,6 +291,7 @@ async fn live_multi_turn_context() {
                 cost: Cost::default(),
                 stop_reason: StopReason::Stop,
                 error_message: None,
+                error_kind: None,
                 timestamp: 1,
                 cache_hint: None,
             })),

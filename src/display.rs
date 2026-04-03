@@ -154,6 +154,7 @@ mod tests {
             cost: Cost::default(),
             stop_reason: StopReason::Stop,
             error_message: None,
+            error_kind: None,
             timestamp: 0,
             cache_hint: None,
         });
@@ -174,6 +175,7 @@ mod tests {
             cost: Cost::default(),
             stop_reason: StopReason::Error,
             error_message: Some("something broke".to_string()),
+            error_kind: None,
             timestamp: 0,
             cache_hint: None,
         });

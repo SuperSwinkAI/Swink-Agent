@@ -247,6 +247,7 @@ mod tests {
             cost: Cost::default(),
             stop_reason: StopReason::ToolUse,
             error_message: None,
+            error_kind: None,
             timestamp: 0,
             cache_hint: None,
         }))

@@ -31,6 +31,7 @@ pub fn assistant_message(text: &str) -> AgentMessage {
         cost: Cost::default(),
         stop_reason: StopReason::Stop,
         error_message: None,
+        error_kind: None,
         timestamp: 0,
         cache_hint: None,
     }))
@@ -72,6 +73,7 @@ pub fn llm_assistant_message(text: &str) -> LlmMessage {
         cost: Cost::default(),
         stop_reason: StopReason::Stop,
         error_message: None,
+        error_kind: None,
         timestamp: 0,
         cache_hint: None,
     })

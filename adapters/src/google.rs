@@ -583,7 +583,7 @@ fn parse_sse_stream(
                         None => {
                             let mut events = crate::finalize::finalize_blocks(&mut state);
                             if state.stop_reason.is_none() {
-                                events.push(AssistantMessageEvent::error("Google stream ended unexpectedly"));
+                                events.push(AssistantMessageEvent::error_network("Google stream ended unexpectedly"));
                             } else {
                                 events.push(AssistantMessageEvent::Done {
                                     stop_reason: state.stop_reason.unwrap_or(StopReason::Stop),
@@ -618,7 +618,7 @@ fn parse_sse_stream(
                                 }
                                 Err(parse_error) => {
                                     error!(error = %parse_error, "Google Gemini JSON parse error");
-                                    events.push(AssistantMessageEvent::error(format!(
+                                    events.push(AssistantMessageEvent::error_network(format!(
                                         "Google JSON parse error: {parse_error}"
                                     )));
                                     done = true;
@@ -709,7 +709,7 @@ fn process_chunk(
             warn!("Google Gemini response blocked by safety filter");
             close_text_block(state, events);
             close_thinking_block(state, events);
-            events.push(AssistantMessageEvent::error(
+            events.push(AssistantMessageEvent::error_content_filtered(
                 "Google Gemini: response blocked by safety filter",
             ));
         } else {

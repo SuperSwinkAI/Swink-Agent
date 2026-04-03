@@ -306,12 +306,7 @@ fn parse_sse_stream(
 fn parse_sse_event_data(data: &str) -> AssistantMessageEvent {
     match serde_json::from_str::<SseEventData>(data) {
         Ok(event) => convert_sse_event(event),
-        Err(e) => AssistantMessageEvent::Error {
-            stop_reason: StopReason::Error,
-            error_message: format!("malformed SSE event JSON: {e}"),
-            usage: None,
-            error_kind: None,
-        },
+        Err(e) => AssistantMessageEvent::error_network(format!("malformed SSE event JSON: {e}")),
     }
 }
 

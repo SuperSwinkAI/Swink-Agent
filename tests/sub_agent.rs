@@ -57,8 +57,8 @@ async fn sub_agent_error_maps_to_tool_error() {
         AssistantMessageEvent::Error {
             stop_reason: StopReason::Error,
             error_message: "model exploded".into(),
-            usage: Some(Usage::default()),
             error_kind: None,
+            usage: Some(Usage::default()),
         },
     ];
     let stream_fn: Arc<dyn StreamFn> = Arc::new(MockStreamFn::new(vec![error_events]));
@@ -136,8 +136,8 @@ async fn default_map_result_with_error_and_no_message() {
         AssistantMessageEvent::Error {
             stop_reason: StopReason::Error,
             error_message: "boom".into(),
-            usage: None,
             error_kind: None,
+            usage: None,
         },
     ];
     let stream_fn2: Arc<dyn StreamFn> = Arc::new(MockStreamFn::new(vec![error_events]));

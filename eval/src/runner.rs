@@ -145,6 +145,7 @@ impl EvalRunner {
                                     cost: Cost::default(),
                                     stop_reason: StopReason::Error,
                                     error_message: Some(e.to_string()),
+                                    error_kind: None,
                                     timestamp: swink_agent::now_timestamp(),
                                     cache_hint: None,
                                 },

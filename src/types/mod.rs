@@ -114,6 +114,12 @@ pub struct AssistantMessage {
     pub cost: Cost,
     pub stop_reason: StopReason,
     pub error_message: Option<String>,
+    /// Structured error classification carried from the stream `Error` event.
+    ///
+    /// When present, the agent loop uses this to classify the error without
+    /// falling back to string matching on `error_message`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_kind: Option<crate::stream::StreamErrorKind>,
     pub timestamp: u64,
     /// Provider-agnostic cache hint for this message.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -658,6 +664,7 @@ mod tests {
                     cost: Cost::default(),
                     stop_reason: StopReason::Stop,
                     error_message: None,
+                    error_kind: None,
                     timestamp: 0,
                     cache_hint: None,
                 })),
@@ -671,6 +678,7 @@ mod tests {
                     cost: Cost::default(),
                     stop_reason: StopReason::Stop,
                     error_message: None,
+                    error_kind: None,
                     timestamp: 0,
                     cache_hint: None,
                 })),

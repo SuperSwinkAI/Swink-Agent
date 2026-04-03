@@ -27,6 +27,7 @@ fn minimal_assistant_message() -> AssistantMessage {
         cost: Cost::default(),
         stop_reason: StopReason::Stop,
         error_message: None,
+        error_kind: None,
         timestamp: 0,
         cache_hint: None,
     }
