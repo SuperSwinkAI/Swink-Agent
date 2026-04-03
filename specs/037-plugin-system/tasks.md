@@ -17,9 +17,9 @@
 
 **Purpose**: Feature gate and module scaffolding
 
-- [ ] T001 Add `plugins` feature flag to `Cargo.toml` (not in default features)
-- [ ] T002 Create `src/plugin.rs` with `#[cfg(feature = "plugins")]` module and re-export in `src/lib.rs`
-- [ ] T003 Add `plugins` field (`Vec<Arc<dyn Plugin>>`) to `AgentOptions` in `src/agent_options.rs` behind `#[cfg(feature = "plugins")]`
+- [x] T001 Add `plugins` feature flag to `Cargo.toml` (not in default features)
+- [x] T002 Create `src/plugin.rs` with `#[cfg(feature = "plugins")]` module and re-export in `src/lib.rs`
+- [x] T003 Add `plugins` field (`Vec<Arc<dyn Plugin>>`) to `AgentOptions` in `src/agent_options.rs` behind `#[cfg(feature = "plugins")]`
 
 ---
 
@@ -29,11 +29,11 @@
 
 **CRITICAL**: No user story work can begin until this phase is complete
 
-- [ ] T004 Define `Plugin` trait with all default methods (name, priority, on_init, policy methods, on_event, tools) in `src/plugin.rs`
-- [ ] T005 Write tests for `PluginRegistry` CRUD operations (register, unregister, get, list, is_empty, len) in `tests/plugin_registry.rs`
-- [ ] T006 Implement `PluginRegistry` struct (register with duplicate warn, unregister, get, list sorted by priority desc with stable sort) in `src/plugin.rs`
-- [ ] T007 Write tests for `NamespacedTool` (name returns `"{plugin}.{tool}"`, all other methods delegate) in `tests/plugin_registry.rs`
-- [ ] T008 Implement `NamespacedTool` struct that wraps `Arc<dyn AgentTool>` and overrides `name()` to return `"{plugin_name}.{tool_name}"` in `src/plugin.rs`
+- [x] T004 Define `Plugin` trait with all default methods (name, priority, on_init, policy methods, on_event, tools) in `src/plugin.rs`
+- [x] T005 Write tests for `PluginRegistry` CRUD operations (register, unregister, get, list, is_empty, len) in `tests/plugin_registry.rs`
+- [x] T006 Implement `PluginRegistry` struct (register with duplicate warn, unregister, get, list sorted by priority desc with stable sort) in `src/plugin.rs`
+- [x] T007 Write tests for `NamespacedTool` (name returns `"{plugin}.{tool}"`, all other methods delegate) in `tests/plugin_registry.rs`
+- [x] T008 Implement `NamespacedTool` struct that wraps `Arc<dyn AgentTool>` and overrides `name()` to return `"{plugin_name}.{tool_name}"` in `src/plugin.rs`
 
 **Checkpoint**: Plugin trait, registry, and tool wrapper are complete and tested independently
 

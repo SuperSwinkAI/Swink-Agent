@@ -63,6 +63,7 @@ default = ["builtin-tools"]
 builtin-tools = []
 hot-reload = ["dep:notify"]
 tiktoken = ["dep:tiktoken-rs"]
+plugins = []
 otel = ["dep:tracing-opentelemetry", "dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp", "dep:tracing-subscriber"]
 
 [dependencies]
