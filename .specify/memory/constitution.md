@@ -82,9 +82,10 @@ on lock acquisition.
 
 ## Architectural Constraints
 
-- **Crate count**: Seven workspace members (core, adapters, memory,
-  local-llm, eval, TUI, xtask). Adding a crate requires justification
-  that no existing crate boundary can absorb the concern.
+- **Crate count**: Eleven workspace members (core, adapters, policies,
+  memory, local-llm, eval, TUI, auth, artifacts, mcp, macros) plus
+  xtask. Adding a crate requires justification that no existing crate
+  boundary can absorb the concern.
 - **MSRV**: 1.88, edition 2024. Pinned via `rust-toolchain.toml`.
 - **Concurrency model**: Tool calls within a turn run concurrently via
   `tokio::spawn`. Everything else (turns, steering polls, follow-up

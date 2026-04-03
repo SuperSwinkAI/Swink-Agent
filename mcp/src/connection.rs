@@ -3,9 +3,11 @@
 //! Wraps an `rmcp` client session, handling tool discovery and providing
 //! access to the peer for tool call forwarding.
 
+use reqwest::header::{HeaderValue, AUTHORIZATION};
 use rmcp::model::{CallToolRequestParam, CallToolResult, ClientInfo, Implementation};
 use rmcp::service::{RoleClient, RunningService, ServiceExt};
 use rmcp::transport::TokioChildProcess;
+use rmcp::transport::sse::SseTransport;
 use serde_json::Value;
 use std::borrow::Cow;
 use tracing::{info, warn};
@@ -96,18 +98,14 @@ impl McpConnection {
 
     /// Connect to an MCP server using the configured transport.
     ///
-    /// Currently supports stdio transport only. SSE transport will be added
-    /// in a later phase.
+    /// Supports stdio and SSE (HTTP) transports.
     pub async fn connect(config: McpServerConfig) -> Result<Self, McpError> {
         let service = match &config.transport {
             McpTransport::Stdio { command, args, env } => {
                 Self::connect_stdio(command, args, env, &config.name).await?
             }
-            McpTransport::Sse { .. } => {
-                return Err(McpError::ConnectionFailed {
-                    server: config.name.clone(),
-                    reason: "SSE transport not yet implemented".to_string(),
-                });
+            McpTransport::Sse { url, bearer_token } => {
+                Self::connect_sse(url, bearer_token.as_deref(), &config.name).await?
             }
         };
 
@@ -171,6 +169,72 @@ impl McpConnection {
             })?;
 
         Ok(service)
+    }
+
+    /// Connect to a remote MCP server via SSE (HTTP) transport.
+    async fn connect_sse(
+        url: &str,
+        bearer_token: Option<&str>,
+        server_name: &str,
+    ) -> Result<RunningService<RoleClient, ClientInfo>, McpError> {
+        let transport = if let Some(token) = bearer_token {
+            let mut headers = reqwest::header::HeaderMap::new();
+            headers.insert(
+                AUTHORIZATION,
+                HeaderValue::from_str(&format!("Bearer {token}")).map_err(|e| {
+                    McpError::ConnectionFailed {
+                        server: server_name.to_string(),
+                        reason: format!("invalid bearer token: {e}"),
+                    }
+                })?,
+            );
+            let client = reqwest::Client::builder()
+                .default_headers(headers)
+                .build()
+                .map_err(|e| McpError::ConnectionFailed {
+                    server: server_name.to_string(),
+                    reason: format!("failed to build HTTP client: {e}"),
+                })?;
+            let mut transport = SseTransport::start_with_client(url, client)
+                .await
+                .map_err(|e| McpError::ConnectionFailed {
+                    server: server_name.to_string(),
+                    reason: format!("SSE connection failed: {e}"),
+                })?;
+            transport.retry_config = rmcp::transport::sse::SseTransportRetryCofnig {
+                max_times: Some(5),
+                min_duration: std::time::Duration::from_secs(1),
+            };
+            transport
+        } else {
+            let mut transport = SseTransport::start(url)
+                .await
+                .map_err(|e| McpError::ConnectionFailed {
+                    server: server_name.to_string(),
+                    reason: format!("SSE connection failed: {e}"),
+                })?;
+            transport.retry_config = rmcp::transport::sse::SseTransportRetryCofnig {
+                max_times: Some(5),
+                min_duration: std::time::Duration::from_secs(1),
+            };
+            transport
+        };
+
+        let client_info = ClientInfo {
+            client_info: Implementation {
+                name: "swink-agent-mcp".to_string(),
+                version: env!("CARGO_PKG_VERSION").to_string(),
+            },
+            ..ClientInfo::default()
+        };
+
+        client_info
+            .serve(transport)
+            .await
+            .map_err(|e| McpError::ConnectionFailed {
+                server: server_name.to_string(),
+                reason: format!("SSE handshake failed: {e}"),
+            })
     }
 
     /// Call a tool on the connected MCP server.

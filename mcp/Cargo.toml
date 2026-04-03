@@ -11,6 +11,7 @@ keywords = ["llm", "agent", "mcp", "tools", "protocol"]
 [dependencies]
 swink-agent = { path = ".." }
 rmcp = { version = "0.1", features = ["client", "transport-sse", "transport-child-process"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 tokio.workspace = true
 tokio-util.workspace = true
 serde.workspace = true
@@ -19,7 +20,7 @@ thiserror.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
-rmcp = { version = "0.1", features = ["client", "server", "macros", "transport-sse", "transport-child-process"] }
+rmcp = { version = "0.1", features = ["client", "server", "macros", "transport-sse", "transport-sse-server", "transport-child-process"] }
 swink-agent = { path = ".." }
 tokio = { workspace = true, features = ["full", "test-util"] }
 tokio-util = { workspace = true }
