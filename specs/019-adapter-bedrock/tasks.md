@@ -17,9 +17,9 @@
 
 **Purpose**: Add new workspace dependencies and configure feature gates for event-stream parsing
 
-- [ ] T001 Add `aws-smithy-eventstream` (0.60.x) and `aws-smithy-types` (1.x) to workspace `[workspace.dependencies]` in Cargo.toml
-- [ ] T002 Add `aws-smithy-eventstream` and `aws-smithy-types` as optional deps gated behind `bedrock` feature in adapters/Cargo.toml (alongside existing `sha2`, `hmac`, `chrono`)
-- [ ] T003 Verify `cargo build -p swink-agent-adapters --no-default-features --features bedrock` compiles with new deps
+- [x] T001 Add `aws-smithy-eventstream` (0.60.x) and `aws-smithy-types` (1.x) to workspace `[workspace.dependencies]` in Cargo.toml
+- [x] T002 Add `aws-smithy-eventstream` and `aws-smithy-types` as optional deps gated behind `bedrock` feature in adapters/Cargo.toml (alongside existing `sha2`, `hmac`, `chrono`)
+- [x] T003 Verify `cargo build -p swink-agent-adapters --no-default-features --features bedrock` compiles with new deps
 
 **Checkpoint**: Bedrock feature compiles with event-stream parsing crates available
 
@@ -31,12 +31,12 @@
 
 **CRITICAL**: No user story work can begin until this phase is complete
 
-- [ ] T004 Add `BedrockSystemBlock` struct (`text: String`) and add `system: Option<Vec<BedrockSystemBlock>>` field to `BedrockRequest` in adapters/src/bedrock.rs
-- [ ] T005 Update `build_request()` in adapters/src/bedrock.rs to populate the `system` field from `context.system_prompt` instead of prepending a synthetic user message
-- [ ] T006 Add streaming event deserialization types in adapters/src/bedrock.rs: `MessageStartEvent`, `ContentBlockStartEvent` (with `StartBlock` enum for text/toolUse), `ContentBlockDeltaEvent` (with `DeltaBlock` enum for text/toolUse), `ContentBlockStopEvent`, `MessageStopEvent`, `MetadataEvent` (with `BedrockStreamUsage` and `BedrockMetrics`)
-- [ ] T007 Add `BedrockStreamState` struct in adapters/src/bedrock.rs to track streaming state: `current_block_type: Option<BlockType>` (Text/ToolUse), `stop_reason: Option<String>`, `usage: Option<Usage>`, `content_index: usize`
-- [ ] T008 Add `parse_event_frame()` function in adapters/src/bedrock.rs that takes an `aws_smithy_eventstream` `Message`, reads the `:event-type` header, deserializes the JSON payload into the appropriate event type, and returns `Option<Vec<AssistantMessageEvent>>`
-- [ ] T009 Add `map_stop_reason()` helper in adapters/src/bedrock.rs: `end_turn`/`stop_sequence` → `Stop`, `tool_use` → `ToolUse`, `max_tokens` → `Length`, `guardrail_intervened` → emit `ContentFiltered` error event
+- [x] T004 Add `BedrockSystemBlock` struct (`text: String`) and add `system: Option<Vec<BedrockSystemBlock>>` field to `BedrockRequest` in adapters/src/bedrock.rs
+- [x] T005 Update `build_request()` in adapters/src/bedrock.rs to populate the `system` field from `context.system_prompt` instead of prepending a synthetic user message
+- [x] T006 Add streaming event deserialization types in adapters/src/bedrock.rs: `MessageStartEvent`, `ContentBlockStartEvent` (with `StartBlock` enum for text/toolUse), `ContentBlockDeltaEvent` (with `DeltaBlock` enum for text/toolUse), `ContentBlockStopEvent`, `MessageStopEvent`, `MetadataEvent` (with `BedrockStreamUsage` and `BedrockMetrics`)
+- [x] T007 Add `BedrockStreamState` struct in adapters/src/bedrock.rs to track streaming state: `current_block_type: Option<BlockType>` (Text/ToolUse), `stop_reason: Option<String>`, `usage: Option<Usage>`, `content_index: usize`
+- [x] T008 Add `parse_event_frame()` function in adapters/src/bedrock.rs that takes an `aws_smithy_eventstream` `Message`, reads the `:event-type` header, deserializes the JSON payload into the appropriate event type, and returns `Option<Vec<AssistantMessageEvent>>`
+- [x] T009 Add `map_stop_reason()` helper in adapters/src/bedrock.rs: `end_turn`/`stop_sequence` → `Stop`, `tool_use` → `ToolUse`, `max_tokens` → `Length`, `guardrail_intervened` → emit `ContentFiltered` error event
 
 **Checkpoint**: All streaming types defined, event parsing function compiles, `cargo test -p swink-agent-adapters --features bedrock` passes
 
