@@ -82,7 +82,44 @@ impl SessionEntry {
     pub fn messages(entries: &[Self]) -> Vec<&LlmMessage> {
         entries.iter().filter_map(Self::as_message).collect()
     }
+
+    /// Returns the serde discriminator string for this entry variant.
+    ///
+    /// Matches the `rename_all = "snake_case"` representation used in serialization.
+    pub const fn entry_type_name(&self) -> &'static str {
+        match self {
+            Self::Message(_) => "message",
+            Self::ModelChange { .. } => "model_change",
+            Self::ThinkingLevelChange { .. } => "thinking_level_change",
+            Self::Compaction { .. } => "compaction",
+            Self::Label { .. } => "label",
+            Self::Custom { .. } => "custom",
+        }
+    }
+
+    /// Returns the timestamp of this entry, if it has one.
+    ///
+    /// `Message` entries derive their timestamp from the inner `LlmMessage`.
+    pub const fn timestamp(&self) -> Option<u64> {
+        match self {
+            Self::Message(msg) => Some(match msg {
+                LlmMessage::User(m) => m.timestamp,
+                LlmMessage::Assistant(m) => m.timestamp,
+                LlmMessage::ToolResult(m) => m.timestamp,
+            }),
+            Self::ModelChange { timestamp, .. }
+            | Self::ThinkingLevelChange { timestamp, .. }
+            | Self::Compaction { timestamp, .. }
+            | Self::Label { timestamp, .. }
+            | Self::Custom { timestamp, .. } => Some(*timestamp),
+        }
+    }
 }
+
+const _: () = {
+    const fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<SessionEntry>();
+};
 
 #[cfg(test)]
 mod tests {

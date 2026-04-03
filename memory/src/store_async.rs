@@ -7,7 +7,9 @@ use std::sync::Arc;
 
 use swink_agent::LlmMessage;
 
+use crate::entry::SessionEntry;
 use crate::interrupt::InterruptState;
+use crate::load_options::LoadOptions;
 use crate::meta::SessionMeta;
 
 /// A boxed future returned by [`AsyncSessionStore`] methods.
@@ -53,6 +55,13 @@ pub trait AsyncSessionStore: Send + Sync {
 
     /// Clear interrupt state for a session asynchronously.
     fn clear_interrupt(&self, id: &str) -> SessionStoreFuture<'_, ()>;
+
+    /// Load a session with filtering options asynchronously.
+    fn load_with_options(
+        &self,
+        id: &str,
+        options: &LoadOptions,
+    ) -> SessionStoreFuture<'_, (SessionMeta, Vec<SessionEntry>)>;
 }
 
 /// Adapter that wraps a synchronous [`SessionStore`](crate::store::SessionStore)
@@ -128,6 +137,17 @@ impl<S: crate::store::SessionStore + 'static> AsyncSessionStore for BlockingSess
         let inner = Arc::clone(&self.inner);
         let id = id.to_string();
         spawn_store_call(move || inner.clear_interrupt(&id))
+    }
+
+    fn load_with_options(
+        &self,
+        id: &str,
+        options: &LoadOptions,
+    ) -> SessionStoreFuture<'_, (SessionMeta, Vec<SessionEntry>)> {
+        let inner = Arc::clone(&self.inner);
+        let id = id.to_string();
+        let options = options.clone();
+        spawn_store_call(move || inner.load_with_options(&id, &options))
     }
 }
 

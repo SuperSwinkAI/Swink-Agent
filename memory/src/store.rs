@@ -4,7 +4,9 @@ use std::io;
 
 use swink_agent::{AgentMessage, CustomMessageRegistry, LlmMessage};
 
+use crate::entry::SessionEntry;
 use crate::interrupt::InterruptState;
+use crate::load_options::LoadOptions;
 use crate::meta::SessionMeta;
 
 /// Pluggable session persistence.
@@ -99,4 +101,14 @@ pub trait SessionStore: Send + Sync {
         let _ = id;
         Ok(())
     }
+
+    /// Load a session with filtering options.
+    ///
+    /// Returns metadata and a filtered subset of session entries based on the
+    /// provided [`LoadOptions`]. Default options return the full session.
+    fn load_with_options(
+        &self,
+        id: &str,
+        options: &LoadOptions,
+    ) -> io::Result<(SessionMeta, Vec<SessionEntry>)>;
 }
