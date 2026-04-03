@@ -193,6 +193,10 @@ impl Agent {
     /// Create a new agent from the given options.
     #[must_use]
     pub fn new(options: AgentOptions) -> Self {
+        // Merge plugin contributions (policies, tools, event observers) into options.
+        #[cfg(feature = "plugins")]
+        let options = merge_plugin_contributions(options);
+
         let primary_model = options.model.clone();
         let primary_stream_fn = Arc::clone(&options.stream_fn);
         let mut available_models = vec![options.model.clone()];
@@ -307,6 +311,71 @@ impl std::fmt::Debug for Agent {
             .field("is_abort_active", &self.abort_controller.is_some())
             .finish_non_exhaustive()
     }
+}
+
+// ─── Plugin merge ───────────────────────────────────────────────────────────
+
+/// Sort plugins by priority and merge their policies, tools, and event
+/// observers into the `AgentOptions`. Plugin policies are prepended before
+/// directly-registered policies; plugin tools are appended after direct tools
+/// (namespaced with the plugin name); plugin event forwarders are prepended.
+#[cfg(feature = "plugins")]
+fn merge_plugin_contributions(mut options: AgentOptions) -> AgentOptions {
+    // Sort plugins by priority descending (stable sort preserves insertion order for ties).
+    options
+        .plugins
+        .sort_by_key(|p| std::cmp::Reverse(p.priority()));
+
+    let mut plugin_pre_turn: Vec<Arc<dyn crate::policy::PreTurnPolicy>> = Vec::new();
+    let mut plugin_pre_dispatch: Vec<Arc<dyn crate::policy::PreDispatchPolicy>> = Vec::new();
+    let mut plugin_post_turn: Vec<Arc<dyn crate::policy::PostTurnPolicy>> = Vec::new();
+    let mut plugin_post_loop: Vec<Arc<dyn crate::policy::PostLoopPolicy>> = Vec::new();
+    let mut plugin_tools: Vec<Arc<dyn AgentTool>> = Vec::new();
+    let mut plugin_forwarders: Vec<crate::event_forwarder::EventForwarderFn> = Vec::new();
+
+    for plugin in &options.plugins {
+        plugin_pre_turn.extend(plugin.pre_turn_policies());
+        plugin_pre_dispatch.extend(plugin.pre_dispatch_policies());
+        plugin_post_turn.extend(plugin.post_turn_policies());
+        plugin_post_loop.extend(plugin.post_loop_policies());
+
+        // Wrap plugin tools in NamespacedTool.
+        let plugin_name = plugin.name().to_owned();
+        for tool in plugin.tools() {
+            plugin_tools.push(Arc::new(crate::plugin::NamespacedTool::new(
+                &plugin_name,
+                tool,
+            )));
+        }
+
+        // Wrap plugin's on_event as EventForwarderFn.
+        let plugin_ref = Arc::clone(plugin);
+        plugin_forwarders.push(Arc::new(move |event: crate::loop_::AgentEvent| {
+            plugin_ref.on_event(&event);
+        }));
+    }
+
+    // Prepend plugin policies before direct policies.
+    plugin_pre_turn.append(&mut options.pre_turn_policies);
+    options.pre_turn_policies = plugin_pre_turn;
+
+    plugin_pre_dispatch.append(&mut options.pre_dispatch_policies);
+    options.pre_dispatch_policies = plugin_pre_dispatch;
+
+    plugin_post_turn.append(&mut options.post_turn_policies);
+    options.post_turn_policies = plugin_post_turn;
+
+    plugin_post_loop.append(&mut options.post_loop_policies);
+    options.post_loop_policies = plugin_post_loop;
+
+    // Append namespaced plugin tools after direct tools.
+    options.tools.extend(plugin_tools);
+
+    // Prepend plugin event forwarders before direct forwarders.
+    plugin_forwarders.append(&mut options.event_forwarders);
+    options.event_forwarders = plugin_forwarders;
+
+    options
 }
 
 // ─── SharedRetryStrategy ─────────────────────────────────────────────────────

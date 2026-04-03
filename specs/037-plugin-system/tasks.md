@@ -47,17 +47,17 @@
 
 ### Tests for User Story 1
 
-- [ ] T009 [US1] Write test: plugin contributing a post-turn policy — verify policy evaluates during the loop in `tests/plugin_integration.rs`
-- [ ] T010 [P] [US1] Write test: plugin contributing tools — verify tools appear namespaced in agent tool list in `tests/plugin_integration.rs`
-- [ ] T011 [P] [US1] Write test: plugin with event observer — verify observer is called for AgentStart event in `tests/plugin_integration.rs`
+- [x] T009 [US1] Write test: plugin contributing a post-turn policy — verify policy evaluates during the loop in `tests/plugin_integration.rs`
+- [x] T010 [P] [US1] Write test: plugin contributing tools — verify tools appear namespaced in agent tool list in `tests/plugin_integration.rs`
+- [x] T011 [P] [US1] Write test: plugin with event observer — verify observer is called for AgentStart event in `tests/plugin_integration.rs`
 
 ### Implementation for User Story 1
 
-- [ ] T012 [US1] Implement `with_plugin()` and `with_plugins()` builder methods on `AgentOptions` in `src/agent_options.rs`
-- [ ] T013 [US1] Implement plugin contribution merge in `Agent::new()` — extract policies from each plugin (priority-sorted), prepend to policy vecs in `src/agent.rs`
-- [ ] T014 [US1] Implement plugin tool extraction in `Agent::new()` — wrap each tool in `NamespacedTool`, append to tools vec in `src/agent.rs`
-- [ ] T015 [US1] Implement plugin event observer integration in `Agent::new()` — convert `on_event` to `EventForwarderFn` closures, prepend to event_forwarders in `src/agent.rs`
-- [ ] T016 [US1] Propagate merged policies and tools through `build_loop_config()` in `src/agent/invoke.rs` (verify existing flow handles merged vecs)
+- [x] T012 [US1] Implement `with_plugin()` and `with_plugins()` builder methods on `AgentOptions` in `src/agent_options.rs`
+- [x] T013 [US1] Implement plugin contribution merge in `Agent::new()` — extract policies from each plugin (priority-sorted), prepend to policy vecs in `src/agent.rs`
+- [x] T014 [US1] Implement plugin tool extraction in `Agent::new()` — wrap each tool in `NamespacedTool`, append to tools vec in `src/agent.rs`
+- [x] T015 [US1] Implement plugin event observer integration in `Agent::new()` — convert `on_event` to `EventForwarderFn` closures, prepend to event_forwarders in `src/agent.rs`
+- [x] T016 [US1] Propagate merged policies and tools through `build_loop_config()` in `src/agent/invoke.rs` (verify existing flow handles merged vecs)
 
 **Checkpoint**: A plugin's policies, tools, and event observer all function correctly. Single-plugin registration is the MVP.
 
