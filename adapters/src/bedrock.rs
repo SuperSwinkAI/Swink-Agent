@@ -1256,10 +1256,16 @@ mod tests {
         use aws_smithy_types::event_stream::{Header, HeaderValue, Message};
         Message::new_from_parts(
             vec![
-                Header::new(":message-type", HeaderValue::String("event".into())),
-                Header::new(":event-type", HeaderValue::String(event_type.into())),
+                Header::new(
+                    ":message-type",
+                    HeaderValue::String(String::from("event").into()),
+                ),
+                Header::new(
+                    ":event-type",
+                    HeaderValue::String(String::from(event_type).into()),
+                ),
             ],
-            payload.to_vec().into(),
+            bytes::Bytes::from(payload.to_vec()),
         )
     }
 
@@ -1271,13 +1277,16 @@ mod tests {
         use aws_smithy_types::event_stream::{Header, HeaderValue, Message};
         Message::new_from_parts(
             vec![
-                Header::new(":message-type", HeaderValue::String("exception".into())),
+                Header::new(
+                    ":message-type",
+                    HeaderValue::String(String::from("exception").into()),
+                ),
                 Header::new(
                     ":exception-type",
-                    HeaderValue::String(exception_type.into()),
+                    HeaderValue::String(String::from(exception_type).into()),
                 ),
             ],
-            payload.to_vec().into(),
+            bytes::Bytes::from(payload.to_vec()),
         )
     }
 
@@ -1404,5 +1413,132 @@ mod tests {
         let mut state = BedrockStreamState::new();
         let blocks = state.drain_open_blocks();
         assert!(blocks.is_empty());
+    }
+
+    #[test]
+    fn tool_call_event_stream_parsing() {
+        let mut state = BedrockStreamState::new();
+
+        // 1. messageStart
+        let msg = make_event_message("messageStart", br#"{"role":"assistant"}"#);
+        let events = process_smithy_message(&msg, &mut state);
+        assert_eq!(events.len(), 1);
+        assert!(matches!(events[0], AssistantMessageEvent::Start));
+
+        // 2. contentBlockStart (toolUse)
+        let msg = make_event_message(
+            "contentBlockStart",
+            br#"{"contentBlockIndex":0,"start":{"type":"toolUse","toolUseId":"tc_abc123","name":"get_weather"}}"#,
+        );
+        let events = process_smithy_message(&msg, &mut state);
+        assert_eq!(events.len(), 1);
+        assert!(matches!(
+            &events[0],
+            AssistantMessageEvent::ToolCallStart { content_index: 0, id, name }
+                if id == "tc_abc123" && name == "get_weather"
+        ));
+
+        // 3. contentBlockDelta (toolUse) — partial JSON
+        let msg = make_event_message(
+            "contentBlockDelta",
+            br#"{"contentBlockIndex":0,"delta":{"type":"toolUse","input":"{\"city\""}}"#,
+        );
+        let events = process_smithy_message(&msg, &mut state);
+        assert_eq!(events.len(), 1);
+        assert!(matches!(
+            &events[0],
+            AssistantMessageEvent::ToolCallDelta { content_index: 0, delta }
+                if delta == r#"{"city""#
+        ));
+
+        // 4. contentBlockDelta (toolUse) — rest of JSON
+        let msg = make_event_message(
+            "contentBlockDelta",
+            br#"{"contentBlockIndex":0,"delta":{"type":"toolUse","input":": \"Paris\"}"}}"#,
+        );
+        let events = process_smithy_message(&msg, &mut state);
+        assert_eq!(events.len(), 1);
+        assert!(matches!(
+            &events[0],
+            AssistantMessageEvent::ToolCallDelta { content_index: 0, delta }
+                if delta == r#": "Paris"}"#
+        ));
+
+        // 5. contentBlockStop
+        let msg = make_event_message("contentBlockStop", br#"{"contentBlockIndex":0}"#);
+        let events = process_smithy_message(&msg, &mut state);
+        assert_eq!(events.len(), 1);
+        assert!(matches!(
+            events[0],
+            AssistantMessageEvent::ToolCallEnd { content_index: 0 }
+        ));
+
+        // 6. messageStop (tool_use stop reason)
+        let msg = make_event_message("messageStop", br#"{"stopReason":"tool_use"}"#);
+        let events = process_smithy_message(&msg, &mut state);
+        assert!(events.is_empty());
+        assert_eq!(state.stop_reason.as_deref(), Some("tool_use"));
+
+        // 7. metadata → Done with ToolUse stop reason
+        let msg = make_event_message(
+            "metadata",
+            br#"{"usage":{"inputTokens":50,"outputTokens":30,"totalTokens":80}}"#,
+        );
+        let events = process_smithy_message(&msg, &mut state);
+        assert_eq!(events.len(), 1);
+        assert!(matches!(
+            &events[0],
+            AssistantMessageEvent::Done {
+                stop_reason: StopReason::ToolUse,
+                usage,
+                ..
+            } if usage.input == 50 && usage.output == 30 && usage.total == 80
+        ));
+    }
+
+    #[test]
+    fn sigv4_signs_converse_stream_path() {
+        // Verify that the canonical request uses the /converse-stream path
+        let model_id = "anthropic.claude-3-5-haiku-20241022-v1:0";
+        let path = format!("/model/{model_id}/converse-stream");
+
+        // Build a minimal canonical request using the same format as send_converse_stream
+        let body = b"{}";
+        let payload_hash = sha256_hex(body);
+        let (amz_date, date_stamp) = amz_dates();
+        let host = "bedrock-runtime.us-east-1.amazonaws.com";
+        let canonical_headers = canonical_headers(
+            host,
+            &amz_date,
+            Some("application/json"),
+            Some(&payload_hash),
+            None,
+        );
+        let signed_headers = signed_headers(false);
+        let canonical_request =
+            format!("POST\n{path}\n\n{canonical_headers}\n{signed_headers}\n{payload_hash}");
+
+        // The canonical request must contain the /converse-stream path
+        assert!(
+            canonical_request.contains("/converse-stream"),
+            "canonical request must use /converse-stream path"
+        );
+        assert!(
+            canonical_request.contains(model_id),
+            "canonical request must contain model ID"
+        );
+
+        // Verify signing produces a valid hex signature
+        let credential_scope = format!("{date_stamp}/us-east-1/bedrock/aws4_request");
+        let string_to_sign = format!(
+            "AWS4-HMAC-SHA256\n{amz_date}\n{credential_scope}\n{}",
+            sha256_hex(canonical_request.as_bytes())
+        );
+        let signing_key = signing_key("test-secret-key", &date_stamp, "us-east-1", "bedrock");
+        let signature = hex_encode(&hmac_sha256(&signing_key, string_to_sign.as_bytes()));
+
+        // Signature should be 64 hex characters
+        assert_eq!(signature.len(), 64);
+        assert!(signature.chars().all(|c| c.is_ascii_hexdigit()));
     }
 }

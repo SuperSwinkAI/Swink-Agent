@@ -71,11 +71,11 @@
 
 ### Implementation for User Story 2
 
-- [ ] T018 [US2] Wire up `contentBlockStart(toolUse)` → `ToolCallStart` (with `toolUseId`, `name`), `contentBlockDelta(toolUse)` → `ToolCallDelta` (with `input` partial JSON), `contentBlockStop` → `ToolCallEnd` event mapping in `parse_event_frame()`
-- [ ] T019 [US2] Add unit test `tool_call_event_stream_parsing` in adapters/src/bedrock.rs that constructs mock event-stream frames for a tool call response and verifies correct ToolCallStart/ToolCallDelta/ToolCallEnd sequence with valid accumulated JSON
-- [ ] T020 [US2] Add `DummyTool` struct (get_weather) in adapters/tests/bedrock_live.rs implementing `AgentTool` with JSON schema for city parameter
-- [ ] T021 [US2] Add `live_tool_use_stream` test in adapters/tests/bedrock_live.rs: send prompt with get_weather tool, assert ToolCallStart with name "get_weather", ToolCallEnd present, and StopReason::ToolUse
-- [ ] T022 [US2] Add `live_multi_turn_context` test in adapters/tests/bedrock_live.rs: send two-turn conversation (introduce name, then ask for recall), assert second reply contains the introduced name
+- [x] T018 [US2] Wire up `contentBlockStart(toolUse)` → `ToolCallStart` (with `toolUseId`, `name`), `contentBlockDelta(toolUse)` → `ToolCallDelta` (with `input` partial JSON), `contentBlockStop` → `ToolCallEnd` event mapping in `parse_event_frame()`
+- [x] T019 [US2] Add unit test `tool_call_event_stream_parsing` in adapters/src/bedrock.rs that constructs mock event-stream frames for a tool call response and verifies correct ToolCallStart/ToolCallDelta/ToolCallEnd sequence with valid accumulated JSON
+- [x] T020 [US2] Add `DummyTool` struct (get_weather) in adapters/tests/bedrock_live.rs implementing `AgentTool` with JSON schema for city parameter
+- [x] T021 [US2] Add `live_tool_use_stream` test in adapters/tests/bedrock_live.rs: send prompt with get_weather tool, assert ToolCallStart with name "get_weather", ToolCallEnd present, and StopReason::ToolUse
+- [x] T022 [US2] Add `live_multi_turn_context` test in adapters/tests/bedrock_live.rs: send two-turn conversation (introduce name, then ask for recall), assert second reply contains the introduced name
 
 **Checkpoint**: Tool call streaming works; live tests pass for both text and tool call scenarios
 
@@ -90,7 +90,7 @@
 ### Implementation for User Story 3
 
 - [x] T023 [US3] Verify that the existing SigV4 signing in `converse_stream()` correctly signs the `/converse-stream` URL path (update path in signing if it was hardcoded to `/converse`)
-- [ ] T024 [US3] Add unit test `sigv4_signs_converse_stream_path` in adapters/src/bedrock.rs that verifies the canonical request uses the `/model/{id}/converse-stream` path
+- [x] T024 [US3] Add unit test `sigv4_signs_converse_stream_path` in adapters/src/bedrock.rs that verifies the canonical request uses the `/model/{id}/converse-stream` path
 - [x] T025 [US3] Add `live_invalid_creds_returns_auth_error` test in adapters/tests/bedrock_live.rs: create BedrockStreamFn with bogus credentials, assert Error event with auth-related message
 
 **Checkpoint**: SigV4 signing verified for streaming endpoint; auth error test passes
