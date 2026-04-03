@@ -1,3 +1,4 @@
+#![cfg(feature = "testkit")]
 //! Integration test: run a ToolMiddleware-wrapped tool through the agent loop.
 
 mod common;

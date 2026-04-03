@@ -1,3 +1,4 @@
+#![cfg(feature = "testkit")]
 //! Integration tests for User Story 5: Structured Output and Proxy Reconstruction.
 //! Tests T033-T037.
 

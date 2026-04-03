@@ -1,3 +1,4 @@
+#![cfg(feature = "testkit")]
 mod common;
 
 use std::sync::{Arc, Mutex};

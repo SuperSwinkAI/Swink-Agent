@@ -1,3 +1,4 @@
+#![cfg(feature = "testkit")]
 //! End-to-end integration tests exercising the full Agent -> loop -> mock
 //! `StreamFn` -> tool execution -> events stack. Tests 6.1 through 6.15 per the
 //! implementation plan.

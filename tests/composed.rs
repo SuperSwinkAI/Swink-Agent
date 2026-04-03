@@ -1,3 +1,4 @@
+#![cfg(feature = "testkit")]
 //! Composed integration tests that exercise multiple features together.
 //!
 //! These tests fill the gap where features are only tested in isolation,

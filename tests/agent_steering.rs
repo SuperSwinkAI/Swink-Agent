@@ -1,3 +1,4 @@
+#![cfg(feature = "testkit")]
 //! Steering and context snapshot tests for the [`Agent`] public API.
 
 mod common;

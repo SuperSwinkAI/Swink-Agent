@@ -1,3 +1,4 @@
+#![cfg(feature = "testkit")]
 //! Integration tests for User Story 2: Tool Execution and Validation (T011-T019).
 
 mod common;

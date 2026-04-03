@@ -541,6 +541,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "testkit")]
     fn config_round_trip_only_contains_restorable_fields() {
         // Every field in AgentConfig must be faithfully restored by
         // into_agent_options(). This test guards against adding fields

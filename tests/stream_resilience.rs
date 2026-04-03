@@ -1,3 +1,4 @@
+#![cfg(feature = "testkit")]
 //! Stream and channel resilience tests.
 //!
 //! Validates that malformed JSON in tool calls produces correct errors,

@@ -1,3 +1,4 @@
+#![cfg(feature = "testkit")]
 //! Stress test: 50 concurrent tool calls proving parallel execution.
 
 mod common;

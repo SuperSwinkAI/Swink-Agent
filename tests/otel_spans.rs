@@ -1,3 +1,4 @@
+#![cfg(feature = "testkit")]
 //! Integration tests for OpenTelemetry span instrumentation.
 //!
 //! These tests verify that the agent loop emits properly hierarchical `OTel` spans

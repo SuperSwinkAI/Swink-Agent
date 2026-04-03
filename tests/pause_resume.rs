@@ -1,3 +1,4 @@
+#![cfg(feature = "testkit")]
 //! Integration tests for pause/resume/checkpoint functionality.
 
 mod common;

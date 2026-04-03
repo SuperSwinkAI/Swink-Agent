@@ -1,3 +1,4 @@
+#![cfg(feature = "testkit")]
 //! Tests for `ToolExecutionPolicy` — verifying sequential, priority, and
 //! custom dispatch modes.
 

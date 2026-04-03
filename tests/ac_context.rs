@@ -1,3 +1,4 @@
+#![cfg(feature = "testkit")]
 //! User Story 3: Context Management and Overflow (T020–T025)
 //!
 //! Tests verifying context window tracking, sliding-window compaction,

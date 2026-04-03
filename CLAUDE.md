@@ -25,16 +25,16 @@ Pure-Rust library for LLM-powered agentic loops. Provider-agnostic core with plu
 - One concern per file. Split at ~1500 lines.
 - Import order: `std` → external (alphabetical) → `crate::`/`super::`.
 - Test names: descriptive `snake_case` without `test_` prefix. Mocks prefixed `Mock`.
-- Shared test helpers in `tests/common/mod.rs` (`MockStreamFn`, `MockTool`, `text_only_events`, `tool_call_events`).
+- Shared test helpers in `src/testing.rs` (gated behind `testkit` feature), re-exported via `tests/common/mod.rs`.
 
 ## Build & Test
 
 ```bash
 cargo build --workspace
-cargo test --workspace
-cargo test -p swink-agent --no-default-features  # verify builtin-tools disabled
-cargo clippy --workspace -- -D warnings          # zero warnings policy
-cargo run -p swink-agent-tui                     # launch TUI (.env auto-loaded)
+cargo test --workspace --features testkit         # testkit enables test helpers
+cargo test -p swink-agent --no-default-features   # verify builtin-tools disabled
+cargo clippy --workspace -- -D warnings           # zero warnings policy
+cargo run -p swink-agent-tui                      # launch TUI (.env auto-loaded)
 ```
 
 MSRV **1.88** (edition 2024). Workspace deps centralized in root `Cargo.toml`.
@@ -115,7 +115,7 @@ MSRV **1.88** (edition 2024). Workspace deps centralized in root `Cargo.toml`.
 
 **Root crate (`swink-agent`):**
 - `builtin-tools` (default-enabled) — gates `BashTool`, `ReadFileTool`, `WriteFileTool`.
-- ~~`test-helpers`~~ — **removed**. The `testing` module is now always public regardless of feature flags; no gate needed.
+- `testkit` — gates the `testing` module (mock `StreamFn`/`AgentTool` implementations, event/message builders). Not default-enabled; consumers add `features = ["testkit"]` in dev-dependencies. Integration tests in `/tests/` are gated with `#![cfg(feature = "testkit")]`.
 - Root crate cannot re-export adapters/local-llm/TUI (cyclic dependency). Consumers depend on sub-crates directly.
 
 **Adapters crate (`swink-agent-adapters`):**

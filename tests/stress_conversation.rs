@@ -1,3 +1,4 @@
+#![cfg(feature = "testkit")]
 //! Stress test: 100+ turn conversation with context compaction.
 
 mod common;

@@ -1,3 +1,4 @@
+#![cfg(feature = "testkit")]
 //! Stress test: 12 concurrent tool calls with random delays, verifying no
 //! results are duplicated or lost.
 

@@ -1,3 +1,4 @@
+#![cfg(feature = "testkit")]
 //! Integration tests for emergency in-place overflow recovery (US6, T064-T073).
 //!
 //! Tests verify that context overflow triggers emergency recovery within the

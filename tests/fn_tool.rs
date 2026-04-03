@@ -1,3 +1,4 @@
+#![cfg(feature = "testkit")]
 //! Integration test: run an `FnTool` through the agent loop with `MockStreamFn`.
 
 mod common;
