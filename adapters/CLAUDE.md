@@ -27,7 +27,7 @@ swink-agent-adapters = {}
 | `gemini` | `google.rs` | — | Implemented |
 | `proxy` | `proxy.rs` | — | Implemented |
 | `azure` | `azure.rs` | — | Implemented |
-| `bedrock` | `bedrock.rs` | `sha2` | Stub |
+| `bedrock` | `bedrock.rs` | `sha2`, `hmac`, `chrono`, `aws-smithy-eventstream`, `aws-smithy-types` | Implemented |
 | `mistral` | `mistral.rs` | — | Implemented |
 | `xai` | `xai.rs` | — | Implemented |
 
