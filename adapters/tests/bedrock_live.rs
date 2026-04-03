@@ -6,15 +6,18 @@
 //! Requires `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and `AWS_REGION`
 //! in `.env` or environment.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use futures::StreamExt;
+use serde_json::json;
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 
 use swink_agent::{
-    AgentContext, AgentMessage, AssistantMessageEvent, ContentBlock, LlmMessage, ModelSpec,
-    StreamFn, StreamOptions, UserMessage,
+    AgentContext, AgentMessage, AgentTool, AgentToolResult, AssistantMessage,
+    AssistantMessageEvent, ContentBlock, Cost, LlmMessage, ModelSpec, StopReason, StreamFn,
+    StreamOptions, Usage, UserMessage,
 };
 use swink_agent_adapters::BedrockStreamFn;
 
@@ -156,4 +159,172 @@ async fn live_invalid_creds_returns_auth_error() {
         .iter()
         .any(|e| matches!(e, AssistantMessageEvent::Error { .. }));
     assert!(has_error, "expected error event for invalid credentials");
+}
+
+// ── DummyTool ───────────────────────────────────────────────────────────────
+
+struct DummyTool;
+
+impl AgentTool for DummyTool {
+    fn name(&self) -> &str {
+        "get_weather"
+    }
+
+    fn label(&self) -> &str {
+        "Get Weather"
+    }
+
+    fn description(&self) -> &str {
+        "Get the current weather for a city."
+    }
+
+    fn parameters_schema(&self) -> &serde_json::Value {
+        static SCHEMA: std::sync::OnceLock<serde_json::Value> = std::sync::OnceLock::new();
+        SCHEMA.get_or_init(|| {
+            json!({
+                "type": "object",
+                "properties": {
+                    "city": {
+                        "type": "string",
+                        "description": "The city name"
+                    }
+                },
+                "required": ["city"]
+            })
+        })
+    }
+
+    fn execute(
+        &self,
+        _tool_call_id: &str,
+        _params: serde_json::Value,
+        _cancellation_token: CancellationToken,
+        _on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
+        _state: std::sync::Arc<std::sync::RwLock<swink_agent::SessionState>>,
+        _credential: Option<swink_agent::ResolvedCredential>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = AgentToolResult> + Send + '_>> {
+        Box::pin(async {
+            AgentToolResult {
+                content: vec![ContentBlock::Text {
+                    text: "72°F, sunny".into(),
+                }],
+                details: json!({}),
+                is_error: false,
+            }
+        })
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires AWS credentials"]
+async fn live_tool_use_stream() {
+    let (access_key, secret_key, region, session_token) = aws_creds();
+    let sf = BedrockStreamFn::new(&region, &access_key, &secret_key, session_token);
+    let context = AgentContext {
+        system_prompt: "You must use the get_weather tool to answer. Do not reply with text only."
+            .into(),
+        messages: vec![AgentMessage::Llm(LlmMessage::User(UserMessage {
+            content: vec![ContentBlock::Text {
+                text: "What's the weather in Paris?".into(),
+            }],
+            timestamp: 0,
+            cache_hint: None,
+        }))],
+        tools: vec![Arc::new(DummyTool)],
+    };
+
+    let events = timeout(TIMEOUT, collect_events(&sf, &context))
+        .await
+        .expect("timed out");
+
+    let names: Vec<&str> = events.iter().map(event_name).collect();
+    println!("events: {names:?}");
+
+    assert!(
+        names.contains(&"ToolCallStart"),
+        "missing ToolCallStart: {names:?}"
+    );
+    assert!(
+        names.contains(&"ToolCallEnd"),
+        "missing ToolCallEnd: {names:?}"
+    );
+
+    // Verify the tool name
+    let tool_name = events.iter().find_map(|e| match e {
+        AssistantMessageEvent::ToolCallStart { name, .. } => Some(name.clone()),
+        _ => None,
+    });
+    assert_eq!(tool_name.as_deref(), Some("get_weather"));
+
+    // Verify stop reason is ToolUse
+    let done = events
+        .iter()
+        .find(|e| matches!(e, AssistantMessageEvent::Done { .. }));
+    assert!(done.is_some(), "missing Done event");
+    if let Some(AssistantMessageEvent::Done { stop_reason, .. }) = done {
+        assert_eq!(*stop_reason, swink_agent::StopReason::ToolUse);
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires AWS credentials"]
+async fn live_multi_turn_context() {
+    let (access_key, secret_key, region, session_token) = aws_creds();
+    let sf = BedrockStreamFn::new(&region, &access_key, &secret_key, session_token);
+
+    // Two-turn conversation: introduce a name, then ask for recall
+    let context = AgentContext {
+        system_prompt: "You are a helpful assistant. Remember what the user tells you.".into(),
+        messages: vec![
+            AgentMessage::Llm(LlmMessage::User(UserMessage {
+                content: vec![ContentBlock::Text {
+                    text: "My name is Zephyrine.".into(),
+                }],
+                timestamp: 0,
+                cache_hint: None,
+            })),
+            AgentMessage::Llm(LlmMessage::Assistant(AssistantMessage {
+                content: vec![ContentBlock::Text {
+                    text: "Nice to meet you, Zephyrine!".into(),
+                }],
+                provider: "bedrock".into(),
+                model_id: "".into(),
+                stop_reason: StopReason::Stop,
+                usage: Usage::default(),
+                cost: Cost::default(),
+                error_message: None,
+                error_kind: None,
+                timestamp: 0,
+                cache_hint: None,
+            })),
+            AgentMessage::Llm(LlmMessage::User(UserMessage {
+                content: vec![ContentBlock::Text {
+                    text: "What is my name?".into(),
+                }],
+                timestamp: 0,
+                cache_hint: None,
+            })),
+        ],
+        tools: Vec::new(),
+    };
+
+    let events = timeout(TIMEOUT, collect_events(&sf, &context))
+        .await
+        .expect("timed out");
+
+    // Assembled text should contain the introduced name
+    let text: String = events
+        .iter()
+        .filter_map(|e| {
+            if let AssistantMessageEvent::TextDelta { delta, .. } = e {
+                Some(delta.as_str())
+            } else {
+                None
+            }
+        })
+        .collect();
+    assert!(
+        text.to_lowercase().contains("zephyrine"),
+        "second reply should contain the introduced name, got: {text}"
+    );
 }
