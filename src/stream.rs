@@ -361,8 +361,32 @@ pub fn accumulate_message(
     let mut cost: Option<Cost> = None;
     let mut error_message: Option<String> = None;
     let mut saw_start = false;
+    let mut saw_terminal = false;
 
     for event in events {
+        // Reject content-block events after a terminal event.
+        match &event {
+            AssistantMessageEvent::TextStart { .. }
+            | AssistantMessageEvent::TextDelta { .. }
+            | AssistantMessageEvent::TextEnd { .. }
+            | AssistantMessageEvent::ThinkingStart { .. }
+            | AssistantMessageEvent::ThinkingDelta { .. }
+            | AssistantMessageEvent::ThinkingEnd { .. }
+            | AssistantMessageEvent::ToolCallStart { .. }
+            | AssistantMessageEvent::ToolCallDelta { .. }
+            | AssistantMessageEvent::ToolCallEnd { .. } => {
+                if saw_terminal {
+                    return Err("content event after terminal event".into());
+                }
+            }
+            AssistantMessageEvent::Done { .. } | AssistantMessageEvent::Error { .. } => {
+                if saw_terminal {
+                    return Err("duplicate terminal event".into());
+                }
+            }
+            AssistantMessageEvent::Start => {}
+        }
+
         match event {
             AssistantMessageEvent::Start => {
                 if saw_start {
@@ -546,6 +570,7 @@ pub fn accumulate_message(
                 stop_reason = Some(sr);
                 usage = Some(u);
                 cost = Some(c);
+                saw_terminal = true;
             }
 
             AssistantMessageEvent::Error {
@@ -559,6 +584,7 @@ pub fn accumulate_message(
                 if let Some(u) = u {
                     usage = Some(u);
                 }
+                saw_terminal = true;
             }
         }
     }
