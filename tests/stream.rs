@@ -513,3 +513,134 @@ fn assistant_message_delta_variants() {
         }
     ));
 }
+
+// ── Terminal event enforcement ──
+
+#[test]
+fn duplicate_done_rejected() {
+    let events = vec![
+        AssistantMessageEvent::Start,
+        AssistantMessageEvent::TextStart { content_index: 0 },
+        AssistantMessageEvent::TextDelta {
+            content_index: 0,
+            delta: "hello".into(),
+        },
+        AssistantMessageEvent::TextEnd { content_index: 0 },
+        AssistantMessageEvent::Done {
+            stop_reason: StopReason::Stop,
+            usage: Usage::default(),
+            cost: Cost::default(),
+        },
+        AssistantMessageEvent::Done {
+            stop_reason: StopReason::Stop,
+            usage: Usage::default(),
+            cost: Cost::default(),
+        },
+    ];
+    let result = accumulate_message(events, "p", "m");
+    assert!(result.is_err());
+    assert!(result.unwrap_err().contains("duplicate terminal"));
+}
+
+#[test]
+fn duplicate_error_rejected() {
+    let events = vec![
+        AssistantMessageEvent::Start,
+        AssistantMessageEvent::Error {
+            stop_reason: StopReason::Error,
+            error_message: "first".into(),
+            usage: None,
+            error_kind: None,
+        },
+        AssistantMessageEvent::Error {
+            stop_reason: StopReason::Error,
+            error_message: "second".into(),
+            usage: None,
+            error_kind: None,
+        },
+    ];
+    let result = accumulate_message(events, "p", "m");
+    assert!(result.is_err());
+    assert!(result.unwrap_err().contains("duplicate terminal"));
+}
+
+#[test]
+fn content_after_done_rejected() {
+    let events = vec![
+        AssistantMessageEvent::Start,
+        AssistantMessageEvent::Done {
+            stop_reason: StopReason::Stop,
+            usage: Usage::default(),
+            cost: Cost::default(),
+        },
+        AssistantMessageEvent::TextDelta {
+            content_index: 0,
+            delta: "late".into(),
+        },
+    ];
+    let result = accumulate_message(events, "p", "m");
+    assert!(result.is_err());
+    assert!(result.unwrap_err().contains("after terminal"));
+}
+
+#[test]
+fn content_after_error_rejected() {
+    let events = vec![
+        AssistantMessageEvent::Start,
+        AssistantMessageEvent::Error {
+            stop_reason: StopReason::Error,
+            error_message: "oops".into(),
+            usage: None,
+            error_kind: None,
+        },
+        AssistantMessageEvent::TextDelta {
+            content_index: 0,
+            delta: "late".into(),
+        },
+    ];
+    let result = accumulate_message(events, "p", "m");
+    assert!(result.is_err());
+    assert!(result.unwrap_err().contains("after terminal"));
+}
+
+#[test]
+fn done_then_error_rejected() {
+    let events = vec![
+        AssistantMessageEvent::Start,
+        AssistantMessageEvent::Done {
+            stop_reason: StopReason::Stop,
+            usage: Usage::default(),
+            cost: Cost::default(),
+        },
+        AssistantMessageEvent::Error {
+            stop_reason: StopReason::Error,
+            error_message: "late error".into(),
+            usage: None,
+            error_kind: None,
+        },
+    ];
+    let result = accumulate_message(events, "p", "m");
+    assert!(result.is_err());
+    assert!(result.unwrap_err().contains("duplicate terminal"));
+}
+
+#[test]
+fn error_then_done_rejected() {
+    let events = vec![
+        AssistantMessageEvent::Start,
+        AssistantMessageEvent::Error {
+            stop_reason: StopReason::Error,
+            error_message: "error first".into(),
+            usage: None,
+            error_kind: None,
+        },
+        AssistantMessageEvent::Done {
+            stop_reason: StopReason::Stop,
+            usage: Usage::default(),
+            cost: Cost::default(),
+        },
+    ];
+    let result = accumulate_message(events, "p", "m");
+    assert!(result.is_err());
+    assert!(result.unwrap_err().contains("duplicate terminal"));
+}
