@@ -259,10 +259,15 @@ mod tests {
         let cost = Cost::default();
         let state = swink_agent::SessionState::new();
         let ctx = make_ctx(&usage, &cost, &state);
+        static MODEL: std::sync::LazyLock<swink_agent::ModelSpec> =
+            std::sync::LazyLock::new(|| swink_agent::ModelSpec::new("test", "test-model"));
         let turn = TurnPolicyContext {
             assistant_message: &msg,
             tool_results: &[],
             stop_reason: StopReason::Stop,
+            system_prompt: "",
+            model_spec: &MODEL,
+            context_messages: &[],
         };
 
         let verdict = logger.evaluate(&ctx, &turn);
@@ -282,10 +287,15 @@ mod tests {
         let cost = Cost::default();
         let state = swink_agent::SessionState::new();
         let ctx = make_ctx(&usage, &cost, &state);
+        static MODEL: std::sync::LazyLock<swink_agent::ModelSpec> =
+            std::sync::LazyLock::new(|| swink_agent::ModelSpec::new("test", "test-model"));
         let turn = TurnPolicyContext {
             assistant_message: &msg,
             tool_results: &[],
             stop_reason: StopReason::Stop,
+            system_prompt: "",
+            model_spec: &MODEL,
+            context_messages: &[],
         };
 
         logger.evaluate(&ctx, &turn);
@@ -324,10 +334,15 @@ mod tests {
         let cost = Cost::default();
         let state = swink_agent::SessionState::new();
         let ctx = make_ctx(&usage, &cost, &state);
+        static MODEL2: std::sync::LazyLock<swink_agent::ModelSpec> =
+            std::sync::LazyLock::new(|| swink_agent::ModelSpec::new("test", "test-model"));
         let turn = TurnPolicyContext {
             assistant_message: &msg,
             tool_results: &[],
             stop_reason: StopReason::ToolUse,
+            system_prompt: "",
+            model_spec: &MODEL2,
+            context_messages: &[],
         };
 
         logger.evaluate(&ctx, &turn);

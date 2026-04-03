@@ -22,7 +22,9 @@ use std::sync::Arc;
 
 use tracing::{debug, warn};
 
-use crate::types::{AgentMessage, AssistantMessage, Cost, StopReason, ToolResultMessage, Usage};
+use crate::types::{
+    AgentMessage, AssistantMessage, Cost, ModelSpec, StopReason, ToolResultMessage, Usage,
+};
 
 // ─── Verdict Enums ──────────────────────────────────────────────────────────
 
@@ -115,6 +117,12 @@ pub struct TurnPolicyContext<'a> {
     pub tool_results: &'a [ToolResultMessage],
     /// Why the turn ended.
     pub stop_reason: StopReason,
+    /// The system prompt active during this turn.
+    pub system_prompt: &'a str,
+    /// The model specification active during this turn.
+    pub model_spec: &'a ModelSpec,
+    /// All context messages (the full conversation history).
+    pub context_messages: &'a [AgentMessage],
 }
 
 // ─── Slot Traits ────────────────────────────────────────────────────────────

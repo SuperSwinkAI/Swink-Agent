@@ -197,6 +197,9 @@ async fn run_loop_inner(
                         assistant_message: msg,
                         tool_results: &state.last_tool_results,
                         stop_reason: msg.stop_reason,
+                        system_prompt: &system_prompt,
+                        model_spec: &config.model,
+                        context_messages: &state.context_messages,
                     };
                     match run_post_turn_policies(&config.post_turn_policies, &policy_ctx, &turn_ctx)
                     {
