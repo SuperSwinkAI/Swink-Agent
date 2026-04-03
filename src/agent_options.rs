@@ -132,6 +132,13 @@ pub struct AgentOptions {
     /// [`CacheHint`](crate::context_cache::CacheHint) markers and emits
     /// [`AgentEvent::CacheAction`](crate::AgentEvent) events.
     pub cache_config: Option<crate::context_cache::CacheConfig>,
+    /// Plugins that contribute policies, tools, and event observers.
+    ///
+    /// Plugins are merged into the agent during construction. Plugin policies
+    /// are prepended before directly-registered policies; plugin tools are
+    /// appended after direct tools (namespaced with the plugin name).
+    #[cfg(feature = "plugins")]
+    pub plugins: Vec<Arc<dyn crate::plugin::Plugin>>,
 }
 
 impl AgentOptions {
@@ -179,6 +186,8 @@ impl AgentOptions {
             session_state: None,
             credential_resolver: None,
             cache_config: None,
+            #[cfg(feature = "plugins")]
+            plugins: Vec::new(),
         }
     }
 
@@ -552,6 +561,22 @@ impl AgentOptions {
         f: impl Fn() -> String + Send + Sync + 'static,
     ) -> Self {
         self.dynamic_system_prompt = Some(Box::new(f));
+        self
+    }
+
+    /// Register a single plugin.
+    #[cfg(feature = "plugins")]
+    #[must_use]
+    pub fn with_plugin(mut self, plugin: Arc<dyn crate::plugin::Plugin>) -> Self {
+        self.plugins.push(plugin);
+        self
+    }
+
+    /// Register multiple plugins at once.
+    #[cfg(feature = "plugins")]
+    #[must_use]
+    pub fn with_plugins(mut self, plugins: Vec<Arc<dyn crate::plugin::Plugin>>) -> Self {
+        self.plugins.extend(plugins);
         self
     }
 

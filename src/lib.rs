@@ -31,6 +31,8 @@ mod noop_tool;
 mod orchestrator;
 #[cfg(feature = "otel")]
 pub mod otel;
+#[cfg(feature = "plugins")]
+pub mod plugin;
 pub mod policy;
 mod registry;
 mod retry;
@@ -139,6 +141,8 @@ pub use types::{
 pub use util::now_timestamp;
 
 pub use display::{CoreDisplayMessage, DisplayRole, IntoDisplayMessages};
+#[cfg(feature = "plugins")]
+pub use plugin::{NamespacedTool, Plugin, PluginRegistry};
 pub use policy::{
     PolicyContext, PolicyVerdict, PostLoopPolicy, PostTurnPolicy, PreDispatchPolicy,
     PreDispatchVerdict, PreTurnPolicy, ToolPolicyContext, TurnPolicyContext, run_policies,
