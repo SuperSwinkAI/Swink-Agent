@@ -81,7 +81,8 @@ pub struct OaiChatRequest {
     pub model: String,
     pub messages: Vec<OaiMessage>,
     pub stream: bool,
-    pub stream_options: OaiStreamOptions,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stream_options: Option<OaiStreamOptions>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
