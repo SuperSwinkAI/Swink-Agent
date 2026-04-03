@@ -1,7 +1,8 @@
 //! Azure `OpenAI` / Azure AI Foundry adapter.
 //!
 //! This adapter targets Azure's OpenAI-v1-compatible chat completions surface.
-//! It reuses the shared OAI-compatible SSE parsing from [`openai_compat`].
+//! It reuses the shared OAI-compatible SSE parsing from [`openai_compat`] and
+//! the shared transport pipeline from [`oai_transport`].
 
 use std::pin::Pin;
 use std::sync::{Arc, RwLock};
@@ -10,16 +11,12 @@ use std::time::{Duration, Instant};
 use futures::stream::{self, Stream, StreamExt as _};
 use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, warn};
+use tracing::debug;
 
 use swink_agent::stream::{AssistantMessageEvent, StreamFn, StreamOptions};
 use swink_agent::types::{AgentContext, ModelSpec};
 
-use crate::base::AdapterBase;
-use crate::convert;
-use crate::openai_compat::{
-    OaiChatRequest, OaiConverter, OaiStreamOptions, build_oai_tools, parse_oai_sse_stream,
-};
+use crate::oai_transport::{oai_send_and_parse, prepare_oai_request};
 
 /// Authentication method for Azure `OpenAI` deployments.
 #[derive(Clone)]
@@ -65,7 +62,8 @@ struct TokenResponse {
 }
 
 pub struct AzureStreamFn {
-    base: AdapterBase,
+    client: reqwest::Client,
+    base_url: String,
     auth: AzureAuth,
     token_cache: Arc<RwLock<Option<CachedToken>>>,
     /// Override token endpoint URL (for testing). `None` = use Microsoft default.
@@ -75,12 +73,9 @@ pub struct AzureStreamFn {
 impl AzureStreamFn {
     #[must_use]
     pub fn new(base_url: impl Into<String>, auth: AzureAuth) -> Self {
-        let api_key = match &auth {
-            AzureAuth::ApiKey(key) => key.clone(),
-            AzureAuth::EntraId { .. } => String::new(),
-        };
         Self {
-            base: AdapterBase::new(base_url.into().trim_end_matches('/').to_string(), api_key),
+            client: reqwest::Client::new(),
+            base_url: base_url.into().trim_end_matches('/').to_string(),
             auth,
             token_cache: Arc::new(RwLock::new(None)),
             token_endpoint_override: None,
@@ -112,7 +107,6 @@ impl AzureStreamFn {
         ];
 
         let resp = self
-            .base
             .client
             .post(&token_url)
             .form(&params)
@@ -174,12 +168,39 @@ impl AzureStreamFn {
             format!("https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token")
         }
     }
+
+    /// Apply Azure-specific auth headers to the request builder.
+    async fn apply_auth(
+        &self,
+        request: reqwest::RequestBuilder,
+        options: &StreamOptions,
+    ) -> Result<reqwest::RequestBuilder, AssistantMessageEvent> {
+        match &self.auth {
+            AzureAuth::ApiKey(key) => {
+                let api_key = options.api_key.as_deref().unwrap_or(key);
+                Ok(request.header("api-key", api_key))
+            }
+            AzureAuth::EntraId {
+                tenant_id,
+                client_id,
+                client_secret,
+            } => {
+                let token = self
+                    .get_or_refresh_token(tenant_id, client_id, client_secret)
+                    .await
+                    .map_err(|e| {
+                        AssistantMessageEvent::error_network(format!("Azure token error: {e}"))
+                    })?;
+                Ok(request.header("Authorization", format!("Bearer {token}")))
+            }
+        }
+    }
 }
 
 impl std::fmt::Debug for AzureStreamFn {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AzureStreamFn")
-            .field("base_url", &self.base.base_url)
+            .field("base_url", &self.base_url)
             .field("auth", &self.auth)
             .finish_non_exhaustive()
     }
@@ -211,92 +232,32 @@ fn azure_stream<'a>(
     cancellation_token: CancellationToken,
 ) -> impl Stream<Item = AssistantMessageEvent> + Send + 'a {
     stream::once(async move {
-        let response = match send_request(azure, model, context, options).await {
-            Ok(resp) => resp,
+        let url = format!("{}/chat/completions", azure.base_url);
+        debug!(
+            %url,
+            model = %model.model_id,
+            messages = context.messages.len(),
+            "sending Azure request"
+        );
+
+        let request = prepare_oai_request(&azure.client, &url, model, context, options);
+        let request = match azure.apply_auth(request, options).await {
+            Ok(r) => r,
             Err(event) => return stream::iter(vec![event]).left_stream(),
         };
 
-        let status = response.status();
-        if !status.is_success() {
-            let code = status.as_u16();
-            let body = response.text().await.unwrap_or_default();
-            warn!(status = code, "Azure HTTP error");
-
-            // Detect Azure content filter violations in error body
-            if is_content_filter_error(&body) {
-                let event = AssistantMessageEvent::error_content_filtered(format!(
-                    "Azure content filter blocked request (HTTP {code})"
-                ));
-                return stream::iter(vec![event]).left_stream();
+        oai_send_and_parse(request, "Azure", cancellation_token, |status, body| {
+            if is_content_filter_error(body) {
+                Some(AssistantMessageEvent::error_content_filtered(format!(
+                    "Azure content filter blocked request (HTTP {status})"
+                )))
+            } else {
+                None
             }
-
-            let event = crate::classify::error_event_from_status(code, &body, "Azure");
-            return stream::iter(vec![event]).left_stream();
-        }
-
-        parse_oai_sse_stream(response, cancellation_token, "Azure").right_stream()
+        })
+        .right_stream()
     })
     .flatten()
-}
-
-async fn send_request(
-    azure: &AzureStreamFn,
-    model: &ModelSpec,
-    context: &AgentContext,
-    options: &StreamOptions,
-) -> Result<reqwest::Response, AssistantMessageEvent> {
-    let url = format!("{}/chat/completions", azure.base.base_url);
-    debug!(
-        %url,
-        model = %model.model_id,
-        messages = context.messages.len(),
-        "sending Azure request"
-    );
-
-    let messages =
-        convert::convert_messages::<OaiConverter>(&context.messages, &context.system_prompt);
-
-    let (tools, tool_choice) = build_oai_tools(&context.tools);
-
-    let body = OaiChatRequest {
-        model: model.model_id.clone(),
-        messages,
-        stream: true,
-        stream_options: OaiStreamOptions {
-            include_usage: true,
-        },
-        temperature: options.temperature,
-        max_tokens: options.max_tokens,
-        tools,
-        tool_choice,
-    };
-
-    let mut request = azure.base.client.post(&url).json(&body);
-
-    match &azure.auth {
-        AzureAuth::ApiKey(key) => {
-            let api_key = options.api_key.as_deref().unwrap_or(key);
-            request = request.header("api-key", api_key);
-        }
-        AzureAuth::EntraId {
-            tenant_id,
-            client_id,
-            client_secret,
-        } => {
-            let token = azure
-                .get_or_refresh_token(tenant_id, client_id, client_secret)
-                .await
-                .map_err(|e| {
-                    AssistantMessageEvent::error_network(format!("Azure token error: {e}"))
-                })?;
-            request = request.header("Authorization", format!("Bearer {token}"));
-        }
-    }
-
-    request
-        .send()
-        .await
-        .map_err(|e| AssistantMessageEvent::error_network(format!("Azure connection error: {e}")))
 }
 
 /// Check if an HTTP error body contains an Azure content filter violation.

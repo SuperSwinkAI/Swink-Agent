@@ -42,6 +42,16 @@ mod finalize;
     )),
     allow(dead_code)
 )]
+mod oai_transport;
+#[cfg_attr(
+    not(any(
+        feature = "openai",
+        feature = "azure",
+        feature = "mistral",
+        feature = "xai"
+    )),
+    allow(dead_code)
+)]
 mod openai_compat;
 mod remote_presets;
 pub mod sse;

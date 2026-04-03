@@ -12,8 +12,9 @@
 //! - **Message ordering**: Mistral rejects `user` immediately after `tool`;
 //!   a synthetic assistant message must be inserted.
 //!
-//! This adapter holds [`AdapterBase`] directly (like Azure) and reuses the
-//! shared `openai_compat` types for message serialization and SSE parsing.
+//! This adapter uses the shared [`oai_transport`] pipeline for HTTP send,
+//! error classification, and SSE parsing, while handling Mistral-specific
+//! message normalization and tool-call ID remapping locally.
 
 use std::collections::HashMap;
 use std::pin::Pin;
@@ -21,14 +22,15 @@ use std::pin::Pin;
 use futures::stream::{self, Stream, StreamExt as _};
 use serde::Serialize;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, warn};
+use tracing::debug;
 
 use swink_agent::stream::{AssistantMessageEvent, StreamFn, StreamOptions};
 use swink_agent::types::{AgentContext, AgentMessage, ModelSpec};
 
 use crate::base::AdapterBase;
 use crate::convert;
-use crate::openai_compat::{OaiConverter, OaiMessage, build_oai_tools, parse_oai_sse_stream};
+use crate::oai_transport::oai_send_and_parse;
+use crate::openai_compat::{OaiConverter, OaiMessage, build_oai_tools};
 
 /// Charset for generating Mistral-compatible 9-char tool call IDs.
 const MISTRAL_ID_CHARSET: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
@@ -181,72 +183,42 @@ fn mistral_stream<'a>(
     cancellation_token: CancellationToken,
 ) -> impl Stream<Item = AssistantMessageEvent> + Send + 'a {
     stream::once(async move {
-        // Build the ID map from existing tool call IDs in context.
         let mut id_map = MistralIdMap::new();
 
-        let response = match send_request(mistral, model, context, options, &mut id_map).await {
-            Ok(resp) => resp,
-            Err(event) => return stream::iter(vec![event]).left_stream(),
+        let url = format!("{}/v1/chat/completions", mistral.base.base_url);
+        debug!(
+            %url,
+            model = %model.model_id,
+            messages = context.messages.len(),
+            "sending Mistral request"
+        );
+
+        let messages =
+            convert_messages_for_mistral(&context.messages, &context.system_prompt, &mut id_map);
+        let (tools, tool_choice) = build_oai_tools(&context.tools);
+
+        let body = MistralChatRequest {
+            model: model.model_id.clone(),
+            messages,
+            stream: true,
+            temperature: options.temperature,
+            max_tokens: options.max_tokens,
+            tools,
+            tool_choice,
         };
 
-        let status = response.status();
-        if !status.is_success() {
-            let code = status.as_u16();
-            let body = response.text().await.unwrap_or_default();
-            warn!(status = code, "Mistral HTTP error");
-            let event = crate::classify::error_event_from_status(code, &body, "Mistral");
-            return stream::iter(vec![event]).left_stream();
-        }
+        let api_key = options.api_key.as_deref().unwrap_or(&mistral.base.api_key);
+        let request = mistral
+            .base
+            .client
+            .post(&url)
+            .header("Authorization", format!("Bearer {api_key}"))
+            .json(&body);
 
-        // Parse SSE then normalize response events.
-        let raw_stream = parse_oai_sse_stream(response, cancellation_token, "Mistral");
-        normalize_response_stream(raw_stream, id_map).right_stream()
+        let raw_stream = oai_send_and_parse(request, "Mistral", cancellation_token, |_, _| None);
+        normalize_response_stream(raw_stream, id_map)
     })
     .flatten()
-}
-
-/// Construct and send the HTTP POST request with Mistral-specific normalization.
-async fn send_request(
-    mistral: &MistralStreamFn,
-    model: &ModelSpec,
-    context: &AgentContext,
-    options: &StreamOptions,
-    id_map: &mut MistralIdMap,
-) -> Result<reqwest::Response, AssistantMessageEvent> {
-    let url = format!("{}/v1/chat/completions", mistral.base.base_url);
-    debug!(
-        %url,
-        model = %model.model_id,
-        messages = context.messages.len(),
-        "sending Mistral request"
-    );
-
-    // Convert messages with Mistral-specific normalization.
-    let messages = convert_messages_for_mistral(&context.messages, &context.system_prompt, id_map);
-
-    let (tools, tool_choice) = build_oai_tools(&context.tools);
-
-    let body = MistralChatRequest {
-        model: model.model_id.clone(),
-        messages,
-        stream: true,
-        temperature: options.temperature,
-        max_tokens: options.max_tokens,
-        tools,
-        tool_choice,
-    };
-
-    let api_key = options.api_key.as_deref().unwrap_or(&mistral.base.api_key);
-
-    mistral
-        .base
-        .client
-        .post(&url)
-        .header("Authorization", format!("Bearer {api_key}"))
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| AssistantMessageEvent::error_network(format!("Mistral connection error: {e}")))
 }
 
 // ─── Message conversion ────────────────────────────────────────────────────
@@ -309,7 +281,7 @@ fn convert_messages_for_mistral(
 /// `StopReason::Stop` (catch-all) which is acceptable — errors from the
 /// Mistral side are rare and the stop reason still allows callers to inspect.
 fn normalize_response_stream(
-    raw: Pin<Box<dyn Stream<Item = AssistantMessageEvent> + Send>>,
+    raw: impl Stream<Item = AssistantMessageEvent> + Send,
     mut id_map: MistralIdMap,
 ) -> impl Stream<Item = AssistantMessageEvent> + Send {
     raw.map(move |event| match event {
