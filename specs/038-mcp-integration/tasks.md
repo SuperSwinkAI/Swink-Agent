@@ -17,10 +17,10 @@
 
 **Purpose**: Create the `swink-agent-mcp` crate and wire it into the workspace
 
-- [ ] T001 Add `mcp` to workspace members in Cargo.toml and create mcp/Cargo.toml with dependencies: swink-agent (path), rmcp (with client + sse features), tokio, serde, serde_json, thiserror, tracing
-- [ ] T002 Create mcp/src/lib.rs with `#![forbid(unsafe_code)]`, module declarations, and public re-exports per contracts/public-api.md
-- [ ] T003 [P] Create mcp/src/error.rs with McpError enum: SpawnFailed, ConnectionFailed, ToolNameCollision, ToolCallFailed, ProtocolError — implement Display, Error, and From conversions
-- [ ] T004 [P] Create mcp/tests/common/mod.rs with mock MCP server helpers: a function that spawns an in-process stdio MCP server advertising configurable tools and returning configurable results
+- [x] T001 Add `mcp` to workspace members in Cargo.toml and create mcp/Cargo.toml with dependencies: swink-agent (path), rmcp (with client + sse features), tokio, serde, serde_json, thiserror, tracing
+- [x] T002 Create mcp/src/lib.rs with `#![forbid(unsafe_code)]`, module declarations, and public re-exports per contracts/public-api.md
+- [x] T003 [P] Create mcp/src/error.rs with McpError enum: SpawnFailed, ConnectionFailed, ToolNameCollision, ToolCallFailed, ProtocolError — implement Display, Error, and From conversions
+- [x] T004 [P] Create mcp/tests/common/mod.rs with mock MCP server helpers: a function that spawns an in-process stdio MCP server advertising configurable tools and returning configurable results
 
 ---
 
@@ -30,11 +30,11 @@
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete
 
-- [ ] T005 Create mcp/src/config.rs with McpTransport enum (Stdio { command, args, env }, Sse { url, bearer_token }), McpServerConfig struct (name, transport, tool_prefix, tool_filter, requires_approval), and ToolFilter struct (allow, deny) per data-model.md
-- [ ] T006 Create mcp/src/convert.rs with functions: rmcp Tool → (name: String, description: String, input_schema: Value), rmcp Content → swink-agent ContentBlock (Text→Text, Image→Image, other→Text fallback), rmcp CallToolResult → AgentToolResult
-- [ ] T007 Add MCP event variants to src/loop_/event.rs in the AgentEvent enum: McpServerConnected { server_name }, McpServerDisconnected { server_name, reason }, McpToolsDiscovered { server_name, tool_count }, McpToolCallStarted { server_name, tool_name }, McpToolCallCompleted { server_name, tool_name, is_error }
-- [ ] T008 [P] Write tests for convert module in mcp/tests/convert_test.rs: text content conversion, image content conversion, unsupported content fallback, error result conversion, empty content handling
-- [ ] T009 [P] Write tests for config module in mcp/tests/config_test.rs: McpServerConfig construction, ToolFilter evaluation logic (allow-only, deny-only, both, neither)
+- [x] T005 Create mcp/src/config.rs with McpTransport enum (Stdio { command, args, env }, Sse { url, bearer_token }), McpServerConfig struct (name, transport, tool_prefix, tool_filter, requires_approval), and ToolFilter struct (allow, deny) per data-model.md
+- [x] T006 Create mcp/src/convert.rs with functions: rmcp Tool → (name: String, description: String, input_schema: Value), rmcp Content → swink-agent ContentBlock (Text→Text, Image→Image, other→Text fallback), rmcp CallToolResult → AgentToolResult
+- [x] T007 Add MCP event variants to src/loop_/event.rs in the AgentEvent enum: McpServerConnected { server_name }, McpServerDisconnected { server_name, reason }, McpToolsDiscovered { server_name, tool_count }, McpToolCallStarted { server_name, tool_name }, McpToolCallCompleted { server_name, tool_name, is_error }
+- [x] T008 [P] Write tests for convert module in mcp/tests/convert_test.rs: text content conversion, image content conversion, unsupported content fallback, error result conversion, empty content handling
+- [x] T009 [P] Write tests for config module in mcp/tests/config_test.rs: McpServerConfig construction, ToolFilter evaluation logic (allow-only, deny-only, both, neither)
 
 **Checkpoint**: Foundation ready — core types, conversions, and events are in place
 
