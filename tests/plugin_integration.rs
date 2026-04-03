@@ -441,6 +441,7 @@ async fn higher_priority_stop_short_circuits_lower_priority() {
 }
 
 // ─── T021: Short-circuit across merged list (plugin + direct policies) ───
+// (Phase 4: US2 — verifies short-circuit semantics across merged policy list)
 
 #[tokio::test]
 async fn plugin_stop_prevents_direct_policy_evaluation() {
@@ -477,5 +478,150 @@ async fn plugin_stop_prevents_direct_policy_evaluation() {
     assert!(
         !direct_fired.load(Ordering::SeqCst),
         "direct pre-turn policy should not fire after plugin Stop verdict"
+    );
+}
+
+// ─── Phase 5: User Story 3 — Backward-Compatible Composition ───────────
+
+// ─── T022: Plugin policy runs before direct policy ─────────────────────
+
+#[tokio::test]
+async fn plugin_policy_runs_before_direct_policy() {
+    GLOBAL_ORDER.store(0, Ordering::SeqCst);
+
+    let plugin_order = Arc::new(AtomicUsize::new(usize::MAX));
+    let direct_order = Arc::new(AtomicUsize::new(usize::MAX));
+
+    // Plugin with a pre-turn policy (priority 0 — default).
+    let plugin: Arc<dyn Plugin> = Arc::new(OrderedPolicyPlugin::new(
+        "myplugin",
+        0,
+        Arc::clone(&plugin_order),
+    ));
+
+    // Direct pre-turn policy.
+    let direct_order_clone = Arc::clone(&direct_order);
+
+    let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("hello")]));
+    let options = AgentOptions::new("test", default_model(), stream_fn, default_convert)
+        .with_plugin(plugin)
+        .with_pre_turn_policy(OrderRecordingPreTurnPolicy {
+            label: "direct-pre-turn".to_owned(),
+            order: direct_order_clone,
+        });
+
+    let mut agent = Agent::new(options);
+    let _ = agent.prompt_async(vec![user_msg("hi")]).await;
+
+    let plugin_seq = plugin_order.load(Ordering::SeqCst);
+    let direct_seq = direct_order.load(Ordering::SeqCst);
+
+    assert!(
+        plugin_seq < direct_seq,
+        "plugin policy should run before direct policy: plugin={plugin_seq}, direct={direct_seq}"
+    );
+}
+
+// ─── T023: No plugins — direct policies behave identically ────────────
+
+#[tokio::test]
+async fn no_plugins_direct_policies_behave_identically() {
+    GLOBAL_ORDER.store(0, Ordering::SeqCst);
+
+    let first_order = Arc::new(AtomicUsize::new(usize::MAX));
+    let second_order = Arc::new(AtomicUsize::new(usize::MAX));
+
+    let first_order_clone = Arc::clone(&first_order);
+    let second_order_clone = Arc::clone(&second_order);
+
+    // Agent with two direct pre-turn policies and NO plugins.
+    let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("hello")]));
+    let options = AgentOptions::new("test", default_model(), stream_fn, default_convert)
+        .with_pre_turn_policy(OrderRecordingPreTurnPolicy {
+            label: "first-direct".to_owned(),
+            order: first_order_clone,
+        })
+        .with_pre_turn_policy(OrderRecordingPreTurnPolicy {
+            label: "second-direct".to_owned(),
+            order: second_order_clone,
+        });
+
+    let mut agent = Agent::new(options);
+    let result = agent.prompt_async(vec![user_msg("hi")]).await.unwrap();
+
+    let first_seq = first_order.load(Ordering::SeqCst);
+    let second_seq = second_order.load(Ordering::SeqCst);
+
+    // Both should have fired.
+    assert_ne!(
+        first_seq,
+        usize::MAX,
+        "first direct policy should have fired"
+    );
+    assert_ne!(
+        second_seq,
+        usize::MAX,
+        "second direct policy should have fired"
+    );
+
+    // Insertion order preserved.
+    assert!(
+        first_seq < second_seq,
+        "direct policies should preserve insertion order: first={first_seq}, second={second_seq}"
+    );
+
+    // Agent should produce a normal response.
+    assert!(
+        !result.messages.is_empty(),
+        "agent should produce messages when policies all Continue"
+    );
+}
+
+// ─── T024: Plugin Stop prevents ALL direct policies from evaluating ────
+
+#[tokio::test]
+async fn plugin_stop_prevents_all_direct_policies() {
+    let direct_a_fired = Arc::new(AtomicBool::new(false));
+    let direct_b_fired = Arc::new(AtomicBool::new(false));
+
+    struct TrackingPreTurnPolicy {
+        name: String,
+        fired: Arc<AtomicBool>,
+    }
+    impl PreTurnPolicy for TrackingPreTurnPolicy {
+        fn name(&self) -> &str {
+            &self.name
+        }
+        fn evaluate(&self, _ctx: &PolicyContext<'_>) -> PolicyVerdict {
+            self.fired.store(true, Ordering::SeqCst);
+            PolicyVerdict::Continue
+        }
+    }
+
+    // Plugin with Stop policy.
+    let stopping_plugin: Arc<dyn Plugin> = Arc::new(StoppingPolicyPlugin::new("blocker", 0));
+
+    let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("hello")]));
+    let options = AgentOptions::new("test", default_model(), stream_fn, default_convert)
+        .with_plugin(stopping_plugin)
+        .with_pre_turn_policy(TrackingPreTurnPolicy {
+            name: "direct-a".to_owned(),
+            fired: Arc::clone(&direct_a_fired),
+        })
+        .with_pre_turn_policy(TrackingPreTurnPolicy {
+            name: "direct-b".to_owned(),
+            fired: Arc::clone(&direct_b_fired),
+        });
+
+    let mut agent = Agent::new(options);
+    let _ = agent.prompt_async(vec![user_msg("hi")]).await;
+
+    assert!(
+        !direct_a_fired.load(Ordering::SeqCst),
+        "direct policy A should not fire after plugin Stop verdict"
+    );
+    assert!(
+        !direct_b_fired.load(Ordering::SeqCst),
+        "direct policy B should not fire after plugin Stop verdict"
     );
 }
