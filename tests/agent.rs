@@ -300,8 +300,8 @@ async fn error_sets_state_error() {
         AssistantMessageEvent::Error {
             stop_reason: StopReason::Error,
             error_message: "something went wrong".to_string(),
-            usage: None,
             error_kind: None,
+            usage: None,
         },
     ]]));
     let mut agent = make_agent(stream_fn);

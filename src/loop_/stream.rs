@@ -10,7 +10,9 @@ use crate::error::AgentError;
 use crate::stream::{
     AssistantMessageDelta, AssistantMessageEvent, StreamFn, StreamOptions, accumulate_message,
 };
-use crate::types::{AgentContext, AgentMessage, LlmMessage, ModelSpec, StopReason, ThinkingLevel};
+use crate::types::{
+    AgentContext, AgentMessage, AssistantMessage, LlmMessage, ModelSpec, StopReason, ThinkingLevel,
+};
 
 use super::{
     AgentEvent, AgentLoopConfig, StreamResult, build_abort_message, build_error_message,
@@ -51,8 +53,7 @@ pub async fn stream_with_retry(
     // return immediately.
     let last_error_msg = match &primary_result {
         StreamResult::Message(msg)
-            if msg.stop_reason != StopReason::Error
-                || !is_fallback_eligible_error(msg.error_message.as_deref()) =>
+            if msg.stop_reason != StopReason::Error || !is_fallback_eligible_error(msg) =>
         {
             return primary_result;
         }
@@ -105,8 +106,7 @@ pub async fn stream_with_retry(
 
         match &fb_result {
             StreamResult::Message(msg)
-                if msg.stop_reason != StopReason::Error
-                    || !is_fallback_eligible_error(msg.error_message.as_deref()) =>
+                if msg.stop_reason != StopReason::Error || !is_fallback_eligible_error(msg) =>
             {
                 return fb_result;
             }
@@ -124,13 +124,16 @@ pub async fn stream_with_retry(
     last_result
 }
 
-/// Returns `true` if the error message indicates a retryable failure that
+/// Returns `true` if the error indicates a retryable failure that
 /// should trigger model fallback (throttled or network errors).
-fn is_fallback_eligible_error(error_message: Option<&str>) -> bool {
-    let Some(msg) = error_message else {
+///
+/// Uses structural `error_kind` when available, falling back to
+/// string-based classification for external adapters.
+fn is_fallback_eligible_error(msg: &AssistantMessage) -> bool {
+    let Some(error_message) = msg.error_message.as_deref() else {
         return false;
     };
-    let harness_error = classify_stream_error(msg, StopReason::Error, None);
+    let harness_error = classify_stream_error(error_message, StopReason::Error, msg.error_kind);
     harness_error.is_retryable()
 }
 

@@ -245,6 +245,7 @@ fn accumulate_error_event() {
         AssistantMessageEvent::Error {
             stop_reason: StopReason::Error,
             error_message: "connection lost".into(),
+            error_kind: None,
             usage: Some(Usage {
                 input: 50,
                 output: 10,
@@ -253,7 +254,6 @@ fn accumulate_error_event() {
                 total: 60,
                 ..Default::default()
             }),
-            error_kind: None,
         },
     ];
 
@@ -341,8 +341,8 @@ fn accumulate_error_event_without_usage() {
         AssistantMessageEvent::Error {
             stop_reason: StopReason::Error,
             error_message: "fatal".into(),
-            usage: None,
             error_kind: None,
+            usage: None,
         },
     ];
 
@@ -424,6 +424,7 @@ fn error_event_with_usage() {
         AssistantMessageEvent::Error {
             stop_reason: StopReason::Error,
             error_message: "overloaded".into(),
+            error_kind: None,
             usage: Some(Usage {
                 input: 42,
                 output: 7,
@@ -432,7 +433,6 @@ fn error_event_with_usage() {
                 total: 49,
                 ..Default::default()
             }),
-            error_kind: Some(swink_agent::StreamErrorKind::Throttled),
         },
     ];
 

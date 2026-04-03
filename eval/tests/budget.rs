@@ -80,6 +80,7 @@ fn turn_events(cost: f64, tokens: u64) -> Vec<AgentEvent> {
                 },
                 stop_reason: StopReason::Stop,
                 error_message: None,
+                error_kind: None,
                 timestamp: 0,
                 cache_hint: None,
             },

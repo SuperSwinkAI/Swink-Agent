@@ -154,6 +154,7 @@ impl PostTurnPolicy for PiiRedactor {
                     cost: orig.cost.clone(),
                     stop_reason: orig.stop_reason,
                     error_message: orig.error_message.clone(),
+                    error_kind: orig.error_kind,
                     timestamp: orig.timestamp,
                     cache_hint: None,
                 };
@@ -182,6 +183,7 @@ mod tests {
             cost: Cost::default(),
             stop_reason: StopReason::Stop,
             error_message: None,
+            error_kind: None,
             timestamp: 12345,
             cache_hint: None,
         };

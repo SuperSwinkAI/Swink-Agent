@@ -374,8 +374,9 @@ impl BedrockStreamFn {
         options: &StreamOptions,
     ) -> Result<reqwest::Response, AssistantMessageEvent> {
         let body = build_request(context, options);
-        let body_json = serde_json::to_vec(&body)
-            .map_err(|e| AssistantMessageEvent::error(format!("Bedrock JSON error: {e}")))?;
+        let body_json = serde_json::to_vec(&body).map_err(|e| {
+            AssistantMessageEvent::error_network(format!("Bedrock JSON error: {e}"))
+        })?;
         let path = format!("/model/{}/converse-stream", model.model_id);
         let url = format!("{}{}", self.base_url, path);
         debug!(%url, model = %model.model_id, "sending Bedrock converse-stream request");
@@ -548,7 +549,7 @@ impl BedrockStreamFn {
                                 Err(e) => {
                                     warn!(error = %e, "Bedrock event-stream decode error");
                                     let mut events = finalize::finalize_blocks(&mut state);
-                                    events.push(AssistantMessageEvent::error(format!(
+                                    events.push(AssistantMessageEvent::error_network(format!(
                                         "Bedrock event-stream decode error: {e}"
                                     )));
                                     return Some((events, StreamUnfoldState::Done));
@@ -679,7 +680,7 @@ fn process_smithy_message(
                 "Bedrock throttled: {payload_str}"
             ))];
         }
-        return vec![AssistantMessageEvent::error(format!(
+        return vec![AssistantMessageEvent::error_network(format!(
             "Bedrock exception ({exc_type}): {payload_str}"
         ))];
     }
@@ -803,7 +804,7 @@ fn map_stop_reason(reason: Option<&str>) -> Result<StopReason, AssistantMessageE
     match reason {
         Some("tool_use") => Ok(StopReason::ToolUse),
         Some("max_tokens") => Ok(StopReason::Length),
-        Some("guardrail_intervened") => Err(AssistantMessageEvent::error(
+        Some("guardrail_intervened") => Err(AssistantMessageEvent::error_content_filtered(
             "Bedrock content filter: guardrail intervened",
         )),
         // end_turn, stop_sequence, None, and any unknown reason all map to Stop

@@ -300,6 +300,7 @@ fn build_terminal_message(
         cost: crate::types::Cost::default(),
         stop_reason,
         error_message: Some(error_message),
+        error_kind: None,
         timestamp: now_timestamp(),
         cache_hint: None,
     }
@@ -443,5 +444,71 @@ mod tests {
             Some(StreamErrorKind::Throttled),
         );
         assert!(matches!(err, AgentError::ModelThrottled));
+    }
+
+    #[test]
+    fn classify_network_by_kind() {
+        let err = classify_stream_error(
+            "connection reset",
+            StopReason::Error,
+            Some(StreamErrorKind::Network),
+        );
+        assert!(matches!(err, AgentError::NetworkError { .. }));
+        assert!(err.is_retryable());
+    }
+
+    #[test]
+    fn classify_auth_by_kind() {
+        let err = classify_stream_error(
+            "invalid api key",
+            StopReason::Error,
+            Some(StreamErrorKind::Auth),
+        );
+        assert!(matches!(err, AgentError::StreamError { .. }));
+        assert!(!err.is_retryable());
+    }
+
+    #[test]
+    fn classify_context_overflow_by_kind() {
+        let err = classify_stream_error(
+            "too many tokens",
+            StopReason::Error,
+            Some(StreamErrorKind::ContextWindowExceeded),
+        );
+        assert!(matches!(err, AgentError::ContextWindowOverflow { .. }));
+    }
+
+    #[test]
+    fn structured_kind_takes_priority_over_string() {
+        // Message says "rate limit" but kind says Network — kind wins
+        let err = classify_stream_error(
+            "rate limit exceeded",
+            StopReason::Error,
+            Some(StreamErrorKind::Network),
+        );
+        assert!(
+            matches!(err, AgentError::NetworkError { .. }),
+            "structured kind should override string matching, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn string_fallback_for_unclassified_errors() {
+        // No error_kind — string matching should still work for external adapters
+        let err = classify_stream_error("rate limit (429)", StopReason::Error, None);
+        assert!(matches!(err, AgentError::ModelThrottled));
+    }
+
+    #[test]
+    fn string_fallback_context_overflow() {
+        let err =
+            classify_stream_error("context_length_exceeded: too long", StopReason::Error, None);
+        assert!(matches!(err, AgentError::ContextWindowOverflow { .. }));
+    }
+
+    #[test]
+    fn aborted_stop_reason_without_kind() {
+        let err = classify_stream_error("operation cancelled", StopReason::Aborted, None);
+        assert!(matches!(err, AgentError::Aborted));
     }
 }

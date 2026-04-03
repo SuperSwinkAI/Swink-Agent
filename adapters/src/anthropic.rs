@@ -496,7 +496,7 @@ fn parse_sse_stream(
                             // Stream ended unexpectedly
                             done = true;
                             let mut events = crate::finalize::finalize_blocks(&mut state);
-                            events.push(AssistantMessageEvent::error("Anthropic stream ended unexpectedly"));
+                            events.push(AssistantMessageEvent::error_network("Anthropic stream ended unexpectedly"));
                             Some((events, (lines, token, state, done, false)))
                         }
                         Some(SseLine::Event { event_type, data }) => {
@@ -731,17 +731,32 @@ fn process_sse_event(
             *done = true;
             events.extend(crate::finalize::finalize_blocks(state));
 
-            let msg = serde_json::from_str::<Value>(data)
-                .ok()
+            let parsed = serde_json::from_str::<Value>(data).ok();
+            let msg = parsed
+                .as_ref()
                 .and_then(|v| {
                     v.pointer("/error/message")
                         .and_then(Value::as_str)
                         .map(String::from)
                 })
                 .unwrap_or_else(|| format!("Anthropic stream error: {data}"));
+            let error_type = parsed
+                .as_ref()
+                .and_then(|v| v.pointer("/error/type").and_then(Value::as_str));
 
             error!(error = %msg, "Anthropic stream error");
-            events.push(AssistantMessageEvent::error(&msg));
+
+            let event = match error_type {
+                Some("authentication_error" | "permission_error") => {
+                    AssistantMessageEvent::error_auth(&msg)
+                }
+                Some("rate_limit_error") => AssistantMessageEvent::error_throttled(&msg),
+                Some("overloaded_error" | "api_error") => {
+                    AssistantMessageEvent::error_network(&msg)
+                }
+                _ => AssistantMessageEvent::error_network(&msg),
+            };
+            events.push(event);
         }
 
         // Ignore ping and other unknown event types

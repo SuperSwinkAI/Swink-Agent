@@ -59,8 +59,8 @@ fn overflow_error_events() -> Vec<AssistantMessageEvent> {
     vec![AssistantMessageEvent::Error {
         stop_reason: StopReason::Error,
         error_message: "context_length_exceeded: too many tokens".to_string(),
-        usage: None,
         error_kind: None,
+        usage: None,
     }]
 }
 

@@ -115,6 +115,7 @@ async fn continue_from_tool_result() {
         usage: Usage::default(),
         cost: Cost::default(),
         error_message: None,
+        error_kind: None,
         timestamp: 0,
         cache_hint: None,
     }));
@@ -186,6 +187,7 @@ async fn continue_does_not_reemit_existing_messages() {
         usage: Usage::default(),
         cost: Cost::default(),
         error_message: None,
+        error_kind: None,
         timestamp: 0,
         cache_hint: None,
     }));
@@ -251,8 +253,8 @@ async fn session_id_forwarding() {
                     vec![AssistantMessageEvent::Error {
                         stop_reason: StopReason::Error,
                         error_message: "no more responses".to_string(),
-                        usage: None,
                         error_kind: None,
+                        usage: None,
                     }]
                 } else {
                     responses.remove(0)

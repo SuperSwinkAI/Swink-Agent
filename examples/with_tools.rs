@@ -46,8 +46,8 @@ impl StreamFn for MockStreamFn {
                 vec![AssistantMessageEvent::Error {
                     stop_reason: StopReason::Error,
                     error_message: "no more scripted responses".to_string(),
-                    usage: None,
                     error_kind: None,
+                    usage: None,
                 }]
             } else {
                 responses.remove(0)

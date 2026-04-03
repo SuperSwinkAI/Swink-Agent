@@ -262,4 +262,94 @@ mod tests {
             other => panic!("expected Error, got {other:?}"),
         }
     }
+
+    // ─── Cross-adapter error classification ──────────────────────────────
+
+    /// Verify that all adapter-emitted error events carry a StreamErrorKind
+    /// for the common error patterns (network, content filter, throttle).
+    #[test]
+    fn cross_adapter_unexpected_eof_is_network() {
+        // All adapters should emit Network kind for unexpected stream EOF
+        let providers = ["Anthropic", "OpenAI", "Google", "Ollama", "Bedrock"];
+        for provider in providers {
+            let event = AssistantMessageEvent::error_network(format!(
+                "{provider} stream ended unexpectedly"
+            ));
+            match event {
+                AssistantMessageEvent::Error { error_kind, .. } => {
+                    assert_eq!(
+                        error_kind,
+                        Some(swink_agent::stream::StreamErrorKind::Network),
+                        "{provider} unexpected EOF should have Network kind"
+                    );
+                }
+                other => panic!("expected Error for {provider}, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn cross_adapter_content_filter_is_classified() {
+        let event =
+            AssistantMessageEvent::error_content_filtered("response blocked by safety filter");
+        match event {
+            AssistantMessageEvent::Error { error_kind, .. } => {
+                assert_eq!(
+                    error_kind,
+                    Some(swink_agent::stream::StreamErrorKind::ContentFiltered),
+                );
+            }
+            other => panic!("expected Error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn http_error_classification_covers_all_adapter_status_codes() {
+        // Auth errors
+        for code in [401, 403] {
+            let event = error_event_from_status(code, "forbidden", "TestAdapter");
+            match event {
+                AssistantMessageEvent::Error { error_kind, .. } => {
+                    assert_eq!(
+                        error_kind,
+                        Some(swink_agent::stream::StreamErrorKind::Auth),
+                        "HTTP {code} should be Auth"
+                    );
+                }
+                other => panic!("expected Error for HTTP {code}, got {other:?}"),
+            }
+        }
+
+        // Throttle
+        let event = error_event_from_status(429, "too many requests", "TestAdapter");
+        match event {
+            AssistantMessageEvent::Error { error_kind, .. } => {
+                assert_eq!(
+                    error_kind,
+                    Some(swink_agent::stream::StreamErrorKind::Throttled)
+                );
+            }
+            other => panic!("expected Error, got {other:?}"),
+        }
+
+        // Server errors
+        for code in [500, 502, 503, 529] {
+            let event = error_event_from_status_with_overrides(
+                code,
+                "server error",
+                "TestAdapter",
+                &[(529, HttpErrorKind::Network)],
+            );
+            match event {
+                AssistantMessageEvent::Error { error_kind, .. } => {
+                    assert_eq!(
+                        error_kind,
+                        Some(swink_agent::stream::StreamErrorKind::Network),
+                        "HTTP {code} should be Network"
+                    );
+                }
+                other => panic!("expected Error for HTTP {code}, got {other:?}"),
+            }
+        }
+    }
 }
