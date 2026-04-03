@@ -133,13 +133,13 @@
 
 ### Tests for User Story 5
 
-- [ ] T031 [US5] Write test: plugin on_init is called once during Agent::new() in `tests/plugin_integration.rs`
-- [ ] T032 [P] [US5] Write test: multiple plugins — on_init fires in priority order in `tests/plugin_integration.rs`
-- [ ] T033 [P] [US5] Write test: panicking on_init is caught, agent construction continues, plugin policies still active in `tests/plugin_integration.rs`
+- [x] T031 [US5] Write test: plugin on_init is called once during Agent::new() in `tests/plugin_integration.rs`
+- [x] T032 [P] [US5] Write test: multiple plugins — on_init fires in priority order in `tests/plugin_integration.rs`
+- [x] T033 [P] [US5] Write test: panicking on_init is caught, agent construction continues, plugin policies still active in `tests/plugin_integration.rs`
 
 ### Implementation for User Story 5
 
-- [ ] T034 [US5] Implement `on_init` dispatch loop in `Agent::new()` — iterate priority-sorted plugins, call `on_init(&self)` wrapped in `catch_unwind`, log panics via `tracing::warn!` in `src/agent.rs`
+- [x] T034 [US5] Implement `on_init` dispatch loop in `Agent::new()` — iterate priority-sorted plugins, call `on_init(&self)` wrapped in `catch_unwind`, log panics via `tracing::warn!` in `src/agent.rs`
 
 **Checkpoint**: Init callbacks fire correctly with panic safety.
 

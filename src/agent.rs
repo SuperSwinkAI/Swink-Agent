@@ -230,7 +230,7 @@ impl Agent {
             (_, tc) => tc,
         };
 
-        Self {
+        let agent = Self {
             id: AgentId::next(),
             state: AgentState {
                 system_prompt: effective_prompt,
@@ -281,7 +281,33 @@ impl Agent {
             dynamic_system_prompt: options.dynamic_system_prompt.map(Arc::from),
             #[cfg(feature = "plugins")]
             plugins: options.plugins,
+        };
+
+        // Dispatch on_init to each plugin in priority order (already sorted).
+        // Panics are caught and logged — the plugin's other contributions
+        // (policies, tools, event observers) remain active.
+        #[cfg(feature = "plugins")]
+        {
+            for plugin in &agent.plugins {
+                let name = plugin.name().to_owned();
+                let plugin_ref = Arc::clone(plugin);
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    plugin_ref.on_init(&agent);
+                }));
+                if let Err(cause) = result {
+                    let msg = if let Some(s) = cause.downcast_ref::<&str>() {
+                        (*s).to_owned()
+                    } else if let Some(s) = cause.downcast_ref::<String>() {
+                        s.clone()
+                    } else {
+                        "unknown panic".to_owned()
+                    };
+                    tracing::warn!(plugin = %name, error = %msg, "plugin on_init panicked");
+                }
+            }
         }
+
+        agent
     }
 
     /// Returns this agent's unique identifier.
