@@ -71,14 +71,14 @@
 
 ### Tests for User Story 2
 
-- [ ] T017 [US2] Write test: two plugins with different priorities — verify higher priority policy runs first in `tests/plugin_integration.rs`
-- [ ] T018 [P] [US2] Write test: two plugins with same priority — verify insertion order preserved in `tests/plugin_integration.rs`
-- [ ] T019 [P] [US2] Write test: higher-priority plugin returns Stop — verify lower-priority plugin's policy is not evaluated (short-circuit) in `tests/plugin_integration.rs`
+- [x] T017 [US2] Write test: two plugins with different priorities — verify higher priority policy runs first in `tests/plugin_integration.rs`
+- [x] T018 [P] [US2] Write test: two plugins with same priority — verify insertion order preserved in `tests/plugin_integration.rs`
+- [x] T019 [P] [US2] Write test: higher-priority plugin returns Stop — verify lower-priority plugin's policy is not evaluated (short-circuit) in `tests/plugin_integration.rs`
 
 ### Implementation for User Story 2
 
-- [ ] T020 [US2] Ensure `Agent::new()` sorts plugins by priority (descending, stable) before extracting contributions in `src/agent.rs`
-- [ ] T021 [US2] Verify short-circuit semantics work across merged policy list (plugin + direct policies) — no changes to `src/policy.rs` expected, add test to confirm
+- [x] T020 [US2] Ensure `Agent::new()` sorts plugins by priority (descending, stable) before extracting contributions in `src/agent.rs`
+- [x] T021 [US2] Verify short-circuit semantics work across merged policy list (plugin + direct policies) — no changes to `src/policy.rs` expected, add test to confirm
 
 **Checkpoint**: Multi-plugin priority ordering is deterministic and short-circuit works across the merged list.
 

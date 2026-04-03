@@ -9,7 +9,9 @@ use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
 use swink_agent::plugin::Plugin;
-use swink_agent::policy::{PolicyContext, PolicyVerdict, PostTurnPolicy, TurnPolicyContext};
+use swink_agent::policy::{
+    PolicyContext, PolicyVerdict, PostTurnPolicy, PreTurnPolicy, TurnPolicyContext,
+};
 use swink_agent::tool::{AgentTool, AgentToolResult, ToolFuture};
 use swink_agent::{Agent, AgentOptions};
 
@@ -221,5 +223,259 @@ async fn plugin_event_observer_called_for_agent_start() {
     assert!(
         count > 0,
         "event observer should have been called at least once, got {count}"
+    );
+}
+
+// ─── Phase 4 Helpers: Priority-Based Execution Order ─────────────────────
+
+/// Shared counter to track policy evaluation order across plugins.
+static GLOBAL_ORDER: AtomicUsize = AtomicUsize::new(0);
+
+/// A pre-turn policy that records its execution order.
+struct OrderRecordingPreTurnPolicy {
+    label: String,
+    order: Arc<AtomicUsize>,
+}
+
+impl PreTurnPolicy for OrderRecordingPreTurnPolicy {
+    fn name(&self) -> &str {
+        &self.label
+    }
+
+    fn evaluate(&self, _ctx: &PolicyContext<'_>) -> PolicyVerdict {
+        let seq = GLOBAL_ORDER.fetch_add(1, Ordering::SeqCst);
+        self.order.store(seq, Ordering::SeqCst);
+        PolicyVerdict::Continue
+    }
+}
+
+/// A pre-turn policy that returns Stop to test short-circuit behavior.
+struct StoppingPreTurnPolicy {
+    label: String,
+}
+
+impl PreTurnPolicy for StoppingPreTurnPolicy {
+    fn name(&self) -> &str {
+        &self.label
+    }
+
+    fn evaluate(&self, _ctx: &PolicyContext<'_>) -> PolicyVerdict {
+        PolicyVerdict::Stop("stopped by policy".into())
+    }
+}
+
+/// A plugin that contributes a pre-turn policy recording its execution order.
+struct OrderedPolicyPlugin {
+    name: String,
+    priority: i32,
+    order: Arc<AtomicUsize>,
+}
+
+impl OrderedPolicyPlugin {
+    fn new(name: &str, priority: i32, order: Arc<AtomicUsize>) -> Self {
+        Self {
+            name: name.to_owned(),
+            priority,
+            order,
+        }
+    }
+}
+
+impl Plugin for OrderedPolicyPlugin {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn priority(&self) -> i32 {
+        self.priority
+    }
+
+    fn pre_turn_policies(&self) -> Vec<Arc<dyn PreTurnPolicy>> {
+        vec![Arc::new(OrderRecordingPreTurnPolicy {
+            label: format!("{}-pre-turn", self.name),
+            order: Arc::clone(&self.order),
+        })]
+    }
+}
+
+/// A plugin that contributes a stopping pre-turn policy.
+struct StoppingPolicyPlugin {
+    name: String,
+    priority: i32,
+}
+
+impl StoppingPolicyPlugin {
+    fn new(name: &str, priority: i32) -> Self {
+        Self {
+            name: name.to_owned(),
+            priority,
+        }
+    }
+}
+
+impl Plugin for StoppingPolicyPlugin {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn priority(&self) -> i32 {
+        self.priority
+    }
+
+    fn pre_turn_policies(&self) -> Vec<Arc<dyn PreTurnPolicy>> {
+        vec![Arc::new(StoppingPreTurnPolicy {
+            label: format!("{}-stopping", self.name),
+        })]
+    }
+}
+
+// ─── T017: Two plugins with different priorities ─────────────────────────
+
+#[tokio::test]
+async fn higher_priority_plugin_policy_runs_first() {
+    // Reset global counter for this test.
+    GLOBAL_ORDER.store(0, Ordering::SeqCst);
+
+    let low_order = Arc::new(AtomicUsize::new(usize::MAX));
+    let high_order = Arc::new(AtomicUsize::new(usize::MAX));
+
+    let low_plugin: Arc<dyn Plugin> =
+        Arc::new(OrderedPolicyPlugin::new("low", 1, Arc::clone(&low_order)));
+    let high_plugin: Arc<dyn Plugin> = Arc::new(OrderedPolicyPlugin::new(
+        "high",
+        10,
+        Arc::clone(&high_order),
+    ));
+
+    // Register low first, high second — priority should override insertion order.
+    let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("hello")]));
+    let options = AgentOptions::new("test", default_model(), stream_fn, default_convert)
+        .with_plugins(vec![low_plugin, high_plugin]);
+
+    let mut agent = Agent::new(options);
+    let _ = agent.prompt_async(vec![user_msg("hi")]).await;
+
+    let high_seq = high_order.load(Ordering::SeqCst);
+    let low_seq = low_order.load(Ordering::SeqCst);
+
+    assert!(
+        high_seq < low_seq,
+        "high-priority plugin should run first: high={high_seq}, low={low_seq}"
+    );
+}
+
+// ─── T018: Two plugins with same priority — insertion order preserved ────
+
+#[tokio::test]
+async fn same_priority_plugins_preserve_insertion_order() {
+    GLOBAL_ORDER.store(0, Ordering::SeqCst);
+
+    let first_order = Arc::new(AtomicUsize::new(usize::MAX));
+    let second_order = Arc::new(AtomicUsize::new(usize::MAX));
+
+    let first_plugin: Arc<dyn Plugin> = Arc::new(OrderedPolicyPlugin::new(
+        "first",
+        0,
+        Arc::clone(&first_order),
+    ));
+    let second_plugin: Arc<dyn Plugin> = Arc::new(OrderedPolicyPlugin::new(
+        "second",
+        0,
+        Arc::clone(&second_order),
+    ));
+
+    let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("hello")]));
+    let options = AgentOptions::new("test", default_model(), stream_fn, default_convert)
+        .with_plugins(vec![first_plugin, second_plugin]);
+
+    let mut agent = Agent::new(options);
+    let _ = agent.prompt_async(vec![user_msg("hi")]).await;
+
+    let first_seq = first_order.load(Ordering::SeqCst);
+    let second_seq = second_order.load(Ordering::SeqCst);
+
+    assert!(
+        first_seq < second_seq,
+        "first-registered plugin should run first when priorities are equal: first={first_seq}, second={second_seq}"
+    );
+}
+
+// ─── T019: Higher-priority Stop prevents lower-priority evaluation ───────
+
+#[tokio::test]
+async fn higher_priority_stop_short_circuits_lower_priority() {
+    GLOBAL_ORDER.store(0, Ordering::SeqCst);
+
+    let low_order = Arc::new(AtomicUsize::new(usize::MAX));
+
+    // High-priority plugin returns Stop.
+    let high_plugin: Arc<dyn Plugin> = Arc::new(StoppingPolicyPlugin::new("blocker", 10));
+    // Low-priority plugin should never run.
+    let low_plugin: Arc<dyn Plugin> = Arc::new(OrderedPolicyPlugin::new(
+        "victim",
+        1,
+        Arc::clone(&low_order),
+    ));
+
+    let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("hello")]));
+    let options = AgentOptions::new("test", default_model(), stream_fn, default_convert)
+        .with_plugins(vec![low_plugin, high_plugin]);
+
+    let mut agent = Agent::new(options);
+    let result = agent.prompt_async(vec![user_msg("hi")]).await.unwrap();
+
+    // The low-priority plugin's policy should not have been evaluated.
+    let low_seq = low_order.load(Ordering::SeqCst);
+    assert_eq!(
+        low_seq,
+        usize::MAX,
+        "low-priority plugin policy should not have run after Stop, but got order={low_seq}"
+    );
+
+    // Agent should have produced no assistant messages (stopped before LLM call).
+    assert!(
+        result.messages.is_empty(),
+        "expected no messages after pre-turn Stop, got {}",
+        result.messages.len()
+    );
+}
+
+// ─── T021: Short-circuit across merged list (plugin + direct policies) ───
+
+#[tokio::test]
+async fn plugin_stop_prevents_direct_policy_evaluation() {
+    let direct_fired = Arc::new(AtomicBool::new(false));
+    let direct_fired_clone = Arc::clone(&direct_fired);
+
+    // Direct pre-turn policy that records whether it fired.
+    struct DirectPreTurnPolicy {
+        fired: Arc<AtomicBool>,
+    }
+    impl PreTurnPolicy for DirectPreTurnPolicy {
+        fn name(&self) -> &str {
+            "direct-pre-turn"
+        }
+        fn evaluate(&self, _ctx: &PolicyContext<'_>) -> PolicyVerdict {
+            self.fired.store(true, Ordering::SeqCst);
+            PolicyVerdict::Continue
+        }
+    }
+
+    // Plugin with Stop policy (priority 10 — runs before direct policies).
+    let stopping_plugin: Arc<dyn Plugin> = Arc::new(StoppingPolicyPlugin::new("blocker", 10));
+
+    let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("hello")]));
+    let options = AgentOptions::new("test", default_model(), stream_fn, default_convert)
+        .with_plugin(stopping_plugin)
+        .with_pre_turn_policy(DirectPreTurnPolicy {
+            fired: direct_fired_clone,
+        });
+
+    let mut agent = Agent::new(options);
+    let _ = agent.prompt_async(vec![user_msg("hi")]).await;
+
+    assert!(
+        !direct_fired.load(Ordering::SeqCst),
+        "direct pre-turn policy should not fire after plugin Stop verdict"
     );
 }
