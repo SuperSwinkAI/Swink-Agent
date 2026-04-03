@@ -7,7 +7,7 @@
 - Provider Roadmap: [PROVIDER_EXPANSION_ROADMAP.md](PROVIDER_EXPANSION_ROADMAP.md)
 - Eval Roadmap: [EVAL.md](EVAL.md)
 
-**Current Focus:** 40 specs total — 40/40 have plans, 40/40 have tasks, 30/40 complete. Phase 0–2 done. Phase 3: 7/10 complete (016 at 43%, 017 at 18%, 019 at 0%). Phase 4: 3/4 complete (021 at 58%). Phase 5–8 done. Phase 9: 5 new specs (036–040) at 0%. Next: continue adapter implementations (016, 017, 019); finish memory crate (021); begin Phase 9 (artifact service, plugin system, MCP, multi-agent patterns, transfer/handoff).
+**Current Focus:** 40 specs total — 40/40 have plans, 40/40 have tasks, 36/40 complete. Phase 0–8 done (including memory crate 021, Azure/xAI adapters). Phase 3: 9/10 complete (019-bedrock at 56%). Phase 9: 1/5 complete (038-mcp done), 036 at 18%, 037 at 44%, 039/040 ready. Next: finish bedrock adapter (019), continue artifact service (036) and plugin system (037), begin multi-agent patterns (039) and transfer/handoff (040).
 
 > **Numbering System:** Spec numbers (001–040) are sequential identifiers that
 > never change. Phase numbers represent execution order and can be reassigned
@@ -107,7 +107,7 @@ primitives, and loop governance — capabilities that enhance the core engine.
 **Goal:** LLM provider adapters — shared infrastructure and one adapter per
 provider. Each adapter implements StreamFn for its provider's streaming protocol.
 
-**Status:** 10/10 specs planned, 10/10 have tasks, 7/10 complete, 10/10 specs defined
+**Status:** 10/10 specs planned, 10/10 have tasks, 9/10 complete, 10/10 specs defined
 
 ### Implementation Checklist
 
@@ -136,15 +136,15 @@ provider. Each adapter implements StreamFn for its provider's streaming protocol
   - Branch: `015-adapter-gemini`
   - Status: Complete (44/44 tasks, merged to main)
   - Depends on: 3.1
-- [ ] **3.6** Adapter: Azure OpenAI — AzureStreamFn, deployment routing, API versioning (§15.1)
+- [x] **3.6** Adapter: Azure OpenAI — AzureStreamFn, deployment routing, API versioning (§15.1)
   - Spec: `specs/016-adapter-azure/spec.md`
   - Branch: `016-adapter-azure`
-  - Status: In Progress (23/54 tasks, 43%)
+  - Status: Complete (54/54 tasks, merged to main)
   - Depends on: 3.1
-- [ ] **3.7** Adapter: xAI — XAiStreamFn, xAI (Grok) SSE (§15.1)
+- [x] **3.7** Adapter: xAI — XAiStreamFn, xAI (Grok) SSE (§15.1)
   - Spec: `specs/017-adapter-xai/spec.md`
   - Branch: `017-adapter-xai`
-  - Status: In Progress (3/17 tasks, 18%)
+  - Status: Complete (17/17 tasks, merged to main)
   - Depends on: 3.1
 - [x] **3.8** Adapter: Mistral — MistralStreamFn, Mistral API SSE (§15.1)
   - Spec: `specs/018-adapter-mistral/spec.md`
@@ -154,7 +154,7 @@ provider. Each adapter implements StreamFn for its provider's streaming protocol
 - [ ] **3.9** Adapter: AWS Bedrock — BedrockStreamFn, SSE, AWS SigV4 signing (§15.1)
   - Spec: `specs/019-adapter-bedrock/spec.md`
   - Branch: `019-adapter-bedrock`
-  - Status: Ready for implementation (0/41 tasks)
+  - Status: In Progress (23/41 tasks, 56%)
   - Depends on: 3.1
 - [x] **3.10** Adapter: Proxy — ProxyStreamFn, SSE, bearer auth, typed delta events (§7.4, §15.1)
   - Spec: `specs/020-adapter-proxy/spec.md`
@@ -173,14 +173,14 @@ After **3.1 Shared Infrastructure** completes, all 9 provider adapters (3.2–3.
 **Goal:** Standalone crates for session persistence, on-device inference, and
 evaluation — each depends only on the core library.
 
-**Status:** 4/4 specs planned, 4/4 have tasks, 3/4 complete, 4/4 specs defined
+**Status:** 4/4 specs planned, 4/4 have tasks, 4/4 complete, 4/4 specs defined
 
 ### Implementation Checklist
 
-- [ ] **4.1** Memory Crate — SessionStore (sync/async), JsonlSessionStore, SummarizingCompactor, session metadata
+- [x] **4.1** Memory Crate — SessionStore (sync/async), JsonlSessionStore, SummarizingCompactor, session metadata
   - Spec: `specs/021-memory-crate/spec.md`
   - Branch: `021-memory-crate`
-  - Status: In Progress (57/98 tasks, 58%)
+  - Status: Complete (98/98 tasks, merged to main)
   - Depends on: 0.2
 - [x] **4.2** Local LLM Crate — LocalModel (SmolLM3-3B), LocalStreamFn, EmbeddingModel, presets, progress reporting
   - Spec: `specs/022-local-llm-crate/spec.md`
@@ -313,24 +313,24 @@ credential management — cross-cutting infrastructure for production readiness.
 orchestration patterns, and agent-to-agent handoff — capabilities that make the
 agent framework composable and extensible for production use cases.
 
-**Status:** 5/5 specs planned, 5/5 have tasks, 0/5 complete, 5/5 specs defined
+**Status:** 5/5 specs planned, 5/5 have tasks, 1/5 complete, 5/5 specs defined
 
 ### Implementation Checklist
 
 - [ ] **9.1** Artifact Service — Versioned artifact storage, filesystem + in-memory backends, session-independent persistence
   - Spec: `specs/036-artifact-service/spec.md`
   - Branch: `036-artifact-service`
-  - Status: Ready for implementation (0/81 tasks)
+  - Status: In Progress (15/81 tasks, 18%)
   - Depends on: 0.2, 2.2
 - [ ] **9.2** Plugin System — Plugin trait, bundled policy/tool/event registration, priority-ordered composition
   - Spec: `specs/037-plugin-system/spec.md`
   - Branch: `037-plugin-system`
-  - Status: Ready for implementation (0/47 tasks)
+  - Status: In Progress (21/47 tasks, 44%)
   - Depends on: 7.1, 2.2
-- [ ] **9.3** MCP Integration — MCP server connections (stdio/SSE), tool discovery, namespaced registration, policy integration
+- [x] **9.3** MCP Integration — MCP server connections (stdio/SSE), tool discovery, namespaced registration, policy integration
   - Spec: `specs/038-mcp-integration/spec.md`
   - Branch: `038-mcp-integration`
-  - Status: Ready for implementation (0/49 tasks)
+  - Status: Complete (48/49 tasks, merged to main — T042 deferred by design)
   - Depends on: 2.2
 - [ ] **9.4** Multi-Agent Patterns — Pipeline primitives (sequential, parallel, loop), merge strategies, pipeline registry
   - Spec: `specs/039-multi-agent-patterns/spec.md`
@@ -480,9 +480,9 @@ graph TD
     style Y fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
     style Z fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
     style AA fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
-    style AB fill:#fff,color:#000,stroke:#6b7280,stroke-width:2px
-    style AC fill:#fff,color:#000,stroke:#6b7280,stroke-width:2px
-    style AD fill:#fff,color:#000,stroke:#6b7280,stroke-width:2px
+    style AB fill:#eab308,color:#000,stroke:#ca8a04,stroke-width:2px
+    style AC fill:#eab308,color:#000,stroke:#ca8a04,stroke-width:2px
+    style AD fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
     style AE fill:#fff,color:#000,stroke:#6b7280,stroke-width:2px
     style AF fill:#fff,color:#000,stroke:#6b7280,stroke-width:2px
 ```
