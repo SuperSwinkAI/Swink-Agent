@@ -287,7 +287,7 @@
 - [x] T092 Run `cargo build -p swink-agent-memory` — fix any compilation errors from new features
 - [x] T093 Run `cargo test -p swink-agent-memory` — fix any test failures from new features
 - [x] T094 Run `cargo clippy -p swink-agent-memory -- -D warnings` — fix any warnings
-- [ ] T095 Validate quickstart.md new examples (rich entries, interrupt, filtered load) match actual API
+- [x] T095 Validate quickstart.md new examples (rich entries, interrupt, filtered load) match actual API
 
 **Checkpoint**: All tests pass, clippy clean, workspace builds successfully
 

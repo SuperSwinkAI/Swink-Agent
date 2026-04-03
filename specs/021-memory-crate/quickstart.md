@@ -17,7 +17,7 @@ use swink_agent_memory::{JsonlSessionStore, SessionMeta, SessionStore};
 use swink_agent_memory::time::{now_utc, format_session_id};
 
 // Create a store backed by a local directory
-let store = JsonlSessionStore::new("./sessions")?;
+let store = JsonlSessionStore::new("./sessions".into())?;
 
 // Build session metadata
 let id = format_session_id(); // e.g., "20260320_143000"
@@ -26,6 +26,8 @@ let meta = SessionMeta {
     title: "Debug session".into(),
     created_at: now_utc(),
     updated_at: now_utc(),
+    version: 1,
+    sequence: 0,
 };
 
 // Save a conversation
@@ -40,9 +42,12 @@ assert_eq!(loaded_messages.len(), messages.len());
 ## Save and load a session (async)
 
 ```rust
-use swink_agent_memory::{JsonlSessionStore, AsyncSessionStore, SessionMeta};
+use swink_agent_memory::{JsonlSessionStore, AsyncSessionStore, BlockingSessionStore, SessionMeta};
 
-let store = JsonlSessionStore::new("./sessions")?;
+// Wrap the sync store for async usage
+let sync_store = JsonlSessionStore::new("./sessions".into())?;
+let store = BlockingSessionStore::new(sync_store);
+
 let id = "20260320_143000";
 
 // Async save
