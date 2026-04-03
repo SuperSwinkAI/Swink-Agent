@@ -112,14 +112,14 @@
 
 ### Tests for User Story 4
 
-- [ ] T026 [US4] Write test: `agent.plugins()` returns all plugins in priority order in `tests/plugin_integration.rs`
-- [ ] T027 [P] [US4] Write test: `agent.plugin("name")` returns correct plugin reference in `tests/plugin_integration.rs`
-- [ ] T028 [P] [US4] Write test: `agent.plugin("nonexistent")` returns None in `tests/plugin_integration.rs`
+- [x] T026 [US4] Write test: `agent.plugins()` returns all plugins in priority order in `tests/plugin_integration.rs`
+- [x] T027 [P] [US4] Write test: `agent.plugin("name")` returns correct plugin reference in `tests/plugin_integration.rs`
+- [x] T028 [P] [US4] Write test: `agent.plugin("nonexistent")` returns None in `tests/plugin_integration.rs`
 
 ### Implementation for User Story 4
 
-- [ ] T029 [US4] Add `plugins: Vec<Arc<dyn Plugin>>` field to `Agent` struct (retained after merge for introspection) in `src/agent.rs`
-- [ ] T030 [US4] Implement `plugins(&self) -> &[Arc<dyn Plugin>]` and `plugin(&self, name: &str) -> Option<&Arc<dyn Plugin>>` methods on Agent in `src/agent.rs`
+- [x] T029 [US4] Add `plugins: Vec<Arc<dyn Plugin>>` field to `Agent` struct (retained after merge for introspection) in `src/agent.rs`
+- [x] T030 [US4] Implement `plugins(&self) -> &[Arc<dyn Plugin>]` and `plugin(&self, name: &str) -> Option<&Arc<dyn Plugin>>` methods on Agent in `src/agent.rs`
 
 **Checkpoint**: Plugin introspection API is functional.
 

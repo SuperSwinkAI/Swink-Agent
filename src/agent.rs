@@ -187,6 +187,9 @@ pub struct Agent {
     cache_config: Option<crate::context_cache::CacheConfig>,
     /// Optional dynamic system prompt.
     dynamic_system_prompt: Option<Arc<dyn Fn() -> String + Send + Sync>>,
+    /// Registered plugins retained for runtime introspection (priority-sorted).
+    #[cfg(feature = "plugins")]
+    plugins: Vec<Arc<dyn crate::plugin::Plugin>>,
 }
 
 impl Agent {
@@ -276,6 +279,8 @@ impl Agent {
             credential_resolver: options.credential_resolver,
             cache_config: options.cache_config,
             dynamic_system_prompt: options.dynamic_system_prompt.map(Arc::from),
+            #[cfg(feature = "plugins")]
+            plugins: options.plugins,
         }
     }
 
@@ -295,6 +300,20 @@ impl Agent {
     #[must_use]
     pub const fn session_state(&self) -> &Arc<std::sync::RwLock<crate::SessionState>> {
         &self.session_state
+    }
+
+    /// Returns all registered plugins sorted by priority (highest first).
+    #[cfg(feature = "plugins")]
+    #[must_use]
+    pub fn plugins(&self) -> &[Arc<dyn crate::plugin::Plugin>] {
+        &self.plugins
+    }
+
+    /// Look up a registered plugin by name.
+    #[cfg(feature = "plugins")]
+    #[must_use]
+    pub fn plugin(&self, name: &str) -> Option<&Arc<dyn crate::plugin::Plugin>> {
+        self.plugins.iter().find(|p| p.name() == name)
     }
 }
 
