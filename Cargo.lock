@@ -6857,7 +6857,7 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
 name = "swink-agent"
-version = "0.4.2"
+version = "0.5.0"
 dependencies = [
  "bytes",
  "chrono",
@@ -6896,7 +6896,7 @@ dependencies = [
 
 [[package]]
 name = "swink-agent-adapters"
-version = "0.4.2"
+version = "0.5.0"
 dependencies = [
  "aws-smithy-eventstream",
  "aws-smithy-types",
@@ -6923,7 +6923,7 @@ dependencies = [
 
 [[package]]
 name = "swink-agent-artifacts"
-version = "0.1.0"
+version = "0.5.0"
 dependencies = [
  "bytes",
  "chrono",
@@ -6939,7 +6939,7 @@ dependencies = [
 
 [[package]]
 name = "swink-agent-auth"
-version = "0.1.0"
+version = "0.5.0"
 dependencies = [
  "chrono",
  "futures",
@@ -6957,7 +6957,7 @@ dependencies = [
 
 [[package]]
 name = "swink-agent-eval"
-version = "0.4.2"
+version = "0.5.0"
 dependencies = [
  "futures",
  "pretty_assertions",
@@ -6977,7 +6977,7 @@ dependencies = [
 
 [[package]]
 name = "swink-agent-local-llm"
-version = "0.4.2"
+version = "0.5.0"
 dependencies = [
  "futures",
  "hf-hub 0.5.0",
@@ -6996,7 +6996,7 @@ dependencies = [
 
 [[package]]
 name = "swink-agent-macros"
-version = "0.1.0"
+version = "0.5.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -7010,7 +7010,7 @@ dependencies = [
 
 [[package]]
 name = "swink-agent-mcp"
-version = "0.4.2"
+version = "0.5.0"
 dependencies = [
  "reqwest 0.12.28",
  "rmcp",
@@ -7026,7 +7026,7 @@ dependencies = [
 
 [[package]]
 name = "swink-agent-memory"
-version = "0.4.2"
+version = "0.5.0"
 dependencies = [
  "chrono",
  "dirs",
@@ -7041,7 +7041,7 @@ dependencies = [
 
 [[package]]
 name = "swink-agent-patterns"
-version = "0.4.2"
+version = "0.5.0"
 dependencies = [
  "regex",
  "schemars 1.2.1",
@@ -7057,7 +7057,7 @@ dependencies = [
 
 [[package]]
 name = "swink-agent-policies"
-version = "0.4.2"
+version = "0.5.0"
 dependencies = [
  "chrono",
  "futures",
@@ -7074,7 +7074,7 @@ dependencies = [
 
 [[package]]
 name = "swink-agent-tui"
-version = "0.4.2"
+version = "0.5.0"
 dependencies = [
  "arboard",
  "crossterm 0.29.0",
@@ -9418,7 +9418,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "0.4.2"
+version = "0.5.0"
 dependencies = [
  "clap",
  "futures",
