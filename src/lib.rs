@@ -160,4 +160,4 @@ pub use policy::{
     run_post_loop_policies, run_post_turn_policies, run_pre_dispatch_policies,
 };
 #[cfg(feature = "transfer")]
-pub use transfer::TransferSignal;
+pub use transfer::{TransferChain, TransferError, TransferSignal, TransferToAgentTool};

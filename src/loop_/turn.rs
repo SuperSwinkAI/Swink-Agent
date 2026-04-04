@@ -643,7 +643,7 @@ async fn handle_no_tool_calls(
 
 /// Handle tool calls: separate incomplete ones, execute the rest, collect results,
 /// emit `TurnEnd`, and poll steering.
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 async fn handle_tool_calls(
     config: &Arc<AgentLoopConfig>,
     state: &mut LoopState,
@@ -676,6 +676,7 @@ async fn handle_tool_calls(
     let mut tool_results: Vec<ToolResultMessage> = max_token_results;
     let mut steering_interrupted = false;
     let mut collected_tool_metrics: Vec<crate::metrics::ToolExecMetrics> = Vec::new();
+    let mut detected_transfer_signal: Option<crate::transfer::TransferSignal> = None;
 
     if !tool_call_data.is_empty() {
         let exec_results =
@@ -685,9 +686,11 @@ async fn handle_tool_calls(
             ToolExecOutcome::Completed {
                 results,
                 tool_metrics,
+                transfer_signal,
             } => {
                 tool_results.extend(results);
                 collected_tool_metrics = tool_metrics;
+                detected_transfer_signal = transfer_signal;
             }
             ToolExecOutcome::SteeringInterrupt {
                 completed,
@@ -724,6 +727,48 @@ async fn handle_tool_calls(
 
     // Store tool results for post-turn hook access
     state.last_tool_results.clone_from(&tool_results);
+
+    // xiii-a. Transfer signal detection: if a tool signaled a transfer,
+    // enrich the signal with conversation history and exit with Transfer.
+    if let Some(mut signal) = detected_transfer_signal {
+        // Enrich with LLM-only conversation history from context
+        let llm_history: Vec<LlmMessage> = state
+            .context_messages
+            .iter()
+            .filter_map(|m| match m {
+                AgentMessage::Llm(llm) => Some(llm.clone()),
+                AgentMessage::Custom(_) => None,
+            })
+            .collect();
+        signal = signal.with_conversation_history(llm_history);
+
+        tracing::info!(
+            target_agent = %signal.target_agent(),
+            reason = %signal.reason(),
+            "transfer signal detected, terminating turn"
+        );
+
+        // Emit TransferInitiated event so callers can capture the signal
+        let _ = emit(
+            tx,
+            AgentEvent::TransferInitiated {
+                signal: signal.clone(),
+            },
+        )
+        .await;
+
+        let state_delta = flush_state_delta(config, tx).await;
+        let snapshot = build_snapshot(state, StopReason::Transfer, state_delta);
+        return emit_turn_end_and_agent_end(
+            msg_for_turn_end,
+            tool_results,
+            TurnEndReason::Transfer,
+            snapshot,
+            state,
+            tx,
+        )
+        .await;
+    }
 
     // xiii. Emit TurnEnd
     let state_delta = flush_state_delta(config, tx).await;

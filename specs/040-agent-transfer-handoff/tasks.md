@@ -49,17 +49,17 @@
 
 ### Tests for US1
 
-- [ ] T011 [US1] Write test: TransferToAgentTool validates target exists in registry, returns transfer signal on success in `src/transfer.rs`
-- [ ] T012 [US1] Write test: TransferToAgentTool returns error result when target agent not in registry in `src/transfer.rs`
-- [ ] T013 [US1] Write test: TransferToAgentTool includes context_summary in signal when provided in `src/transfer.rs`
-- [ ] T014 [US1] Write test: agent loop detects transfer signal in tool results, terminates turn with StopReason::Transfer, and enriches signal with conversation history in `src/loop_/turn.rs`
-- [ ] T015 [US1] Write test: tool result text is "Transfer to {agent_name} initiated." on success in `src/transfer.rs`
+- [x] T011 [US1] Write test: TransferToAgentTool validates target exists in registry, returns transfer signal on success in `src/transfer.rs`
+- [x] T012 [US1] Write test: TransferToAgentTool returns error result when target agent not in registry in `src/transfer.rs`
+- [x] T013 [US1] Write test: TransferToAgentTool includes context_summary in signal when provided in `src/transfer.rs`
+- [x] T014 [US1] Write test: agent loop detects transfer signal in tool results, terminates turn with StopReason::Transfer, and enriches signal with conversation history in `src/loop_/turn.rs`
+- [x] T015 [US1] Write test: tool result text is "Transfer to {agent_name} initiated." on success in `src/transfer.rs`
 
 ### Implementation for US1
 
-- [ ] T016 [US1] Implement `TransferToAgentTool` struct with `registry: Arc<AgentRegistry>` and `allowed_targets: Option<HashSet<String>>` fields, `new(registry)` constructor in `src/transfer.rs`
-- [ ] T017 [US1] Implement `AgentTool` trait for `TransferToAgentTool` — `name()`, `description()`, `schema()` (JSON schema with agent_name, reason, context_summary params), `execute()` validates target in registry, returns `AgentToolResult::transfer(signal)` with confirmation text in `src/transfer.rs`
-- [ ] T018 [US1] Add transfer signal detection in agent loop after tool results are collected — scan results for `is_transfer()`, if found enrich signal with conversation history from `LoopState.context_messages`, set `StopReason::Transfer` and break inner loop in `src/loop_/turn.rs`
+- [x] T016 [US1] Implement `TransferToAgentTool` struct with `registry: Arc<AgentRegistry>` and `allowed_targets: Option<HashSet<String>>` fields, `new(registry)` constructor in `src/transfer.rs`
+- [x] T017 [US1] Implement `AgentTool` trait for `TransferToAgentTool` — `name()`, `description()`, `schema()` (JSON schema with agent_name, reason, context_summary params), `execute()` validates target in registry, returns `AgentToolResult::transfer(signal)` with confirmation text in `src/transfer.rs`
+- [x] T018 [US1] Add transfer signal detection in agent loop after tool results are collected — scan results for `is_transfer()`, if found enrich signal with conversation history from `LoopState.context_messages`, set `StopReason::Transfer` and break inner loop in `src/loop_/turn.rs`
 
 **Checkpoint**: Basic transfer works end-to-end. `cargo test -p swink-agent` passes.
 
@@ -73,15 +73,15 @@
 
 ### Tests for US2
 
-- [ ] T019 [US2] Write test: transfer to allowed target succeeds in `src/transfer.rs`
-- [ ] T020 [US2] Write test: transfer to disallowed target returns error result with clear message in `src/transfer.rs`
-- [ ] T021 [US2] Write test: unrestricted tool (allowed_targets: None) allows transfer to any registered agent in `src/transfer.rs`
-- [ ] T022 [US2] Write test: empty allowed_targets set rejects all transfers in `src/transfer.rs`
+- [x] T019 [US2] Write test: transfer to allowed target succeeds in `src/transfer.rs`
+- [x] T020 [US2] Write test: transfer to disallowed target returns error result with clear message in `src/transfer.rs`
+- [x] T021 [US2] Write test: unrestricted tool (allowed_targets: None) allows transfer to any registered agent in `src/transfer.rs`
+- [x] T022 [US2] Write test: empty allowed_targets set rejects all transfers in `src/transfer.rs`
 
 ### Implementation for US2
 
-- [ ] T023 [US2] Implement `with_allowed_targets(registry, targets)` constructor on `TransferToAgentTool` in `src/transfer.rs`
-- [ ] T024 [US2] Add allowed_targets validation in `execute()` — check target against set before registry lookup, return error result if not allowed in `src/transfer.rs`
+- [x] T023 [US2] Implement `with_allowed_targets(registry, targets)` constructor on `TransferToAgentTool` in `src/transfer.rs`
+- [x] T024 [US2] Add allowed_targets validation in `execute()` — check target against set before registry lookup, return error result if not allowed in `src/transfer.rs`
 
 **Checkpoint**: Allowed targets restriction works. `cargo test -p swink-agent` passes.
 
@@ -95,17 +95,17 @@
 
 ### Tests for US3
 
-- [ ] T025 [US3] Write test: TransferChain rejects circular transfer (agent already in chain) in `src/transfer.rs`
-- [ ] T026 [US3] Write test: TransferChain rejects when max_depth exceeded in `src/transfer.rs`
-- [ ] T027 [US3] Write test: TransferChain allows push of new agent not in chain in `src/transfer.rs`
-- [ ] T028 [US3] Write test: TransferChain::default() has max_depth 5 in `src/transfer.rs`
-- [ ] T029 [US3] Write test: TransferChain::contains() and depth() return correct values in `src/transfer.rs`
-- [ ] T030 [US3] Write test: self-transfer is always circular (current agent is first in chain) in `src/transfer.rs`
+- [x] T025 [US3] Write test: TransferChain rejects circular transfer (agent already in chain) in `src/transfer.rs`
+- [x] T026 [US3] Write test: TransferChain rejects when max_depth exceeded in `src/transfer.rs`
+- [x] T027 [US3] Write test: TransferChain allows push of new agent not in chain in `src/transfer.rs`
+- [x] T028 [US3] Write test: TransferChain::default() has max_depth 5 in `src/transfer.rs`
+- [x] T029 [US3] Write test: TransferChain::contains() and depth() return correct values in `src/transfer.rs`
+- [x] T030 [US3] Write test: self-transfer is always circular (current agent is first in chain) in `src/transfer.rs`
 
 ### Implementation for US3
 
-- [ ] T031 [US3] Implement `TransferChain` struct with `chain: Vec<String>` and `max_depth: usize`, `new(max_depth)`, `Default` (max_depth: 5), `push()`, `depth()`, `contains()`, `chain()` in `src/transfer.rs`
-- [ ] T032 [US3] Implement `TransferError` enum with CircularTransfer and MaxDepthExceeded variants, Display, Error in `src/transfer.rs`
+- [x] T031 [US3] Implement `TransferChain` struct with `chain: Vec<String>` and `max_depth: usize`, `new(max_depth)`, `Default` (max_depth: 5), `push()`, `depth()`, `contains()`, `chain()` in `src/transfer.rs`
+- [x] T032 [US3] Implement `TransferError` enum with CircularTransfer and MaxDepthExceeded variants, Display, Error in `src/transfer.rs`
 
 **Checkpoint**: Circular detection works. `cargo test -p swink-agent` passes.
 
@@ -119,12 +119,12 @@
 
 ### Tests for US4
 
-- [ ] T033 [US4] Write test: transfer-requested event emitted when transfer tool succeeds in `src/loop_/turn.rs`
-- [ ] T034 [US4] Write test: transfer-rejected event emitted when transfer tool returns error (target not found or not allowed) in `src/loop_/turn.rs`
+- [x] T033 [US4] Write test: transfer-requested event emitted when transfer tool succeeds in `src/loop_/turn.rs`
+- [x] T034 [US4] Write test: transfer-rejected event emitted when transfer tool returns error (target not found or not allowed) in `src/loop_/turn.rs`
 
 ### Implementation for US4
 
-- [ ] T035 [US4] Add transfer event emission in the loop's transfer detection path — emit transfer-requested event (via `AgentEvent::Custom(Emission)`) when transfer signal found, emit transfer-rejected when transfer tool returns error in `src/loop_/turn.rs`
+- [x] T035 [US4] Add transfer event emission in the loop's transfer detection path — emit transfer-requested event (via `AgentEvent::Custom(Emission)`) when transfer signal found, emit transfer-rejected when transfer tool returns error in `src/loop_/turn.rs`
 
 **Checkpoint**: Transfer events work. `cargo test -p swink-agent` passes.
 
@@ -138,13 +138,13 @@
 
 ### Tests for US5
 
-- [ ] T036 [US5] Write test: AgentResult with StopReason::Transfer has transfer_signal containing target, reason, context_summary in `src/transfer.rs`
-- [ ] T037 [US5] Write test: transfer signal conversation_history contains all LLM messages from agent session (custom messages filtered out) in `src/loop_/turn.rs`
-- [ ] T038 [US5] Write test: conversation_history includes tool results from concurrent tool calls in the same turn in `src/loop_/turn.rs`
+- [x] T036 [US5] Write test: AgentResult with StopReason::Transfer has transfer_signal containing target, reason, context_summary in `src/transfer.rs`
+- [x] T037 [US5] Write test: transfer signal conversation_history contains all LLM messages from agent session (custom messages filtered out) in `src/loop_/turn.rs`
+- [x] T038 [US5] Write test: conversation_history includes tool results from concurrent tool calls in the same turn in `src/loop_/turn.rs`
 
 ### Implementation for US5
 
-- [ ] T039 [US5] Ensure loop enrichment filters custom messages from conversation_history (include only AgentMessage::Llm variants), consistent with existing `in_flight_llm_messages` pattern in `src/loop_/turn.rs`
+- [x] T039 [US5] Ensure loop enrichment filters custom messages from conversation_history (include only AgentMessage::Llm variants), consistent with existing `in_flight_llm_messages` pattern in `src/loop_/turn.rs`
 
 **Checkpoint**: Full orchestration context works. `cargo test -p swink-agent` passes.
 
@@ -156,13 +156,13 @@
 
 ### Tests
 
-- [ ] T040 Write test: only first transfer signal is honored when LLM calls transfer_to_agent multiple times in one turn in `src/loop_/turn.rs`
-- [ ] T041 Write test: cancellation token takes precedence over transfer — loop returns Aborted, not Transfer in `src/loop_/turn.rs`
-- [ ] T042 Write test: transfer tool alongside other tools — all tool results processed, transfer terminates turn after in `src/loop_/turn.rs`
+- [x] T040 Write test: only first transfer signal is honored when LLM calls transfer_to_agent multiple times in one turn in `src/loop_/turn.rs`
+- [x] T041 Write test: cancellation token takes precedence over transfer — loop returns Aborted, not Transfer in `src/loop_/turn.rs`
+- [x] T042 Write test: transfer tool alongside other tools — all tool results processed, transfer terminates turn after in `src/loop_/turn.rs`
 
 ### Implementation
 
-- [ ] T043 Implement multi-transfer deduplication in loop — take first signal, log warning for duplicates in `src/loop_/turn.rs`
+- [x] T043 Implement multi-transfer deduplication in loop — take first signal, log warning for duplicates in `src/loop_/turn.rs`
 
 **Checkpoint**: All edge cases handled. `cargo test -p swink-agent` passes.
 
@@ -172,12 +172,12 @@
 
 **Purpose**: Final quality and verification
 
-- [ ] T044 [P] Add doc comments to all public types and methods in `src/transfer.rs`
-- [ ] T045 [P] Add `Send + Sync` compile-time assertions for `TransferToAgentTool`, `TransferSignal`, `TransferChain` in `src/transfer.rs`
-- [ ] T046 Run `cargo clippy -p swink-agent -- -D warnings` and fix any warnings
-- [ ] T047 Run `cargo test --workspace` final pass — all tests green including downstream crates
-- [ ] T048 Verify `cargo test -p swink-agent --no-default-features` compiles (transfer module gated)
-- [ ] T049 Run `cargo build --workspace` to verify no workspace-level breakage
+- [x] T044 [P] Add doc comments to all public types and methods in `src/transfer.rs`
+- [x] T045 [P] Add `Send + Sync` compile-time assertions for `TransferToAgentTool`, `TransferSignal`, `TransferChain` in `src/transfer.rs`
+- [x] T046 Run `cargo clippy -p swink-agent -- -D warnings` and fix any warnings
+- [x] T047 Run `cargo test --workspace` final pass — all tests green including downstream crates
+- [x] T048 Verify `cargo test -p swink-agent --no-default-features` compiles (transfer module gated)
+- [x] T049 Run `cargo build --workspace` to verify no workspace-level breakage
 
 ---
 

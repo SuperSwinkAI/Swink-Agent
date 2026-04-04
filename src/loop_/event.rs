@@ -25,6 +25,8 @@ pub enum TurnEndReason {
     Cancelled,
     /// Stream was aborted mid-generation.
     Aborted,
+    /// Turn ended due to a transfer signal from a tool.
+    Transfer,
 }
 
 // ─── AgentEvent ──────────────────────────────────────────────────────────────
@@ -167,6 +169,15 @@ pub enum AgentEvent {
         name: String,
         /// The version number that was saved.
         version: u32,
+    },
+
+    /// Emitted when a tool signals a transfer to another agent.
+    ///
+    /// Contains the enriched [`TransferSignal`](crate::transfer::TransferSignal)
+    /// with conversation history. Emitted immediately before the `TurnEnd` event
+    /// with `TurnEndReason::Transfer`.
+    TransferInitiated {
+        signal: crate::transfer::TransferSignal,
     },
 
     /// A custom event emitted via [`Agent::emit`](crate::Agent::emit).

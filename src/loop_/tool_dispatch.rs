@@ -113,6 +113,8 @@ pub async fn execute_tools_concurrently(
         Arc::new(Mutex::new(Vec::new()));
     let steering_detected: Arc<std::sync::atomic::AtomicBool> =
         Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let transfer_signal: Arc<Mutex<Option<crate::transfer::TransferSignal>>> =
+        Arc::new(Mutex::new(None));
 
     // Pre-build a tool lookup map for O(1) dispatch by name.
     let tool_map: HashMap<&str, &Arc<dyn AgentTool>> =
@@ -187,6 +189,7 @@ pub async fn execute_tools_concurrently(
                     return ToolExecOutcome::Completed {
                         results: ordered,
                         tool_metrics: collected_timings,
+                        transfer_signal: None,
                     };
                 }
                 PreDispatchVerdict::Skip(error_text) => {
@@ -258,6 +261,7 @@ pub async fn execute_tools_concurrently(
                 &results,
                 &tool_timings,
                 &steering_detected,
+                &transfer_signal,
                 tx,
             )
             .await;
@@ -291,9 +295,11 @@ pub async fn execute_tools_concurrently(
     let ordered = order_results_by_tool_calls(tool_calls, &all_results);
 
     let collected_timings = std::mem::take(&mut *tool_timings.lock().await);
+    let captured_transfer = transfer_signal.lock().await.take();
     ToolExecOutcome::Completed {
         results: ordered,
         tool_metrics: collected_timings,
+        transfer_signal: captured_transfer,
     }
 }
 
@@ -594,6 +600,7 @@ async fn dispatch_single_tool(
     results: &Arc<tokio::sync::Mutex<Vec<(usize, ToolResultMessage)>>>,
     tool_timings: &Arc<tokio::sync::Mutex<Vec<crate::metrics::ToolExecMetrics>>>,
     steering_flag: &Arc<std::sync::atomic::AtomicBool>,
+    transfer_signal: &Arc<tokio::sync::Mutex<Option<crate::transfer::TransferSignal>>>,
     tx: &mpsc::Sender<AgentEvent>,
 ) -> DispatchResult {
     let tool = tool_map.get(tc.name.as_str()).copied();
@@ -614,6 +621,7 @@ async fn dispatch_single_tool(
     let results_clone = Arc::clone(results);
     let timings_clone = Arc::clone(tool_timings);
     let steering_clone = Arc::clone(steering_flag);
+    let transfer_clone = Arc::clone(transfer_signal);
     let config_clone = Arc::clone(config);
     let tx_clone = tx.clone();
 
@@ -666,6 +674,14 @@ async fn dispatch_single_tool(
                     duration: exec_duration,
                     success: !is_error,
                 });
+
+            // Capture transfer signal (first one wins)
+            if result.is_transfer() {
+                let mut guard = transfer_clone.lock().await;
+                if guard.is_none() {
+                    (*guard).clone_from(&result.transfer_signal);
+                }
+            }
 
             let _ = emit(
                 &tx_clone,
