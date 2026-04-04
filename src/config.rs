@@ -188,6 +188,43 @@ pub enum ApprovalModeConfig {
     Bypassed,
 }
 
+// ─── CacheConfigData ────────────────────────────────────────────────────────
+
+/// Serializable representation of [`CacheConfig`](crate::context_cache::CacheConfig).
+///
+/// Duration is stored as milliseconds for serde-friendliness.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CacheConfigData {
+    /// Time-to-live in milliseconds.
+    pub ttl_ms: u64,
+    /// Minimum token count for the cached prefix.
+    pub min_tokens: usize,
+    /// Number of turns between cache refreshes.
+    pub cache_intervals: usize,
+}
+
+impl From<&crate::context_cache::CacheConfig> for CacheConfigData {
+    fn from(c: &crate::context_cache::CacheConfig) -> Self {
+        Self {
+            ttl_ms: c.ttl.as_millis().try_into().unwrap_or(u64::MAX),
+            min_tokens: c.min_tokens,
+            cache_intervals: c.cache_intervals,
+        }
+    }
+}
+
+impl CacheConfigData {
+    /// Convert back to a [`CacheConfig`](crate::context_cache::CacheConfig).
+    #[must_use]
+    pub const fn to_cache_config(&self) -> crate::context_cache::CacheConfig {
+        crate::context_cache::CacheConfig::new(
+            std::time::Duration::from_millis(self.ttl_ms),
+            self.min_tokens,
+            self.cache_intervals,
+        )
+    }
+}
+
 impl From<ApprovalMode> for ApprovalModeConfig {
     fn from(m: ApprovalMode) -> Self {
         match m {
@@ -212,12 +249,28 @@ impl From<ApprovalModeConfig> for ApprovalMode {
 
 /// A fully serializable snapshot of agent configuration.
 ///
-/// Captures every [`AgentOptions`](crate::AgentOptions) field that can survive
-/// a serde round-trip. Trait objects (tools, transformers, policies, callbacks)
-/// are represented by **name only** so that the consumer can re-register
-/// concrete implementations after deserialization.
+/// Captures the subset of [`AgentOptions`](crate::AgentOptions) fields that can
+/// survive a serde round-trip. Trait objects (tools, stream functions,
+/// transformers, policies, callbacks) **cannot** be serialized and must be
+/// re-registered by the consumer after deserialization.
 ///
-/// # Round-trip
+/// # What round-trips faithfully
+///
+/// `system_prompt`, `model`, `retry`, `stream_options`, `steering_mode`,
+/// `follow_up_mode`, `structured_output_max_retries`, `approval_mode`,
+/// `plan_mode_addendum`, and `cache_config` are all restored by
+/// [`into_agent_options()`](Self::into_agent_options).
+///
+/// # What does NOT round-trip
+///
+/// - **`tool_names`** — stored for informational use only (e.g., re-registering
+///   tools by name). The consumer must supply the actual tool implementations.
+/// - **`extra`** — application-level metadata that has no corresponding
+///   `AgentOptions` field. Survives serde but is not fed back into the agent.
+/// - **Trait objects** — `stream_fn`, `convert_to_llm`, `transform_context`,
+///   `approve_tool`, policies, event forwarders, etc. must be re-attached.
+///
+/// # Example
 ///
 /// ```ignore
 /// // Save
@@ -265,7 +318,19 @@ pub struct AgentConfig {
     #[serde(default)]
     pub approval_mode: ApprovalModeConfig,
 
+    /// Optional plan mode addendum appended to the system prompt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan_mode_addendum: Option<String>,
+
+    /// Optional context caching configuration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_config: Option<CacheConfigData>,
+
     /// Arbitrary extension data for application-specific config.
+    ///
+    /// This field survives serialization but is **not** restored into
+    /// [`AgentOptions`](crate::AgentOptions) — it has no corresponding field
+    /// there. Use it to store application-level metadata alongside the config.
     #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
     pub extra: serde_json::Value,
 }
@@ -302,6 +367,8 @@ impl AgentConfig {
         opts.follow_up_mode = self.follow_up_mode.into();
         opts.structured_output_max_retries = self.structured_output_max_retries;
         opts.approval_mode = self.approval_mode.into();
+        opts.plan_mode_addendum = self.plan_mode_addendum;
+        opts.cache_config = self.cache_config.map(|c| c.to_cache_config());
 
         // Clear the default transform_context — the caller may want to re-attach
         // their own, and `from_config` should not silently override.
@@ -337,6 +404,8 @@ impl crate::agent::AgentOptions {
             follow_up_mode: self.follow_up_mode.into(),
             structured_output_max_retries: self.structured_output_max_retries,
             approval_mode: self.approval_mode.into(),
+            plan_mode_addendum: self.plan_mode_addendum.clone(),
+            cache_config: self.cache_config.as_ref().map(CacheConfigData::from),
             extra: serde_json::Value::Null,
         }
     }
@@ -484,6 +553,12 @@ mod tests {
             follow_up_mode: FollowUpModeConfig::All,
             structured_output_max_retries: 5,
             approval_mode: ApprovalModeConfig::Smart,
+            plan_mode_addendum: Some("Custom plan instructions.".into()),
+            cache_config: Some(CacheConfigData {
+                ttl_ms: 300_000,
+                min_tokens: 1024,
+                cache_intervals: 4,
+            }),
             extra: serde_json::json!({"custom_key": "custom_value"}),
         };
 
@@ -502,6 +577,14 @@ mod tests {
         assert_eq!(restored.follow_up_mode, FollowUpModeConfig::All);
         assert_eq!(restored.structured_output_max_retries, 5);
         assert_eq!(restored.approval_mode, ApprovalModeConfig::Smart);
+        assert_eq!(
+            restored.plan_mode_addendum.as_deref(),
+            Some("Custom plan instructions.")
+        );
+        let cc = restored.cache_config.unwrap();
+        assert_eq!(cc.ttl_ms, 300_000);
+        assert_eq!(cc.min_tokens, 1024);
+        assert_eq!(cc.cache_intervals, 4);
         assert_eq!(restored.extra["custom_key"], "custom_value");
     }
 
@@ -543,7 +626,8 @@ mod tests {
     #[test]
     #[cfg(feature = "testkit")]
     fn config_round_trip_only_contains_restorable_fields() {
-        // Every field in AgentConfig must be faithfully restored by
+        // Every field in AgentConfig (except `extra` and `tool_names`, which
+        // are documented as metadata-only) must be faithfully restored by
         // into_agent_options(). This test guards against adding fields
         // that serialize but silently drop on restore.
         let config = AgentConfig {
@@ -567,6 +651,12 @@ mod tests {
             follow_up_mode: FollowUpModeConfig::All,
             structured_output_max_retries: 10,
             approval_mode: ApprovalModeConfig::Bypassed,
+            plan_mode_addendum: Some("Plan mode text.".into()),
+            cache_config: Some(CacheConfigData {
+                ttl_ms: 60_000,
+                min_tokens: 512,
+                cache_intervals: 3,
+            }),
             extra: serde_json::json!({"k": "v"}),
         };
 
@@ -603,6 +693,11 @@ mod tests {
             opts.approval_mode,
             crate::tool::ApprovalMode::Bypassed
         ));
+        assert_eq!(opts.plan_mode_addendum.as_deref(), Some("Plan mode text."));
+        let cc = opts.cache_config.unwrap();
+        assert_eq!(cc.ttl.as_millis(), 60_000);
+        assert_eq!(cc.min_tokens, 512);
+        assert_eq!(cc.cache_intervals, 3);
     }
 
     #[test]
@@ -617,6 +712,53 @@ mod tests {
             let back: ApprovalModeConfig = serde_json::from_str(&json).unwrap();
             assert_eq!(back, mode);
         }
+    }
+
+    #[test]
+    fn cache_config_data_roundtrip() {
+        let data = CacheConfigData {
+            ttl_ms: 120_000,
+            min_tokens: 2048,
+            cache_intervals: 5,
+        };
+        let cc = data.to_cache_config();
+        assert_eq!(cc.ttl, Duration::from_millis(120_000));
+        assert_eq!(cc.min_tokens, 2048);
+        assert_eq!(cc.cache_intervals, 5);
+
+        let back = CacheConfigData::from(&cc);
+        assert_eq!(back.ttl_ms, 120_000);
+        assert_eq!(back.min_tokens, 2048);
+        assert_eq!(back.cache_intervals, 5);
+    }
+
+    #[test]
+    #[cfg(feature = "testkit")]
+    fn to_config_captures_plan_mode_and_cache() {
+        let stream_fn: std::sync::Arc<dyn crate::stream::StreamFn> =
+            std::sync::Arc::new(crate::testing::MockStreamFn::new(vec![]));
+        let mut opts = crate::agent::AgentOptions::new(
+            "test",
+            crate::types::ModelSpec::new("anthropic", "claude-sonnet"),
+            stream_fn,
+            crate::agent::default_convert,
+        );
+        opts.plan_mode_addendum = Some("custom addendum".into());
+        opts.cache_config = Some(crate::context_cache::CacheConfig::new(
+            Duration::from_secs(300),
+            1024,
+            4,
+        ));
+
+        let config = opts.to_config();
+        assert_eq!(
+            config.plan_mode_addendum.as_deref(),
+            Some("custom addendum")
+        );
+        let cc = config.cache_config.unwrap();
+        assert_eq!(cc.ttl_ms, 300_000);
+        assert_eq!(cc.min_tokens, 1024);
+        assert_eq!(cc.cache_intervals, 4);
     }
 
     #[test]
