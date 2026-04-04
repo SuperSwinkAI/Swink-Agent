@@ -1,4 +1,4 @@
-//! OAuth2 token refresh and authorization code exchange helpers.
+//! OAuth2 token refresh helpers.
 
 use serde::Deserialize;
 use swink_agent::CredentialError;
@@ -63,59 +63,6 @@ pub async fn refresh_token(
         .json::<TokenResponse>()
         .await
         .map_err(|e| CredentialError::RefreshFailed {
-            key: String::new(),
-            reason: format!("failed to parse token response: {e}"),
-        })
-}
-
-/// Exchange an authorization code for tokens via the token endpoint.
-///
-/// Sends a POST request with `grant_type=authorization_code`.
-pub async fn exchange_code(
-    client: &reqwest::Client,
-    token_url: &str,
-    code: &str,
-    client_id: &str,
-    client_secret: Option<&str>,
-    redirect_uri: Option<&str>,
-) -> Result<TokenResponse, CredentialError> {
-    debug!(token_url, "exchanging authorization code for tokens");
-
-    let mut form = vec![
-        ("grant_type", "authorization_code"),
-        ("code", code),
-        ("client_id", client_id),
-    ];
-    if let Some(secret) = client_secret {
-        form.push(("client_secret", secret));
-    }
-    if let Some(redirect) = redirect_uri {
-        form.push(("redirect_uri", redirect));
-    }
-
-    let response = client
-        .post(token_url)
-        .form(&form)
-        .send()
-        .await
-        .map_err(|e| CredentialError::AuthorizationFailed {
-            key: String::new(),
-            reason: format!("HTTP request failed: {e}"),
-        })?;
-
-    if !response.status().is_success() {
-        let status = response.status();
-        let body = response.text().await.unwrap_or_default();
-        return Err(CredentialError::AuthorizationFailed {
-            key: String::new(),
-            reason: format!("token endpoint returned {status}: {body}"),
-        });
-    }
-
-    response
-        .json::<TokenResponse>()
-        .await
-        .map_err(|e| CredentialError::AuthorizationFailed {
             key: String::new(),
             reason: format!("failed to parse token response: {e}"),
         })

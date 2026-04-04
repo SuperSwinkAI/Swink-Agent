@@ -211,22 +211,6 @@ pub enum CredentialError {
         actual: CredentialType,
     },
 
-    /// `OAuth2` authorization flow failed.
-    #[error("authorization failed for {key}: {reason}")]
-    AuthorizationFailed {
-        /// The credential key.
-        key: String,
-        /// Human-readable reason (no secrets).
-        reason: String,
-    },
-
-    /// `OAuth2` authorization flow timed out.
-    #[error("authorization timed out for {key}")]
-    AuthorizationTimeout {
-        /// The credential key.
-        key: String,
-    },
-
     /// Generic credential store error.
     #[error("credential store error: {0}")]
     StoreError(Box<dyn std::error::Error + Send + Sync>),
@@ -268,20 +252,6 @@ pub trait CredentialResolver: Send + Sync {
     /// Resolve a credential by key. Returns the minimal secret value
     /// needed for the authenticated request.
     fn resolve(&self, key: &str) -> CredentialFuture<'_, ResolvedCredential>;
-}
-
-// ─── AuthorizationHandler trait ─────────────────────────────────────────────
-
-/// Callback for interactive `OAuth2` authorization code flows.
-///
-/// The handler receives the authorization URL and returns the authorization code.
-/// Implementations may open a browser, display a prompt, or use a redirect server.
-pub trait AuthorizationHandler: Send + Sync {
-    /// Present the authorization URL to the user and return the authorization code.
-    ///
-    /// `state` is the CSRF token that the caller generated and appended to
-    /// the authorization URL; implementations should verify it matches.
-    fn authorize(&self, auth_url: &str, state: &str) -> CredentialFuture<'_, String>;
 }
 
 // ─── Tests ──────────────────────────────────────────────────────────────────
@@ -369,13 +339,6 @@ mod tests {
                 key: "my-key".into(),
                 expected: CredentialType::Bearer,
                 actual: CredentialType::ApiKey,
-            },
-            CredentialError::AuthorizationFailed {
-                key: "my-key".into(),
-                reason: "denied".into(),
-            },
-            CredentialError::AuthorizationTimeout {
-                key: "my-key".into(),
             },
             CredentialError::Timeout {
                 key: "my-key".into(),
