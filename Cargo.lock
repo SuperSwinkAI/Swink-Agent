@@ -7044,6 +7044,7 @@ name = "swink-agent-patterns"
 version = "0.4.2"
 dependencies = [
  "regex",
+ "schemars 1.2.1",
  "serde",
  "serde_json",
  "swink-agent",
