@@ -14,7 +14,7 @@
 //!   deserialization with interleaved ordering.
 //! - [`restore_single_custom`] — restore one custom-message envelope via a
 //!   registry (useful for line-oriented formats like JSONL).
-//! - [`SerializedCustomMessage`] — a lightweight [`CustomMessage`]
+//! - [`SerializedCustomMessage`] — a lightweight [`CustomMessage`](super::CustomMessage)
 //!   implementation that holds pre-serialized `type_name` + `to_json` data,
 //!   enabling transfer across thread or process boundaries.
 //! - [`clone_messages_for_send`] — snapshot a slice of `AgentMessage` into
@@ -185,7 +185,7 @@ pub fn restore_single_custom(
 
 // ─── SerializedCustomMessage ────────────────────────────────────────────────
 
-/// A lightweight [`CustomMessage`] stand-in that holds pre-serialized data.
+/// A lightweight [`CustomMessage`](super::CustomMessage) stand-in that holds pre-serialized data.
 ///
 /// Useful for ferrying custom messages across `spawn_blocking` boundaries or
 /// other contexts where the original `Box<dyn CustomMessage>` (which is
