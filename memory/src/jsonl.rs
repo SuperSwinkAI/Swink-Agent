@@ -10,7 +10,7 @@ use std::io::{self, BufRead, Seek, Write};
 use std::path::{Path, PathBuf};
 
 use swink_agent::{
-    AgentMessage, CustomMessageRegistry, LlmMessage, deserialize_custom_message,
+    AgentMessage, CustomMessageRegistry, LlmMessage, restore_single_custom,
     serialize_custom_message,
 };
 
@@ -254,8 +254,9 @@ fn parse_message_record(
     match SessionRecord::parse(line) {
         Ok(SessionRecord::Llm(message)) => Some(AgentMessage::Llm(*message)),
         Ok(SessionRecord::Custom(envelope)) => {
-            registry.and_then(|reg| match deserialize_custom_message(reg, &envelope) {
-                Ok(custom) => Some(AgentMessage::Custom(custom)),
+            match restore_single_custom(registry, &envelope) {
+                Ok(Some(custom)) => Some(AgentMessage::Custom(custom)),
+                Ok(None) => None, // no registry provided
                 Err(error) => {
                     tracing::warn!(
                         line = line_num,
@@ -264,7 +265,7 @@ fn parse_message_record(
                     );
                     None
                 }
-            })
+            }
         }
         Ok(SessionRecord::State(_)) => None,
         Err(error) => {

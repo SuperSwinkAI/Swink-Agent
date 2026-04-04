@@ -140,9 +140,11 @@ pub use tools::{BashTool, ReadFileTool, WriteFileTool, builtin_tools};
 pub use tools::{ListArtifactsTool, LoadArtifactTool, SaveArtifactTool, artifact_tools};
 pub use types::{
     AgentContext, AgentMessage, AgentResult, AssistantMessage, ContentBlock, Cost, CustomMessage,
-    CustomMessageRegistry, ImageSource, LlmMessage, ModelCapabilities, ModelSpec, StopReason,
-    ThinkingBudgets, ThinkingLevel, ToolResultMessage, TurnSnapshot, Usage, UserMessage,
-    deserialize_custom_message, serialize_custom_message,
+    CustomMessageRegistry, ImageSource, LlmMessage, MessageSlot, ModelCapabilities, ModelSpec,
+    SerializedCustomMessage, SerializedMessages, StopReason, ThinkingBudgets, ThinkingLevel,
+    ToolResultMessage, TurnSnapshot, Usage, UserMessage, clone_messages_for_send,
+    deserialize_custom_message, restore_messages, restore_single_custom, serialize_custom_message,
+    serialize_messages,
 };
 pub use util::now_timestamp;
 

@@ -4,9 +4,14 @@
 //! All other modules depend on it; it depends on nothing else in the crate.
 
 mod custom_message;
+pub mod message_codec;
 mod model;
 
 pub use custom_message::*;
+pub use message_codec::{
+    MessageSlot, SerializedCustomMessage, SerializedMessages, clone_messages_for_send,
+    restore_messages, restore_single_custom, serialize_messages,
+};
 pub use model::*;
 
 use std::collections::HashMap;

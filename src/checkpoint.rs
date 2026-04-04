@@ -8,127 +8,12 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::types::{
-    AgentMessage, Cost, CustomMessageRegistry, LlmMessage, Usage, deserialize_custom_message,
-    serialize_custom_message,
-};
+use crate::types::message_codec::{self, MessageSlot};
+use crate::types::{AgentMessage, Cost, CustomMessageRegistry, LlmMessage, Usage};
 
 mod store;
 
 pub use store::{CheckpointFuture, CheckpointStore};
-
-/// Tracks the original position of each message in the sequence.
-///
-/// During serialization, LLM and custom messages are stored in separate
-/// vectors for backward compatibility. `MessageSlot` records the original
-/// ordering so that `restore_messages` can reconstruct the interleaved
-/// sequence faithfully.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "kind")]
-enum MessageSlot {
-    /// An LLM message at the given index in the `messages` vector.
-    Llm { index: usize },
-    /// A custom message at the given index in the `custom_messages` vector.
-    Custom { index: usize },
-}
-
-#[derive(Debug, Clone)]
-struct SerializedMessages {
-    llm_messages: Vec<LlmMessage>,
-    custom_messages: Vec<serde_json::Value>,
-    message_order: Vec<MessageSlot>,
-}
-
-fn serialize_messages(messages: &[AgentMessage], kind: &str) -> SerializedMessages {
-    let mut llm_messages = Vec::new();
-    let mut custom_messages = Vec::new();
-    let mut message_order = Vec::new();
-
-    for message in messages {
-        match message {
-            AgentMessage::Llm(llm) => {
-                message_order.push(MessageSlot::Llm {
-                    index: llm_messages.len(),
-                });
-                llm_messages.push(llm.clone());
-            }
-            AgentMessage::Custom(custom) => {
-                if let Some(envelope) = serialize_custom_message(custom.as_ref()) {
-                    message_order.push(MessageSlot::Custom {
-                        index: custom_messages.len(),
-                    });
-                    custom_messages.push(envelope);
-                } else {
-                    tracing::warn!(
-                        "skipping non-serializable CustomMessage in {kind}: {:?}",
-                        custom
-                    );
-                }
-            }
-        }
-    }
-
-    SerializedMessages {
-        llm_messages,
-        custom_messages,
-        message_order,
-    }
-}
-
-fn restore_messages(
-    messages: &[LlmMessage],
-    custom_messages: &[serde_json::Value],
-    message_order: &[MessageSlot],
-    registry: Option<&CustomMessageRegistry>,
-    kind: &str,
-) -> Vec<AgentMessage> {
-    // If message_order is present, use it to reconstruct the original sequence.
-    // Otherwise fall back to legacy behavior (LLM first, then custom) for
-    // backward compatibility with checkpoints created before this fix.
-    if !message_order.is_empty() {
-        let mut result = Vec::with_capacity(message_order.len());
-        for slot in message_order {
-            match slot {
-                MessageSlot::Llm { index } => {
-                    if let Some(llm) = messages.get(*index) {
-                        result.push(AgentMessage::Llm(llm.clone()));
-                    }
-                }
-                MessageSlot::Custom { index } => {
-                    if let Some(reg) = registry
-                        && let Some(envelope) = custom_messages.get(*index)
-                    {
-                        match deserialize_custom_message(reg, envelope) {
-                            Ok(custom) => result.push(AgentMessage::Custom(custom)),
-                            Err(error) => {
-                                tracing::warn!(
-                                    "failed to deserialize custom message from {kind}: {error}"
-                                );
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        return result;
-    }
-
-    // Legacy fallback: LLM messages first, then custom messages appended.
-    let mut result: Vec<AgentMessage> = messages.iter().cloned().map(AgentMessage::Llm).collect();
-
-    if let Some(reg) = registry {
-        for envelope in custom_messages {
-            match deserialize_custom_message(reg, envelope) {
-                Ok(custom) => result.push(AgentMessage::Custom(custom)),
-                Err(error) => {
-                    tracing::warn!("failed to deserialize custom message from {kind}: {error}");
-                }
-            }
-        }
-    }
-
-    result
-}
 
 fn restore_llm_messages(messages: &[LlmMessage]) -> Vec<AgentMessage> {
     messages.iter().cloned().map(AgentMessage::Llm).collect()
@@ -195,7 +80,7 @@ impl Checkpoint {
         model_id: impl Into<String>,
         messages: &[AgentMessage],
     ) -> Self {
-        let serialized = serialize_messages(messages, "checkpoint");
+        let serialized = message_codec::serialize_messages(messages, "checkpoint");
 
         Self {
             id: id.into(),
@@ -259,7 +144,7 @@ impl Checkpoint {
     /// legacy behavior (LLM messages first, then custom messages appended).
     #[must_use]
     pub fn restore_messages(&self, registry: Option<&CustomMessageRegistry>) -> Vec<AgentMessage> {
-        restore_messages(
+        message_codec::restore_messages(
             &self.messages,
             &self.custom_messages,
             &self.message_order,
@@ -318,7 +203,7 @@ impl LoopCheckpoint {
         model_id: impl Into<String>,
         messages: &[AgentMessage],
     ) -> Self {
-        let serialized = serialize_messages(messages, "loop checkpoint");
+        let serialized = message_codec::serialize_messages(messages, "loop checkpoint");
 
         Self {
             messages: serialized.llm_messages,
@@ -361,7 +246,7 @@ impl LoopCheckpoint {
     /// If `registry` is `None`, custom messages are silently skipped.
     #[must_use]
     pub fn restore_messages(&self, registry: Option<&CustomMessageRegistry>) -> Vec<AgentMessage> {
-        restore_messages(
+        message_codec::restore_messages(
             &self.messages,
             &self.custom_messages,
             &self.message_order,
