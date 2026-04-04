@@ -51,7 +51,7 @@ async fn connect_to_nonexistent_server_returns_spawn_failed() {
         requires_approval: false,
     };
 
-    let result = McpConnection::connect(config).await;
+    let result = McpConnection::connect(config, None).await;
     assert!(
         result.is_err(),
         "should fail to connect to nonexistent server"
@@ -96,10 +96,10 @@ async fn connect_sse_discovers_tools() {
         requires_approval: false,
     };
 
-    let conn = McpConnection::connect(config).await
+    let conn = McpConnection::connect(config, None).await
         .expect("SSE connection should succeed");
 
-    assert_eq!(conn.status, swink_agent_mcp::McpConnectionStatus::Connected);
+    assert_eq!(conn.status(), swink_agent_mcp::McpConnectionStatus::Connected);
     assert!(
         !conn.discovered_tools.is_empty(),
         "should discover tools from SSE server"
@@ -139,10 +139,10 @@ async fn connect_sse_with_bearer_token_succeeds() {
         requires_approval: false,
     };
 
-    let conn = McpConnection::connect(config).await
+    let conn = McpConnection::connect(config, None).await
         .expect("SSE connection with bearer token should succeed");
 
-    assert_eq!(conn.status, swink_agent_mcp::McpConnectionStatus::Connected);
+    assert_eq!(conn.status(), swink_agent_mcp::McpConnectionStatus::Connected);
     assert!(!conn.discovered_tools.is_empty());
 
     ct.cancel();

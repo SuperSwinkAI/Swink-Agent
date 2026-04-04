@@ -46,7 +46,7 @@ async fn filter_allow_list_includes_only_matching_tools() {
         }),
     );
 
-    let conn = McpConnection::from_service(config, service)
+    let conn = McpConnection::from_service(config, service, None)
         .await
         .expect("connection should succeed");
 
@@ -78,7 +78,7 @@ async fn filter_deny_list_excludes_matching_tools() {
         }),
     );
 
-    let conn = McpConnection::from_service(config, service)
+    let conn = McpConnection::from_service(config, service, None)
         .await
         .expect("connection should succeed");
 
@@ -109,7 +109,7 @@ async fn filter_allow_then_deny_applied_in_order() {
         }),
     );
 
-    let conn = McpConnection::from_service(config, service)
+    let conn = McpConnection::from_service(config, service, None)
         .await
         .expect("connection should succeed");
 
@@ -134,7 +134,7 @@ async fn no_filter_returns_all_tools() {
 
     let config = stub_config("no-filter-test", None);
 
-    let conn = McpConnection::from_service(config, service)
+    let conn = McpConnection::from_service(config, service, None)
         .await
         .expect("connection should succeed");
 

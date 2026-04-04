@@ -189,7 +189,7 @@ pub async fn spawn_mock_connection(
         requires_approval: false,
     };
 
-    swink_agent_mcp::McpConnection::from_service(mcp_config, service)
+    swink_agent_mcp::McpConnection::from_service(mcp_config, service, None)
         .await
         .expect("mock connection should succeed")
 }

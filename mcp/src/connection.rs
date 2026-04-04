@@ -1,15 +1,22 @@
 //! MCP server connection management.
 //!
 //! Wraps an `rmcp` client session, handling tool discovery and providing
-//! access to the peer for tool call forwarding.
+//! access to the peer for tool call forwarding. A background monitor task
+//! awaits the service lifecycle and emits a disconnect event when the
+//! transport closes unexpectedly.
+
+use std::borrow::Cow;
+use std::sync::{Arc, Mutex};
 
 use reqwest::header::{HeaderValue, AUTHORIZATION};
 use rmcp::model::{CallToolRequestParam, CallToolResult, ClientInfo, Implementation};
-use rmcp::service::{RoleClient, RunningService, ServiceExt};
+use rmcp::service::{Peer, QuitReason, RoleClient, RunningService, ServiceExt};
 use rmcp::transport::TokioChildProcess;
 use rmcp::transport::sse::SseTransport;
 use serde_json::Value;
-use std::borrow::Cow;
+use swink_agent::AgentEvent;
+use tokio::sync::mpsc::UnboundedSender;
+use tokio::task::JoinHandle;
 use tracing::{info, warn};
 
 use crate::config::{McpServerConfig, McpTransport};
@@ -26,17 +33,24 @@ pub enum McpConnectionStatus {
 
 /// A connection to a single MCP server.
 ///
-/// Holds the rmcp `RunningService`, discovered tool definitions, and connection
-/// status. Created via [`McpConnection::connect`].
+/// Holds a cloned `Peer<RoleClient>` for making tool calls and a background
+/// monitor task that awaits the service lifecycle. When the remote transport
+/// closes the monitor transitions `status` to `Disconnected` and sends an
+/// `AgentEvent::McpServerDisconnected` on the optional event channel.
+///
+/// Created via [`McpConnection::connect`] or [`McpConnection::from_service`].
 pub struct McpConnection {
     /// The server configuration used to establish this connection.
     pub config: McpServerConfig,
     /// Discovered tools from the server (raw rmcp tool definitions).
     pub discovered_tools: Vec<rmcp::model::Tool>,
-    /// Current connection status.
-    pub status: McpConnectionStatus,
-    /// The running rmcp client session (None if disconnected).
-    service: Option<RunningService<RoleClient, ClientInfo>>,
+    /// Shared connection status — written by the monitor task, read by callers.
+    status: Arc<Mutex<McpConnectionStatus>>,
+    /// Cloned peer handle for forwarding tool calls.
+    peer: Option<Peer<RoleClient>>,
+    /// Background lifecycle-monitor task. Holds the `RunningService` and
+    /// resolves when the transport closes.
+    monitor: Option<JoinHandle<()>>,
 }
 
 impl std::fmt::Debug for McpConnection {
@@ -44,38 +58,45 @@ impl std::fmt::Debug for McpConnection {
         f.debug_struct("McpConnection")
             .field("config", &self.config)
             .field("discovered_tools", &self.discovered_tools.len())
-            .field("status", &self.status)
+            .field("status", &self.status())
             .finish_non_exhaustive()
     }
 }
 
 impl McpConnection {
+    /// Returns the current connection status.
+    pub fn status(&self) -> McpConnectionStatus {
+        *self.status.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     /// Create a disconnected connection placeholder.
     ///
     /// Useful for tests that only inspect tool metadata without establishing
     /// a real connection. Calls to `call_tool()` will fail immediately.
-    pub const fn disconnected(config: McpServerConfig) -> Self {
+    pub fn disconnected(config: McpServerConfig) -> Self {
         Self {
             config,
             discovered_tools: Vec::new(),
-            status: McpConnectionStatus::Disconnected,
-            service: None,
+            status: Arc::new(Mutex::new(McpConnectionStatus::Disconnected)),
+            peer: None,
+            monitor: None,
         }
     }
 
     /// Create a connection from a pre-established rmcp service.
     ///
-    /// Performs tool discovery on the already-connected service. Useful for
-    /// testing with in-process mock servers or when the transport is managed
-    /// externally.
+    /// Performs tool discovery on the already-connected service and spawns the
+    /// background lifecycle monitor. Useful for testing with in-process mock
+    /// servers or when the transport is managed externally.
     pub async fn from_service(
         config: McpServerConfig,
         service: RunningService<RoleClient, ClientInfo>,
+        event_tx: Option<UnboundedSender<AgentEvent>>,
     ) -> Result<Self, McpError> {
+        let peer = service.peer().clone();
+
         let discovered_tools =
-            service
-                .peer()
-                .list_all_tools()
+            peer.list_all_tools()
                 .await
                 .map_err(|e| McpError::ConnectionFailed {
                     server: config.name.clone(),
@@ -88,18 +109,27 @@ impl McpConnection {
             "MCP server connected via provided service, tools discovered"
         );
 
+        let status = Arc::new(Mutex::new(McpConnectionStatus::Connected));
+        let monitor = spawn_monitor(service, Arc::clone(&status), config.name.clone(), event_tx);
+
         Ok(Self {
             config,
             discovered_tools,
-            status: McpConnectionStatus::Connected,
-            service: Some(service),
+            status,
+            peer: Some(peer),
+            monitor: Some(monitor),
         })
     }
 
     /// Connect to an MCP server using the configured transport.
     ///
-    /// Supports stdio and SSE (HTTP) transports.
-    pub async fn connect(config: McpServerConfig) -> Result<Self, McpError> {
+    /// Supports stdio and SSE (HTTP) transports. Spawns a background lifecycle
+    /// monitor that sends `AgentEvent::McpServerDisconnected` on `event_tx`
+    /// when the transport closes unexpectedly.
+    pub async fn connect(
+        config: McpServerConfig,
+        event_tx: Option<UnboundedSender<AgentEvent>>,
+    ) -> Result<Self, McpError> {
         let service = match &config.transport {
             McpTransport::Stdio { command, args, env } => {
                 Self::connect_stdio(command, args, env, &config.name).await?
@@ -109,11 +139,11 @@ impl McpConnection {
             }
         };
 
+        let peer = service.peer().clone();
+
         // Discover tools from the server.
         let discovered_tools =
-            service
-                .peer()
-                .list_all_tools()
+            peer.list_all_tools()
                 .await
                 .map_err(|e| McpError::ConnectionFailed {
                     server: config.name.clone(),
@@ -126,11 +156,15 @@ impl McpConnection {
             "MCP server connected, tools discovered"
         );
 
+        let status = Arc::new(Mutex::new(McpConnectionStatus::Connected));
+        let monitor = spawn_monitor(service, Arc::clone(&status), config.name.clone(), event_tx);
+
         Ok(Self {
             config,
             discovered_tools,
-            status: McpConnectionStatus::Connected,
-            service: Some(service),
+            status,
+            peer: Some(peer),
+            monitor: Some(monitor),
         })
     }
 
@@ -245,7 +279,7 @@ impl McpConnection {
         tool_name: &str,
         arguments: Value,
     ) -> Result<CallToolResult, McpError> {
-        if self.status == McpConnectionStatus::Disconnected {
+        if self.status() == McpConnectionStatus::Disconnected {
             return Err(McpError::ToolCallFailed {
                 server: self.config.name.clone(),
                 tool: tool_name.to_string(),
@@ -253,8 +287,8 @@ impl McpConnection {
             });
         }
 
-        let service = self
-            .service
+        let peer = self
+            .peer
             .as_ref()
             .ok_or_else(|| McpError::ToolCallFailed {
                 server: self.config.name.clone(),
@@ -282,9 +316,7 @@ impl McpConnection {
             arguments: json_args,
         };
 
-        service
-            .peer()
-            .call_tool(params)
+        peer.call_tool(params)
             .await
             .map_err(|e| McpError::ToolCallFailed {
                 server: self.config.name.clone(),
@@ -294,16 +326,46 @@ impl McpConnection {
     }
 
     /// Shut down the connection gracefully.
+    ///
+    /// Aborts the monitor task (which drops the underlying `RunningService`).
+    /// For stdio servers, rmcp's `ChildWithCleanup` terminates the subprocess
+    /// on drop. For SSE servers, the HTTP connection is closed.
     pub async fn shutdown(mut self) {
-        if let Some(service) = self.service.take()
-            && let Err(e) = service.cancel().await
-        {
-            warn!(
-                server = %self.config.name,
-                error = %e,
-                "error during MCP server shutdown"
-            );
+        if let Some(monitor) = self.monitor.take() {
+            monitor.abort();
+            let _ = monitor.await;
         }
-        self.status = McpConnectionStatus::Disconnected;
+        *self.status.lock().unwrap_or_else(|e| e.into_inner()) = McpConnectionStatus::Disconnected;
     }
+}
+
+/// Spawn a background task that awaits the service lifecycle.
+///
+/// When the transport closes with `QuitReason::Closed` (remote disconnect or
+/// crash), the shared `status` is updated to `Disconnected` and
+/// `McpServerDisconnected` is sent on `event_tx`. Voluntary cancellations
+/// (`QuitReason::Cancelled`) and join errors are silently ignored since they
+/// are initiated by the caller via `shutdown()`.
+fn spawn_monitor(
+    service: RunningService<RoleClient, ClientInfo>,
+    status: Arc<Mutex<McpConnectionStatus>>,
+    server_name: String,
+    event_tx: Option<UnboundedSender<AgentEvent>>,
+) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        match service.waiting().await {
+            Ok(QuitReason::Closed) => {
+                *status.lock().unwrap_or_else(|e| e.into_inner()) =
+                    McpConnectionStatus::Disconnected;
+                if let Some(ref tx) = event_tx {
+                    let _ = tx.send(crate::event::server_disconnected(
+                        &server_name,
+                        "transport closed",
+                    ));
+                }
+            }
+            // Cancelled by shutdown() or join error — no event needed.
+            Ok(QuitReason::Cancelled) | Err(_) => {}
+        }
+    })
 }

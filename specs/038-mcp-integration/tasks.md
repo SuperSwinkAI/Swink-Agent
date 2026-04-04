@@ -163,7 +163,7 @@
 ### Implementation for User Story 6
 
 - [x] T041 [US6] Implement Drop for McpManager in mcp/src/manager.rs: clear tools then clear connections; rmcp's ChildWithCleanup handles subprocess termination on drop
-- [ ] T042 [US6] Implement crash detection in mcp/src/connection.rs: spawn a background tokio task that monitors the rmcp session health, on failure update status to Disconnected and emit McpServerDisconnected event (deferred — requires breaking API change)
+- [x] T042 [US6] Implement crash detection in mcp/src/connection.rs: background monitor task awaits RunningService::waiting() which resolves with QuitReason::Closed on transport closure; status (Arc<Mutex>) updated to Disconnected and McpServerDisconnected emitted on optional UnboundedSender<AgentEvent>. McpConnection::connect/from_service gain event_tx param; McpManager gains with_event_tx() builder.
 - [x] T043 [US6] Write test in mcp/tests/lifecycle_test.rs: McpTool::execute() on disconnected connection returns AgentToolResult with is_error=true (already implemented in execute() via call_tool error path)
 
 **Checkpoint**: Full lifecycle management — no zombie processes, crash detection, graceful degradation
