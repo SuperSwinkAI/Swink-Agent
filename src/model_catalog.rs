@@ -261,7 +261,12 @@ mod tests {
 
         let local = catalog.provider("local").unwrap();
         assert_eq!(local.kind, ProviderKind::Local);
-        assert!(local.preset("smollm3_3b").unwrap().include_by_default);
+        assert!(!local.preset("smollm3_3b").unwrap().include_by_default);
+        assert!(local.preset("gemma4_e2b").unwrap().include_by_default);
+        assert_eq!(
+            local.preset("gemma4_e2b").unwrap().context_window_tokens,
+            Some(131_072)
+        );
 
         let google = catalog.provider("google").unwrap();
         assert_eq!(google.kind, ProviderKind::Remote);

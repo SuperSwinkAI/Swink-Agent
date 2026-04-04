@@ -150,14 +150,44 @@ kind = "local"
 [[providers.presets]]
 id = "smollm3_3b"
 display_name = "Local SmolLM3-3B"
-group = "default"
+group = "legacy"
 model_id = "SmolLM3-3B-Q4_K_M"
 capabilities = ["text", "streaming"]
-include_by_default = true
+include_by_default = false
 repo_id = "bartowski/SmolLM3-3B-GGUF"
 filename = "SmolLM3-3B-Q4_K_M.gguf"
 context_window_tokens = 8192
 max_output_tokens = 2048
+
+[[providers.presets]]
+id = "gemma4_e2b"
+display_name = "Gemma 4 E2B"
+group = "default"
+model_id = "gemma4:e2b"
+capabilities = ["text", "tools", "streaming", "thinking"]
+include_by_default = true
+repo_id = "google/gemma-4-E2B-it"
+filename = ""
+context_window_tokens = 131072
+max_output_tokens = 8192
+
+[[providers.presets]]
+id = "gemma4_e4b"
+display_name = "Gemma 4 E4B (Ollama)"
+group = "default"
+model_id = "gemma4:e4b"
+capabilities = ["text", "tools", "streaming", "thinking"]
+context_window_tokens = 128000
+max_output_tokens = 8192
+
+[[providers.presets]]
+id = "gemma4_26b"
+display_name = "Gemma 4 26B MoE (Ollama)"
+group = "large"
+model_id = "gemma4:26b"
+capabilities = ["text", "tools", "streaming", "thinking"]
+context_window_tokens = 256000
+max_output_tokens = 8192
 
 [[providers]]
 key = "google"
