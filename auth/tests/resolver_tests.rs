@@ -272,9 +272,8 @@ async fn expired_no_refresh_no_handler_returns_expired() {
 
     let err = resolver.resolve("service").await.unwrap_err();
     let err_str = format!("{err}");
-    // Should be Expired, not AuthorizationFailed
     assert!(
         err_str.contains("expired") || err_str.contains("service"),
-        "should indicate expired, not authorization failed: {err_str}"
+        "should indicate expired: {err_str}"
     );
 }

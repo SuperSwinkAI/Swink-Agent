@@ -5,7 +5,7 @@
 //! - [`InMemoryCredentialStore`] — thread-safe in-memory credential storage
 //! - [`DefaultCredentialResolver`] — credential resolution with expiry checking,
 //!   OAuth2 refresh, and concurrent request deduplication
-//! - OAuth2 token refresh and authorization code exchange helpers
+//! - OAuth2 token refresh helpers
 
 mod in_memory;
 pub mod oauth2;

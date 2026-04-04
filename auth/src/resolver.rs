@@ -13,8 +13,7 @@ use tracing::{debug, info};
 
 use swink_agent::credential::CredentialFuture;
 use swink_agent::{
-    AuthorizationHandler, Credential, CredentialError, CredentialResolver, CredentialStore,
-    ResolvedCredential,
+    Credential, CredentialError, CredentialResolver, CredentialStore, ResolvedCredential,
 };
 
 use crate::oauth2;
@@ -26,13 +25,10 @@ type InFlightFuture = Shared<BoxFuture<'static, Result<ResolvedCredential, Strin
 /// - API key passthrough
 /// - Bearer token expiry validation
 /// - OAuth2 token refresh with deduplication
-/// - OAuth2 authorization code flow (when handler is configured)
 pub struct DefaultCredentialResolver {
     store: Arc<dyn CredentialStore>,
     client: reqwest::Client,
     expiry_buffer: Duration,
-    authorization_handler: Option<Arc<dyn AuthorizationHandler>>,
-    authorization_timeout: Duration,
     /// In-flight refresh futures keyed by credential key.
     /// Concurrent resolves for the same key share a single refresh request.
     in_flight: Mutex<HashMap<String, InFlightFuture>>,
@@ -46,8 +42,6 @@ impl DefaultCredentialResolver {
             store,
             client: reqwest::Client::new(),
             expiry_buffer: Duration::from_secs(60),
-            authorization_handler: None,
-            authorization_timeout: Duration::from_secs(300),
             in_flight: Mutex::new(HashMap::new()),
         }
     }
@@ -65,20 +59,6 @@ impl DefaultCredentialResolver {
     #[must_use]
     pub fn with_expiry_buffer(mut self, buffer: Duration) -> Self {
         self.expiry_buffer = buffer;
-        self
-    }
-
-    /// Set an authorization handler for interactive OAuth2 flows.
-    #[must_use]
-    pub fn with_authorization_handler(mut self, handler: Arc<dyn AuthorizationHandler>) -> Self {
-        self.authorization_handler = Some(handler);
-        self
-    }
-
-    /// Set the authorization flow timeout (default: 5 minutes).
-    #[must_use]
-    pub fn with_authorization_timeout(mut self, timeout: Duration) -> Self {
-        self.authorization_timeout = timeout;
         self
     }
 
@@ -160,17 +140,14 @@ impl CredentialResolver for DefaultCredentialResolver {
                     let store = Arc::clone(&self.store);
                     let client = self.client.clone();
                     let expiry_buffer = self.expiry_buffer;
-                    let authorization_handler = self.authorization_handler.clone();
                     let key_clone = key.clone();
 
                     let fut: BoxFuture<'static, Result<ResolvedCredential, String>> =
                         Box::pin(async move {
-                            // Re-create a temporary resolver-like context for the inner resolve
                             let resolver = InnerResolver {
                                 store: &store,
                                 client: &client,
                                 expiry_buffer,
-                                authorization_handler: authorization_handler.as_deref(),
                             };
                             resolver
                                 .resolve_inner(&key_clone)
@@ -202,7 +179,6 @@ struct InnerResolver<'a> {
     store: &'a Arc<dyn CredentialStore>,
     client: &'a reqwest::Client,
     expiry_buffer: Duration,
-    authorization_handler: Option<&'a dyn AuthorizationHandler>,
 }
 
 impl InnerResolver<'_> {
@@ -282,31 +258,17 @@ impl InnerResolver<'_> {
 
                     self.store.set(key, new_credential).await?;
                     Ok(ResolvedCredential::OAuth2AccessToken(response.access_token))
-                } else if self.authorization_handler.is_some() {
-                    // Expired OAuth2 with no refresh token and handler available
-                    // but we don't have enough context for the auth flow here
-                    Err(CredentialError::Expired {
-                        key: key.to_string(),
-                    })
                 } else {
+                    // Expired OAuth2 with no refresh token — cannot recover
                     Err(CredentialError::Expired {
                         key: key.to_string(),
                     })
                 }
             }
 
-            None => {
-                if self.authorization_handler.is_some() {
-                    // Handler available but no credential and no OAuth2 context
-                    Err(CredentialError::NotFound {
-                        key: key.to_string(),
-                    })
-                } else {
-                    Err(CredentialError::NotFound {
-                        key: key.to_string(),
-                    })
-                }
-            }
+            None => Err(CredentialError::NotFound {
+                key: key.to_string(),
+            }),
         }
     }
 }

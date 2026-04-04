@@ -1,4 +1,4 @@
-//! Tests for OAuth2 refresh and authorization (T045, T047-T049, T054-T058, T064).
+//! Tests for OAuth2 refresh (T045, T047-T049, T064).
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -200,7 +200,6 @@ async fn pre_provisioned_expired_auto_refreshes() {
     let token_url = format!("{}/token", mock_server.uri());
     let store =
         store(InMemoryCredentialStore::empty().with_credential("svc", expired_oauth2(&token_url)));
-    // No authorization handler — headless mode
     let resolver = DefaultCredentialResolver::new(store);
 
     let result = resolver.resolve("svc").await.unwrap();
