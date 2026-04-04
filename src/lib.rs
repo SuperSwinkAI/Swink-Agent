@@ -66,8 +66,8 @@ pub use agent_id::AgentId;
 pub use async_context_transformer::{AsyncContextTransformer, AsyncTransformFuture};
 pub use checkpoint::{Checkpoint, CheckpointFuture, CheckpointStore, LoopCheckpoint};
 pub use config::{
-    AgentConfig, ApprovalModeConfig, FollowUpModeConfig, RetryConfig, SteeringModeConfig,
-    StreamOptionsConfig,
+    AgentConfig, ApprovalModeConfig, CacheConfigData, FollowUpModeConfig, RetryConfig,
+    SteeringModeConfig, StreamOptionsConfig,
 };
 pub use context::CompactionReport;
 #[allow(deprecated)]
@@ -148,8 +148,8 @@ pub use util::now_timestamp;
 
 #[cfg(feature = "artifact-store")]
 pub use artifact::{
-    ArtifactByteStream, ArtifactData, ArtifactError, ArtifactMeta, ArtifactStore,
-    ArtifactVersion, StreamingArtifactStore, validate_artifact_name,
+    ArtifactByteStream, ArtifactData, ArtifactError, ArtifactMeta, ArtifactStore, ArtifactVersion,
+    StreamingArtifactStore, validate_artifact_name,
 };
 pub use display::{CoreDisplayMessage, DisplayRole, IntoDisplayMessages};
 #[cfg(feature = "plugins")]
