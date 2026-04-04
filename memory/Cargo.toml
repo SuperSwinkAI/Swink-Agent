@@ -10,6 +10,10 @@ readme = "../README.md"
 keywords = ["llm", "agent", "memory", "session", "context"]
 categories = ["development-tools", "data-structures"]
 
+[features]
+default = []
+sqlite = ["dep:rusqlite"]
+
 [package.metadata.docs_rs]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
@@ -22,6 +26,7 @@ tokio.workspace = true
 dirs = "6"
 tracing.workspace = true
 chrono.workspace = true
+rusqlite = { workspace = true, optional = true }
 
 [dev-dependencies]
 tempfile.workspace = true
