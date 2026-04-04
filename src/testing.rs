@@ -618,7 +618,9 @@ impl EventCollector {
 #[cfg(feature = "plugins")]
 use crate::plugin::Plugin;
 #[cfg(feature = "plugins")]
-use crate::policy::{PolicyContext, PolicyVerdict, PostTurnPolicy, PreTurnPolicy, TurnPolicyContext};
+use crate::policy::{
+    PolicyContext, PolicyVerdict, PostTurnPolicy, PreTurnPolicy, TurnPolicyContext,
+};
 #[cfg(feature = "plugins")]
 use std::sync::atomic::AtomicUsize;
 

@@ -3,9 +3,9 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use tokio_util::sync::CancellationToken;
-use swink_agent::types::{Usage, ContentBlock, LlmMessage, UserMessage};
+use swink_agent::types::{ContentBlock, LlmMessage, Usage, UserMessage};
 use swink_agent::{AgentMessage, now_timestamp};
+use tokio_util::sync::CancellationToken;
 
 use super::events::PipelineEvent;
 use super::executor::AgentFactory;
@@ -40,7 +40,8 @@ pub(crate) async fn run_parallel(
     let pipeline_start = Instant::now();
     let child_token = cancellation_token.child_token();
     let branch_count = branches.len();
-    let (tx, mut rx) = tokio::sync::mpsc::channel::<Result<BranchResult, PipelineError>>(branch_count);
+    let (tx, mut rx) =
+        tokio::sync::mpsc::channel::<Result<BranchResult, PipelineError>>(branch_count);
 
     // Spawn a task for each branch.
     for (index, branch_name) in branches.iter().enumerate() {
@@ -109,14 +110,15 @@ pub(crate) async fn run_parallel(
                         });
                     }
 
-                    let _ = tx.send(Ok(BranchResult {
-                        index,
-                        agent_name: branch_name,
-                        response,
-                        duration,
-                        usage,
-                    }))
-                    .await;
+                    let _ = tx
+                        .send(Ok(BranchResult {
+                            index,
+                            agent_name: branch_name,
+                            response,
+                            duration,
+                            usage,
+                        }))
+                        .await;
                 }
                 Err(e) => {
                     let _ = tx
@@ -138,14 +140,21 @@ pub(crate) async fn run_parallel(
         MergeStrategy::Concat { separator } => {
             merge_concat(&mut rx, branch_count, separator, id, pipeline_start).await
         }
-        MergeStrategy::First => {
-            merge_first(&mut rx, id, pipeline_start, child_token).await
-        }
+        MergeStrategy::First => merge_first(&mut rx, id, pipeline_start, child_token).await,
         MergeStrategy::Fastest { n } => {
             merge_fastest(&mut rx, n, id, pipeline_start, child_token).await
         }
         MergeStrategy::Custom { aggregator } => {
-            merge_custom(&mut rx, branch_count, aggregator, factory, event_handler, id, pipeline_start).await
+            merge_custom(
+                &mut rx,
+                branch_count,
+                aggregator,
+                factory,
+                event_handler,
+                id,
+                pipeline_start,
+            )
+            .await
         }
     }
 }
@@ -356,13 +365,15 @@ async fn merge_custom(
         cache_hint: None,
     }))];
 
-    let agg_result = aggregator.prompt_async(messages).await.map_err(|e| {
-        PipelineError::StepFailed {
-            step_index: branch_count,
-            agent_name: aggregator_name.clone(),
-            source: Box::new(e),
-        }
-    })?;
+    let agg_result =
+        aggregator
+            .prompt_async(messages)
+            .await
+            .map_err(|e| PipelineError::StepFailed {
+                step_index: branch_count,
+                agent_name: aggregator_name.clone(),
+                source: Box::new(e),
+            })?;
 
     let final_response = agg_result.assistant_text();
     total_usage += agg_result.usage.clone();
@@ -462,10 +473,7 @@ mod tests {
     // T029: First returns first completed
     #[tokio::test]
     async fn first_returns_one_result() {
-        let factory = make_factory(vec![
-            ("agent-a", "alpha"),
-            ("agent-b", "bravo"),
-        ]);
+        let factory = make_factory(vec![("agent-a", "alpha"), ("agent-b", "bravo")]);
 
         let result = super::run_parallel(
             &(factory as Arc<dyn super::super::executor::AgentFactory>),

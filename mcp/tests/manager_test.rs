@@ -26,7 +26,11 @@ async fn two_servers_with_prefixes_produce_prefixed_tools() {
         names.contains(&"fs_echo".to_string()),
         "should have fs_echo, got: {names:?}"
     );
-    assert_eq!(names.len(), 2, "should have exactly 2 tools, got: {names:?}");
+    assert_eq!(
+        names.len(),
+        2,
+        "should have exactly 2 tools, got: {names:?}"
+    );
 }
 
 /// T020: Connect to three servers where one fails, verify other two servers'
@@ -51,7 +55,10 @@ async fn partial_failure_still_discovers_tools_from_healthy_servers() {
     let mut manager = McpManager::new(configs);
     // connect_all should succeed even though the server fails to connect.
     let result = manager.connect_all().await;
-    assert!(result.is_ok(), "connect_all should not fail on partial errors");
+    assert!(
+        result.is_ok(),
+        "connect_all should not fail on partial errors"
+    );
 
     // No tools from the broken server.
     let tools = manager.tools();
@@ -69,7 +76,11 @@ async fn partial_failure_still_discovers_tools_from_healthy_servers() {
 
     let tools = manager.tools();
     let names: Vec<String> = tools.iter().map(|t| t.name().to_string()).collect();
-    assert_eq!(names.len(), 2, "should have tools from both healthy servers");
+    assert_eq!(
+        names.len(),
+        2,
+        "should have tools from both healthy servers"
+    );
     assert!(names.contains(&"a_echo".to_string()));
     assert!(names.contains(&"b_echo".to_string()));
 }

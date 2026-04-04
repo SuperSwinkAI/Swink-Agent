@@ -95,12 +95,10 @@ impl<S: ArtifactStore + 'static> AgentTool for SaveArtifactTool<S> {
             };
 
             match self.store.save(&session_id, &parsed.name, data).await {
-                Ok(version) => {
-                    AgentToolResult::text(format!(
-                        "Saved '{}' version {}",
-                        parsed.name, version.version
-                    ))
-                }
+                Ok(version) => AgentToolResult::text(format!(
+                    "Saved '{}' version {}",
+                    parsed.name, version.version
+                )),
                 Err(e) => AgentToolResult::error(format!("{e}")),
             }
         })

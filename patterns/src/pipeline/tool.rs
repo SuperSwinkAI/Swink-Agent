@@ -7,8 +7,8 @@ use serde::Deserialize;
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
-use swink_agent::tool::{AgentTool, AgentToolResult, ToolFuture};
 use swink_agent::schema_for;
+use swink_agent::tool::{AgentTool, AgentToolResult, ToolFuture};
 
 use super::executor::PipelineExecutor;
 use super::types::PipelineId;
@@ -185,8 +185,7 @@ mod tests {
         factory.register("agent-a", || make_text_agent("step-one-output"));
         factory.register("agent-b", || make_text_agent("final-output"));
 
-        let pipeline =
-            Pipeline::sequential("tool-test", vec!["agent-a".into(), "agent-b".into()]);
+        let pipeline = Pipeline::sequential("tool-test", vec!["agent-a".into(), "agent-b".into()]);
         let (executor, id) = make_executor_with_pipeline(factory, pipeline);
 
         let tool = PipelineTool::new(id, "test-pipeline".to_owned(), executor);
@@ -246,23 +245,19 @@ mod tests {
         assert_eq!(tool.label(), "my-pipeline");
         assert_eq!(tool.description(), "Execute a multi-agent pipeline");
 
-        let tool_with_desc = PipelineTool::new(
-            PipelineId::new("p2"),
-            "described".to_owned(),
-            executor,
-        )
-        .with_description("A custom pipeline description");
-        assert_eq!(tool_with_desc.description(), "A custom pipeline description");
+        let tool_with_desc =
+            PipelineTool::new(PipelineId::new("p2"), "described".to_owned(), executor)
+                .with_description("A custom pipeline description");
+        assert_eq!(
+            tool_with_desc.description(),
+            "A custom pipeline description"
+        );
     }
 
     #[test]
     fn pipeline_tool_rejects_invalid_params() {
         let executor = make_executor();
-        let tool = PipelineTool::new(
-            PipelineId::new("p1"),
-            "bad-params".to_owned(),
-            executor,
-        );
+        let tool = PipelineTool::new(PipelineId::new("p1"), "bad-params".to_owned(), executor);
 
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()

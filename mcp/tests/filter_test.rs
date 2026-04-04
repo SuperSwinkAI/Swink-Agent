@@ -50,7 +50,8 @@ async fn filter_allow_list_includes_only_matching_tools() {
         .await
         .expect("connection should succeed");
 
-    let manager = McpManager::from_connections(vec![conn]).expect("manager creation should succeed");
+    let manager =
+        McpManager::from_connections(vec![conn]).expect("manager creation should succeed");
     let tools = manager.tools();
 
     assert_eq!(
@@ -82,7 +83,8 @@ async fn filter_deny_list_excludes_matching_tools() {
         .await
         .expect("connection should succeed");
 
-    let manager = McpManager::from_connections(vec![conn]).expect("manager creation should succeed");
+    let manager =
+        McpManager::from_connections(vec![conn]).expect("manager creation should succeed");
     let tools = manager.tools();
 
     assert_eq!(
@@ -113,7 +115,8 @@ async fn filter_allow_then_deny_applied_in_order() {
         .await
         .expect("connection should succeed");
 
-    let manager = McpManager::from_connections(vec![conn]).expect("manager creation should succeed");
+    let manager =
+        McpManager::from_connections(vec![conn]).expect("manager creation should succeed");
     let tools = manager.tools();
 
     assert_eq!(
@@ -138,7 +141,8 @@ async fn no_filter_returns_all_tools() {
         .await
         .expect("connection should succeed");
 
-    let manager = McpManager::from_connections(vec![conn]).expect("manager creation should succeed");
+    let manager =
+        McpManager::from_connections(vec![conn]).expect("manager creation should succeed");
     let tools = manager.tools();
 
     assert!(

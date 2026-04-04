@@ -150,8 +150,11 @@ pub fn restore_messages(
     }
 
     // Legacy fallback: LLM messages first, then custom messages appended.
-    let mut result: Vec<AgentMessage> =
-        llm_messages.iter().cloned().map(AgentMessage::Llm).collect();
+    let mut result: Vec<AgentMessage> = llm_messages
+        .iter()
+        .cloned()
+        .map(AgentMessage::Llm)
+        .collect();
 
     if let Some(reg) = registry {
         for envelope in custom_messages {
@@ -541,12 +544,9 @@ mod tests {
         assert_eq!(cloned.len(), 1);
 
         // The cloned custom message can be serialized and restored
-        let envelope = serialize_custom_message(
-            cloned[0]
-                .downcast_ref::<SerializedCustomMessage>()
-                .unwrap(),
-        )
-        .unwrap();
+        let envelope =
+            serialize_custom_message(cloned[0].downcast_ref::<SerializedCustomMessage>().unwrap())
+                .unwrap();
         let restored = deserialize_custom_message(&registry, &envelope).unwrap();
         assert_eq!(
             restored

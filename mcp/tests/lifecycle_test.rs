@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use swink_agent::tool::AgentTool;
-use swink_agent_mcp::{McpConnection, McpManager, McpServerConfig, McpTransport, McpTool};
+use swink_agent_mcp::{McpConnection, McpManager, McpServerConfig, McpTool, McpTransport};
 
 /// T039: Drop McpManager cleans up without hang or panic.
 ///
@@ -18,8 +18,8 @@ use swink_agent_mcp::{McpConnection, McpManager, McpServerConfig, McpTransport, 
 async fn drop_manager_cleans_up_without_panic() {
     let conn = common::spawn_mock_connection("lifecycle-test", None, vec![]).await;
 
-    let manager = McpManager::from_connections(vec![conn])
-        .expect("manager creation should succeed");
+    let manager =
+        McpManager::from_connections(vec![conn]).expect("manager creation should succeed");
 
     assert!(!manager.tools().is_empty(), "should have tools before drop");
 
@@ -46,9 +46,14 @@ async fn call_tool_on_disconnected_connection_returns_error() {
     };
     let conn = McpConnection::disconnected(config);
 
-    let result = conn.call_tool("echo", serde_json::json!({"text": "hello"})).await;
+    let result = conn
+        .call_tool("echo", serde_json::json!({"text": "hello"}))
+        .await;
 
-    assert!(result.is_err(), "call_tool on disconnected connection should return Err");
+    assert!(
+        result.is_err(),
+        "call_tool on disconnected connection should return Err"
+    );
     let msg = result.unwrap_err().to_string();
     assert!(
         msg.contains("disconnected") || msg.contains("server is disconnected"),
@@ -83,7 +88,10 @@ async fn monitor_detects_transport_close_and_emits_event() {
     // explicitly cancel the RunningService to drop the transport.
     let (cancel_tx, cancel_rx) = oneshot::channel::<()>();
     let server_task = tokio::spawn(async move {
-        let svc = server.serve(server_stream).await.expect("server should start");
+        let svc = server
+            .serve(server_stream)
+            .await
+            .expect("server should start");
         let _ = cancel_rx.await;
         // cancel() calls ct.cancel() → internal loop breaks → server_stream dropped
         let _ = svc.cancel().await;
@@ -111,7 +119,11 @@ async fn monitor_detects_transport_close_and_emits_event() {
         .await
         .expect("connection should succeed");
 
-    assert_eq!(conn.status(), McpConnectionStatus::Connected, "should start Connected");
+    assert_eq!(
+        conn.status(),
+        McpConnectionStatus::Connected,
+        "should start Connected"
+    );
 
     // Simulate crash: cancel the server → drops server_stream → client sees EOF.
     let _ = cancel_tx.send(());
@@ -137,7 +149,9 @@ async fn monitor_detects_transport_close_and_emits_event() {
     );
 
     // The disconnect event should have been emitted.
-    let event = event_rx.try_recv().expect("McpServerDisconnected event should be in channel");
+    let event = event_rx
+        .try_recv()
+        .expect("McpServerDisconnected event should be in channel");
     match event {
         AgentEvent::McpServerDisconnected { server_name, .. } => {
             assert_eq!(server_name, "crash-test-server");

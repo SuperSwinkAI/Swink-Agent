@@ -33,10 +33,7 @@ fn image_content_conversion() {
 
 #[test]
 fn error_result_conversion() {
-    let result = CallToolResult {
-        content: vec![Content::text("something went wrong")],
-        is_error: Some(true),
-    };
+    let result = CallToolResult::error(vec![Content::text("something went wrong")]);
     let agent_result = swink_agent_mcp::convert::call_result_to_agent_result(&result);
     assert!(agent_result.is_error);
     assert_eq!(agent_result.content.len(), 1);
@@ -48,10 +45,7 @@ fn error_result_conversion() {
 
 #[test]
 fn empty_content_handling() {
-    let result = CallToolResult {
-        content: vec![],
-        is_error: Some(false),
-    };
+    let result = CallToolResult::success(vec![]);
     let agent_result = swink_agent_mcp::convert::call_result_to_agent_result(&result);
     assert!(!agent_result.is_error);
     assert_eq!(agent_result.content.len(), 1);
@@ -63,20 +57,14 @@ fn empty_content_handling() {
 
 #[test]
 fn empty_error_content_handling() {
-    let result = CallToolResult {
-        content: vec![],
-        is_error: Some(true),
-    };
+    let result = CallToolResult::error(vec![]);
     let agent_result = swink_agent_mcp::convert::call_result_to_agent_result(&result);
     assert!(agent_result.is_error);
 }
 
 #[test]
 fn success_result_conversion() {
-    let result = CallToolResult {
-        content: vec![Content::text("success output")],
-        is_error: Some(false),
-    };
+    let result = CallToolResult::success(vec![Content::text("success output")]);
     let agent_result = swink_agent_mcp::convert::call_result_to_agent_result(&result);
     assert!(!agent_result.is_error);
     assert_eq!(agent_result.content.len(), 1);

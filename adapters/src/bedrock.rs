@@ -117,7 +117,6 @@ struct BedrockToolResultContent {
     text: String,
 }
 
-
 // --- Streaming event deserialization types ---
 
 #[derive(Debug, Deserialize)]
@@ -882,7 +881,6 @@ fn convert_messages(messages: &[AgentMessage]) -> Vec<BedrockMessage> {
     }
     result
 }
-
 
 fn amz_dates() -> (String, String) {
     let now = Utc::now();

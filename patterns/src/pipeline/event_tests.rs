@@ -6,9 +6,9 @@ use std::sync::{Arc, Mutex};
 
 use tokio_util::sync::CancellationToken;
 
+use swink_agent::Agent;
 use swink_agent::AgentOptions;
 use swink_agent::testing::{MockStreamFn, default_convert, default_model, text_only_events};
-use swink_agent::Agent;
 
 use crate::pipeline::events::PipelineEvent;
 use crate::pipeline::executor::{PipelineExecutor, SimpleAgentFactory};
@@ -60,13 +60,27 @@ async fn sequential_pipeline_emits_correct_event_sequence() {
     let _output = executor.run(&id, "input".into(), token).await.unwrap();
 
     let captured = events.lock().unwrap();
-    assert_eq!(captured.len(), 6, "expected 6 events: Started + 2*(StepStarted + StepCompleted) + Completed");
+    assert_eq!(
+        captured.len(),
+        6,
+        "expected 6 events: Started + 2*(StepStarted + StepCompleted) + Completed"
+    );
 
-    assert!(matches!(&captured[0], PipelineEvent::Started { pipeline_name, .. } if pipeline_name == "two-step"));
-    assert!(matches!(&captured[1], PipelineEvent::StepStarted { step_index: 0, agent_name, .. } if agent_name == "agent-a"));
-    assert!(matches!(&captured[2], PipelineEvent::StepCompleted { step_index: 0, agent_name, .. } if agent_name == "agent-a"));
-    assert!(matches!(&captured[3], PipelineEvent::StepStarted { step_index: 1, agent_name, .. } if agent_name == "agent-b"));
-    assert!(matches!(&captured[4], PipelineEvent::StepCompleted { step_index: 1, agent_name, .. } if agent_name == "agent-b"));
+    assert!(
+        matches!(&captured[0], PipelineEvent::Started { pipeline_name, .. } if pipeline_name == "two-step")
+    );
+    assert!(
+        matches!(&captured[1], PipelineEvent::StepStarted { step_index: 0, agent_name, .. } if agent_name == "agent-a")
+    );
+    assert!(
+        matches!(&captured[2], PipelineEvent::StepCompleted { step_index: 0, agent_name, .. } if agent_name == "agent-a")
+    );
+    assert!(
+        matches!(&captured[3], PipelineEvent::StepStarted { step_index: 1, agent_name, .. } if agent_name == "agent-b")
+    );
+    assert!(
+        matches!(&captured[4], PipelineEvent::StepCompleted { step_index: 1, agent_name, .. } if agent_name == "agent-b")
+    );
     assert!(matches!(&captured[5], PipelineEvent::Completed { .. }));
 }
 

@@ -781,12 +781,11 @@ mod tests {
     fn approval_context_panic_caught() {
         use crate::FnTool;
 
-        let tool =
-            FnTool::new("panicker", "Panicker", "Panics in context").with_approval_context(
-                |_params| {
-                    panic!("oops");
-                },
-            );
+        let tool = FnTool::new("panicker", "Panicker", "Panics in context").with_approval_context(
+            |_params| {
+                panic!("oops");
+            },
+        );
 
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             tool.approval_context(&json!({}))

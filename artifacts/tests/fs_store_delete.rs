@@ -29,7 +29,10 @@ async fn fs_delete_removes_files() {
 
     // Verify artifact directory exists on disk
     let artifact_dir = tmpdir.path().join("s1").join("report.md");
-    assert!(artifact_dir.exists(), "artifact dir should exist before delete");
+    assert!(
+        artifact_dir.exists(),
+        "artifact dir should exist before delete"
+    );
 
     // Delete
     store.delete("s1", "report.md").await.unwrap();

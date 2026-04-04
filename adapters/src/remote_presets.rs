@@ -188,16 +188,13 @@ pub mod remote_preset_keys {
             RemotePresetKey::new("bedrock", "mistral_large_2407");
         pub const MISTRAL_PIXTRAL_LARGE: RemotePresetKey =
             RemotePresetKey::new("bedrock", "mistral_pixtral_large");
-        pub const MISTRAL_SMALL: RemotePresetKey =
-            RemotePresetKey::new("bedrock", "mistral_small");
+        pub const MISTRAL_SMALL: RemotePresetKey = RemotePresetKey::new("bedrock", "mistral_small");
         pub const MISTRAL_MIXTRAL_8X7B: RemotePresetKey =
             RemotePresetKey::new("bedrock", "mistral_mixtral_8x7b");
-        pub const MISTRAL_7B: RemotePresetKey =
-            RemotePresetKey::new("bedrock", "mistral_7b");
+        pub const MISTRAL_7B: RemotePresetKey = RemotePresetKey::new("bedrock", "mistral_7b");
 
         // DeepSeek
-        pub const DEEPSEEK_R1: RemotePresetKey =
-            RemotePresetKey::new("bedrock", "deepseek_r1");
+        pub const DEEPSEEK_R1: RemotePresetKey = RemotePresetKey::new("bedrock", "deepseek_r1");
 
         // AI21
         pub const AI21_JAMBA_1_5_LARGE: RemotePresetKey =

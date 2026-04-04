@@ -138,8 +138,7 @@ pub trait StreamingArtifactStore: ArtifactStore {
         session_id: &str,
         name: &str,
         version: Option<u32>,
-    ) -> impl std::future::Future<Output = Result<Option<ArtifactByteStream>, ArtifactError>>
-           + Send;
+    ) -> impl std::future::Future<Output = Result<Option<ArtifactByteStream>, ArtifactError>> + Send;
 }
 
 /// Validate an artifact name. Returns `Ok(())` if valid.

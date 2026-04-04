@@ -106,9 +106,7 @@ impl<S: ArtifactStore + 'static> AgentTool for LoadArtifactTool<S> {
                         ))
                     }
                 }
-                Ok(None) => {
-                    AgentToolResult::error(format!("artifact '{}' not found", parsed.name))
-                }
+                Ok(None) => AgentToolResult::error(format!("artifact '{}' not found", parsed.name)),
                 Err(e) => AgentToolResult::error(format!("{e}")),
             }
         })

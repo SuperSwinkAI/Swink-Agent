@@ -25,6 +25,16 @@ pub fn content_to_block(content: &Content) -> ContentBlock {
                 text: format!("[MCP Resource: {uri}] <binary content>"),
             },
         },
+        RawContent::Audio(audio) => ContentBlock::Text {
+            text: format!(
+                "[MCP Audio: {} ({} bytes)]",
+                audio.mime_type,
+                audio.data.len()
+            ),
+        },
+        RawContent::ResourceLink(resource) => ContentBlock::Text {
+            text: format!("[MCP Resource Link: {}]", resource.uri),
+        },
     }
 }
 
@@ -53,7 +63,7 @@ pub fn call_result_to_agent_result(result: &CallToolResult) -> AgentToolResult {
 /// Returns `(name, description, input_schema)`.
 pub fn tool_definition(tool: &rmcp::model::Tool) -> (String, String, Value) {
     let name = tool.name.to_string();
-    let description = tool.description.to_string();
+    let description = tool.description.as_deref().unwrap_or_default().to_string();
     let input_schema = tool.schema_as_json_value();
     (name, description, input_schema)
 }

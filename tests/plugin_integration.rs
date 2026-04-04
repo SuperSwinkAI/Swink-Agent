@@ -11,7 +11,7 @@ use swink_agent::{Agent, AgentOptions};
 
 mod common;
 use common::{
-    MockPlugin, MockStreamFn, MOCK_PLUGIN_GLOBAL_ORDER, OrderRecordingPreTurnPolicy,
+    MOCK_PLUGIN_GLOBAL_ORDER, MockPlugin, MockStreamFn, OrderRecordingPreTurnPolicy,
     RecordingPostTurnPolicy, default_convert, default_model, text_only_events, user_msg,
 };
 
@@ -27,9 +27,8 @@ fn make_agent_with_plugins(plugins: Vec<Arc<dyn Plugin>>) -> Agent {
 #[tokio::test]
 async fn plugin_post_turn_policy_evaluates_during_loop() {
     let fired = Arc::new(AtomicBool::new(false));
-    let plugin: Arc<dyn Plugin> = Arc::new(
-        MockPlugin::new("test-policy").with_post_turn_tracker(Arc::clone(&fired)),
-    );
+    let plugin: Arc<dyn Plugin> =
+        Arc::new(MockPlugin::new("test-policy").with_post_turn_tracker(Arc::clone(&fired)));
 
     let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("hello")]));
     let options =

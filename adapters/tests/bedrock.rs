@@ -50,10 +50,7 @@ fn event_frame(event_type: &str, payload: &[u8]) -> Vec<u8> {
 /// Build a complete text-response event stream body.
 fn text_response_body(text: &str) -> Vec<u8> {
     let mut body = Vec::new();
-    body.extend(event_frame(
-        "messageStart",
-        br#"{"role":"assistant"}"#,
-    ));
+    body.extend(event_frame("messageStart", br#"{"role":"assistant"}"#));
     body.extend(event_frame(
         "contentBlockStart",
         br#"{"contentBlockIndex":0,"start":{"type":"text"}}"#,
@@ -67,10 +64,7 @@ fn text_response_body(text: &str) -> Vec<u8> {
         "contentBlockStop",
         br#"{"contentBlockIndex":0}"#,
     ));
-    body.extend(event_frame(
-        "messageStop",
-        br#"{"stopReason":"end_turn"}"#,
-    ));
+    body.extend(event_frame("messageStop", br#"{"stopReason":"end_turn"}"#));
     body.extend(event_frame(
         "metadata",
         br#"{"usage":{"inputTokens":4,"outputTokens":2,"totalTokens":6}}"#,
@@ -81,10 +75,7 @@ fn text_response_body(text: &str) -> Vec<u8> {
 /// Build a complete tool-use event stream body.
 fn tool_use_response_body(tool_id: &str, tool_name: &str, args_json: &str) -> Vec<u8> {
     let mut body = Vec::new();
-    body.extend(event_frame(
-        "messageStart",
-        br#"{"role":"assistant"}"#,
-    ));
+    body.extend(event_frame("messageStart", br#"{"role":"assistant"}"#));
     body.extend(event_frame(
         "contentBlockStart",
         format!(
@@ -94,19 +85,14 @@ fn tool_use_response_body(tool_id: &str, tool_name: &str, args_json: &str) -> Ve
     ));
     body.extend(event_frame(
         "contentBlockDelta",
-        format!(
-            r#"{{"contentBlockIndex":0,"delta":{{"type":"toolUse","input":{args_json}}}}}"#
-        )
-        .as_bytes(),
+        format!(r#"{{"contentBlockIndex":0,"delta":{{"type":"toolUse","input":{args_json}}}}}"#)
+            .as_bytes(),
     ));
     body.extend(event_frame(
         "contentBlockStop",
         br#"{"contentBlockIndex":0}"#,
     ));
-    body.extend(event_frame(
-        "messageStop",
-        br#"{"stopReason":"tool_use"}"#,
-    ));
+    body.extend(event_frame("messageStop", br#"{"stopReason":"tool_use"}"#));
     body.extend(event_frame(
         "metadata",
         br#"{"usage":{"inputTokens":4,"outputTokens":2,"totalTokens":6}}"#,
@@ -120,9 +106,7 @@ async fn bedrock_text_response_maps_to_text_events() {
 
     let server = MockServer::start().await;
     Mock::given(method("POST"))
-        .and(path(
-            "/model/amazon.nova-pro-v1:0/converse-stream",
-        ))
+        .and(path("/model/amazon.nova-pro-v1:0/converse-stream"))
         .and(header_exists("authorization"))
         .and(header_exists("x-amz-date"))
         .respond_with(
@@ -155,9 +139,9 @@ async fn bedrock_text_response_maps_to_text_events() {
         .await;
 
     assert!(
-        events
-            .iter()
-            .any(|e| matches!(e, AssistantMessageEvent::TextDelta { delta, .. } if delta == "hello")),
+        events.iter().any(
+            |e| matches!(e, AssistantMessageEvent::TextDelta { delta, .. } if delta == "hello")
+        ),
         "expected TextDelta with 'hello', got: {events:?}"
     );
     assert!(events.iter().any(|e| matches!(
@@ -199,7 +183,7 @@ impl AgentTool for DummyTool {
                 content: vec![],
                 details: serde_json::Value::Null,
                 is_error: false,
-                    transfer_signal: None,
+                transfer_signal: None,
             }
         })
     }
@@ -207,11 +191,7 @@ impl AgentTool for DummyTool {
 
 #[tokio::test]
 async fn bedrock_tool_use_maps_to_tool_events() {
-    let body = tool_use_response_body(
-        "tool_1",
-        "get_weather",
-        r#""{\"city\":\"Paris\"}""#,
-    );
+    let body = tool_use_response_body("tool_1", "get_weather", r#""{\"city\":\"Paris\"}""#);
 
     let server = MockServer::start().await;
     Mock::given(method("POST"))

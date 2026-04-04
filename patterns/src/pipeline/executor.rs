@@ -52,11 +52,12 @@ impl Default for SimpleAgentFactory {
 
 impl AgentFactory for SimpleAgentFactory {
     fn create(&self, name: &str) -> Result<Agent, PipelineError> {
-        let builder = self.builders.get(name).ok_or_else(|| {
-            PipelineError::AgentNotFound {
+        let builder = self
+            .builders
+            .get(name)
+            .ok_or_else(|| PipelineError::AgentNotFound {
                 name: name.to_owned(),
-            }
-        })?;
+            })?;
         Ok(builder())
     }
 }
@@ -104,12 +105,12 @@ impl PipelineExecutor {
         input: String,
         cancellation_token: CancellationToken,
     ) -> Result<PipelineOutput, PipelineError> {
-        let pipeline = self
-            .registry
-            .get(pipeline_id)
-            .ok_or_else(|| PipelineError::PipelineNotFound {
-                id: pipeline_id.clone(),
-            })?;
+        let pipeline =
+            self.registry
+                .get(pipeline_id)
+                .ok_or_else(|| PipelineError::PipelineNotFound {
+                    id: pipeline_id.clone(),
+                })?;
 
         match pipeline {
             Pipeline::Sequential {
@@ -209,13 +210,15 @@ impl PipelineExecutor {
                 vec![user_msg(&current_input)]
             };
 
-            let result = agent.prompt_async(messages).await.map_err(|e| {
-                PipelineError::StepFailed {
-                    step_index: index,
-                    agent_name: agent_name.clone(),
-                    source: Box::new(e),
-                }
-            })?;
+            let result =
+                agent
+                    .prompt_async(messages)
+                    .await
+                    .map_err(|e| PipelineError::StepFailed {
+                        step_index: index,
+                        agent_name: agent_name.clone(),
+                        source: Box::new(e),
+                    })?;
 
             let response = extract_text_response(&result);
             let step_duration = step_start.elapsed();
@@ -241,7 +244,9 @@ impl PipelineExecutor {
             if pass_context {
                 // Push the user message as an LlmMessage
                 context_messages.push(LlmMessage::User(swink_agent::UserMessage {
-                    content: vec![ContentBlock::Text { text: current_input.clone() }],
+                    content: vec![ContentBlock::Text {
+                        text: current_input.clone(),
+                    }],
                     timestamp: 0,
                     cache_hint: None,
                 }));
@@ -375,8 +380,7 @@ mod tests {
         factory.register("agent-b", || make_text_agent("world"));
 
         let registry = PipelineRegistry::new();
-        let pipeline =
-            Pipeline::sequential("two-step", vec!["agent-a".into(), "agent-b".into()]);
+        let pipeline = Pipeline::sequential("two-step", vec!["agent-a".into(), "agent-b".into()]);
         let id = pipeline.id().clone();
         registry.register(pipeline);
 
@@ -412,10 +416,7 @@ mod tests {
         let token = CancellationToken::new();
 
         let result = executor.run(&id, "input".into(), token).await;
-        assert!(
-            result.is_err(),
-            "expected error when step agent not found"
-        );
+        assert!(result.is_err(), "expected error when step agent not found");
         assert!(
             matches!(result.unwrap_err(), PipelineError::AgentNotFound { name } if name == "agent-b"),
             "expected AgentNotFound for agent-b"

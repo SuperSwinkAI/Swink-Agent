@@ -28,7 +28,10 @@ async fn fs_save_and_load_round_trip() {
         },
     };
 
-    let version = store.save("s1", "report.md", original.clone()).await.unwrap();
+    let version = store
+        .save("s1", "report.md", original.clone())
+        .await
+        .unwrap();
     assert_eq!(version.version, 1);
     assert_eq!(version.name, "report.md");
     assert_eq!(version.size, 11);
@@ -48,7 +51,10 @@ async fn fs_persistence_across_instances() {
 
     {
         let store_a = FileArtifactStore::new(tmpdir.path());
-        store_a.save("s1", "doc.txt", text_data("persisted")).await.unwrap();
+        store_a
+            .save("s1", "doc.txt", text_data("persisted"))
+            .await
+            .unwrap();
     }
     // store_a is dropped
 
@@ -65,9 +71,18 @@ async fn fs_versioning_persists() {
 
     {
         let store = FileArtifactStore::new(tmpdir.path());
-        store.save("s1", "notes.md", text_data("v1 content")).await.unwrap();
-        store.save("s1", "notes.md", text_data("v2 content")).await.unwrap();
-        store.save("s1", "notes.md", text_data("v3 content")).await.unwrap();
+        store
+            .save("s1", "notes.md", text_data("v1 content"))
+            .await
+            .unwrap();
+        store
+            .save("s1", "notes.md", text_data("v2 content"))
+            .await
+            .unwrap();
+        store
+            .save("s1", "notes.md", text_data("v3 content"))
+            .await
+            .unwrap();
     }
 
     let store = FileArtifactStore::new(tmpdir.path());
@@ -143,7 +158,10 @@ async fn fs_concurrent_saves_no_corruption() {
 
     // All 10 versions should be loadable
     for ver_num in 1..=10u32 {
-        let result = store.load_version("s1", "shared.txt", ver_num).await.unwrap();
+        let result = store
+            .load_version("s1", "shared.txt", ver_num)
+            .await
+            .unwrap();
         assert!(result.is_some(), "version {ver_num} missing");
     }
 

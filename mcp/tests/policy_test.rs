@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use serde_json::Value;
 use swink_agent::tool::AgentTool;
-use swink_agent_mcp::{McpConnection, McpServerConfig, McpTransport, McpTool};
+use swink_agent_mcp::{McpConnection, McpServerConfig, McpTool, McpTransport};
 
 /// Helper to create a disconnected McpConnection for metadata-only tests.
 fn disconnected_connection(requires_approval: bool) -> (McpServerConfig, Arc<McpConnection>) {
@@ -37,7 +37,10 @@ async fn mcp_tool_requires_approval_true_when_configured() {
     let (_, conn) = disconnected_connection(true);
     let tool = McpTool::new(echo_def, None, "policy-test-server", true, conn);
 
-    assert!(tool.requires_approval(), "requires_approval should be true when configured as true");
+    assert!(
+        tool.requires_approval(),
+        "requires_approval should be true when configured as true"
+    );
 }
 
 /// T028: McpTool with requires_approval=false returns false.
@@ -51,7 +54,10 @@ async fn mcp_tool_requires_approval_false_when_configured() {
     let (_, conn) = disconnected_connection(false);
     let tool = McpTool::new(echo_def, None, "policy-test-server", false, conn);
 
-    assert!(!tool.requires_approval(), "requires_approval should be false when configured as false");
+    assert!(
+        !tool.requires_approval(),
+        "requires_approval should be false when configured as false"
+    );
 }
 
 /// T029: approval_context returns the full params as context.
@@ -71,7 +77,10 @@ async fn mcp_tool_approval_context_returns_params_for_policy_inspection() {
     });
     let context = tool.approval_context(&params);
 
-    assert!(context.is_some(), "approval_context should return Some for MCP tools");
+    assert!(
+        context.is_some(),
+        "approval_context should return Some for MCP tools"
+    );
     assert_eq!(
         context.unwrap(),
         params,

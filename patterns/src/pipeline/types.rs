@@ -336,11 +336,7 @@ mod tests {
 
     #[test]
     fn parallel_constructor() {
-        let p = Pipeline::parallel(
-            "par",
-            vec!["x".into(), "y".into()],
-            MergeStrategy::First,
-        );
+        let p = Pipeline::parallel("par", vec!["x".into(), "y".into()], MergeStrategy::First);
         assert_eq!(p.name(), "par");
         assert!(matches!(p, Pipeline::Parallel { .. }));
     }
@@ -350,9 +346,7 @@ mod tests {
         let p = Pipeline::loop_("lp", "body-agent", ExitCondition::MaxIterations);
         assert_eq!(p.name(), "lp");
         match &p {
-            Pipeline::Loop {
-                max_iterations, ..
-            } => assert_eq!(*max_iterations, 10),
+            Pipeline::Loop { max_iterations, .. } => assert_eq!(*max_iterations, 10),
             _ => panic!("expected Loop"),
         }
     }

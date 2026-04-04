@@ -8,8 +8,9 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use rmcp::model::{ServerCapabilities, ServerInfo};
-use rmcp::{ServerHandler, tool};
+use rmcp::handler::server::wrapper::Parameters;
+use rmcp::model::{CallToolResult, Content, ServerCapabilities, ServerInfo};
+use rmcp::{ServerHandler, tool, tool_handler, tool_router};
 use serde_json::Value;
 
 /// Configuration for a single mock tool.
@@ -95,6 +96,13 @@ impl MockServerConfig {
     }
 }
 
+/// Parameter struct for the mock echo tool.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct EchoParams {
+    /// The text to echo back.
+    pub text: String,
+}
+
 /// A mock MCP server that advertises configurable tools.
 ///
 /// Uses rmcp's tool macro system to implement `ServerHandler`.
@@ -102,6 +110,7 @@ impl MockServerConfig {
 pub struct MockMcpServer {
     /// Map of tool name to (result text, is error).
     results: Arc<HashMap<String, (String, bool)>>,
+    tool_router: rmcp::handler::server::router::tool::ToolRouter<MockMcpServer>,
 }
 
 impl MockMcpServer {
@@ -115,27 +124,28 @@ impl MockMcpServer {
         }
         Self {
             results: Arc::new(results),
+            tool_router: Self::tool_router(),
         }
     }
 }
 
-#[tool(tool_box)]
+#[tool_router]
 impl MockMcpServer {
     /// A generic echo tool for testing — returns whatever text it receives.
     #[tool(description = "Echo the input back")]
-    fn echo(&self, #[tool(param)] text: String) -> String {
-        text
+    fn echo(
+        &self,
+        Parameters(params): Parameters<EchoParams>,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        Ok(CallToolResult::success(vec![Content::text(params.text)]))
     }
 }
 
-#[tool(tool_box)]
+#[tool_handler]
 impl ServerHandler for MockMcpServer {
     fn get_info(&self) -> ServerInfo {
-        ServerInfo {
-            instructions: Some("Mock MCP server for testing".into()),
-            capabilities: ServerCapabilities::builder().enable_tools().build(),
-            ..ServerInfo::default()
-        }
+        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+            .with_instructions("Mock MCP server for testing".to_string())
     }
 }
 
@@ -149,13 +159,23 @@ pub async fn spawn_mock_server_with_client(
 
     let server = MockMcpServer::from_config(config);
 
-    // Create in-memory duplex streams.
-    let (client_stream, server_stream) = tokio::io::duplex(4096);
+    // Create in-memory duplex streams. Use a larger buffer to accommodate
+    // the rmcp 1.x initialization handshake.
+    let (client_stream, server_stream) = tokio::io::duplex(65536);
 
     // Spawn the server on one end of the duplex.
     let _server_handle = tokio::spawn(async move {
-        let _ = server.serve(server_stream).await;
+        match server.serve(server_stream).await {
+            Ok(svc) => {
+                // Keep the service alive until it naturally terminates.
+                let _ = svc.waiting().await;
+            }
+            Err(e) => eprintln!("Mock MCP server failed: {e:?}"),
+        }
     });
+
+    // Yield to let the server task start accepting.
+    tokio::task::yield_now().await;
 
     // Connect the client on the other end.
     let client_info = rmcp::model::ClientInfo::default();
