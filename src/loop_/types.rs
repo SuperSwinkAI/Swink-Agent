@@ -66,6 +66,8 @@ pub enum ToolExecOutcome {
     Completed {
         results: Vec<ToolResultMessage>,
         tool_metrics: Vec<crate::metrics::ToolExecMetrics>,
+        /// Transfer signal detected during tool execution (first one wins).
+        transfer_signal: Option<crate::transfer::TransferSignal>,
     },
     SteeringInterrupt {
         completed: Vec<ToolResultMessage>,

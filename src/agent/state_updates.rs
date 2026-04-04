@@ -21,18 +21,26 @@ impl Agent {
         let mut usage = Usage::default();
         let mut cost = crate::types::Cost::default();
         let mut error: Option<String> = None;
+        let mut transfer_signal: Option<crate::transfer::TransferSignal> = None;
 
         while let Some(event) = stream.next().await {
             self.dispatch_event(&event);
             self.update_state_from_event(&event);
 
             match event {
+                AgentEvent::TransferInitiated { signal } => {
+                    transfer_signal = Some(signal);
+                    stop_reason = StopReason::Transfer;
+                }
                 AgentEvent::TurnEnd {
                     assistant_message,
                     tool_results,
                     ..
                 } => {
-                    stop_reason = assistant_message.stop_reason;
+                    // Preserve Transfer stop reason set by TransferInitiated event
+                    if transfer_signal.is_none() {
+                        stop_reason = assistant_message.stop_reason;
+                    }
                     usage += assistant_message.usage.clone();
                     cost += assistant_message.cost.clone();
                     if let Some(ref err) = assistant_message.error_message {
@@ -73,7 +81,7 @@ impl Agent {
             usage,
             cost,
             error,
-            transfer_signal: None,
+            transfer_signal,
         })
     }
 

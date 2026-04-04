@@ -857,6 +857,7 @@ pub fn event_variant_name(event: &AgentEvent) -> String {
         AgentEvent::McpToolCallCompleted { .. } => "McpToolCallCompleted".into(),
         #[cfg(feature = "artifact-store")]
         AgentEvent::ArtifactSaved { .. } => "ArtifactSaved".into(),
+        AgentEvent::TransferInitiated { .. } => "TransferInitiated".into(),
     }
 }
 
