@@ -204,43 +204,22 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+    use crate::FnTool;
     use crate::tool::AgentTool;
 
-    /// Minimal tool for testing middleware.
-    struct DummyTool;
-
-    impl AgentTool for DummyTool {
-        fn name(&self) -> &'static str {
-            "dummy"
-        }
-        fn label(&self) -> &'static str {
-            "Dummy"
-        }
-        fn description(&self) -> &'static str {
-            "A dummy tool."
-        }
-        fn parameters_schema(&self) -> &Value {
-            &Value::Null
-        }
-        fn requires_approval(&self) -> bool {
-            true
-        }
-        fn execute(
-            &self,
-            _tool_call_id: &str,
-            _params: Value,
-            _cancellation_token: CancellationToken,
-            _on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
-            _state: std::sync::Arc<std::sync::RwLock<crate::SessionState>>,
-            _credential: Option<crate::credential::ResolvedCredential>,
-        ) -> ToolFuture<'_> {
-            Box::pin(async { AgentToolResult::text("dummy result") })
-        }
+    fn dummy_tool() -> Arc<dyn AgentTool> {
+        Arc::new(
+            FnTool::new("dummy", "Dummy", "A dummy tool.")
+                .with_requires_approval(true)
+                .with_execute_simple(|_params, _cancel| async {
+                    AgentToolResult::text("dummy result")
+                }),
+        )
     }
 
     #[test]
     fn metadata_delegates_to_inner() {
-        let inner: Arc<dyn AgentTool> = Arc::new(DummyTool);
+        let inner: Arc<dyn AgentTool> = dummy_tool();
         let mw = ToolMiddleware::new(
             inner,
             |tool, id, params, cancel, on_update, state, credential| {
@@ -266,7 +245,7 @@ mod tests {
         let counter = Arc::new(AtomicU32::new(0));
         let counter_clone = counter.clone();
 
-        let inner: Arc<dyn AgentTool> = Arc::new(DummyTool);
+        let inner: Arc<dyn AgentTool> = dummy_tool();
         let mw = ToolMiddleware::new(
             inner,
             move |tool, id, params, cancel, on_update, state, credential| {
@@ -295,7 +274,7 @@ mod tests {
 
     #[tokio::test]
     async fn call_through_returns_inner_result() {
-        let inner: Arc<dyn AgentTool> = Arc::new(DummyTool);
+        let inner: Arc<dyn AgentTool> = dummy_tool();
         let mw = ToolMiddleware::new(
             inner,
             |tool, id, params, cancel, on_update, state, credential| {
@@ -373,7 +352,7 @@ mod tests {
         let calls = Arc::new(AtomicU32::new(0));
         let calls_clone = calls.clone();
 
-        let inner: Arc<dyn AgentTool> = Arc::new(DummyTool);
+        let inner: Arc<dyn AgentTool> = dummy_tool();
         let mw = ToolMiddleware::with_logging(inner, move |_name, _id, _is_start| {
             calls_clone.fetch_add(1, Ordering::SeqCst);
         });

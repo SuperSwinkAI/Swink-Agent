@@ -420,7 +420,7 @@ command = "echo hello"
                 json!({}),
                 CancellationToken::new(),
                 None,
-                Arc::new(std::sync::RwLock::new(crate::SessionState::new())),
+                std::sync::Arc::new(std::sync::RwLock::new(crate::SessionState::new())),
                 None,
             )
             .await;

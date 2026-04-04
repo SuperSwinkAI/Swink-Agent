@@ -233,6 +233,10 @@ mod tests {
 
     use super::*;
 
+    fn test_state() -> std::sync::Arc<std::sync::RwLock<crate::SessionState>> {
+        std::sync::Arc::new(std::sync::RwLock::new(crate::SessionState::new()))
+    }
+
     fn sample_tool() -> FnTool {
         FnTool::new("test", "Test", "A test tool.")
     }
@@ -255,7 +259,7 @@ mod tests {
                 json!({}),
                 CancellationToken::new(),
                 None,
-                std::sync::Arc::new(std::sync::RwLock::new(crate::SessionState::new())),
+                test_state(),
                 None,
             )
             .await;
@@ -277,7 +281,7 @@ mod tests {
                 json!({"msg": "hello"}),
                 CancellationToken::new(),
                 None,
-                std::sync::Arc::new(std::sync::RwLock::new(crate::SessionState::new())),
+                test_state(),
                 None,
             )
             .await;
@@ -325,7 +329,7 @@ mod tests {
                 json!({}),
                 CancellationToken::new(),
                 None,
-                std::sync::Arc::new(std::sync::RwLock::new(crate::SessionState::new())),
+                test_state(),
                 None,
             )
             .await;
