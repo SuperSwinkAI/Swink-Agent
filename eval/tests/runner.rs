@@ -1,4 +1,3 @@
-#![cfg(feature = "testkit")]
 //! Integration tests for `EvalRunner` — suite execution, empty suites, and error continuation.
 
 mod common;
