@@ -15,6 +15,7 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
+gemma4 = []
 metal = ["mistralrs/metal"]
 cuda = ["mistralrs/cuda"]
 cudnn = ["mistralrs/cudnn"]
@@ -24,7 +25,7 @@ accelerate = ["mistralrs/accelerate"]
 
 [dependencies]
 swink-agent = { path = ".." }
-mistralrs = "0.7"
+mistralrs = "0.8"
 hf-hub = { version = "0.5", features = ["tokio"] }
 tokio.workspace = true
 tokio-util.workspace = true

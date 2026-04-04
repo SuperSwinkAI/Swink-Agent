@@ -37,6 +37,18 @@ pub struct ModelConfig {
     pub chat_template: Option<String>,
 }
 
+impl ModelConfig {
+    /// Returns `true` if this configuration targets a Gemma 4 model family.
+    ///
+    /// Used for model-family branching: builder selection, thinking token
+    /// injection, and output parsing.
+    #[cfg(feature = "gemma4")]
+    pub fn is_gemma4(&self) -> bool {
+        let id = self.repo_id.to_ascii_lowercase();
+        id.contains("gemma-4") || id.contains("gemma4")
+    }
+}
+
 impl Default for ModelConfig {
     fn default() -> Self {
         let preset = model_catalog()
@@ -117,6 +129,17 @@ impl LoaderBackend for ChatBackend {
         _progress_cb: Option<ProgressCallbackFn>,
     ) -> Pin<Box<dyn Future<Output = Result<Self::Artifact, LocalModelError>> + Send + '_>> {
         Box::pin(async move {
+            // Gemma 4 uses MultimodalModelBuilder which handles its own
+            // downloading internally — skip the hf-hub download phase.
+            #[cfg(feature = "gemma4")]
+            if config.is_gemma4() {
+                info!(
+                    repo = %config.repo_id,
+                    "skipping hf-hub download for Gemma 4 (MultimodalModelBuilder downloads internally)"
+                );
+                return Ok(std::path::PathBuf::new());
+            }
+
             info!(
                 repo = %config.repo_id,
                 file = %config.filename,
@@ -150,10 +173,31 @@ impl LoaderBackend for ChatBackend {
             let repo_id = config.repo_id.clone();
             let filename = config.filename.clone();
 
+            #[cfg(feature = "gemma4")]
+            let is_gemma4 = config.is_gemma4();
+            #[cfg(not(feature = "gemma4"))]
+            let is_gemma4 = false;
+
             let build_result = tokio::task::spawn(async move {
-                mistralrs::GgufModelBuilder::new(repo_id, vec![filename])
-                    .build()
-                    .await
+                if is_gemma4 {
+                    #[cfg(feature = "gemma4")]
+                    {
+                        // Gemma 4 is a multimodal architecture in mistralrs —
+                        // GgufModelBuilder does not support it. Use
+                        // MultimodalModelBuilder with the safetensors repo.
+                        mistralrs::MultimodalModelBuilder::new(repo_id)
+                            .build()
+                            .await
+                    }
+                    #[cfg(not(feature = "gemma4"))]
+                    {
+                        unreachable!("is_gemma4 is false when feature disabled")
+                    }
+                } else {
+                    mistralrs::GgufModelBuilder::new(repo_id, vec![filename])
+                        .build()
+                        .await
+                }
             })
             .await;
 
@@ -344,5 +388,37 @@ mod tests {
         let cb: ProgressCallbackFn = Arc::new(|_| {});
         let result = model.with_progress(cb);
         assert!(result.is_err());
+    }
+
+    #[cfg(feature = "gemma4")]
+    mod gemma4_tests {
+        use super::*;
+
+        #[test]
+        fn is_gemma4_detects_bartowski_repo() {
+            let config = ModelConfig {
+                repo_id: "bartowski/google_gemma-4-E2B-it-GGUF".to_string(),
+                ..ModelConfig::default()
+            };
+            assert!(config.is_gemma4());
+        }
+
+        #[test]
+        fn is_gemma4_detects_ollama_style_repo() {
+            let config = ModelConfig {
+                repo_id: "gemma4-e2b".to_string(),
+                ..ModelConfig::default()
+            };
+            assert!(config.is_gemma4());
+        }
+
+        #[test]
+        fn is_gemma4_false_for_smollm() {
+            let config = ModelConfig {
+                repo_id: "bartowski/SmolLM3-3B-GGUF".to_string(),
+                ..ModelConfig::default()
+            };
+            assert!(!config.is_gemma4());
+        }
     }
 }
