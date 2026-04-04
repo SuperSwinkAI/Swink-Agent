@@ -37,6 +37,11 @@ pub mod store;
 pub mod store_async;
 pub mod time;
 
+#[cfg(feature = "sqlite")]
+pub mod sqlite;
+#[cfg(feature = "sqlite")]
+pub use sqlite::SqliteSessionStore;
+
 pub use compaction::{CompactionResult, SummarizingCompactor};
 pub use entry::SessionEntry;
 pub use interrupt::{InterruptState, PendingToolCall};
