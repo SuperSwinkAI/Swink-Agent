@@ -44,6 +44,7 @@ pub fn call_result_to_agent_result(result: &CallToolResult) -> AgentToolResult {
         content,
         details: Value::Null,
         is_error,
+        transfer_signal: None,
     }
 }
 

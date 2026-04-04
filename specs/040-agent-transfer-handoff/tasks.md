@@ -17,8 +17,8 @@
 
 **Purpose**: Feature gate and module scaffolding
 
-- [ ] T001 Add `transfer` feature flag to `Cargo.toml` (default-enabled) in root `Cargo.toml`
-- [ ] T002 Create `src/transfer.rs` with `#[cfg(feature = "transfer")]` module gate and re-export in `src/lib.rs`
+- [x] T001 Add `transfer` feature flag to `Cargo.toml` (default-enabled) in root `Cargo.toml`
+- [x] T002 Create `src/transfer.rs` with `#[cfg(feature = "transfer")]` module gate and re-export in `src/lib.rs`
 
 ---
 
@@ -28,14 +28,14 @@
 
 **CRITICAL**: No user story work can begin until this phase is complete
 
-- [ ] T003 [P] Add `StopReason::Transfer` unit variant to the StopReason enum in `src/types/mod.rs`
-- [ ] T004 [P] Create `TransferSignal` struct with `target_agent`, `reason`, `context_summary`, `conversation_history` fields, constructors (`new()`, `with_context_summary()`, `with_conversation_history()`), accessors, and derives (Clone, Debug, Serialize, Deserialize) in `src/transfer.rs`
-- [ ] T005 Add `transfer_signal: Option<TransferSignal>` field to `AgentToolResult` in `src/tool.rs` with `#[serde(default, skip_serializing_if = "Option::is_none")]`, add `transfer()` constructor and `is_transfer()` method
-- [ ] T006 Add `transfer_signal: Option<TransferSignal>` field to `AgentResult` in `src/types/mod.rs` with `#[serde(default, skip_serializing_if = "Option::is_none")]`
-- [ ] T007 Write unit tests for `TransferSignal` constructors, accessors, and serde round-trip in `src/transfer.rs`
-- [ ] T008 Write unit tests for `AgentToolResult::transfer()` constructor and `is_transfer()` method in `src/tool.rs`
-- [ ] T009 Write test that existing `AgentToolResult::text()` and `error()` constructors produce `transfer_signal: None` in `src/tool.rs`
-- [ ] T010 Write test that `AgentToolResult` JSON deserialization without `transfer_signal` field defaults to None (backward compat) in `src/tool.rs`
+- [x] T003 [P] Add `StopReason::Transfer` unit variant to the StopReason enum in `src/types/mod.rs`
+- [x] T004 [P] Create `TransferSignal` struct with `target_agent`, `reason`, `context_summary`, `conversation_history` fields, constructors (`new()`, `with_context_summary()`, `with_conversation_history()`), accessors, and derives (Clone, Debug, Serialize, Deserialize) in `src/transfer.rs`
+- [x] T005 Add `transfer_signal: Option<TransferSignal>` field to `AgentToolResult` in `src/tool.rs` with `#[serde(default, skip_serializing_if = "Option::is_none")]`, add `transfer()` constructor and `is_transfer()` method
+- [x] T006 Add `transfer_signal: Option<TransferSignal>` field to `AgentResult` in `src/types/mod.rs` with `#[serde(default, skip_serializing_if = "Option::is_none")]`
+- [x] T007 Write unit tests for `TransferSignal` constructors, accessors, and serde round-trip in `src/transfer.rs`
+- [x] T008 Write unit tests for `AgentToolResult::transfer()` constructor and `is_transfer()` method in `src/tool.rs`
+- [x] T009 Write test that existing `AgentToolResult::text()` and `error()` constructors produce `transfer_signal: None` in `src/tool.rs`
+- [x] T010 Write test that `AgentToolResult` JSON deserialization without `transfer_signal` field defaults to None (backward compat) in `src/tool.rs`
 
 **Checkpoint**: Core types compile, all existing tests pass, new foundational tests pass. `cargo test -p swink-agent` green.
 

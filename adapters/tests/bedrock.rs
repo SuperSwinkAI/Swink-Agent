@@ -199,6 +199,7 @@ impl AgentTool for DummyTool {
                 content: vec![],
                 details: serde_json::Value::Null,
                 is_error: false,
+                    transfer_signal: None,
             }
         })
     }

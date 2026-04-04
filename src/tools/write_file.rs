@@ -111,6 +111,7 @@ impl AgentTool for WriteFileTool {
                         "new_content": parsed.content,
                     }),
                     is_error: false,
+                    transfer_signal: None,
                 },
                 Err(e) => {
                     AgentToolResult::error(format!("failed to write file {}: {e}", parsed.path))

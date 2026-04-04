@@ -119,7 +119,7 @@ impl AgentTool for DummyTool {
                     text: "72°F, sunny".into(),
                 }],
                 details: json!({}),
-                is_error: false,
+                is_error: false, transfer_signal: None,
             }
         })
     }
