@@ -33,9 +33,11 @@ fn image_content_conversion() {
 
 #[test]
 fn error_result_conversion() {
-    let result = CallToolResult {
-        content: vec![Content::text("something went wrong")],
-        is_error: Some(true),
+    let result = {
+        let mut r = CallToolResult::default();
+        r.content = vec![Content::text("something went wrong")];
+        r.is_error = Some(true);
+        r
     };
     let agent_result = swink_agent_mcp::convert::call_result_to_agent_result(&result);
     assert!(agent_result.is_error);
@@ -48,9 +50,11 @@ fn error_result_conversion() {
 
 #[test]
 fn empty_content_handling() {
-    let result = CallToolResult {
-        content: vec![],
-        is_error: Some(false),
+    let result = {
+        let mut r = CallToolResult::default();
+        r.content = vec![];
+        r.is_error = Some(false);
+        r
     };
     let agent_result = swink_agent_mcp::convert::call_result_to_agent_result(&result);
     assert!(!agent_result.is_error);
@@ -63,9 +67,11 @@ fn empty_content_handling() {
 
 #[test]
 fn empty_error_content_handling() {
-    let result = CallToolResult {
-        content: vec![],
-        is_error: Some(true),
+    let result = {
+        let mut r = CallToolResult::default();
+        r.content = vec![];
+        r.is_error = Some(true);
+        r
     };
     let agent_result = swink_agent_mcp::convert::call_result_to_agent_result(&result);
     assert!(agent_result.is_error);
@@ -73,9 +79,11 @@ fn empty_error_content_handling() {
 
 #[test]
 fn success_result_conversion() {
-    let result = CallToolResult {
-        content: vec![Content::text("success output")],
-        is_error: Some(false),
+    let result = {
+        let mut r = CallToolResult::default();
+        r.content = vec![Content::text("success output")];
+        r.is_error = Some(false);
+        r
     };
     let agent_result = swink_agent_mcp::convert::call_result_to_agent_result(&result);
     assert!(!agent_result.is_error);

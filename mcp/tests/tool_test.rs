@@ -79,14 +79,12 @@ async fn mcp_tool_executes_and_returns_result() {
 
     // For execution, we need a real connection. We'll test this by directly
     // calling the rmcp peer to verify the server works end-to-end.
-    let params = rmcp::model::CallToolRequestParam {
-        name: std::borrow::Cow::Borrowed("echo"),
-        arguments: Some({
-            let mut map = serde_json::Map::new();
-            map.insert("text".to_string(), serde_json::json!("hello world"));
-            map
-        }),
-    };
+    let mut params = rmcp::model::CallToolRequestParams::new("echo");
+    params.arguments = Some({
+        let mut map = serde_json::Map::new();
+        map.insert("text".to_string(), serde_json::json!("hello world"));
+        map
+    });
 
     let result = client.peer().call_tool(params).await.unwrap();
     let agent_result = convert::call_result_to_agent_result(&result);
