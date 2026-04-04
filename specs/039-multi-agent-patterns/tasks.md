@@ -56,7 +56,7 @@
 
 ### Tests for US4
 
-- [ ] T018 [US4] Write tests for PipelineRegistry: register returns pipeline by ID, get returns None for unknown ID, list returns all (id, name) pairs, remove deletes entry, re-register with same ID replaces silently, len/is_empty in `patterns/src/pipeline/registry.rs`
+- [x] T018 [US4] Write tests for PipelineRegistry: register returns pipeline by ID, get returns None for unknown ID, list returns all (id, name) pairs, remove deletes entry, re-register with same ID replaces silently, len/is_empty in `patterns/src/pipeline/registry.rs`
 
 ### Implementation for US4
 
@@ -74,17 +74,17 @@
 
 ### Tests for US1
 
-- [ ] T020 [US1] Write test: two-step sequential pipeline passes agent-A's text output as agent-B's user message input in `patterns/src/pipeline/executor.rs`
-- [ ] T021 [US1] Write test: sequential pipeline with three steps halts on step-2 error, step-3 never runs, returns StepFailed in `patterns/src/pipeline/executor.rs`
-- [ ] T022 [US1] Write test: sequential pipeline with `pass_context: true` passes accumulated user/assistant text messages (no tool messages) to each step in `patterns/src/pipeline/executor.rs`
-- [ ] T023 [US1] Write test: sequential pipeline referencing missing agent returns AgentNotFound in `patterns/src/pipeline/executor.rs`
-- [ ] T024 [US1] Write test: zero-step sequential pipeline returns empty response and zero usage in `patterns/src/pipeline/executor.rs`
+- [x] T020 [US1] Write test: two-step sequential pipeline passes agent-A's text output as agent-B's user message input in `patterns/src/pipeline/executor.rs`
+- [x] T021 [US1] Write test: sequential pipeline with three steps halts on step-2 error, step-3 never runs, returns StepFailed in `patterns/src/pipeline/executor.rs`
+- [x] T022 [US1] Write test: sequential pipeline with `pass_context: true` passes accumulated user/assistant text messages (no tool messages) to each step in `patterns/src/pipeline/executor.rs`
+- [x] T023 [US1] Write test: sequential pipeline referencing missing agent returns AgentNotFound in `patterns/src/pipeline/executor.rs`
+- [x] T024 [US1] Write test: zero-step sequential pipeline returns empty response and zero usage in `patterns/src/pipeline/executor.rs`
 
 ### Implementation for US1
 
-- [ ] T025 [US1] Implement `PipelineExecutor::run()` dispatch method that matches on Pipeline variant and delegates to private `run_sequential()`, `run_parallel()`, `run_loop()` in `patterns/src/pipeline/executor.rs`
-- [ ] T026 [US1] Implement `run_sequential()` — iterate steps, create fresh agent per step via factory, send user message (previous output or accumulated context), collect StepResult with timing and usage, aggregate PipelineOutput in `patterns/src/pipeline/executor.rs`
-- [ ] T027 [US1] Add text extraction helper: extract concatenated text content blocks from agent result (excluding tool call metadata) in `patterns/src/pipeline/executor.rs`
+- [x] T025 [US1] Implement `PipelineExecutor::run()` dispatch method that matches on Pipeline variant and delegates to private `run_sequential()`, `run_parallel()`, `run_loop()` in `patterns/src/pipeline/executor.rs`
+- [x] T026 [US1] Implement `run_sequential()` — iterate steps, create fresh agent per step via factory, send user message (previous output or accumulated context), collect StepResult with timing and usage, aggregate PipelineOutput in `patterns/src/pipeline/executor.rs`
+- [x] T027 [US1] Add text extraction helper: extract concatenated text content blocks from agent result (excluding tool call metadata) in `patterns/src/pipeline/executor.rs`
 
 **Checkpoint**: Sequential pipelines execute end-to-end. `cargo test -p swink-agent-patterns` passes.
 
@@ -98,19 +98,19 @@
 
 ### Tests for US2
 
-- [ ] T028 [US2] Write test: parallel pipeline with Concat merges all outputs in declaration order in `patterns/src/pipeline/executor.rs`
-- [ ] T029 [US2] Write test: parallel pipeline with First returns first completed branch and cancels remaining in `patterns/src/pipeline/executor.rs`
-- [ ] T030 [US2] Write test: parallel pipeline with Fastest(2) returns first two completed and cancels remaining in `patterns/src/pipeline/executor.rs`
-- [ ] T031 [US2] Write test: parallel pipeline with Concat fails entirely if any branch errors (strict, no partial results) in `patterns/src/pipeline/executor.rs`
-- [ ] T032 [US2] Write test: cancellation token propagates to all branches in `patterns/src/pipeline/executor.rs`
-- [ ] T033 [US2] Write test: parallel pipeline with one branch works (no special-casing) in `patterns/src/pipeline/executor.rs`
+- [x] T028 [US2] Write test: parallel pipeline with Concat merges all outputs in declaration order in `patterns/src/pipeline/executor.rs`
+- [x] T029 [US2] Write test: parallel pipeline with First returns first completed branch and cancels remaining in `patterns/src/pipeline/executor.rs`
+- [x] T030 [US2] Write test: parallel pipeline with Fastest(2) returns first two completed and cancels remaining in `patterns/src/pipeline/executor.rs`
+- [x] T031 [US2] Write test: parallel pipeline with Concat fails entirely if any branch errors (strict, no partial results) in `patterns/src/pipeline/executor.rs`
+- [x] T032 [US2] Write test: cancellation token propagates to all branches in `patterns/src/pipeline/executor.rs`
+- [x] T033 [US2] Write test: parallel pipeline with one branch works (no special-casing) in `patterns/src/pipeline/executor.rs`
 
 ### Implementation for US2
 
-- [ ] T034 [US2] Implement `run_parallel()` — spawn each branch via `tokio::spawn` with child CancellationToken, create fresh agent per branch via factory, collect results via mpsc channel in `patterns/src/pipeline/executor.rs`
-- [ ] T035 [US2] Implement Concat merge — wait for all branches, order results by declaration index, join with separator in `patterns/src/pipeline/executor.rs`
-- [ ] T036 [US2] Implement First merge — return first completed result, cancel remaining branches via shared child token in `patterns/src/pipeline/executor.rs`
-- [ ] T037 [US2] Implement Fastest(N) merge — collect N results, cancel remaining branches in `patterns/src/pipeline/executor.rs`
+- [x] T034 [US2] Implement `run_parallel()` — spawn each branch via `tokio::spawn` with child CancellationToken, create fresh agent per branch via factory, collect results via mpsc channel in `patterns/src/pipeline/executor.rs`
+- [x] T035 [US2] Implement Concat merge — wait for all branches, order results by declaration index, join with separator in `patterns/src/pipeline/executor.rs`
+- [x] T036 [US2] Implement First merge — return first completed result, cancel remaining branches via shared child token in `patterns/src/pipeline/executor.rs`
+- [x] T037 [US2] Implement Fastest(N) merge — collect N results, cancel remaining branches in `patterns/src/pipeline/executor.rs`
 
 **Checkpoint**: Parallel pipelines execute with all non-Custom merge strategies. `cargo test -p swink-agent-patterns` passes.
 
@@ -124,17 +124,17 @@
 
 ### Tests for US3
 
-- [ ] T038 [US3] Write test: loop pipeline exits when body agent calls named tool (ToolCalled exit condition) in `patterns/src/pipeline/executor.rs`
-- [ ] T039 [US3] Write test: loop pipeline exits when output matches regex (OutputContains exit condition) in `patterns/src/pipeline/executor.rs`
-- [ ] T040 [US3] Write test: loop pipeline returns MaxIterationsReached when exit condition never met in `patterns/src/pipeline/executor.rs`
-- [ ] T041 [US3] Write test: loop pipeline halts immediately on body agent error in `patterns/src/pipeline/executor.rs`
-- [ ] T042 [US3] Write test: iteration 2+ receives original input plus conversation history from prior iterations in `patterns/src/pipeline/executor.rs`
-- [ ] T043 [US3] Write test: loop with MaxIterations exit condition always runs to cap in `patterns/src/pipeline/executor.rs`
+- [x] T038 [US3] Write test: loop pipeline exits when body agent calls named tool (ToolCalled exit condition) in `patterns/src/pipeline/executor.rs`
+- [x] T039 [US3] Write test: loop pipeline exits when output matches regex (OutputContains exit condition) in `patterns/src/pipeline/executor.rs`
+- [x] T040 [US3] Write test: loop pipeline returns MaxIterationsReached when exit condition never met in `patterns/src/pipeline/executor.rs`
+- [x] T041 [US3] Write test: loop pipeline halts immediately on body agent error in `patterns/src/pipeline/executor.rs`
+- [x] T042 [US3] Write test: iteration 2+ receives original input plus conversation history from prior iterations in `patterns/src/pipeline/executor.rs`
+- [x] T043 [US3] Write test: loop with MaxIterations exit condition always runs to cap in `patterns/src/pipeline/executor.rs`
 
 ### Implementation for US3
 
-- [ ] T044 [US3] Implement `run_loop()` — iterate up to max_iterations, create fresh agent per iteration via factory, build accumulated message history (original input + prior iteration user/assistant messages), check exit condition after each iteration in `patterns/src/pipeline/executor.rs`
-- [ ] T045 [US3] Implement exit condition checking — ToolCalled checks agent events for tool execution with matching name, OutputContains runs compiled regex against agent text output in `patterns/src/pipeline/executor.rs`
+- [x] T044 [US3] Implement `run_loop()` — iterate up to max_iterations, create fresh agent per iteration via factory, build accumulated message history (original input + prior iteration user/assistant messages), check exit condition after each iteration in `patterns/src/pipeline/executor.rs`
+- [x] T045 [US3] Implement exit condition checking — ToolCalled checks agent events for tool execution with matching name, OutputContains runs compiled regex against agent text output in `patterns/src/pipeline/executor.rs`
 
 **Checkpoint**: All three pipeline types (Sequential, Parallel, Loop) fully functional. Core MVP complete. `cargo test -p swink-agent-patterns` passes.
 
@@ -148,14 +148,14 @@
 
 ### Tests for US5
 
-- [ ] T046 [US5] Write test: PipelineTool returns pipeline's final_response as tool result text in `patterns/src/pipeline/tool.rs`
-- [ ] T047 [US5] Write test: PipelineTool returns error result (not panic) when pipeline fails in `patterns/src/pipeline/tool.rs`
-- [ ] T048 [US5] Write test: PipelineTool schema has `input` string parameter and description derived from pipeline name in `patterns/src/pipeline/tool.rs`
+- [x] T046 [US5] Write test: PipelineTool returns pipeline's final_response as tool result text in `patterns/src/pipeline/tool.rs`
+- [x] T047 [US5] Write test: PipelineTool returns error result (not panic) when pipeline fails in `patterns/src/pipeline/tool.rs`
+- [x] T048 [US5] Write test: PipelineTool schema has `input` string parameter and description derived from pipeline name in `patterns/src/pipeline/tool.rs`
 
 ### Implementation for US5
 
-- [ ] T049 [US5] Implement `PipelineTool` struct holding `PipelineId`, `Arc<PipelineExecutor>`, and optional description with `new()` and `with_description()` constructors in `patterns/src/pipeline/tool.rs`
-- [ ] T050 [US5] Implement `AgentTool` trait for `PipelineTool` — `name()` returns pipeline name, `description()` from builder or pipeline name, `schema()` with single `input` string param, `execute()` calls `executor.run()` with input from args and returns `AgentToolResult::text()` or `AgentToolResult::error()` in `patterns/src/pipeline/tool.rs`
+- [x] T049 [US5] Implement `PipelineTool` struct holding `PipelineId`, `Arc<PipelineExecutor>`, and optional description with `new()` and `with_description()` constructors in `patterns/src/pipeline/tool.rs`
+- [x] T050 [US5] Implement `AgentTool` trait for `PipelineTool` — `name()` returns pipeline name, `description()` from builder or pipeline name, `schema()` with single `input` string param, `execute()` calls `executor.run()` with input from args and returns `AgentToolResult::text()` or `AgentToolResult::error()` in `patterns/src/pipeline/tool.rs`
 
 **Checkpoint**: Pipelines can be used as tools by other agents. `cargo test -p swink-agent-patterns` passes.
 
@@ -169,12 +169,12 @@
 
 ### Tests for US6
 
-- [ ] T051 [US6] Write test: Custom merge passes all branch outputs as labeled text sections (`[agent-name]: output`) to aggregator agent in `patterns/src/pipeline/executor.rs`
-- [ ] T052 [US6] Write test: Custom merge returns AgentNotFound when aggregator agent is missing in `patterns/src/pipeline/executor.rs`
+- [x] T051 [US6] Write test: Custom merge passes all branch outputs as labeled text sections (`[agent-name]: output`) to aggregator agent in `patterns/src/pipeline/executor.rs`
+- [x] T052 [US6] Write test: Custom merge returns AgentNotFound when aggregator agent is missing in `patterns/src/pipeline/executor.rs`
 
 ### Implementation for US6
 
-- [ ] T053 [US6] Implement Custom merge in `run_parallel()` — after all branches complete, format outputs as `[agent-name]: output` separated by blank lines, create fresh aggregator agent via factory, send formatted message, return aggregator's response in `patterns/src/pipeline/executor.rs`
+- [x] T053 [US6] Implement Custom merge in `run_parallel()` — after all branches complete, format outputs as `[agent-name]: output` separated by blank lines, create fresh aggregator agent via factory, send formatted message, return aggregator's response in `patterns/src/pipeline/executor.rs`
 
 **Checkpoint**: All four merge strategies functional. `cargo test -p swink-agent-patterns` passes.
 
@@ -188,16 +188,16 @@
 
 ### Tests for US7
 
-- [ ] T054 [US7] Write test: sequential pipeline emits Started, StepStarted(0), StepCompleted(0), StepStarted(1), StepCompleted(1), Completed in order in `patterns/src/pipeline/executor.rs`
-- [ ] T055 [US7] Write test: failed pipeline emits Failed event with error details in `patterns/src/pipeline/executor.rs`
-- [ ] T056 [US7] Write test: StepCompleted events carry agent_name, duration, and usage in `patterns/src/pipeline/executor.rs`
-- [ ] T057 [US7] Write test: no events emitted when no event handler is configured (no panics, no errors) in `patterns/src/pipeline/executor.rs`
-- [ ] T058 [US7] Write test: `PipelineEvent::to_emission()` produces valid `Emission` with correct name and payload in `patterns/src/pipeline/events.rs`
+- [x] T054 [US7] Write test: sequential pipeline emits Started, StepStarted(0), StepCompleted(0), StepStarted(1), StepCompleted(1), Completed in order in `patterns/src/pipeline/executor.rs`
+- [x] T055 [US7] Write test: failed pipeline emits Failed event with error details in `patterns/src/pipeline/executor.rs`
+- [x] T056 [US7] Write test: StepCompleted events carry agent_name, duration, and usage in `patterns/src/pipeline/executor.rs`
+- [x] T057 [US7] Write test: no events emitted when no event handler is configured (no panics, no errors) in `patterns/src/pipeline/executor.rs`
+- [x] T058 [US7] Write test: `PipelineEvent::to_emission()` produces valid `Emission` with correct name and payload in `patterns/src/pipeline/events.rs`
 
 ### Implementation for US7
 
-- [ ] T059 [US7] Add `emit()` helper method on `PipelineExecutor` that calls event handler if present (no-op otherwise) in `patterns/src/pipeline/executor.rs`
-- [ ] T060 [US7] Wire event emission into `run_sequential()`, `run_parallel()`, and `run_loop()` — emit Started at entry, StepStarted/StepCompleted around each step, Completed/Failed at exit in `patterns/src/pipeline/executor.rs`
+- [x] T059 [US7] Add `emit()` helper method on `PipelineExecutor` that calls event handler if present (no-op otherwise) in `patterns/src/pipeline/executor.rs`
+- [x] T060 [US7] Wire event emission into `run_sequential()`, `run_parallel()`, and `run_loop()` — emit Started at entry, StepStarted/StepCompleted around each step, Completed/Failed at exit in `patterns/src/pipeline/executor.rs`
 
 **Checkpoint**: Full observability across all pipeline types. `cargo test -p swink-agent-patterns` passes.
 
@@ -207,12 +207,12 @@
 
 **Purpose**: Final quality, documentation, and workspace integration
 
-- [ ] T061 [P] Add doc comments to all public types and methods in `patterns/src/pipeline/*.rs`
-- [ ] T062 [P] Add `Send + Sync` compile-time assertions for `PipelineRegistry`, `PipelineExecutor`, `PipelineTool` in `patterns/src/lib.rs`
-- [ ] T063 Run `cargo clippy -p swink-agent-patterns -- -D warnings` and fix any warnings
-- [ ] T064 Run `cargo test -p swink-agent-patterns` final pass — all tests green
-- [ ] T065 Run `cargo build --workspace` to verify no workspace-level breakage
-- [ ] T066 Verify `cargo test -p swink-agent-patterns --no-default-features` compiles (pipeline module gated)
+- [x] T061 [P] Add doc comments to all public types and methods in `patterns/src/pipeline/*.rs`
+- [x] T062 [P] Add `Send + Sync` compile-time assertions for `PipelineRegistry`, `PipelineExecutor`, `PipelineTool` in `patterns/src/lib.rs`
+- [x] T063 Run `cargo clippy -p swink-agent-patterns -- -D warnings` and fix any warnings
+- [x] T064 Run `cargo test -p swink-agent-patterns` final pass — all tests green
+- [x] T065 Run `cargo build --workspace` to verify no workspace-level breakage
+- [x] T066 Verify `cargo test -p swink-agent-patterns --no-default-features` compiles (pipeline module gated)
 
 ---
 

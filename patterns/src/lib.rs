@@ -10,5 +10,6 @@ pub mod pipeline;
 #[cfg(feature = "pipelines")]
 pub use pipeline::{
     AgentFactory, ExitCondition, MergeStrategy, Pipeline, PipelineError, PipelineEvent,
-    PipelineExecutor, PipelineId, PipelineOutput, PipelineRegistry, SimpleAgentFactory, StepResult,
+    PipelineExecutor, PipelineId, PipelineOutput, PipelineRegistry, PipelineTool,
+    SimpleAgentFactory, StepResult,
 };
