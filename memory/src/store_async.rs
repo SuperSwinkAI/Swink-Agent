@@ -122,50 +122,13 @@ impl<S: crate::store::SessionStore + 'static> BlockingSessionStore<S> {
     }
 }
 
-/// A lightweight [`CustomMessage`] stand-in that holds pre-serialized data.
-///
-/// Used to ferry custom messages across `spawn_blocking` boundaries. The
-/// original `Box<dyn CustomMessage>` is not `Clone`, so we snapshot its
-/// `type_name()` and `to_json()` output, which *are* `Clone + Send`.
-#[derive(Debug, Clone)]
-struct SerializedCustomMessage {
-    name: String,
-    json: serde_json::Value,
-}
-
-impl swink_agent::CustomMessage for SerializedCustomMessage {
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-    fn type_name(&self) -> Option<&str> {
-        Some(&self.name)
-    }
-    fn to_json(&self) -> Option<serde_json::Value> {
-        Some(self.json.clone())
-    }
-}
-
 /// Clone messages for transfer across `spawn_blocking`.
 ///
-/// `Llm` variants are cloned directly. `Custom` variants are snapshot-serialized
-/// into [`SerializedCustomMessage`] wrappers so the sync store can persist them
-/// faithfully. Custom messages that lack `type_name()` or `to_json()` are
-/// skipped with a warning — matching the sync store's own behaviour.
+/// Delegates to [`swink_agent::clone_messages_for_send`] which snapshots
+/// `Custom` variants into `SerializedCustomMessage` wrappers so they can
+/// cross thread boundaries faithfully.
 fn clone_messages_for_blocking(messages: &[AgentMessage]) -> Vec<AgentMessage> {
-    messages
-        .iter()
-        .filter_map(|m| match m {
-            AgentMessage::Llm(llm) => Some(AgentMessage::Llm(llm.clone())),
-            AgentMessage::Custom(custom) => {
-                let name = custom.type_name()?;
-                let json = custom.to_json()?;
-                Some(AgentMessage::Custom(Box::new(SerializedCustomMessage {
-                    name: name.to_string(),
-                    json,
-                })))
-            }
-        })
-        .collect()
+    swink_agent::clone_messages_for_send(messages)
 }
 
 impl<S: crate::store::SessionStore + 'static> AsyncSessionStore for BlockingSessionStore<S> {
