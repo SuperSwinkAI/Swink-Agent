@@ -107,6 +107,15 @@ MSRV **1.88** (edition 2024). Workspace deps centralized in root `Cargo.toml`.
 - `AgentToolResult.is_error` replaces old `text.starts_with("error")` heuristic. Use `error()` / `text()` constructors.
 - `ToolCallTransformer` runs unconditionally (not gated by approval). Distinct from `ToolValidator` (rejects vs rewrites).
 
+### Plugin System (`src/plugin.rs`)
+
+- `Plugin` trait: only `name()` required; all other methods (`priority()`, `on_init()`, policy/tool contributions) have default no-op implementations.
+- `PluginRegistry` stores plugins in insertion order; `list()` returns them sorted by priority (highest first, stable sort). Duplicate names replace silently with a warning.
+- `NamespacedTool` prefixes plugin name onto tool name (`"plugin.tool"`) to avoid cross-plugin collisions. `metadata().namespace` is set automatically.
+- Plugin contributions (policies, tools, event observer) are merged in `Agent::new()` — policies prepended in priority order, tools wrapped in `NamespacedTool`.
+- `on_init()` is called in priority order during `Agent::new()` after full configuration. Panics are caught via `catch_unwind` and logged.
+- Entire module gated behind `#[cfg(feature = "plugins")]` — zero cost when disabled. `MockPlugin` test helper in `testing.rs` also feature-gated.
+
 ### Checkpoint / Persistence
 
 - Checkpoint and SessionStore now support CustomMessage persistence via `custom_messages` field and `save_full`/`load_full`. Old checkpoints without `custom_messages` field deserialize fine (backward compat via `#[serde(default)]`).
@@ -116,6 +125,7 @@ MSRV **1.88** (edition 2024). Workspace deps centralized in root `Cargo.toml`.
 **Root crate (`swink-agent`):**
 - `builtin-tools` (default-enabled) — gates `BashTool`, `ReadFileTool`, `WriteFileTool`.
 - `testkit` — gates the `testing` module (mock `StreamFn`/`AgentTool` implementations, event/message builders). Not default-enabled; consumers add `features = ["testkit"]` in dev-dependencies. Integration tests in `/tests/` are gated with `#![cfg(feature = "testkit")]`.
+- `plugins` — gates `plugin` module (`Plugin` trait, `PluginRegistry`, `NamespacedTool`). Not default-enabled. `MockPlugin` in `testing.rs` also gated behind this feature.
 - Root crate cannot re-export adapters/local-llm/TUI (cyclic dependency). Consumers depend on sub-crates directly.
 
 **Adapters crate (`swink-agent-adapters`):**

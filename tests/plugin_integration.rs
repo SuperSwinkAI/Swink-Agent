@@ -1,4 +1,4 @@
-#![cfg(feature = "plugins")]
+#![cfg(all(feature = "plugins", feature = "testkit"))]
 
 //! Integration tests for plugin contribution merge in Agent::new().
 

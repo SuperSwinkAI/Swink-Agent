@@ -15,3 +15,7 @@ pub use swink_agent::testing::{
 
 #[allow(unused_imports)]
 pub use swink_agent::AssistantMessageEvent;
+
+#[cfg(all(feature = "plugins", feature = "testkit"))]
+#[allow(unused_imports)]
+pub use swink_agent::testing::MockPlugin;
