@@ -512,6 +512,11 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+    use crate::FnTool;
+
+    fn stub_tool(name: &str) -> FnTool {
+        FnTool::new(name, name, "A test tool.")
+    }
 
     // ─── ToolApprovalRequest Debug ──────────────────────────────────────────
 
@@ -735,74 +740,14 @@ mod tests {
 
     #[test]
     fn agent_tool_metadata_defaults_to_none() {
-        use tokio_util::sync::CancellationToken;
-
-        struct MinimalTool;
-
-        impl AgentTool for MinimalTool {
-            fn name(&self) -> &'static str {
-                "minimal"
-            }
-            fn label(&self) -> &'static str {
-                "Minimal"
-            }
-            fn description(&self) -> &'static str {
-                "A minimal tool"
-            }
-            fn parameters_schema(&self) -> &Value {
-                &Value::Null
-            }
-            fn execute(
-                &self,
-                _tool_call_id: &str,
-                _params: Value,
-                _ct: CancellationToken,
-                _on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
-                _state: Arc<std::sync::RwLock<crate::SessionState>>,
-                _credential: Option<crate::credential::ResolvedCredential>,
-            ) -> ToolFuture<'_> {
-                Box::pin(async { AgentToolResult::text("ok") })
-            }
-        }
-
-        let tool = MinimalTool;
+        let tool = stub_tool("minimal");
         assert!(tool.metadata().is_none());
     }
 
     // T025: auth_config default returns None
     #[test]
     fn agent_tool_auth_config_defaults_to_none() {
-        use tokio_util::sync::CancellationToken;
-
-        struct NoAuthTool;
-
-        impl AgentTool for NoAuthTool {
-            fn name(&self) -> &'static str {
-                "no-auth"
-            }
-            fn label(&self) -> &'static str {
-                "No Auth"
-            }
-            fn description(&self) -> &'static str {
-                "Tool with no auth"
-            }
-            fn parameters_schema(&self) -> &Value {
-                &Value::Null
-            }
-            fn execute(
-                &self,
-                _tool_call_id: &str,
-                _params: Value,
-                _ct: CancellationToken,
-                _on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
-                _state: Arc<std::sync::RwLock<crate::SessionState>>,
-                _credential: Option<crate::credential::ResolvedCredential>,
-            ) -> ToolFuture<'_> {
-                Box::pin(async { AgentToolResult::text("ok") })
-            }
-        }
-
-        let tool = NoAuthTool;
+        let tool = stub_tool("no-auth");
         assert!(tool.auth_config().is_none());
     }
 
@@ -810,76 +755,18 @@ mod tests {
 
     #[test]
     fn approval_context_default_none() {
-        use tokio_util::sync::CancellationToken;
-
-        struct PlainTool;
-
-        impl AgentTool for PlainTool {
-            fn name(&self) -> &'static str {
-                "plain"
-            }
-            fn label(&self) -> &'static str {
-                "Plain"
-            }
-            fn description(&self) -> &'static str {
-                "No context"
-            }
-            fn parameters_schema(&self) -> &Value {
-                &Value::Null
-            }
-            fn execute(
-                &self,
-                _tool_call_id: &str,
-                _params: Value,
-                _ct: CancellationToken,
-                _on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
-                _state: Arc<std::sync::RwLock<crate::SessionState>>,
-                _credential: Option<crate::credential::ResolvedCredential>,
-            ) -> ToolFuture<'_> {
-                Box::pin(async { AgentToolResult::text("ok") })
-            }
-        }
-
-        let tool = PlainTool;
+        let tool = stub_tool("plain");
         assert!(tool.approval_context(&json!({})).is_none());
     }
 
     #[test]
     fn approval_context_returns_value() {
-        use tokio_util::sync::CancellationToken;
+        use crate::FnTool;
 
-        struct ContextTool;
+        let tool = FnTool::new("ctx", "Ctx", "With context").with_approval_context(|params| {
+            Some(json!({"preview": format!("Will process: {}", params)}))
+        });
 
-        impl AgentTool for ContextTool {
-            fn name(&self) -> &'static str {
-                "ctx"
-            }
-            fn label(&self) -> &'static str {
-                "Ctx"
-            }
-            fn description(&self) -> &'static str {
-                "With context"
-            }
-            fn parameters_schema(&self) -> &Value {
-                &Value::Null
-            }
-            fn approval_context(&self, params: &Value) -> Option<Value> {
-                Some(json!({"preview": format!("Will process: {}", params)}))
-            }
-            fn execute(
-                &self,
-                _tool_call_id: &str,
-                _params: Value,
-                _ct: CancellationToken,
-                _on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
-                _state: Arc<std::sync::RwLock<crate::SessionState>>,
-                _credential: Option<crate::credential::ResolvedCredential>,
-            ) -> ToolFuture<'_> {
-                Box::pin(async { AgentToolResult::text("ok") })
-            }
-        }
-
-        let tool = ContextTool;
         let ctx = tool.approval_context(&json!({"file": "test.txt"}));
         assert!(ctx.is_some());
         assert!(
@@ -892,40 +779,15 @@ mod tests {
 
     #[test]
     fn approval_context_panic_caught() {
-        use tokio_util::sync::CancellationToken;
+        use crate::FnTool;
 
-        struct PanickingTool;
+        let tool =
+            FnTool::new("panicker", "Panicker", "Panics in context").with_approval_context(
+                |_params| {
+                    panic!("oops");
+                },
+            );
 
-        impl AgentTool for PanickingTool {
-            fn name(&self) -> &'static str {
-                "panicker"
-            }
-            fn label(&self) -> &'static str {
-                "Panicker"
-            }
-            fn description(&self) -> &'static str {
-                "Panics in context"
-            }
-            fn parameters_schema(&self) -> &Value {
-                &Value::Null
-            }
-            fn approval_context(&self, _params: &Value) -> Option<Value> {
-                panic!("oops");
-            }
-            fn execute(
-                &self,
-                _tool_call_id: &str,
-                _params: Value,
-                _ct: CancellationToken,
-                _on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
-                _state: Arc<std::sync::RwLock<crate::SessionState>>,
-                _credential: Option<crate::credential::ResolvedCredential>,
-            ) -> ToolFuture<'_> {
-                Box::pin(async { AgentToolResult::text("ok") })
-            }
-        }
-
-        let tool = PanickingTool;
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             tool.approval_context(&json!({}))
         }));

@@ -97,6 +97,10 @@ mod tests {
     use super::*;
     use crate::tool::AgentTool;
 
+    fn test_state() -> Arc<std::sync::RwLock<crate::SessionState>> {
+        Arc::new(std::sync::RwLock::new(crate::SessionState::new()))
+    }
+
     #[test]
     fn noop_tool_name_matches() {
         let tool = NoopTool::new("old_tool");
@@ -118,7 +122,7 @@ mod tests {
                 json!({"any": "args"}),
                 CancellationToken::new(),
                 None,
-                Arc::new(std::sync::RwLock::new(crate::SessionState::new())),
+                test_state(),
                 None,
             )
             .await;
@@ -139,7 +143,7 @@ mod tests {
                 json!({"complex": {"nested": true}, "array": [1, 2, 3]}),
                 CancellationToken::new(),
                 None,
-                Arc::new(std::sync::RwLock::new(crate::SessionState::new())),
+                test_state(),
                 None,
             )
             .await;
