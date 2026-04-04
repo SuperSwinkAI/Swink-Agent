@@ -17,10 +17,10 @@
 
 **Purpose**: Crate scaffolding and workspace integration
 
-- [ ] T001 Add `swink-agent-patterns` to workspace members in root `Cargo.toml` and add any new workspace dependencies (regex is already present)
-- [ ] T002 Create `patterns/Cargo.toml` with `swink-agent = { path = ".." }`, workspace deps (`tokio`, `tokio-util`, `serde`, `serde_json`, `regex`, `uuid`, `tracing`, `thiserror`), and `pipelines` feature gate (default-enabled)
-- [ ] T003 Create `patterns/src/lib.rs` with `#![forbid(unsafe_code)]`, feature-gated `pipeline` module, and public re-exports
-- [ ] T004 Create `patterns/src/pipeline/mod.rs` with submodule declarations and re-exports
+- [x] T001 Add `swink-agent-patterns` to workspace members in root `Cargo.toml` and add any new workspace dependencies (regex is already present)
+- [x] T002 Create `patterns/Cargo.toml` with `swink-agent = { path = ".." }`, workspace deps (`tokio`, `tokio-util`, `serde`, `serde_json`, `regex`, `uuid`, `tracing`, `thiserror`), and `pipelines` feature gate (default-enabled)
+- [x] T003 Create `patterns/src/lib.rs` with `#![forbid(unsafe_code)]`, feature-gated `pipeline` module, and public re-exports
+- [x] T004 Create `patterns/src/pipeline/mod.rs` with submodule declarations and re-exports
 
 ---
 
@@ -30,19 +30,19 @@
 
 **CRITICAL**: No user story work can begin until this phase is complete
 
-- [ ] T005 [P] Create `PipelineId` newtype with `new()`, `generate()` (UUID), Display, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize in `patterns/src/pipeline/types.rs`
-- [ ] T006 [P] Create `MergeStrategy` enum (Concat { separator }, First, Fastest { n }, Custom { aggregator }) with Clone, Debug, Serialize, Deserialize in `patterns/src/pipeline/types.rs`
-- [ ] T007 [P] Create `ExitCondition` enum (ToolCalled { tool_name }, OutputContains { pattern, compiled }, MaxIterations) with `output_contains()` constructor that validates regex eagerly, custom Serialize/Deserialize that stores pattern string and recompiles on deser in `patterns/src/pipeline/types.rs`
-- [ ] T008 Create `Pipeline` enum (Sequential, Parallel, Loop variants) with all fields per data-model.md, convenience constructors (`sequential()`, `sequential_with_context()`, `parallel()`, `loop_()`, `loop_with_max()`), `with_id()` builder, `id()` and `name()` accessors, Clone, Debug, Serialize, Deserialize in `patterns/src/pipeline/types.rs`
-- [ ] T009 [P] Create `StepResult` struct and `PipelineOutput` struct with all fields per data-model.md in `patterns/src/pipeline/output.rs`
-- [ ] T010 [P] Create `PipelineError` enum with all variants (AgentNotFound, PipelineNotFound, StepFailed, MaxIterationsReached, Cancelled, InvalidExitCondition), implement Display and Error in `patterns/src/pipeline/output.rs`
-- [ ] T011 [P] Create `PipelineEvent` enum with all variants (Started, StepStarted, StepCompleted, Completed, Failed) and `to_emission()` method returning `swink_agent::Emission` in `patterns/src/pipeline/events.rs`
-- [ ] T012 Create `AgentFactory` trait (`fn create(&self, name: &str) -> Result<Agent, PipelineError>`) and `SimpleAgentFactory` struct with `new()`, `register()`, and `AgentFactory` impl in `patterns/src/pipeline/executor.rs`
-- [ ] T013 Create `PipelineExecutor` struct skeleton holding `Arc<dyn AgentFactory>`, `Arc<PipelineRegistry>`, and `Option<Arc<dyn Fn(PipelineEvent) + Send + Sync>>` with `new()` and `with_event_handler()` builder in `patterns/src/pipeline/executor.rs`
-- [ ] T014 Write unit tests for `PipelineId` (new, generate, equality, hashing, serde round-trip) in `patterns/src/pipeline/types.rs`
-- [ ] T015 Write unit tests for `ExitCondition` (valid regex compiles, invalid regex errors, serde round-trip recompiles regex) in `patterns/src/pipeline/types.rs`
-- [ ] T016 Write unit tests for `Pipeline` constructors (sequential, parallel, loop, with_id, auto-generated IDs are unique) in `patterns/src/pipeline/types.rs`
-- [ ] T017 Write unit tests for `SimpleAgentFactory` (register + create succeeds, unknown name returns AgentNotFound) in `patterns/src/pipeline/executor.rs`
+- [x] T005 [P] Create `PipelineId` newtype with `new()`, `generate()` (UUID), Display, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize in `patterns/src/pipeline/types.rs`
+- [x] T006 [P] Create `MergeStrategy` enum (Concat { separator }, First, Fastest { n }, Custom { aggregator }) with Clone, Debug, Serialize, Deserialize in `patterns/src/pipeline/types.rs`
+- [x] T007 [P] Create `ExitCondition` enum (ToolCalled { tool_name }, OutputContains { pattern, compiled }, MaxIterations) with `output_contains()` constructor that validates regex eagerly, custom Serialize/Deserialize that stores pattern string and recompiles on deser in `patterns/src/pipeline/types.rs`
+- [x] T008 Create `Pipeline` enum (Sequential, Parallel, Loop variants) with all fields per data-model.md, convenience constructors (`sequential()`, `sequential_with_context()`, `parallel()`, `loop_()`, `loop_with_max()`), `with_id()` builder, `id()` and `name()` accessors, Clone, Debug, Serialize, Deserialize in `patterns/src/pipeline/types.rs`
+- [x] T009 [P] Create `StepResult` struct and `PipelineOutput` struct with all fields per data-model.md in `patterns/src/pipeline/output.rs`
+- [x] T010 [P] Create `PipelineError` enum with all variants (AgentNotFound, PipelineNotFound, StepFailed, MaxIterationsReached, Cancelled, InvalidExitCondition), implement Display and Error in `patterns/src/pipeline/output.rs`
+- [x] T011 [P] Create `PipelineEvent` enum with all variants (Started, StepStarted, StepCompleted, Completed, Failed) and `to_emission()` method returning `swink_agent::Emission` in `patterns/src/pipeline/events.rs`
+- [x] T012 Create `AgentFactory` trait (`fn create(&self, name: &str) -> Result<Agent, PipelineError>`) and `SimpleAgentFactory` struct with `new()`, `register()`, and `AgentFactory` impl in `patterns/src/pipeline/executor.rs`
+- [x] T013 Create `PipelineExecutor` struct skeleton holding `Arc<dyn AgentFactory>`, `Arc<PipelineRegistry>`, and `Option<Arc<dyn Fn(PipelineEvent) + Send + Sync>>` with `new()` and `with_event_handler()` builder in `patterns/src/pipeline/executor.rs`
+- [x] T014 Write unit tests for `PipelineId` (new, generate, equality, hashing, serde round-trip) in `patterns/src/pipeline/types.rs`
+- [x] T015 Write unit tests for `ExitCondition` (valid regex compiles, invalid regex errors, serde round-trip recompiles regex) in `patterns/src/pipeline/types.rs`
+- [x] T016 Write unit tests for `Pipeline` constructors (sequential, parallel, loop, with_id, auto-generated IDs are unique) in `patterns/src/pipeline/types.rs`
+- [x] T017 Write unit tests for `SimpleAgentFactory` (register + create succeeds, unknown name returns AgentNotFound) in `patterns/src/pipeline/executor.rs`
 
 **Checkpoint**: All foundational types compile and pass unit tests. `cargo test -p swink-agent-patterns` passes.
 
@@ -56,11 +56,11 @@
 
 ### Tests for US4
 
-- [ ] T018 [US4] Write tests for PipelineRegistry: register returns pipeline by ID, get returns None for unknown ID, list returns all (id, name) pairs, remove deletes entry, re-register with same ID replaces silently, len/is_empty in `patterns/src/pipeline/registry.rs`
+- [x] T018 [US4] Write tests for PipelineRegistry: register returns pipeline by ID, get returns None for unknown ID, list returns all (id, name) pairs, remove deletes entry, re-register with same ID replaces silently, len/is_empty in `patterns/src/pipeline/registry.rs`
 
 ### Implementation for US4
 
-- [ ] T019 [US4] Implement `PipelineRegistry` with `RwLock<HashMap<PipelineId, Pipeline>>` — methods: `new()`, `register()` (reads ID from pipeline), `get()` (clone), `list()`, `remove()`, `len()`, `is_empty()` in `patterns/src/pipeline/registry.rs`
+- [x] T019 [US4] Implement `PipelineRegistry` with `RwLock<HashMap<PipelineId, Pipeline>>` — methods: `new()`, `register()` (reads ID from pipeline), `get()` (clone), `list()`, `remove()`, `len()`, `is_empty()` in `patterns/src/pipeline/registry.rs`
 
 **Checkpoint**: Registry fully functional and tested. `cargo test -p swink-agent-patterns` passes.
 
