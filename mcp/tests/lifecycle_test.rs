@@ -1,9 +1,10 @@
-//! Lifecycle management tests for MCP integration (T039, T040, T043).
+//! Lifecycle management tests for MCP integration (T039, T040, T042, T043).
 
 mod common;
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use swink_agent::tool::AgentTool;
 use swink_agent_mcp::{McpConnection, McpManager, McpServerConfig, McpTransport, McpTool};
@@ -53,6 +54,96 @@ async fn call_tool_on_disconnected_connection_returns_error() {
         msg.contains("disconnected") || msg.contains("server is disconnected"),
         "error should mention disconnection, got: {msg}"
     );
+}
+
+/// T042: Background monitor detects transport closure, updates status to
+/// Disconnected, and emits McpServerDisconnected on the event channel.
+///
+/// We simulate a crash by properly cancelling the server's `RunningService`,
+/// which drops its side of the duplex transport and causes the client to see
+/// EOF — triggering `QuitReason::Closed` in the monitor task.
+#[tokio::test]
+async fn monitor_detects_transport_close_and_emits_event() {
+    use rmcp::service::ServiceExt;
+    use swink_agent::AgentEvent;
+    use swink_agent_mcp::{McpConnection, McpConnectionStatus, McpServerConfig, McpTransport};
+    use tokio::sync::mpsc::unbounded_channel;
+    use tokio::sync::oneshot;
+
+    let (event_tx, mut event_rx) = unbounded_channel::<AgentEvent>();
+
+    let (client_stream, server_stream) = tokio::io::duplex(4096);
+
+    let mock_cfg = common::MockServerConfig::new(vec![]);
+    let server = common::MockMcpServer::from_config(&mock_cfg);
+
+    // Signal channel: test → server task, to cancel the server RunningService.
+    // Aborting the outer task only detaches rmcp's internal I/O task (dropping
+    // JoinHandle detaches, doesn't abort), so the duplex stays open. We must
+    // explicitly cancel the RunningService to drop the transport.
+    let (cancel_tx, cancel_rx) = oneshot::channel::<()>();
+    let server_task = tokio::spawn(async move {
+        let svc = server.serve(server_stream).await.expect("server should start");
+        let _ = cancel_rx.await;
+        // cancel() calls ct.cancel() → internal loop breaks → server_stream dropped
+        let _ = svc.cancel().await;
+    });
+
+    let client_info = rmcp::model::ClientInfo::default();
+    let service = client_info
+        .serve(client_stream)
+        .await
+        .expect("client should connect");
+
+    let config = McpServerConfig {
+        name: "crash-test-server".into(),
+        transport: McpTransport::Stdio {
+            command: "mock".into(),
+            args: vec![],
+            env: HashMap::default(),
+        },
+        tool_prefix: None,
+        tool_filter: None,
+        requires_approval: false,
+    };
+
+    let conn = McpConnection::from_service(config, service, Some(event_tx))
+        .await
+        .expect("connection should succeed");
+
+    assert_eq!(conn.status(), McpConnectionStatus::Connected, "should start Connected");
+
+    // Simulate crash: cancel the server → drops server_stream → client sees EOF.
+    let _ = cancel_tx.send(());
+    let _ = server_task.await;
+
+    // Poll until the monitor detects QuitReason::Closed and updates status.
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    loop {
+        if conn.status() == McpConnectionStatus::Disconnected {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "monitor did not detect disconnect within 2 seconds"
+        );
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+
+    assert_eq!(
+        conn.status(),
+        McpConnectionStatus::Disconnected,
+        "monitor should have transitioned status to Disconnected"
+    );
+
+    // The disconnect event should have been emitted.
+    let event = event_rx.try_recv().expect("McpServerDisconnected event should be in channel");
+    match event {
+        AgentEvent::McpServerDisconnected { server_name, .. } => {
+            assert_eq!(server_name, "crash-test-server");
+        }
+        other => panic!("unexpected event: {other:?}"),
+    }
 }
 
 /// T043: McpTool::execute() on a disconnected connection returns is_error=true.

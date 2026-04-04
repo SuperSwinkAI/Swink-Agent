@@ -7,7 +7,9 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use swink_agent::AgentEvent;
 use swink_agent::tool::AgentTool;
+use tokio::sync::mpsc::UnboundedSender;
 use tracing::warn;
 
 use crate::config::McpServerConfig;
@@ -53,6 +55,7 @@ pub struct McpManager {
     configs: Vec<McpServerConfig>,
     connections: Vec<Arc<McpConnection>>,
     tools: Vec<Arc<dyn AgentTool>>,
+    event_tx: Option<UnboundedSender<AgentEvent>>,
 }
 
 impl McpManager {
@@ -65,7 +68,18 @@ impl McpManager {
             configs,
             connections: Vec::new(),
             tools: Vec::new(),
+            event_tx: None,
         }
+    }
+
+    /// Wire up an event channel for crash-detection notifications.
+    ///
+    /// When provided, each connection's monitor task will send
+    /// `AgentEvent::McpServerDisconnected` on this sender when a transport
+    /// closure is detected.
+    pub fn with_event_tx(mut self, tx: UnboundedSender<AgentEvent>) -> Self {
+        self.event_tx = Some(tx);
+        self
     }
 
     /// Create a manager from pre-established connections.
@@ -110,6 +124,7 @@ impl McpManager {
             configs: Vec::new(),
             connections: arc_connections,
             tools,
+            event_tx: None,
         })
     }
 
@@ -122,7 +137,7 @@ impl McpManager {
         let mut all_tools: Vec<(String, String, Arc<dyn AgentTool>)> = Vec::new();
 
         for config in self.configs.clone() {
-            match McpConnection::connect(config.clone()).await {
+            match McpConnection::connect(config.clone(), self.event_tx.clone()).await {
                 Ok(connection) => {
                     let conn = Arc::new(connection);
 
@@ -204,6 +219,7 @@ impl std::fmt::Debug for McpManager {
             .field("configs", &self.configs.len())
             .field("connections", &self.connections.len())
             .field("tools", &self.tools.len())
+            .field("event_tx", &self.event_tx.is_some())
             .finish()
     }
 }

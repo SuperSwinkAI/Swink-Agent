@@ -1,5 +1,5 @@
 # Spec-Driven Development Status
-<!-- spec-status: project=Swink-Agent commit=36b26a4ac292733281c601553499544a30952144 updated=2026-04-02T18:22:47Z -->
+<!-- spec-status: project=Swink-Agent commit=0913b02667e7c5ae382804455a066ee432e61873 updated=2026-04-03T23:40:59Z -->
 
 | Feature                         | Specify | Plan | Tasks | Implement |
 |---------------------------------|---------|------|-------|-----------|
@@ -21,7 +21,7 @@
 | 016-adapter-azure               | ✓     | ✓  | ✓   | ● 47/54 (87%) |
 | 017-adapter-xai                 | ✓     | ✓  | ✓   | ✓ Complete |
 | 018-adapter-mistral             | ✓     | ✓  | ✓   | ✓ Complete |
-| 019-adapter-bedrock             | ✓     | ✓  | ✓   | ✅ 42/42 (100%) |
+| 019-adapter-bedrock             | ✓     | ✓  | ✓   | ● 0/41 (0%) |
 | 020-adapter-proxy               | ✓     | ✓  | ✓   | ✓ Complete |
 | 021-memory-crate                | ✓     | ✓  | ✓   | ✓ Complete |
 | 022-local-llm-crate             | ✓     | ✓  | ✓   | ✓ Complete |
@@ -38,9 +38,9 @@
 | 033-workspace-feature-gates     | ✓     | ✓  | ✓   | ✓ Complete |
 | 034-session-state-store         | ✓     | ✓  | ✓   | ✓ Complete |
 | 035-credential-management       | ✓     | ✓  | ✓   | ✓ Complete |
-| 036-artifact-service            | ✓     | ✓  | ✓   | ● 28/81 (35%) |
+| 036-artifact-service            | ✓     | ✓  | ✓   | ● 15/81 (18%) |
 | 037-plugin-system               | ✓     | ✓  | ✓   | ● 0/47 (0%) |
-| 038-mcp-integration             | ✓     | ✓  | ✓   | ● 16/49 (33%) |
+| 038-mcp-integration             | ✓     | ✓  | ✓   | ● 48/49 (97%) |
 | 039-multi-agent-patterns        | ✓     | ✓  | ✓   | ● 0/66 (0%) |
 | 040-agent-transfer-handoff      | ✓     | ✓  | ✓   | ● 0/49 (0%) |
 
@@ -62,7 +62,7 @@
 <!-- feature: 016-adapter-azure has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=54 tasks_completed=47 checklist_files=requirements.md -->
 <!-- feature: 017-adapter-xai has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=17 tasks_completed=17 checklist_files=requirements.md -->
 <!-- feature: 018-adapter-mistral has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=42 tasks_completed=42 checklist_files=requirements.md -->
-<!-- feature: 019-adapter-bedrock has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=42 tasks_completed=42 checklist_files=requirements.md -->
+<!-- feature: 019-adapter-bedrock has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=41 tasks_completed=0 checklist_files=requirements.md -->
 <!-- feature: 020-adapter-proxy has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=40 tasks_completed=40 checklist_files=requirements.md -->
 <!-- feature: 021-memory-crate has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=98 tasks_completed=98 checklist_files=requirements.md -->
 <!-- feature: 022-local-llm-crate has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=58 tasks_completed=58 checklist_files=requirements.md -->
@@ -79,8 +79,8 @@
 <!-- feature: 033-workspace-feature-gates has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=25 tasks_completed=25 checklist_files=requirements.md -->
 <!-- feature: 034-session-state-store has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=93 tasks_completed=93 checklist_files=requirements.md -->
 <!-- feature: 035-credential-management has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=73 tasks_completed=73 checklist_files=requirements.md -->
-<!-- feature: 036-artifact-service has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=81 tasks_completed=28 checklist_files=requirements.md -->
+<!-- feature: 036-artifact-service has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=81 tasks_completed=15 checklist_files=requirements.md -->
 <!-- feature: 037-plugin-system has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=47 tasks_completed=0 checklist_files=requirements.md -->
-<!-- feature: 038-mcp-integration has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=49 tasks_completed=16 checklist_files=requirements.md -->
+<!-- feature: 038-mcp-integration has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=49 tasks_completed=48 checklist_files=requirements.md -->
 <!-- feature: 039-multi-agent-patterns has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=66 tasks_completed=0 checklist_files=requirements.md -->
 <!-- feature: 040-agent-transfer-handoff has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=49 tasks_completed=0 checklist_files=requirements.md -->
