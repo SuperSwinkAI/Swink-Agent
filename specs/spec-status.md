@@ -38,7 +38,7 @@
 | 033-workspace-feature-gates     | ✓     | ✓  | ✓   | ✓ Complete |
 | 034-session-state-store         | ✓     | ✓  | ✓   | ✓ Complete |
 | 035-credential-management       | ✓     | ✓  | ✓   | ✓ Complete |
-| 036-artifact-service            | ✓     | ✓  | ✓   | ● 15/81 (18%) |
+| 036-artifact-service            | ✓     | ✓  | ✓   | ● 34/81 (41%) |
 | 037-plugin-system               | ✓     | ✓  | ✓   | ● 0/47 (0%) |
 | 038-mcp-integration             | ✓     | ✓  | ✓   | ● 48/49 (97%) |
 | 039-multi-agent-patterns        | ✓     | ✓  | ✓   | ● 0/66 (0%) |
@@ -79,7 +79,7 @@
 <!-- feature: 033-workspace-feature-gates has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=25 tasks_completed=25 checklist_files=requirements.md -->
 <!-- feature: 034-session-state-store has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=93 tasks_completed=93 checklist_files=requirements.md -->
 <!-- feature: 035-credential-management has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=73 tasks_completed=73 checklist_files=requirements.md -->
-<!-- feature: 036-artifact-service has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=81 tasks_completed=15 checklist_files=requirements.md -->
+<!-- feature: 036-artifact-service has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=81 tasks_completed=34 checklist_files=requirements.md -->
 <!-- feature: 037-plugin-system has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=47 tasks_completed=0 checklist_files=requirements.md -->
 <!-- feature: 038-mcp-integration has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=49 tasks_completed=48 checklist_files=requirements.md -->
 <!-- feature: 039-multi-agent-patterns has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=66 tasks_completed=0 checklist_files=requirements.md -->
