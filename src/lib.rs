@@ -136,6 +136,8 @@ pub use tool_filter::{ToolFilter, ToolPattern};
 pub use tool_middleware::ToolMiddleware;
 #[cfg(feature = "builtin-tools")]
 pub use tools::{BashTool, ReadFileTool, WriteFileTool, builtin_tools};
+#[cfg(feature = "artifact-tools")]
+pub use tools::{ListArtifactsTool, LoadArtifactTool, SaveArtifactTool, artifact_tools};
 pub use types::{
     AgentContext, AgentMessage, AgentResult, AssistantMessage, ContentBlock, Cost, CustomMessage,
     CustomMessageRegistry, ImageSource, LlmMessage, ModelCapabilities, ModelSpec, StopReason,
@@ -146,8 +148,8 @@ pub use util::now_timestamp;
 
 #[cfg(feature = "artifact-store")]
 pub use artifact::{
-    ArtifactData, ArtifactError, ArtifactMeta, ArtifactStore, ArtifactVersion,
-    validate_artifact_name,
+    ArtifactByteStream, ArtifactData, ArtifactError, ArtifactMeta, ArtifactStore,
+    ArtifactVersion, StreamingArtifactStore, validate_artifact_name,
 };
 pub use display::{CoreDisplayMessage, DisplayRole, IntoDisplayMessages};
 #[cfg(feature = "plugins")]

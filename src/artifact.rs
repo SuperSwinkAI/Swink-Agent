@@ -1,8 +1,11 @@
 //! Core artifact types and trait, gated behind the `artifact-store` feature.
 
 use std::collections::HashMap;
+use std::pin::Pin;
 
+use bytes::Bytes;
 use chrono::{DateTime, Utc};
+use futures::Stream;
 
 // ─── Error ──────────────────────────────────────────────────────────────────
 
@@ -107,6 +110,36 @@ pub trait ArtifactStore: Send + Sync {
         session_id: &str,
         name: &str,
     ) -> impl std::future::Future<Output = Result<(), ArtifactError>> + Send;
+}
+
+/// A boxed byte stream used by [`StreamingArtifactStore`].
+pub type ArtifactByteStream = Pin<Box<dyn Stream<Item = Result<Bytes, ArtifactError>> + Send>>;
+
+/// Extension trait for artifact stores that support streaming I/O.
+///
+/// This allows saving and loading artifact content as byte streams, which is
+/// useful for large artifacts that should not be buffered entirely in memory.
+pub trait StreamingArtifactStore: ArtifactStore {
+    /// Save content from a byte stream as a new version.
+    fn save_stream(
+        &self,
+        session_id: &str,
+        name: &str,
+        content_type: String,
+        metadata: HashMap<String, String>,
+        stream: ArtifactByteStream,
+    ) -> impl std::future::Future<Output = Result<ArtifactVersion, ArtifactError>> + Send;
+
+    /// Load an artifact version as a byte stream.
+    ///
+    /// If `version` is `None`, loads the latest version.
+    fn load_stream(
+        &self,
+        session_id: &str,
+        name: &str,
+        version: Option<u32>,
+    ) -> impl std::future::Future<Output = Result<Option<ArtifactByteStream>, ArtifactError>>
+           + Send;
 }
 
 /// Validate an artifact name. Returns `Ok(())` if valid.

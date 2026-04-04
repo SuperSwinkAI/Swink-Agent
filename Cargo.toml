@@ -31,6 +31,7 @@ insta = { version = "1", features = ["json"] }
 syn = { version = "2", features = ["full", "extra-traits"] }
 quote = "1"
 proc-macro2 = "1"
+bytes = "1"
 aws-smithy-eventstream = "0.60"
 aws-smithy-types = "1"
 
@@ -63,7 +64,7 @@ default = ["builtin-tools", "transfer"]
 builtin-tools = []
 transfer = []
 testkit = []
-artifact-store = []
+artifact-store = ["dep:bytes"]
 artifact-tools = ["artifact-store"]
 hot-reload = ["dep:notify"]
 tiktoken = ["dep:tiktoken-rs"]
@@ -84,6 +85,7 @@ regex = "1"
 uuid.workspace = true
 rand.workspace = true
 tracing.workspace = true
+bytes = { workspace = true, optional = true }
 toml.workspace = true
 chrono.workspace = true
 tiktoken-rs = { version = "0.6", optional = true }

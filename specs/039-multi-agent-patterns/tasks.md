@@ -56,7 +56,7 @@
 
 ### Tests for US4
 
-- [x] T018 [US4] Write tests for PipelineRegistry: register returns pipeline by ID, get returns None for unknown ID, list returns all (id, name) pairs, remove deletes entry, re-register with same ID replaces silently, len/is_empty in `patterns/src/pipeline/registry.rs`
+- [ ] T018 [US4] Write tests for PipelineRegistry: register returns pipeline by ID, get returns None for unknown ID, list returns all (id, name) pairs, remove deletes entry, re-register with same ID replaces silently, len/is_empty in `patterns/src/pipeline/registry.rs`
 
 ### Implementation for US4
 

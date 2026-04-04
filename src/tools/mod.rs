@@ -28,3 +28,32 @@ pub fn builtin_tools() -> Vec<std::sync::Arc<dyn crate::tool::AgentTool>> {
         std::sync::Arc::new(WriteFileTool::new()),
     ]
 }
+
+#[cfg(feature = "artifact-tools")]
+mod save_artifact;
+#[cfg(feature = "artifact-tools")]
+mod load_artifact;
+#[cfg(feature = "artifact-tools")]
+mod list_artifacts;
+
+#[cfg(feature = "artifact-tools")]
+pub use save_artifact::SaveArtifactTool;
+#[cfg(feature = "artifact-tools")]
+pub use load_artifact::LoadArtifactTool;
+#[cfg(feature = "artifact-tools")]
+pub use list_artifacts::ListArtifactsTool;
+
+/// Create all built-in artifact tools (save, load, list) backed by the given store.
+#[cfg(feature = "artifact-tools")]
+pub fn artifact_tools<S: crate::artifact::ArtifactStore + 'static>(
+    store: std::sync::Arc<S>,
+) -> Vec<std::sync::Arc<dyn crate::tool::AgentTool>> {
+    vec![
+        std::sync::Arc::new(SaveArtifactTool::new(store.clone())),
+        std::sync::Arc::new(LoadArtifactTool::new(store.clone())),
+        std::sync::Arc::new(ListArtifactsTool::new(store)),
+    ]
+}
+
+#[cfg(test)]
+mod tests;
