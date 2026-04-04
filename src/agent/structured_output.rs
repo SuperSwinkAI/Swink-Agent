@@ -29,12 +29,16 @@ impl Agent {
     }
 
     /// Run a structured output extraction loop, blocking the current thread.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AgentError::SyncInAsyncContext`] if called from within a Tokio runtime.
     pub fn structured_output_sync(
         &mut self,
         prompt: String,
         schema: Value,
     ) -> Result<Value, AgentError> {
-        let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
+        let rt = super::invoke::new_blocking_runtime()?;
         rt.block_on(self.structured_output(prompt, schema))
     }
 
@@ -52,12 +56,16 @@ impl Agent {
     }
 
     /// Run structured output extraction, deserialize into a typed result, blocking.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AgentError::SyncInAsyncContext`] if called from within a Tokio runtime.
     pub fn structured_output_typed_sync<T: serde::de::DeserializeOwned>(
         &mut self,
         prompt: String,
         schema: Value,
     ) -> Result<T, AgentError> {
-        let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
+        let rt = super::invoke::new_blocking_runtime()?;
         rt.block_on(self.structured_output_typed(prompt, schema))
     }
 

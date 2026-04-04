@@ -58,10 +58,11 @@ impl Agent {
     ///
     /// # Errors
     ///
-    /// Returns [`AgentError::AlreadyRunning`] if the agent is already running.
+    /// Returns [`AgentError::AlreadyRunning`] if the agent is already running,
+    /// or [`AgentError::SyncInAsyncContext`] if called from within a Tokio runtime.
     pub fn prompt_sync(&mut self, input: Vec<AgentMessage>) -> Result<AgentResult, AgentError> {
         self.check_not_running()?;
-        let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
+        let rt = new_blocking_runtime()?;
         rt.block_on(async {
             let stream = self.start_loop(input, false)?;
             self.collect_stream(stream).await
@@ -145,11 +146,11 @@ impl Agent {
     /// # Errors
     ///
     /// Returns [`AgentError::AlreadyRunning`], [`AgentError::NoMessages`],
-    /// or [`AgentError::InvalidContinue`].
+    /// [`AgentError::InvalidContinue`], or [`AgentError::SyncInAsyncContext`].
     pub fn continue_sync(&mut self) -> Result<AgentResult, AgentError> {
         self.check_not_running()?;
         self.validate_continue()?;
-        let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
+        let rt = new_blocking_runtime()?;
         rt.block_on(async {
             let stream = self.start_loop(Vec::new(), true)?;
             self.collect_stream(stream).await
@@ -283,4 +284,14 @@ impl Agent {
             dynamic_system_prompt: self.dynamic_system_prompt.clone(),
         }
     }
+}
+
+/// Create a new Tokio runtime for blocking sync APIs, returning
+/// [`AgentError::SyncInAsyncContext`] if a runtime is already active on
+/// the current thread.
+pub(super) fn new_blocking_runtime() -> Result<tokio::runtime::Runtime, AgentError> {
+    if tokio::runtime::Handle::try_current().is_ok() {
+        return Err(AgentError::SyncInAsyncContext);
+    }
+    Ok(tokio::runtime::Runtime::new().expect("failed to create tokio runtime"))
 }
