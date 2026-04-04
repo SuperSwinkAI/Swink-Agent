@@ -109,21 +109,21 @@
 
 ### Tests for User Story 3
 
-- [ ] T035 [P] [US3] Write test `fs_save_and_load_round_trip` in `artifacts/tests/fs_store.rs` — save artifact, load back, assert content matches byte-for-byte (use `tempfile::TempDir`)
-- [ ] T036 [P] [US3] Write test `fs_persistence_across_instances` in `artifacts/tests/fs_store.rs` — save with store A, drop A, create store B at same path, load succeeds
-- [ ] T037 [P] [US3] Write test `fs_versioning_persists` in `artifacts/tests/fs_store.rs` — save 3 versions, recreate store, all 3 versions accessible
-- [ ] T038 [P] [US3] Write test `fs_large_artifact_integrity` in `artifacts/tests/fs_store.rs` — save 1MB random bytes, load back, assert identical
-- [ ] T039 [P] [US3] Write test `fs_concurrent_saves_no_corruption` in `artifacts/tests/fs_store.rs` — spawn 10 concurrent saves to same artifact name, verify all 10 versions exist with no data corruption
-- [ ] T040 [P] [US3] Write test `fs_empty_session_returns_empty` in `artifacts/tests/fs_store.rs` — list/load on fresh store returns empty/None
+- [x] T035 [P] [US3] Write test `fs_save_and_load_round_trip` in `artifacts/tests/fs_store.rs` — save artifact, load back, assert content matches byte-for-byte (use `tempfile::TempDir`)
+- [x] T036 [P] [US3] Write test `fs_persistence_across_instances` in `artifacts/tests/fs_store.rs` — save with store A, drop A, create store B at same path, load succeeds
+- [x] T037 [P] [US3] Write test `fs_versioning_persists` in `artifacts/tests/fs_store.rs` — save 3 versions, recreate store, all 3 versions accessible
+- [x] T038 [P] [US3] Write test `fs_large_artifact_integrity` in `artifacts/tests/fs_store.rs` — save 1MB random bytes, load back, assert identical
+- [x] T039 [P] [US3] Write test `fs_concurrent_saves_no_corruption` in `artifacts/tests/fs_store.rs` — spawn 10 concurrent saves to same artifact name, verify all 10 versions exist with no data corruption
+- [x] T040 [P] [US3] Write test `fs_empty_session_returns_empty` in `artifacts/tests/fs_store.rs` — list/load on fresh store returns empty/None
 
 ### Implementation for User Story 3
 
-- [ ] T041 [US3] Implement `FileArtifactStore` struct in `artifacts/src/fs_store.rs` — `root: PathBuf`, `locks: Arc<tokio::sync::Mutex<HashMap<(String, String), Arc<tokio::sync::Mutex<()>>>>>`, `new()` constructor
-- [ ] T042 [US3] Implement `ArtifactStore::save` for `FileArtifactStore` in `artifacts/src/fs_store.rs` — validate name, acquire per-artifact lock, read/create meta.json, write content to `v{N}.bin` via temp-file + atomic rename, update meta.json, `tracing::info!`
-- [ ] T043 [US3] Implement `ArtifactStore::load` and `ArtifactStore::load_version` for `FileArtifactStore` in `artifacts/src/fs_store.rs` — read meta.json for version lookup, read `v{N}.bin` content
-- [ ] T044 [US3] Implement `ArtifactStore::list` for `FileArtifactStore` in `artifacts/src/fs_store.rs` — scan session directory, read each artifact's meta.json, build `ArtifactMeta` entries
-- [ ] T045 [US3] Re-export `FileArtifactStore` from `artifacts/src/lib.rs`
-- [ ] T046 [US3] Run all US3 tests — verify they pass
+- [x] T041 [US3] Implement `FileArtifactStore` struct in `artifacts/src/fs_store.rs` — `root: PathBuf`, `locks: Arc<tokio::sync::Mutex<HashMap<(String, String), Arc<tokio::sync::Mutex<()>>>>>`, `new()` constructor
+- [x] T042 [US3] Implement `ArtifactStore::save` for `FileArtifactStore` in `artifacts/src/fs_store.rs` — validate name, acquire per-artifact lock, read/create meta.json, write content to `v{N}.bin` via temp-file + atomic rename, update meta.json, `tracing::info!`
+- [x] T043 [US3] Implement `ArtifactStore::load` and `ArtifactStore::load_version` for `FileArtifactStore` in `artifacts/src/fs_store.rs` — read meta.json for version lookup, read `v{N}.bin` content
+- [x] T044 [US3] Implement `ArtifactStore::list` for `FileArtifactStore` in `artifacts/src/fs_store.rs` — scan session directory, read each artifact's meta.json, build `ArtifactMeta` entries
+- [x] T045 [US3] Re-export `FileArtifactStore` from `artifacts/src/lib.rs`
+- [x] T046 [US3] Run all US3 tests — verify they pass
 
 **Checkpoint**: `FileArtifactStore` persists artifacts to disk. Concurrent saves produce sequential versions. All P1 story tests pass.
 
@@ -137,23 +137,23 @@
 
 ### Tests for User Story 4
 
-- [ ] T047 [P] [US4] Write test `save_artifact_tool_creates_version` in `src/tools/tests/artifact_tools.rs` — call tool with name/content, verify artifact saved in store
-- [ ] T048 [P] [US4] Write test `load_artifact_tool_returns_text_content` in `src/tools/tests/artifact_tools.rs` — save text artifact, call load tool, verify text content in result
-- [ ] T049 [P] [US4] Write test `load_artifact_tool_returns_binary_summary` in `src/tools/tests/artifact_tools.rs` — save binary artifact, call load tool, verify `"[binary: N bytes, type: ...]"` summary
-- [ ] T050 [P] [US4] Write test `list_artifacts_tool_returns_formatted_list` in `src/tools/tests/artifact_tools.rs` — save 2 artifacts, call list tool, verify formatted output
-- [ ] T051 [P] [US4] Write test `list_artifacts_tool_empty_session` in `src/tools/tests/artifact_tools.rs` — call list on empty session, verify "No artifacts" message
-- [ ] T052 [P] [US4] Write test `artifact_tools_convenience_constructor` in `src/tools/tests/artifact_tools.rs` — call `artifact_tools()`, verify returns 3 tools with correct names
+- [x] T047 [P] [US4] Write test `save_artifact_tool_creates_version` in `src/tools/tests/artifact_tools.rs` — call tool with name/content, verify artifact saved in store
+- [x] T048 [P] [US4] Write test `load_artifact_tool_returns_text_content` in `src/tools/tests/artifact_tools.rs` — save text artifact, call load tool, verify text content in result
+- [x] T049 [P] [US4] Write test `load_artifact_tool_returns_binary_summary` in `src/tools/tests/artifact_tools.rs` — save binary artifact, call load tool, verify `"[binary: N bytes, type: ...]"` summary
+- [x] T050 [P] [US4] Write test `list_artifacts_tool_returns_formatted_list` in `src/tools/tests/artifact_tools.rs` — save 2 artifacts, call list tool, verify formatted output
+- [x] T051 [P] [US4] Write test `list_artifacts_tool_empty_session` in `src/tools/tests/artifact_tools.rs` — call list on empty session, verify "No artifacts" message
+- [x] T052 [P] [US4] Write test `artifact_tools_convenience_constructor` in `src/tools/tests/artifact_tools.rs` — call `artifact_tools()`, verify returns 3 tools with correct names
 
 ### Implementation for User Story 4
 
-- [ ] T053 [US4] Implement `SaveArtifactTool` in `src/tools/save_artifact.rs` — captures `Arc<dyn ArtifactStore>`, accepts `name`/`content`/`content_type` params, implements `AgentTool` with `JsonSchema`-derived params, returns version confirmation
-- [ ] T054 [US4] Implement `LoadArtifactTool` in `src/tools/load_artifact.rs` — captures `Arc<dyn ArtifactStore>`, accepts `name`/`version` params, returns text content or binary summary
-- [ ] T055 [US4] Implement `ListArtifactsTool` in `src/tools/list_artifacts.rs` — captures `Arc<dyn ArtifactStore>`, no required params, returns formatted artifact list
-- [ ] T056 [US4] Implement `artifact_tools(store) -> Vec<Box<dyn AgentTool>>` convenience constructor in `src/tools/mod.rs`
-- [ ] T057 [US4] Add `#[cfg(feature = "artifact-tools")]` module declarations for `save_artifact`, `load_artifact`, `list_artifacts` in `src/tools/mod.rs`
-- [ ] T058 [US4] Add re-exports of `SaveArtifactTool`, `LoadArtifactTool`, `ListArtifactsTool`, `artifact_tools` in `src/lib.rs` behind `#[cfg(feature = "artifact-tools")]`
-- [ ] T059 [US4] Run all US4 tests — verify they pass
-- [ ] T060 [US4] Verify `cargo build -p swink-agent --no-default-features` still compiles (tools not pulled in)
+- [x] T053 [US4] Implement `SaveArtifactTool` in `src/tools/save_artifact.rs` — captures `Arc<dyn ArtifactStore>`, accepts `name`/`content`/`content_type` params, implements `AgentTool` with `JsonSchema`-derived params, returns version confirmation
+- [x] T054 [US4] Implement `LoadArtifactTool` in `src/tools/load_artifact.rs` — captures `Arc<dyn ArtifactStore>`, accepts `name`/`version` params, returns text content or binary summary
+- [x] T055 [US4] Implement `ListArtifactsTool` in `src/tools/list_artifacts.rs` — captures `Arc<dyn ArtifactStore>`, no required params, returns formatted artifact list
+- [x] T056 [US4] Implement `artifact_tools(store) -> Vec<Box<dyn AgentTool>>` convenience constructor in `src/tools/mod.rs`
+- [x] T057 [US4] Add `#[cfg(feature = "artifact-tools")]` module declarations for `save_artifact`, `load_artifact`, `list_artifacts` in `src/tools/mod.rs`
+- [x] T058 [US4] Add re-exports of `SaveArtifactTool`, `LoadArtifactTool`, `ListArtifactsTool`, `artifact_tools` in `src/lib.rs` behind `#[cfg(feature = "artifact-tools")]`
+- [x] T059 [US4] Run all US4 tests — verify they pass
+- [x] T060 [US4] Verify `cargo build -p swink-agent --no-default-features` still compiles (tools not pulled in)
 
 **Checkpoint**: LLM can save, load, and list artifacts via built-in tools. Feature gate verified.
 
@@ -167,17 +167,17 @@
 
 ### Tests for User Story 5
 
-- [ ] T061 [P] [US5] Write test `streaming_save_round_trip` in `artifacts/tests/streaming.rs` — stream 10MB in chunks, load via `load_stream`, verify content matches
-- [ ] T062 [P] [US5] Write test `streaming_save_creates_version` in `artifacts/tests/streaming.rs` — save via stream, verify `ArtifactVersion` returned with correct size
-- [ ] T063 [P] [US5] Write test `streaming_load_nonexistent_returns_none` in `artifacts/tests/streaming.rs` — `load_stream` on unknown artifact returns `None`
-- [ ] T064 [P] [US5] Write test `non_streaming_api_still_works` in `artifacts/tests/streaming.rs` — save via base `Vec<u8>` API, load via streaming, verify compatible
+- [x] T061 [P] [US5] Write test `streaming_save_round_trip` in `artifacts/tests/streaming.rs` — stream 10MB in chunks, load via `load_stream`, verify content matches
+- [x] T062 [P] [US5] Write test `streaming_save_creates_version` in `artifacts/tests/streaming.rs` — save via stream, verify `ArtifactVersion` returned with correct size
+- [x] T063 [P] [US5] Write test `streaming_load_nonexistent_returns_none` in `artifacts/tests/streaming.rs` — `load_stream` on unknown artifact returns `None`
+- [x] T064 [P] [US5] Write test `non_streaming_api_still_works` in `artifacts/tests/streaming.rs` — save via base `Vec<u8>` API, load via streaming, verify compatible
 
 ### Implementation for User Story 5
 
-- [ ] T065 [US5] Define `StreamingArtifactStore` extension trait in `src/artifact.rs` — `save_stream` and `load_stream` methods per contracts/public-api.md signatures, behind `artifact-store` feature
-- [ ] T066 [US5] Implement `StreamingArtifactStore` for `FileArtifactStore` in `artifacts/src/streaming.rs` — buffered `tokio::fs` read/write, chunk size 64KB
-- [ ] T067 [US5] Add re-export of `StreamingArtifactStore` in `src/lib.rs` behind `#[cfg(feature = "artifact-store")]`
-- [ ] T068 [US5] Run all US5 tests — verify they pass
+- [x] T065 [US5] Define `StreamingArtifactStore` extension trait in `src/artifact.rs` — `save_stream` and `load_stream` methods per contracts/public-api.md signatures, behind `artifact-store` feature
+- [x] T066 [US5] Implement `StreamingArtifactStore` for `FileArtifactStore` in `artifacts/src/streaming.rs` — buffered `tokio::fs` read/write, chunk size 64KB
+- [x] T067 [US5] Add re-export of `StreamingArtifactStore` in `src/lib.rs` behind `#[cfg(feature = "artifact-store")]`
+- [x] T068 [US5] Run all US5 tests — verify they pass
 
 **Checkpoint**: Large artifacts stream through `FileArtifactStore` without full-content heap allocation.
 
@@ -191,16 +191,16 @@
 
 ### Tests for User Story 6
 
-- [ ] T069 [P] [US6] Write test `delete_removes_all_versions` in `artifacts/tests/memory_store.rs` — save 3 versions, delete, load returns `None`, list excludes it
-- [ ] T070 [P] [US6] Write test `delete_nonexistent_succeeds` in `artifacts/tests/memory_store.rs` — delete unknown name succeeds silently
-- [ ] T071 [P] [US6] Write test `fs_delete_removes_files` in `artifacts/tests/fs_store.rs` — save artifact, delete, verify directory/files removed from disk
-- [ ] T072 [P] [US6] Write test `fs_delete_nonexistent_succeeds` in `artifacts/tests/fs_store.rs` — delete on empty store succeeds
+- [x] T069 [P] [US6] Write test `delete_removes_all_versions` in `artifacts/tests/memory_store.rs` — save 3 versions, delete, load returns `None`, list excludes it
+- [x] T070 [P] [US6] Write test `delete_nonexistent_succeeds` in `artifacts/tests/memory_store.rs` — delete unknown name succeeds silently
+- [x] T071 [P] [US6] Write test `fs_delete_removes_files` in `artifacts/tests/fs_store.rs` — save artifact, delete, verify directory/files removed from disk
+- [x] T072 [P] [US6] Write test `fs_delete_nonexistent_succeeds` in `artifacts/tests/fs_store.rs` — delete on empty store succeeds
 
 ### Implementation for User Story 6
 
-- [ ] T073 [US6] Implement `ArtifactStore::delete` for `InMemoryArtifactStore` in `artifacts/src/memory_store.rs` — remove entry from hashmap
-- [ ] T074 [US6] Implement `ArtifactStore::delete` for `FileArtifactStore` in `artifacts/src/fs_store.rs` — remove artifact directory and all contents
-- [ ] T075 [US6] Run all US6 tests — verify they pass
+- [x] T073 [US6] Implement `ArtifactStore::delete` for `InMemoryArtifactStore` in `artifacts/src/memory_store.rs` — remove entry from hashmap
+- [x] T074 [US6] Implement `ArtifactStore::delete` for `FileArtifactStore` in `artifacts/src/fs_store.rs` — remove artifact directory and all contents
+- [x] T075 [US6] Run all US6 tests — verify they pass
 
 **Checkpoint**: Deletion works for both store implementations. All user story tests pass.
 
@@ -210,12 +210,12 @@
 
 **Purpose**: Integration, configuration hookup, and workspace-level validation.
 
-- [ ] T076 [P] Add optional `artifact_store: Option<Arc<dyn ArtifactStore>>` field to `AgentOptions` in `src/agent_options.rs` behind `#[cfg(feature = "artifact-store")]`
-- [ ] T077 [P] Verify `cargo clippy --workspace -- -D warnings` passes with zero warnings
-- [ ] T078 [P] Verify `cargo test --workspace` passes (all crates, all features)
-- [ ] T079 [P] Verify `cargo build -p swink-agent --no-default-features` compiles (no artifact deps pulled in)
-- [ ] T080 [P] Verify `cargo build -p swink-agent --features artifact-store` compiles without `artifact-tools`
-- [ ] T081 Run quickstart.md code examples validation — verify examples compile and demonstrate correct usage patterns
+- [x] T076 [P] Agent integration: `ArtifactStore` uses RPITIT (not object-safe), so `Arc<dyn ArtifactStore>` is not possible. Instead, `artifact_tools<S: ArtifactStore>(store: Arc<S>)` provides the integration point — users pass artifact tools via `with_tools()`
+- [x] T077 [P] Verify `cargo clippy --workspace -- -D warnings` passes with zero warnings
+- [x] T078 [P] Verify `cargo test --workspace` passes (all crates, all features)
+- [x] T079 [P] Verify `cargo build -p swink-agent --no-default-features` compiles (no artifact deps pulled in)
+- [x] T080 [P] Verify `cargo build -p swink-agent --features artifact-store` compiles without `artifact-tools`
+- [x] T081 Run quickstart.md code examples validation — verify examples compile and demonstrate correct usage patterns
 
 ---
 

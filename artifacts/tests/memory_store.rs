@@ -232,3 +232,73 @@ async fn load_includes_custom_metadata() {
     assert_eq!(loaded.metadata.get("source").unwrap(), "web-scrape");
     assert_eq!(loaded.metadata.len(), 2);
 }
+
+// T069: delete_removes_all_versions
+#[tokio::test]
+async fn delete_removes_all_versions() {
+    let store = InMemoryArtifactStore::new();
+
+    // Save 3 versions of "report.md"
+    store
+        .save("s1", "report.md", text_data("v1"))
+        .await
+        .unwrap();
+    store
+        .save("s1", "report.md", text_data("v2"))
+        .await
+        .unwrap();
+    store
+        .save("s1", "report.md", text_data("v3"))
+        .await
+        .unwrap();
+
+    // Save another artifact in the same session
+    store
+        .save("s1", "other.txt", text_data("keep me"))
+        .await
+        .unwrap();
+
+    // Delete report.md
+    store.delete("s1", "report.md").await.unwrap();
+
+    // load returns None
+    let result = store.load("s1", "report.md").await.unwrap();
+    assert!(result.is_none());
+
+    // All versions are gone
+    for v in 1..=3u32 {
+        let result = store.load_version("s1", "report.md", v).await.unwrap();
+        assert!(result.is_none(), "version {v} should be deleted");
+    }
+
+    // list excludes the deleted artifact
+    let metas = store.list("s1").await.unwrap();
+    assert_eq!(metas.len(), 1);
+    assert_eq!(metas[0].name, "other.txt");
+
+    // Other artifact is unaffected
+    let (data, _) = store.load("s1", "other.txt").await.unwrap().unwrap();
+    assert_eq!(data.content, b"keep me");
+}
+
+// T070: delete_nonexistent_succeeds
+#[tokio::test]
+async fn delete_nonexistent_succeeds() {
+    let store = InMemoryArtifactStore::new();
+
+    // Delete from a session that doesn't exist — should succeed silently
+    let result = store.delete("no-session", "missing.txt").await;
+    assert!(result.is_ok());
+
+    // Delete a name that doesn't exist within an existing session
+    store
+        .save("s1", "exists.txt", text_data("hello"))
+        .await
+        .unwrap();
+    let result = store.delete("s1", "nonexistent.txt").await;
+    assert!(result.is_ok());
+
+    // The existing artifact is still there
+    let (data, _) = store.load("s1", "exists.txt").await.unwrap().unwrap();
+    assert_eq!(data.content, b"hello");
+}
