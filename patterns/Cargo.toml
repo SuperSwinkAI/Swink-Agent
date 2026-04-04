@@ -1,0 +1,22 @@
+[package]
+name = "swink-agent-patterns"
+version = "0.4.2"
+edition = "2024"
+rust-version = "1.88"
+description = "Multi-agent pipeline patterns for swink-agent"
+
+[features]
+default = ["pipelines"]
+pipelines = []
+testkit = ["swink-agent/testkit"]
+
+[dependencies]
+swink-agent = { path = ".." }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+regex = "1"
+uuid = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }

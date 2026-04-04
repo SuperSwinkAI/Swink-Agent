@@ -7038,6 +7038,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "swink-agent-patterns"
+version = "0.4.2"
+dependencies = [
+ "regex",
+ "serde",
+ "serde_json",
+ "swink-agent",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "uuid 1.23.0",
+]
+
+[[package]]
 name = "swink-agent-policies"
 version = "0.4.2"
 dependencies = [
