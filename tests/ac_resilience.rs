@@ -270,6 +270,65 @@ fn sync_api_blocks_until_complete() {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
+// Regression: sync APIs return SyncInAsyncContext instead of panicking
+// when called from inside a Tokio runtime.
+// ═════════════════════════════════════════════════════════════════════════════
+
+#[tokio::test]
+async fn prompt_sync_returns_error_inside_tokio() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("never")]));
+    let mut agent = Agent::new(
+        AgentOptions::new("test", default_model(), stream_fn, default_convert).with_retry_strategy(
+            Box::new(
+                DefaultRetryStrategy::default()
+                    .with_jitter(false)
+                    .with_base_delay(Duration::from_millis(1)),
+            ),
+        ),
+    );
+
+    let err = agent.prompt_sync(vec![user_msg("hi")]).unwrap_err();
+    assert!(
+        matches!(err, swink_agent::AgentError::SyncInAsyncContext),
+        "expected SyncInAsyncContext, got: {err:?}"
+    );
+}
+
+#[tokio::test]
+async fn continue_sync_returns_error_inside_tokio() {
+    // Use two turns so continue_sync has a valid state to resume from:
+    // first turn returns a tool call, second turn provides the tool result.
+    let stream_fn = Arc::new(MockStreamFn::new(vec![
+        tool_call_events("tool-1", "mock_tool", "{}"),
+        text_only_events("done"),
+    ]));
+    let tool = Arc::new(MockTool::new("mock_tool"));
+    let mut agent = Agent::new(
+        AgentOptions::new("test", default_model(), stream_fn, default_convert)
+            .with_retry_strategy(Box::new(
+                DefaultRetryStrategy::default()
+                    .with_jitter(false)
+                    .with_base_delay(Duration::from_millis(1)),
+            ))
+            .with_tools(vec![tool]),
+    );
+
+    // Run the full loop (tool call + result + second turn)
+    let result = agent.prompt_async(vec![user_msg("seed")]).await.unwrap();
+    assert!(!result.messages.is_empty());
+
+    // Enqueue a follow-up so continue validation passes
+    agent.follow_up(user_msg("follow up"));
+
+    // Now try the sync continue — should detect the runtime
+    let err = agent.continue_sync().unwrap_err();
+    assert!(
+        matches!(err, swink_agent::AgentError::SyncInAsyncContext),
+        "expected SyncInAsyncContext, got: {err:?}"
+    );
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
 // T030 — followup_decision_controls_continuation (AC 21)
 //
 // Verify that when the agent produces a text-only response (no tool calls),

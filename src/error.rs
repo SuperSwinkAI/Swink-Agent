@@ -95,6 +95,15 @@ pub enum AgentError {
     /// auth or network errors.
     #[error("content filtered by provider safety policy")]
     ContentFiltered,
+
+    /// A synchronous API (`prompt_sync`, `continue_sync`, etc.) was called
+    /// from within an active Tokio runtime.
+    ///
+    /// These methods create their own Tokio runtime internally.  Calling them
+    /// from async code (or any thread that already has a Tokio runtime) would
+    /// panic.  Use the `_async` or `_stream` variants instead.
+    #[error("sync API called inside an active Tokio runtime — use the async variant instead")]
+    SyncInAsyncContext,
 }
 
 impl AgentError {
@@ -182,5 +191,12 @@ mod tests {
             format!("{err}"),
             "content filtered by provider safety policy"
         );
+    }
+
+    #[test]
+    fn sync_in_async_context_not_retryable() {
+        let err = AgentError::SyncInAsyncContext;
+        assert!(!err.is_retryable());
+        assert!(format!("{err}").contains("sync API"));
     }
 }
