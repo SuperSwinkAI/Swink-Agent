@@ -7,6 +7,7 @@ use swink_agent::types::ContentBlock;
 
 /// Convert an `rmcp` `Content` item to a `swink-agent` `ContentBlock`.
 pub fn content_to_block(content: &Content) -> ContentBlock {
+    #[allow(unreachable_patterns)]
     match &content.raw {
         RawContent::Text(text) => ContentBlock::Text {
             text: text.text.clone(),
@@ -24,6 +25,15 @@ pub fn content_to_block(content: &Content) -> ContentBlock {
             ResourceContents::BlobResourceContents { uri, .. } => ContentBlock::Text {
                 text: format!("[MCP Resource: {uri}] <binary content>"),
             },
+        },
+        RawContent::Audio(audio) => ContentBlock::Text {
+            text: format!("[MCP Audio: {}]", audio.mime_type),
+        },
+        RawContent::ResourceLink(link) => ContentBlock::Text {
+            text: format!("[MCP ResourceLink: {}]", link.uri),
+        },
+        _ => ContentBlock::Text {
+            text: "[MCP: unsupported content type]".to_string(),
         },
     }
 }
@@ -53,7 +63,7 @@ pub fn call_result_to_agent_result(result: &CallToolResult) -> AgentToolResult {
 /// Returns `(name, description, input_schema)`.
 pub fn tool_definition(tool: &rmcp::model::Tool) -> (String, String, Value) {
     let name = tool.name.to_string();
-    let description = tool.description.to_string();
+    let description = tool.description.as_deref().unwrap_or("").to_string();
     let input_schema = tool.schema_as_json_value();
     (name, description, input_schema)
 }

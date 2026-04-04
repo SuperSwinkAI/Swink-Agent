@@ -5,14 +5,14 @@
 //! awaits the service lifecycle and emits a disconnect event when the
 //! transport closes unexpectedly.
 
-use std::borrow::Cow;
 use std::sync::{Arc, Mutex, PoisonError};
 
-use reqwest::header::{HeaderValue, AUTHORIZATION};
-use rmcp::model::{CallToolRequestParam, CallToolResult, ClientInfo, Implementation};
+use rmcp::model::{CallToolRequestParams, CallToolResult, ClientInfo, Implementation};
 use rmcp::service::{Peer, QuitReason, RoleClient, RunningService, ServiceExt};
 use rmcp::transport::TokioChildProcess;
-use rmcp::transport::sse::SseTransport;
+use rmcp::transport::streamable_http_client::{
+    StreamableHttpClientTransport, StreamableHttpClientTransportConfig,
+};
 use serde_json::Value;
 use swink_agent::AgentEvent;
 use tokio::sync::mpsc::UnboundedSender;
@@ -181,93 +181,44 @@ impl McpConnection {
             cmd.env(key, value);
         }
 
-        let transport = TokioChildProcess::new(&mut cmd).map_err(|e| McpError::SpawnFailed {
+        let transport = TokioChildProcess::new(cmd).map_err(|e| McpError::SpawnFailed {
             server: server_name.to_string(),
             source: e,
         })?;
 
-        let client_info = ClientInfo {
-            client_info: Implementation {
-                name: "swink-agent-mcp".to_string(),
-                version: env!("CARGO_PKG_VERSION").to_string(),
-            },
-            ..ClientInfo::default()
-        };
+        let client_info = client_info();
 
-        let service = client_info
-            .serve(transport)
-            .await
-            .map_err(|e: std::io::Error| McpError::ConnectionFailed {
-                server: server_name.to_string(),
-                reason: format!("connection handshake failed: {e}"),
-            })?;
+        let service =
+            client_info
+                .serve(transport)
+                .await
+                .map_err(|e| McpError::ConnectionFailed {
+                    server: server_name.to_string(),
+                    reason: format!("connection handshake failed: {e}"),
+                })?;
 
         Ok(service)
     }
 
-    /// Connect to a remote MCP server via SSE (HTTP) transport.
+    /// Connect to a remote MCP server via HTTP streaming transport.
     async fn connect_sse(
         url: &str,
         bearer_token: Option<&str>,
         server_name: &str,
     ) -> Result<RunningService<RoleClient, ClientInfo>, McpError> {
-        let transport = if let Some(token) = bearer_token {
-            let mut headers = reqwest::header::HeaderMap::new();
-            headers.insert(
-                AUTHORIZATION,
-                HeaderValue::from_str(&format!("Bearer {token}")).map_err(|e| {
-                    McpError::ConnectionFailed {
-                        server: server_name.to_string(),
-                        reason: format!("invalid bearer token: {e}"),
-                    }
-                })?,
-            );
-            let client = reqwest::Client::builder()
-                .default_headers(headers)
-                .build()
-                .map_err(|e| McpError::ConnectionFailed {
-                    server: server_name.to_string(),
-                    reason: format!("failed to build HTTP client: {e}"),
-                })?;
-            let mut transport = SseTransport::start_with_client(url, client)
-                .await
-                .map_err(|e| McpError::ConnectionFailed {
-                    server: server_name.to_string(),
-                    reason: format!("SSE connection failed: {e}"),
-                })?;
-            transport.retry_config = rmcp::transport::sse::SseTransportRetryCofnig {
-                max_times: Some(5),
-                min_duration: std::time::Duration::from_secs(1),
-            };
-            transport
-        } else {
-            let mut transport = SseTransport::start(url)
-                .await
-                .map_err(|e| McpError::ConnectionFailed {
-                    server: server_name.to_string(),
-                    reason: format!("SSE connection failed: {e}"),
-                })?;
-            transport.retry_config = rmcp::transport::sse::SseTransportRetryCofnig {
-                max_times: Some(5),
-                min_duration: std::time::Duration::from_secs(1),
-            };
-            transport
-        };
+        let mut config = StreamableHttpClientTransportConfig::with_uri(url);
+        if let Some(token) = bearer_token {
+            config = config.auth_header(format!("Bearer {token}"));
+        }
 
-        let client_info = ClientInfo {
-            client_info: Implementation {
-                name: "swink-agent-mcp".to_string(),
-                version: env!("CARGO_PKG_VERSION").to_string(),
-            },
-            ..ClientInfo::default()
-        };
+        let transport = StreamableHttpClientTransport::from_config(config);
 
-        client_info
+        client_info()
             .serve(transport)
             .await
             .map_err(|e| McpError::ConnectionFailed {
                 server: server_name.to_string(),
-                reason: format!("SSE handshake failed: {e}"),
+                reason: format!("HTTP streaming handshake failed: {e}"),
             })
     }
 
@@ -287,14 +238,11 @@ impl McpConnection {
             });
         }
 
-        let peer = self
-            .peer
-            .as_ref()
-            .ok_or_else(|| McpError::ToolCallFailed {
-                server: self.config.name.clone(),
-                tool: tool_name.to_string(),
-                reason: "no active session".to_string(),
-            })?;
+        let peer = self.peer.as_ref().ok_or_else(|| McpError::ToolCallFailed {
+            server: self.config.name.clone(),
+            tool: tool_name.to_string(),
+            reason: "no active session".to_string(),
+        })?;
 
         let json_args = match arguments {
             Value::Object(map) => Some(map),
@@ -311,10 +259,8 @@ impl McpConnection {
             }
         };
 
-        let params = CallToolRequestParam {
-            name: Cow::Owned(tool_name.to_string()),
-            arguments: json_args,
-        };
+        let mut params = CallToolRequestParams::new(tool_name.to_string());
+        params.arguments = json_args;
 
         peer.call_tool(params)
             .await
@@ -335,8 +281,16 @@ impl McpConnection {
             monitor.abort();
             let _ = monitor.await;
         }
-        *self.status.lock().unwrap_or_else(PoisonError::into_inner) = McpConnectionStatus::Disconnected;
+        *self.status.lock().unwrap_or_else(PoisonError::into_inner) =
+            McpConnectionStatus::Disconnected;
     }
+}
+
+/// Build the `ClientInfo` used for MCP handshakes.
+fn client_info() -> ClientInfo {
+    let mut info = ClientInfo::default();
+    info.client_info = Implementation::new("swink-agent-mcp", env!("CARGO_PKG_VERSION"));
+    info
 }
 
 /// Spawn a background task that awaits the service lifecycle.
@@ -353,19 +307,16 @@ fn spawn_monitor(
     event_tx: Option<UnboundedSender<AgentEvent>>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
-        match service.waiting().await {
-            Ok(QuitReason::Closed) => {
-                *status.lock().unwrap_or_else(PoisonError::into_inner) =
-                    McpConnectionStatus::Disconnected;
-                if let Some(ref tx) = event_tx {
-                    let _ = tx.send(crate::event::server_disconnected(
-                        &server_name,
-                        "transport closed",
-                    ));
-                }
+        if let Ok(QuitReason::Closed | QuitReason::JoinError(_)) = service.waiting().await {
+            *status.lock().unwrap_or_else(PoisonError::into_inner) =
+                McpConnectionStatus::Disconnected;
+            if let Some(ref tx) = event_tx {
+                let _ = tx.send(crate::event::server_disconnected(
+                    &server_name,
+                    "transport closed",
+                ));
             }
-            // Cancelled by shutdown() or join error — no event needed.
-            Ok(QuitReason::Cancelled) | Err(_) => {}
         }
+        // Cancelled by shutdown() or other future variants — no event needed.
     })
 }
