@@ -172,3 +172,15 @@ A developer queries a model's capabilities at runtime to determine what features
 - Pricing is in USD per million tokens, consistent across all providers.
 - `calculate_cost()` looks up pricing by `model_id` (searching across all providers), not by provider key + preset ID.
 - `ModelCapabilities` already exists in `src/types.rs` — this spec formalizes its usage, not its creation.
+
+## Addendum: Gemma 4 Local Presets (2026-04-04)
+
+Three Gemma 4 presets added under the `local` provider for Ollama-based inference:
+
+| Preset ID | Model ID | Context | Capabilities | Default |
+|-----------|----------|---------|--------------|---------|
+| `gemma4_e2b` | `gemma4:e2b` | 128K | text, tools, streaming, thinking | Yes |
+| `gemma4_e4b` | `gemma4:e4b` | 128K | text, tools, streaming, thinking | No |
+| `gemma4_26b` | `gemma4:26b` | 256K | text, tools, streaming, thinking | No |
+
+`smollm3_3b` demoted to `group = "legacy"`, `include_by_default = false`. These presets target Ollama (not local-llm/mistral.rs), so they omit `repo_id`/`filename`. The `thinking` capability enables the Ollama `think` request field via the adapter.

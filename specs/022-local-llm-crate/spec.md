@@ -151,3 +151,7 @@ A developer uses the agent loop with a local model. The agent loop produces mess
 - Model weights are downloaded from a public source and cached in a platform-appropriate location (e.g., user cache directory).
 - The local model's output quality is lower than large cloud models — this crate prioritizes offline availability and privacy over output quality.
 - Quantized (4-bit) weights are used to balance quality and resource requirements.
+
+## Addendum: Gemma 4 Deferred for local-llm (2026-04-04)
+
+Gemma 4 direct inference via `mistral.rs` is deferred. Version 0.7 (current) does not support the Gemma 4 architecture. Version 0.8 (latest, released 2026-04-02) adds Gemma 4 but requires `MultimodalModelBuilder` instead of `GgufModelBuilder`, and has an open NaN logits bug (#2051). The `ModelPreset` enum and `DEFAULT_LOCAL_PRESET_ID` remain unchanged until a stable release lands. Until then, Gemma 4 is available through the Ollama adapter (see spec 014 addendum) or any OpenAI-compatible local server (llama.cpp, vLLM, LM Studio) via the existing `openai_compat` adapter.

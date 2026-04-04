@@ -10,11 +10,14 @@ mod common;
 
 use futures::StreamExt;
 use tokio_util::sync::CancellationToken;
-use wiremock::matchers::{method, path};
+use wiremock::matchers::{body_string_contains, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use common::test_context;
-use swink_agent::{AssistantMessageEvent, ModelSpec, StopReason, StreamFn, StreamOptions};
+use swink_agent::{
+    AssistantMessageEvent, ModelCapabilities, ModelSpec, StopReason, StreamFn, StreamOptions,
+    ThinkingLevel,
+};
 use swink_agent_adapters::OllamaStreamFn;
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -628,4 +631,61 @@ async fn ollama_assistant_empty_text_with_tools() {
         has_tool_start,
         "expected at least one ToolCallStart, got: {events:?}"
     );
+}
+
+/// 17. When `thinking_level != Off`, the request body includes `"think":true`.
+#[tokio::test]
+async fn ollama_think_field_set_when_thinking_enabled() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/chat"))
+        .and(body_string_contains("\"think\":true"))
+        .respond_with(ndjson_response(&[
+            r#"{"message":{"role":"assistant","content":"","thinking":"hmm"},"done":false}"#,
+            r#"{"message":{"role":"assistant","content":"yes"},"done":false}"#,
+            r#"{"message":{"role":"assistant","content":""},"done":true,"done_reason":"stop","prompt_eval_count":5,"eval_count":10}"#,
+        ]))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let ollama = OllamaStreamFn::new(server.uri());
+    let model = ModelSpec::new("ollama", "gemma4:e2b")
+        .with_thinking_level(ThinkingLevel::Medium)
+        .with_capabilities(ModelCapabilities::default().with_thinking(true));
+    let context = test_context();
+    let options = StreamOptions::default();
+    let token = CancellationToken::new();
+    let stream = ollama.stream(&model, &context, &options, token);
+    let events: Vec<_> = stream.collect::<Vec<_>>().await;
+
+    assert!(matches!(events[0], AssistantMessageEvent::Start));
+    let has_done = events
+        .iter()
+        .any(|e| matches!(e, AssistantMessageEvent::Done { .. }));
+    assert!(has_done, "expected Done event, got: {events:?}");
+}
+
+/// 18. When `thinking_level == Off`, the request body does NOT include `"think"`.
+#[tokio::test]
+async fn ollama_think_field_absent_when_thinking_off() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/chat"))
+        .respond_with(ndjson_response(&[
+            r#"{"message":{"role":"assistant","content":"hello"},"done":false}"#,
+            r#"{"message":{"role":"assistant","content":""},"done":true,"done_reason":"stop","prompt_eval_count":5,"eval_count":10}"#,
+        ]))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let ollama = OllamaStreamFn::new(server.uri());
+    let events = collect_events(&ollama).await;
+
+    assert!(matches!(events[0], AssistantMessageEvent::Start));
+    let has_done = events
+        .iter()
+        .any(|e| matches!(e, AssistantMessageEvent::Done { .. }));
+    assert!(has_done, "expected Done event, got: {events:?}");
 }

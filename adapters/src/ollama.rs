@@ -17,7 +17,7 @@ use swink_agent::ContentBlock;
 use swink_agent::stream::{AssistantMessageEvent, StreamFn, StreamOptions};
 use swink_agent::types::{
     AgentContext, AssistantMessage as HarnessAssistantMessage, Cost, ModelSpec, StopReason,
-    ToolResultMessage, Usage, UserMessage,
+    ThinkingLevel, ToolResultMessage, Usage, UserMessage,
 };
 
 use crate::convert::{self, MessageConverter, extract_tool_schemas};
@@ -242,7 +242,11 @@ async fn send_request(
             num_predict: options.max_tokens,
         }),
         tools,
-        think: None,
+        think: if model.thinking_level == ThinkingLevel::Off {
+            None
+        } else {
+            Some(true)
+        },
     };
 
     ollama
