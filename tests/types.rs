@@ -741,6 +741,7 @@ fn agent_result_construction() {
             ..Default::default()
         },
         error: None,
+        transfer_signal: None,
     };
     assert_eq!(result.messages.len(), 1);
     assert_eq!(result.stop_reason, StopReason::Stop);

@@ -472,6 +472,7 @@ async fn run_agent_loop(
                         usage: crate::types::Usage::default(),
                         cost: crate::types::Cost::default(),
                         error: None,
+                        transfer_signal: None,
                     });
                 }
             }

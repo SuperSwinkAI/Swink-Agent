@@ -177,6 +177,7 @@ pub async fn execute_tools_concurrently(
                         }],
                         details: serde_json::Value::Null,
                         is_error: true,
+                        transfer_signal: None,
                     };
                     emit_error_result(&tc.id, error_result, idx, &results, tx).await;
                     // Return all results collected so far
@@ -193,6 +194,7 @@ pub async fn execute_tools_concurrently(
                         content: vec![ContentBlock::Text { text: error_text }],
                         details: serde_json::Value::Null,
                         is_error: true,
+                        transfer_signal: None,
                     };
                     emit_error_result(&tc.id, error_result, idx, &results, tx).await;
                     continue;

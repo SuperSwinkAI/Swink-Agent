@@ -246,6 +246,8 @@ pub enum StopReason {
     Aborted,
     /// An error occurred during generation.
     Error,
+    /// Agent loop terminated due to a transfer signal.
+    Transfer,
 }
 
 // ─── Agent Result ───────────────────────────────────────────────────────────
@@ -262,6 +264,8 @@ pub struct AgentResult {
     pub cost: Cost,
     /// Optional error string if the run ended in an error state.
     pub error: Option<String>,
+    /// Optional transfer signal when the run ended with `StopReason::Transfer`.
+    pub transfer_signal: Option<crate::transfer::TransferSignal>,
 }
 
 impl AgentResult {
@@ -291,6 +295,7 @@ impl fmt::Debug for AgentResult {
             .field("usage", &self.usage)
             .field("cost", &self.cost)
             .field("error", &self.error)
+            .field("transfer_signal", &self.transfer_signal)
             .finish()
     }
 }
@@ -687,6 +692,7 @@ mod tests {
             usage: Usage::default(),
             cost: Cost::default(),
             error: None,
+            transfer_signal: None,
         };
         assert_eq!(result.assistant_text(), "second");
     }
@@ -705,6 +711,7 @@ mod tests {
             usage: Usage::default(),
             cost: Cost::default(),
             error: None,
+            transfer_signal: None,
         };
         assert_eq!(result.assistant_text(), "");
     }
@@ -717,6 +724,7 @@ mod tests {
             usage: Usage::default(),
             cost: Cost::default(),
             error: None,
+            transfer_signal: None,
         };
         assert_eq!(result.assistant_text(), "");
     }

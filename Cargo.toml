@@ -59,8 +59,9 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
-default = ["builtin-tools"]
+default = ["builtin-tools", "transfer"]
 builtin-tools = []
+transfer = []
 testkit = []
 artifact-store = []
 artifact-tools = ["artifact-store"]

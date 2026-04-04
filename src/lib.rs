@@ -48,6 +48,7 @@ mod tool_execution_policy;
 pub mod tool_filter;
 mod tool_middleware;
 pub mod tools;
+pub mod transfer;
 pub mod types;
 mod util;
 
@@ -156,3 +157,5 @@ pub use policy::{
     PreDispatchVerdict, PreTurnPolicy, ToolPolicyContext, TurnPolicyContext, run_policies,
     run_post_loop_policies, run_post_turn_policies, run_pre_dispatch_policies,
 };
+#[cfg(feature = "transfer")]
+pub use transfer::TransferSignal;

@@ -73,6 +73,7 @@ impl Agent {
             usage,
             cost,
             error,
+            transfer_signal: None,
         })
     }
 

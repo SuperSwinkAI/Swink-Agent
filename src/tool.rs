@@ -19,6 +19,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::agent_options::{ApproveToolFn, ApproveToolFuture};
 use crate::schema::schema_for;
+use crate::transfer::TransferSignal;
 use crate::types::ContentBlock;
 
 static SCHEMA_VALIDATOR_CACHE: LazyLock<Mutex<HashMap<String, Arc<jsonschema::Validator>>>> =
@@ -38,6 +39,9 @@ pub struct AgentToolResult {
     pub details: Value,
     /// Whether this result represents an error condition.
     pub is_error: bool,
+    /// Optional transfer signal when this tool result requests an agent handoff.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transfer_signal: Option<TransferSignal>,
 }
 
 impl AgentToolResult {
@@ -47,6 +51,7 @@ impl AgentToolResult {
             content: vec![ContentBlock::Text { text: text.into() }],
             details: Value::Null,
             is_error: false,
+            transfer_signal: None,
         }
     }
 
@@ -62,7 +67,28 @@ impl AgentToolResult {
             }],
             details: Value::Null,
             is_error: true,
+            transfer_signal: None,
         }
+    }
+
+    /// Create a result that signals a transfer to another agent.
+    ///
+    /// The result text is a brief confirmation message; the transfer signal
+    /// carries the actual handoff payload. The agent loop detects this signal
+    /// and terminates the turn with [`StopReason::Transfer`](crate::StopReason::Transfer).
+    pub fn transfer(signal: TransferSignal) -> Self {
+        let text = format!("Transfer to {} initiated.", signal.target_agent());
+        Self {
+            content: vec![ContentBlock::Text { text }],
+            details: Value::Null,
+            is_error: false,
+            transfer_signal: Some(signal),
+        }
+    }
+
+    /// Returns `true` if this result carries a transfer signal.
+    pub const fn is_transfer(&self) -> bool {
+        self.transfer_signal.is_some()
     }
 }
 
@@ -918,5 +944,60 @@ mod tests {
             context: Some(ctx.clone()),
         };
         assert_eq!(req.context, Some(ctx));
+    }
+
+    // ─── Transfer signal on AgentToolResult ─────────────────────────────
+
+    #[test]
+    fn transfer_constructor_sets_signal_and_text() {
+        use crate::transfer::TransferSignal;
+
+        let signal = TransferSignal::new("billing", "billing issue");
+        let result = AgentToolResult::transfer(signal);
+
+        assert!(result.is_transfer());
+        assert!(!result.is_error);
+        let text = match &result.content[0] {
+            ContentBlock::Text { text } => text.as_str(),
+            _ => panic!("expected text block"),
+        };
+        assert_eq!(text, "Transfer to billing initiated.");
+        assert!(result.transfer_signal.is_some());
+        let sig = result.transfer_signal.as_ref().unwrap();
+        assert_eq!(sig.target_agent(), "billing");
+        assert_eq!(sig.reason(), "billing issue");
+    }
+
+    #[test]
+    fn text_constructor_has_no_transfer_signal() {
+        let result = AgentToolResult::text("hello");
+        assert!(!result.is_transfer());
+        assert!(result.transfer_signal.is_none());
+    }
+
+    #[test]
+    fn error_constructor_has_no_transfer_signal() {
+        let result = AgentToolResult::error("something failed");
+        assert!(!result.is_transfer());
+        assert!(result.transfer_signal.is_none());
+    }
+
+    #[test]
+    fn deserialize_without_transfer_signal_defaults_to_none() {
+        let json = r#"{
+            "content": [{"type": "text", "text": "hello"}],
+            "details": null,
+            "is_error": false
+        }"#;
+        let result: AgentToolResult = serde_json::from_str(json).unwrap();
+        assert!(!result.is_transfer());
+        assert!(result.transfer_signal.is_none());
+    }
+
+    #[test]
+    fn transfer_signal_not_serialized_when_none() {
+        let result = AgentToolResult::text("hello");
+        let json = serde_json::to_value(&result).unwrap();
+        assert!(!json.as_object().unwrap().contains_key("transfer_signal"));
     }
 }
