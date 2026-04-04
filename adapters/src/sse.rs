@@ -1,7 +1,21 @@
-//! Shared SSE (Server-Sent Events) stream parser.
+//! Shared SSE (Server-Sent Events) stream parser and adapter helpers.
 //!
 //! Provides a reusable byte-buffer parser that Anthropic, `OpenAI`, Azure, and
 //! Google adapters use instead of duplicating SSE line parsing logic.
+//!
+//! ## Helper hierarchy
+//!
+//! ```text
+//! sse_lines()              ← raw SseLine stream (Event, Data, Done, Empty)
+//!   ├── sse_data_lines()   ← filters to Data + Done only (Google, OpenAI, Proxy)
+//!   └── sse_paired_events()← pairs event: + data: into SseEvent (Anthropic)
+//!
+//! sse_adapter_stream()     ← shared Start/cancel/finalize scaffolding
+//!                            (Anthropic, Google, OpenAI-compat)
+//! ```
+//!
+//! Adapters with simple or fundamentally different streaming models (Proxy,
+//! Bedrock) use `sse_data_lines()` or raw byte streams directly.
 //!
 //! **Stability note:** This module is a shared implementation detail for
 //! built-in adapters. External `StreamFn` implementors should depend only
@@ -13,6 +27,12 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::pin::Pin;
 
 use futures::stream::{self, Stream, StreamExt as _};
+use tokio_util::sync::CancellationToken;
+
+use swink_agent::stream::AssistantMessageEvent;
+use swink_agent::types::StopReason;
+
+use crate::finalize::StreamFinalize;
 
 /// Parsed SSE line.
 #[derive(Debug, PartialEq, Eq)]
@@ -227,6 +247,149 @@ pub fn sse_data_lines_with_callback(
             }
         },
     ))
+}
+
+// ─── Event/data pairing ────────────────────────────────────────────────────
+
+/// A paired SSE event: an `event:` type label matched with its `data:` payload.
+///
+/// Providers like Anthropic emit `event: <type>\ndata: <json>\n\n` sequences.
+/// This type captures the pairing so adapters receive structured events instead
+/// of interleaved raw lines.
+#[derive(Debug, PartialEq, Eq)]
+pub struct SseEvent {
+    /// The event type (e.g., `message_start`, `content_block_delta`).
+    pub event_type: String,
+    /// The JSON data payload associated with this event.
+    pub data: String,
+}
+
+/// Pair `event:` and `data:` lines from an SSE byte stream.
+///
+/// Uses [`sse_lines`] internally to parse bytes, then applies a state machine
+/// that tracks the most recent `event:` label and yields an [`SseEvent`] when
+/// a `data:` line follows. Empty lines and `Done` sentinels reset the pairing
+/// state. Data lines without a preceding event are attributed to `"unknown"`.
+///
+/// This is the appropriate entry point for providers that use both `event:` and
+/// `data:` headers (e.g., Anthropic). Providers that emit only `data:` lines
+/// (e.g., `OpenAI`, Google) should use [`sse_data_lines`] instead.
+pub fn sse_paired_events(
+    byte_stream: impl Stream<Item = Result<bytes::Bytes, reqwest::Error>> + Send + 'static,
+) -> Pin<Box<dyn Stream<Item = SseEvent> + Send + 'static>> {
+    Box::pin(stream::unfold(
+        (Box::pin(sse_lines(byte_stream)), Option::<String>::None),
+        |(mut stream, mut current_event)| async move {
+            loop {
+                match stream.next().await {
+                    Some(SseLine::Empty | SseLine::Done) => {
+                        current_event = None;
+                    }
+                    Some(SseLine::Event(event_type)) => {
+                        current_event = Some(event_type);
+                    }
+                    Some(SseLine::Data(data)) => {
+                        if !data.is_empty() {
+                            let event_type = current_event
+                                .take()
+                                .unwrap_or_else(|| "unknown".to_string());
+                            return Some((SseEvent { event_type, data }, (stream, current_event)));
+                        }
+                    }
+                    None => return None,
+                }
+            }
+        },
+    ))
+}
+
+// ─── Shared stream scaffolding ─────────────────────────────────────────────
+
+/// Outcome of processing one SSE line (or stream end) in an adapter.
+pub enum SseAction {
+    /// Emit events and continue streaming.
+    Continue(Vec<AssistantMessageEvent>),
+    /// Emit events and terminate the stream.
+    Done(Vec<AssistantMessageEvent>),
+    /// No events to emit, continue streaming.
+    Skip,
+}
+
+/// Build an event stream with shared Start-emission, cancellation, and
+/// finalization scaffolding.
+///
+/// The common adapter streaming pattern is:
+/// 1. Emit `Start` on the first iteration.
+/// 2. On cancellation, finalize open blocks and emit an `Aborted` error.
+/// 3. Delegate per-line processing to the adapter via `on_item`.
+///
+/// `on_item` receives `None` when the underlying line stream ends (allowing
+/// adapter-specific cleanup, e.g., emitting `Done` vs an unexpected-end error)
+/// and `Some(line)` for each SSE line.
+///
+/// Adapters with no block-tracking state (e.g., Proxy) should use
+/// `sse_data_lines` directly rather than this helper, since they have
+/// nothing to finalize on cancellation.
+pub fn sse_adapter_stream<S, L, F>(
+    line_stream: Pin<Box<dyn Stream<Item = L> + Send>>,
+    cancellation_token: CancellationToken,
+    state: S,
+    cancel_message: &'static str,
+    on_item: F,
+) -> Pin<Box<dyn Stream<Item = AssistantMessageEvent> + Send>>
+where
+    S: StreamFinalize + Send + 'static,
+    L: Send + 'static,
+    F: FnMut(Option<L>, &mut S) -> SseAction + Send + 'static,
+{
+    Box::pin(
+        stream::unfold(
+            (line_stream, cancellation_token, state, false, true, on_item),
+            move |(mut lines, token, mut state, mut done, first, mut on_item)| async move {
+                if done {
+                    return None;
+                }
+
+                if first {
+                    return Some((
+                        vec![AssistantMessageEvent::Start],
+                        (lines, token, state, done, false, on_item),
+                    ));
+                }
+
+                tokio::select! {
+                    biased;
+                    () = token.cancelled() => {
+                        let mut events = crate::finalize::finalize_blocks(&mut state);
+                        events.push(AssistantMessageEvent::Error {
+                            stop_reason: StopReason::Aborted,
+                            error_message: cancel_message.to_string(),
+                            usage: None,
+                            error_kind: None,
+                        });
+                        done = true;
+                        Some((events, (lines, token, state, done, false, on_item)))
+                    }
+                    item = lines.next() => {
+                        let action = on_item(item, &mut state);
+                        match action {
+                            SseAction::Continue(events) => {
+                                Some((events, (lines, token, state, done, false, on_item)))
+                            }
+                            SseAction::Done(events) => {
+                                done = true;
+                                Some((events, (lines, token, state, done, false, on_item)))
+                            }
+                            SseAction::Skip => {
+                                Some((vec![], (lines, token, state, done, false, on_item)))
+                            }
+                        }
+                    }
+                }
+            },
+        )
+        .flat_map(stream::iter),
+    )
 }
 
 #[cfg(test)]
@@ -454,5 +617,171 @@ mod tests {
                 SseLine::Done,
             ]
         );
+    }
+
+    // ─── sse_paired_events tests ──────────────────────────────────────────
+
+    #[tokio::test]
+    async fn paired_events_pairs_event_with_data() {
+        let chunks = vec![Ok(bytes::Bytes::from(
+            "event: message_start\ndata: {\"type\":\"start\"}\n\nevent: content_block_delta\ndata: {\"text\":\"hi\"}\n\n",
+        ))];
+        let byte_stream = futures::stream::iter(chunks);
+        let events: Vec<_> = super::sse_paired_events(byte_stream).collect().await;
+
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].event_type, "message_start");
+        assert_eq!(events[0].data, "{\"type\":\"start\"}");
+        assert_eq!(events[1].event_type, "content_block_delta");
+        assert_eq!(events[1].data, "{\"text\":\"hi\"}");
+    }
+
+    #[tokio::test]
+    async fn paired_events_data_without_event_uses_unknown() {
+        let chunks = vec![Ok(bytes::Bytes::from("data: orphan\n\n"))];
+        let byte_stream = futures::stream::iter(chunks);
+        let events: Vec<_> = super::sse_paired_events(byte_stream).collect().await;
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event_type, "unknown");
+        assert_eq!(events[0].data, "orphan");
+    }
+
+    #[tokio::test]
+    async fn paired_events_empty_line_resets_event() {
+        // event: foo, then empty line (separator), then data — should use "unknown"
+        let chunks = vec![Ok(bytes::Bytes::from(
+            "event: foo\n\ndata: after_reset\n\n",
+        ))];
+        let byte_stream = futures::stream::iter(chunks);
+        let events: Vec<_> = super::sse_paired_events(byte_stream).collect().await;
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event_type, "unknown");
+    }
+
+    // ─── sse_adapter_stream tests ─────────────────────────────────────────
+
+    #[tokio::test]
+    async fn adapter_stream_emits_start_first() {
+        use crate::finalize::{OpenBlock, StreamFinalize};
+
+        struct EmptyState;
+        impl StreamFinalize for EmptyState {
+            fn drain_open_blocks(&mut self) -> Vec<OpenBlock> {
+                vec![]
+            }
+        }
+
+        let line_stream: Pin<Box<dyn Stream<Item = SseLine> + Send>> =
+            Box::pin(futures::stream::empty());
+        let token = CancellationToken::new();
+
+        let events: Vec<_> = super::sse_adapter_stream(
+            line_stream,
+            token,
+            EmptyState,
+            "cancelled",
+            |item, _state| match item {
+                None => super::SseAction::Done(vec![]),
+                Some(_) => super::SseAction::Skip,
+            },
+        )
+        .collect()
+        .await;
+
+        assert!(!events.is_empty());
+        assert!(matches!(events[0], AssistantMessageEvent::Start));
+    }
+
+    #[tokio::test]
+    async fn adapter_stream_finalizes_on_cancel() {
+        use crate::finalize::{OpenBlock, StreamFinalize};
+
+        struct TextState;
+        impl StreamFinalize for TextState {
+            fn drain_open_blocks(&mut self) -> Vec<OpenBlock> {
+                vec![OpenBlock::Text { content_index: 0 }]
+            }
+        }
+
+        let token = CancellationToken::new();
+        token.cancel(); // Cancel immediately
+
+        // Use a stream that never yields so the cancel branch fires
+        let line_stream: Pin<Box<dyn Stream<Item = SseLine> + Send>> =
+            Box::pin(futures::stream::pending());
+
+        let events: Vec<_> = super::sse_adapter_stream(
+            line_stream,
+            token,
+            TextState,
+            "test cancelled",
+            |_item, _state| super::SseAction::Skip,
+        )
+        .collect()
+        .await;
+
+        // Start + TextEnd (from finalize) + Error(Aborted)
+        assert_eq!(events.len(), 3);
+        assert!(matches!(events[0], AssistantMessageEvent::Start));
+        assert!(matches!(
+            events[1],
+            AssistantMessageEvent::TextEnd { content_index: 0 }
+        ));
+        assert!(matches!(
+            events[2],
+            AssistantMessageEvent::Error {
+                stop_reason: StopReason::Aborted,
+                ..
+            }
+        ));
+    }
+
+    #[tokio::test]
+    async fn adapter_stream_delegates_lines_to_callback() {
+        use crate::finalize::{OpenBlock, StreamFinalize};
+
+        struct EmptyState;
+        impl StreamFinalize for EmptyState {
+            fn drain_open_blocks(&mut self) -> Vec<OpenBlock> {
+                vec![]
+            }
+        }
+
+        let line_stream: Pin<Box<dyn Stream<Item = SseLine> + Send>> = Box::pin(
+            futures::stream::iter(vec![SseLine::Data("hello".to_string())]),
+        );
+        let token = CancellationToken::new();
+
+        let events: Vec<_> = super::sse_adapter_stream(
+            line_stream,
+            token,
+            EmptyState,
+            "cancelled",
+            |item, _state| match item {
+                Some(SseLine::Data(text)) => {
+                    super::SseAction::Continue(vec![AssistantMessageEvent::TextDelta {
+                        content_index: 0,
+                        delta: text,
+                    }])
+                }
+                None => super::SseAction::Done(vec![]),
+                _ => super::SseAction::Skip,
+            },
+        )
+        .collect()
+        .await;
+
+        // Start + TextDelta
+        assert!(events.len() >= 2);
+        assert!(matches!(events[0], AssistantMessageEvent::Start));
+        assert!(matches!(
+            events[1],
+            AssistantMessageEvent::TextDelta {
+                content_index: 0,
+                ..
+            }
+        ));
     }
 }

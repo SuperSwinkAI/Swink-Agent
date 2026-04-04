@@ -246,6 +246,12 @@ async fn send_request(
 ///
 /// Respects the cancellation token by racing each SSE event against
 /// token cancellation.
+///
+/// NOTE: This adapter does **not** use `sse_adapter_stream` because the proxy
+/// protocol is fundamentally simpler — events arrive pre-structured as JSON,
+/// there is no block-tracking state to finalize, and each SSE line maps 1:1
+/// to an `AssistantMessageEvent`. The shared scaffolding would add overhead
+/// (a `StreamFinalize` no-op, `Vec` wrapping) without reducing code.
 fn parse_sse_stream(
     response: reqwest::Response,
     cancellation_token: CancellationToken,

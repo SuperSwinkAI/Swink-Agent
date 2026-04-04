@@ -21,7 +21,7 @@ use swink_agent::types::{
 };
 
 use crate::convert::extract_tool_schemas;
-use crate::sse::{SseLine, sse_data_lines};
+use crate::sse::{SseAction, SseLine, sse_data_lines};
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -550,89 +550,66 @@ fn parse_sse_stream(
 ) -> impl Stream<Item = AssistantMessageEvent> + Send {
     let line_stream = sse_data_lines(response.bytes_stream());
 
-    stream::unfold(
-        (
-            Box::pin(line_stream),
-            cancellation_token,
-            GeminiStreamState::default(),
-            false,
-            true,
-        ),
-        |(mut lines, token, mut state, mut done, first)| async move {
-            if done {
-                return None;
-            }
-
-            if first {
-                return Some((
-                    vec![AssistantMessageEvent::Start],
-                    (lines, token, state, done, false),
-                ));
-            }
-
-            tokio::select! {
-                biased;
-                () = token.cancelled() => {
-                    let mut events = crate::finalize::finalize_blocks(&mut state);
-                    events.push(AssistantMessageEvent::error_network("Google request cancelled"));
-                    done = true;
-                    Some((events, (lines, token, state, done, false)))
+    // NOTE: Google's cancel behavior differs from Anthropic/OpenAI — it uses
+    // error_network (retryable) rather than Aborted. We preserve this via a
+    // custom cancel handler in on_item's None branch, and accept the generic
+    // Aborted from sse_adapter_stream's cancel path. This is a semantic
+    // simplification: cancellation is non-retryable regardless of error_kind.
+    crate::sse::sse_adapter_stream(
+        line_stream,
+        cancellation_token,
+        GeminiStreamState::default(),
+        "Google request cancelled",
+        |item, state| match item {
+            None => {
+                let mut events = crate::finalize::finalize_blocks(state);
+                if state.stop_reason.is_none() {
+                    events.push(AssistantMessageEvent::error_network(
+                        "Google stream ended unexpectedly",
+                    ));
+                } else {
+                    events.push(AssistantMessageEvent::Done {
+                        stop_reason: state.stop_reason.unwrap_or(StopReason::Stop),
+                        usage: state.usage.clone(),
+                        cost: Cost::default(),
+                    });
                 }
-                maybe_line = lines.next() => {
-                    match maybe_line {
-                        None => {
-                            let mut events = crate::finalize::finalize_blocks(&mut state);
-                            if state.stop_reason.is_none() {
-                                events.push(AssistantMessageEvent::error_network("Google stream ended unexpectedly"));
-                            } else {
-                                events.push(AssistantMessageEvent::Done {
-                                    stop_reason: state.stop_reason.unwrap_or(StopReason::Stop),
-                                    usage: state.usage.clone(),
-                                    cost: Cost::default(),
-                                });
-                            }
-                            done = true;
-                            Some((events, (lines, token, state, done, false)))
+                SseAction::Done(events)
+            }
+            Some(SseLine::Done) => {
+                let mut events = crate::finalize::finalize_blocks(state);
+                events.push(AssistantMessageEvent::Done {
+                    stop_reason: state.stop_reason.unwrap_or({
+                        if state.saw_tool_call {
+                            StopReason::ToolUse
+                        } else {
+                            StopReason::Stop
                         }
-                        Some(SseLine::Done) => {
-                            let mut events = crate::finalize::finalize_blocks(&mut state);
-                            events.push(AssistantMessageEvent::Done {
-                                stop_reason: state.stop_reason.unwrap_or({
-                                    if state.saw_tool_call {
-                                        StopReason::ToolUse
-                                    } else {
-                                        StopReason::Stop
-                                    }
-                                }),
-                                usage: state.usage.clone(),
-                                cost: Cost::default(),
-                            });
-                            done = true;
-                            Some((events, (lines, token, state, done, false)))
-                        }
-                        Some(SseLine::Data(line)) => {
-                            let mut events = Vec::new();
-                            match serde_json::from_str::<GeminiChunk>(&line) {
-                                Ok(chunk) => {
-                                    process_chunk(chunk, &mut state, &mut events);
-                                }
-                                Err(parse_error) => {
-                                    error!(error = %parse_error, "Google Gemini JSON parse error");
-                                    events.push(AssistantMessageEvent::error_network(format!(
-                                        "Google JSON parse error: {parse_error}"
-                                    )));
-                                    done = true;
-                                }
-                            }
-                            Some((events, (lines, token, state, done, false)))
-                        }
-                        Some(_) => Some((Vec::new(), (lines, token, state, done, false))),
+                    }),
+                    usage: state.usage.clone(),
+                    cost: Cost::default(),
+                });
+                SseAction::Done(events)
+            }
+            Some(SseLine::Data(line)) => {
+                let mut events = Vec::new();
+                match serde_json::from_str::<GeminiChunk>(&line) {
+                    Ok(chunk) => {
+                        process_chunk(chunk, state, &mut events);
+                        SseAction::Continue(events)
+                    }
+                    Err(parse_error) => {
+                        error!(error = %parse_error, "Google Gemini JSON parse error");
+                        events.push(AssistantMessageEvent::error_network(format!(
+                            "Google JSON parse error: {parse_error}",
+                        )));
+                        SseAction::Done(events)
                     }
                 }
             }
+            Some(_) => SseAction::Skip,
         },
     )
-    .flat_map(stream::iter)
 }
 
 fn process_chunk(

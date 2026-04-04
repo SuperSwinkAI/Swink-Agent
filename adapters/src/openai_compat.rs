@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use futures::stream::{self, Stream, StreamExt as _};
+use futures::stream::Stream;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
@@ -23,7 +23,7 @@ use swink_agent::types::{
 };
 
 use crate::convert::{MessageConverter, extract_tool_schemas};
-use crate::sse::{SseLine, sse_data_lines};
+use crate::sse::{SseAction, SseLine, sse_data_lines};
 
 // ─── Request types ──────────────────────────────────────────────────────────
 
@@ -459,106 +459,59 @@ pub fn parse_oai_sse_stream(
     cancellation_token: CancellationToken,
     provider: &'static str,
 ) -> Pin<Box<dyn Stream<Item = AssistantMessageEvent> + Send>> {
-    let byte_stream = response.bytes_stream();
-    let line_stream = sse_data_lines(byte_stream);
+    let line_stream = sse_data_lines(response.bytes_stream());
 
-    Box::pin(
-        stream::unfold(
-            (
-                Box::pin(line_stream),
-                cancellation_token,
-                OaiSseStreamState::default(),
-                false,
-                true,
-            ),
-            move |(mut lines, token, mut state, mut done, first)| async move {
-                if done {
-                    return None;
+    crate::sse::sse_adapter_stream(
+        line_stream,
+        cancellation_token,
+        OaiSseStreamState::default(),
+        "operation cancelled",
+        move |item, state| match item {
+            None => {
+                let mut events = crate::finalize::finalize_blocks(state);
+                if let Some(stop_reason) = state.stop_reason.take() {
+                    let usage = state.usage.take();
+                    events.push(AssistantMessageEvent::Done {
+                        stop_reason,
+                        usage: usage.unwrap_or_default(),
+                        cost: Cost::default(),
+                    });
+                } else {
+                    events.push(AssistantMessageEvent::error_network(format!(
+                        "{provider} stream ended unexpectedly",
+                    )));
                 }
-
-                if first {
-                    return Some((
-                        vec![AssistantMessageEvent::Start],
-                        (lines, token, state, done, false),
-                    ));
-                }
-
-                tokio::select! {
-                    biased;
-                    () = token.cancelled() => {
-                        let mut events = crate::finalize::finalize_blocks(&mut state);
-                        events.push(AssistantMessageEvent::Error {
-                            stop_reason: StopReason::Aborted,
-                            error_message: "operation cancelled".to_string(),
-                            usage: None,
-                            error_kind: None,
-                        });
-                        done = true;
-                        Some((events, (lines, token, state, done, false)))
+                SseAction::Done(events)
+            }
+            Some(SseLine::Done) => {
+                let mut events = crate::finalize::finalize_blocks(state);
+                let stop_reason = state.stop_reason.take().unwrap_or(StopReason::Stop);
+                let usage = state.usage.take();
+                events.push(AssistantMessageEvent::Done {
+                    stop_reason,
+                    usage: usage.unwrap_or_default(),
+                    cost: Cost::default(),
+                });
+                SseAction::Done(events)
+            }
+            Some(SseLine::Data(data)) => {
+                let chunk: OaiChunk = match serde_json::from_str(&data) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        error!(error = %e, "{provider} JSON parse error");
+                        let mut events = crate::finalize::finalize_blocks(state);
+                        events.push(AssistantMessageEvent::error_network(format!(
+                            "{provider} JSON parse error: {e}",
+                        )));
+                        return SseAction::Done(events);
                     }
-                    item = lines.next() => {
-                        match item {
-                            None => {
-                                done = true;
-                                let mut events = crate::finalize::finalize_blocks(&mut state);
-                                if let Some(stop_reason) = state.stop_reason.take() {
-                                    let usage = state.usage.take();
-                                    events.push(AssistantMessageEvent::Done {
-                                        stop_reason,
-                                        usage: usage.unwrap_or_default(),
-                                        cost: Cost::default(),
-                                    });
-                                } else {
-                                    events.push(AssistantMessageEvent::error_network(
-                                        format!("{provider} stream ended unexpectedly"),
-                                    ));
-                                }
-                                Some((events, (lines, token, state, done, false)))
-                            }
-                            Some(SseLine::Done) => {
-                                done = true;
-                                let mut events = crate::finalize::finalize_blocks(&mut state);
-                                let stop_reason = state.stop_reason.take()
-                                    .unwrap_or(StopReason::Stop);
-                                let usage = state.usage.take();
-                                events.push(AssistantMessageEvent::Done {
-                                    stop_reason,
-                                    usage: usage.unwrap_or_default(),
-                                    cost: Cost::default(),
-                                });
-                                Some((events, (lines, token, state, done, false)))
-                            }
-                            Some(SseLine::Data(data)) => {
-                                let chunk: OaiChunk = match serde_json::from_str(&data) {
-                                    Ok(c) => c,
-                                    Err(e) => {
-                                        error!(error = %e, "{provider} JSON parse error");
-                                        done = true;
-                                        let mut events = crate::finalize::finalize_blocks(&mut state);
-                                        events.push(AssistantMessageEvent::error_network(format!(
-                                            "{provider} JSON parse error: {e}"
-                                        )));
-                                        return Some((events, (lines, token, state, done, false)));
-                                    }
-                                };
+                };
 
-                                let mut events = Vec::new();
-                                process_oai_chunk(&chunk, &mut state, &mut events, provider);
-
-                                if events.is_empty() {
-                                    Some((vec![], (lines, token, state, done, false)))
-                                } else {
-                                    Some((events, (lines, token, state, done, false)))
-                                }
-                            }
-                            Some(_) => {
-                                Some((vec![], (lines, token, state, done, false)))
-                            }
-                        }
-                    }
-                }
-            },
-        )
-        .flat_map(stream::iter),
+                let mut events = Vec::new();
+                process_oai_chunk(&chunk, state, &mut events, provider);
+                SseAction::Continue(events)
+            }
+            Some(_) => SseAction::Skip,
+        },
     )
 }
