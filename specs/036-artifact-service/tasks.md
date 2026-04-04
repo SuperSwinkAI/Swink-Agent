@@ -87,15 +87,15 @@
 
 ### Tests for User Story 2
 
-- [ ] T029 [P] [US2] Write test `list_returns_all_artifacts` in `artifacts/tests/memory_store.rs` — save 3 artifacts, list returns 3 entries with correct names/versions/types
-- [ ] T030 [P] [US2] Write test `list_empty_session_returns_empty` in `artifacts/tests/memory_store.rs` — list on unknown session returns empty vec
-- [ ] T031 [P] [US2] Write test `list_reflects_latest_version` in `artifacts/tests/memory_store.rs` — save 2 versions of same artifact, list shows `latest_version: 2`
-- [ ] T032 [P] [US2] Write test `load_includes_custom_metadata` in `artifacts/tests/memory_store.rs` — save with metadata map, load returns same metadata
+- [x] T029 [P] [US2] Write test `list_returns_all_artifacts` in `artifacts/tests/memory_store.rs` — save 3 artifacts, list returns 3 entries with correct names/versions/types
+- [x] T030 [P] [US2] Write test `list_empty_session_returns_empty` in `artifacts/tests/memory_store.rs` — list on unknown session returns empty vec
+- [x] T031 [P] [US2] Write test `list_reflects_latest_version` in `artifacts/tests/memory_store.rs` — save 2 versions of same artifact, list shows `latest_version: 2`
+- [x] T032 [P] [US2] Write test `load_includes_custom_metadata` in `artifacts/tests/memory_store.rs` — save with metadata map, load returns same metadata
 
 ### Implementation for User Story 2
 
-- [ ] T033 [US2] Implement `ArtifactStore::list` for `InMemoryArtifactStore` in `artifacts/src/memory_store.rs` — iterate artifacts, build `ArtifactMeta` with timestamps from version records
-- [ ] T034 [US2] Run all US2 tests — verify they pass
+- [x] T033 [US2] Implement `ArtifactStore::list` for `InMemoryArtifactStore` in `artifacts/src/memory_store.rs` — iterate artifacts, build `ArtifactMeta` with timestamps from version records
+- [x] T034 [US2] Run all US2 tests — verify they pass
 
 **Checkpoint**: List returns correct metadata for all artifacts. US1 + US2 tests pass.
 
