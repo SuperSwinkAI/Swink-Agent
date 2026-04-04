@@ -613,6 +613,220 @@ impl EventCollector {
     }
 }
 
+// ─── MockPlugin ──────────────────────────────────────────────────────────
+
+#[cfg(feature = "plugins")]
+use crate::plugin::Plugin;
+#[cfg(feature = "plugins")]
+use crate::policy::{PolicyContext, PolicyVerdict, PostTurnPolicy, PreTurnPolicy, TurnPolicyContext};
+#[cfg(feature = "plugins")]
+use std::sync::atomic::AtomicUsize;
+
+/// A configurable mock [`Plugin`] for testing.
+///
+/// Consolidates the common inline mock patterns used across plugin test files.
+/// Use builder methods to configure tools, policies, and event tracking.
+#[cfg(feature = "plugins")]
+pub struct MockPlugin {
+    plugin_name: String,
+    priority: i32,
+    tool_names: Vec<String>,
+    event_counter: Option<Arc<AtomicUsize>>,
+    post_turn_tracker: Option<Arc<AtomicBool>>,
+    pre_turn_order: Option<Arc<AtomicUsize>>,
+    stopping_pre_turn: bool,
+    init_called: Arc<AtomicBool>,
+}
+
+#[cfg(feature = "plugins")]
+impl MockPlugin {
+    /// Create a `MockPlugin` with the given name and default settings.
+    #[must_use]
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            plugin_name: name.into(),
+            priority: 0,
+            tool_names: vec![],
+            event_counter: None,
+            post_turn_tracker: None,
+            pre_turn_order: None,
+            stopping_pre_turn: false,
+            init_called: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    /// Set the priority for this plugin.
+    #[must_use]
+    pub fn with_priority(mut self, priority: i32) -> Self {
+        self.priority = priority;
+        self
+    }
+
+    /// Contribute tools with the given names (each wrapped with a permissive schema).
+    #[must_use]
+    pub fn with_tools(mut self, names: &[&str]) -> Self {
+        self.tool_names = names.iter().map(|s| s.to_string()).collect();
+        self
+    }
+
+    /// Attach an event counter incremented on every `on_event` call.
+    #[must_use]
+    pub fn with_event_counter(mut self, counter: Arc<AtomicUsize>) -> Self {
+        self.event_counter = Some(counter);
+        self
+    }
+
+    /// Attach a `fired` flag set to `true` when the contributed post-turn policy evaluates.
+    #[must_use]
+    pub fn with_post_turn_tracker(mut self, fired: Arc<AtomicBool>) -> Self {
+        self.post_turn_tracker = Some(fired);
+        self
+    }
+
+    /// Attach an order recorder for the contributed pre-turn policy.
+    ///
+    /// When the policy evaluates it fetches-and-increments a global sequence counter
+    /// and stores the resulting position in `order`.
+    #[must_use]
+    pub fn with_pre_turn_order(mut self, order: Arc<AtomicUsize>) -> Self {
+        self.pre_turn_order = Some(order);
+        self
+    }
+
+    /// Make the contributed pre-turn policy return `PolicyVerdict::Stop`.
+    #[must_use]
+    pub fn with_stopping_pre_turn(mut self) -> Self {
+        self.stopping_pre_turn = true;
+        self
+    }
+
+    /// Returns a handle to the `init_called` flag — set to `true` when `on_init` fires.
+    pub fn init_called(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.init_called)
+    }
+}
+
+#[cfg(feature = "plugins")]
+impl Plugin for MockPlugin {
+    fn name(&self) -> &str {
+        &self.plugin_name
+    }
+
+    fn priority(&self) -> i32 {
+        self.priority
+    }
+
+    fn on_init(&self, _agent: &crate::Agent) {
+        self.init_called.store(true, Ordering::SeqCst);
+    }
+
+    fn pre_turn_policies(&self) -> Vec<Arc<dyn PreTurnPolicy>> {
+        if self.stopping_pre_turn {
+            return vec![Arc::new(StoppingPreTurnPolicy {
+                label: format!("{}-stopping", self.plugin_name),
+            })];
+        }
+        if let Some(order) = &self.pre_turn_order {
+            return vec![Arc::new(OrderRecordingPreTurnPolicy {
+                label: format!("{}-pre-turn", self.plugin_name),
+                order: Arc::clone(order),
+            })];
+        }
+        vec![]
+    }
+
+    fn post_turn_policies(&self) -> Vec<Arc<dyn PostTurnPolicy>> {
+        if let Some(fired) = &self.post_turn_tracker {
+            return vec![Arc::new(RecordingPostTurnPolicy {
+                fired: Arc::clone(fired),
+            })];
+        }
+        vec![]
+    }
+
+    fn on_event(&self, _event: &crate::AgentEvent) {
+        if let Some(counter) = &self.event_counter {
+            counter.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    fn tools(&self) -> Vec<Arc<dyn crate::tool::AgentTool>> {
+        self.tool_names
+            .iter()
+            .map(|n| Arc::new(MockTool::new(n)) as Arc<dyn crate::tool::AgentTool>)
+            .collect()
+    }
+}
+
+// ─── Policy helpers used by MockPlugin ──────────────────────────────────────
+
+/// A post-turn policy that sets a `fired` flag on evaluation.
+#[cfg(feature = "plugins")]
+pub struct RecordingPostTurnPolicy {
+    /// Set to `true` when this policy evaluates.
+    pub fired: Arc<AtomicBool>,
+}
+
+#[cfg(feature = "plugins")]
+impl PostTurnPolicy for RecordingPostTurnPolicy {
+    fn name(&self) -> &str {
+        "recording-post-turn"
+    }
+
+    fn evaluate(&self, _ctx: &PolicyContext<'_>, _turn: &TurnPolicyContext<'_>) -> PolicyVerdict {
+        self.fired.store(true, Ordering::SeqCst);
+        PolicyVerdict::Continue
+    }
+}
+
+/// Global sequence counter for [`OrderRecordingPreTurnPolicy`].
+///
+/// Tests that need to track relative evaluation order across policies
+/// should reset this with `MOCK_PLUGIN_GLOBAL_ORDER.store(0, Ordering::SeqCst)`
+/// at the start of each test.
+#[cfg(feature = "plugins")]
+pub static MOCK_PLUGIN_GLOBAL_ORDER: AtomicUsize = AtomicUsize::new(0);
+
+/// A pre-turn policy that records its evaluation order via a global sequence counter.
+#[cfg(feature = "plugins")]
+pub struct OrderRecordingPreTurnPolicy {
+    /// Label used as the policy name.
+    pub label: String,
+    /// Stores the sequence number assigned during evaluation.
+    pub order: Arc<AtomicUsize>,
+}
+
+#[cfg(feature = "plugins")]
+impl PreTurnPolicy for OrderRecordingPreTurnPolicy {
+    fn name(&self) -> &str {
+        &self.label
+    }
+
+    fn evaluate(&self, _ctx: &PolicyContext<'_>) -> PolicyVerdict {
+        let seq = MOCK_PLUGIN_GLOBAL_ORDER.fetch_add(1, Ordering::SeqCst);
+        self.order.store(seq, Ordering::SeqCst);
+        PolicyVerdict::Continue
+    }
+}
+
+/// A pre-turn policy that always returns `PolicyVerdict::Stop`.
+#[cfg(feature = "plugins")]
+pub struct StoppingPreTurnPolicy {
+    /// Label used as the policy name.
+    pub label: String,
+}
+
+#[cfg(feature = "plugins")]
+impl PreTurnPolicy for StoppingPreTurnPolicy {
+    fn name(&self) -> &str {
+        &self.label
+    }
+
+    fn evaluate(&self, _ctx: &PolicyContext<'_>) -> PolicyVerdict {
+        PolicyVerdict::Stop("stopped by policy".into())
+    }
+}
+
 /// Extract the variant name from an `AgentEvent`.
 #[allow(dead_code)]
 pub fn event_variant_name(event: &AgentEvent) -> String {

@@ -6,7 +6,7 @@
 //! transport closes unexpectedly.
 
 use std::borrow::Cow;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError};
 
 use reqwest::header::{HeaderValue, AUTHORIZATION};
 use rmcp::model::{CallToolRequestParam, CallToolResult, ClientInfo, Implementation};
@@ -66,7 +66,7 @@ impl std::fmt::Debug for McpConnection {
 impl McpConnection {
     /// Returns the current connection status.
     pub fn status(&self) -> McpConnectionStatus {
-        *self.status.lock().unwrap_or_else(|e| e.into_inner())
+        *self.status.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     /// Create a disconnected connection placeholder.
@@ -335,7 +335,7 @@ impl McpConnection {
             monitor.abort();
             let _ = monitor.await;
         }
-        *self.status.lock().unwrap_or_else(|e| e.into_inner()) = McpConnectionStatus::Disconnected;
+        *self.status.lock().unwrap_or_else(PoisonError::into_inner) = McpConnectionStatus::Disconnected;
     }
 }
 
@@ -355,7 +355,7 @@ fn spawn_monitor(
     tokio::spawn(async move {
         match service.waiting().await {
             Ok(QuitReason::Closed) => {
-                *status.lock().unwrap_or_else(|e| e.into_inner()) =
+                *status.lock().unwrap_or_else(PoisonError::into_inner) =
                     McpConnectionStatus::Disconnected;
                 if let Some(ref tx) = event_tx {
                     let _ = tx.send(crate::event::server_disconnected(

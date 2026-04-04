@@ -5,159 +5,15 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-use serde_json::{Value, json};
-use tokio_util::sync::CancellationToken;
-
 use swink_agent::plugin::Plugin;
-use swink_agent::policy::{
-    PolicyContext, PolicyVerdict, PostTurnPolicy, PreTurnPolicy, TurnPolicyContext,
-};
-use swink_agent::tool::{AgentTool, AgentToolResult, ToolFuture};
+use swink_agent::policy::{PolicyContext, PolicyVerdict, PostTurnPolicy, PreTurnPolicy};
 use swink_agent::{Agent, AgentOptions};
 
 mod common;
-use common::*;
-
-// ─── Test Helpers ──────────────────────────────────────────────────────────
-
-/// A plugin that contributes a post-turn policy which records when it fires.
-struct PolicyPlugin {
-    name: String,
-    fired: Arc<AtomicBool>,
-}
-
-impl PolicyPlugin {
-    fn new(name: &str, fired: Arc<AtomicBool>) -> Self {
-        Self {
-            name: name.to_owned(),
-            fired,
-        }
-    }
-}
-
-impl Plugin for PolicyPlugin {
-    fn name(&self) -> &str {
-        &self.name
-    }
-
-    fn post_turn_policies(&self) -> Vec<Arc<dyn PostTurnPolicy>> {
-        let fired = Arc::clone(&self.fired);
-        vec![Arc::new(RecordingPostTurnPolicy { fired })]
-    }
-}
-
-struct RecordingPostTurnPolicy {
-    fired: Arc<AtomicBool>,
-}
-
-impl PostTurnPolicy for RecordingPostTurnPolicy {
-    fn name(&self) -> &str {
-        "recording-post-turn"
-    }
-
-    fn evaluate(&self, _ctx: &PolicyContext<'_>, _turn: &TurnPolicyContext<'_>) -> PolicyVerdict {
-        self.fired.store(true, Ordering::SeqCst);
-        PolicyVerdict::Continue
-    }
-}
-
-/// A simple tool for plugin contribution tests.
-struct PluginStubTool {
-    name: String,
-    schema: Value,
-}
-
-impl PluginStubTool {
-    fn new(name: &str) -> Self {
-        Self {
-            name: name.to_owned(),
-            schema: json!({"type": "object"}),
-        }
-    }
-}
-
-impl AgentTool for PluginStubTool {
-    fn name(&self) -> &str {
-        &self.name
-    }
-
-    fn label(&self) -> &str {
-        &self.name
-    }
-
-    fn description(&self) -> &str {
-        "plugin stub tool"
-    }
-
-    fn parameters_schema(&self) -> &Value {
-        &self.schema
-    }
-
-    fn execute(
-        &self,
-        _tool_call_id: &str,
-        _params: Value,
-        _cancellation_token: CancellationToken,
-        _on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
-        _state: Arc<std::sync::RwLock<swink_agent::SessionState>>,
-        _credential: Option<swink_agent::credential::ResolvedCredential>,
-    ) -> ToolFuture<'_> {
-        Box::pin(async { AgentToolResult::text("ok") })
-    }
-}
-
-/// A plugin that contributes tools.
-struct ToolPlugin {
-    name: String,
-    tool_names: Vec<String>,
-}
-
-impl ToolPlugin {
-    fn new(name: &str, tool_names: &[&str]) -> Self {
-        Self {
-            name: name.to_owned(),
-            tool_names: tool_names.iter().map(|s| s.to_string()).collect(),
-        }
-    }
-}
-
-impl Plugin for ToolPlugin {
-    fn name(&self) -> &str {
-        &self.name
-    }
-
-    fn tools(&self) -> Vec<Arc<dyn AgentTool>> {
-        self.tool_names
-            .iter()
-            .map(|n| Arc::new(PluginStubTool::new(n)) as Arc<dyn AgentTool>)
-            .collect()
-    }
-}
-
-/// A plugin that tracks event observer calls.
-struct EventPlugin {
-    name: String,
-    event_count: Arc<AtomicUsize>,
-}
-
-impl EventPlugin {
-    fn new(name: &str, event_count: Arc<AtomicUsize>) -> Self {
-        Self {
-            name: name.to_owned(),
-            event_count,
-        }
-    }
-}
-
-impl Plugin for EventPlugin {
-    fn name(&self) -> &str {
-        &self.name
-    }
-
-    fn on_event(&self, _event: &swink_agent::AgentEvent) {
-        self.event_count.fetch_add(1, Ordering::SeqCst);
-    }
-}
+use common::{
+    MockPlugin, MockStreamFn, MOCK_PLUGIN_GLOBAL_ORDER, OrderRecordingPreTurnPolicy,
+    RecordingPostTurnPolicy, default_convert, default_model, text_only_events, user_msg,
+};
 
 fn make_agent_with_plugins(plugins: Vec<Arc<dyn Plugin>>) -> Agent {
     let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("hello")]));
@@ -171,7 +27,9 @@ fn make_agent_with_plugins(plugins: Vec<Arc<dyn Plugin>>) -> Agent {
 #[tokio::test]
 async fn plugin_post_turn_policy_evaluates_during_loop() {
     let fired = Arc::new(AtomicBool::new(false));
-    let plugin: Arc<dyn Plugin> = Arc::new(PolicyPlugin::new("test-policy", Arc::clone(&fired)));
+    let plugin: Arc<dyn Plugin> = Arc::new(
+        MockPlugin::new("test-policy").with_post_turn_tracker(Arc::clone(&fired)),
+    );
 
     let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("hello")]));
     let options =
@@ -190,7 +48,8 @@ async fn plugin_post_turn_policy_evaluates_during_loop() {
 
 #[test]
 fn plugin_tools_appear_namespaced_in_agent_tool_list() {
-    let plugin: Arc<dyn Plugin> = Arc::new(ToolPlugin::new("myplugin", &["save", "load"]));
+    let plugin: Arc<dyn Plugin> =
+        Arc::new(MockPlugin::new("myplugin").with_tools(&["save", "load"]));
 
     let agent = make_agent_with_plugins(vec![plugin]);
 
@@ -210,7 +69,8 @@ fn plugin_tools_appear_namespaced_in_agent_tool_list() {
 #[tokio::test]
 async fn plugin_event_observer_called_for_agent_start() {
     let event_count = Arc::new(AtomicUsize::new(0));
-    let plugin: Arc<dyn Plugin> = Arc::new(EventPlugin::new("observer", Arc::clone(&event_count)));
+    let plugin: Arc<dyn Plugin> =
+        Arc::new(MockPlugin::new("observer").with_event_counter(Arc::clone(&event_count)));
 
     let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("hello")]));
     let options =
@@ -228,124 +88,26 @@ async fn plugin_event_observer_called_for_agent_start() {
 
 // ─── Phase 4 Helpers: Priority-Based Execution Order ─────────────────────
 
-/// Shared counter to track policy evaluation order across plugins.
-static GLOBAL_ORDER: AtomicUsize = AtomicUsize::new(0);
-
-/// A pre-turn policy that records its execution order.
-struct OrderRecordingPreTurnPolicy {
-    label: String,
-    order: Arc<AtomicUsize>,
-}
-
-impl PreTurnPolicy for OrderRecordingPreTurnPolicy {
-    fn name(&self) -> &str {
-        &self.label
-    }
-
-    fn evaluate(&self, _ctx: &PolicyContext<'_>) -> PolicyVerdict {
-        let seq = GLOBAL_ORDER.fetch_add(1, Ordering::SeqCst);
-        self.order.store(seq, Ordering::SeqCst);
-        PolicyVerdict::Continue
-    }
-}
-
-/// A pre-turn policy that returns Stop to test short-circuit behavior.
-struct StoppingPreTurnPolicy {
-    label: String,
-}
-
-impl PreTurnPolicy for StoppingPreTurnPolicy {
-    fn name(&self) -> &str {
-        &self.label
-    }
-
-    fn evaluate(&self, _ctx: &PolicyContext<'_>) -> PolicyVerdict {
-        PolicyVerdict::Stop("stopped by policy".into())
-    }
-}
-
-/// A plugin that contributes a pre-turn policy recording its execution order.
-struct OrderedPolicyPlugin {
-    name: String,
-    priority: i32,
-    order: Arc<AtomicUsize>,
-}
-
-impl OrderedPolicyPlugin {
-    fn new(name: &str, priority: i32, order: Arc<AtomicUsize>) -> Self {
-        Self {
-            name: name.to_owned(),
-            priority,
-            order,
-        }
-    }
-}
-
-impl Plugin for OrderedPolicyPlugin {
-    fn name(&self) -> &str {
-        &self.name
-    }
-
-    fn priority(&self) -> i32 {
-        self.priority
-    }
-
-    fn pre_turn_policies(&self) -> Vec<Arc<dyn PreTurnPolicy>> {
-        vec![Arc::new(OrderRecordingPreTurnPolicy {
-            label: format!("{}-pre-turn", self.name),
-            order: Arc::clone(&self.order),
-        })]
-    }
-}
-
-/// A plugin that contributes a stopping pre-turn policy.
-struct StoppingPolicyPlugin {
-    name: String,
-    priority: i32,
-}
-
-impl StoppingPolicyPlugin {
-    fn new(name: &str, priority: i32) -> Self {
-        Self {
-            name: name.to_owned(),
-            priority,
-        }
-    }
-}
-
-impl Plugin for StoppingPolicyPlugin {
-    fn name(&self) -> &str {
-        &self.name
-    }
-
-    fn priority(&self) -> i32 {
-        self.priority
-    }
-
-    fn pre_turn_policies(&self) -> Vec<Arc<dyn PreTurnPolicy>> {
-        vec![Arc::new(StoppingPreTurnPolicy {
-            label: format!("{}-stopping", self.name),
-        })]
-    }
-}
-
 // ─── T017: Two plugins with different priorities ─────────────────────────
 
 #[tokio::test]
 async fn higher_priority_plugin_policy_runs_first() {
     // Reset global counter for this test.
-    GLOBAL_ORDER.store(0, Ordering::SeqCst);
+    MOCK_PLUGIN_GLOBAL_ORDER.store(0, Ordering::SeqCst);
 
     let low_order = Arc::new(AtomicUsize::new(usize::MAX));
     let high_order = Arc::new(AtomicUsize::new(usize::MAX));
 
-    let low_plugin: Arc<dyn Plugin> =
-        Arc::new(OrderedPolicyPlugin::new("low", 1, Arc::clone(&low_order)));
-    let high_plugin: Arc<dyn Plugin> = Arc::new(OrderedPolicyPlugin::new(
-        "high",
-        10,
-        Arc::clone(&high_order),
-    ));
+    let low_plugin: Arc<dyn Plugin> = Arc::new(
+        MockPlugin::new("low")
+            .with_priority(1)
+            .with_pre_turn_order(Arc::clone(&low_order)),
+    );
+    let high_plugin: Arc<dyn Plugin> = Arc::new(
+        MockPlugin::new("high")
+            .with_priority(10)
+            .with_pre_turn_order(Arc::clone(&high_order)),
+    );
 
     // Register low first, high second — priority should override insertion order.
     let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("hello")]));
@@ -368,21 +130,21 @@ async fn higher_priority_plugin_policy_runs_first() {
 
 #[tokio::test]
 async fn same_priority_plugins_preserve_insertion_order() {
-    GLOBAL_ORDER.store(0, Ordering::SeqCst);
+    MOCK_PLUGIN_GLOBAL_ORDER.store(0, Ordering::SeqCst);
 
     let first_order = Arc::new(AtomicUsize::new(usize::MAX));
     let second_order = Arc::new(AtomicUsize::new(usize::MAX));
 
-    let first_plugin: Arc<dyn Plugin> = Arc::new(OrderedPolicyPlugin::new(
-        "first",
-        0,
-        Arc::clone(&first_order),
-    ));
-    let second_plugin: Arc<dyn Plugin> = Arc::new(OrderedPolicyPlugin::new(
-        "second",
-        0,
-        Arc::clone(&second_order),
-    ));
+    let first_plugin: Arc<dyn Plugin> = Arc::new(
+        MockPlugin::new("first")
+            .with_priority(0)
+            .with_pre_turn_order(Arc::clone(&first_order)),
+    );
+    let second_plugin: Arc<dyn Plugin> = Arc::new(
+        MockPlugin::new("second")
+            .with_priority(0)
+            .with_pre_turn_order(Arc::clone(&second_order)),
+    );
 
     let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("hello")]));
     let options = AgentOptions::new("test", default_model(), stream_fn, default_convert)
@@ -404,18 +166,22 @@ async fn same_priority_plugins_preserve_insertion_order() {
 
 #[tokio::test]
 async fn higher_priority_stop_short_circuits_lower_priority() {
-    GLOBAL_ORDER.store(0, Ordering::SeqCst);
+    MOCK_PLUGIN_GLOBAL_ORDER.store(0, Ordering::SeqCst);
 
     let low_order = Arc::new(AtomicUsize::new(usize::MAX));
 
     // High-priority plugin returns Stop.
-    let high_plugin: Arc<dyn Plugin> = Arc::new(StoppingPolicyPlugin::new("blocker", 10));
+    let high_plugin: Arc<dyn Plugin> = Arc::new(
+        MockPlugin::new("blocker")
+            .with_priority(10)
+            .with_stopping_pre_turn(),
+    );
     // Low-priority plugin should never run.
-    let low_plugin: Arc<dyn Plugin> = Arc::new(OrderedPolicyPlugin::new(
-        "victim",
-        1,
-        Arc::clone(&low_order),
-    ));
+    let low_plugin: Arc<dyn Plugin> = Arc::new(
+        MockPlugin::new("victim")
+            .with_priority(1)
+            .with_pre_turn_order(Arc::clone(&low_order)),
+    );
 
     let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("hello")]));
     let options = AgentOptions::new("test", default_model(), stream_fn, default_convert)
@@ -463,7 +229,11 @@ async fn plugin_stop_prevents_direct_policy_evaluation() {
     }
 
     // Plugin with Stop policy (priority 10 — runs before direct policies).
-    let stopping_plugin: Arc<dyn Plugin> = Arc::new(StoppingPolicyPlugin::new("blocker", 10));
+    let stopping_plugin: Arc<dyn Plugin> = Arc::new(
+        MockPlugin::new("blocker")
+            .with_priority(10)
+            .with_stopping_pre_turn(),
+    );
 
     let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("hello")]));
     let options = AgentOptions::new("test", default_model(), stream_fn, default_convert)
@@ -487,17 +257,17 @@ async fn plugin_stop_prevents_direct_policy_evaluation() {
 
 #[tokio::test]
 async fn plugin_policy_runs_before_direct_policy() {
-    GLOBAL_ORDER.store(0, Ordering::SeqCst);
+    MOCK_PLUGIN_GLOBAL_ORDER.store(0, Ordering::SeqCst);
 
     let plugin_order = Arc::new(AtomicUsize::new(usize::MAX));
     let direct_order = Arc::new(AtomicUsize::new(usize::MAX));
 
     // Plugin with a pre-turn policy (priority 0 — default).
-    let plugin: Arc<dyn Plugin> = Arc::new(OrderedPolicyPlugin::new(
-        "myplugin",
-        0,
-        Arc::clone(&plugin_order),
-    ));
+    let plugin: Arc<dyn Plugin> = Arc::new(
+        MockPlugin::new("myplugin")
+            .with_priority(0)
+            .with_pre_turn_order(Arc::clone(&plugin_order)),
+    );
 
     // Direct pre-turn policy.
     let direct_order_clone = Arc::clone(&direct_order);
@@ -526,7 +296,7 @@ async fn plugin_policy_runs_before_direct_policy() {
 
 #[tokio::test]
 async fn no_plugins_direct_policies_behave_identically() {
-    GLOBAL_ORDER.store(0, Ordering::SeqCst);
+    MOCK_PLUGIN_GLOBAL_ORDER.store(0, Ordering::SeqCst);
 
     let first_order = Arc::new(AtomicUsize::new(usize::MAX));
     let second_order = Arc::new(AtomicUsize::new(usize::MAX));
@@ -583,21 +353,21 @@ async fn no_plugins_direct_policies_behave_identically() {
 
 #[test]
 fn agent_plugins_returns_all_in_priority_order() {
-    let p_low: Arc<dyn Plugin> = Arc::new(OrderedPolicyPlugin::new(
-        "low",
-        1,
-        Arc::new(AtomicUsize::new(0)),
-    ));
-    let p_mid: Arc<dyn Plugin> = Arc::new(OrderedPolicyPlugin::new(
-        "mid",
-        5,
-        Arc::new(AtomicUsize::new(0)),
-    ));
-    let p_high: Arc<dyn Plugin> = Arc::new(OrderedPolicyPlugin::new(
-        "high",
-        10,
-        Arc::new(AtomicUsize::new(0)),
-    ));
+    let p_low: Arc<dyn Plugin> = Arc::new(
+        MockPlugin::new("low")
+            .with_priority(1)
+            .with_pre_turn_order(Arc::new(AtomicUsize::new(0))),
+    );
+    let p_mid: Arc<dyn Plugin> = Arc::new(
+        MockPlugin::new("mid")
+            .with_priority(5)
+            .with_pre_turn_order(Arc::new(AtomicUsize::new(0))),
+    );
+    let p_high: Arc<dyn Plugin> = Arc::new(
+        MockPlugin::new("high")
+            .with_priority(10)
+            .with_pre_turn_order(Arc::new(AtomicUsize::new(0))),
+    );
 
     // Register in low→mid→high order; plugins() should return high→mid→low.
     let agent = make_agent_with_plugins(vec![p_low, p_mid, p_high]);
@@ -614,8 +384,8 @@ fn agent_plugins_returns_all_in_priority_order() {
 
 #[test]
 fn agent_plugin_by_name_returns_correct_reference() {
-    let p_alpha: Arc<dyn Plugin> = Arc::new(ToolPlugin::new("alpha", &["save"]));
-    let p_beta: Arc<dyn Plugin> = Arc::new(ToolPlugin::new("beta", &["load"]));
+    let p_alpha: Arc<dyn Plugin> = Arc::new(MockPlugin::new("alpha").with_tools(&["save"]));
+    let p_beta: Arc<dyn Plugin> = Arc::new(MockPlugin::new("beta").with_tools(&["load"]));
 
     let agent = make_agent_with_plugins(vec![p_alpha, p_beta]);
 
@@ -632,7 +402,7 @@ fn agent_plugin_by_name_returns_correct_reference() {
 
 #[test]
 fn agent_plugin_nonexistent_returns_none() {
-    let p: Arc<dyn Plugin> = Arc::new(ToolPlugin::new("existing", &["tool1"]));
+    let p: Arc<dyn Plugin> = Arc::new(MockPlugin::new("existing").with_tools(&["tool1"]));
     let agent = make_agent_with_plugins(vec![p]);
 
     assert!(
@@ -643,13 +413,16 @@ fn agent_plugin_nonexistent_returns_none() {
 
 // ─── Phase 7: User Story 5 — Initialization Callback ───────────────────
 
-/// A plugin that tracks on_init calls.
+/// A plugin that tracks on_init calls with ordering.
 struct InitPlugin {
     name: String,
     priority: i32,
     init_called: Arc<AtomicBool>,
     init_order: Arc<AtomicUsize>,
 }
+
+/// Shared counter to track init order across plugins.
+static GLOBAL_INIT_ORDER: AtomicUsize = AtomicUsize::new(0);
 
 impl InitPlugin {
     fn new(name: &str, init_called: Arc<AtomicBool>) -> Self {
@@ -683,7 +456,7 @@ impl Plugin for InitPlugin {
 
     fn on_init(&self, _agent: &Agent) {
         self.init_called.store(true, Ordering::SeqCst);
-        let seq = GLOBAL_ORDER.fetch_add(1, Ordering::SeqCst);
+        let seq = GLOBAL_INIT_ORDER.fetch_add(1, Ordering::SeqCst);
         self.init_order.store(seq, Ordering::SeqCst);
     }
 }
@@ -737,7 +510,7 @@ fn plugin_on_init_called_once_during_agent_new() {
 
 #[test]
 fn plugin_on_init_fires_in_priority_order() {
-    GLOBAL_ORDER.store(0, Ordering::SeqCst);
+    GLOBAL_INIT_ORDER.store(0, Ordering::SeqCst);
 
     let low_called = Arc::new(AtomicBool::new(false));
     let high_called = Arc::new(AtomicBool::new(false));
@@ -826,7 +599,11 @@ async fn plugin_stop_prevents_all_direct_policies() {
     }
 
     // Plugin with Stop policy.
-    let stopping_plugin: Arc<dyn Plugin> = Arc::new(StoppingPolicyPlugin::new("blocker", 0));
+    let stopping_plugin: Arc<dyn Plugin> = Arc::new(
+        MockPlugin::new("blocker")
+            .with_priority(0)
+            .with_stopping_pre_turn(),
+    );
 
     let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("hello")]));
     let options = AgentOptions::new("test", default_model(), stream_fn, default_convert)
@@ -859,7 +636,8 @@ async fn plugin_stop_prevents_all_direct_policies() {
 
 #[test]
 fn plugin_tools_namespaced_format() {
-    let plugin: Arc<dyn Plugin> = Arc::new(ToolPlugin::new("analyzer", &["scan", "report"]));
+    let plugin: Arc<dyn Plugin> =
+        Arc::new(MockPlugin::new("analyzer").with_tools(&["scan", "report"]));
 
     let agent = make_agent_with_plugins(vec![plugin]);
 
@@ -878,8 +656,8 @@ fn plugin_tools_namespaced_format() {
 
 #[test]
 fn two_plugins_same_tool_names_distinct_namespaces() {
-    let plugin_a: Arc<dyn Plugin> = Arc::new(ToolPlugin::new("alpha", &["run"]));
-    let plugin_b: Arc<dyn Plugin> = Arc::new(ToolPlugin::new("beta", &["run"]));
+    let plugin_a: Arc<dyn Plugin> = Arc::new(MockPlugin::new("alpha").with_tools(&["run"]));
+    let plugin_b: Arc<dyn Plugin> = Arc::new(MockPlugin::new("beta").with_tools(&["run"]));
 
     let agent = make_agent_with_plugins(vec![plugin_a, plugin_b]);
 
@@ -909,11 +687,13 @@ fn two_plugins_same_tool_names_distinct_namespaces() {
 
 #[test]
 fn direct_tool_found_first_over_namespaced_plugin_tool() {
+    use swink_agent::tool::AgentTool;
+
     // Create a direct tool named "myns.fetch" and a plugin named "myns" contributing "fetch".
     // The direct tool should be found first by find_tool.
-
-    let direct_tool: Arc<dyn AgentTool> = Arc::new(PluginStubTool::new("myns.fetch"));
-    let plugin: Arc<dyn Plugin> = Arc::new(ToolPlugin::new("myns", &["fetch"]));
+    let direct_tool: Arc<dyn AgentTool> =
+        Arc::new(swink_agent::testing::MockTool::new("myns.fetch"));
+    let plugin: Arc<dyn Plugin> = Arc::new(MockPlugin::new("myns").with_tools(&["fetch"]));
 
     let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("hello")]));
     let options = AgentOptions::new("test", default_model(), stream_fn, default_convert)
@@ -937,7 +717,7 @@ fn direct_tool_found_first_over_namespaced_plugin_tool() {
 
     // Verify it's the direct tool (not the NamespacedTool wrapper).
     // NamespacedTool has description "plugin stub tool" and label "myns.fetch" (overridden).
-    // Direct PluginStubTool has label "myns.fetch" (set in constructor).
+    // Direct MockTool has label "myns.fetch" (set in constructor).
     // Both have the same description, so check order by position.
     let first_idx = tool_names.iter().position(|&n| n == "myns.fetch").unwrap();
     assert_eq!(
@@ -947,7 +727,7 @@ fn direct_tool_found_first_over_namespaced_plugin_tool() {
 }
 
 // ─── T038: Verify tool merge order — direct first, then plugin ──────────
-// (Verification task — confirmed by T037 above: direct tools at lower indices,
+// (Already confirmed by T037 above: direct tools at lower indices,
 //  plugin tools appended after.)
 
 // ─── Phase 9: User Story 6 — Plugin Removal ────────────────────────────
@@ -959,8 +739,8 @@ fn unregistered_plugin_contributions_absent() {
     use swink_agent::plugin::PluginRegistry;
 
     let mut registry = PluginRegistry::new();
-    let plugin_a: Arc<dyn Plugin> = Arc::new(ToolPlugin::new("keep", &["tool_a"]));
-    let plugin_b: Arc<dyn Plugin> = Arc::new(ToolPlugin::new("remove", &["tool_b"]));
+    let plugin_a: Arc<dyn Plugin> = Arc::new(MockPlugin::new("keep").with_tools(&["tool_a"]));
+    let plugin_b: Arc<dyn Plugin> = Arc::new(MockPlugin::new("remove").with_tools(&["tool_b"]));
     registry.register(plugin_a);
     registry.register(plugin_b);
 

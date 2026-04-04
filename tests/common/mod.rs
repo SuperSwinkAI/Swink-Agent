@@ -16,6 +16,9 @@ pub use swink_agent::testing::{
 #[allow(unused_imports)]
 pub use swink_agent::AssistantMessageEvent;
 
-#[cfg(all(feature = "plugins", feature = "testkit"))]
+#[cfg(feature = "plugins")]
 #[allow(unused_imports)]
-pub use swink_agent::testing::MockPlugin;
+pub use swink_agent::testing::{
+    MockPlugin, MOCK_PLUGIN_GLOBAL_ORDER, OrderRecordingPreTurnPolicy, RecordingPostTurnPolicy,
+    StoppingPreTurnPolicy,
+};

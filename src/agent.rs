@@ -295,13 +295,11 @@ impl Agent {
                     plugin_ref.on_init(&agent);
                 }));
                 if let Err(cause) = result {
-                    let msg = if let Some(s) = cause.downcast_ref::<&str>() {
-                        (*s).to_owned()
-                    } else if let Some(s) = cause.downcast_ref::<String>() {
-                        s.clone()
-                    } else {
-                        "unknown panic".to_owned()
-                    };
+                    let msg = cause
+                        .downcast_ref::<&str>()
+                        .map(|s| (*s).to_owned())
+                        .or_else(|| cause.downcast_ref::<String>().cloned())
+                        .unwrap_or_else(|| "unknown panic".to_owned());
                     tracing::warn!(plugin = %name, error = %msg, "plugin on_init panicked");
                 }
             }

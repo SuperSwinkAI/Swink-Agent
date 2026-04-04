@@ -77,6 +77,7 @@ impl McpManager {
     /// When provided, each connection's monitor task will send
     /// `AgentEvent::McpServerDisconnected` on this sender when a transport
     /// closure is detected.
+    #[must_use]
     pub fn with_event_tx(mut self, tx: UnboundedSender<AgentEvent>) -> Self {
         self.event_tx = Some(tx);
         self

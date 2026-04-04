@@ -241,36 +241,7 @@ impl std::fmt::Debug for NamespacedTool {
 mod tests {
     use super::*;
 
-    // ─── Minimal mock plugin for unit tests ─────────────────────────────
-
-    struct TestPlugin {
-        name: String,
-        priority: i32,
-    }
-
-    impl TestPlugin {
-        fn new(name: &str) -> Self {
-            Self {
-                name: name.to_owned(),
-                priority: 0,
-            }
-        }
-
-        fn with_priority(mut self, priority: i32) -> Self {
-            self.priority = priority;
-            self
-        }
-    }
-
-    impl Plugin for TestPlugin {
-        fn name(&self) -> &str {
-            &self.name
-        }
-
-        fn priority(&self) -> i32 {
-            self.priority
-        }
-    }
+    use crate::testing::MockPlugin;
 
     // ─── PluginRegistry tests ───────────────────────────────────────────
 
@@ -280,7 +251,7 @@ mod tests {
         assert!(reg.is_empty());
         assert_eq!(reg.len(), 0);
 
-        reg.register(Arc::new(TestPlugin::new("alpha")));
+        reg.register(Arc::new(MockPlugin::new("alpha")));
         assert!(!reg.is_empty());
         assert_eq!(reg.len(), 1);
         assert!(reg.get("alpha").is_some());
@@ -290,8 +261,8 @@ mod tests {
     #[test]
     fn registry_duplicate_replaces() {
         let mut reg = PluginRegistry::new();
-        reg.register(Arc::new(TestPlugin::new("alpha").with_priority(1)));
-        reg.register(Arc::new(TestPlugin::new("alpha").with_priority(5)));
+        reg.register(Arc::new(MockPlugin::new("alpha").with_priority(1)));
+        reg.register(Arc::new(MockPlugin::new("alpha").with_priority(5)));
         assert_eq!(reg.len(), 1);
         assert_eq!(reg.get("alpha").unwrap().priority(), 5);
     }
@@ -299,8 +270,8 @@ mod tests {
     #[test]
     fn registry_unregister() {
         let mut reg = PluginRegistry::new();
-        reg.register(Arc::new(TestPlugin::new("alpha")));
-        reg.register(Arc::new(TestPlugin::new("beta")));
+        reg.register(Arc::new(MockPlugin::new("alpha")));
+        reg.register(Arc::new(MockPlugin::new("beta")));
         assert_eq!(reg.len(), 2);
 
         reg.unregister("alpha");
@@ -312,7 +283,7 @@ mod tests {
     #[test]
     fn registry_unregister_nonexistent_is_noop() {
         let mut reg = PluginRegistry::new();
-        reg.register(Arc::new(TestPlugin::new("alpha")));
+        reg.register(Arc::new(MockPlugin::new("alpha")));
         reg.unregister("nonexistent");
         assert_eq!(reg.len(), 1);
     }
@@ -320,9 +291,9 @@ mod tests {
     #[test]
     fn registry_list_sorted_by_priority_desc() {
         let mut reg = PluginRegistry::new();
-        reg.register(Arc::new(TestPlugin::new("low").with_priority(1)));
-        reg.register(Arc::new(TestPlugin::new("high").with_priority(10)));
-        reg.register(Arc::new(TestPlugin::new("mid").with_priority(5)));
+        reg.register(Arc::new(MockPlugin::new("low").with_priority(1)));
+        reg.register(Arc::new(MockPlugin::new("high").with_priority(10)));
+        reg.register(Arc::new(MockPlugin::new("mid").with_priority(5)));
 
         let list = reg.list();
         let names: Vec<&str> = list.iter().map(|p| p.name()).collect();
@@ -332,9 +303,9 @@ mod tests {
     #[test]
     fn registry_list_stable_sort_for_equal_priority() {
         let mut reg = PluginRegistry::new();
-        reg.register(Arc::new(TestPlugin::new("first").with_priority(0)));
-        reg.register(Arc::new(TestPlugin::new("second").with_priority(0)));
-        reg.register(Arc::new(TestPlugin::new("third").with_priority(0)));
+        reg.register(Arc::new(MockPlugin::new("first").with_priority(0)));
+        reg.register(Arc::new(MockPlugin::new("second").with_priority(0)));
+        reg.register(Arc::new(MockPlugin::new("third").with_priority(0)));
 
         let list = reg.list();
         let names: Vec<&str> = list.iter().map(|p| p.name()).collect();

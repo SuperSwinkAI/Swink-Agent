@@ -84,6 +84,16 @@ MSRV **1.88** (edition 2024). Workspace deps centralized in root `Cargo.toml`.
 - `AuditSink` trait is sync (`fn write(&self, record: &AuditRecord)`) — defined in this crate, not in core.
 - All regex patterns compiled once at construction, `evaluate()` only runs matches.
 
+### Plugin System (`src/plugin.rs`)
+
+- `Plugin` trait requires only `name()` — all contribution methods (`pre_turn_policies`, `post_turn_policies`, `tools`, `on_event`, etc.) default to no-op/empty.
+- `PluginRegistry` deduplicates by name on `register()` — the new plugin **replaces** the old one (with a `tracing::warn`), not an error.
+- `list()` returns plugins sorted by priority descending; insertion order preserved for ties (stable sort via `sort_by_key` with `std::cmp::Reverse`).
+- `NamespacedTool` prefixes as `"{plugin_name}.{tool_name}"` — prevents tool name collisions across plugins. `metadata()` also sets `namespace` on the inner `ToolMetadata`.
+- Contributions merged in `Agent::new()`: plugin policies **prepended** (priority-sorted), direct policies appended; plugin tools appended after direct tools.
+- `on_init(&self, &Agent)` dispatched in priority order, wrapped in `catch_unwind` — panicking `on_init` is logged and skipped, construction continues (plugin's other contributions remain active).
+- Entire module behind `#[cfg(feature = "plugins")]` — opt-in, not default-enabled, zero cost when disabled.
+
 ### Streaming (`src/stream.rs`)
 
 - `accumulate_message` enforces strict ordering: one Start, indexed content blocks, one terminal (Done/Error).
