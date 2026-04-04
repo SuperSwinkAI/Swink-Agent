@@ -21,7 +21,7 @@ use swink_agent::types::{
 
 use crate::base::AdapterBase;
 use crate::convert::extract_tool_schemas;
-use crate::sse::{SseLine as SharedSseLine, sse_lines};
+use crate::sse::{SseAction, SseEvent, sse_paired_events};
 
 // ─── Request types ──────────────────────────────────────────────────────────
 
@@ -119,11 +119,7 @@ struct SseStreamState {
     stop_reason: Option<StopReason>,
 }
 
-/// Parsed SSE line with event type.
-enum SseLine {
-    /// An `event: <type>` + `data: <json>` pair.
-    Event { event_type: String, data: String },
-}
+// NOTE: Event/data pairing is handled by `SseEvent` from `crate::sse::sse_paired_events`.
 
 // ─── AnthropicStreamFn ──────────────────────────────────────────────────────
 
@@ -448,72 +444,39 @@ fn parse_sse_stream(
     response: reqwest::Response,
     cancellation_token: CancellationToken,
 ) -> impl Stream<Item = AssistantMessageEvent> + Send {
-    let byte_stream = response.bytes_stream();
-    let line_stream = sse_event_lines(byte_stream);
+    let line_stream = sse_paired_events(response.bytes_stream());
 
-    stream::unfold(
-        (
-            Box::pin(line_stream),
-            cancellation_token,
-            SseStreamState {
-                content_index: 0,
-                active_blocks: HashMap::new(),
-                usage: Usage::default(),
-                stop_reason: None,
-            },
-            false,
-            true,
-        ),
-        |(mut lines, token, mut state, mut done, first)| async move {
-            if done {
-                return None;
-            }
+    let state = SseStreamState {
+        content_index: 0,
+        active_blocks: HashMap::new(),
+        usage: Usage::default(),
+        stop_reason: None,
+    };
 
-            // Emit Start on first call
-            if first {
-                return Some((
-                    vec![AssistantMessageEvent::Start],
-                    (lines, token, state, done, false),
+    crate::sse::sse_adapter_stream(
+        line_stream,
+        cancellation_token,
+        state,
+        "operation cancelled",
+        |item, state| match item {
+            None => {
+                let mut events = crate::finalize::finalize_blocks(state);
+                events.push(AssistantMessageEvent::error_network(
+                    "Anthropic stream ended unexpectedly",
                 ));
+                SseAction::Done(events)
             }
-
-            tokio::select! {
-                biased;
-                () = token.cancelled() => {
-                    let mut events = crate::finalize::finalize_blocks(&mut state);
-                    events.push(AssistantMessageEvent::Error {
-                        stop_reason: StopReason::Aborted,
-                        error_message: "operation cancelled".to_string(),
-                        usage: None,
-                        error_kind: None,
-                    });
-                    done = true;
-                    Some((events, (lines, token, state, done, false)))
-                }
-                item = lines.next() => {
-                    match item {
-                        None => {
-                            // Stream ended unexpectedly
-                            done = true;
-                            let mut events = crate::finalize::finalize_blocks(&mut state);
-                            events.push(AssistantMessageEvent::error_network("Anthropic stream ended unexpectedly"));
-                            Some((events, (lines, token, state, done, false)))
-                        }
-                        Some(SseLine::Event { event_type, data }) => {
-                            let events = process_sse_event(
-                                &event_type,
-                                &data,
-                                &mut state,
-                                &mut done,
-                            );
-                            Some((events, (lines, token, state, done, false)))
-                        }
-                    }
+            Some(SseEvent { event_type, data }) => {
+                let mut done = false;
+                let events = process_sse_event(&event_type, &data, state, &mut done);
+                if done {
+                    SseAction::Done(events)
+                } else {
+                    SseAction::Continue(events)
                 }
             }
         },
     )
-    .flat_map(stream::iter)
 }
 
 /// Process a single SSE event and return the resulting harness events.
@@ -789,41 +752,7 @@ impl crate::finalize::StreamFinalize for SseStreamState {
     }
 }
 
-/// Convert a byte stream into a stream of parsed SSE event+data pairs.
-///
-/// Anthropic SSE has both `event:` and `data:` lines. This parser pairs them
-/// together using a simple state machine.
-fn sse_event_lines(
-    byte_stream: impl Stream<Item = Result<bytes::Bytes, reqwest::Error>> + Send + 'static,
-) -> Pin<Box<dyn Stream<Item = SseLine> + Send + 'static>> {
-    Box::pin(stream::unfold(
-        (Box::pin(sse_lines(byte_stream)), Option::<String>::None),
-        |(mut stream, mut current_event)| async move {
-            loop {
-                match stream.next().await {
-                    Some(SharedSseLine::Empty | SharedSseLine::Done) => {
-                        current_event = None;
-                    }
-                    Some(SharedSseLine::Event(event_type)) => {
-                        current_event = Some(event_type);
-                    }
-                    Some(SharedSseLine::Data(data)) => {
-                        if !data.is_empty() {
-                            let event_type = current_event
-                                .take()
-                                .unwrap_or_else(|| "unknown".to_string());
-                            return Some((
-                                SseLine::Event { event_type, data },
-                                (stream, current_event),
-                            ));
-                        }
-                    }
-                    None => return None,
-                }
-            }
-        },
-    ))
-}
+// Event/data pairing is now handled by `crate::sse::sse_paired_events`.
 
 // ─── Compile-time assertions ────────────────────────────────────────────────
 
