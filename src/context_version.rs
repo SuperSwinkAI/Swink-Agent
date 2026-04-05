@@ -202,16 +202,6 @@ struct VersioningState {
     turn_counter: u64,
 }
 
-fn extract_llm_messages(messages: &[AgentMessage]) -> Vec<LlmMessage> {
-    messages
-        .iter()
-        .filter_map(|m| match m {
-            AgentMessage::Llm(llm) => Some(llm.clone()),
-            AgentMessage::Custom(_) => None,
-        })
-        .collect()
-}
-
 impl VersioningTransformer {
     /// Create a new versioning transformer wrapping an inner transformer.
     pub fn new(
@@ -248,48 +238,15 @@ impl ContextTransformer for VersioningTransformer {
         messages: &mut Vec<AgentMessage>,
         overflow: bool,
     ) -> Option<CompactionReport> {
-        let before_len = messages.len();
-
-        // Snapshot LLM messages before compaction so we can identify dropped ones.
-        let snapshot: Vec<LlmMessage> = extract_llm_messages(messages);
-
-        // Run the inner transformer.
+        // Run the inner transformer. The report carries the dropped LLM messages
+        // directly — no snapshot/diff reconstruction needed.
         let report = self.inner.transform(messages, overflow)?;
 
-        let after_len = messages.len();
-        let dropped_count = before_len - after_len;
-
-        if dropped_count == 0 {
+        if report.dropped_messages.is_empty() {
             return Some(report);
         }
 
-        // Collect the LLM messages that survived compaction.
-        let surviving: Vec<LlmMessage> = extract_llm_messages(messages);
-
-        // The dropped LLM messages are those in the snapshot but not in the
-        // surviving set. Sliding window removes a contiguous middle section,
-        // so we can diff by finding the anchor prefix and tail suffix that
-        // match, and the middle is what was dropped.
-        let anchor_count = snapshot
-            .iter()
-            .zip(surviving.iter())
-            .take_while(|(a, b)| format!("{a:?}") == format!("{b:?}"))
-            .count();
-
-        let tail_count = surviving.len().saturating_sub(anchor_count);
-        let snapshot_tail_start = snapshot.len().saturating_sub(tail_count);
-
-        let dropped_messages: Vec<LlmMessage> = if anchor_count < snapshot_tail_start {
-            snapshot[anchor_count..snapshot_tail_start].to_vec()
-        } else {
-            Vec::new()
-        };
-
-        if dropped_messages.is_empty() {
-            return Some(report);
-        }
-
-        // Build the version.
+        // Build the version from the report's explicit dropped-message list.
         let mut state = self
             .state
             .lock()
@@ -299,13 +256,13 @@ impl ContextTransformer for VersioningTransformer {
         let summary = self
             .summarizer
             .as_ref()
-            .and_then(|s| s.summarize(&dropped_messages));
+            .and_then(|s| s.summarize(&report.dropped_messages));
 
         let version = ContextVersion {
             version: state.next_version,
             turn: state.turn_counter,
             timestamp: crate::util::now_timestamp(),
-            messages: dropped_messages,
+            messages: report.dropped_messages.clone(),
             summary,
         };
 
@@ -499,5 +456,101 @@ mod tests {
 
         // Verify store() returns the same store.
         assert!(transformer.store().list_versions().is_empty());
+    }
+
+    // Regression tests for #164: explicit compaction results (no Debug-string diff)
+
+    #[test]
+    fn report_dropped_messages_populated_by_compaction() {
+        // Verify that CompactionReport.dropped_messages contains the correct
+        // messages after compact_sliding_window_with runs — not reconstructed
+        // via Debug-string diffing.
+        use crate::context::compact_sliding_window_with;
+
+        // Each message: 400 chars / 4 = 100 tokens.
+        let body = "x".repeat(400);
+        let mut messages = vec![
+            text_message(&body), // anchor (100t)
+            text_message(&body), // dropped (100t)
+            text_message(&body), // dropped (100t)
+            text_message(&body), // tail (100t)
+        ];
+        // Total: 400t. Budget 250 with anchor=1:
+        // anchor(100t) + tail(100t) = 200t fits; middle 2 dropped.
+        let report = compact_sliding_window_with(&mut messages, 250, 1, None).unwrap();
+
+        // The middle two messages should be in dropped_messages.
+        assert_eq!(report.dropped_messages.len(), 2);
+        // Anchor and tail survive.
+        assert_eq!(messages.len(), 2);
+    }
+
+    #[test]
+    fn versioning_uses_report_dropped_messages_not_debug_diff() {
+        // Verify VersioningTransformer correctly captures dropped content
+        // from the report rather than through snapshot diffing.
+        let store: Arc<dyn ContextVersionStore> = Arc::new(InMemoryVersionStore::new());
+        let inner = SlidingWindowTransformer::new(250, 100, 1);
+        let transformer = VersioningTransformer::new(inner, Arc::clone(&store));
+
+        let body_a = "a".repeat(400); // 100 tokens
+        let body_b = "b".repeat(400); // 100 tokens
+
+        // Messages: anchor(a), dropped(a), dropped(b), tail(b).
+        // Budget 250, anchor=1: anchor(100t) + tail(100t) = 200t fits.
+        // Middle 2 messages (body_a, body_b) dropped.
+        let mut messages = vec![
+            text_message(&body_a),
+            text_message(&body_a),
+            text_message(&body_b),
+            text_message(&body_b),
+        ];
+
+        let report = transformer.transform(&mut messages, false);
+        assert!(report.is_some());
+
+        let v = store.load_version(1).unwrap();
+        // Two middle messages were dropped.
+        assert_eq!(v.messages.len(), 2);
+        // Verify dropped content — if debug-string diffing were used and broke,
+        // the wrong messages would be captured.
+        if let LlmMessage::User(ref u) = v.messages[0] {
+            if let ContentBlock::Text { ref text } = u.content[0] {
+                assert_eq!(text, &body_a);
+            } else {
+                panic!("expected text block");
+            }
+        } else {
+            panic!("expected user message");
+        }
+    }
+
+    #[test]
+    fn custom_messages_excluded_from_dropped_messages() {
+        // Custom messages should be filtered out of CompactionReport.dropped_messages
+        // (they're not LlmMessage variants).
+        use crate::context::compact_sliding_window_with;
+        use crate::types::CustomMessage;
+
+        #[derive(Debug)]
+        struct Marker;
+        impl CustomMessage for Marker {
+            fn as_any(&self) -> &dyn std::any::Any {
+                self
+            }
+        }
+
+        let body = "x".repeat(400); // 100 tokens each
+        let mut messages = vec![
+            text_message(&body),                                     // anchor
+            AgentMessage::Custom(Box::new(Marker)),                  // custom — dropped but excluded
+            text_message(&body),                                     // dropped
+            text_message(&body),                                     // tail
+        ];
+        // Budget 250, anchor=1: anchor(100t) + tail(100t) fits.
+        let report = compact_sliding_window_with(&mut messages, 250, 1, None).unwrap();
+
+        // Custom message is filtered out; only the LlmMessage is in dropped_messages.
+        assert_eq!(report.dropped_messages.len(), 1);
     }
 }

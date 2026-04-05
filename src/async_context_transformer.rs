@@ -75,6 +75,7 @@ mod tests {
                             tokens_before: 0,
                             tokens_after: 0,
                             overflow: true,
+                            dropped_messages: Vec::new(),
                         })
                     } else {
                         None

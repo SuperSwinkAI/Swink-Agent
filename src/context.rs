@@ -76,6 +76,13 @@ pub struct CompactionReport {
     pub tokens_after: usize,
     /// Whether compaction was triggered by overflow.
     pub overflow: bool,
+    /// The LLM messages that were dropped during this compaction pass.
+    ///
+    /// Only `LlmMessage` variants are included; `CustomMessage` values are
+    /// filtered out. Populated by [`compact_sliding_window_with`]; empty for
+    /// bare-closure transformers that don't have access to the dropped slice.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dropped_messages: Vec<LlmMessage>,
 }
 
 /// Core sliding window compaction algorithm.
@@ -149,6 +156,15 @@ pub fn compact_sliding_window_with(
 
     let dropped_count = tail_start - effective_anchor;
 
+    // Collect the dropped LLM messages before modifying the slice.
+    let dropped_messages: Vec<LlmMessage> = messages[effective_anchor..tail_start]
+        .iter()
+        .filter_map(|m| match m {
+            AgentMessage::Llm(llm) => Some(llm.clone()),
+            AgentMessage::Custom(_) => None,
+        })
+        .collect();
+
     // Build the compacted list: anchor messages + tail messages.
     let tail: Vec<AgentMessage> = messages.drain(tail_start..).collect();
     messages.truncate(effective_anchor);
@@ -161,6 +177,7 @@ pub fn compact_sliding_window_with(
         tokens_before,
         tokens_after,
         overflow: false,
+        dropped_messages,
     })
 }
 
@@ -619,6 +636,35 @@ mod tests {
         let result = compact_sliding_window(&mut messages, 250, 1);
         assert!(result.is_some());
         assert_eq!(messages.len(), 2);
+    }
+
+    #[test]
+    fn compaction_report_includes_dropped_messages() {
+        // Regression test for #164: CompactionReport.dropped_messages must be
+        // populated by compact_sliding_window_with, not reconstructed via Debug diff.
+        let body = "x".repeat(400); // 100 tokens each
+        // anchor | dropped | dropped | tail
+        let mut messages = vec![
+            text_message(&body),
+            text_message(&body),
+            text_message(&body),
+            text_message(&body),
+        ];
+        // Budget 250, anchor=1: anchor(100t) + tail(100t) = 200t fits; 2 middle dropped.
+        let report = compact_sliding_window_with(&mut messages, 250, 1, None).unwrap();
+
+        assert_eq!(report.dropped_count, 2);
+        assert_eq!(report.dropped_messages.len(), 2);
+        // Surviving: 2 messages.
+        assert_eq!(messages.len(), 2);
+    }
+
+    #[test]
+    fn compaction_report_dropped_messages_empty_when_no_compaction() {
+        let mut messages = vec![text_message("hello"), text_message("world")];
+        let result = compact_sliding_window_with(&mut messages, 10_000, 1, None);
+        // No compaction — result is None, so dropped_messages never exists.
+        assert!(result.is_none());
     }
 
     // ── is_context_overflow tests ──────────────────────────────────────

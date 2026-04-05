@@ -170,6 +170,7 @@ fn all_agent_event_variants_serialize_to_json() {
                     tokens_before: 10000,
                     tokens_after: 5000,
                     overflow: false,
+                    dropped_messages: Vec::new(),
                 },
             },
         ),
@@ -254,6 +255,7 @@ fn context_compacted_serializes_report_fields() {
             tokens_before: 20000,
             tokens_after: 8000,
             overflow: true,
+            dropped_messages: Vec::new(),
         },
     };
     let val = serde_json::to_value(&event).unwrap();
@@ -452,6 +454,7 @@ fn agent_event_roundtrip_all_variants() {
                     tokens_before: 10000,
                     tokens_after: 5000,
                     overflow: false,
+                    dropped_messages: Vec::new(),
                 },
             },
         ),

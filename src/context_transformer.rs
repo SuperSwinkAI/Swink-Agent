@@ -38,6 +38,7 @@ impl<F: Fn(&mut Vec<AgentMessage>, bool) + Send + Sync> ContextTransformer for F
                 tokens_before: 0, // bare closures can't report token counts
                 tokens_after: 0,
                 overflow,
+                dropped_messages: Vec::new(), // bare closures don't have access to the dropped slice
             })
         } else {
             None
