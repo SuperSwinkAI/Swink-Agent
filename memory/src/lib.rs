@@ -26,6 +26,7 @@
 //! store.save(&id, &meta, &messages)?;
 //! ```
 
+pub mod codec;
 pub mod compaction;
 pub mod entry;
 pub mod interrupt;

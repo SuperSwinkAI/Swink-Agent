@@ -17,7 +17,7 @@ async fn async_save_and_load_roundtrip() {
 
     store.save("async_rt", &meta, &messages).await.unwrap();
 
-    let (loaded_meta, loaded_msgs) = store.load("async_rt", None).await.unwrap();
+    let (loaded_meta, loaded_msgs) = store.load("async_rt").await.unwrap();
     assert_eq!(loaded_meta.id, meta.id);
     assert_eq!(loaded_meta.title, meta.title);
     assert_eq!(loaded_meta.sequence, 1); // incremented on save
@@ -38,7 +38,7 @@ async fn concurrent_async_operations_on_different_sessions() {
             let meta = sample_meta(&id, &format!("Session {i}"));
             let messages = vec![user_message(&format!("message from {i}"))];
             store.save(&id, &meta, &messages).await.unwrap();
-            let (loaded_meta, loaded_msgs) = store.load(&id, None).await.unwrap();
+            let (loaded_meta, loaded_msgs) = store.load(&id).await.unwrap();
             assert_eq!(loaded_meta.id, id);
             assert_eq!(loaded_msgs.len(), 1);
         });
