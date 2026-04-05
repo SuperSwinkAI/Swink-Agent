@@ -61,12 +61,51 @@ impl MessageConverter for LocalConverter {
     }
 }
 
+// ─── Gemma 4 converter ──────────────────────────────────────────────────────
+
+/// Message converter for Gemma 4 direct inference.
+///
+/// Identical to [`LocalConverter`] except `tool_result_message` wraps results
+/// in Gemma 4's native `<|tool_result>...<tool_result|>` format instead of
+/// the generic `[tool_call_id: ...]` format.
+#[cfg(feature = "gemma4")]
+struct Gemma4LocalConverter;
+
+#[cfg(feature = "gemma4")]
+impl MessageConverter for Gemma4LocalConverter {
+    type Message = LocalMessage;
+
+    fn system_message(system_prompt: &str) -> Option<Self::Message> {
+        LocalConverter::system_message(system_prompt)
+    }
+
+    fn user_message(user: &UserMessage) -> Self::Message {
+        LocalConverter::user_message(user)
+    }
+
+    fn assistant_message(assistant: &AssistantMessage) -> Self::Message {
+        LocalConverter::assistant_message(assistant)
+    }
+
+    fn tool_result_message(result: &ToolResultMessage) -> Self::Message {
+        let text = ContentBlock::extract_text(&result.content);
+        LocalMessage {
+            role: TextMessageRole::Tool,
+            content: format!(
+                "<|tool_result>{}\n{text}<tool_result|>",
+                result.tool_call_id
+            ),
+        }
+    }
+}
+
 // ─── Public API ─────────────────────────────────────────────────────────────
 
 /// Convert an [`AgentContext`] into mistral.rs [`TextMessages`].
 ///
-/// Delegates to core's generic [`convert_messages`] with [`LocalConverter`],
-/// then folds the intermediate messages into the mistral.rs builder.
+/// Delegates to core's generic [`convert_messages`] with the appropriate
+/// converter (Gemma 4 or standard), then folds the intermediate messages into
+/// the mistral.rs builder.
 ///
 /// When `config` identifies a Gemma 4 model and `thinking_enabled` is `true`,
 /// prepends `<|think|>\n` to the system prompt to activate thinking mode
@@ -77,6 +116,14 @@ pub fn convert_context_messages(
     thinking_enabled: bool,
 ) -> TextMessages {
     let system_prompt = inject_think_token(&context.system_prompt, config, thinking_enabled);
+
+    #[cfg(feature = "gemma4")]
+    let converted: Vec<LocalMessage> = if config.is_gemma4() {
+        convert_messages::<Gemma4LocalConverter>(&context.messages, &system_prompt)
+    } else {
+        convert_messages::<LocalConverter>(&context.messages, &system_prompt)
+    };
+    #[cfg(not(feature = "gemma4"))]
     let converted = convert_messages::<LocalConverter>(&context.messages, &system_prompt);
 
     let mut messages = TextMessages::new();
@@ -266,6 +313,31 @@ mod tests {
         let ctx = make_context("", vec![msg]);
         let _msgs = convert_context_messages(&ctx, &smollm_config(), false);
         // Error tool results convert without panic.
+    }
+
+    // ── T051: Gemma 4 tool result formatting ─────────────────────────────
+
+    #[cfg(feature = "gemma4")]
+    #[test]
+    fn tool_result_formatting() {
+        use swink_agent::types::ToolResultMessage;
+
+        let result = ToolResultMessage {
+            tool_call_id: "read_file".to_string(),
+            content: vec![ContentBlock::Text {
+                text: "file contents".to_string(),
+            }],
+            is_error: false,
+            timestamp: 0,
+            details: serde_json::Value::Null,
+            cache_hint: None,
+        };
+
+        let msg = Gemma4LocalConverter::tool_result_message(&result);
+        assert_eq!(
+            msg.content,
+            "<|tool_result>read_file\nfile contents<tool_result|>"
+        );
     }
 
     // ── Think token injection tests (T029-T031) ─────────────────────────

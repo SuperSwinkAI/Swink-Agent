@@ -6,9 +6,17 @@
 ## Prerequisites
 
 - Rust 1.88+ with edition 2024
-- `mistralrs` 0.8+ (blocked until NaN logits bug #2051 is fixed)
-- ~4 GB free disk space (for E2B Q4_K_M download + cache)
-- ~6 GB RAM recommended for E2B inference
+- **GPU required for Gemma 4**: NVIDIA GPU with CUDA, or Apple Silicon with Metal.
+  CPU-only inference hangs silently on non-trivial prompts.
+  - NVIDIA (Linux/Windows): compile with `--features gemma4,cuda`
+  - Apple Silicon (macOS): compile with `--features gemma4,metal`
+  - Windows additional requirement: MSVC C++ compiler (`cl.exe`) in `PATH`.
+    Install [Visual Studio Build Tools 2022](https://visualstudio.microsoft.com/downloads/#build-tools-for-visual-studio-2022)
+    with the "Desktop development with C++" workload, then build from a
+    **Developer Command Prompt for VS 2022**.
+- SmolLM3-3B (default) works on CPU — no GPU needed.
+- ~5 GB free disk space for E2B safetensors download
+- ~6 GB VRAM recommended for E2B GPU inference
 
 ## Quick Start
 
@@ -34,6 +42,22 @@ export LOCAL_MODEL_FILE="SmolLM3-3B-Q4_K_M.gguf"
 export LOCAL_CONTEXT_LENGTH=8192
 ```
 
+### Opt-in to Gemma 4 E2B (SmolLM3-3B remains the default)
+
+```rust
+// In Cargo.toml:
+// swink-agent-local-llm = { version = "0.6", features = ["gemma4"] }
+
+use swink_agent_local_llm::{ModelPreset, LocalModel, LocalStreamFn};
+use std::sync::Arc;
+
+// SmolLM3-3B is still the unconditional default.
+// Use from_preset to explicitly select Gemma 4 E2B (~5 GB download on first use).
+let model = LocalModel::from_preset(ModelPreset::Gemma4E2B);
+let stream_fn = LocalStreamFn::new(Arc::new(model));
+// stream_fn can now be passed to AgentLoopConfig or ModelConnection.
+```
+
 ### Using a specific Gemma 4 variant
 
 ```rust
@@ -57,17 +81,20 @@ let connection = default_local_connection()?; // SmolLM3-3B
 ## Build & Test
 
 ```bash
-# Build with Gemma 4 support
-cargo build -p swink-agent-local-llm --features gemma4
+# Build with Gemma 4 support — choose your GPU backend:
+cargo build -p swink-agent-local-llm --features "gemma4,cuda"    # NVIDIA
+cargo build -p swink-agent-local-llm --features "gemma4,metal"   # Apple Silicon
 
-# Run unit tests (no model download needed)
+# Run unit tests (no model download or GPU needed)
 cargo test -p swink-agent-local-llm --features gemma4
 
-# Run live tests (downloads ~3.5 GB on first run)
-cargo test -p swink-agent-local-llm --features gemma4 --test local_live -- --ignored
+# Run live tests — GPU required (downloads ~5 GB on first run)
+# NVIDIA:
+cargo test -p swink-agent-local-llm --features "gemma4,cuda" --test local_live -- --ignored
+# Apple Silicon:
+cargo test -p swink-agent-local-llm --features "gemma4,metal" --test local_live -- --ignored
 
-# Build with Metal acceleration (macOS)
-cargo build -p swink-agent-local-llm --features "gemma4,metal"
+# Windows: must run from a Developer Command Prompt for VS 2022 so cl.exe is in PATH
 ```
 
 ## Alternative Backends (no code changes)

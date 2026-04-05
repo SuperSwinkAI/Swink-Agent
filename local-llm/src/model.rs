@@ -185,6 +185,16 @@ impl LoaderBackend for ChatBackend {
                         // Gemma 4 is a multimodal architecture in mistralrs —
                         // GgufModelBuilder does not support it. Use
                         // MultimodalModelBuilder with the safetensors repo.
+                        //
+                        // GPU REQUIREMENT: CPU-only inference hangs silently on any
+                        // non-trivial prompt. Compile with --features cuda (NVIDIA)
+                        // or --features metal (Apple Silicon) to enable GPU inference.
+                        #[cfg(not(any(feature = "cuda", feature = "metal", feature = "cudnn")))]
+                        tracing::warn!(
+                            "Gemma 4 requires GPU for reliable inference. \
+                             Compile with --features cuda (NVIDIA) or --features metal (Apple Silicon). \
+                             CPU-only inference will hang on complex prompts."
+                        );
                         mistralrs::MultimodalModelBuilder::new(repo_id)
                             .build()
                             .await

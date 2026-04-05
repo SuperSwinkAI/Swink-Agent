@@ -307,6 +307,20 @@ mod tests {
         assert_eq!(p, p2);
     }
 
+    // ── Phase 5 (US3) tests ───────────────────────────────────────────────
+
+    #[test]
+    fn default_preset_remains_smollm3() {
+        assert_eq!(DEFAULT_LOCAL_PRESET_ID, "smollm3_3b");
+    }
+
+    #[test]
+    fn smollm3_preset_still_available() {
+        let config = ModelPreset::SmolLM3_3B.config();
+        assert!(config.repo_id.contains("SmolLM3"));
+        assert_eq!(config.context_length, 8192);
+    }
+
     #[cfg(feature = "gemma4")]
     mod gemma4_tests {
         use super::*;
@@ -351,6 +365,13 @@ mod tests {
             assert!(config.filename.is_empty());
             assert_eq!(config.context_length, 262_144);
             assert!(config.chat_template.is_none());
+        }
+
+        #[test]
+        fn gemma4_e2b_selectable_via_preset() {
+            let config = ModelPreset::Gemma4E2B.config();
+            assert!(config.is_gemma4());
+            assert_eq!(config.context_length, 131_072);
         }
 
         #[test]

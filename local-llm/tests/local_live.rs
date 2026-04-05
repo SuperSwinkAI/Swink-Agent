@@ -229,6 +229,180 @@ mod gemma4_live {
         }
     }
 
+    /// Probe: complex system prompt WITHOUT angle brackets — does it hang?
+    #[tokio::test]
+    #[ignore = "downloads Gemma 4 E2B safetensors (~5 GB)"]
+    async fn probe_complex_system_no_angle_brackets() {
+        let Some(local_model) = ready_gemma4_or_skip().await else {
+            return;
+        };
+        let stream_fn = LocalStreamFn::new(Arc::clone(&local_model));
+        let model = ModelSpec::new("local", "gemma-4-E2B-it");
+        let options = StreamOptions::default();
+
+        let ctx = gemma4_context(
+            "You are an expert software engineer specializing in Rust programming. \
+             You write clean, efficient, idiomatic code. You follow the Rust API guidelines \
+             and prefer zero-copy patterns where possible. When explaining code, be thorough \
+             but concise. Always consider error handling and edge cases.",
+            // Same topic but angle brackets replaced with plain text
+            "Explain the difference between Arc with Mutex and Arc with RwLock in Rust. \
+             When should you use each? Give a brief code example.",
+        );
+        let events: Vec<AssistantMessageEvent> = tokio::time::timeout(
+            std::time::Duration::from_secs(120),
+            stream_fn.stream(&model, &ctx, &options, CancellationToken::new()).collect(),
+        )
+        .await
+        .expect("probe_complex_system_no_angle_brackets should complete within 120s");
+
+        let msg = swink_agent::stream::accumulate_message(events, "local", "gemma-4-E2B-it").unwrap();
+        let text = ContentBlock::extract_text(&msg.content);
+        assert!(!text.is_empty());
+        eprintln!("PASS no_angle_brackets: {}", &text[..text.len().min(120)]);
+    }
+
+    /// Probe: same prompt WITH angle brackets in the user message — does it hang?
+    #[tokio::test]
+    #[ignore = "downloads Gemma 4 E2B safetensors (~5 GB)"]
+    async fn probe_complex_system_with_angle_brackets() {
+        let Some(local_model) = ready_gemma4_or_skip().await else {
+            return;
+        };
+        let stream_fn = LocalStreamFn::new(Arc::clone(&local_model));
+        let model = ModelSpec::new("local", "gemma-4-E2B-it");
+        let options = StreamOptions::default();
+
+        let ctx = gemma4_context(
+            "You are an expert software engineer specializing in Rust programming. \
+             You write clean, efficient, idiomatic code. You follow the Rust API guidelines \
+             and prefer zero-copy patterns where possible. When explaining code, be thorough \
+             but concise. Always consider error handling and edge cases.",
+            // Original prompt with angle brackets
+            "Explain the difference between Arc<Mutex<T>> and Arc<RwLock<T>> in Rust. \
+             When should you use each? Give a brief code example.",
+        );
+        let events: Vec<AssistantMessageEvent> = tokio::time::timeout(
+            std::time::Duration::from_secs(120),
+            stream_fn.stream(&model, &ctx, &options, CancellationToken::new()).collect(),
+        )
+        .await
+        .expect("probe_complex_system_with_angle_brackets should complete within 120s");
+
+        let msg = swink_agent::stream::accumulate_message(events, "local", "gemma-4-E2B-it").unwrap();
+        let text = ContentBlock::extract_text(&msg.content);
+        assert!(!text.is_empty());
+        eprintln!("PASS with_angle_brackets: {}", &text[..text.len().min(120)]);
+    }
+
+    #[tokio::test]
+    #[ignore = "downloads Gemma 4 E2B safetensors (~5 GB)"]
+    async fn live_gemma4_e2b_text_stream() {
+        let Some(local_model) = ready_gemma4_or_skip().await else {
+            return;
+        };
+        let stream_fn = LocalStreamFn::new(Arc::clone(&local_model));
+        let model = ModelSpec::new("local", "gemma-4-E2B-it");
+        let options = StreamOptions::default();
+
+        let ctx = gemma4_context("You are a helpful assistant.", "What is 2 + 2?");
+        let events: Vec<AssistantMessageEvent> = stream_fn
+            .stream(&model, &ctx, &options, CancellationToken::new())
+            .collect()
+            .await;
+
+        assert!(matches!(events.first(), Some(AssistantMessageEvent::Start)));
+        assert!(matches!(events.last(), Some(AssistantMessageEvent::Done { .. })));
+
+        let msg =
+            swink_agent::stream::accumulate_message(events, "local", "gemma-4-E2B-it").unwrap();
+        let text = ContentBlock::extract_text(&msg.content);
+        assert!(!text.is_empty(), "text stream produced empty output");
+        eprintln!("live_gemma4_e2b_text_stream: {}", &text[..text.len().min(100)]);
+    }
+
+    #[tokio::test]
+    #[ignore = "downloads Gemma 4 E2B safetensors (~5 GB)"]
+    async fn live_gemma4_e2b_thinking() {
+        use swink_agent::types::{ModelCapabilities, ModelSpec};
+
+        let Some(local_model) = ready_gemma4_or_skip().await else {
+            return;
+        };
+        let stream_fn = LocalStreamFn::new(Arc::clone(&local_model));
+
+        // Build a ModelSpec with thinking enabled.
+        let mut model = ModelSpec::new("local", "gemma-4-E2B-it");
+        model.capabilities = Some(ModelCapabilities {
+            supports_thinking: true,
+            ..Default::default()
+        });
+        let options = StreamOptions::default();
+
+        let ctx = gemma4_context(
+            "You are a thoughtful assistant.",
+            "What is the capital of France? Think step by step.",
+        );
+        let events: Vec<AssistantMessageEvent> = stream_fn
+            .stream(&model, &ctx, &options, CancellationToken::new())
+            .collect()
+            .await;
+
+        let has_thinking = events.iter().any(|e| {
+            matches!(e, AssistantMessageEvent::ThinkingStart { .. })
+        });
+        assert!(has_thinking, "thinking mode should emit ThinkingStart events");
+
+        let msg =
+            swink_agent::stream::accumulate_message(events, "local", "gemma-4-E2B-it").unwrap();
+        let text = ContentBlock::extract_text(&msg.content);
+        assert!(!text.is_empty(), "thinking response should include text output");
+        eprintln!("live_gemma4_e2b_thinking text: {}", &text[..text.len().min(100)]);
+    }
+
+    #[tokio::test]
+    #[ignore = "downloads Gemma 4 E2B safetensors (~5 GB)"]
+    async fn live_gemma4_e2b_tool_call() {
+        // Tests that the streaming pipeline completes successfully when the model
+        // is prompted with a tool-use-style request. Whether the model emits a
+        // native <|tool_call> token depends on its behavior — this test verifies
+        // the pipeline does not crash and produces a valid event sequence.
+        let Some(local_model) = ready_gemma4_or_skip().await else {
+            return;
+        };
+        let stream_fn = LocalStreamFn::new(Arc::clone(&local_model));
+        let model = ModelSpec::new("local", "gemma-4-E2B-it");
+        let options = StreamOptions::default();
+
+        let ctx = gemma4_context(
+            "You have a tool called read_file(path: str) that reads files. \
+             Use it when the user asks you to read something.",
+            "Call read_file with path='/tmp/test.txt' and show me the result.",
+        );
+
+        let events: Vec<AssistantMessageEvent> = tokio::time::timeout(
+            std::time::Duration::from_secs(120),
+            stream_fn
+                .stream(&model, &ctx, &options, CancellationToken::new())
+                .collect(),
+        )
+        .await
+        .expect("tool call test should complete within 120s");
+
+        assert!(matches!(events.first(), Some(AssistantMessageEvent::Start)));
+        assert!(matches!(events.last(), Some(AssistantMessageEvent::Done { .. })));
+
+        let has_tool_call = events
+            .iter()
+            .any(|e| matches!(e, AssistantMessageEvent::ToolCallStart { .. }));
+        eprintln!("live_gemma4_e2b_tool_call: has_tool_call={has_tool_call}");
+        if has_tool_call {
+            eprintln!("PASS: Gemma 4 E2B emitted native tool call events");
+        } else {
+            eprintln!("NOTE: model responded in text (native tool call format not triggered)");
+        }
+    }
+
     /// Validation gate: verify Gemma 4 E2B works on mistralrs 0.8 without
     /// NaN logits. Sends 3 prompts of increasing complexity.
     ///

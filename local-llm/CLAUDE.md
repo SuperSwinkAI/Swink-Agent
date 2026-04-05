@@ -2,17 +2,17 @@
 
 ## Scope
 
-`local-llm/` — On-device inference via mistral.rs. SmolLM3-3B (text/tools) and EmbeddingGemma-300M (embeddings).
+`local-llm/` — On-device inference via mistral.rs. SmolLM3-3B (default), Gemma 4 E2B (opt-in, `gemma4` feature), and EmbeddingGemma-300M (embeddings).
 
 ## Key Facts
 
 - Models lazily downloaded from HuggingFace on first `ensure_ready()`. Cached in `~/.cache/huggingface/hub/`.
 - `ModelState` lifecycle: `Unloaded → Downloading → Loading → Ready` (or `Failed`).
 - Internal state (`InternalModelState`) holds the runner; public `ModelState` is a simple enum without the runner.
-- Currently non-streaming (`send_chat_request` wrapped into event protocol). Future: switch to `stream_chat_request`.
-- Cost is always zero.
-- `ModelPreset` enum provides `SmolLM3_3B` and `EmbeddingGemma300M` for zero-config model setup.
+- Uses `stream_chat_request` for true token-by-token streaming. Cost is always zero.
+- `ModelPreset` enum provides `SmolLM3_3B`, `EmbeddingGemma300M`, and (with `gemma4` feature) `Gemma4E2B`, `Gemma4E4B`, `Gemma4_26B`, `Gemma4_31B`.
 - `ProgressEvent` enum: `DownloadProgress`, `DownloadComplete`, `LoadingProgress`, `LoadingComplete`.
+- **Default remains SmolLM3-3B** — `DEFAULT_LOCAL_PRESET_ID = "smollm3_3b"` unconditionally. Gemma 4 is opt-in via `ModelPreset::Gemma4E2B`.
 
 ## Lessons Learned
 
@@ -22,6 +22,13 @@
 - **`with_progress` returns `Result`** — call before cloning the `Arc`.
 - **`ModelState` split** — public `ModelState` (re-exported from lib.rs) vs internal `InternalModelState` (holds `mistralrs::Model` runner). Stream code uses `InternalModelState`.
 - **Embedding method naming** — `embed(text)` for single text, `embed_batch(texts)` for batch. Errors use `LocalModelError::Embedding` variant.
+- **Gemma 4 requires GPU** — CPU-only inference hangs silently on non-trivial prompts (BF16 safetensors on CPU is not viable). Build with `--features gemma4,cuda` (NVIDIA) or `--features gemma4,metal` (Apple Silicon). On Windows, `cl.exe` (MSVC) must be in PATH for the cuda feature to compile — use a VS 2022 Developer Command Prompt. A `tracing::warn!` is emitted at load time when Gemma 4 is used without any GPU feature compiled in.
+- **Gemma 4 uses `MultimodalModelBuilder`** — `GgufModelBuilder` cannot load Gemma 4 (Per-Layer Embeddings architecture). `MultimodalModelBuilder::new(repo_id)` handles download internally, so the hf-hub download phase is skipped for Gemma 4.
+- **Gemma 4 model family detection** — `ModelConfig::is_gemma4()` checks `repo_id` for `"gemma-4"` or `"gemma4"` substrings (behind `gemma4` feature flag).
+- **Gemma 4 thinking mode** — `<|think|>\n` prepended to system prompt in `convert.rs` when `config.is_gemma4() && thinking_enabled`. mistralrs has no `think: true` API for direct inference.
+- **Gemma 4 thinking output** — `ChannelThoughtParser` in `stream.rs` handles cross-chunk `<|channel>thought\n...<channel|>` delimiters. Stateful 4-state machine (Normal → PartialOpen → InThinking → PartialClose).
+- **Gemma 4 tool calls** — `ToolCallParser` in `stream.rs` handles cross-chunk `<|tool_call>call:{name}{args}<tool_call|>` format. IDs are generated as UUIDs. `Gemma4LocalConverter` wraps tool results as `<|tool_result>{tool_call_id}\n{text}<tool_result|>`.
+- **Two converter types** — `LocalConverter` (SmolLM3) and `Gemma4LocalConverter` (Gemma 4) both implement `MessageConverter`. `convert_context_messages` dispatches based on `config.is_gemma4()`.
 
 ## Design Decisions
 
@@ -39,6 +46,14 @@ Both modules follow the same `Arc<Inner>` + state-machine pattern (`Unloaded -> 
 cargo build -p swink-agent-local-llm
 cargo test -p swink-agent-local-llm
 cargo clippy -p swink-agent-local-llm -- -D warnings
+
+# With Gemma 4 support
+cargo build -p swink-agent-local-llm --features gemma4
+cargo test -p swink-agent-local-llm --features gemma4
+cargo clippy -p swink-agent-local-llm --features gemma4 -- -D warnings
+
+# Verify SmolLM3 still works without gemma4 feature
+cargo build -p swink-agent-local-llm --no-default-features
 ```
 
 ## Live Tests
@@ -46,6 +61,9 @@ cargo clippy -p swink-agent-local-llm -- -D warnings
 ```bash
 cargo test -p swink-agent-local-llm --test local_live -- --ignored
 cargo test -p swink-agent-local-llm --test embedding_live -- --ignored
+
+# Gemma 4 live tests (downloads ~5 GB on first run)
+cargo test -p swink-agent-local-llm --features gemma4 --test local_live -- --ignored
 ```
 
-Downloads ~2.1 GB on first run. Embedding model requires `HF_TOKEN` (gated).
+SmolLM3 downloads ~1.92 GB on first run. Embedding model requires `HF_TOKEN` (gated). Gemma 4 E2B downloads ~5 GB safetensors on first run.

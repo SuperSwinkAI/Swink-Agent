@@ -11,6 +11,8 @@ use std::sync::Arc;
 use futures::stream::{self, Stream, StreamExt as _};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, warn};
+#[cfg(feature = "gemma4")]
+use uuid::Uuid;
 
 use swink_agent::stream::{AssistantMessageEvent, StreamFn, StreamOptions};
 use swink_agent::types::{AgentContext, Cost, ModelSpec, StopReason, Usage};
@@ -245,6 +247,206 @@ mod channel_thought {
     }
 }
 
+// ─── ToolCallParser (Gemma 4) ─────────────────────────────────────────────
+
+#[cfg(feature = "gemma4")]
+mod tool_call {
+    /// Opening delimiter for Gemma 4 tool calls.
+    const OPEN_DELIM: &str = "<|tool_call>call:";
+    /// Closing delimiter for Gemma 4 tool calls.
+    const CLOSE_DELIM: &str = "<tool_call|>";
+
+    /// A tool call extracted from Gemma 4 streaming output.
+    pub(super) struct ParsedToolCall {
+        pub name: String,
+        pub args: String,
+    }
+
+    /// Parser state for Gemma 4's `<|tool_call>call:{name}{args}<tool_call|>` format.
+    ///
+    /// Handles cross-chunk boundary splitting of both open and close delimiters.
+    #[derive(Debug)]
+    pub(super) struct ToolCallParser {
+        state: State,
+        buffer: String,
+        name_buf: String,
+        args_buf: String,
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum State {
+        /// Normal text output.
+        Normal,
+        /// Seen a partial open delimiter prefix — buffering until match or mismatch.
+        PartialOpen,
+        /// Inside the function name (before the first `{`).
+        InName,
+        /// Inside the JSON arguments (after `{`, up to `<tool_call|>`).
+        InArgs,
+        /// Seen a partial close delimiter prefix while inside arguments.
+        PartialClose,
+    }
+
+    impl ToolCallParser {
+        pub const fn new() -> Self {
+            Self {
+                state: State::Normal,
+                buffer: String::new(),
+                name_buf: String::new(),
+                args_buf: String::new(),
+            }
+        }
+
+        /// Process a chunk of content, returning completed tool calls and remaining text.
+        ///
+        /// Returns `(completed_calls, Option<text_content>)`.
+        #[allow(clippy::too_many_lines)]
+        pub fn process(&mut self, content: &str) -> (Vec<ParsedToolCall>, Option<String>) {
+            self.buffer.push_str(content);
+
+            let mut calls: Vec<ParsedToolCall> = Vec::new();
+            let mut text_out: Option<String> = None;
+
+            loop {
+                match self.state {
+                    State::Normal => {
+                        if let Some(pos) = self.buffer.find(OPEN_DELIM) {
+                            let before = &self.buffer[..pos];
+                            if !before.is_empty() {
+                                append(&mut text_out, before);
+                            }
+                            let rest = self.buffer[pos + OPEN_DELIM.len()..].to_string();
+                            self.buffer = rest;
+                            self.name_buf.clear();
+                            self.args_buf.clear();
+                            self.state = State::InName;
+                            continue;
+                        }
+                        if let Some(partial_len) =
+                            partial_prefix_at_end(&self.buffer, OPEN_DELIM)
+                        {
+                            let flush_end = self.buffer.len() - partial_len;
+                            let flush = &self.buffer[..flush_end];
+                            if !flush.is_empty() {
+                                append(&mut text_out, flush);
+                            }
+                            let rest = self.buffer[flush_end..].to_string();
+                            self.buffer = rest;
+                            self.state = State::PartialOpen;
+                            break;
+                        }
+                        if !self.buffer.is_empty() {
+                            append(&mut text_out, &self.buffer.clone());
+                            self.buffer.clear();
+                        }
+                        break;
+                    }
+                    State::PartialOpen => {
+                        if self.buffer.len() >= OPEN_DELIM.len() {
+                            if self.buffer.starts_with(OPEN_DELIM) {
+                                let rest = self.buffer[OPEN_DELIM.len()..].to_string();
+                                self.buffer = rest;
+                                self.name_buf.clear();
+                                self.args_buf.clear();
+                                self.state = State::InName;
+                                continue;
+                            }
+                            self.state = State::Normal;
+                            continue;
+                        }
+                        if OPEN_DELIM.starts_with(&self.buffer) {
+                            break;
+                        }
+                        self.state = State::Normal;
+                    }
+                    State::InName => {
+                        if let Some(pos) = self.buffer.find('{') {
+                            self.name_buf.push_str(&self.buffer[..pos]);
+                            let rest = self.buffer[pos..].to_string();
+                            self.buffer = rest;
+                            self.state = State::InArgs;
+                            continue;
+                        }
+                        self.name_buf.push_str(&self.buffer);
+                        self.buffer.clear();
+                        break;
+                    }
+                    State::InArgs => {
+                        if let Some(pos) = self.buffer.find(CLOSE_DELIM) {
+                            self.args_buf.push_str(&self.buffer[..pos]);
+                            let rest = self.buffer[pos + CLOSE_DELIM.len()..].to_string();
+                            self.buffer = rest;
+                            calls.push(ParsedToolCall {
+                                name: self.name_buf.trim().to_string(),
+                                args: self.args_buf.clone(),
+                            });
+                            self.name_buf.clear();
+                            self.args_buf.clear();
+                            self.state = State::Normal;
+                            continue;
+                        }
+                        if let Some(partial_len) =
+                            partial_prefix_at_end(&self.buffer, CLOSE_DELIM)
+                        {
+                            let flush_end = self.buffer.len() - partial_len;
+                            self.args_buf.push_str(&self.buffer[..flush_end]);
+                            let rest = self.buffer[flush_end..].to_string();
+                            self.buffer = rest;
+                            self.state = State::PartialClose;
+                            break;
+                        }
+                        self.args_buf.push_str(&self.buffer);
+                        self.buffer.clear();
+                        break;
+                    }
+                    State::PartialClose => {
+                        if self.buffer.len() >= CLOSE_DELIM.len() {
+                            if self.buffer.starts_with(CLOSE_DELIM) {
+                                let rest = self.buffer[CLOSE_DELIM.len()..].to_string();
+                                self.buffer = rest;
+                                calls.push(ParsedToolCall {
+                                    name: self.name_buf.trim().to_string(),
+                                    args: self.args_buf.clone(),
+                                });
+                                self.name_buf.clear();
+                                self.args_buf.clear();
+                                self.state = State::Normal;
+                                continue;
+                            }
+                            self.state = State::InArgs;
+                            continue;
+                        }
+                        if CLOSE_DELIM.starts_with(&self.buffer) {
+                            break;
+                        }
+                        self.state = State::InArgs;
+                    }
+                }
+            }
+
+            (calls, text_out)
+        }
+    }
+
+    fn append(target: &mut Option<String>, s: &str) {
+        match target {
+            Some(existing) => existing.push_str(s),
+            None => *target = Some(s.to_string()),
+        }
+    }
+
+    fn partial_prefix_at_end(haystack: &str, needle: &str) -> Option<usize> {
+        let max_check = haystack.len().min(needle.len() - 1);
+        for len in (1..=max_check).rev() {
+            let suffix = &haystack[haystack.len() - len..];
+            if needle.starts_with(suffix) {
+                return Some(len);
+            }
+        }
+        None
+    }
+}
+
 // ─── Streaming state ────────────────────────────────────────────────────────
 
 /// Mutable state accumulated across streaming chunks.
@@ -261,6 +463,9 @@ struct StreamState {
     /// Gemma 4 channel-thought parser (only present for Gemma 4 models).
     #[cfg(feature = "gemma4")]
     channel_parser: Option<channel_thought::ChannelThoughtParser>,
+    /// Gemma 4 native tool call parser (only present for Gemma 4 models).
+    #[cfg(feature = "gemma4")]
+    tool_call_parser: Option<tool_call::ToolCallParser>,
 }
 
 impl StreamState {
@@ -280,6 +485,12 @@ impl StreamState {
             #[cfg(feature = "gemma4")]
             channel_parser: if is_gemma4 {
                 Some(channel_thought::ChannelThoughtParser::new())
+            } else {
+                None
+            },
+            #[cfg(feature = "gemma4")]
+            tool_call_parser: if is_gemma4 {
+                Some(tool_call::ToolCallParser::new())
             } else {
                 None
             },
@@ -347,7 +558,7 @@ impl StreamState {
             return;
         };
 
-        // Dispatch to Gemma 4 channel parser when present, otherwise SmolLM3 parser.
+        // Step 1: Extract thinking blocks (Gemma 4 channel-thought or SmolLM3 <think>).
         #[cfg(feature = "gemma4")]
         let (thinking_part, text_part) = self.channel_parser.as_mut().map_or_else(
             || {
@@ -362,6 +573,7 @@ impl StreamState {
             (t, if txt.is_empty() { None } else { Some(txt) })
         };
 
+        // Emit thinking events.
         if let Some(think) = thinking_part
             && !think.is_empty()
         {
@@ -377,7 +589,26 @@ impl StreamState {
             });
         }
 
-        if let Some(text) = text_part
+        // Step 2: Pass text through Gemma 4 tool call parser or emit directly.
+        #[cfg(feature = "gemma4")]
+        let final_text = if let Some(text) = text_part {
+            if let Some(parser) = self.tool_call_parser.as_mut() {
+                let (calls, remaining) = parser.process(&text);
+                for call in calls {
+                    self.emit_gemma4_tool_call(call);
+                }
+                remaining
+            } else {
+                Some(text)
+            }
+        } else {
+            None
+        };
+        #[cfg(not(feature = "gemma4"))]
+        let final_text = text_part;
+
+        // Emit text events.
+        if let Some(text) = final_text
             && !text.is_empty()
         {
             self.close_thinking_block();
@@ -392,6 +623,35 @@ impl StreamState {
                 delta: text,
             });
         }
+    }
+
+    /// Emit `ToolCallStart` + optional `ToolCallDelta` for a Gemma 4 native tool call.
+    ///
+    /// `ToolCallEnd` is deferred to [`finalize`] via `active_tool_calls`, matching the
+    /// pattern used for mistralrs-native tool calls.
+    #[cfg(feature = "gemma4")]
+    fn emit_gemma4_tool_call(&mut self, call: tool_call::ParsedToolCall) {
+        self.close_text_block();
+        self.close_thinking_block();
+
+        let id = Uuid::new_v4().to_string();
+        let tc_content_index = self.content_index;
+        self.has_tool_calls = true;
+        self.active_tool_calls.push((id.clone(), tc_content_index));
+        self.content_index += 1;
+
+        self.events.push(AssistantMessageEvent::ToolCallStart {
+            content_index: tc_content_index,
+            id,
+            name: call.name,
+        });
+        if !call.args.is_empty() {
+            self.events.push(AssistantMessageEvent::ToolCallDelta {
+                content_index: tc_content_index,
+                delta: call.args,
+            });
+        }
+        // ToolCallEnd emitted in finalize() via active_tool_calls.
     }
 
     fn process_tool_call_delta(&mut self, choice: &mistralrs::ChunkChoice) {
@@ -807,6 +1067,64 @@ mod tests {
             let (t3, txt3) = parser.process(" after");
             assert!(t3.is_none());
             assert_eq!(txt3.as_deref(), Some(" after"));
+        }
+
+        // ── T047-T050: ToolCallParser tests ──────────────────────────────────
+
+        #[test]
+        fn tool_call_single_chunk() {
+            use super::super::tool_call::ToolCallParser;
+            let mut parser = ToolCallParser::new();
+            let (calls, text) =
+                parser.process(r#"<|tool_call>call:read_file{"path":"foo.rs"}<tool_call|>"#);
+            assert_eq!(calls.len(), 1);
+            assert_eq!(calls[0].name, "read_file");
+            assert_eq!(calls[0].args, r#"{"path":"foo.rs"}"#);
+            assert!(text.is_none());
+        }
+
+        #[test]
+        fn tool_call_cross_chunk() {
+            use super::super::tool_call::ToolCallParser;
+            let mut parser = ToolCallParser::new();
+            // Split at the close delimiter boundary.
+            let (calls1, text1) =
+                parser.process(r#"<|tool_call>call:read_file{"path":"foo.rs"}<tool_call"#);
+            assert!(calls1.is_empty());
+            assert!(text1.is_none());
+
+            let (calls2, text2) = parser.process("|>");
+            assert_eq!(calls2.len(), 1);
+            assert_eq!(calls2[0].name, "read_file");
+            assert_eq!(calls2[0].args, r#"{"path":"foo.rs"}"#);
+            assert!(text2.is_none());
+        }
+
+        #[test]
+        fn tool_call_no_delimiters() {
+            use super::super::tool_call::ToolCallParser;
+            let mut parser = ToolCallParser::new();
+            let (calls, text) = parser.process("Hello, world!");
+            assert!(calls.is_empty());
+            assert_eq!(text.as_deref(), Some("Hello, world!"));
+        }
+
+        #[test]
+        fn tool_call_with_thinking() {
+            // Simulate the full pipeline: ChannelThoughtParser → ToolCallParser.
+            let mut think_parser = ChannelThoughtParser::new();
+            let input = r#"<|channel>thought
+reasoning<channel|><|tool_call>call:read_file{"path":"foo.rs"}<tool_call|>"#;
+            let (thinking, text_opt) = think_parser.process(input);
+            assert_eq!(thinking.as_deref(), Some("reasoning"));
+
+            let text = text_opt.expect("tool call text must follow thinking block");
+            use super::super::tool_call::ToolCallParser;
+            let mut tool_parser = ToolCallParser::new();
+            let (calls, remaining) = tool_parser.process(&text);
+            assert_eq!(calls.len(), 1);
+            assert_eq!(calls[0].name, "read_file");
+            assert!(remaining.filter(|s| !s.is_empty()).is_none());
         }
 
         #[test]

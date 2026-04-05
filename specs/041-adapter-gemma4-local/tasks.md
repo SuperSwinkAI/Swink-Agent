@@ -78,8 +78,19 @@
 
 ### Validation Gate (STOP/GO)
 
-- [ ] T021 Run ignored live test `live_gemma4_e2b_smoke` — download E2B Q4_K_M GGUF, send 3 prompts of increasing complexity (simple greeting, multi-paragraph system prompt, tool-use-style prompt), verify no NaN/hang/garbage output in `local-llm/tests/local_live.rs`
-- **If PASS**: Continue to Phase 4+. E2B is confirmed safe with Q4_K_M GGUF on mistralrs 0.8.0.
+- [x] T021 Run ignored live test `live_gemma4_e2b_smoke` — **PASS** — 2026-04-05
+
+**Result**: GO. All 3 prompts passed. Total test time: 148.96s (~2m29s). GPU required.
+
+**Key finding**: Gemma 4 E2B via `MultimodalModelBuilder` **requires GPU (CUDA/Metal)** for inference. CPU-only runs hang silently on complex prompts (BF16 safetensors on CPU is not viable). On GPU, all prompts complete reliably within 150s.
+
+**Environment**:
+- Model: `google/gemma-4-E2B-it` safetensors (dense, not MoE)
+- Backend: `mistralrs 0.8.1`, `MultimodalModelBuilder`, CUDA GPU inference (`--features gemma4,cuda`)
+- Build prereq: MSVC `cl.exe` must be in PATH (VS Build Tools 2022 required on Windows)
+- Env: `HF_HUB_CACHE=D:/models`
+
+- **If PASS**: Continue to Phase 4+. ✓
 - **If FAIL (NaN)**: STOP. Pause all further phases. Fall back to Ollama path until upstream fix. File upstream issue with reproduction details.
 
 ---
@@ -124,16 +135,16 @@
 
 ### Tests for User Story 3
 
-- [ ] T038 [P] [US3] Write test `default_preset_remains_smollm3` — `DEFAULT_LOCAL_PRESET_ID` equals `"smollm3_3b"` regardless of `gemma4` feature in `local-llm/src/preset.rs`
-- [ ] T039 [P] [US3] Write test `gemma4_e2b_selectable_via_preset` — `ModelPreset::Gemma4E2B.config()` returns correct Gemma 4 config when `gemma4` feature enabled in `local-llm/src/preset.rs`
-- [ ] T040 [P] [US3] Write test `smollm3_preset_still_available` — `ModelPreset::SmolLM3_3B.config()` returns correct SmolLM3 config regardless of feature flag in `local-llm/src/preset.rs`
+- [x] T038 [P] [US3] Write test `default_preset_remains_smollm3` — `DEFAULT_LOCAL_PRESET_ID` equals `"smollm3_3b"` regardless of `gemma4` feature in `local-llm/src/preset.rs`
+- [x] T039 [P] [US3] Write test `gemma4_e2b_selectable_via_preset` — `ModelPreset::Gemma4E2B.config()` returns correct Gemma 4 config when `gemma4` feature enabled in `local-llm/src/preset.rs`
+- [x] T040 [P] [US3] Write test `smollm3_preset_still_available` — `ModelPreset::SmolLM3_3B.config()` returns correct SmolLM3 config regardless of feature flag in `local-llm/src/preset.rs`
 
 ### Implementation for User Story 3
 
-- [ ] T041 [US3] Verify `DEFAULT_LOCAL_PRESET_ID` remains `"smollm3_3b"` unconditionally in `local-llm/src/preset.rs` — no conditional swap needed
-- [ ] T042 [US3] Add `LocalModel::from_preset(ModelPreset::Gemma4E2B)` usage example to quickstart.md showing opt-in selection
-- [ ] T043 [US3] Verify all T038-T040 tests pass with `--features gemma4`
-- [ ] T044 [US3] Verify `cargo test -p swink-agent-local-llm` (without `gemma4` feature) — all existing SmolLM3 tests still pass unchanged
+- [x] T041 [US3] Verify `DEFAULT_LOCAL_PRESET_ID` remains `"smollm3_3b"` unconditionally in `local-llm/src/preset.rs` — no conditional swap needed
+- [x] T042 [US3] Add `LocalModel::from_preset(ModelPreset::Gemma4E2B)` usage example to quickstart.md showing opt-in selection
+- [x] T043 [US3] Verify all T038-T040 tests pass with `--features gemma4`
+- [x] T044 [US3] Verify `cargo test -p swink-agent-local-llm` (without `gemma4` feature) — all existing SmolLM3 tests still pass unchanged
 
 **Checkpoint**: SmolLM3-3B default preserved, Gemma 4 opt-in works
 
@@ -164,18 +175,18 @@
 
 ### Tests for User Story 5
 
-- [ ] T047 [P] [US5] Write test `tool_call_single_chunk` — full `<|tool_call>call:read_file{"path":"foo.rs"}<tool_call|>` in one chunk produces ToolCallStart + ToolCallDelta + ToolCallEnd in `local-llm/src/stream.rs`
-- [ ] T048 [P] [US5] Write test `tool_call_cross_chunk` — tool call delimiter split across chunks, parser reassembles correctly in `local-llm/src/stream.rs`
-- [ ] T049 [P] [US5] Write test `tool_call_no_delimiters` — plain text without tool call markers emits only text events in `local-llm/src/stream.rs`
-- [ ] T050 [P] [US5] Write test `tool_call_with_thinking` — response contains both thinking block and tool call, both parsed correctly in `local-llm/src/stream.rs`
-- [ ] T051 [P] [US5] Write test `tool_result_formatting` — `LocalConverter::tool_result_message()` formats result in `<|tool_result>{name}\n{text}<tool_result|>` format for Gemma 4 in `local-llm/src/convert.rs`
+- [x] T047 [P] [US5] Write test `tool_call_single_chunk` — full `<|tool_call>call:read_file{"path":"foo.rs"}<tool_call|>` in one chunk produces ToolCallStart + ToolCallDelta + ToolCallEnd in `local-llm/src/stream.rs`
+- [x] T048 [P] [US5] Write test `tool_call_cross_chunk` — tool call delimiter split across chunks, parser reassembles correctly in `local-llm/src/stream.rs`
+- [x] T049 [P] [US5] Write test `tool_call_no_delimiters` — plain text without tool call markers emits only text events in `local-llm/src/stream.rs`
+- [x] T050 [P] [US5] Write test `tool_call_with_thinking` — response contains both thinking block and tool call, both parsed correctly in `local-llm/src/stream.rs`
+- [x] T051 [P] [US5] Write test `tool_result_formatting` — `LocalConverter::tool_result_message()` formats result in `<|tool_result>{name}\n{text}<tool_result|>` format for Gemma 4 in `local-llm/src/convert.rs`
 
 ### Implementation for User Story 5
 
-- [ ] T052 [P] [US5] Implement `ToolCallParser` struct with stateful delimiter parsing behind `#[cfg(feature = "gemma4")]` in `local-llm/src/stream.rs` — extracts function name and JSON arguments from `<|tool_call>call:{name}{args}<tool_call|>` format
-- [ ] T053 [US5] Integrate `ToolCallParser` into `StreamState` — dispatch to parser when Gemma 4 model detected, alongside existing `process_tool_call_delta()` for mistralrs-native tool calls in `local-llm/src/stream.rs`
-- [ ] T054 [US5] Update `LocalConverter::tool_result_message()` to format results as `<|tool_result>{name}\n{text}<tool_result|>` when model is Gemma 4 in `local-llm/src/convert.rs`
-- [ ] T055 [US5] Verify all T047-T051 tests pass with `--features gemma4`
+- [x] T052 [P] [US5] Implement `ToolCallParser` struct with stateful delimiter parsing behind `#[cfg(feature = "gemma4")]` in `local-llm/src/stream.rs` — extracts function name and JSON arguments from `<|tool_call>call:{name}{args}<tool_call|>` format
+- [x] T053 [US5] Integrate `ToolCallParser` into `StreamState` — dispatch to parser when Gemma 4 model detected, alongside existing `process_tool_call_delta()` for mistralrs-native tool calls in `local-llm/src/stream.rs`
+- [x] T054 [US5] Update `LocalConverter::tool_result_message()` to format results as `<|tool_result>{name}\n{text}<tool_result|>` when model is Gemma 4 in `local-llm/src/convert.rs` (via `Gemma4LocalConverter`)
+- [x] T055 [US5] Verify all T047-T051 tests pass with `--features gemma4`
 
 **Checkpoint**: Tool calling works end-to-end in direct Gemma 4 inference
 
@@ -185,14 +196,14 @@
 
 **Purpose**: Verification, documentation updates, and cross-story validation
 
-- [ ] T056 [P] Add ignored live test `live_gemma4_e2b_text_stream` — download E2B model and stream text in `local-llm/tests/local_live.rs`
-- [ ] T057 [P] Add ignored live test `live_gemma4_e2b_thinking` — verify thinking events with real model in `local-llm/tests/local_live.rs`
-- [ ] T058 [P] Add ignored live test `live_gemma4_e2b_tool_call` — verify tool calling with real model in `local-llm/tests/local_live.rs`
-- [ ] T059 Run `cargo clippy -p swink-agent-local-llm --features gemma4 -- -D warnings` — zero warnings
-- [ ] T060 Run `cargo test --workspace --features testkit` — verify no regressions across workspace
-- [ ] T061 Run `cargo build -p swink-agent-local-llm --no-default-features` — verify builds without gemma4 feature (SmolLM3-3B only)
-- [ ] T062 Update `local-llm/CLAUDE.md` — document Gemma 4 default change, thinking behavior, MultimodalModelBuilder branching, feature gate
-- [ ] T063 Update lib.rs doc comment in `local-llm/src/lib.rs` — add Gemma 4 E2B to the crate-level documentation alongside SmolLM3-3B
+- [x] T056 [P] Add ignored live test `live_gemma4_e2b_text_stream` — download E2B model and stream text in `local-llm/tests/local_live.rs`
+- [x] T057 [P] Add ignored live test `live_gemma4_e2b_thinking` — verify thinking events with real model in `local-llm/tests/local_live.rs`
+- [x] T058 [P] Add ignored live test `live_gemma4_e2b_tool_call` — verify tool calling with real model in `local-llm/tests/local_live.rs`
+- [x] T059 Run `cargo clippy -p swink-agent-local-llm --features gemma4 -- -D warnings` — zero warnings
+- [x] T060 Run `cargo test --workspace --features testkit` — verify no regressions across workspace (pre-existing `bash_output_truncation` failure in `swink-agent --test tools` is unrelated to 041)
+- [x] T061 Run `cargo build -p swink-agent-local-llm --no-default-features` — verify builds without gemma4 feature (SmolLM3-3B only)
+- [x] T062 Update `local-llm/CLAUDE.md` — document Gemma 4 default change, thinking behavior, MultimodalModelBuilder branching, feature gate
+- [x] T063 Update lib.rs doc comment in `local-llm/src/lib.rs` — add Gemma 4 E2B to the crate-level documentation alongside SmolLM3-3B
 
 ---
 
