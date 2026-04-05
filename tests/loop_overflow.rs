@@ -124,6 +124,7 @@ impl swink_agent::AsyncContextTransformer for MockAsyncTransformer {
                     tokens_before: removed * 100,
                     tokens_after: 100,
                     overflow: true,
+                    dropped_messages: Vec::new(),
                 })
             } else {
                 None
