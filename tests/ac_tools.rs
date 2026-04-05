@@ -349,12 +349,8 @@ impl swink_agent::PreDispatchPolicy for InjectFieldPolicy {
         "inject_field"
     }
 
-    fn evaluate(
-        &self,
-        _ctx: &swink_agent::PolicyContext<'_>,
-        tool: &mut swink_agent::ToolPolicyContext<'_>,
-    ) -> swink_agent::PreDispatchVerdict {
-        if let Some(obj) = tool.arguments.as_object_mut() {
+    fn evaluate(&self, ctx: &mut swink_agent::ToolDispatchContext<'_>) -> swink_agent::PreDispatchVerdict {
+        if let Some(obj) = ctx.arguments.as_object_mut() {
             obj.insert("injected".to_string(), json!(true));
         }
         swink_agent::PreDispatchVerdict::Continue
@@ -411,12 +407,8 @@ impl swink_agent::PreDispatchPolicy for BlockToolPolicy {
         "block_tool"
     }
 
-    fn evaluate(
-        &self,
-        _ctx: &swink_agent::PolicyContext<'_>,
-        tool: &mut swink_agent::ToolPolicyContext<'_>,
-    ) -> swink_agent::PreDispatchVerdict {
-        if tool.tool_name == "blocked" {
+    fn evaluate(&self, ctx: &mut swink_agent::ToolDispatchContext<'_>) -> swink_agent::PreDispatchVerdict {
+        if ctx.tool_name == "blocked" {
             swink_agent::PreDispatchVerdict::Skip("blocked".into())
         } else {
             swink_agent::PreDispatchVerdict::Continue

@@ -1,6 +1,4 @@
-use swink_agent::policy::{
-    PolicyContext, PreDispatchPolicy, PreDispatchVerdict, ToolPolicyContext,
-};
+use swink_agent::policy::{PreDispatchPolicy, PreDispatchVerdict, ToolDispatchContext};
 use url::Url;
 
 use crate::domain::DomainFilter;
@@ -23,18 +21,14 @@ impl PreDispatchPolicy for DomainFilterPolicy {
         "web.domain_filter"
     }
 
-    fn evaluate(
-        &self,
-        _ctx: &PolicyContext<'_>,
-        tool: &mut ToolPolicyContext<'_>,
-    ) -> PreDispatchVerdict {
+    fn evaluate(&self, ctx: &mut ToolDispatchContext<'_>) -> PreDispatchVerdict {
         // Only apply to web.* tools.
-        if !tool.tool_name.starts_with("web.") {
+        if !ctx.tool_name.starts_with("web.") {
             return PreDispatchVerdict::Continue;
         }
 
         // Extract the URL argument; if absent, let the tool handle validation.
-        let url_str = match tool.arguments.get("url").and_then(|v| v.as_str()) {
+        let url_str = match ctx.arguments.get("url").and_then(|v| v.as_str()) {
             Some(s) => s,
             None => return PreDispatchVerdict::Continue,
         };

@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use swink_agent::policy::{PolicyContext, PreDispatchPolicy, PreDispatchVerdict, ToolPolicyContext};
+use swink_agent::policy::{PreDispatchPolicy, PreDispatchVerdict, ToolDispatchContext};
 
 /// PreDispatch policy that enforces a shared rate limit across all web tools.
 ///
@@ -28,13 +28,9 @@ impl PreDispatchPolicy for RateLimitPolicy {
         "web.rate_limiter"
     }
 
-    fn evaluate(
-        &self,
-        _ctx: &PolicyContext<'_>,
-        tool: &mut ToolPolicyContext<'_>,
-    ) -> PreDispatchVerdict {
+    fn evaluate(&self, ctx: &mut ToolDispatchContext<'_>) -> PreDispatchVerdict {
         // Only apply to web-namespaced tools.
-        if !tool.tool_name.starts_with("web.") {
+        if !ctx.tool_name.starts_with("web.") {
             return PreDispatchVerdict::Continue;
         }
 

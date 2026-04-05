@@ -3,7 +3,7 @@
 
 use std::path::{Path, PathBuf};
 
-use swink_agent::{PolicyContext, PreDispatchPolicy, PreDispatchVerdict, ToolPolicyContext};
+use swink_agent::{PreDispatchPolicy, PreDispatchVerdict, ToolDispatchContext};
 
 /// Rejects tool calls that reference file paths outside an allowed root directory.
 ///
@@ -73,12 +73,8 @@ impl PreDispatchPolicy for SandboxPolicy {
         "sandbox"
     }
 
-    fn evaluate(
-        &self,
-        _ctx: &PolicyContext<'_>,
-        tool: &mut ToolPolicyContext<'_>,
-    ) -> PreDispatchVerdict {
-        let Some(obj) = tool.arguments.as_object() else {
+    fn evaluate(&self, ctx: &mut ToolDispatchContext<'_>) -> PreDispatchVerdict {
+        let Some(obj) = ctx.arguments.as_object() else {
             return PreDispatchVerdict::Continue;
         };
 
@@ -102,20 +98,16 @@ impl PreDispatchPolicy for SandboxPolicy {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use swink_agent::{Cost, Usage};
 
-    fn make_ctx<'a>(
-        usage: &'a Usage,
-        cost: &'a Cost,
+    fn make_dispatch_ctx<'a>(
+        tool_name: &'a str,
+        args: &'a mut serde_json::Value,
         state: &'a swink_agent::SessionState,
-    ) -> PolicyContext<'a> {
-        PolicyContext {
-            turn_index: 0,
-            accumulated_usage: usage,
-            accumulated_cost: cost,
-            message_count: 0,
-            overflow_signal: false,
-            new_messages: &[],
+    ) -> ToolDispatchContext<'a> {
+        ToolDispatchContext {
+            tool_name,
+            tool_call_id: "id1",
+            arguments: args,
             state,
         }
     }
@@ -123,69 +115,41 @@ mod tests {
     #[test]
     fn rejects_path_outside_root() {
         let policy = SandboxPolicy::new("/tmp/workspace");
-        let usage = Usage::default();
-        let cost = Cost::default();
         let state = swink_agent::SessionState::new();
-        let ctx = make_ctx(&usage, &cost, &state);
         let mut args = serde_json::json!({"path": "/etc/passwd"});
-        let mut tool_ctx = ToolPolicyContext {
-            tool_name: "write_file",
-            tool_call_id: "id1",
-            arguments: &mut args,
-        };
-        let result = policy.evaluate(&ctx, &mut tool_ctx);
+        let mut ctx = make_dispatch_ctx("write_file", &mut args, &state);
+        let result = policy.evaluate(&mut ctx);
         assert!(matches!(result, PreDispatchVerdict::Skip(ref e) if e.contains("/etc/passwd")));
     }
 
     #[test]
     fn allows_path_inside_root() {
         let policy = SandboxPolicy::new("/tmp/workspace");
-        let usage = Usage::default();
-        let cost = Cost::default();
         let state = swink_agent::SessionState::new();
-        let ctx = make_ctx(&usage, &cost, &state);
         let mut args = serde_json::json!({"path": "/tmp/workspace/output.txt"});
-        let mut tool_ctx = ToolPolicyContext {
-            tool_name: "write_file",
-            tool_call_id: "id1",
-            arguments: &mut args,
-        };
-        let result = policy.evaluate(&ctx, &mut tool_ctx);
+        let mut ctx = make_dispatch_ctx("write_file", &mut args, &state);
+        let result = policy.evaluate(&mut ctx);
         assert!(matches!(result, PreDispatchVerdict::Continue));
     }
 
     #[test]
     fn handles_path_traversal_attack() {
         let policy = SandboxPolicy::new("/tmp/workspace");
-        let usage = Usage::default();
-        let cost = Cost::default();
         let state = swink_agent::SessionState::new();
-        let ctx = make_ctx(&usage, &cost, &state);
         let mut args = serde_json::json!({"path": "/tmp/workspace/../../etc/passwd"});
-        let mut tool_ctx = ToolPolicyContext {
-            tool_name: "write_file",
-            tool_call_id: "id1",
-            arguments: &mut args,
-        };
-        let result = policy.evaluate(&ctx, &mut tool_ctx);
+        let mut ctx = make_dispatch_ctx("write_file", &mut args, &state);
+        let result = policy.evaluate(&mut ctx);
         assert!(matches!(result, PreDispatchVerdict::Skip(_)));
     }
 
     #[test]
     fn only_checks_configured_fields() {
         let policy = SandboxPolicy::new("/tmp/workspace");
-        let usage = Usage::default();
-        let cost = Cost::default();
         let state = swink_agent::SessionState::new();
-        let ctx = make_ctx(&usage, &cost, &state);
         // "command" is not in the default path_fields, so it won't be checked
         let mut args = serde_json::json!({"command": "/etc/passwd"});
-        let mut tool_ctx = ToolPolicyContext {
-            tool_name: "bash",
-            tool_call_id: "id1",
-            arguments: &mut args,
-        };
-        let result = policy.evaluate(&ctx, &mut tool_ctx);
+        let mut ctx = make_dispatch_ctx("bash", &mut args, &state);
+        let result = policy.evaluate(&mut ctx);
         assert!(matches!(result, PreDispatchVerdict::Continue));
     }
 
@@ -193,17 +157,10 @@ mod tests {
     fn custom_path_fields() {
         let policy =
             SandboxPolicy::new("/tmp/workspace").with_path_fields(["target_dir", "output"]);
-        let usage = Usage::default();
-        let cost = Cost::default();
         let state = swink_agent::SessionState::new();
-        let ctx = make_ctx(&usage, &cost, &state);
         let mut args = serde_json::json!({"target_dir": "/etc/shadow"});
-        let mut tool_ctx = ToolPolicyContext {
-            tool_name: "deploy",
-            tool_call_id: "id1",
-            arguments: &mut args,
-        };
-        let result = policy.evaluate(&ctx, &mut tool_ctx);
+        let mut ctx = make_dispatch_ctx("deploy", &mut args, &state);
+        let result = policy.evaluate(&mut ctx);
         assert!(matches!(result, PreDispatchVerdict::Skip(_)));
     }
 }
