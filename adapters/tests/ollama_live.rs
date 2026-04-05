@@ -15,8 +15,8 @@ use tokio_util::sync::CancellationToken;
 
 use swink_agent::{
     AgentContext, AgentMessage, AgentTool, AgentToolResult, AssistantMessage,
-    AssistantMessageEvent, ContentBlock, Cost, LlmMessage, ModelSpec, StopReason, StreamFn,
-    StreamOptions, Usage, UserMessage,
+    AssistantMessageEvent, ContentBlock, Cost, LlmMessage, ModelCapabilities, ModelSpec,
+    StopReason, StreamFn, StreamOptions, ThinkingLevel, Usage, UserMessage,
 };
 use swink_agent_adapters::OllamaStreamFn;
 
@@ -344,4 +344,33 @@ async fn live_model_not_found() {
         has_error,
         "expected an Error event for nonexistent model, got: {events:?}"
     );
+}
+
+#[tokio::test]
+#[ignore = "hits live Ollama instance — requires `ollama pull gemma4:e2b`"]
+async fn live_gemma4_e2b_thinking() {
+    let sf = ollama();
+    let m = ModelSpec::new("ollama", "gemma4:e2b")
+        .with_thinking_level(ThinkingLevel::Medium)
+        .with_capabilities(ModelCapabilities::default().with_thinking(true));
+    let context = simple_context("What is 15 * 23? Think step by step.");
+    let options = StreamOptions::default();
+    let token = CancellationToken::new();
+    let stream = sf.stream(&m, &context, &options, token);
+    let events: Vec<AssistantMessageEvent> = timeout(TIMEOUT, stream.collect::<Vec<_>>())
+        .await
+        .expect("timed out");
+
+    let types: Vec<&str> = events.iter().map(|e| event_name(e)).collect();
+    assert!(types.contains(&"Start"), "missing Start: {types:?}");
+    assert!(
+        types.contains(&"ThinkingStart"),
+        "missing ThinkingStart — did you pull gemma4:e2b? types: {types:?}"
+    );
+    assert!(
+        types.contains(&"ThinkingDelta"),
+        "missing ThinkingDelta: {types:?}"
+    );
+    assert!(types.contains(&"TextStart"), "missing TextStart: {types:?}");
+    assert!(types.contains(&"Done"), "missing Done: {types:?}");
 }
