@@ -122,7 +122,7 @@ mod tests {
     /// SmolLM3 config — used as the default non-Gemma4 config for existing tests.
     fn smollm_config() -> ModelConfig {
         ModelConfig {
-            repo_id: "bartowski/SmolLM3-3B-GGUF".to_string(),
+            repo_id: "unsloth/SmolLM3-3B-GGUF".to_string(),
             ..ModelConfig::default()
         }
     }

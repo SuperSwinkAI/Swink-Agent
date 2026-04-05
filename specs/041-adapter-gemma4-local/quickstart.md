@@ -29,7 +29,7 @@ let connection = default_local_connection()?;
 
 ```bash
 # Use SmolLM3-3B instead of Gemma 4 E2B
-export LOCAL_MODEL_REPO="bartowski/SmolLM3-3B-GGUF"
+export LOCAL_MODEL_REPO="unsloth/SmolLM3-3B-GGUF"
 export LOCAL_MODEL_FILE="SmolLM3-3B-Q4_K_M.gguf"
 export LOCAL_CONTEXT_LENGTH=8192
 ```

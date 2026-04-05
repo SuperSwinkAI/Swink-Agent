@@ -50,7 +50,7 @@ impl ModelPreset {
         match self {
             Self::SmolLM3_3B => ModelConfig {
                 repo_id: std::env::var("LOCAL_MODEL_REPO")
-                    .unwrap_or_else(|_| "bartowski/SmolLM3-3B-GGUF".to_string()),
+                    .unwrap_or_else(|_| "unsloth/SmolLM3-3B-GGUF".to_string()),
                 filename: std::env::var("LOCAL_MODEL_FILE")
                     .unwrap_or_else(|_| "SmolLM3-3B-Q4_K_M.gguf".to_string()),
                 context_length: std::env::var("LOCAL_CONTEXT_LENGTH")
@@ -106,7 +106,7 @@ impl ModelPreset {
             #[cfg(feature = "gemma4")]
             Self::Gemma4_26B => ModelConfig {
                 repo_id: std::env::var("LOCAL_MODEL_REPO").unwrap_or_else(|_| {
-                    "google/gemma-4-26B-it".to_string()
+                    "google/gemma-4-26B-A4B-it".to_string()
                 }),
                 filename: String::new(), // safetensors, not GGUF
                 context_length: std::env::var("LOCAL_CONTEXT_LENGTH")
@@ -135,7 +135,7 @@ impl ModelPreset {
                     .unwrap_or(768),
             },
             Self::SmolLM3_3B => EmbeddingConfig {
-                repo_id: "bartowski/SmolLM3-3B-GGUF".to_string(),
+                repo_id: "unsloth/SmolLM3-3B-GGUF".to_string(),
                 filename: "SmolLM3-3B-Q4_K_M.gguf".to_string(),
                 dimensions: 768,
             },
@@ -309,7 +309,7 @@ mod tests {
         #[test]
         fn gemma4_26b_preset_config_defaults() {
             let config = ModelPreset::Gemma4_26B.config();
-            assert_eq!(config.repo_id, "google/gemma-4-26B-it");
+            assert_eq!(config.repo_id, "google/gemma-4-26B-A4B-it");
             assert!(config.filename.is_empty());
             assert_eq!(config.context_length, 262_144);
         }

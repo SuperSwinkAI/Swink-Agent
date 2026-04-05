@@ -21,7 +21,7 @@ use crate::progress::ProgressCallbackFn;
 /// Configuration for a local GGUF model.
 #[derive(Debug, Clone)]
 pub struct ModelConfig {
-    /// `HuggingFace` repository ID (e.g. `bartowski/SmolLM3-3B-GGUF`).
+    /// `HuggingFace` repository ID (e.g. `unsloth/SmolLM3-3B-GGUF`).
     pub repo_id: String,
 
     /// GGUF filename within the repository.
@@ -415,7 +415,7 @@ mod tests {
         #[test]
         fn is_gemma4_false_for_smollm() {
             let config = ModelConfig {
-                repo_id: "bartowski/SmolLM3-3B-GGUF".to_string(),
+                repo_id: "unsloth/SmolLM3-3B-GGUF".to_string(),
                 ..ModelConfig::default()
             };
             assert!(!config.is_gemma4());
