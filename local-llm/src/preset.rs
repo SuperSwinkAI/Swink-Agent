@@ -39,7 +39,7 @@ pub enum ModelPreset {
     /// Gemma 4 E4B with `Q4_K_M` quantization, 128K context (~5.5 GB).
     #[cfg(feature = "gemma4")]
     Gemma4E4B,
-    /// Gemma 4 26B MoE with `Q4_K_M` quantization, 256K context (~16 GB).
+    /// Gemma 4 26B `MoE` with `Q4_K_M` quantization, 256K context (~16 GB).
     #[cfg(feature = "gemma4")]
     Gemma4_26B,
 }
