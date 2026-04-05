@@ -42,6 +42,9 @@ pub enum ModelPreset {
     /// Gemma 4 26B `MoE` with `Q4_K_M` quantization, 256K context (~16 GB).
     #[cfg(feature = "gemma4")]
     Gemma4_26B,
+    /// Gemma 4 31B dense with `Q4_K_M` quantization, 256K context (~20 GB).
+    #[cfg(feature = "gemma4")]
+    Gemma4_31B,
 }
 
 impl ModelPreset {
@@ -119,6 +122,22 @@ impl ModelPreset {
                     .and_then(|v| v.parse().ok())
                     .unwrap_or(0),
             },
+            #[cfg(feature = "gemma4")]
+            Self::Gemma4_31B => ModelConfig {
+                repo_id: std::env::var("LOCAL_MODEL_REPO").unwrap_or_else(|_| {
+                    "google/gemma-4-31B-it".to_string()
+                }),
+                filename: String::new(), // safetensors, not GGUF
+                context_length: std::env::var("LOCAL_CONTEXT_LENGTH")
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(262_144),
+                chat_template: None,
+                gpu_layers: std::env::var("LOCAL_GPU_LAYERS")
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(0),
+            },
         }
     }
 
@@ -140,7 +159,7 @@ impl ModelPreset {
                 dimensions: 768,
             },
             #[cfg(feature = "gemma4")]
-            Self::Gemma4E2B | Self::Gemma4E4B | Self::Gemma4_26B => EmbeddingConfig {
+            Self::Gemma4E2B | Self::Gemma4E4B | Self::Gemma4_26B | Self::Gemma4_31B => EmbeddingConfig {
                 repo_id: "google/gemma-embedding-300m".to_string(),
                 filename: String::new(),
                 dimensions: 768,
@@ -163,6 +182,7 @@ impl ModelPreset {
             Self::Gemma4E2B,
             Self::Gemma4E4B,
             Self::Gemma4_26B,
+            Self::Gemma4_31B,
         ]
     }
 }
@@ -178,6 +198,8 @@ impl std::fmt::Display for ModelPreset {
             Self::Gemma4E4B => write!(f, "Gemma4-E4B"),
             #[cfg(feature = "gemma4")]
             Self::Gemma4_26B => write!(f, "Gemma4-26B"),
+            #[cfg(feature = "gemma4")]
+            Self::Gemma4_31B => write!(f, "Gemma4-31B"),
         }
     }
 }
@@ -323,14 +345,24 @@ mod tests {
         }
 
         #[test]
+        fn gemma4_31b_preset_config_defaults() {
+            let config = ModelPreset::Gemma4_31B.config();
+            assert_eq!(config.repo_id, "google/gemma-4-31B-it");
+            assert!(config.filename.is_empty());
+            assert_eq!(config.context_length, 262_144);
+            assert!(config.chat_template.is_none());
+        }
+
+        #[test]
         fn all_presets_includes_gemma4_variants() {
             let all = ModelPreset::all();
-            assert_eq!(all.len(), 5);
+            assert_eq!(all.len(), 6);
             assert!(all.contains(&ModelPreset::SmolLM3_3B));
             assert!(all.contains(&ModelPreset::EmbeddingGemma300M));
             assert!(all.contains(&ModelPreset::Gemma4E2B));
             assert!(all.contains(&ModelPreset::Gemma4E4B));
             assert!(all.contains(&ModelPreset::Gemma4_26B));
+            assert!(all.contains(&ModelPreset::Gemma4_31B));
         }
     }
 }
