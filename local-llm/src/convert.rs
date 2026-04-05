@@ -12,6 +12,8 @@ use swink_agent::types::{
     AgentContext, AssistantMessage, ContentBlock, ToolResultMessage, UserMessage,
 };
 
+use crate::model::ModelConfig;
+
 // ─── Intermediate message type ──────────────────────────────────────────────
 
 /// A role + content pair that can be folded into mistral.rs [`TextMessages`].
@@ -65,14 +67,35 @@ impl MessageConverter for LocalConverter {
 ///
 /// Delegates to core's generic [`convert_messages`] with [`LocalConverter`],
 /// then folds the intermediate messages into the mistral.rs builder.
-pub fn convert_context_messages(context: &AgentContext) -> TextMessages {
-    let converted = convert_messages::<LocalConverter>(&context.messages, &context.system_prompt);
+///
+/// When `config` identifies a Gemma 4 model and `thinking_enabled` is `true`,
+/// prepends `<|think|>\n` to the system prompt to activate thinking mode
+/// (mistral.rs has no `think: true` API for direct inference).
+pub fn convert_context_messages(
+    context: &AgentContext,
+    config: &ModelConfig,
+    thinking_enabled: bool,
+) -> TextMessages {
+    let system_prompt = inject_think_token(&context.system_prompt, config, thinking_enabled);
+    let converted = convert_messages::<LocalConverter>(&context.messages, &system_prompt);
 
     let mut messages = TextMessages::new();
     for msg in converted {
         messages = messages.add_message(msg.role, msg.content);
     }
     messages
+}
+
+/// Conditionally prepend `<|think|>\n` to the system prompt for Gemma 4 thinking mode.
+fn inject_think_token(system_prompt: &str, config: &ModelConfig, thinking_enabled: bool) -> String {
+    #[cfg(feature = "gemma4")]
+    if config.is_gemma4() && thinking_enabled {
+        return format!("<|think|>\n{system_prompt}");
+    }
+
+    // Suppress unused variable warnings when gemma4 feature is disabled.
+    let _ = (config, thinking_enabled);
+    system_prompt.to_string()
 }
 
 #[cfg(test)]
@@ -96,19 +119,27 @@ mod tests {
         }
     }
 
+    /// SmolLM3 config — used as the default non-Gemma4 config for existing tests.
+    fn smollm_config() -> ModelConfig {
+        ModelConfig {
+            repo_id: "unsloth/SmolLM3-3B-GGUF".to_string(),
+            ..ModelConfig::default()
+        }
+    }
+
     // ── Tests ─────────────────────────────────────────────────────────────
 
     #[test]
     fn empty_context_produces_empty_messages() {
         let ctx = make_context("", vec![]);
-        let _msgs = convert_context_messages(&ctx);
+        let _msgs = convert_context_messages(&ctx, &smollm_config(), false);
         // TextMessages doesn't expose length, but it shouldn't panic.
     }
 
     #[test]
     fn system_prompt_is_included() {
         let ctx = make_context("You are helpful.", vec![]);
-        let _msgs = convert_context_messages(&ctx);
+        let _msgs = convert_context_messages(&ctx, &smollm_config(), false);
         // System prompt is set — no panic.
     }
 
@@ -122,7 +153,7 @@ mod tests {
                 tool_result_msg("tc1", "result"),
             ],
         );
-        let _msgs = convert_context_messages(&ctx);
+        let _msgs = convert_context_messages(&ctx, &smollm_config(), false);
         // All message types handled — no panic.
     }
 
@@ -146,7 +177,7 @@ mod tests {
                 user_msg("after"),
             ],
         );
-        let _msgs = convert_context_messages(&ctx);
+        let _msgs = convert_context_messages(&ctx, &smollm_config(), false);
         // Custom skipped — no panic.
     }
 
@@ -165,14 +196,14 @@ mod tests {
             cache_hint: None,
         }));
         let ctx = make_context("", vec![msg]);
-        let _msgs = convert_context_messages(&ctx);
+        let _msgs = convert_context_messages(&ctx, &smollm_config(), false);
         // Empty content blocks produce empty text — no panic.
     }
 
     #[test]
     fn tool_result_includes_call_id() {
         let ctx = make_context("", vec![tool_result_msg("tc-42", "file contents")]);
-        let _msgs = convert_context_messages(&ctx);
+        let _msgs = convert_context_messages(&ctx, &smollm_config(), false);
     }
 
     #[test]
@@ -190,7 +221,7 @@ mod tests {
             cache_hint: None,
         }));
         let ctx = make_context("", vec![msg]);
-        let _msgs = convert_context_messages(&ctx);
+        let _msgs = convert_context_messages(&ctx, &smollm_config(), false);
         // Multiple text blocks concatenated — no panic.
     }
 
@@ -217,7 +248,7 @@ mod tests {
         }));
         let ctx = make_context("", vec![msg]);
         // Only Text blocks are extracted — others silently ignored.
-        let _msgs = convert_context_messages(&ctx);
+        let _msgs = convert_context_messages(&ctx, &smollm_config(), false);
     }
 
     #[test]
@@ -233,7 +264,42 @@ mod tests {
             cache_hint: None,
         }));
         let ctx = make_context("", vec![msg]);
-        let _msgs = convert_context_messages(&ctx);
+        let _msgs = convert_context_messages(&ctx, &smollm_config(), false);
         // Error tool results convert without panic.
+    }
+
+    // ── Think token injection tests (T029-T031) ─────────────────────────
+
+    #[cfg(feature = "gemma4")]
+    mod think_token_tests {
+        use super::*;
+
+        fn gemma4_config() -> ModelConfig {
+            ModelConfig {
+                repo_id: "bartowski/google_gemma-4-E2B-it-GGUF".to_string(),
+                ..ModelConfig::default()
+            }
+        }
+
+        #[test]
+        fn think_token_injected_for_gemma4() {
+            let result = inject_think_token("You are helpful.", &gemma4_config(), true);
+            assert!(result.starts_with("<|think|>\n"));
+            assert!(result.contains("You are helpful."));
+        }
+
+        #[test]
+        fn think_token_not_injected_for_smollm() {
+            let result = inject_think_token("You are helpful.", &smollm_config(), true);
+            assert!(!result.contains("<|think|>"));
+            assert_eq!(result, "You are helpful.");
+        }
+
+        #[test]
+        fn think_token_not_injected_when_thinking_disabled() {
+            let result = inject_think_token("You are helpful.", &gemma4_config(), false);
+            assert!(!result.contains("<|think|>"));
+            assert_eq!(result, "You are helpful.");
+        }
     }
 }

@@ -121,3 +121,11 @@ A developer encounters various error conditions when communicating with the Olla
 - Not all Ollama models support tool calling — the adapter handles this gracefully.
 - The shared conversion trait and error classifier from the adapter shared infrastructure (spec 011) are available.
 - The adapter does not manage model downloads — only communication with an already-running Ollama instance.
+
+## Addendum: Thinking Support via `think` Field (2026-04-04)
+
+The `OllamaChatRequest` already had `think: Option<bool>` but it was hardcoded to `None`. Now the adapter sets `think: Some(true)` when `model.thinking_level != ThinkingLevel::Off`. The agent loop's capability enforcement ensures `thinking_level` is `Off` for models without the `thinking` capability, so this single check is both necessary and sufficient.
+
+Response-side thinking parsing was already implemented (`ThinkingStart`/`ThinkingDelta`/`ThinkingEnd` from the `thinking` NDJSON field). No response-side changes needed. Ollama handles the `<|think|>` chat template token internally when it receives `think: true` — the adapter must NOT inject the token into the system prompt.
+
+New wiremock tests verify the `think` field is present/absent based on thinking level. A new ignored live test exercises Gemma 4 E2B thinking end-to-end.

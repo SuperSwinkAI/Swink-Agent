@@ -63,6 +63,188 @@ impl StreamFn for LocalStreamFn {
     }
 }
 
+// ─── ChannelThoughtParser (Gemma 4) ────────────────────────────────────────
+
+#[cfg(feature = "gemma4")]
+mod channel_thought {
+    /// Opening delimiter for Gemma 4 thinking blocks.
+    const OPEN_DELIM: &str = "<|channel>thought\n";
+    /// Closing delimiter for Gemma 4 thinking blocks.
+    const CLOSE_DELIM: &str = "<channel|>";
+
+    /// Parser state for Gemma 4's `<|channel>thought\n...<channel|>` format.
+    ///
+    /// Handles cross-chunk boundary splitting of both open and close delimiters.
+    #[derive(Debug)]
+    pub(super) struct ChannelThoughtParser {
+        state: State,
+        /// Buffer for accumulating partial delimiter matches.
+        buffer: String,
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum State {
+        /// Normal text output.
+        Normal,
+        /// Seen a partial open delimiter prefix — buffering until match or mismatch.
+        PartialOpen,
+        /// Inside a thinking block.
+        InThinking,
+        /// Seen a partial close delimiter prefix while inside thinking.
+        PartialClose,
+    }
+
+    impl ChannelThoughtParser {
+        pub const fn new() -> Self {
+            Self {
+                state: State::Normal,
+                buffer: String::new(),
+            }
+        }
+
+        /// Process a chunk of content, returning thinking and text parts.
+        ///
+        /// Returns `(Option<thinking_content>, Option<text_content>)`.
+        pub fn process(&mut self, content: &str) -> (Option<String>, Option<String>) {
+            self.buffer.push_str(content);
+
+            let mut thinking_out: Option<String> = None;
+            let mut text_out: Option<String> = None;
+
+            // Process buffer until stable (no more transitions possible).
+            loop {
+                match self.state {
+                    State::Normal => {
+                        if let Some(pos) = self.buffer.find("<|channel>thought\n") {
+                            // Flush text before the delimiter.
+                            let before = &self.buffer[..pos];
+                            if !before.is_empty() {
+                                append(&mut text_out, before);
+                            }
+                            // Consume the open delimiter.
+                            let rest = self.buffer[pos + OPEN_DELIM.len()..].to_string();
+                            self.buffer = rest;
+                            self.state = State::InThinking;
+                            continue;
+                        }
+                        // Check for partial open delimiter at end of buffer.
+                        if let Some(partial_len) = partial_prefix_at_end(&self.buffer, OPEN_DELIM) {
+                            let flush_end = self.buffer.len() - partial_len;
+                            let flush = &self.buffer[..flush_end];
+                            if !flush.is_empty() {
+                                append(&mut text_out, flush);
+                            }
+                            let rest = self.buffer[flush_end..].to_string();
+                            self.buffer = rest;
+                            self.state = State::PartialOpen;
+                            break;
+                        }
+                        // No delimiter found — flush everything as text.
+                        if !self.buffer.is_empty() {
+                            append(&mut text_out, &self.buffer.clone());
+                            self.buffer.clear();
+                        }
+                        break;
+                    }
+                    State::PartialOpen => {
+                        if self.buffer.len() >= OPEN_DELIM.len() {
+                            if self.buffer.starts_with(OPEN_DELIM) {
+                                let rest = self.buffer[OPEN_DELIM.len()..].to_string();
+                                self.buffer = rest;
+                                self.state = State::InThinking;
+                                continue;
+                            }
+                            // Mismatch — flush buffer as text.
+                            self.state = State::Normal;
+                            continue;
+                        }
+                        // Still partial — check if it's still a valid prefix.
+                        if OPEN_DELIM.starts_with(&self.buffer) {
+                            break; // Wait for more data.
+                        }
+                        // Not a valid prefix — flush as text.
+                        self.state = State::Normal;
+                    }
+                    State::InThinking => {
+                        if let Some(pos) = self.buffer.find(CLOSE_DELIM) {
+                            let thinking = &self.buffer[..pos];
+                            if !thinking.is_empty() {
+                                append(&mut thinking_out, thinking);
+                            }
+                            let rest = self.buffer[pos + CLOSE_DELIM.len()..].to_string();
+                            self.buffer = rest;
+                            self.state = State::Normal;
+                            continue;
+                        }
+                        // Check for partial close delimiter at end.
+                        if let Some(partial_len) =
+                            partial_prefix_at_end(&self.buffer, CLOSE_DELIM)
+                        {
+                            let flush_end = self.buffer.len() - partial_len;
+                            let flush = &self.buffer[..flush_end];
+                            if !flush.is_empty() {
+                                append(&mut thinking_out, flush);
+                            }
+                            let rest = self.buffer[flush_end..].to_string();
+                            self.buffer = rest;
+                            self.state = State::PartialClose;
+                            break;
+                        }
+                        // No delimiter — flush all as thinking.
+                        if !self.buffer.is_empty() {
+                            append(&mut thinking_out, &self.buffer.clone());
+                            self.buffer.clear();
+                        }
+                        break;
+                    }
+                    State::PartialClose => {
+                        if self.buffer.len() >= CLOSE_DELIM.len() {
+                            if self.buffer.starts_with(CLOSE_DELIM) {
+                                let rest = self.buffer[CLOSE_DELIM.len()..].to_string();
+                                self.buffer = rest;
+                                self.state = State::Normal;
+                                continue;
+                            }
+                            // Mismatch — flush buffer as thinking.
+                            self.state = State::InThinking;
+                            continue;
+                        }
+                        // Still partial — check if it's still a valid prefix.
+                        if CLOSE_DELIM.starts_with(&self.buffer) {
+                            break; // Wait for more data.
+                        }
+                        // Not a valid prefix — flush as thinking.
+                        self.state = State::InThinking;
+                    }
+                }
+            }
+
+            (thinking_out, text_out)
+        }
+    }
+
+    /// Append `s` to an `Option<String>`, creating it if `None`.
+    fn append(target: &mut Option<String>, s: &str) {
+        match target {
+            Some(existing) => existing.push_str(s),
+            None => *target = Some(s.to_string()),
+        }
+    }
+
+    /// Find the longest suffix of `haystack` that is a prefix of `needle`.
+    /// Returns the length of the partial match, or `None` if no partial match.
+    fn partial_prefix_at_end(haystack: &str, needle: &str) -> Option<usize> {
+        let max_check = haystack.len().min(needle.len() - 1);
+        for len in (1..=max_check).rev() {
+            let suffix = &haystack[haystack.len() - len..];
+            if needle.starts_with(suffix) {
+                return Some(len);
+            }
+        }
+        None
+    }
+}
+
 // ─── Streaming state ────────────────────────────────────────────────────────
 
 /// Mutable state accumulated across streaming chunks.
@@ -76,10 +258,16 @@ struct StreamState {
     has_tool_calls: bool,
     /// Map from tool call index to (`tool_id`, `content_index` at start).
     active_tool_calls: Vec<(String, usize)>,
+    /// Gemma 4 channel-thought parser (only present for Gemma 4 models).
+    #[cfg(feature = "gemma4")]
+    channel_parser: Option<channel_thought::ChannelThoughtParser>,
 }
 
 impl StreamState {
-    fn new() -> Self {
+    fn new(is_gemma4: bool) -> Self {
+        #[cfg(not(feature = "gemma4"))]
+        let _ = is_gemma4;
+
         Self {
             events: vec![AssistantMessageEvent::Start],
             content_index: 0,
@@ -89,6 +277,12 @@ impl StreamState {
             finish_reason: None,
             has_tool_calls: false,
             active_tool_calls: Vec::new(),
+            #[cfg(feature = "gemma4")]
+            channel_parser: if is_gemma4 {
+                Some(channel_thought::ChannelThoughtParser::new())
+            } else {
+                None
+            },
         }
     }
 
@@ -152,7 +346,21 @@ impl StreamState {
         let Some(content) = &choice.delta.content else {
             return;
         };
-        let (thinking_part, text_part) = extract_thinking_delta(content);
+
+        // Dispatch to Gemma 4 channel parser when present, otherwise SmolLM3 parser.
+        #[cfg(feature = "gemma4")]
+        let (thinking_part, text_part) = self.channel_parser.as_mut().map_or_else(
+            || {
+                let (t, txt) = extract_thinking_delta(content);
+                (t, if txt.is_empty() { None } else { Some(txt) })
+            },
+            |parser| parser.process(content),
+        );
+        #[cfg(not(feature = "gemma4"))]
+        let (thinking_part, text_part) = {
+            let (t, txt) = extract_thinking_delta(content);
+            (t, if txt.is_empty() { None } else { Some(txt) })
+        };
 
         if let Some(think) = thinking_part
             && !think.is_empty()
@@ -169,7 +377,9 @@ impl StreamState {
             });
         }
 
-        if !text_part.is_empty() {
+        if let Some(text) = text_part
+            && !text.is_empty()
+        {
             self.close_thinking_block();
             if !self.text_started {
                 self.events.push(AssistantMessageEvent::TextStart {
@@ -179,7 +389,7 @@ impl StreamState {
             }
             self.events.push(AssistantMessageEvent::TextDelta {
                 content_index: self.content_index,
-                delta: text_part,
+                delta: text,
             });
         }
     }
@@ -311,7 +521,22 @@ fn local_stream<'a>(
             ]);
         }
 
-        let messages = crate::convert::convert_context_messages(context);
+        // Determine model family and thinking state for Gemma 4 support.
+        #[cfg(feature = "gemma4")]
+        let is_gemma4 = local_model.config().is_gemma4();
+        #[cfg(not(feature = "gemma4"))]
+        let is_gemma4 = false;
+
+        let thinking_enabled = model
+            .capabilities
+            .as_ref()
+            .is_some_and(|c| c.supports_thinking);
+
+        let messages = crate::convert::convert_context_messages(
+            context,
+            local_model.config(),
+            thinking_enabled,
+        );
         debug!(
             provider = %model.provider,
             model_id = %model.model_id,
@@ -342,7 +567,7 @@ fn local_stream<'a>(
             }
         };
 
-        let mut state = StreamState::new();
+        let mut state = StreamState::new(is_gemma4);
         while let Some(response) = mistral_stream.next().await {
             if cancellation_token.is_cancelled() {
                 return stream::iter(state.finalize_cancelled());
@@ -505,5 +730,97 @@ mod tests {
         assert_eq!(usage.total, 55);
         assert_eq!(usage.cache_read, 0);
         assert_eq!(usage.cache_write, 0);
+    }
+
+    #[cfg(feature = "gemma4")]
+    mod gemma4_tests {
+        use super::super::channel_thought::ChannelThoughtParser;
+
+        #[test]
+        fn channel_thought_single_chunk() {
+            let mut parser = ChannelThoughtParser::new();
+            let (thinking, text) =
+                parser.process("<|channel>thought\nreasoning here<channel|>");
+            assert_eq!(thinking.as_deref(), Some("reasoning here"));
+            assert!(text.is_none());
+        }
+
+        #[test]
+        fn channel_thought_cross_chunk_open() {
+            let mut parser = ChannelThoughtParser::new();
+            // Split the opening delimiter across two chunks.
+            let (t1, txt1) = parser.process("<|channel>");
+            // Partial open — nothing emitted yet.
+            assert!(t1.is_none());
+            assert!(txt1.is_none());
+
+            let (t2, txt2) = parser.process("thought\nthinking content<channel|>");
+            assert_eq!(t2.as_deref(), Some("thinking content"));
+            assert!(txt2.is_none());
+        }
+
+        #[test]
+        fn channel_thought_cross_chunk_close() {
+            let mut parser = ChannelThoughtParser::new();
+            let (t1, txt1) =
+                parser.process("<|channel>thought\nsome reasoning<chan");
+            // Thinking content flushed, partial close buffered.
+            assert_eq!(t1.as_deref(), Some("some reasoning"));
+            assert!(txt1.is_none());
+
+            let (t2, txt2) = parser.process("nel|>after text");
+            assert!(t2.is_none());
+            assert_eq!(txt2.as_deref(), Some("after text"));
+        }
+
+        #[test]
+        fn channel_thought_no_delimiters() {
+            let mut parser = ChannelThoughtParser::new();
+            let (thinking, text) = parser.process("Hello, world!");
+            assert!(thinking.is_none());
+            assert_eq!(text.as_deref(), Some("Hello, world!"));
+        }
+
+        #[test]
+        fn channel_thought_multiple_blocks() {
+            let mut parser = ChannelThoughtParser::new();
+            let input = "<|channel>thought\nfirst<channel|><|channel>thought\nsecond<channel|>";
+            let (thinking, text) = parser.process(input);
+            // Both thinking blocks merged into one output.
+            assert_eq!(thinking.as_deref(), Some("firstsecond"));
+            assert!(text.is_none());
+        }
+
+        #[test]
+        fn channel_thought_mixed_text_and_thinking() {
+            let mut parser = ChannelThoughtParser::new();
+
+            let (t1, txt1) = parser.process("before ");
+            assert!(t1.is_none());
+            assert_eq!(txt1.as_deref(), Some("before "));
+
+            let (t2, txt2) =
+                parser.process("<|channel>thought\nreasoning<channel|>");
+            assert_eq!(t2.as_deref(), Some("reasoning"));
+            assert!(txt2.is_none());
+
+            let (t3, txt3) = parser.process(" after");
+            assert!(t3.is_none());
+            assert_eq!(txt3.as_deref(), Some(" after"));
+        }
+
+        #[test]
+        fn channel_thought_delimiter_in_text() {
+            // Quoted delimiter text without the trailing newline should NOT trigger.
+            // `<|channel>thought` without `\n` is not a valid open delimiter.
+            let mut parser = ChannelThoughtParser::new();
+            let (thinking, text) =
+                parser.process("The format is <|channel>thought end");
+            assert!(thinking.is_none());
+            // The parser sees a partial open at `<|channel>thought` but then
+            // gets ` end` which doesn't continue the delimiter — flushes as text.
+            // We just need it to NOT produce thinking events.
+            assert!(text.is_some());
+        }
     }
 }
