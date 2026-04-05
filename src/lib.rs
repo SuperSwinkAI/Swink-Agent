@@ -158,7 +158,7 @@ pub use display::{CoreDisplayMessage, DisplayRole, IntoDisplayMessages};
 pub use plugin::{NamespacedTool, Plugin, PluginRegistry};
 pub use policy::{
     PolicyContext, PolicyVerdict, PostLoopPolicy, PostTurnPolicy, PreDispatchPolicy,
-    PreDispatchVerdict, PreTurnPolicy, ToolPolicyContext, TurnPolicyContext, run_policies,
+    PreDispatchVerdict, PreTurnPolicy, ToolDispatchContext, TurnPolicyContext, run_policies,
     run_post_loop_policies, run_post_turn_policies, run_pre_dispatch_policies,
 };
 #[cfg(feature = "transfer")]

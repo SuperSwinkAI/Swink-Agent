@@ -76,7 +76,6 @@ pub struct PolicyContext<'a> {
     ///
     /// - **`PreTurn`**: user/pending messages appended since the previous turn.
     /// - **`PostTurn`** / **`PostLoop`**: empty — current-turn data is in [`TurnPolicyContext`].
-    /// - **`PreDispatch`**: empty — tool-call data is in [`ToolPolicyContext`].
     ///
     /// Policies should only scan this slice, never the full session history,
     /// to avoid redundant work on messages that have already been evaluated.
@@ -85,22 +84,27 @@ pub struct PolicyContext<'a> {
     pub state: &'a crate::SessionState,
 }
 
-/// Per-tool-call context for `PreDispatch` policies.
+/// Combined context for `PreDispatch` policies.
 ///
-/// Provides mutable access to arguments so policies can rewrite them
-/// (e.g., sandboxing, path normalization).
-pub struct ToolPolicyContext<'a> {
+/// Contains only the data reliably available during tool dispatch — the per-call
+/// fields and read-only session state. Loop-level metrics (turn index, accumulated
+/// usage/cost, message count, overflow signal) are intentionally excluded: they are
+/// not tracked at the tool dispatch call site, and fabricating placeholder values
+/// would give policies incorrect data to reason from.
+pub struct ToolDispatchContext<'a> {
     /// Name of the tool being called.
     pub tool_name: &'a str,
     /// Unique identifier for this tool call.
     pub tool_call_id: &'a str,
-    /// Mutable reference to tool call arguments.
+    /// Mutable reference to tool call arguments (policies may rewrite them).
     pub arguments: &'a mut serde_json::Value,
+    /// Read-only access to the session state.
+    pub state: &'a crate::SessionState,
 }
 
-impl std::fmt::Debug for ToolPolicyContext<'_> {
+impl std::fmt::Debug for ToolDispatchContext<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ToolPolicyContext")
+        f.debug_struct("ToolDispatchContext")
             .field("tool_name", &self.tool_name)
             .field("tool_call_id", &self.tool_call_id)
             .field("arguments", &"<redacted>")
@@ -143,17 +147,13 @@ pub trait PreTurnPolicy: Send + Sync {
 
 /// Slot 2: Evaluated per tool call, before approval and execution.
 ///
-/// Can inspect and mutate tool call arguments via [`ToolPolicyContext`].
+/// Can inspect and mutate tool call arguments via [`ToolDispatchContext`].
 /// Returns [`PreDispatchVerdict`] which includes `Skip` for per-tool rejection.
 pub trait PreDispatchPolicy: Send + Sync {
     /// Policy identifier for tracing and debugging.
     fn name(&self) -> &str;
     /// Evaluate the policy. Returns [`PreDispatchVerdict`].
-    fn evaluate(
-        &self,
-        ctx: &PolicyContext<'_>,
-        tool: &mut ToolPolicyContext<'_>,
-    ) -> PreDispatchVerdict;
+    fn evaluate(&self, ctx: &mut ToolDispatchContext<'_>) -> PreDispatchVerdict;
 }
 
 /// Slot 3: Evaluated after each completed turn.
@@ -295,14 +295,13 @@ fn run_policies_inner<'a>(
 /// - **Panics** are caught and treated as Continue.
 pub fn run_pre_dispatch_policies(
     policies: &[Arc<dyn PreDispatchPolicy>],
-    ctx: &PolicyContext<'_>,
-    tool: &mut ToolPolicyContext<'_>,
+    ctx: &mut ToolDispatchContext<'_>,
 ) -> PreDispatchVerdict {
     let mut injections: Vec<AgentMessage> = Vec::new();
 
     for policy in policies {
         let policy_name = policy.name().to_string();
-        let result = std::panic::catch_unwind(AssertUnwindSafe(|| policy.evaluate(ctx, tool)));
+        let result = std::panic::catch_unwind(AssertUnwindSafe(|| policy.evaluate(ctx)));
 
         match result {
             Ok(PreDispatchVerdict::Continue) => {}
@@ -403,11 +402,7 @@ mod tests {
         fn name(&self) -> &str {
             &self.policy_name
         }
-        fn evaluate(
-            &self,
-            _ctx: &PolicyContext<'_>,
-            _tool: &mut ToolPolicyContext<'_>,
-        ) -> PreDispatchVerdict {
+        fn evaluate(&self, _ctx: &mut ToolDispatchContext<'_>) -> PreDispatchVerdict {
             self.call_count.fetch_add(1, Ordering::SeqCst);
             (self.make_verdict)()
         }
@@ -418,11 +413,7 @@ mod tests {
         fn name(&self) -> &'static str {
             "panicker"
         }
-        fn evaluate(
-            &self,
-            _ctx: &PolicyContext<'_>,
-            _tool: &mut ToolPolicyContext<'_>,
-        ) -> PreDispatchVerdict {
+        fn evaluate(&self, _ctx: &mut ToolDispatchContext<'_>) -> PreDispatchVerdict {
             panic!("pre-dispatch policy panicked");
         }
     }
@@ -432,12 +423,8 @@ mod tests {
         fn name(&self) -> &'static str {
             "mutator"
         }
-        fn evaluate(
-            &self,
-            _ctx: &PolicyContext<'_>,
-            tool: &mut ToolPolicyContext<'_>,
-        ) -> PreDispatchVerdict {
-            if let Some(obj) = tool.arguments.as_object_mut() {
+        fn evaluate(&self, ctx: &mut ToolDispatchContext<'_>) -> PreDispatchVerdict {
+            if let Some(obj) = ctx.arguments.as_object_mut() {
                 obj.insert("injected".to_string(), serde_json::json!("by_policy"));
             }
             PreDispatchVerdict::Continue
@@ -451,12 +438,8 @@ mod tests {
         fn name(&self) -> &'static str {
             "verifier"
         }
-        fn evaluate(
-            &self,
-            _ctx: &PolicyContext<'_>,
-            tool: &mut ToolPolicyContext<'_>,
-        ) -> PreDispatchVerdict {
-            if tool.arguments.get(&self.expected_key).is_some() {
+        fn evaluate(&self, ctx: &mut ToolDispatchContext<'_>) -> PreDispatchVerdict {
+            if ctx.arguments.get(&self.expected_key).is_some() {
                 PreDispatchVerdict::Continue
             } else {
                 PreDispatchVerdict::Skip(format!("missing key: {}", self.expected_key))
@@ -488,6 +471,18 @@ mod tests {
             message_count: 5,
             overflow_signal: false,
             new_messages: &[],
+            state,
+        }
+    }
+
+    fn make_dispatch_ctx<'a>(
+        args: &'a mut serde_json::Value,
+        state: &'a crate::SessionState,
+    ) -> ToolDispatchContext<'a> {
+        ToolDispatchContext {
+            tool_name: "test_tool",
+            tool_call_id: "id1",
+            arguments: args,
             state,
         }
     }
@@ -618,16 +613,10 @@ mod tests {
     #[test]
     fn pre_dispatch_empty_vec_returns_continue() {
         let policies: Vec<Arc<dyn PreDispatchPolicy>> = vec![];
-        let (usage, cost) = test_context();
         let state = crate::SessionState::new();
-        let ctx = make_ctx(&usage, &cost, &state);
         let mut args = serde_json::json!({});
-        let mut tool_ctx = ToolPolicyContext {
-            tool_name: "test",
-            tool_call_id: "id1",
-            arguments: &mut args,
-        };
-        let result = run_pre_dispatch_policies(&policies, &ctx, &mut tool_ctx);
+        let mut ctx = make_dispatch_ctx(&mut args, &state);
+        let result = run_pre_dispatch_policies(&policies, &mut ctx);
         assert!(matches!(result, PreDispatchVerdict::Continue));
     }
 
@@ -640,16 +629,10 @@ mod tests {
             PreDispatchVerdict::Continue
         }));
         let policies: Vec<Arc<dyn PreDispatchPolicy>> = vec![p1.clone(), p2.clone()];
-        let (usage, cost) = test_context();
         let state = crate::SessionState::new();
-        let ctx = make_ctx(&usage, &cost, &state);
         let mut args = serde_json::json!({});
-        let mut tool_ctx = ToolPolicyContext {
-            tool_name: "test",
-            tool_call_id: "id1",
-            arguments: &mut args,
-        };
-        let result = run_pre_dispatch_policies(&policies, &ctx, &mut tool_ctx);
+        let mut ctx = make_dispatch_ctx(&mut args, &state);
+        let result = run_pre_dispatch_policies(&policies, &mut ctx);
         assert!(matches!(result, PreDispatchVerdict::Skip(ref e) if e == "denied"));
         assert_eq!(p1.calls(), 1);
         assert_eq!(p2.calls(), 0);
@@ -664,16 +647,10 @@ mod tests {
             PreDispatchVerdict::Continue
         }));
         let policies: Vec<Arc<dyn PreDispatchPolicy>> = vec![p1, p2.clone()];
-        let (usage, cost) = test_context();
         let state = crate::SessionState::new();
-        let ctx = make_ctx(&usage, &cost, &state);
         let mut args = serde_json::json!({});
-        let mut tool_ctx = ToolPolicyContext {
-            tool_name: "test",
-            tool_call_id: "id1",
-            arguments: &mut args,
-        };
-        let result = run_pre_dispatch_policies(&policies, &ctx, &mut tool_ctx);
+        let mut ctx = make_dispatch_ctx(&mut args, &state);
+        let result = run_pre_dispatch_policies(&policies, &mut ctx);
         assert!(matches!(result, PreDispatchVerdict::Stop(ref r) if r == "halt"));
         assert_eq!(p2.calls(), 0);
     }
@@ -687,16 +664,10 @@ mod tests {
             PreDispatchVerdict::Inject(vec![test_message()])
         }));
         let policies: Vec<Arc<dyn PreDispatchPolicy>> = vec![p1, p2];
-        let (usage, cost) = test_context();
         let state = crate::SessionState::new();
-        let ctx = make_ctx(&usage, &cost, &state);
         let mut args = serde_json::json!({});
-        let mut tool_ctx = ToolPolicyContext {
-            tool_name: "test",
-            tool_call_id: "id1",
-            arguments: &mut args,
-        };
-        let result = run_pre_dispatch_policies(&policies, &ctx, &mut tool_ctx);
+        let mut ctx = make_dispatch_ctx(&mut args, &state);
+        let result = run_pre_dispatch_policies(&policies, &mut ctx);
         match result {
             PreDispatchVerdict::Inject(msgs) => assert_eq!(msgs.len(), 2),
             _ => panic!("expected Inject"),
@@ -710,16 +681,10 @@ mod tests {
             PreDispatchVerdict::Continue
         }));
         let policies: Vec<Arc<dyn PreDispatchPolicy>> = vec![p1, p2.clone()];
-        let (usage, cost) = test_context();
         let state = crate::SessionState::new();
-        let ctx = make_ctx(&usage, &cost, &state);
         let mut args = serde_json::json!({});
-        let mut tool_ctx = ToolPolicyContext {
-            tool_name: "test",
-            tool_call_id: "id1",
-            arguments: &mut args,
-        };
-        let result = run_pre_dispatch_policies(&policies, &ctx, &mut tool_ctx);
+        let mut ctx = make_dispatch_ctx(&mut args, &state);
+        let result = run_pre_dispatch_policies(&policies, &mut ctx);
         assert!(matches!(result, PreDispatchVerdict::Continue));
         assert_eq!(p2.calls(), 1);
     }
@@ -731,19 +696,35 @@ mod tests {
             expected_key: "injected".to_string(),
         });
         let policies: Vec<Arc<dyn PreDispatchPolicy>> = vec![mutator, verifier];
-        let (usage, cost) = test_context();
         let state = crate::SessionState::new();
-        let ctx = make_ctx(&usage, &cost, &state);
         let mut args = serde_json::json!({"original": "value"});
-        let mut tool_ctx = ToolPolicyContext {
-            tool_name: "test",
-            tool_call_id: "id1",
-            arguments: &mut args,
-        };
-        let result = run_pre_dispatch_policies(&policies, &ctx, &mut tool_ctx);
+        let mut ctx = make_dispatch_ctx(&mut args, &state);
+        let result = run_pre_dispatch_policies(&policies, &mut ctx);
         // If mutator didn't inject "injected" key, verifier would return Skip
         assert!(matches!(result, PreDispatchVerdict::Continue));
-        // Verify the mutation is visible in the original args
+        // Verify the mutation is visible in the original args after dispatch
         assert_eq!(args["injected"], "by_policy");
+    }
+
+    #[test]
+    fn tool_dispatch_context_contains_only_reliable_fields() {
+        // Regression: ToolDispatchContext must not include loop-level metrics
+        // (turn_index, usage, cost, message_count, overflow_signal, new_messages)
+        // because those are not tracked at the tool dispatch call site.
+        let state = crate::SessionState::new();
+        let mut args = serde_json::json!({"path": "/tmp/file"});
+        let ctx = ToolDispatchContext {
+            tool_name: "write_file",
+            tool_call_id: "call-123",
+            arguments: &mut args,
+            state: &state,
+        };
+        assert_eq!(ctx.tool_name, "write_file");
+        assert_eq!(ctx.tool_call_id, "call-123");
+        assert_eq!(ctx.arguments["path"], "/tmp/file");
+        // Debug output does not expose argument values
+        let debug_str = format!("{ctx:?}");
+        assert!(debug_str.contains("write_file"));
+        assert!(!debug_str.contains("/tmp/file"), "arguments must be redacted in Debug");
     }
 }

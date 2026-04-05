@@ -1,6 +1,6 @@
 use serde_json::json;
-use swink_agent::policy::{PolicyContext, PreDispatchPolicy, PreDispatchVerdict, ToolPolicyContext};
-use swink_agent::{Cost, SessionState, Usage};
+use swink_agent::policy::{PreDispatchPolicy, PreDispatchVerdict, ToolDispatchContext};
+use swink_agent::SessionState;
 use swink_agent_plugin_web::domain::{DomainFilter, DomainFilterError};
 use swink_agent_plugin_web::policy::DomainFilterPolicy;
 use url::Url;
@@ -9,22 +9,16 @@ use url::Url;
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn make_policy_context() -> (Usage, Cost, SessionState) {
-    (Usage::default(), Cost::default(), SessionState::default())
-}
-
-fn ctx_from<'a>(
-    usage: &'a Usage,
-    cost: &'a Cost,
+fn make_dispatch_ctx<'a>(
+    tool_name: &'a str,
+    tool_call_id: &'a str,
+    args: &'a mut serde_json::Value,
     state: &'a SessionState,
-) -> PolicyContext<'a> {
-    PolicyContext {
-        turn_index: 0,
-        accumulated_usage: usage,
-        accumulated_cost: cost,
-        message_count: 0,
-        overflow_signal: false,
-        new_messages: &[],
+) -> ToolDispatchContext<'a> {
+    ToolDispatchContext {
+        tool_name,
+        tool_call_id,
+        arguments: args,
         state,
     }
 }
@@ -184,15 +178,10 @@ fn policy_ignores_non_web_tools() {
         denylist: vec!["evil.com".to_string()],
         ..Default::default()
     });
-    let (usage, cost, state) = make_policy_context();
-    let ctx = ctx_from(&usage, &cost, &state);
+    let state = SessionState::default();
     let mut args = json!({"url": "https://evil.com"});
-    let mut tool = ToolPolicyContext {
-        tool_name: "bash",
-        tool_call_id: "call_1",
-        arguments: &mut args,
-    };
-    let verdict = policy.evaluate(&ctx, &mut tool);
+    let mut ctx = make_dispatch_ctx("bash", "call_1", &mut args, &state);
+    let verdict = policy.evaluate(&mut ctx);
     assert!(matches!(verdict, PreDispatchVerdict::Continue));
 }
 
@@ -206,15 +195,10 @@ fn policy_continues_when_no_url_arg() {
         denylist: vec!["evil.com".to_string()],
         ..Default::default()
     });
-    let (usage, cost, state) = make_policy_context();
-    let ctx = ctx_from(&usage, &cost, &state);
+    let state = SessionState::default();
     let mut args = json!({"query": "rust programming"});
-    let mut tool = ToolPolicyContext {
-        tool_name: "web.search",
-        tool_call_id: "call_2",
-        arguments: &mut args,
-    };
-    let verdict = policy.evaluate(&ctx, &mut tool);
+    let mut ctx = make_dispatch_ctx("web.search", "call_2", &mut args, &state);
+    let verdict = policy.evaluate(&mut ctx);
     assert!(matches!(verdict, PreDispatchVerdict::Continue));
 }
 
@@ -228,15 +212,10 @@ fn policy_blocks_denied_domain() {
         denylist: vec!["evil.com".to_string()],
         ..Default::default()
     });
-    let (usage, cost, state) = make_policy_context();
-    let ctx = ctx_from(&usage, &cost, &state);
+    let state = SessionState::default();
     let mut args = json!({"url": "https://evil.com/page"});
-    let mut tool = ToolPolicyContext {
-        tool_name: "web.fetch",
-        tool_call_id: "call_3",
-        arguments: &mut args,
-    };
-    let verdict = policy.evaluate(&ctx, &mut tool);
+    let mut ctx = make_dispatch_ctx("web.fetch", "call_3", &mut args, &state);
+    let verdict = policy.evaluate(&mut ctx);
     assert!(
         matches!(verdict, PreDispatchVerdict::Skip(_)),
         "expected Skip, got {verdict:?}"
@@ -250,15 +229,10 @@ fn policy_blocks_denied_domain() {
 #[test]
 fn policy_allows_valid_domain() {
     let policy = DomainFilterPolicy::new(DomainFilter::default());
-    let (usage, cost, state) = make_policy_context();
-    let ctx = ctx_from(&usage, &cost, &state);
+    let state = SessionState::default();
     let mut args = json!({"url": "https://example.com"});
-    let mut tool = ToolPolicyContext {
-        tool_name: "web.fetch",
-        tool_call_id: "call_4",
-        arguments: &mut args,
-    };
-    let verdict = policy.evaluate(&ctx, &mut tool);
+    let mut ctx = make_dispatch_ctx("web.fetch", "call_4", &mut args, &state);
+    let verdict = policy.evaluate(&mut ctx);
     assert!(matches!(verdict, PreDispatchVerdict::Continue));
 }
 
@@ -269,15 +243,10 @@ fn policy_allows_valid_domain() {
 #[test]
 fn policy_rejects_file_scheme() {
     let policy = DomainFilterPolicy::new(DomainFilter::default());
-    let (usage, cost, state) = make_policy_context();
-    let ctx = ctx_from(&usage, &cost, &state);
+    let state = SessionState::default();
     let mut args = json!({"url": "file:///etc/passwd"});
-    let mut tool = ToolPolicyContext {
-        tool_name: "web.fetch",
-        tool_call_id: "call_5",
-        arguments: &mut args,
-    };
-    let verdict = policy.evaluate(&ctx, &mut tool);
+    let mut ctx = make_dispatch_ctx("web.fetch", "call_5", &mut args, &state);
+    let verdict = policy.evaluate(&mut ctx);
     assert!(
         matches!(verdict, PreDispatchVerdict::Skip(_)),
         "expected Skip for file:// scheme"
@@ -291,15 +260,10 @@ fn policy_rejects_file_scheme() {
 #[test]
 fn policy_skips_invalid_url() {
     let policy = DomainFilterPolicy::new(DomainFilter::default());
-    let (usage, cost, state) = make_policy_context();
-    let ctx = ctx_from(&usage, &cost, &state);
+    let state = SessionState::default();
     let mut args = json!({"url": "not a url at all"});
-    let mut tool = ToolPolicyContext {
-        tool_name: "web.fetch",
-        tool_call_id: "call_6",
-        arguments: &mut args,
-    };
-    let verdict = policy.evaluate(&ctx, &mut tool);
+    let mut ctx = make_dispatch_ctx("web.fetch", "call_6", &mut args, &state);
+    let verdict = policy.evaluate(&mut ctx);
     assert!(
         matches!(verdict, PreDispatchVerdict::Skip(_)),
         "expected Skip for unparseable URL"

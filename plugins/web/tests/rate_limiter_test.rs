@@ -3,36 +3,30 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use serde_json::json;
-use swink_agent::policy::{PolicyContext, PreDispatchPolicy, PreDispatchVerdict, ToolPolicyContext};
-use swink_agent::{Cost, SessionState, Usage};
+use swink_agent::policy::{PreDispatchPolicy, PreDispatchVerdict, ToolDispatchContext};
+use swink_agent::SessionState;
 use swink_agent_plugin_web::policy::RateLimitPolicy;
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn make_policy_context() -> (Usage, Cost, SessionState) {
-    (Usage::default(), Cost::default(), SessionState::default())
-}
-
-fn ctx_from<'a>(
-    usage: &'a Usage,
-    cost: &'a Cost,
-    state: &'a SessionState,
-) -> PolicyContext<'a> {
-    PolicyContext {
-        turn_index: 0,
-        accumulated_usage: usage,
-        accumulated_cost: cost,
-        message_count: 0,
-        overflow_signal: false,
-        new_messages: &[],
-        state,
-    }
-}
-
 fn shared_state() -> Arc<Mutex<VecDeque<Instant>>> {
     Arc::new(Mutex::new(VecDeque::new()))
+}
+
+fn make_dispatch_ctx<'a>(
+    tool_name: &'a str,
+    tool_call_id: &'a str,
+    args: &'a mut serde_json::Value,
+    state: &'a SessionState,
+) -> ToolDispatchContext<'a> {
+    ToolDispatchContext {
+        tool_name,
+        tool_call_id,
+        arguments: args,
+        state,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -41,19 +35,15 @@ fn shared_state() -> Arc<Mutex<VecDeque<Instant>>> {
 
 #[test]
 fn requests_within_limit_return_continue() {
-    let state = shared_state();
-    let policy = RateLimitPolicy::new(state, 5);
-    let (usage, cost, session) = make_policy_context();
-    let ctx = ctx_from(&usage, &cost, &session);
+    let rl_state = shared_state();
+    let policy = RateLimitPolicy::new(rl_state, 5);
+    let session = SessionState::default();
 
     for i in 0..5 {
+        let call_id = format!("tc_{i}");
         let mut args = json!({"url": "https://example.com"});
-        let mut tool = ToolPolicyContext {
-            tool_name: "web.fetch",
-            tool_call_id: &format!("tc_{i}"),
-            arguments: &mut args,
-        };
-        let verdict = policy.evaluate(&ctx, &mut tool);
+        let mut ctx = make_dispatch_ctx("web.fetch", &call_id, &mut args, &session);
+        let verdict = policy.evaluate(&mut ctx);
         assert!(
             matches!(verdict, PreDispatchVerdict::Continue),
             "request {i} should pass within limit"
@@ -67,31 +57,23 @@ fn requests_within_limit_return_continue() {
 
 #[test]
 fn exceeding_limit_returns_skip() {
-    let state = shared_state();
-    let policy = RateLimitPolicy::new(state, 3);
-    let (usage, cost, session) = make_policy_context();
-    let ctx = ctx_from(&usage, &cost, &session);
+    let rl_state = shared_state();
+    let policy = RateLimitPolicy::new(rl_state, 3);
+    let session = SessionState::default();
 
     // Use up the limit.
     for i in 0..3 {
+        let call_id = format!("tc_{i}");
         let mut args = json!({"url": "https://example.com"});
-        let mut tool = ToolPolicyContext {
-            tool_name: "web.fetch",
-            tool_call_id: &format!("tc_{i}"),
-            arguments: &mut args,
-        };
-        let verdict = policy.evaluate(&ctx, &mut tool);
+        let mut ctx = make_dispatch_ctx("web.fetch", &call_id, &mut args, &session);
+        let verdict = policy.evaluate(&mut ctx);
         assert!(matches!(verdict, PreDispatchVerdict::Continue));
     }
 
     // Next request should be skipped.
     let mut args = json!({"url": "https://example.com"});
-    let mut tool = ToolPolicyContext {
-        tool_name: "web.fetch",
-        tool_call_id: "tc_over",
-        arguments: &mut args,
-    };
-    let verdict = policy.evaluate(&ctx, &mut tool);
+    let mut ctx = make_dispatch_ctx("web.fetch", "tc_over", &mut args, &session);
+    let verdict = policy.evaluate(&mut ctx);
     assert!(
         matches!(verdict, PreDispatchVerdict::Skip(_)),
         "expected Skip when limit exceeded, got {verdict:?}"
@@ -104,28 +86,22 @@ fn exceeding_limit_returns_skip() {
 
 #[test]
 fn old_timestamps_are_pruned_allowing_new_requests() {
-    let state = shared_state();
+    let rl_state = shared_state();
 
     // Pre-fill with timestamps from >60 seconds ago.
     {
-        let mut timestamps = state.lock().unwrap();
+        let mut timestamps = rl_state.lock().unwrap();
         let old = Instant::now() - Duration::from_secs(120);
         for _ in 0..5 {
             timestamps.push_back(old);
         }
     }
 
-    let policy = RateLimitPolicy::new(state, 5);
-    let (usage, cost, session) = make_policy_context();
-    let ctx = ctx_from(&usage, &cost, &session);
-
+    let policy = RateLimitPolicy::new(rl_state, 5);
+    let session = SessionState::default();
     let mut args = json!({"url": "https://example.com"});
-    let mut tool = ToolPolicyContext {
-        tool_name: "web.fetch",
-        tool_call_id: "tc_after_prune",
-        arguments: &mut args,
-    };
-    let verdict = policy.evaluate(&ctx, &mut tool);
+    let mut ctx = make_dispatch_ctx("web.fetch", "tc_after_prune", &mut args, &session);
+    let verdict = policy.evaluate(&mut ctx);
     assert!(
         matches!(verdict, PreDispatchVerdict::Continue),
         "should pass after stale timestamps are pruned"
@@ -138,19 +114,13 @@ fn old_timestamps_are_pruned_allowing_new_requests() {
 
 #[test]
 fn non_web_tool_returns_continue() {
-    let state = shared_state();
+    let rl_state = shared_state();
     // Even with a zero limit, non-web tools should not be affected.
-    let policy = RateLimitPolicy::new(state, 0);
-    let (usage, cost, session) = make_policy_context();
-    let ctx = ctx_from(&usage, &cost, &session);
-
+    let policy = RateLimitPolicy::new(rl_state, 0);
+    let session = SessionState::default();
     let mut args = json!({"command": "ls"});
-    let mut tool = ToolPolicyContext {
-        tool_name: "bash",
-        tool_call_id: "tc_bash",
-        arguments: &mut args,
-    };
-    let verdict = policy.evaluate(&ctx, &mut tool);
+    let mut ctx = make_dispatch_ctx("bash", "tc_bash", &mut args, &session);
+    let verdict = policy.evaluate(&mut ctx);
     assert!(
         matches!(verdict, PreDispatchVerdict::Continue),
         "non-web tools should always pass through"
@@ -163,19 +133,15 @@ fn non_web_tool_returns_continue() {
 
 #[test]
 fn default_30_rpm_allows_30_requests() {
-    let state = shared_state();
-    let policy = RateLimitPolicy::new(state, 30);
-    let (usage, cost, session) = make_policy_context();
-    let ctx = ctx_from(&usage, &cost, &session);
+    let rl_state = shared_state();
+    let policy = RateLimitPolicy::new(rl_state, 30);
+    let session = SessionState::default();
 
     for i in 0..30 {
+        let call_id = format!("tc_{i}");
         let mut args = json!({"url": "https://example.com"});
-        let mut tool = ToolPolicyContext {
-            tool_name: "web.search",
-            tool_call_id: &format!("tc_{i}"),
-            arguments: &mut args,
-        };
-        let verdict = policy.evaluate(&ctx, &mut tool);
+        let mut ctx = make_dispatch_ctx("web.search", &call_id, &mut args, &session);
+        let verdict = policy.evaluate(&mut ctx);
         assert!(
             matches!(verdict, PreDispatchVerdict::Continue),
             "request {i} of 30 should pass"
@@ -184,12 +150,8 @@ fn default_30_rpm_allows_30_requests() {
 
     // Request 31 should be rate-limited.
     let mut args = json!({"url": "https://example.com"});
-    let mut tool = ToolPolicyContext {
-        tool_name: "web.search",
-        tool_call_id: "tc_31",
-        arguments: &mut args,
-    };
-    let verdict = policy.evaluate(&ctx, &mut tool);
+    let mut ctx = make_dispatch_ctx("web.search", "tc_31", &mut args, &session);
+    let verdict = policy.evaluate(&mut ctx);
     assert!(
         matches!(verdict, PreDispatchVerdict::Skip(_)),
         "31st request should be rate-limited at 30 RPM"

@@ -141,9 +141,7 @@ pub async fn execute_tools_concurrently(
         // ── PreDispatch policies ──
         let mut effective_arguments = tc.arguments.clone();
         {
-            use crate::policy::{
-                PolicyContext, PreDispatchVerdict, ToolPolicyContext, run_pre_dispatch_policies,
-            };
+            use crate::policy::{PreDispatchVerdict, ToolDispatchContext, run_pre_dispatch_policies};
 
             let state_snapshot = {
                 let guard = config
@@ -152,25 +150,13 @@ pub async fn execute_tools_concurrently(
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
                 guard.clone()
             };
-            let policy_ctx = PolicyContext {
-                turn_index: 0, // tool dispatch doesn't track turn index
-                accumulated_usage: &crate::types::Usage::default(),
-                accumulated_cost: &crate::types::Cost::default(),
-                message_count: 0,
-                overflow_signal: false,
-                new_messages: &[],
-                state: &state_snapshot,
-            };
-            let mut tool_ctx = ToolPolicyContext {
+            let mut dispatch_ctx = ToolDispatchContext {
                 tool_name: &tc.name,
                 tool_call_id: &tc.id,
                 arguments: &mut effective_arguments,
+                state: &state_snapshot,
             };
-            match run_pre_dispatch_policies(
-                &config.pre_dispatch_policies,
-                &policy_ctx,
-                &mut tool_ctx,
-            ) {
+            match run_pre_dispatch_policies(&config.pre_dispatch_policies, &mut dispatch_ctx) {
                 PreDispatchVerdict::Continue | PreDispatchVerdict::Inject(_) => {}
                 PreDispatchVerdict::Stop(reason) => {
                     let error_result = AgentToolResult {
