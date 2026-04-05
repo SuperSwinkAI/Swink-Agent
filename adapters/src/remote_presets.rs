@@ -47,8 +47,8 @@ pub enum RemoteModelConnectionError {
     UnknownModelId { model_id: String },
     #[error("{provider_key}.{preset_id} is not a remote preset")]
     NotRemotePreset {
-        provider_key: &'static str,
-        preset_id: &'static str,
+        provider_key: String,
+        preset_id: String,
     },
     #[error(
         "Missing {env_var} for {preset}. Set it in your environment or .env before launching the example."
@@ -113,8 +113,8 @@ fn build_connection_from_preset(
 ) -> Result<ModelConnection, RemoteModelConnectionError> {
     if preset.provider_kind != ProviderKind::Remote {
         return Err(RemoteModelConnectionError::NotRemotePreset {
-            provider_key: "unknown",
-            preset_id: "unknown",
+            provider_key: preset.provider_key.clone(),
+            preset_id: preset.preset_id.clone(),
         });
     }
 
