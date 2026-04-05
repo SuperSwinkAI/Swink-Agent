@@ -43,13 +43,12 @@ pub trait AsyncSessionStore: Send + Sync {
 
     /// Load a session by ID asynchronously.
     ///
-    /// If `registry` is `Some`, custom messages are deserialized using the
-    /// provided registry. If `None`, custom messages are skipped.
-    fn load(
-        &self,
-        id: &str,
-        registry: Option<&CustomMessageRegistry>,
-    ) -> SessionStoreFuture<'_, (SessionMeta, Vec<AgentMessage>)>;
+    /// Custom messages are deserialized using the registry configured at
+    /// construction time (e.g. via [`BlockingSessionStore::with_registry`]).
+    /// To restore custom messages, provide the registry at construction rather
+    /// than per-call: a per-call registry cannot cross `spawn_blocking`
+    /// boundaries reliably.
+    fn load(&self, id: &str) -> SessionStoreFuture<'_, (SessionMeta, Vec<AgentMessage>)>;
 
     /// List all saved sessions asynchronously.
     fn list(&self) -> SessionStoreFuture<'_, Vec<SessionMeta>>;
@@ -111,10 +110,8 @@ impl<S: crate::store::SessionStore + 'static> BlockingSessionStore<S> {
 
     /// Attach a [`CustomMessageRegistry`] for deserializing custom messages on load.
     ///
-    /// Without a registry, the per-call `registry` argument to [`AsyncSessionStore::load`]
-    /// is ignored because `&CustomMessageRegistry` cannot cross `spawn_blocking`
-    /// boundaries. Providing a registry here ensures custom messages survive the
-    /// blocking adapter round-trip.
+    /// Because `&CustomMessageRegistry` cannot cross `spawn_blocking` boundaries,
+    /// the registry must be provided once at construction rather than per call.
     #[must_use]
     pub fn with_registry(mut self, registry: Arc<CustomMessageRegistry>) -> Self {
         self.registry = Some(registry);
@@ -152,17 +149,9 @@ impl<S: crate::store::SessionStore + 'static> AsyncSessionStore for BlockingSess
         spawn_store_call(move || inner.append(&id, &messages))
     }
 
-    fn load(
-        &self,
-        id: &str,
-        _registry: Option<&CustomMessageRegistry>,
-    ) -> SessionStoreFuture<'_, (SessionMeta, Vec<AgentMessage>)> {
+    fn load(&self, id: &str) -> SessionStoreFuture<'_, (SessionMeta, Vec<AgentMessage>)> {
         let inner = Arc::clone(&self.inner);
         let id = id.to_string();
-        // Use the stored registry (set via `with_registry`) because a bare
-        // `&CustomMessageRegistry` reference cannot cross `spawn_blocking`.
-        // The per-call `_registry` parameter is accepted for trait conformance
-        // but the stored `Arc` takes precedence.
         let registry = self.registry.clone();
         spawn_store_call(move || inner.load(&id, registry.as_deref()))
     }
@@ -260,7 +249,7 @@ mod tests {
         assert_eq!(sessions[0].title, "Async test");
 
         // Load via async adapter.
-        let (loaded_meta, loaded_messages) = async_store.load("test_async", None).await.unwrap();
+        let (loaded_meta, loaded_messages) = async_store.load("test_async").await.unwrap();
         assert_eq!(loaded_meta.id, "test_async");
         assert!(loaded_messages.is_empty());
 
@@ -382,7 +371,7 @@ mod tests {
             .unwrap();
 
         // Load back through the blocking adapter — custom messages must survive.
-        let (_, loaded) = async_store.load("custom_save", None).await.unwrap();
+        let (_, loaded) = async_store.load("custom_save").await.unwrap();
         assert_eq!(loaded.len(), 3, "all three messages must be loaded");
         assert!(matches!(loaded[0], AgentMessage::Llm(_)));
         assert!(matches!(loaded[1], AgentMessage::Custom(_)));
@@ -410,7 +399,7 @@ mod tests {
         // Load through the blocking adapter with a registry — must restore the custom message.
         let jsonl_store = JsonlSessionStore::new(dir.path().to_path_buf()).unwrap();
         let async_store = BlockingSessionStore::new(jsonl_store).with_registry(registry);
-        let (_, loaded) = async_store.load("reg_load", None).await.unwrap();
+        let (_, loaded) = async_store.load("reg_load").await.unwrap();
         assert_eq!(loaded.len(), 1);
         assert!(matches!(loaded[0], AgentMessage::Custom(_)));
         let custom = loaded[0].downcast_ref::<TestCustomMsg>().unwrap();
@@ -452,7 +441,7 @@ mod tests {
             .unwrap();
 
         // Reload and verify the custom message survived.
-        let (_, loaded) = async_store.load("custom_append", None).await.unwrap();
+        let (_, loaded) = async_store.load("custom_append").await.unwrap();
         assert_eq!(loaded.len(), 2);
         assert!(matches!(loaded[0], AgentMessage::Llm(_)));
         assert!(matches!(loaded[1], AgentMessage::Custom(_)));

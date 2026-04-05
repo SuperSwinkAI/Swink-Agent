@@ -14,10 +14,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, PoisonError};
 
 use rusqlite::{Connection, params};
-use swink_agent::{
-    AgentMessage, CustomMessageRegistry, LlmMessage, deserialize_custom_message,
-    serialize_custom_message,
-};
+use swink_agent::{AgentMessage, CustomMessageRegistry, LlmMessage};
 
 use crate::entry::SessionEntry;
 use crate::interrupt::InterruptState;
@@ -198,49 +195,6 @@ impl SqliteSessionStore {
     }
 }
 
-/// Serialize an [`AgentMessage`] to a `(kind, json_data)` pair for storage.
-fn serialize_agent_message(msg: &AgentMessage, session_id: &str) -> io::Result<(String, String)> {
-    match msg {
-        AgentMessage::Llm(llm) => {
-            let json = serde_json::to_string(llm).map_err(to_io)?;
-            Ok(("llm".to_string(), json))
-        }
-        AgentMessage::Custom(custom) => {
-            if let Some(envelope) = serialize_custom_message(custom.as_ref()) {
-                let json = serde_json::to_string(&envelope).map_err(to_io)?;
-                Ok(("custom".to_string(), json))
-            } else {
-                tracing::warn!(
-                    "skipping non-serializable CustomMessage in session {session_id}: {:?}",
-                    custom
-                );
-                Err(io::Error::other("non-serializable custom message"))
-            }
-        }
-    }
-}
-
-/// Deserialize a stored entry back to [`AgentMessage`].
-fn deserialize_entry(
-    kind: &str,
-    data: &str,
-    registry: Option<&CustomMessageRegistry>,
-) -> Option<AgentMessage> {
-    match kind {
-        "llm" => serde_json::from_str::<LlmMessage>(data)
-            .ok()
-            .map(AgentMessage::Llm),
-        "custom" => {
-            let envelope: serde_json::Value = serde_json::from_str(data).ok()?;
-            registry.and_then(|reg| {
-                deserialize_custom_message(reg, &envelope)
-                    .ok()
-                    .map(AgentMessage::Custom)
-            })
-        }
-        _ => None,
-    }
-}
 
 #[allow(clippy::significant_drop_tightening)]
 impl SessionStore for SqliteSessionStore {
@@ -279,8 +233,9 @@ impl SessionStore for SqliteSessionStore {
 
         let mut pos = 0i64;
         for msg in messages {
-            if let Ok((kind, data)) = serialize_agent_message(msg, id) {
-                stmt.execute(params![id, pos, kind, data]).map_err(to_io)?;
+            if let Some((kind, data)) = crate::codec::encode(msg, id) {
+                stmt.execute(params![id, pos, kind.as_str(), data])
+                    .map_err(to_io)?;
                 pos += 1;
             }
         }
@@ -317,8 +272,9 @@ impl SessionStore for SqliteSessionStore {
 
         let mut pos = max_pos + 1;
         for msg in messages {
-            if let Ok((kind, data)) = serialize_agent_message(msg, id) {
-                stmt.execute(params![id, pos, kind, data]).map_err(to_io)?;
+            if let Some((kind, data)) = crate::codec::encode(msg, id) {
+                stmt.execute(params![id, pos, kind.as_str(), data])
+                    .map_err(to_io)?;
                 pos += 1;
             }
         }
@@ -368,8 +324,9 @@ impl SessionStore for SqliteSessionStore {
             })
             .map_err(to_io)?
             .filter_map(|row| {
-                let (kind, data) = row.ok()?;
-                deserialize_entry(&kind, &data, registry)
+                let (kind_str, data) = row.ok()?;
+                let kind = crate::codec::MessageKind::parse(&kind_str)?;
+                crate::codec::decode(kind, &data, registry).ok().flatten()
             })
             .collect();
 

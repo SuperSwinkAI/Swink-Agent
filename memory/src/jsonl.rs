@@ -33,7 +33,13 @@ impl SessionRecord {
         match message {
             AgentMessage::Llm(llm) => Some(Self::Llm(Box::new(llm.clone()))),
             AgentMessage::Custom(custom) => {
-                let mut envelope = serialize_custom_message(custom.as_ref())?;
+                let Some(mut envelope) = serialize_custom_message(custom.as_ref()) else {
+                    tracing::warn!(
+                        session_id,
+                        "skipping non-serializable CustomMessage: {custom:?}"
+                    );
+                    return None;
+                };
                 envelope
                     .as_object_mut()
                     .expect("custom message envelope must be an object")
@@ -41,15 +47,6 @@ impl SessionRecord {
                 Some(Self::Custom(envelope))
             }
         }
-        .or_else(|| {
-            if let AgentMessage::Custom(custom) = message {
-                tracing::warn!(
-                    "skipping non-serializable CustomMessage in session {session_id}: {:?}",
-                    custom
-                );
-            }
-            None
-        })
     }
 
     const fn state(state: serde_json::Value) -> Self {
