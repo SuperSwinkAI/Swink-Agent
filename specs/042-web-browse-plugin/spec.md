@@ -50,7 +50,7 @@ A developer needs an agent that can visually inspect web pages — for example, 
 
 **Acceptance Scenarios**:
 
-1. **Given** an agent with the web plugin and Playwright CLI installed on the host, **When** the agent calls `web.screenshot` with a URL, **Then** the plugin returns the screenshot as image data (PNG).
+1. **Given** an agent with the web plugin and Playwright CLI installed on the host, **When** the agent calls `web.screenshot` with a URL, **Then** the plugin returns the screenshot as a `ContentBlock::Image` containing base64-encoded PNG data, directly consumable by multi-modal LLMs.
 2. **Given** the Playwright CLI is not installed on the host, **When** the agent calls `web.screenshot`, **Then** the plugin returns a clear error message indicating that Playwright needs to be installed, with guidance on how to install it.
 3. **Given** the agent calls `web.screenshot` with optional viewport size parameters, **When** the screenshot is taken, **Then** the browser renders at the specified dimensions.
 
@@ -123,7 +123,7 @@ A fetched web page contains prompt injection attempts embedded in its content (e
 ### Edge Cases
 
 - What happens when a URL redirects multiple times? The plugin should follow redirects up to a configurable limit (default: 10) and return the final page's content.
-- What happens when a page requires JavaScript rendering to display content? The `web.fetch` tool returns the static HTML content only. Users needing JS-rendered content should use `web.screenshot` or `web.extract` (future: headless fetch via Playwright).
+- What happens when a page requires JavaScript rendering to display content? The `web.fetch` tool returns the static HTML content only. Users needing JS-rendered content should use `web.screenshot` or `web.extract`, both of which use Playwright for full JS rendering.
 - What happens when the search provider (DuckDuckGo) is temporarily unavailable? The plugin returns a clear error indicating the search backend is unreachable, allowing the agent to inform the user rather than silently failing.
 - What happens when a fetched page is extremely large (e.g., a log dump or data file)? Content is truncated at the configured maximum length with a truncation notice appended.
 - What happens when the agent calls `web.fetch` on a non-HTML resource (PDF, image, binary)? The plugin detects the content type and returns an appropriate message (e.g., "This URL points to a PDF document. Use web.screenshot to view it visually.").
@@ -135,22 +135,22 @@ A fetched web page contains prompt injection attempts embedded in its content (e
 
 - **FR-001**: The plugin MUST implement the `Plugin` trait from `swink-agent` core, registering all tools, policies, and event observers as a single composable unit.
 - **FR-002**: The plugin MUST provide a `web.fetch` tool that retrieves a URL and returns the page's main content as clean, readable text with boilerplate removed.
-- **FR-003**: The plugin MUST provide a `web.search` tool that accepts a query string and returns a ranked list of results (title, URL, snippet).
-- **FR-004**: The plugin MUST provide a `web.screenshot` tool that renders a URL in a headless browser and returns a PNG screenshot.
-- **FR-005**: The plugin MUST provide a `web.extract` tool that retrieves structured content from a URL using CSS selectors or preset extraction types (links, headings, tables).
-- **FR-006**: The plugin MUST use DuckDuckGo as the default search provider, requiring no API keys for basic operation.
+- **FR-003**: The plugin MUST provide a `web.search` tool that accepts a query string and returns a ranked list of up to 10 results (title, URL, snippet) by default, with the max count configurable via the builder.
+- **FR-004**: The plugin MUST provide a `web.screenshot` tool that renders a URL in a headless browser and returns a PNG screenshot as a `ContentBlock::Image` (base64-encoded), directly usable by multi-modal LLMs.
+- **FR-005**: The plugin MUST provide a `web.extract` tool that retrieves structured content from a URL using CSS selectors or preset extraction types (links, headings, tables). Extraction MUST use Playwright (headless browser) to support JS-rendered pages.
+- **FR-006**: The plugin MUST use DuckDuckGo as the default search provider, requiring no API keys for basic operation. The DuckDuckGo provider MUST use `reqwest` for HTTP and the `scraper` crate for HTML parsing of the DuckDuckGo Lite endpoint (no Playwright dependency).
 - **FR-007**: The plugin MUST support Brave Search as an alternative search provider when an API key is configured.
 - **FR-008**: The plugin MUST support Tavily as an alternative search provider when an API key is configured.
 - **FR-009**: The plugin MUST include a PreDispatch domain filtering policy that blocks requests to private/internal IP ranges (SSRF protection) by default, with configurable allowlist and denylist.
-- **FR-010**: The plugin MUST include a PreDispatch rate limiting policy with a configurable requests-per-minute threshold and a sensible default.
+- **FR-010**: The plugin MUST include a PreDispatch rate limiting policy with a configurable requests-per-minute threshold and a sensible default. The rate limiter MUST be shared across all web tools (fetch, search, screenshot, extract) using interior mutability (`Arc<Mutex<>>`) for concurrent safety.
 - **FR-011**: The plugin MUST include a PostTurn content sanitization policy that strips known prompt injection patterns from fetched web content.
-- **FR-012**: The plugin MUST use the Playwright CLI as an external process for headless browser operations (screenshot), not link a browser engine into the binary.
+- **FR-012**: The plugin MUST use Playwright as an external Node.js subprocess for headless browser operations (screenshot and extract), communicating via JSON over stdin/stdout. The subprocess MUST be long-lived (lazily started on first use, shut down on plugin drop) to amortize startup cost. The plugin MUST NOT link a browser engine into the Rust binary.
 - **FR-013**: The plugin MUST provide a builder-style configuration API for setting search provider, domain filters, rate limits, content length limits, and Playwright path.
-- **FR-014**: The plugin MUST extract readable content from HTML using a readability-style algorithm that strips navigation, ads, scripts, and boilerplate while preserving meaningful content structure.
-- **FR-015**: The plugin MUST truncate fetched content that exceeds the configured maximum length, preserving content from the beginning and end with a truncation notice.
+- **FR-014**: The plugin MUST extract readable content from HTML using the `readability` crate (arc90 Readability port) to strip navigation, ads, scripts, and boilerplate while preserving meaningful content structure.
+- **FR-015**: The plugin MUST truncate fetched content that exceeds the configured maximum length (default: 50,000 characters / ~12,500 tokens), preserving content from the beginning and end with a truncation notice. The limit is configurable via the builder.
 - **FR-016**: The plugin MUST log every web request (URL, status, content size, latency) via the event observer for debugging and auditing.
 - **FR-017**: The plugin MUST detect non-HTML content types and return an appropriate message rather than dumping binary data into the agent's context.
-- **FR-018**: The plugin MUST gracefully handle Playwright not being installed, returning a clear error with installation guidance rather than an opaque failure.
+- **FR-018**: The plugin MUST gracefully handle Playwright not being installed, returning a clear error with installation guidance rather than an opaque failure. This applies to both `web.screenshot` and `web.extract`, which both require Playwright.
 - **FR-019**: The search provider MUST be abstracted behind a trait so that additional providers can be added without modifying existing code.
 - **FR-020**: Each search provider (Brave, Tavily) MUST be independently feature-gated so that unused providers add zero compile-time cost.
 
@@ -162,11 +162,26 @@ A fetched web page contains prompt injection attempts embedded in its content (e
 - **DomainFilter**: A set of allowlist/denylist rules and built-in SSRF protections that determine whether a URL is safe to request.
 - **FetchedContent**: The result of fetching a URL, containing the cleaned text, original URL, status code, and content metadata (type, length, truncation status).
 
+## Clarifications
+
+### Session 2026-04-04
+
+- Q: How should screenshot image data be returned to the agent? → A: As `ContentBlock::Image` (base64 PNG) in the tool result, directly consumable by multi-modal LLMs.
+- Q: Does `web.extract` use static HTML parsing or Playwright? → A: Always uses Playwright (headless browser) for extraction, supporting JS-rendered pages.
+- Q: What crate naming and location for the web plugin? → A: `plugins/web/` directory, crate name `swink-agent-plugin-web`.
+- Q: Which crate for the readability-style content extraction algorithm? → A: Use the `readability` crate (arc90 Readability port, v0.3).
+- Q: How many search results should `web.search` return by default? → A: 10 results, configurable via builder.
+- Q: Rate limiter scope with concurrent tool calls? → A: Single shared rate limiter across all web tools (fetch, search, screenshot, extract).
+- Q: Default max content length for fetched pages? → A: 50,000 characters (~12,500 tokens), configurable via builder.
+- Q: How should the plugin communicate with Playwright? → A: Launch a Playwright Node.js subprocess, communicate via JSON over stdin/stdout for both screenshot and extract operations.
+- Q: DuckDuckGo scraping: reqwest or Playwright? → A: `reqwest` + `scraper` crate for HTML parsing. No Playwright dependency for search.
+- Q: Playwright subprocess lifecycle? → A: Long-lived subprocess, lazily started on first use, shut down on plugin drop. Amortizes startup cost across multiple requests.
+
 ## Assumptions
 
 - Playwright CLI is installed separately by the user; the plugin does not install or manage it.
 - DuckDuckGo's HTML lite search endpoint remains publicly accessible for scraping (this is the same approach used by LangChain, AutoGen, and other major frameworks).
-- The plugin operates in a workspace crate (`plugins/web/`) following the same conventions as `swink-agent-policies` — depends only on `swink-agent` public API.
+- The plugin operates in a workspace crate at `plugins/web/` with crate name `swink-agent-plugin-web`, following the same conventions as `swink-agent-policies` — depends only on `swink-agent` public API.
 - The `web.screenshot` tool returns image data that the LLM can interpret (multi-modal models) or stores it as an artifact for the user.
 - Content sanitization targets known prompt injection patterns; it is a defense-in-depth measure, not a guarantee against all injection techniques.
 - Default rate limit is conservative (e.g., 30 requests per minute) to prevent accidental abuse while still being useful for normal agent operation.
@@ -181,5 +196,5 @@ A fetched web page contains prompt injection attempts embedded in its content (e
 - **SC-004**: All requests to private/internal IP ranges are blocked by default, with zero false negatives on standard SSRF vectors (localhost, 10.x, 172.16-31.x, 192.168.x).
 - **SC-005**: Rate limiting prevents more than the configured number of requests per minute, with no requests slipping through during burst scenarios.
 - **SC-006**: Fetched content from typical web pages is at least 80% shorter than the raw HTML while retaining all meaningful content (readability extraction effectiveness).
-- **SC-007**: The plugin compiles and passes all tests with no external dependencies beyond Playwright CLI (which is only required for screenshot functionality).
+- **SC-007**: The plugin compiles and passes all tests with no external dependencies beyond Playwright CLI and Node.js (required for screenshot and extract functionality; fetch and search work without them).
 - **SC-008**: Switching search providers requires changing a single builder method call — no other code changes needed.
