@@ -1,0 +1,58 @@
+[package]
+name = "swink-agent-plugin-web"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "Web browsing plugin for swink-agent: fetch, search, screenshot, extract"
+license = "MIT"
+
+[features]
+default = ["duckduckgo"]
+duckduckgo = ["dep:scraper"]
+brave = []
+tavily = []
+all = ["duckduckgo", "brave", "tavily"]
+integration = []
+
+[dependencies]
+swink-agent = { path = "../..", features = ["plugins"] }
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+regex = "1"
+url = "2"
+base64 = "0.22"
+readability = "0.3"
+scraper = { version = "0.23", optional = true }
+
+[dev-dependencies]
+wiremock.workspace = true
+tokio = { workspace = true, features = ["full", "test-util"] }
+pretty_assertions.workspace = true
+tempfile.workspace = true
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+unnecessary_literal_bound = "allow"
+missing_const_for_fn = "allow"
+significant_drop_tightening = "allow"
+doc_markdown = "allow"
+cast_possible_truncation = "allow"
+redundant_closure_for_method_calls = "allow"
+manual_let_else = "allow"
+format_push_string = "allow"
+trivially_copy_pass_by_ref = "allow"
+option_if_let_else = "allow"
