@@ -147,8 +147,8 @@
 
 ### Implementation for User Story 4
 
-- [ ] T045 [US4] Write alternative backends documentation section in `specs/041-adapter-gemma4-local/quickstart.md` — expand existing llama.cpp, vLLM, LM Studio sections with full step-by-step instructions including model download, server start, and adapter configuration
-- [ ] T046 [US4] Document known limitations per backend in quickstart.md — LM Studio streaming+tools bug (#1066), vLLM `reasoning_content` field behavior
+- [x] T045 [US4] Write alternative backends documentation section in `specs/041-adapter-gemma4-local/quickstart.md` — expand existing llama.cpp, vLLM, LM Studio sections with full step-by-step instructions including model download, server start, and adapter configuration
+- [x] T046 [US4] Document known limitations per backend in quickstart.md — LM Studio streaming+tools bug (#1066), vLLM `reasoning_content` field behavior
 
 **Checkpoint**: Developers have clear documentation for all Gemma 4 backend options
 
