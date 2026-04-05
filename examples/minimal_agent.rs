@@ -8,14 +8,14 @@
 //! Requires: `ANTHROPIC_API_KEY` (or swap the preset for OpenAI/Ollama).
 
 use swink_agent::{Agent, AgentMessage, AgentOptions, ContentBlock, LlmMessage, ModelConnections};
-use swink_agent_adapters::{build_remote_connection, remote_preset_keys};
+use swink_agent_adapters::build_remote_connection_for_model;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenvy::dotenv().ok();
 
-    // Build a single remote connection from a preset (reads the API key from env).
-    let connection = build_remote_connection(remote_preset_keys::anthropic::HAIKU_45)?;
+    // Build a single remote connection by model_id (reads the API key from env).
+    let connection = build_remote_connection_for_model("claude-haiku-4-5-20251001")?;
 
     // Create agent options with just the primary model — no fallbacks, no tools.
     let connections = ModelConnections::new(connection, vec![]);

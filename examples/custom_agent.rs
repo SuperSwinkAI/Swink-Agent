@@ -9,7 +9,7 @@
 //! model is always available and is included in the F4 cycle by default.
 
 use swink_agent::prelude::*;
-use swink_agent_adapters::{build_remote_connection, remote_preset_keys};
+use swink_agent_adapters::build_remote_connection_for_model;
 use swink_agent_local_llm::default_local_connection;
 use swink_agent_tui::{TuiConfig, launch, restore_terminal, setup_terminal};
 
@@ -17,14 +17,10 @@ use swink_agent_tui::{TuiConfig, launch, restore_terminal, setup_terminal};
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenvy::dotenv().ok();
 
-    // 1. Choose named helpers instead of hand-typing provider/model/base-url strings.
+    // 1. Look up models by model_id — no handwritten constants needed.
     let connections = ModelConnections::builder()
-        .primary(build_remote_connection(
-            remote_preset_keys::anthropic::SONNET_46,
-        )?)
-        .fallback(build_remote_connection(
-            remote_preset_keys::openai::GPT_4_1,
-        )?)
+        .primary(build_remote_connection_for_model("claude-sonnet-4-6")?)
+        .fallback(build_remote_connection_for_model("gpt-4.1")?)
         .fallback(default_local_connection()?)
         .build();
 
