@@ -92,25 +92,25 @@
 
 ### Tests for User Story 2
 
-- [ ] T022 [P] [US2] Write test `channel_thought_single_chunk` — full `<|channel>thought\nreasoning here<channel|>` in one chunk produces ThinkingStart + ThinkingDelta + ThinkingEnd in `local-llm/src/stream.rs`
-- [ ] T023 [P] [US2] Write test `channel_thought_cross_chunk_open` — opening delimiter `<|channel>thought\n` split across two chunks, parser reassembles correctly in `local-llm/src/stream.rs`
-- [ ] T024 [P] [US2] Write test `channel_thought_cross_chunk_close` — closing delimiter `<channel|>` split across two chunks, parser reassembles correctly in `local-llm/src/stream.rs`
-- [ ] T025 [P] [US2] Write test `channel_thought_no_delimiters` — plain text without delimiters emits only text events, no thinking events in `local-llm/src/stream.rs`
-- [ ] T026 [P] [US2] Write test `channel_thought_multiple_blocks` — two consecutive thinking blocks in a single response each produce separate ThinkingStart/Delta/End sequences in `local-llm/src/stream.rs`
-- [ ] T027 [P] [US2] Write test `channel_thought_mixed_text_and_thinking` — text before, thinking block, text after — emits TextDelta, ThinkingStart/Delta/End, TextDelta in correct order in `local-llm/src/stream.rs`
-- [ ] T028 [P] [US2] Write test `channel_thought_delimiter_in_text` — input `"The format is <|channel>thought"` as quoted explanation text should NOT trigger thinking events, only emit text in `local-llm/src/stream.rs`
-- [ ] T029 [P] [US2] Write test `think_token_injected_for_gemma4` — `convert_context_messages()` with Gemma 4 config and `thinking_enabled: true` prepends `<|think|>\n` to system prompt in `local-llm/src/convert.rs`
-- [ ] T030 [P] [US2] Write test `think_token_not_injected_for_smollm` — `convert_context_messages()` with SmolLM3 config does NOT inject `<|think|>` in `local-llm/src/convert.rs`
-- [ ] T031 [P] [US2] Write test `think_token_not_injected_when_thinking_disabled` — `convert_context_messages()` with Gemma 4 config but `thinking_enabled: false` does NOT inject `<|think|>` in `local-llm/src/convert.rs`
+- [x] T022 [P] [US2] Write test `channel_thought_single_chunk` — full `<|channel>thought\nreasoning here<channel|>` in one chunk produces ThinkingStart + ThinkingDelta + ThinkingEnd in `local-llm/src/stream.rs`
+- [x] T023 [P] [US2] Write test `channel_thought_cross_chunk_open` — opening delimiter `<|channel>thought\n` split across two chunks, parser reassembles correctly in `local-llm/src/stream.rs`
+- [x] T024 [P] [US2] Write test `channel_thought_cross_chunk_close` — closing delimiter `<channel|>` split across two chunks, parser reassembles correctly in `local-llm/src/stream.rs`
+- [x] T025 [P] [US2] Write test `channel_thought_no_delimiters` — plain text without delimiters emits only text events, no thinking events in `local-llm/src/stream.rs`
+- [x] T026 [P] [US2] Write test `channel_thought_multiple_blocks` — two consecutive thinking blocks in a single response each produce separate ThinkingStart/Delta/End sequences in `local-llm/src/stream.rs`
+- [x] T027 [P] [US2] Write test `channel_thought_mixed_text_and_thinking` — text before, thinking block, text after — emits TextDelta, ThinkingStart/Delta/End, TextDelta in correct order in `local-llm/src/stream.rs`
+- [x] T028 [P] [US2] Write test `channel_thought_delimiter_in_text` — input `"The format is <|channel>thought"` as quoted explanation text should NOT trigger thinking events, only emit text in `local-llm/src/stream.rs`
+- [x] T029 [P] [US2] Write test `think_token_injected_for_gemma4` — `convert_context_messages()` with Gemma 4 config and `thinking_enabled: true` prepends `<|think|>\n` to system prompt in `local-llm/src/convert.rs`
+- [x] T030 [P] [US2] Write test `think_token_not_injected_for_smollm` — `convert_context_messages()` with SmolLM3 config does NOT inject `<|think|>` in `local-llm/src/convert.rs`
+- [x] T031 [P] [US2] Write test `think_token_not_injected_when_thinking_disabled` — `convert_context_messages()` with Gemma 4 config but `thinking_enabled: false` does NOT inject `<|think|>` in `local-llm/src/convert.rs`
 
 ### Implementation for User Story 2
 
-- [ ] T032 [P] [US2] Implement `ChannelThoughtParser` struct with 4-state machine (`Normal`, `InThinking`, `PartialOpen`, `PartialClose`) behind `#[cfg(feature = "gemma4")]` in `local-llm/src/stream.rs` — `fn process(&mut self, content: &str) -> (Option<String>, String)` method
-- [ ] T033 [US2] Change `StreamState::new()` to accept `is_gemma4: bool` parameter; add `ChannelThoughtParser` as optional field on `StreamState` behind `#[cfg(feature = "gemma4")]` in `local-llm/src/stream.rs` — initialize parser when `is_gemma4` is true
-- [ ] T034 [US2] Update `StreamState::process_content_delta()` to dispatch to `ChannelThoughtParser` when present (Gemma 4) or `extract_thinking_delta()` when absent (SmolLM3-3B) in `local-llm/src/stream.rs`
-- [ ] T035 [US2] Update `convert_context_messages()` signature to accept `config: &ModelConfig` and `thinking_enabled: bool` parameters in `local-llm/src/convert.rs` — inject `<|think|>\n` prefix on system prompt when `config.is_gemma4()` and `thinking_enabled` is true
-- [ ] T036 [US2] Update `local_stream()` to extract `thinking_enabled` from `ModelSpec.capabilities.supports_thinking`, pass `ModelConfig` and `thinking_enabled` to `convert_context_messages()`, and pass `is_gemma4` to `StreamState::new()` in `local-llm/src/stream.rs`
-- [ ] T037 [US2] Verify all T022-T031 tests pass with `--features gemma4`
+- [x] T032 [P] [US2] Implement `ChannelThoughtParser` struct with 4-state machine (`Normal`, `InThinking`, `PartialOpen`, `PartialClose`) behind `#[cfg(feature = "gemma4")]` in `local-llm/src/stream.rs` — `fn process(&mut self, content: &str) -> (Option<String>, String)` method
+- [x] T033 [US2] Change `StreamState::new()` to accept `is_gemma4: bool` parameter; add `ChannelThoughtParser` as optional field on `StreamState` behind `#[cfg(feature = "gemma4")]` in `local-llm/src/stream.rs` — initialize parser when `is_gemma4` is true
+- [x] T034 [US2] Update `StreamState::process_content_delta()` to dispatch to `ChannelThoughtParser` when present (Gemma 4) or `extract_thinking_delta()` when absent (SmolLM3-3B) in `local-llm/src/stream.rs`
+- [x] T035 [US2] Update `convert_context_messages()` signature to accept `config: &ModelConfig` and `thinking_enabled: bool` parameters in `local-llm/src/convert.rs` — inject `<|think|>\n` prefix on system prompt when `config.is_gemma4()` and `thinking_enabled` is true
+- [x] T036 [US2] Update `local_stream()` to extract `thinking_enabled` from `ModelSpec.capabilities.supports_thinking`, pass `ModelConfig` and `thinking_enabled` to `convert_context_messages()`, and pass `is_gemma4` to `StreamState::new()` in `local-llm/src/stream.rs`
+- [x] T037 [US2] Verify all T022-T031 tests pass with `--features gemma4`
 
 **Checkpoint**: Gemma 4 thinking mode works end-to-end in direct inference with cross-chunk parsing
 
