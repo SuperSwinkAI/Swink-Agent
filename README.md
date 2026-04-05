@@ -40,7 +40,7 @@ Wire up an LLM provider, register tools, and launch the interactive TUI — all 
 
 ```rust
 use swink_agent::{AgentOptions, BashTool, ModelConnections, ReadFileTool, WriteFileTool};
-use swink_agent_adapters::{build_remote_connection, remote_preset_keys};
+use swink_agent_adapters::build_remote_connection_for_model;
 use swink_agent_local_llm::default_local_connection;
 use swink_agent_tui::{TuiConfig, launch, restore_terminal, setup_terminal};
 
@@ -49,9 +49,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenvy::dotenv().ok();
 
     let connections = ModelConnections::new(
-        build_remote_connection(remote_preset_keys::anthropic::SONNET_46)?,
+        build_remote_connection_for_model("claude-sonnet-4-6")?,
         vec![
-            build_remote_connection(remote_preset_keys::openai::GPT_4_1)?,
+            build_remote_connection_for_model("gpt-4.1")?,
             default_local_connection()?,
         ],
     );

@@ -36,191 +36,6 @@ impl RemotePresetKey {
     }
 }
 
-#[allow(unused_imports)]
-pub mod remote_preset_keys {
-    use super::RemotePresetKey;
-
-    #[cfg(feature = "anthropic")]
-    pub mod anthropic {
-        use super::RemotePresetKey;
-
-        pub const OPUS_46: RemotePresetKey = RemotePresetKey::new("anthropic", "opus_46");
-        pub const SONNET_46: RemotePresetKey = RemotePresetKey::new("anthropic", "sonnet_46");
-        pub const HAIKU_45: RemotePresetKey = RemotePresetKey::new("anthropic", "haiku_45");
-    }
-
-    #[cfg(feature = "openai")]
-    pub mod openai {
-        use super::RemotePresetKey;
-
-        pub const GPT_4O: RemotePresetKey = RemotePresetKey::new("openai", "gpt_4o");
-        pub const GPT_4_1: RemotePresetKey = RemotePresetKey::new("openai", "gpt_4_1");
-        pub const GPT_4O_MINI: RemotePresetKey = RemotePresetKey::new("openai", "gpt_4o_mini");
-        pub const GPT_4_1_MINI: RemotePresetKey = RemotePresetKey::new("openai", "gpt_4_1_mini");
-        pub const O3_MINI: RemotePresetKey = RemotePresetKey::new("openai", "o3_mini");
-        pub const O1: RemotePresetKey = RemotePresetKey::new("openai", "o1");
-    }
-
-    #[cfg(feature = "gemini")]
-    pub mod google {
-        use super::RemotePresetKey;
-
-        pub const GEMINI_3_1_PRO: RemotePresetKey =
-            RemotePresetKey::new("google", "gemini_3_1_pro");
-        pub const GEMINI_3_1_DEEP_THINK: RemotePresetKey =
-            RemotePresetKey::new("google", "gemini_3_1_deep_think");
-        pub const GEMINI_3_FLASH: RemotePresetKey =
-            RemotePresetKey::new("google", "gemini_3_flash");
-        pub const GEMINI_3_1_FLASH_LITE: RemotePresetKey =
-            RemotePresetKey::new("google", "gemini_3_1_flash_lite");
-    }
-
-    #[cfg(feature = "azure")]
-    pub mod azure {
-        use super::RemotePresetKey;
-
-        pub const GPT_4O: RemotePresetKey = RemotePresetKey::new("azure", "gpt_4o");
-        pub const GPT_4O_MINI: RemotePresetKey = RemotePresetKey::new("azure", "gpt_4o_mini");
-        pub const PHI_4: RemotePresetKey = RemotePresetKey::new("azure", "phi_4");
-    }
-
-    #[cfg(feature = "xai")]
-    pub mod xai {
-        use super::RemotePresetKey;
-
-        pub const GROK_4_20_REASONING: RemotePresetKey =
-            RemotePresetKey::new("xai", "grok_4_20_reasoning");
-        pub const GROK_4_20_NON_REASONING: RemotePresetKey =
-            RemotePresetKey::new("xai", "grok_4_20_non_reasoning");
-        pub const GROK_4_1_FAST_REASONING: RemotePresetKey =
-            RemotePresetKey::new("xai", "grok_4_1_fast_reasoning");
-        pub const GROK_4_1_FAST_NON_REASONING: RemotePresetKey =
-            RemotePresetKey::new("xai", "grok_4_1_fast_non_reasoning");
-        pub const GROK_4_20_MULTI_AGENT: RemotePresetKey =
-            RemotePresetKey::new("xai", "grok_4_20_multi_agent");
-    }
-
-    #[cfg(feature = "mistral")]
-    pub mod mistral {
-        use super::RemotePresetKey;
-
-        pub const MISTRAL_LARGE: RemotePresetKey = RemotePresetKey::new("mistral", "mistral_large");
-        pub const MISTRAL_MEDIUM: RemotePresetKey =
-            RemotePresetKey::new("mistral", "mistral_medium");
-        pub const MISTRAL_SMALL: RemotePresetKey = RemotePresetKey::new("mistral", "mistral_small");
-        pub const MINISTRAL_3B: RemotePresetKey = RemotePresetKey::new("mistral", "ministral_3b");
-        pub const MINISTRAL_8B: RemotePresetKey = RemotePresetKey::new("mistral", "ministral_8b");
-        pub const MINISTRAL_14B: RemotePresetKey = RemotePresetKey::new("mistral", "ministral_14b");
-        pub const MAGISTRAL_MEDIUM: RemotePresetKey =
-            RemotePresetKey::new("mistral", "magistral_medium");
-        pub const MAGISTRAL_SMALL: RemotePresetKey =
-            RemotePresetKey::new("mistral", "magistral_small");
-        pub const CODESTRAL: RemotePresetKey = RemotePresetKey::new("mistral", "codestral");
-        pub const DEVSTRAL: RemotePresetKey = RemotePresetKey::new("mistral", "devstral");
-        pub const PIXTRAL_LARGE: RemotePresetKey = RemotePresetKey::new("mistral", "pixtral_large");
-        pub const PIXTRAL_12B: RemotePresetKey = RemotePresetKey::new("mistral", "pixtral_12b");
-    }
-
-    #[cfg(feature = "bedrock")]
-    pub mod bedrock {
-        use super::RemotePresetKey;
-
-        // Anthropic
-        pub const ANTHROPIC_CLAUDE_OPUS_46: RemotePresetKey =
-            RemotePresetKey::new("bedrock", "anthropic_claude_opus_46");
-        pub const ANTHROPIC_CLAUDE_SONNET_46: RemotePresetKey =
-            RemotePresetKey::new("bedrock", "anthropic_claude_sonnet_46");
-        pub const ANTHROPIC_CLAUDE_SONNET_45: RemotePresetKey =
-            RemotePresetKey::new("bedrock", "anthropic_claude_sonnet_45");
-        pub const ANTHROPIC_CLAUDE_HAIKU_45: RemotePresetKey =
-            RemotePresetKey::new("bedrock", "anthropic_claude_haiku_45");
-        pub const ANTHROPIC_CLAUDE_37_SONNET: RemotePresetKey =
-            RemotePresetKey::new("bedrock", "anthropic_claude_37_sonnet");
-        pub const ANTHROPIC_CLAUDE_35_SONNET_V2: RemotePresetKey =
-            RemotePresetKey::new("bedrock", "anthropic_claude_35_sonnet_v2");
-        pub const ANTHROPIC_CLAUDE_35_HAIKU: RemotePresetKey =
-            RemotePresetKey::new("bedrock", "anthropic_claude_35_haiku");
-        pub const ANTHROPIC_CLAUDE_3_OPUS: RemotePresetKey =
-            RemotePresetKey::new("bedrock", "anthropic_claude_3_opus");
-        pub const ANTHROPIC_CLAUDE_3_HAIKU: RemotePresetKey =
-            RemotePresetKey::new("bedrock", "anthropic_claude_3_haiku");
-
-        // Meta Llama
-        pub const META_LLAMA_4_SCOUT: RemotePresetKey =
-            RemotePresetKey::new("bedrock", "meta_llama_4_scout");
-        pub const META_LLAMA_4_MAVERICK: RemotePresetKey =
-            RemotePresetKey::new("bedrock", "meta_llama_4_maverick");
-        pub const META_LLAMA_33_70B: RemotePresetKey =
-            RemotePresetKey::new("bedrock", "meta_llama_33_70b");
-        pub const META_LLAMA_32_90B: RemotePresetKey =
-            RemotePresetKey::new("bedrock", "meta_llama_32_90b");
-        pub const META_LLAMA_32_11B: RemotePresetKey =
-            RemotePresetKey::new("bedrock", "meta_llama_32_11b");
-        pub const META_LLAMA_32_3B: RemotePresetKey =
-            RemotePresetKey::new("bedrock", "meta_llama_32_3b");
-        pub const META_LLAMA_32_1B: RemotePresetKey =
-            RemotePresetKey::new("bedrock", "meta_llama_32_1b");
-        pub const META_LLAMA_31_405B: RemotePresetKey =
-            RemotePresetKey::new("bedrock", "meta_llama_31_405b");
-        pub const META_LLAMA_31_70B: RemotePresetKey =
-            RemotePresetKey::new("bedrock", "meta_llama_31_70b");
-        pub const META_LLAMA_31_8B: RemotePresetKey =
-            RemotePresetKey::new("bedrock", "meta_llama_31_8b");
-
-        // Amazon Nova
-        pub const AMAZON_NOVA_2_PRO: RemotePresetKey =
-            RemotePresetKey::new("bedrock", "amazon_nova_2_pro");
-        pub const AMAZON_NOVA_2_LITE: RemotePresetKey =
-            RemotePresetKey::new("bedrock", "amazon_nova_2_lite");
-        pub const AMAZON_NOVA_PRO: RemotePresetKey =
-            RemotePresetKey::new("bedrock", "amazon_nova_pro");
-        pub const AMAZON_NOVA_LITE: RemotePresetKey =
-            RemotePresetKey::new("bedrock", "amazon_nova_lite");
-        pub const AMAZON_NOVA_MICRO: RemotePresetKey =
-            RemotePresetKey::new("bedrock", "amazon_nova_micro");
-        pub const AMAZON_NOVA_PREMIER: RemotePresetKey =
-            RemotePresetKey::new("bedrock", "amazon_nova_premier");
-
-        // Mistral
-        pub const MISTRAL_LARGE_3: RemotePresetKey =
-            RemotePresetKey::new("bedrock", "mistral_large_3");
-        pub const MISTRAL_LARGE_2407: RemotePresetKey =
-            RemotePresetKey::new("bedrock", "mistral_large_2407");
-        pub const MISTRAL_PIXTRAL_LARGE: RemotePresetKey =
-            RemotePresetKey::new("bedrock", "mistral_pixtral_large");
-        pub const MISTRAL_SMALL: RemotePresetKey =
-            RemotePresetKey::new("bedrock", "mistral_small");
-        pub const MISTRAL_MIXTRAL_8X7B: RemotePresetKey =
-            RemotePresetKey::new("bedrock", "mistral_mixtral_8x7b");
-        pub const MISTRAL_7B: RemotePresetKey =
-            RemotePresetKey::new("bedrock", "mistral_7b");
-
-        // DeepSeek
-        pub const DEEPSEEK_R1: RemotePresetKey =
-            RemotePresetKey::new("bedrock", "deepseek_r1");
-
-        // AI21
-        pub const AI21_JAMBA_1_5_LARGE: RemotePresetKey =
-            RemotePresetKey::new("bedrock", "ai21_jamba_1_5_large");
-        pub const AI21_JAMBA_1_5_MINI: RemotePresetKey =
-            RemotePresetKey::new("bedrock", "ai21_jamba_1_5_mini");
-        pub const AI21_JAMBA_INSTRUCT: RemotePresetKey =
-            RemotePresetKey::new("bedrock", "ai21_jamba_instruct");
-
-        // Cohere
-        pub const COHERE_COMMAND_R_PLUS: RemotePresetKey =
-            RemotePresetKey::new("bedrock", "cohere_command_r_plus");
-        pub const COHERE_COMMAND_R: RemotePresetKey =
-            RemotePresetKey::new("bedrock", "cohere_command_r");
-
-        // Writer
-        pub const WRITER_PALMYRA_X5: RemotePresetKey =
-            RemotePresetKey::new("bedrock", "writer_palmyra_x5");
-        pub const WRITER_PALMYRA_X4: RemotePresetKey =
-            RemotePresetKey::new("bedrock", "writer_palmyra_x4");
-    }
-}
-
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum RemoteModelConnectionError {
     #[error("Unknown remote preset {provider_key}.{preset_id}")]
@@ -228,10 +43,12 @@ pub enum RemoteModelConnectionError {
         provider_key: &'static str,
         preset_id: &'static str,
     },
+    #[error("No remote preset found for model_id \"{model_id}\"")]
+    UnknownModelId { model_id: String },
     #[error("{provider_key}.{preset_id} is not a remote preset")]
     NotRemotePreset {
-        provider_key: &'static str,
-        preset_id: &'static str,
+        provider_key: String,
+        preset_id: String,
     },
     #[error(
         "Missing {env_var} for {preset}. Set it in your environment or .env before launching the example."
@@ -249,6 +66,8 @@ pub enum RemoteModelConnectionError {
         "Missing AWS_ACCESS_KEY_ID or AWS_SECRET_ACCESS_KEY for {preset}. Set AWS credentials in your environment or .env before launching the example."
     )]
     MissingAwsCredentials { preset: String },
+    #[error("Unsupported provider \"{provider_key}\" — no adapter feature enabled")]
+    UnsupportedProvider { provider_key: String },
 }
 
 #[must_use]
@@ -272,8 +91,8 @@ pub fn build_remote_connection(
     key: RemotePresetKey,
 ) -> Result<ModelConnection, RemoteModelConnectionError> {
     let preset = required_catalog_preset(key)?;
-    build_remote_connection_from_values(
-        key,
+    build_connection_from_preset(
+        &preset,
         preset
             .credential_env_var
             .as_deref()
@@ -287,39 +106,38 @@ pub fn build_remote_connection(
 }
 
 #[allow(unreachable_code, unused_variables)]
-fn build_remote_connection_from_values(
-    key: RemotePresetKey,
+fn build_connection_from_preset(
+    preset: &CatalogPreset,
     api_key: Option<String>,
     base_url: Option<&str>,
 ) -> Result<ModelConnection, RemoteModelConnectionError> {
-    let preset = required_catalog_preset(key)?;
     if preset.provider_kind != ProviderKind::Remote {
         return Err(RemoteModelConnectionError::NotRemotePreset {
-            provider_key: key.provider_key,
-            preset_id: key.preset_id,
+            provider_key: preset.provider_key.clone(),
+            preset_id: preset.preset_id.clone(),
         });
     }
 
-    let api_key =
-        if key.provider_key == "bedrock" {
-            String::new()
-        } else {
-            let env_var = preset.credential_env_var.clone().ok_or(
-                RemoteModelConnectionError::UnknownPreset {
-                    provider_key: key.provider_key,
-                    preset_id: key.preset_id,
-                },
-            )?;
-            match api_key {
-                Some(value) if !value.trim().is_empty() => value,
-                _ => {
-                    return Err(RemoteModelConnectionError::MissingCredential {
-                        preset: preset.display_name,
-                        env_var,
-                    });
-                }
+    let provider_key = preset.provider_key.as_str();
+
+    let api_key = if provider_key == "bedrock" {
+        String::new()
+    } else {
+        let env_var = preset.credential_env_var.clone().ok_or_else(|| {
+            RemoteModelConnectionError::UnsupportedProvider {
+                provider_key: provider_key.to_string(),
             }
-        };
+        })?;
+        match api_key {
+            Some(value) if !value.trim().is_empty() => value,
+            _ => {
+                return Err(RemoteModelConnectionError::MissingCredential {
+                    preset: preset.display_name.clone(),
+                    env_var,
+                });
+            }
+        }
+    };
 
     let resolved_base_url = || {
         base_url
@@ -333,7 +151,7 @@ fn build_remote_connection_from_values(
                     .unwrap_or_else(|| "BASE_URL".to_string()),
             })
     };
-    let stream_fn: Arc<dyn StreamFn> = match key.provider_key {
+    let stream_fn: Arc<dyn StreamFn> = match provider_key {
         #[cfg(feature = "anthropic")]
         "anthropic" => Arc::new(AnthropicStreamFn::new(resolved_base_url()?, &api_key)),
         #[cfg(feature = "openai")]
@@ -386,9 +204,8 @@ fn build_remote_connection_from_values(
             ))
         }
         _ => {
-            return Err(RemoteModelConnectionError::UnknownPreset {
-                provider_key: key.provider_key,
-                preset_id: key.preset_id,
+            return Err(RemoteModelConnectionError::UnsupportedProvider {
+                provider_key: provider_key.to_string(),
             });
         }
     };
@@ -397,14 +214,47 @@ fn build_remote_connection_from_values(
 
 /// Looks up a remote preset by its `model_id` (e.g. `"claude-sonnet-4-6"`).
 ///
-/// This is a convenience shorthand so callers can write
-/// `preset("claude-sonnet-4-6")` instead of navigating
-/// `remote_preset_keys::anthropic::SONNET_46` and the catalog manually.
+/// This is the primary entry point for finding a preset — callers write
+/// `preset("claude-sonnet-4-6")` instead of constructing a `RemotePresetKey`
+/// and looking up the catalog manually.
 #[must_use]
 pub fn preset(model_id: &str) -> Option<CatalogPreset> {
     remote_presets(None)
         .into_iter()
         .find(|p| p.model_id == model_id)
+}
+
+/// Builds a [`ModelConnection`] for a model identified by its `model_id`
+/// (e.g. `"claude-sonnet-4-6"`, `"gpt-4o"`).
+///
+/// This is the simplest way to get a connection — it resolves the preset from
+/// the catalog by `model_id`, reads credentials from the environment, and
+/// constructs the appropriate provider-specific `StreamFn`.
+///
+/// # Errors
+///
+/// Returns [`RemoteModelConnectionError`] if the model is not found, is not a
+/// remote preset, or required credentials are missing from the environment.
+pub fn build_remote_connection_for_model(
+    model_id: &str,
+) -> Result<ModelConnection, RemoteModelConnectionError> {
+    let catalog_preset = preset(model_id).ok_or_else(|| {
+        RemoteModelConnectionError::UnknownModelId {
+            model_id: model_id.to_string(),
+        }
+    })?;
+    build_connection_from_preset(
+        &catalog_preset,
+        catalog_preset
+            .credential_env_var
+            .as_deref()
+            .and_then(|env_var| std::env::var(env_var).ok()),
+        catalog_preset
+            .base_url_env_var
+            .as_deref()
+            .and_then(|env_var| std::env::var(env_var).ok())
+            .as_deref(),
+    )
 }
 
 fn required_catalog_preset(
@@ -424,111 +274,12 @@ mod tests {
 
     #[test]
     fn grouped_remote_presets_are_loaded_from_catalog() {
-        // Catalog always contains all provider entries regardless of feature gates.
-        // The preset keys and StreamFn constructors are gated, but catalog data is not.
         let all = remote_presets(None);
         assert!(!all.is_empty(), "catalog should have remote presets");
     }
 
-    #[cfg(feature = "anthropic")]
-    #[test]
-    fn remote_connection_uses_catalog_model_spec() {
-        let connection = build_remote_connection_from_values(
-            remote_preset_keys::anthropic::SONNET_46,
-            Some("anthropic-test-key".to_string()),
-            None,
-        )
-        .unwrap();
-        assert_eq!(
-            connection.model_spec(),
-            &required_catalog_preset(remote_preset_keys::anthropic::SONNET_46)
-                .unwrap()
-                .model_spec()
-        );
-    }
-
-    #[cfg(feature = "anthropic")]
-    #[test]
-    fn added_anthropic_four_five_and_four_six_presets_map_to_catalog_models() {
-        let opus = required_catalog_preset(remote_preset_keys::anthropic::OPUS_46).unwrap();
-        assert_eq!(opus.model_id, "claude-opus-4-6");
-
-        let sonnet = required_catalog_preset(remote_preset_keys::anthropic::SONNET_46).unwrap();
-        assert_eq!(sonnet.model_id, "claude-sonnet-4-6");
-
-        let haiku = required_catalog_preset(remote_preset_keys::anthropic::HAIKU_45).unwrap();
-        assert_eq!(haiku.model_id, "claude-haiku-4-5-20251001");
-    }
-
-    #[cfg(feature = "openai")]
-    #[test]
-    fn remote_preset_requires_key() {
-        let Err(error) =
-            build_remote_connection_from_values(remote_preset_keys::openai::GPT_4O, None, None)
-        else {
-            panic!("expected missing credential error");
-        };
-        assert_eq!(
-            error,
-            RemoteModelConnectionError::MissingCredential {
-                preset: "OpenAI GPT-4o".to_string(),
-                env_var: "OPENAI_API_KEY".to_string(),
-            }
-        );
-    }
-
-    #[cfg(feature = "openai")]
-    #[test]
-    fn added_openai_presets_map_to_catalog_models() {
-        let gpt_4o = required_catalog_preset(remote_preset_keys::openai::GPT_4O).unwrap();
-        assert_eq!(gpt_4o.model_id, "gpt-4o");
-
-        let gpt_4_1 = required_catalog_preset(remote_preset_keys::openai::GPT_4_1).unwrap();
-        assert_eq!(gpt_4_1.model_id, "gpt-4.1");
-
-        let gpt_4o_mini = required_catalog_preset(remote_preset_keys::openai::GPT_4O_MINI).unwrap();
-        assert_eq!(gpt_4o_mini.model_id, "gpt-4o-mini");
-
-        let gpt_4_1_mini =
-            required_catalog_preset(remote_preset_keys::openai::GPT_4_1_MINI).unwrap();
-        assert_eq!(gpt_4_1_mini.model_id, "gpt-4.1-mini");
-
-        let o3_mini = required_catalog_preset(remote_preset_keys::openai::O3_MINI).unwrap();
-        assert_eq!(o3_mini.model_id, "o3-mini");
-
-        let o1 = required_catalog_preset(remote_preset_keys::openai::O1).unwrap();
-        assert_eq!(o1.model_id, "o1");
-    }
-
-    #[cfg(feature = "gemini")]
-    #[test]
-    fn google_presets_map_to_catalog_models() {
-        let gemini_31_pro =
-            required_catalog_preset(remote_preset_keys::google::GEMINI_3_1_PRO).unwrap();
-        assert_eq!(gemini_31_pro.model_id, "gemini-3.1-pro-preview");
-
-        let gemini_31_deep_think =
-            required_catalog_preset(remote_preset_keys::google::GEMINI_3_1_DEEP_THINK).unwrap();
-        assert_eq!(
-            gemini_31_deep_think.model_id,
-            "gemini-3.1-deep-think-preview"
-        );
-
-        let gemini_3_flash =
-            required_catalog_preset(remote_preset_keys::google::GEMINI_3_FLASH).unwrap();
-        assert_eq!(gemini_3_flash.model_id, "gemini-3-flash-preview");
-
-        let gemini_31_flash_lite =
-            required_catalog_preset(remote_preset_keys::google::GEMINI_3_1_FLASH_LITE).unwrap();
-        assert_eq!(
-            gemini_31_flash_lite.model_id,
-            "gemini-3.1-flash-lite-preview"
-        );
-    }
-
     #[test]
     fn preset_finds_by_model_id() {
-        // preset() searches the catalog, which is always fully populated.
         let sonnet = preset("claude-sonnet-4-6").expect("sonnet preset should exist");
         assert_eq!(sonnet.provider_key, "anthropic");
         assert_eq!(sonnet.preset_id, "sonnet_46");
@@ -539,130 +290,91 @@ mod tests {
         assert!(preset("nonexistent-model-xyz").is_none());
     }
 
-    #[cfg(all(
-        feature = "azure",
-        feature = "xai",
-        feature = "mistral",
-        feature = "bedrock"
-    ))]
     #[test]
-    fn added_provider_presets_map_to_catalog_models() {
+    fn preset_key_resolves_via_catalog() {
+        let key = RemotePresetKey::new("anthropic", "sonnet_46");
+        let catalog_preset = required_catalog_preset(key).unwrap();
+        assert_eq!(catalog_preset.model_id, "claude-sonnet-4-6");
+    }
+
+    #[cfg(feature = "anthropic")]
+    #[test]
+    fn remote_connection_uses_catalog_model_spec() {
+        let key = RemotePresetKey::new("anthropic", "sonnet_46");
+        let preset = required_catalog_preset(key).unwrap();
+        let connection =
+            build_connection_from_preset(&preset, Some("test-key".to_string()), None).unwrap();
+        assert_eq!(connection.model_spec(), &preset.model_spec());
+    }
+
+    #[cfg(feature = "openai")]
+    #[test]
+    fn remote_preset_requires_key() {
+        let preset = preset("gpt-4o").unwrap();
+        let err = build_connection_from_preset(&preset, None, None).unwrap_err();
         assert_eq!(
-            required_catalog_preset(remote_preset_keys::azure::GPT_4O)
-                .unwrap()
-                .model_id,
-            "gpt-4o"
+            err,
+            RemoteModelConnectionError::MissingCredential {
+                preset: "OpenAI GPT-4o".to_string(),
+                env_var: "OPENAI_API_KEY".to_string(),
+            }
         );
+    }
+
+    #[test]
+    fn build_remote_connection_for_model_rejects_unknown() {
+        let result = build_remote_connection_for_model("nonexistent-xyz");
+        assert!(result.is_err());
+        let err = result.err().unwrap();
         assert_eq!(
-            required_catalog_preset(remote_preset_keys::xai::GROK_4_20_REASONING)
-                .unwrap()
-                .model_id,
-            "grok-4.20-0309-reasoning"
+            err,
+            RemoteModelConnectionError::UnknownModelId {
+                model_id: "nonexistent-xyz".to_string(),
+            }
         );
-        assert_eq!(
-            required_catalog_preset(remote_preset_keys::xai::GROK_4_20_NON_REASONING)
-                .unwrap()
-                .model_id,
-            "grok-4.20-0309-non-reasoning"
-        );
-        assert_eq!(
-            required_catalog_preset(remote_preset_keys::xai::GROK_4_1_FAST_REASONING)
-                .unwrap()
-                .model_id,
-            "grok-4-1-fast-reasoning"
-        );
-        assert_eq!(
-            required_catalog_preset(remote_preset_keys::xai::GROK_4_1_FAST_NON_REASONING)
-                .unwrap()
-                .model_id,
-            "grok-4-1-fast-non-reasoning"
-        );
-        assert_eq!(
-            required_catalog_preset(remote_preset_keys::xai::GROK_4_20_MULTI_AGENT)
-                .unwrap()
-                .model_id,
-            "grok-4.20-multi-agent-0309"
-        );
-        assert_eq!(
-            required_catalog_preset(remote_preset_keys::mistral::MISTRAL_LARGE)
-                .unwrap()
-                .model_id,
-            "mistral-large-latest"
-        );
-        assert_eq!(
-            required_catalog_preset(remote_preset_keys::mistral::CODESTRAL)
-                .unwrap()
-                .model_id,
-            "codestral-latest"
-        );
-        assert_eq!(
-            required_catalog_preset(remote_preset_keys::mistral::DEVSTRAL)
-                .unwrap()
-                .model_id,
-            "devstral-2512"
-        );
-        assert_eq!(
-            required_catalog_preset(remote_preset_keys::mistral::PIXTRAL_LARGE)
-                .unwrap()
-                .model_id,
-            "pixtral-large-2411"
-        );
-        // Bedrock — spot-check one model from each provider group
-        assert_eq!(
-            required_catalog_preset(remote_preset_keys::bedrock::ANTHROPIC_CLAUDE_OPUS_46)
-                .unwrap()
-                .group
-                .as_deref(),
-            Some("anthropic")
-        );
-        assert_eq!(
-            required_catalog_preset(remote_preset_keys::bedrock::META_LLAMA_4_SCOUT)
-                .unwrap()
-                .group
-                .as_deref(),
-            Some("meta")
-        );
-        assert_eq!(
-            required_catalog_preset(remote_preset_keys::bedrock::AMAZON_NOVA_PRO)
-                .unwrap()
-                .group
-                .as_deref(),
-            Some("amazon")
-        );
-        assert_eq!(
-            required_catalog_preset(remote_preset_keys::bedrock::MISTRAL_LARGE_3)
-                .unwrap()
-                .group
-                .as_deref(),
-            Some("mistral")
-        );
-        assert_eq!(
-            required_catalog_preset(remote_preset_keys::bedrock::DEEPSEEK_R1)
-                .unwrap()
-                .group
-                .as_deref(),
-            Some("deepseek")
-        );
-        assert_eq!(
-            required_catalog_preset(remote_preset_keys::bedrock::AI21_JAMBA_1_5_LARGE)
-                .unwrap()
-                .group
-                .as_deref(),
-            Some("ai21")
-        );
-        assert_eq!(
-            required_catalog_preset(remote_preset_keys::bedrock::COHERE_COMMAND_R_PLUS)
-                .unwrap()
-                .group
-                .as_deref(),
-            Some("cohere")
-        );
-        assert_eq!(
-            required_catalog_preset(remote_preset_keys::bedrock::WRITER_PALMYRA_X5)
-                .unwrap()
-                .group
-                .as_deref(),
-            Some("writer")
-        );
+    }
+
+    #[test]
+    fn every_remote_provider_has_at_least_one_preset() {
+        let catalog = model_catalog();
+        for provider in &catalog.providers {
+            if provider.kind == ProviderKind::Remote {
+                let presets = remote_presets(Some(&provider.key));
+                assert!(
+                    !presets.is_empty(),
+                    "remote provider '{}' should have presets",
+                    provider.key
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn all_remote_presets_resolvable_via_key() {
+        for p in remote_presets(None) {
+            let key = RemotePresetKey::new(
+                Box::leak(p.provider_key.clone().into_boxed_str()),
+                Box::leak(p.preset_id.clone().into_boxed_str()),
+            );
+            let resolved = required_catalog_preset(key).unwrap();
+            assert_eq!(resolved.model_id, p.model_id);
+        }
+    }
+
+    #[test]
+    fn preset_finds_representative_models_across_providers() {
+        // Spot-check one model per remote provider to verify catalog coverage.
+        let checks = [
+            ("claude-sonnet-4-6", "anthropic"),
+            ("gpt-4o", "openai"),
+            ("gemini-3-flash-preview", "google"),
+            ("mistral-large-latest", "mistral"),
+        ];
+        for (model_id, expected_provider) in checks {
+            let p = preset(model_id).unwrap_or_else(|| {
+                panic!("preset for model_id '{model_id}' should exist in catalog")
+            });
+            assert_eq!(p.provider_key, expected_provider);
+        }
     }
 }
