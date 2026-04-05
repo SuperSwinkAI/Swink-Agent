@@ -1,6 +1,6 @@
-# Feature Specification: Gemma 4 Local Default (Direct Inference)
+# Feature Specification: Gemma 4 Local Inference (Opt-In Direct)
 
-**Feature Branch**: `041-gemma4-local-default`  
+**Feature Branch**: `041-adapter-gemma4-local`  
 **Created**: 2026-04-04  
 **Status**: Draft  
 **Input**: Add first-class Gemma 4 model family support to swink-agent, making Gemma 4 E2B the default local/edge model via direct in-process inference (Phase 3). Phases 1-2 (Ollama path, catalog presets) are already complete.
@@ -61,19 +61,20 @@ A developer enables thinking mode for Gemma 4 E2B in the local-llm crate. The sy
 
 ---
 
-### User Story 3 - Backward-Compatible Default Swap (Priority: P2)
+### User Story 3 - Opt-In Gemma 4 for Capable Hardware (Priority: P2)
 
-A developer upgrades to a version that includes Gemma 4 E2B as the default local model. The transition is seamless — the new default model activates without configuration changes. Developers who prefer the previous default (SmolLM3-3B) or any other model can override via environment variables. The system's model preset configuration gains a new Gemma 4 E2B option alongside the existing presets.
+A developer with sufficient hardware (16+ GB RAM) wants to use Gemma 4 E2B for its superior capabilities (128K context, thinking, tools) instead of the default SmolLM3-3B (8K context). They select Gemma 4 E2B via the preset API or environment variables. SmolLM3-3B remains the default for all users — no Ollama dependency is introduced. The system never requires an external service for the default inference path.
 
-**Why this priority**: The default swap is important for new-user experience but depends on the core inference (Story 1) and thinking (Story 2) working correctly first.
+**Why this priority**: Opt-in Gemma 4 selection depends on the core inference (Story 1) and thinking (Story 2) working correctly first.
 
-**Independent Test**: Can be tested by checking that the default preset resolves to Gemma 4 E2B, and that setting override environment variables changes the resolved model.
+**Independent Test**: Can be tested by selecting Gemma 4 E2B via preset, verifying it loads correctly, and confirming the default still resolves to SmolLM3-3B when no override is set.
 
 **Acceptance Scenarios**:
 
-1. **Given** a new installation with default settings, **When** the local-llm crate resolves the default model, **Then** it selects Gemma 4 E2B (not SmolLM3-3B).
-2. **Given** environment variables are set to specify a different model repository and filename, **When** the default model is resolved, **Then** the overridden model is used instead of Gemma 4 E2B.
-3. **Given** an existing deployment using SmolLM3-3B explicitly (via environment variable override), **When** upgrading to this version, **Then** the SmolLM3-3B model continues to work with no changes required.
+1. **Given** a new installation with default settings, **When** the local-llm crate resolves the default model, **Then** it selects SmolLM3-3B (unchanged).
+2. **Given** a developer explicitly selects `ModelPreset::Gemma4E2B`, **When** the model is loaded, **Then** Gemma 4 E2B is used with 128K context and thinking support.
+3. **Given** environment variables override the model to Gemma 4, **When** the default model is resolved, **Then** the overridden Gemma 4 model is used.
+4. **Given** the `gemma4` feature flag is disabled, **When** the crate is compiled, **Then** Gemma 4 presets are not available and SmolLM3-3B is the only chat preset.
 
 ---
 
@@ -121,21 +122,21 @@ A developer uses Gemma 4 E2B via direct local inference and wants tool calling s
 
 ### Functional Requirements
 
-- **FR-001**: System MUST provide presets for all three Gemma 4 variants (E2B, E4B, 26B) in the local-llm crate, each bundling the correct HuggingFace repository, quantized model filename, and context window configuration (128K tokens for E2B/E4B, 256K for 26B). E2B is the default.
+- **FR-001**: System MUST provide presets for all three Gemma 4 variants (E2B, E4B, 26B) in the local-llm crate, each bundling the correct HuggingFace repository, model weights, and context window configuration (128K tokens for E2B/E4B, 256K for 26B). Gemma 4 presets are opt-in — SmolLM3-3B remains the default.
 - **FR-002**: System MUST automatically download Gemma 4 E2B model weights (~3.5 GB Q4_K_M) from HuggingFace on first use, caching them in the standard local cache directory for subsequent use.
 - **FR-003**: System MUST use the appropriate model builder for Gemma 4 architecture, which differs from the builder used for existing models. Model-family detection determines which builder to use based on model configuration.
 - **FR-004**: System MUST inject the thinking control token into the system prompt when thinking mode is enabled for Gemma 4 in direct inference, since the inference engine provides no higher-level thinking API.
 - **FR-005**: System MUST parse Gemma 4's thinking output delimiters (`<|channel>thought\n...<channel|>`) and emit standard ThinkingStart, ThinkingDelta, and ThinkingEnd events, correctly handling delimiters that span multiple streaming chunks.
-- **FR-006**: System MUST default to Gemma 4 E2B as the local model preset, replacing SmolLM3-3B. Users MUST be able to override back to SmolLM3-3B or any other model via environment variables.
+- **FR-006**: System MUST keep SmolLM3-3B as the default local model preset. Gemma 4 E2B is available as an opt-in preset for machines with sufficient hardware (16+ GB RAM). Users select Gemma 4 via `ModelPreset::Gemma4E2B` or environment variable override — the agent MUST NOT depend on Ollama for any default or fallback path.
 - **FR-007**: System MUST gate all Gemma 4 direct inference changes behind a feature flag until the upstream inference engine stabilizes support. The feature flag controls whether Gemma 4-specific code paths are compiled.
-- **FR-008**: System MUST validate E2B inference with Q4_K_M GGUF quantization via a live test before shipping. The known upstream NaN logits bug (#2051) was reported against MoE variants (26B) with BF16/UQFF quantization — E2B (dense architecture) with Q4_K_M may not be affected. If E2B live validation passes, it can ship. E4B and 26B (MoE) presets MUST remain behind the feature flag until the upstream MoE fix is released.
+- **FR-008**: System MUST validate E2B inference via a live test before shipping. The known upstream NaN logits bug (#2051) was reported against MoE variants (26B) with BF16/UQFF quantization — E2B (dense architecture) may not be affected. If E2B live validation passes, it can ship. E4B and 26B (MoE) presets MUST remain behind the feature flag until the upstream MoE fix is released.
 - **FR-009**: System MUST support model-family detection that determines whether a given model configuration is Gemma 4, enabling family-specific code paths (builder selection, thinking token injection, output parsing) without hardcoding to a single model.
 - **FR-010**: System MUST preserve full backward compatibility for existing SmolLM3-3B users — the SmolLM3-3B preset, its configuration, and its inference behavior remain available and unchanged.
 - **FR-011**: System MUST parse Gemma 4's native tool call output format in direct inference and emit standard tool call events. This requirement is P3 priority — implemented only after core text generation (FR-001 through FR-003) and thinking mode (FR-004, FR-005) are stable.
 
 ### Key Entities
 
-- **ModelPreset**: Named configuration bundle for a local model. Gains three Gemma 4 variants (E2B, E4B, 26B) alongside the existing SmolLM3-3B and EmbeddingGemma-300M variants. Each preset specifies repository, filename, context window, and builder type. E2B is the default local model.
+- **ModelPreset**: Named configuration bundle for a local model. Gains three Gemma 4 variants (E2B, E4B, 26B) alongside the existing SmolLM3-3B and EmbeddingGemma-300M variants. Each preset specifies repository, filename, context window, and builder type. SmolLM3-3B remains the default; Gemma 4 variants are opt-in for capable hardware.
 - **Thinking Parser**: Component that extracts thinking content from model output. Must support multiple delimiter formats (existing `<think>...</think>` for SmolLM3-3B, new `<|channel>thought\n...<channel|>` for Gemma 4) with cross-chunk boundary handling.
 - **Model Builder**: Abstraction over the inference engine's model construction. Gemma 4 requires a different builder type than existing models, introducing the first model-family-specific branching in the local-llm crate.
 
@@ -159,7 +160,7 @@ A developer uses Gemma 4 E2B via direct local inference and wants tool calling s
 
 - **SC-001**: A developer with no Ollama installation can run Gemma 4 E2B inference through the local-llm crate, receiving streaming text output on first use after an automatic model download.
 - **SC-002**: Thinking mode produces correctly parsed thinking events for 100% of Gemma 4 outputs that contain thinking delimiters, including outputs where delimiters span streaming chunk boundaries.
-- **SC-003**: The default local model change from SmolLM3-3B to Gemma 4 E2B requires zero configuration changes for new users.
-- **SC-004**: Existing SmolLM3-3B users can continue using their preferred model via environment variable override with no behavioral changes.
+- **SC-003**: SmolLM3-3B remains the default local model — no configuration changes required for existing users on any hardware.
+- **SC-004**: Developers with capable hardware (16+ GB RAM) can opt into Gemma 4 E2B via preset selection or environment variable, with no Ollama dependency.
 - **SC-005**: All Gemma 4 direct inference code is excluded from compilation when the feature flag is disabled, adding zero overhead for users who do not need it.
 - **SC-006**: Local Gemma 4 E2B inference provides 128K token context window — a 15x improvement over the previous SmolLM3-3B default (8K tokens).

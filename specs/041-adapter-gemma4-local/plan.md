@@ -1,7 +1,7 @@
-# Implementation Plan: Gemma 4 Local Default (Direct Inference)
+# Implementation Plan: Gemma 4 Local Inference (Opt-In Direct)
 
-**Branch**: `041-gemma4-local-default` | **Date**: 2026-04-04 | **Spec**: [spec.md](spec.md)
-**Input**: Feature specification from `/specs/041-gemma4-local-default/spec.md`
+**Branch**: `041-adapter-gemma4-local` | **Date**: 2026-04-04 | **Spec**: [spec.md](spec.md)
+**Input**: Feature specification from `/specs/041-adapter-gemma4-local/spec.md`
 
 ## Summary
 
@@ -41,7 +41,7 @@ Add direct in-process Gemma 4 inference to the `swink-agent-local-llm` crate, ma
 ### Documentation (this feature)
 
 ```text
-specs/041-gemma4-local-default/
+specs/041-adapter-gemma4-local/
 ├── plan.md              # This file
 ├── spec.md              # Feature specification
 ├── research.md          # Phase 0 research findings
@@ -99,12 +99,9 @@ The `ChannelThoughtParser` is a field on `StreamState` (behind `#[cfg(feature = 
 
 This requires threading model config information into the converter. The current `convert_context_messages(context)` signature gains a `config: &ModelConfig` parameter.
 
-### D4: Feature Gate Conditional Default
+### D4: SmolLM3-3B Remains Default, Gemma 4 Opt-In
 
-When `gemma4` feature is enabled: `DEFAULT_LOCAL_PRESET_ID = "gemma4_e2b"`.  
-When `gemma4` feature is disabled: `DEFAULT_LOCAL_PRESET_ID = "smollm3_3b"` (unchanged).
-
-This is implemented via `#[cfg(feature = "gemma4")]` on a constant definition with a fallback.
+`DEFAULT_LOCAL_PRESET_ID = "smollm3_3b"` unconditionally. Gemma 4 E2B (~5 GB safetensors, needs ~10 GB RAM) is too large to be a safe default on all hardware. Developers with capable machines (16+ GB RAM) opt in via `ModelPreset::Gemma4E2B` or environment variables. No Ollama dependency for any default path.
 
 ### D5: Tool Call Parser (P3, deferred)
 

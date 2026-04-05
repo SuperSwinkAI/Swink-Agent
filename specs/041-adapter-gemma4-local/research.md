@@ -1,6 +1,6 @@
 # Research: Gemma 4 Local Default (Direct Inference)
 
-**Feature**: 041-gemma4-local-default  
+**Feature**: 041-adapter-gemma4-local  
 **Date**: 2026-04-04
 
 ## R1: mistral.rs 0.7 → 0.8 Migration

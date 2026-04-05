@@ -1,6 +1,6 @@
 # Tasks: Gemma 4 Local Default (Direct Inference)
 
-**Input**: Design documents from `/specs/041-gemma4-local-default/`
+**Input**: Design documents from `/specs/041-adapter-gemma4-local/`
 **Prerequisites**: plan.md (required), spec.md (required), research.md, data-model.md
 
 **Tests**: Included per constitution (Test-Driven Development is NON-NEGOTIABLE). Tests are written before implementation.
@@ -116,26 +116,26 @@
 
 ---
 
-## Phase 5: User Story 3 — Backward-Compatible Default Swap (Priority: P2)
+## Phase 5: User Story 3 — Opt-In Gemma 4 for Capable Hardware (Priority: P2)
 
-**Goal**: Default local model changes from SmolLM3-3B to Gemma 4 E2B when `gemma4` feature is enabled. SmolLM3-3B remains default when feature is disabled. Env var overrides work.
+**Goal**: Gemma 4 E2B is available as an opt-in preset for machines with sufficient RAM. SmolLM3-3B remains the unconditional default. No Ollama dependency for any default path.
 
-**Independent Test**: Check default preset resolves to Gemma 4 E2B with feature enabled, SmolLM3-3B with feature disabled.
+**Independent Test**: Verify default resolves to SmolLM3-3B always, and that explicit `ModelPreset::Gemma4E2B` selection works.
 
 ### Tests for User Story 3
 
-- [ ] T038 [P] [US3] Write test `default_preset_is_gemma4_e2b` — `DEFAULT_LOCAL_PRESET_ID` equals `"gemma4_e2b"` when `gemma4` feature enabled in `local-llm/src/preset.rs`
-- [ ] T039 [P] [US3] Write test `default_local_connection_uses_gemma4` — `default_local_connection()` returns a connection with Gemma 4 E2B model spec when `gemma4` feature enabled in `local-llm/src/preset.rs`
+- [ ] T038 [P] [US3] Write test `default_preset_remains_smollm3` — `DEFAULT_LOCAL_PRESET_ID` equals `"smollm3_3b"` regardless of `gemma4` feature in `local-llm/src/preset.rs`
+- [ ] T039 [P] [US3] Write test `gemma4_e2b_selectable_via_preset` — `ModelPreset::Gemma4E2B.config()` returns correct Gemma 4 config when `gemma4` feature enabled in `local-llm/src/preset.rs`
 - [ ] T040 [P] [US3] Write test `smollm3_preset_still_available` — `ModelPreset::SmolLM3_3B.config()` returns correct SmolLM3 config regardless of feature flag in `local-llm/src/preset.rs`
 
 ### Implementation for User Story 3
 
-- [ ] T041 [US3] Change `DEFAULT_LOCAL_PRESET_ID` to `"gemma4_e2b"` behind `#[cfg(feature = "gemma4")]` with fallback to `"smollm3_3b"` when feature disabled in `local-llm/src/preset.rs`
-- [ ] T042 [US3] Update `ModelConfig::default()` to resolve context_length from the new default preset (131072 for Gemma 4 E2B vs 8192 for SmolLM3) in `local-llm/src/model.rs`
+- [ ] T041 [US3] Verify `DEFAULT_LOCAL_PRESET_ID` remains `"smollm3_3b"` unconditionally in `local-llm/src/preset.rs` — no conditional swap needed
+- [ ] T042 [US3] Add `LocalModel::from_preset(ModelPreset::Gemma4E2B)` usage example to quickstart.md showing opt-in selection
 - [ ] T043 [US3] Verify all T038-T040 tests pass with `--features gemma4`
 - [ ] T044 [US3] Verify `cargo test -p swink-agent-local-llm` (without `gemma4` feature) — all existing SmolLM3 tests still pass unchanged
 
-**Checkpoint**: Default swap works, backward compatibility preserved
+**Checkpoint**: SmolLM3-3B default preserved, Gemma 4 opt-in works
 
 ---
 
@@ -147,7 +147,7 @@
 
 ### Implementation for User Story 4
 
-- [ ] T045 [US4] Write alternative backends documentation section in `specs/041-gemma4-local-default/quickstart.md` — expand existing llama.cpp, vLLM, LM Studio sections with full step-by-step instructions including model download, server start, and adapter configuration
+- [ ] T045 [US4] Write alternative backends documentation section in `specs/041-adapter-gemma4-local/quickstart.md` — expand existing llama.cpp, vLLM, LM Studio sections with full step-by-step instructions including model download, server start, and adapter configuration
 - [ ] T046 [US4] Document known limitations per backend in quickstart.md — LM Studio streaming+tools bug (#1066), vLLM `reasoning_content` field behavior
 
 **Checkpoint**: Developers have clear documentation for all Gemma 4 backend options
