@@ -51,5 +51,5 @@ pub use load_options::LoadOptions;
 pub use meta::SessionMeta;
 pub use migrate::SessionMigrator;
 pub use store::SessionStore;
-pub use store_async::{AsyncSessionStore, BlockingSessionStore, SessionStoreFuture};
+pub use store_async::{BlockingSessionStore, SessionStoreFuture};
 pub use time::{format_session_id, now_utc};

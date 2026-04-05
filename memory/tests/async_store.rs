@@ -2,7 +2,7 @@
 
 mod common;
 
-use swink_agent_memory::{AsyncSessionStore, BlockingSessionStore, JsonlSessionStore};
+use swink_agent_memory::{BlockingSessionStore, JsonlSessionStore};
 
 use common::{sample_meta, user_message};
 
