@@ -145,7 +145,7 @@ pub fn decode_jsonl_message_line(
         return decode(MessageKind::Custom, line, registry);
     }
 
-    if let Ok(message) = serde_json::from_value::<LlmMessage>(value.clone()) {
+    if let Ok(message) = serde_json::from_value::<LlmMessage>(value) {
         return Ok(Some(AgentMessage::Llm(message)));
     }
 
@@ -177,10 +177,9 @@ pub fn decode_session_entry(kind: &str, data: &str) -> io::Result<Option<Session
             .map(SessionEntry::Message)
             .map(Some)
             .map_err(io::Error::other),
-        Some(MessageKind::Custom) => match serde_json::from_str::<SessionEntry>(data) {
-            Ok(entry) => Ok(Some(entry)),
-            Err(_) => Ok(None),
-        },
+        Some(MessageKind::Custom) => {
+            serde_json::from_str::<SessionEntry>(data).map_or_else(|_| Ok(None), |entry| Ok(Some(entry)))
+        }
         None => serde_json::from_str::<SessionEntry>(data)
             .map(Some)
             .map_err(io::Error::other),
