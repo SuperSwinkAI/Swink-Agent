@@ -24,7 +24,7 @@ ollama = []
 gemini = []
 proxy = []
 azure = []
-bedrock = ["dep:sha2", "dep:hmac", "dep:chrono", "dep:aws-smithy-eventstream", "dep:aws-smithy-types"]
+bedrock = ["dep:aws-credential-types", "dep:aws-sigv4", "dep:aws-smithy-eventstream", "dep:aws-smithy-runtime-api", "dep:aws-smithy-types"]
 mistral = []
 xai = ["openai"]
 
@@ -39,10 +39,10 @@ serde_json.workspace = true
 uuid.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
-sha2 = { workspace = true, optional = true }
-hmac = { workspace = true, optional = true }
-chrono = { workspace = true, optional = true }
+aws-credential-types = { workspace = true, optional = true }
+aws-sigv4 = { workspace = true, optional = true }
 aws-smithy-eventstream = { workspace = true, optional = true }
+aws-smithy-runtime-api = { workspace = true, optional = true }
 aws-smithy-types = { workspace = true, optional = true }
 bytes = "1"
 

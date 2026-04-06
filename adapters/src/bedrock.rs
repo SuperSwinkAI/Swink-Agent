@@ -4,18 +4,26 @@
 //! the harness event protocol. Responses arrive as binary event-stream frames
 //! decoded by `aws-smithy-eventstream`.
 
-use std::pin::Pin;
+use std::{pin::Pin, time::SystemTime};
 
+use aws_credential_types::Credentials;
+use aws_sigv4::{
+    http_request::{
+        self, PayloadChecksumKind, SessionTokenMode, SignableBody, SignableRequest, SigningSettings,
+    },
+    sign::v4,
+};
 use aws_smithy_eventstream::frame::{DecodedFrame, MessageFrameDecoder};
+use aws_smithy_runtime_api::client::identity::Identity;
 use aws_smithy_types::event_stream::HeaderValue;
 use bytes::BytesMut;
-use chrono::Utc;
 use futures::stream::{self, Stream, StreamExt as _};
-use hmac::{Hmac, KeyInit, Mac};
-use reqwest::Client;
+use reqwest::{
+    Client,
+    header::{CONTENT_TYPE, HOST, HeaderName, HeaderValue as HttpHeaderValue},
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sha2::{Digest, Sha256};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};
 
@@ -116,7 +124,6 @@ struct BedrockToolResult {
 struct BedrockToolResultContent {
     text: String,
 }
-
 
 // --- Streaming event deserialization types ---
 
@@ -334,53 +341,22 @@ impl BedrockStreamFn {
         let url = format!("{}{}", self.base_url, path);
         debug!(%url, model = %model.model_id, "sending Bedrock converse-stream request");
 
-        let (amz_date, date_stamp) = amz_dates();
-        let host = reqwest::Url::parse(&url)
-            .ok()
-            .and_then(|parsed| parsed.host_str().map(ToString::to_string))
+        let request = self.client.post(&url).body(body_json.clone());
+        let host = request
+            .try_clone()
+            .and_then(|builder| builder.build().ok())
+            .and_then(|request| request_host_header(request.url()))
             .unwrap_or_else(|| "bedrock-runtime.amazonaws.com".to_string());
-        let payload_hash = sha256_hex(&body_json);
-        let canonical_headers = canonical_headers(
-            &host,
-            &amz_date,
-            Some("application/json"),
-            Some(&payload_hash),
-            self.session_token.as_deref(),
-        );
-        let signed_headers = signed_headers(self.session_token.is_some());
-        let canonical_request =
-            format!("POST\n{path}\n\n{canonical_headers}\n{signed_headers}\n{payload_hash}");
-        let credential_scope = format!("{date_stamp}/{}/bedrock/aws4_request", self.region);
-        let string_to_sign = format!(
-            "AWS4-HMAC-SHA256\n{amz_date}\n{credential_scope}\n{}",
-            sha256_hex(canonical_request.as_bytes())
-        );
-        let signing_key = signing_key(
-            &self.secret_access_key,
-            &date_stamp,
-            &self.region,
-            "bedrock",
-        );
-        let signature = hex_encode(&hmac_sha256(&signing_key, string_to_sign.as_bytes()));
-        let authorization = format!(
-            "AWS4-HMAC-SHA256 Credential={}/{}, SignedHeaders={}, Signature={}",
-            self.access_key_id, credential_scope, signed_headers, signature
-        );
+        let mut request = request
+            .header(CONTENT_TYPE, "application/json")
+            .header(HOST, &host)
+            .build()
+            .map_err(|e| {
+                AssistantMessageEvent::error_network(format!("Bedrock request build error: {e}"))
+            })?;
+        self.sign_request(&mut request, &body_json)?;
 
-        let mut request = self
-            .client
-            .post(&url)
-            .header("content-type", "application/json")
-            .header("host", host)
-            .header("x-amz-date", &amz_date)
-            .header("x-amz-content-sha256", &payload_hash)
-            .header("authorization", authorization)
-            .body(body_json);
-        if let Some(token) = &self.session_token {
-            request = request.header("x-amz-security-token", token);
-        }
-
-        let response = request.send().await.map_err(|e| {
+        let response = self.client.execute(request).await.map_err(|e| {
             AssistantMessageEvent::error_network(format!("Bedrock connection error: {e}"))
         })?;
 
@@ -883,73 +859,90 @@ fn convert_messages(messages: &[AgentMessage]) -> Vec<BedrockMessage> {
     result
 }
 
-
-fn amz_dates() -> (String, String) {
-    let now = Utc::now();
-    (
-        now.format("%Y%m%dT%H%M%SZ").to_string(),
-        now.format("%Y%m%d").to_string(),
-    )
-}
-
-fn canonical_headers(
-    host: &str,
-    amz_date: &str,
-    content_type: Option<&str>,
-    payload_hash: Option<&str>,
-    session_token: Option<&str>,
-) -> String {
-    let mut headers = vec![format!("host:{host}"), format!("x-amz-date:{amz_date}")];
-    if let Some(content_type) = content_type {
-        headers.push(format!("content-type:{content_type}"));
+impl BedrockStreamFn {
+    #[allow(clippy::result_large_err)]
+    fn sign_request(
+        &self,
+        request: &mut reqwest::Request,
+        body: &[u8],
+    ) -> Result<(), AssistantMessageEvent> {
+        let credentials = Credentials::new(
+            self.access_key_id.clone(),
+            self.secret_access_key.clone(),
+            self.session_token.clone(),
+            None,
+            "swink-agent-bedrock",
+        );
+        let identity: Identity = credentials.into();
+        let mut signing_settings = SigningSettings::default();
+        signing_settings.payload_checksum_kind = PayloadChecksumKind::XAmzSha256;
+        signing_settings.session_token_mode = SessionTokenMode::Include;
+        let signing_params = http_request::SigningParams::V4(
+            v4::SigningParams::builder()
+                .identity(&identity)
+                .region(&self.region)
+                .name("bedrock")
+                .time(SystemTime::now())
+                .settings(signing_settings)
+                .build()
+                .map_err(|e| {
+                    AssistantMessageEvent::error_network(format!(
+                        "Bedrock signing parameter error: {e}"
+                    ))
+                })?,
+        );
+        let header_pairs = request
+            .headers()
+            .iter()
+            .map(|(name, value)| {
+                value
+                    .to_str()
+                    .map(|value| (name.as_str(), value))
+                    .map_err(|e| {
+                        AssistantMessageEvent::error_network(format!(
+                            "Bedrock header encoding error: {e}"
+                        ))
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let signable_request = SignableRequest::new(
+            request.method().as_str(),
+            request.url().as_str(),
+            header_pairs.into_iter(),
+            SignableBody::Bytes(body),
+        )
+        .map_err(|e| {
+            AssistantMessageEvent::error_network(format!("Bedrock signing request error: {e}"))
+        })?;
+        let (signing_instructions, _) = http_request::sign(signable_request, &signing_params)
+            .map_err(|e| {
+                AssistantMessageEvent::error_network(format!("Bedrock signing error: {e}"))
+            })?
+            .into_parts();
+        let (signed_headers, _) = signing_instructions.into_parts();
+        for header in signed_headers {
+            let name = HeaderName::from_bytes(header.name().as_bytes()).map_err(|e| {
+                AssistantMessageEvent::error_network(format!(
+                    "Bedrock signed header name error: {e}"
+                ))
+            })?;
+            let value = HttpHeaderValue::from_str(header.value()).map_err(|e| {
+                AssistantMessageEvent::error_network(format!(
+                    "Bedrock signed header value error: {e}"
+                ))
+            })?;
+            request.headers_mut().insert(name, value);
+        }
+        Ok(())
     }
-    if let Some(payload_hash) = payload_hash {
-        headers.push(format!("x-amz-content-sha256:{payload_hash}"));
+}
+
+fn request_host_header(url: &reqwest::Url) -> Option<String> {
+    let host = url.host_str()?;
+    match (url.scheme(), url.port()) {
+        ("https", Some(443)) | ("http", Some(80)) | (_, None) => Some(host.to_string()),
+        (_, Some(port)) => Some(format!("{host}:{port}")),
     }
-    if let Some(session_token) = session_token {
-        headers.push(format!("x-amz-security-token:{session_token}"));
-    }
-    headers.sort_unstable();
-    format!("{}\n", headers.join("\n"))
-}
-
-fn signed_headers(with_session_token: bool) -> String {
-    let mut headers = vec!["content-type", "host", "x-amz-content-sha256", "x-amz-date"];
-    if with_session_token {
-        headers.push("x-amz-security-token");
-    }
-    headers.sort_unstable();
-    headers.join(";")
-}
-
-fn signing_key(secret: &str, date: &str, region: &str, service: &str) -> [u8; 32] {
-    let k_date = hmac_sha256(format!("AWS4{secret}").as_bytes(), date.as_bytes());
-    let k_region = hmac_sha256(&k_date, region.as_bytes());
-    let k_service = hmac_sha256(&k_region, service.as_bytes());
-    hmac_sha256(&k_service, b"aws4_request")
-}
-
-fn sha256_hex(data: &[u8]) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(data);
-    hex_encode(&hasher.finalize())
-}
-
-fn hex_encode(bytes: &[u8]) -> String {
-    let mut output = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        use std::fmt::Write as _;
-        let _ = write!(&mut output, "{byte:02x}");
-    }
-    output
-}
-
-type HmacSha256 = Hmac<Sha256>;
-
-fn hmac_sha256(key: &[u8], data: &[u8]) -> [u8; 32] {
-    let mut mac = HmacSha256::new_from_slice(key).expect("HMAC accepts any key size");
-    mac.update(data);
-    mac.finalize().into_bytes().into()
 }
 
 const _: () = {
@@ -960,25 +953,71 @@ const _: () = {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use reqwest::header::{CONTENT_TYPE, HOST};
 
     #[test]
-    fn hmac_sha256_known_answer() {
-        // RFC 4231 Test Case 2
-        let key = b"Jefe";
-        let data = b"what do ya want for nothing?";
-        let result = hmac_sha256(key, data);
-        let expected = "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843";
-        assert_eq!(hex_encode(&result), expected);
+    fn sigv4_signs_request_with_expected_headers() {
+        let signer = BedrockStreamFn::new("us-east-1", "AKIDEXAMPLE", "secret", None);
+        let body = b"{}";
+        let mut request = signer
+            .client
+            .post(
+                "https://bedrock-runtime.us-east-1.amazonaws.com/model/test-model/converse-stream",
+            )
+            .body(body.to_vec())
+            .build()
+            .unwrap();
+        request.headers_mut().insert(
+            CONTENT_TYPE,
+            HttpHeaderValue::from_static("application/json"),
+        );
+        request.headers_mut().insert(
+            HOST,
+            HttpHeaderValue::from_static("bedrock-runtime.us-east-1.amazonaws.com"),
+        );
+
+        signer.sign_request(&mut request, body).unwrap();
+
+        assert!(request.headers().contains_key("authorization"));
+        assert!(request.headers().contains_key("x-amz-date"));
+        assert!(request.headers().contains_key("x-amz-content-sha256"));
+        let authorization = request.headers()["authorization"].to_str().unwrap();
+        assert!(authorization.contains("AWS4-HMAC-SHA256"));
+        assert!(authorization.contains("Credential=AKIDEXAMPLE/"));
+        assert!(authorization.contains("/us-east-1/bedrock/aws4_request"));
     }
 
     #[test]
-    fn amz_dates_format() {
-        let (amz_date, date_stamp) = amz_dates();
-        assert_eq!(amz_date.len(), 16);
-        assert!(amz_date.ends_with('Z'));
-        assert_eq!(&amz_date[8..9], "T");
-        assert_eq!(date_stamp.len(), 8);
-        assert!(date_stamp.chars().all(|c| c.is_ascii_digit()));
+    fn sigv4_signing_includes_session_token() {
+        let signer = BedrockStreamFn::new(
+            "us-east-1",
+            "AKIDEXAMPLE",
+            "secret",
+            Some("session-token".to_string()),
+        );
+        let body = b"{}";
+        let mut request = signer
+            .client
+            .post(
+                "https://bedrock-runtime.us-east-1.amazonaws.com/model/test-model/converse-stream",
+            )
+            .body(body.to_vec())
+            .build()
+            .unwrap();
+        request.headers_mut().insert(
+            CONTENT_TYPE,
+            HttpHeaderValue::from_static("application/json"),
+        );
+        request.headers_mut().insert(
+            HOST,
+            HttpHeaderValue::from_static("bedrock-runtime.us-east-1.amazonaws.com"),
+        );
+
+        signer.sign_request(&mut request, body).unwrap();
+
+        assert_eq!(request.headers()["x-amz-security-token"], "session-token");
+        let authorization = request.headers()["authorization"].to_str().unwrap();
+        assert!(authorization.contains("x-amz-security-token"));
     }
 
     #[test]
@@ -1386,51 +1425,5 @@ mod tests {
                 ..
             } if usage.input == 50 && usage.output == 30 && usage.total == 80
         ));
-    }
-
-    #[test]
-    fn sigv4_signs_converse_stream_path() {
-        // Verify that the canonical request uses the /converse-stream path
-        let model_id = "anthropic.claude-3-5-haiku-20241022-v1:0";
-        let path = format!("/model/{model_id}/converse-stream");
-
-        // Build a minimal canonical request using the same format as send_converse_stream
-        let body = b"{}";
-        let payload_hash = sha256_hex(body);
-        let (amz_date, date_stamp) = amz_dates();
-        let host = "bedrock-runtime.us-east-1.amazonaws.com";
-        let canonical_headers = canonical_headers(
-            host,
-            &amz_date,
-            Some("application/json"),
-            Some(&payload_hash),
-            None,
-        );
-        let signed_headers = signed_headers(false);
-        let canonical_request =
-            format!("POST\n{path}\n\n{canonical_headers}\n{signed_headers}\n{payload_hash}");
-
-        // The canonical request must contain the /converse-stream path
-        assert!(
-            canonical_request.contains("/converse-stream"),
-            "canonical request must use /converse-stream path"
-        );
-        assert!(
-            canonical_request.contains(model_id),
-            "canonical request must contain model ID"
-        );
-
-        // Verify signing produces a valid hex signature
-        let credential_scope = format!("{date_stamp}/us-east-1/bedrock/aws4_request");
-        let string_to_sign = format!(
-            "AWS4-HMAC-SHA256\n{amz_date}\n{credential_scope}\n{}",
-            sha256_hex(canonical_request.as_bytes())
-        );
-        let signing_key = signing_key("test-secret-key", &date_stamp, "us-east-1", "bedrock");
-        let signature = hex_encode(&hmac_sha256(&signing_key, string_to_sign.as_bytes()));
-
-        // Signature should be 64 hex characters
-        assert_eq!(signature.len(), 64);
-        assert!(signature.chars().all(|c| c.is_ascii_hexdigit()));
     }
 }

@@ -9,7 +9,7 @@ use aws_smithy_types::event_stream::{Header, HeaderValue, Message};
 use bytes::BytesMut;
 use futures::StreamExt;
 use tokio_util::sync::CancellationToken;
-use wiremock::matchers::{header_exists, method, path};
+use wiremock::matchers::{header, header_exists, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use swink_agent::{
@@ -50,10 +50,7 @@ fn event_frame(event_type: &str, payload: &[u8]) -> Vec<u8> {
 /// Build a complete text-response event stream body.
 fn text_response_body(text: &str) -> Vec<u8> {
     let mut body = Vec::new();
-    body.extend(event_frame(
-        "messageStart",
-        br#"{"role":"assistant"}"#,
-    ));
+    body.extend(event_frame("messageStart", br#"{"role":"assistant"}"#));
     body.extend(event_frame(
         "contentBlockStart",
         br#"{"contentBlockIndex":0,"start":{"type":"text"}}"#,
@@ -67,10 +64,7 @@ fn text_response_body(text: &str) -> Vec<u8> {
         "contentBlockStop",
         br#"{"contentBlockIndex":0}"#,
     ));
-    body.extend(event_frame(
-        "messageStop",
-        br#"{"stopReason":"end_turn"}"#,
-    ));
+    body.extend(event_frame("messageStop", br#"{"stopReason":"end_turn"}"#));
     body.extend(event_frame(
         "metadata",
         br#"{"usage":{"inputTokens":4,"outputTokens":2,"totalTokens":6}}"#,
@@ -81,10 +75,7 @@ fn text_response_body(text: &str) -> Vec<u8> {
 /// Build a complete tool-use event stream body.
 fn tool_use_response_body(tool_id: &str, tool_name: &str, args_json: &str) -> Vec<u8> {
     let mut body = Vec::new();
-    body.extend(event_frame(
-        "messageStart",
-        br#"{"role":"assistant"}"#,
-    ));
+    body.extend(event_frame("messageStart", br#"{"role":"assistant"}"#));
     body.extend(event_frame(
         "contentBlockStart",
         format!(
@@ -94,19 +85,14 @@ fn tool_use_response_body(tool_id: &str, tool_name: &str, args_json: &str) -> Ve
     ));
     body.extend(event_frame(
         "contentBlockDelta",
-        format!(
-            r#"{{"contentBlockIndex":0,"delta":{{"type":"toolUse","input":{args_json}}}}}"#
-        )
-        .as_bytes(),
+        format!(r#"{{"contentBlockIndex":0,"delta":{{"type":"toolUse","input":{args_json}}}}}"#)
+            .as_bytes(),
     ));
     body.extend(event_frame(
         "contentBlockStop",
         br#"{"contentBlockIndex":0}"#,
     ));
-    body.extend(event_frame(
-        "messageStop",
-        br#"{"stopReason":"tool_use"}"#,
-    ));
+    body.extend(event_frame("messageStop", br#"{"stopReason":"tool_use"}"#));
     body.extend(event_frame(
         "metadata",
         br#"{"usage":{"inputTokens":4,"outputTokens":2,"totalTokens":6}}"#,
@@ -120,11 +106,10 @@ async fn bedrock_text_response_maps_to_text_events() {
 
     let server = MockServer::start().await;
     Mock::given(method("POST"))
-        .and(path(
-            "/model/amazon.nova-pro-v1:0/converse-stream",
-        ))
+        .and(path("/model/amazon.nova-pro-v1:0/converse-stream"))
         .and(header_exists("authorization"))
         .and(header_exists("x-amz-date"))
+        .and(header_exists("x-amz-content-sha256"))
         .respond_with(
             ResponseTemplate::new(200)
                 .insert_header("Content-Type", "application/vnd.amazon.eventstream")
@@ -155,9 +140,9 @@ async fn bedrock_text_response_maps_to_text_events() {
         .await;
 
     assert!(
-        events
-            .iter()
-            .any(|e| matches!(e, AssistantMessageEvent::TextDelta { delta, .. } if delta == "hello")),
+        events.iter().any(
+            |e| matches!(e, AssistantMessageEvent::TextDelta { delta, .. } if delta == "hello")
+        ),
         "expected TextDelta with 'hello', got: {events:?}"
     );
     assert!(events.iter().any(|e| matches!(
@@ -199,7 +184,7 @@ impl AgentTool for DummyTool {
                 content: vec![],
                 details: serde_json::Value::Null,
                 is_error: false,
-                    transfer_signal: None,
+                transfer_signal: None,
             }
         })
     }
@@ -207,11 +192,7 @@ impl AgentTool for DummyTool {
 
 #[tokio::test]
 async fn bedrock_tool_use_maps_to_tool_events() {
-    let body = tool_use_response_body(
-        "tool_1",
-        "get_weather",
-        r#""{\"city\":\"Paris\"}""#,
-    );
+    let body = tool_use_response_body("tool_1", "get_weather", r#""{\"city\":\"Paris\"}""#);
 
     let server = MockServer::start().await;
     Mock::given(method("POST"))
@@ -263,6 +244,53 @@ async fn bedrock_tool_use_maps_to_tool_events() {
         e,
         AssistantMessageEvent::Done {
             stop_reason: StopReason::ToolUse,
+            ..
+        }
+    )));
+}
+
+#[tokio::test]
+async fn bedrock_session_token_is_forwarded() {
+    let body = text_response_body("hello");
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/model/amazon.nova-pro-v1:0/converse-stream"))
+        .and(header("x-amz-security-token", "session-token"))
+        .and(header_exists("authorization"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("Content-Type", "application/vnd.amazon.eventstream")
+                .set_body_bytes(body),
+        )
+        .mount(&server)
+        .await;
+
+    let stream_fn = BedrockStreamFn::new_with_base_url(
+        server.uri(),
+        "us-east-1",
+        "AKIDEXAMPLE",
+        "secret",
+        Some("session-token".to_string()),
+    );
+    let events = stream_fn
+        .stream(
+            &ModelSpec::new("bedrock", "amazon.nova-pro-v1:0"),
+            &AgentContext {
+                system_prompt: String::new(),
+                messages: Vec::new(),
+                tools: Vec::new(),
+            },
+            &StreamOptions::default(),
+            CancellationToken::new(),
+        )
+        .collect::<Vec<_>>()
+        .await;
+
+    assert!(events.iter().any(|e| matches!(
+        e,
+        AssistantMessageEvent::Done {
+            stop_reason: StopReason::Stop,
             ..
         }
     )));
