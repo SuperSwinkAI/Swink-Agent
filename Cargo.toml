@@ -41,7 +41,7 @@ rusqlite = { version = "0.35", features = ["bundled"] }
 
 [package]
 name = "swink-agent"
-version = "0.6.0"
+version = "0.6.1"
 edition = "2024"
 rust-version = "1.88"
 description = "Core scaffolding for running LLM-powered agentic loops"
