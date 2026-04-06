@@ -37,7 +37,7 @@ aws-smithy-types = "1"
 aws-credential-types = "1.2.14"
 aws-sigv4 = { version = "1.4.2", default-features = false, features = ["sign-http", "http1"] }
 aws-smithy-runtime-api = { version = "1.11.6", features = ["client"] }
-rusqlite = { version = "0.35", features = ["bundled"] }
+rusqlite = { version = "0.39", features = ["bundled"] }
 
 [package]
 name = "swink-agent"
