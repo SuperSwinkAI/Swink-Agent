@@ -17,6 +17,8 @@ use futures::Stream;
 use serde_json::Value;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+#[cfg(feature = "plugins")]
+use std::sync::atomic::AtomicUsize;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
@@ -618,9 +620,10 @@ impl EventCollector {
 #[cfg(feature = "plugins")]
 use crate::plugin::Plugin;
 #[cfg(feature = "plugins")]
-use crate::policy::{PolicyContext, PolicyVerdict, PostTurnPolicy, PreTurnPolicy, TurnPolicyContext};
-#[cfg(feature = "plugins")]
-use std::sync::atomic::AtomicUsize;
+use crate::policy::{
+    PolicyContext, PolicyVerdict, PostLoopPolicy, PostTurnPolicy, PreDispatchPolicy, PreTurnPolicy,
+    TurnPolicyContext,
+};
 
 /// A configurable mock [`Plugin`] for testing.
 ///
@@ -631,11 +634,18 @@ pub struct MockPlugin {
     plugin_name: String,
     priority: i32,
     tool_names: Vec<String>,
+    tools: Vec<Arc<dyn AgentTool>>,
+    pre_turn_policies: Vec<Arc<dyn PreTurnPolicy>>,
+    pre_dispatch_policies: Vec<Arc<dyn PreDispatchPolicy>>,
+    post_turn_policies: Vec<Arc<dyn PostTurnPolicy>>,
+    post_loop_policies: Vec<Arc<dyn PostLoopPolicy>>,
     event_counter: Option<Arc<AtomicUsize>>,
     post_turn_tracker: Option<Arc<AtomicBool>>,
     pre_turn_order: Option<Arc<AtomicUsize>>,
     stopping_pre_turn: bool,
     init_called: Arc<AtomicBool>,
+    init_count: Arc<AtomicUsize>,
+    init_order: Option<Arc<AtomicUsize>>,
 }
 
 #[cfg(feature = "plugins")]
@@ -647,11 +657,18 @@ impl MockPlugin {
             plugin_name: name.into(),
             priority: 0,
             tool_names: vec![],
+            tools: vec![],
+            pre_turn_policies: vec![],
+            pre_dispatch_policies: vec![],
+            post_turn_policies: vec![],
+            post_loop_policies: vec![],
             event_counter: None,
             post_turn_tracker: None,
             pre_turn_order: None,
             stopping_pre_turn: false,
             init_called: Arc::new(AtomicBool::new(false)),
+            init_count: Arc::new(AtomicUsize::new(0)),
+            init_order: None,
         }
     }
 
@@ -666,6 +683,13 @@ impl MockPlugin {
     #[must_use]
     pub fn with_tools(mut self, names: &[&str]) -> Self {
         self.tool_names = names.iter().map(|s| s.to_string()).collect();
+        self
+    }
+
+    /// Contribute a concrete tool instance.
+    #[must_use]
+    pub fn with_tool(mut self, tool: Arc<dyn AgentTool>) -> Self {
+        self.tools.push(tool);
         self
     }
 
@@ -693,6 +717,37 @@ impl MockPlugin {
         self
     }
 
+    /// Contribute a concrete pre-turn policy.
+    #[must_use]
+    pub fn with_pre_turn_policy(mut self, policy: Arc<dyn PreTurnPolicy>) -> Self {
+        self.pre_turn_policies.push(policy);
+        self
+    }
+
+    /// Contribute a concrete pre-dispatch policy.
+    #[must_use]
+    pub fn with_pre_dispatch_policy<P>(mut self, policy: P) -> Self
+    where
+        P: PreDispatchPolicy + 'static,
+    {
+        self.pre_dispatch_policies.push(Arc::new(policy));
+        self
+    }
+
+    /// Contribute a concrete post-turn policy.
+    #[must_use]
+    pub fn with_post_turn_policy(mut self, policy: Arc<dyn PostTurnPolicy>) -> Self {
+        self.post_turn_policies.push(policy);
+        self
+    }
+
+    /// Contribute a concrete post-loop policy.
+    #[must_use]
+    pub fn with_post_loop_policy(mut self, policy: Arc<dyn PostLoopPolicy>) -> Self {
+        self.post_loop_policies.push(policy);
+        self
+    }
+
     /// Make the contributed pre-turn policy return `PolicyVerdict::Stop`.
     #[must_use]
     pub fn with_stopping_pre_turn(mut self) -> Self {
@@ -703,6 +758,18 @@ impl MockPlugin {
     /// Returns a handle to the `init_called` flag — set to `true` when `on_init` fires.
     pub fn init_called(&self) -> Arc<AtomicBool> {
         Arc::clone(&self.init_called)
+    }
+
+    /// Number of times `on_init` was called.
+    pub fn init_count(&self) -> usize {
+        self.init_count.load(Ordering::SeqCst)
+    }
+
+    /// Provide a shared counter for tracking init order across plugins.
+    #[must_use]
+    pub fn with_init_order(mut self, order: Arc<AtomicUsize>) -> Self {
+        self.init_order = Some(order);
+        self
     }
 }
 
@@ -718,30 +785,44 @@ impl Plugin for MockPlugin {
 
     fn on_init(&self, _agent: &crate::Agent) {
         self.init_called.store(true, Ordering::SeqCst);
+        self.init_count.fetch_add(1, Ordering::SeqCst);
+        if let Some(order) = &self.init_order {
+            order.fetch_add(1, Ordering::SeqCst);
+        }
     }
 
     fn pre_turn_policies(&self) -> Vec<Arc<dyn PreTurnPolicy>> {
+        let mut policies = self.pre_turn_policies.clone();
         if self.stopping_pre_turn {
-            return vec![Arc::new(StoppingPreTurnPolicy {
+            policies.push(Arc::new(StoppingPreTurnPolicy {
                 label: format!("{}-stopping", self.plugin_name),
-            })];
+            }));
         }
         if let Some(order) = &self.pre_turn_order {
-            return vec![Arc::new(OrderRecordingPreTurnPolicy {
+            policies.push(Arc::new(OrderRecordingPreTurnPolicy {
                 label: format!("{}-pre-turn", self.plugin_name),
                 order: Arc::clone(order),
-            })];
+            }));
         }
-        vec![]
+        policies
+    }
+
+    fn pre_dispatch_policies(&self) -> Vec<Arc<dyn PreDispatchPolicy>> {
+        self.pre_dispatch_policies.clone()
     }
 
     fn post_turn_policies(&self) -> Vec<Arc<dyn PostTurnPolicy>> {
+        let mut policies = self.post_turn_policies.clone();
         if let Some(fired) = &self.post_turn_tracker {
-            return vec![Arc::new(RecordingPostTurnPolicy {
+            policies.push(Arc::new(RecordingPostTurnPolicy {
                 fired: Arc::clone(fired),
-            })];
+            }));
         }
-        vec![]
+        policies
+    }
+
+    fn post_loop_policies(&self) -> Vec<Arc<dyn PostLoopPolicy>> {
+        self.post_loop_policies.clone()
     }
 
     fn on_event(&self, _event: &crate::AgentEvent) {
@@ -751,10 +832,13 @@ impl Plugin for MockPlugin {
     }
 
     fn tools(&self) -> Vec<Arc<dyn crate::tool::AgentTool>> {
-        self.tool_names
-            .iter()
-            .map(|n| Arc::new(MockTool::new(n)) as Arc<dyn crate::tool::AgentTool>)
-            .collect()
+        let mut tools = self.tools.clone();
+        tools.extend(
+            self.tool_names
+                .iter()
+                .map(|n| Arc::new(MockTool::new(n)) as Arc<dyn crate::tool::AgentTool>),
+        );
+        tools
     }
 }
 
@@ -860,141 +944,3 @@ pub fn event_variant_name(event: &AgentEvent) -> String {
         AgentEvent::TransferInitiated { .. } => "TransferInitiated".into(),
     }
 }
-
-// ─── MockPlugin (plugins feature only) ──────────────────────────────────
-
-#[cfg(feature = "plugins")]
-mod mock_plugin {
-    use super::*;
-    use crate::plugin::Plugin;
-    use crate::policy::{PostLoopPolicy, PostTurnPolicy, PreDispatchPolicy, PreTurnPolicy};
-    use std::sync::atomic::AtomicUsize;
-
-    /// A configurable mock [`Plugin`] for testing plugin registration, ordering,
-    /// and contribution merging.
-    ///
-    /// Tracks `on_init` invocations and records the order relative to other plugins.
-    pub struct MockPlugin {
-        name: String,
-        priority: i32,
-        tools: Vec<Arc<dyn AgentTool>>,
-        pre_turn: Vec<Arc<dyn PreTurnPolicy>>,
-        pre_dispatch: Vec<Arc<dyn PreDispatchPolicy>>,
-        post_turn: Vec<Arc<dyn PostTurnPolicy>>,
-        post_loop: Vec<Arc<dyn PostLoopPolicy>>,
-        init_count: Arc<AtomicUsize>,
-        init_order: Option<Arc<AtomicUsize>>,
-    }
-
-    impl MockPlugin {
-        /// Create a minimal plugin with the given name and default priority 0.
-        #[must_use]
-        pub fn new(name: &str) -> Self {
-            Self {
-                name: name.to_owned(),
-                priority: 0,
-                tools: Vec::new(),
-                pre_turn: Vec::new(),
-                pre_dispatch: Vec::new(),
-                post_turn: Vec::new(),
-                post_loop: Vec::new(),
-                init_count: Arc::new(AtomicUsize::new(0)),
-                init_order: None,
-            }
-        }
-
-        /// Set the priority.
-        #[must_use]
-        pub const fn with_priority(mut self, priority: i32) -> Self {
-            self.priority = priority;
-            self
-        }
-
-        /// Add a tool to the plugin's contributions.
-        #[must_use]
-        pub fn with_tool(mut self, tool: Arc<dyn AgentTool>) -> Self {
-            self.tools.push(tool);
-            self
-        }
-
-        /// Add a pre-turn policy.
-        #[must_use]
-        pub fn with_pre_turn_policy(mut self, policy: Arc<dyn PreTurnPolicy>) -> Self {
-            self.pre_turn.push(policy);
-            self
-        }
-
-        /// Add a pre-dispatch policy.
-        #[must_use]
-        pub fn with_pre_dispatch_policy(mut self, policy: Arc<dyn PreDispatchPolicy>) -> Self {
-            self.pre_dispatch.push(policy);
-            self
-        }
-
-        /// Add a post-turn policy.
-        #[must_use]
-        pub fn with_post_turn_policy(mut self, policy: Arc<dyn PostTurnPolicy>) -> Self {
-            self.post_turn.push(policy);
-            self
-        }
-
-        /// Add a post-loop policy.
-        #[must_use]
-        pub fn with_post_loop_policy(mut self, policy: Arc<dyn PostLoopPolicy>) -> Self {
-            self.post_loop.push(policy);
-            self
-        }
-
-        /// Provide a shared counter for tracking init order across plugins.
-        #[must_use]
-        pub fn with_init_order(mut self, order: Arc<AtomicUsize>) -> Self {
-            self.init_order = Some(order);
-            self
-        }
-
-        /// Number of times `on_init` was called.
-        pub fn init_count(&self) -> usize {
-            self.init_count.load(Ordering::SeqCst)
-        }
-    }
-
-    impl Plugin for MockPlugin {
-        fn name(&self) -> &str {
-            &self.name
-        }
-
-        fn priority(&self) -> i32 {
-            self.priority
-        }
-
-        fn on_init(&self, _agent: &crate::Agent) {
-            self.init_count.fetch_add(1, Ordering::SeqCst);
-            if let Some(order) = &self.init_order {
-                order.fetch_add(1, Ordering::SeqCst);
-            }
-        }
-
-        fn pre_turn_policies(&self) -> Vec<Arc<dyn PreTurnPolicy>> {
-            self.pre_turn.clone()
-        }
-
-        fn pre_dispatch_policies(&self) -> Vec<Arc<dyn PreDispatchPolicy>> {
-            self.pre_dispatch.clone()
-        }
-
-        fn post_turn_policies(&self) -> Vec<Arc<dyn PostTurnPolicy>> {
-            self.post_turn.clone()
-        }
-
-        fn post_loop_policies(&self) -> Vec<Arc<dyn PostLoopPolicy>> {
-            self.post_loop.clone()
-        }
-
-        fn tools(&self) -> Vec<Arc<dyn AgentTool>> {
-            self.tools.clone()
-        }
-    }
-}
-
-#[cfg(feature = "plugins")]
-pub use mock_plugin::MockPlugin;
