@@ -11,8 +11,6 @@ use tokio_util::sync::CancellationToken;
 
 #[cfg(feature = "duckduckgo")]
 mod duckduckgo_parsing {
-    use swink_agent_plugin_web::search::SearchResult;
-
     // We call the public `parse_results` directly, avoiding any HTTP calls.
     use swink_agent_plugin_web::search::DuckDuckGoProvider;
 

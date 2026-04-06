@@ -36,7 +36,7 @@ impl RemotePresetKey {
     }
 }
 
-#[allow(unused_imports)]
+#[allow(dead_code, unused_imports)]
 pub mod remote_preset_keys {
     use super::RemotePresetKey;
 
@@ -491,7 +491,10 @@ mod tests {
     #[test]
     fn remote_preset_requires_key() {
         let preset = preset("gpt-4o").unwrap();
-        let err = build_connection_from_preset(&preset, None, None).unwrap_err();
+        let err = match build_connection_from_preset(&preset, None, None) {
+            Ok(_) => panic!("expected missing credential error"),
+            Err(err) => err,
+        };
         assert_eq!(
             err,
             RemoteModelConnectionError::MissingCredential {

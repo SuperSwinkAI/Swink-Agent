@@ -22,7 +22,7 @@ use crate::entry::SessionEntry;
 pub enum MessageKind {
     /// An [`LlmMessage`] (user, assistant, tool result).
     Llm,
-    /// A custom message serialised via [`CustomMessage::to_json`].
+    /// A custom message serialised via `swink_agent::CustomMessage::to_json`.
     Custom,
 }
 
@@ -49,7 +49,8 @@ impl MessageKind {
 /// Encode an [`AgentMessage`] to a `(kind, json)` pair.
 ///
 /// Returns `None` and emits a `tracing::warn` for custom messages that cannot
-/// be serialised (i.e. their [`CustomMessage::to_json`] / [`CustomMessage::type_name`]
+/// be serialised (i.e. their `swink_agent::CustomMessage::to_json` /
+/// `swink_agent::CustomMessage::type_name`
 /// implementations return `None`). LLM messages always succeed unless
 /// `serde_json` itself errors, which should not happen in practice.
 pub fn encode(msg: &AgentMessage, session_id: &str) -> Option<(MessageKind, String)> {

@@ -79,7 +79,7 @@ pub struct CompactionReport {
     /// The LLM messages that were dropped during this compaction pass.
     ///
     /// Only `LlmMessage` variants are included; `CustomMessage` values are
-    /// filtered out. Populated by [`compact_sliding_window_with`]; empty for
+    /// filtered out. Populated by the sliding-window compaction routine; empty for
     /// bare-closure transformers that don't have access to the dropped slice.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub dropped_messages: Vec<LlmMessage>,

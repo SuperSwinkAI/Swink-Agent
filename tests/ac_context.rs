@@ -19,8 +19,8 @@ use common::{
 };
 
 use swink_agent::{
-    Agent, AgentMessage, AgentOptions, AssistantMessageEvent, ContentBlock, DefaultRetryStrategy,
-    LlmMessage, sliding_window,
+    Agent, AgentMessage, AgentOptions, AssistantMessageEvent, ContentBlock, ContextTransformer,
+    DefaultRetryStrategy, LlmMessage, SlidingWindowTransformer,
 };
 
 // ─── Helpers ─────────────────────────────────────────────────────────────
@@ -38,7 +38,11 @@ fn make_agent_with_small_context(
             stream_fn,
             default_convert,
         )
-        .with_transform_context_fn(sliding_window(normal_budget, overflow_budget, anchor))
+        .with_transform_context(SlidingWindowTransformer::new(
+            normal_budget,
+            overflow_budget,
+            anchor,
+        ))
         .with_retry_strategy(Box::new(
             DefaultRetryStrategy::default()
                 .with_jitter(false)
@@ -265,7 +269,7 @@ async fn tool_result_pairs_kept_together() {
         )
         .with_tools(vec![tool])
         // Very small budget to force compaction after a few rounds.
-        .with_transform_context_fn(sliding_window(300, 150, 1))
+        .with_transform_context(SlidingWindowTransformer::new(300, 150, 1))
         .with_retry_strategy(Box::new(
             DefaultRetryStrategy::default()
                 .with_jitter(false)
@@ -341,8 +345,8 @@ async fn transform_context_callback_on_overflow() {
                     overflow_seen_clone.store(true, Ordering::SeqCst);
                 }
                 // Apply basic sliding window to avoid infinite loops.
-                let compact = sliding_window(10_000, 200, 1);
-                compact(msgs, overflow);
+                let compact = SlidingWindowTransformer::new(10_000, 200, 1);
+                compact.transform(msgs, overflow);
             })
             .with_retry_strategy(Box::new(
                 DefaultRetryStrategy::default()
