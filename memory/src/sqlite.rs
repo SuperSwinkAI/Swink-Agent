@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, PoisonError};
 
 use rusqlite::{Connection, params};
-use swink_agent::{AgentMessage, CustomMessageRegistry, LlmMessage};
+use swink_agent::{AgentMessage, CustomMessageRegistry};
 
 use crate::entry::SessionEntry;
 use crate::interrupt::InterruptState;
@@ -489,7 +489,9 @@ impl SessionStore for SqliteSessionStore {
             .map_err(to_io)?
             .filter_map(|row| {
                 let (kind, data) = row.ok()?;
-                deserialize_session_entry(&kind, &data)
+                crate::codec::decode_session_entry(&kind, &data)
+                    .ok()
+                    .flatten()
             })
             .collect();
 
@@ -554,7 +556,7 @@ impl SqliteSessionStore {
             .map_err(to_io)?;
 
         for (i, entry) in entries.iter().enumerate() {
-            let (kind, data) = serialize_session_entry(entry)?;
+            let (kind, data) = crate::codec::encode_session_entry(entry)?;
             let pos = i64::try_from(i).map_err(to_io)?;
             stmt.execute(params![id, pos, kind, data]).map_err(to_io)?;
         }
@@ -584,32 +586,13 @@ impl SqliteSessionStore {
             .map_err(to_io)?
             .filter_map(|row| {
                 let (kind, data) = row.ok()?;
-                deserialize_session_entry(&kind, &data)
+                crate::codec::decode_session_entry(&kind, &data)
+                    .ok()
+                    .flatten()
             })
             .collect();
 
         Ok((meta, entries))
-    }
-}
-
-fn serialize_session_entry(entry: &SessionEntry) -> io::Result<(String, String)> {
-    let kind = entry.entry_type_name().to_string();
-    let data = serde_json::to_string(entry).map_err(to_io)?;
-    Ok((kind, data))
-}
-
-fn deserialize_session_entry(kind: &str, data: &str) -> Option<SessionEntry> {
-    match kind {
-        "llm" => {
-            // Stored via save() as AgentMessage — unwrap to SessionEntry::Message
-            serde_json::from_str::<LlmMessage>(data)
-                .ok()
-                .map(SessionEntry::Message)
-        }
-        _ => {
-            // Stored via save_entries() as tagged SessionEntry
-            serde_json::from_str::<SessionEntry>(data).ok()
-        }
     }
 }
 
@@ -1087,5 +1070,22 @@ mod tests {
         assert!(matches!(loaded[1], AgentMessage::Custom(_)));
         let custom = loaded[1].downcast_ref::<TestCustom>().unwrap();
         assert_eq!(custom.data, "payload");
+    }
+
+    #[test]
+    fn load_entries_reads_sessions_saved_via_message_api() {
+        let store = SqliteSessionStore::in_memory().unwrap();
+        let m = meta("entry-compat", "Entry compatibility");
+        let messages = vec![user_msg("hello"), assistant_msg("world")];
+
+        store.save("entry-compat", &m, &messages).unwrap();
+
+        let (_, entries) = store.load_entries("entry-compat").unwrap();
+        assert_eq!(entries.len(), 2);
+        assert!(matches!(entries[0], SessionEntry::Message(LlmMessage::User(_))));
+        assert!(matches!(
+            entries[1],
+            SessionEntry::Message(LlmMessage::Assistant(_))
+        ));
     }
 }

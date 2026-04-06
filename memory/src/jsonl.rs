@@ -9,10 +9,7 @@
 use std::io::{self, BufRead, Seek, Write};
 use std::path::{Path, PathBuf};
 
-use swink_agent::{
-    AgentMessage, CustomMessageRegistry, LlmMessage, restore_single_custom,
-    serialize_custom_message,
-};
+use swink_agent::{AgentMessage, CustomMessageRegistry, LlmMessage};
 
 use crate::entry::SessionEntry;
 use crate::interrupt::InterruptState;
@@ -30,22 +27,11 @@ enum SessionRecord {
 
 impl SessionRecord {
     fn from_message(message: &AgentMessage, session_id: &str) -> Option<Self> {
-        match message {
-            AgentMessage::Llm(llm) => Some(Self::Llm(Box::new(llm.clone()))),
-            AgentMessage::Custom(custom) => {
-                let Some(mut envelope) = serialize_custom_message(custom.as_ref()) else {
-                    tracing::warn!(
-                        session_id,
-                        "skipping non-serializable CustomMessage: {custom:?}"
-                    );
-                    return None;
-                };
-                envelope
-                    .as_object_mut()
-                    .expect("custom message envelope must be an object")
-                    .insert("_custom".to_string(), serde_json::Value::Bool(true));
-                Some(Self::Custom(envelope))
-            }
+        let line = crate::codec::encode_jsonl_message_line(message, session_id)?;
+        match Self::parse(&line).ok()? {
+            Self::Llm(llm) => Some(Self::Llm(llm)),
+            Self::Custom(envelope) => Some(Self::Custom(envelope)),
+            Self::State(_) => None,
         }
     }
 
@@ -248,28 +234,13 @@ fn parse_message_record(
     id: &str,
     registry: Option<&CustomMessageRegistry>,
 ) -> Option<AgentMessage> {
-    match SessionRecord::parse(line) {
-        Ok(SessionRecord::Llm(message)) => Some(AgentMessage::Llm(*message)),
-        Ok(SessionRecord::Custom(envelope)) => {
-            match restore_single_custom(registry, &envelope) {
-                Ok(Some(custom)) => Some(AgentMessage::Custom(custom)),
-                Ok(None) => None, // no registry provided
-                Err(error) => {
-                    tracing::warn!(
-                        line = line_num,
-                        error = %error,
-                        "skipping unrestorable custom message in session {id}"
-                    );
-                    None
-                }
-            }
-        }
-        Ok(SessionRecord::State(_)) => None,
+    match crate::codec::decode_jsonl_message_line(line, registry) {
+        Ok(message) => message,
         Err(error) => {
             tracing::warn!(
                 line = line_num,
                 error = %error,
-                "skipping unparseable line in session {id}"
+                "skipping unparseable message line in session {id}"
             );
             None
         }
@@ -853,5 +824,50 @@ mod tests {
 
         let (_, messages) = store.load("test-state", None).unwrap();
         assert_eq!(messages.len(), 2);
+    }
+
+    #[test]
+    fn load_reads_message_entries_saved_via_save_entries() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = JsonlSessionStore::new(dir.path().to_path_buf()).unwrap();
+
+        let now = now_utc();
+        let meta = SessionMeta {
+            id: "entry-messages".to_string(),
+            title: "Entry messages".to_string(),
+            created_at: now,
+            updated_at: now,
+            version: 1,
+            sequence: 0,
+        };
+
+        let entries = vec![
+            SessionEntry::Message(LlmMessage::User(swink_agent::UserMessage {
+                content: vec![swink_agent::ContentBlock::Text {
+                    text: "hello".to_string(),
+                }],
+                timestamp: 1,
+                cache_hint: None,
+            })),
+            SessionEntry::Label {
+                text: "bookmark".to_string(),
+                message_index: 0,
+                timestamp: 2,
+            },
+            SessionEntry::Message(LlmMessage::User(swink_agent::UserMessage {
+                content: vec![swink_agent::ContentBlock::Text {
+                    text: "world".to_string(),
+                }],
+                timestamp: 3,
+                cache_hint: None,
+            })),
+        ];
+
+        store.save_entries("entry-messages", &meta, &entries).unwrap();
+
+        let (_, messages) = store.load("entry-messages", None).unwrap();
+        assert_eq!(messages.len(), 2);
+        assert!(matches!(messages[0], AgentMessage::Llm(LlmMessage::User(_))));
+        assert!(matches!(messages[1], AgentMessage::Llm(LlmMessage::User(_))));
     }
 }
