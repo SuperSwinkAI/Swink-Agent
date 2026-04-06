@@ -63,6 +63,10 @@ MSRV **1.88** (edition 2024). Workspace deps centralized in root `Cargo.toml`.
 - Adapter SSE parsing should go through `adapters/src/sse.rs` helpers when possible; the proxy adapter no longer uses its own `eventsource-stream` path.
 - `adapters/src/sse.rs` is the shared byte-to-SSE-line parser for both generic data-only adapters and Anthropic's event+data pairing logic; avoid reintroducing custom chunk splitters in provider modules.
 
+### Local LLM Streaming (`local-llm/src/stream.rs`)
+
+- Gemma 4 delimiter scanners must only slice `&str` at UTF-8 character boundaries. For partial `<|channel>thought\n` and `<tool_call|>` matches, use the shared UTF-8-safe suffix helper instead of raw byte-offset suffix slicing.
+
 ### Context (`src/context.rs`)
 
 - Sliding window: anchor (first N) + tail (recent), middle removed to fit budget.
