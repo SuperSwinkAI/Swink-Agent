@@ -36,7 +36,7 @@ impl RemotePresetKey {
     }
 }
 
-#[allow(unused_imports)]
+#[allow(dead_code, unused_imports)]
 pub mod remote_preset_keys {
     use super::RemotePresetKey;
 

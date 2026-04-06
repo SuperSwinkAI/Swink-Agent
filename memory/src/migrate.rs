@@ -2,7 +2,7 @@
 //!
 //! [`SessionMigrator`] implementations transform session entries from one
 //! schema version to the next. The migration runner in
-//! [`JsonlSessionStore::load`] applies applicable migrators in order.
+//! [`crate::store::SessionStore::load`] applies applicable migrators in order.
 
 use std::io;
 
