@@ -100,6 +100,10 @@ MSRV **1.88** (edition 2024). Workspace deps centralized in root `Cargo.toml`.
 - `partial_json` consumed on `ToolCallEnd` — parsed once. Empty string → `{}`, not null.
 - `AssistantMessageEvent::error()` is the canonical error constructor — adapters must use it.
 
+### Local LLM Streaming (`local-llm/src/stream.rs`)
+
+- Gemma 4 delimiter scanners must only slice `&str` at UTF-8 character boundaries. For partial `<|channel>thought\n` and `<tool_call|>` matches, use the shared UTF-8-safe suffix helper instead of raw byte-offset suffix slicing.
+
 ### Context (`src/context.rs`)
 
 - Sliding window: anchor (first N) + tail (recent), middle removed to fit budget.

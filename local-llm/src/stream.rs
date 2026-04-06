@@ -68,7 +68,44 @@ impl StreamFn for LocalStreamFn {
 // ─── ChannelThoughtParser (Gemma 4) ────────────────────────────────────────
 
 #[cfg(feature = "gemma4")]
+mod gemma4 {
+    /// Find the longest suffix of `haystack` that is also a prefix of `needle`.
+    ///
+    /// The returned length is a byte length into `haystack`, but matching is
+    /// only attempted at valid UTF-8 character boundaries so callers can safely
+    /// slice the original `&str`.
+    pub(super) fn partial_prefix_at_end(haystack: &str, needle: &str) -> Option<usize> {
+        if needle.len() <= 1 || haystack.is_empty() {
+            return None;
+        }
+
+        let min_start = haystack
+            .len()
+            .saturating_sub(needle.len().saturating_sub(1));
+
+        for (start, _) in haystack.char_indices() {
+            if start < min_start {
+                continue;
+            }
+
+            let suffix = &haystack[start..];
+            if needle.starts_with(suffix) {
+                return Some(haystack.len() - start);
+            }
+        }
+
+        if needle.starts_with(haystack) && haystack.len() < needle.len() {
+            Some(haystack.len())
+        } else {
+            None
+        }
+    }
+}
+
+#[cfg(feature = "gemma4")]
 mod channel_thought {
+    use super::gemma4::partial_prefix_at_end;
+
     /// Opening delimiter for Gemma 4 thinking blocks.
     const OPEN_DELIM: &str = "<|channel>thought\n";
     /// Closing delimiter for Gemma 4 thinking blocks.
@@ -231,25 +268,14 @@ mod channel_thought {
             None => *target = Some(s.to_string()),
         }
     }
-
-    /// Find the longest suffix of `haystack` that is a prefix of `needle`.
-    /// Returns the length of the partial match, or `None` if no partial match.
-    fn partial_prefix_at_end(haystack: &str, needle: &str) -> Option<usize> {
-        let max_check = haystack.len().min(needle.len() - 1);
-        for len in (1..=max_check).rev() {
-            let suffix = &haystack[haystack.len() - len..];
-            if needle.starts_with(suffix) {
-                return Some(len);
-            }
-        }
-        None
-    }
 }
 
 // ─── ToolCallParser (Gemma 4) ─────────────────────────────────────────────
 
 #[cfg(feature = "gemma4")]
 mod tool_call {
+    use super::gemma4::partial_prefix_at_end;
+
     /// Opening delimiter for Gemma 4 tool calls.
     const OPEN_DELIM: &str = "<|tool_call>call:";
     /// Closing delimiter for Gemma 4 tool calls.
@@ -429,17 +455,6 @@ mod tool_call {
             Some(existing) => existing.push_str(s),
             None => *target = Some(s.to_string()),
         }
-    }
-
-    fn partial_prefix_at_end(haystack: &str, needle: &str) -> Option<usize> {
-        let max_check = haystack.len().min(needle.len() - 1);
-        for len in (1..=max_check).rev() {
-            let suffix = &haystack[haystack.len() - len..];
-            if needle.starts_with(suffix) {
-                return Some(len);
-            }
-        }
-        None
     }
 }
 
@@ -991,6 +1006,7 @@ mod tests {
     #[cfg(feature = "gemma4")]
     mod gemma4_tests {
         use super::super::channel_thought::ChannelThoughtParser;
+        use super::super::gemma4::partial_prefix_at_end;
 
         #[test]
         fn channel_thought_single_chunk() {
@@ -1025,6 +1041,21 @@ mod tests {
             let (t2, txt2) = parser.process("nel|>after text");
             assert!(t2.is_none());
             assert_eq!(txt2.as_deref(), Some("after text"));
+        }
+
+        #[test]
+        fn channel_thought_partial_match_is_utf8_safe() {
+            let haystack = "alpha🙂<|chan";
+            assert_eq!(partial_prefix_at_end(haystack, "<|channel>thought\n"), Some(6));
+
+            let mut parser = ChannelThoughtParser::new();
+            let (t1, txt1) = parser.process("alpha🙂<|chan");
+            assert!(t1.is_none());
+            assert_eq!(txt1.as_deref(), Some("alpha🙂"));
+
+            let (t2, txt2) = parser.process("nel>thought\nreasoning<channel|>");
+            assert_eq!(t2.as_deref(), Some("reasoning"));
+            assert!(txt2.is_none());
         }
 
         #[test]
@@ -1087,6 +1118,26 @@ mod tests {
             assert!(text1.is_none());
 
             let (calls2, text2) = parser.process("|>");
+            assert_eq!(calls2.len(), 1);
+            assert_eq!(calls2[0].name, "read_file");
+            assert_eq!(calls2[0].args, r#"{"path":"foo.rs"}"#);
+            assert!(text2.is_none());
+        }
+
+        #[test]
+        fn tool_call_partial_match_is_utf8_safe() {
+            use super::super::tool_call::ToolCallParser;
+
+            let haystack = r#"prefix🙂<tool_cal"#;
+            assert_eq!(partial_prefix_at_end(haystack, "<tool_call|>"), Some(9));
+
+            let mut parser = ToolCallParser::new();
+            let (calls1, text1) =
+                parser.process(r#"prefix🙂<|tool_call>call:read_file{"path":"foo.rs"}<tool_cal"#);
+            assert!(calls1.is_empty());
+            assert_eq!(text1.as_deref(), Some("prefix🙂"));
+
+            let (calls2, text2) = parser.process("l|>");
             assert_eq!(calls2.len(), 1);
             assert_eq!(calls2[0].name, "read_file");
             assert_eq!(calls2[0].args, r#"{"path":"foo.rs"}"#);
