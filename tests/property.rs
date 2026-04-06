@@ -3,9 +3,9 @@
 use proptest::prelude::*;
 use std::time::Duration;
 use swink_agent::{
-    AgentMessage, AssistantMessageEvent, ContentBlock, Cost, DefaultRetryStrategy, LlmMessage,
-    RetryStrategy, StopReason, Usage, UserMessage, accumulate_message, estimate_tokens,
-    sliding_window,
+    AgentMessage, AssistantMessageEvent, ContentBlock, ContextTransformer, Cost,
+    DefaultRetryStrategy, LlmMessage, RetryStrategy, SlidingWindowTransformer, StopReason, Usage,
+    UserMessage, accumulate_message, estimate_tokens,
 };
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -44,10 +44,10 @@ proptest! {
         budget in 50_usize..5000,
         anchor in 0_usize..5,
     ) {
-        let compact = sliding_window(budget, budget / 2, anchor);
+        let compact = SlidingWindowTransformer::new(budget, budget / 2, anchor);
         let mut msgs = lengths_to_messages(&lengths);
         let total_before: usize = msgs.iter().map(estimate_tokens).sum();
-        compact(&mut msgs, false);
+        compact.transform(&mut msgs, false);
         let total_after: usize = msgs.iter().map(estimate_tokens).sum();
 
         // After compaction, tokens should be ≤ budget, unless:
@@ -66,12 +66,12 @@ proptest! {
         budget in 10_usize..2000,
         anchor in 1_usize..4,
     ) {
-        let compact = sliding_window(budget, budget / 2, anchor);
+        let compact = SlidingWindowTransformer::new(budget, budget / 2, anchor);
         let original = lengths_to_messages(&lengths);
         let mut msgs = lengths_to_messages(&lengths);
         let effective_anchor = anchor.min(msgs.len());
 
-        compact(&mut msgs, false);
+        compact.transform(&mut msgs, false);
 
         // Anchor messages must always be preserved at the front.
         prop_assert!(msgs.len() >= effective_anchor);
@@ -88,10 +88,10 @@ proptest! {
         budget in 10_usize..5000,
         anchor in 0_usize..5,
     ) {
-        let compact = sliding_window(budget, budget / 2, anchor);
+        let compact = SlidingWindowTransformer::new(budget, budget / 2, anchor);
         let original_len = lengths.len();
         let mut msgs = lengths_to_messages(&lengths);
-        compact(&mut msgs, false);
+        compact.transform(&mut msgs, false);
         prop_assert!(msgs.len() <= original_len);
     }
 }

@@ -18,8 +18,8 @@ use tokio_util::sync::CancellationToken;
 
 use swink_agent::{
     AgentContext, AgentEvent, AgentLoopConfig, AgentMessage, AssistantMessageEvent, ContentBlock,
-    DefaultRetryStrategy, LlmMessage, ModelSpec, StopReason, StreamFn, StreamOptions, UserMessage,
-    agent_loop, sliding_window,
+    ContextTransformer, DefaultRetryStrategy, LlmMessage, ModelSpec, SlidingWindowTransformer,
+    StopReason, StreamFn, StreamOptions, UserMessage, agent_loop,
 };
 
 // ─── MockMessageCapturingStreamFn ────────────────────────────────────────────
@@ -152,11 +152,11 @@ async fn overflow_triggers_compaction() {
     let mut config = default_config(stream_fn);
     // Use sliding_window with a budget that forces compaction on overflow.
     // Normal budget: 10000 (generous), overflow budget: 200 (tight).
-    let compact = sliding_window(10_000, 200, 1);
+    let compact = SlidingWindowTransformer::new(10_000, 200, 1);
     config.transform_context = Some(Arc::new(
         move |msgs: &mut Vec<AgentMessage>, overflow: bool| {
             flags_clone.lock().unwrap().push(overflow);
-            compact(msgs, overflow);
+            compact.transform(msgs, overflow);
         },
     ));
 
@@ -212,12 +212,12 @@ async fn compacted_context_preserves_anchors() {
     });
 
     let anchor_count = 2;
-    let compact = sliding_window(10_000, 300, anchor_count);
+    let compact = SlidingWindowTransformer::new(10_000, 300, anchor_count);
 
     let mut config = default_config(stream_fn as Arc<dyn StreamFn>);
     config.transform_context = Some(Arc::new(
         move |msgs: &mut Vec<AgentMessage>, overflow: bool| {
-            compact(msgs, overflow);
+            compact.transform(msgs, overflow);
         },
     ));
 
@@ -299,13 +299,13 @@ async fn compacted_context_preserves_tool_pairs() {
     let tool = Arc::new(MockTool::new("mock_tool"));
     // Budget: overflow_budget tight enough to trigger compaction but large enough
     // to keep the tool pair (tool call + result are relatively small).
-    let compact = sliding_window(10_000, 500, 1);
+    let compact = SlidingWindowTransformer::new(10_000, 500, 1);
 
     let mut config = default_config(stream_fn as Arc<dyn StreamFn>);
     config.tools = vec![tool];
     config.transform_context = Some(Arc::new(
         move |msgs: &mut Vec<AgentMessage>, overflow: bool| {
-            compact(msgs, overflow);
+            compact.transform(msgs, overflow);
         },
     ));
 
@@ -446,12 +446,12 @@ async fn overflow_with_no_compaction_surfaces_error() {
     // Very tight overflow budget that a single large message exceeds.
     // sliding_window with anchor=1 and budget=10 on a single message cannot
     // remove anything (the anchor IS the only message), so it returns None.
-    let compact = sliding_window(10_000, 10, 1);
+    let compact = SlidingWindowTransformer::new(10_000, 10, 1);
 
     let mut config = default_config(stream_fn);
     config.transform_context = Some(Arc::new(
         move |msgs: &mut Vec<AgentMessage>, overflow: bool| {
-            compact(msgs, overflow);
+            compact.transform(msgs, overflow);
         },
     ));
 

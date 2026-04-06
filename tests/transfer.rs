@@ -15,7 +15,7 @@ use serde_json::json;
 
 use swink_agent::testing::SimpleMockStreamFn;
 use swink_agent::{
-    Agent, AgentEvent, AgentMessage, AgentOptions, AgentRegistry, AgentTool, AgentToolResult,
+    Agent, AgentMessage, AgentOptions, AgentRegistry, AgentTool, AgentToolResult,
     ContentBlock, DefaultRetryStrategy, LlmMessage, ModelSpec, StopReason, TransferToAgentTool,
 };
 
