@@ -149,13 +149,10 @@ impl PlaywrightBridge {
 
         // Verify the bridge is alive.
         let id = bridge.next_id();
-        let resp = bridge
-            .send_request(PlaywrightRequest::Ping { id })
-            .await?;
+        let resp = bridge.send_request(PlaywrightRequest::Ping { id }).await?;
         if !resp.ok {
             return Err(PlaywrightError::Communication(
-                resp.error
-                    .unwrap_or_else(|| "ping failed".into()),
+                resp.error.unwrap_or_else(|| "ping failed".into()),
             ));
         }
 
@@ -193,8 +190,7 @@ impl PlaywrightBridge {
 
         if !resp.ok {
             return Err(PlaywrightError::BridgeError(
-                resp.error
-                    .unwrap_or_else(|| "screenshot failed".into()),
+                resp.error.unwrap_or_else(|| "screenshot failed".into()),
             ));
         }
 
@@ -222,8 +218,7 @@ impl PlaywrightBridge {
 
         if !resp.ok {
             return Err(PlaywrightError::BridgeError(
-                resp.error
-                    .unwrap_or_else(|| "extraction failed".into()),
+                resp.error.unwrap_or_else(|| "extraction failed".into()),
             ));
         }
 
@@ -239,13 +234,10 @@ impl PlaywrightBridge {
     pub async fn shutdown(&mut self) -> Result<(), PlaywrightError> {
         let id = self.next_id();
         // Best-effort: send shutdown, don't fail if bridge is already gone.
-        let send_result = self
-            .send_request(PlaywrightRequest::Shutdown { id })
-            .await;
+        let send_result = self.send_request(PlaywrightRequest::Shutdown { id }).await;
 
         // Wait for the child to exit (with timeout).
-        let wait_result =
-            tokio::time::timeout(Duration::from_secs(5), self.child.wait()).await;
+        let wait_result = tokio::time::timeout(Duration::from_secs(5), self.child.wait()).await;
 
         match wait_result {
             Ok(Ok(_)) => {}
@@ -317,15 +309,14 @@ fn resolve_node_path(explicit: Option<&Path>) -> PathBuf {
     }
 
     // Try `which node` synchronously (called once at startup, acceptable).
-    if let Ok(output) = std::process::Command::new("which")
-        .arg("node")
-        .output()
-        && output.status.success() {
-            let path_str = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-            if !path_str.is_empty() {
-                return PathBuf::from(path_str);
-            }
+    if let Ok(output) = std::process::Command::new("which").arg("node").output()
+        && output.status.success()
+    {
+        let path_str = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+        if !path_str.is_empty() {
+            return PathBuf::from(path_str);
         }
+    }
 
     PathBuf::from("node")
 }

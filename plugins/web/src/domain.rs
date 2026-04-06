@@ -52,10 +52,7 @@ impl DomainFilter {
 
         // 3. Allowlist check.
         if !self.allowlist.is_empty()
-            && !self
-                .allowlist
-                .iter()
-                .any(|a| a.eq_ignore_ascii_case(host))
+            && !self.allowlist.iter().any(|a| a.eq_ignore_ascii_case(host))
         {
             return Err(DomainFilterError::NotAllowlisted(host.to_string()));
         }

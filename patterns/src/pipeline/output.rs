@@ -66,4 +66,3 @@ pub enum PipelineError {
     #[error("invalid exit condition: {message}")]
     InvalidExitCondition { message: String },
 }
-

@@ -34,10 +34,7 @@ impl PreDispatchPolicy for RateLimitPolicy {
             return PreDispatchVerdict::Continue;
         }
 
-        let mut timestamps = self
-            .state
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let mut timestamps = self.state.lock().unwrap_or_else(|e| e.into_inner());
 
         // Prune timestamps older than 60 seconds.
         let cutoff = Instant::now().checked_sub(Duration::from_secs(60)).unwrap();

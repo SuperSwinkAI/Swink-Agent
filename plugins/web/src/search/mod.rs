@@ -3,17 +3,17 @@ use std::pin::Pin;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-#[cfg(feature = "duckduckgo")]
-mod duckduckgo;
 #[cfg(feature = "brave")]
 mod brave;
+#[cfg(feature = "duckduckgo")]
+mod duckduckgo;
 #[cfg(feature = "tavily")]
 mod tavily;
 
-#[cfg(feature = "duckduckgo")]
-pub use duckduckgo::DuckDuckGoProvider;
 #[cfg(feature = "brave")]
 pub use brave::BraveProvider;
+#[cfg(feature = "duckduckgo")]
+pub use duckduckgo::DuckDuckGoProvider;
 #[cfg(feature = "tavily")]
 pub use tavily::TavilyProvider;
 
@@ -47,5 +47,7 @@ pub trait SearchProvider: Send + Sync {
         &self,
         query: &str,
         max_results: usize,
-    ) -> Pin<Box<dyn std::future::Future<Output = Result<Vec<SearchResult>, SearchError>> + Send + '_>>;
+    ) -> Pin<
+        Box<dyn std::future::Future<Output = Result<Vec<SearchResult>, SearchError>> + Send + '_>,
+    >;
 }

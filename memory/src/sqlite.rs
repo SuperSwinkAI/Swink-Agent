@@ -195,7 +195,6 @@ impl SqliteSessionStore {
     }
 }
 
-
 #[allow(clippy::significant_drop_tightening)]
 impl SessionStore for SqliteSessionStore {
     fn save(&self, id: &str, meta: &SessionMeta, messages: &[AgentMessage]) -> io::Result<()> {

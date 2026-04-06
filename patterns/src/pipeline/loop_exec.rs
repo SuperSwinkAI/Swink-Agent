@@ -3,9 +3,9 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use tokio_util::sync::CancellationToken;
 use swink_agent::types::Usage;
 use swink_agent::{AgentMessage, AgentResult, ContentBlock, LlmMessage};
+use tokio_util::sync::CancellationToken;
 
 use super::events::PipelineEvent;
 use super::executor::AgentFactory;
@@ -70,13 +70,14 @@ pub(crate) async fn run_loop(
         }
 
         // Run the agent.
-        let result = agent.prompt_async(messages).await.map_err(|e| {
-            PipelineError::StepFailed {
+        let result = agent
+            .prompt_async(messages)
+            .await
+            .map_err(|e| PipelineError::StepFailed {
                 step_index: iteration,
                 agent_name: body.clone(),
                 source: Box::new(e),
-            }
-        })?;
+            })?;
 
         let step_duration = step_start.elapsed();
         let response_text = extract_text(&result);
@@ -137,10 +138,7 @@ pub(crate) async fn run_loop(
         ExitCondition::MaxIterations => {
             // MaxIterations exit condition: success after running all iterations.
             let total_duration = pipeline_start.elapsed();
-            let final_response = accumulated_responses
-                .last()
-                .cloned()
-                .unwrap_or_default();
+            let final_response = accumulated_responses.last().cloned().unwrap_or_default();
             if let Some(handler) = event_handler {
                 handler(PipelineEvent::Completed {
                     pipeline_id: id.clone(),
@@ -188,9 +186,10 @@ fn extract_text(result: &AgentResult) -> String {
 /// Check whether the agent result contains a tool call with the given name.
 fn check_tool_called(result: &AgentResult, tool_name: &str) -> bool {
     result.messages.iter().any(|m| match m {
-        AgentMessage::Llm(LlmMessage::Assistant(msg)) => msg.content.iter().any(|b| {
-            matches!(b, ContentBlock::ToolCall { name, .. } if name == tool_name)
-        }),
+        AgentMessage::Llm(LlmMessage::Assistant(msg)) => msg
+            .content
+            .iter()
+            .any(|b| matches!(b, ContentBlock::ToolCall { name, .. } if name == tool_name)),
         _ => false,
     })
 }
@@ -211,10 +210,10 @@ mod tests {
     use super::*;
     use std::sync::Arc;
 
+    use swink_agent::AgentOptions;
     use swink_agent::testing::{
         MockStreamFn, default_convert, default_model, text_events, tool_call_events,
     };
-    use swink_agent::AgentOptions;
 
     use crate::pipeline::executor::SimpleAgentFactory;
 

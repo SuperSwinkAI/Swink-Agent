@@ -725,6 +725,9 @@ mod tests {
         // Debug output does not expose argument values
         let debug_str = format!("{ctx:?}");
         assert!(debug_str.contains("write_file"));
-        assert!(!debug_str.contains("/tmp/file"), "arguments must be redacted in Debug");
+        assert!(
+            !debug_str.contains("/tmp/file"),
+            "arguments must be redacted in Debug"
+        );
     }
 }

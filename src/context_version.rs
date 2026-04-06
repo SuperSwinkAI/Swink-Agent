@@ -542,10 +542,10 @@ mod tests {
 
         let body = "x".repeat(400); // 100 tokens each
         let mut messages = vec![
-            text_message(&body),                                     // anchor
-            AgentMessage::Custom(Box::new(Marker)),                  // custom — dropped but excluded
-            text_message(&body),                                     // dropped
-            text_message(&body),                                     // tail
+            text_message(&body),                    // anchor
+            AgentMessage::Custom(Box::new(Marker)), // custom — dropped but excluded
+            text_message(&body),                    // dropped
+            text_message(&body),                    // tail
         ];
         // Budget 250, anchor=1: anchor(100t) + tail(100t) fits.
         let report = compact_sliding_window_with(&mut messages, 250, 1, None).unwrap();

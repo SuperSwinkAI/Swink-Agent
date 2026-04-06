@@ -51,11 +51,7 @@ impl ContentSanitizerPolicy {
                 modified = true;
             }
         }
-        if modified {
-            Some(result)
-        } else {
-            None
-        }
+        if modified { Some(result) } else { None }
     }
 }
 
@@ -77,12 +73,11 @@ impl PostTurnPolicy for ContentSanitizerPolicy {
             .content
             .iter()
             .filter_map(|block| {
-                if let ContentBlock::ToolCall {
-                    id, name, ..
-                } = block
-                    && name.starts_with("web.") {
-                        return Some(id.as_str());
-                    }
+                if let ContentBlock::ToolCall { id, name, .. } = block
+                    && name.starts_with("web.")
+                {
+                    return Some(id.as_str());
+                }
                 None
             })
             .collect();

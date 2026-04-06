@@ -22,7 +22,11 @@ pub struct FetchTool {
 impl FetchTool {
     /// Create a new `FetchTool` with the given HTTP client, content length limit,
     /// and request timeout.
-    pub fn new(client: reqwest::Client, max_content_length: usize, request_timeout: Duration) -> Self {
+    pub fn new(
+        client: reqwest::Client,
+        max_content_length: usize,
+        request_timeout: Duration,
+    ) -> Self {
         let schema = serde_json::json!({
             "type": "object",
             "properties": {
@@ -93,7 +97,10 @@ impl AgentTool for FetchTool {
             }
 
             // Send GET request with timeout.
-            let request = self.client.get(parsed_url.clone()).timeout(self.request_timeout);
+            let request = self
+                .client
+                .get(parsed_url.clone())
+                .timeout(self.request_timeout);
 
             let response = tokio::select! {
                 result = request.send() => {
@@ -134,7 +141,9 @@ impl AgentTool for FetchTool {
             // Read response bytes.
             let bytes = match response.bytes().await {
                 Ok(b) => b,
-                Err(e) => return AgentToolResult::error(format!("Failed to read response body: {e}")),
+                Err(e) => {
+                    return AgentToolResult::error(format!("Failed to read response body: {e}"));
+                }
             };
 
             // Extract readable content.

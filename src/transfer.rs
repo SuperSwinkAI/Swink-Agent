@@ -331,8 +331,7 @@ mod tests {
             timestamp: 0,
             cache_hint: None,
         });
-        let signal =
-            TransferSignal::new("tech", "tech issue").with_conversation_history(vec![msg]);
+        let signal = TransferSignal::new("tech", "tech issue").with_conversation_history(vec![msg]);
         assert_eq!(signal.conversation_history().len(), 1);
     }
 
@@ -628,10 +627,7 @@ mod tests {
             registry.register("tech", dummy_agent());
 
             // Only allow billing
-            let tool = TransferToAgentTool::with_allowed_targets(
-                registry,
-                vec!["billing"],
-            );
+            let tool = TransferToAgentTool::with_allowed_targets(registry, vec!["billing"]);
             let params = serde_json::json!({
                 "agent_name": "tech",
                 "reason": "tech question"
@@ -667,10 +663,7 @@ mod tests {
             let registry = std::sync::Arc::new(AgentRegistry::new());
             registry.register("billing", dummy_agent());
 
-            let tool = TransferToAgentTool::with_allowed_targets(
-                registry,
-                vec!["billing"],
-            );
+            let tool = TransferToAgentTool::with_allowed_targets(registry, vec!["billing"]);
             let params = serde_json::json!({
                 "agent_name": "billing",
                 "reason": "billing question"

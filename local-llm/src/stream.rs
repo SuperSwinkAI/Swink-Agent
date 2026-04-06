@@ -179,8 +179,7 @@ mod channel_thought {
                             continue;
                         }
                         // Check for partial close delimiter at end.
-                        if let Some(partial_len) =
-                            partial_prefix_at_end(&self.buffer, CLOSE_DELIM)
+                        if let Some(partial_len) = partial_prefix_at_end(&self.buffer, CLOSE_DELIM)
                         {
                             let flush_end = self.buffer.len() - partial_len;
                             let flush = &self.buffer[..flush_end];
@@ -322,9 +321,7 @@ mod tool_call {
                             self.state = State::InName;
                             continue;
                         }
-                        if let Some(partial_len) =
-                            partial_prefix_at_end(&self.buffer, OPEN_DELIM)
-                        {
+                        if let Some(partial_len) = partial_prefix_at_end(&self.buffer, OPEN_DELIM) {
                             let flush_end = self.buffer.len() - partial_len;
                             let flush = &self.buffer[..flush_end];
                             if !flush.is_empty() {
@@ -385,8 +382,7 @@ mod tool_call {
                             self.state = State::Normal;
                             continue;
                         }
-                        if let Some(partial_len) =
-                            partial_prefix_at_end(&self.buffer, CLOSE_DELIM)
+                        if let Some(partial_len) = partial_prefix_at_end(&self.buffer, CLOSE_DELIM)
                         {
                             let flush_end = self.buffer.len() - partial_len;
                             self.args_buf.push_str(&self.buffer[..flush_end]);
@@ -999,8 +995,7 @@ mod tests {
         #[test]
         fn channel_thought_single_chunk() {
             let mut parser = ChannelThoughtParser::new();
-            let (thinking, text) =
-                parser.process("<|channel>thought\nreasoning here<channel|>");
+            let (thinking, text) = parser.process("<|channel>thought\nreasoning here<channel|>");
             assert_eq!(thinking.as_deref(), Some("reasoning here"));
             assert!(text.is_none());
         }
@@ -1022,8 +1017,7 @@ mod tests {
         #[test]
         fn channel_thought_cross_chunk_close() {
             let mut parser = ChannelThoughtParser::new();
-            let (t1, txt1) =
-                parser.process("<|channel>thought\nsome reasoning<chan");
+            let (t1, txt1) = parser.process("<|channel>thought\nsome reasoning<chan");
             // Thinking content flushed, partial close buffered.
             assert_eq!(t1.as_deref(), Some("some reasoning"));
             assert!(txt1.is_none());
@@ -1059,8 +1053,7 @@ mod tests {
             assert!(t1.is_none());
             assert_eq!(txt1.as_deref(), Some("before "));
 
-            let (t2, txt2) =
-                parser.process("<|channel>thought\nreasoning<channel|>");
+            let (t2, txt2) = parser.process("<|channel>thought\nreasoning<channel|>");
             assert_eq!(t2.as_deref(), Some("reasoning"));
             assert!(txt2.is_none());
 
@@ -1132,8 +1125,7 @@ reasoning<channel|><|tool_call>call:read_file{"path":"foo.rs"}<tool_call|>"#;
             // Quoted delimiter text without the trailing newline should NOT trigger.
             // `<|channel>thought` without `\n` is not a valid open delimiter.
             let mut parser = ChannelThoughtParser::new();
-            let (thinking, text) =
-                parser.process("The format is <|channel>thought end");
+            let (thinking, text) = parser.process("The format is <|channel>thought end");
             assert!(thinking.is_none());
             // The parser sees a partial open at `<|channel>thought` but then
             // gets ` end` which doesn't continue the delimiter — flushes as text.

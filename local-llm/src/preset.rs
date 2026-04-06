@@ -76,9 +76,8 @@ impl ModelPreset {
             },
             #[cfg(feature = "gemma4")]
             Self::Gemma4E2B => ModelConfig {
-                repo_id: std::env::var("LOCAL_MODEL_REPO").unwrap_or_else(|_| {
-                    "google/gemma-4-E2B-it".to_string()
-                }),
+                repo_id: std::env::var("LOCAL_MODEL_REPO")
+                    .unwrap_or_else(|_| "google/gemma-4-E2B-it".to_string()),
                 filename: String::new(), // safetensors, not GGUF
                 context_length: std::env::var("LOCAL_CONTEXT_LENGTH")
                     .ok()
@@ -92,9 +91,8 @@ impl ModelPreset {
             },
             #[cfg(feature = "gemma4")]
             Self::Gemma4E4B => ModelConfig {
-                repo_id: std::env::var("LOCAL_MODEL_REPO").unwrap_or_else(|_| {
-                    "google/gemma-4-E4B-it".to_string()
-                }),
+                repo_id: std::env::var("LOCAL_MODEL_REPO")
+                    .unwrap_or_else(|_| "google/gemma-4-E4B-it".to_string()),
                 filename: String::new(), // safetensors, not GGUF
                 context_length: std::env::var("LOCAL_CONTEXT_LENGTH")
                     .ok()
@@ -108,9 +106,8 @@ impl ModelPreset {
             },
             #[cfg(feature = "gemma4")]
             Self::Gemma4_26B => ModelConfig {
-                repo_id: std::env::var("LOCAL_MODEL_REPO").unwrap_or_else(|_| {
-                    "google/gemma-4-26B-A4B-it".to_string()
-                }),
+                repo_id: std::env::var("LOCAL_MODEL_REPO")
+                    .unwrap_or_else(|_| "google/gemma-4-26B-A4B-it".to_string()),
                 filename: String::new(), // safetensors, not GGUF
                 context_length: std::env::var("LOCAL_CONTEXT_LENGTH")
                     .ok()
@@ -124,9 +121,8 @@ impl ModelPreset {
             },
             #[cfg(feature = "gemma4")]
             Self::Gemma4_31B => ModelConfig {
-                repo_id: std::env::var("LOCAL_MODEL_REPO").unwrap_or_else(|_| {
-                    "google/gemma-4-31B-it".to_string()
-                }),
+                repo_id: std::env::var("LOCAL_MODEL_REPO")
+                    .unwrap_or_else(|_| "google/gemma-4-31B-it".to_string()),
                 filename: String::new(), // safetensors, not GGUF
                 context_length: std::env::var("LOCAL_CONTEXT_LENGTH")
                     .ok()
@@ -159,11 +155,13 @@ impl ModelPreset {
                 dimensions: 768,
             },
             #[cfg(feature = "gemma4")]
-            Self::Gemma4E2B | Self::Gemma4E4B | Self::Gemma4_26B | Self::Gemma4_31B => EmbeddingConfig {
-                repo_id: "google/gemma-embedding-300m".to_string(),
-                filename: String::new(),
-                dimensions: 768,
-            },
+            Self::Gemma4E2B | Self::Gemma4E4B | Self::Gemma4_26B | Self::Gemma4_31B => {
+                EmbeddingConfig {
+                    repo_id: "google/gemma-embedding-300m".to_string(),
+                    filename: String::new(),
+                    dimensions: 768,
+                }
+            }
         }
     }
 

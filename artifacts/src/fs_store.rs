@@ -63,7 +63,10 @@ impl FileArtifactStore {
     async fn artifact_lock(&self, session_id: &str, name: &str) -> Arc<Mutex<()>> {
         let key = (session_id.to_string(), name.to_string());
         let mut locks = self.locks.lock().await;
-        locks.entry(key).or_insert_with(|| Arc::new(Mutex::new(()))).clone()
+        locks
+            .entry(key)
+            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .clone()
     }
 
     /// Path to the artifact directory: `{root}/{session_id}/{artifact_name}/`
@@ -78,7 +81,8 @@ impl FileArtifactStore {
 
     /// Path to versioned content file.
     pub(crate) fn version_path(&self, session_id: &str, name: &str, version: u32) -> PathBuf {
-        self.artifact_dir(session_id, name).join(format!("v{version}.bin"))
+        self.artifact_dir(session_id, name)
+            .join(format!("v{version}.bin"))
     }
 
     /// Read meta.json, returning an empty `MetaFile` if it doesn't exist.
@@ -86,9 +90,9 @@ impl FileArtifactStore {
         let path = self.meta_path(session_id, name);
         match tokio::fs::read_to_string(&path).await {
             Ok(contents) => serde_json::from_str(&contents).map_err(storage_err),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                Ok(MetaFile { versions: Vec::new() })
-            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(MetaFile {
+                versions: Vec::new(),
+            }),
             Err(e) => Err(storage_err(e)),
         }
     }
@@ -105,8 +109,12 @@ impl FileArtifactStore {
         let tmp_path = dir.join("meta.json.tmp");
 
         let json = serde_json::to_string_pretty(meta).map_err(storage_err)?;
-        tokio::fs::write(&tmp_path, json.as_bytes()).await.map_err(storage_err)?;
-        tokio::fs::rename(&tmp_path, &meta_path).await.map_err(storage_err)?;
+        tokio::fs::write(&tmp_path, json.as_bytes())
+            .await
+            .map_err(storage_err)?;
+        tokio::fs::rename(&tmp_path, &meta_path)
+            .await
+            .map_err(storage_err)?;
 
         Ok(())
     }
@@ -115,10 +123,7 @@ impl FileArtifactStore {
     ///
     /// Recursively discovers artifact directories (those containing `meta.json`),
     /// returning artifact names relative to the session directory.
-    async fn discover_artifacts(
-        &self,
-        session_id: &str,
-    ) -> Result<Vec<String>, ArtifactError> {
+    async fn discover_artifacts(&self, session_id: &str) -> Result<Vec<String>, ArtifactError> {
         let session_dir = self.root.join(session_id);
         if !session_dir.exists() {
             return Ok(Vec::new());
@@ -230,7 +235,12 @@ impl ArtifactStore for FileArtifactStore {
         let content = match tokio::fs::read(&content_path).await {
             Ok(bytes) => bytes,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                tracing::debug!(session_id, name, version = record.version, "content file missing");
+                tracing::debug!(
+                    session_id,
+                    name,
+                    version = record.version,
+                    "content file missing"
+                );
                 return Ok(None);
             }
             Err(e) => return Err(storage_err(e)),
@@ -249,7 +259,12 @@ impl ArtifactStore for FileArtifactStore {
             content_type: record.content_type.clone(),
         };
 
-        tracing::debug!(session_id, name, version = record.version, "artifact loaded");
+        tracing::debug!(
+            session_id,
+            name,
+            version = record.version,
+            "artifact loaded"
+        );
         Ok(Some((data, version)))
     }
 

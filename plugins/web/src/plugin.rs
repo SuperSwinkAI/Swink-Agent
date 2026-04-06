@@ -9,10 +9,10 @@ use swink_agent::tool::AgentTool;
 
 use crate::config::{SearchProviderKind, WebPluginConfig, WebPluginConfigBuilder};
 use crate::domain::DomainFilter;
+use crate::playwright::{PlaywrightBridge, Viewport};
 use crate::policy::domain_filter::DomainFilterPolicy;
 use crate::policy::rate_limiter::RateLimitPolicy;
 use crate::policy::sanitizer::ContentSanitizerPolicy;
-use crate::playwright::{PlaywrightBridge, Viewport};
 use crate::tools::extract::ExtractTool;
 use crate::tools::fetch::FetchTool;
 use crate::tools::screenshot::ScreenshotTool;
@@ -47,7 +47,9 @@ impl WebPlugin {
     pub fn from_config(config: WebPluginConfig) -> Self {
         let http_client = reqwest::Client::builder()
             .user_agent(&config.user_agent)
-            .redirect(reqwest::redirect::Policy::limited(config.max_redirects as usize))
+            .redirect(reqwest::redirect::Policy::limited(
+                config.max_redirects as usize,
+            ))
             .timeout(config.request_timeout)
             .build()
             .expect("Failed to build HTTP client");
@@ -65,9 +67,9 @@ impl WebPlugin {
         let provider: Arc<dyn crate::search::SearchProvider> =
             match &self.config.search_provider_kind {
                 #[cfg(feature = "duckduckgo")]
-                SearchProviderKind::DuckDuckGo => Arc::new(
-                    crate::search::DuckDuckGoProvider::new(self.http_client.clone()),
-                ),
+                SearchProviderKind::DuckDuckGo => Arc::new(crate::search::DuckDuckGoProvider::new(
+                    self.http_client.clone(),
+                )),
                 #[cfg(not(feature = "duckduckgo"))]
                 SearchProviderKind::DuckDuckGo => {
                     panic!("DuckDuckGo search provider requires the 'duckduckgo' feature")

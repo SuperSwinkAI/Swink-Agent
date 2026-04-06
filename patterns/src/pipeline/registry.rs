@@ -77,8 +77,8 @@ impl Default for PipelineRegistry {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::types::Pipeline;
+    use super::*;
 
     #[test]
     fn register_and_get() {

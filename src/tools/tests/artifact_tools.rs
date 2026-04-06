@@ -8,13 +8,13 @@ use serde_json::json;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
+use crate::SessionState;
 use crate::artifact::{
     ArtifactData, ArtifactError, ArtifactMeta, ArtifactStore, ArtifactVersion,
     validate_artifact_name,
 };
 use crate::tool::{AgentTool, AgentToolResult};
 use crate::types::ContentBlock;
-use crate::SessionState;
 
 // ─── Mock Store ────────────────────────────────────────────────────────────
 
@@ -237,9 +237,15 @@ async fn load_artifact_tool_returns_binary_summary() {
 
     assert!(!result.is_error);
     let text = result_text(&result);
-    assert!(text.contains("[binary:"), "expected binary marker in: {text}");
+    assert!(
+        text.contains("[binary:"),
+        "expected binary marker in: {text}"
+    );
     assert!(text.contains("4 bytes"), "expected size in: {text}");
-    assert!(text.contains("image/png"), "expected content type in: {text}");
+    assert!(
+        text.contains("image/png"),
+        "expected content type in: {text}"
+    );
 }
 
 #[tokio::test]
@@ -275,22 +281,12 @@ async fn list_artifacts_tool_returns_formatted_list() {
 
     let list_tool = ListArtifactsTool::new(store);
     let result = list_tool
-        .execute(
-            "c3",
-            json!({}),
-            cancel_token(),
-            None,
-            state,
-            None,
-        )
+        .execute("c3", json!({}), cancel_token(), None, state, None)
         .await;
 
     assert!(!result.is_error);
     let text = result_text(&result);
-    assert!(
-        text.starts_with("Artifacts:"),
-        "expected header in: {text}"
-    );
+    assert!(text.starts_with("Artifacts:"), "expected header in: {text}");
     assert!(text.contains("report.md"), "expected report.md in: {text}");
     assert!(text.contains("data.csv"), "expected data.csv in: {text}");
 }
@@ -304,14 +300,7 @@ async fn list_artifacts_tool_empty_session() {
 
     let list_tool = ListArtifactsTool::new(store);
     let result = list_tool
-        .execute(
-            "c1",
-            json!({}),
-            cancel_token(),
-            None,
-            state,
-            None,
-        )
+        .execute("c1", json!({}), cancel_token(), None, state, None)
         .await;
 
     assert!(!result.is_error);

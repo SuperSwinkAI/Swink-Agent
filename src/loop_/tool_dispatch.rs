@@ -141,7 +141,9 @@ pub async fn execute_tools_concurrently(
         // ── PreDispatch policies ──
         let mut effective_arguments = tc.arguments.clone();
         {
-            use crate::policy::{PreDispatchVerdict, ToolDispatchContext, run_pre_dispatch_policies};
+            use crate::policy::{
+                PreDispatchVerdict, ToolDispatchContext, run_pre_dispatch_policies,
+            };
 
             let state_snapshot = {
                 let guard = config

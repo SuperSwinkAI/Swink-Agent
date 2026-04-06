@@ -13,11 +13,11 @@ use std::time::Duration;
 
 use serde_json::json;
 
+use swink_agent::testing::SimpleMockStreamFn;
 use swink_agent::{
     Agent, AgentEvent, AgentMessage, AgentOptions, AgentRegistry, AgentTool, AgentToolResult,
     ContentBlock, DefaultRetryStrategy, LlmMessage, ModelSpec, StopReason, TransferToAgentTool,
 };
-use swink_agent::testing::SimpleMockStreamFn;
 
 use common::{
     EventCollector, MockStreamFn, MockTool, default_convert, default_model, text_only_events,
@@ -72,15 +72,17 @@ fn registry_with_billing() -> Arc<AgentRegistry> {
 }
 
 /// Build an Agent with the transfer tool and the given mock stream.
-fn make_transfer_agent(
-    stream_fn: Arc<MockStreamFn>,
-    registry: Arc<AgentRegistry>,
-) -> Agent {
+fn make_transfer_agent(stream_fn: Arc<MockStreamFn>, registry: Arc<AgentRegistry>) -> Agent {
     let transfer_tool = Arc::new(TransferToAgentTool::new(registry));
     Agent::new(
-        AgentOptions::new("test system prompt", default_model(), stream_fn, default_convert)
-            .with_tools(vec![transfer_tool as Arc<dyn AgentTool>])
-            .with_retry_strategy(fast_retry()),
+        AgentOptions::new(
+            "test system prompt",
+            default_model(),
+            stream_fn,
+            default_convert,
+        )
+        .with_tools(vec![transfer_tool as Arc<dyn AgentTool>])
+        .with_retry_strategy(fast_retry()),
     )
 }
 
@@ -103,7 +105,10 @@ async fn agent_loop_detects_transfer_and_terminates_with_transfer_stop_reason() 
     ]));
 
     let mut agent = make_transfer_agent(stream_fn, registry);
-    let result = agent.prompt_async(vec![user_msg("transfer me to billing")]).await.unwrap();
+    let result = agent
+        .prompt_async(vec![user_msg("transfer me to billing")])
+        .await
+        .unwrap();
 
     assert_eq!(
         result.stop_reason,
@@ -140,7 +145,10 @@ async fn transfer_initiated_event_emitted_on_transfer() {
     let collector = EventCollector::new();
     agent.subscribe(collector.subscriber());
 
-    let result = agent.prompt_async(vec![user_msg("transfer me")]).await.unwrap();
+    let result = agent
+        .prompt_async(vec![user_msg("transfer me")])
+        .await
+        .unwrap();
 
     assert_eq!(result.stop_reason, StopReason::Transfer);
 
@@ -151,7 +159,10 @@ async fn transfer_initiated_event_emitted_on_transfer() {
     );
 
     // Verify ordering: TransferInitiated should come before AgentEnd
-    let transfer_pos = events.iter().position(|e| e == "TransferInitiated").unwrap();
+    let transfer_pos = events
+        .iter()
+        .position(|e| e == "TransferInitiated")
+        .unwrap();
     let agent_end_pos = events.iter().position(|e| e == "AgentEnd").unwrap();
     assert!(
         transfer_pos < agent_end_pos,
@@ -198,7 +209,10 @@ async fn transfer_signal_contains_conversation_history() {
 
     // Should contain at least one User message
     let has_user = history.iter().any(|m| matches!(m, LlmMessage::User(_)));
-    assert!(has_user, "conversation_history should contain a User message");
+    assert!(
+        has_user,
+        "conversation_history should contain a User message"
+    );
 }
 
 // ─── T040: Only first transfer signal honored in multi-transfer ─────────────
@@ -234,7 +248,10 @@ async fn only_first_transfer_signal_honored_when_multiple_transfers_in_same_turn
             .with_retry_strategy(fast_retry()),
     );
 
-    let result = agent.prompt_async(vec![user_msg("transfer me")]).await.unwrap();
+    let result = agent
+        .prompt_async(vec![user_msg("transfer me")])
+        .await
+        .unwrap();
 
     assert_eq!(result.stop_reason, StopReason::Transfer);
     let signal = result.transfer_signal.as_ref().unwrap();
@@ -284,7 +301,10 @@ async fn cancellation_takes_precedence_over_transfer() {
     // Abort immediately — cancellation should prevent transfer from completing
     agent.abort();
 
-    let result = agent.prompt_async(vec![user_msg("do stuff")]).await.unwrap();
+    let result = agent
+        .prompt_async(vec![user_msg("do stuff")])
+        .await
+        .unwrap();
 
     // The abort should cause the loop to terminate with Aborted.
     // If the transfer tool completes before cancellation propagates,
@@ -342,9 +362,11 @@ async fn transfer_alongside_other_tools_processes_all_results() {
     );
 
     // Both tool results should appear in the message history
-    let tool_result_count = result.messages.iter().filter(|msg| {
-        matches!(msg, AgentMessage::Llm(LlmMessage::ToolResult(_)))
-    }).count();
+    let tool_result_count = result
+        .messages
+        .iter()
+        .filter(|msg| matches!(msg, AgentMessage::Llm(LlmMessage::ToolResult(_))))
+        .count();
 
     assert!(
         tool_result_count >= 2,
@@ -379,7 +401,10 @@ async fn transfer_to_nonexistent_agent_produces_error_and_loop_continues() {
             .with_retry_strategy(fast_retry()),
     );
 
-    let result = agent.prompt_async(vec![user_msg("transfer me")]).await.unwrap();
+    let result = agent
+        .prompt_async(vec![user_msg("transfer me")])
+        .await
+        .unwrap();
 
     // Should NOT be Transfer — the tool returned an error, not a signal
     assert_ne!(

@@ -41,11 +41,7 @@ impl DuckDuckGoProvider {
                         break;
                     }
                     let title = link_el.text().collect::<String>().trim().to_owned();
-                    let url = link_el
-                        .value()
-                        .attr("href")
-                        .unwrap_or_default()
-                        .to_owned();
+                    let url = link_el.value().attr("href").unwrap_or_default().to_owned();
                     let snippet = snippets
                         .get(i)
                         .map(|el| el.text().collect::<String>().trim().to_owned())
@@ -80,10 +76,7 @@ impl DuckDuckGoProvider {
                         let title = a_el.text().collect::<String>().trim().to_owned();
                         // Use the remaining row text (minus the link text) as snippet.
                         let full_text = row.text().collect::<String>();
-                        let snippet = full_text
-                            .replace(&title, "")
-                            .trim()
-                            .to_owned();
+                        let snippet = full_text.replace(&title, "").trim().to_owned();
                         results.push(SearchResult {
                             title,
                             url: href.to_owned(),
@@ -108,7 +101,9 @@ impl SearchProvider for DuckDuckGoProvider {
         &self,
         query: &str,
         max_results: usize,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<SearchResult>, SearchError>> + Send + '_>> {
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<Vec<SearchResult>, SearchError>> + Send + '_>,
+    > {
         let query = query.to_owned();
         Box::pin(async move {
             let response = self

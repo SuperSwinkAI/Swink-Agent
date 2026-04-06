@@ -16,9 +16,9 @@ use crate::types::{
 use futures::Stream;
 use serde_json::Value;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 #[cfg(feature = "plugins")]
 use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;

@@ -36,6 +36,187 @@ impl RemotePresetKey {
     }
 }
 
+#[allow(unused_imports)]
+pub mod remote_preset_keys {
+    use super::RemotePresetKey;
+
+    #[cfg(feature = "anthropic")]
+    pub mod anthropic {
+        use super::RemotePresetKey;
+
+        pub const OPUS_46: RemotePresetKey = RemotePresetKey::new("anthropic", "opus_46");
+        pub const SONNET_46: RemotePresetKey = RemotePresetKey::new("anthropic", "sonnet_46");
+        pub const HAIKU_45: RemotePresetKey = RemotePresetKey::new("anthropic", "haiku_45");
+    }
+
+    #[cfg(feature = "openai")]
+    pub mod openai {
+        use super::RemotePresetKey;
+
+        pub const GPT_4O: RemotePresetKey = RemotePresetKey::new("openai", "gpt_4o");
+        pub const GPT_4_1: RemotePresetKey = RemotePresetKey::new("openai", "gpt_4_1");
+        pub const GPT_4O_MINI: RemotePresetKey = RemotePresetKey::new("openai", "gpt_4o_mini");
+        pub const GPT_4_1_MINI: RemotePresetKey = RemotePresetKey::new("openai", "gpt_4_1_mini");
+        pub const O3_MINI: RemotePresetKey = RemotePresetKey::new("openai", "o3_mini");
+        pub const O1: RemotePresetKey = RemotePresetKey::new("openai", "o1");
+    }
+
+    #[cfg(feature = "gemini")]
+    pub mod google {
+        use super::RemotePresetKey;
+
+        pub const GEMINI_3_1_PRO: RemotePresetKey =
+            RemotePresetKey::new("google", "gemini_3_1_pro");
+        pub const GEMINI_3_1_DEEP_THINK: RemotePresetKey =
+            RemotePresetKey::new("google", "gemini_3_1_deep_think");
+        pub const GEMINI_3_FLASH: RemotePresetKey =
+            RemotePresetKey::new("google", "gemini_3_flash");
+        pub const GEMINI_3_1_FLASH_LITE: RemotePresetKey =
+            RemotePresetKey::new("google", "gemini_3_1_flash_lite");
+    }
+
+    #[cfg(feature = "azure")]
+    pub mod azure {
+        use super::RemotePresetKey;
+
+        pub const GPT_4O: RemotePresetKey = RemotePresetKey::new("azure", "gpt_4o");
+        pub const GPT_4O_MINI: RemotePresetKey = RemotePresetKey::new("azure", "gpt_4o_mini");
+        pub const PHI_4: RemotePresetKey = RemotePresetKey::new("azure", "phi_4");
+    }
+
+    #[cfg(feature = "xai")]
+    pub mod xai {
+        use super::RemotePresetKey;
+
+        pub const GROK_4_20_REASONING: RemotePresetKey =
+            RemotePresetKey::new("xai", "grok_4_20_reasoning");
+        pub const GROK_4_20_NON_REASONING: RemotePresetKey =
+            RemotePresetKey::new("xai", "grok_4_20_non_reasoning");
+        pub const GROK_4_1_FAST_REASONING: RemotePresetKey =
+            RemotePresetKey::new("xai", "grok_4_1_fast_reasoning");
+        pub const GROK_4_1_FAST_NON_REASONING: RemotePresetKey =
+            RemotePresetKey::new("xai", "grok_4_1_fast_non_reasoning");
+        pub const GROK_4_20_MULTI_AGENT: RemotePresetKey =
+            RemotePresetKey::new("xai", "grok_4_20_multi_agent");
+    }
+
+    #[cfg(feature = "mistral")]
+    pub mod mistral {
+        use super::RemotePresetKey;
+
+        pub const MISTRAL_LARGE: RemotePresetKey = RemotePresetKey::new("mistral", "mistral_large");
+        pub const MISTRAL_MEDIUM: RemotePresetKey =
+            RemotePresetKey::new("mistral", "mistral_medium");
+        pub const MISTRAL_SMALL: RemotePresetKey = RemotePresetKey::new("mistral", "mistral_small");
+        pub const MINISTRAL_3B: RemotePresetKey = RemotePresetKey::new("mistral", "ministral_3b");
+        pub const MINISTRAL_8B: RemotePresetKey = RemotePresetKey::new("mistral", "ministral_8b");
+        pub const MINISTRAL_14B: RemotePresetKey = RemotePresetKey::new("mistral", "ministral_14b");
+        pub const MAGISTRAL_MEDIUM: RemotePresetKey =
+            RemotePresetKey::new("mistral", "magistral_medium");
+        pub const MAGISTRAL_SMALL: RemotePresetKey =
+            RemotePresetKey::new("mistral", "magistral_small");
+        pub const CODESTRAL: RemotePresetKey = RemotePresetKey::new("mistral", "codestral");
+        pub const DEVSTRAL: RemotePresetKey = RemotePresetKey::new("mistral", "devstral");
+        pub const PIXTRAL_LARGE: RemotePresetKey = RemotePresetKey::new("mistral", "pixtral_large");
+        pub const PIXTRAL_12B: RemotePresetKey = RemotePresetKey::new("mistral", "pixtral_12b");
+    }
+
+    #[cfg(feature = "bedrock")]
+    pub mod bedrock {
+        use super::RemotePresetKey;
+
+        // Anthropic
+        pub const ANTHROPIC_CLAUDE_OPUS_46: RemotePresetKey =
+            RemotePresetKey::new("bedrock", "anthropic_claude_opus_46");
+        pub const ANTHROPIC_CLAUDE_SONNET_46: RemotePresetKey =
+            RemotePresetKey::new("bedrock", "anthropic_claude_sonnet_46");
+        pub const ANTHROPIC_CLAUDE_SONNET_45: RemotePresetKey =
+            RemotePresetKey::new("bedrock", "anthropic_claude_sonnet_45");
+        pub const ANTHROPIC_CLAUDE_HAIKU_45: RemotePresetKey =
+            RemotePresetKey::new("bedrock", "anthropic_claude_haiku_45");
+        pub const ANTHROPIC_CLAUDE_37_SONNET: RemotePresetKey =
+            RemotePresetKey::new("bedrock", "anthropic_claude_37_sonnet");
+        pub const ANTHROPIC_CLAUDE_35_SONNET_V2: RemotePresetKey =
+            RemotePresetKey::new("bedrock", "anthropic_claude_35_sonnet_v2");
+        pub const ANTHROPIC_CLAUDE_35_HAIKU: RemotePresetKey =
+            RemotePresetKey::new("bedrock", "anthropic_claude_35_haiku");
+        pub const ANTHROPIC_CLAUDE_3_OPUS: RemotePresetKey =
+            RemotePresetKey::new("bedrock", "anthropic_claude_3_opus");
+        pub const ANTHROPIC_CLAUDE_3_HAIKU: RemotePresetKey =
+            RemotePresetKey::new("bedrock", "anthropic_claude_3_haiku");
+
+        // Meta Llama
+        pub const META_LLAMA_4_SCOUT: RemotePresetKey =
+            RemotePresetKey::new("bedrock", "meta_llama_4_scout");
+        pub const META_LLAMA_4_MAVERICK: RemotePresetKey =
+            RemotePresetKey::new("bedrock", "meta_llama_4_maverick");
+        pub const META_LLAMA_33_70B: RemotePresetKey =
+            RemotePresetKey::new("bedrock", "meta_llama_33_70b");
+        pub const META_LLAMA_32_90B: RemotePresetKey =
+            RemotePresetKey::new("bedrock", "meta_llama_32_90b");
+        pub const META_LLAMA_32_11B: RemotePresetKey =
+            RemotePresetKey::new("bedrock", "meta_llama_32_11b");
+        pub const META_LLAMA_32_3B: RemotePresetKey =
+            RemotePresetKey::new("bedrock", "meta_llama_32_3b");
+        pub const META_LLAMA_32_1B: RemotePresetKey =
+            RemotePresetKey::new("bedrock", "meta_llama_32_1b");
+        pub const META_LLAMA_31_405B: RemotePresetKey =
+            RemotePresetKey::new("bedrock", "meta_llama_31_405b");
+        pub const META_LLAMA_31_70B: RemotePresetKey =
+            RemotePresetKey::new("bedrock", "meta_llama_31_70b");
+        pub const META_LLAMA_31_8B: RemotePresetKey =
+            RemotePresetKey::new("bedrock", "meta_llama_31_8b");
+
+        // Amazon Nova
+        pub const AMAZON_NOVA_2_PRO: RemotePresetKey =
+            RemotePresetKey::new("bedrock", "amazon_nova_2_pro");
+        pub const AMAZON_NOVA_2_LITE: RemotePresetKey =
+            RemotePresetKey::new("bedrock", "amazon_nova_2_lite");
+        pub const AMAZON_NOVA_PRO: RemotePresetKey =
+            RemotePresetKey::new("bedrock", "amazon_nova_pro");
+        pub const AMAZON_NOVA_LITE: RemotePresetKey =
+            RemotePresetKey::new("bedrock", "amazon_nova_lite");
+        pub const AMAZON_NOVA_MICRO: RemotePresetKey =
+            RemotePresetKey::new("bedrock", "amazon_nova_micro");
+        pub const AMAZON_NOVA_PREMIER: RemotePresetKey =
+            RemotePresetKey::new("bedrock", "amazon_nova_premier");
+
+        // Mistral
+        pub const MISTRAL_LARGE_3: RemotePresetKey =
+            RemotePresetKey::new("bedrock", "mistral_large_3");
+        pub const MISTRAL_LARGE_2407: RemotePresetKey =
+            RemotePresetKey::new("bedrock", "mistral_large_2407");
+        pub const MISTRAL_PIXTRAL_LARGE: RemotePresetKey =
+            RemotePresetKey::new("bedrock", "mistral_pixtral_large");
+        pub const MISTRAL_SMALL: RemotePresetKey = RemotePresetKey::new("bedrock", "mistral_small");
+        pub const MISTRAL_MIXTRAL_8X7B: RemotePresetKey =
+            RemotePresetKey::new("bedrock", "mistral_mixtral_8x7b");
+        pub const MISTRAL_7B: RemotePresetKey = RemotePresetKey::new("bedrock", "mistral_7b");
+
+        // DeepSeek
+        pub const DEEPSEEK_R1: RemotePresetKey = RemotePresetKey::new("bedrock", "deepseek_r1");
+
+        // AI21
+        pub const AI21_JAMBA_1_5_LARGE: RemotePresetKey =
+            RemotePresetKey::new("bedrock", "ai21_jamba_1_5_large");
+        pub const AI21_JAMBA_1_5_MINI: RemotePresetKey =
+            RemotePresetKey::new("bedrock", "ai21_jamba_1_5_mini");
+        pub const AI21_JAMBA_INSTRUCT: RemotePresetKey =
+            RemotePresetKey::new("bedrock", "ai21_jamba_instruct");
+
+        // Cohere
+        pub const COHERE_COMMAND_R_PLUS: RemotePresetKey =
+            RemotePresetKey::new("bedrock", "cohere_command_r_plus");
+        pub const COHERE_COMMAND_R: RemotePresetKey =
+            RemotePresetKey::new("bedrock", "cohere_command_r");
+
+        // Writer
+        pub const WRITER_PALMYRA_X5: RemotePresetKey =
+            RemotePresetKey::new("bedrock", "writer_palmyra_x5");
+        pub const WRITER_PALMYRA_X4: RemotePresetKey =
+            RemotePresetKey::new("bedrock", "writer_palmyra_x4");
+    }
+}
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum RemoteModelConnectionError {
     #[error("Unknown remote preset {provider_key}.{preset_id}")]
@@ -238,11 +419,10 @@ pub fn preset(model_id: &str) -> Option<CatalogPreset> {
 pub fn build_remote_connection_for_model(
     model_id: &str,
 ) -> Result<ModelConnection, RemoteModelConnectionError> {
-    let catalog_preset = preset(model_id).ok_or_else(|| {
-        RemoteModelConnectionError::UnknownModelId {
+    let catalog_preset =
+        preset(model_id).ok_or_else(|| RemoteModelConnectionError::UnknownModelId {
             model_id: model_id.to_string(),
-        }
-    })?;
+        })?;
     build_connection_from_preset(
         &catalog_preset,
         catalog_preset

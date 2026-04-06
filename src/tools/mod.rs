@@ -30,18 +30,18 @@ pub fn builtin_tools() -> Vec<std::sync::Arc<dyn crate::tool::AgentTool>> {
 }
 
 #[cfg(feature = "artifact-tools")]
-mod save_artifact;
+mod list_artifacts;
 #[cfg(feature = "artifact-tools")]
 mod load_artifact;
 #[cfg(feature = "artifact-tools")]
-mod list_artifacts;
+mod save_artifact;
 
 #[cfg(feature = "artifact-tools")]
-pub use save_artifact::SaveArtifactTool;
+pub use list_artifacts::ListArtifactsTool;
 #[cfg(feature = "artifact-tools")]
 pub use load_artifact::LoadArtifactTool;
 #[cfg(feature = "artifact-tools")]
-pub use list_artifacts::ListArtifactsTool;
+pub use save_artifact::SaveArtifactTool;
 
 /// Create all built-in artifact tools (save, load, list) backed by the given store.
 #[cfg(feature = "artifact-tools")]

@@ -14,9 +14,7 @@ fn pattern_bytes(size: usize) -> Vec<u8> {
 
 /// Collect a streaming load result into a `Vec<u8>`.
 async fn collect_stream(
-    stream: std::pin::Pin<
-        Box<dyn futures::Stream<Item = Result<Bytes, ArtifactError>> + Send>,
-    >,
+    stream: std::pin::Pin<Box<dyn futures::Stream<Item = Result<Bytes, ArtifactError>> + Send>>,
 ) -> Vec<u8> {
     let chunks: Vec<Bytes> = stream
         .map(|r| r.expect("stream chunk should succeed"))
@@ -76,9 +74,9 @@ async fn streaming_save_creates_version() {
     let store = FileArtifactStore::new(tmpdir.path());
 
     let content = b"streaming version test";
-    let input_stream = Box::pin(stream::iter(vec![
-        Ok(Bytes::copy_from_slice(content.as_slice())),
-    ]));
+    let input_stream = Box::pin(stream::iter(vec![Ok(Bytes::copy_from_slice(
+        content.as_slice(),
+    ))]));
 
     let v1 = store
         .save_stream(
@@ -101,9 +99,9 @@ async fn streaming_save_creates_version() {
 
     // Save a second version.
     let content2 = b"updated content";
-    let input_stream2 = Box::pin(stream::iter(vec![
-        Ok(Bytes::copy_from_slice(content2.as_slice())),
-    ]));
+    let input_stream2 = Box::pin(stream::iter(vec![Ok(Bytes::copy_from_slice(
+        content2.as_slice(),
+    ))]));
 
     let v2 = store
         .save_stream(

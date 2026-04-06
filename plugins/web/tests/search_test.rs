@@ -3,8 +3,8 @@ mod common;
 use std::sync::Arc;
 
 use serde_json::json;
-use swink_agent::tool::AgentTool;
 use swink_agent::SessionState;
+use swink_agent::tool::AgentTool;
 use tokio_util::sync::CancellationToken;
 
 // ─── DuckDuckGo HTML parsing ────────────────────────────────────────────────
@@ -136,10 +136,10 @@ impl SearchProvider for MockProvider {
         &self,
         _query: &str,
         max_results: usize,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<SearchResult>, SearchError>> + Send + '_>> {
-        Box::pin(async move {
-            Ok(self.results.iter().take(max_results).cloned().collect())
-        })
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<Vec<SearchResult>, SearchError>> + Send + '_>,
+    > {
+        Box::pin(async move { Ok(self.results.iter().take(max_results).cloned().collect()) })
     }
 }
 
@@ -154,10 +154,10 @@ impl SearchProvider for FailingProvider {
         &self,
         _query: &str,
         _max_results: usize,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<SearchResult>, SearchError>> + Send + '_>> {
-        Box::pin(async move {
-            Err(SearchError::NetworkError("connection refused".into()))
-        })
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<Vec<SearchResult>, SearchError>> + Send + '_>,
+    > {
+        Box::pin(async move { Err(SearchError::NetworkError("connection refused".into())) })
     }
 }
 
@@ -195,9 +195,7 @@ async fn execute_returns_formatted_results() {
 async fn execute_returns_no_results_message() {
     use swink_agent_plugin_web::tools::SearchTool;
 
-    let provider = Arc::new(MockProvider {
-        results: vec![],
-    });
+    let provider = Arc::new(MockProvider { results: vec![] });
     let tool = SearchTool::new(provider, 10);
     let state = Arc::new(std::sync::RwLock::new(SessionState::default()));
     let result = tool

@@ -83,9 +83,7 @@ fn builder_overrides_search_provider() {
 
 #[test]
 fn builder_overrides_max_redirects() {
-    let config = WebPluginConfigBuilder::new()
-        .with_max_redirects(5)
-        .build();
+    let config = WebPluginConfigBuilder::new().with_max_redirects(5).build();
     assert_eq!(config.max_redirects, 5);
 }
 

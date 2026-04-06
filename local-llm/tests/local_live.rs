@@ -251,12 +251,15 @@ mod gemma4_live {
         );
         let events: Vec<AssistantMessageEvent> = tokio::time::timeout(
             std::time::Duration::from_secs(120),
-            stream_fn.stream(&model, &ctx, &options, CancellationToken::new()).collect(),
+            stream_fn
+                .stream(&model, &ctx, &options, CancellationToken::new())
+                .collect(),
         )
         .await
         .expect("probe_complex_system_no_angle_brackets should complete within 120s");
 
-        let msg = swink_agent::stream::accumulate_message(events, "local", "gemma-4-E2B-it").unwrap();
+        let msg =
+            swink_agent::stream::accumulate_message(events, "local", "gemma-4-E2B-it").unwrap();
         let text = ContentBlock::extract_text(&msg.content);
         assert!(!text.is_empty());
         eprintln!("PASS no_angle_brackets: {}", &text[..text.len().min(120)]);
@@ -284,12 +287,15 @@ mod gemma4_live {
         );
         let events: Vec<AssistantMessageEvent> = tokio::time::timeout(
             std::time::Duration::from_secs(120),
-            stream_fn.stream(&model, &ctx, &options, CancellationToken::new()).collect(),
+            stream_fn
+                .stream(&model, &ctx, &options, CancellationToken::new())
+                .collect(),
         )
         .await
         .expect("probe_complex_system_with_angle_brackets should complete within 120s");
 
-        let msg = swink_agent::stream::accumulate_message(events, "local", "gemma-4-E2B-it").unwrap();
+        let msg =
+            swink_agent::stream::accumulate_message(events, "local", "gemma-4-E2B-it").unwrap();
         let text = ContentBlock::extract_text(&msg.content);
         assert!(!text.is_empty());
         eprintln!("PASS with_angle_brackets: {}", &text[..text.len().min(120)]);
@@ -312,13 +318,19 @@ mod gemma4_live {
             .await;
 
         assert!(matches!(events.first(), Some(AssistantMessageEvent::Start)));
-        assert!(matches!(events.last(), Some(AssistantMessageEvent::Done { .. })));
+        assert!(matches!(
+            events.last(),
+            Some(AssistantMessageEvent::Done { .. })
+        ));
 
         let msg =
             swink_agent::stream::accumulate_message(events, "local", "gemma-4-E2B-it").unwrap();
         let text = ContentBlock::extract_text(&msg.content);
         assert!(!text.is_empty(), "text stream produced empty output");
-        eprintln!("live_gemma4_e2b_text_stream: {}", &text[..text.len().min(100)]);
+        eprintln!(
+            "live_gemma4_e2b_text_stream: {}",
+            &text[..text.len().min(100)]
+        );
     }
 
     #[tokio::test]
@@ -348,16 +360,25 @@ mod gemma4_live {
             .collect()
             .await;
 
-        let has_thinking = events.iter().any(|e| {
-            matches!(e, AssistantMessageEvent::ThinkingStart { .. })
-        });
-        assert!(has_thinking, "thinking mode should emit ThinkingStart events");
+        let has_thinking = events
+            .iter()
+            .any(|e| matches!(e, AssistantMessageEvent::ThinkingStart { .. }));
+        assert!(
+            has_thinking,
+            "thinking mode should emit ThinkingStart events"
+        );
 
         let msg =
             swink_agent::stream::accumulate_message(events, "local", "gemma-4-E2B-it").unwrap();
         let text = ContentBlock::extract_text(&msg.content);
-        assert!(!text.is_empty(), "thinking response should include text output");
-        eprintln!("live_gemma4_e2b_thinking text: {}", &text[..text.len().min(100)]);
+        assert!(
+            !text.is_empty(),
+            "thinking response should include text output"
+        );
+        eprintln!(
+            "live_gemma4_e2b_thinking text: {}",
+            &text[..text.len().min(100)]
+        );
     }
 
     #[tokio::test]
@@ -390,7 +411,10 @@ mod gemma4_live {
         .expect("tool call test should complete within 120s");
 
         assert!(matches!(events.first(), Some(AssistantMessageEvent::Start)));
-        assert!(matches!(events.last(), Some(AssistantMessageEvent::Done { .. })));
+        assert!(matches!(
+            events.last(),
+            Some(AssistantMessageEvent::Done { .. })
+        ));
 
         let has_tool_call = events
             .iter()
@@ -419,10 +443,7 @@ mod gemma4_live {
         let options = StreamOptions::default();
 
         // Prompt 1: Simple greeting
-        let ctx1 = gemma4_context(
-            "You are a helpful assistant.",
-            "Say hello in one sentence.",
-        );
+        let ctx1 = gemma4_context("You are a helpful assistant.", "Say hello in one sentence.");
         let events1: Vec<AssistantMessageEvent> = stream_fn
             .stream(&model, &ctx1, &options, CancellationToken::new())
             .collect()
@@ -430,7 +451,10 @@ mod gemma4_live {
         let msg1 =
             swink_agent::stream::accumulate_message(events1, "local", "gemma-4-E2B-it").unwrap();
         let text1 = ContentBlock::extract_text(&msg1.content);
-        assert!(!text1.is_empty(), "prompt 1 (simple greeting) produced empty output");
+        assert!(
+            !text1.is_empty(),
+            "prompt 1 (simple greeting) produced empty output"
+        );
         assert!(
             !text1.contains("NaN") && !text1.contains("nan"),
             "prompt 1 output contains NaN: {text1}"
@@ -457,12 +481,18 @@ mod gemma4_live {
         let msg2 =
             swink_agent::stream::accumulate_message(events2, "local", "gemma-4-E2B-it").unwrap();
         let text2 = ContentBlock::extract_text(&msg2.content);
-        assert!(!text2.is_empty(), "prompt 2 (complex system prompt) produced empty output");
+        assert!(
+            !text2.is_empty(),
+            "prompt 2 (complex system prompt) produced empty output"
+        );
         assert!(
             !text2.contains("NaN") && !text2.contains("nan"),
             "prompt 2 output contains NaN: {text2}"
         );
-        eprintln!("PASS prompt 2 (complex): {}", &text2[..text2.len().min(100)]);
+        eprintln!(
+            "PASS prompt 2 (complex): {}",
+            &text2[..text2.len().min(100)]
+        );
 
         // Prompt 3: Tool-use-style prompt (structured output request)
         let ctx3 = gemma4_context(
@@ -481,12 +511,18 @@ mod gemma4_live {
         let msg3 =
             swink_agent::stream::accumulate_message(events3, "local", "gemma-4-E2B-it").unwrap();
         let text3 = ContentBlock::extract_text(&msg3.content);
-        assert!(!text3.is_empty(), "prompt 3 (structured) produced empty output");
+        assert!(
+            !text3.is_empty(),
+            "prompt 3 (structured) produced empty output"
+        );
         assert!(
             !text3.contains("NaN") && !text3.contains("nan"),
             "prompt 3 output contains NaN: {text3}"
         );
-        eprintln!("PASS prompt 3 (structured): {}", &text3[..text3.len().min(100)]);
+        eprintln!(
+            "PASS prompt 3 (structured): {}",
+            &text3[..text3.len().min(100)]
+        );
 
         eprintln!("=== VALIDATION GATE: ALL 3 PROMPTS PASSED ===");
     }

@@ -158,11 +158,7 @@ impl<S: crate::store::SessionStore + 'static> BlockingSessionStore<S> {
     }
 
     /// Persist interrupt state for a session asynchronously.
-    pub fn save_interrupt(
-        &self,
-        id: &str,
-        state: &InterruptState,
-    ) -> SessionStoreFuture<'_, ()> {
+    pub fn save_interrupt(&self, id: &str, state: &InterruptState) -> SessionStoreFuture<'_, ()> {
         let inner = Arc::clone(&self.inner);
         let id = id.to_string();
         let state = state.clone();

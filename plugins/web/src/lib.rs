@@ -14,7 +14,9 @@ pub mod search;
 pub mod tools;
 
 pub use config::{SearchProviderKind, WebPluginConfig, WebPluginConfigBuilder};
-pub use content::{ContentError, FetchedContent, extract_readable_content, is_html_content_type, truncate_content};
+pub use content::{
+    ContentError, FetchedContent, extract_readable_content, is_html_content_type, truncate_content,
+};
 pub use domain::{DomainFilter, DomainFilterError};
 pub use playwright::{
     ExtractedElement, ExtractionPreset, PlaywrightBridge, PlaywrightError, Viewport,
