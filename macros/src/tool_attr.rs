@@ -46,6 +46,10 @@ pub fn tool_attr_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
     let body = &input_fn.block;
     let fn_params: Vec<_> = input_fn.sig.inputs.iter().collect();
 
+    // Build ordered call args matching the original function signature:
+    // CancellationToken params → pass `__cancel`, others → pass `__p.field`.
+    let call_args = build_call_args(&input_fn);
+
     quote! {
         // Hidden params struct with schemars + serde so schema_for works.
         #[doc(hidden)]
@@ -97,9 +101,9 @@ pub fn tool_attr_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
 
                     async fn #fn_name(#(#fn_params),*) -> swink_agent::AgentToolResult #body
 
-                    #fn_name(
-                        #(__p.#param_names),*
-                    ).await
+                    // Call with args in the original parameter order:
+                    // CancellationToken slots receive __cancel; others receive __p.field.
+                    #fn_name(#(#call_args),*).await
                 })
             }
         }
@@ -143,6 +147,29 @@ fn pascal_case(s: &str) -> String {
             })
         })
         .collect()
+}
+
+/// Build the ordered call-arg token list matching the original function signature.
+///
+/// `CancellationToken` parameters receive `__cancel` (the token from `execute`);
+/// all other named parameters receive `__p.<name>` (deserialized from JSON).
+fn build_call_args(input_fn: &ItemFn) -> Vec<TokenStream> {
+    let mut args = Vec::new();
+    for arg in &input_fn.sig.inputs {
+        let FnArg::Typed(pat_type) = arg else {
+            continue;
+        };
+        let Pat::Ident(pat_ident) = pat_type.pat.as_ref() else {
+            continue;
+        };
+        if is_cancellation_token(&pat_type.ty) {
+            args.push(quote! { __cancel });
+        } else {
+            let name = &pat_ident.ident;
+            args.push(quote! { __p.#name });
+        }
+    }
+    args
 }
 
 /// Collect (name, type) pairs for all non-`CancellationToken` named parameters.

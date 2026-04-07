@@ -63,3 +63,34 @@ fn tool_attr_schema_no_params() {
     // No required fields.
     assert!(schema["required"].as_array().map_or(true, |a| a.is_empty()));
 }
+
+// ── CancellationToken not leaked into schema ─────────────────────────────────
+//
+// A CancellationToken parameter must be excluded from the generated schema and
+// must not appear in `required`. This also verifies that the macro compiles
+// correctly when CancellationToken is present (previously a bug: the token was
+// excluded from the call args, causing an arity mismatch).
+
+#[tool(
+    name = "cancel_aware",
+    description = "Tool that receives a cancellation token"
+)]
+async fn cancel_aware(
+    message: String,
+    cancel: tokio_util::sync::CancellationToken,
+) -> swink_agent::AgentToolResult {
+    let _ = cancel;
+    swink_agent::AgentToolResult::text(message)
+}
+
+#[test]
+fn tool_attr_cancellation_token_excluded_from_schema() {
+    let schema = CancelAwareTool.parameters_schema();
+    // CancellationToken must not appear in properties or required.
+    assert!(schema["properties"].get("cancel").is_none());
+    let required = schema["required"].as_array().unwrap();
+    assert!(!required.contains(&serde_json::json!("cancel")));
+    // The regular param is still present.
+    assert_eq!(schema["properties"]["message"]["type"], "string");
+    assert!(required.contains(&serde_json::json!("message")));
+}
