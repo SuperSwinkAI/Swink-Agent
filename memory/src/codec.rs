@@ -177,9 +177,8 @@ pub fn decode_session_entry(kind: &str, data: &str) -> io::Result<Option<Session
             .map(SessionEntry::Message)
             .map(Some)
             .map_err(io::Error::other),
-        Some(MessageKind::Custom) => {
-            serde_json::from_str::<SessionEntry>(data).map_or_else(|_| Ok(None), |entry| Ok(Some(entry)))
-        }
+        Some(MessageKind::Custom) => serde_json::from_str::<SessionEntry>(data)
+            .map_or_else(|_| Ok(None), |entry| Ok(Some(entry))),
         None => serde_json::from_str::<SessionEntry>(data)
             .map(Some)
             .map_err(io::Error::other),
@@ -284,7 +283,10 @@ mod tests {
             .expect("decode succeeds")
             .expect("entry preserved");
 
-        assert!(matches!(decoded, SessionEntry::Message(LlmMessage::User(_))));
+        assert!(matches!(
+            decoded,
+            SessionEntry::Message(LlmMessage::User(_))
+        ));
     }
 
     #[test]

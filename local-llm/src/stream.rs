@@ -1046,7 +1046,10 @@ mod tests {
         #[test]
         fn channel_thought_partial_match_is_utf8_safe() {
             let haystack = "alpha🙂<|chan";
-            assert_eq!(partial_prefix_at_end(haystack, "<|channel>thought\n"), Some(6));
+            assert_eq!(
+                partial_prefix_at_end(haystack, "<|channel>thought\n"),
+                Some(6)
+            );
 
             let mut parser = ChannelThoughtParser::new();
             let (t1, txt1) = parser.process("alpha🙂<|chan");

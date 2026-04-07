@@ -863,11 +863,19 @@ mod tests {
             })),
         ];
 
-        store.save_entries("entry-messages", &meta, &entries).unwrap();
+        store
+            .save_entries("entry-messages", &meta, &entries)
+            .unwrap();
 
         let (_, messages) = store.load("entry-messages", None).unwrap();
         assert_eq!(messages.len(), 2);
-        assert!(matches!(messages[0], AgentMessage::Llm(LlmMessage::User(_))));
-        assert!(matches!(messages[1], AgentMessage::Llm(LlmMessage::User(_))));
+        assert!(matches!(
+            messages[0],
+            AgentMessage::Llm(LlmMessage::User(_))
+        ));
+        assert!(matches!(
+            messages[1],
+            AgentMessage::Llm(LlmMessage::User(_))
+        ));
     }
 }
