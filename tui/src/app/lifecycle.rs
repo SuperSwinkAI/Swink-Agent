@@ -85,6 +85,18 @@ impl App {
         }
     }
 
+    /// Replace the session store and session ID assigned by [`App::new`].
+    ///
+    /// Consuming builder so it chains cleanly after `App::new(config)`. Use this
+    /// when embedding the TUI with a custom storage directory or ID prefix (e.g.
+    /// `tui_chat_<uuid>`).
+    #[must_use]
+    pub fn with_session_store(mut self, store: JsonlSessionStore, id: String) -> Self {
+        self.session_store = Some(store);
+        self.session_id = id;
+        self
+    }
+
     pub(super) fn push_system_message(&mut self, content: String) {
         self.messages
             .push(DisplayMessage::new(MessageRole::System, content));

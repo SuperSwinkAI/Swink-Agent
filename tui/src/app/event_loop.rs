@@ -430,7 +430,7 @@ impl App {
                 return;
             }
             CommandResult::LoadSession(id) => {
-                self.load_session(&id);
+                let _ = self.load_session(&id);
                 return;
             }
             CommandResult::ListSessions => {

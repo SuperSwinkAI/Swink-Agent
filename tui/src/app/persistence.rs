@@ -1,5 +1,7 @@
 //! Session persistence and credential helpers.
 
+use std::io;
+
 use swink_agent::{AgentMessage, ContentBlock, LlmMessage};
 use swink_agent_memory::now_utc;
 use tracing::{info, warn};
@@ -37,11 +39,11 @@ impl App {
         self.push_system_message(format!("Session saved: {}", self.session_id));
     }
 
-    pub(super) fn load_session(&mut self, id: &str) {
+    pub(super) fn load_session(&mut self, id: &str) -> io::Result<()> {
         let Some(ref store) = self.session_store else {
             warn!("session persistence unavailable");
             self.push_system_message("Session persistence unavailable.".to_string());
-            return;
+            return Err(io::Error::other("session persistence unavailable"));
         };
         info!(session_id = %id, "loading session");
         match store.load(id, None) {
@@ -96,12 +98,22 @@ impl App {
                     id,
                     self.messages.len()
                 ));
+                Ok(())
             }
             Err(error) => {
                 warn!(session_id = %id, error = %error, "failed to load session");
                 self.push_system_message(format!("Failed to load session: {error}"));
+                Err(error)
             }
         }
+    }
+
+    /// Load a prior session into the app before the event loop starts.
+    ///
+    /// Returns [`io::Error`] with kind [`io::ErrorKind::NotFound`] when the session
+    /// does not exist, allowing CLI callers to surface the correct exit code.
+    pub fn resume_into(&mut self, id: &str) -> io::Result<()> {
+        self.load_session(id)
     }
 
     pub(super) fn list_sessions(&mut self) {

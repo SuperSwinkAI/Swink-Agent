@@ -7509,7 +7509,7 @@ dependencies = [
 
 [[package]]
 name = "swink-agent-tui"
-version = "0.6.1"
+version = "0.7.0"
 dependencies = [
  "arboard",
  "crossterm 0.29.0",

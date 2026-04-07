@@ -220,7 +220,7 @@ async fn load_session_keeps_full_agent_state_but_trims_visible_history() {
     app.session_store = Some(store);
     app.set_agent(agent);
 
-    app.load_session(session_id);
+    app.load_session(session_id).unwrap();
 
     let visible_turns = app
         .messages
@@ -310,6 +310,62 @@ fn resize_event_sets_dirty() {
     app.handle_terminal_event(&crossterm::event::Event::Resize(120, 40));
 
     assert!(app.dirty, "resize should set dirty flag");
+}
+
+#[test]
+fn with_session_store_overrides_default_store_and_id() {
+    let tempdir = tempdir().unwrap();
+    let store = JsonlSessionStore::new(tempdir.path().to_path_buf()).unwrap();
+    let app =
+        App::new(TuiConfig::default()).with_session_store(store, "tui_chat_custom-id".to_string());
+    assert_eq!(app.session_id, "tui_chat_custom-id");
+    assert!(app.session_store.is_some());
+}
+
+#[tokio::test]
+async fn resume_into_loads_existing_session() {
+    let tempdir = tempdir().unwrap();
+    let store = JsonlSessionStore::new(tempdir.path().to_path_buf()).unwrap();
+
+    let session_id = "session-resume-test";
+    let now = swink_agent_memory::now_utc();
+    let meta = SessionMeta {
+        id: session_id.to_string(),
+        title: "mock-model".to_string(),
+        created_at: now,
+        updated_at: now,
+        version: 1,
+        sequence: 0,
+    };
+    let messages = vec![
+        make_user_agent_message("hello"),
+        make_assistant_agent_message("world"),
+    ];
+    store.save(session_id, &meta, &messages).unwrap();
+
+    let store2 = JsonlSessionStore::new(tempdir.path().to_path_buf()).unwrap();
+    let mut app = App::new(TuiConfig::default()).with_session_store(store2, "new-id".to_string());
+    let result = app.resume_into(session_id);
+    assert!(
+        result.is_ok(),
+        "resume_into should succeed for existing session"
+    );
+    assert_eq!(
+        app.session_id, session_id,
+        "session_id updated after resume"
+    );
+}
+
+#[tokio::test]
+async fn resume_into_errors_on_missing_session() {
+    let tempdir = tempdir().unwrap();
+    let store = JsonlSessionStore::new(tempdir.path().to_path_buf()).unwrap();
+    let mut app = App::new(TuiConfig::default()).with_session_store(store, "new-id".to_string());
+    let result = app.resume_into("nonexistent-session");
+    assert!(
+        result.is_err(),
+        "resume_into should error for missing session"
+    );
 }
 
 #[tokio::test]

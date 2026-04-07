@@ -34,6 +34,7 @@ use swink_agent::{Agent, ToolApproval, ToolApprovalRequest, selective_approve};
 
 pub use app::App;
 pub use config::TuiConfig;
+pub use session::JsonlSessionStore;
 pub use ui::conversation::ConversationView;
 pub use ui::input::InputEditor;
 pub use ui::markdown::markdown_to_lines;
@@ -112,6 +113,36 @@ pub async fn launch(
 ) -> Result<(), Box<dyn std::error::Error>> {
     dotenvy::dotenv().ok();
     let mut app = App::new(config);
+    let approval_tx = app.approval_sender();
+    let options = options.with_approve_tool(tui_approval_callback(&approval_tx));
+    app.set_agent(Agent::new(options));
+    app.run(terminal).await
+}
+
+/// Like [`launch`], but with an injectable session store, session ID, and optional resume.
+///
+/// Use this when embedding the TUI in a host binary that needs to control where sessions
+/// are stored (e.g. `~/.superswink/sessions/`) or resume a prior transcript before the
+/// event loop starts.
+///
+/// # Arguments
+/// - `store` — session store to use instead of the default `JsonlSessionStore` location.
+/// - `session_id` — ID for the new session (e.g. `tui_chat_<uuid-v7>`).
+/// - `resume_id` — if `Some(id)`, load that prior session before starting the event loop.
+///   Returns [`io::Error`] if the session is not found.
+pub async fn launch_with_session(
+    config: TuiConfig,
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    options: swink_agent::AgentOptions,
+    store: JsonlSessionStore,
+    session_id: String,
+    resume_id: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    dotenvy::dotenv().ok();
+    let mut app = App::new(config).with_session_store(store, session_id);
+    if let Some(id) = resume_id {
+        app.resume_into(id)?;
+    }
     let approval_tx = app.approval_sender();
     let options = options.with_approve_tool(tui_approval_callback(&approval_tx));
     app.set_agent(Agent::new(options));
