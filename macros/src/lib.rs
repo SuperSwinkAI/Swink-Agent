@@ -3,10 +3,12 @@
 //!
 //! This crate provides two proc macros:
 //!
-//! - `#[derive(ToolSchema)]` — generates a `ToolParameters` implementation from
-//!   a struct's fields, mapping Rust types to JSON Schema types.
+//! - `#[derive(ToolSchema)]` — generates a `ToolParameters` implementation that
+//!   delegates schema generation to [`schemars`]. The struct must also derive
+//!   [`schemars::JsonSchema`] (available as `swink_agent::JsonSchema`).
 //! - `#[tool(name = "...", description = "...")]` — wraps an async function as
-//!   an `AgentTool` implementation.
+//!   an `AgentTool` implementation. Schema is derived from a hidden params struct
+//!   via [`schemars`], replacing the previous bespoke type mapper.
 
 mod tool_attr;
 mod tool_schema;
@@ -15,16 +17,31 @@ use proc_macro::TokenStream;
 
 /// Derive macro that generates a `ToolParameters` implementation.
 ///
-/// Maps struct fields to JSON Schema properties:
-/// - `String` → `"string"`
-/// - `u8`–`u128`, `i8`–`i128` → `"integer"`
-/// - `f32`, `f64` → `"number"`
-/// - `bool` → `"boolean"`
-/// - `Option<T>` → type of T, not in `required`
-/// - `Vec<T>` → `"array"` with items of T's type
+/// Delegates JSON Schema generation to [`schemars`] by implementing
+/// `ToolParameters::json_schema` via `swink_agent::schema_for::<Self>()`.
 ///
-/// Doc comments (`///`) become `description` fields. Use
-/// `#[tool(description = "...")]` to override.
+/// **The annotated struct must also derive `JsonSchema`** (via
+/// `swink_agent::JsonSchema` or `schemars::JsonSchema`). Doc comments
+/// (`/// …`) are automatically picked up as field descriptions by schemars.
+/// Use `#[schemars(description = "…")]` to override a field description.
+///
+/// All Rust types supported by `schemars` are accepted — there is no
+/// restricted subset of primitives.
+///
+/// # Example
+///
+/// ```ignore
+/// use swink_agent::JsonSchema;
+/// use swink_agent_macros::ToolSchema;
+///
+/// #[derive(ToolSchema, JsonSchema, serde::Deserialize)]
+/// struct SearchParams {
+///     /// The search query
+///     query: String,
+///     /// Maximum number of results
+///     limit: Option<u32>,
+/// }
+/// ```
 #[proc_macro_derive(ToolSchema, attributes(tool))]
 pub fn derive_tool_schema(input: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(input as syn::DeriveInput);

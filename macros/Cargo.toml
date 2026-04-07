@@ -17,6 +17,7 @@ proc-macro2 = "1"
 
 [dev-dependencies]
 swink-agent = { path = ".." }
+schemars = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["full", "test-util"] }
