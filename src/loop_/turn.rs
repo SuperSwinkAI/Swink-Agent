@@ -687,21 +687,25 @@ async fn handle_tool_calls(
                 results,
                 tool_metrics,
                 transfer_signal,
+                injected_messages,
             } => {
                 tool_results.extend(results);
                 collected_tool_metrics = tool_metrics;
                 detected_transfer_signal = transfer_signal;
+                state.pending_messages.extend(injected_messages);
             }
             ToolExecOutcome::SteeringInterrupt {
                 completed,
                 cancelled,
                 steering_messages,
                 tool_metrics,
+                injected_messages,
             } => {
                 tool_results.extend(completed);
                 tool_results.extend(cancelled);
                 steering_interrupted = true;
                 collected_tool_metrics = tool_metrics;
+                state.pending_messages.extend(injected_messages);
                 state.pending_messages.extend(steering_messages);
             }
             ToolExecOutcome::ChannelClosed => return TurnOutcome::Return,

@@ -68,12 +68,17 @@ pub enum ToolExecOutcome {
         tool_metrics: Vec<crate::metrics::ToolExecMetrics>,
         /// Transfer signal detected during tool execution (first one wins).
         transfer_signal: Option<crate::transfer::TransferSignal>,
+        /// Messages injected by `PreDispatch` policies via `Inject` verdict,
+        /// to be appended to `pending_messages` for the next turn.
+        injected_messages: Vec<AgentMessage>,
     },
     SteeringInterrupt {
         completed: Vec<ToolResultMessage>,
         cancelled: Vec<ToolResultMessage>,
         steering_messages: Vec<AgentMessage>,
         tool_metrics: Vec<crate::metrics::ToolExecMetrics>,
+        /// Messages injected by `PreDispatch` policies before the steering interrupt.
+        injected_messages: Vec<AgentMessage>,
     },
     ChannelClosed,
 }

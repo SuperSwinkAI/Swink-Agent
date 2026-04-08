@@ -458,3 +458,60 @@ async fn tool_validator_rejects_call() {
         "should have an error tool result when policy skips"
     );
 }
+
+// ─── Regression (#204): PreDispatch Inject verdict must be applied ───────────
+
+/// A `PreDispatch` policy that injects a user message before the tool runs.
+struct InjectMessagePolicy;
+
+impl swink_agent::PreDispatchPolicy for InjectMessagePolicy {
+    fn name(&self) -> &'static str {
+        "inject_message"
+    }
+
+    fn evaluate(
+        &self,
+        _ctx: &mut swink_agent::ToolDispatchContext<'_>,
+    ) -> swink_agent::PreDispatchVerdict {
+        swink_agent::PreDispatchVerdict::Inject(vec![user_msg("pre_dispatch_injected")])
+    }
+}
+
+#[tokio::test]
+async fn pre_dispatch_inject_is_applied() {
+    // Regression for #204: injected messages were silently dropped.
+    //
+    // Without the fix, the second stream call sees: [user, assistant(tool_call), tool_result] = 3.
+    // With the fix, it also sees the injected user message = 4.
+    let tool = Arc::new(MockTool::new("noop"));
+
+    let stream_fn = Arc::new(MockContextCapturingStreamFn::new(vec![
+        tool_call_events("call_1", "noop", "{}"),
+        text_only_events("done"),
+    ]));
+
+    let mut agent = Agent::new(
+        AgentOptions::new("test", default_model(), stream_fn.clone(), default_convert)
+            .with_tools(vec![tool.clone()])
+            .with_pre_dispatch_policy(InjectMessagePolicy)
+            .with_retry_strategy(fast_retry()),
+    );
+
+    let _ = agent.prompt_async(vec![user_msg("go")]).await.unwrap();
+
+    let counts = stream_fn.captured_message_counts.lock().unwrap().clone();
+    assert_eq!(
+        counts.len(),
+        2,
+        "stream should be called twice (tool-call turn + follow-up turn): {counts:?}"
+    );
+    assert_eq!(
+        counts[0], 1,
+        "first call sees only the initial user message: {counts:?}"
+    );
+    assert_eq!(
+        counts[1], 4,
+        "second call must include the PreDispatch-injected message \
+         (expected 4: user + assistant + tool_result + injected; got {counts:?})"
+    );
+}

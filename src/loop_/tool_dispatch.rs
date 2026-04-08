@@ -11,7 +11,7 @@ use crate::tool::{
     validate_tool_arguments, validation_error_result,
 };
 use crate::tool_execution_policy::{ToolCallSummary, ToolExecutionPolicy};
-use crate::types::{ContentBlock, ToolResultMessage};
+use crate::types::{AgentMessage, ContentBlock, ToolResultMessage};
 use crate::util::now_timestamp;
 
 use crate::agent_options::ApproveToolFn;
@@ -122,6 +122,9 @@ pub async fn execute_tools_concurrently(
 
     // Phase 1: Pre-process all tool calls (approval, transform, validate).
     let mut prepared: Vec<PreparedToolCall> = Vec::new();
+    // Messages injected by PreDispatch policies (Inject verdict). These are
+    // propagated via the outcome so the loop can append them to pending_messages.
+    let mut injected_messages: Vec<AgentMessage> = Vec::new();
 
     for (idx, tc) in tool_calls.iter().enumerate() {
         // Emit ToolExecutionStart
@@ -159,7 +162,10 @@ pub async fn execute_tools_concurrently(
                 state: &state_snapshot,
             };
             match run_pre_dispatch_policies(&config.pre_dispatch_policies, &mut dispatch_ctx) {
-                PreDispatchVerdict::Continue | PreDispatchVerdict::Inject(_) => {}
+                PreDispatchVerdict::Continue => {}
+                PreDispatchVerdict::Inject(msgs) => {
+                    injected_messages.extend(msgs);
+                }
                 PreDispatchVerdict::Stop(reason) => {
                     let error_result = AgentToolResult {
                         content: vec![ContentBlock::Text {
@@ -178,6 +184,7 @@ pub async fn execute_tools_concurrently(
                         results: ordered,
                         tool_metrics: collected_timings,
                         transfer_signal: None,
+                        injected_messages,
                     };
                 }
                 PreDispatchVerdict::Skip(error_text) => {
@@ -273,7 +280,14 @@ pub async fn execute_tools_concurrently(
         match group_outcome {
             GroupOutcome::Continue => {}
             GroupOutcome::SteeringInterrupt => {
-                return build_steering_outcome(config, tool_calls, results, tool_timings).await;
+                return build_steering_outcome(
+                    config,
+                    tool_calls,
+                    results,
+                    tool_timings,
+                    injected_messages,
+                )
+                .await;
             }
         }
     }
@@ -288,6 +302,7 @@ pub async fn execute_tools_concurrently(
         results: ordered,
         tool_metrics: collected_timings,
         transfer_signal: captured_transfer,
+        injected_messages,
     }
 }
 
@@ -446,6 +461,7 @@ async fn build_steering_outcome(
     tool_calls: &[ToolCallInfo],
     results: Arc<tokio::sync::Mutex<Vec<(usize, ToolResultMessage)>>>,
     tool_timings: Arc<tokio::sync::Mutex<Vec<crate::metrics::ToolExecMetrics>>>,
+    injected_messages: Vec<AgentMessage>,
 ) -> ToolExecOutcome {
     let all_results = std::mem::take(&mut *results.lock().await);
     let result_map: HashMap<&str, &ToolResultMessage> = all_results
@@ -483,6 +499,7 @@ async fn build_steering_outcome(
         cancelled,
         steering_messages,
         tool_metrics: collected_timings,
+        injected_messages,
     }
 }
 
