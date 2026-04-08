@@ -325,6 +325,39 @@ impl MessageConverter for OllamaConverter {
     }
 }
 
+/// Emit `ToolCallStart`/`Delta`/`End` events for each tool call in a chunk.
+///
+/// Ollama may legitimately emit the same tool name multiple times in one turn
+/// (e.g. parallel calls to `read_file`). Each call must produce its own block —
+/// deduplicating by name silently drops repeats. See issue #209.
+fn emit_tool_calls(
+    state: &mut StreamState,
+    tool_calls: &[OllamaResponseToolCall],
+) -> Vec<AssistantMessageEvent> {
+    let mut events = Vec::with_capacity(tool_calls.len() * 3 + 1);
+
+    // Close text block if open — tool calls always start a fresh block.
+    if let Some(ev) = state.blocks.close_text() {
+        events.push(ev);
+    }
+
+    for tc in tool_calls {
+        let tool_id = format!("tc_{}", uuid::Uuid::new_v4());
+        let (ci, start_ev) = state
+            .blocks
+            .open_tool_call(tool_id, tc.function.name.clone());
+        events.push(start_ev);
+        events.push(crate::block_accumulator::BlockAccumulator::tool_call_delta(
+            ci,
+            tc.function.arguments.to_string(),
+        ));
+        if let Some(ev) = state.blocks.close_tool_call(ci) {
+            events.push(ev);
+        }
+    }
+    events
+}
+
 /// Parse Ollama's NDJSON streaming response into `AssistantMessageEvent` values.
 #[allow(clippy::too_many_lines)]
 fn parse_ndjson_stream(
@@ -417,12 +450,7 @@ fn parse_ndjson_stream(
 
                             // Handle tool calls
                             if let Some(tool_calls) = &chunk.message.tool_calls {
-                                // Close text block if open
-                                if let Some(ev) = state.blocks.close_text() {
-                                    events.push(ev);
-                                }
-
-                                emit_tool_calls(&mut state, tool_calls, &mut events);
+                                events.extend(emit_tool_calls(&mut state, tool_calls));
                             }
 
                             // Handle done
@@ -485,30 +513,6 @@ impl crate::finalize::StreamFinalize for StreamState {
 /// State machine tracking which content blocks have been started.
 struct StreamState {
     blocks: crate::block_accumulator::BlockAccumulator,
-}
-
-/// Emit one tool-call block per entry. Ollama sends each tool call as a complete
-/// object in a single chunk, and the same tool name may legitimately appear
-/// multiple times in one turn — do NOT deduplicate by name.
-fn emit_tool_calls(
-    state: &mut StreamState,
-    tool_calls: &[OllamaResponseToolCall],
-    events: &mut Vec<AssistantMessageEvent>,
-) {
-    for tc in tool_calls {
-        let tool_id = format!("tc_{}", uuid::Uuid::new_v4());
-        let (ci, start_ev) = state
-            .blocks
-            .open_tool_call(tool_id, tc.function.name.clone());
-        events.push(start_ev);
-        events.push(crate::block_accumulator::BlockAccumulator::tool_call_delta(
-            ci,
-            tc.function.arguments.to_string(),
-        ));
-        if let Some(ev) = state.blocks.close_tool_call(ci) {
-            events.push(ev);
-        }
-    }
 }
 
 /// Convert a byte stream into a stream of complete NDJSON lines.
@@ -786,47 +790,51 @@ mod tests {
         assert_eq!(result[0].content, "after custom");
     }
 
-    // ─── emit_tool_calls: repeated same-name tool calls (regression) ────
+    // ─── emit_tool_calls: regression for issue #209 ─────────────────────
 
+    /// Regression for issue #209: when Ollama emits two tool calls with the
+    /// same function name in one chunk, both must be dispatched. The previous
+    /// implementation deduped by name via a `HashSet<String>` and silently
+    /// dropped the second call.
     #[test]
     fn emit_tool_calls_preserves_repeated_same_name_calls() {
         let mut state = StreamState {
             blocks: crate::block_accumulator::BlockAccumulator::new(),
         };
-        let calls = vec![
+
+        let tool_calls = vec![
             OllamaResponseToolCall {
                 function: OllamaResponseFunction {
-                    name: "search".to_string(),
-                    arguments: serde_json::json!({"q": "first"}),
+                    name: "read_file".to_string(),
+                    arguments: serde_json::json!({"path": "a.txt"}),
                 },
             },
             OllamaResponseToolCall {
                 function: OllamaResponseFunction {
-                    name: "search".to_string(),
-                    arguments: serde_json::json!({"q": "second"}),
-                },
-            },
-            OllamaResponseToolCall {
-                function: OllamaResponseFunction {
-                    name: "search".to_string(),
-                    arguments: serde_json::json!({"q": "third"}),
+                    name: "read_file".to_string(),
+                    arguments: serde_json::json!({"path": "b.txt"}),
                 },
             },
         ];
-        let mut events = Vec::new();
-        emit_tool_calls(&mut state, &calls, &mut events);
 
-        // Each call must produce Start + Delta + End — three calls => 9 events.
-        assert_eq!(events.len(), 9, "expected 3 events per tool call");
+        let events = emit_tool_calls(&mut state, &tool_calls);
 
-        let starts: Vec<&str> = events
+        // Expect 6 events: Start/Delta/End for each of the two calls.
+        let starts: Vec<_> = events
             .iter()
             .filter_map(|e| match e {
-                AssistantMessageEvent::ToolCallStart { name, .. } => Some(name.as_str()),
+                AssistantMessageEvent::ToolCallStart { name, id, .. } => Some((name, id)),
                 _ => None,
             })
             .collect();
-        assert_eq!(starts, vec!["search", "search", "search"]);
+        assert_eq!(
+            starts.len(),
+            2,
+            "both tool calls should produce a ToolCallStart"
+        );
+        assert_eq!(starts[0].0, "read_file");
+        assert_eq!(starts[1].0, "read_file");
+        assert_ne!(starts[0].1, starts[1].1, "tool call ids must be unique");
 
         let deltas: Vec<&str> = events
             .iter()
@@ -835,9 +843,14 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert_eq!(deltas.len(), 3);
-        assert!(deltas[0].contains("first"));
-        assert!(deltas[1].contains("second"));
-        assert!(deltas[2].contains("third"));
+        assert_eq!(deltas.len(), 2);
+        assert!(deltas[0].contains("a.txt"));
+        assert!(deltas[1].contains("b.txt"));
+
+        let ends = events
+            .iter()
+            .filter(|e| matches!(e, AssistantMessageEvent::ToolCallEnd { .. }))
+            .count();
+        assert_eq!(ends, 2);
     }
 }
