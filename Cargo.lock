@@ -7260,7 +7260,7 @@ dependencies = [
  "opentelemetry_sdk",
  "pretty_assertions",
  "proptest",
- "rand 0.9.2",
+ "rand 0.10.0",
  "regex",
  "schemars 1.2.1",
  "serde",
