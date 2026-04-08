@@ -357,6 +357,115 @@ async fn resume_into_loads_existing_session() {
 }
 
 #[tokio::test]
+async fn repeated_auto_save_preserves_created_at_and_advances_sequence() {
+    // Regression for #196: the TUI rebuilt SessionMeta from scratch on every
+    // save, sending sequence=0 each time, which tripped the JSONL store's
+    // optimistic-concurrency check and silently dropped every save after the
+    // first. `created_at` was also regenerated on each write.
+    let tempdir = tempdir().unwrap();
+    let store = JsonlSessionStore::new(tempdir.path().to_path_buf()).unwrap();
+    let session_id = "session-repeated-save";
+
+    let stream_fn = Arc::new(ScriptedStreamFn::new(vec![]));
+    let agent = make_test_agent(stream_fn);
+    let mut app = App::new(TuiConfig::default()).with_session_store(store, session_id.to_string());
+    app.set_agent(agent);
+
+    // Populate at least one message so the save has content to persist.
+    if let Some(ref mut agent) = app.agent {
+        agent.set_messages(vec![make_user_agent_message("hello")]);
+    }
+
+    // First save: creates the file, sequence goes 0 -> 1 in the store.
+    app.auto_save_session().expect("first save should succeed");
+    let first_meta = app.session_meta.clone().expect("meta set after save");
+    let created_at = first_meta.created_at;
+    assert_eq!(first_meta.sequence, 1, "local sequence mirrors the store");
+
+    // Second save: previously failed silently with a sequence conflict.
+    if let Some(ref mut agent) = app.agent {
+        agent.set_messages(vec![
+            make_user_agent_message("hello"),
+            make_assistant_agent_message("world"),
+        ]);
+    }
+    app.auto_save_session()
+        .expect("second save should succeed without sequence conflict");
+    let second_meta = app.session_meta.clone().unwrap();
+    assert_eq!(second_meta.sequence, 2, "sequence advanced on second save");
+    assert_eq!(
+        second_meta.created_at, created_at,
+        "created_at is preserved across saves"
+    );
+
+    // Third save — make sure advancement keeps working.
+    app.auto_save_session().expect("third save should succeed");
+    assert_eq!(app.session_meta.as_ref().unwrap().sequence, 3);
+
+    // Reload from disk and confirm the persisted state matches what we expected.
+    let reload_store = JsonlSessionStore::new(tempdir.path().to_path_buf()).unwrap();
+    let (persisted_meta, persisted_messages) = reload_store.load(session_id, None).unwrap();
+    assert_eq!(persisted_meta.sequence, 3);
+    assert_eq!(persisted_meta.created_at, created_at);
+    assert_eq!(
+        persisted_messages.len(),
+        2,
+        "latest messages were persisted"
+    );
+}
+
+#[tokio::test]
+async fn auto_save_after_load_preserves_created_at_and_continues_sequence() {
+    // Regression for #196: after loading an existing session, saves should
+    // carry the loaded meta forward rather than starting at sequence 0.
+    let tempdir = tempdir().unwrap();
+    let store = JsonlSessionStore::new(tempdir.path().to_path_buf()).unwrap();
+    let session_id = "session-load-then-save";
+
+    let original_created = swink_agent_memory::now_utc();
+    let meta = SessionMeta {
+        id: session_id.to_string(),
+        title: "mock-model".to_string(),
+        created_at: original_created,
+        updated_at: original_created,
+        version: 1,
+        sequence: 0,
+    };
+    store
+        .save(session_id, &meta, &[make_user_agent_message("hi")])
+        .unwrap();
+    // After that save the stored sequence is 1.
+
+    let stream_fn = Arc::new(ScriptedStreamFn::new(vec![]));
+    let agent = make_test_agent(stream_fn);
+    let store2 = JsonlSessionStore::new(tempdir.path().to_path_buf()).unwrap();
+    let mut app =
+        App::new(TuiConfig::default()).with_session_store(store2, "placeholder".to_string());
+    app.set_agent(agent);
+    app.load_session(session_id).unwrap();
+
+    let loaded_meta = app.session_meta.clone().expect("meta set after load");
+    assert_eq!(loaded_meta.sequence, 1);
+    assert_eq!(loaded_meta.created_at, original_created);
+
+    // Mutate and save — should succeed and advance sequence to 2.
+    if let Some(ref mut agent) = app.agent {
+        agent.set_messages(vec![
+            make_user_agent_message("hi"),
+            make_assistant_agent_message("there"),
+        ]);
+    }
+    app.auto_save_session()
+        .expect("save after load should succeed");
+    assert_eq!(app.session_meta.as_ref().unwrap().sequence, 2);
+    assert_eq!(
+        app.session_meta.as_ref().unwrap().created_at,
+        original_created,
+        "loaded created_at is preserved on subsequent saves"
+    );
+}
+
+#[tokio::test]
 async fn resume_into_errors_on_missing_session() {
     let tempdir = tempdir().unwrap();
     let store = JsonlSessionStore::new(tempdir.path().to_path_buf()).unwrap();

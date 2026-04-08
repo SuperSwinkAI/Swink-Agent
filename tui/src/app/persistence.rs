@@ -13,30 +13,62 @@ use crate::ui::conversation::ConversationView;
 use super::state::{App, DisplayMessage, MessageRole};
 
 impl App {
-    pub(super) fn auto_save_session(&self) {
+    /// Persist the current session. Returns an error if the save failed so that
+    /// callers can surface it to the user instead of silently dropping failures.
+    pub(super) fn auto_save_session(&mut self) -> io::Result<()> {
         let Some(ref store) = self.session_store else {
-            return;
+            return Ok(());
         };
         let Some(ref agent) = self.agent else {
-            return;
+            return Ok(());
         };
         let state = agent.state();
         let now = now_utc();
-        let meta = SessionMeta {
-            id: self.session_id.clone(),
-            title: self.model_name.clone(),
-            created_at: now,
-            updated_at: now,
-            version: 1,
-            sequence: 0,
+
+        // Build the meta to send to the store. Preserve `created_at` and the
+        // optimistic-concurrency `sequence` from the last successful save.
+        let mut meta = match self.session_meta.clone() {
+            Some(mut existing) => {
+                existing.id.clone_from(&self.session_id);
+                existing.title.clone_from(&self.model_name);
+                existing.updated_at = now;
+                existing
+            }
+            None => SessionMeta {
+                id: self.session_id.clone(),
+                title: self.model_name.clone(),
+                created_at: now,
+                updated_at: now,
+                version: 1,
+                sequence: 0,
+            },
         };
-        let _ = store.save(&self.session_id, &meta, &state.messages);
+
+        match store.save(&self.session_id, &meta, &state.messages) {
+            Ok(()) => {
+                // Store increments sequence by 1 on successful write — mirror that
+                // locally so the next save doesn't race on a stale sequence.
+                meta.sequence += 1;
+                self.session_meta = Some(meta);
+                Ok(())
+            }
+            Err(error) => {
+                warn!(session_id = %self.session_id, error = %error, "failed to save session");
+                Err(error)
+            }
+        }
     }
 
     pub(super) fn save_session(&mut self) {
         info!(session_id = %self.session_id, "saving session");
-        self.auto_save_session();
-        self.push_system_message(format!("Session saved: {}", self.session_id));
+        match self.auto_save_session() {
+            Ok(()) => {
+                self.push_system_message(format!("Session saved: {}", self.session_id));
+            }
+            Err(error) => {
+                self.push_system_message(format!("Failed to save session: {error}"));
+            }
+        }
     }
 
     pub(super) fn load_session(&mut self, id: &str) -> io::Result<()> {
@@ -88,6 +120,7 @@ impl App {
                 }
                 self.session_id = id.to_string();
                 self.model_name.clone_from(&meta.title);
+                self.session_meta = Some(meta.clone());
                 self.conversation = ConversationView::new();
                 self.trim_messages_to_recent_turns();
                 if let Some(agent) = &mut self.agent {
