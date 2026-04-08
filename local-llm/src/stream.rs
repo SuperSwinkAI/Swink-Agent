@@ -752,11 +752,15 @@ impl StreamState {
     fn finalize_cancelled(mut self) -> Vec<AssistantMessageEvent> {
         self.close_thinking_block();
         self.close_text_block();
-        self.events.push(AssistantMessageEvent::Done {
-            stop_reason: StopReason::Stop,
-            usage: build_usage(self.accumulated_usage.as_ref()),
-            cost: Cost::default(),
-        });
+        for (id, tc_content_index) in &self.active_tool_calls {
+            if !id.is_empty() {
+                self.events.push(AssistantMessageEvent::ToolCallEnd {
+                    content_index: *tc_content_index,
+                });
+            }
+        }
+        self.events
+            .push(AssistantMessageEvent::error("local inference cancelled"));
         self.events
     }
 }
@@ -784,11 +788,7 @@ fn local_stream<'a>(
         if cancellation_token.is_cancelled() {
             return stream::iter(vec![
                 AssistantMessageEvent::Start,
-                AssistantMessageEvent::Done {
-                    stop_reason: StopReason::Stop,
-                    usage: Usage::default(),
-                    cost: Cost::default(),
-                },
+                AssistantMessageEvent::error("local inference cancelled"),
             ]);
         }
 
@@ -972,6 +972,33 @@ mod tests {
         let (thinking, text) = extract_thinking_delta(input);
         assert!(thinking.is_none());
         assert_eq!(text, "<think>unclosed thinking");
+    }
+
+    #[test]
+    fn finalize_cancelled_emits_error_terminal() {
+        let mut state = StreamState::new(false);
+        // Simulate having started a text block.
+        state.events.push(AssistantMessageEvent::TextStart {
+            content_index: 0,
+        });
+        state.text_started = true;
+
+        let events = state.finalize_cancelled();
+        let terminal = events.last().expect("at least one event");
+        match terminal {
+            AssistantMessageEvent::Error { error_message, .. } => {
+                assert!(
+                    error_message.contains("cancelled"),
+                    "expected cancellation message, got: {error_message}"
+                );
+            }
+            other => panic!("expected Error terminal, got {other:?}"),
+        }
+        // Open text block must be closed before the terminal error.
+        assert!(events.iter().any(|e| matches!(
+            e,
+            AssistantMessageEvent::TextEnd { .. }
+        )));
     }
 
     #[test]
