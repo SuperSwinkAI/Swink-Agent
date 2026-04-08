@@ -3,7 +3,7 @@
 //! Implements [`StreamFn`] for the Ollama `/api/chat` endpoint.
 //! Ollama streams newline-delimited JSON (NDJSON), not SSE.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::pin::Pin;
 
 use futures::stream::{self, Stream, StreamExt as _};
@@ -337,7 +337,6 @@ fn parse_ndjson_stream(
     stream::unfold(
         (Box::pin(line_stream), cancellation_token, StreamState {
             blocks: crate::block_accumulator::BlockAccumulator::new(),
-            tool_calls_started: HashSet::new(),
         }, false, true),
         |(mut lines, token, mut state, mut done, first)| async move {
             if done {
@@ -423,25 +422,7 @@ fn parse_ndjson_stream(
                                     events.push(ev);
                                 }
 
-                                for tc in tool_calls {
-                                    let tool_id = format!("tc_{}", uuid::Uuid::new_v4());
-                                    if state.tool_calls_started.insert(tc.function.name.clone()) {
-                                        let (ci, start_ev) = state.blocks.open_tool_call(
-                                            tool_id,
-                                            tc.function.name.clone(),
-                                        );
-                                        events.push(start_ev);
-                                        events.push(
-                                            crate::block_accumulator::BlockAccumulator::tool_call_delta(
-                                                ci,
-                                                tc.function.arguments.to_string(),
-                                            ),
-                                        );
-                                        if let Some(ev) = state.blocks.close_tool_call(ci) {
-                                            events.push(ev);
-                                        }
-                                    }
-                                }
+                                emit_tool_calls(&mut state, tool_calls, &mut events);
                             }
 
                             // Handle done
@@ -504,9 +485,30 @@ impl crate::finalize::StreamFinalize for StreamState {
 /// State machine tracking which content blocks have been started.
 struct StreamState {
     blocks: crate::block_accumulator::BlockAccumulator,
-    /// Tool-call names seen so far; Ollama sends complete tool calls in one
-    /// chunk, so we use names (not indices) to deduplicate.
-    tool_calls_started: HashSet<String>,
+}
+
+/// Emit one tool-call block per entry. Ollama sends each tool call as a complete
+/// object in a single chunk, and the same tool name may legitimately appear
+/// multiple times in one turn — do NOT deduplicate by name.
+fn emit_tool_calls(
+    state: &mut StreamState,
+    tool_calls: &[OllamaResponseToolCall],
+    events: &mut Vec<AssistantMessageEvent>,
+) {
+    for tc in tool_calls {
+        let tool_id = format!("tc_{}", uuid::Uuid::new_v4());
+        let (ci, start_ev) = state
+            .blocks
+            .open_tool_call(tool_id, tc.function.name.clone());
+        events.push(start_ev);
+        events.push(crate::block_accumulator::BlockAccumulator::tool_call_delta(
+            ci,
+            tc.function.arguments.to_string(),
+        ));
+        if let Some(ev) = state.blocks.close_tool_call(ci) {
+            events.push(ev);
+        }
+    }
 }
 
 /// Convert a byte stream into a stream of complete NDJSON lines.
@@ -656,10 +658,7 @@ mod tests {
         let mut blocks = crate::block_accumulator::BlockAccumulator::new();
         blocks.ensure_thinking_open(); // index 0
         blocks.ensure_text_open(); // index 1
-        let mut state = StreamState {
-            blocks,
-            tool_calls_started: HashSet::new(),
-        };
+        let mut state = StreamState { blocks };
 
         let drained = state.drain_open_blocks();
         assert_eq!(drained.len(), 2);
@@ -684,10 +683,7 @@ mod tests {
         let mut blocks = crate::block_accumulator::BlockAccumulator::new();
         blocks.ensure_thinking_open();
         blocks.ensure_text_open();
-        let mut state = StreamState {
-            blocks,
-            tool_calls_started: HashSet::new(),
-        };
+        let mut state = StreamState { blocks };
 
         let first = state.drain_open_blocks();
         let second = state.drain_open_blocks();
@@ -788,5 +784,60 @@ mod tests {
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].role, "user");
         assert_eq!(result[0].content, "after custom");
+    }
+
+    // ─── emit_tool_calls: repeated same-name tool calls (regression) ────
+
+    #[test]
+    fn emit_tool_calls_preserves_repeated_same_name_calls() {
+        let mut state = StreamState {
+            blocks: crate::block_accumulator::BlockAccumulator::new(),
+        };
+        let calls = vec![
+            OllamaResponseToolCall {
+                function: OllamaResponseFunction {
+                    name: "search".to_string(),
+                    arguments: serde_json::json!({"q": "first"}),
+                },
+            },
+            OllamaResponseToolCall {
+                function: OllamaResponseFunction {
+                    name: "search".to_string(),
+                    arguments: serde_json::json!({"q": "second"}),
+                },
+            },
+            OllamaResponseToolCall {
+                function: OllamaResponseFunction {
+                    name: "search".to_string(),
+                    arguments: serde_json::json!({"q": "third"}),
+                },
+            },
+        ];
+        let mut events = Vec::new();
+        emit_tool_calls(&mut state, &calls, &mut events);
+
+        // Each call must produce Start + Delta + End — three calls => 9 events.
+        assert_eq!(events.len(), 9, "expected 3 events per tool call");
+
+        let starts: Vec<&str> = events
+            .iter()
+            .filter_map(|e| match e {
+                AssistantMessageEvent::ToolCallStart { name, .. } => Some(name.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(starts, vec!["search", "search", "search"]);
+
+        let deltas: Vec<&str> = events
+            .iter()
+            .filter_map(|e| match e {
+                AssistantMessageEvent::ToolCallDelta { delta, .. } => Some(delta.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(deltas.len(), 3);
+        assert!(deltas[0].contains("first"));
+        assert!(deltas[1].contains("second"));
+        assert!(deltas[2].contains("third"));
     }
 }
