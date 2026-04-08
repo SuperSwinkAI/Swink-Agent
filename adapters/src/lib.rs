@@ -73,7 +73,7 @@ pub mod sse;
 
 pub use remote_presets::{
     RemoteModelConnectionError, RemotePresetKey, build_remote_connection,
-    build_remote_connection_for_model, preset, remote_preset_keys, remote_presets,
+    build_remote_connection_for_model, preset, remote_presets,
 };
 
 // ── Provider adapters (feature-gated) ─────────────────────────────────────
