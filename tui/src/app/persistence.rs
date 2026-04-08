@@ -7,36 +7,55 @@ use swink_agent_memory::now_utc;
 use tracing::{info, warn};
 
 use crate::credentials;
-use crate::session::{SessionMeta, SessionStore};
+use crate::session::SessionStore;
 use crate::ui::conversation::ConversationView;
 
 use super::state::{App, DisplayMessage, MessageRole};
 
 impl App {
-    pub(super) fn auto_save_session(&self) {
+    /// Persist the current agent state to the session store.
+    ///
+    /// Returns `Ok(())` when there is no store/agent attached (nothing to do)
+    /// or after a successful save. On failure, the local `session_meta` is
+    /// left untouched so the next save retries with the same sequence.
+    pub(super) fn auto_save_session(&mut self) -> io::Result<()> {
         let Some(ref store) = self.session_store else {
-            return;
+            return Ok(());
         };
         let Some(ref agent) = self.agent else {
-            return;
+            return Ok(());
         };
         let state = agent.state();
-        let now = now_utc();
-        let meta = SessionMeta {
-            id: self.session_id.clone(),
-            title: self.model_name.clone(),
-            created_at: now,
-            updated_at: now,
-            version: 1,
-            sequence: 0,
-        };
-        let _ = store.save(&self.session_id, &meta, &state.messages);
+        // Refresh mutable fields, but preserve created_at + sequence so the
+        // JSONL store's optimistic-concurrency check accepts repeated writes.
+        self.session_meta.id.clone_from(&self.session_id);
+        self.session_meta.title.clone_from(&self.model_name);
+        self.session_meta.updated_at = now_utc();
+
+        match store.save(&self.session_id, &self.session_meta, &state.messages) {
+            Ok(()) => {
+                // The store increments stored sequence on write; mirror that
+                // locally so the next save passes `check_sequence`.
+                self.session_meta.sequence += 1;
+                Ok(())
+            }
+            Err(error) => {
+                warn!(session_id = %self.session_id, error = %error, "failed to save session");
+                Err(error)
+            }
+        }
     }
 
     pub(super) fn save_session(&mut self) {
         info!(session_id = %self.session_id, "saving session");
-        self.auto_save_session();
-        self.push_system_message(format!("Session saved: {}", self.session_id));
+        match self.auto_save_session() {
+            Ok(()) => {
+                self.push_system_message(format!("Session saved: {}", self.session_id));
+            }
+            Err(error) => {
+                self.push_system_message(format!("Failed to save session: {error}"));
+            }
+        }
     }
 
     pub(super) fn load_session(&mut self, id: &str) -> io::Result<()> {
@@ -88,6 +107,7 @@ impl App {
                 }
                 self.session_id = id.to_string();
                 self.model_name.clone_from(&meta.title);
+                self.session_meta = meta;
                 self.conversation = ConversationView::new();
                 self.trim_messages_to_recent_turns();
                 if let Some(agent) = &mut self.agent {

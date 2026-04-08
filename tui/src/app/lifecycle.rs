@@ -9,15 +9,33 @@ use tokio::sync::{mpsc, oneshot};
 use swink_agent::{Agent, ToolApproval, ToolApprovalRequest};
 
 use crate::config::TuiConfig;
-use crate::session::JsonlSessionStore;
+use crate::session::{JsonlSessionStore, SessionMeta};
 use crate::theme;
 use crate::ui::conversation::ConversationView;
 use crate::ui::help_panel::HelpPanel;
 use crate::ui::input::InputEditor;
 use crate::ui::tool_panel::ToolPanel;
+use swink_agent_memory::now_utc;
 
 use super::state::{AgentStatus, App, DisplayMessage, Focus, MessageRole, OperatingMode};
 use super::{AUTO_COLLAPSE_SECS, MAX_VISIBLE_TURNS};
+
+/// Construct a fresh `SessionMeta` for a brand-new session.
+///
+/// Used when the TUI does not yet have persisted metadata (initial launch or
+/// `with_session_store` override). After load or save, the existing meta is
+/// preserved so `created_at` and `sequence` advance correctly.
+pub(super) fn new_session_meta(session_id: &str, title: &str) -> SessionMeta {
+    let now = now_utc();
+    SessionMeta {
+        id: session_id.to_string(),
+        title: title.to_string(),
+        created_at: now,
+        updated_at: now,
+        version: 1,
+        sequence: 0,
+    }
+}
 
 impl App {
     pub fn new(config: TuiConfig) -> Self {
@@ -30,6 +48,7 @@ impl App {
         } else {
             "unnamed".to_string()
         };
+        let session_meta = new_session_meta(&session_id, &config.default_model);
 
         // Apply configured color mode.
         let mode = match config.color_mode.as_str() {
@@ -63,6 +82,7 @@ impl App {
             retry_attempt: None,
             session_store,
             session_id,
+            session_meta,
             approval_rx,
             approval_tx,
             pending_approval: None,
@@ -93,6 +113,7 @@ impl App {
     #[must_use]
     pub fn with_session_store(mut self, store: JsonlSessionStore, id: String) -> Self {
         self.session_store = Some(store);
+        self.session_meta = new_session_meta(&id, &self.model_name);
         self.session_id = id;
         self
     }

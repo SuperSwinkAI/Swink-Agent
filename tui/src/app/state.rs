@@ -12,7 +12,7 @@ use swink_agent::{
 };
 
 use crate::config::TuiConfig;
-use crate::session::JsonlSessionStore;
+use crate::session::{JsonlSessionStore, SessionMeta};
 use crate::ui::conversation::ConversationView;
 use crate::ui::help_panel::HelpPanel;
 use crate::ui::input::InputEditor;
@@ -145,6 +145,10 @@ pub struct App {
     pub(crate) session_store: Option<JsonlSessionStore>,
     /// Current session ID.
     pub(crate) session_id: String,
+    /// Persisted session metadata. Carries `created_at` and the optimistic-
+    /// concurrency `sequence` forward across saves so the JSONL store does not
+    /// reject subsequent writes from the same TUI session.
+    pub(crate) session_meta: SessionMeta,
     /// Receiver for tool approval requests from the agent callback.
     pub(crate) approval_rx: mpsc::Receiver<(ToolApprovalRequest, oneshot::Sender<ToolApproval>)>,
     /// Sender for tool approval requests (cloned into the approval callback).

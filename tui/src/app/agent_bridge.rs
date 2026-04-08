@@ -174,7 +174,9 @@ impl App {
             AgentEvent::AgentEnd { .. } => {
                 self.status = AgentStatus::Idle;
                 self.retry_attempt = None;
-                self.auto_save_session();
+                if let Err(error) = self.auto_save_session() {
+                    self.push_system_message(format!("Failed to save session: {error}"));
+                }
                 self.trim_messages_to_recent_turns();
             }
             AgentEvent::ToolApprovalRequested {

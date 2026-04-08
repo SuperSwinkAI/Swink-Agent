@@ -357,6 +357,88 @@ async fn resume_into_loads_existing_session() {
 }
 
 #[tokio::test]
+async fn repeated_auto_save_advances_sequence_and_preserves_created_at() {
+    // Regression for #196: rebuilding `SessionMeta` on every save with
+    // `sequence: 0` made the second save fail the JSONL store's optimistic
+    // concurrency check, and the failure was silently dropped.
+    let tempdir = tempdir().unwrap();
+    let store = JsonlSessionStore::new(tempdir.path().to_path_buf()).unwrap();
+
+    let stream_fn = Arc::new(ScriptedStreamFn::new(vec![]));
+    let agent = make_test_agent(stream_fn);
+    let mut app =
+        App::new(TuiConfig::default()).with_session_store(store, "regression-196".to_string());
+    app.set_agent(agent);
+
+    let created_at_before = app.session_meta.created_at;
+
+    app.auto_save_session().expect("first save should succeed");
+    assert_eq!(app.session_meta.sequence, 1);
+
+    app.auto_save_session()
+        .expect("second save must not fail with sequence conflict");
+    assert_eq!(app.session_meta.sequence, 2);
+
+    app.auto_save_session().expect("third save should succeed");
+    assert_eq!(app.session_meta.sequence, 3);
+
+    assert_eq!(
+        app.session_meta.created_at, created_at_before,
+        "created_at must be preserved across saves"
+    );
+
+    // Verify what we wrote round-trips and reflects the latest sequence.
+    let store2 = JsonlSessionStore::new(tempdir.path().to_path_buf()).unwrap();
+    let (loaded_meta, _) = store2.load("regression-196", None).unwrap();
+    assert_eq!(loaded_meta.sequence, 3);
+    assert_eq!(loaded_meta.created_at, created_at_before);
+}
+
+#[tokio::test]
+async fn save_after_load_preserves_created_at_and_continues_sequence() {
+    // Regression for #196: after loading an existing session, the next save
+    // must reuse the loaded `created_at` and `sequence`, not reset them.
+    let tempdir = tempdir().unwrap();
+    let store = JsonlSessionStore::new(tempdir.path().to_path_buf()).unwrap();
+
+    let session_id = "regression-196-load";
+    let original_created = swink_agent_memory::now_utc();
+    let meta = SessionMeta {
+        id: session_id.to_string(),
+        title: "mock-model".to_string(),
+        created_at: original_created,
+        updated_at: original_created,
+        version: 1,
+        sequence: 5,
+    };
+    // Seed the file at sequence 5 so a fresh save would have to round-trip
+    // through the same value.
+    store
+        .save(session_id, &meta, &[make_user_agent_message("seed")])
+        .unwrap();
+    // After save, the stored sequence is 6.
+
+    let stream_fn = Arc::new(ScriptedStreamFn::new(vec![]));
+    let agent = make_test_agent(stream_fn);
+    let store2 = JsonlSessionStore::new(tempdir.path().to_path_buf()).unwrap();
+    let mut app =
+        App::new(TuiConfig::default()).with_session_store(store2, "placeholder".to_string());
+    app.set_agent(agent);
+
+    app.load_session(session_id).unwrap();
+    assert_eq!(app.session_meta.sequence, 6);
+    assert_eq!(app.session_meta.created_at, original_created);
+
+    app.auto_save_session()
+        .expect("save after load must not conflict");
+    assert_eq!(app.session_meta.sequence, 7);
+    assert_eq!(
+        app.session_meta.created_at, original_created,
+        "created_at must survive load → save"
+    );
+}
+
+#[tokio::test]
 async fn resume_into_errors_on_missing_session() {
     let tempdir = tempdir().unwrap();
     let store = JsonlSessionStore::new(tempdir.path().to_path_buf()).unwrap();
