@@ -357,6 +357,10 @@ pub fn accumulate_message(
     model_id: &str,
 ) -> Result<AssistantMessage, String> {
     let mut content: Option<Vec<ContentBlock>> = None;
+    // Parallel to `content`: tracks whether each block is still open (awaiting
+    // its matching `*End` event). Finalization (on `Done`) fails if any block
+    // is still open, preventing silently-corrupt assistant messages.
+    let mut open_blocks: Vec<bool> = Vec::new();
     let mut stop_reason: Option<StopReason> = None;
     let mut usage: Option<Usage> = None;
     let mut cost: Option<Cost> = None;
@@ -409,6 +413,7 @@ pub fn accumulate_message(
                 blocks.push(ContentBlock::Text {
                     text: String::new(),
                 });
+                open_blocks.push(true);
             }
 
             AssistantMessageEvent::TextDelta {
@@ -439,6 +444,9 @@ pub fn accumulate_message(
                         "TextEnd: block at index {content_index} is not Text"
                     ));
                 }
+                if let Some(open) = open_blocks.get_mut(content_index) {
+                    *open = false;
+                }
             }
 
             AssistantMessageEvent::ThinkingStart { content_index } => {
@@ -453,6 +461,7 @@ pub fn accumulate_message(
                     thinking: String::new(),
                     signature: None,
                 });
+                open_blocks.push(true);
             }
 
             AssistantMessageEvent::ThinkingDelta {
@@ -489,6 +498,9 @@ pub fn accumulate_message(
                         ));
                     }
                 }
+                if let Some(open) = open_blocks.get_mut(content_index) {
+                    *open = false;
+                }
             }
 
             AssistantMessageEvent::ToolCallStart {
@@ -509,6 +521,7 @@ pub fn accumulate_message(
                     arguments: Value::Null,
                     partial_json: Some(String::new()),
                 });
+                open_blocks.push(true);
             }
 
             AssistantMessageEvent::ToolCallDelta {
@@ -562,6 +575,9 @@ pub fn accumulate_message(
                         ));
                     }
                 }
+                if let Some(open) = open_blocks.get_mut(content_index) {
+                    *open = false;
+                }
             }
 
             AssistantMessageEvent::Done {
@@ -569,6 +585,11 @@ pub fn accumulate_message(
                 usage: u,
                 cost: c,
             } => {
+                if let Some(idx) = open_blocks.iter().position(|open| *open) {
+                    return Err(format!(
+                        "Done received with unterminated content block at index {idx}"
+                    ));
+                }
                 stop_reason = Some(sr);
                 usage = Some(u);
                 cost = Some(c);
@@ -626,6 +647,89 @@ const _: () = {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn done_with_unterminated_text_block_is_rejected() {
+        // Regression for #206: a Text block opened but never closed before Done
+        // must not silently produce a corrupt assistant message.
+        let events = vec![
+            AssistantMessageEvent::Start,
+            AssistantMessageEvent::TextStart { content_index: 0 },
+            AssistantMessageEvent::TextDelta {
+                content_index: 0,
+                delta: "hi".into(),
+            },
+            AssistantMessageEvent::Done {
+                stop_reason: StopReason::Stop,
+                usage: Usage::default(),
+                cost: Cost::default(),
+            },
+        ];
+        let err = accumulate_message(events, "test", "test").unwrap_err();
+        assert!(err.contains("unterminated content block"), "got: {err}");
+    }
+
+    #[test]
+    fn done_with_unterminated_tool_call_block_is_rejected() {
+        // Regression for #206: missing ToolCallEnd must be rejected.
+        let events = vec![
+            AssistantMessageEvent::Start,
+            AssistantMessageEvent::ToolCallStart {
+                content_index: 0,
+                id: "t1".into(),
+                name: "foo".into(),
+            },
+            AssistantMessageEvent::ToolCallDelta {
+                content_index: 0,
+                delta: "{}".into(),
+            },
+            AssistantMessageEvent::Done {
+                stop_reason: StopReason::ToolUse,
+                usage: Usage::default(),
+                cost: Cost::default(),
+            },
+        ];
+        let err = accumulate_message(events, "test", "test").unwrap_err();
+        assert!(err.contains("unterminated content block"), "got: {err}");
+    }
+
+    #[test]
+    fn done_with_all_blocks_terminated_succeeds() {
+        let events = vec![
+            AssistantMessageEvent::Start,
+            AssistantMessageEvent::TextStart { content_index: 0 },
+            AssistantMessageEvent::TextDelta {
+                content_index: 0,
+                delta: "ok".into(),
+            },
+            AssistantMessageEvent::TextEnd { content_index: 0 },
+            AssistantMessageEvent::Done {
+                stop_reason: StopReason::Stop,
+                usage: Usage::default(),
+                cost: Cost::default(),
+            },
+        ];
+        let msg = accumulate_message(events, "test", "test").expect("should succeed");
+        assert_eq!(msg.content.len(), 1);
+    }
+
+    #[test]
+    fn error_with_unterminated_block_is_allowed() {
+        // Errors may legitimately abort mid-block; don't mask them with a
+        // validation failure.
+        let events = vec![
+            AssistantMessageEvent::Start,
+            AssistantMessageEvent::TextStart { content_index: 0 },
+            AssistantMessageEvent::Error {
+                stop_reason: StopReason::Error,
+                error_message: "boom".into(),
+                usage: None,
+                error_kind: None,
+            },
+        ];
+        let msg = accumulate_message(events, "test", "test").expect("error terminal ok");
+        assert_eq!(msg.error_message.as_deref(), Some("boom"));
+    }
 
     #[test]
     fn error_constructor_sets_kind_none() {
