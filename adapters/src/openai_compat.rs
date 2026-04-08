@@ -152,10 +152,13 @@ pub struct OaiUsage {
 
 // ─── Tool call state tracking ───────────────────────────────────────────────
 
-/// Tracks the accumulated state of a single tool call during streaming.
-pub struct ToolCallState {
+/// Tracks OAI-specific per-tool-call streaming state.
+///
+/// The `content_index` is the harness-side index allocated by
+/// [`BlockAccumulator`] when the tool call was first opened.  `arguments`
+/// accumulates the partial JSON across deltas.
+pub struct OaiToolCallEntry {
     pub arguments: String,
-    pub started: bool,
     pub content_index: usize,
 }
 
@@ -269,11 +272,18 @@ pub fn build_oai_tools(tools: &[Arc<dyn AgentTool>]) -> (Vec<OaiTool>, Option<St
 
 /// State machine tracking SSE streaming progress for OAI-compatible
 /// adapters (`OpenAI`, Azure, Mistral, xAI, etc.).
+///
+/// Text and tool-call block lifecycle (index allocation, open/close tracking,
+/// and stream-end draining) is delegated to [`BlockAccumulator`].  The
+/// `tool_calls` map is keyed by the **provider-side chunk index** (0-based
+/// sequential index within the OAI streaming response) and holds only the
+/// accumulated arguments alongside the harness content index that
+/// [`BlockAccumulator`] assigned when the tool call was first seen.
 #[derive(Default)]
 pub struct OaiSseStreamState {
-    pub text_started: bool,
-    pub content_index: usize,
-    pub tool_calls: HashMap<usize, ToolCallState>,
+    pub blocks: crate::block_accumulator::BlockAccumulator,
+    /// Provider-index → (arguments, harness `content_index`).
+    pub tool_calls: HashMap<usize, OaiToolCallEntry>,
     pub usage: Option<Usage>,
     /// Saved stop reason from `finish_reason`; emitted with `Done` on `[DONE]`.
     pub stop_reason: Option<StopReason>,
@@ -281,29 +291,10 @@ pub struct OaiSseStreamState {
 
 impl crate::finalize::StreamFinalize for OaiSseStreamState {
     fn drain_open_blocks(&mut self) -> Vec<crate::finalize::OpenBlock> {
-        let mut blocks = Vec::new();
-
-        if self.text_started {
-            blocks.push(crate::finalize::OpenBlock::Text {
-                content_index: self.content_index,
-            });
-            self.text_started = false;
-            self.content_index += 1;
-        }
-
-        let mut indices: Vec<usize> = self.tool_calls.keys().copied().collect();
-        indices.sort_unstable();
-        for idx in indices {
-            if let Some(tc) = self.tool_calls.remove(&idx)
-                && tc.started
-            {
-                blocks.push(crate::finalize::OpenBlock::ToolCall {
-                    content_index: tc.content_index,
-                });
-            }
-        }
-
-        blocks
+        // Tool-call entries in the HashMap that were opened in `blocks` will be
+        // drained by the accumulator; we only need to remove our own bookkeeping.
+        self.tool_calls.clear();
+        crate::finalize::StreamFinalize::drain_open_blocks(&mut self.blocks)
     }
 }
 
@@ -332,25 +323,17 @@ pub fn process_oai_chunk(
         if let Some(content) = &choice.delta.content
             && !content.is_empty()
         {
-            if !state.text_started {
-                events.push(AssistantMessageEvent::TextStart {
-                    content_index: state.content_index,
-                });
-                state.text_started = true;
+            if let Some(ev) = state.blocks.ensure_text_open() {
+                events.push(ev);
             }
-            events.push(AssistantMessageEvent::TextDelta {
-                content_index: state.content_index,
-                delta: content.clone(),
-            });
+            if let Some(ev) = state.blocks.text_delta(content.clone()) {
+                events.push(ev);
+            }
         }
 
         if let Some(tool_calls) = &choice.delta.tool_calls {
-            if state.text_started {
-                events.push(AssistantMessageEvent::TextEnd {
-                    content_index: state.content_index,
-                });
-                state.text_started = false;
-                state.content_index += 1;
+            if let Some(ev) = state.blocks.close_text() {
+                events.push(ev);
             }
 
             for tc_delta in tool_calls {
@@ -400,18 +383,12 @@ fn process_oai_tool_call_delta(
             .and_then(|f| f.name.clone())
             .unwrap_or_default();
 
-        let content_index = state.content_index;
-        entry.insert(ToolCallState {
-            arguments: String::new(),
-            started: true,
-            content_index,
-        });
-        state.content_index += 1;
+        let (content_index, start_ev) = state.blocks.open_tool_call(id, name);
+        events.push(start_ev);
 
-        events.push(AssistantMessageEvent::ToolCallStart {
+        entry.insert(OaiToolCallEntry {
+            arguments: String::new(),
             content_index,
-            id,
-            name,
         });
 
         if let Some(args) = tc_delta
@@ -420,15 +397,15 @@ fn process_oai_tool_call_delta(
             .and_then(|f| f.arguments.as_ref())
             && !args.is_empty()
         {
-            let tc_state = state.tool_calls.get_mut(&tc_index).expect("just inserted");
-            tc_state.arguments.push_str(args);
-            events.push(AssistantMessageEvent::ToolCallDelta {
+            let tc_entry = state.tool_calls.get_mut(&tc_index).expect("just inserted");
+            tc_entry.arguments.push_str(args);
+            events.push(crate::block_accumulator::BlockAccumulator::tool_call_delta(
                 content_index,
-                delta: args.clone(),
-            });
+                args.clone(),
+            ));
         }
     } else {
-        let tc_state = state
+        let tc_entry = state
             .tool_calls
             .get_mut(&tc_index)
             .expect("entry exists per condition");
@@ -438,11 +415,11 @@ fn process_oai_tool_call_delta(
             .and_then(|f| f.arguments.as_ref())
             && !args.is_empty()
         {
-            tc_state.arguments.push_str(args);
-            events.push(AssistantMessageEvent::ToolCallDelta {
-                content_index: tc_state.content_index,
-                delta: args.clone(),
-            });
+            tc_entry.arguments.push_str(args);
+            events.push(crate::block_accumulator::BlockAccumulator::tool_call_delta(
+                tc_entry.content_index,
+                args.clone(),
+            ));
         }
     }
 }

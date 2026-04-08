@@ -16,6 +16,21 @@
     allow(dead_code)
 )]
 mod base;
+#[cfg_attr(
+    not(any(
+        feature = "anthropic",
+        feature = "openai",
+        feature = "ollama",
+        feature = "gemini",
+        feature = "proxy",
+        feature = "azure",
+        feature = "bedrock",
+        feature = "mistral",
+        feature = "xai",
+    )),
+    allow(dead_code)
+)]
+mod block_accumulator;
 pub mod classify;
 pub mod convert;
 #[cfg_attr(

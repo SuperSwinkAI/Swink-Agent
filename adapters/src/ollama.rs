@@ -336,9 +336,7 @@ fn parse_ndjson_stream(
 
     stream::unfold(
         (Box::pin(line_stream), cancellation_token, StreamState {
-            text_started: false,
-            thinking_started: false,
-            content_index: 0,
+            blocks: crate::block_accumulator::BlockAccumulator::new(),
             tool_calls_started: HashSet::new(),
         }, false, true),
         |(mut lines, token, mut state, mut done, first)| async move {
@@ -394,68 +392,54 @@ fn parse_ndjson_stream(
                             if let Some(thinking) = &chunk.message.thinking
                                 && !thinking.is_empty()
                             {
-                                if !state.thinking_started {
-                                    events.push(AssistantMessageEvent::ThinkingStart {
-                                        content_index: state.content_index,
-                                    });
-                                    state.thinking_started = true;
+                                if let Some(ev) = state.blocks.ensure_thinking_open() {
+                                    events.push(ev);
                                 }
-                                events.push(AssistantMessageEvent::ThinkingDelta {
-                                    content_index: state.content_index,
-                                    delta: thinking.clone(),
-                                });
+                                if let Some(ev) = state.blocks.thinking_delta(thinking.clone()) {
+                                    events.push(ev);
+                                }
                             }
 
                             // Handle text content
                             if !chunk.message.content.is_empty() {
-                                if !state.text_started {
-                                    // Close thinking block first if open
-                                    if state.thinking_started {
-                                        events.push(AssistantMessageEvent::ThinkingEnd {
-                                            content_index: state.content_index,
-                                            signature: None,
-                                        });
-                                        state.thinking_started = false;
-                                        state.content_index += 1;
-                                    }
-                                    events.push(AssistantMessageEvent::TextStart {
-                                        content_index: state.content_index,
-                                    });
-                                    state.text_started = true;
+                                // Close thinking block first if open (returns None when not open)
+                                if let Some(ev) = state.blocks.close_thinking(None) {
+                                    events.push(ev);
                                 }
-                                events.push(AssistantMessageEvent::TextDelta {
-                                    content_index: state.content_index,
-                                    delta: chunk.message.content.clone(),
-                                });
+                                if let Some(ev) = state.blocks.ensure_text_open() {
+                                    events.push(ev);
+                                }
+                                if let Some(ev) =
+                                    state.blocks.text_delta(chunk.message.content.clone())
+                                {
+                                    events.push(ev);
+                                }
                             }
 
                             // Handle tool calls
                             if let Some(tool_calls) = &chunk.message.tool_calls {
                                 // Close text block if open
-                                if state.text_started {
-                                    events.push(AssistantMessageEvent::TextEnd {
-                                        content_index: state.content_index,
-                                    });
-                                    state.text_started = false;
-                                    state.content_index += 1;
+                                if let Some(ev) = state.blocks.close_text() {
+                                    events.push(ev);
                                 }
 
                                 for tc in tool_calls {
                                     let tool_id = format!("tc_{}", uuid::Uuid::new_v4());
                                     if state.tool_calls_started.insert(tc.function.name.clone()) {
-                                        events.push(AssistantMessageEvent::ToolCallStart {
-                                            content_index: state.content_index,
-                                            id: tool_id,
-                                            name: tc.function.name.clone(),
-                                        });
-                                        events.push(AssistantMessageEvent::ToolCallDelta {
-                                            content_index: state.content_index,
-                                            delta: tc.function.arguments.to_string(),
-                                        });
-                                        events.push(AssistantMessageEvent::ToolCallEnd {
-                                            content_index: state.content_index,
-                                        });
-                                        state.content_index += 1;
+                                        let (ci, start_ev) = state.blocks.open_tool_call(
+                                            tool_id,
+                                            tc.function.name.clone(),
+                                        );
+                                        events.push(start_ev);
+                                        events.push(
+                                            crate::block_accumulator::BlockAccumulator::tool_call_delta(
+                                                ci,
+                                                tc.function.arguments.to_string(),
+                                            ),
+                                        );
+                                        if let Some(ev) = state.blocks.close_tool_call(ci) {
+                                            events.push(ev);
+                                        }
                                     }
                                 }
                             }
@@ -513,31 +497,15 @@ fn parse_ndjson_stream(
 
 impl crate::finalize::StreamFinalize for StreamState {
     fn drain_open_blocks(&mut self) -> Vec<crate::finalize::OpenBlock> {
-        let mut blocks = Vec::new();
-        if self.thinking_started {
-            blocks.push(crate::finalize::OpenBlock::Thinking {
-                content_index: self.content_index,
-                signature: None,
-            });
-            self.thinking_started = false;
-            self.content_index += 1;
-        }
-        if self.text_started {
-            blocks.push(crate::finalize::OpenBlock::Text {
-                content_index: self.content_index,
-            });
-            self.text_started = false;
-            self.content_index += 1;
-        }
-        blocks
+        crate::finalize::StreamFinalize::drain_open_blocks(&mut self.blocks)
     }
 }
 
 /// State machine tracking which content blocks have been started.
 struct StreamState {
-    text_started: bool,
-    thinking_started: bool,
-    content_index: usize,
+    blocks: crate::block_accumulator::BlockAccumulator,
+    /// Tool-call names seen so far; Ollama sends complete tool calls in one
+    /// chunk, so we use names (not indices) to deduplicate.
     tool_calls_started: HashSet<String>,
 }
 
@@ -685,24 +653,25 @@ mod tests {
 
     #[test]
     fn drain_open_blocks_thinking_then_text() {
+        let mut blocks = crate::block_accumulator::BlockAccumulator::new();
+        blocks.ensure_thinking_open(); // index 0
+        blocks.ensure_text_open(); // index 1
         let mut state = StreamState {
-            text_started: true,
-            thinking_started: true,
-            content_index: 0,
+            blocks,
             tool_calls_started: HashSet::new(),
         };
 
-        let blocks = state.drain_open_blocks();
-        assert_eq!(blocks.len(), 2);
+        let drained = state.drain_open_blocks();
+        assert_eq!(drained.len(), 2);
 
         // Thinking comes first (content_index 0), then text (content_index 1)
-        match &blocks[0] {
+        match &drained[0] {
             crate::finalize::OpenBlock::Thinking { content_index, .. } => {
                 assert_eq!(*content_index, 0);
             }
             other => panic!("expected Thinking, got {other:?}"),
         }
-        match &blocks[1] {
+        match &drained[1] {
             crate::finalize::OpenBlock::Text { content_index } => {
                 assert_eq!(*content_index, 1);
             }
@@ -712,10 +681,11 @@ mod tests {
 
     #[test]
     fn drain_open_blocks_idempotent() {
+        let mut blocks = crate::block_accumulator::BlockAccumulator::new();
+        blocks.ensure_thinking_open();
+        blocks.ensure_text_open();
         let mut state = StreamState {
-            text_started: true,
-            thinking_started: true,
-            content_index: 0,
+            blocks,
             tool_calls_started: HashSet::new(),
         };
 
