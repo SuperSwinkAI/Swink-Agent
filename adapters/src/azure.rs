@@ -5,7 +5,7 @@
 //! the shared transport pipeline from [`oai_transport`].
 
 use std::pin::Pin;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, PoisonError, RwLock};
 use std::time::{Duration, Instant};
 
 use futures::stream::{self, Stream, StreamExt as _};
@@ -139,11 +139,11 @@ impl AzureStreamFn {
     ) -> Result<String, String> {
         // Check cache first
         {
-            let cache = self.token_cache.read().unwrap_or_else(|e| e.into_inner());
-            if let Some(cached) = cache.as_ref() {
-                if Instant::now() + REFRESH_MARGIN < cached.expires_at {
-                    return Ok(cached.access_token.clone());
-                }
+            let cache = self.token_cache.read().unwrap_or_else(PoisonError::into_inner);
+            if let Some(cached) = cache.as_ref()
+                && Instant::now() + REFRESH_MARGIN < cached.expires_at
+            {
+                return Ok(cached.access_token.clone());
             }
         }
 
@@ -154,19 +154,20 @@ impl AzureStreamFn {
         let access_token = token.access_token.clone();
 
         // Update cache
-        let mut cache = self.token_cache.write().unwrap_or_else(|e| e.into_inner());
-        *cache = Some(token);
+        *self
+            .token_cache
+            .write()
+            .unwrap_or_else(PoisonError::into_inner) = Some(token);
 
         Ok(access_token)
     }
 
     /// Build the token endpoint URL. Uses override if set, otherwise Microsoft default.
     fn token_url(&self, tenant_id: &str) -> String {
-        if let Some(override_url) = &self.token_endpoint_override {
-            override_url.clone()
-        } else {
-            format!("https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token")
-        }
+        self.token_endpoint_override.as_ref().map_or_else(
+            || format!("https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"),
+            Clone::clone,
+        )
     }
 
     /// Apply Azure-specific auth headers to the request builder.
