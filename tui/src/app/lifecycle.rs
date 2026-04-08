@@ -63,6 +63,7 @@ impl App {
             retry_attempt: None,
             session_store,
             session_id,
+            session_meta: None,
             approval_rx,
             approval_tx,
             pending_approval: None,
@@ -94,6 +95,7 @@ impl App {
     pub fn with_session_store(mut self, store: JsonlSessionStore, id: String) -> Self {
         self.session_store = Some(store);
         self.session_id = id;
+        self.session_meta = None;
         self
     }
 

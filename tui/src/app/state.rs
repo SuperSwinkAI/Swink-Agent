@@ -145,6 +145,10 @@ pub struct App {
     pub(crate) session_store: Option<JsonlSessionStore>,
     /// Current session ID.
     pub(crate) session_id: String,
+    /// Current persisted session metadata. `None` until the first successful save
+    /// or until a session is loaded. Owns `created_at` and the optimistic-concurrency
+    /// `sequence` counter so subsequent saves don't race against the store.
+    pub(crate) session_meta: Option<crate::session::SessionMeta>,
     /// Receiver for tool approval requests from the agent callback.
     pub(crate) approval_rx: mpsc::Receiver<(ToolApprovalRequest, oneshot::Sender<ToolApproval>)>,
     /// Sender for tool approval requests (cloned into the approval callback).
