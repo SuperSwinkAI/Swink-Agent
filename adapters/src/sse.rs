@@ -56,6 +56,9 @@ pub enum SseLine {
 /// specification (FR-006).
 pub struct SseStreamParser {
     buffer: String,
+    /// Bytes carried across `feed()` calls when a chunk ends mid-UTF-8
+    /// sequence. Up to 3 bytes may be held until the continuation arrives.
+    byte_carry: Vec<u8>,
     /// Accumulates successive `data:` lines for multi-line concatenation.
     pending_data: Option<String>,
 }
@@ -66,22 +69,76 @@ impl SseStreamParser {
     pub const fn new() -> Self {
         Self {
             buffer: String::new(),
+            byte_carry: Vec::new(),
             pending_data: None,
         }
     }
 
     /// Feed bytes into the parser, yielding complete SSE lines.
+    ///
+    /// Multi-byte UTF-8 sequences split across chunk boundaries are held
+    /// in an internal carry buffer until the continuation bytes arrive,
+    /// so split characters are decoded losslessly rather than replaced.
     pub fn feed(&mut self, chunk: &[u8]) -> Vec<SseLine> {
-        match std::str::from_utf8(chunk) {
-            Ok(s) => self.buffer.push_str(s),
-            Err(_) => self.buffer.push_str(&String::from_utf8_lossy(chunk)),
+        // Combine any carried trailing bytes from the previous feed with
+        // the new chunk before attempting UTF-8 decoding.
+        let combined: Vec<u8> = if self.byte_carry.is_empty() {
+            chunk.to_vec()
+        } else {
+            let mut v = std::mem::take(&mut self.byte_carry);
+            v.extend_from_slice(chunk);
+            v
+        };
+
+        let bytes = combined.as_slice();
+        let mut cursor = 0;
+        while cursor < bytes.len() {
+            match std::str::from_utf8(&bytes[cursor..]) {
+                Ok(s) => {
+                    self.buffer.push_str(s);
+                    cursor = bytes.len();
+                }
+                Err(e) => {
+                    let valid = e.valid_up_to();
+                    if valid > 0 {
+                        // SAFETY: `valid_up_to()` is guaranteed to point at
+                        // the end of a valid UTF-8 prefix.
+                        let s =
+                            std::str::from_utf8(&bytes[cursor..cursor + valid]).expect("valid utf-8 prefix");
+                        self.buffer.push_str(s);
+                    }
+                    cursor += valid;
+                    match e.error_len() {
+                        None => {
+                            // Trailing bytes are an *incomplete* UTF-8
+                            // sequence — carry them to the next feed.
+                            self.byte_carry.extend_from_slice(&bytes[cursor..]);
+                            cursor = bytes.len();
+                        }
+                        Some(n) => {
+                            // Genuinely invalid byte(s) — substitute the
+                            // Unicode replacement char and skip past them.
+                            self.buffer.push('\u{FFFD}');
+                            cursor += n;
+                        }
+                    }
+                }
+            }
         }
+
         self.drain_lines()
     }
 
     /// Flush remaining buffer at stream end.
     pub fn flush(&mut self) -> Vec<SseLine> {
         let mut lines = vec![];
+
+        // Any leftover incomplete UTF-8 bytes at end-of-stream are no
+        // longer recoverable — emit them lossily so callers still see them.
+        if !self.byte_carry.is_empty() {
+            let carry = std::mem::take(&mut self.byte_carry);
+            self.buffer.push_str(&String::from_utf8_lossy(&carry));
+        }
 
         if !self.buffer.trim().is_empty() {
             let remaining = std::mem::take(&mut self.buffer);
@@ -529,6 +586,70 @@ mod tests {
 
         let flushed = parser.flush();
         assert_eq!(flushed, vec![SseLine::Data("orphan".to_string())]);
+    }
+
+    #[test]
+    fn sse_parser_split_utf8_across_chunks_is_lossless() {
+        // Regression for #207: a multi-byte UTF-8 sequence split across two
+        // feed() calls must decode losslessly, not produce replacement chars.
+        // "héllo" — 'é' is 0xC3 0xA9; we split the chunk between those bytes.
+        let payload = "data: héllo\n\n".as_bytes();
+        let split_at = payload
+            .windows(2)
+            .position(|w| w == [0xC3, 0xA9])
+            .expect("payload contains é")
+            + 1;
+        let (first, second) = payload.split_at(split_at);
+
+        let mut parser = SseStreamParser::new();
+        let lines1 = parser.feed(first);
+        // The split byte should not have produced any line yet (no newline)
+        // and must NOT contain a replacement character.
+        for line in &lines1 {
+            if let SseLine::Data(d) = line {
+                assert!(!d.contains('\u{FFFD}'), "split byte produced U+FFFD: {d:?}");
+            }
+        }
+
+        let lines2 = parser.feed(second);
+        let combined: Vec<_> = lines1.into_iter().chain(lines2).collect();
+        assert_eq!(
+            combined,
+            vec![SseLine::Data("héllo".to_string()), SseLine::Empty]
+        );
+    }
+
+    #[test]
+    fn sse_parser_split_utf8_3byte_and_4byte() {
+        // 3-byte char: '€' (0xE2 0x82 0xAC); 4-byte char: '🦀' (0xF0 0x9F 0xA6 0x80).
+        // Feed each one byte at a time and confirm the parser reassembles
+        // them without inserting replacement characters.
+        let payload = "data: €🦀\n\n".as_bytes();
+        let mut parser = SseStreamParser::new();
+        let mut all = Vec::new();
+        for b in payload {
+            all.extend(parser.feed(&[*b]));
+        }
+        assert_eq!(
+            all,
+            vec![SseLine::Data("€🦀".to_string()), SseLine::Empty]
+        );
+    }
+
+    #[test]
+    fn sse_parser_truly_invalid_byte_uses_replacement_char() {
+        // A lone 0xFF is not the start of any valid UTF-8 sequence and is
+        // not the continuation of a partial sequence — it should be replaced
+        // with U+FFFD, not held in the carry buffer forever.
+        let mut parser = SseStreamParser::new();
+        let lines = parser.feed(b"data: a\xFFb\n\n");
+        assert_eq!(
+            lines,
+            vec![
+                SseLine::Data("a\u{FFFD}b".to_string()),
+                SseLine::Empty,
+            ]
+        );
     }
 
     #[test]
