@@ -17,7 +17,7 @@ rand = "0.10"
 schemars = "1"
 dotenvy = "0.15"
 pretty_assertions = "1"
-criterion = { version = "0.5", features = ["html_reports"] }
+criterion = { version = "0.8", features = ["html_reports"] }
 tempfile = "3"
 wiremock = "0.6"
 serde_yaml = "0.9"
