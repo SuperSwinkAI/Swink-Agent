@@ -497,10 +497,12 @@ async fn ollama_multiple_tool_calls() {
     }
 }
 
-/// 13. Two chunks with the same tool name — the second is deduped; only one
-/// `ToolCallStart` for "bash" is emitted.
+/// 13. Regression for issue #209: two chunks with the same tool name must
+/// both be dispatched. The previous implementation deduped by name and
+/// silently dropped the second call, breaking any workflow that legitimately
+/// invokes the same tool multiple times in one turn.
 #[tokio::test]
-async fn ollama_duplicate_tool_calls_deduped() {
+async fn ollama_repeated_same_name_tool_calls_both_dispatched() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/api/chat"))
@@ -522,15 +524,42 @@ async fn ollama_duplicate_tool_calls_deduped() {
 
     assert_eq!(
         tool_starts.len(),
-        1,
-        "expected exactly 1 ToolCallStart (duplicate deduped), got: {tool_starts:?}"
+        2,
+        "both same-name tool calls should be dispatched, got: {tool_starts:?}"
     );
-    match &tool_starts[0] {
-        AssistantMessageEvent::ToolCallStart { name, .. } => {
-            assert_eq!(name, "bash");
+
+    let mut ids = Vec::new();
+    let mut indices = Vec::new();
+    for ts in &tool_starts {
+        match ts {
+            AssistantMessageEvent::ToolCallStart {
+                name,
+                id,
+                content_index,
+            } => {
+                assert_eq!(name, "bash");
+                ids.push(id.clone());
+                indices.push(*content_index);
+            }
+            _ => unreachable!(),
         }
-        _ => unreachable!(),
     }
+    assert_ne!(ids[0], ids[1], "tool call ids must be unique");
+    assert_ne!(
+        indices[0], indices[1],
+        "each tool call must occupy its own content block"
+    );
+
+    let deltas: Vec<&str> = events
+        .iter()
+        .filter_map(|e| match e {
+            AssistantMessageEvent::ToolCallDelta { delta, .. } => Some(delta.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(deltas.len(), 2);
+    assert!(deltas.iter().any(|d| d.contains("\"ls\"")));
+    assert!(deltas.iter().any(|d| d.contains("\"pwd\"")));
 }
 
 /// 14. Stream ends without a done chunk — should produce an error about
