@@ -35,7 +35,7 @@ use crate::finalize::{OpenBlock, StreamFinalize};
 /// The accumulator implements [`StreamFinalize`]: call
 /// `finalize_blocks(accumulator)` (from [`crate::finalize`]) to close every
 /// block that the provider left open.
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct BlockAccumulator {
     /// Next content index to hand out.
     next_index: usize,
@@ -53,6 +53,7 @@ pub struct BlockAccumulator {
 #[allow(clippy::missing_const_for_fn)]
 impl BlockAccumulator {
     /// Create a new accumulator starting at content index 0.
+    #[allow(dead_code)]
     #[inline]
     pub fn new() -> Self {
         Self::default()
@@ -215,6 +216,7 @@ impl BlockAccumulator {
     ///
     /// Returns a `ToolCallEnd` event, or `None` if no open block with that
     /// index exists.
+    #[allow(dead_code)]
     pub fn close_tool_call(&mut self, content_index: usize) -> Option<AssistantMessageEvent> {
         if let Some(pos) = self
             .open_tool_calls

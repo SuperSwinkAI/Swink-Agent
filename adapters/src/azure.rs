@@ -139,7 +139,10 @@ impl AzureStreamFn {
     ) -> Result<String, String> {
         // Check cache first
         {
-            let cache = self.token_cache.read().unwrap_or_else(PoisonError::into_inner);
+            let cache = self
+                .token_cache
+                .read()
+                .unwrap_or_else(PoisonError::into_inner);
             if let Some(cached) = cache.as_ref()
                 && Instant::now() + REFRESH_MARGIN < cached.expires_at
             {

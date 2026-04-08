@@ -411,3 +411,136 @@ async fn google_safety_finish_reason_emits_error() {
         "error message should mention safety: {msg}"
     );
 }
+
+// ── BlockAccumulator regression tests ─────────────────────────────────────────
+//
+// These tests verify the content-index ordering contract introduced when
+// GeminiStreamState migrated from its own block-tracking fields to the shared
+// BlockAccumulator.  The key invariant: each block (thinking, text, tool-call)
+// receives a globally-sequential, unique content index regardless of how many
+// chunks arrive or how the blocks interleave.
+
+/// Thinking block (index 0) followed by text block (index 1): indices must be
+/// sequential and non-overlapping across block types.
+#[tokio::test]
+async fn gemini_thinking_then_text_content_indices_are_sequential() {
+    let body = [
+        r#"data: {"candidates":[{"content":{"parts":[{"text":"thinking…","thought":true}]}}]}"#,
+        "",
+        r#"data: {"candidates":[{"content":{"parts":[{"text":"answer"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":5,"candidatesTokenCount":3,"totalTokenCount":8}}"#,
+        "",
+        "data: [DONE]",
+        "",
+    ]
+    .join("\n");
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(sse_response(&body))
+        .mount(&server)
+        .await;
+
+    let stream_fn = GeminiStreamFn::new(server.uri(), "test-key", ApiVersion::V1beta);
+    let events = collect_events(&stream_fn).await;
+
+    let thinking_start_ci = events.iter().find_map(|ev| match ev {
+        AssistantMessageEvent::ThinkingStart { content_index } => Some(*content_index),
+        _ => None,
+    });
+    let text_start_ci = events.iter().find_map(|ev| match ev {
+        AssistantMessageEvent::TextStart { content_index } => Some(*content_index),
+        _ => None,
+    });
+
+    let thinking_ci = thinking_start_ci.expect("expected ThinkingStart");
+    let text_ci = text_start_ci.expect("expected TextStart");
+    assert_ne!(
+        thinking_ci, text_ci,
+        "thinking and text must have different content indices"
+    );
+    assert!(
+        thinking_ci < text_ci,
+        "thinking block opened first must have a lower content index"
+    );
+    assert_eq!(
+        text_ci,
+        thinking_ci + 1,
+        "content indices must be strictly sequential"
+    );
+}
+
+/// Two tool calls in one response must receive distinct, ascending content
+/// indices (regression for the `next_content_index` removal).
+#[tokio::test]
+async fn gemini_two_tool_calls_have_sequential_content_indices() {
+    let body = [
+        r#"data: {"candidates":[{"content":{"parts":[{"functionCall":{"id":"c1","name":"get_weather","args":{"city":"Paris"}}},{"functionCall":{"id":"c2","name":"get_time","args":{"tz":"UTC"}}}]}}]}"#,
+        "",
+        r#"data: {"candidates":[{"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":12,"totalTokenCount":22}}"#,
+        "",
+        "data: [DONE]",
+        "",
+    ]
+    .join("\n");
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(sse_response(&body))
+        .mount(&server)
+        .await;
+
+    let stream_fn = GeminiStreamFn::new(server.uri(), "test-key", ApiVersion::V1beta);
+    let events = collect_events(&stream_fn).await;
+
+    let cis: Vec<usize> = events
+        .iter()
+        .filter_map(|ev| match ev {
+            AssistantMessageEvent::ToolCallStart { content_index, .. } => Some(*content_index),
+            _ => None,
+        })
+        .collect();
+
+    assert_eq!(cis.len(), 2, "expected 2 ToolCallStart events: {cis:?}");
+    assert_ne!(
+        cis[0], cis[1],
+        "tool calls must have different content indices"
+    );
+    assert!(
+        cis[0] < cis[1],
+        "first tool call must have a lower content index"
+    );
+    assert_eq!(cis[1], cis[0] + 1, "content indices must be sequential");
+}
+
+/// When the stream ends without an explicit finish reason the open text block
+/// must be closed by the finalization path (not silently dropped).
+#[tokio::test]
+async fn gemini_abrupt_stream_end_closes_open_text_block() {
+    // No finishReason, no [DONE] — simulates an abrupt disconnect.
+    let body = [
+        r#"data: {"candidates":[{"content":{"parts":[{"text":"partial"}]}}]}"#,
+        "",
+    ]
+    .join("\n");
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(sse_response(&body))
+        .mount(&server)
+        .await;
+
+    let stream_fn = GeminiStreamFn::new(server.uri(), "test-key", ApiVersion::V1beta);
+    let events = collect_events(&stream_fn).await;
+
+    let types: Vec<_> = events.iter().map(event_name).collect();
+    // The text block must have been opened…
+    assert!(
+        types.contains(&"TextStart"),
+        "expected TextStart: {types:?}"
+    );
+    // …and must be closed, even on abrupt termination.
+    assert!(
+        types.contains(&"TextEnd"),
+        "expected TextEnd from finalization: {types:?}"
+    );
+}

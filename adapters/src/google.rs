@@ -187,20 +187,18 @@ struct GeminiUsageMetadata {
 
 #[derive(Debug)]
 struct GeminiToolCallState {
-    id: String,
-    name: String,
+    /// Harness-side content index returned by [`BlockAccumulator::open_tool_call`].
     content_index: usize,
+    /// Accumulated JSON arguments for incremental delta diffing.
     arguments: String,
 }
 
 #[derive(Debug, Default)]
 struct GeminiStreamState {
-    text_started: bool,
-    text_content_index: Option<usize>,
-    thinking_started: bool,
-    thinking_content_index: Option<usize>,
-    thinking_signature: Option<String>,
-    next_content_index: usize,
+    /// Shared block lifecycle accumulator (index allocation, open/close, drain).
+    blocks: crate::block_accumulator::BlockAccumulator,
+    /// Provider-part-index → harness state.  Kept for argument diffing and
+    /// delta event emission; block lifecycle is owned by `blocks`.
     tool_calls: HashMap<usize, GeminiToolCallState>,
     saw_tool_call: bool,
     usage: Usage,
@@ -633,31 +631,25 @@ fn process_chunk(
     if let Some(content) = candidate.content {
         for (part_index, part) in content.parts.into_iter().enumerate() {
             if part.thought.unwrap_or(false) {
-                close_text_block(state, events);
-                if !state.thinking_started {
-                    let content_index = state.next_content_index;
-                    state.next_content_index += 1;
-                    state.thinking_started = true;
-                    state.thinking_content_index = Some(content_index);
-                    events.push(AssistantMessageEvent::ThinkingStart { content_index });
+                events.extend(state.blocks.close_text());
+                if let Some(ev) = state.blocks.ensure_thinking_open() {
+                    events.push(ev);
                 }
                 if let Some(text) = part.text
                     && !text.is_empty()
+                    && let Some(ev) = state.blocks.thinking_delta(text)
                 {
-                    events.push(AssistantMessageEvent::ThinkingDelta {
-                        content_index: state.thinking_content_index.expect("thinking index set"),
-                        delta: text,
-                    });
+                    events.push(ev);
                 }
                 if let Some(signature) = part.thought_signature {
-                    state.thinking_signature = Some(signature);
+                    state.blocks.set_thinking_signature(signature);
                 }
                 continue;
             }
 
             if let Some(function_call) = part.function_call {
-                close_text_block(state, events);
-                close_thinking_block(state, events);
+                events.extend(state.blocks.close_text());
+                events.extend(state.blocks.close_thinking(None));
                 process_function_call(part_index, function_call, state, events);
                 continue;
             }
@@ -665,18 +657,13 @@ fn process_chunk(
             if let Some(text) = part.text
                 && !text.is_empty()
             {
-                close_thinking_block(state, events);
-                if !state.text_started {
-                    let content_index = state.next_content_index;
-                    state.next_content_index += 1;
-                    state.text_started = true;
-                    state.text_content_index = Some(content_index);
-                    events.push(AssistantMessageEvent::TextStart { content_index });
+                events.extend(state.blocks.close_thinking(None));
+                if let Some(ev) = state.blocks.ensure_text_open() {
+                    events.push(ev);
                 }
-                events.push(AssistantMessageEvent::TextDelta {
-                    content_index: state.text_content_index.expect("text index set"),
-                    delta: text,
-                });
+                if let Some(ev) = state.blocks.text_delta(text) {
+                    events.push(ev);
+                }
             }
         }
     }
@@ -684,8 +671,8 @@ fn process_chunk(
     if let Some(ref finish_reason) = candidate.finish_reason {
         if finish_reason == "SAFETY" {
             warn!("Google Gemini response blocked by safety filter");
-            close_text_block(state, events);
-            close_thinking_block(state, events);
+            events.extend(state.blocks.close_text());
+            events.extend(state.blocks.close_thinking(None));
             events.push(AssistantMessageEvent::error_content_filtered(
                 "Google Gemini: response blocked by safety filter",
             ));
@@ -701,28 +688,28 @@ fn process_function_call(
     state: &mut GeminiStreamState,
     events: &mut Vec<AssistantMessageEvent>,
 ) {
-    let entry = state.tool_calls.entry(part_index).or_insert_with(|| {
+    // Open a new tool-call block the first time we see this part_index.
+    if !state.tool_calls.contains_key(&part_index) {
         state.saw_tool_call = true;
-        let content_index = state.next_content_index;
-        state.next_content_index += 1;
-        GeminiToolCallState {
-            id: function_call
-                .id
-                .clone()
-                .unwrap_or_else(|| format!("gemini-tool-{part_index}")),
-            name: function_call.name.clone(),
-            content_index,
-            arguments: String::new(),
-        }
-    });
-
-    if entry.arguments.is_empty() {
-        events.push(AssistantMessageEvent::ToolCallStart {
-            content_index: entry.content_index,
-            id: entry.id.clone(),
-            name: entry.name.clone(),
-        });
+        let id = function_call
+            .id
+            .clone()
+            .unwrap_or_else(|| format!("gemini-tool-{part_index}"));
+        let (content_index, start_ev) = state.blocks.open_tool_call(id, function_call.name.clone());
+        events.push(start_ev);
+        state.tool_calls.insert(
+            part_index,
+            GeminiToolCallState {
+                content_index,
+                arguments: String::new(),
+            },
+        );
     }
+
+    let entry = state
+        .tool_calls
+        .get_mut(&part_index)
+        .expect("just inserted or already present");
 
     let serialized_args = match function_call.args {
         Value::Null => String::new(),
@@ -759,50 +746,11 @@ fn map_finish_reason(finish_reason: &str, saw_tool_call: bool) -> StopReason {
     }
 }
 
-fn close_text_block(state: &mut GeminiStreamState, events: &mut Vec<AssistantMessageEvent>) {
-    if let Some(content_index) = state.text_content_index.take() {
-        events.push(AssistantMessageEvent::TextEnd { content_index });
-        state.text_started = false;
-    }
-}
-
-fn close_thinking_block(state: &mut GeminiStreamState, events: &mut Vec<AssistantMessageEvent>) {
-    if let Some(content_index) = state.thinking_content_index.take() {
-        events.push(AssistantMessageEvent::ThinkingEnd {
-            content_index,
-            signature: state.thinking_signature.take(),
-        });
-        state.thinking_started = false;
-    }
-}
-
 impl crate::finalize::StreamFinalize for GeminiStreamState {
     fn drain_open_blocks(&mut self) -> Vec<crate::finalize::OpenBlock> {
-        let mut blocks = Vec::new();
-
-        if let Some(content_index) = self.text_content_index.take() {
-            blocks.push(crate::finalize::OpenBlock::Text { content_index });
-            self.text_started = false;
-        }
-
-        if let Some(content_index) = self.thinking_content_index.take() {
-            blocks.push(crate::finalize::OpenBlock::Thinking {
-                content_index,
-                signature: self.thinking_signature.take(),
-            });
-            self.thinking_started = false;
-        }
-
-        let mut tool_calls: Vec<_> = self.tool_calls.values().collect();
-        tool_calls.sort_by_key(|tool_call| tool_call.content_index);
-        for tool_call in tool_calls {
-            blocks.push(crate::finalize::OpenBlock::ToolCall {
-                content_index: tool_call.content_index,
-            });
-        }
+        // Clear per-chunk bookkeeping; block lifecycle is owned by `blocks`.
         self.tool_calls.clear();
-
-        blocks
+        crate::finalize::StreamFinalize::drain_open_blocks(&mut self.blocks)
     }
 }
 
