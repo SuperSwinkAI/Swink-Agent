@@ -8,6 +8,9 @@
 
 use std::io::{self, BufRead, Seek, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
 
 use swink_agent::{AgentMessage, CustomMessageRegistry, LlmMessage};
 
@@ -159,21 +162,102 @@ fn read_meta_with_line_len(path: &Path, id: &str) -> io::Result<(SessionMeta, us
     Ok((meta, line_len))
 }
 
-fn rewrite_session_file(path: &Path, meta: &SessionMeta, lines: &[String]) -> io::Result<()> {
-    let file = std::fs::File::create(path)?;
-    let mut writer = io::BufWriter::new(file);
+/// Write `contents_fn` to a sibling temp file, fsync, then atomically rename
+/// over `target`. The temp file is removed on any error so a crash mid-write
+/// never leaves a zero-length or partial file at `target`.
+fn atomic_write<F>(target: &Path, contents_fn: F) -> io::Result<()>
+where
+    F: FnOnce(&mut io::BufWriter<&std::fs::File>) -> io::Result<()>,
+{
+    let parent = target.parent().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "target path has no parent directory",
+        )
+    })?;
+    let file_name = target.file_name().and_then(|s| s.to_str()).ok_or_else(|| {
+        io::Error::new(io::ErrorKind::InvalidInput, "target path has no file name")
+    })?;
+    // Serialize overlapping rewrites of the same target within this process,
+    // so the rename+replace sequence on Windows cannot race.
+    let lock = lock_for_target(target);
+    let _guard = lock.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    // Unique per write attempt: pid + monotonic counter. Two overlapping
+    // rewrites of the same target inside one process must not share a temp
+    // path, or they would truncate/rename each other's files.
+    let seq = TMP_SEQ.fetch_add(1, Ordering::Relaxed);
+    let tmp_path = parent.join(format!(
+        ".{file_name}.tmp.{}.{seq}",
+        std::process::id()
+    ));
 
-    serde_json::to_writer(&mut writer, meta).map_err(io::Error::other)?;
-    writeln!(writer)?;
-
-    for line in lines {
-        if !line.is_empty() {
-            writeln!(writer, "{line}")?;
+    let result: io::Result<()> = (|| {
+        // `create_new` guarantees we never clobber a pre-existing temp file
+        // from another writer that happened to pick the same path.
+        let file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp_path)?;
+        {
+            let mut writer = io::BufWriter::new(&file);
+            contents_fn(&mut writer)?;
+            writer.flush()?;
         }
-    }
+        file.sync_all()?;
+        drop(file);
+        rename_replacing(&tmp_path, target)
+    })();
 
-    writer.flush()?;
-    Ok(())
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp_path);
+    }
+    result
+}
+
+/// Rename `from` to `to`, replacing `to` if it already exists.
+///
+/// On Unix, `std::fs::rename` is an atomic replace. On Windows it fails with
+/// `ERROR_ALREADY_EXISTS` when the destination is present, so we remove it
+/// first. To keep concurrent rewrites of the same target safe on Windows,
+/// callers must serialize via [`lock_for_target`] around the whole
+/// write+rename sequence.
+fn rename_replacing(from: &Path, to: &Path) -> io::Result<()> {
+    #[cfg(windows)]
+    if to.exists() {
+        std::fs::remove_file(to)?;
+    }
+    std::fs::rename(from, to)
+}
+
+/// Per-target serialization guard. Two overlapping atomic rewrites of the
+/// same path inside one process must not race on the final rename step —
+/// on Windows this is especially important because the replace sequence is
+/// not a single kernel operation. We key a global mutex map on the target
+/// path so writes to different sessions remain fully concurrent.
+fn lock_for_target(target: &Path) -> std::sync::Arc<std::sync::Mutex<()>> {
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex, OnceLock};
+    static LOCKS: OnceLock<Mutex<HashMap<PathBuf, Arc<Mutex<()>>>>> = OnceLock::new();
+    let map = LOCKS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut guard = map.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    guard
+        .entry(target.to_path_buf())
+        .or_insert_with(|| Arc::new(Mutex::new(())))
+        .clone()
+}
+
+fn rewrite_session_file(path: &Path, meta: &SessionMeta, lines: &[String]) -> io::Result<()> {
+    atomic_write(path, |writer| {
+        serde_json::to_writer(&mut *writer, meta).map_err(io::Error::other)?;
+        writeln!(writer)?;
+
+        for line in lines {
+            if !line.is_empty() {
+                writeln!(writer, "{line}")?;
+            }
+        }
+        Ok(())
+    })
 }
 
 fn append_records(
@@ -325,23 +409,20 @@ impl SessionStore for JsonlSessionStore {
         let mut write_meta = meta.clone();
         write_meta.sequence += 1;
 
-        let file = std::fs::File::create(&path)?;
-        let mut writer = io::BufWriter::new(file);
+        atomic_write(&path, |writer| {
+            // First line: metadata
+            serde_json::to_writer(&mut *writer, &write_meta).map_err(io::Error::other)?;
+            writeln!(writer)?;
 
-        // First line: metadata
-        serde_json::to_writer(&mut writer, &write_meta).map_err(io::Error::other)?;
-        writeln!(writer)?;
-
-        // Subsequent lines: one message per line
-        for msg in messages {
-            if let Some(record) = SessionRecord::from_message(msg, id) {
-                writer.write_all(record.to_json_line()?.as_bytes())?;
-                writeln!(writer)?;
+            // Subsequent lines: one message per line
+            for msg in messages {
+                if let Some(record) = SessionRecord::from_message(msg, id) {
+                    writer.write_all(record.to_json_line()?.as_bytes())?;
+                    writeln!(writer)?;
+                }
             }
-        }
-
-        writer.flush()?;
-        Ok(())
+            Ok(())
+        })
     }
 
     fn append(&self, id: &str, messages: &[AgentMessage]) -> io::Result<()> {
@@ -491,9 +572,9 @@ impl SessionStore for JsonlSessionStore {
     fn save_interrupt(&self, id: &str, state: &InterruptState) -> io::Result<()> {
         validate_session_id(id)?;
         let path = interrupt_path(&self.sessions_dir, id);
-        let file = std::fs::File::create(&path)?;
-        let writer = io::BufWriter::new(file);
-        serde_json::to_writer_pretty(writer, state).map_err(io::Error::other)
+        atomic_write(&path, |writer| {
+            serde_json::to_writer_pretty(&mut *writer, state).map_err(io::Error::other)
+        })
     }
 
     fn load_interrupt(&self, id: &str) -> io::Result<Option<InterruptState>> {
@@ -569,21 +650,18 @@ impl JsonlSessionStore {
         let mut write_meta = meta.clone();
         write_meta.sequence += 1;
 
-        let file = std::fs::File::create(&path)?;
-        let mut writer = io::BufWriter::new(file);
-
-        // First line: metadata
-        serde_json::to_writer(&mut writer, &write_meta).map_err(io::Error::other)?;
-        writeln!(writer)?;
-
-        // Subsequent lines: one SessionEntry per line
-        for entry in entries {
-            serde_json::to_writer(&mut writer, entry).map_err(io::Error::other)?;
+        atomic_write(&path, |writer| {
+            // First line: metadata
+            serde_json::to_writer(&mut *writer, &write_meta).map_err(io::Error::other)?;
             writeln!(writer)?;
-        }
 
-        writer.flush()?;
-        Ok(())
+            // Subsequent lines: one SessionEntry per line
+            for entry in entries {
+                serde_json::to_writer(&mut *writer, entry).map_err(io::Error::other)?;
+                writeln!(writer)?;
+            }
+            Ok(())
+        })
     }
 
     /// Load a session with rich entry types.
@@ -827,6 +905,155 @@ mod tests {
 
         let (_, messages) = store.load("test-state", None).unwrap();
         assert_eq!(messages.len(), 2);
+    }
+
+    #[test]
+    fn atomic_write_leaves_no_temp_file_on_success() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("sess.jsonl");
+        atomic_write(&target, |w| {
+            w.write_all(b"hello\n")?;
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "hello\n");
+        // No leftover temp files in the directory
+        for entry in std::fs::read_dir(dir.path()).unwrap() {
+            let name = entry.unwrap().file_name().into_string().unwrap();
+            assert!(
+                !name.contains(".tmp."),
+                "unexpected temp file left behind: {name}"
+            );
+        }
+    }
+
+    #[test]
+    fn atomic_write_cleans_up_temp_on_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("sess.jsonl");
+        let err = atomic_write(&target, |_w| {
+            Err(io::Error::other("simulated mid-write failure"))
+        })
+        .unwrap_err();
+        assert_eq!(err.to_string(), "simulated mid-write failure");
+        // Target must not exist (no zero-length file)
+        assert!(!target.exists());
+        // And no leftover temp file
+        for entry in std::fs::read_dir(dir.path()).unwrap() {
+            let name = entry.unwrap().file_name().into_string().unwrap();
+            assert!(!name.contains(".tmp."), "temp file not cleaned up: {name}");
+        }
+    }
+
+    #[test]
+    fn atomic_write_replaces_existing_file() {
+        // Regression: on Windows, std::fs::rename does not replace an existing
+        // destination, so rewrites of existing session files would fail.
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("sess.jsonl");
+        std::fs::write(&target, b"old content\n").unwrap();
+        atomic_write(&target, |w| {
+            w.write_all(b"new content\n")?;
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "new content\n");
+        // No leftover temp files
+        for entry in std::fs::read_dir(dir.path()).unwrap() {
+            let name = entry.unwrap().file_name().into_string().unwrap();
+            assert!(!name.contains(".tmp."), "temp file left behind: {name}");
+        }
+    }
+
+    #[test]
+    fn atomic_write_concurrent_rewrites_of_same_target_do_not_collide() {
+        // Regression: the temp file path must be unique per write attempt.
+        // If two overlapping rewrites in the same process shared a temp path,
+        // they could truncate or rename each other's files nondeterministically.
+        use std::sync::Arc;
+        use std::sync::Barrier;
+        use std::thread;
+
+        let dir = tempfile::tempdir().unwrap();
+        let target = Arc::new(dir.path().join("sess.jsonl"));
+        std::fs::write(&*target, b"initial\n").unwrap();
+
+        let n = 8;
+        let barrier = Arc::new(Barrier::new(n));
+        let mut handles = Vec::with_capacity(n);
+        for i in 0..n {
+            let target = Arc::clone(&target);
+            let barrier = Arc::clone(&barrier);
+            handles.push(thread::spawn(move || {
+                barrier.wait();
+                atomic_write(&target, |w| {
+                    // Write enough data that a torn rename would be observable.
+                    for _ in 0..256 {
+                        writeln!(w, "writer-{i}")?;
+                    }
+                    Ok(())
+                })
+            }));
+        }
+        for h in handles {
+            h.join().unwrap().expect("concurrent atomic_write failed");
+        }
+
+        // Final file must be entirely one writer's content (no interleaving).
+        let final_contents = std::fs::read_to_string(&*target).unwrap();
+        let first_line = final_contents.lines().next().unwrap();
+        assert!(first_line.starts_with("writer-"));
+        for line in final_contents.lines() {
+            assert_eq!(line, first_line, "file contains interleaved writes");
+        }
+
+        // No leftover temp files.
+        for entry in std::fs::read_dir(dir.path()).unwrap() {
+            let name = entry.unwrap().file_name().into_string().unwrap();
+            assert!(!name.contains(".tmp."), "temp file left behind: {name}");
+        }
+    }
+
+    #[test]
+    fn save_preserves_previous_file_when_new_write_fails() {
+        // Regression for #234: a failed rewrite must not truncate the live
+        // file. With atomic rename, the original content survives.
+        let dir = tempfile::tempdir().unwrap();
+        let store = JsonlSessionStore::new(dir.path().to_path_buf()).unwrap();
+        let now = now_utc();
+        let meta = SessionMeta {
+            id: "atomic".to_string(),
+            title: "t".to_string(),
+            created_at: now,
+            updated_at: now,
+            version: 1,
+            sequence: 0,
+        };
+        let messages: Vec<AgentMessage> = vec![AgentMessage::Llm(LlmMessage::User(
+            swink_agent::UserMessage {
+                content: vec![swink_agent::ContentBlock::Text {
+                    text: "first".to_string(),
+                }],
+                timestamp: 1,
+                cache_hint: None,
+            },
+        ))];
+        store.save("atomic", &meta, &messages).unwrap();
+
+        let path = session_path(dir.path(), "atomic");
+        let before = std::fs::read_to_string(&path).unwrap();
+        assert!(!before.is_empty());
+
+        // Simulate a failed rewrite. With atomic_write, the target file must
+        // remain untouched.
+        let _ = atomic_write(&path, |_w| Err(io::Error::other("boom")));
+
+        let after = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(before, after, "failed write must not corrupt live file");
+
+        // File still parses cleanly
+        let (_, loaded) = store.load("atomic", None).unwrap();
+        assert_eq!(loaded.len(), 1);
     }
 
     #[test]
