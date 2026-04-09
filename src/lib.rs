@@ -14,6 +14,7 @@ pub(crate) mod agent_subscriptions;
 #[cfg(feature = "artifact-store")]
 pub mod artifact;
 mod async_context_transformer;
+pub mod block_accumulator;
 mod checkpoint;
 mod config;
 mod context;
@@ -71,6 +72,7 @@ pub use agent::{
     SubscriptionId, default_convert,
 };
 pub use agent_id::AgentId;
+pub use block_accumulator::{BlockAccumulator, OpenBlock, StreamFinalize, finalize_blocks};
 pub use async_context_transformer::{AsyncContextTransformer, AsyncTransformFuture};
 pub use checkpoint::{Checkpoint, CheckpointFuture, CheckpointStore, LoopCheckpoint};
 pub use config::{
