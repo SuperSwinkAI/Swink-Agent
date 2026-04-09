@@ -102,6 +102,7 @@ pub enum AgentEvent {
 
     /// Emitted when a tool call completes.
     ToolExecutionEnd {
+        id: String,
         result: AgentToolResult,
         is_error: bool,
     },

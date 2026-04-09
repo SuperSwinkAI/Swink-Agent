@@ -41,6 +41,7 @@ async fn emit_error_result(
     let _ = emit(
         tx,
         AgentEvent::ToolExecutionEnd {
+            id: tool_call_id.to_string(),
             result: error_result.clone(),
             is_error: true,
         },
@@ -691,6 +692,7 @@ async fn dispatch_single_tool(
             let _ = emit(
                 &tx_clone,
                 AgentEvent::ToolExecutionEnd {
+                    id: tool_call_id.clone(),
                     result: result.clone(),
                     is_error,
                 },
