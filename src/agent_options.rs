@@ -15,7 +15,7 @@ use crate::message_provider::MessageProvider;
 use crate::retry::{DefaultRetryStrategy, RetryStrategy};
 use crate::stream::{StreamFn, StreamOptions};
 use crate::tool::{AgentTool, ApprovalMode, ToolApproval, ToolApprovalRequest};
-use crate::types::{AgentMessage, LlmMessage, ModelSpec};
+use crate::types::{AgentMessage, CustomMessageRegistry, LlmMessage, ModelSpec};
 
 // ─── Type aliases (module-local) ─────────────────────────────────────────────
 
@@ -93,6 +93,16 @@ pub struct AgentOptions {
     pub async_transform_context: Option<AsyncTransformContextArc>,
     /// Optional checkpoint store for persisting agent state.
     pub checkpoint_store: Option<CheckpointStoreArc>,
+    /// Optional registry used to deserialize persisted [`CustomMessage`](crate::types::CustomMessage)
+    /// values when restoring from a [`Checkpoint`](crate::checkpoint::Checkpoint) or
+    /// [`LoopCheckpoint`](crate::checkpoint::LoopCheckpoint).
+    ///
+    /// When set, the agent's `restore_from_checkpoint` / `load_and_restore_checkpoint`
+    /// / `resume` / `resume_stream` paths thread this registry into
+    /// [`Checkpoint::restore_messages`] so that custom messages survive a round
+    /// trip through the checkpoint store. When `None`, persisted custom messages
+    /// are silently dropped on restore (legacy behavior).
+    pub custom_message_registry: Option<Arc<CustomMessageRegistry>>,
     /// Optional metrics collector for per-turn observability.
     pub metrics_collector: Option<Arc<dyn crate::metrics::MetricsCollector>>,
     /// Optional custom token counter for context compaction.
@@ -177,6 +187,7 @@ impl AgentOptions {
             event_forwarders: Vec::new(),
             async_transform_context: None,
             checkpoint_store: None,
+            custom_message_registry: None,
             metrics_collector: None,
             token_counter: None,
             fallback: None,
@@ -407,6 +418,31 @@ impl AgentOptions {
     #[must_use]
     pub fn with_checkpoint_store(mut self, store: impl CheckpointStore + 'static) -> Self {
         self.checkpoint_store = Some(Arc::new(store));
+        self
+    }
+
+    /// Set the [`CustomMessageRegistry`] used to decode persisted custom
+    /// messages when restoring from a checkpoint.
+    ///
+    /// Without this, [`Checkpoint::restore_messages`](crate::checkpoint::Checkpoint::restore_messages)
+    /// and [`LoopCheckpoint::restore_messages`](crate::checkpoint::LoopCheckpoint::restore_messages)
+    /// are called with `None` in the public agent restore/resume APIs, and any
+    /// persisted [`CustomMessage`](crate::types::CustomMessage) values are
+    /// silently dropped.
+    #[must_use]
+    pub fn with_custom_message_registry(mut self, registry: CustomMessageRegistry) -> Self {
+        self.custom_message_registry = Some(Arc::new(registry));
+        self
+    }
+
+    /// Set the [`CustomMessageRegistry`] from a shared [`Arc`], for sharing a
+    /// single registry across multiple agents.
+    #[must_use]
+    pub fn with_custom_message_registry_arc(
+        mut self,
+        registry: Arc<CustomMessageRegistry>,
+    ) -> Self {
+        self.custom_message_registry = Some(registry);
         self
     }
 
