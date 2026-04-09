@@ -103,6 +103,12 @@ impl Agent {
     /// checkpoint. The checkpoint can later be passed to [`resume`](Self::resume)
     /// to continue the loop from where it left off.
     ///
+    /// The agent remains in the **running** state until the loop fully drains
+    /// and emits `AgentEnd`. Callers should either consume the remaining stream
+    /// events (via [`handle_stream_event`](Self::handle_stream_event) or by
+    /// awaiting the `prompt_async` future) or call [`wait_for_idle`](Self::wait_for_idle)
+    /// before starting a new run.
+    ///
     /// Returns `None` if the agent is not currently running.
     pub fn pause(&mut self) -> Option<crate::checkpoint::LoopCheckpoint> {
         if !self.state.is_running {
@@ -131,9 +137,11 @@ impl Agent {
         }
         drop(s);
 
-        self.state.is_running = false;
-        self.abort_controller = None;
-        self.idle_notify.notify_waiters();
+        // Do NOT mark idle here. The spawned loop task is still running
+        // asynchronously and may emit events until it reaches `AgentEnd`.
+        // The `is_running` flag and idle notification are handled by the
+        // normal loop-completion paths (`collect_stream`, `handle_stream_event`,
+        // and `update_state_from_event`).
 
         Some(checkpoint)
     }

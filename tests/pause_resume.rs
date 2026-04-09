@@ -195,3 +195,45 @@ fn loop_checkpoint_to_standard_checkpoint_integration() {
     assert_eq!(standard.system_prompt, "sys");
     assert_eq!(standard.messages.len(), 1);
 }
+
+#[tokio::test]
+async fn pause_keeps_running_until_loop_drains() {
+    use futures::StreamExt;
+
+    let mut agent = simple_agent(vec![text_only_events("hello")]);
+
+    let mut stream = agent.prompt_stream(vec![user_msg("hi")]).unwrap();
+    assert!(agent.state().is_running, "agent should be running after prompt_stream");
+
+    let checkpoint = agent.pause();
+    assert!(checkpoint.is_some(), "pause should return a checkpoint");
+
+    // After pause(), the agent must still report as running until the loop
+    // fully drains and emits AgentEnd.
+    assert!(
+        agent.state().is_running,
+        "agent must remain running after pause() until the loop emits AgentEnd"
+    );
+
+    // A new run must be rejected while the old loop is still draining.
+    let err = agent.prompt_stream(vec![user_msg("too early")]);
+    assert!(
+        matches!(err, Err(swink_agent::AgentError::AlreadyRunning)),
+        "starting a new run before drain completes must fail"
+    );
+
+    // Consume the remaining stream events to let the loop finish.
+    while let Some(event) = stream.next().await {
+        agent.handle_stream_event(&event);
+    }
+
+    // Now the agent should be idle.
+    assert!(
+        !agent.state().is_running,
+        "agent should be idle after stream is fully consumed"
+    );
+
+    // A new run should succeed now.
+    let result = agent.prompt_stream(vec![user_msg("after drain")]);
+    assert!(result.is_ok(), "new run should succeed after drain completes");
+}
