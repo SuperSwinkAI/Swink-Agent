@@ -14,6 +14,7 @@ use tracing::{debug, error, warn};
 #[cfg(feature = "gemma4")]
 use uuid::Uuid;
 
+use swink_agent::block_accumulator::{BlockAccumulator, finalize_blocks};
 use swink_agent::stream::{AssistantMessageEvent, StreamFn, StreamOptions};
 use swink_agent::types::{AgentContext, Cost, ModelSpec, StopReason, Usage};
 
@@ -463,9 +464,7 @@ mod tool_call {
 /// Mutable state accumulated across streaming chunks.
 struct StreamState {
     events: Vec<AssistantMessageEvent>,
-    content_index: usize,
-    text_started: bool,
-    thinking_started: bool,
+    blocks: BlockAccumulator,
     accumulated_usage: Option<mistralrs::Usage>,
     finish_reason: Option<String>,
     has_tool_calls: bool,
@@ -486,9 +485,7 @@ impl StreamState {
 
         Self {
             events: vec![AssistantMessageEvent::Start],
-            content_index: 0,
-            text_started: false,
-            thinking_started: false,
+            blocks: BlockAccumulator::new(),
             accumulated_usage: None,
             finish_reason: None,
             has_tool_calls: false,
@@ -551,16 +548,10 @@ impl StreamState {
         if let Some(reasoning) = &choice.delta.reasoning_content
             && !reasoning.is_empty()
         {
-            if !self.thinking_started {
-                self.events.push(AssistantMessageEvent::ThinkingStart {
-                    content_index: self.content_index,
-                });
-                self.thinking_started = true;
-            }
-            self.events.push(AssistantMessageEvent::ThinkingDelta {
-                content_index: self.content_index,
-                delta: reasoning.clone(),
-            });
+            self.events
+                .extend(self.blocks.ensure_thinking_open());
+            self.events
+                .extend(self.blocks.thinking_delta(reasoning.clone()));
         }
     }
 
@@ -588,16 +579,10 @@ impl StreamState {
         if let Some(think) = thinking_part
             && !think.is_empty()
         {
-            if !self.thinking_started {
-                self.events.push(AssistantMessageEvent::ThinkingStart {
-                    content_index: self.content_index,
-                });
-                self.thinking_started = true;
-            }
-            self.events.push(AssistantMessageEvent::ThinkingDelta {
-                content_index: self.content_index,
-                delta: think,
-            });
+            self.events
+                .extend(self.blocks.ensure_thinking_open());
+            self.events
+                .extend(self.blocks.thinking_delta(think));
         }
 
         // Step 2: Pass text through Gemma 4 tool call parser or emit directly.
@@ -622,17 +607,12 @@ impl StreamState {
         if let Some(text) = final_text
             && !text.is_empty()
         {
-            self.close_thinking_block();
-            if !self.text_started {
-                self.events.push(AssistantMessageEvent::TextStart {
-                    content_index: self.content_index,
-                });
-                self.text_started = true;
-            }
-            self.events.push(AssistantMessageEvent::TextDelta {
-                content_index: self.content_index,
-                delta: text,
-            });
+            self.events
+                .extend(self.blocks.close_thinking(None));
+            self.events
+                .extend(self.blocks.ensure_text_open());
+            self.events
+                .extend(self.blocks.text_delta(text));
         }
     }
 
@@ -642,27 +622,21 @@ impl StreamState {
     /// pattern used for mistralrs-native tool calls.
     #[cfg(feature = "gemma4")]
     fn emit_gemma4_tool_call(&mut self, call: tool_call::ParsedToolCall) {
-        self.close_text_block();
-        self.close_thinking_block();
+        self.events.extend(self.blocks.close_text());
+        self.events.extend(self.blocks.close_thinking(None));
 
         let id = Uuid::new_v4().to_string();
-        let tc_content_index = self.content_index;
         self.has_tool_calls = true;
-        self.active_tool_calls.push((id.clone(), tc_content_index));
-        self.content_index += 1;
+        let (tc_content_index, start_ev) =
+            self.blocks.open_tool_call(id.clone(), call.name);
+        self.active_tool_calls.push((id, tc_content_index));
+        self.events.push(start_ev);
 
-        self.events.push(AssistantMessageEvent::ToolCallStart {
-            content_index: tc_content_index,
-            id,
-            name: call.name,
-        });
         if !call.args.is_empty() {
-            self.events.push(AssistantMessageEvent::ToolCallDelta {
-                content_index: tc_content_index,
-                delta: call.args,
-            });
+            self.events
+                .push(BlockAccumulator::tool_call_delta(tc_content_index, call.args));
         }
-        // ToolCallEnd emitted in finalize() via active_tool_calls.
+        // ToolCallEnd emitted in finalize() via BlockAccumulator::drain_open_blocks.
     }
 
     fn process_tool_call_delta(&mut self, choice: &mistralrs::ChunkChoice) {
@@ -670,8 +644,8 @@ impl StreamState {
             return;
         };
 
-        self.close_text_block();
-        self.close_thinking_block();
+        self.events.extend(self.blocks.close_text());
+        self.events.extend(self.blocks.close_thinking(None));
 
         for tc in tool_calls {
             self.has_tool_calls = true;
@@ -680,56 +654,24 @@ impl StreamState {
                 self.active_tool_calls.push((String::new(), 0));
             }
             if self.active_tool_calls[tool_idx].0.is_empty() {
-                self.active_tool_calls[tool_idx] = (tc.id.clone(), self.content_index);
-                self.events.push(AssistantMessageEvent::ToolCallStart {
-                    content_index: self.content_index,
-                    id: tc.id.clone(),
-                    name: tc.function.name.clone(),
-                });
-                self.content_index += 1;
+                let (content_index, start_ev) = self
+                    .blocks
+                    .open_tool_call(tc.id.clone(), tc.function.name.clone());
+                self.active_tool_calls[tool_idx] = (tc.id.clone(), content_index);
+                self.events.push(start_ev);
             }
             let tc_content_index = self.active_tool_calls[tool_idx].1;
             if !tc.function.arguments.is_empty() {
-                self.events.push(AssistantMessageEvent::ToolCallDelta {
-                    content_index: tc_content_index,
-                    delta: tc.function.arguments.clone(),
-                });
+                self.events.push(BlockAccumulator::tool_call_delta(
+                    tc_content_index,
+                    tc.function.arguments.clone(),
+                ));
             }
-        }
-    }
-
-    fn close_thinking_block(&mut self) {
-        if self.thinking_started {
-            self.events.push(AssistantMessageEvent::ThinkingEnd {
-                content_index: self.content_index,
-                signature: None,
-            });
-            self.thinking_started = false;
-            self.content_index += 1;
-        }
-    }
-
-    fn close_text_block(&mut self) {
-        if self.text_started {
-            self.events.push(AssistantMessageEvent::TextEnd {
-                content_index: self.content_index,
-            });
-            self.text_started = false;
-            self.content_index += 1;
         }
     }
 
     fn finalize(mut self) -> Vec<AssistantMessageEvent> {
-        self.close_thinking_block();
-        self.close_text_block();
-
-        for (id, tc_content_index) in &self.active_tool_calls {
-            if !id.is_empty() {
-                self.events.push(AssistantMessageEvent::ToolCallEnd {
-                    content_index: *tc_content_index,
-                });
-            }
-        }
+        self.events.extend(finalize_blocks(&mut self.blocks));
 
         let stop_reason = if self.has_tool_calls {
             StopReason::ToolUse
@@ -750,15 +692,7 @@ impl StreamState {
     }
 
     fn finalize_cancelled(mut self) -> Vec<AssistantMessageEvent> {
-        self.close_thinking_block();
-        self.close_text_block();
-        for (id, tc_content_index) in &self.active_tool_calls {
-            if !id.is_empty() {
-                self.events.push(AssistantMessageEvent::ToolCallEnd {
-                    content_index: *tc_content_index,
-                });
-            }
-        }
+        self.events.extend(finalize_blocks(&mut self.blocks));
         self.events
             .push(AssistantMessageEvent::error("local inference cancelled"));
         self.events
@@ -977,11 +911,9 @@ mod tests {
     #[test]
     fn finalize_cancelled_emits_error_terminal() {
         let mut state = StreamState::new(false);
-        // Simulate having started a text block.
-        state.events.push(AssistantMessageEvent::TextStart {
-            content_index: 0,
-        });
-        state.text_started = true;
+        // Simulate having started a text block via BlockAccumulator.
+        let start = state.blocks.ensure_text_open();
+        state.events.extend(start);
 
         let events = state.finalize_cancelled();
         let terminal = events.last().expect("at least one event");
