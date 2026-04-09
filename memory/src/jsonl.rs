@@ -186,13 +186,26 @@ where
         }
         file.sync_all()?;
         drop(file);
-        std::fs::rename(&tmp_path, target)
+        rename_replacing(&tmp_path, target)
     })();
 
     if result.is_err() {
         let _ = std::fs::remove_file(&tmp_path);
     }
     result
+}
+
+/// Rename `from` to `to`, replacing `to` if it already exists.
+///
+/// On Unix, `std::fs::rename` is an atomic replace. On Windows it fails with
+/// `ERROR_ALREADY_EXISTS` when the destination is present, so we remove it
+/// first. This is not atomic on Windows but is the correct behaviour.
+fn rename_replacing(from: &Path, to: &Path) -> io::Result<()> {
+    #[cfg(windows)]
+    if to.exists() {
+        std::fs::remove_file(to)?;
+    }
+    std::fs::rename(from, to)
 }
 
 fn rewrite_session_file(path: &Path, meta: &SessionMeta, lines: &[String]) -> io::Result<()> {
@@ -888,6 +901,26 @@ mod tests {
         for entry in std::fs::read_dir(dir.path()).unwrap() {
             let name = entry.unwrap().file_name().into_string().unwrap();
             assert!(!name.contains(".tmp."), "temp file not cleaned up: {name}");
+        }
+    }
+
+    #[test]
+    fn atomic_write_replaces_existing_file() {
+        // Regression: on Windows, std::fs::rename does not replace an existing
+        // destination, so rewrites of existing session files would fail.
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("sess.jsonl");
+        std::fs::write(&target, b"old content\n").unwrap();
+        atomic_write(&target, |w| {
+            w.write_all(b"new content\n")?;
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "new content\n");
+        // No leftover temp files
+        for entry in std::fs::read_dir(dir.path()).unwrap() {
+            let name = entry.unwrap().file_name().into_string().unwrap();
+            assert!(!name.contains(".tmp."), "temp file left behind: {name}");
         }
     }
 
