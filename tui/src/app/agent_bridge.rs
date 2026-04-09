@@ -138,11 +138,8 @@ impl App {
             AgentEvent::ToolExecutionStart { id, name, .. } => {
                 self.tool_panel.start_tool(id, name);
             }
-            AgentEvent::ToolExecutionEnd { is_error, .. } => {
-                if let Some(tool) = self.tool_panel.active.last() {
-                    let id = tool.id.clone();
-                    self.tool_panel.end_tool(&id, is_error);
-                }
+            AgentEvent::ToolExecutionEnd { id, is_error, .. } => {
+                self.tool_panel.end_tool(&id, is_error);
             }
             AgentEvent::TurnEnd { tool_results, .. } => {
                 for result in &tool_results {

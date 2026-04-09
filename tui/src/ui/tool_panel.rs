@@ -411,6 +411,41 @@ mod tests {
     }
 
     #[test]
+    fn end_tool_out_of_order_concurrent() {
+        let mut panel = ToolPanel::new();
+        panel.start_tool("t1".into(), "bash".into());
+        panel.start_tool("t2".into(), "read_file".into());
+        panel.start_tool("t3".into(), "write_file".into());
+
+        // Complete in reverse order (t3, t1, t2)
+        panel.end_tool("t3", false);
+        assert_eq!(panel.active.len(), 2);
+        assert_eq!(panel.completed.len(), 1);
+        assert_eq!(panel.completed[0].id, "t3");
+        assert_eq!(panel.completed[0].name, "write_file");
+
+        panel.end_tool("t1", true);
+        assert_eq!(panel.active.len(), 1);
+        assert_eq!(panel.completed.len(), 2);
+        assert_eq!(panel.completed[1].id, "t1");
+        assert!(panel.completed[1].is_error);
+
+        panel.end_tool("t2", false);
+        assert!(panel.active.is_empty());
+        assert_eq!(panel.completed.len(), 3);
+        assert_eq!(panel.completed[2].id, "t2");
+    }
+
+    #[test]
+    fn end_tool_unknown_id_is_noop() {
+        let mut panel = ToolPanel::new();
+        panel.start_tool("t1".into(), "bash".into());
+        panel.end_tool("nonexistent", false);
+        assert_eq!(panel.active.len(), 1);
+        assert!(panel.completed.is_empty());
+    }
+
+    #[test]
     fn height_capped_at_max() {
         let mut panel = ToolPanel::new();
         for i in 0..20 {
