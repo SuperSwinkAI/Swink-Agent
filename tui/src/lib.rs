@@ -15,10 +15,17 @@ pub mod app;
 pub mod config;
 pub mod error;
 
-#[doc(hidden)]
+#[cfg(feature = "cli")]
 pub mod credentials;
-#[doc(hidden)]
+#[cfg(not(feature = "cli"))]
+#[allow(dead_code)]
+mod credentials;
+
+#[cfg(feature = "cli")]
 pub mod wizard;
+#[cfg(not(feature = "cli"))]
+#[allow(dead_code)]
+mod wizard;
 
 use crossterm::{
     event::{DisableMouseCapture, EnableMouseCapture},

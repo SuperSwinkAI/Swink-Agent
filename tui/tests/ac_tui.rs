@@ -13,6 +13,24 @@ use swink_agent_tui::app::{AgentStatus, DisplayMessage, MessageRole, OperatingMo
 use swink_agent_tui::config::TuiConfig;
 
 // ---------------------------------------------------------------------------
+// Regression: credentials and wizard modules are gated behind `cli` feature
+// (issue #211). With default features (which include `cli`), these modules
+// should be publicly accessible.
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "cli")]
+#[test]
+fn credentials_module_accessible_with_cli_feature() {
+    // Verify the module is reachable — calling `providers()` exercises the
+    // public re-export without side effects (no keychain access required).
+    let providers = swink_agent_tui::credentials::providers();
+    assert!(
+        !providers.is_empty(),
+        "providers() should return at least one entry"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
