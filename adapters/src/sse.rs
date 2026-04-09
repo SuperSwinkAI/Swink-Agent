@@ -46,7 +46,17 @@ pub enum SseLine {
     Done,
     /// Empty line (event separator).
     Empty,
+    /// A transport-level error emitted when the underlying `reqwest`
+    /// byte stream yields an `Err`. Surfaces network failures so adapters
+    /// can classify them as retryable instead of misreporting them as a
+    /// clean EOF.
+    TransportError(String),
 }
+
+/// Synthetic event type that [`sse_paired_events`] emits when the upstream
+/// byte stream reports a transport error. Adapters consuming `SseEvent`
+/// should treat this as a terminal network error.
+pub const SSE_TRANSPORT_ERROR_EVENT: &str = "__swink_transport_error__";
 
 /// Streaming SSE parser that buffers bytes and yields parsed lines.
 ///
@@ -265,8 +275,20 @@ pub fn sse_lines(
                 }
 
                 if let Some(result) = stream.next().await {
-                    if let Ok(bytes) = result {
-                        pending.extend(parser.feed(&bytes));
+                    match result {
+                        Ok(bytes) => {
+                            pending.extend(parser.feed(&bytes));
+                        }
+                        Err(err) => {
+                            // Transport failure — flush any buffered content,
+                            // then append a terminal TransportError so downstream
+                            // adapters classify this as a network error instead
+                            // of a clean EOF.
+                            pending.extend(parser.flush());
+                            pending.push_back(SseLine::TransportError(format!(
+                                "SSE transport error: {err}"
+                            )));
+                        }
                     }
                     continue;
                 }
@@ -290,7 +312,10 @@ pub fn sse_data_lines_with_callback(
         |(mut stream, callback)| async move {
             loop {
                 if let Some(line) = stream.next().await {
-                    if !matches!(line, SseLine::Data(_) | SseLine::Done) {
+                    if !matches!(
+                        line,
+                        SseLine::Data(_) | SseLine::Done | SseLine::TransportError(_)
+                    ) {
                         continue;
                     }
                     if let (SseLine::Data(data), Some(cb)) = (&line, &callback) {
@@ -341,6 +366,15 @@ pub fn sse_paired_events(
                 match stream.next().await {
                     Some(SseLine::Empty | SseLine::Done) => {
                         current_event = None;
+                    }
+                    Some(SseLine::TransportError(message)) => {
+                        return Some((
+                            SseEvent {
+                                event_type: SSE_TRANSPORT_ERROR_EVENT.to_string(),
+                                data: message,
+                            },
+                            (stream, current_event),
+                        ));
                     }
                     Some(SseLine::Event(event_type)) => {
                         current_event = Some(event_type);
@@ -857,6 +891,54 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    /// Regression for issue #230 — transport errors from `reqwest::bytes_stream`
+    /// must surface as a terminal `SseLine::TransportError` rather than being
+    /// silently dropped as EOF. We spin up a TCP listener that writes a valid
+    /// HTTP/1.1 chunked-encoded response header + a partial chunk and then
+    /// closes the connection mid-body; `reqwest` surfaces that as an error on
+    /// its byte stream.
+    #[tokio::test]
+    async fn sse_lines_surfaces_transport_error() {
+        use tokio::io::AsyncWriteExt;
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        tokio::spawn(async move {
+            if let Ok((mut sock, _)) = listener.accept().await {
+                // Read + discard the request headers.
+                let mut buf = [0u8; 1024];
+                let _ = tokio::io::AsyncReadExt::read(&mut sock, &mut buf).await;
+                // Write a chunked response header and one partial chunk, then
+                // abruptly close the connection so reqwest's body stream errors.
+                let header = "HTTP/1.1 200 OK\r\n\
+                    Content-Type: text/event-stream\r\n\
+                    Transfer-Encoding: chunked\r\n\r\n\
+                    10\r\ndata: partial\n";
+                let _ = sock.write_all(header.as_bytes()).await;
+                // Drop the socket without finishing the chunk — reqwest will
+                // surface a transport-level error on its next byte-stream poll.
+                drop(sock);
+            }
+        });
+
+        let client = reqwest::Client::new();
+        let resp = client
+            .get(format!("http://{addr}/"))
+            .send()
+            .await
+            .expect("connect");
+        let lines: Vec<_> = sse_lines(resp.bytes_stream()).collect().await;
+
+        assert!(
+            lines
+                .iter()
+                .any(|l| matches!(l, SseLine::TransportError(_))),
+            "expected TransportError line, got {lines:?}"
+        );
     }
 
     #[tokio::test]

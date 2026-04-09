@@ -488,6 +488,13 @@ pub fn parse_oai_sse_stream(
                 process_oai_chunk(&chunk, state, &mut events, provider);
                 SseAction::Continue(events)
             }
+            Some(SseLine::TransportError(message)) => {
+                let mut events = crate::finalize::finalize_blocks(state);
+                events.push(AssistantMessageEvent::error_network(format!(
+                    "{provider} {message}",
+                )));
+                SseAction::Done(events)
+            }
             Some(_) => SseAction::Skip,
         },
     )
