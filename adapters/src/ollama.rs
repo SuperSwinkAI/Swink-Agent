@@ -406,7 +406,18 @@ fn parse_ndjson_stream(
                             events.push(AssistantMessageEvent::error_network("Ollama stream ended unexpectedly"));
                             Some((events, (lines, token, state, done, false)))
                         }
-                        Some(line) => {
+                        Some(Err(err)) => {
+                            // Transport-level failure — surface as network error
+                            // instead of silently treating as EOF.
+                            error!(error = %err, "Ollama transport error");
+                            done = true;
+                            let mut events = crate::finalize::finalize_blocks(&mut state);
+                            events.push(AssistantMessageEvent::error_network(format!(
+                                "Ollama {err}"
+                            )));
+                            Some((events, (lines, token, state, done, false)))
+                        }
+                        Some(Ok(line)) => {
                             let chunk: OllamaChatChunk = match serde_json::from_str(&line) {
                                 Ok(c) => c,
                                 Err(e) => {
@@ -516,12 +527,20 @@ struct StreamState {
 }
 
 /// Convert a byte stream into a stream of complete NDJSON lines.
+///
+/// Yields `Ok(line)` for each complete line and `Err(message)` if the
+/// underlying `reqwest` byte stream reports a transport-level failure.
+/// A transport error is terminal — downstream consumers must stop after
+/// observing one.
 fn ndjson_lines(
     byte_stream: impl Stream<Item = Result<bytes::Bytes, reqwest::Error>> + Send + 'static,
-) -> Pin<Box<dyn Stream<Item = String> + Send + 'static>> {
+) -> Pin<Box<dyn Stream<Item = Result<String, String>> + Send + 'static>> {
     Box::pin(stream::unfold(
-        (Box::pin(byte_stream), String::new()),
-        |(mut stream, mut buf)| async move {
+        (Box::pin(byte_stream), String::new(), false),
+        |(mut stream, mut buf, mut errored)| async move {
+            if errored {
+                return None;
+            }
             loop {
                 // Check if we have a complete line in the buffer
                 if let Some(pos) = buf.find('\n') {
@@ -533,27 +552,41 @@ fn ndjson_lines(
                     let line: String = buf[..line_end].to_string();
                     buf.drain(..=pos);
                     if !line.is_empty() {
-                        return Some((line, (stream, buf)));
+                        return Some((Ok(line), (stream, buf, errored)));
                     }
                     continue;
                 }
 
                 // Need more data
-                if let Some(Ok(bytes)) = stream.next().await {
-                    // Attempt zero-copy UTF-8 conversion
-                    match std::str::from_utf8(&bytes) {
-                        Ok(s) => buf.push_str(s),
-                        Err(_) => buf.push_str(&String::from_utf8_lossy(&bytes)),
+                match stream.next().await {
+                    Some(Ok(bytes)) => {
+                        // Attempt zero-copy UTF-8 conversion
+                        match std::str::from_utf8(&bytes) {
+                            Ok(s) => buf.push_str(s),
+                            Err(_) => buf.push_str(&String::from_utf8_lossy(&bytes)),
+                        }
                     }
-                } else {
-                    // Stream ended — flush remaining buffer
-                    let trimmed = buf.trim();
-                    if !trimmed.is_empty() {
-                        let line = trimmed.to_string();
+                    Some(Err(err)) => {
+                        // Transport failure — surface immediately as a
+                        // terminal error so the adapter can emit a
+                        // classified network error instead of EOF.
+                        errored = true;
                         buf.clear();
-                        return Some((line, (stream, buf)));
+                        return Some((
+                            Err(format!("transport error: {err}")),
+                            (stream, buf, errored),
+                        ));
                     }
-                    return None;
+                    None => {
+                        // Stream ended cleanly — flush remaining buffer
+                        let trimmed = buf.trim();
+                        if !trimmed.is_empty() {
+                            let line = trimmed.to_string();
+                            buf.clear();
+                            return Some((Ok(line), (stream, buf, errored)));
+                        }
+                        return None;
+                    }
                 }
             }
         },
@@ -607,8 +640,8 @@ mod tests {
         let bytes_stream = stream::iter(vec![Ok(bytes::Bytes::from("line1\nline2\n"))]);
         let mut lines = ndjson_lines(bytes_stream);
 
-        assert_eq!(lines.next().await.unwrap(), "line1");
-        assert_eq!(lines.next().await.unwrap(), "line2");
+        assert_eq!(lines.next().await.unwrap().unwrap(), "line1");
+        assert_eq!(lines.next().await.unwrap().unwrap(), "line2");
         assert!(lines.next().await.is_none());
     }
 
@@ -617,8 +650,8 @@ mod tests {
         let bytes_stream = stream::iter(vec![Ok(bytes::Bytes::from("aaa\r\nbbb\r\n"))]);
         let mut lines = ndjson_lines(bytes_stream);
 
-        assert_eq!(lines.next().await.unwrap(), "aaa");
-        assert_eq!(lines.next().await.unwrap(), "bbb");
+        assert_eq!(lines.next().await.unwrap().unwrap(), "aaa");
+        assert_eq!(lines.next().await.unwrap().unwrap(), "bbb");
         assert!(lines.next().await.is_none());
     }
 
@@ -631,8 +664,8 @@ mod tests {
         ]);
         let mut lines = ndjson_lines(bytes_stream);
 
-        assert_eq!(lines.next().await.unwrap(), "hello");
-        assert_eq!(lines.next().await.unwrap(), "world");
+        assert_eq!(lines.next().await.unwrap().unwrap(), "hello");
+        assert_eq!(lines.next().await.unwrap().unwrap(), "world");
         assert!(lines.next().await.is_none());
     }
 
@@ -641,8 +674,50 @@ mod tests {
         let bytes_stream = stream::iter(vec![Ok(bytes::Bytes::from("no_newline"))]);
         let mut lines = ndjson_lines(bytes_stream);
 
-        assert_eq!(lines.next().await.unwrap(), "no_newline");
+        assert_eq!(lines.next().await.unwrap().unwrap(), "no_newline");
         assert!(lines.next().await.is_none());
+    }
+
+    /// Regression for issue #230 — transport errors on Ollama's NDJSON byte
+    /// stream must surface as a terminal `Err` rather than being silently
+    /// dropped as clean EOF. Uses a TCP listener that closes mid-body.
+    #[tokio::test]
+    async fn ndjson_surfaces_transport_error() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        tokio::spawn(async move {
+            if let Ok((mut sock, _)) = listener.accept().await {
+                let mut buf = [0u8; 1024];
+                let _ = sock.read(&mut buf).await;
+                let header = "HTTP/1.1 200 OK\r\n\
+                    Content-Type: application/x-ndjson\r\n\
+                    Transfer-Encoding: chunked\r\n\r\n\
+                    10\r\n{\"partial\":true";
+                let _ = sock.write_all(header.as_bytes()).await;
+                drop(sock);
+            }
+        });
+
+        let client = reqwest::Client::new();
+        let resp = client
+            .get(format!("http://{addr}/"))
+            .send()
+            .await
+            .expect("connect");
+        let mut lines = ndjson_lines(resp.bytes_stream());
+
+        let mut saw_err = false;
+        while let Some(item) = lines.next().await {
+            if item.is_err() {
+                saw_err = true;
+                break;
+            }
+        }
+        assert!(saw_err, "expected Err from ndjson_lines on transport error");
     }
 
     #[tokio::test]
@@ -650,8 +725,8 @@ mod tests {
         let bytes_stream = stream::iter(vec![Ok(bytes::Bytes::from("a\n\n\nb\n"))]);
         let mut lines = ndjson_lines(bytes_stream);
 
-        assert_eq!(lines.next().await.unwrap(), "a");
-        assert_eq!(lines.next().await.unwrap(), "b");
+        assert_eq!(lines.next().await.unwrap().unwrap(), "a");
+        assert_eq!(lines.next().await.unwrap().unwrap(), "b");
         assert!(lines.next().await.is_none());
     }
 

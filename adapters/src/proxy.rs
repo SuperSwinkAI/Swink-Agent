@@ -298,6 +298,12 @@ fn parse_sse_stream(
                             done = is_terminal_event(&parsed);
                             Some((parsed, (sse, token, done)))
                         }
+                        Some(SseLine::TransportError(message)) => Some((
+                            AssistantMessageEvent::error_network(format!(
+                                "network error: {message}",
+                            )),
+                            (sse, token, true),
+                        )),
                         Some(_) => Some((AssistantMessageEvent::error_network(
                             "network error: unexpected non-data SSE line",
                         ), (sse, token, true))),

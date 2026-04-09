@@ -605,6 +605,13 @@ fn parse_sse_stream(
                     }
                 }
             }
+            Some(SseLine::TransportError(message)) => {
+                let mut events = crate::finalize::finalize_blocks(state);
+                events.push(AssistantMessageEvent::error_network(format!(
+                    "Google {message}",
+                )));
+                SseAction::Done(events)
+            }
             Some(_) => SseAction::Skip,
         },
     )
