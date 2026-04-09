@@ -32,6 +32,7 @@ struct PreparedToolCall {
 
 /// Build an error `ToolResultMessage` and emit `ToolExecutionEnd`.
 async fn emit_error_result(
+    tool_name: &str,
     tool_call_id: &str,
     error_result: AgentToolResult,
     idx: usize,
@@ -42,6 +43,7 @@ async fn emit_error_result(
         tx,
         AgentEvent::ToolExecutionEnd {
             id: tool_call_id.to_string(),
+            name: tool_name.to_string(),
             result: error_result.clone(),
             is_error: true,
         },
@@ -176,7 +178,7 @@ pub async fn execute_tools_concurrently(
                         is_error: true,
                         transfer_signal: None,
                     };
-                    emit_error_result(&tc.id, error_result, idx, &results, tx).await;
+                    emit_error_result(&tc.name, &tc.id, error_result, idx, &results, tx).await;
                     // Return all results collected so far
                     let all_results = std::mem::take(&mut *results.lock().await);
                     let ordered = order_results_by_tool_calls(tool_calls, &all_results);
@@ -195,7 +197,7 @@ pub async fn execute_tools_concurrently(
                         is_error: true,
                         transfer_signal: None,
                     };
-                    emit_error_result(&tc.id, error_result, idx, &results, tx).await;
+                    emit_error_result(&tc.name, &tc.id, error_result, idx, &results, tx).await;
                     continue;
                 }
             }
@@ -587,7 +589,7 @@ async fn check_approval(
                 "Tool call '{}' was rejected by the approval gate.",
                 tc.name
             ));
-            emit_error_result(&tc.id, rejection_result, idx, results, tx).await;
+            emit_error_result(&tc.name, &tc.id, rejection_result, idx, results, tx).await;
             ApprovalOutcome::Rejected
         }
     }
@@ -602,7 +604,7 @@ enum DispatchResult {
 }
 
 /// Validate and dispatch a single tool call, returning a join handle or inline result.
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 async fn dispatch_single_tool(
     tool_map: &HashMap<&str, &Arc<dyn AgentTool>>,
     config: &Arc<AgentLoopConfig>,
@@ -625,7 +627,7 @@ async fn dispatch_single_tool(
     let Some(tool) = tool else {
         // Unknown tool
         let error_result = crate::tool::unknown_tool_result(&tool_name);
-        emit_error_result(&tool_call_id, error_result, idx, results, tx).await;
+        emit_error_result(&tool_name, &tool_call_id, error_result, idx, results, tx).await;
         return DispatchResult::Inline;
     };
 
@@ -679,6 +681,7 @@ async fn dispatch_single_tool(
             let exec_duration = exec_start.elapsed();
             debug!(tool = %tool_name, id = %tool_call_id, is_error, "tool execution finished");
 
+            let event_tool_name = tool_name.clone();
             timings_clone
                 .lock()
                 .await
@@ -700,6 +703,7 @@ async fn dispatch_single_tool(
                 &tx_clone,
                 AgentEvent::ToolExecutionEnd {
                     id: tool_call_id.clone(),
+                    name: event_tool_name,
                     result: result.clone(),
                     is_error,
                 },

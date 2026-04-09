@@ -103,6 +103,10 @@ pub enum AgentEvent {
     /// Emitted when a tool call completes.
     ToolExecutionEnd {
         id: String,
+        /// The tool name (matches `ToolExecutionStart.name`, including any
+        /// plugin namespace prefix) so observers can correlate end events
+        /// with the tool that produced them.
+        name: String,
         result: AgentToolResult,
         is_error: bool,
     },
