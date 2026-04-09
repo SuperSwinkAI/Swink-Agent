@@ -8,6 +8,9 @@
 
 use std::io::{self, BufRead, Seek, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
 
 use swink_agent::{AgentMessage, CustomMessageRegistry, LlmMessage};
 
@@ -175,10 +178,26 @@ where
     let file_name = target.file_name().and_then(|s| s.to_str()).ok_or_else(|| {
         io::Error::new(io::ErrorKind::InvalidInput, "target path has no file name")
     })?;
-    let tmp_path = parent.join(format!(".{file_name}.tmp.{}", std::process::id()));
+    // Serialize overlapping rewrites of the same target within this process,
+    // so the rename+replace sequence on Windows cannot race.
+    let lock = lock_for_target(target);
+    let _guard = lock.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    // Unique per write attempt: pid + monotonic counter. Two overlapping
+    // rewrites of the same target inside one process must not share a temp
+    // path, or they would truncate/rename each other's files.
+    let seq = TMP_SEQ.fetch_add(1, Ordering::Relaxed);
+    let tmp_path = parent.join(format!(
+        ".{file_name}.tmp.{}.{seq}",
+        std::process::id()
+    ));
 
     let result: io::Result<()> = (|| {
-        let file = std::fs::File::create(&tmp_path)?;
+        // `create_new` guarantees we never clobber a pre-existing temp file
+        // from another writer that happened to pick the same path.
+        let file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp_path)?;
         {
             let mut writer = io::BufWriter::new(&file);
             contents_fn(&mut writer)?;
@@ -199,13 +218,32 @@ where
 ///
 /// On Unix, `std::fs::rename` is an atomic replace. On Windows it fails with
 /// `ERROR_ALREADY_EXISTS` when the destination is present, so we remove it
-/// first. This is not atomic on Windows but is the correct behaviour.
+/// first. To keep concurrent rewrites of the same target safe on Windows,
+/// callers must serialize via [`lock_for_target`] around the whole
+/// write+rename sequence.
 fn rename_replacing(from: &Path, to: &Path) -> io::Result<()> {
     #[cfg(windows)]
     if to.exists() {
         std::fs::remove_file(to)?;
     }
     std::fs::rename(from, to)
+}
+
+/// Per-target serialization guard. Two overlapping atomic rewrites of the
+/// same path inside one process must not race on the final rename step —
+/// on Windows this is especially important because the replace sequence is
+/// not a single kernel operation. We key a global mutex map on the target
+/// path so writes to different sessions remain fully concurrent.
+fn lock_for_target(target: &Path) -> std::sync::Arc<std::sync::Mutex<()>> {
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex, OnceLock};
+    static LOCKS: OnceLock<Mutex<HashMap<PathBuf, Arc<Mutex<()>>>>> = OnceLock::new();
+    let map = LOCKS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut guard = map.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    guard
+        .entry(target.to_path_buf())
+        .or_insert_with(|| Arc::new(Mutex::new(())))
+        .clone()
 }
 
 fn rewrite_session_file(path: &Path, meta: &SessionMeta, lines: &[String]) -> io::Result<()> {
@@ -918,6 +956,55 @@ mod tests {
         .unwrap();
         assert_eq!(std::fs::read_to_string(&target).unwrap(), "new content\n");
         // No leftover temp files
+        for entry in std::fs::read_dir(dir.path()).unwrap() {
+            let name = entry.unwrap().file_name().into_string().unwrap();
+            assert!(!name.contains(".tmp."), "temp file left behind: {name}");
+        }
+    }
+
+    #[test]
+    fn atomic_write_concurrent_rewrites_of_same_target_do_not_collide() {
+        // Regression: the temp file path must be unique per write attempt.
+        // If two overlapping rewrites in the same process shared a temp path,
+        // they could truncate or rename each other's files nondeterministically.
+        use std::sync::Arc;
+        use std::sync::Barrier;
+        use std::thread;
+
+        let dir = tempfile::tempdir().unwrap();
+        let target = Arc::new(dir.path().join("sess.jsonl"));
+        std::fs::write(&*target, b"initial\n").unwrap();
+
+        let n = 8;
+        let barrier = Arc::new(Barrier::new(n));
+        let mut handles = Vec::with_capacity(n);
+        for i in 0..n {
+            let target = Arc::clone(&target);
+            let barrier = Arc::clone(&barrier);
+            handles.push(thread::spawn(move || {
+                barrier.wait();
+                atomic_write(&target, |w| {
+                    // Write enough data that a torn rename would be observable.
+                    for _ in 0..256 {
+                        writeln!(w, "writer-{i}")?;
+                    }
+                    Ok(())
+                })
+            }));
+        }
+        for h in handles {
+            h.join().unwrap().expect("concurrent atomic_write failed");
+        }
+
+        // Final file must be entirely one writer's content (no interleaving).
+        let final_contents = std::fs::read_to_string(&*target).unwrap();
+        let first_line = final_contents.lines().next().unwrap();
+        assert!(first_line.starts_with("writer-"));
+        for line in final_contents.lines() {
+            assert_eq!(line, first_line, "file contains interleaved writes");
+        }
+
+        // No leftover temp files.
         for entry in std::fs::read_dir(dir.path()).unwrap() {
             let name = entry.unwrap().file_name().into_string().unwrap();
             assert!(!name.contains(".tmp."), "temp file left behind: {name}");
