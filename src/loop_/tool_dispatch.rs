@@ -210,6 +210,7 @@ pub async fn execute_tools_concurrently(
             match check_approval(
                 approve_fn,
                 tc,
+                &effective_arguments,
                 idx,
                 requires_approval,
                 &tool_map,
@@ -515,9 +516,15 @@ enum ApprovalOutcome {
 }
 
 /// Run the approval gate for a single tool call: emit events, call callback, handle rejection.
+///
+/// `effective_arguments` are the post-rewrite arguments after pre-dispatch
+/// policies have been applied. These are shown to the approval callback so the
+/// approver sees the actual arguments that will be executed.
+#[allow(clippy::too_many_arguments)]
 async fn check_approval(
     approve_fn: &ApproveToolFn,
     tc: &ToolCallInfo,
+    effective_arguments: &serde_json::Value,
     idx: usize,
     requires_approval: bool,
     tool_map: &HashMap<&str, &Arc<dyn AgentTool>>,
@@ -529,7 +536,7 @@ async fn check_approval(
         AgentEvent::ToolApprovalRequested {
             id: tc.id.clone(),
             name: tc.name.clone(),
-            arguments: tc.arguments.clone(),
+            arguments: effective_arguments.clone(),
         },
     )
     .await
@@ -540,7 +547,7 @@ async fn check_approval(
     // Resolve approval context with panic safety.
     let approval_context = tool_map.get(tc.name.as_str()).and_then(|tool| {
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            tool.approval_context(&tc.arguments)
+            tool.approval_context(effective_arguments)
         }))
         .unwrap_or_else(|_| {
             tracing::warn!(tool_name = %tc.name, "approval_context() panicked — using None");
@@ -551,7 +558,7 @@ async fn check_approval(
     let request = ToolApprovalRequest {
         tool_call_id: tc.id.clone(),
         tool_name: tc.name.clone(),
-        arguments: tc.arguments.clone(),
+        arguments: effective_arguments.clone(),
         requires_approval,
         context: approval_context,
     };
