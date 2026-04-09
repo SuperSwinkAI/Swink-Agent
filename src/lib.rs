@@ -1,4 +1,12 @@
 #![forbid(unsafe_code)]
+//! # Encapsulation regression
+//!
+//! The `credential` module is private; consumers must use the canonical
+//! re-exports at the crate root rather than reaching into submodule paths.
+//!
+//! ```compile_fail
+//! use swink_agent::credential::ResolvedCredential;
+//! ```
 mod agent;
 mod agent_id;
 pub mod agent_options;
@@ -13,7 +21,7 @@ pub mod context_cache;
 mod context_transformer;
 mod context_version;
 pub mod convert;
-pub mod credential;
+mod credential;
 pub mod display;
 mod emit;
 mod error;
@@ -82,8 +90,8 @@ pub use context_version::{
 };
 pub use convert::{MessageConverter, ToolSchema, convert_messages, extract_tool_schemas};
 pub use credential::{
-    AuthConfig, AuthScheme, Credential, CredentialError, CredentialResolver, CredentialStore,
-    CredentialType, ResolvedCredential,
+    AuthConfig, AuthScheme, Credential, CredentialError, CredentialFuture, CredentialResolver,
+    CredentialStore, CredentialType, ResolvedCredential,
 };
 pub use emit::Emission;
 pub use error::{AgentError, DowncastError};

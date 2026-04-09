@@ -81,7 +81,7 @@ impl AgentTool for ExtractTool {
         cancellation_token: tokio_util::sync::CancellationToken,
         _on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
         _state: Arc<std::sync::RwLock<swink_agent::SessionState>>,
-        _credential: Option<swink_agent::credential::ResolvedCredential>,
+        _credential: Option<swink_agent::ResolvedCredential>,
     ) -> ToolFuture<'_> {
         Box::pin(async move {
             // Extract URL from params.

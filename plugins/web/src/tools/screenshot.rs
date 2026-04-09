@@ -89,7 +89,7 @@ impl AgentTool for ScreenshotTool {
         cancellation_token: CancellationToken,
         _on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
         _state: Arc<std::sync::RwLock<swink_agent::SessionState>>,
-        _credential: Option<swink_agent::credential::ResolvedCredential>,
+        _credential: Option<swink_agent::ResolvedCredential>,
     ) -> ToolFuture<'_> {
         Box::pin(async move {
             if cancellation_token.is_cancelled() {

@@ -8,8 +8,8 @@ use std::sync::Arc;
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
+use swink_agent::ResolvedCredential;
 use swink_agent::SessionState;
-use swink_agent::credential::ResolvedCredential;
 use swink_agent::tool::{AgentTool, AgentToolResult, ToolFuture, ToolMetadata};
 
 use crate::connection::McpConnection;

@@ -83,7 +83,7 @@ pub fn tool_attr_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
                 cancellation_token: tokio_util::sync::CancellationToken,
                 _on_update: Option<Box<dyn Fn(swink_agent::AgentToolResult) + Send + Sync>>,
                 _state: std::sync::Arc<std::sync::RwLock<swink_agent::SessionState>>,
-                _credential: Option<swink_agent::credential::ResolvedCredential>,
+                _credential: Option<swink_agent::ResolvedCredential>,
             ) -> std::pin::Pin<Box<dyn std::future::Future<Output = swink_agent::AgentToolResult> + Send + '_>> {
                 Box::pin(async move {
                     #[allow(unused_variables)]

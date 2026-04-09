@@ -81,7 +81,7 @@ impl AgentTool for SearchTool {
         _cancellation_token: CancellationToken,
         _on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
         _state: Arc<std::sync::RwLock<swink_agent::SessionState>>,
-        _credential: Option<swink_agent::credential::ResolvedCredential>,
+        _credential: Option<swink_agent::ResolvedCredential>,
     ) -> ToolFuture<'_> {
         let query = params
             .get("query")
