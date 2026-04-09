@@ -4,6 +4,7 @@
 //! the harness event protocol. Responses arrive as binary event-stream frames
 //! decoded by `aws-smithy-eventstream`.
 
+use std::collections::HashMap;
 use std::{pin::Pin, time::SystemTime};
 
 use aws_credential_types::Credentials;
@@ -32,8 +33,9 @@ use swink_agent::types::{
     AgentContext, AgentMessage, ContentBlock, Cost, LlmMessage, ModelSpec, StopReason, Usage,
 };
 
+use crate::block_accumulator::BlockAccumulator;
 use crate::convert::extract_tool_schemas;
-use crate::finalize::{self, OpenBlock, StreamFinalize};
+use crate::finalize::{self, StreamFinalize};
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -212,42 +214,45 @@ struct BedrockMetrics {
 
 // --- Streaming state ---
 
+/// The type of content block currently active at a given provider index.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum BlockType {
     Text,
     ToolUse,
 }
 
+/// State machine tracking Bedrock streaming progress.
+///
+/// Block lifecycle (index allocation, open/close, drain) is delegated to
+/// [`BlockAccumulator`].  The `provider_blocks` map translates Bedrock's
+/// provider-side block indices to `(BlockType, harness content_index)` so
+/// that `contentBlockDelta` and `contentBlockStop` events can be routed to
+/// the correct accumulator method.
 #[derive(Debug)]
 struct BedrockStreamState {
-    current_block_type: Option<BlockType>,
+    /// Shared block lifecycle accumulator.
+    blocks: BlockAccumulator,
+    /// Bedrock block index → `(BlockType, harness content_index)`.
+    provider_blocks: HashMap<usize, (BlockType, usize)>,
     stop_reason: Option<String>,
     usage: Option<Usage>,
-    content_index: usize,
 }
 
 impl BedrockStreamState {
-    const fn new() -> Self {
+    fn new() -> Self {
         Self {
-            current_block_type: None,
+            blocks: BlockAccumulator::default(),
+            provider_blocks: HashMap::new(),
             stop_reason: None,
             usage: None,
-            content_index: 0,
         }
     }
 }
 
 impl StreamFinalize for BedrockStreamState {
-    fn drain_open_blocks(&mut self) -> Vec<OpenBlock> {
-        match self.current_block_type.take() {
-            Some(BlockType::Text) => vec![OpenBlock::Text {
-                content_index: self.content_index,
-            }],
-            Some(BlockType::ToolUse) => vec![OpenBlock::ToolCall {
-                content_index: self.content_index,
-            }],
-            None => vec![],
-        }
+    fn drain_open_blocks(&mut self) -> Vec<crate::finalize::OpenBlock> {
+        self.provider_blocks.clear();
+        self.blocks.drain_open_blocks()
     }
 }
 
@@ -418,7 +423,7 @@ impl BedrockStreamFn {
                                         byte_stream: Box::pin(byte_stream),
                                         decoder: MessageFrameDecoder::new(),
                                         buffer: BytesMut::new(),
-                                        state: BedrockStreamState::new(),
+                                        state: Box::new(BedrockStreamState::new()),
                                         cancellation_token,
                                     },
                                 ))
@@ -477,7 +482,7 @@ impl BedrockStreamFn {
                                 }
                                 Err(e) => {
                                     warn!(error = %e, "Bedrock event-stream decode error");
-                                    let mut events = finalize::finalize_blocks(&mut state);
+                                    let mut events = finalize::finalize_blocks(state.as_mut());
                                     events.push(AssistantMessageEvent::error_network(format!(
                                         "Bedrock event-stream decode error: {e}"
                                     )));
@@ -489,7 +494,7 @@ impl BedrockStreamFn {
                             tokio::select! {
                                 biased;
                                 () = cancellation_token.cancelled() => {
-                                    let mut events = finalize::finalize_blocks(&mut state);
+                                    let mut events = finalize::finalize_blocks(state.as_mut());
                                     events.push(AssistantMessageEvent::error_network(
                                         "Bedrock stream cancelled",
                                     ));
@@ -502,7 +507,7 @@ impl BedrockStreamFn {
                                             // Loop back to try decoding
                                         }
                                         Some(Err(e)) => {
-                                            let mut events = finalize::finalize_blocks(&mut state);
+                                            let mut events = finalize::finalize_blocks(state.as_mut());
                                             events.push(AssistantMessageEvent::error_network(
                                                 format!("Bedrock stream read error: {e}"),
                                             ));
@@ -510,7 +515,7 @@ impl BedrockStreamFn {
                                         }
                                         None => {
                                             // Stream ended — emit Done if we haven't yet
-                                            let mut events = finalize::finalize_blocks(&mut state);
+                                            let mut events = finalize::finalize_blocks(state.as_mut());
                                             if !events.is_empty() || state.stop_reason.is_some() {
                                                 let usage = state.usage.take().unwrap_or_default();
                                                 let stop_reason = map_stop_reason(
@@ -560,7 +565,7 @@ enum StreamUnfoldState<'a> {
         byte_stream: Pin<Box<dyn Stream<Item = Result<bytes::Bytes, reqwest::Error>> + Send + 'a>>,
         decoder: MessageFrameDecoder,
         buffer: BytesMut,
-        state: BedrockStreamState,
+        state: Box<BedrockStreamState>,
         cancellation_token: CancellationToken,
     },
     Done,
@@ -649,50 +654,51 @@ fn parse_event_frame(
         }
         "contentBlockStart" => {
             let event: ContentBlockStartEvent = serde_json::from_slice(payload).ok()?;
-            state.content_index = event.content_block_index;
+            let provider_idx = event.content_block_index;
             match event.start {
                 StartBlock::Text => {
-                    state.current_block_type = Some(BlockType::Text);
-                    Some(vec![AssistantMessageEvent::TextStart {
-                        content_index: event.content_block_index,
-                    }])
+                    let mut events = Vec::new();
+                    events.extend(state.blocks.ensure_text_open());
+                    if let Some(content_index) = state.blocks.text_index() {
+                        state
+                            .provider_blocks
+                            .insert(provider_idx, (BlockType::Text, content_index));
+                    }
+                    Some(events)
                 }
                 StartBlock::ToolUse { tool_use_id, name } => {
-                    state.current_block_type = Some(BlockType::ToolUse);
-                    Some(vec![AssistantMessageEvent::ToolCallStart {
-                        content_index: event.content_block_index,
-                        id: tool_use_id,
-                        name,
-                    }])
+                    let (content_index, start_ev) =
+                        state.blocks.open_tool_call(tool_use_id, name);
+                    state
+                        .provider_blocks
+                        .insert(provider_idx, (BlockType::ToolUse, content_index));
+                    Some(vec![start_ev])
                 }
             }
         }
         "contentBlockDelta" => {
             let event: ContentBlockDeltaEvent = serde_json::from_slice(payload).ok()?;
+            let (_, content_index) = state.provider_blocks.get(&event.content_block_index)?;
+            let content_index = *content_index;
             match event.delta {
-                DeltaBlock::Text { text } => Some(vec![AssistantMessageEvent::TextDelta {
-                    content_index: event.content_block_index,
-                    delta: text,
-                }]),
-                DeltaBlock::ToolUse { input } => Some(vec![AssistantMessageEvent::ToolCallDelta {
-                    content_index: event.content_block_index,
-                    delta: input,
-                }]),
+                DeltaBlock::Text { text } => state.blocks.text_delta(text).map(|e| vec![e]),
+                DeltaBlock::ToolUse { input } => {
+                    Some(vec![BlockAccumulator::tool_call_delta(
+                        content_index,
+                        input,
+                    )])
+                }
             }
         }
         "contentBlockStop" => {
             let event: ContentBlockStopEvent = serde_json::from_slice(payload).ok()?;
-            let evt = match state.current_block_type {
-                Some(BlockType::Text) => AssistantMessageEvent::TextEnd {
-                    content_index: event.content_block_index,
-                },
-                Some(BlockType::ToolUse) => AssistantMessageEvent::ToolCallEnd {
-                    content_index: event.content_block_index,
-                },
-                None => return None,
+            let (block_type, content_index) =
+                state.provider_blocks.remove(&event.content_block_index)?;
+            let evt = match block_type {
+                BlockType::Text => state.blocks.close_text(),
+                BlockType::ToolUse => state.blocks.close_tool_call(content_index),
             };
-            state.current_block_type = None;
-            Some(vec![evt])
+            evt.map(|e| vec![e])
         }
         "messageStop" => {
             let event: MessageStopEvent = serde_json::from_slice(payload).ok()?;
@@ -1042,7 +1048,7 @@ mod tests {
             events[0],
             AssistantMessageEvent::TextStart { content_index: 0 }
         ));
-        assert_eq!(state.current_block_type, Some(BlockType::Text));
+        assert!(state.blocks.text_open());
 
         // contentBlockDelta with text
         let payload = br#"{"contentBlockIndex":0,"delta":{"type":"text","text":"Hello"}}"#;
@@ -1059,22 +1065,23 @@ mod tests {
             events[0],
             AssistantMessageEvent::TextEnd { content_index: 0 }
         ));
-        assert_eq!(state.current_block_type, None);
+        assert!(!state.blocks.text_open());
     }
 
     #[test]
     fn parse_tool_use_content_block_events() {
         let mut state = BedrockStreamState::new();
 
-        // contentBlockStart with toolUse
+        // contentBlockStart with toolUse — provider index 1, but harness index
+        // is 0 because no prior blocks were opened through the accumulator.
         let payload = br#"{"contentBlockIndex":1,"start":{"type":"toolUse","toolUseId":"tc_123","name":"get_weather"}}"#;
         let events = parse_event_frame("contentBlockStart", payload, &mut state).unwrap();
         assert!(matches!(
             &events[0],
-            AssistantMessageEvent::ToolCallStart { content_index: 1, id, name }
+            AssistantMessageEvent::ToolCallStart { content_index: 0, id, name }
                 if id == "tc_123" && name == "get_weather"
         ));
-        assert_eq!(state.current_block_type, Some(BlockType::ToolUse));
+        assert!(state.provider_blocks.contains_key(&1));
 
         // contentBlockDelta with toolUse input
         let payload =
@@ -1082,7 +1089,7 @@ mod tests {
         let events = parse_event_frame("contentBlockDelta", payload, &mut state).unwrap();
         assert!(matches!(
             &events[0],
-            AssistantMessageEvent::ToolCallDelta { content_index: 1, delta }
+            AssistantMessageEvent::ToolCallDelta { content_index: 0, delta }
                 if delta == r#"{"city":"SF"}"#
         ));
 
@@ -1091,7 +1098,7 @@ mod tests {
         let events = parse_event_frame("contentBlockStop", payload, &mut state).unwrap();
         assert!(matches!(
             events[0],
-            AssistantMessageEvent::ToolCallEnd { content_index: 1 }
+            AssistantMessageEvent::ToolCallEnd { content_index: 0 }
         ));
     }
 
@@ -1318,24 +1325,28 @@ mod tests {
 
     #[test]
     fn stream_finalize_closes_open_text_block() {
+        use crate::finalize::OpenBlock;
         let mut state = BedrockStreamState::new();
-        state.current_block_type = Some(BlockType::Text);
-        state.content_index = 2;
+        // Simulate opening a text block through the accumulator
+        let payload = br#"{"contentBlockIndex":0,"start":{"type":"text"}}"#;
+        parse_event_frame("contentBlockStart", payload, &mut state);
         let blocks = state.drain_open_blocks();
         assert_eq!(blocks.len(), 1);
-        assert!(matches!(blocks[0], OpenBlock::Text { content_index: 2 }));
+        assert!(matches!(blocks[0], OpenBlock::Text { content_index: 0 }));
     }
 
     #[test]
     fn stream_finalize_closes_open_tool_block() {
+        use crate::finalize::OpenBlock;
         let mut state = BedrockStreamState::new();
-        state.current_block_type = Some(BlockType::ToolUse);
-        state.content_index = 1;
+        // Simulate opening a tool-call block through the accumulator
+        let payload = br#"{"contentBlockIndex":0,"start":{"type":"toolUse","toolUseId":"tc_1","name":"tool"}}"#;
+        parse_event_frame("contentBlockStart", payload, &mut state);
         let blocks = state.drain_open_blocks();
         assert_eq!(blocks.len(), 1);
         assert!(matches!(
             blocks[0],
-            OpenBlock::ToolCall { content_index: 1 }
+            OpenBlock::ToolCall { content_index: 0 }
         ));
     }
 
@@ -1344,6 +1355,59 @@ mod tests {
         let mut state = BedrockStreamState::new();
         let blocks = state.drain_open_blocks();
         assert!(blocks.is_empty());
+    }
+
+    #[test]
+    fn stream_finalize_drains_multiple_open_blocks() {
+        use crate::finalize::OpenBlock;
+        let mut state = BedrockStreamState::new();
+        // Open text block (provider index 0)
+        let payload = br#"{"contentBlockIndex":0,"start":{"type":"text"}}"#;
+        parse_event_frame("contentBlockStart", payload, &mut state);
+        // Close text block
+        let payload = br#"{"contentBlockIndex":0}"#;
+        parse_event_frame("contentBlockStop", payload, &mut state);
+        // Open two tool-call blocks (provider indices 1 and 2)
+        let payload = br#"{"contentBlockIndex":1,"start":{"type":"toolUse","toolUseId":"tc_1","name":"a"}}"#;
+        parse_event_frame("contentBlockStart", payload, &mut state);
+        let payload = br#"{"contentBlockIndex":2,"start":{"type":"toolUse","toolUseId":"tc_2","name":"b"}}"#;
+        parse_event_frame("contentBlockStart", payload, &mut state);
+        // Drain without closing — both tool calls should be drained
+        let blocks = state.drain_open_blocks();
+        assert_eq!(blocks.len(), 2);
+        assert!(matches!(
+            blocks[0],
+            OpenBlock::ToolCall { content_index: 1 }
+        ));
+        assert!(matches!(
+            blocks[1],
+            OpenBlock::ToolCall { content_index: 2 }
+        ));
+    }
+
+    #[test]
+    fn content_indices_are_sequential_across_block_types() {
+        let mut state = BedrockStreamState::new();
+        // Open text (harness index 0)
+        let payload = br#"{"contentBlockIndex":0,"start":{"type":"text"}}"#;
+        let events = parse_event_frame("contentBlockStart", payload, &mut state).unwrap();
+        assert!(matches!(
+            events[0],
+            AssistantMessageEvent::TextStart { content_index: 0 }
+        ));
+        // Close text
+        let payload = br#"{"contentBlockIndex":0}"#;
+        parse_event_frame("contentBlockStop", payload, &mut state);
+        // Open tool (harness index 1)
+        let payload = br#"{"contentBlockIndex":1,"start":{"type":"toolUse","toolUseId":"tc_1","name":"t"}}"#;
+        let events = parse_event_frame("contentBlockStart", payload, &mut state).unwrap();
+        assert!(matches!(
+            &events[0],
+            AssistantMessageEvent::ToolCallStart {
+                content_index: 1,
+                ..
+            }
+        ));
     }
 
     #[test]
