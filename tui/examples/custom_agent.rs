@@ -4,7 +4,7 @@
 //! and `swink-agent-tui` as external crates — the same code you'd write in your
 //! own project after `cargo add`ing the three crates.
 //!
-//! Run: `cargo run --example custom_agent`
+//! Run: `cargo run -p swink-agent-tui --features local --example custom_agent`
 //! Requires: remote provider keys in `.env` or environment. The local SmolLM3-3B
 //! model is always available and is included in the F4 cycle by default.
 

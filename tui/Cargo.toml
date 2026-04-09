@@ -47,6 +47,10 @@ cli = []
 full = ["local", "cli"]
 local = ["dep:swink-agent-local-llm"]
 
+[[example]]
+name = "custom_agent"
+required-features = ["local"]
+
 [dev-dependencies]
 swink-agent = { path = "..", default-features = false, features = ["testkit"] }
 tempfile.workspace = true

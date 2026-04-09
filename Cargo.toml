@@ -104,9 +104,7 @@ name = "context"
 harness = false
 
 [dev-dependencies]
-swink-agent-adapters = { path = "adapters" }
-swink-agent-local-llm = { path = "local-llm" }
-swink-agent-tui = { path = "tui" }
+swink-agent-adapters = { path = "adapters", features = ["proxy"] }
 dotenvy.workspace = true
 pretty_assertions.workspace = true
 tempfile.workspace = true
