@@ -7,6 +7,16 @@ use swink_agent::ContentBlock;
 use swink_agent::tool::AgentTool;
 use swink_agent::tools::{BashTool, ReadFileTool, WriteFileTool};
 
+// Cross-platform `sleep N seconds` command string for BashTool tests.
+fn sleep_command(seconds: u32) -> String {
+    if cfg!(windows) {
+        // `ping -n K 127.0.0.1` waits ~(K-1) seconds. Add 1 for the target duration.
+        format!("ping -n {} 127.0.0.1 > NUL", seconds + 1)
+    } else {
+        format!("sleep {seconds}")
+    }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // BashTool
 // ═══════════════════════════════════════════════════════════════════════════
@@ -53,6 +63,36 @@ async fn bash_echo_success() {
     assert!(
         text.contains("hello"),
         "expected 'hello' in output, got: {text}"
+    );
+}
+
+// Regression for #202: BashTool used to hardcode `sh -c`, which does not exist
+// on Windows. This test spawns a command via the platform shell — on Windows
+// that means `cmd /C`, on Unix `sh -c`. Failure here indicates the dispatch
+// regressed.
+#[tokio::test]
+async fn bash_uses_platform_shell() {
+    let tool = BashTool::new();
+    let token = CancellationToken::new();
+    let result = tool
+        .execute(
+            "tc_platform",
+            json!({"command": "echo platform-ok"}),
+            token,
+            None,
+            std::sync::Arc::new(std::sync::RwLock::new(swink_agent::SessionState::new())),
+            None,
+        )
+        .await;
+    assert!(
+        !result.is_error,
+        "spawning platform shell must succeed, got: {:?}",
+        result.content
+    );
+    let text = ContentBlock::extract_text(&result.content);
+    assert!(
+        text.contains("Exit code: 0") && text.contains("platform-ok"),
+        "expected successful platform-shell dispatch, got: {text}"
     );
 }
 
@@ -152,7 +192,7 @@ async fn bash_timeout() {
     let result = tool
         .execute(
             "tc_6",
-            json!({"command": "sleep 30", "timeout_ms": 100}),
+            json!({"command": sleep_command(30), "timeout_ms": 100}),
             token,
             None,
             std::sync::Arc::new(std::sync::RwLock::new(swink_agent::SessionState::new())),
@@ -166,6 +206,8 @@ async fn bash_timeout() {
     );
 }
 
+// Unix-only: uses `cat` and `>&2` which are not available in `cmd /C`.
+#[cfg(unix)]
 #[tokio::test]
 async fn bash_output_truncation() {
     let tool = BashTool::new();
@@ -203,6 +245,9 @@ async fn bash_output_truncation() {
     );
 }
 
+// Uses Unix-only utilities (`head`, `tr`, `/dev/zero`); skipped on Windows
+// where the platform shell is `cmd /C` and cannot interpret them.
+#[cfg(unix)]
 #[tokio::test]
 async fn bash_large_stdout_does_not_deadlock() {
     let tool = BashTool::new();
@@ -228,6 +273,8 @@ async fn bash_large_stdout_does_not_deadlock() {
     );
 }
 
+// Unix-only: uses `head`, `tr`, `/dev/zero`, `&`, and `wait`.
+#[cfg(unix)]
 #[tokio::test]
 async fn bash_large_stdout_and_stderr_do_not_deadlock() {
     let tool = BashTool::new();
@@ -261,6 +308,8 @@ async fn bash_large_stdout_and_stderr_do_not_deadlock() {
     );
 }
 
+// Unix-only: `yes` is not available on Windows `cmd`.
+#[cfg(unix)]
 #[tokio::test]
 async fn bash_noisy_timeout_does_not_deadlock() {
     let tool = BashTool::new();

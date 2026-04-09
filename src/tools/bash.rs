@@ -14,13 +14,16 @@ use crate::tool::{AgentTool, AgentToolResult, ToolFuture, validated_schema_for};
 /// Default timeout in milliseconds.
 const DEFAULT_TIMEOUT_MS: u64 = 30_000;
 
-/// Built-in tool that executes a shell command via `sh -c`.
+/// Built-in tool that executes a shell command.
+///
+/// On Unix-like targets the command is passed to `sh -c`. On Windows the
+/// command is passed to `cmd /C`, matching the platform's native shell.
 ///
 /// # Security
 ///
-/// This tool executes arbitrary shell commands via `sh -c`. It should only
-/// be used with trusted input. It is NOT suitable for production agents
-/// exposed to untrusted users.
+/// This tool executes arbitrary shell commands via the platform shell. It
+/// should only be used with trusted input. It is NOT suitable for production
+/// agents exposed to untrusted users.
 pub struct BashTool {
     schema: Value,
 }
@@ -93,9 +96,7 @@ impl AgentTool for BashTool {
 
             let timeout = Duration::from_millis(parsed.timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS));
 
-            let mut child = match Command::new("sh")
-                .arg("-c")
-                .arg(&parsed.command)
+            let mut child = match shell_command(&parsed.command)
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped())
                 .spawn()
@@ -139,6 +140,24 @@ impl AgentTool for BashTool {
                 }
             }
         })
+    }
+}
+
+/// Build a platform-appropriate shell `Command` that executes `command`.
+///
+/// Unix: `sh -c <command>`. Windows: `cmd /C <command>`.
+fn shell_command(command: &str) -> Command {
+    #[cfg(windows)]
+    {
+        let mut cmd = Command::new("cmd");
+        cmd.arg("/C").arg(command);
+        cmd
+    }
+    #[cfg(not(windows))]
+    {
+        let mut cmd = Command::new("sh");
+        cmd.arg("-c").arg(command);
+        cmd
     }
 }
 
