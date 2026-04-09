@@ -14,7 +14,8 @@ use tokio_util::sync::CancellationToken;
 
 use swink_agent::{
     Agent, AgentEvent, AgentMessage, AgentOptions, AgentTool, AgentToolResult, ApprovalMode,
-    AssistantMessageEvent, ContentBlock, Cost, LlmMessage, StopReason, ToolApproval, Usage,
+    AssistantMessageEvent, ContentBlock, Cost, LlmMessage, PreDispatchPolicy, PreDispatchVerdict,
+    StopReason, ToolApproval, ToolApprovalRequest, ToolDispatchContext, Usage,
 };
 
 // ─── Helpers ─────────────────────────────────────────────────────────────
@@ -426,4 +427,85 @@ async fn approval_request_carries_requires_approval_field() {
     let _ = agent.prompt_async(vec![user_msg("hello")]).await.unwrap();
 
     assert_eq!(*captured.lock().unwrap(), Some(true));
+}
+
+// ─── Regression: approval sees post-rewrite arguments (#227) ────────────
+
+/// A pre-dispatch policy that rewrites tool arguments.
+struct RewriteArgsPolicy;
+
+impl PreDispatchPolicy for RewriteArgsPolicy {
+    fn name(&self) -> &str {
+        "rewrite-args"
+    }
+
+    fn evaluate(&self, ctx: &mut ToolDispatchContext<'_>) -> PreDispatchVerdict {
+        // Inject a "rewritten" key so the approval callback can detect it.
+        if let Some(obj) = ctx.arguments.as_object_mut() {
+            obj.insert("injected_by_policy".to_string(), json!(true));
+        }
+        PreDispatchVerdict::Continue
+    }
+}
+
+/// Test 14: Approval callback sees rewritten arguments after pre-dispatch policy,
+/// not the original arguments from the LLM.
+#[tokio::test]
+async fn approval_sees_post_rewrite_arguments() {
+    let tool = Arc::new(MockTool::new("test_tool"));
+    let captured_args: Arc<Mutex<Option<Value>>> = Arc::new(Mutex::new(None));
+    let cap = Arc::clone(&captured_args);
+
+    let responses = tool_call_then_stop("tc1", "test_tool", r#"{"original": true}"#);
+    let options = make_agent(responses, vec![tool])
+        .with_pre_dispatch_policy(RewriteArgsPolicy)
+        .with_approve_tool(move |req: ToolApprovalRequest| {
+            *cap.lock().unwrap() = Some(req.arguments.clone());
+            Box::pin(async { ToolApproval::Approved })
+        });
+    let mut agent = Agent::new(options);
+
+    let result = agent.prompt_async(vec![user_msg("hello")]).await.unwrap();
+    assert!(result.error.is_none());
+
+    let args = captured_args.lock().unwrap().take().expect("approval callback should have been called");
+    assert_eq!(
+        args.get("injected_by_policy"),
+        Some(&json!(true)),
+        "approval must see arguments after pre-dispatch rewrite"
+    );
+    assert_eq!(
+        args.get("original"),
+        Some(&json!(true)),
+        "original arguments should still be present"
+    );
+}
+
+/// Test 15: ToolApprovalRequested event carries rewritten arguments.
+#[tokio::test]
+async fn approval_event_carries_rewritten_arguments() {
+    let tool = Arc::new(MockTool::new("test_tool"));
+    let event_args: Arc<Mutex<Option<Value>>> = Arc::new(Mutex::new(None));
+
+    let responses = tool_call_then_stop("tc1", "test_tool", r#"{"original": true}"#);
+    let options = make_agent(responses, vec![tool])
+        .with_pre_dispatch_policy(RewriteArgsPolicy)
+        .with_approve_tool(|_req| Box::pin(async { ToolApproval::Approved }));
+    let mut agent = Agent::new(options);
+
+    let captured = Arc::clone(&event_args);
+    agent.subscribe(move |event| {
+        if let AgentEvent::ToolApprovalRequested { arguments, .. } = event {
+            *captured.lock().unwrap() = Some(arguments.clone());
+        }
+    });
+
+    let _result = agent.prompt_async(vec![user_msg("hello")]).await.unwrap();
+
+    let args = event_args.lock().unwrap().take().expect("ToolApprovalRequested event should have fired");
+    assert_eq!(
+        args.get("injected_by_policy"),
+        Some(&json!(true)),
+        "ToolApprovalRequested event must carry post-rewrite arguments"
+    );
 }
