@@ -365,6 +365,24 @@ pub fn accumulate_message(
     let mut saw_start = false;
     let mut saw_terminal = false;
 
+    // Pre-scan for a Length stop reason. Providers can emit `ToolCallEnd` with
+    // truncated JSON arguments (or omit it entirely) when hitting the max-token
+    // limit mid tool-call. We must preserve the incomplete block so the loop's
+    // `recover_incomplete_tool_calls` path can convert it into an error tool
+    // result and continue on the next turn. See issue #221.
+    let tolerate_truncated_tool_args = events.iter().any(|e| {
+        matches!(
+            e,
+            AssistantMessageEvent::Done {
+                stop_reason: StopReason::Length,
+                ..
+            } | AssistantMessageEvent::Error {
+                stop_reason: StopReason::Length,
+                ..
+            }
+        )
+    });
+
     for event in events {
         // Reject content-block events after a terminal event.
         match &event {
@@ -546,15 +564,31 @@ pub fn accumulate_message(
                         ..
                     } => {
                         let json_str = partial_json
-                            .take()
-                            .ok_or("ToolCallEnd: partial_json already consumed")?;
-                        *arguments = if json_str.is_empty() {
-                            Value::Object(serde_json::Map::new())
+                            .as_ref()
+                            .ok_or("ToolCallEnd: partial_json already consumed")?
+                            .clone();
+                        if json_str.is_empty() {
+                            *arguments = Value::Object(serde_json::Map::new());
+                            *partial_json = None;
                         } else {
-                            serde_json::from_str(&json_str).map_err(|e| {
-                                format!("ToolCallEnd: failed to parse arguments JSON: {e}")
-                            })?
-                        };
+                            match serde_json::from_str::<Value>(&json_str) {
+                                Ok(v) => {
+                                    *arguments = v;
+                                    *partial_json = None;
+                                }
+                                Err(e) => {
+                                    if tolerate_truncated_tool_args {
+                                        // Leave `partial_json` as Some so the
+                                        // block is flagged incomplete and the
+                                        // loop recovers on the next turn.
+                                    } else {
+                                        return Err(format!(
+                                            "ToolCallEnd: failed to parse arguments JSON: {e}"
+                                        ));
+                                    }
+                                }
+                            }
+                        }
                     }
                     _ => {
                         return Err(format!(
