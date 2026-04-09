@@ -103,11 +103,15 @@ impl Agent {
                 for tr in tool_results {
                     msgs.push(AgentMessage::Llm(LlmMessage::ToolResult(tr.clone())));
                 }
+                // Capture terminal error so it survives through AgentEnd.
+                if let Some(ref err) = assistant_message.error_message {
+                    self.state.error = Some(err.clone());
+                }
             }
             AgentEvent::AgentEnd { messages } => {
                 self.state.messages = clone_llm_messages(messages.as_ref());
                 self.in_flight_llm_messages = None;
-                self.state.error = None;
+                // Preserve terminal error — do not clear self.state.error.
                 self.idle_notify.notify_waiters();
             }
             _ => {}
