@@ -47,11 +47,13 @@ impl Agent {
     /// Restore agent message history from a checkpoint.
     ///
     /// Replaces the current messages with those from the checkpoint and
-    /// updates the system prompt to match. Custom messages are not restored
-    /// by this method; use `restore_messages(Some(registry))` directly for
-    /// full restoration including custom messages.
+    /// updates the system prompt to match. Persisted custom messages are
+    /// restored when a [`CustomMessageRegistry`](crate::types::CustomMessageRegistry)
+    /// has been configured on [`AgentOptions`](crate::AgentOptions) via
+    /// [`with_custom_message_registry`](crate::AgentOptions::with_custom_message_registry);
+    /// otherwise they are dropped.
     pub fn restore_from_checkpoint(&mut self, checkpoint: &Checkpoint) {
-        self.state.messages = checkpoint.restore_messages(None);
+        self.state.messages = checkpoint.restore_messages(self.custom_message_registry.as_deref());
         self.state
             .system_prompt
             .clone_from(&checkpoint.system_prompt);
@@ -160,7 +162,7 @@ impl Agent {
         &mut self,
         checkpoint: &crate::checkpoint::LoopCheckpoint,
     ) -> Result<(), AgentError> {
-        self.state.messages = checkpoint.restore_messages(None);
+        self.state.messages = checkpoint.restore_messages(self.custom_message_registry.as_deref());
         self.state
             .system_prompt
             .clone_from(&checkpoint.system_prompt);
@@ -190,5 +192,131 @@ impl Agent {
         );
 
         Ok(())
+    }
+}
+
+#[cfg(all(test, feature = "testkit"))]
+mod tests {
+    use std::sync::Arc;
+
+    use crate::agent::Agent;
+    use crate::agent_options::AgentOptions;
+    use crate::testing::SimpleMockStreamFn;
+    use crate::types::{
+        AgentMessage, CustomMessage, CustomMessageRegistry, LlmMessage, ModelSpec, UserMessage,
+    };
+
+    #[derive(Debug, Clone, PartialEq)]
+    struct Tagged {
+        value: String,
+    }
+
+    impl CustomMessage for Tagged {
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+        fn type_name(&self) -> Option<&str> {
+            Some("Tagged")
+        }
+        fn to_json(&self) -> Option<serde_json::Value> {
+            Some(serde_json::json!({ "value": self.value }))
+        }
+    }
+
+    fn tagged_registry() -> CustomMessageRegistry {
+        let mut reg = CustomMessageRegistry::new();
+        reg.register(
+            "Tagged",
+            Box::new(|val: serde_json::Value| {
+                let value = val
+                    .get("value")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| "missing value".to_string())?;
+                Ok(Box::new(Tagged {
+                    value: value.to_string(),
+                }) as Box<dyn CustomMessage>)
+            }),
+        );
+        reg
+    }
+
+    fn make_agent(registry: Option<CustomMessageRegistry>) -> Agent {
+        let stream_fn = Arc::new(SimpleMockStreamFn::from_text("ok"));
+        let mut opts =
+            AgentOptions::new_simple("system", ModelSpec::new("mock", "mock-model"), stream_fn);
+        if let Some(reg) = registry {
+            opts = opts.with_custom_message_registry(reg);
+        }
+        Agent::new(opts)
+    }
+
+    #[tokio::test]
+    async fn restore_from_checkpoint_rehydrates_custom_messages_via_registry() {
+        let mut source = make_agent(None);
+        source
+            .state
+            .messages
+            .push(AgentMessage::Llm(LlmMessage::User(UserMessage {
+                content: vec![crate::types::ContentBlock::Text {
+                    text: "hi".to_string(),
+                }],
+                timestamp: 0,
+                cache_hint: None,
+            })));
+        source
+            .state
+            .messages
+            .push(AgentMessage::Custom(Box::new(Tagged {
+                value: "preserved".to_string(),
+            })));
+
+        let checkpoint = source.save_checkpoint("cp-1").await.unwrap();
+        let json = serde_json::to_string(&checkpoint).unwrap();
+        let loaded: crate::checkpoint::Checkpoint = serde_json::from_str(&json).unwrap();
+        assert_eq!(loaded.custom_messages.len(), 1);
+
+        // Without a registry the custom message is dropped (legacy behavior).
+        let mut no_reg = make_agent(None);
+        no_reg.restore_from_checkpoint(&loaded);
+        assert_eq!(no_reg.state.messages.len(), 1);
+
+        // With a registry configured on AgentOptions, the custom message
+        // survives restoration through the public API.
+        let mut with_reg = make_agent(Some(tagged_registry()));
+        with_reg.restore_from_checkpoint(&loaded);
+        assert_eq!(with_reg.state.messages.len(), 2);
+        let restored = with_reg.state.messages[1]
+            .downcast_ref::<Tagged>()
+            .expect("custom message should be restored via registry");
+        assert_eq!(restored.value, "preserved");
+    }
+
+    #[tokio::test]
+    async fn loop_checkpoint_resume_rehydrates_custom_messages_via_registry() {
+        use crate::checkpoint::LoopCheckpoint;
+
+        let messages = vec![
+            AgentMessage::Llm(LlmMessage::User(UserMessage {
+                content: vec![crate::types::ContentBlock::Text {
+                    text: "hi".to_string(),
+                }],
+                timestamp: 0,
+                cache_hint: None,
+            })),
+            AgentMessage::Custom(Box::new(Tagged {
+                value: "resumed".to_string(),
+            })),
+        ];
+        let cp = LoopCheckpoint::new("system", "mock", "mock-model", &messages);
+        let json = serde_json::to_string(&cp).unwrap();
+        let loaded: LoopCheckpoint = serde_json::from_str(&json).unwrap();
+
+        let mut agent = make_agent(Some(tagged_registry()));
+        agent.restore_from_loop_checkpoint(&loaded).unwrap();
+        assert_eq!(agent.state.messages.len(), 2);
+        let restored = agent.state.messages[1]
+            .downcast_ref::<Tagged>()
+            .expect("custom message should be restored via registry");
+        assert_eq!(restored.value, "resumed");
     }
 }

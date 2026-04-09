@@ -169,6 +169,8 @@ pub struct Agent {
     async_transform_context: Option<AsyncTransformContextArc>,
     /// Optional checkpoint store.
     checkpoint_store: Option<CheckpointStoreArc>,
+    /// Optional registry for decoding persisted custom messages on restore.
+    pub(crate) custom_message_registry: Option<Arc<crate::types::CustomMessageRegistry>>,
     /// Optional metrics collector.
     metrics_collector: Option<Arc<dyn crate::metrics::MetricsCollector>>,
     /// Optional model fallback chain.
@@ -268,6 +270,7 @@ impl Agent {
             event_forwarders: options.event_forwarders,
             async_transform_context: options.async_transform_context,
             checkpoint_store: options.checkpoint_store,
+            custom_message_registry: options.custom_message_registry,
             metrics_collector: options.metrics_collector,
             fallback: options.fallback,
             external_message_provider: options.external_message_provider,
