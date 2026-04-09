@@ -183,6 +183,7 @@ fn append_records(
 ) -> io::Result<()> {
     let (mut meta, old_meta_line_len) = read_meta_with_line_len(path, id)?;
     meta.updated_at = now_utc();
+    meta.sequence += 1;
 
     let new_meta_line = serde_json::to_string(&meta).map_err(io::Error::other)?;
     let new_meta_with_newline = format!("{new_meta_line}\n");
@@ -454,7 +455,9 @@ impl SessionStore for JsonlSessionStore {
             return Err(not_found(id));
         }
 
-        let (meta, mut lines) = read_meta_and_message_lines(&path, id)?;
+        let (mut meta, mut lines) = read_meta_and_message_lines(&path, id)?;
+        meta.updated_at = now_utc();
+        meta.sequence += 1;
         let state_line = SessionRecord::state(state.clone()).to_json_line()?;
 
         if let Some(line) = find_record_line_mut(&mut lines, id, |record| {
@@ -877,5 +880,80 @@ mod tests {
             messages[1],
             AgentMessage::Llm(LlmMessage::User(_))
         ));
+    }
+
+    fn user_msg(text: &str, ts: u64) -> AgentMessage {
+        AgentMessage::Llm(LlmMessage::User(swink_agent::UserMessage {
+            content: vec![swink_agent::ContentBlock::Text {
+                text: text.to_string(),
+            }],
+            timestamp: ts,
+            cache_hint: None,
+        }))
+    }
+
+    fn fresh_meta(id: &str) -> SessionMeta {
+        let now = now_utc();
+        SessionMeta {
+            id: id.to_string(),
+            title: "t".to_string(),
+            created_at: now,
+            updated_at: now,
+            version: 1,
+            sequence: 0,
+        }
+    }
+
+    #[test]
+    fn append_advances_sequence_and_rejects_stale_save() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = JsonlSessionStore::new(dir.path().to_path_buf()).unwrap();
+
+        let meta = fresh_meta("seq-append");
+        store.save("seq-append", &meta, &[user_msg("a", 1)]).unwrap();
+        // After save, on-disk sequence == 1. `meta` still holds 0.
+
+        store
+            .append("seq-append", &[user_msg("b", 2)])
+            .unwrap();
+        // After append, on-disk sequence must have advanced to 2.
+
+        // Sanity: list() / load() sees the bumped sequence.
+        let (loaded_meta, _) = store.load("seq-append", None).unwrap();
+        assert_eq!(loaded_meta.sequence, 2);
+
+        // A stale writer holding the pre-append meta (sequence == 1 after save)
+        // should now be rejected by check_sequence.
+        let mut stale = meta;
+        stale.sequence = 1;
+        let err = store
+            .save("seq-append", &stale, &[user_msg("c", 3)])
+            .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
+    }
+
+    #[test]
+    fn save_state_advances_sequence_and_rejects_stale_save() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = JsonlSessionStore::new(dir.path().to_path_buf()).unwrap();
+
+        let meta = fresh_meta("seq-state");
+        store.save("seq-state", &meta, &[user_msg("a", 1)]).unwrap();
+        // On-disk sequence == 1.
+
+        store
+            .save_state("seq-state", &serde_json::json!({ "cursor": 1 }))
+            .unwrap();
+
+        let (loaded_meta, _) = store.load("seq-state", None).unwrap();
+        assert_eq!(loaded_meta.sequence, 2);
+
+        // Stale writer with sequence == 1 must be rejected.
+        let mut stale = meta;
+        stale.sequence = 1;
+        let err = store
+            .save("seq-state", &stale, &[user_msg("c", 3)])
+            .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
     }
 }
