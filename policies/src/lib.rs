@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! Policy implementations for [`swink_agent`].
 //!
 //! This crate provides all policy implementations built against `swink-agent`'s

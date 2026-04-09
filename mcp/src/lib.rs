@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! MCP (Model Context Protocol) integration for swink-agent.
 //!
 //! Provides connection management, tool discovery, and tool execution for
