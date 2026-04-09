@@ -209,15 +209,41 @@ impl Plugin for WebPlugin {
     }
 
     fn on_event(&self, event: &AgentEvent) {
-        match event {
-            AgentEvent::ToolExecutionStart { name, .. } if name.starts_with("web.") => {
+        match classify_web_event(event) {
+            WebEventClass::Start(name) => {
                 tracing::info!(tool = %name, "Web tool execution started");
             }
-            AgentEvent::ToolExecutionEnd { is_error, .. } if *is_error => {
-                tracing::warn!("Web tool execution completed with error");
+            WebEventClass::Error(name) => {
+                tracing::warn!(tool = %name, "Web tool execution completed with error");
             }
-            _ => {}
+            WebEventClass::Ignored => {}
         }
+    }
+}
+
+/// Classification of an [`AgentEvent`] from the web plugin's perspective.
+///
+/// Extracted from [`WebPlugin::on_event`] so the namespace-gating logic can be
+/// exercised directly by unit tests without depending on a tracing subscriber.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum WebEventClass<'a> {
+    /// A `web.*` tool has started executing.
+    Start(&'a str),
+    /// A `web.*` tool has failed.
+    Error(&'a str),
+    /// Not a web-namespaced tool event — plugin should ignore it.
+    Ignored,
+}
+
+pub(crate) fn classify_web_event(event: &AgentEvent) -> WebEventClass<'_> {
+    match event {
+        AgentEvent::ToolExecutionStart { name, .. } if name.starts_with("web.") => {
+            WebEventClass::Start(name.as_str())
+        }
+        AgentEvent::ToolExecutionEnd {
+            name, is_error, ..
+        } if *is_error && name.starts_with("web.") => WebEventClass::Error(name.as_str()),
+        _ => WebEventClass::Ignored,
     }
 }
 
@@ -270,5 +296,77 @@ mod tests {
             ..WebPluginConfig::default()
         };
         assert!(WebPlugin::from_config(config).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod on_event_tests {
+    use super::{WebEventClass, classify_web_event};
+    use serde_json::json;
+    use swink_agent::AgentEvent;
+    use swink_agent::tool::AgentToolResult;
+
+    fn tool_end(name: &str, is_error: bool) -> AgentEvent {
+        AgentEvent::ToolExecutionEnd {
+            id: "tc1".into(),
+            name: name.into(),
+            result: if is_error {
+                AgentToolResult::error("boom")
+            } else {
+                AgentToolResult::text("ok")
+            },
+            is_error,
+        }
+    }
+
+    fn tool_start(name: &str) -> AgentEvent {
+        AgentEvent::ToolExecutionStart {
+            id: "tc1".into(),
+            name: name.into(),
+            arguments: json!({}),
+        }
+    }
+
+    #[test]
+    fn non_web_tool_error_is_not_attributed_to_web_plugin() {
+        // Regression for #237: the plugin previously matched every failing
+        // ToolExecutionEnd as a web-tool failure, including tools from other
+        // namespaces (e.g., `bash.run`).
+        assert_eq!(
+            classify_web_event(&tool_end("bash.run", true)),
+            WebEventClass::Ignored
+        );
+        assert_eq!(
+            classify_web_event(&tool_end("unrelated_tool", true)),
+            WebEventClass::Ignored
+        );
+    }
+
+    #[test]
+    fn web_tool_error_is_attributed_to_web_plugin() {
+        assert_eq!(
+            classify_web_event(&tool_end("web.fetch", true)),
+            WebEventClass::Error("web.fetch")
+        );
+    }
+
+    #[test]
+    fn successful_web_tool_end_is_ignored() {
+        assert_eq!(
+            classify_web_event(&tool_end("web.fetch", false)),
+            WebEventClass::Ignored
+        );
+    }
+
+    #[test]
+    fn web_tool_start_is_classified() {
+        assert_eq!(
+            classify_web_event(&tool_start("web.search")),
+            WebEventClass::Start("web.search")
+        );
+        assert_eq!(
+            classify_web_event(&tool_start("bash.run")),
+            WebEventClass::Ignored
+        );
     }
 }

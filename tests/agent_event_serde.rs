@@ -143,6 +143,7 @@ fn all_agent_event_variants_serialize_to_json() {
             "ToolExecutionEnd",
             AgentEvent::ToolExecutionEnd {
                 id: "tc1".into(),
+                name: "dangerous_tool".into(),
                 result: AgentToolResult::text("done"),
                 is_error: false,
             },
@@ -428,6 +429,7 @@ fn agent_event_roundtrip_all_variants() {
             "ToolExecutionEnd",
             AgentEvent::ToolExecutionEnd {
                 id: "tc1".into(),
+                name: "dangerous_tool".into(),
                 result: AgentToolResult::text("done"),
                 is_error: false,
             },
