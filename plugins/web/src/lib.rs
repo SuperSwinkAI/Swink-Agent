@@ -22,5 +22,5 @@ pub use domain::{DomainFilter, DomainFilterError};
 pub use playwright::{
     ExtractedElement, ExtractionPreset, PlaywrightBridge, PlaywrightError, Viewport,
 };
-pub use plugin::WebPlugin;
+pub use plugin::{WebPlugin, WebPluginError};
 pub use search::{SearchError, SearchProvider, SearchResult};

@@ -2,6 +2,8 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
+use thiserror::Error;
+
 use swink_agent::AgentEvent;
 use swink_agent::plugin::Plugin;
 use swink_agent::policy::{PostTurnPolicy, PreDispatchPolicy};
@@ -13,10 +15,38 @@ use crate::playwright::{PlaywrightBridge, Viewport};
 use crate::policy::domain_filter::DomainFilterPolicy;
 use crate::policy::rate_limiter::RateLimitPolicy;
 use crate::policy::sanitizer::ContentSanitizerPolicy;
+use crate::search::SearchProvider;
 use crate::tools::extract::ExtractTool;
 use crate::tools::fetch::FetchTool;
 use crate::tools::screenshot::ScreenshotTool;
 use crate::tools::search::SearchTool;
+
+/// Errors returned when constructing a [`WebPlugin`].
+///
+/// These replace the previous panics on recoverable misconfiguration so that
+/// hosts embedding the plugin can surface a diagnostic instead of aborting.
+#[derive(Debug, Error)]
+pub enum WebPluginError {
+    /// The underlying `reqwest` HTTP client failed to build (e.g. invalid
+    /// TLS backend configuration).
+    #[error("failed to build HTTP client: {0}")]
+    HttpClient(#[from] reqwest::Error),
+
+    /// The configured search provider is not available because the
+    /// corresponding cargo feature is disabled at compile time.
+    #[error(
+        "search provider `{provider}` requires the `{feature}` feature to be enabled at compile time"
+    )]
+    SearchProviderFeatureDisabled {
+        provider: &'static str,
+        feature: &'static str,
+    },
+
+    /// The configured search provider requires an API key that was not
+    /// supplied on the configuration.
+    #[error("search provider `{provider}` requires an API key but none was configured")]
+    MissingApiKey { provider: &'static str },
+}
 
 /// Web browsing plugin for swink-agent.
 ///
@@ -25,14 +55,18 @@ use crate::tools::search::SearchTool;
 pub struct WebPlugin {
     config: WebPluginConfig,
     http_client: reqwest::Client,
+    search_provider: Arc<dyn SearchProvider>,
     playwright_bridge: Arc<tokio::sync::Mutex<Option<PlaywrightBridge>>>,
     rate_state: Arc<Mutex<VecDeque<Instant>>>,
 }
 
 impl WebPlugin {
     /// Create a new `WebPlugin` with default configuration.
-    #[must_use]
-    pub fn new() -> Self {
+    ///
+    /// Returns an error if the default configuration cannot be satisfied
+    /// (for example, if the default search provider's feature flag is
+    /// disabled at compile time).
+    pub fn new() -> Result<Self, WebPluginError> {
         Self::from_config(WebPluginConfig::default())
     }
 
@@ -43,77 +77,78 @@ impl WebPlugin {
     }
 
     /// Create a `WebPlugin` from an explicit configuration.
-    #[must_use]
-    pub fn from_config(config: WebPluginConfig) -> Self {
+    ///
+    /// Returns an error if the HTTP client cannot be built or if the
+    /// configured search provider is unavailable (missing feature flag or
+    /// missing API key).
+    pub fn from_config(config: WebPluginConfig) -> Result<Self, WebPluginError> {
         let http_client = reqwest::Client::builder()
             .user_agent(&config.user_agent)
             .redirect(reqwest::redirect::Policy::limited(
                 config.max_redirects as usize,
             ))
             .timeout(config.request_timeout)
-            .build()
-            .expect("Failed to build HTTP client");
+            .build()?;
 
-        Self {
+        let search_provider = build_search_provider(&config, &http_client)?;
+
+        Ok(Self {
             config,
             http_client,
+            search_provider,
             playwright_bridge: Arc::new(tokio::sync::Mutex::new(None)),
             rate_state: Arc::new(Mutex::new(VecDeque::new())),
-        }
-    }
-
-    /// Build the search tool based on the configured search provider.
-    fn build_search_tool(&self) -> SearchTool {
-        let provider: Arc<dyn crate::search::SearchProvider> =
-            match &self.config.search_provider_kind {
-                #[cfg(feature = "duckduckgo")]
-                SearchProviderKind::DuckDuckGo => Arc::new(crate::search::DuckDuckGoProvider::new(
-                    self.http_client.clone(),
-                )),
-                #[cfg(not(feature = "duckduckgo"))]
-                SearchProviderKind::DuckDuckGo => {
-                    panic!("DuckDuckGo search provider requires the 'duckduckgo' feature")
-                }
-                #[cfg(feature = "brave")]
-                SearchProviderKind::Brave => {
-                    let key = self
-                        .config
-                        .brave_api_key
-                        .clone()
-                        .expect("Brave API key required when using Brave search provider");
-                    Arc::new(crate::search::BraveProvider::new(
-                        key,
-                        self.http_client.clone(),
-                    ))
-                }
-                #[cfg(not(feature = "brave"))]
-                SearchProviderKind::Brave => {
-                    panic!("Brave search provider requires the 'brave' feature")
-                }
-                #[cfg(feature = "tavily")]
-                SearchProviderKind::Tavily => {
-                    let key = self
-                        .config
-                        .tavily_api_key
-                        .clone()
-                        .expect("Tavily API key required when using Tavily search provider");
-                    Arc::new(crate::search::TavilyProvider::new(
-                        key,
-                        self.http_client.clone(),
-                    ))
-                }
-                #[cfg(not(feature = "tavily"))]
-                SearchProviderKind::Tavily => {
-                    panic!("Tavily search provider requires the 'tavily' feature")
-                }
-            };
-        SearchTool::new(provider, self.config.max_search_results)
+        })
     }
 }
 
-impl Default for WebPlugin {
-    fn default() -> Self {
-        Self::new()
+#[allow(unused_variables)]
+fn build_search_provider(
+    config: &WebPluginConfig,
+    http_client: &reqwest::Client,
+) -> Result<Arc<dyn SearchProvider>, WebPluginError> {
+    match &config.search_provider_kind {
+        #[cfg(feature = "duckduckgo")]
+        SearchProviderKind::DuckDuckGo => Ok(Arc::new(crate::search::DuckDuckGoProvider::new(
+            http_client.clone(),
+        ))),
+        #[cfg(not(feature = "duckduckgo"))]
+        SearchProviderKind::DuckDuckGo => Err(WebPluginError::SearchProviderFeatureDisabled {
+            provider: "duckduckgo",
+            feature: "duckduckgo",
+        }),
+        #[cfg(feature = "brave")]
+        SearchProviderKind::Brave => {
+            let key = config
+                .brave_api_key
+                .clone()
+                .ok_or(WebPluginError::MissingApiKey { provider: "brave" })?;
+            Ok(Arc::new(crate::search::BraveProvider::new(
+                key,
+                http_client.clone(),
+            )))
+        }
+        #[cfg(not(feature = "brave"))]
+        SearchProviderKind::Brave => Err(WebPluginError::SearchProviderFeatureDisabled {
+            provider: "brave",
+            feature: "brave",
+        }),
+        #[cfg(feature = "tavily")]
+        SearchProviderKind::Tavily => {
+            let key = config
+                .tavily_api_key
+                .clone()
+                .ok_or(WebPluginError::MissingApiKey { provider: "tavily" })?;
+            Ok(Arc::new(crate::search::TavilyProvider::new(
+                key,
+                http_client.clone(),
+            )))
+        }
+        #[cfg(not(feature = "tavily"))]
+        SearchProviderKind::Tavily => Err(WebPluginError::SearchProviderFeatureDisabled {
+            provider: "tavily",
+            feature: "tavily",
+        }),
     }
 }
 
@@ -129,7 +164,10 @@ impl Plugin for WebPlugin {
                 self.config.max_content_length,
                 self.config.request_timeout,
             )),
-            Arc::new(self.build_search_tool()),
+            Arc::new(SearchTool::new(
+                self.search_provider.clone(),
+                self.config.max_search_results,
+            )),
             Arc::new(ScreenshotTool::new(
                 self.playwright_bridge.clone(),
                 self.config.playwright_path.clone(),
@@ -180,5 +218,57 @@ impl Plugin for WebPlugin {
             }
             _ => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_with_default_config_succeeds_when_default_provider_feature_enabled() {
+        // The default config uses DuckDuckGo which is enabled by default.
+        assert!(WebPlugin::new().is_ok(), "default construction failed");
+    }
+
+    #[cfg(feature = "brave")]
+    #[test]
+    fn brave_without_api_key_returns_missing_api_key_error() {
+        let config = WebPluginConfig {
+            search_provider_kind: SearchProviderKind::Brave,
+            brave_api_key: None,
+            ..WebPluginConfig::default()
+        };
+        match WebPlugin::from_config(config) {
+            Err(WebPluginError::MissingApiKey { provider: "brave" }) => {}
+            Err(other) => panic!("unexpected error: {other:?}"),
+            Ok(_) => panic!("expected missing API key error, got Ok"),
+        }
+    }
+
+    #[cfg(feature = "tavily")]
+    #[test]
+    fn tavily_without_api_key_returns_missing_api_key_error() {
+        let config = WebPluginConfig {
+            search_provider_kind: SearchProviderKind::Tavily,
+            tavily_api_key: None,
+            ..WebPluginConfig::default()
+        };
+        match WebPlugin::from_config(config) {
+            Err(WebPluginError::MissingApiKey { provider: "tavily" }) => {}
+            Err(other) => panic!("unexpected error: {other:?}"),
+            Ok(_) => panic!("expected missing API key error, got Ok"),
+        }
+    }
+
+    #[cfg(feature = "brave")]
+    #[test]
+    fn brave_with_api_key_constructs_successfully() {
+        let config = WebPluginConfig {
+            search_provider_kind: SearchProviderKind::Brave,
+            brave_api_key: Some("test-key".to_string()),
+            ..WebPluginConfig::default()
+        };
+        assert!(WebPlugin::from_config(config).is_ok());
     }
 }
