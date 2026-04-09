@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! Web browsing plugin for swink-agent.
 //!
 //! Provides tools for fetching web pages, searching the web, capturing screenshots,
