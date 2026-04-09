@@ -17,6 +17,7 @@ path = "src/lib.rs"
 [[bin]]
 name = "swink"
 path = "src/main.rs"
+required-features = ["cli"]
 
 [dependencies]
 swink-agent = { path = ".." }
@@ -41,8 +42,9 @@ dotenvy.workspace = true
 thiserror.workspace = true
 
 [features]
-default = []
-full = ["local"]
+default = ["cli"]
+cli = []
+full = ["local", "cli"]
 local = ["dep:swink-agent-local-llm"]
 
 [dev-dependencies]
