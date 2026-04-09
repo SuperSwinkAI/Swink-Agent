@@ -833,6 +833,56 @@ async fn max_tokens_recovery() {
     );
 }
 
+// Regression for #221: when the provider emits `ToolCallEnd` with truncated
+// JSON alongside `StopReason::Length`, accumulation must preserve the
+// incomplete block so the loop's recovery path converts it into an error
+// tool result and continues.
+#[tokio::test]
+async fn max_tokens_recovery_with_tool_call_end() {
+    let events_with_incomplete = vec![
+        AssistantMessageEvent::Start,
+        AssistantMessageEvent::ToolCallStart {
+            content_index: 0,
+            id: "tc_1".to_string(),
+            name: "read_file".to_string(),
+        },
+        AssistantMessageEvent::ToolCallDelta {
+            content_index: 0,
+            delta: r#"{"path": "/tmp"#.to_string(),
+        },
+        AssistantMessageEvent::ToolCallEnd { content_index: 0 },
+        AssistantMessageEvent::Done {
+            stop_reason: StopReason::Length,
+            usage: Usage::default(),
+            cost: Cost::default(),
+        },
+    ];
+
+    let stream_fn = Arc::new(MockStreamFn::new(vec![
+        events_with_incomplete,
+        text_only_events("recovered"),
+    ]));
+
+    let tool = Arc::new(MockTool::new("read_file"));
+    let mut config = default_config(stream_fn);
+    config.tools = vec![tool];
+
+    let events = collect_events(agent_loop(
+        vec![],
+        "system".to_string(),
+        config,
+        CancellationToken::new(),
+    ))
+    .await;
+
+    assert!(has_event(&events, "AgentEnd"));
+    assert_eq!(
+        count_events(&events, "TurnStart"),
+        2,
+        "should recover across two turns when ToolCallEnd carries truncated JSON"
+    );
+}
+
 // ─── 3.14: convert_to_llm filter ────────────────────────────────────────
 
 #[tokio::test]
