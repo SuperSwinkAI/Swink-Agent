@@ -20,6 +20,7 @@ use swink_agent::types::{
 };
 
 use crate::base::AdapterBase;
+use crate::block_accumulator::BlockAccumulator;
 use crate::convert::extract_tool_schemas;
 use crate::sse::{SseAction, SseEvent, sse_paired_events};
 
@@ -102,7 +103,7 @@ struct AnthropicChatRequest {
 
 // ─── SSE event / block tracking ─────────────────────────────────────────────
 
-/// The type of content block currently active at a given index.
+/// The type of content block currently active at a given provider index.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum BlockType {
     Text,
@@ -111,10 +112,17 @@ enum BlockType {
 }
 
 /// State machine tracking SSE streaming progress.
+///
+/// Block lifecycle (index allocation, open/close, drain) is delegated to
+/// [`BlockAccumulator`].  The `provider_blocks` map translates Anthropic's
+/// provider-side block indices to `(BlockType, harness content_index)` so
+/// that `content_block_delta` and `content_block_stop` events can be routed
+/// to the correct accumulator method.
 struct SseStreamState {
-    content_index: usize,
-    /// Maps Anthropic block index → `(BlockType, harness content_index)`.
-    active_blocks: HashMap<usize, (BlockType, usize)>,
+    /// Shared block lifecycle accumulator.
+    blocks: BlockAccumulator,
+    /// Anthropic block index → `(BlockType, harness content_index)`.
+    provider_blocks: HashMap<usize, (BlockType, usize)>,
     usage: Usage,
     stop_reason: Option<StopReason>,
 }
@@ -447,8 +455,8 @@ fn parse_sse_stream(
     let line_stream = sse_paired_events(response.bytes_stream());
 
     let state = SseStreamState {
-        content_index: 0,
-        active_blocks: HashMap::new(),
+        blocks: BlockAccumulator::default(),
+        provider_blocks: HashMap::new(),
         usage: Usage::default(),
         stop_reason: None,
     };
@@ -535,22 +543,26 @@ fn process_sse_event(
                     .and_then(Value::as_str)
                     .unwrap_or("");
 
-                let content_index = state.content_index;
-
                 match block_type {
                     "text" => {
-                        state
-                            .active_blocks
-                            .insert(index, (BlockType::Text, content_index));
-                        state.content_index += 1;
-                        events.push(AssistantMessageEvent::TextStart { content_index });
+                        events.extend(state.blocks.ensure_text_open());
+                        // Always register the provider→harness index mapping so
+                        // subsequent content_block_delta events can route by
+                        // provider index.  ensure_text_open is idempotent, but
+                        // the provider may use a fresh index for the same block.
+                        if let Some(content_index) = state.blocks.text_index() {
+                            state
+                                .provider_blocks
+                                .insert(index, (BlockType::Text, content_index));
+                        }
                     }
                     "thinking" => {
-                        state
-                            .active_blocks
-                            .insert(index, (BlockType::Thinking, content_index));
-                        state.content_index += 1;
-                        events.push(AssistantMessageEvent::ThinkingStart { content_index });
+                        events.extend(state.blocks.ensure_thinking_open());
+                        if let Some(content_index) = state.blocks.thinking_index() {
+                            state
+                                .provider_blocks
+                                .insert(index, (BlockType::Thinking, content_index));
+                        }
                     }
                     "tool_use" => {
                         let id = parsed
@@ -563,15 +575,11 @@ fn process_sse_event(
                             .and_then(Value::as_str)
                             .unwrap_or("")
                             .to_string();
+                        let (content_index, start_ev) = state.blocks.open_tool_call(id, name);
                         state
-                            .active_blocks
+                            .provider_blocks
                             .insert(index, (BlockType::ToolUse, content_index));
-                        state.content_index += 1;
-                        events.push(AssistantMessageEvent::ToolCallStart {
-                            content_index,
-                            id,
-                            name,
-                        });
+                        events.push(start_ev);
                     }
                     _ => {}
                 }
@@ -590,12 +598,20 @@ fn process_sse_event(
                     .and_then(Value::as_str)
                     .unwrap_or("");
 
-                if let Some(&(_, content_index)) = state.active_blocks.get(&index) {
+                if let Some(&(block_type, content_index)) = state.provider_blocks.get(&index) {
                     match delta_type {
                         "text_delta" => {
+                            debug_assert!(
+                                matches!(block_type, BlockType::Text),
+                                "text_delta on non-text provider block"
+                            );
                             if let Some(text) =
                                 parsed.pointer("/delta/text").and_then(Value::as_str)
                             {
+                                // Use the provider-mapped content_index so the
+                                // event always carries the index registered at
+                                // content_block_start — matching pre-migration
+                                // behaviour exactly.
                                 events.push(AssistantMessageEvent::TextDelta {
                                     content_index,
                                     delta: text.to_string(),
@@ -603,6 +619,10 @@ fn process_sse_event(
                             }
                         }
                         "thinking_delta" => {
+                            debug_assert!(
+                                matches!(block_type, BlockType::Thinking),
+                                "thinking_delta on non-thinking provider block"
+                            );
                             if let Some(thinking) =
                                 parsed.pointer("/delta/thinking").and_then(Value::as_str)
                             {
@@ -617,10 +637,10 @@ fn process_sse_event(
                                 .pointer("/delta/partial_json")
                                 .and_then(Value::as_str)
                             {
-                                events.push(AssistantMessageEvent::ToolCallDelta {
+                                events.push(BlockAccumulator::tool_call_delta(
                                     content_index,
-                                    delta: json.to_string(),
-                                });
+                                    json.to_string(),
+                                ));
                             }
                         }
                         _ => {}
@@ -637,24 +657,20 @@ fn process_sse_event(
                     .try_into()
                     .unwrap_or(0);
 
-                if let Some((block_type, content_index)) = state.active_blocks.remove(&index) {
+                if let Some((block_type, content_index)) = state.provider_blocks.remove(&index) {
                     match block_type {
                         BlockType::Text => {
-                            events.push(AssistantMessageEvent::TextEnd { content_index });
+                            events.extend(state.blocks.close_text());
                         }
                         BlockType::Thinking => {
-                            // Extract signature if present
                             let signature = parsed
                                 .pointer("/signature")
                                 .and_then(Value::as_str)
                                 .map(String::from);
-                            events.push(AssistantMessageEvent::ThinkingEnd {
-                                content_index,
-                                signature,
-                            });
+                            events.extend(state.blocks.close_thinking(signature));
                         }
                         BlockType::ToolUse => {
-                            events.push(AssistantMessageEvent::ToolCallEnd { content_index });
+                            events.extend(state.blocks.close_tool_call(content_index));
                         }
                     }
                 }
@@ -740,24 +756,8 @@ fn process_sse_event(
 
 impl crate::finalize::StreamFinalize for SseStreamState {
     fn drain_open_blocks(&mut self) -> Vec<crate::finalize::OpenBlock> {
-        let mut indices: Vec<usize> = self.active_blocks.keys().copied().collect();
-        indices.sort_unstable();
-
-        let mut blocks = Vec::new();
-        for idx in indices {
-            if let Some((block_type, content_index)) = self.active_blocks.remove(&idx) {
-                blocks.push(match block_type {
-                    BlockType::Text => crate::finalize::OpenBlock::Text { content_index },
-                    BlockType::Thinking => crate::finalize::OpenBlock::Thinking {
-                        content_index,
-                        signature: None,
-                    },
-                    BlockType::ToolUse => crate::finalize::OpenBlock::ToolCall { content_index },
-                });
-            }
-        }
-
-        blocks
+        self.provider_blocks.clear();
+        crate::finalize::StreamFinalize::drain_open_blocks(&mut self.blocks)
     }
 }
 
@@ -861,5 +861,410 @@ mod tests {
         let strategy = CacheStrategy::Auto;
         assert!(matches!(strategy, CacheStrategy::Auto));
         // No code changes needed in other adapters — they ignore it by design.
+    }
+
+    // ── SSE event processing (BlockAccumulator integration) ───────────────
+
+    /// Helper: create a fresh `SseStreamState`.
+    fn new_state() -> SseStreamState {
+        SseStreamState {
+            blocks: BlockAccumulator::default(),
+            provider_blocks: HashMap::new(),
+            usage: Usage::default(),
+            stop_reason: None,
+        }
+    }
+
+    /// Helper: run `process_sse_event` and return `(events, done)`.
+    fn process(
+        event_type: &str,
+        data: &str,
+        state: &mut SseStreamState,
+    ) -> (Vec<AssistantMessageEvent>, bool) {
+        let mut done = false;
+        let events = process_sse_event(event_type, data, state, &mut done);
+        (events, done)
+    }
+
+    #[test]
+    fn text_block_lifecycle_via_sse() {
+        let mut state = new_state();
+
+        // content_block_start for text at provider index 0
+        let (events, _) = process(
+            "content_block_start",
+            r#"{"index":0,"content_block":{"type":"text","text":""}}"#,
+            &mut state,
+        );
+        assert_eq!(events.len(), 1);
+        assert!(matches!(
+            events[0],
+            AssistantMessageEvent::TextStart { content_index: 0 }
+        ));
+
+        // text delta
+        let (events, _) = process(
+            "content_block_delta",
+            r#"{"index":0,"delta":{"type":"text_delta","text":"Hello"}}"#,
+            &mut state,
+        );
+        assert_eq!(events.len(), 1);
+        assert!(matches!(
+            &events[0],
+            AssistantMessageEvent::TextDelta { content_index: 0, delta } if delta == "Hello"
+        ));
+
+        // content_block_stop
+        let (events, _) = process("content_block_stop", r#"{"index":0}"#, &mut state);
+        assert_eq!(events.len(), 1);
+        assert!(matches!(
+            events[0],
+            AssistantMessageEvent::TextEnd { content_index: 0 }
+        ));
+    }
+
+    #[test]
+    fn thinking_block_with_signature() {
+        let mut state = new_state();
+
+        let (events, _) = process(
+            "content_block_start",
+            r#"{"index":0,"content_block":{"type":"thinking","thinking":""}}"#,
+            &mut state,
+        );
+        assert_eq!(events.len(), 1);
+        assert!(matches!(
+            events[0],
+            AssistantMessageEvent::ThinkingStart { content_index: 0 }
+        ));
+
+        let (events, _) = process(
+            "content_block_delta",
+            r#"{"index":0,"delta":{"type":"thinking_delta","thinking":"Let me think..."}}"#,
+            &mut state,
+        );
+        assert_eq!(events.len(), 1);
+        assert!(matches!(
+            &events[0],
+            AssistantMessageEvent::ThinkingDelta { content_index: 0, delta } if delta == "Let me think..."
+        ));
+
+        // Stop with signature
+        let (events, _) = process(
+            "content_block_stop",
+            r#"{"index":0,"signature":"abc123"}"#,
+            &mut state,
+        );
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            AssistantMessageEvent::ThinkingEnd {
+                content_index,
+                signature,
+            } => {
+                assert_eq!(*content_index, 0);
+                assert_eq!(signature.as_deref(), Some("abc123"));
+            }
+            other => panic!("expected ThinkingEnd, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn mixed_thinking_text_tool_call_indices() {
+        let mut state = new_state();
+
+        // Thinking block at provider index 0 → harness index 0
+        let (events, _) = process(
+            "content_block_start",
+            r#"{"index":0,"content_block":{"type":"thinking","thinking":""}}"#,
+            &mut state,
+        );
+        assert!(matches!(
+            events[0],
+            AssistantMessageEvent::ThinkingStart { content_index: 0 }
+        ));
+
+        let (events, _) = process("content_block_stop", r#"{"index":0}"#, &mut state);
+        assert!(matches!(
+            events[0],
+            AssistantMessageEvent::ThinkingEnd {
+                content_index: 0,
+                ..
+            }
+        ));
+
+        // Text block at provider index 1 → harness index 1
+        let (events, _) = process(
+            "content_block_start",
+            r#"{"index":1,"content_block":{"type":"text","text":""}}"#,
+            &mut state,
+        );
+        assert!(matches!(
+            events[0],
+            AssistantMessageEvent::TextStart { content_index: 1 }
+        ));
+
+        let (events, _) = process("content_block_stop", r#"{"index":1}"#, &mut state);
+        assert!(matches!(
+            events[0],
+            AssistantMessageEvent::TextEnd { content_index: 1 }
+        ));
+
+        // Tool call at provider index 2 → harness index 2
+        let (events, _) = process(
+            "content_block_start",
+            r#"{"index":2,"content_block":{"type":"tool_use","id":"call_1","name":"bash"}}"#,
+            &mut state,
+        );
+        assert!(matches!(
+            &events[0],
+            AssistantMessageEvent::ToolCallStart {
+                content_index: 2,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn multiple_sequential_tool_calls() {
+        let mut state = new_state();
+
+        // First tool call at provider index 0
+        let (events, _) = process(
+            "content_block_start",
+            r#"{"index":0,"content_block":{"type":"tool_use","id":"tc_1","name":"read_file"}}"#,
+            &mut state,
+        );
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            AssistantMessageEvent::ToolCallStart {
+                content_index,
+                id,
+                name,
+            } => {
+                assert_eq!(*content_index, 0);
+                assert_eq!(id, "tc_1");
+                assert_eq!(name, "read_file");
+            }
+            other => panic!("expected ToolCallStart, got {other:?}"),
+        }
+
+        // Delta for first tool call
+        let (events, _) = process(
+            "content_block_delta",
+            r#"{"index":0,"delta":{"type":"input_json_delta","partial_json":"{\"path\":\"foo\"}"}}"#,
+            &mut state,
+        );
+        assert_eq!(events.len(), 1);
+        assert!(matches!(
+            &events[0],
+            AssistantMessageEvent::ToolCallDelta {
+                content_index: 0,
+                ..
+            }
+        ));
+
+        // Close first tool call
+        let (events, _) = process("content_block_stop", r#"{"index":0}"#, &mut state);
+        assert!(matches!(
+            events[0],
+            AssistantMessageEvent::ToolCallEnd { content_index: 0 }
+        ));
+
+        // Second tool call at provider index 1 → harness index 1
+        let (events, _) = process(
+            "content_block_start",
+            r#"{"index":1,"content_block":{"type":"tool_use","id":"tc_2","name":"write_file"}}"#,
+            &mut state,
+        );
+        match &events[0] {
+            AssistantMessageEvent::ToolCallStart {
+                content_index,
+                id,
+                name,
+            } => {
+                assert_eq!(*content_index, 1);
+                assert_eq!(id, "tc_2");
+                assert_eq!(name, "write_file");
+            }
+            other => panic!("expected ToolCallStart, got {other:?}"),
+        }
+
+        // Close second tool call
+        let (events, _) = process("content_block_stop", r#"{"index":1}"#, &mut state);
+        assert!(matches!(
+            events[0],
+            AssistantMessageEvent::ToolCallEnd { content_index: 1 }
+        ));
+    }
+
+    #[test]
+    fn message_stop_emits_done_with_usage() {
+        let mut state = new_state();
+
+        // Set up usage via message_start
+        process(
+            "message_start",
+            r#"{"message":{"usage":{"input_tokens":100,"cache_read_input_tokens":10,"cache_creation_input_tokens":5}}}"#,
+            &mut state,
+        );
+
+        // Set up stop reason + output tokens
+        process(
+            "message_delta",
+            r#"{"delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":50}}"#,
+            &mut state,
+        );
+
+        // message_stop triggers Done
+        let (events, done) = process("message_stop", r#"{}"#, &mut state);
+        assert!(done);
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            AssistantMessageEvent::Done {
+                stop_reason, usage, ..
+            } => {
+                assert_eq!(*stop_reason, StopReason::Stop);
+                assert_eq!(usage.input, 100);
+                assert_eq!(usage.output, 50);
+                assert_eq!(usage.cache_read, 10);
+                assert_eq!(usage.cache_write, 5);
+                assert_eq!(usage.total, 165);
+            }
+            other => panic!("expected Done, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn error_event_closes_open_blocks() {
+        let mut state = new_state();
+
+        // Open a text block
+        process(
+            "content_block_start",
+            r#"{"index":0,"content_block":{"type":"text","text":""}}"#,
+            &mut state,
+        );
+
+        // SSE error arrives before content_block_stop
+        let (events, done) = process(
+            "error",
+            r#"{"error":{"type":"overloaded_error","message":"Server overloaded"}}"#,
+            &mut state,
+        );
+        assert!(done);
+        // Should have: TextEnd (from finalize) + error event
+        assert_eq!(events.len(), 2);
+        assert!(matches!(
+            events[0],
+            AssistantMessageEvent::TextEnd { content_index: 0 }
+        ));
+    }
+
+    #[test]
+    fn tool_use_stop_reason_mapping() {
+        let mut state = new_state();
+
+        process(
+            "message_delta",
+            r#"{"delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":10}}"#,
+            &mut state,
+        );
+
+        let (events, done) = process("message_stop", r#"{}"#, &mut state);
+        assert!(done);
+        match &events[0] {
+            AssistantMessageEvent::Done { stop_reason, .. } => {
+                assert_eq!(*stop_reason, StopReason::ToolUse);
+            }
+            other => panic!("expected Done, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn open_blocks_drained_on_message_stop() {
+        let mut state = new_state();
+
+        // Open text and tool call, don't close them
+        process(
+            "content_block_start",
+            r#"{"index":0,"content_block":{"type":"text","text":""}}"#,
+            &mut state,
+        );
+        process(
+            "content_block_start",
+            r#"{"index":1,"content_block":{"type":"tool_use","id":"tc_1","name":"bash"}}"#,
+            &mut state,
+        );
+
+        // message_stop should finalize both open blocks
+        let (events, done) = process("message_stop", r#"{}"#, &mut state);
+        assert!(done);
+        // TextEnd + ToolCallEnd + Done = 3 events
+        assert_eq!(events.len(), 3);
+        assert!(matches!(
+            events[0],
+            AssistantMessageEvent::TextEnd { content_index: 0 }
+        ));
+        assert!(matches!(
+            events[1],
+            AssistantMessageEvent::ToolCallEnd { content_index: 1 }
+        ));
+        assert!(matches!(events[2], AssistantMessageEvent::Done { .. }));
+    }
+
+    #[test]
+    fn mixed_text_and_tool_call_stream() {
+        let mut state = new_state();
+
+        // Text block
+        process(
+            "content_block_start",
+            r#"{"index":0,"content_block":{"type":"text","text":""}}"#,
+            &mut state,
+        );
+        process(
+            "content_block_delta",
+            r#"{"index":0,"delta":{"type":"text_delta","text":"I will run a command."}}"#,
+            &mut state,
+        );
+        let (events, _) = process("content_block_stop", r#"{"index":0}"#, &mut state);
+        assert!(matches!(
+            events[0],
+            AssistantMessageEvent::TextEnd { content_index: 0 }
+        ));
+
+        // Tool call block
+        process(
+            "content_block_start",
+            r#"{"index":1,"content_block":{"type":"tool_use","id":"call_abc","name":"bash"}}"#,
+            &mut state,
+        );
+        process(
+            "content_block_delta",
+            r#"{"index":1,"delta":{"type":"input_json_delta","partial_json":"{\"cmd\":\"ls\"}"}}"#,
+            &mut state,
+        );
+        let (events, _) = process("content_block_stop", r#"{"index":1}"#, &mut state);
+        assert!(matches!(
+            events[0],
+            AssistantMessageEvent::ToolCallEnd { content_index: 1 }
+        ));
+
+        // Done
+        process(
+            "message_delta",
+            r#"{"delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":20}}"#,
+            &mut state,
+        );
+        let (events, done) = process("message_stop", r#"{}"#, &mut state);
+        assert!(done);
+        assert_eq!(events.len(), 1);
+        assert!(matches!(
+            &events[0],
+            AssistantMessageEvent::Done {
+                stop_reason: StopReason::ToolUse,
+                ..
+            }
+        ));
     }
 }
