@@ -405,20 +405,8 @@ mod tests {
     use swink_agent::testing::{MockStreamFn, default_convert, default_model, text_only_events};
     use swink_agent::{Agent, AgentOptions};
 
-    use super::super::executor::{PipelineExecutor, SimpleAgentFactory};
-    use super::super::registry::PipelineRegistry;
-    use super::super::types::{MergeStrategy, Pipeline, PipelineId};
-
-    fn make_agent(response: &str) -> Agent {
-        let events = text_only_events(response);
-        let options = AgentOptions::new(
-            "test",
-            default_model(),
-            Arc::new(MockStreamFn::new(vec![events])),
-            default_convert,
-        );
-        Agent::new(options)
-    }
+    use super::super::executor::SimpleAgentFactory;
+    use super::super::types::{MergeStrategy, PipelineId};
 
     fn make_factory(agents: Vec<(&str, &str)>) -> Arc<SimpleAgentFactory> {
         let mut factory = SimpleAgentFactory::new();
