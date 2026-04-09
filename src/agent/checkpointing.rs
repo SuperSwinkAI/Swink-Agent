@@ -1,5 +1,7 @@
-use futures::Stream;
 use std::pin::Pin;
+use std::sync::atomic::Ordering;
+
+use futures::Stream;
 
 use crate::checkpoint::{Checkpoint, CheckpointStore};
 use crate::error::AgentError;
@@ -103,9 +105,14 @@ impl Agent {
     /// checkpoint. The checkpoint can later be passed to [`resume`](Self::resume)
     /// to continue the loop from where it left off.
     ///
+    /// The agent remains in the *running* state after this call. It becomes idle
+    /// when the caller either drains the event stream to completion or drops the
+    /// stream returned by [`prompt_stream`](Self::prompt_stream). This prevents a
+    /// new run from starting while the previous loop is still tearing down.
+    ///
     /// Returns `None` if the agent is not currently running.
     pub fn pause(&mut self) -> Option<crate::checkpoint::LoopCheckpoint> {
-        if !self.state.is_running {
+        if !self.loop_active.load(Ordering::Acquire) {
             return None;
         }
 
@@ -131,9 +138,10 @@ impl Agent {
         }
         drop(s);
 
-        self.state.is_running = false;
-        self.abort_controller = None;
-        self.idle_notify.notify_waiters();
+        // Do NOT clear is_running / abort_controller / notify idle here.
+        // The agent stays "running" until the LoopGuardStream is dropped or
+        // the stream is drained to AgentEnd, which guarantees the spawned loop
+        // task has finished using the channel before a new run can start.
 
         Some(checkpoint)
     }

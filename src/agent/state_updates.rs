@@ -1,6 +1,8 @@
-use futures::{Stream, StreamExt};
 use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
+
+use futures::{Stream, StreamExt};
 
 use crate::error::AgentError;
 use crate::loop_::AgentEvent;
@@ -72,6 +74,7 @@ impl Agent {
             self.state.messages = state_messages;
         }
         self.state.is_running = false;
+        self.loop_active.store(false, Ordering::Release);
         self.state.error.clone_from(&error);
         self.idle_notify.notify_waiters();
 
@@ -136,6 +139,7 @@ impl Agent {
             }
             AgentEvent::AgentEnd { .. } => {
                 self.state.is_running = false;
+                self.loop_active.store(false, Ordering::Release);
                 self.state.pending_tool_calls.clear();
                 self.state.stream_message = None;
             }

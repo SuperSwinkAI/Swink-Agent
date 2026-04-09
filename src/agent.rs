@@ -26,6 +26,7 @@ mod state_updates;
 mod structured_output;
 
 use std::collections::{HashSet, VecDeque};
+use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::{Arc, Mutex};
 
 use tokio::sync::Notify;
@@ -189,6 +190,15 @@ pub struct Agent {
     cache_config: Option<crate::context_cache::CacheConfig>,
     /// Optional dynamic system prompt.
     dynamic_system_prompt: Option<Arc<dyn Fn() -> String + Send + Sync>>,
+    /// Shared flag: true while a spawned loop task is active. Set to false by
+    /// the `LoopGuardStream` wrapper on drop or by `collect_stream`/`AgentEnd`.
+    /// Used by `check_not_running` and `wait_for_idle` as the ground truth for
+    /// whether a loop is still in progress (instead of `state.is_running` which
+    /// may lag on the stream-drop path).
+    loop_active: Arc<AtomicBool>,
+    /// Monotonically increasing counter bumped on each `start_loop`. Prevents a
+    /// stale `LoopGuardStream` from clearing `loop_active` for a newer run.
+    loop_generation: Arc<AtomicU64>,
     /// Registered plugins retained for runtime introspection (priority-sorted).
     #[cfg(feature = "plugins")]
     plugins: Vec<Arc<dyn crate::plugin::Plugin>>,
@@ -282,6 +292,8 @@ impl Agent {
             credential_resolver: options.credential_resolver,
             cache_config: options.cache_config,
             dynamic_system_prompt: options.dynamic_system_prompt.map(Arc::from),
+            loop_active: Arc::new(AtomicBool::new(false)),
+            loop_generation: Arc::new(AtomicU64::new(0)),
             #[cfg(feature = "plugins")]
             plugins: options.plugins,
         };
@@ -318,9 +330,23 @@ impl Agent {
     }
 
     /// Access the current agent state.
+    ///
+    /// Note: [`AgentState::is_running`] may lag behind the true loop lifecycle
+    /// after a stream is dropped. Use [`Agent::is_running`] for an accurate
+    /// real-time check.
     #[must_use]
     pub const fn state(&self) -> &AgentState {
         &self.state
+    }
+
+    /// Returns whether a loop is currently active.
+    ///
+    /// This reads an atomic flag that is cleared immediately when the event
+    /// stream is dropped or drained to `AgentEnd`, making it accurate even in
+    /// the window between dropping a stream and the next `&mut self` call.
+    #[must_use]
+    pub fn is_running(&self) -> bool {
+        self.loop_active.load(std::sync::atomic::Ordering::Acquire)
     }
 
     /// Access the session key-value state (thread-safe, shared reference).

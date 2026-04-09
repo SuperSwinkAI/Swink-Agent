@@ -183,6 +183,67 @@ fn loop_checkpoint_serde_stable() {
     assert_eq!(restored.metadata["session"], "sess-abc");
 }
 
+/// After `pause()`, the agent remains running until the event stream is
+/// dropped. Attempting a new `prompt_stream` before dropping returns
+/// `AlreadyRunning`. Dropping the stream makes the agent idle again.
+#[tokio::test]
+async fn pause_keeps_running_until_stream_dropped() {
+    use futures::StreamExt;
+
+    let mut agent = simple_agent(vec![text_only_events("hello"), text_only_events("world")]);
+
+    // Start a run and get the stream.
+    let stream = agent.prompt_stream(vec![user_msg("hi")]).unwrap();
+
+    // Pause cancels the token but the agent stays running.
+    let checkpoint = agent.pause().expect("should return checkpoint");
+    assert!(agent.is_running(), "agent should remain running after pause");
+
+    // Trying to start a new run should fail — loop is still active.
+    let err = agent.prompt_stream(vec![user_msg("again")]);
+    assert!(
+        matches!(err, Err(swink_agent::AgentError::AlreadyRunning)),
+        "expected AlreadyRunning while stream is alive"
+    );
+
+    // Drop the stream — this triggers cleanup via LoopGuardStream.
+    drop(stream);
+
+    // Now the agent should be idle and a new run should succeed.
+    assert!(
+        !agent.is_running(),
+        "agent should be idle after stream is dropped"
+    );
+    let _checkpoint = checkpoint; // keep checkpoint alive for the assertion above
+    let new_stream = agent.prompt_stream(vec![user_msg("new run")]);
+    assert!(new_stream.is_ok(), "new run should succeed after stream drop");
+
+    // Clean up: drain the new stream.
+    let mut s = new_stream.unwrap();
+    while s.next().await.is_some() {}
+}
+
+/// Regression test for the PR #252 blocking finding: pausing a
+/// `prompt_stream()` run and dropping the stream without draining it must
+/// not leave the agent permanently stuck in `AlreadyRunning`.
+#[tokio::test]
+async fn pause_then_drop_stream_becomes_idle() {
+    let mut agent = simple_agent(vec![text_only_events("hello")]);
+
+    let stream = agent.prompt_stream(vec![user_msg("hi")]).unwrap();
+    let _checkpoint = agent.pause().expect("should return checkpoint");
+
+    // Drop stream without consuming any events.
+    drop(stream);
+
+    // wait_for_idle must resolve (not hang forever).
+    tokio::time::timeout(std::time::Duration::from_secs(2), agent.wait_for_idle())
+        .await
+        .expect("wait_for_idle should resolve after stream drop, not hang");
+
+    assert!(!agent.is_running());
+}
+
 #[test]
 fn loop_checkpoint_to_standard_checkpoint_integration() {
     let msgs = vec![user_msg("hello")];
