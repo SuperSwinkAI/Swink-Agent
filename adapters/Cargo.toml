@@ -29,7 +29,7 @@ mistral = []
 xai = ["openai"]
 
 [dependencies]
-swink-agent = { path = ".." }
+swink-agent = { path = "..", default-features = false }
 reqwest.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true

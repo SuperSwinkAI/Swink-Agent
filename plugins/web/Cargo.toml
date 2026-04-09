@@ -15,7 +15,7 @@ all = ["duckduckgo", "brave", "tavily"]
 integration = []
 
 [dependencies]
-swink-agent = { path = "../..", features = ["plugins"] }
+swink-agent = { path = "../..", default-features = false, features = ["plugins"] }
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true

@@ -24,7 +24,7 @@ content-filter = ["regex"]
 audit = ["chrono", "serde", "serde_json", "unicode-truncate"]
 
 [dependencies]
-swink-agent = { path = ".." }
+swink-agent = { path = "..", default-features = false }
 regex = { version = "1", optional = true }
 chrono = { workspace = true, optional = true }
 serde = { workspace = true, optional = true }
@@ -34,7 +34,7 @@ tracing = { workspace = true }
 unicode-truncate = { version = "2", optional = true }
 
 [dev-dependencies]
-swink-agent = { path = "..", features = ["testkit"] }
+swink-agent = { path = "..", default-features = false, features = ["testkit"] }
 futures = { workspace = true }
 serde_json = { workspace = true }
 tempfile = { workspace = true }

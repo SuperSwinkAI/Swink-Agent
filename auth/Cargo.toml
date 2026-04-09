@@ -8,7 +8,7 @@ license = "MIT"
 repository = "https://github.com/SuperSwinkAI/Swink-Agent"
 
 [dependencies]
-swink-agent = { path = ".." }
+swink-agent = { path = "..", default-features = false }
 reqwest.workspace = true
 chrono.workspace = true
 serde.workspace = true

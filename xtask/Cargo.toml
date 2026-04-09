@@ -6,7 +6,7 @@ rust-version = "1.88"
 publish = false
 
 [dependencies]
-swink-agent = { path = ".." }
+swink-agent = { path = "..", default-features = false }
 clap = { version = "4", features = ["derive"] }
 futures.workspace = true
 reqwest = { workspace = true, features = ["json", "query"] }

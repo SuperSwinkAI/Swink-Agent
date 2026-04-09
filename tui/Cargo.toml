@@ -20,7 +20,7 @@ path = "src/main.rs"
 required-features = ["cli"]
 
 [dependencies]
-swink-agent = { path = ".." }
+swink-agent = { path = "..", default-features = false, features = ["builtin-tools", "transfer"] }
 swink-agent-adapters = { path = "../adapters", default-features = false, features = ["anthropic", "openai", "ollama", "proxy"] }
 swink-agent-memory = { path = "../memory" }
 swink-agent-local-llm = { path = "../local-llm", optional = true }
@@ -48,7 +48,7 @@ full = ["local", "cli"]
 local = ["dep:swink-agent-local-llm"]
 
 [dev-dependencies]
-swink-agent = { path = "..", features = ["testkit"] }
+swink-agent = { path = "..", default-features = false, features = ["testkit"] }
 tempfile.workspace = true
 tokio-util.workspace = true
 

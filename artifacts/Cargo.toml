@@ -8,7 +8,7 @@ license = "MIT"
 repository = "https://github.com/SuperSwinkAI/Swink-Agent"
 
 [dependencies]
-swink-agent = { path = "..", features = ["artifact-store"] }
+swink-agent = { path = "..", default-features = false, features = ["artifact-store"] }
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

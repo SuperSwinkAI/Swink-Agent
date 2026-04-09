@@ -24,7 +24,7 @@ mkl = ["mistralrs/mkl"]
 accelerate = ["mistralrs/accelerate"]
 
 [dependencies]
-swink-agent = { path = ".." }
+swink-agent = { path = "..", default-features = false }
 mistralrs = "0.8"
 hf-hub = { version = "0.5", features = ["tokio"] }
 tokio.workspace = true
@@ -38,7 +38,7 @@ tracing.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
-swink-agent = { path = "..", features = ["testkit"] }
+swink-agent = { path = "..", default-features = false, features = ["testkit"] }
 tokio = { workspace = true, features = ["full", "test-util"] }
 pretty_assertions.workspace = true
 
