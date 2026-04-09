@@ -536,23 +536,23 @@ fn process_sse_event(
 
                 match block_type {
                     "text" => {
-                        // Anthropic explicitly starts text blocks, so
-                        // ensure_text_open always fires here.
-                        if let Some(ev) = state.blocks.ensure_text_open() {
-                            let content_index = state.blocks.text_index().unwrap();
+                        events.extend(state.blocks.ensure_text_open());
+                        // Always register the provider→harness index mapping so
+                        // subsequent content_block_delta events can route by
+                        // provider index.  ensure_text_open is idempotent, but
+                        // the provider may use a fresh index for the same block.
+                        if let Some(content_index) = state.blocks.text_index() {
                             state
                                 .provider_blocks
                                 .insert(index, (BlockType::Text, content_index));
-                            events.push(ev);
                         }
                     }
                     "thinking" => {
-                        if let Some(ev) = state.blocks.ensure_thinking_open() {
-                            let content_index = state.blocks.thinking_index().unwrap();
+                        events.extend(state.blocks.ensure_thinking_open());
+                        if let Some(content_index) = state.blocks.thinking_index() {
                             state
                                 .provider_blocks
                                 .insert(index, (BlockType::Thinking, content_index));
-                            events.push(ev);
                         }
                     }
                     "tool_use" => {
@@ -589,22 +589,38 @@ fn process_sse_event(
                     .and_then(Value::as_str)
                     .unwrap_or("");
 
-                if let Some(&(_, content_index)) = state.provider_blocks.get(&index) {
+                if let Some(&(block_type, content_index)) = state.provider_blocks.get(&index) {
                     match delta_type {
                         "text_delta" => {
+                            debug_assert!(
+                                matches!(block_type, BlockType::Text),
+                                "text_delta on non-text provider block"
+                            );
                             if let Some(text) =
                                 parsed.pointer("/delta/text").and_then(Value::as_str)
-                                && let Some(ev) = state.blocks.text_delta(text.to_string())
                             {
-                                events.push(ev);
+                                // Use the provider-mapped content_index so the
+                                // event always carries the index registered at
+                                // content_block_start — matching pre-migration
+                                // behaviour exactly.
+                                events.push(AssistantMessageEvent::TextDelta {
+                                    content_index,
+                                    delta: text.to_string(),
+                                });
                             }
                         }
                         "thinking_delta" => {
+                            debug_assert!(
+                                matches!(block_type, BlockType::Thinking),
+                                "thinking_delta on non-thinking provider block"
+                            );
                             if let Some(thinking) =
                                 parsed.pointer("/delta/thinking").and_then(Value::as_str)
-                                && let Some(ev) = state.blocks.thinking_delta(thinking.to_string())
                             {
-                                events.push(ev);
+                                events.push(AssistantMessageEvent::ThinkingDelta {
+                                    content_index,
+                                    delta: thinking.to_string(),
+                                });
                             }
                         }
                         "input_json_delta" => {

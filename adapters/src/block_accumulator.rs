@@ -185,6 +185,7 @@ impl BlockAccumulator {
     /// Build a `ThinkingDelta` event for the currently-open thinking block.
     ///
     /// Returns `None` if no thinking block is open.
+    #[allow(dead_code)]
     pub fn thinking_delta(&self, delta: String) -> Option<AssistantMessageEvent> {
         self.thinking_index
             .as_ref()
