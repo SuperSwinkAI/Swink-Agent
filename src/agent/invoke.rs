@@ -1,7 +1,10 @@
 use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::task::{Context, Poll};
 
 use futures::Stream;
+use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
@@ -14,6 +17,41 @@ use crate::util::now_timestamp;
 
 use super::queueing::QueueMessageProvider;
 use super::{Agent, SharedRetryStrategy};
+
+// ─── LoopGuardStream ────────────────────────────────────────────────────────
+
+/// Wrapper stream that clears the agent's `loop_active` flag when dropped.
+///
+/// This ensures the agent becomes idle even if the caller drops the stream
+/// without draining it to `AgentEnd`. A generation counter prevents a stale
+/// guard from clearing the flag for a newer run.
+struct LoopGuardStream {
+    inner: Pin<Box<dyn Stream<Item = AgentEvent> + Send>>,
+    loop_active: Arc<AtomicBool>,
+    idle_notify: Arc<Notify>,
+    generation: u64,
+    expected_generation: Arc<AtomicU64>,
+}
+
+impl Stream for LoopGuardStream {
+    type Item = AgentEvent;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        self.inner.as_mut().poll_next(cx)
+    }
+}
+
+impl Drop for LoopGuardStream {
+    fn drop(&mut self) {
+        // Only clear loop_active if this guard belongs to the current run.
+        // A newer start_loop will have incremented loop_generation, making
+        // this guard's generation stale.
+        if self.expected_generation.load(Ordering::Acquire) == self.generation {
+            self.loop_active.store(false, Ordering::Release);
+            self.idle_notify.notify_waiters();
+        }
+    }
+}
 
 impl Agent {
     /// Start a new loop with input messages, returning an event stream.
@@ -157,8 +195,12 @@ impl Agent {
         })
     }
 
-    pub(super) const fn check_not_running(&self) -> Result<(), AgentError> {
-        if self.state.is_running {
+    pub(super) fn check_not_running(&mut self) -> Result<(), AgentError> {
+        // Synchronise the observable `state.is_running` from the atomic ground
+        // truth so callers that inspect `agent.state()` see an up-to-date value.
+        let active = self.loop_active.load(Ordering::Acquire);
+        self.state.is_running = active;
+        if active {
             return Err(AgentError::AlreadyRunning);
         }
         Ok(())
@@ -185,6 +227,8 @@ impl Agent {
     ) -> Result<Pin<Box<dyn Stream<Item = AgentEvent> + Send>>, AgentError> {
         self.state.is_running = true;
         self.state.error = None;
+        self.loop_active.store(true, Ordering::Release);
+        let generation = self.loop_generation.fetch_add(1, Ordering::AcqRel) + 1;
 
         let token = CancellationToken::new();
         self.abort_controller = Some(token.clone());
@@ -219,7 +263,15 @@ impl Agent {
 
         self.in_flight_llm_messages = Some(in_flight_llm_messages);
 
-        Ok(raw_stream)
+        let guarded: Pin<Box<dyn Stream<Item = AgentEvent> + Send>> =
+            Box::pin(LoopGuardStream {
+                inner: raw_stream,
+                loop_active: Arc::clone(&self.loop_active),
+                idle_notify: Arc::clone(&self.idle_notify),
+                generation,
+                expected_generation: Arc::clone(&self.loop_generation),
+            });
+        Ok(guarded)
     }
 
     #[allow(clippy::type_complexity)]

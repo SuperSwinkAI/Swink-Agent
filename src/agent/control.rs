@@ -1,5 +1,6 @@
 use std::future::Future;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 use tracing::info;
 
@@ -18,6 +19,7 @@ impl Agent {
     pub fn reset(&mut self) {
         self.state.messages.clear();
         self.state.is_running = false;
+        self.loop_active.store(false, Ordering::Release);
         self.state.stream_message = None;
         self.state.pending_tool_calls.clear();
         self.state.error = None;
@@ -27,10 +29,14 @@ impl Agent {
     }
 
     /// Returns a future that resolves when the agent is no longer running.
+    ///
+    /// Uses the shared `loop_active` flag so the future correctly resolves even
+    /// when the event stream is dropped without being drained to `AgentEnd`.
     pub fn wait_for_idle(&self) -> impl Future<Output = ()> + Send + '_ {
         let notify = Arc::clone(&self.idle_notify);
+        let active = Arc::clone(&self.loop_active);
         async move {
-            if !self.state.is_running {
+            if !active.load(Ordering::Acquire) {
                 return;
             }
             notify.notified().await;
