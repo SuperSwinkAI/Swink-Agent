@@ -3,8 +3,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
-use swink_agent::credential::CredentialFuture;
-use swink_agent::{Credential, CredentialStore};
+use swink_agent::{Credential, CredentialFuture, CredentialStore};
 
 /// Thread-safe in-memory credential store.
 ///

@@ -11,9 +11,9 @@ use futures::future::{BoxFuture, Shared};
 use tokio::sync::Mutex;
 use tracing::{debug, info};
 
-use swink_agent::credential::CredentialFuture;
 use swink_agent::{
-    Credential, CredentialError, CredentialResolver, CredentialStore, ResolvedCredential,
+    Credential, CredentialError, CredentialFuture, CredentialResolver, CredentialStore,
+    ResolvedCredential,
 };
 
 use crate::oauth2;
