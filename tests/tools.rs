@@ -206,6 +206,8 @@ async fn bash_timeout() {
     );
 }
 
+// Unix-only: uses `cat` and `>&2` which are not available in `cmd /C`.
+#[cfg(unix)]
 #[tokio::test]
 async fn bash_output_truncation() {
     let tool = BashTool::new();
