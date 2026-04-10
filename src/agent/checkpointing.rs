@@ -11,6 +11,16 @@ use super::Agent;
 use super::queueing::llm_messages_from_queue;
 
 impl Agent {
+    /// Rebind `self.stream_fn` if the current model's `provider`/`model_id`
+    /// matches one of the registered `model_stream_fns`.
+    fn rebind_stream_fn_for_current_model(&mut self) {
+        if let Some((_, stream_fn)) = self.model_stream_fns.iter().find(|(m, _)| {
+            m.provider == self.state.model.provider && m.model_id == self.state.model.model_id
+        }) {
+            self.stream_fn = std::sync::Arc::clone(stream_fn);
+        }
+    }
+
     // ── Checkpointing ────────────────────────────────────────────────────
 
     /// Create a checkpoint of the current agent state.
@@ -49,7 +59,10 @@ impl Agent {
     /// Restore agent message history from a checkpoint.
     ///
     /// Replaces the current messages with those from the checkpoint and
-    /// updates the system prompt to match. Persisted custom messages are
+    /// updates the system prompt to match. If the checkpoint's model
+    /// matches one of the [`available_models`](crate::AgentOptions::with_available_models),
+    /// the stream function is rebound automatically; otherwise the current
+    /// stream function is left in place. Persisted custom messages are
     /// restored when a [`CustomMessageRegistry`](crate::types::CustomMessageRegistry)
     /// has been configured on [`AgentOptions`](crate::AgentOptions) via
     /// [`with_custom_message_registry`](crate::AgentOptions::with_custom_message_registry);
@@ -61,6 +74,7 @@ impl Agent {
             .clone_from(&checkpoint.system_prompt);
         self.state.model.provider.clone_from(&checkpoint.provider);
         self.state.model.model_id.clone_from(&checkpoint.model_id);
+        self.rebind_stream_fn_for_current_model();
 
         if let Some(ref state_val) = checkpoint.state {
             let restored = crate::SessionState::restore_from_snapshot(state_val.clone());
@@ -177,6 +191,7 @@ impl Agent {
             .clone_from(&checkpoint.system_prompt);
         self.state.model.provider.clone_from(&checkpoint.provider);
         self.state.model.model_id.clone_from(&checkpoint.model_id);
+        self.rebind_stream_fn_for_current_model();
 
         if let Some(ref state_val) = checkpoint.state {
             let restored = crate::SessionState::restore_from_snapshot(state_val.clone());
@@ -431,6 +446,97 @@ mod tests {
             },
             _ => panic!("expected user message in follow-up queue"),
         }
+    }
+
+    #[tokio::test]
+    async fn restore_from_checkpoint_rebinds_stream_fn_for_matching_model() {
+        use crate::stream::StreamFn;
+        use crate::types::ContentBlock;
+
+        let model_a = ModelSpec::new("provider-a", "model-a");
+        let model_b = ModelSpec::new("provider-b", "model-b");
+        let stream_a = Arc::new(SimpleMockStreamFn::from_text("from-a"));
+        let stream_b = Arc::new(SimpleMockStreamFn::from_text("from-b"));
+
+        // Agent starts on model_a, with model_b registered as available.
+        let opts = AgentOptions::new_simple("system", model_a.clone(), stream_a.clone())
+            .with_available_models(vec![(model_b.clone(), stream_b.clone())]);
+        let mut agent = Agent::new(opts);
+
+        // Confirm initial stream_fn points to stream_a.
+        assert!(
+            Arc::ptr_eq(&agent.stream_fn, &(stream_a.clone() as Arc<dyn StreamFn>)),
+            "initial stream_fn should be stream_a"
+        );
+
+        // Build a checkpoint from a source agent that uses model_b.
+        let source_opts =
+            AgentOptions::new_simple("system", model_b.clone(), stream_b.clone());
+        let mut source = Agent::new(source_opts);
+        source
+            .state
+            .messages
+            .push(AgentMessage::Llm(LlmMessage::User(UserMessage {
+                content: vec![ContentBlock::Text {
+                    text: "hello".to_string(),
+                }],
+                timestamp: 0,
+                cache_hint: None,
+            })));
+        let checkpoint = source.save_checkpoint("cp-rebind").await.unwrap();
+
+        // Restore into agent (currently on model_a).
+        agent.restore_from_checkpoint(&checkpoint);
+
+        // Model metadata should reflect model_b.
+        assert_eq!(agent.state.model.provider, "provider-b");
+        assert_eq!(agent.state.model.model_id, "model-b");
+
+        // Stream function should now be rebound to stream_b.
+        assert!(
+            Arc::ptr_eq(&agent.stream_fn, &(stream_b.clone() as Arc<dyn StreamFn>)),
+            "stream_fn should be rebound to stream_b after checkpoint restore"
+        );
+    }
+
+    #[tokio::test]
+    async fn restore_from_loop_checkpoint_rebinds_stream_fn_for_matching_model() {
+        use crate::checkpoint::LoopCheckpoint;
+        use crate::stream::StreamFn;
+        use crate::types::ContentBlock;
+
+        let model_a = ModelSpec::new("provider-a", "model-a");
+        let model_b = ModelSpec::new("provider-b", "model-b");
+        let stream_a = Arc::new(SimpleMockStreamFn::from_text("from-a"));
+        let stream_b = Arc::new(SimpleMockStreamFn::from_text("from-b"));
+
+        let opts = AgentOptions::new_simple("system", model_a.clone(), stream_a.clone())
+            .with_available_models(vec![(model_b.clone(), stream_b.clone())]);
+        let mut agent = Agent::new(opts);
+
+        assert!(
+            Arc::ptr_eq(&agent.stream_fn, &(stream_a.clone() as Arc<dyn StreamFn>)),
+            "initial stream_fn should be stream_a"
+        );
+
+        // Build a LoopCheckpoint for model_b.
+        let messages = vec![AgentMessage::Llm(LlmMessage::User(UserMessage {
+            content: vec![ContentBlock::Text {
+                text: "hello".to_string(),
+            }],
+            timestamp: 0,
+            cache_hint: None,
+        }))];
+        let cp = LoopCheckpoint::new("system", "provider-b", "model-b", &messages);
+
+        agent.restore_from_loop_checkpoint(&cp).unwrap();
+
+        assert_eq!(agent.state.model.provider, "provider-b");
+        assert_eq!(agent.state.model.model_id, "model-b");
+        assert!(
+            Arc::ptr_eq(&agent.stream_fn, &(stream_b.clone() as Arc<dyn StreamFn>)),
+            "stream_fn should be rebound to stream_b after loop checkpoint restore"
+        );
     }
 
     #[tokio::test]
