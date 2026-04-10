@@ -5,6 +5,7 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info_span};
 
+use crate::policy::{PolicyContext, PolicyVerdict, TurnPolicyContext, run_post_turn_policies};
 use crate::types::{
     AgentContext, AgentMessage, AssistantMessage, ContentBlock, LlmMessage, StopReason,
     ToolResultMessage, TurnSnapshot,
@@ -287,6 +288,7 @@ pub async fn run_single_turn(
             assistant_message,
             state,
             config,
+            system_prompt,
             llm_call_duration,
             turn_start,
             tx,
@@ -300,6 +302,7 @@ pub async fn run_single_turn(
         state,
         assistant_message,
         tool_calls,
+        system_prompt,
         llm_call_duration,
         turn_start,
         cancellation_token,
@@ -595,12 +598,80 @@ fn extract_tool_calls(message: &AssistantMessage) -> Vec<ToolCallInfo> {
         .collect()
 }
 
-/// Handle the case where no tool calls are present: emit `TurnEnd`, break inner.
+/// Run post-turn policies and return the (possibly replaced) assistant message.
+///
+/// If a policy returns `Inject` with an `AssistantMessage`, it replaces the
+/// original — the replacement is what gets committed to context and emitted in
+/// `TurnEnd`. Non-assistant injected messages go to `pending_messages`.
+///
+/// Returns `(final_assistant_message, Option<stop_reason>)`.
+fn run_post_turn_policy_check(
+    assistant_message: &AssistantMessage,
+    tool_results: &[ToolResultMessage],
+    state: &mut LoopState,
+    config: &Arc<AgentLoopConfig>,
+    system_prompt: &str,
+) -> (AssistantMessage, Option<String>) {
+    if config.post_turn_policies.is_empty() {
+        return (assistant_message.clone(), None);
+    }
+
+    let state_snapshot = {
+        let guard = config
+            .session_state
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        guard.clone()
+    };
+    let policy_ctx = PolicyContext {
+        turn_index: state.turn_index,
+        accumulated_usage: &state.accumulated_usage,
+        accumulated_cost: &state.accumulated_cost,
+        message_count: state.context_messages.len(),
+        overflow_signal: state.overflow_signal,
+        new_messages: &[], // current-turn data is in TurnPolicyContext
+        state: &state_snapshot,
+    };
+    let turn_ctx = TurnPolicyContext {
+        assistant_message,
+        tool_results,
+        stop_reason: assistant_message.stop_reason,
+        system_prompt,
+        model_spec: &config.model,
+        context_messages: &state.context_messages,
+    };
+    match run_post_turn_policies(&config.post_turn_policies, &policy_ctx, &turn_ctx) {
+        PolicyVerdict::Continue => (assistant_message.clone(), None),
+        PolicyVerdict::Stop(reason) => (assistant_message.clone(), Some(reason)),
+        PolicyVerdict::Inject(msgs) => {
+            // If the injection includes an assistant message, use the last one
+            // as a replacement. All other injected messages go to pending.
+            let mut replaced = assistant_message.clone();
+            for msg in msgs {
+                match msg {
+                    AgentMessage::Llm(LlmMessage::Assistant(new_msg)) => {
+                        replaced = new_msg;
+                    }
+                    other => {
+                        state.pending_messages.push(other);
+                    }
+                }
+            }
+            // Update last_assistant_message to reflect the replacement.
+            state.last_assistant_message = Some(replaced.clone());
+            (replaced, None)
+        }
+    }
+}
+
+/// Handle the case where no tool calls are present: run post-turn policies,
+/// commit the (possibly replaced) message, emit `TurnEnd`, break inner.
 #[allow(clippy::too_many_arguments)]
 async fn handle_no_tool_calls(
     assistant_message: AssistantMessage,
     state: &mut LoopState,
     config: &Arc<AgentLoopConfig>,
+    system_prompt: &str,
     llm_call_duration: Duration,
     turn_start: Instant,
     tx: &mpsc::Sender<AgentEvent>,
@@ -618,17 +689,25 @@ async fn handle_no_tool_calls(
     )
     .await;
 
-    let msg_for_event = assistant_message.clone();
+    // Run post-turn policies BEFORE committing to context or emitting TurnEnd.
+    let (assistant_message, policy_stop) = run_post_turn_policy_check(
+        &assistant_message,
+        &[],
+        state,
+        config,
+        system_prompt,
+    );
+
     let stop = assistant_message.stop_reason;
     state
         .context_messages
-        .push(AgentMessage::Llm(LlmMessage::Assistant(assistant_message)));
+        .push(AgentMessage::Llm(LlmMessage::Assistant(assistant_message.clone())));
     let state_delta = flush_state_delta(config, tx).await;
     let snapshot = build_snapshot(state, stop, state_delta);
     if !emit(
         tx,
         AgentEvent::TurnEnd {
-            assistant_message: msg_for_event,
+            assistant_message,
             tool_results: vec![],
             reason: TurnEndReason::Complete,
             snapshot,
@@ -638,17 +717,23 @@ async fn handle_no_tool_calls(
     {
         return TurnOutcome::Return;
     }
+
+    if let Some(reason) = policy_stop {
+        tracing::info!("post-turn policy stopped agent: {reason}");
+    }
+
     TurnOutcome::BreakInner
 }
 
 /// Handle tool calls: separate incomplete ones, execute the rest, collect results,
-/// emit `TurnEnd`, and poll steering.
+/// run post-turn policies, emit `TurnEnd`, and poll steering.
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 async fn handle_tool_calls(
     config: &Arc<AgentLoopConfig>,
     state: &mut LoopState,
     assistant_message: AssistantMessage,
     mut tool_call_data: Vec<ToolCallInfo>,
+    system_prompt: &str,
     llm_call_duration: Duration,
     turn_start: Instant,
     cancellation_token: &CancellationToken,
@@ -656,10 +741,13 @@ async fn handle_tool_calls(
 ) -> TurnOutcome {
     accumulate_turn_state(state, &assistant_message);
 
-    let msg_for_turn_end = assistant_message.clone();
+    // Record the index where we insert the assistant message so we can replace
+    // it later if a post-turn policy returns a mutated version.
+    let assistant_ctx_index = state.context_messages.len();
     state
         .context_messages
-        .push(AgentMessage::Llm(LlmMessage::Assistant(assistant_message)));
+        .push(AgentMessage::Llm(LlmMessage::Assistant(assistant_message.clone())));
+    let msg_for_turn_end = assistant_message;
 
     // Max tokens recovery: replace incomplete tool calls with error results
     let max_token_results =
@@ -774,7 +862,21 @@ async fn handle_tool_calls(
         .await;
     }
 
-    // xiii. Emit TurnEnd
+    // xiii. Run post-turn policies BEFORE emitting TurnEnd so Inject can
+    //       replace the assistant message before it is observed by listeners.
+    let (msg_for_turn_end, policy_stop) = run_post_turn_policy_check(
+        &msg_for_turn_end,
+        &tool_results,
+        state,
+        config,
+        system_prompt,
+    );
+
+    // Update the assistant message in context in case a policy replaced it.
+    state.context_messages[assistant_ctx_index] =
+        AgentMessage::Llm(LlmMessage::Assistant(msg_for_turn_end.clone()));
+
+    // xiv. Emit TurnEnd
     let state_delta = flush_state_delta(config, tx).await;
     let snapshot = build_snapshot(state, msg_for_turn_end.stop_reason, state_delta);
     if !emit(
@@ -793,6 +895,11 @@ async fn handle_tool_calls(
     .await
     {
         return TurnOutcome::Return;
+    }
+
+    if let Some(reason) = policy_stop {
+        tracing::info!("post-turn policy stopped agent: {reason}");
+        return TurnOutcome::BreakInner;
     }
 
     // Poll steering if not already interrupted

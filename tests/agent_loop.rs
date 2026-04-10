@@ -17,9 +17,10 @@ use serde_json::json;
 use tokio_util::sync::CancellationToken;
 
 use swink_agent::{
-    AgentEvent, AgentLoopConfig, AgentMessage, AgentTool, AgentToolResult, AssistantMessageEvent,
-    ContentBlock, Cost, CustomMessage, DefaultRetryStrategy, LlmMessage, MessageProvider,
-    StopReason, StreamFn, StreamOptions, ToolResultMessage, TurnSnapshot, Usage, UserMessage,
+    AgentEvent, AgentLoopConfig, AgentMessage, AgentTool, AgentToolResult, AssistantMessage,
+    AssistantMessageEvent, ContentBlock, Cost, CustomMessage, DefaultRetryStrategy, LlmMessage,
+    MessageProvider, PolicyContext, PolicyVerdict, PostTurnPolicy, StopReason, StreamFn,
+    StreamOptions, ToolResultMessage, TurnPolicyContext, TurnSnapshot, Usage, UserMessage,
     agent_loop,
 };
 
@@ -1253,4 +1254,130 @@ async fn turn_snapshot_serializes_to_json() {
     assert!((parsed.cost.total - 0.05).abs() < f64::EPSILON);
     assert_eq!(parsed.stop_reason, StopReason::Stop);
     assert!(parsed.messages.is_empty());
+}
+
+// ─── Post-turn policy replaces assistant message before TurnEnd ──────────
+
+/// A post-turn policy that replaces the assistant message text.
+/// Simulates what PiiRedactor does: returns Inject with a modified
+/// AssistantMessage to replace the original.
+struct ReplacingPostTurnPolicy {
+    replacement_text: String,
+}
+
+impl PostTurnPolicy for ReplacingPostTurnPolicy {
+    fn name(&self) -> &str {
+        "replacing-post-turn"
+    }
+
+    fn evaluate(&self, _ctx: &PolicyContext<'_>, turn: &TurnPolicyContext<'_>) -> PolicyVerdict {
+        let orig = turn.assistant_message;
+        let msg = AssistantMessage {
+            content: vec![ContentBlock::Text {
+                text: self.replacement_text.clone(),
+            }],
+            provider: orig.provider.clone(),
+            model_id: orig.model_id.clone(),
+            usage: orig.usage.clone(),
+            cost: orig.cost.clone(),
+            stop_reason: orig.stop_reason,
+            error_message: orig.error_message.clone(),
+            error_kind: orig.error_kind,
+            timestamp: orig.timestamp,
+            cache_hint: None,
+        };
+        PolicyVerdict::Inject(vec![AgentMessage::Llm(LlmMessage::Assistant(msg))])
+    }
+}
+
+/// Regression test for #313: post-turn Inject verdicts must replace the
+/// assistant message in TurnEnd and context BEFORE the event is emitted.
+#[tokio::test]
+async fn post_turn_inject_replaces_assistant_message_in_turn_end() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events(
+        "secret SSN 123-45-6789",
+    )]));
+
+    let policy: Arc<dyn PostTurnPolicy> = Arc::new(ReplacingPostTurnPolicy {
+        replacement_text: "secret SSN [REDACTED]".to_string(),
+    });
+
+    let mut config = default_config(stream_fn);
+    config.post_turn_policies = vec![policy];
+
+    let events = collect_events(agent_loop(
+        vec![],
+        "system".to_string(),
+        config,
+        CancellationToken::new(),
+    ))
+    .await;
+
+    // Find the TurnEnd event and verify the assistant message was replaced.
+    let turn_end = events.iter().find_map(|e| match e {
+        AgentEvent::TurnEnd {
+            assistant_message, ..
+        } => Some(assistant_message),
+        _ => None,
+    });
+
+    let msg = turn_end.expect("should have TurnEnd event");
+    let text = ContentBlock::extract_text(&msg.content);
+    assert_eq!(
+        text, "secret SSN [REDACTED]",
+        "TurnEnd must contain the replaced assistant message, not the original"
+    );
+
+    // Verify the AgentEnd snapshot also contains the replaced message.
+    let agent_end_messages = events.iter().find_map(|e| match e {
+        AgentEvent::AgentEnd { messages } => Some(messages.clone()),
+        _ => None,
+    });
+    let msgs = agent_end_messages.expect("should have AgentEnd");
+    let last_assistant = msgs.iter().rev().find_map(|m| match m {
+        AgentMessage::Llm(LlmMessage::Assistant(a)) => Some(a),
+        _ => None,
+    });
+    let a = last_assistant.expect("should have assistant message in AgentEnd");
+    let final_text = ContentBlock::extract_text(&a.content);
+    assert_eq!(
+        final_text, "secret SSN [REDACTED]",
+        "AgentEnd context_messages must contain the replaced assistant message"
+    );
+}
+
+/// Regression test: post-turn Stop verdict still emits TurnEnd before stopping.
+#[tokio::test]
+async fn post_turn_stop_still_emits_turn_end() {
+    struct StoppingPostTurnPolicy;
+
+    impl PostTurnPolicy for StoppingPostTurnPolicy {
+        fn name(&self) -> &str {
+            "stopping-post-turn"
+        }
+
+        fn evaluate(
+            &self,
+            _ctx: &PolicyContext<'_>,
+            _turn: &TurnPolicyContext<'_>,
+        ) -> PolicyVerdict {
+            PolicyVerdict::Stop("budget exceeded".to_string())
+        }
+    }
+
+    let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("Hello!")]));
+    let mut config = default_config(stream_fn);
+    config.post_turn_policies = vec![Arc::new(StoppingPostTurnPolicy)];
+
+    let events = collect_events(agent_loop(
+        vec![],
+        "system".to_string(),
+        config,
+        CancellationToken::new(),
+    ))
+    .await;
+
+    // TurnEnd should still be emitted even when the policy stops the loop.
+    assert!(has_event(&events, "TurnEnd"));
+    assert!(has_event(&events, "AgentEnd"));
 }
