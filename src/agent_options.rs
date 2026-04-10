@@ -603,18 +603,33 @@ impl AgentOptions {
     }
 
     /// Register a single plugin.
+    ///
+    /// If a plugin with the same [`name()`](crate::plugin::Plugin::name) is
+    /// already registered, it is replaced (matching [`PluginRegistry`](crate::plugin::PluginRegistry)
+    /// semantics).
     #[cfg(feature = "plugins")]
     #[must_use]
     pub fn with_plugin(mut self, plugin: Arc<dyn crate::plugin::Plugin>) -> Self {
-        self.plugins.push(plugin);
+        let name = plugin.name();
+        if let Some(pos) = self.plugins.iter().position(|p| p.name() == name) {
+            tracing::warn!(plugin = %name, "replacing duplicate plugin in AgentOptions");
+            self.plugins[pos] = plugin;
+        } else {
+            self.plugins.push(plugin);
+        }
         self
     }
 
     /// Register multiple plugins at once.
+    ///
+    /// Duplicates (by name) are resolved with last-wins semantics, consistent
+    /// with [`PluginRegistry::register`](crate::plugin::PluginRegistry::register).
     #[cfg(feature = "plugins")]
     #[must_use]
     pub fn with_plugins(mut self, plugins: Vec<Arc<dyn crate::plugin::Plugin>>) -> Self {
-        self.plugins.extend(plugins);
+        for plugin in plugins {
+            self = self.with_plugin(plugin);
+        }
         self
     }
 
@@ -626,5 +641,68 @@ impl AgentOptions {
         self.static_system_prompt
             .as_deref()
             .unwrap_or(&self.system_prompt)
+    }
+}
+
+#[cfg(test)]
+#[cfg(feature = "plugins")]
+mod tests {
+    use super::*;
+    use crate::testing::{MockPlugin, SimpleMockStreamFn};
+    use crate::types::ModelSpec;
+
+    fn test_options() -> AgentOptions {
+        AgentOptions::new_simple(
+            "test",
+            ModelSpec::new("test-model", "test-model"),
+            Arc::new(SimpleMockStreamFn::from_text("hello")),
+        )
+    }
+
+    #[test]
+    fn with_plugin_deduplicates_by_name() {
+        let opts = test_options()
+            .with_plugin(Arc::new(MockPlugin::new("alpha").with_priority(1)))
+            .with_plugin(Arc::new(MockPlugin::new("alpha").with_priority(5)));
+
+        assert_eq!(opts.plugins.len(), 1);
+        assert_eq!(opts.plugins[0].priority(), 5);
+    }
+
+    #[test]
+    fn with_plugin_keeps_distinct_names() {
+        let opts = test_options()
+            .with_plugin(Arc::new(MockPlugin::new("alpha")))
+            .with_plugin(Arc::new(MockPlugin::new("beta")));
+
+        assert_eq!(opts.plugins.len(), 2);
+    }
+
+    #[test]
+    fn with_plugins_deduplicates_within_batch() {
+        let opts = test_options().with_plugins(vec![
+            Arc::new(MockPlugin::new("alpha").with_priority(1)),
+            Arc::new(MockPlugin::new("beta")),
+            Arc::new(MockPlugin::new("alpha").with_priority(9)),
+        ]);
+
+        assert_eq!(opts.plugins.len(), 2);
+        // Last "alpha" wins
+        let alpha = opts.plugins.iter().find(|p| p.name() == "alpha").unwrap();
+        assert_eq!(alpha.priority(), 9);
+    }
+
+    #[test]
+    fn with_plugins_deduplicates_against_existing() {
+        let opts = test_options()
+            .with_plugin(Arc::new(MockPlugin::new("alpha").with_priority(1)))
+            .with_plugins(vec![
+                Arc::new(MockPlugin::new("alpha").with_priority(7)),
+                Arc::new(MockPlugin::new("beta")),
+            ]);
+
+        assert_eq!(opts.plugins.len(), 2);
+        let alpha = opts.plugins.iter().find(|p| p.name() == "alpha").unwrap();
+        assert_eq!(alpha.priority(), 7);
     }
 }
