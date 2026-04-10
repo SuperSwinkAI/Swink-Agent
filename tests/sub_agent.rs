@@ -15,7 +15,7 @@ fn test_state() -> std::sync::Arc<std::sync::RwLock<swink_agent::SessionState>> 
 
 use swink_agent::{
     AgentMessage, AgentOptions, AgentTool, AgentToolResult, AssistantMessageEvent, ContentBlock,
-    LlmMessage, StopReason, SubAgent, Usage, stream::StreamFn,
+    LlmMessage, StopReason, StreamFn, SubAgent, Usage,
 };
 
 use common::{MockStreamFn, default_model, text_only_events};
