@@ -12,6 +12,12 @@ use tracing::warn;
 
 use crate::types::{EvalCase, Invocation, RecordedToolCall, TurnRecord};
 
+/// Sleep until the given deadline. Used in `tokio::select!` to enforce
+/// `max_duration` proactively.
+async fn sleep_until_deadline(deadline: tokio::time::Instant) {
+    tokio::time::sleep_until(deadline).await;
+}
+
 /// Real-time budget guard that cancels an agent run when cost, token, turn,
 /// or duration thresholds are exceeded mid-execution.
 pub struct BudgetGuard {
@@ -238,7 +244,7 @@ impl TrajectoryCollector {
             return true;
         }
         if let Some(max_duration) = guard.max_duration
-            && guard.start_time.elapsed() > max_duration
+            && guard.start_time.elapsed() >= max_duration
         {
             return true;
         }
@@ -247,9 +253,11 @@ impl TrajectoryCollector {
 
     /// Collect from a stream with an optional budget guard.
     ///
-    /// After each event, checks whether accumulated metrics exceed the guard's
-    /// thresholds. If exceeded, cancels the token and logs a warning. The stream
-    /// is fully drained so the returned [`Invocation`] trace is complete.
+    /// After each event, checks whether accumulated cost, token, and turn
+    /// thresholds are exceeded. Duration is enforced proactively via a
+    /// deadline: if `max_duration` is set, the guard races a timeout against
+    /// the event stream so the run is cancelled even when no events arrive
+    /// (e.g., the LLM or a tool call is blocking).
     pub async fn collect_with_guard(
         stream: impl Stream<Item = AgentEvent>,
         guard: Option<BudgetGuard>,
@@ -257,8 +265,54 @@ impl TrajectoryCollector {
         let mut collector = Self::new();
         futures::pin_mut!(stream);
         let mut cancelled = false;
-        while let Some(event) = stream.next().await {
+
+        // Compute a tokio deadline from max_duration, if configured.
+        let has_deadline = guard
+            .as_ref()
+            .and_then(|g| g.max_duration)
+            .is_some();
+        let deadline = guard.as_ref().and_then(|g| {
+            g.max_duration.map(|d| {
+                let elapsed = g.start_time.elapsed();
+                tokio::time::Instant::now() + d.saturating_sub(elapsed)
+            })
+        });
+
+        loop {
+            let event = if has_deadline && !cancelled {
+                // SAFETY: `deadline` is `Some` when `has_deadline` is true.
+                let dl = deadline.unwrap();
+                tokio::select! {
+                    biased;
+                    () = sleep_until_deadline(dl) => {
+                        // Deadline fired before next event.
+                        if let Some(ref g) = guard {
+                            warn!(
+                                cost = collector.accumulated_cost.total,
+                                tokens = collector.accumulated_usage.total,
+                                turns = collector.turn_counter,
+                                elapsed_ms = g.start_time.elapsed().as_millis() as u64,
+                                "budget guard triggered (deadline) — cancelling agent run"
+                            );
+                            g.cancel.cancel();
+                        }
+                        cancelled = true;
+                        // Continue draining the stream so the trace is complete.
+                        stream.next().await
+                    }
+                    next = stream.next() => next,
+                }
+            } else {
+                stream.next().await
+            };
+
+            let Some(event) = event else {
+                break;
+            };
+
             collector.observe(&event);
+
+            // Check non-duration thresholds after each event.
             if let Some(ref g) = guard
                 && !cancelled
                 && collector.exceeds_budget(g)
@@ -394,5 +448,64 @@ mod tests {
         }));
         let guard = BudgetGuard::from_case(&case, CancellationToken::new());
         assert!(guard.is_none());
+    }
+
+    #[tokio::test]
+    async fn deadline_cancels_token_proactively() {
+        // Simulate a stream that emits one event, then delays longer than the
+        // deadline before the second event. The deadline should fire and cancel
+        // the token even though the stream hasn't yielded the second event yet.
+        let cancel = CancellationToken::new();
+        let cancel_clone = cancel.clone();
+        let guard = BudgetGuard::new(cancel).with_max_duration(Duration::from_millis(50));
+
+        let stream = futures::stream::unfold(0u8, |state| async move {
+            match state {
+                0 => Some((AgentEvent::AgentStart, 1)),
+                1 => {
+                    // Delay longer than the guard's deadline.
+                    tokio::time::sleep(Duration::from_millis(200)).await;
+                    Some((
+                        AgentEvent::AgentEnd {
+                            messages: std::sync::Arc::new(vec![]),
+                        },
+                        2,
+                    ))
+                }
+                _ => None,
+            }
+        });
+
+        let _invocation = TrajectoryCollector::collect_with_guard(stream, Some(guard)).await;
+
+        // The token must have been cancelled by the proactive deadline.
+        assert!(
+            cancel_clone.is_cancelled(),
+            "cancellation token should be cancelled by deadline"
+        );
+    }
+
+    #[tokio::test]
+    async fn no_deadline_does_not_cancel() {
+        // Without a duration limit, the token should NOT be cancelled.
+        let cancel = CancellationToken::new();
+        let cancel_clone = cancel.clone();
+        let guard = BudgetGuard::new(cancel)
+            .with_max_cost(100.0)
+            .with_max_tokens(100_000);
+
+        let stream = futures::stream::iter(vec![
+            AgentEvent::AgentStart,
+            AgentEvent::AgentEnd {
+                messages: std::sync::Arc::new(vec![]),
+            },
+        ]);
+
+        let _invocation = TrajectoryCollector::collect_with_guard(stream, Some(guard)).await;
+
+        assert!(
+            !cancel_clone.is_cancelled(),
+            "cancellation token should not be cancelled when within budget"
+        );
     }
 }
