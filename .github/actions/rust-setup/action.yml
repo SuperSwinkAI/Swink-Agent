@@ -1,0 +1,23 @@
+name: Rust Setup
+description: Install the requested Rust toolchain with clippy + rustfmt and the shared build cache.
+inputs:
+  toolchain:
+    description: Rust toolchain to install (e.g. stable, 1.88)
+    required: false
+    default: stable
+  cache-key:
+    description: Additional key suffix for the shared rust-cache to partition caches between workflows.
+    required: false
+    default: default
+runs:
+  using: composite
+  steps:
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@master
+      with:
+        toolchain: ${{ inputs.toolchain }}
+        components: clippy, rustfmt
+    - name: Shared cargo cache
+      uses: Swatinem/rust-cache@v2
+      with:
+        key: ${{ inputs.cache-key }}-${{ inputs.toolchain }}
