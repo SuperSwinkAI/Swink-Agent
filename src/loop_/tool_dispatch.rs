@@ -210,24 +210,35 @@ pub async fn execute_tools_concurrently(
             let requires_approval = tool_map
                 .get(tc.name.as_str())
                 .is_some_and(|t| t.requires_approval());
-            match check_approval(
-                approve_fn,
-                tc,
-                &effective_arguments,
-                idx,
-                requires_approval,
-                &tool_map,
-                &results,
-                tx,
-            )
-            .await
-            {
-                ApprovalOutcome::Approved => {}
-                ApprovalOutcome::ApprovedWith(new_params) => {
-                    effective_arguments = new_params;
+
+            // In Smart mode, auto-approve tools that declare requires_approval() == false.
+            // Only Enabled mode routes every tool through the callback unconditionally.
+            let should_call_approval = match config.approval_mode {
+                ApprovalMode::Smart => requires_approval,
+                ApprovalMode::Enabled => true,
+                ApprovalMode::Bypassed => unreachable!(), // filtered above
+            };
+
+            if should_call_approval {
+                match check_approval(
+                    approve_fn,
+                    tc,
+                    &effective_arguments,
+                    idx,
+                    requires_approval,
+                    &tool_map,
+                    &results,
+                    tx,
+                )
+                .await
+                {
+                    ApprovalOutcome::Approved => {}
+                    ApprovalOutcome::ApprovedWith(new_params) => {
+                        effective_arguments = new_params;
+                    }
+                    ApprovalOutcome::Rejected => continue,
+                    ApprovalOutcome::ChannelClosed => return ToolExecOutcome::ChannelClosed,
                 }
-                ApprovalOutcome::Rejected => continue,
-                ApprovalOutcome::ChannelClosed => return ToolExecOutcome::ChannelClosed,
             }
         }
 
