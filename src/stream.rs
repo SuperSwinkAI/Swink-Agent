@@ -620,9 +620,19 @@ pub fn accumulate_message(
                 cost: c,
             } => {
                 if let Some(idx) = open_blocks.iter().position(|open| *open) {
-                    return Err(format!(
-                        "Done received with unterminated content block at index {idx}"
-                    ));
+                    if tolerate_truncated_tool_args {
+                        // Max-tokens truncation: leave open tool-call blocks
+                        // with `partial_json` set so the loop's
+                        // `recover_incomplete_tool_calls` path can convert
+                        // them into error tool results on the next turn.
+                        tracing::debug!(
+                            "Done(Length) with unterminated content block at index {idx} — tolerating for max-tokens recovery"
+                        );
+                    } else {
+                        return Err(format!(
+                            "Done received with unterminated content block at index {idx}"
+                        ));
+                    }
                 }
                 stop_reason = Some(sr);
                 usage = Some(u);
@@ -871,6 +881,43 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    // Regression for #293: Done(Length) with an unterminated tool-call block
+    // must NOT be rejected — the block should survive with `partial_json` set
+    // so `recover_incomplete_tool_calls` can convert it to an error result.
+    #[test]
+    fn done_length_with_unterminated_tool_call_is_tolerated() {
+        let events = vec![
+            AssistantMessageEvent::Start,
+            AssistantMessageEvent::ToolCallStart {
+                content_index: 0,
+                id: "tc_1".into(),
+                name: "read_file".into(),
+            },
+            AssistantMessageEvent::ToolCallDelta {
+                content_index: 0,
+                delta: r#"{"path": "/tmp"#.into(),
+            },
+            AssistantMessageEvent::Done {
+                stop_reason: StopReason::Length,
+                usage: Usage::default(),
+                cost: Cost::default(),
+            },
+        ];
+        let msg = accumulate_message(events, "test", "test")
+            .expect("Done(Length) with open tool-call block should succeed");
+        assert_eq!(msg.stop_reason, StopReason::Length);
+        // The tool call block should have partial_json set (incomplete)
+        match &msg.content[0] {
+            ContentBlock::ToolCall { partial_json, .. } => {
+                assert!(
+                    partial_json.is_some(),
+                    "partial_json should be Some for incomplete tool call"
+                );
+            }
+            other => panic!("expected ToolCall, got {other:?}"),
+        }
     }
 
     #[test]
