@@ -124,6 +124,21 @@ pub(super) fn make_assistant_agent_message(content: &str) -> AgentMessage {
     }))
 }
 
+pub(super) fn make_error_assistant_agent_message(error_msg: &str) -> AgentMessage {
+    AgentMessage::Llm(LlmMessage::Assistant(AssistantMessage {
+        content: vec![],
+        provider: "test".to_string(),
+        model_id: "mock-model".to_string(),
+        usage: Usage::default(),
+        cost: Cost::default(),
+        stop_reason: StopReason::Error,
+        error_message: Some(error_msg.to_string()),
+        error_kind: None,
+        timestamp: 0,
+        cache_hint: None,
+    }))
+}
+
 pub(super) fn instant_secs_ago(secs: u64) -> Instant {
     Instant::now()
         .checked_sub(Duration::from_secs(secs))
