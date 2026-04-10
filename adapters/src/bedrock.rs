@@ -623,25 +623,15 @@ fn process_smithy_message(
     }
 
     // Handle normal event frames
-    event_type.map_or_else(Vec::new, |et| {
-        parse_event_frame(&et, message.payload(), state).unwrap_or_else(|| {
-            // parse_event_frame returns None for unknown events (benign) or
-            // JSON deserialization failures (potentially problematic).
-            if matches!(
-                et.as_str(),
-                "messageStart"
-                    | "contentBlockStart"
-                    | "contentBlockDelta"
-                    | "contentBlockStop"
-                    | "metadata"
-            ) {
-                warn!(
-                    event_type = %et,
-                    "Bedrock event deserialization failed for known event type"
-                );
-            }
-            vec![]
-        })
+    event_type.map_or_else(Vec::new, |et| match parse_event_frame(&et, message.payload(), state) {
+        Ok(Some(events)) => events,
+        Ok(None) => Vec::new(),
+        Err(error_text) => {
+            warn!(event_type = %et, "Bedrock event deserialization failed for known event type");
+            let mut events = finalize::finalize_blocks(state);
+            events.push(AssistantMessageEvent::error_network(error_text));
+            events
+        }
     })
 }
 
@@ -688,15 +678,17 @@ fn parse_event_frame(
     event_type: &str,
     payload: &[u8],
     state: &mut BedrockStreamState,
-) -> Option<Vec<AssistantMessageEvent>> {
+) -> Result<Option<Vec<AssistantMessageEvent>>, String> {
     match event_type {
         "messageStart" => {
-            let _event: MessageStartEvent = serde_json::from_slice(payload).ok()?;
+            let _event: MessageStartEvent = serde_json::from_slice(payload)
+                .map_err(|e| format!("Bedrock messageStart parse error: {e}"))?;
             state.started = true;
-            Some(vec![AssistantMessageEvent::Start])
+            Ok(Some(vec![AssistantMessageEvent::Start]))
         }
         "contentBlockStart" => {
-            let event: ContentBlockStartEvent = serde_json::from_slice(payload).ok()?;
+            let event: ContentBlockStartEvent = serde_json::from_slice(payload)
+                .map_err(|e| format!("Bedrock contentBlockStart parse error: {e}"))?;
             let provider_idx = event.content_block_index;
             match event.start {
                 StartBlock::Text => {
@@ -707,49 +699,56 @@ fn parse_event_frame(
                             .provider_blocks
                             .insert(provider_idx, (BlockType::Text, content_index));
                     }
-                    Some(events)
+                    Ok(Some(events))
                 }
                 StartBlock::ToolUse { tool_use_id, name } => {
-                    let (content_index, start_ev) =
-                        state.blocks.open_tool_call(tool_use_id, name);
+                    let (content_index, start_ev) = state.blocks.open_tool_call(tool_use_id, name);
                     state
                         .provider_blocks
                         .insert(provider_idx, (BlockType::ToolUse, content_index));
-                    Some(vec![start_ev])
+                    Ok(Some(vec![start_ev]))
                 }
             }
         }
         "contentBlockDelta" => {
-            let event: ContentBlockDeltaEvent = serde_json::from_slice(payload).ok()?;
-            let (_, content_index) = state.provider_blocks.get(&event.content_block_index)?;
+            let event: ContentBlockDeltaEvent = serde_json::from_slice(payload)
+                .map_err(|e| format!("Bedrock contentBlockDelta parse error: {e}"))?;
+            let Some((_, content_index)) = state.provider_blocks.get(&event.content_block_index)
+            else {
+                return Ok(None);
+            };
             let content_index = *content_index;
             match event.delta {
-                DeltaBlock::Text { text } => state.blocks.text_delta(text).map(|e| vec![e]),
-                DeltaBlock::ToolUse { input } => {
-                    Some(vec![BlockAccumulator::tool_call_delta(
-                        content_index,
-                        input,
-                    )])
-                }
+                DeltaBlock::Text { text } => Ok(state.blocks.text_delta(text).map(|e| vec![e])),
+                DeltaBlock::ToolUse { input } => Ok(Some(vec![BlockAccumulator::tool_call_delta(
+                    content_index,
+                    input,
+                )])),
             }
         }
         "contentBlockStop" => {
-            let event: ContentBlockStopEvent = serde_json::from_slice(payload).ok()?;
-            let (block_type, content_index) =
-                state.provider_blocks.remove(&event.content_block_index)?;
+            let event: ContentBlockStopEvent = serde_json::from_slice(payload)
+                .map_err(|e| format!("Bedrock contentBlockStop parse error: {e}"))?;
+            let Some((block_type, content_index)) =
+                state.provider_blocks.remove(&event.content_block_index)
+            else {
+                return Ok(None);
+            };
             let evt = match block_type {
                 BlockType::Text => state.blocks.close_text(),
                 BlockType::ToolUse => state.blocks.close_tool_call(content_index),
             };
-            evt.map(|e| vec![e])
+            Ok(evt.map(|e| vec![e]))
         }
         "messageStop" => {
-            let event: MessageStopEvent = serde_json::from_slice(payload).ok()?;
+            let event: MessageStopEvent = serde_json::from_slice(payload)
+                .map_err(|e| format!("Bedrock messageStop parse error: {e}"))?;
             state.stop_reason = Some(event.stop_reason);
-            None
+            Ok(None)
         }
         "metadata" => {
-            let event: MetadataEvent = serde_json::from_slice(payload).ok()?;
+            let event: MetadataEvent = serde_json::from_slice(payload)
+                .map_err(|e| format!("Bedrock metadata parse error: {e}"))?;
             let usage = Usage {
                 input: event.usage.input_tokens,
                 output: event.usage.output_tokens,
@@ -762,17 +761,17 @@ fn parse_event_frame(
             };
             let stop_reason = map_stop_reason(state.stop_reason.as_deref());
             match stop_reason {
-                Ok(stop_reason) => Some(vec![AssistantMessageEvent::Done {
+                Ok(stop_reason) => Ok(Some(vec![AssistantMessageEvent::Done {
                     stop_reason,
                     usage,
                     cost: Cost::default(),
-                }]),
-                Err(error_event) => Some(vec![error_event]),
+                }])),
+                Err(error_event) => Ok(Some(vec![error_event])),
             }
         }
         _ => {
             debug!(event_type, "unknown Bedrock event type, skipping");
-            None
+            Ok(None)
         }
     }
 }
@@ -1073,7 +1072,7 @@ mod tests {
     fn parse_message_start_event() {
         let mut state = BedrockStreamState::new();
         let payload = br#"{"role":"assistant"}"#;
-        let events = parse_event_frame("messageStart", payload, &mut state);
+        let events = parse_event_frame("messageStart", payload, &mut state).unwrap();
         assert!(matches!(
             events.as_deref(),
             Some([AssistantMessageEvent::Start])
@@ -1086,7 +1085,9 @@ mod tests {
 
         // contentBlockStart with text
         let payload = br#"{"contentBlockIndex":0,"start":{"type":"text"}}"#;
-        let events = parse_event_frame("contentBlockStart", payload, &mut state).unwrap();
+        let events = parse_event_frame("contentBlockStart", payload, &mut state)
+            .unwrap()
+            .unwrap();
         assert!(matches!(
             events[0],
             AssistantMessageEvent::TextStart { content_index: 0 }
@@ -1095,7 +1096,9 @@ mod tests {
 
         // contentBlockDelta with text
         let payload = br#"{"contentBlockIndex":0,"delta":{"type":"text","text":"Hello"}}"#;
-        let events = parse_event_frame("contentBlockDelta", payload, &mut state).unwrap();
+        let events = parse_event_frame("contentBlockDelta", payload, &mut state)
+            .unwrap()
+            .unwrap();
         assert!(matches!(
             &events[0],
             AssistantMessageEvent::TextDelta { content_index: 0, delta } if delta == "Hello"
@@ -1103,7 +1106,9 @@ mod tests {
 
         // contentBlockStop
         let payload = br#"{"contentBlockIndex":0}"#;
-        let events = parse_event_frame("contentBlockStop", payload, &mut state).unwrap();
+        let events = parse_event_frame("contentBlockStop", payload, &mut state)
+            .unwrap()
+            .unwrap();
         assert!(matches!(
             events[0],
             AssistantMessageEvent::TextEnd { content_index: 0 }
@@ -1118,7 +1123,9 @@ mod tests {
         // contentBlockStart with toolUse — provider index 1, but harness index
         // is 0 because no prior blocks were opened through the accumulator.
         let payload = br#"{"contentBlockIndex":1,"start":{"type":"toolUse","toolUseId":"tc_123","name":"get_weather"}}"#;
-        let events = parse_event_frame("contentBlockStart", payload, &mut state).unwrap();
+        let events = parse_event_frame("contentBlockStart", payload, &mut state)
+            .unwrap()
+            .unwrap();
         assert!(matches!(
             &events[0],
             AssistantMessageEvent::ToolCallStart { content_index: 0, id, name }
@@ -1129,7 +1136,9 @@ mod tests {
         // contentBlockDelta with toolUse input
         let payload =
             br#"{"contentBlockIndex":1,"delta":{"type":"toolUse","input":"{\"city\":\"SF\"}"}}"#;
-        let events = parse_event_frame("contentBlockDelta", payload, &mut state).unwrap();
+        let events = parse_event_frame("contentBlockDelta", payload, &mut state)
+            .unwrap()
+            .unwrap();
         assert!(matches!(
             &events[0],
             AssistantMessageEvent::ToolCallDelta { content_index: 0, delta }
@@ -1138,7 +1147,9 @@ mod tests {
 
         // contentBlockStop
         let payload = br#"{"contentBlockIndex":1}"#;
-        let events = parse_event_frame("contentBlockStop", payload, &mut state).unwrap();
+        let events = parse_event_frame("contentBlockStop", payload, &mut state)
+            .unwrap()
+            .unwrap();
         assert!(matches!(
             events[0],
             AssistantMessageEvent::ToolCallEnd { content_index: 0 }
@@ -1151,13 +1162,15 @@ mod tests {
 
         // messageStop captures stop_reason
         let payload = br#"{"stopReason":"end_turn"}"#;
-        let events = parse_event_frame("messageStop", payload, &mut state);
+        let events = parse_event_frame("messageStop", payload, &mut state).unwrap();
         assert!(events.is_none());
         assert_eq!(state.stop_reason.as_deref(), Some("end_turn"));
 
         // metadata emits Done
         let payload = br#"{"usage":{"inputTokens":10,"outputTokens":20,"totalTokens":30},"metrics":{"latencyMs":150}}"#;
-        let events = parse_event_frame("metadata", payload, &mut state).unwrap();
+        let events = parse_event_frame("metadata", payload, &mut state)
+            .unwrap()
+            .unwrap();
         assert!(matches!(
             &events[0],
             AssistantMessageEvent::Done { stop_reason: StopReason::Stop, usage, .. }
@@ -1214,7 +1227,7 @@ mod tests {
     #[test]
     fn parse_unknown_event_returns_none() {
         let mut state = BedrockStreamState::new();
-        let events = parse_event_frame("someUnknownEvent", b"{}", &mut state);
+        let events = parse_event_frame("someUnknownEvent", b"{}", &mut state).unwrap();
         assert!(events.is_none());
     }
 
@@ -1224,7 +1237,9 @@ mod tests {
         state.stop_reason = Some("guardrail_intervened".to_string());
 
         let payload = br#"{"usage":{"inputTokens":5,"outputTokens":0,"totalTokens":5}}"#;
-        let events = parse_event_frame("metadata", payload, &mut state).unwrap();
+        let events = parse_event_frame("metadata", payload, &mut state)
+            .unwrap()
+            .unwrap();
         assert!(matches!(events[0], AssistantMessageEvent::Error { .. }));
     }
 
@@ -1533,7 +1548,7 @@ mod tests {
         let mut state = BedrockStreamState::new();
         // Simulate opening a text block through the accumulator
         let payload = br#"{"contentBlockIndex":0,"start":{"type":"text"}}"#;
-        parse_event_frame("contentBlockStart", payload, &mut state);
+        parse_event_frame("contentBlockStart", payload, &mut state).unwrap();
         let blocks = state.drain_open_blocks();
         assert_eq!(blocks.len(), 1);
         assert!(matches!(blocks[0], OpenBlock::Text { content_index: 0 }));
@@ -1545,7 +1560,7 @@ mod tests {
         let mut state = BedrockStreamState::new();
         // Simulate opening a tool-call block through the accumulator
         let payload = br#"{"contentBlockIndex":0,"start":{"type":"toolUse","toolUseId":"tc_1","name":"tool"}}"#;
-        parse_event_frame("contentBlockStart", payload, &mut state);
+        parse_event_frame("contentBlockStart", payload, &mut state).unwrap();
         let blocks = state.drain_open_blocks();
         assert_eq!(blocks.len(), 1);
         assert!(matches!(
@@ -1567,15 +1582,17 @@ mod tests {
         let mut state = BedrockStreamState::new();
         // Open text block (provider index 0)
         let payload = br#"{"contentBlockIndex":0,"start":{"type":"text"}}"#;
-        parse_event_frame("contentBlockStart", payload, &mut state);
+        parse_event_frame("contentBlockStart", payload, &mut state).unwrap();
         // Close text block
         let payload = br#"{"contentBlockIndex":0}"#;
-        parse_event_frame("contentBlockStop", payload, &mut state);
+        parse_event_frame("contentBlockStop", payload, &mut state).unwrap();
         // Open two tool-call blocks (provider indices 1 and 2)
-        let payload = br#"{"contentBlockIndex":1,"start":{"type":"toolUse","toolUseId":"tc_1","name":"a"}}"#;
-        parse_event_frame("contentBlockStart", payload, &mut state);
-        let payload = br#"{"contentBlockIndex":2,"start":{"type":"toolUse","toolUseId":"tc_2","name":"b"}}"#;
-        parse_event_frame("contentBlockStart", payload, &mut state);
+        let payload =
+            br#"{"contentBlockIndex":1,"start":{"type":"toolUse","toolUseId":"tc_1","name":"a"}}"#;
+        parse_event_frame("contentBlockStart", payload, &mut state).unwrap();
+        let payload =
+            br#"{"contentBlockIndex":2,"start":{"type":"toolUse","toolUseId":"tc_2","name":"b"}}"#;
+        parse_event_frame("contentBlockStart", payload, &mut state).unwrap();
         // Drain without closing — both tool calls should be drained
         let blocks = state.drain_open_blocks();
         assert_eq!(blocks.len(), 2);
@@ -1594,17 +1611,22 @@ mod tests {
         let mut state = BedrockStreamState::new();
         // Open text (harness index 0)
         let payload = br#"{"contentBlockIndex":0,"start":{"type":"text"}}"#;
-        let events = parse_event_frame("contentBlockStart", payload, &mut state).unwrap();
+        let events = parse_event_frame("contentBlockStart", payload, &mut state)
+            .unwrap()
+            .unwrap();
         assert!(matches!(
             events[0],
             AssistantMessageEvent::TextStart { content_index: 0 }
         ));
         // Close text
         let payload = br#"{"contentBlockIndex":0}"#;
-        parse_event_frame("contentBlockStop", payload, &mut state);
+        parse_event_frame("contentBlockStop", payload, &mut state).unwrap();
         // Open tool (harness index 1)
-        let payload = br#"{"contentBlockIndex":1,"start":{"type":"toolUse","toolUseId":"tc_1","name":"t"}}"#;
-        let events = parse_event_frame("contentBlockStart", payload, &mut state).unwrap();
+        let payload =
+            br#"{"contentBlockIndex":1,"start":{"type":"toolUse","toolUseId":"tc_1","name":"t"}}"#;
+        let events = parse_event_frame("contentBlockStart", payload, &mut state)
+            .unwrap()
+            .unwrap();
         assert!(matches!(
             &events[0],
             AssistantMessageEvent::ToolCallStart {
@@ -1721,7 +1743,50 @@ mod tests {
         assert!(!state.started);
 
         let payload = br#"{"role":"assistant"}"#;
-        parse_event_frame("messageStart", payload, &mut state);
+        let _ = parse_event_frame("messageStart", payload, &mut state);
         assert!(state.started);
+    }
+
+    #[test]
+    fn malformed_known_event_emits_terminal_error() {
+        let mut state = BedrockStreamState::new();
+        let msg = make_event_message("metadata", br#"{"usage":"bad"}"#);
+        let events = process_smithy_message(&msg, &mut state);
+        assert_eq!(events.len(), 1);
+        assert!(matches!(
+            &events[0],
+            AssistantMessageEvent::Error { error_message, .. }
+                if error_message.contains("Bedrock metadata parse error")
+        ));
+    }
+
+    #[test]
+    fn malformed_known_event_drains_open_blocks_before_error() {
+        let mut state = BedrockStreamState::new();
+        let start = make_event_message(
+            "contentBlockStart",
+            br#"{"contentBlockIndex":0,"start":{"type":"text"}}"#,
+        );
+        let events = process_smithy_message(&start, &mut state);
+        assert!(matches!(
+            events.as_slice(),
+            [AssistantMessageEvent::TextStart { content_index: 0 }]
+        ));
+
+        let bad_delta = make_event_message(
+            "contentBlockDelta",
+            br#"{"contentBlockIndex":0,"delta":"bad"}"#,
+        );
+        let events = process_smithy_message(&bad_delta, &mut state);
+        assert_eq!(events.len(), 2);
+        assert!(matches!(
+            events[0],
+            AssistantMessageEvent::TextEnd { content_index: 0 }
+        ));
+        assert!(matches!(
+            &events[1],
+            AssistantMessageEvent::Error { error_message, .. }
+                if error_message.contains("Bedrock contentBlockDelta parse error")
+        ));
     }
 }
