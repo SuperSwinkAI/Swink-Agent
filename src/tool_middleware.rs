@@ -3,7 +3,9 @@
 //!
 //! # Example
 //!
-//! ```
+//! ```no_run
+//! # #[cfg(feature = "builtin-tools")]
+//! # {
 //! use std::sync::Arc;
 //! use swink_agent::{AgentTool, AgentToolResult, BashTool, ToolMiddleware};
 //!
@@ -18,6 +20,7 @@
 //! });
 //!
 //! assert_eq!(logged.name(), "bash");
+//! # }
 //! ```
 
 use std::sync::Arc;
