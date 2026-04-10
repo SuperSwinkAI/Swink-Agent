@@ -10,7 +10,7 @@ use tokio_util::sync::CancellationToken;
 
 use swink_agent::ResolvedCredential;
 use swink_agent::SessionState;
-use swink_agent::tool::{AgentTool, AgentToolResult, ToolFuture, ToolMetadata};
+use swink_agent::{AgentTool, AgentToolResult, ToolFuture, ToolMetadata};
 
 use crate::connection::McpConnection;
 use crate::convert;

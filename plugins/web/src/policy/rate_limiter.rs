@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use swink_agent::policy::{PreDispatchPolicy, PreDispatchVerdict, ToolDispatchContext};
+use swink_agent::{PreDispatchPolicy, PreDispatchVerdict, ToolDispatchContext};
 
 /// PreDispatch policy that enforces a shared rate limit across all web tools.
 ///

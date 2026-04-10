@@ -28,7 +28,7 @@ pub fn derive_tool_schema_impl(input: &DeriveInput) -> TokenStream {
     // Delegate entirely to schemars. The struct must also derive `JsonSchema`
     // (available as `swink_agent::JsonSchema` or `schemars::JsonSchema`).
     quote! {
-        impl swink_agent::tool::ToolParameters for #name {
+        impl swink_agent::ToolParameters for #name {
             fn json_schema() -> serde_json::Value {
                 swink_agent::schema_for::<Self>()
             }

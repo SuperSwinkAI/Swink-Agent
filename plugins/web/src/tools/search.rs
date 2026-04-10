@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use serde_json::Value;
-use swink_agent::tool::{AgentTool, AgentToolResult, ToolFuture};
+use swink_agent::{AgentTool, AgentToolResult, ToolFuture};
 use tokio_util::sync::CancellationToken;
 
 use crate::search::SearchProvider;

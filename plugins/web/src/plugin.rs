@@ -5,9 +5,7 @@ use std::time::Instant;
 use thiserror::Error;
 
 use swink_agent::AgentEvent;
-use swink_agent::plugin::Plugin;
-use swink_agent::policy::{PostTurnPolicy, PreDispatchPolicy};
-use swink_agent::tool::AgentTool;
+use swink_agent::{AgentTool, Plugin, PostTurnPolicy, PreDispatchPolicy};
 
 use crate::config::{SearchProviderKind, WebPluginConfig, WebPluginConfigBuilder};
 use crate::domain::DomainFilter;
@@ -304,7 +302,7 @@ mod on_event_tests {
     use super::{WebEventClass, classify_web_event};
     use serde_json::json;
     use swink_agent::AgentEvent;
-    use swink_agent::tool::AgentToolResult;
+    use swink_agent::AgentToolResult;
 
     fn tool_end(name: &str, is_error: bool) -> AgentEvent {
         AgentEvent::ToolExecutionEnd {

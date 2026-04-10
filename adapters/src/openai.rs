@@ -10,8 +10,7 @@ use futures::Stream;
 use tokio_util::sync::CancellationToken;
 use tracing::debug;
 
-use swink_agent::stream::{AssistantMessageEvent, StreamFn, StreamOptions};
-use swink_agent::types::{AgentContext, ModelSpec};
+use swink_agent::{AgentContext, AssistantMessageEvent, ModelSpec, StreamFn, StreamOptions};
 
 use crate::base::AdapterBase;
 use crate::oai_transport::{oai_send_and_parse, prepare_oai_request};

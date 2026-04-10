@@ -9,8 +9,7 @@ use std::pin::Pin;
 use futures::Stream;
 use tokio_util::sync::CancellationToken;
 
-use swink_agent::stream::{AssistantMessageEvent, StreamFn, StreamOptions};
-use swink_agent::types::{AgentContext, ModelSpec};
+use swink_agent::{AgentContext, AssistantMessageEvent, ModelSpec, StreamFn, StreamOptions};
 
 use crate::OpenAiStreamFn;
 

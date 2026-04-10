@@ -8,8 +8,7 @@ use tokio_util::sync::CancellationToken;
 use wiremock::matchers::{body_string_contains, header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-use swink_agent::stream::StreamErrorKind;
-use swink_agent::{AssistantMessageEvent, ModelSpec, StopReason, StreamFn, StreamOptions};
+use swink_agent::{AssistantMessageEvent, ModelSpec, StopReason, StreamErrorKind, StreamFn, StreamOptions};
 use swink_agent_adapters::{AzureAuth, AzureStreamFn};
 
 use common::{event_name, sse_response, test_context};

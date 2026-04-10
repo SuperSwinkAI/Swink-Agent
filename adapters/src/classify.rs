@@ -13,7 +13,7 @@
 //! on `swink_agent` (core) types. Breaking changes to this module's API
 //! may occur without a major version bump.
 
-use swink_agent::stream::AssistantMessageEvent;
+use swink_agent::AssistantMessageEvent;
 
 /// Classification of HTTP error status codes for LLM providers.
 ///
@@ -177,7 +177,7 @@ mod tests {
                 assert!(error_message.contains("TestProvider"));
                 assert!(error_message.contains("401"));
                 assert!(error_message.contains("bad key"));
-                assert_eq!(error_kind, Some(swink_agent::stream::StreamErrorKind::Auth));
+                assert_eq!(error_kind, Some(swink_agent::StreamErrorKind::Auth));
             }
             other => panic!("expected Error, got {other:?}"),
         }
@@ -195,7 +195,7 @@ mod tests {
                 assert!(error_message.contains("429"));
                 assert_eq!(
                     error_kind,
-                    Some(swink_agent::stream::StreamErrorKind::Throttled)
+                    Some(swink_agent::StreamErrorKind::Throttled)
                 );
             }
             other => panic!("expected Error, got {other:?}"),
@@ -214,7 +214,7 @@ mod tests {
                 assert!(error_message.contains("500"));
                 assert_eq!(
                     error_kind,
-                    Some(swink_agent::stream::StreamErrorKind::Network)
+                    Some(swink_agent::StreamErrorKind::Network)
                 );
             }
             other => panic!("expected Error, got {other:?}"),
@@ -256,7 +256,7 @@ mod tests {
                 assert!(error_message.contains("529"));
                 assert_eq!(
                     error_kind,
-                    Some(swink_agent::stream::StreamErrorKind::Network)
+                    Some(swink_agent::StreamErrorKind::Network)
                 );
             }
             other => panic!("expected Error, got {other:?}"),
@@ -279,7 +279,7 @@ mod tests {
                 AssistantMessageEvent::Error { error_kind, .. } => {
                     assert_eq!(
                         error_kind,
-                        Some(swink_agent::stream::StreamErrorKind::Network),
+                        Some(swink_agent::StreamErrorKind::Network),
                         "{provider} unexpected EOF should have Network kind"
                     );
                 }
@@ -296,7 +296,7 @@ mod tests {
             AssistantMessageEvent::Error { error_kind, .. } => {
                 assert_eq!(
                     error_kind,
-                    Some(swink_agent::stream::StreamErrorKind::ContentFiltered),
+                    Some(swink_agent::StreamErrorKind::ContentFiltered),
                 );
             }
             other => panic!("expected Error, got {other:?}"),
@@ -312,7 +312,7 @@ mod tests {
                 AssistantMessageEvent::Error { error_kind, .. } => {
                     assert_eq!(
                         error_kind,
-                        Some(swink_agent::stream::StreamErrorKind::Auth),
+                        Some(swink_agent::StreamErrorKind::Auth),
                         "HTTP {code} should be Auth"
                     );
                 }
@@ -326,7 +326,7 @@ mod tests {
             AssistantMessageEvent::Error { error_kind, .. } => {
                 assert_eq!(
                     error_kind,
-                    Some(swink_agent::stream::StreamErrorKind::Throttled)
+                    Some(swink_agent::StreamErrorKind::Throttled)
                 );
             }
             other => panic!("expected Error, got {other:?}"),
@@ -344,7 +344,7 @@ mod tests {
                 AssistantMessageEvent::Error { error_kind, .. } => {
                     assert_eq!(
                         error_kind,
-                        Some(swink_agent::stream::StreamErrorKind::Network),
+                        Some(swink_agent::StreamErrorKind::Network),
                         "HTTP {code} should be Network"
                     );
                 }

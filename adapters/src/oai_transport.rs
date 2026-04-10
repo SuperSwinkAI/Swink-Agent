@@ -12,8 +12,7 @@
 use futures::stream::{self, Stream, StreamExt as _};
 use tracing::warn;
 
-use swink_agent::stream::{AssistantMessageEvent, StreamOptions};
-use swink_agent::types::{AgentContext, ModelSpec};
+use swink_agent::{AgentContext, AssistantMessageEvent, ModelSpec, StreamOptions};
 
 use crate::convert;
 use crate::openai_compat::{

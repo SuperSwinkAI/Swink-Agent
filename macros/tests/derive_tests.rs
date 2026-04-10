@@ -7,7 +7,7 @@
 #![allow(dead_code)]
 
 use swink_agent::JsonSchema;
-use swink_agent::tool::ToolParameters;
+use swink_agent::ToolParameters;
 use swink_agent_macros::ToolSchema;
 
 #[derive(ToolSchema, JsonSchema)]

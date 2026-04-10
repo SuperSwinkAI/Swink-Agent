@@ -28,3 +28,87 @@ fn builtin_tools_reexported() {
     let _read_type = std::any::type_name::<ReadFileTool>();
     let _write_type = std::any::type_name::<WriteFileTool>();
 }
+
+#[test]
+fn stream_types_re_exported() {
+    let _ = std::any::type_name::<dyn StreamFn>();
+    let _ = swink_agent::StreamOptions::default();
+    let _ = std::any::type_name::<swink_agent::AssistantMessageEvent>();
+    let _ = std::any::type_name::<swink_agent::AssistantMessageDelta>();
+}
+
+#[test]
+fn policy_types_re_exported() {
+    fn _assert_pre_turn<T: swink_agent::PreTurnPolicy>() {}
+    fn _assert_post_turn<T: swink_agent::PostTurnPolicy>() {}
+    fn _assert_pre_dispatch<T: swink_agent::PreDispatchPolicy>() {}
+    fn _assert_post_loop<T: swink_agent::PostLoopPolicy>() {}
+    let _ = std::any::type_name::<swink_agent::PolicyVerdict>();
+    let _ = std::any::type_name::<swink_agent::PreDispatchVerdict>();
+}
+
+#[test]
+fn tool_types_re_exported() {
+    fn _assert_tool<T: swink_agent::AgentTool>() {}
+    let _ = swink_agent::ToolMetadata::default();
+    let _ = std::any::type_name::<swink_agent::AgentToolResult>();
+    let _ = std::any::type_name::<swink_agent::ToolApproval>();
+    let _ = std::any::type_name::<swink_agent::ToolApprovalRequest>();
+}
+
+#[test]
+fn convert_types_re_exported() {
+    fn _assert_converter<T: swink_agent::MessageConverter>() {}
+}
+
+#[test]
+fn model_types_re_exported() {
+    let _ = std::any::type_name::<swink_agent::ModelSpec>();
+    let _ = std::any::type_name::<swink_agent::ContentBlock>();
+    let _ = std::any::type_name::<swink_agent::LlmMessage>();
+    let _ = std::any::type_name::<swink_agent::Usage>();
+    let _ = std::any::type_name::<swink_agent::Cost>();
+    let _ = std::any::type_name::<swink_agent::StopReason>();
+    let _ = std::any::type_name::<swink_agent::AssistantMessage>();
+}
+
+#[test]
+fn display_types_re_exported() {
+    fn _assert_display<T: swink_agent::IntoDisplayMessages>() {}
+    let _ = std::any::type_name::<swink_agent::DisplayRole>();
+    let _ = std::any::type_name::<swink_agent::CoreDisplayMessage>();
+}
+
+#[test]
+fn context_and_config_types_re_exported() {
+    let _ = std::any::type_name::<swink_agent::AgentContext>();
+    let _ = std::any::type_name::<swink_agent::AgentConfig>();
+    let _ = std::any::type_name::<swink_agent::AgentLoopConfig>();
+    let _ = std::any::type_name::<swink_agent::AgentMessage>();
+}
+
+#[test]
+fn metrics_types_re_exported() {
+    fn _assert_metrics<T: swink_agent::MetricsCollector>() {}
+    let _ = std::any::type_name::<swink_agent::TurnMetrics>();
+    let _ = std::any::type_name::<swink_agent::ToolExecMetrics>();
+}
+
+#[test]
+fn block_accumulator_re_exported() {
+    let _ = std::any::type_name::<swink_agent::BlockAccumulator>();
+}
+
+#[test]
+fn message_provider_types_re_exported() {
+    fn _assert_provider<T: swink_agent::MessageProvider>() {}
+    let _ = std::any::type_name::<swink_agent::ChannelMessageProvider>();
+}
+
+#[cfg(feature = "plugins")]
+#[test]
+fn plugin_types_re_exported() {
+    fn _assert_plugin<T: swink_agent::Plugin>() {}
+    let _ = std::any::type_name::<swink_agent::PluginRegistry>();
+    let _ = std::any::type_name::<swink_agent::NamespacedTool>();
+}

@@ -11,9 +11,9 @@ mod common;
 use std::sync::Arc;
 
 use futures::StreamExt;
-use swink_agent::stream::{AssistantMessageEvent, StreamFn, StreamOptions};
-use swink_agent::types::{
-    AgentContext, AgentMessage, ContentBlock, LlmMessage, ModelSpec, UserMessage,
+use swink_agent::{
+    AgentContext, AgentMessage, AssistantMessageEvent, ContentBlock, LlmMessage, ModelSpec,
+    StreamFn, StreamOptions, UserMessage,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -84,7 +84,7 @@ async fn stream_produces_valid_event_sequence() {
 
     // Accumulate and verify the message.
     let msg =
-        swink_agent::stream::accumulate_message(events, "local", "SmolLM3-3B-Q4_K_M").unwrap();
+        swink_agent::accumulate_message(events, "local", "SmolLM3-3B-Q4_K_M").unwrap();
     let text = ContentBlock::extract_text(&msg.content);
     assert!(!text.is_empty(), "response should contain text");
 }
@@ -259,7 +259,7 @@ mod gemma4_live {
         .expect("probe_complex_system_no_angle_brackets should complete within 120s");
 
         let msg =
-            swink_agent::stream::accumulate_message(events, "local", "gemma-4-E2B-it").unwrap();
+            swink_agent::accumulate_message(events, "local", "gemma-4-E2B-it").unwrap();
         let text = ContentBlock::extract_text(&msg.content);
         assert!(!text.is_empty());
         eprintln!("PASS no_angle_brackets: {}", &text[..text.len().min(120)]);
@@ -295,7 +295,7 @@ mod gemma4_live {
         .expect("probe_complex_system_with_angle_brackets should complete within 120s");
 
         let msg =
-            swink_agent::stream::accumulate_message(events, "local", "gemma-4-E2B-it").unwrap();
+            swink_agent::accumulate_message(events, "local", "gemma-4-E2B-it").unwrap();
         let text = ContentBlock::extract_text(&msg.content);
         assert!(!text.is_empty());
         eprintln!("PASS with_angle_brackets: {}", &text[..text.len().min(120)]);
@@ -324,7 +324,7 @@ mod gemma4_live {
         ));
 
         let msg =
-            swink_agent::stream::accumulate_message(events, "local", "gemma-4-E2B-it").unwrap();
+            swink_agent::accumulate_message(events, "local", "gemma-4-E2B-it").unwrap();
         let text = ContentBlock::extract_text(&msg.content);
         assert!(!text.is_empty(), "text stream produced empty output");
         eprintln!(
@@ -336,7 +336,7 @@ mod gemma4_live {
     #[tokio::test]
     #[ignore = "downloads Gemma 4 E2B safetensors (~5 GB)"]
     async fn live_gemma4_e2b_thinking() {
-        use swink_agent::types::{ModelCapabilities, ModelSpec};
+        use swink_agent::{ModelCapabilities, ModelSpec};
 
         let Some(local_model) = ready_gemma4_or_skip().await else {
             return;
@@ -369,7 +369,7 @@ mod gemma4_live {
         );
 
         let msg =
-            swink_agent::stream::accumulate_message(events, "local", "gemma-4-E2B-it").unwrap();
+            swink_agent::accumulate_message(events, "local", "gemma-4-E2B-it").unwrap();
         let text = ContentBlock::extract_text(&msg.content);
         assert!(
             !text.is_empty(),
@@ -449,7 +449,7 @@ mod gemma4_live {
             .collect()
             .await;
         let msg1 =
-            swink_agent::stream::accumulate_message(events1, "local", "gemma-4-E2B-it").unwrap();
+            swink_agent::accumulate_message(events1, "local", "gemma-4-E2B-it").unwrap();
         let text1 = ContentBlock::extract_text(&msg1.content);
         assert!(
             !text1.is_empty(),
@@ -479,7 +479,7 @@ mod gemma4_live {
         .await
         .expect("prompt 2 should complete within 120s (not hung)");
         let msg2 =
-            swink_agent::stream::accumulate_message(events2, "local", "gemma-4-E2B-it").unwrap();
+            swink_agent::accumulate_message(events2, "local", "gemma-4-E2B-it").unwrap();
         let text2 = ContentBlock::extract_text(&msg2.content);
         assert!(
             !text2.is_empty(),
@@ -509,7 +509,7 @@ mod gemma4_live {
         .await
         .expect("prompt 3 should complete within 120s (not hung)");
         let msg3 =
-            swink_agent::stream::accumulate_message(events3, "local", "gemma-4-E2B-it").unwrap();
+            swink_agent::accumulate_message(events3, "local", "gemma-4-E2B-it").unwrap();
         let text3 = ContentBlock::extract_text(&msg3.content);
         assert!(
             !text3.is_empty(),

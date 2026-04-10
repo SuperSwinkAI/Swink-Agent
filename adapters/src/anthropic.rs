@@ -14,9 +14,9 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, warn};
 
 use swink_agent::ContentBlock;
-use swink_agent::stream::{AssistantMessageEvent, CacheStrategy, StreamFn, StreamOptions};
-use swink_agent::types::{
-    AgentContext, AgentMessage, Cost, LlmMessage, ModelSpec, StopReason, ThinkingLevel, Usage,
+use swink_agent::{
+    AgentContext, AgentMessage, AssistantMessageEvent, CacheStrategy, Cost, LlmMessage, ModelSpec,
+    StopReason, StreamFn, StreamOptions, ThinkingLevel, Usage,
 };
 
 use crate::base::AdapterBase;

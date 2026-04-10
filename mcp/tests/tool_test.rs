@@ -5,7 +5,7 @@ mod common;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use swink_agent::tool::AgentTool;
+use swink_agent::AgentTool;
 use swink_agent_mcp::McpTool;
 use swink_agent_mcp::convert;
 
@@ -93,7 +93,7 @@ async fn mcp_tool_executes_and_returns_result() {
     assert!(!agent_result.content.is_empty(), "should have content");
 
     // Verify the content includes the echoed text.
-    let text = swink_agent::types::ContentBlock::extract_text(&agent_result.content);
+    let text = swink_agent::ContentBlock::extract_text(&agent_result.content);
     assert!(
         text.contains("hello world"),
         "should echo back the input, got: {text}"

@@ -1,6 +1,6 @@
 use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
 use swink_agent::sliding_window;
-use swink_agent::types::{AgentMessage, ContentBlock, LlmMessage, UserMessage};
+use swink_agent::{AgentMessage, ContentBlock, LlmMessage, UserMessage};
 
 fn make_messages(n: usize, text: &str) -> Vec<AgentMessage> {
     (0..n)

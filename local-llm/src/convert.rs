@@ -7,9 +7,9 @@
 
 use mistralrs::{TextMessageRole, TextMessages};
 
-use swink_agent::convert::{MessageConverter, convert_messages};
-use swink_agent::types::{
-    AgentContext, AssistantMessage, ContentBlock, ToolResultMessage, UserMessage,
+use swink_agent::{
+    AgentContext, AssistantMessage, ContentBlock, MessageConverter, ToolResultMessage, UserMessage,
+    convert_messages,
 };
 
 use crate::model::ModelConfig;
@@ -151,7 +151,7 @@ mod tests {
 
     use serde_json::json;
     use swink_agent::testing::{assistant_msg, tool_result_msg, user_msg};
-    use swink_agent::types::{
+    use swink_agent::{
         AgentMessage, AssistantMessage, ContentBlock, Cost, LlmMessage, StopReason,
         ToolResultMessage, Usage, UserMessage,
     };
@@ -210,7 +210,7 @@ mod tests {
 
         #[derive(Debug)]
         struct Custom;
-        impl swink_agent::types::CustomMessage for Custom {
+        impl swink_agent::CustomMessage for Custom {
             fn as_any(&self) -> &dyn Any {
                 self
             }
@@ -320,7 +320,7 @@ mod tests {
     #[cfg(feature = "gemma4")]
     #[test]
     fn tool_result_formatting() {
-        use swink_agent::types::ToolResultMessage;
+        use swink_agent::ToolResultMessage;
 
         let result = ToolResultMessage {
             tool_call_id: "read_file".to_string(),

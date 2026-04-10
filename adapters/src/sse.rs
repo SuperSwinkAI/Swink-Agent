@@ -29,8 +29,7 @@ use std::pin::Pin;
 use futures::stream::{self, Stream, StreamExt as _};
 use tokio_util::sync::CancellationToken;
 
-use swink_agent::stream::AssistantMessageEvent;
-use swink_agent::types::StopReason;
+use swink_agent::{AssistantMessageEvent, StopReason};
 
 use crate::finalize::StreamFinalize;
 

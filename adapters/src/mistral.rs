@@ -24,8 +24,9 @@ use serde::Serialize;
 use tokio_util::sync::CancellationToken;
 use tracing::debug;
 
-use swink_agent::stream::{AssistantMessageEvent, StreamFn, StreamOptions};
-use swink_agent::types::{AgentContext, AgentMessage, ModelSpec};
+use swink_agent::{
+    AgentContext, AgentMessage, AssistantMessageEvent, ModelSpec, StreamFn, StreamOptions,
+};
 
 use crate::base::AdapterBase;
 use crate::convert;

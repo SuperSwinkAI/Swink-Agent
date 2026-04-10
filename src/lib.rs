@@ -9,21 +9,21 @@
 //! ```
 mod agent;
 mod agent_id;
-pub mod agent_options;
+pub(crate) mod agent_options;
 pub(crate) mod agent_subscriptions;
 #[cfg(feature = "artifact-store")]
 pub mod artifact;
 mod async_context_transformer;
-pub mod block_accumulator;
+pub(crate) mod block_accumulator;
 mod checkpoint;
 mod config;
 mod context;
-pub mod context_cache;
+pub(crate) mod context_cache;
 mod context_transformer;
 mod context_version;
-pub mod convert;
+pub(crate) mod convert;
 mod credential;
-pub mod display;
+pub(crate) mod display;
 mod emit;
 mod error;
 mod event_forwarder;
@@ -33,9 +33,9 @@ mod handle;
 #[cfg(feature = "hot-reload")]
 pub mod hot_reload;
 mod loop_;
-pub mod message_provider;
+pub(crate) mod message_provider;
 mod messaging;
-pub mod metrics;
+pub(crate) mod metrics;
 mod model_catalog;
 mod model_presets;
 mod noop_tool;
@@ -43,22 +43,22 @@ mod orchestrator;
 #[cfg(feature = "otel")]
 pub mod otel;
 #[cfg(feature = "plugins")]
-pub mod plugin;
-pub mod policy;
+pub(crate) mod plugin;
+pub(crate) mod policy;
 mod registry;
 mod retry;
 mod schema;
 mod state;
-pub mod stream;
+pub(crate) mod stream;
 mod stream_middleware;
 mod sub_agent;
-pub mod tool;
+pub(crate) mod tool;
 mod tool_execution_policy;
-pub mod tool_filter;
+pub(crate) mod tool_filter;
 mod tool_middleware;
-pub mod tools;
-pub mod transfer;
-pub mod types;
+pub(crate) mod tools;
+pub(crate) mod transfer;
+pub(crate) mod types;
 mod util;
 
 #[cfg(feature = "testkit")]

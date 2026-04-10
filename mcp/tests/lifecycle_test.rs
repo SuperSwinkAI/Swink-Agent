@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use swink_agent::tool::AgentTool;
+use swink_agent::AgentTool;
 use swink_agent_mcp::{McpConnection, McpManager, McpServerConfig, McpTool, McpTransport};
 
 /// T039: Drop McpManager cleans up without hang or panic.

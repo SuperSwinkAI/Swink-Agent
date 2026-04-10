@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use serde_json::json;
 use swink_agent::SessionState;
-use swink_agent::tool::AgentTool;
+use swink_agent::AgentTool;
 use tokio_util::sync::CancellationToken;
 
 // ─── DuckDuckGo HTML parsing ────────────────────────────────────────────────

@@ -13,8 +13,10 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
-use swink_agent::stream::{AssistantMessageEvent, StreamFn, StreamOptions};
-use swink_agent::types::{AgentContext, Cost, LlmMessage, ModelSpec, StopReason, Usage};
+use swink_agent::{
+    AgentContext, AssistantMessageEvent, Cost, LlmMessage, ModelSpec, StopReason, StreamFn,
+    StreamOptions, Usage,
+};
 
 use crate::classify::error_event_from_status;
 use crate::sse::{SseLine, sse_data_lines};
@@ -214,8 +216,8 @@ async fn send_request(
         .messages
         .iter()
         .filter_map(|msg| match msg {
-            swink_agent::types::AgentMessage::Llm(llm) => Some(llm),
-            swink_agent::types::AgentMessage::Custom(_) => None,
+            swink_agent::AgentMessage::Llm(llm) => Some(llm),
+            swink_agent::AgentMessage::Custom(_) => None,
         })
         .collect();
 

@@ -14,10 +14,10 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, warn};
 
 use swink_agent::ApiVersion;
-use swink_agent::stream::{AssistantMessageEvent, StreamFn, StreamOptions};
-use swink_agent::types::{
-    AgentContext, AgentMessage, AssistantMessage as HarnessAssistantMessage, ContentBlock, Cost,
-    ImageSource, LlmMessage, ModelSpec, StopReason, ToolResultMessage, Usage,
+use swink_agent::{
+    AgentContext, AgentMessage, AssistantMessage as HarnessAssistantMessage, AssistantMessageEvent,
+    ContentBlock, Cost, ImageSource, LlmMessage, ModelSpec, StopReason, StreamFn, StreamOptions,
+    ToolResultMessage, Usage,
 };
 
 use crate::convert::extract_tool_schemas;

@@ -1,6 +1,6 @@
 use serde_json::json;
 use swink_agent::SessionState;
-use swink_agent::policy::{PreDispatchPolicy, PreDispatchVerdict, ToolDispatchContext};
+use swink_agent::{PreDispatchPolicy, PreDispatchVerdict, ToolDispatchContext};
 use swink_agent_plugin_web::domain::{DomainFilter, DomainFilterError};
 use swink_agent_plugin_web::policy::DomainFilterPolicy;
 use url::Url;

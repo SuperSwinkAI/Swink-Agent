@@ -28,9 +28,9 @@ use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};
 
-use swink_agent::stream::{AssistantMessageEvent, StreamFn, StreamOptions};
-use swink_agent::types::{
-    AgentContext, AgentMessage, ContentBlock, Cost, LlmMessage, ModelSpec, StopReason, Usage,
+use swink_agent::{
+    AgentContext, AgentMessage, AssistantMessageEvent, ContentBlock, Cost, LlmMessage, ModelSpec,
+    StopReason, StreamFn, StreamOptions, Usage,
 };
 
 use crate::block_accumulator::BlockAccumulator;
@@ -1146,7 +1146,7 @@ mod tests {
         let context = AgentContext {
             system_prompt: "You are a helpful assistant.".to_string(),
             messages: vec![AgentMessage::Llm(LlmMessage::User(
-                swink_agent::types::UserMessage {
+                swink_agent::UserMessage {
                     content: vec![ContentBlock::Text {
                         text: "Hello".to_string(),
                     }],

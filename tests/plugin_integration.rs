@@ -5,9 +5,9 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-use swink_agent::plugin::Plugin;
-use swink_agent::policy::{PolicyContext, PolicyVerdict, PostTurnPolicy, PreTurnPolicy};
-use swink_agent::{Agent, AgentOptions};
+use swink_agent::{
+    Agent, AgentOptions, Plugin, PolicyContext, PolicyVerdict, PostTurnPolicy, PreTurnPolicy,
+};
 
 mod common;
 use common::{
@@ -686,7 +686,7 @@ fn two_plugins_same_tool_names_distinct_namespaces() {
 
 #[test]
 fn direct_tool_found_first_over_namespaced_plugin_tool() {
-    use swink_agent::tool::AgentTool;
+    use swink_agent::AgentTool;
 
     // Create a direct tool named "myns.fetch" and a plugin named "myns" contributing "fetch".
     // The direct tool should be found first by find_tool.
@@ -735,7 +735,7 @@ fn direct_tool_found_first_over_namespaced_plugin_tool() {
 
 #[test]
 fn unregistered_plugin_contributions_absent() {
-    use swink_agent::plugin::PluginRegistry;
+    use swink_agent::PluginRegistry;
 
     let mut registry = PluginRegistry::new();
     let plugin_a: Arc<dyn Plugin> = Arc::new(MockPlugin::new("keep").with_tools(&["tool_a"]));
