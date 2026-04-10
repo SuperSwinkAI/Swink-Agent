@@ -12,7 +12,7 @@ Pure-Rust library for LLM-powered agentic loops. Provider-agnostic core with plu
 - **Lessons learned go in nested AGENTS.md files.** Update when you discover something non-obvious.
 - **Context7 first.** When researching any crate API, dependency docs, or library usage, always query the context7 MCP server before falling back to web search or training data. Training data may be stale; context7 pulls current docs.
 - **No parallel builds in agents.** Never have multiple subagents run `cargo build`/`test`/`clippy` concurrently — Cargo's global lock serializes them anyway, causing extended build times. Run all compilation in the main conversation first; subagents should only read and analyze code.
-- **Check specs and docs first.** Before making large changes, read the relevant spec files in `specs/NNN-*/` (spec.md, plan.md, tasks.md) and architecture docs in `tech_docs/` (HLD, subsystem READMEs, planning docs). The project uses spec-driven development — changes should align with the agreed design.
+- **Check specs and docs first.** Before making large changes, read the relevant spec files in `specs/NNN-*/` (spec.md, plan.md, tasks.md) and architecture docs in `docs/` (HLD, subsystem READMEs, planning docs). The project uses spec-driven development — changes should align with the agreed design.
 
 ## Style (project-specific conventions)
 

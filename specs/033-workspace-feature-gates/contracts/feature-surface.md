@@ -10,17 +10,17 @@ This document defines the public feature flag contract that consumers depend on.
 
 | Feature | Status | Description |
 |---------|--------|-------------|
-| `default` | — | Enables `all` |
-| `all` | — | Enables all 9 adapter features |
+| `default` | — | No adapters enabled by default |
+| `full` / `all` | — | Enables all 9 adapter features |
 | `anthropic` | Implemented | Anthropic Messages API |
 | `openai` | Implemented | OpenAI Chat Completions API |
 | `ollama` | Implemented | Ollama local inference (NDJSON) |
 | `gemini` | Implemented | Google Gemini API |
 | `proxy` | Implemented | Generic proxy endpoint |
-| `azure` | Stub | Azure OpenAI (OpenAI-compatible) |
-| `bedrock` | Stub | AWS Bedrock Converse API |
-| `mistral` | Stub | Mistral (OpenAI-compatible) |
-| `xai` | Stub | xAI Grok (OpenAI-compatible) |
+| `azure` | Implemented | Azure OpenAI (OpenAI-compatible) |
+| `bedrock` | Implemented | AWS Bedrock Converse API |
+| `mistral` | Implemented | Mistral (OpenAI-compatible) |
+| `xai` | Implemented | xAI Grok (OpenAI-compatible, implies `openai`) |
 
 ### Public Re-exports by Feature
 
@@ -75,23 +75,18 @@ ProgressCallbackFn, ProgressEvent
 
 | Feature | Activates | Description |
 |---------|-----------|-------------|
-| `default` | `builtin-tools` | Current behavior preserved |
+| `default` | `builtin-tools`, `transfer` | Current behavior preserved |
 | `builtin-tools` | — | BashTool, ReadFileTool, WriteFileTool |
-| `test-helpers` | — | Test utility re-exports |
-| `anthropic` | adapters crate + feature | Anthropic adapter |
-| `openai` | adapters crate + feature | OpenAI adapter |
-| `ollama` | adapters crate + feature | Ollama adapter |
-| `gemini` | adapters crate + feature | Gemini adapter |
-| `proxy` | adapters crate + feature | Proxy adapter |
-| `azure` | adapters crate + feature | Azure adapter |
-| `bedrock` | adapters crate + feature | Bedrock adapter |
-| `mistral` | adapters crate + feature | Mistral adapter |
-| `xai` | adapters crate + feature | xAI adapter |
-| `adapters-all` | adapters crate + all | All adapters |
-| `local-llm` | local-llm crate | Local inference (CPU) |
-| `local-llm-metal` | local-llm crate + metal | Local + Metal |
-| `local-llm-cuda` | local-llm crate + cuda | Local + CUDA |
-| `tui` | TUI crate | Terminal UI |
+| `transfer` | — | TransferToAgent tool |
+| `testkit` | — | Test utility re-exports (mock StreamFn, tools, builders) |
+| `plugins` | — | Plugin trait, PluginRegistry, NamespacedTool |
+| `artifact-store` | `dep:bytes` | Artifact storage traits and types |
+| `artifact-tools` | `artifact-store` | Artifact read/write agent tools |
+| `hot-reload` | `dep:notify` | File-watcher-based hot reload |
+| `tiktoken` | `dep:tiktoken-rs` | Precise token counting via tiktoken |
+| `otel` | tracing-opentelemetry stack | OpenTelemetry tracing export |
+
+> **Note:** The root crate does not forward adapter or local-llm features. Consumers depend on `swink-agent-adapters` and `swink-agent-local-llm` directly for provider selection.
 
 ## Consumer Examples
 
@@ -99,12 +94,10 @@ ProgressCallbackFn, ProgressEvent
 # Minimal: just the agent loop
 swink-agent = { path = "../Swink-Agent", default-features = false }
 
-# Anthropic + OpenAI only
-swink-agent = { path = "../Swink-Agent", features = ["anthropic", "openai"] }
+# Core + specific adapters (depend on sub-crate directly)
+swink-agent = { path = "../Swink-Agent" }
+swink-agent-adapters = { path = "../Swink-Agent/adapters", default-features = false, features = ["anthropic", "openai"] }
 
-# Everything
-swink-agent = { path = "../Swink-Agent", features = ["adapters-all", "local-llm-metal", "tui"] }
-
-# SuperSwink-Core typical usage
-swink-agent = { path = "../Swink-Agent", features = ["anthropic", "openai", "ollama", "gemini"] }
+# All adapters
+swink-agent-adapters = { path = "../Swink-Agent/adapters", features = ["all"] }
 ```
