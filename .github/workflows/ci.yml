@@ -33,6 +33,9 @@ jobs:
 
       - run: cargo nextest run --workspace
 
+      - name: Test (testkit features)
+        run: cargo test --workspace --features testkit
+
       - run: cargo build --examples --workspace
 
       - run: cargo test --workspace --doc
