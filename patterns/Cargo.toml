@@ -4,6 +4,7 @@ version = "0.7.0"
 edition = "2024"
 rust-version = "1.88"
 description = "Multi-agent pipeline patterns for swink-agent"
+license = "MIT OR Apache-2.0"
 
 [features]
 default = ["pipelines"]

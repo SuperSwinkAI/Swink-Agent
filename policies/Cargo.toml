@@ -4,7 +4,7 @@ version = "0.7.0"
 edition = "2024"
 rust-version = "1.88"
 description = "Policy implementations for swink-agent"
-license = "MIT"
+license = "MIT OR Apache-2.0"
 repository = "https://github.com/SuperSwinkAI/Swink-Agent"
 keywords = ["llm", "agent", "policy", "security", "audit"]
 
