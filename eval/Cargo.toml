@@ -24,7 +24,7 @@ thiserror.workspace = true
 tracing.workspace = true
 tokio-util.workspace = true
 uuid.workspace = true
-regex = "1"
+regex.workspace = true
 sha2.workspace = true
 serde_yaml = { workspace = true, optional = true }
 

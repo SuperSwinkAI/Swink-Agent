@@ -32,6 +32,8 @@ syn = { version = "2", features = ["full", "extra-traits"] }
 quote = "1"
 proc-macro2 = "1"
 bytes = "1"
+dirs = "6"
+regex = "1"
 aws-smithy-eventstream = "0.60"
 aws-smithy-types = "1"
 aws-credential-types = "1.2.14"
@@ -88,7 +90,7 @@ futures.workspace = true
 tokio-stream.workspace = true
 jsonschema = "0.28"
 schemars.workspace = true
-regex = "1"
+regex.workspace = true
 uuid.workspace = true
 rand.workspace = true
 tracing.workspace = true
