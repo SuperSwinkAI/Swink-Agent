@@ -743,12 +743,9 @@ fn process_function_call(
 }
 
 fn map_finish_reason(finish_reason: &str, saw_tool_call: bool) -> StopReason {
-    if saw_tool_call {
-        return StopReason::ToolUse;
-    }
-
     match finish_reason {
         "MAX_TOKENS" => StopReason::Length,
+        _ if saw_tool_call => StopReason::ToolUse,
         _ => StopReason::Stop,
     }
 }

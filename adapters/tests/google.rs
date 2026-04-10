@@ -512,6 +512,52 @@ async fn gemini_two_tool_calls_have_sequential_content_indices() {
     assert_eq!(cis[1], cis[0] + 1, "content indices must be sequential");
 }
 
+/// When a tool call is emitted but finishReason is MAX_TOKENS, the stop reason
+/// must be Length — not ToolUse. Regression test for #273.
+#[tokio::test]
+async fn gemini_max_tokens_after_tool_call_reports_length() {
+    let body = [
+        r#"data: {"candidates":[{"content":{"parts":[{"functionCall":{"id":"c1","name":"get_weather","args":{"city":"Paris"}}}]}}]}"#,
+        "",
+        r#"data: {"candidates":[{"finishReason":"MAX_TOKENS"}],"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":50,"totalTokenCount":60}}"#,
+        "",
+        "data: [DONE]",
+        "",
+    ]
+    .join("\n");
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path(
+            "/v1beta/models/gemini-3-flash-preview:streamGenerateContent",
+        ))
+        .and(query_param("alt", "sse"))
+        .respond_with(sse_response(&body))
+        .mount(&server)
+        .await;
+
+    let stream_fn = GeminiStreamFn::new(server.uri(), "test-key", ApiVersion::V1beta);
+    let events = collect_events(&stream_fn).await;
+
+    // Tool call events should still be present
+    let types: Vec<_> = events.iter().map(event_name).collect();
+    assert!(
+        types.contains(&"ToolCallStart"),
+        "missing ToolCallStart: {types:?}"
+    );
+
+    // Stop reason must be Length, not ToolUse
+    let stop_reason = events.iter().find_map(|event| match event {
+        AssistantMessageEvent::Done { stop_reason, .. } => Some(*stop_reason),
+        _ => None,
+    });
+    assert_eq!(
+        stop_reason,
+        Some(StopReason::Length),
+        "MAX_TOKENS must map to Length even when tool calls were emitted"
+    );
+}
+
 /// When the stream ends without an explicit finish reason the open text block
 /// must be closed by the finalization path (not silently dropped).
 #[tokio::test]
