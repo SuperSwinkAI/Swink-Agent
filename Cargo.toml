@@ -64,10 +64,6 @@ codegen-units = 1
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
-[[example]]
-name = "with_tools"
-required-features = ["builtin-tools"]
-
 [features]
 default = ["builtin-tools", "transfer"]
 builtin-tools = []
