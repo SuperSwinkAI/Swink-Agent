@@ -608,15 +608,7 @@ fn process_smithy_message(
         let exc_type = exception_type.as_deref().unwrap_or("unknown");
         let payload_str = std::str::from_utf8(message.payload()).unwrap_or("(binary)");
         warn!(exception_type = exc_type, "Bedrock exception frame");
-        let is_throttled = exc_type.to_lowercase().contains("throttl");
-        if is_throttled {
-            return vec![AssistantMessageEvent::error_throttled(format!(
-                "Bedrock throttled: {payload_str}"
-            ))];
-        }
-        return vec![AssistantMessageEvent::error_network(format!(
-            "Bedrock exception ({exc_type}): {payload_str}"
-        ))];
+        return vec![classify_bedrock_exception(exc_type, payload_str)];
     }
 
     // Handle normal event frames
@@ -640,6 +632,45 @@ fn process_smithy_message(
             vec![]
         })
     })
+}
+
+/// Classify a Bedrock exception frame into the correct error category.
+///
+/// Bedrock exception types map to three buckets:
+/// - **Throttled** (retryable): `throttlingException`, `tooManyRequestsException`
+/// - **Auth** (non-retryable): `accessDeniedException`, `validationException`,
+///   `resourceNotFoundException`
+/// - **Network** (retryable): `internalServerException`, `modelStreamErrorException`,
+///   `modelTimeoutException`, `serviceUnavailableException`
+///
+/// Unknown exception types fall through to a generic (unclassified) error so they
+/// are not silently treated as retryable.
+fn classify_bedrock_exception(exc_type: &str, payload: &str) -> AssistantMessageEvent {
+    let lower = exc_type.to_lowercase();
+
+    if lower.contains("throttl") || lower.contains("toomanyrequests") {
+        AssistantMessageEvent::error_throttled(format!("Bedrock throttled: {payload}"))
+    } else if lower.contains("accessdenied")
+        || lower.contains("validation")
+        || lower.contains("resourcenotfound")
+    {
+        AssistantMessageEvent::error_auth(format!(
+            "Bedrock client error ({exc_type}): {payload}"
+        ))
+    } else if lower.contains("internalserver")
+        || lower.contains("modelstreamerror")
+        || lower.contains("modeltimeout")
+        || lower.contains("serviceunavailable")
+    {
+        AssistantMessageEvent::error_network(format!(
+            "Bedrock server error ({exc_type}): {payload}"
+        ))
+    } else {
+        // Unknown exception type — do not assume retryable.
+        AssistantMessageEvent::error(format!(
+            "Bedrock exception ({exc_type}): {payload}"
+        ))
+    }
 }
 
 fn parse_event_frame(
@@ -1296,12 +1327,162 @@ mod tests {
     }
 
     #[test]
-    fn exception_frame_handling() {
+    fn exception_frame_throttling_is_throttled() {
         let mut state = BedrockStreamState::new();
         let msg = make_exception_message("throttlingException", br#"{"message":"Rate exceeded"}"#);
         let events = process_smithy_message(&msg, &mut state);
         assert_eq!(events.len(), 1);
-        assert!(matches!(events[0], AssistantMessageEvent::Error { .. }));
+        match &events[0] {
+            AssistantMessageEvent::Error { error_kind, .. } => {
+                assert_eq!(*error_kind, Some(swink_agent::StreamErrorKind::Throttled));
+            }
+            other => panic!("expected Error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn exception_frame_too_many_requests_is_throttled() {
+        let mut state = BedrockStreamState::new();
+        let msg =
+            make_exception_message("tooManyRequestsException", br#"{"message":"Slow down"}"#);
+        let events = process_smithy_message(&msg, &mut state);
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            AssistantMessageEvent::Error { error_kind, .. } => {
+                assert_eq!(*error_kind, Some(swink_agent::StreamErrorKind::Throttled));
+            }
+            other => panic!("expected Error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn exception_frame_access_denied_is_auth() {
+        let mut state = BedrockStreamState::new();
+        let msg =
+            make_exception_message("accessDeniedException", br#"{"message":"Not authorized"}"#);
+        let events = process_smithy_message(&msg, &mut state);
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            AssistantMessageEvent::Error { error_kind, .. } => {
+                assert_eq!(*error_kind, Some(swink_agent::StreamErrorKind::Auth));
+            }
+            other => panic!("expected Error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn exception_frame_validation_is_auth() {
+        let mut state = BedrockStreamState::new();
+        let msg =
+            make_exception_message("validationException", br#"{"message":"Invalid request"}"#);
+        let events = process_smithy_message(&msg, &mut state);
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            AssistantMessageEvent::Error { error_kind, .. } => {
+                assert_eq!(*error_kind, Some(swink_agent::StreamErrorKind::Auth));
+            }
+            other => panic!("expected Error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn exception_frame_resource_not_found_is_auth() {
+        let mut state = BedrockStreamState::new();
+        let msg = make_exception_message(
+            "resourceNotFoundException",
+            br#"{"message":"Model not found"}"#,
+        );
+        let events = process_smithy_message(&msg, &mut state);
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            AssistantMessageEvent::Error { error_kind, .. } => {
+                assert_eq!(*error_kind, Some(swink_agent::StreamErrorKind::Auth));
+            }
+            other => panic!("expected Error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn exception_frame_internal_server_is_network() {
+        let mut state = BedrockStreamState::new();
+        let msg = make_exception_message(
+            "internalServerException",
+            br#"{"message":"Internal error"}"#,
+        );
+        let events = process_smithy_message(&msg, &mut state);
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            AssistantMessageEvent::Error { error_kind, .. } => {
+                assert_eq!(*error_kind, Some(swink_agent::StreamErrorKind::Network));
+            }
+            other => panic!("expected Error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn exception_frame_model_stream_error_is_network() {
+        let mut state = BedrockStreamState::new();
+        let msg = make_exception_message(
+            "modelStreamErrorException",
+            br#"{"message":"Stream failed"}"#,
+        );
+        let events = process_smithy_message(&msg, &mut state);
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            AssistantMessageEvent::Error { error_kind, .. } => {
+                assert_eq!(*error_kind, Some(swink_agent::StreamErrorKind::Network));
+            }
+            other => panic!("expected Error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn exception_frame_model_timeout_is_network() {
+        let mut state = BedrockStreamState::new();
+        let msg =
+            make_exception_message("modelTimeoutException", br#"{"message":"Timeout"}"#);
+        let events = process_smithy_message(&msg, &mut state);
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            AssistantMessageEvent::Error { error_kind, .. } => {
+                assert_eq!(*error_kind, Some(swink_agent::StreamErrorKind::Network));
+            }
+            other => panic!("expected Error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn exception_frame_service_unavailable_is_network() {
+        let mut state = BedrockStreamState::new();
+        let msg = make_exception_message(
+            "serviceUnavailableException",
+            br#"{"message":"Service down"}"#,
+        );
+        let events = process_smithy_message(&msg, &mut state);
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            AssistantMessageEvent::Error { error_kind, .. } => {
+                assert_eq!(*error_kind, Some(swink_agent::StreamErrorKind::Network));
+            }
+            other => panic!("expected Error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn exception_frame_unknown_type_is_unclassified() {
+        let mut state = BedrockStreamState::new();
+        let msg = make_exception_message(
+            "someFutureException",
+            br#"{"message":"Something new"}"#,
+        );
+        let events = process_smithy_message(&msg, &mut state);
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            AssistantMessageEvent::Error { error_kind, .. } => {
+                assert_eq!(*error_kind, None, "unknown exceptions should not be classified as retryable");
+            }
+            other => panic!("expected Error, got {other:?}"),
+        }
     }
 
     #[test]

@@ -236,6 +236,9 @@ impl super::CustomMessage for SerializedCustomMessage {
     fn to_json(&self) -> Option<serde_json::Value> {
         Some(self.json.clone())
     }
+    fn clone_box(&self) -> Option<Box<dyn super::CustomMessage>> {
+        Some(Box::new(self.clone()))
+    }
 }
 
 // ─── clone_messages_for_send ────────────────────────────────────────────────

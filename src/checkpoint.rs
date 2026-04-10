@@ -173,8 +173,14 @@ pub struct LoopCheckpoint {
     /// Records the original interleaved order of LLM and custom messages.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     message_order: Vec<MessageSlot>,
-    /// Messages queued for injection into the next turn.
+    /// Follow-up messages queued for injection into the next turn.
     pub pending_messages: Vec<LlmMessage>,
+    /// Steering messages queued at the time of pause.
+    ///
+    /// Older checkpoints without this field deserialize with an empty vec
+    /// (backward compatible).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pending_steering_messages: Vec<LlmMessage>,
     /// The system prompt active at the time of pause.
     pub system_prompt: String,
     /// Model provider name.
@@ -210,6 +216,7 @@ impl LoopCheckpoint {
             custom_messages: serialized.custom_messages,
             message_order: serialized.message_order,
             pending_messages: Vec::new(),
+            pending_steering_messages: Vec::new(),
             system_prompt: system_prompt.into(),
             provider: provider.into(),
             model_id: model_id.into(),
@@ -226,10 +233,17 @@ impl LoopCheckpoint {
         self
     }
 
-    /// Set pending messages.
+    /// Set pending follow-up messages.
     #[must_use]
     pub fn with_pending_messages(mut self, pending: Vec<LlmMessage>) -> Self {
         self.pending_messages = pending;
+        self
+    }
+
+    /// Set pending steering messages.
+    #[must_use]
+    pub fn with_pending_steering_messages(mut self, pending: Vec<LlmMessage>) -> Self {
+        self.pending_steering_messages = pending;
         self
     }
 
@@ -255,10 +269,16 @@ impl LoopCheckpoint {
         )
     }
 
-    /// Restore pending messages as `AgentMessage` values.
+    /// Restore pending follow-up messages as `AgentMessage` values.
     #[must_use]
     pub fn restore_pending_messages(&self) -> Vec<AgentMessage> {
         restore_llm_messages(&self.pending_messages)
+    }
+
+    /// Restore pending steering messages as `AgentMessage` values.
+    #[must_use]
+    pub fn restore_pending_steering_messages(&self) -> Vec<AgentMessage> {
+        restore_llm_messages(&self.pending_steering_messages)
     }
 
     /// Convert this loop checkpoint into a standard [`Checkpoint`] for storage.
@@ -572,6 +592,69 @@ mod tests {
             restored[1],
             AgentMessage::Llm(LlmMessage::Assistant(_))
         ));
+    }
+
+    #[test]
+    fn loop_checkpoint_steering_messages_roundtrip() {
+        let steering = vec![LlmMessage::User(UserMessage {
+            content: vec![ContentBlock::Text {
+                text: "steer-me".to_string(),
+            }],
+            timestamp: 300,
+            cache_hint: None,
+        })];
+        let follow_up = vec![LlmMessage::User(UserMessage {
+            content: vec![ContentBlock::Text {
+                text: "follow-up".to_string(),
+            }],
+            timestamp: 301,
+            cache_hint: None,
+        })];
+
+        let cp = LoopCheckpoint::new("p", "p", "m", &[])
+            .with_pending_messages(follow_up)
+            .with_pending_steering_messages(steering);
+
+        // Serde roundtrip
+        let json = serde_json::to_string(&cp).unwrap();
+        let restored: LoopCheckpoint = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(restored.pending_messages.len(), 1);
+        assert_eq!(restored.pending_steering_messages.len(), 1);
+
+        let restored_steering = restored.restore_pending_steering_messages();
+        assert_eq!(restored_steering.len(), 1);
+        assert!(matches!(
+            restored_steering[0],
+            AgentMessage::Llm(LlmMessage::User(_))
+        ));
+    }
+
+    #[test]
+    fn loop_checkpoint_backward_compat_no_steering_field() {
+        // Simulate a checkpoint created before pending_steering_messages existed
+        let cp = LoopCheckpoint::new("p", "p", "m", &[])
+            .with_pending_messages(vec![LlmMessage::User(UserMessage {
+                content: vec![ContentBlock::Text {
+                    text: "old-follow-up".to_string(),
+                }],
+                timestamp: 100,
+                cache_hint: None,
+            })]);
+
+        let mut json_val = serde_json::to_value(&cp).unwrap();
+        // Strip the field to simulate old format
+        json_val
+            .as_object_mut()
+            .unwrap()
+            .remove("pending_steering_messages");
+        let legacy: LoopCheckpoint = serde_json::from_value(json_val).unwrap();
+
+        assert!(
+            legacy.pending_steering_messages.is_empty(),
+            "missing steering field should default to empty"
+        );
+        assert_eq!(legacy.pending_messages.len(), 1);
     }
 
     #[test]

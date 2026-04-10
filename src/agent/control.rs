@@ -16,7 +16,21 @@ impl Agent {
     }
 
     /// Reset the agent to its initial state, clearing messages, queues, and error.
+    ///
+    /// If a loop is currently active, the abort token is cancelled and the
+    /// generation counter is bumped so the stale [`LoopGuardStream`] cannot
+    /// clear `loop_active` for any future run.
     pub fn reset(&mut self) {
+        // Cancel the running loop *before* dropping the token, so the spawned
+        // stream observes cancellation rather than continuing to emit events.
+        if let Some(ref token) = self.abort_controller {
+            token.cancel();
+        }
+
+        // Bump the generation counter so the old LoopGuardStream's Drop impl
+        // sees a mismatched generation and skips clearing loop_active.
+        self.loop_generation.fetch_add(1, Ordering::AcqRel);
+
         self.state.messages.clear();
         self.state.is_running = false;
         self.loop_active.store(false, Ordering::Release);

@@ -381,3 +381,40 @@ async fn wait_for_idle_multiple_waiters() {
     let ((), ()) = tokio::join!(agent.wait_for_idle(), agent.wait_for_idle(),);
     assert!(!agent.state().is_running);
 }
+
+// ─── Regression: reset cancels active loop and bumps generation (#266) ──
+
+#[tokio::test]
+async fn reset_cancels_active_loop_and_allows_new_run() {
+    // Two scripted responses: one for the first (interrupted) run, one for the
+    // second (post-reset) run.
+    let stream_fn = Arc::new(MockStreamFn::new(vec![
+        text_only_events("first"),
+        text_only_events("second"),
+    ]));
+    let mut agent = make_agent(stream_fn);
+
+    // Start a streaming run but do NOT drain it — simulate an active loop.
+    let mut stream = agent.prompt_stream(vec![user_msg("go")]).unwrap();
+
+    // Pull at least one event so the stream is actively being consumed.
+    let _first_event = stream.next().await;
+    assert!(agent.state().is_running, "agent should be running mid-stream");
+
+    // Reset while the loop is still active. Before the fix this would not
+    // cancel the abort token and would not bump the generation counter,
+    // letting the stale LoopGuardStream corrupt state on drop.
+    agent.reset();
+
+    // Drop the old stream — its LoopGuardStream::drop should be a no-op
+    // because reset() bumped the generation counter.
+    drop(stream);
+
+    // Agent should be idle after reset.
+    assert!(!agent.state().is_running, "agent should be idle after reset");
+
+    // A new run should succeed without AlreadyRunning error.
+    let result = agent.prompt_async(vec![user_msg("go again")]).await.unwrap();
+    assert_eq!(result.stop_reason, StopReason::Stop);
+    assert!(!agent.state().is_running);
+}

@@ -37,6 +37,15 @@ pub trait CustomMessage: Send + Sync + fmt::Debug + std::any::Any {
     fn to_json(&self) -> Option<serde_json::Value> {
         None
     }
+
+    /// Clone this custom message into a new boxed trait object.
+    ///
+    /// Returns `None` if the underlying type does not support cloning
+    /// (the default). Implement this to preserve custom messages across
+    /// stream-driven state rebuilds (e.g. `handle_stream_event`).
+    fn clone_box(&self) -> Option<Box<dyn CustomMessage>> {
+        None
+    }
 }
 
 /// A function that deserializes a JSON value into a boxed [`CustomMessage`].

@@ -114,7 +114,8 @@ async fn always_reject_callback_tools_not_executed() {
 
     let responses = tool_call_then_stop("tc1", "test_tool", "{}");
     let options = make_agent(responses, vec![tool])
-        .with_approve_tool(|_req| Box::pin(async { ToolApproval::Rejected }));
+        .with_approve_tool(|_req| Box::pin(async { ToolApproval::Rejected }))
+        .with_approval_mode(ApprovalMode::Enabled);
     let mut agent = Agent::new(options);
 
     let result = agent.prompt_async(vec![user_msg("hello")]).await.unwrap();
@@ -191,15 +192,17 @@ async fn selective_approval_by_tool_name() {
     ];
 
     let options =
-        make_agent(responses, vec![allowed_tool, blocked_tool]).with_approve_tool(|req| {
-            Box::pin(async move {
-                if req.tool_name == "allowed" {
-                    ToolApproval::Approved
-                } else {
-                    ToolApproval::Rejected
-                }
+        make_agent(responses, vec![allowed_tool, blocked_tool])
+            .with_approve_tool(|req| {
+                Box::pin(async move {
+                    if req.tool_name == "allowed" {
+                        ToolApproval::Approved
+                    } else {
+                        ToolApproval::Rejected
+                    }
+                })
             })
-        });
+            .with_approval_mode(ApprovalMode::Enabled);
     let mut agent = Agent::new(options);
 
     let result = agent.prompt_async(vec![user_msg("hello")]).await.unwrap();
@@ -219,7 +222,8 @@ async fn approval_events_in_correct_order() {
 
     let responses = tool_call_then_stop("tc1", "test_tool", "{}");
     let options = make_agent(responses, vec![tool])
-        .with_approve_tool(|_req| Box::pin(async { ToolApproval::Approved }));
+        .with_approve_tool(|_req| Box::pin(async { ToolApproval::Approved }))
+        .with_approval_mode(ApprovalMode::Enabled);
     let mut agent = Agent::new(options);
 
     let log = Arc::clone(&events_log);
@@ -462,7 +466,8 @@ async fn approval_sees_post_rewrite_arguments() {
         .with_approve_tool(move |req: ToolApprovalRequest| {
             *cap.lock().unwrap() = Some(req.arguments.clone());
             Box::pin(async { ToolApproval::Approved })
-        });
+        })
+        .with_approval_mode(ApprovalMode::Enabled);
     let mut agent = Agent::new(options);
 
     let result = agent.prompt_async(vec![user_msg("hello")]).await.unwrap();
@@ -481,7 +486,95 @@ async fn approval_sees_post_rewrite_arguments() {
     );
 }
 
-/// Test 15: ToolApprovalRequested event carries rewritten arguments.
+/// Test 15: Smart mode skips approval callback for read-only tools (requires_approval == false).
+/// Regression test for #270.
+#[tokio::test]
+async fn smart_mode_skips_callback_for_readonly_tools() {
+    let tool = Arc::new(MockTool::new("read_tool")); // requires_approval defaults to false
+    let tool_ref = Arc::clone(&tool);
+    let callback_called = Arc::new(AtomicBool::new(false));
+    let callback_flag = Arc::clone(&callback_called);
+
+    let responses = tool_call_then_stop("tc1", "read_tool", "{}");
+    let options = make_agent(responses, vec![tool])
+        .with_approve_tool(move |_req| {
+            callback_flag.store(true, Ordering::SeqCst);
+            Box::pin(async { ToolApproval::Rejected }) // would reject if called
+        })
+        .with_approval_mode(ApprovalMode::Smart);
+    let mut agent = Agent::new(options);
+
+    let result = agent.prompt_async(vec![user_msg("hello")]).await.unwrap();
+    assert!(result.error.is_none());
+    assert!(
+        tool_ref.was_executed(),
+        "read-only tool should execute in Smart mode without approval"
+    );
+    assert!(
+        !callback_called.load(Ordering::SeqCst),
+        "approval callback should not be called for read-only tools in Smart mode"
+    );
+}
+
+/// Test 16: Smart mode still calls approval callback for tools that require approval.
+/// Regression test for #270.
+#[tokio::test]
+async fn smart_mode_calls_callback_for_write_tools() {
+    let tool = Arc::new(MockTool::new("write_tool").with_requires_approval(true));
+    let tool_ref = Arc::clone(&tool);
+    let callback_called = Arc::new(AtomicBool::new(false));
+    let callback_flag = Arc::clone(&callback_called);
+
+    let responses = tool_call_then_stop("tc1", "write_tool", "{}");
+    let options = make_agent(responses, vec![tool])
+        .with_approve_tool(move |_req| {
+            callback_flag.store(true, Ordering::SeqCst);
+            Box::pin(async { ToolApproval::Rejected })
+        })
+        .with_approval_mode(ApprovalMode::Smart);
+    let mut agent = Agent::new(options);
+
+    let result = agent.prompt_async(vec![user_msg("hello")]).await.unwrap();
+    assert!(
+        !tool_ref.was_executed(),
+        "write tool should be rejected in Smart mode when callback rejects"
+    );
+    assert!(
+        callback_called.load(Ordering::SeqCst),
+        "approval callback must be called for tools requiring approval in Smart mode"
+    );
+}
+
+/// Test 17: Enabled mode still routes read-only tools through approval callback.
+/// Ensures Enabled mode behavior is unchanged by the Smart mode fix (#270).
+#[tokio::test]
+async fn enabled_mode_routes_readonly_tools_through_callback() {
+    let tool = Arc::new(MockTool::new("read_tool")); // requires_approval defaults to false
+    let tool_ref = Arc::clone(&tool);
+    let callback_called = Arc::new(AtomicBool::new(false));
+    let callback_flag = Arc::clone(&callback_called);
+
+    let responses = tool_call_then_stop("tc1", "read_tool", "{}");
+    let options = make_agent(responses, vec![tool])
+        .with_approve_tool(move |_req| {
+            callback_flag.store(true, Ordering::SeqCst);
+            Box::pin(async { ToolApproval::Rejected })
+        })
+        .with_approval_mode(ApprovalMode::Enabled);
+    let mut agent = Agent::new(options);
+
+    let result = agent.prompt_async(vec![user_msg("hello")]).await.unwrap();
+    assert!(
+        !tool_ref.was_executed(),
+        "Enabled mode should route ALL tools through callback, including read-only"
+    );
+    assert!(
+        callback_called.load(Ordering::SeqCst),
+        "callback must be called for all tools in Enabled mode"
+    );
+}
+
+/// Test 18: ToolApprovalRequested event carries rewritten arguments.
 #[tokio::test]
 async fn approval_event_carries_rewritten_arguments() {
     let tool = Arc::new(MockTool::new("test_tool"));
@@ -490,7 +583,8 @@ async fn approval_event_carries_rewritten_arguments() {
     let responses = tool_call_then_stop("tc1", "test_tool", r#"{"original": true}"#);
     let options = make_agent(responses, vec![tool])
         .with_pre_dispatch_policy(RewriteArgsPolicy)
-        .with_approve_tool(|_req| Box::pin(async { ToolApproval::Approved }));
+        .with_approve_tool(|_req| Box::pin(async { ToolApproval::Approved }))
+        .with_approval_mode(ApprovalMode::Enabled);
     let mut agent = Agent::new(options);
 
     let captured = Arc::clone(&event_args);
