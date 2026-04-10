@@ -12,24 +12,28 @@ use tracing::warn;
 
 use crate::types::{EvalCase, Invocation, RecordedToolCall, TurnRecord};
 
-/// Real-time budget guard that cancels an agent run when cost, token, or turn
-/// thresholds are exceeded mid-execution.
+/// Real-time budget guard that cancels an agent run when cost, token, turn,
+/// or duration thresholds are exceeded mid-execution.
 pub struct BudgetGuard {
     cancel: CancellationToken,
     max_cost: Option<f64>,
     max_tokens: Option<u64>,
     max_turns: Option<usize>,
+    max_duration: Option<Duration>,
+    start_time: Instant,
 }
 
 impl BudgetGuard {
     /// Create a guard with the given cancellation token and no thresholds.
     #[must_use]
-    pub const fn new(cancel: CancellationToken) -> Self {
+    pub fn new(cancel: CancellationToken) -> Self {
         Self {
             cancel,
             max_cost: None,
             max_tokens: None,
             max_turns: None,
+            max_duration: None,
+            start_time: Instant::now(),
         }
     }
 
@@ -54,18 +58,30 @@ impl BudgetGuard {
         self
     }
 
+    /// Set a maximum wall-clock duration threshold.
+    #[must_use]
+    pub const fn with_max_duration(mut self, max_duration: Duration) -> Self {
+        self.max_duration = Some(max_duration);
+        self
+    }
+
     /// Build a guard from an eval case's budget constraints, if any thresholds
     /// are defined.
     #[must_use]
     pub fn from_case(case: &EvalCase, cancel: CancellationToken) -> Option<Self> {
         let budget = case.budget.as_ref()?;
-        if budget.max_cost.is_none() && budget.max_tokens.is_none() && budget.max_turns.is_none() {
+        if budget.max_cost.is_none()
+            && budget.max_tokens.is_none()
+            && budget.max_turns.is_none()
+            && budget.max_duration.is_none()
+        {
             return None;
         }
         let mut guard = Self::new(cancel);
         guard.max_cost = budget.max_cost;
         guard.max_tokens = budget.max_tokens;
         guard.max_turns = budget.max_turns;
+        guard.max_duration = budget.max_duration;
         Some(guard)
     }
 }
@@ -221,6 +237,11 @@ impl TrajectoryCollector {
         {
             return true;
         }
+        if let Some(max_duration) = guard.max_duration
+            && guard.start_time.elapsed() > max_duration
+        {
+            return true;
+        }
         false
     }
 
@@ -246,6 +267,7 @@ impl TrajectoryCollector {
                     cost = collector.accumulated_cost.total,
                     tokens = collector.accumulated_usage.total,
                     turns = collector.turn_counter,
+                    elapsed_ms = g.start_time.elapsed().as_millis() as u64,
                     "budget guard triggered — cancelling agent run"
                 );
                 g.cancel.cancel();
@@ -309,5 +331,68 @@ mod tests {
             .with_max_tokens(1000)
             .with_max_turns(10);
         assert!(!c.exceeds_budget(&guard));
+    }
+
+    #[test]
+    fn exceeds_duration() {
+        let c = make_collector(1.0, 100, 2);
+        // Create a guard with a zero-duration limit — already exceeded.
+        let guard =
+            BudgetGuard::new(CancellationToken::new()).with_max_duration(Duration::ZERO);
+        assert!(c.exceeds_budget(&guard));
+    }
+
+    #[test]
+    fn within_duration() {
+        let c = make_collector(1.0, 100, 2);
+        // 1 hour should be well within bounds for this test.
+        let guard = BudgetGuard::new(CancellationToken::new())
+            .with_max_duration(Duration::from_secs(3600));
+        assert!(!c.exceeds_budget(&guard));
+    }
+
+    fn make_eval_case(budget: Option<crate::types::BudgetConstraints>) -> EvalCase {
+        EvalCase {
+            id: "test".to_string(),
+            name: "test".to_string(),
+            description: None,
+            system_prompt: String::new(),
+            user_messages: vec!["hi".to_string()],
+            expected_trajectory: None,
+            expected_response: None,
+            evaluators: vec![],
+            budget,
+            metadata: Default::default(),
+        }
+    }
+
+    #[test]
+    fn from_case_includes_duration() {
+        use crate::types::BudgetConstraints;
+
+        let case = make_eval_case(Some(BudgetConstraints {
+            max_cost: None,
+            max_tokens: None,
+            max_turns: None,
+            max_duration: Some(Duration::from_secs(30)),
+        }));
+        let guard = BudgetGuard::from_case(&case, CancellationToken::new());
+        assert!(guard.is_some());
+        let g = guard.unwrap();
+        assert_eq!(g.max_duration, Some(Duration::from_secs(30)));
+    }
+
+    #[test]
+    fn from_case_none_when_all_empty() {
+        use crate::types::BudgetConstraints;
+
+        let case = make_eval_case(Some(BudgetConstraints {
+            max_cost: None,
+            max_tokens: None,
+            max_turns: None,
+            max_duration: None,
+        }));
+        let guard = BudgetGuard::from_case(&case, CancellationToken::new());
+        assert!(guard.is_none());
     }
 }
