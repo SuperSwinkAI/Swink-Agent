@@ -25,8 +25,6 @@
 //! mcp.connect_all().await?;
 //! let tools = mcp.tools();
 //! ```
-#![forbid(unsafe_code)]
-
 mod config;
 mod connection;
 pub mod convert;

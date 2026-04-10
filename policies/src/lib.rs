@@ -18,8 +18,6 @@
 //! - **`pii`**: `PiiRedactor` — redacts personally identifiable information from assistant responses
 //! - **`content-filter`**: `ContentFilter` — keyword/regex blocklist for assistant output
 //! - **`audit`**: `AuditLogger` — records every turn to a pluggable sink
-#![forbid(unsafe_code)]
-
 #[cfg(any(feature = "prompt-guard", feature = "pii", feature = "content-filter"))]
 mod patterns;
 
