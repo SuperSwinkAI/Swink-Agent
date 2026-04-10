@@ -4,9 +4,9 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::json;
 
-use swink_agent::{
-    BashTool, ReadFileTool, WriteFileTool, schema_for, validate_schema, validate_tool_arguments,
-};
+#[cfg(feature = "builtin-tools")]
+use swink_agent::{BashTool, ReadFileTool, WriteFileTool};
+use swink_agent::{schema_for, validate_schema, validate_tool_arguments};
 
 // ─── schema_for generates valid schemas ─────────────────────────────────────
 
@@ -42,6 +42,7 @@ fn schema_for_optional_fields_not_required() {
 
 // ─── Built-in tool schemas still validate correctly ─────────────────────────
 
+#[cfg(feature = "builtin-tools")]
 #[test]
 fn bash_tool_schema_validates_valid_args() {
     use swink_agent::AgentTool;
@@ -50,6 +51,7 @@ fn bash_tool_schema_validates_valid_args() {
     assert!(validate_tool_arguments(tool.parameters_schema(), &args).is_ok());
 }
 
+#[cfg(feature = "builtin-tools")]
 #[test]
 fn bash_tool_schema_rejects_missing_command() {
     use swink_agent::AgentTool;
@@ -58,6 +60,7 @@ fn bash_tool_schema_rejects_missing_command() {
     assert!(validate_tool_arguments(tool.parameters_schema(), &args).is_err());
 }
 
+#[cfg(feature = "builtin-tools")]
 #[test]
 fn read_file_tool_schema_validates_valid_args() {
     use swink_agent::AgentTool;
@@ -66,6 +69,7 @@ fn read_file_tool_schema_validates_valid_args() {
     assert!(validate_tool_arguments(tool.parameters_schema(), &args).is_ok());
 }
 
+#[cfg(feature = "builtin-tools")]
 #[test]
 fn write_file_tool_schema_validates_valid_args() {
     use swink_agent::AgentTool;
@@ -74,6 +78,7 @@ fn write_file_tool_schema_validates_valid_args() {
     assert!(validate_tool_arguments(tool.parameters_schema(), &args).is_ok());
 }
 
+#[cfg(feature = "builtin-tools")]
 #[test]
 fn write_file_tool_schema_rejects_extra_fields() {
     use swink_agent::AgentTool;
