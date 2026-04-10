@@ -37,3 +37,93 @@ fn transfer_must_not_leak_into_no_default_features() {
          A dev-dependency is likely leaking features via Cargo unification."
     );
 }
+
+// --- artifact-store ---
+
+#[cfg(not(feature = "artifact-store"))]
+#[test]
+fn artifact_store_feature_is_off() {}
+
+#[cfg(feature = "artifact-store")]
+#[test]
+fn artifact_store_must_not_leak_into_no_default_features() {
+    panic!(
+        "artifact-store feature is enabled but should not be. \
+         A dev-dependency is likely leaking features via Cargo unification."
+    );
+}
+
+// --- artifact-tools ---
+
+#[cfg(not(feature = "artifact-tools"))]
+#[test]
+fn artifact_tools_feature_is_off() {}
+
+#[cfg(feature = "artifact-tools")]
+#[test]
+fn artifact_tools_must_not_leak_into_no_default_features() {
+    panic!(
+        "artifact-tools feature is enabled but should not be. \
+         A dev-dependency is likely leaking features via Cargo unification."
+    );
+}
+
+// --- hot-reload ---
+
+#[cfg(not(feature = "hot-reload"))]
+#[test]
+fn hot_reload_feature_is_off() {}
+
+#[cfg(feature = "hot-reload")]
+#[test]
+fn hot_reload_must_not_leak_into_no_default_features() {
+    panic!(
+        "hot-reload feature is enabled but should not be. \
+         A dev-dependency is likely leaking features via Cargo unification."
+    );
+}
+
+// --- tiktoken ---
+
+#[cfg(not(feature = "tiktoken"))]
+#[test]
+fn tiktoken_feature_is_off() {}
+
+#[cfg(feature = "tiktoken")]
+#[test]
+fn tiktoken_must_not_leak_into_no_default_features() {
+    panic!(
+        "tiktoken feature is enabled but should not be. \
+         A dev-dependency is likely leaking features via Cargo unification."
+    );
+}
+
+// --- plugins ---
+
+#[cfg(not(feature = "plugins"))]
+#[test]
+fn plugins_feature_is_off() {}
+
+#[cfg(feature = "plugins")]
+#[test]
+fn plugins_must_not_leak_into_no_default_features() {
+    panic!(
+        "plugins feature is enabled but should not be. \
+         A dev-dependency is likely leaking features via Cargo unification."
+    );
+}
+
+// --- otel ---
+
+#[cfg(not(feature = "otel"))]
+#[test]
+fn otel_feature_is_off() {}
+
+#[cfg(feature = "otel")]
+#[test]
+fn otel_must_not_leak_into_no_default_features() {
+    panic!(
+        "otel feature is enabled but should not be. \
+         A dev-dependency is likely leaking features via Cargo unification."
+    );
+}
