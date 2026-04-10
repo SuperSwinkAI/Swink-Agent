@@ -6,7 +6,7 @@
 //! Concurrent writes to the same session may corrupt the file.
 //! Callers are expected to enforce single-writer access.
 
-use std::io::{self, BufRead, Seek, Write};
+use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -181,15 +181,14 @@ where
     // Serialize overlapping rewrites of the same target within this process,
     // so the rename+replace sequence on Windows cannot race.
     let lock = lock_for_target(target);
-    let _guard = lock.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let _guard = lock
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     // Unique per write attempt: pid + monotonic counter. Two overlapping
     // rewrites of the same target inside one process must not share a temp
     // path, or they would truncate/rename each other's files.
     let seq = TMP_SEQ.fetch_add(1, Ordering::Relaxed);
-    let tmp_path = parent.join(format!(
-        ".{file_name}.tmp.{}.{seq}",
-        std::process::id()
-    ));
+    let tmp_path = parent.join(format!(".{file_name}.tmp.{}.{seq}", std::process::id()));
 
     let result: io::Result<()> = (|| {
         // `create_new` guarantees we never clobber a pre-existing temp file
@@ -239,7 +238,9 @@ fn lock_for_target(target: &Path) -> std::sync::Arc<std::sync::Mutex<()>> {
     use std::sync::{Arc, Mutex, OnceLock};
     static LOCKS: OnceLock<Mutex<HashMap<PathBuf, Arc<Mutex<()>>>>> = OnceLock::new();
     let map = LOCKS.get_or_init(|| Mutex::new(HashMap::new()));
-    let mut guard = map.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut guard = map
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     guard
         .entry(target.to_path_buf())
         .or_insert_with(|| Arc::new(Mutex::new(())))
@@ -265,32 +266,30 @@ fn append_records(
     id: &str,
     records: impl IntoIterator<Item = SessionRecord>,
 ) -> io::Result<()> {
-    let (mut meta, old_meta_line_len) = read_meta_with_line_len(path, id)?;
+    append_records_with_rewrite(path, id, records, rewrite_session_file)
+}
+
+fn append_records_with_rewrite<F>(
+    path: &Path,
+    id: &str,
+    records: impl IntoIterator<Item = SessionRecord>,
+    rewrite_fn: F,
+) -> io::Result<()>
+where
+    F: FnOnce(&Path, &SessionMeta, &[String]) -> io::Result<()>,
+{
+    let (mut meta, _) = read_meta_with_line_len(path, id)?;
     meta.updated_at = now_utc();
     meta.sequence += 1;
 
-    let new_meta_line = serde_json::to_string(&meta).map_err(io::Error::other)?;
-    let new_meta_with_newline = format!("{new_meta_line}\n");
     let record_lines = records
         .into_iter()
         .map(|record| record.to_json_line())
         .collect::<io::Result<Vec<_>>>()?;
 
-    if new_meta_with_newline.len() == old_meta_line_len {
-        let mut file = std::fs::OpenOptions::new().write(true).open(path)?;
-        file.seek(io::SeekFrom::Start(0))?;
-        file.write_all(new_meta_with_newline.as_bytes())?;
-        file.seek(io::SeekFrom::End(0))?;
-        for line in &record_lines {
-            writeln!(file, "{line}")?;
-        }
-        file.flush()?;
-        return Ok(());
-    }
-
     let (_, mut existing_lines) = read_meta_and_message_lines(path, id)?;
     existing_lines.extend(record_lines);
-    rewrite_session_file(path, &meta, &existing_lines)
+    rewrite_fn(path, &meta, &existing_lines)
 }
 
 fn find_record_line_mut<'a>(
@@ -1137,12 +1136,12 @@ mod tests {
         let store = JsonlSessionStore::new(dir.path().to_path_buf()).unwrap();
 
         let meta = fresh_meta("seq-append");
-        store.save("seq-append", &meta, &[user_msg("a", 1)]).unwrap();
+        store
+            .save("seq-append", &meta, &[user_msg("a", 1)])
+            .unwrap();
         // After save, on-disk sequence == 1. `meta` still holds 0.
 
-        store
-            .append("seq-append", &[user_msg("b", 2)])
-            .unwrap();
+        store.append("seq-append", &[user_msg("b", 2)]).unwrap();
         // After append, on-disk sequence must have advanced to 2.
 
         // Sanity: list() / load() sees the bumped sequence.
@@ -1157,6 +1156,39 @@ mod tests {
             .save("seq-append", &stale, &[user_msg("c", 3)])
             .unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
+    }
+
+    #[test]
+    fn append_rewrite_failure_preserves_existing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = JsonlSessionStore::new(dir.path().to_path_buf()).unwrap();
+
+        let meta = fresh_meta("append-atomic");
+        store
+            .save("append-atomic", &meta, &[user_msg("first", 1)])
+            .unwrap();
+
+        let path = session_path(dir.path(), "append-atomic");
+        let before = std::fs::read_to_string(&path).unwrap();
+
+        let err = append_records_with_rewrite(
+            &path,
+            "append-atomic",
+            [SessionRecord::from_message(&user_msg("second", 2), "append-atomic").unwrap()],
+            |_path, _meta, _lines| Err(io::Error::other("simulated append rewrite failure")),
+        )
+        .unwrap_err();
+        assert_eq!(err.to_string(), "simulated append rewrite failure");
+
+        let after = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(
+            before, after,
+            "failed append rewrite must not modify the live session file"
+        );
+
+        let (loaded_meta, loaded_messages) = store.load("append-atomic", None).unwrap();
+        assert_eq!(loaded_meta.sequence, 1);
+        assert_eq!(loaded_messages.len(), 1);
     }
 
     #[test]
