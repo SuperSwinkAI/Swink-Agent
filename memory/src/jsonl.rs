@@ -8,10 +8,8 @@
 
 use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 
-static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
-
+use swink_agent::atomic_fs::{atomic_write, atomic_write_unlocked, with_target_lock};
 use swink_agent::{AgentMessage, CustomMessageRegistry, LlmMessage};
 
 use crate::entry::SessionEntry;
@@ -158,109 +156,12 @@ fn read_meta_with_line_len(path: &Path, id: &str) -> io::Result<(SessionMeta, us
     Ok((meta, line_len))
 }
 
-/// Write `contents_fn` to a sibling temp file, fsync, then atomically rename
-/// over `target`. The temp file is removed on any error so a crash mid-write
-/// never leaves a zero-length or partial file at `target`.
-fn with_target_lock<T>(target: &Path, op: impl FnOnce() -> io::Result<T>) -> io::Result<T> {
-    let lock = lock_for_target(target);
-    let _guard = lock
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    op()
-}
-
-fn atomic_write_locked<F>(target: &Path, contents_fn: F) -> io::Result<()>
-where
-    F: FnOnce(&mut io::BufWriter<&std::fs::File>) -> io::Result<()>,
-{
-    let parent = target.parent().ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "target path has no parent directory",
-        )
-    })?;
-    let file_name = target.file_name().and_then(|s| s.to_str()).ok_or_else(|| {
-        io::Error::new(io::ErrorKind::InvalidInput, "target path has no file name")
-    })?;
-    // Unique per write attempt: pid + monotonic counter. Two overlapping
-    // rewrites of the same target inside one process must not share a temp
-    // path, or they would truncate/rename each other's files.
-    let seq = TMP_SEQ.fetch_add(1, Ordering::Relaxed);
-    let tmp_path = parent.join(format!(".{file_name}.tmp.{}.{seq}", std::process::id()));
-
-    let result: io::Result<()> = (|| {
-        // `create_new` guarantees we never clobber a pre-existing temp file
-        // from another writer that happened to pick the same path.
-        let file = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&tmp_path)?;
-        {
-            let mut writer = io::BufWriter::new(&file);
-            contents_fn(&mut writer)?;
-            writer.flush()?;
-        }
-        file.sync_all()?;
-        drop(file);
-        rename_replacing(&tmp_path, target)
-    })();
-
-    if result.is_err() {
-        let _ = std::fs::remove_file(&tmp_path);
-    }
-    result
-}
-
-/// Write `contents_fn` to a sibling temp file, fsync, then atomically rename
-/// over `target`. The temp file is removed on any error so a crash mid-write
-/// never leaves a zero-length or partial file at `target`.
-fn atomic_write<F>(target: &Path, contents_fn: F) -> io::Result<()>
-where
-    F: FnOnce(&mut io::BufWriter<&std::fs::File>) -> io::Result<()>,
-{
-    with_target_lock(target, || atomic_write_locked(target, contents_fn))
-}
-
-/// Rename `from` to `to`, replacing `to` if it already exists.
-///
-/// On Unix, `std::fs::rename` is an atomic replace. On Windows it fails with
-/// `ERROR_ALREADY_EXISTS` when the destination is present, so we remove it
-/// first. To keep concurrent rewrites of the same target safe on Windows,
-/// callers must serialize via [`lock_for_target`] around the whole
-/// write+rename sequence.
-fn rename_replacing(from: &Path, to: &Path) -> io::Result<()> {
-    #[cfg(windows)]
-    if to.exists() {
-        std::fs::remove_file(to)?;
-    }
-    std::fs::rename(from, to)
-}
-
-/// Per-target serialization guard. Two overlapping atomic rewrites of the
-/// same path inside one process must not race on the final rename step —
-/// on Windows this is especially important because the replace sequence is
-/// not a single kernel operation. We key a global mutex map on the target
-/// path so writes to different sessions remain fully concurrent.
-fn lock_for_target(target: &Path) -> std::sync::Arc<std::sync::Mutex<()>> {
-    use std::collections::HashMap;
-    use std::sync::{Arc, Mutex, OnceLock};
-    static LOCKS: OnceLock<Mutex<HashMap<PathBuf, Arc<Mutex<()>>>>> = OnceLock::new();
-    let map = LOCKS.get_or_init(|| Mutex::new(HashMap::new()));
-    let mut guard = map
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    guard
-        .entry(target.to_path_buf())
-        .or_insert_with(|| Arc::new(Mutex::new(())))
-        .clone()
-}
-
 fn rewrite_session_file_locked(
     path: &Path,
     meta: &SessionMeta,
     lines: &[String],
 ) -> io::Result<()> {
-    atomic_write_locked(path, |writer| {
+    atomic_write_unlocked(path, |writer| {
         serde_json::to_writer(&mut *writer, meta).map_err(io::Error::other)?;
         writeln!(writer)?;
 
@@ -301,7 +202,7 @@ fn write_messages_locked(
     messages: &[AgentMessage],
     id: &str,
 ) -> io::Result<()> {
-    atomic_write_locked(path, |writer| {
+    atomic_write_unlocked(path, |writer| {
         serde_json::to_writer(&mut *writer, meta).map_err(io::Error::other)?;
         writeln!(writer)?;
 
@@ -687,7 +588,7 @@ impl JsonlSessionStore {
             let mut write_meta = meta.clone();
             write_meta.sequence += 1;
 
-            atomic_write_locked(&path, |writer| {
+            atomic_write_unlocked(&path, |writer| {
                 // First line: metadata
                 serde_json::to_writer(&mut *writer, &write_meta).map_err(io::Error::other)?;
                 writeln!(writer)?;
