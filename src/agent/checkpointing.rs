@@ -127,7 +127,8 @@ impl Agent {
             &self.state.model.model_id,
             &self.state.messages,
         )
-        .with_pending_messages(llm_messages_from_queue(&self.follow_up_queue));
+        .with_pending_messages(llm_messages_from_queue(&self.follow_up_queue))
+        .with_pending_steering_messages(llm_messages_from_queue(&self.steering_queue));
 
         let s = self
             .session_state
@@ -192,6 +193,9 @@ impl Agent {
 
         for msg in checkpoint.restore_pending_messages() {
             self.follow_up(msg);
+        }
+        for msg in checkpoint.restore_pending_steering_messages() {
+            self.steer(msg);
         }
 
         tracing::info!(
@@ -297,6 +301,136 @@ mod tests {
             .downcast_ref::<Tagged>()
             .expect("custom message should be restored via registry");
         assert_eq!(restored.value, "preserved");
+    }
+
+    #[tokio::test]
+    async fn pause_captures_both_steering_and_follow_up_queues() {
+        use crate::types::ContentBlock;
+
+        let mut agent = make_agent(None);
+        // Give the agent a message so it's valid to resume
+        agent
+            .state
+            .messages
+            .push(AgentMessage::Llm(LlmMessage::User(UserMessage {
+                content: vec![ContentBlock::Text {
+                    text: "hi".to_string(),
+                }],
+                timestamp: 0,
+                cache_hint: None,
+            })));
+
+        // Queue a steering message and a follow-up message
+        agent.steer(AgentMessage::Llm(LlmMessage::User(UserMessage {
+            content: vec![ContentBlock::Text {
+                text: "steering-msg".to_string(),
+            }],
+            timestamp: 1,
+            cache_hint: None,
+        })));
+        agent.follow_up(AgentMessage::Llm(LlmMessage::User(UserMessage {
+            content: vec![ContentBlock::Text {
+                text: "followup-msg".to_string(),
+            }],
+            timestamp: 2,
+            cache_hint: None,
+        })));
+
+        // Simulate a running loop so pause() doesn't return None
+        agent
+            .loop_active
+            .store(true, std::sync::atomic::Ordering::Release);
+
+        let checkpoint = agent.pause().expect("agent should be running");
+
+        // Verify both queues are captured separately
+        assert_eq!(
+            checkpoint.pending_messages.len(),
+            1,
+            "follow-up queue should be captured"
+        );
+        assert_eq!(
+            checkpoint.pending_steering_messages.len(),
+            1,
+            "steering queue should be captured"
+        );
+
+        // Verify the content is correct
+        match &checkpoint.pending_messages[0] {
+            LlmMessage::User(u) => match &u.content[0] {
+                ContentBlock::Text { text } => assert_eq!(text, "followup-msg"),
+                _ => panic!("expected text content"),
+            },
+            _ => panic!("expected user message"),
+        }
+        match &checkpoint.pending_steering_messages[0] {
+            LlmMessage::User(u) => match &u.content[0] {
+                ContentBlock::Text { text } => assert_eq!(text, "steering-msg"),
+                _ => panic!("expected text content"),
+            },
+            _ => panic!("expected user message"),
+        }
+    }
+
+    #[tokio::test]
+    async fn restore_from_loop_checkpoint_routes_steering_to_steering_queue() {
+        use crate::checkpoint::LoopCheckpoint;
+        use crate::types::ContentBlock;
+
+        let messages = vec![AgentMessage::Llm(LlmMessage::User(UserMessage {
+            content: vec![ContentBlock::Text {
+                text: "hi".to_string(),
+            }],
+            timestamp: 0,
+            cache_hint: None,
+        }))];
+
+        let cp = LoopCheckpoint::new("system", "mock", "mock-model", &messages)
+            .with_pending_messages(vec![LlmMessage::User(UserMessage {
+                content: vec![ContentBlock::Text {
+                    text: "followup".to_string(),
+                }],
+                timestamp: 1,
+                cache_hint: None,
+            })])
+            .with_pending_steering_messages(vec![LlmMessage::User(UserMessage {
+                content: vec![ContentBlock::Text {
+                    text: "steering".to_string(),
+                }],
+                timestamp: 2,
+                cache_hint: None,
+            })]);
+
+        let mut agent = make_agent(None);
+        agent.restore_from_loop_checkpoint(&cp).unwrap();
+
+        // Verify steering went to steering queue, follow-up to follow-up queue
+        let steering = agent
+            .steering_queue
+            .lock()
+            .unwrap();
+        let follow_up = agent
+            .follow_up_queue
+            .lock()
+            .unwrap();
+
+        assert_eq!(steering.len(), 1, "steering queue should have 1 message");
+        assert_eq!(follow_up.len(), 1, "follow-up queue should have 1 message");
+
+        match &steering[0] {
+            AgentMessage::Llm(LlmMessage::User(u)) => match &u.content[0] {
+                ContentBlock::Text { text } => assert_eq!(text, "steering"),
+                _ => panic!("expected text"),
+            },
+            _ => panic!("expected user message in steering queue"),
+        }
+        match &follow_up[0] {
+            AgentMessage::Llm(LlmMessage::User(u)) => match &u.content[0] {
+                ContentBlock::Text { text } => assert_eq!(text, "followup"),
+                _ => panic!("expected text"),
+            },
+            _ => panic!("expected user message in follow-up queue"),
+        }
     }
 
     #[tokio::test]
