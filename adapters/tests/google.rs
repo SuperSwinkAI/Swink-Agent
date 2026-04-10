@@ -558,6 +558,108 @@ async fn gemini_max_tokens_after_tool_call_reports_length() {
     );
 }
 
+/// Regression test for #271: when Gemini rewrites `function_call.args` between
+/// chunks (non-prefix change), the concatenated `ToolCallDelta` events must
+/// produce the correct final JSON, not a corrupted `old + new` concatenation.
+#[tokio::test]
+async fn gemini_non_prefix_arg_rewrite_produces_correct_json() {
+    // Chunk 1: initial args snapshot with key "a"
+    // Chunk 2: rewritten args snapshot with key "b" (NOT a prefix extension)
+    // Chunk 3: finish
+    let body = [
+        r#"data: {"candidates":[{"content":{"parts":[{"functionCall":{"id":"c1","name":"do_stuff","args":{"a":1}}}]}}]}"#,
+        "",
+        r#"data: {"candidates":[{"content":{"parts":[{"functionCall":{"id":"c1","name":"do_stuff","args":{"b":2}}}]}}]}"#,
+        "",
+        r#"data: {"candidates":[{"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":5,"candidatesTokenCount":5,"totalTokenCount":10}}"#,
+        "",
+        "data: [DONE]",
+        "",
+    ]
+    .join("\n");
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path(
+            "/v1beta/models/gemini-3-flash-preview:streamGenerateContent",
+        ))
+        .and(query_param("alt", "sse"))
+        .respond_with(sse_response(&body))
+        .mount(&server)
+        .await;
+
+    let stream_fn = GeminiStreamFn::new(server.uri(), "test-key", ApiVersion::V1beta);
+    let events = collect_events(&stream_fn).await;
+
+    let arguments: String = events
+        .iter()
+        .filter_map(|event| match event {
+            AssistantMessageEvent::ToolCallDelta { delta, .. } => Some(delta.as_str()),
+            _ => None,
+        })
+        .collect();
+
+    // The concatenation of all deltas must be valid JSON matching the LAST
+    // snapshot — not a corrupted merge of old + new.
+    let parsed: serde_json::Value =
+        serde_json::from_str(&arguments).expect("concatenated deltas must be valid JSON");
+    assert_eq!(
+        parsed,
+        serde_json::json!({"b": 2}),
+        "final args must match the last Gemini snapshot, got: {arguments}"
+    );
+}
+
+/// Verify that monotonic prefix-growth of `function_call.args` across multiple
+/// chunks still produces the correct concatenated JSON after the deferred-delta
+/// change for #271.
+#[tokio::test]
+async fn gemini_prefix_growth_args_produce_correct_json() {
+    // Chunk 1: partial args  {"city":"Pa
+    // Chunk 2: extended args {"city":"Paris"}
+    // Chunk 3: finish
+    let body = [
+        r#"data: {"candidates":[{"content":{"parts":[{"functionCall":{"id":"c1","name":"get_weather","args":{"city":"Paris"}}}]}}]}"#,
+        "",
+        r#"data: {"candidates":[{"content":{"parts":[{"functionCall":{"id":"c1","name":"get_weather","args":{"city":"Paris","unit":"C"}}}]}}]}"#,
+        "",
+        r#"data: {"candidates":[{"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":5,"candidatesTokenCount":5,"totalTokenCount":10}}"#,
+        "",
+        "data: [DONE]",
+        "",
+    ]
+    .join("\n");
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path(
+            "/v1beta/models/gemini-3-flash-preview:streamGenerateContent",
+        ))
+        .and(query_param("alt", "sse"))
+        .respond_with(sse_response(&body))
+        .mount(&server)
+        .await;
+
+    let stream_fn = GeminiStreamFn::new(server.uri(), "test-key", ApiVersion::V1beta);
+    let events = collect_events(&stream_fn).await;
+
+    let arguments: String = events
+        .iter()
+        .filter_map(|event| match event {
+            AssistantMessageEvent::ToolCallDelta { delta, .. } => Some(delta.as_str()),
+            _ => None,
+        })
+        .collect();
+
+    let parsed: serde_json::Value =
+        serde_json::from_str(&arguments).expect("concatenated deltas must be valid JSON");
+    assert_eq!(
+        parsed,
+        serde_json::json!({"city": "Paris", "unit": "C"}),
+        "final args must match the last snapshot, got: {arguments}"
+    );
+}
+
 /// When the stream ends without an explicit finish reason the open text block
 /// must be closed by the finalization path (not silently dropped).
 #[tokio::test]

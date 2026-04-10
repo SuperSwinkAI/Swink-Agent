@@ -189,7 +189,10 @@ struct GeminiUsageMetadata {
 struct GeminiToolCallState {
     /// Harness-side content index returned by [`BlockAccumulator::open_tool_call`].
     content_index: usize,
-    /// Accumulated JSON arguments for incremental delta diffing.
+    /// Latest full arguments snapshot from Gemini.  Updated on every chunk but
+    /// only emitted as a single [`AssistantMessageEvent::ToolCallDelta`] at
+    /// finalization to avoid corrupted concatenation when Gemini rewrites
+    /// (non-prefix-extends) the snapshot between chunks.
     arguments: String,
 }
 
@@ -560,7 +563,8 @@ fn parse_sse_stream(
         "Google request cancelled",
         |item, state| match item {
             None => {
-                let mut events = crate::finalize::finalize_blocks(state);
+                let mut events = state.emit_final_tool_deltas();
+                events.extend(crate::finalize::finalize_blocks(state));
                 if state.stop_reason.is_none() {
                     events.push(AssistantMessageEvent::error_network(
                         "Google stream ended unexpectedly",
@@ -575,7 +579,8 @@ fn parse_sse_stream(
                 SseAction::Done(events)
             }
             Some(SseLine::Done) => {
-                let mut events = crate::finalize::finalize_blocks(state);
+                let mut events = state.emit_final_tool_deltas();
+                events.extend(crate::finalize::finalize_blocks(state));
                 events.push(AssistantMessageEvent::Done {
                     stop_reason: state.stop_reason.unwrap_or({
                         if state.saw_tool_call {
@@ -606,7 +611,8 @@ fn parse_sse_stream(
                 }
             }
             Some(SseLine::TransportError(message)) => {
-                let mut events = crate::finalize::finalize_blocks(state);
+                let mut events = state.emit_final_tool_deltas();
+                events.extend(crate::finalize::finalize_blocks(state));
                 events.push(AssistantMessageEvent::error_network(format!(
                     "Google {message}",
                 )));
@@ -718,26 +724,16 @@ fn process_function_call(
         .get_mut(&part_index)
         .expect("just inserted or already present");
 
+    // Gemini sends full argument snapshots, not deltas.  We buffer the latest
+    // snapshot and defer delta emission to finalization.  Emitting deltas
+    // inline corrupts `accumulate_message` when Gemini rewrites the snapshot
+    // (non-prefix change) between chunks, because `partial_json` is
+    // append-only.  See issue #271.
     let serialized_args = match function_call.args {
         Value::Null => String::new(),
         value => value.to_string(),
     };
-    if serialized_args.len() > entry.arguments.len()
-        && serialized_args.starts_with(&entry.arguments)
-    {
-        let delta = serialized_args[entry.arguments.len()..].to_string();
-        if !delta.is_empty() {
-            events.push(AssistantMessageEvent::ToolCallDelta {
-                content_index: entry.content_index,
-                delta: delta.clone(),
-            });
-            entry.arguments.push_str(&delta);
-        }
-    } else if !serialized_args.is_empty() && serialized_args != entry.arguments {
-        events.push(AssistantMessageEvent::ToolCallDelta {
-            content_index: entry.content_index,
-            delta: serialized_args.clone(),
-        });
+    if !serialized_args.is_empty() {
         entry.arguments = serialized_args;
     }
 }
@@ -747,6 +743,23 @@ fn map_finish_reason(finish_reason: &str, saw_tool_call: bool) -> StopReason {
         "MAX_TOKENS" => StopReason::Length,
         _ if saw_tool_call => StopReason::ToolUse,
         _ => StopReason::Stop,
+    }
+}
+
+impl GeminiStreamState {
+    /// Emit a single [`AssistantMessageEvent::ToolCallDelta`] per buffered tool
+    /// call carrying the complete final arguments snapshot.  Must be called
+    /// **before** [`finalize_blocks`](crate::finalize::finalize_blocks) (which
+    /// drains and clears the tool-call map).
+    fn emit_final_tool_deltas(&self) -> Vec<AssistantMessageEvent> {
+        self.tool_calls
+            .values()
+            .filter(|tc| !tc.arguments.is_empty())
+            .map(|tc| AssistantMessageEvent::ToolCallDelta {
+                content_index: tc.content_index,
+                delta: tc.arguments.clone(),
+            })
+            .collect()
     }
 }
 
