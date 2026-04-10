@@ -27,7 +27,7 @@ jobs:
 
       - run: cargo clippy --workspace -- -D warnings
 
-      - uses: cargo-bins/cargo-binstall@main
+      - uses: cargo-bins/cargo-binstall@v1.17.9
 
       - run: cargo binstall --no-confirm cargo-nextest
 
@@ -53,7 +53,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - uses: cargo-bins/cargo-binstall@main
+      - uses: cargo-bins/cargo-binstall@v1.17.9
 
       - run: cargo binstall --no-confirm cargo-hack
 
@@ -75,7 +75,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - uses: cargo-bins/cargo-binstall@main
+      - uses: cargo-bins/cargo-binstall@v1.17.9
 
       - run: cargo binstall --no-confirm cargo-semver-checks
 
