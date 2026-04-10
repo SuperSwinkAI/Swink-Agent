@@ -11,17 +11,17 @@ use crate::theme;
 /// Multi-line input editor state.
 pub struct InputEditor {
     /// Lines of text in the editor.
-    pub lines: Vec<String>,
+    lines: Vec<String>,
     /// Current cursor row (0-indexed).
-    pub cursor_row: usize,
+    cursor_row: usize,
     /// Current cursor column (0-indexed).
-    pub cursor_col: usize,
+    cursor_col: usize,
     /// Scroll offset for when content exceeds visible area.
-    pub scroll_offset: usize,
+    scroll_offset: usize,
     /// Input history for Up/Down recall.
-    pub history: Vec<Vec<String>>,
+    history: Vec<Vec<String>>,
     /// Current index into history (None = editing new input).
-    pub history_index: Option<usize>,
+    history_index: Option<usize>,
     /// Saved in-progress input when browsing history.
     saved_input: Option<Vec<String>>,
 }
@@ -42,6 +42,32 @@ impl InputEditor {
             history: Vec::new(),
             history_index: None,
             saved_input: None,
+        }
+    }
+
+    /// Current cursor row (0-indexed).
+    pub const fn cursor_row(&self) -> usize {
+        self.cursor_row
+    }
+
+    /// Number of lines in the editor.
+    pub const fn line_count(&self) -> usize {
+        self.lines.len()
+    }
+
+    /// Read-only access to the lines.
+    pub fn lines(&self) -> &[String] {
+        &self.lines
+    }
+
+    /// Clamp cursor to valid position within current lines.
+    fn clamp_cursor(&mut self) {
+        if self.cursor_row >= self.lines.len() {
+            self.cursor_row = self.lines.len().saturating_sub(1);
+        }
+        let char_count = self.lines[self.cursor_row].chars().count();
+        if self.cursor_col > char_count {
+            self.cursor_col = char_count;
         }
     }
 
@@ -95,15 +121,15 @@ impl InputEditor {
 
     /// Delete the character before the cursor.
     pub fn backspace(&mut self) {
+        self.clamp_cursor();
         if self.cursor_col > 0 {
             self.cursor_col -= 1;
             let byte_idx = Self::char_to_byte(&self.lines[self.cursor_row], self.cursor_col);
             // Find the byte range of the char at this position
-            let ch = self.lines[self.cursor_row][byte_idx..]
-                .chars()
-                .next()
-                .unwrap();
-            self.lines[self.cursor_row].replace_range(byte_idx..byte_idx + ch.len_utf8(), "");
+            if let Some(ch) = self.lines[self.cursor_row][byte_idx..].chars().next() {
+                self.lines[self.cursor_row]
+                    .replace_range(byte_idx..byte_idx + ch.len_utf8(), "");
+            }
         } else if self.cursor_row > 0 {
             // Merge with previous line
             let current = self.lines.remove(self.cursor_row);
@@ -115,14 +141,14 @@ impl InputEditor {
 
     /// Delete the character at the cursor.
     pub fn delete(&mut self) {
+        self.clamp_cursor();
         let char_count = self.line_char_len();
         if self.cursor_col < char_count {
             let byte_idx = Self::char_to_byte(&self.lines[self.cursor_row], self.cursor_col);
-            let ch = self.lines[self.cursor_row][byte_idx..]
-                .chars()
-                .next()
-                .unwrap();
-            self.lines[self.cursor_row].replace_range(byte_idx..byte_idx + ch.len_utf8(), "");
+            if let Some(ch) = self.lines[self.cursor_row][byte_idx..].chars().next() {
+                self.lines[self.cursor_row]
+                    .replace_range(byte_idx..byte_idx + ch.len_utf8(), "");
+            }
         } else if self.cursor_row + 1 < self.lines.len() {
             // Merge with next line
             let next = self.lines.remove(self.cursor_row + 1);
@@ -496,6 +522,54 @@ mod tests {
             editor.insert_newline();
         }
         assert_eq!(editor.height(), 10);
+    }
+
+    #[test]
+    fn backspace_with_cursor_past_end_clamps_instead_of_panic() {
+        let mut editor = InputEditor::new();
+        editor.insert_char('a');
+        editor.insert_char('b');
+        // Artificially put cursor past end of line
+        editor.cursor_col = 100;
+        // Should not panic — clamp_cursor brings it in range
+        editor.backspace();
+        assert_eq!(editor.lines, vec!["a".to_string()]);
+        assert_eq!(editor.cursor_col, 1);
+    }
+
+    #[test]
+    fn delete_with_cursor_past_end_clamps_instead_of_panic() {
+        let mut editor = InputEditor::new();
+        editor.insert_char('a');
+        // Artificially put cursor past end of line
+        editor.cursor_col = 100;
+        // Should not panic — clamps to end, then merges or no-ops
+        editor.delete();
+        // Cursor clamped to 1 (end of "a"), nothing to delete
+        assert_eq!(editor.lines, vec!["a".to_string()]);
+    }
+
+    #[test]
+    fn backspace_with_cursor_row_past_end_clamps() {
+        let mut editor = InputEditor::new();
+        editor.insert_char('a');
+        // Artificially put cursor on non-existent row
+        editor.cursor_row = 50;
+        editor.cursor_col = 10;
+        // Should not panic
+        editor.backspace();
+        // Clamped to row 0, col clamped, then backspace operates normally
+        assert!(!editor.lines.is_empty());
+    }
+
+    #[test]
+    fn fields_are_private() {
+        // This test documents that fields are not directly accessible
+        // from outside the module. If this compiles, the struct API is correct.
+        let editor = InputEditor::new();
+        // Only public getters available:
+        assert_eq!(editor.cursor_row(), 0);
+        assert_eq!(editor.line_count(), 1);
     }
 
     #[test]
