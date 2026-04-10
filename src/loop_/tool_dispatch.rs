@@ -151,6 +151,7 @@ pub async fn execute_tools_concurrently(
                 PreDispatchVerdict, ToolDispatchContext, run_pre_dispatch_policies,
             };
 
+            let execution_root = std::env::current_dir().ok();
             let state_snapshot = {
                 let guard = config
                     .session_state
@@ -162,6 +163,7 @@ pub async fn execute_tools_concurrently(
                 tool_name: &tc.name,
                 tool_call_id: &tc.id,
                 arguments: &mut effective_arguments,
+                execution_root: execution_root.as_deref(),
                 state: &state_snapshot,
             };
             match run_pre_dispatch_policies(&config.pre_dispatch_policies, &mut dispatch_ctx) {

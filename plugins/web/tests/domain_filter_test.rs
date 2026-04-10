@@ -19,6 +19,7 @@ fn make_dispatch_ctx<'a>(
         tool_name,
         tool_call_id,
         arguments: args,
+        execution_root: None,
         state,
     }
 }

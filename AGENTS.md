@@ -63,6 +63,7 @@ MSRV **1.88** (edition 2024). Workspace deps centralized in root `Cargo.toml`.
 - Two verdict enums: `PolicyVerdict` (Continue/Stop/Inject) and `PreDispatchVerdict` (+ Skip). Compile-time enforcement that Skip is only valid in PreDispatch.
 - Slot runner uses `AssertUnwindSafe` + `catch_unwind` — traits only need `Send + Sync`, not `UnwindSafe`.
 - Empty policy vecs = zero overhead, no allocation. Default is anything-goes.
+- `ToolDispatchContext.execution_root` carries the tool's working directory when known. Policies that validate relative paths must reject them when this context is absent instead of assuming lexical containment.
 - **All policy implementations live in `swink-agent-policies` crate** — core only defines traits and runners.
 - Old fields removed from `AgentLoopConfig`: `budget_guard`, `loop_policy`, `post_turn_hook`, `tool_validator`, `tool_call_transformer`. Replaced by 4 policy vecs.
 - `PolicyContext.new_messages` contains only messages added since the last evaluation for that slot. PreTurn: pending batch (tracked via `new_messages_start` index before append). PostTurn/PostLoop/PreDispatch: `&[]` (current-turn data is in `TurnPolicyContext`/`ToolPolicyContext`). This is a slice borrow (zero-copy), not a clone.
@@ -78,6 +79,7 @@ MSRV **1.88** (edition 2024). Workspace deps centralized in root `Cargo.toml`.
 - Stateful policies (e.g., `LoopDetectionPolicy`) use interior mutability (`Mutex`) — trait takes `&self`.
 - `CheckpointPolicy` bridges sync/async via `tokio::spawn` fire-and-forget. Captures `Handle::current()` at construction.
 - `SandboxPolicy` checks configured field names (default: `["path", "file_path", "file"]`) — Skip with error, no silent rewriting.
+- `SandboxPolicy` must resolve checked paths against a canonical allowed root plus the `ToolDispatchContext.execution_root`; lexical `starts_with` checks are insufficient because relative paths and symlinked parents can escape the sandbox.
 - `PromptInjectionGuard` implements both `PreTurnPolicy` and `PostTurnPolicy` — single struct, dual trait.
 - `PiiRedactor` Inject verdict constructs `AgentMessage::Llm(LlmMessage::Assistant(...))` preserving original metadata.
 - `ContentFilter` converts keywords to regex at construction time (with `` for whole-word, `(?i)` for case-insensitive).

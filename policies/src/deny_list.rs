@@ -56,6 +56,7 @@ mod tests {
             tool_name,
             tool_call_id: "id1",
             arguments: args,
+            execution_root: None,
             state,
         }
     }

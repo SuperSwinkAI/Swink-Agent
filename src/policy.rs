@@ -18,6 +18,7 @@
 #![forbid(unsafe_code)]
 
 use std::panic::AssertUnwindSafe;
+use std::path::Path;
 use std::sync::Arc;
 
 use tracing::{debug, warn};
@@ -98,6 +99,8 @@ pub struct ToolDispatchContext<'a> {
     pub tool_call_id: &'a str,
     /// Mutable reference to tool call arguments (policies may rewrite them).
     pub arguments: &'a mut serde_json::Value,
+    /// Working directory the tool will resolve relative paths against, when known.
+    pub execution_root: Option<&'a Path>,
     /// Read-only access to the session state.
     pub state: &'a crate::SessionState,
 }
@@ -107,6 +110,7 @@ impl std::fmt::Debug for ToolDispatchContext<'_> {
         f.debug_struct("ToolDispatchContext")
             .field("tool_name", &self.tool_name)
             .field("tool_call_id", &self.tool_call_id)
+            .field("execution_root", &self.execution_root)
             .field("arguments", &"<redacted>")
             .finish()
     }
@@ -483,6 +487,7 @@ mod tests {
             tool_name: "test_tool",
             tool_call_id: "id1",
             arguments: args,
+            execution_root: None,
             state,
         }
     }
@@ -717,6 +722,7 @@ mod tests {
             tool_name: "write_file",
             tool_call_id: "call-123",
             arguments: &mut args,
+            execution_root: None,
             state: &state,
         };
         assert_eq!(ctx.tool_name, "write_file");
