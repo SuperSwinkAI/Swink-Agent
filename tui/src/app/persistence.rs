@@ -2,7 +2,7 @@
 
 use std::io;
 
-use swink_agent::{AgentMessage, ContentBlock, LlmMessage};
+use swink_agent::{AgentMessage, ContentBlock, LlmMessage, StopReason};
 use swink_agent_memory::now_utc;
 use tracing::{info, warn};
 
@@ -90,10 +90,22 @@ impl App {
                             ));
                         }
                         AgentMessage::Llm(LlmMessage::Assistant(assistant)) => {
-                            self.messages.push(DisplayMessage::new(
-                                MessageRole::Assistant,
-                                ContentBlock::extract_text(&assistant.content),
-                            ));
+                            let text = ContentBlock::extract_text(&assistant.content);
+                            let (role, content) =
+                                if assistant.stop_reason == StopReason::Error {
+                                    let content = if text.is_empty() {
+                                        assistant
+                                            .error_message
+                                            .clone()
+                                            .unwrap_or_default()
+                                    } else {
+                                        text
+                                    };
+                                    (MessageRole::Error, content)
+                                } else {
+                                    (MessageRole::Assistant, text)
+                                };
+                            self.messages.push(DisplayMessage::new(role, content));
                         }
                         AgentMessage::Llm(LlmMessage::ToolResult(tool_result)) => {
                             let content = ContentBlock::extract_text(&tool_result.content);
