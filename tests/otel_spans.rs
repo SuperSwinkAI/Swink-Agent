@@ -280,7 +280,7 @@ async fn otel_spans_exclude_content() {
 #[tokio::test]
 async fn otel_coexists_with_metrics_collector() {
     use std::sync::atomic::{AtomicBool, Ordering};
-    use swink_agent::metrics::{MetricsCollector, TurnMetrics};
+    use swink_agent::{MetricsCollector, TurnMetrics};
 
     struct FlagCollector(AtomicBool);
 

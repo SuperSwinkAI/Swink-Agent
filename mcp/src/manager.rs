@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use swink_agent::AgentEvent;
-use swink_agent::tool::AgentTool;
+use swink_agent::AgentTool;
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::warn;
 

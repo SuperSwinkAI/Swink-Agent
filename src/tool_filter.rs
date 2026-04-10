@@ -7,7 +7,7 @@
 //! # Example
 //!
 //! ```
-//! use swink_agent::tool_filter::{ToolFilter, ToolPattern};
+//! use swink_agent::{ToolFilter, ToolPattern};
 //!
 //! let filter = ToolFilter::new()
 //!     .with_allowed(vec![ToolPattern::parse("read_*")])

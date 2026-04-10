@@ -1,8 +1,7 @@
 use std::collections::HashSet;
 
 use regex::Regex;
-use swink_agent::policy::{PolicyContext, PolicyVerdict, PostTurnPolicy, TurnPolicyContext};
-use swink_agent::types::ContentBlock;
+use swink_agent::{ContentBlock, PolicyContext, PolicyVerdict, PostTurnPolicy, TurnPolicyContext};
 
 /// `PostTurnPolicy` that detects known prompt injection patterns in web content.
 ///

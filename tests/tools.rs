@@ -4,8 +4,7 @@ use serde_json::json;
 use tokio_util::sync::CancellationToken;
 
 use swink_agent::ContentBlock;
-use swink_agent::tool::AgentTool;
-use swink_agent::tools::{BashTool, ReadFileTool, WriteFileTool};
+use swink_agent::{AgentTool, BashTool, ReadFileTool, WriteFileTool};
 
 // Cross-platform `sleep N seconds` command string for BashTool tests.
 fn sleep_command(seconds: u32) -> String {

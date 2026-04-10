@@ -16,10 +16,9 @@ use tracing::error;
 
 use swink_agent::AgentTool;
 use swink_agent::ContentBlock;
-use swink_agent::stream::AssistantMessageEvent;
-use swink_agent::types::{
-    AssistantMessage as HarnessAssistantMessage, Cost, StopReason, ToolResultMessage, Usage,
-    UserMessage,
+use swink_agent::{
+    AssistantMessage as HarnessAssistantMessage, AssistantMessageEvent, Cost, StopReason,
+    ToolResultMessage, Usage, UserMessage,
 };
 
 use crate::convert::{MessageConverter, extract_tool_schemas};

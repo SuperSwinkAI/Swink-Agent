@@ -14,9 +14,10 @@ use tracing::{debug, error, warn};
 #[cfg(feature = "gemma4")]
 use uuid::Uuid;
 
-use swink_agent::block_accumulator::{BlockAccumulator, finalize_blocks};
-use swink_agent::stream::{AssistantMessageEvent, StreamFn, StreamOptions};
-use swink_agent::types::{AgentContext, Cost, ModelSpec, StopReason, Usage};
+use swink_agent::{
+    AgentContext, AssistantMessageEvent, BlockAccumulator, Cost, ModelSpec, StopReason, StreamFn,
+    StreamOptions, Usage, finalize_blocks,
+};
 
 use crate::loader::LoaderState;
 use crate::model::LocalModel;

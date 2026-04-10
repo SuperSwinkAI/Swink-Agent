@@ -7,8 +7,7 @@ use std::sync::Arc;
 use serde_json::json;
 use tokio_util::sync::CancellationToken;
 
-use swink_agent::plugin::{NamespacedTool, PluginRegistry};
-use swink_agent::tool::AgentTool;
+use swink_agent::{AgentTool, NamespacedTool, PluginRegistry};
 
 mod common;
 use common::{MockPlugin, MockTool};

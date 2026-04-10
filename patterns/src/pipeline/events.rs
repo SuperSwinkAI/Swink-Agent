@@ -3,7 +3,7 @@
 use std::time::Duration;
 
 use swink_agent::Emission;
-use swink_agent::types::Usage;
+use swink_agent::Usage;
 
 use super::types::PipelineId;
 

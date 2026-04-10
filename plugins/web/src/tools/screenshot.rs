@@ -6,8 +6,7 @@ use serde_json::Value;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
-use swink_agent::types::{ContentBlock, ImageSource};
-use swink_agent::{AgentTool, AgentToolResult, ToolFuture};
+use swink_agent::{AgentTool, AgentToolResult, ContentBlock, ImageSource, ToolFuture};
 
 use crate::playwright::{PlaywrightBridge, PlaywrightError, Viewport};
 

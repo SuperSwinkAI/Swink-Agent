@@ -2,8 +2,7 @@
 
 use rmcp::model::{CallToolResult, Content, RawContent, ResourceContents};
 use serde_json::Value;
-use swink_agent::tool::AgentToolResult;
-use swink_agent::types::ContentBlock;
+use swink_agent::{AgentToolResult, ContentBlock};
 
 /// Convert an `rmcp` `Content` item to a `swink-agent` `ContentBlock`.
 pub fn content_to_block(content: &Content) -> ContentBlock {
@@ -13,7 +12,7 @@ pub fn content_to_block(content: &Content) -> ContentBlock {
             text: text.text.clone(),
         },
         RawContent::Image(image) => ContentBlock::Image {
-            source: swink_agent::types::ImageSource::Base64 {
+            source: swink_agent::ImageSource::Base64 {
                 data: image.data.clone(),
                 media_type: image.mime_type.clone(),
             },

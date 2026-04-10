@@ -1,4 +1,4 @@
-use swink_agent::policy::{PreDispatchPolicy, PreDispatchVerdict, ToolDispatchContext};
+use swink_agent::{PreDispatchPolicy, PreDispatchVerdict, ToolDispatchContext};
 use url::Url;
 
 use crate::domain::DomainFilter;

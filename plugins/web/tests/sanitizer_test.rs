@@ -1,7 +1,7 @@
 use swink_agent::SessionState;
-use swink_agent::policy::{PolicyContext, PolicyVerdict, PostTurnPolicy, TurnPolicyContext};
-use swink_agent::types::{
-    AssistantMessage, ContentBlock, Cost, ModelSpec, StopReason, ToolResultMessage, Usage,
+use swink_agent::{
+    AssistantMessage, ContentBlock, Cost, ModelSpec, PolicyContext, PolicyVerdict, PostTurnPolicy,
+    StopReason, ToolResultMessage, TurnPolicyContext, Usage,
 };
 use swink_agent_plugin_web::policy::ContentSanitizerPolicy;
 

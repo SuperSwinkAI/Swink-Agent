@@ -43,7 +43,7 @@ fn schema_for_optional_fields_not_required() {
 #[cfg(feature = "builtin-tools")]
 #[test]
 fn bash_tool_schema_validates_valid_args() {
-    use swink_agent::{AgentTool, tools::BashTool};
+    use swink_agent::{AgentTool, BashTool};
     let tool = BashTool::new();
     let args = json!({"command": "echo hello"});
     assert!(validate_tool_arguments(tool.parameters_schema(), &args).is_ok());
@@ -52,7 +52,7 @@ fn bash_tool_schema_validates_valid_args() {
 #[cfg(feature = "builtin-tools")]
 #[test]
 fn bash_tool_schema_rejects_missing_command() {
-    use swink_agent::{AgentTool, tools::BashTool};
+    use swink_agent::{AgentTool, BashTool};
     let tool = BashTool::new();
     let args = json!({"timeout_ms": 5000});
     assert!(validate_tool_arguments(tool.parameters_schema(), &args).is_err());
@@ -61,7 +61,7 @@ fn bash_tool_schema_rejects_missing_command() {
 #[cfg(feature = "builtin-tools")]
 #[test]
 fn read_file_tool_schema_validates_valid_args() {
-    use swink_agent::{AgentTool, tools::ReadFileTool};
+    use swink_agent::{AgentTool, ReadFileTool};
     let tool = ReadFileTool::new();
     let args = json!({"path": "/tmp/file.txt"});
     assert!(validate_tool_arguments(tool.parameters_schema(), &args).is_ok());
@@ -70,7 +70,7 @@ fn read_file_tool_schema_validates_valid_args() {
 #[cfg(feature = "builtin-tools")]
 #[test]
 fn write_file_tool_schema_validates_valid_args() {
-    use swink_agent::{AgentTool, tools::WriteFileTool};
+    use swink_agent::{AgentTool, WriteFileTool};
     let tool = WriteFileTool::new();
     let args = json!({"path": "/tmp/file.txt", "content": "hello"});
     assert!(validate_tool_arguments(tool.parameters_schema(), &args).is_ok());
@@ -79,7 +79,7 @@ fn write_file_tool_schema_validates_valid_args() {
 #[cfg(feature = "builtin-tools")]
 #[test]
 fn write_file_tool_schema_rejects_extra_fields() {
-    use swink_agent::{AgentTool, tools::WriteFileTool};
+    use swink_agent::{AgentTool, WriteFileTool};
     let tool = WriteFileTool::new();
     let args = json!({"path": "/tmp/file.txt", "content": "hello", "extra": true});
     assert!(validate_tool_arguments(tool.parameters_schema(), &args).is_err());

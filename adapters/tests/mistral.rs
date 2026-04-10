@@ -14,8 +14,7 @@ use tokio_util::sync::CancellationToken;
 use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-use swink_agent::types::{AssistantMessage, ContentBlock, ToolResultMessage, UserMessage};
-use swink_agent::{
+use swink_agent::{AssistantMessage, ContentBlock, ToolResultMessage, UserMessage,
     AgentContext, AgentMessage, AgentTool, AgentToolResult, AssistantMessageEvent, LlmMessage,
     ModelSpec, StopReason, StreamFn, StreamOptions,
 };

@@ -9,7 +9,7 @@
 //! ```
 //! use std::sync::Arc;
 //! use swink_agent::{StreamMiddleware, AssistantMessageEvent};
-//! # use swink_agent::stream::StreamFn;
+//! # use swink_agent::StreamFn;
 //! # fn example(stream_fn: Arc<dyn StreamFn>) {
 //! let logged = StreamMiddleware::with_logging(stream_fn, |event| {
 //!     println!("event: {event:?}");

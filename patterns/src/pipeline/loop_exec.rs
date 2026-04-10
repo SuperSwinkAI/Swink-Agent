@@ -3,8 +3,7 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use swink_agent::types::Usage;
-use swink_agent::{AgentMessage, AgentResult, ContentBlock, LlmMessage};
+use swink_agent::{AgentMessage, AgentResult, ContentBlock, LlmMessage, Usage};
 use tokio_util::sync::CancellationToken;
 
 use super::events::PipelineEvent;
@@ -220,7 +219,7 @@ mod tests {
     /// Build a factory that creates agents returning the given event sequences.
     fn factory_with_responses(
         name: &str,
-        responses: Vec<Vec<swink_agent::stream::AssistantMessageEvent>>,
+        responses: Vec<Vec<swink_agent::AssistantMessageEvent>>,
     ) -> Arc<SimpleAgentFactory> {
         let name = name.to_string();
         let responses = Arc::new(std::sync::Mutex::new(responses));

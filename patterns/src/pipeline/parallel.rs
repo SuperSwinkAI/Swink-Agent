@@ -3,8 +3,7 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use swink_agent::types::{ContentBlock, LlmMessage, Usage, UserMessage};
-use swink_agent::{AgentMessage, now_timestamp};
+use swink_agent::{AgentMessage, ContentBlock, LlmMessage, Usage, UserMessage, now_timestamp};
 use tokio_util::sync::CancellationToken;
 
 use super::events::PipelineEvent;

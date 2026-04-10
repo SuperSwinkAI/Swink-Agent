@@ -61,7 +61,7 @@ where
 /// # Example
 ///
 /// ```
-/// use swink_agent::message_provider::from_fns;
+/// use swink_agent::from_fns;
 ///
 /// let provider = from_fns(
 ///     || vec![],  // no steering messages
@@ -202,7 +202,7 @@ impl MessageProvider for ComposedMessageProvider {
 /// # Example
 ///
 /// ```
-/// use swink_agent::message_provider::message_channel;
+/// use swink_agent::message_channel;
 ///
 /// let (provider, sender) = message_channel();
 /// // sender.send(msg) pushes a follow-up message

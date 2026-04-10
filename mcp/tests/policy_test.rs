@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use serde_json::Value;
-use swink_agent::tool::AgentTool;
+use swink_agent::AgentTool;
 use swink_agent_mcp::{McpConnection, McpServerConfig, McpTool, McpTransport};
 
 /// Helper to create a disconnected McpConnection for metadata-only tests.

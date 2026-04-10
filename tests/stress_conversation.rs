@@ -6,7 +6,7 @@ mod common;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-use swink_agent::{Agent, AgentEvent, AgentOptions, SlidingWindowTransformer, message_provider};
+use swink_agent::{Agent, AgentEvent, AgentOptions, SlidingWindowTransformer, from_fns};
 
 use common::{default_convert, default_model, text_events, user_msg};
 
@@ -38,7 +38,7 @@ async fn many_turns_with_compaction() {
 
     // Create a message provider that drip-feeds one follow-up per poll.
     let follow_ups_clone = Arc::clone(&follow_ups);
-    let provider = message_provider::from_fns(
+    let provider = from_fns(
         Vec::new, // no steering messages
         move || {
             let mut guard = follow_ups_clone.lock().unwrap();

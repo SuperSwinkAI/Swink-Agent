@@ -14,10 +14,10 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, warn};
 
 use swink_agent::ContentBlock;
-use swink_agent::stream::{AssistantMessageEvent, StreamFn, StreamOptions};
-use swink_agent::types::{
-    AgentContext, AssistantMessage as HarnessAssistantMessage, Cost, ModelSpec, StopReason,
-    ThinkingLevel, ToolResultMessage, Usage, UserMessage,
+use swink_agent::{
+    AgentContext, AssistantMessage as HarnessAssistantMessage, AssistantMessageEvent, Cost,
+    ModelSpec, StopReason, StreamFn, StreamOptions, ThinkingLevel, ToolResultMessage, Usage,
+    UserMessage,
 };
 
 use crate::convert::{self, MessageConverter, extract_tool_schemas};
@@ -607,7 +607,7 @@ mod tests {
     use crate::finalize::StreamFinalize;
     use futures::StreamExt;
     use futures::stream;
-    use swink_agent::types::{
+    use swink_agent::{
         AgentMessage, AssistantMessage as HarnessAssistantMessage, ContentBlock, Cost, LlmMessage,
         StopReason, ToolResultMessage, Usage, UserMessage,
     };
@@ -840,7 +840,7 @@ mod tests {
     fn convert_skips_custom_message() {
         #[derive(Debug)]
         struct TestCustom;
-        impl swink_agent::types::CustomMessage for TestCustom {
+        impl swink_agent::CustomMessage for TestCustom {
             fn as_any(&self) -> &dyn std::any::Any {
                 self
             }

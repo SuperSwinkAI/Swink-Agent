@@ -3,7 +3,7 @@
 mod common;
 
 use rmcp::model::{CallToolResult, Content};
-use swink_agent::types::ContentBlock;
+use swink_agent::ContentBlock;
 
 #[test]
 fn text_content_conversion() {
@@ -21,7 +21,7 @@ fn image_content_conversion() {
     let block = swink_agent_mcp::convert::content_to_block(&content);
     match block {
         ContentBlock::Image { source } => match source {
-            swink_agent::types::ImageSource::Base64 { data, media_type } => {
+            swink_agent::ImageSource::Base64 { data, media_type } => {
                 assert_eq!(data, "aW1hZ2VkYXRh");
                 assert_eq!(media_type, "image/png");
             }
