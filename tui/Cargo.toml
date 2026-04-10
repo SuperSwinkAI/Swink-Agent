@@ -21,7 +21,7 @@ required-features = ["cli"]
 
 [dependencies]
 swink-agent = { path = "..", default-features = false, features = ["builtin-tools", "transfer"] }
-swink-agent-adapters = { path = "../adapters", default-features = false, features = ["anthropic", "openai", "ollama", "proxy"] }
+swink-agent-adapters = { path = "../adapters", default-features = false, features = ["anthropic", "openai", "ollama", "proxy"], optional = true }
 swink-agent-memory = { path = "../memory" }
 swink-agent-local-llm = { path = "../local-llm", optional = true }
 ratatui = "0.30"
@@ -43,7 +43,8 @@ thiserror.workspace = true
 
 [features]
 default = ["cli"]
-cli = []
+cli = ["adapters"]
+adapters = ["dep:swink-agent-adapters"]
 full = ["local", "cli"]
 local = ["dep:swink-agent-local-llm"]
 
