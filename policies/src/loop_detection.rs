@@ -60,13 +60,37 @@ impl LoopDetectionPolicy {
     }
 
     /// Extract tool call fingerprints from a turn context.
+    ///
+    /// Fingerprints are derived from the assistant message's `ToolCall` content
+    /// blocks (tool name + arguments), which are stable across invocations.
+    /// Falls back to tool result content when no matching tool call is found.
     fn extract_fingerprint(turn: &TurnPolicyContext<'_>) -> Vec<(String, serde_json::Value)> {
+        // Build a lookup from tool_call_id -> (name, arguments) from assistant message
+        let tool_calls: std::collections::HashMap<&str, (&str, &serde_json::Value)> = turn
+            .assistant_message
+            .content
+            .iter()
+            .filter_map(|block| match block {
+                ContentBlock::ToolCall {
+                    id,
+                    name,
+                    arguments,
+                    ..
+                } => Some((id.as_str(), (name.as_str(), arguments))),
+                _ => None,
+            })
+            .collect();
+
         turn.tool_results
             .iter()
             .map(|tr| {
-                // Use the tool_call_id prefix (tool name) and content as fingerprint
-                // The actual tool name isn't in ToolResultMessage, so we use the content hash
-                (tr.tool_call_id.clone(), serde_json::json!(tr.content))
+                if let Some((name, args)) = tool_calls.get(tr.tool_call_id.as_str()) {
+                    // Stable fingerprint: tool name + arguments
+                    ((*name).to_string(), (*args).clone())
+                } else {
+                    // Fallback: use tool result content (still more stable than tool_call_id)
+                    ("_unknown".to_string(), serde_json::json!(tr.content))
+                }
             })
             .collect()
     }
@@ -185,9 +209,17 @@ mod tests {
         }
     }
 
-    fn dummy_msg() -> AssistantMessage {
+    fn msg_with_tool_calls(calls: &[(&str, &str, serde_json::Value)]) -> AssistantMessage {
         AssistantMessage {
-            content: vec![],
+            content: calls
+                .iter()
+                .map(|(id, name, args)| ContentBlock::ToolCall {
+                    id: id.to_string(),
+                    name: name.to_string(),
+                    arguments: args.clone(),
+                    partial_json: None,
+                })
+                .collect(),
             provider: String::new(),
             model_id: String::new(),
             usage: Usage::default(),
@@ -220,24 +252,26 @@ mod tests {
         let cost = Cost::default();
         let state = swink_agent::SessionState::new();
         let ctx = make_ctx(&usage, &cost, &state);
-        let msg = dummy_msg();
 
-        let results1 = vec![tool_result("bash_1", "output1")];
-        let turn1 = make_turn_ctx(&msg, &results1);
+        let msg1 = msg_with_tool_calls(&[("id1", "bash", serde_json::json!({"cmd": "ls"}))]);
+        let results1 = vec![tool_result("id1", "output1")];
+        let turn1 = make_turn_ctx(&msg1, &results1);
         assert!(matches!(
             policy.evaluate(&ctx, &turn1),
             PolicyVerdict::Continue
         ));
 
-        let results2 = vec![tool_result("bash_2", "output2")];
-        let turn2 = make_turn_ctx(&msg, &results2);
+        let msg2 = msg_with_tool_calls(&[("id2", "bash", serde_json::json!({"cmd": "pwd"}))]);
+        let results2 = vec![tool_result("id2", "output2")];
+        let turn2 = make_turn_ctx(&msg2, &results2);
         assert!(matches!(
             policy.evaluate(&ctx, &turn2),
             PolicyVerdict::Continue
         ));
 
-        let results3 = vec![tool_result("bash_3", "output3")];
-        let turn3 = make_turn_ctx(&msg, &results3);
+        let msg3 = msg_with_tool_calls(&[("id3", "bash", serde_json::json!({"cmd": "whoami"}))]);
+        let results3 = vec![tool_result("id3", "output3")];
+        let turn3 = make_turn_ctx(&msg3, &results3);
         assert!(matches!(
             policy.evaluate(&ctx, &turn3),
             PolicyVerdict::Continue
@@ -251,9 +285,10 @@ mod tests {
         let cost = Cost::default();
         let state = swink_agent::SessionState::new();
         let ctx = make_ctx(&usage, &cost, &state);
-        let msg = dummy_msg();
 
-        let results = vec![tool_result("bash_1", "same_output")];
+        // Same tool name + args each turn (but tool_call_id could differ)
+        let msg = msg_with_tool_calls(&[("id1", "bash", serde_json::json!({"cmd": "ls"}))]);
+        let results = vec![tool_result("id1", "same_output")];
 
         let turn = make_turn_ctx(&msg, &results);
         let r1 = policy.evaluate(&ctx, &turn);
@@ -275,9 +310,9 @@ mod tests {
         let cost = Cost::default();
         let state = swink_agent::SessionState::new();
         let ctx = make_ctx(&usage, &cost, &state);
-        let msg = dummy_msg();
 
-        let results = vec![tool_result("bash_1", "same")];
+        let msg = msg_with_tool_calls(&[("id1", "bash", serde_json::json!({"cmd": "ls"}))]);
+        let results = vec![tool_result("id1", "same")];
 
         let turn = make_turn_ctx(&msg, &results);
         let _ = policy.evaluate(&ctx, &turn); // 1st
@@ -294,14 +329,15 @@ mod tests {
         let cost = Cost::default();
         let state = swink_agent::SessionState::new();
         let ctx = make_ctx(&usage, &cost, &state);
-        let msg = dummy_msg();
 
-        let results1 = vec![tool_result("bash_1", "output_a")];
-        let turn1 = make_turn_ctx(&msg, &results1);
+        let msg1 = msg_with_tool_calls(&[("id1", "bash", serde_json::json!({"cmd": "ls"}))]);
+        let results1 = vec![tool_result("id1", "output_a")];
+        let turn1 = make_turn_ctx(&msg1, &results1);
         let _ = policy.evaluate(&ctx, &turn1);
 
-        let results2 = vec![tool_result("bash_1", "output_b")]; // different content
-        let turn2 = make_turn_ctx(&msg, &results2);
+        let msg2 = msg_with_tool_calls(&[("id2", "bash", serde_json::json!({"cmd": "pwd"}))]);
+        let results2 = vec![tool_result("id2", "output_b")];
+        let turn2 = make_turn_ctx(&msg2, &results2);
         let r = policy.evaluate(&ctx, &turn2);
         assert!(matches!(r, PolicyVerdict::Continue));
     }
@@ -313,24 +349,58 @@ mod tests {
         let cost = Cost::default();
         let state = swink_agent::SessionState::new();
         let ctx = make_ctx(&usage, &cost, &state);
-        let msg = dummy_msg();
+
+        let same_args = serde_json::json!({"cmd": "ls"});
+        let diff_args = serde_json::json!({"cmd": "pwd"});
 
         // Push 2 identical, then 1 different, then 2 identical again
         // Should not trigger because the different one breaks the streak
-        let same = vec![tool_result("bash_1", "same")];
-        let different = vec![tool_result("bash_1", "different")];
+        let same_msg = msg_with_tool_calls(&[("id1", "bash", same_args.clone())]);
+        let same_res = vec![tool_result("id1", "same")];
+        let diff_msg = msg_with_tool_calls(&[("id2", "bash", diff_args)]);
+        let diff_res = vec![tool_result("id2", "different")];
 
-        let t = make_turn_ctx(&msg, &same);
+        let t = make_turn_ctx(&same_msg, &same_res);
         let _ = policy.evaluate(&ctx, &t);
-        let t = make_turn_ctx(&msg, &same);
+        let t = make_turn_ctx(&same_msg, &same_res);
         let _ = policy.evaluate(&ctx, &t);
-        let t = make_turn_ctx(&msg, &different);
+        let t = make_turn_ctx(&diff_msg, &diff_res);
         let _ = policy.evaluate(&ctx, &t);
-        let t = make_turn_ctx(&msg, &same);
+        let t = make_turn_ctx(&same_msg, &same_res);
         let _ = policy.evaluate(&ctx, &t);
-        let t = make_turn_ctx(&msg, &same);
+        let t = make_turn_ctx(&same_msg, &same_res);
         let r = policy.evaluate(&ctx, &t);
         // Last 3: different, same, same — not all identical
         assert!(matches!(r, PolicyVerdict::Continue));
+    }
+
+    /// Regression test for #276: identical tool calls with different tool_call_ids
+    /// must still be detected as a loop.
+    #[test]
+    fn fresh_tool_call_ids_still_detected_as_loop() {
+        let policy = LoopDetectionPolicy::new(3);
+        let usage = Usage::default();
+        let cost = Cost::default();
+        let state = swink_agent::SessionState::new();
+        let ctx = make_ctx(&usage, &cost, &state);
+
+        let args = serde_json::json!({"command": "ls -la"});
+
+        // Each turn has the same tool name + args but a different tool_call_id
+        let msg1 = msg_with_tool_calls(&[("call_abc", "bash", args.clone())]);
+        let res1 = vec![tool_result("call_abc", "file1.txt")];
+        let t1 = make_turn_ctx(&msg1, &res1);
+        assert!(matches!(policy.evaluate(&ctx, &t1), PolicyVerdict::Continue));
+
+        let msg2 = msg_with_tool_calls(&[("call_def", "bash", args.clone())]);
+        let res2 = vec![tool_result("call_def", "file1.txt")];
+        let t2 = make_turn_ctx(&msg2, &res2);
+        assert!(matches!(policy.evaluate(&ctx, &t2), PolicyVerdict::Continue));
+
+        let msg3 = msg_with_tool_calls(&[("call_ghi", "bash", args.clone())]);
+        let res3 = vec![tool_result("call_ghi", "file1.txt")];
+        let t3 = make_turn_ctx(&msg3, &res3);
+        // Despite fresh IDs each time, the tool name + args are identical → loop detected
+        assert!(matches!(policy.evaluate(&ctx, &t3), PolicyVerdict::Stop(_)));
     }
 }
