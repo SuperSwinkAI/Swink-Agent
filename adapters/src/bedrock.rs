@@ -236,6 +236,8 @@ struct BedrockStreamState {
     provider_blocks: HashMap<usize, (BlockType, usize)>,
     stop_reason: Option<String>,
     usage: Option<Usage>,
+    /// Whether `AssistantMessageEvent::Start` has been emitted.
+    started: bool,
 }
 
 impl BedrockStreamState {
@@ -245,6 +247,7 @@ impl BedrockStreamState {
             provider_blocks: HashMap::new(),
             stop_reason: None,
             usage: None,
+            started: false,
         }
     }
 }
@@ -407,9 +410,12 @@ impl BedrockStreamFn {
                     } => {
                         if cancellation_token.is_cancelled() {
                             return Some((
-                                vec![AssistantMessageEvent::error_network(
-                                    "Bedrock request cancelled",
-                                )],
+                                vec![
+                                    AssistantMessageEvent::Start,
+                                    AssistantMessageEvent::error_network(
+                                        "Bedrock request cancelled",
+                                    ),
+                                ],
                                 StreamUnfoldState::Done,
                             ));
                         }
@@ -429,7 +435,7 @@ impl BedrockStreamFn {
                                 ))
                             }
                             Err(err_event) => {
-                                Some((vec![err_event], StreamUnfoldState::Done))
+                                Some((vec![AssistantMessageEvent::Start, err_event], StreamUnfoldState::Done))
                             }
                         }
                     }
@@ -608,7 +614,12 @@ fn process_smithy_message(
         let exc_type = exception_type.as_deref().unwrap_or("unknown");
         let payload_str = std::str::from_utf8(message.payload()).unwrap_or("(binary)");
         warn!(exception_type = exc_type, "Bedrock exception frame");
-        return vec![classify_bedrock_exception(exc_type, payload_str)];
+        let error_event = classify_bedrock_exception(exc_type, payload_str);
+        if state.started {
+            return vec![error_event];
+        }
+        state.started = true;
+        return vec![AssistantMessageEvent::Start, error_event];
     }
 
     // Handle normal event frames
@@ -681,6 +692,7 @@ fn parse_event_frame(
     match event_type {
         "messageStart" => {
             let _event: MessageStartEvent = serde_json::from_slice(payload).ok()?;
+            state.started = true;
             Some(vec![AssistantMessageEvent::Start])
         }
         "contentBlockStart" => {
@@ -1331,8 +1343,10 @@ mod tests {
         let mut state = BedrockStreamState::new();
         let msg = make_exception_message("throttlingException", br#"{"message":"Rate exceeded"}"#);
         let events = process_smithy_message(&msg, &mut state);
-        assert_eq!(events.len(), 1);
-        match &events[0] {
+        // Before Start: emits [Start, Error]
+        assert_eq!(events.len(), 2);
+        assert!(matches!(events[0], AssistantMessageEvent::Start));
+        match &events[1] {
             AssistantMessageEvent::Error { error_kind, .. } => {
                 assert_eq!(*error_kind, Some(swink_agent::StreamErrorKind::Throttled));
             }
@@ -1346,8 +1360,9 @@ mod tests {
         let msg =
             make_exception_message("tooManyRequestsException", br#"{"message":"Slow down"}"#);
         let events = process_smithy_message(&msg, &mut state);
-        assert_eq!(events.len(), 1);
-        match &events[0] {
+        assert_eq!(events.len(), 2);
+        assert!(matches!(events[0], AssistantMessageEvent::Start));
+        match &events[1] {
             AssistantMessageEvent::Error { error_kind, .. } => {
                 assert_eq!(*error_kind, Some(swink_agent::StreamErrorKind::Throttled));
             }
@@ -1361,8 +1376,9 @@ mod tests {
         let msg =
             make_exception_message("accessDeniedException", br#"{"message":"Not authorized"}"#);
         let events = process_smithy_message(&msg, &mut state);
-        assert_eq!(events.len(), 1);
-        match &events[0] {
+        assert_eq!(events.len(), 2);
+        assert!(matches!(events[0], AssistantMessageEvent::Start));
+        match &events[1] {
             AssistantMessageEvent::Error { error_kind, .. } => {
                 assert_eq!(*error_kind, Some(swink_agent::StreamErrorKind::Auth));
             }
@@ -1376,8 +1392,9 @@ mod tests {
         let msg =
             make_exception_message("validationException", br#"{"message":"Invalid request"}"#);
         let events = process_smithy_message(&msg, &mut state);
-        assert_eq!(events.len(), 1);
-        match &events[0] {
+        assert_eq!(events.len(), 2);
+        assert!(matches!(events[0], AssistantMessageEvent::Start));
+        match &events[1] {
             AssistantMessageEvent::Error { error_kind, .. } => {
                 assert_eq!(*error_kind, Some(swink_agent::StreamErrorKind::Auth));
             }
@@ -1393,8 +1410,9 @@ mod tests {
             br#"{"message":"Model not found"}"#,
         );
         let events = process_smithy_message(&msg, &mut state);
-        assert_eq!(events.len(), 1);
-        match &events[0] {
+        assert_eq!(events.len(), 2);
+        assert!(matches!(events[0], AssistantMessageEvent::Start));
+        match &events[1] {
             AssistantMessageEvent::Error { error_kind, .. } => {
                 assert_eq!(*error_kind, Some(swink_agent::StreamErrorKind::Auth));
             }
@@ -1410,8 +1428,9 @@ mod tests {
             br#"{"message":"Internal error"}"#,
         );
         let events = process_smithy_message(&msg, &mut state);
-        assert_eq!(events.len(), 1);
-        match &events[0] {
+        assert_eq!(events.len(), 2);
+        assert!(matches!(events[0], AssistantMessageEvent::Start));
+        match &events[1] {
             AssistantMessageEvent::Error { error_kind, .. } => {
                 assert_eq!(*error_kind, Some(swink_agent::StreamErrorKind::Network));
             }
@@ -1427,8 +1446,9 @@ mod tests {
             br#"{"message":"Stream failed"}"#,
         );
         let events = process_smithy_message(&msg, &mut state);
-        assert_eq!(events.len(), 1);
-        match &events[0] {
+        assert_eq!(events.len(), 2);
+        assert!(matches!(events[0], AssistantMessageEvent::Start));
+        match &events[1] {
             AssistantMessageEvent::Error { error_kind, .. } => {
                 assert_eq!(*error_kind, Some(swink_agent::StreamErrorKind::Network));
             }
@@ -1442,8 +1462,9 @@ mod tests {
         let msg =
             make_exception_message("modelTimeoutException", br#"{"message":"Timeout"}"#);
         let events = process_smithy_message(&msg, &mut state);
-        assert_eq!(events.len(), 1);
-        match &events[0] {
+        assert_eq!(events.len(), 2);
+        assert!(matches!(events[0], AssistantMessageEvent::Start));
+        match &events[1] {
             AssistantMessageEvent::Error { error_kind, .. } => {
                 assert_eq!(*error_kind, Some(swink_agent::StreamErrorKind::Network));
             }
@@ -1459,8 +1480,9 @@ mod tests {
             br#"{"message":"Service down"}"#,
         );
         let events = process_smithy_message(&msg, &mut state);
-        assert_eq!(events.len(), 1);
-        match &events[0] {
+        assert_eq!(events.len(), 2);
+        assert!(matches!(events[0], AssistantMessageEvent::Start));
+        match &events[1] {
             AssistantMessageEvent::Error { error_kind, .. } => {
                 assert_eq!(*error_kind, Some(swink_agent::StreamErrorKind::Network));
             }
@@ -1476,8 +1498,9 @@ mod tests {
             br#"{"message":"Something new"}"#,
         );
         let events = process_smithy_message(&msg, &mut state);
-        assert_eq!(events.len(), 1);
-        match &events[0] {
+        assert_eq!(events.len(), 2);
+        assert!(matches!(events[0], AssistantMessageEvent::Start));
+        match &events[1] {
             AssistantMessageEvent::Error { error_kind, .. } => {
                 assert_eq!(*error_kind, None, "unknown exceptions should not be classified as retryable");
             }
@@ -1670,5 +1693,35 @@ mod tests {
                 ..
             } if usage.input == 50 && usage.output == 30 && usage.total == 80
         ));
+    }
+
+    #[test]
+    fn exception_after_start_does_not_duplicate_start() {
+        let mut state = BedrockStreamState::new();
+
+        // Simulate messageStart already received
+        let msg = make_event_message("messageStart", br#"{"role":"assistant"}"#);
+        let events = process_smithy_message(&msg, &mut state);
+        assert!(matches!(events[0], AssistantMessageEvent::Start));
+        assert!(state.started);
+
+        // Exception after Start should emit only Error, no second Start
+        let msg = make_exception_message(
+            "modelStreamErrorException",
+            br#"{"message":"Stream failed mid-response"}"#,
+        );
+        let events = process_smithy_message(&msg, &mut state);
+        assert_eq!(events.len(), 1, "should not prepend Start when already started");
+        assert!(matches!(events[0], AssistantMessageEvent::Error { .. }));
+    }
+
+    #[test]
+    fn message_start_sets_started_flag() {
+        let mut state = BedrockStreamState::new();
+        assert!(!state.started);
+
+        let payload = br#"{"role":"assistant"}"#;
+        parse_event_frame("messageStart", payload, &mut state);
+        assert!(state.started);
     }
 }
