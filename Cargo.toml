@@ -64,10 +64,6 @@ codegen-units = 1
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
-[[example]]
-name = "with_tools"
-required-features = ["builtin-tools"]
-
 [features]
 default = ["builtin-tools", "transfer"]
 builtin-tools = []
@@ -108,6 +104,10 @@ tracing-subscriber = { version = "0.3", features = ["registry"], optional = true
 [[bench]]
 name = "context"
 harness = false
+
+[[example]]
+name = "with_tools"
+required-features = ["builtin-tools"]
 
 [dev-dependencies]
 swink-agent-adapters = { path = "adapters", features = ["proxy"] }
