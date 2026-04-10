@@ -13,7 +13,7 @@ The TUI (`swink-agent-tui`) is a separate binary crate that provides an interact
 
 The implementation uses `ratatui` for rendering and `crossterm` for terminal I/O, following an immediate-mode rendering pattern where the entire UI is redrawn each frame from current state. The async event loop uses `crossterm::EventStream` with `tokio::select!` and a dirty flag to avoid unnecessary redraws.
 
-By default the TUI connects to Ollama for LLM inference. Proxy mode (connecting to OpenAI-compatible APIs) is supported via environment variables.
+The TUI selects a provider by priority: Custom SSE Proxy > OpenAI > Anthropic > Local (SmolLM3) > Ollama (fallback). Provider selection is driven by environment variables and keychain credentials. See [getting_started.md](../../getting_started.md) for the full priority table.
 
 ---
 

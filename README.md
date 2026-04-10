@@ -12,9 +12,15 @@ A pure-Rust library for building LLM-powered agentic loops. Provider-agnostic co
 |---|---|---|
 | `swink-agent` | lib | Agent loop, tool system, streaming traits, retry, error types |
 | `swink-agent-adapters` | lib | `StreamFn` adapters — Anthropic, OpenAI, Google Gemini, Ollama, Azure, xAI, Mistral, Bedrock |
+| `swink-agent-policies` | lib | 10 feature-gated policy implementations (budget, sandbox, PII, audit, etc.) |
 | `swink-agent-memory` | lib | Session persistence, summarization compaction |
 | `swink-agent-local-llm` | lib | On-device inference via SmolLM3-3B (text/tools) and EmbeddingGemma-300M (embeddings) |
 | `swink-agent-eval` | lib | Evaluation harness — efficiency scoring, budget guards, gate checks, audit trails |
+| `swink-agent-artifacts` | lib | Versioned artifact storage (filesystem + in-memory backends) |
+| `swink-agent-auth` | lib | OAuth2 credential management and refresh |
+| `swink-agent-mcp` | lib | Model Context Protocol integration (stdio/SSE) |
+| `swink-agent-patterns` | lib | Multi-agent orchestration patterns (pipeline, parallel, loop) |
+| `swink-agent-plugin-web` | lib | Web browsing and search plugin |
 | `swink-agent-tui` | bin | Interactive terminal UI with markdown, syntax highlighting, tool panel |
 
 ## Key Ideas
@@ -74,24 +80,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ```
 
 ```bash
-cargo run --example custom_agent
+cargo run -p swink-agent-tui --features local --example custom_agent
 ```
 
 ## More Examples
 
-Runnable examples live in `examples/`:
+Runnable examples live in `examples/` (core) and `tui/examples/` (TUI):
 
 | Example | What it demonstrates |
 |---|---|
-| [`custom_agent`](examples/custom_agent.rs) | Full agent with Anthropic adapter, tools, and interactive TUI |
 | [`simple_prompt`](examples/simple_prompt.rs) | Create an Agent with a mock stream function, send a prompt, print the result |
 | [`with_tools`](examples/with_tools.rs) | Register BashTool / ReadFileTool / WriteFileTool and wire up the approval callback |
 | [`custom_adapter`](examples/custom_adapter.rs) | Implement the `StreamFn` trait for a custom provider |
+| [`custom_agent`](tui/examples/custom_agent.rs) | Full agent with Anthropic adapter, tools, and interactive TUI |
 
 ```bash
 cargo run --example simple_prompt
 cargo run --example with_tools
 cargo run --example custom_adapter
+cargo run -p swink-agent-tui --features local --example custom_agent
 ```
 
 See [docs/getting_started.md](docs/getting_started.md) for setup and configuration.

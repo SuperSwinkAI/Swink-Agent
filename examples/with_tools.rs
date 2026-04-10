@@ -1,8 +1,7 @@
 //! Example: register tools with an Agent and set up the approval callback.
 //!
-//! Demonstrates how to wire up `BashTool` and `ReadFileTool`, configure the
-//! `selective_approve` middleware so only tools that declare
-//! `requires_approval = true` go through the approval gate, and run a prompt.
+//! Demonstrates how to wire up `BashTool` and `ReadFileTool`, configure an
+//! approval callback via `with_approve_tool_async`, and run a prompt.
 //!
 //! Also shows how to create a custom tool with [`FnTool`] using closures
 //! instead of implementing the [`AgentTool`] trait manually.
@@ -106,14 +105,13 @@ async fn main() {
 
     // Step 3: Build options with tools and an approval callback.
     //
-    // `selective_approve` wraps the inner callback so that only tools with
-    // `requires_approval() == true` are sent through. BashTool and WriteFileTool
-    // require approval; ReadFileTool does not.
-    // `with_approve_tool_async` avoids the verbose `Pin<Box<dyn Future<...>>>`
+    // `with_approve_tool_async` registers an async approval callback that is
+    // invoked for every tool call. It avoids the verbose `Pin<Box<dyn Future<...>>>`
     // ceremony that `with_approve_tool` requires.
     //
-    // To gate approval to only tools with `requires_approval() == true`, wrap
-    // the callback with `selective_approve` and pass it to `with_approve_tool`:
+    // To only prompt for tools that declare `requires_approval() == true`
+    // (e.g. BashTool and WriteFileTool, but not ReadFileTool), wrap the
+    // callback with `selective_approve` instead:
     //
     //   .with_approve_tool(selective_approve(|req| Box::pin(async move { ... })))
     let options = AgentOptions::new_simple(

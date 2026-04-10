@@ -7,7 +7,7 @@
 - Provider Roadmap: [PROVIDER_EXPANSION_ROADMAP.md](PROVIDER_EXPANSION_ROADMAP.md)
 - Eval Roadmap: [EVAL.md](EVAL.md)
 
-**Current Focus:** 40 specs total — 40/40 have plans, 40/40 have tasks, 36/40 complete. Phase 0–8 done (including memory crate 021, Azure/xAI adapters). Phase 3: 9/10 complete (019-bedrock at 56%). Phase 9: 1/5 complete (038-mcp done), 036 at 18%, 037 at 44%, 039/040 ready. Next: finish bedrock adapter (019), continue artifact service (036) and plugin system (037), begin multi-agent patterns (039) and transfer/handoff (040).
+**Current Focus:** 42 specs total — 42/42 have plans, 42/42 have tasks, 38/42 complete. Phase 0–8 done (including memory crate 021, Azure/xAI adapters). Phase 3: 9/10 complete (019-bedrock at 56%). Phase 9: 1/5 complete (038-mcp done), 036 at 18%, 037 at 44%, 039/040 ready. Phase 10: 041 (Gemma4 local adapter) at 60%, 042 (web browse plugin) complete. Next: finish bedrock adapter (019), continue artifact service (036) and plugin system (037), begin multi-agent patterns (039) and transfer/handoff (040), finish Gemma4 local adapter (041).
 
 > **Numbering System:** Spec numbers (001–040) are sequential identifiers that
 > never change. Phase numbers represent execution order and can be reassigned
@@ -346,6 +346,27 @@ agent framework composable and extensible for production use cases.
 ### Parallel Opportunities
 
 After their respective dependencies are met, 9.1 (Artifact Service), 9.2 (Plugin System), 9.3 (MCP Integration), 9.4 (Multi-Agent Patterns), and 9.5 (Transfer/Handoff) can all proceed in parallel — they are independent feature verticals.
+
+---
+
+## Phase 10: Local Models & Plugins
+
+**Goal:** On-device model expansion and plugin-based tool ecosystems.
+
+**Status:** 2/2 specs planned, 2/2 have tasks, 1/2 complete, 2/2 specs defined
+
+### Implementation Checklist
+
+- [ ] **10.1** Adapter: Gemma 4 Local — Gemma4LocalStreamFn, mistralrs 0.8+ upgrade, UTF-8-safe delimiter scanning
+  - Spec: `specs/041-adapter-gemma4-local/spec.md`
+  - Branch: `041-adapter-gemma4-local`
+  - Status: In Progress (60%)
+  - Depends on: 4.2
+- [x] **10.2** Web Browse Plugin — Web search, page fetch, content extraction, screenshot via Playwright
+  - Spec: `specs/042-web-browse-plugin/spec.md`
+  - Branch: `042-web-browse-plugin`
+  - Status: Complete (merged to main)
+  - Depends on: 9.2
 
 ---
 
