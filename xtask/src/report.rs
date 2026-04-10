@@ -63,10 +63,10 @@ fn result_label(result: &PresetResult) -> String {
     }
 }
 
-pub fn write_github_summary(rows: &[VerifyRow]) {
+pub fn write_github_summary(rows: &[VerifyRow]) -> std::io::Result<()> {
     let Ok(summary_path) = std::env::var("GITHUB_STEP_SUMMARY") else {
         eprintln!("GITHUB_STEP_SUMMARY not set; skipping summary write");
-        return;
+        return Ok(());
     };
     let mut md = String::from("## Catalog Verification\n\n");
     md.push_str("| Provider | Preset | Model ID | Result |\n");
@@ -76,13 +76,13 @@ pub fn write_github_summary(rows: &[VerifyRow]) {
         let preset = &row.task.preset_display;
         let model = &row.task.model_id;
         let result = result_label(&row.result);
-        writeln!(md, "| {key} | {preset} | {model} | {result} |").unwrap();
+        writeln!(md, "| {key} | {preset} | {model} | {result} |")
+            .map_err(std::io::Error::other)?;
     }
     let mut file = std::fs::OpenOptions::new()
         .append(true)
         .create(true)
-        .open(summary_path)
-        .expect("failed to open GITHUB_STEP_SUMMARY");
-    file.write_all(md.as_bytes())
-        .expect("failed to write to GITHUB_STEP_SUMMARY");
+        .open(&summary_path)?;
+    file.write_all(md.as_bytes())?;
+    Ok(())
 }
