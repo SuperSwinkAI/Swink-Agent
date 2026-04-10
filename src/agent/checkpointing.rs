@@ -10,6 +10,13 @@ use crate::loop_::AgentEvent;
 use super::Agent;
 use super::queueing::llm_messages_from_queue;
 
+fn invalid_state_snapshot(error: serde_json::Error) -> std::io::Error {
+    std::io::Error::new(
+        std::io::ErrorKind::InvalidData,
+        format!("corrupted session state snapshot: {error}"),
+    )
+}
+
 impl Agent {
     // ── Checkpointing ────────────────────────────────────────────────────
 
@@ -54,7 +61,10 @@ impl Agent {
     /// has been configured on [`AgentOptions`](crate::AgentOptions) via
     /// [`with_custom_message_registry`](crate::AgentOptions::with_custom_message_registry);
     /// otherwise they are dropped.
-    pub fn restore_from_checkpoint(&mut self, checkpoint: &Checkpoint) {
+    pub fn restore_from_checkpoint(
+        &mut self,
+        checkpoint: &Checkpoint,
+    ) -> Result<(), std::io::Error> {
         self.state.messages = checkpoint.restore_messages(self.custom_message_registry.as_deref());
         self.state
             .system_prompt
@@ -63,13 +73,16 @@ impl Agent {
         self.state.model.model_id.clone_from(&checkpoint.model_id);
 
         if let Some(ref state_val) = checkpoint.state {
-            let restored = crate::SessionState::restore_from_snapshot(state_val.clone());
+            let restored = crate::SessionState::restore_from_snapshot(state_val.clone())
+                .map_err(invalid_state_snapshot)?;
             let mut s = self
                 .session_state
                 .write()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             *s = restored;
         }
+
+        Ok(())
     }
 
     /// Load a checkpoint from the configured store and restore state from it.
@@ -87,7 +100,7 @@ impl Agent {
 
         let maybe = store.load_checkpoint(id).await?;
         if let Some(ref checkpoint) = maybe {
-            self.restore_from_checkpoint(checkpoint);
+            self.restore_from_checkpoint(checkpoint)?;
         }
         Ok(maybe)
     }
@@ -178,7 +191,9 @@ impl Agent {
         self.state.model.model_id.clone_from(&checkpoint.model_id);
 
         if let Some(ref state_val) = checkpoint.state {
-            let restored = crate::SessionState::restore_from_snapshot(state_val.clone());
+            let restored = crate::SessionState::restore_from_snapshot(state_val.clone())
+                .map_err(invalid_state_snapshot)
+                .map_err(AgentError::stream)?;
             let mut s = self
                 .session_state
                 .write()
@@ -205,14 +220,18 @@ impl Agent {
 
 #[cfg(all(test, feature = "testkit"))]
 mod tests {
+    use std::collections::HashMap;
     use std::sync::Arc;
+    use std::sync::Mutex;
 
     use crate::agent::Agent;
     use crate::agent_options::AgentOptions;
+    use crate::checkpoint::{CheckpointFuture, CheckpointStore, LoopCheckpoint};
     use crate::testing::SimpleMockStreamFn;
     use crate::types::{
         AgentMessage, CustomMessage, CustomMessageRegistry, LlmMessage, ModelSpec, UserMessage,
     };
+    use crate::{AgentError, Checkpoint};
 
     #[derive(Debug, Clone, PartialEq)]
     struct Tagged {
@@ -258,6 +277,70 @@ mod tests {
         Agent::new(opts)
     }
 
+    fn user_msg(text: &str) -> AgentMessage {
+        AgentMessage::Llm(LlmMessage::User(UserMessage {
+            content: vec![crate::types::ContentBlock::Text {
+                text: text.to_string(),
+            }],
+            timestamp: 0,
+            cache_hint: None,
+        }))
+    }
+
+    #[derive(Default)]
+    struct TestCheckpointStore {
+        data: Mutex<HashMap<String, String>>,
+    }
+
+    impl CheckpointStore for TestCheckpointStore {
+        fn save_checkpoint(&self, checkpoint: &Checkpoint) -> CheckpointFuture<'_, ()> {
+            let json = serde_json::to_string(checkpoint).unwrap();
+            let id = checkpoint.id.clone();
+            Box::pin(async move {
+                self.data
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .insert(id, json);
+                Ok(())
+            })
+        }
+
+        fn load_checkpoint(&self, id: &str) -> CheckpointFuture<'_, Option<Checkpoint>> {
+            let id = id.to_string();
+            Box::pin(async move {
+                self.data
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .get(&id)
+                    .map(|json| serde_json::from_str(json).map_err(std::io::Error::other))
+                    .transpose()
+            })
+        }
+
+        fn list_checkpoints(&self) -> CheckpointFuture<'_, Vec<String>> {
+            Box::pin(async move {
+                Ok(self
+                    .data
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .keys()
+                    .cloned()
+                    .collect())
+            })
+        }
+
+        fn delete_checkpoint(&self, id: &str) -> CheckpointFuture<'_, ()> {
+            let id = id.to_string();
+            Box::pin(async move {
+                self.data
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .remove(&id);
+                Ok(())
+            })
+        }
+    }
+
     #[tokio::test]
     async fn restore_from_checkpoint_rehydrates_custom_messages_via_registry() {
         let mut source = make_agent(None);
@@ -285,13 +368,13 @@ mod tests {
 
         // Without a registry the custom message is dropped (legacy behavior).
         let mut no_reg = make_agent(None);
-        no_reg.restore_from_checkpoint(&loaded);
+        no_reg.restore_from_checkpoint(&loaded).unwrap();
         assert_eq!(no_reg.state.messages.len(), 1);
 
         // With a registry configured on AgentOptions, the custom message
         // survives restoration through the public API.
         let mut with_reg = make_agent(Some(tagged_registry()));
-        with_reg.restore_from_checkpoint(&loaded);
+        with_reg.restore_from_checkpoint(&loaded).unwrap();
         assert_eq!(with_reg.state.messages.len(), 2);
         let restored = with_reg.state.messages[1]
             .downcast_ref::<Tagged>()
@@ -301,8 +384,6 @@ mod tests {
 
     #[tokio::test]
     async fn loop_checkpoint_resume_rehydrates_custom_messages_via_registry() {
-        use crate::checkpoint::LoopCheckpoint;
-
         let messages = vec![
             AgentMessage::Llm(LlmMessage::User(UserMessage {
                 content: vec![crate::types::ContentBlock::Text {
@@ -326,5 +407,51 @@ mod tests {
             .downcast_ref::<Tagged>()
             .expect("custom message should be restored via registry");
         assert_eq!(restored.value, "resumed");
+    }
+
+    #[tokio::test]
+    async fn load_and_restore_checkpoint_rejects_corrupt_state_snapshot() {
+        let store = TestCheckpointStore::default();
+        let checkpoint = Checkpoint::new(
+            "bad-state",
+            "system",
+            "mock",
+            "mock-model",
+            &[user_msg("hi")],
+        )
+        .with_state(serde_json::json!(["bad"]));
+        store.save_checkpoint(&checkpoint).await.unwrap();
+
+        let stream_fn = Arc::new(SimpleMockStreamFn::from_text("ok"));
+        let agent_options =
+            AgentOptions::new_simple("system", ModelSpec::new("mock", "mock-model"), stream_fn)
+                .with_checkpoint_store(store);
+        let mut agent = Agent::new(agent_options);
+
+        let err = agent
+            .load_and_restore_checkpoint("bad-state")
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("corrupted session state snapshot"));
+    }
+
+    #[tokio::test]
+    async fn resume_rejects_corrupt_loop_checkpoint_state_snapshot() {
+        let checkpoint = LoopCheckpoint::new("system", "mock", "mock-model", &[user_msg("hi")])
+            .with_state(serde_json::json!(["bad"]));
+        let mut agent = make_agent(None);
+
+        let err = agent.resume(&checkpoint).await.unwrap_err();
+        match err {
+            AgentError::StreamError { source } => {
+                let io = source
+                    .downcast_ref::<std::io::Error>()
+                    .expect("expected io::Error source");
+                assert_eq!(io.kind(), std::io::ErrorKind::InvalidData);
+                assert!(io.to_string().contains("corrupted session state snapshot"));
+            }
+            other => panic!("expected StreamError, got {other:?}"),
+        }
     }
 }
