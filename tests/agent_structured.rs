@@ -14,7 +14,10 @@ use common::{
 use futures::stream::StreamExt;
 use serde_json::json;
 
-use swink_agent::{Agent, AgentError, AgentOptions, DefaultRetryStrategy, StopReason, StreamFn};
+use swink_agent::{
+    Agent, AgentError, AgentMessage, AgentOptions, CustomMessage, DefaultRetryStrategy, StopReason,
+    StreamFn,
+};
 
 // ─── Helpers ─────────────────────────────────────────────────────────────
 
@@ -388,4 +391,72 @@ async fn handle_stream_event_preserves_terminal_error_through_agent_end() {
         Some("stream error: fatal error"),
         "terminal error must survive through AgentEnd"
     );
+}
+
+// ─── Regression test for #269: CustomMessage preservation ──────────────
+
+/// A cloneable custom message for testing state rebuild preservation.
+#[derive(Debug, Clone)]
+struct CloneableCustomMsg {
+    label: String,
+}
+
+impl CustomMessage for CloneableCustomMsg {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn clone_box(&self) -> Option<Box<dyn CustomMessage>> {
+        Some(Box::new(self.clone()))
+    }
+}
+
+/// Regression test for #269: stream-driven state rebuild via `handle_stream_event`
+/// must preserve `AgentMessage::Custom` entries that implement `clone_box`.
+#[tokio::test]
+async fn handle_stream_event_preserves_custom_messages() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("response")]));
+    let mut agent = make_agent(stream_fn);
+
+    // Inject a custom message alongside the user message.
+    let input = vec![
+        user_msg("hello"),
+        AgentMessage::Custom(Box::new(CloneableCustomMsg {
+            label: "my-custom".to_string(),
+        })),
+    ];
+
+    let stream = agent.prompt_stream(input).unwrap();
+    let mut stream = std::pin::pin!(stream);
+    while let Some(event) = stream.next().await {
+        agent.handle_stream_event(&event);
+    }
+
+    assert!(!agent.state().is_running, "agent should be idle");
+
+    // Count custom messages in the rebuilt state.
+    let custom_count = agent
+        .state()
+        .messages
+        .iter()
+        .filter(|m| matches!(m, AgentMessage::Custom(_)))
+        .count();
+
+    assert_eq!(
+        custom_count, 1,
+        "custom message must survive stream-driven state rebuild (got {custom_count})"
+    );
+
+    // Verify it's the right custom message by downcasting.
+    let custom = agent
+        .state()
+        .messages
+        .iter()
+        .find_map(|m| match m {
+            AgentMessage::Custom(cm) => cm.as_any().downcast_ref::<CloneableCustomMsg>(),
+            _ => None,
+        })
+        .expect("should find CloneableCustomMsg in rebuilt state");
+
+    assert_eq!(custom.label, "my-custom");
 }

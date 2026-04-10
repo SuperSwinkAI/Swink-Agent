@@ -62,7 +62,7 @@ impl Agent {
                         received_full_context = true;
                     }
                     Err(messages) => {
-                        self.state.messages = clone_llm_messages(messages.as_ref());
+                        self.state.messages = clone_messages(messages.as_ref());
                         received_full_context = true;
                     }
                 },
@@ -112,7 +112,7 @@ impl Agent {
                 }
             }
             AgentEvent::AgentEnd { messages } => {
-                self.state.messages = clone_llm_messages(messages.as_ref());
+                self.state.messages = clone_messages(messages.as_ref());
                 self.in_flight_llm_messages = None;
                 // Preserve terminal error — do not clear self.state.error.
                 self.idle_notify.notify_waiters();
@@ -148,12 +148,21 @@ impl Agent {
     }
 }
 
-fn clone_llm_messages(messages: &[AgentMessage]) -> Vec<AgentMessage> {
+fn clone_messages(messages: &[AgentMessage]) -> Vec<AgentMessage> {
     messages
         .iter()
         .filter_map(|message| match message {
             AgentMessage::Llm(llm) => Some(AgentMessage::Llm(llm.clone())),
-            AgentMessage::Custom(_) => None,
+            AgentMessage::Custom(cm) => cm.clone_box().map_or_else(
+                || {
+                    tracing::warn!(
+                        "CustomMessage {:?} does not support clone_box — dropped during state rebuild",
+                        cm
+                    );
+                    None
+                },
+                |cloned| Some(AgentMessage::Custom(cloned)),
+            ),
         })
         .collect()
 }
