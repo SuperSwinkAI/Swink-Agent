@@ -10,7 +10,7 @@ use crate::loop_::AgentEvent;
 use super::Agent;
 use super::queueing::llm_messages_from_queue;
 
-fn invalid_state_snapshot(error: serde_json::Error) -> std::io::Error {
+fn invalid_state_snapshot(error: &serde_json::Error) -> std::io::Error {
     std::io::Error::new(
         std::io::ErrorKind::InvalidData,
         format!("corrupted session state snapshot: {error}"),
@@ -88,7 +88,7 @@ impl Agent {
 
         if let Some(ref state_val) = checkpoint.state {
             let restored = crate::SessionState::restore_from_snapshot(state_val.clone())
-                .map_err(invalid_state_snapshot)?;
+                .map_err(|e| invalid_state_snapshot(&e))?;
             let mut s = self
                 .session_state
                 .write()
@@ -208,7 +208,7 @@ impl Agent {
 
         if let Some(ref state_val) = checkpoint.state {
             let restored = crate::SessionState::restore_from_snapshot(state_val.clone())
-                .map_err(invalid_state_snapshot)
+                .map_err(|e| invalid_state_snapshot(&e))
                 .map_err(AgentError::stream)?;
             let mut s = self
                 .session_state

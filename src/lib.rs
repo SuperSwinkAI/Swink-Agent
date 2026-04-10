@@ -11,6 +11,7 @@ mod agent;
 mod agent_id;
 pub(crate) mod agent_options;
 pub(crate) mod agent_subscriptions;
+pub mod atomic_fs;
 #[cfg(feature = "artifact-store")]
 pub mod artifact;
 mod async_context_transformer;
