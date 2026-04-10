@@ -93,15 +93,11 @@ fn sequence_conflict(id: &str, expected: u64, actual: u64) -> io::Error {
     )
 }
 
-/// Check optimistic concurrency: if file exists, verify the caller's sequence
-/// matches the stored sequence. Returns `Ok(())` if the file doesn't exist
-/// (new session) or sequences match; `Err` on conflict.
-fn check_sequence(sessions_dir: &Path, id: &str, caller_sequence: u64) -> io::Result<()> {
-    let path = session_path(sessions_dir, id);
+fn check_sequence_path(path: &Path, id: &str, caller_sequence: u64) -> io::Result<()> {
     if !path.exists() {
         return Ok(());
     }
-    let (stored_meta, _) = read_meta_with_line_len(&path, id)?;
+    let (stored_meta, _) = read_meta_with_line_len(path, id)?;
     if stored_meta.sequence != caller_sequence {
         return Err(sequence_conflict(id, caller_sequence, stored_meta.sequence));
     }
@@ -165,7 +161,15 @@ fn read_meta_with_line_len(path: &Path, id: &str) -> io::Result<(SessionMeta, us
 /// Write `contents_fn` to a sibling temp file, fsync, then atomically rename
 /// over `target`. The temp file is removed on any error so a crash mid-write
 /// never leaves a zero-length or partial file at `target`.
-fn atomic_write<F>(target: &Path, contents_fn: F) -> io::Result<()>
+fn with_target_lock<T>(target: &Path, op: impl FnOnce() -> io::Result<T>) -> io::Result<T> {
+    let lock = lock_for_target(target);
+    let _guard = lock
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    op()
+}
+
+fn atomic_write_locked<F>(target: &Path, contents_fn: F) -> io::Result<()>
 where
     F: FnOnce(&mut io::BufWriter<&std::fs::File>) -> io::Result<()>,
 {
@@ -178,12 +182,6 @@ where
     let file_name = target.file_name().and_then(|s| s.to_str()).ok_or_else(|| {
         io::Error::new(io::ErrorKind::InvalidInput, "target path has no file name")
     })?;
-    // Serialize overlapping rewrites of the same target within this process,
-    // so the rename+replace sequence on Windows cannot race.
-    let lock = lock_for_target(target);
-    let _guard = lock
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
     // Unique per write attempt: pid + monotonic counter. Two overlapping
     // rewrites of the same target inside one process must not share a temp
     // path, or they would truncate/rename each other's files.
@@ -211,6 +209,16 @@ where
         let _ = std::fs::remove_file(&tmp_path);
     }
     result
+}
+
+/// Write `contents_fn` to a sibling temp file, fsync, then atomically rename
+/// over `target`. The temp file is removed on any error so a crash mid-write
+/// never leaves a zero-length or partial file at `target`.
+fn atomic_write<F>(target: &Path, contents_fn: F) -> io::Result<()>
+where
+    F: FnOnce(&mut io::BufWriter<&std::fs::File>) -> io::Result<()>,
+{
+    with_target_lock(target, || atomic_write_locked(target, contents_fn))
 }
 
 /// Rename `from` to `to`, replacing `to` if it already exists.
@@ -247,8 +255,12 @@ fn lock_for_target(target: &Path) -> std::sync::Arc<std::sync::Mutex<()>> {
         .clone()
 }
 
-fn rewrite_session_file(path: &Path, meta: &SessionMeta, lines: &[String]) -> io::Result<()> {
-    atomic_write(path, |writer| {
+fn rewrite_session_file_locked(
+    path: &Path,
+    meta: &SessionMeta,
+    lines: &[String],
+) -> io::Result<()> {
+    atomic_write_locked(path, |writer| {
         serde_json::to_writer(&mut *writer, meta).map_err(io::Error::other)?;
         writeln!(writer)?;
 
@@ -261,12 +273,54 @@ fn rewrite_session_file(path: &Path, meta: &SessionMeta, lines: &[String]) -> io
     })
 }
 
+fn save_messages_with_hooks<AfterValidation, WriteOp>(
+    path: &Path,
+    id: &str,
+    meta: &SessionMeta,
+    messages: &[AgentMessage],
+    after_validation: AfterValidation,
+    write_op: WriteOp,
+) -> io::Result<()>
+where
+    AfterValidation: FnOnce() -> io::Result<()>,
+    WriteOp: FnOnce(&Path, &SessionMeta, &[AgentMessage], &str) -> io::Result<()>,
+{
+    with_target_lock(path, || {
+        check_sequence_path(path, id, meta.sequence)?;
+        after_validation()?;
+
+        let mut write_meta = meta.clone();
+        write_meta.sequence += 1;
+        write_op(path, &write_meta, messages, id)
+    })
+}
+
+fn write_messages_locked(
+    path: &Path,
+    meta: &SessionMeta,
+    messages: &[AgentMessage],
+    id: &str,
+) -> io::Result<()> {
+    atomic_write_locked(path, |writer| {
+        serde_json::to_writer(&mut *writer, meta).map_err(io::Error::other)?;
+        writeln!(writer)?;
+
+        for msg in messages {
+            if let Some(record) = SessionRecord::from_message(msg, id) {
+                writer.write_all(record.to_json_line()?.as_bytes())?;
+                writeln!(writer)?;
+            }
+        }
+        Ok(())
+    })
+}
+
 fn append_records(
     path: &Path,
     id: &str,
     records: impl IntoIterator<Item = SessionRecord>,
 ) -> io::Result<()> {
-    append_records_with_rewrite(path, id, records, rewrite_session_file)
+    append_records_with_rewrite(path, id, records, rewrite_session_file_locked)
 }
 
 fn append_records_with_rewrite<F>(
@@ -278,18 +332,20 @@ fn append_records_with_rewrite<F>(
 where
     F: FnOnce(&Path, &SessionMeta, &[String]) -> io::Result<()>,
 {
-    let (mut meta, _) = read_meta_with_line_len(path, id)?;
-    meta.updated_at = now_utc();
-    meta.sequence += 1;
+    with_target_lock(path, || {
+        let (mut meta, _) = read_meta_with_line_len(path, id)?;
+        meta.updated_at = now_utc();
+        meta.sequence += 1;
 
-    let record_lines = records
-        .into_iter()
-        .map(|record| record.to_json_line())
-        .collect::<io::Result<Vec<_>>>()?;
+        let record_lines = records
+            .into_iter()
+            .map(|record| record.to_json_line())
+            .collect::<io::Result<Vec<_>>>()?;
 
-    let (_, mut existing_lines) = read_meta_and_message_lines(path, id)?;
-    existing_lines.extend(record_lines);
-    rewrite_fn(path, &meta, &existing_lines)
+        let (_, mut existing_lines) = read_meta_and_message_lines(path, id)?;
+        existing_lines.extend(record_lines);
+        rewrite_fn(path, &meta, &existing_lines)
+    })
 }
 
 fn find_record_line_mut<'a>(
@@ -400,28 +456,8 @@ impl JsonlSessionStore {
 impl SessionStore for JsonlSessionStore {
     fn save(&self, id: &str, meta: &SessionMeta, messages: &[AgentMessage]) -> io::Result<()> {
         validate_session_id(id)?;
-        check_sequence(&self.sessions_dir, id, meta.sequence)?;
-
         let path = session_path(&self.sessions_dir, id);
-
-        // Increment sequence for the write
-        let mut write_meta = meta.clone();
-        write_meta.sequence += 1;
-
-        atomic_write(&path, |writer| {
-            // First line: metadata
-            serde_json::to_writer(&mut *writer, &write_meta).map_err(io::Error::other)?;
-            writeln!(writer)?;
-
-            // Subsequent lines: one message per line
-            for msg in messages {
-                if let Some(record) = SessionRecord::from_message(msg, id) {
-                    writer.write_all(record.to_json_line()?.as_bytes())?;
-                    writeln!(writer)?;
-                }
-            }
-            Ok(())
-        })
+        save_messages_with_hooks(&path, id, meta, messages, || Ok(()), write_messages_locked)
     }
 
     fn append(&self, id: &str, messages: &[AgentMessage]) -> io::Result<()> {
@@ -531,23 +567,25 @@ impl SessionStore for JsonlSessionStore {
         validate_session_id(id)?;
 
         let path = session_path(&self.sessions_dir, id);
-        if !path.exists() {
-            return Err(not_found(id));
-        }
+        with_target_lock(&path, || {
+            if !path.exists() {
+                return Err(not_found(id));
+            }
 
-        let (mut meta, mut lines) = read_meta_and_message_lines(&path, id)?;
-        meta.updated_at = now_utc();
-        meta.sequence += 1;
-        let state_line = SessionRecord::state(state.clone()).to_json_line()?;
+            let (mut meta, mut lines) = read_meta_and_message_lines(&path, id)?;
+            meta.updated_at = now_utc();
+            meta.sequence += 1;
+            let state_line = SessionRecord::state(state.clone()).to_json_line()?;
 
-        if let Some(line) = find_record_line_mut(&mut lines, id, |record| {
-            matches!(record, SessionRecord::State(_))
-        }) {
-            line.clone_from(&state_line);
-        } else {
-            lines.push(state_line);
-        }
-        rewrite_session_file(&path, &meta, &lines)
+            if let Some(line) = find_record_line_mut(&mut lines, id, |record| {
+                matches!(record, SessionRecord::State(_))
+            }) {
+                line.clone_from(&state_line);
+            } else {
+                lines.push(state_line);
+            }
+            rewrite_session_file_locked(&path, &meta, &lines)
+        })
     }
 
     fn load_state(&self, id: &str) -> io::Result<Option<serde_json::Value>> {
@@ -641,25 +679,26 @@ impl JsonlSessionStore {
         entries: &[SessionEntry],
     ) -> io::Result<()> {
         validate_session_id(id)?;
-        check_sequence(&self.sessions_dir, id, meta.sequence)?;
-
         let path = session_path(&self.sessions_dir, id);
+        with_target_lock(&path, || {
+            check_sequence_path(&path, id, meta.sequence)?;
 
-        // Increment sequence for the write
-        let mut write_meta = meta.clone();
-        write_meta.sequence += 1;
+            // Increment sequence for the write
+            let mut write_meta = meta.clone();
+            write_meta.sequence += 1;
 
-        atomic_write(&path, |writer| {
-            // First line: metadata
-            serde_json::to_writer(&mut *writer, &write_meta).map_err(io::Error::other)?;
-            writeln!(writer)?;
-
-            // Subsequent lines: one SessionEntry per line
-            for entry in entries {
-                serde_json::to_writer(&mut *writer, entry).map_err(io::Error::other)?;
+            atomic_write_locked(&path, |writer| {
+                // First line: metadata
+                serde_json::to_writer(&mut *writer, &write_meta).map_err(io::Error::other)?;
                 writeln!(writer)?;
-            }
-            Ok(())
+
+                // Subsequent lines: one SessionEntry per line
+                for entry in entries {
+                    serde_json::to_writer(&mut *writer, entry).map_err(io::Error::other)?;
+                    writeln!(writer)?;
+                }
+                Ok(())
+            })
         })
     }
 
@@ -1214,5 +1253,68 @@ mod tests {
             .save("seq-state", &stale, &[user_msg("c", 3)])
             .unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
+    }
+
+    #[test]
+    fn stale_saves_do_not_both_pass_validation() {
+        use std::sync::mpsc;
+        use std::thread;
+
+        let dir = tempfile::tempdir().unwrap();
+        let store = JsonlSessionStore::new(dir.path().to_path_buf()).unwrap();
+
+        let meta = fresh_meta("stale-race");
+        store
+            .save("stale-race", &meta, &[user_msg("v1", 1)])
+            .unwrap();
+        let (stale_meta, _) = store.load("stale-race", None).unwrap();
+
+        let path = session_path(dir.path(), "stale-race");
+        let (validated_tx, validated_rx) = mpsc::channel();
+        let (resume_tx, resume_rx) = mpsc::channel();
+
+        let thread_path = path.clone();
+        let thread_meta = stale_meta.clone();
+        let paused_writer = thread::spawn(move || {
+            let messages = vec![user_msg("writer-1", 2)];
+            save_messages_with_hooks(
+                &thread_path,
+                "stale-race",
+                &thread_meta,
+                &messages,
+                || {
+                    validated_tx.send(()).unwrap();
+                    resume_rx.recv().unwrap();
+                    Ok(())
+                },
+                write_messages_locked,
+            )
+        });
+
+        validated_rx.recv().unwrap();
+
+        let competitor_messages = vec![user_msg("writer-2", 3)];
+        let competitor_meta = stale_meta.clone();
+        let competitor =
+            thread::spawn(move || store.save("stale-race", &competitor_meta, &competitor_messages));
+
+        resume_tx.send(()).unwrap();
+
+        let first_result = paused_writer.join().unwrap();
+        let second_result = competitor.join().unwrap();
+
+        let conflict_count =
+            usize::from(first_result.is_err()) + usize::from(second_result.is_err());
+        assert_eq!(
+            conflict_count, 1,
+            "exactly one stale writer should conflict"
+        );
+
+        let (loaded_meta, loaded_messages) = JsonlSessionStore::new(dir.path().to_path_buf())
+            .unwrap()
+            .load("stale-race", None)
+            .unwrap();
+        assert_eq!(loaded_meta.sequence, 2);
+        assert_eq!(loaded_messages.len(), 1);
     }
 }
