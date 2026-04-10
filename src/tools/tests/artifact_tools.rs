@@ -124,7 +124,7 @@ impl ArtifactStore for MockArtifactStore {
 
 fn make_state(session_id: &str) -> Arc<std::sync::RwLock<SessionState>> {
     let mut state = SessionState::new();
-    state.set("session_id", session_id.to_string());
+    state.set("session_id", session_id.to_string()).unwrap();
     Arc::new(std::sync::RwLock::new(state))
 }
 

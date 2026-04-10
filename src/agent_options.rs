@@ -516,7 +516,9 @@ impl AgentOptions {
         let state = self
             .session_state
             .get_or_insert_with(crate::SessionState::new);
-        state.set(&key.into(), value);
+        state
+            .set(&key.into(), value)
+            .expect("with_state_entry: value must be serializable to JSON");
         // Flush delta so pre-seeded entries don't appear as mutations (baseline semantics).
         state.flush_delta();
         self

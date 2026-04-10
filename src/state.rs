@@ -78,10 +78,13 @@ impl SessionState {
     }
 
     /// Set a typed value. Serializes to `Value` and records in delta.
-    pub fn set<T: Serialize>(&mut self, key: &str, value: T) {
-        let val = serde_json::to_value(value).expect("value must be serializable");
+    ///
+    /// Returns an error if the value cannot be serialized to JSON.
+    pub fn set<T: Serialize>(&mut self, key: &str, value: T) -> Result<(), serde_json::Error> {
+        let val = serde_json::to_value(value)?;
         self.data.insert(key.to_string(), val.clone());
         self.delta.changes.insert(key.to_string(), Some(val));
+        Ok(())
     }
 
     /// Remove a key. Records removal in delta. No-op if key absent.
@@ -187,14 +190,14 @@ mod tests {
     #[test]
     fn set_and_get_typed() {
         let mut s = SessionState::new();
-        s.set("count", 42_i64);
+        s.set("count", 42_i64).unwrap();
         assert_eq!(s.get::<i64>("count"), Some(42));
     }
 
     #[test]
     fn get_raw_returns_value_ref() {
         let mut s = SessionState::new();
-        s.set("key", "hello");
+        s.set("key", "hello").unwrap();
         assert_eq!(s.get_raw("key"), Some(&json!("hello")));
     }
 
@@ -207,7 +210,7 @@ mod tests {
     #[test]
     fn get_wrong_type_returns_none() {
         let mut s = SessionState::new();
-        s.set("key", "hello");
+        s.set("key", "hello").unwrap();
         // Try to get as i64 — should fail gracefully
         assert_eq!(s.get::<i64>("key"), None);
         // Original value still intact
@@ -217,7 +220,7 @@ mod tests {
     #[test]
     fn remove_existing_key() {
         let mut s = SessionState::new();
-        s.set("x", 1);
+        s.set("x", 1).unwrap();
         s.remove("x");
         assert!(!s.contains("x"));
         assert!(s.is_empty());
@@ -234,8 +237,8 @@ mod tests {
     fn contains_keys_len_is_empty() {
         let mut s = SessionState::new();
         assert!(s.is_empty());
-        s.set("a", 1);
-        s.set("b", 2);
+        s.set("a", 1).unwrap();
+        s.set("b", 2).unwrap();
         assert!(s.contains("a"));
         assert!(!s.contains("c"));
         assert_eq!(s.len(), 2);
@@ -248,8 +251,8 @@ mod tests {
     #[test]
     fn clear_records_all_removals() {
         let mut s = SessionState::new();
-        s.set("a", 1);
-        s.set("b", 2);
+        s.set("a", 1).unwrap();
+        s.set("b", 2).unwrap();
         s.flush_delta(); // reset
         s.clear();
         assert!(s.is_empty());
@@ -263,8 +266,8 @@ mod tests {
     #[test]
     fn delta_set_set_last_wins() {
         let mut s = SessionState::new();
-        s.set("k", 1);
-        s.set("k", 2);
+        s.set("k", 1).unwrap();
+        s.set("k", 2).unwrap();
         assert_eq!(s.delta().changes["k"], Some(json!(2)));
         assert_eq!(s.delta().len(), 1);
     }
@@ -272,7 +275,7 @@ mod tests {
     #[test]
     fn delta_set_remove_is_none() {
         let mut s = SessionState::new();
-        s.set("k", 1);
+        s.set("k", 1).unwrap();
         s.remove("k");
         assert_eq!(s.delta().changes["k"], None);
     }
@@ -281,7 +284,7 @@ mod tests {
     fn delta_remove_set_is_some() {
         let mut s = SessionState::with_data(std::iter::once(("k".to_string(), json!(1))).collect());
         s.remove("k");
-        s.set("k", 99);
+        s.set("k", 99).unwrap();
         assert_eq!(s.delta().changes["k"], Some(json!(99)));
     }
 
@@ -290,7 +293,7 @@ mod tests {
     #[test]
     fn flush_delta_returns_and_resets() {
         let mut s = SessionState::new();
-        s.set("a", 1);
+        s.set("a", 1).unwrap();
         let d = s.flush_delta();
         assert_eq!(d.len(), 1);
         assert!(s.delta().is_empty());
@@ -318,8 +321,8 @@ mod tests {
     #[test]
     fn snapshot_restore_roundtrip() {
         let mut s = SessionState::new();
-        s.set("name", "alice");
-        s.set("age", 30);
+        s.set("name", "alice").unwrap();
+        s.set("age", 30).unwrap();
         let snap = s.snapshot();
         let s2 = SessionState::restore_from_snapshot(snap);
         assert_eq!(s2.get::<String>("name"), Some("alice".to_string()));
@@ -332,7 +335,7 @@ mod tests {
     #[test]
     fn serde_roundtrip_skips_delta() {
         let mut s = SessionState::new();
-        s.set("k", "v");
+        s.set("k", "v").unwrap();
         // Delta has an entry
         assert!(!s.delta().is_empty());
         let json = serde_json::to_string(&s).unwrap();
@@ -340,6 +343,29 @@ mod tests {
         assert_eq!(s2.get::<String>("k"), Some("v".to_string()));
         // Delta is empty after deserialization (skipped)
         assert!(s2.delta().is_empty());
+    }
+
+    // ── Serialization error handling ──
+
+    #[test]
+    fn set_returns_error_on_serialization_failure() {
+        use serde::ser::{self, Serializer};
+
+        /// A type whose `Serialize` impl always fails.
+        struct Unserializable;
+
+        impl Serialize for Unserializable {
+            fn serialize<S: Serializer>(&self, _s: S) -> Result<S::Ok, S::Error> {
+                Err(ser::Error::custom("intentional serialization failure"))
+            }
+        }
+
+        let mut s = SessionState::new();
+        let result = s.set("bad", Unserializable);
+        assert!(result.is_err());
+        // State must remain unchanged after a failed set.
+        assert!(!s.contains("bad"));
+        assert!(s.delta().is_empty());
     }
 
     // ── Nested JSON values ──
@@ -351,7 +377,7 @@ mod tests {
             "user": {"name": "bob", "scores": [1, 2, 3]},
             "active": true
         });
-        s.set("profile", nested.clone());
+        s.set("profile", nested.clone()).unwrap();
         let snap = s.snapshot();
         let s2 = SessionState::restore_from_snapshot(snap);
         assert_eq!(s2.get_raw("profile"), Some(&nested));
