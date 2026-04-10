@@ -75,9 +75,12 @@ pub fn oai_send_and_parse<'a>(
         let response = match request.send().await {
             Ok(resp) => resp,
             Err(e) => {
-                return stream::iter(vec![AssistantMessageEvent::error_network(format!(
-                    "{provider} connection error: {e}"
-                ))])
+                return stream::iter(vec![
+                    AssistantMessageEvent::Start,
+                    AssistantMessageEvent::error_network(format!(
+                        "{provider} connection error: {e}"
+                    )),
+                ])
                 .left_stream();
             }
         };
@@ -89,11 +92,11 @@ pub fn oai_send_and_parse<'a>(
             warn!(status = code, "{provider} HTTP error");
 
             if let Some(event) = classify_error(code, &body) {
-                return stream::iter(vec![event]).left_stream();
+                return stream::iter(vec![AssistantMessageEvent::Start, event]).left_stream();
             }
 
             let event = crate::classify::error_event_from_status(code, &body, provider);
-            return stream::iter(vec![event]).left_stream();
+            return stream::iter(vec![AssistantMessageEvent::Start, event]).left_stream();
         }
 
         parse_oai_sse_stream(response, cancellation_token, provider).right_stream()

@@ -716,9 +716,10 @@ fn local_stream<'a>(
 ) -> impl Stream<Item = AssistantMessageEvent> + Send + 'a {
     stream::once(async move {
         if let Err(e) = local_model.ensure_ready().await {
-            return stream::iter(vec![AssistantMessageEvent::error(format!(
-                "local model not ready: {e}"
-            ))]);
+            return stream::iter(vec![
+                AssistantMessageEvent::Start,
+                AssistantMessageEvent::error(format!("local model not ready: {e}")),
+            ]);
         }
         if cancellation_token.is_cancelled() {
             return stream::iter(vec![
@@ -753,23 +754,26 @@ fn local_stream<'a>(
         let state_guard = match local_model.runner().await {
             Ok(guard) => guard,
             Err(e) => {
-                return stream::iter(vec![AssistantMessageEvent::error(format!(
-                    "model runner unavailable: {e}"
-                ))]);
+                return stream::iter(vec![
+                    AssistantMessageEvent::Start,
+                    AssistantMessageEvent::error(format!("model runner unavailable: {e}")),
+                ]);
             }
         };
         let LoaderState::Ready { runner } = &*state_guard else {
-            return stream::iter(vec![AssistantMessageEvent::error(
-                "model in unexpected state",
-            )]);
+            return stream::iter(vec![
+                AssistantMessageEvent::Start,
+                AssistantMessageEvent::error("model in unexpected state"),
+            ]);
         };
         let mut mistral_stream = match runner.stream_chat_request(messages).await {
             Ok(s) => s,
             Err(e) => {
                 error!(error = %e, "local streaming request failed");
-                return stream::iter(vec![AssistantMessageEvent::error(format!(
-                    "local inference error: {e}"
-                ))]);
+                return stream::iter(vec![
+                    AssistantMessageEvent::Start,
+                    AssistantMessageEvent::error(format!("local inference error: {e}")),
+                ]);
             }
         };
 
