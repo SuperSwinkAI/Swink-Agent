@@ -70,8 +70,41 @@ pub enum RemoteModelConnectionError {
     UnsupportedProvider { provider_key: String },
 }
 
+/// Returns `true` if the adapter for the given provider key is compiled in.
+///
+/// Uses `#[cfg(feature = "...")]` checks so the answer is a compile-time
+/// constant for each provider. Provider keys that don't map to any adapter
+/// feature (e.g. `"local"`) always return `false`.
+#[must_use]
+pub fn is_provider_compiled(provider_key: &str) -> bool {
+    match provider_key {
+        "anthropic" => cfg!(feature = "anthropic"),
+        "openai" => cfg!(feature = "openai"),
+        "google" => cfg!(feature = "gemini"),
+        "azure" => cfg!(feature = "azure"),
+        "xai" => cfg!(feature = "xai"),
+        "mistral" => cfg!(feature = "mistral"),
+        "bedrock" => cfg!(feature = "bedrock"),
+        _ => false,
+    }
+}
+
+/// Returns remote presets filtered to only those whose provider adapter is
+/// compiled in. Use [`all_remote_presets`] to enumerate the full catalog
+/// regardless of compiled adapter support.
 #[must_use]
 pub fn remote_presets(provider_key: Option<&str>) -> Vec<CatalogPreset> {
+    all_remote_presets(provider_key)
+        .into_iter()
+        .filter(|p| is_provider_compiled(&p.provider_key))
+        .collect()
+}
+
+/// Returns all remote presets from the catalog, regardless of whether the
+/// corresponding adapter feature is compiled in. Useful for discovery UIs
+/// that want to show available models even when the adapter is not enabled.
+#[must_use]
+pub fn all_remote_presets(provider_key: Option<&str>) -> Vec<CatalogPreset> {
     let catalog = model_catalog();
     catalog
         .providers
@@ -271,29 +304,172 @@ fn required_catalog_preset(
 mod tests {
     use super::*;
 
+    // ── all_remote_presets (unfiltered) ──────────────────────────────────
+
     #[test]
-    fn grouped_remote_presets_are_loaded_from_catalog() {
-        let all = remote_presets(None);
+    fn all_remote_presets_are_loaded_from_catalog() {
+        let all = all_remote_presets(None);
         assert!(!all.is_empty(), "catalog should have remote presets");
     }
 
     #[test]
-    fn preset_finds_by_model_id() {
-        let sonnet = preset("claude-sonnet-4-6").expect("sonnet preset should exist");
-        assert_eq!(sonnet.provider_key, "anthropic");
-        assert_eq!(sonnet.preset_id, "sonnet_46");
+    fn every_remote_provider_has_at_least_one_unfiltered_preset() {
+        let catalog = model_catalog();
+        for provider in &catalog.providers {
+            if provider.kind == ProviderKind::Remote {
+                let presets = all_remote_presets(Some(&provider.key));
+                assert!(
+                    !presets.is_empty(),
+                    "remote provider '{}' should have presets in the catalog",
+                    provider.key
+                );
+            }
+        }
+    }
 
-        let gpt = preset("gpt-4o").expect("gpt-4o preset should exist");
-        assert_eq!(gpt.provider_key, "openai");
+    #[test]
+    fn all_catalog_remote_presets_resolvable_by_provider_and_preset_id() {
+        let catalog = model_catalog();
+        for p in all_remote_presets(None) {
+            let found = catalog
+                .preset(&p.provider_key, &p.preset_id)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "catalog.preset('{}', '{}') must resolve for model_id '{}'",
+                        p.provider_key, p.preset_id, p.model_id
+                    )
+                });
+            assert_eq!(found.model_id, p.model_id);
+        }
+    }
 
+    // ── is_provider_compiled ────────────────────────────────────────────
+
+    #[test]
+    fn is_provider_compiled_returns_false_for_unknown_provider() {
+        assert!(!is_provider_compiled("nonexistent"));
+        assert!(!is_provider_compiled("local"));
+        assert!(!is_provider_compiled(""));
+    }
+
+    #[test]
+    fn is_provider_compiled_matches_feature_gates() {
+        // Each assertion matches the compile-time cfg for the corresponding feature.
+        assert_eq!(is_provider_compiled("anthropic"), cfg!(feature = "anthropic"));
+        assert_eq!(is_provider_compiled("openai"), cfg!(feature = "openai"));
+        assert_eq!(is_provider_compiled("google"), cfg!(feature = "gemini"));
+        assert_eq!(is_provider_compiled("azure"), cfg!(feature = "azure"));
+        assert_eq!(is_provider_compiled("xai"), cfg!(feature = "xai"));
+        assert_eq!(is_provider_compiled("mistral"), cfg!(feature = "mistral"));
+        assert_eq!(is_provider_compiled("bedrock"), cfg!(feature = "bedrock"));
+    }
+
+    // ── remote_presets (filtered) ───────────────────────────────────────
+
+    #[test]
+    fn remote_presets_only_contains_compiled_providers() {
+        for p in remote_presets(None) {
+            assert!(
+                is_provider_compiled(&p.provider_key),
+                "remote_presets() returned preset '{}' for provider '{}' which is not compiled",
+                p.preset_id,
+                p.provider_key
+            );
+        }
+    }
+
+    #[test]
+    fn remote_presets_subset_of_all_remote_presets() {
+        let filtered = remote_presets(None);
+        let all = all_remote_presets(None);
+        assert!(
+            filtered.len() <= all.len(),
+            "filtered ({}) must be <= all ({})",
+            filtered.len(),
+            all.len()
+        );
+        // Every filtered preset must also appear in the unfiltered list.
+        for p in &filtered {
+            assert!(
+                all.iter().any(|a| a.model_id == p.model_id && a.provider_key == p.provider_key),
+                "filtered preset '{}.{}' not found in all_remote_presets",
+                p.provider_key,
+                p.preset_id
+            );
+        }
+    }
+
+    #[cfg(not(any(
+        feature = "anthropic",
+        feature = "openai",
+        feature = "gemini",
+        feature = "azure",
+        feature = "xai",
+        feature = "mistral",
+        feature = "bedrock",
+    )))]
+    #[test]
+    fn remote_presets_empty_when_no_adapters_compiled() {
+        let presets = remote_presets(None);
+        assert!(
+            presets.is_empty(),
+            "remote_presets() should be empty with no adapter features, got {} presets",
+            presets.len()
+        );
+    }
+
+    // ── preset() (filtered) ────────────────────────────────────────────
+
+    #[test]
+    fn preset_only_finds_compiled_providers() {
+        // Take every model_id from the full catalog and verify that preset()
+        // only returns it when the provider is compiled.
+        for p in all_remote_presets(None) {
+            let result = preset(&p.model_id);
+            if is_provider_compiled(&p.provider_key) {
+                // May still be None if an earlier provider claimed this model_id.
+                // That's fine — we just verify it doesn't return an uncompiled one.
+                if let Some(found) = &result {
+                    assert!(
+                        is_provider_compiled(&found.provider_key),
+                        "preset('{}') returned uncompiled provider '{}'",
+                        p.model_id,
+                        found.provider_key
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn preset_returns_none_for_nonexistent_model() {
         assert!(preset("nonexistent-model-xyz").is_none());
     }
+
+    // ── preset key resolution ──────────────────────────────────────────
 
     #[test]
     fn preset_key_resolves_via_catalog() {
         let key = RemotePresetKey::new("anthropic", "sonnet_46");
         let catalog_preset = required_catalog_preset(key).unwrap();
         assert_eq!(catalog_preset.model_id, "claude-sonnet-4-6");
+    }
+
+    // ── feature-gated connection tests ──────────────────────────────────
+
+    #[cfg(feature = "anthropic")]
+    #[test]
+    fn preset_finds_anthropic_when_compiled() {
+        let sonnet = preset("claude-sonnet-4-6").expect("sonnet preset should exist");
+        assert_eq!(sonnet.provider_key, "anthropic");
+        assert_eq!(sonnet.preset_id, "sonnet_46");
+    }
+
+    #[cfg(feature = "openai")]
+    #[test]
+    fn preset_finds_openai_when_compiled() {
+        let gpt = preset("gpt-4o").expect("gpt-4o preset should exist");
+        assert_eq!(gpt.provider_key, "openai");
     }
 
     #[cfg(feature = "anthropic")]
@@ -337,72 +513,44 @@ mod tests {
     }
 
     #[test]
-    fn every_remote_provider_has_at_least_one_preset() {
-        let catalog = model_catalog();
-        for provider in &catalog.providers {
-            if provider.kind == ProviderKind::Remote {
-                let presets = remote_presets(Some(&provider.key));
-                assert!(
-                    !presets.is_empty(),
-                    "remote provider '{}' should have presets",
-                    provider.key
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn all_catalog_remote_presets_resolvable_by_provider_and_preset_id() {
-        // Every preset in the catalog is directly resolvable via its (provider_key, preset_id)
-        // pair without needing a hand-maintained constant table. The catalog is the
-        // sole authoritative source of preset identity.
-        let catalog = model_catalog();
-        for p in remote_presets(None) {
-            let found = catalog
-                .preset(&p.provider_key, &p.preset_id)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "catalog.preset('{}', '{}') must resolve for model_id '{}'",
-                        p.provider_key, p.preset_id, p.model_id
-                    )
-                });
-            assert_eq!(found.model_id, p.model_id);
-        }
-    }
-
-    #[test]
-    fn preset_by_model_id_returns_a_match_for_every_catalog_model_id() {
-        // preset(model_id) must return a non-None value for every model_id present
-        // in the catalog. Note: multiple providers may share the same model_id
-        // (e.g. OpenAI and Azure both expose "gpt-4o"); preset() returns the first
-        // match, which is fine — callers that need a specific provider use
-        // build_remote_connection(RemotePresetKey) directly.
+    fn preset_by_model_id_returns_a_match_for_every_filtered_model_id() {
         let mut seen = std::collections::HashSet::new();
         for p in remote_presets(None) {
             if seen.insert(p.model_id.clone()) {
                 assert!(
                     preset(&p.model_id).is_some(),
-                    "preset('{}') must return Some for a catalog model_id",
+                    "preset('{}') must return Some for a compiled catalog model_id",
                     p.model_id
                 );
             }
         }
     }
 
+    #[cfg(feature = "anthropic")]
     #[test]
-    fn preset_finds_representative_models_across_providers() {
-        // Spot-check one model per remote provider to verify catalog coverage.
-        let checks = [
-            ("claude-sonnet-4-6", "anthropic"),
-            ("gpt-4o", "openai"),
-            ("gemini-3-flash-preview", "google"),
-            ("mistral-large-latest", "mistral"),
-        ];
-        for (model_id, expected_provider) in checks {
-            let p = preset(model_id).unwrap_or_else(|| {
-                panic!("preset for model_id '{model_id}' should exist in catalog")
-            });
-            assert_eq!(p.provider_key, expected_provider);
-        }
+    fn preset_finds_representative_anthropic_model() {
+        let p = preset("claude-sonnet-4-6").expect("anthropic preset should exist");
+        assert_eq!(p.provider_key, "anthropic");
+    }
+
+    #[cfg(feature = "openai")]
+    #[test]
+    fn preset_finds_representative_openai_model() {
+        let p = preset("gpt-4o").expect("openai preset should exist");
+        assert_eq!(p.provider_key, "openai");
+    }
+
+    #[cfg(feature = "gemini")]
+    #[test]
+    fn preset_finds_representative_gemini_model() {
+        let p = preset("gemini-3-flash-preview").expect("gemini preset should exist");
+        assert_eq!(p.provider_key, "google");
+    }
+
+    #[cfg(feature = "mistral")]
+    #[test]
+    fn preset_finds_representative_mistral_model() {
+        let p = preset("mistral-large-latest").expect("mistral preset should exist");
+        assert_eq!(p.provider_key, "mistral");
     }
 }
