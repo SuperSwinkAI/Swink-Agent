@@ -296,14 +296,14 @@ impl App {
                 self.input.move_end();
             }
             (KeyModifiers::NONE, KeyCode::Up) => {
-                if self.input.cursor_row == 0 {
+                if self.input.cursor_row() == 0 {
                     self.input.history_prev();
                 } else {
                     self.input.move_up();
                 }
             }
             (KeyModifiers::NONE, KeyCode::Down) => {
-                if self.input.cursor_row + 1 >= self.input.lines.len() {
+                if self.input.cursor_row() + 1 >= self.input.line_count() {
                     self.input.history_next();
                 } else {
                     self.input.move_down();
