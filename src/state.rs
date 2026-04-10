@@ -139,12 +139,12 @@ impl SessionState {
 
     /// Restore from a JSON Value snapshot. Returns a new `SessionState` with
     /// empty delta.
-    pub fn restore_from_snapshot(snapshot: Value) -> Self {
-        let data: HashMap<String, Value> = serde_json::from_value(snapshot).unwrap_or_default();
-        Self {
+    pub fn restore_from_snapshot(snapshot: Value) -> Result<Self, serde_json::Error> {
+        let data: HashMap<String, Value> = serde_json::from_value(snapshot)?;
+        Ok(Self {
             data,
             delta: StateDelta::default(),
-        }
+        })
     }
 }
 
@@ -324,7 +324,7 @@ mod tests {
         s.set("name", "alice").unwrap();
         s.set("age", 30).unwrap();
         let snap = s.snapshot();
-        let s2 = SessionState::restore_from_snapshot(snap);
+        let s2 = SessionState::restore_from_snapshot(snap).unwrap();
         assert_eq!(s2.get::<String>("name"), Some("alice".to_string()));
         assert_eq!(s2.get::<i64>("age"), Some(30));
         assert!(s2.delta().is_empty());
@@ -379,7 +379,13 @@ mod tests {
         });
         s.set("profile", nested.clone()).unwrap();
         let snap = s.snapshot();
-        let s2 = SessionState::restore_from_snapshot(snap);
+        let s2 = SessionState::restore_from_snapshot(snap).unwrap();
         assert_eq!(s2.get_raw("profile"), Some(&nested));
+    }
+
+    #[test]
+    fn restore_from_corrupt_snapshot_returns_error() {
+        let err = SessionState::restore_from_snapshot(json!(["not", "an", "object"])).unwrap_err();
+        assert!(err.to_string().contains("map"));
     }
 }
