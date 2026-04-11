@@ -1,5 +1,9 @@
 use std::collections::HashMap;
+#[cfg(test)]
+use std::path::PathBuf;
 use std::sync::Arc;
+#[cfg(test)]
+use std::sync::Mutex as StdMutex;
 
 use futures::stream::{FuturesUnordered, StreamExt};
 use tokio::sync::mpsc;
@@ -153,7 +157,6 @@ pub async fn execute_tools_concurrently(
                 PreDispatchVerdict, ToolDispatchContext, run_pre_dispatch_policies,
             };
 
-            let execution_root = std::env::current_dir().ok();
             let state_snapshot = {
                 let guard = config
                     .session_state
@@ -165,7 +168,10 @@ pub async fn execute_tools_concurrently(
                 tool_name: &tc.name,
                 tool_call_id: &tc.id,
                 arguments: &mut effective_arguments,
-                execution_root: execution_root.as_deref(),
+                // Do not guess at a trust boundary. Until the runtime can
+                // prove a tool-specific execution root, policies must treat it
+                // as unknown rather than inheriting the host process CWD.
+                execution_root: None,
                 state: &state_snapshot,
             };
             match run_pre_dispatch_policies(&config.pre_dispatch_policies, &mut dispatch_ctx) {
@@ -877,4 +883,105 @@ async fn resolve_credential(
     }
 
     Ok(Some(credential))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    use tokio::sync::mpsc;
+
+    use crate::policy::{PreDispatchPolicy, PreDispatchVerdict, ToolDispatchContext};
+    use crate::testing::{MockStreamFn, default_convert, default_model};
+    use crate::{DefaultRetryStrategy, StreamOptions, ToolExecutionPolicy};
+
+    struct ExecutionRootRecorder {
+        saw_none: Arc<AtomicBool>,
+        captured_roots: Arc<StdMutex<Vec<Option<PathBuf>>>>,
+    }
+
+    impl PreDispatchPolicy for ExecutionRootRecorder {
+        fn name(&self) -> &str {
+            "execution-root-recorder"
+        }
+
+        fn evaluate(&self, ctx: &mut ToolDispatchContext<'_>) -> PreDispatchVerdict {
+            self.saw_none
+                .store(ctx.execution_root.is_none(), Ordering::SeqCst);
+            self.captured_roots
+                .lock()
+                .unwrap()
+                .push(ctx.execution_root.map(std::path::Path::to_path_buf));
+            PreDispatchVerdict::Continue
+        }
+    }
+
+    fn test_loop_config(
+        pre_dispatch_policies: Vec<Arc<dyn PreDispatchPolicy>>,
+    ) -> Arc<AgentLoopConfig> {
+        Arc::new(AgentLoopConfig {
+            model: default_model(),
+            stream_options: StreamOptions::default(),
+            retry_strategy: Box::new(DefaultRetryStrategy::default()),
+            stream_fn: Arc::new(MockStreamFn::new(vec![])),
+            tools: vec![],
+            convert_to_llm: Box::new(default_convert),
+            transform_context: None,
+            get_api_key: None,
+            message_provider: None,
+            approve_tool: None,
+            approval_mode: crate::ApprovalMode::Bypassed,
+            pre_turn_policies: vec![],
+            pre_dispatch_policies,
+            post_turn_policies: vec![],
+            post_loop_policies: vec![],
+            async_transform_context: None,
+            metrics_collector: None,
+            fallback: None,
+            tool_execution_policy: ToolExecutionPolicy::Concurrent,
+            session_state: Arc::new(std::sync::RwLock::new(crate::SessionState::new())),
+            credential_resolver: None,
+            cache_config: None,
+            cache_state: std::sync::Mutex::new(crate::CacheState::default()),
+            dynamic_system_prompt: None,
+        })
+    }
+
+    #[tokio::test]
+    async fn pre_dispatch_execution_root_is_none_when_runtime_cannot_prove_it() {
+        let saw_none = Arc::new(AtomicBool::new(false));
+        let captured_roots = Arc::new(StdMutex::new(Vec::new()));
+        let recorder = Arc::new(ExecutionRootRecorder {
+            saw_none: Arc::clone(&saw_none),
+            captured_roots: Arc::clone(&captured_roots),
+        });
+        let config = test_loop_config(vec![recorder]);
+        let tool_calls = vec![ToolCallInfo {
+            id: "call_1".to_string(),
+            name: "unknown_tool".to_string(),
+            arguments: serde_json::json!({}),
+            is_incomplete: false,
+        }];
+        let cancellation_token = CancellationToken::new();
+        let (tx, _rx) = mpsc::channel(8);
+
+        let outcome =
+            execute_tools_concurrently(&config, &tool_calls, &cancellation_token, &tx).await;
+
+        assert!(
+            matches!(outcome, ToolExecOutcome::Completed { .. }),
+            "expected completed outcome"
+        );
+        assert!(
+            saw_none.load(Ordering::SeqCst),
+            "pre-dispatch policy should see execution_root=None"
+        );
+        assert_eq!(
+            captured_roots.lock().unwrap().as_slice(),
+            &[None],
+            "execution_root should remain unknown until a tool-specific root is available"
+        );
+    }
 }
