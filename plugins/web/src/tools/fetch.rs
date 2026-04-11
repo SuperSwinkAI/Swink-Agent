@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use serde_json::Value;
 use swink_agent::{AgentTool, AgentToolResult, ToolFuture};
+use tokio_util::sync::CancellationToken;
 use tracing::warn;
 
 use crate::content::{extract_readable_content, is_html_content_type, truncate_content};
@@ -43,6 +44,38 @@ impl FetchTool {
             request_timeout,
             schema,
         }
+    }
+
+    async fn read_body_with_cap(
+        response: &mut reqwest::Response,
+        max_bytes: usize,
+        cancellation_token: &CancellationToken,
+    ) -> Result<Vec<u8>, String> {
+        let mut body = Vec::with_capacity(max_bytes.min(8 * 1024));
+
+        while let Some(chunk) = tokio::select! {
+            result = response.chunk() => {
+                match result {
+                    Ok(next) => next,
+                    Err(error) => {
+                        return Err(format!("Failed to read response body: {error}"));
+                    }
+                }
+            }
+            () = cancellation_token.cancelled() => {
+                return Err("Request cancelled".to_string());
+            }
+        } {
+            if body.len().saturating_add(chunk.len()) > max_bytes {
+                return Err(format!(
+                    "Response body exceeded configured limit of {max_bytes} bytes before readability extraction."
+                ));
+            }
+
+            body.extend_from_slice(&chunk);
+        }
+
+        Ok(body)
     }
 }
 
@@ -102,7 +135,7 @@ impl AgentTool for FetchTool {
                 .get(parsed_url.clone())
                 .timeout(self.request_timeout);
 
-            let response = tokio::select! {
+            let mut response = tokio::select! {
                 result = request.send() => {
                     match result {
                         Ok(resp) => resp,
@@ -138,12 +171,17 @@ impl AgentTool for FetchTool {
                 ));
             }
 
-            // Read response bytes.
-            let bytes = match response.bytes().await {
-                Ok(b) => b,
-                Err(e) => {
-                    return AgentToolResult::error(format!("Failed to read response body: {e}"));
-                }
+            // Bound the raw response body before readability extraction so the
+            // configured content limit caps network and parsing cost too.
+            let bytes = match Self::read_body_with_cap(
+                &mut response,
+                self.max_content_length,
+                &cancellation_token,
+            )
+            .await
+            {
+                Ok(body) => body,
+                Err(error) => return AgentToolResult::error(error),
             };
 
             // Extract readable content.
@@ -174,5 +212,98 @@ impl AgentTool for FetchTool {
 
             AgentToolResult::text(output)
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, RwLock};
+    use std::time::Duration;
+
+    use serde_json::json;
+    use swink_agent::{AgentTool, SessionState};
+    use tokio_util::sync::CancellationToken;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    use super::FetchTool;
+
+    #[tokio::test]
+    async fn execute_returns_readable_content_for_html_under_cap() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/article"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/html; charset=utf-8")
+                    .set_body_string(
+                        r#"<!DOCTYPE html>
+                        <html>
+                        <head><title>Fetch Test</title></head>
+                        <body>
+                            <article>
+                                <p>This is the readable content for the fetch tool test.</p>
+                                <p>It should survive readability extraction.</p>
+                            </article>
+                        </body>
+                        </html>"#,
+                    ),
+            )
+            .mount(&server)
+            .await;
+
+        let tool = FetchTool::new(reqwest::Client::new(), 4_096, Duration::from_secs(5));
+        let state = Arc::new(RwLock::new(SessionState::default()));
+        let result = tool
+            .execute(
+                "call-1",
+                json!({ "url": format!("{}/article", server.uri()) }),
+                CancellationToken::new(),
+                None,
+                state,
+                None,
+            )
+            .await;
+
+        assert!(!result.is_error);
+        let text = format!("{:?}", result.content);
+        assert!(text.contains("Fetch Test"));
+        assert!(text.contains("readable content for the fetch tool test"));
+    }
+
+    #[tokio::test]
+    async fn execute_rejects_body_that_exceeds_cap_before_extraction() {
+        let server = MockServer::start().await;
+        let oversized_html = format!(
+            "<!DOCTYPE html><html><body><article><p>{}</p></article></body></html>",
+            "x".repeat(2_048)
+        );
+        Mock::given(method("GET"))
+            .and(path("/oversized"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/html; charset=utf-8")
+                    .set_body_string(oversized_html),
+            )
+            .mount(&server)
+            .await;
+
+        let tool = FetchTool::new(reqwest::Client::new(), 512, Duration::from_secs(5));
+        let state = Arc::new(RwLock::new(SessionState::default()));
+        let result = tool
+            .execute(
+                "call-2",
+                json!({ "url": format!("{}/oversized", server.uri()) }),
+                CancellationToken::new(),
+                None,
+                state,
+                None,
+            )
+            .await;
+
+        assert!(result.is_error);
+        let text = format!("{:?}", result.content);
+        assert!(text.contains("Response body exceeded configured limit of 512 bytes"));
+        assert!(text.contains("before readability extraction"));
     }
 }
