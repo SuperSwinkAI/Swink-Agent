@@ -355,7 +355,10 @@ mod tests {
     #[test]
     fn is_provider_compiled_matches_feature_gates() {
         // Each assertion matches the compile-time cfg for the corresponding feature.
-        assert_eq!(is_provider_compiled("anthropic"), cfg!(feature = "anthropic"));
+        assert_eq!(
+            is_provider_compiled("anthropic"),
+            cfg!(feature = "anthropic")
+        );
         assert_eq!(is_provider_compiled("openai"), cfg!(feature = "openai"));
         assert_eq!(is_provider_compiled("google"), cfg!(feature = "gemini"));
         assert_eq!(is_provider_compiled("azure"), cfg!(feature = "azure"));
@@ -391,7 +394,8 @@ mod tests {
         // Every filtered preset must also appear in the unfiltered list.
         for p in &filtered {
             assert!(
-                all.iter().any(|a| a.model_id == p.model_id && a.provider_key == p.provider_key),
+                all.iter()
+                    .any(|a| a.model_id == p.model_id && a.provider_key == p.provider_key),
                 "filtered preset '{}.{}' not found in all_remote_presets",
                 p.provider_key,
                 p.preset_id
@@ -415,6 +419,19 @@ mod tests {
             presets.is_empty(),
             "remote_presets() should be empty with no adapter features, got {} presets",
             presets.len()
+        );
+    }
+
+    #[cfg(all(feature = "xai", not(feature = "openai")))]
+    #[test]
+    fn xai_feature_does_not_mark_openai_as_compiled() {
+        assert!(is_provider_compiled("xai"));
+        assert!(!is_provider_compiled("openai"));
+        assert!(
+            remote_presets(None)
+                .into_iter()
+                .all(|preset| preset.provider_key != "openai"),
+            "xai-only builds must not expose OpenAI presets as compiled",
         );
     }
 

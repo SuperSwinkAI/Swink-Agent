@@ -11,7 +11,7 @@ use tokio_util::sync::CancellationToken;
 
 use swink_agent::{AgentContext, AssistantMessageEvent, ModelSpec, StreamFn, StreamOptions};
 
-use crate::OpenAiStreamFn;
+use crate::openai::OpenAiStreamFn;
 
 pub struct XAiStreamFn {
     inner: OpenAiStreamFn,
