@@ -7312,6 +7312,7 @@ dependencies = [
  "serde",
  "serde_json",
  "swink-agent",
+ "swink-agent-auth",
  "thiserror 2.0.18",
  "tokio",
  "tokio-util",
