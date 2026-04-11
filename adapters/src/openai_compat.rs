@@ -147,6 +147,46 @@ pub struct OaiUsage {
     pub prompt_tokens: u64,
     #[serde(default)]
     pub completion_tokens: u64,
+    #[serde(default)]
+    pub total_tokens: Option<u64>,
+    #[serde(flatten)]
+    pub extra: HashMap<String, Value>,
+}
+
+impl OaiUsage {
+    fn to_usage(&self) -> Usage {
+        let mut extra = HashMap::new();
+        for (key, value) in &self.extra {
+            collect_numeric_usage_fields(key.clone(), value, &mut extra);
+        }
+
+        Usage {
+            input: self.prompt_tokens,
+            output: self.completion_tokens,
+            cache_read: 0,
+            cache_write: 0,
+            total: self
+                .total_tokens
+                .unwrap_or(self.prompt_tokens + self.completion_tokens),
+            extra,
+        }
+    }
+}
+
+fn collect_numeric_usage_fields(key: String, value: &Value, extra: &mut HashMap<String, u64>) {
+    match value {
+        Value::Number(number) => {
+            if let Some(value) = number.as_u64() {
+                extra.insert(key, value);
+            }
+        }
+        Value::Object(fields) => {
+            for (child_key, child_value) in fields {
+                collect_numeric_usage_fields(format!("{key}.{child_key}"), child_value, extra);
+            }
+        }
+        _ => {}
+    }
 }
 
 // ─── Tool call state tracking ───────────────────────────────────────────────
@@ -311,14 +351,7 @@ pub fn process_oai_chunk(
     provider: &str,
 ) {
     if let Some(u) = &chunk.usage {
-        state.usage = Some(Usage {
-            input: u.prompt_tokens,
-            output: u.completion_tokens,
-            cache_read: 0,
-            cache_write: 0,
-            total: u.prompt_tokens + u.completion_tokens,
-            extra: HashMap::new(),
-        });
+        state.usage = Some(u.to_usage());
     }
 
     for choice in &chunk.choices {

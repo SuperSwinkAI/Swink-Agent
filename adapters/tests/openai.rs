@@ -250,6 +250,51 @@ async fn openai_usage_in_separate_chunk() {
 }
 
 #[tokio::test]
+async fn openai_usage_preserves_provider_total_and_breakdowns() {
+    let body = [
+        r#"data: {"choices":[{"delta":{"content":"hi"},"index":0}]}"#,
+        "",
+        r#"data: {"choices":[],"usage":{"prompt_tokens":42,"completion_tokens":17,"total_tokens":80,"prompt_tokens_details":{"cached_tokens":9},"completion_tokens_details":{"reasoning_tokens":7,"accepted_prediction_tokens":3},"provider_batch_tokens":11}}"#,
+        "",
+        r#"data: {"choices":[{"delta":{},"finish_reason":"stop","index":0}]}"#,
+        "",
+        "data: [DONE]",
+        "",
+        "",
+    ]
+    .join("\n");
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(sse_response(&body))
+        .mount(&server)
+        .await;
+
+    let sf = OpenAiStreamFn::new(server.uri(), "test-key");
+    let events = collect_events(&sf).await;
+
+    let usage = events
+        .iter()
+        .find_map(|e| match e {
+            AssistantMessageEvent::Done { usage, .. } => Some(usage.clone()),
+            _ => None,
+        })
+        .expect("missing Done event");
+
+    assert_eq!(usage.input, 42);
+    assert_eq!(usage.output, 17);
+    assert_eq!(usage.total, 80, "expected provider-reported total");
+    assert_eq!(usage.extra["prompt_tokens_details.cached_tokens"], 9);
+    assert_eq!(usage.extra["completion_tokens_details.reasoning_tokens"], 7);
+    assert_eq!(
+        usage.extra["completion_tokens_details.accepted_prediction_tokens"],
+        3
+    );
+    assert_eq!(usage.extra["provider_batch_tokens"], 11);
+}
+
+#[tokio::test]
 async fn openai_http_401() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
