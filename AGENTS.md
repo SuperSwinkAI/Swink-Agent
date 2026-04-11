@@ -49,6 +49,7 @@ MSRV **1.88** (edition 2024). Workspace deps centralized in root `Cargo.toml`.
 - Queues use `Arc<Mutex<>>` with `PoisonError::into_inner()` — never panics on poisoned locks.
 - `dispatch_event` now wraps event forwarders in `catch_unwind` — matching the existing listener panic safety. Panicking forwarders are logged and skipped, not auto-removed (unlike listeners).
 - `AgentId` lives in its own module `src/agent_id.rs` (extracted from `registry.rs` to break the `agent.rs` ↔ `registry.rs` circular import).
+- `reset()` must call `idle_notify.notify_waiters()` after clearing `loop_active`; `wait_for_idle()` depends on that wakeup for pending waiters when a run is cancelled/reset before the normal stream-end path fires.
 
 ### Agent Loop (`src/loop_.rs`)
 
