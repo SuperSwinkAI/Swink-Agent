@@ -47,6 +47,7 @@ aws-smithy-types = { workspace = true, optional = true }
 bytes.workspace = true
 
 [dev-dependencies]
+swink-agent = { path = "..", default-features = false, features = ["testkit"] }
 tokio = { workspace = true, features = ["full", "test-util"] }
 wiremock.workspace = true
 pretty_assertions.workspace = true

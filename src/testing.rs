@@ -16,12 +16,244 @@ use crate::types::{
 use futures::Stream;
 use serde_json::Value;
 use std::pin::Pin;
+use std::process::Command;
 #[cfg(feature = "plugins")]
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
+
+// ─── Test runtime detection ────────────────────────────────────────────────
+
+/// Supported host operating systems for runtime-gated tests.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TestOs {
+    /// Apple macOS.
+    MacOs,
+    /// Linux.
+    Linux,
+    /// Microsoft Windows.
+    Windows,
+    /// Any other OS family.
+    Other,
+}
+
+impl TestOs {
+    /// Return the current host operating system.
+    #[must_use]
+    pub fn current() -> Self {
+        match std::env::consts::OS {
+            "macos" => Self::MacOs,
+            "linux" => Self::Linux,
+            "windows" => Self::Windows,
+            _ => Self::Other,
+        }
+    }
+
+    /// Human-readable OS label.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::MacOs => "macOS",
+            Self::Linux => "Linux",
+            Self::Windows => "Windows",
+            Self::Other => "other",
+        }
+    }
+}
+
+/// GPU capability required by a test at runtime.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TestGpu {
+    /// No GPU requirement.
+    None,
+    /// Any detected GPU is sufficient.
+    Any,
+    /// Requires an NVIDIA GPU.
+    Nvidia,
+    /// Requires an Apple Metal-capable GPU.
+    AppleMetal,
+}
+
+/// Runtime requirements that determine whether a host should run a test.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TestRuntimeRequirements {
+    /// Optional OS requirement.
+    pub os: Option<TestOs>,
+    /// Optional GPU requirement.
+    pub gpu: TestGpu,
+}
+
+impl TestRuntimeRequirements {
+    /// Create an unconstrained requirement set.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            os: None,
+            gpu: TestGpu::None,
+        }
+    }
+
+    /// Require a specific operating system.
+    #[must_use]
+    pub const fn with_os(mut self, os: TestOs) -> Self {
+        self.os = Some(os);
+        self
+    }
+
+    /// Require a specific GPU capability.
+    #[must_use]
+    pub const fn with_gpu(mut self, gpu: TestGpu) -> Self {
+        self.gpu = gpu;
+        self
+    }
+}
+
+impl Default for TestRuntimeRequirements {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Snapshot of host runtime capabilities used for test gating.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TestRuntime {
+    /// Current operating system.
+    pub os: TestOs,
+    /// Current target architecture.
+    pub arch: &'static str,
+    /// Whether any GPU was detected.
+    pub has_any_gpu: bool,
+    /// Whether an NVIDIA GPU was detected.
+    pub has_nvidia_gpu: bool,
+    /// Whether an Apple Metal-capable GPU was detected.
+    pub has_apple_metal_gpu: bool,
+}
+
+/// Return the cached host runtime snapshot for test gating.
+#[must_use]
+pub fn test_runtime() -> &'static TestRuntime {
+    static RUNTIME: OnceLock<TestRuntime> = OnceLock::new();
+    RUNTIME.get_or_init(detect_test_runtime)
+}
+
+/// Return a skip reason when the current host does not satisfy `requirements`.
+#[must_use]
+pub fn test_runtime_skip_reason(requirements: TestRuntimeRequirements) -> Option<String> {
+    evaluate_test_runtime(test_runtime(), requirements).err()
+}
+
+/// Return `true` when the current host should run a test with `requirements`.
+///
+/// When the requirements are not met, this prints a single `skipping:` line
+/// and returns `false`.
+#[must_use]
+pub fn should_run_test(requirements: TestRuntimeRequirements) -> bool {
+    if let Some(reason) = test_runtime_skip_reason(requirements) {
+        eprintln!("skipping: {reason}");
+        return false;
+    }
+    true
+}
+
+fn evaluate_test_runtime(
+    runtime: &TestRuntime,
+    requirements: TestRuntimeRequirements,
+) -> Result<(), String> {
+    if let Some(expected_os) = requirements.os {
+        if runtime.os != expected_os {
+            return Err(format!(
+                "requires {}, detected {}",
+                expected_os.as_str(),
+                runtime.os.as_str()
+            ));
+        }
+    }
+
+    match requirements.gpu {
+        TestGpu::None => Ok(()),
+        TestGpu::Any if runtime.has_any_gpu => Ok(()),
+        TestGpu::Any => Err("requires a detected GPU on the host".to_string()),
+        TestGpu::Nvidia if runtime.has_nvidia_gpu => Ok(()),
+        TestGpu::Nvidia => Err("requires an NVIDIA GPU on the host".to_string()),
+        TestGpu::AppleMetal if runtime.has_apple_metal_gpu => Ok(()),
+        TestGpu::AppleMetal => Err("requires an Apple Metal-capable GPU on the host".to_string()),
+    }
+}
+
+fn detect_test_runtime() -> TestRuntime {
+    let os = TestOs::current();
+    let arch = std::env::consts::ARCH;
+    let has_nvidia_gpu = detect_nvidia_gpu();
+    let has_apple_metal_gpu = detect_apple_metal_gpu();
+    let has_any_gpu = has_nvidia_gpu || has_apple_metal_gpu || detect_generic_gpu(os);
+
+    TestRuntime {
+        os,
+        arch,
+        has_any_gpu,
+        has_nvidia_gpu,
+        has_apple_metal_gpu,
+    }
+}
+
+fn detect_nvidia_gpu() -> bool {
+    command_stdout("nvidia-smi", &["-L"])
+        .is_some_and(|stdout| stdout.lines().any(|line| !line.trim().is_empty()))
+}
+
+fn detect_apple_metal_gpu() -> bool {
+    if TestOs::current() != TestOs::MacOs {
+        return false;
+    }
+
+    command_stdout("system_profiler", &["SPDisplaysDataType"]).is_some_and(|stdout| {
+        stdout.contains("Metal Support:")
+            || stdout.contains("Metal Family:")
+            || stdout.contains("Chipset Model: Apple")
+    })
+}
+
+fn detect_generic_gpu(os: TestOs) -> bool {
+    match os {
+        TestOs::MacOs => command_stdout("system_profiler", &["SPDisplaysDataType"])
+            .is_some_and(|stdout| stdout.contains("Chipset Model:")),
+        TestOs::Linux => command_stdout("lspci", &[]).is_some_and(|stdout| {
+            let lower = stdout.to_ascii_lowercase();
+            lower.contains("vga compatible controller")
+                || lower.contains("3d controller")
+                || lower.contains("display controller")
+        }),
+        TestOs::Windows => windows_video_controller_present(),
+        TestOs::Other => false,
+    }
+}
+
+fn windows_video_controller_present() -> bool {
+    const POWERSHELL_COMMAND: &str =
+        "Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name";
+
+    command_stdout(
+        "powershell",
+        &["-NoProfile", "-Command", POWERSHELL_COMMAND],
+    )
+    .or_else(|| command_stdout("pwsh", &["-NoProfile", "-Command", POWERSHELL_COMMAND]))
+    .is_some_and(|stdout| {
+        stdout
+            .lines()
+            .map(str::trim)
+            .any(|line| !line.is_empty() && line != "Microsoft Basic Display Adapter")
+    })
+}
+
+fn command_stdout(command: &str, args: &[&str]) -> Option<String> {
+    let output = Command::new(command).args(args).output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&output.stdout).into_owned())
+}
 
 // ─── MockStreamFn (error-fallback scripted stream) ─────────────────────
 
@@ -942,5 +1174,66 @@ pub fn event_variant_name(event: &AgentEvent) -> String {
         #[cfg(feature = "artifact-store")]
         AgentEvent::ArtifactSaved { .. } => "ArtifactSaved".into(),
         AgentEvent::TransferInitiated { .. } => "TransferInitiated".into(),
+    }
+}
+
+#[cfg(test)]
+mod runtime_tests {
+    use super::{TestGpu, TestOs, TestRuntime, TestRuntimeRequirements, evaluate_test_runtime};
+
+    #[test]
+    fn runtime_rejects_os_mismatch() {
+        let runtime = TestRuntime {
+            os: TestOs::Linux,
+            arch: "x86_64",
+            has_any_gpu: false,
+            has_nvidia_gpu: false,
+            has_apple_metal_gpu: false,
+        };
+
+        let reason = evaluate_test_runtime(
+            &runtime,
+            TestRuntimeRequirements::new().with_os(TestOs::MacOs),
+        )
+        .expect_err("linux host should not satisfy macOS-only requirement");
+
+        assert!(reason.contains("requires macOS"));
+    }
+
+    #[test]
+    fn runtime_rejects_missing_gpu() {
+        let runtime = TestRuntime {
+            os: TestOs::Linux,
+            arch: "x86_64",
+            has_any_gpu: false,
+            has_nvidia_gpu: false,
+            has_apple_metal_gpu: false,
+        };
+
+        let reason = evaluate_test_runtime(
+            &runtime,
+            TestRuntimeRequirements::new().with_gpu(TestGpu::Any),
+        )
+        .expect_err("gpu-less host should not satisfy gpu requirement");
+
+        assert!(reason.contains("requires a detected GPU"));
+    }
+
+    #[test]
+    fn runtime_accepts_nvidia_gpu_requirement() {
+        let runtime = TestRuntime {
+            os: TestOs::Linux,
+            arch: "x86_64",
+            has_any_gpu: true,
+            has_nvidia_gpu: true,
+            has_apple_metal_gpu: false,
+        };
+
+        let result = evaluate_test_runtime(
+            &runtime,
+            TestRuntimeRequirements::new().with_gpu(TestGpu::Nvidia),
+        );
+
+        assert!(result.is_ok());
     }
 }

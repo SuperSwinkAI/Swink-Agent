@@ -26,6 +26,7 @@ Pure-Rust library for LLM-powered agentic loops. Provider-agnostic core with plu
 - Import order: `std` → external (alphabetical) → `crate::`/`super::`.
 - Test names: descriptive `snake_case` without `test_` prefix. Mocks prefixed `Mock`.
 - Shared test helpers in `src/testing.rs` (gated behind `testkit` feature), re-exported via `tests/common/mod.rs`.
+- Prefer runtime-gated live tests over ad hoc host checks. OS/GPU detection lives in `swink_agent::testing` (`TestRuntime`, `TestRuntimeRequirements`, `should_run_test()`), so live/integration tests should skip explicitly on unsupported hosts instead of hanging or failing deep in model startup.
 
 ## Build & Test
 
@@ -105,6 +106,12 @@ MSRV **1.88** (edition 2024). Workspace deps centralized in root `Cargo.toml`.
 ### Local LLM Streaming (`local-llm/src/stream.rs`)
 
 - Gemma 4 delimiter scanners must only slice `&str` at UTF-8 character boundaries. For partial `<|channel>thought\n` and `<tool_call|>` matches, use the shared UTF-8-safe suffix helper instead of raw byte-offset suffix slicing.
+
+### Test Infrastructure (`src/testing.rs`)
+
+- Runtime host detection for tests is centralized in `swink_agent::testing`. Use `test_runtime()` / `should_run_test()` with `TestRuntimeRequirements` instead of duplicating `cfg!`, `system_profiler`, or `nvidia-smi` logic in individual test files.
+- Gemma 4 live tests must gate on both compiled backend and detected hardware. `metal` implies macOS + Apple Silicon + Metal-capable GPU; `cuda`/`cudnn` implies an NVIDIA GPU. Unsupported hosts should print a clear `skipping:` reason and return early.
+- Adapter crates that reuse these helpers need a dev-dependency on `swink-agent` with the `testkit` feature enabled.
 
 ### Context (`src/context.rs`)
 

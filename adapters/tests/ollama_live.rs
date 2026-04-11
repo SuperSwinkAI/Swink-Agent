@@ -13,6 +13,7 @@ use serde_json::json;
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 
+use swink_agent::testing::{TestGpu, TestRuntimeRequirements, should_run_test};
 use swink_agent::{
     AgentContext, AgentMessage, AgentTool, AgentToolResult, AssistantMessage,
     AssistantMessageEvent, ContentBlock, Cost, LlmMessage, ModelCapabilities, ModelSpec,
@@ -350,6 +351,10 @@ async fn live_model_not_found() {
 #[tokio::test]
 #[ignore = "hits live Ollama instance — requires `ollama pull gemma4:e2b`"]
 async fn live_gemma4_e2b_thinking() {
+    if !should_run_test(TestRuntimeRequirements::new().with_gpu(TestGpu::Any)) {
+        return;
+    }
+
     let sf = ollama();
     let m = ModelSpec::new("ollama", "gemma4:e2b")
         .with_thinking_level(ThinkingLevel::Medium)

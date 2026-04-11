@@ -83,8 +83,7 @@ async fn stream_produces_valid_event_sequence() {
     );
 
     // Accumulate and verify the message.
-    let msg =
-        swink_agent::accumulate_message(events, "local", "SmolLM3-3B-Q4_K_M").unwrap();
+    let msg = swink_agent::accumulate_message(events, "local", "SmolLM3-3B-Q4_K_M").unwrap();
     let text = ContentBlock::extract_text(&msg.content);
     assert!(!text.is_empty(), "response should contain text");
 }
@@ -213,6 +212,10 @@ mod gemma4_live {
     }
 
     async fn ready_gemma4_or_skip() -> Option<Arc<LocalModel>> {
+        if !common::require_gemma4_local_runtime() {
+            return None;
+        }
+
         let config = ModelPreset::Gemma4E2B.config();
         let local_model = Arc::new(LocalModel::new(config));
         match local_model.ensure_ready().await {
@@ -258,8 +261,7 @@ mod gemma4_live {
         .await
         .expect("probe_complex_system_no_angle_brackets should complete within 120s");
 
-        let msg =
-            swink_agent::accumulate_message(events, "local", "gemma-4-E2B-it").unwrap();
+        let msg = swink_agent::accumulate_message(events, "local", "gemma-4-E2B-it").unwrap();
         let text = ContentBlock::extract_text(&msg.content);
         assert!(!text.is_empty());
         eprintln!("PASS no_angle_brackets: {}", &text[..text.len().min(120)]);
@@ -294,8 +296,7 @@ mod gemma4_live {
         .await
         .expect("probe_complex_system_with_angle_brackets should complete within 120s");
 
-        let msg =
-            swink_agent::accumulate_message(events, "local", "gemma-4-E2B-it").unwrap();
+        let msg = swink_agent::accumulate_message(events, "local", "gemma-4-E2B-it").unwrap();
         let text = ContentBlock::extract_text(&msg.content);
         assert!(!text.is_empty());
         eprintln!("PASS with_angle_brackets: {}", &text[..text.len().min(120)]);
@@ -323,8 +324,7 @@ mod gemma4_live {
             Some(AssistantMessageEvent::Done { .. })
         ));
 
-        let msg =
-            swink_agent::accumulate_message(events, "local", "gemma-4-E2B-it").unwrap();
+        let msg = swink_agent::accumulate_message(events, "local", "gemma-4-E2B-it").unwrap();
         let text = ContentBlock::extract_text(&msg.content);
         assert!(!text.is_empty(), "text stream produced empty output");
         eprintln!(
@@ -368,8 +368,7 @@ mod gemma4_live {
             "thinking mode should emit ThinkingStart events"
         );
 
-        let msg =
-            swink_agent::accumulate_message(events, "local", "gemma-4-E2B-it").unwrap();
+        let msg = swink_agent::accumulate_message(events, "local", "gemma-4-E2B-it").unwrap();
         let text = ContentBlock::extract_text(&msg.content);
         assert!(
             !text.is_empty(),
@@ -448,8 +447,7 @@ mod gemma4_live {
             .stream(&model, &ctx1, &options, CancellationToken::new())
             .collect()
             .await;
-        let msg1 =
-            swink_agent::accumulate_message(events1, "local", "gemma-4-E2B-it").unwrap();
+        let msg1 = swink_agent::accumulate_message(events1, "local", "gemma-4-E2B-it").unwrap();
         let text1 = ContentBlock::extract_text(&msg1.content);
         assert!(
             !text1.is_empty(),
@@ -478,8 +476,7 @@ mod gemma4_live {
         )
         .await
         .expect("prompt 2 should complete within 120s (not hung)");
-        let msg2 =
-            swink_agent::accumulate_message(events2, "local", "gemma-4-E2B-it").unwrap();
+        let msg2 = swink_agent::accumulate_message(events2, "local", "gemma-4-E2B-it").unwrap();
         let text2 = ContentBlock::extract_text(&msg2.content);
         assert!(
             !text2.is_empty(),
@@ -508,8 +505,7 @@ mod gemma4_live {
         )
         .await
         .expect("prompt 3 should complete within 120s (not hung)");
-        let msg3 =
-            swink_agent::accumulate_message(events3, "local", "gemma-4-E2B-it").unwrap();
+        let msg3 = swink_agent::accumulate_message(events3, "local", "gemma-4-E2B-it").unwrap();
         let text3 = ContentBlock::extract_text(&msg3.content);
         assert!(
             !text3.is_empty(),
