@@ -27,16 +27,22 @@ use crate::error::McpError;
 pub enum McpConnectionStatus {
     /// Connected and ready to serve tool calls.
     Connected,
-    /// Disconnected — tool calls will fail immediately.
+    /// Disconnected; tool calls will fail immediately.
     Disconnected,
+}
+
+struct McpConnectionState {
+    status: McpConnectionStatus,
+    peer: Option<Peer<RoleClient>>,
+    monitor: Option<JoinHandle<()>>,
 }
 
 /// A connection to a single MCP server.
 ///
 /// Holds a cloned `Peer<RoleClient>` for making tool calls and a background
 /// monitor task that awaits the service lifecycle. When the remote transport
-/// closes the monitor transitions `status` to `Disconnected` and sends an
-/// `AgentEvent::McpServerDisconnected` on the optional event channel.
+/// closes, the monitor transitions the shared state to `Disconnected` and
+/// sends an `AgentEvent::McpServerDisconnected` on the optional event channel.
 ///
 /// Created via [`McpConnection::connect`] or [`McpConnection::from_service`].
 pub struct McpConnection {
@@ -44,13 +50,8 @@ pub struct McpConnection {
     pub config: McpServerConfig,
     /// Discovered tools from the server (raw rmcp tool definitions).
     pub discovered_tools: Vec<rmcp::model::Tool>,
-    /// Shared connection status — written by the monitor task, read by callers.
-    status: Arc<Mutex<McpConnectionStatus>>,
-    /// Cloned peer handle for forwarding tool calls.
-    peer: Option<Peer<RoleClient>>,
-    /// Background lifecycle-monitor task. Holds the `RunningService` and
-    /// resolves when the transport closes.
-    monitor: Option<JoinHandle<()>>,
+    /// Shared connection state used by callers, shutdown, and the monitor task.
+    state: Arc<Mutex<McpConnectionState>>,
 }
 
 impl std::fmt::Debug for McpConnection {
@@ -66,7 +67,10 @@ impl std::fmt::Debug for McpConnection {
 impl McpConnection {
     /// Returns the current connection status.
     pub fn status(&self) -> McpConnectionStatus {
-        *self.status.lock().unwrap_or_else(PoisonError::into_inner)
+        self.state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .status
     }
 
     /// Create a disconnected connection placeholder.
@@ -77,9 +81,11 @@ impl McpConnection {
         Self {
             config,
             discovered_tools: Vec::new(),
-            status: Arc::new(Mutex::new(McpConnectionStatus::Disconnected)),
-            peer: None,
-            monitor: None,
+            state: Arc::new(Mutex::new(McpConnectionState {
+                status: McpConnectionStatus::Disconnected,
+                peer: None,
+                monitor: None,
+            })),
         }
     }
 
@@ -109,15 +115,18 @@ impl McpConnection {
             "MCP server connected via provided service, tools discovered"
         );
 
-        let status = Arc::new(Mutex::new(McpConnectionStatus::Connected));
-        let monitor = spawn_monitor(service, Arc::clone(&status), config.name.clone(), event_tx);
+        let state = Arc::new(Mutex::new(McpConnectionState {
+            status: McpConnectionStatus::Connected,
+            peer: Some(peer),
+            monitor: None,
+        }));
+        let monitor = spawn_monitor(service, Arc::clone(&state), config.name.clone(), event_tx);
+        state.lock().unwrap_or_else(PoisonError::into_inner).monitor = Some(monitor);
 
         Ok(Self {
             config,
             discovered_tools,
-            status,
-            peer: Some(peer),
-            monitor: Some(monitor),
+            state,
         })
     }
 
@@ -156,15 +165,18 @@ impl McpConnection {
             "MCP server connected, tools discovered"
         );
 
-        let status = Arc::new(Mutex::new(McpConnectionStatus::Connected));
-        let monitor = spawn_monitor(service, Arc::clone(&status), config.name.clone(), event_tx);
+        let state = Arc::new(Mutex::new(McpConnectionState {
+            status: McpConnectionStatus::Connected,
+            peer: Some(peer),
+            monitor: None,
+        }));
+        let monitor = spawn_monitor(service, Arc::clone(&state), config.name.clone(), event_tx);
+        state.lock().unwrap_or_else(PoisonError::into_inner).monitor = Some(monitor);
 
         Ok(Self {
             config,
             discovered_tools,
-            status,
-            peer: Some(peer),
-            monitor: Some(monitor),
+            state,
         })
     }
 
@@ -230,19 +242,22 @@ impl McpConnection {
         tool_name: &str,
         arguments: Value,
     ) -> Result<CallToolResult, McpError> {
-        if self.status() == McpConnectionStatus::Disconnected {
-            return Err(McpError::ToolCallFailed {
+        let peer = {
+            let state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+            if state.status == McpConnectionStatus::Disconnected {
+                return Err(McpError::ToolCallFailed {
+                    server: self.config.name.clone(),
+                    tool: tool_name.to_string(),
+                    reason: "server is disconnected".to_string(),
+                });
+            }
+
+            state.peer.clone().ok_or_else(|| McpError::ToolCallFailed {
                 server: self.config.name.clone(),
                 tool: tool_name.to_string(),
-                reason: "server is disconnected".to_string(),
-            });
-        }
-
-        let peer = self.peer.as_ref().ok_or_else(|| McpError::ToolCallFailed {
-            server: self.config.name.clone(),
-            tool: tool_name.to_string(),
-            reason: "no active session".to_string(),
-        })?;
+                reason: "no active session".to_string(),
+            })?
+        };
 
         let json_args = match arguments {
             Value::Object(map) => Some(map),
@@ -276,13 +291,29 @@ impl McpConnection {
     /// Aborts the monitor task (which drops the underlying `RunningService`).
     /// For stdio servers, rmcp's `ChildWithCleanup` terminates the subprocess
     /// on drop. For SSE servers, the HTTP connection is closed.
-    pub async fn shutdown(mut self) {
-        if let Some(monitor) = self.monitor.take() {
+    pub async fn shutdown(&self) {
+        let monitor = {
+            let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+            state.status = McpConnectionStatus::Disconnected;
+            state.peer = None;
+            state.monitor.take()
+        };
+
+        if let Some(monitor) = monitor {
             monitor.abort();
             let _ = monitor.await;
         }
-        *self.status.lock().unwrap_or_else(PoisonError::into_inner) =
-            McpConnectionStatus::Disconnected;
+    }
+}
+
+impl Drop for McpConnection {
+    fn drop(&mut self) {
+        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        state.status = McpConnectionStatus::Disconnected;
+        state.peer = None;
+        if let Some(monitor) = state.monitor.take() {
+            monitor.abort();
+        }
     }
 }
 
@@ -296,20 +327,24 @@ fn client_info() -> ClientInfo {
 /// Spawn a background task that awaits the service lifecycle.
 ///
 /// When the transport closes with `QuitReason::Closed` (remote disconnect or
-/// crash), the shared `status` is updated to `Disconnected` and
+/// crash), the shared state is updated to `Disconnected` and
 /// `McpServerDisconnected` is sent on `event_tx`. Voluntary cancellations
 /// (`QuitReason::Cancelled`) and join errors are silently ignored since they
 /// are initiated by the caller via `shutdown()`.
 fn spawn_monitor(
     service: RunningService<RoleClient, ClientInfo>,
-    status: Arc<Mutex<McpConnectionStatus>>,
+    state: Arc<Mutex<McpConnectionState>>,
     server_name: String,
     event_tx: Option<UnboundedSender<AgentEvent>>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
         if let Ok(QuitReason::Closed | QuitReason::JoinError(_)) = service.waiting().await {
-            *status.lock().unwrap_or_else(PoisonError::into_inner) =
-                McpConnectionStatus::Disconnected;
+            let mut state = state.lock().unwrap_or_else(PoisonError::into_inner);
+            state.status = McpConnectionStatus::Disconnected;
+            state.peer = None;
+            state.monitor = None;
+            drop(state);
+
             if let Some(ref tx) = event_tx {
                 let _ = tx.send(crate::event::server_disconnected(
                     &server_name,
@@ -317,6 +352,6 @@ fn spawn_monitor(
                 ));
             }
         }
-        // Cancelled by shutdown() or other future variants — no event needed.
+        // Cancelled by shutdown() or other future variants; no event needed.
     })
 }
