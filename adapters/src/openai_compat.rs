@@ -18,7 +18,7 @@ use swink_agent::AgentTool;
 use swink_agent::ContentBlock;
 use swink_agent::{
     AssistantMessage as HarnessAssistantMessage, AssistantMessageEvent, Cost, StopReason,
-    ToolResultMessage, Usage, UserMessage,
+    StreamErrorKind, ToolResultMessage, Usage, UserMessage,
 };
 
 use crate::convert::{MessageConverter, extract_tool_schemas};
@@ -286,6 +286,9 @@ pub struct OaiSseStreamState {
     pub usage: Option<Usage>,
     /// Saved stop reason from `finish_reason`; emitted with `Done` on `[DONE]`.
     pub stop_reason: Option<StopReason>,
+    /// Terminal provider error captured from a finish reason that should not
+    /// be downgraded into a normal `Done` event.
+    pub terminal_error: Option<AssistantMessageEvent>,
 }
 
 impl crate::finalize::StreamFinalize for OaiSseStreamState {
@@ -349,6 +352,17 @@ pub fn process_oai_chunk(
                 return;
             }
 
+            if provider == "Mistral" && reason == "error" {
+                events.extend(crate::finalize::finalize_blocks(state));
+                state.terminal_error = Some(AssistantMessageEvent::Error {
+                    stop_reason: StopReason::Error,
+                    error_message: "Mistral reported finish_reason=error".to_string(),
+                    usage: state.usage.clone(),
+                    error_kind: Some(StreamErrorKind::Network),
+                });
+                return;
+            }
+
             let stop_reason = match reason.as_str() {
                 "tool_calls" => StopReason::ToolUse,
                 "length" | "model_length" => StopReason::Length,
@@ -356,7 +370,6 @@ pub fn process_oai_chunk(
             };
 
             events.extend(crate::finalize::finalize_blocks(state));
-
             state.stop_reason = Some(stop_reason);
         }
     }
@@ -445,7 +458,9 @@ pub fn parse_oai_sse_stream(
         move |item, state| match item {
             None => {
                 let mut events = crate::finalize::finalize_blocks(state);
-                if let Some(stop_reason) = state.stop_reason.take() {
+                if let Some(error) = state.terminal_error.take() {
+                    events.push(error);
+                } else if let Some(stop_reason) = state.stop_reason.take() {
                     let usage = state.usage.take();
                     events.push(AssistantMessageEvent::Done {
                         stop_reason,
@@ -461,13 +476,17 @@ pub fn parse_oai_sse_stream(
             }
             Some(SseLine::Done) => {
                 let mut events = crate::finalize::finalize_blocks(state);
-                let stop_reason = state.stop_reason.take().unwrap_or(StopReason::Stop);
-                let usage = state.usage.take();
-                events.push(AssistantMessageEvent::Done {
-                    stop_reason,
-                    usage: usage.unwrap_or_default(),
-                    cost: Cost::default(),
-                });
+                if let Some(error) = state.terminal_error.take() {
+                    events.push(error);
+                } else {
+                    let stop_reason = state.stop_reason.take().unwrap_or(StopReason::Stop);
+                    let usage = state.usage.take();
+                    events.push(AssistantMessageEvent::Done {
+                        stop_reason,
+                        usage: usage.unwrap_or_default(),
+                        cost: Cost::default(),
+                    });
+                }
                 SseAction::Done(events)
             }
             Some(SseLine::Data(data)) => {
@@ -485,7 +504,12 @@ pub fn parse_oai_sse_stream(
 
                 let mut events = Vec::new();
                 process_oai_chunk(&chunk, state, &mut events, provider);
-                SseAction::Continue(events)
+                if let Some(error) = state.terminal_error.take() {
+                    events.push(error);
+                    SseAction::Done(events)
+                } else {
+                    SseAction::Continue(events)
+                }
             }
             Some(SseLine::TransportError(message)) => {
                 let mut events = crate::finalize::finalize_blocks(state);
