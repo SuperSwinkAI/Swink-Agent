@@ -65,6 +65,37 @@ async fn emit_error_result(
     results.lock().await.push((idx, tool_result_msg));
 }
 
+async fn emit_tool_execution_start(tc: &ToolCallInfo, tx: &mpsc::Sender<AgentEvent>) -> bool {
+    emit(
+        tx,
+        AgentEvent::ToolExecutionStart {
+            id: tc.id.clone(),
+            name: tc.name.clone(),
+            arguments: tc.arguments.clone(),
+        },
+    )
+    .await
+}
+
+async fn emit_batch_stop_results(
+    tool_calls: &[ToolCallInfo],
+    stop_idx: usize,
+    reason: &str,
+    results: &Arc<tokio::sync::Mutex<Vec<(usize, ToolResultMessage)>>>,
+    tx: &mpsc::Sender<AgentEvent>,
+) {
+    for (idx, tc) in tool_calls.iter().enumerate().skip(stop_idx) {
+        if idx != stop_idx {
+            emit_tool_execution_start(tc, tx).await;
+        }
+
+        let error_result = AgentToolResult::error(format!(
+            "policy stopped tool batch before dispatch: {reason}"
+        ));
+        emit_error_result(&tc.name, &tc.id, error_result, idx, results, tx).await;
+    }
+}
+
 /// Order results to match the original `tool_calls` order, returning only
 /// those whose IDs appear in the result set.
 fn order_results_by_tool_calls(
@@ -137,16 +168,7 @@ pub async fn execute_tools_concurrently(
 
     for (idx, tc) in tool_calls.iter().enumerate() {
         // Emit ToolExecutionStart
-        if !emit(
-            tx,
-            AgentEvent::ToolExecutionStart {
-                id: tc.id.clone(),
-                name: tc.name.clone(),
-                arguments: tc.arguments.clone(),
-            },
-        )
-        .await
-        {
+        if !emit_tool_execution_start(tc, tx).await {
             return ToolExecOutcome::ChannelClosed;
         }
 
@@ -180,15 +202,7 @@ pub async fn execute_tools_concurrently(
                     injected_messages.extend(msgs);
                 }
                 PreDispatchVerdict::Stop(reason) => {
-                    let error_result = AgentToolResult {
-                        content: vec![ContentBlock::Text {
-                            text: format!("policy stopped tool batch: {reason}"),
-                        }],
-                        details: serde_json::Value::Null,
-                        is_error: true,
-                        transfer_signal: None,
-                    };
-                    emit_error_result(&tc.name, &tc.id, error_result, idx, &results, tx).await;
+                    emit_batch_stop_results(tool_calls, idx, &reason, &results, tx).await;
                     // Return all results collected so far
                     let all_results = std::mem::take(&mut *results.lock().await);
                     let ordered = order_results_by_tool_calls(tool_calls, &all_results);
@@ -902,6 +916,18 @@ mod tests {
         captured_roots: Arc<StdMutex<Vec<Option<PathBuf>>>>,
     }
 
+    struct StopBatchPolicy;
+
+    impl PreDispatchPolicy for StopBatchPolicy {
+        fn name(&self) -> &str {
+            "stop-batch"
+        }
+
+        fn evaluate(&self, _ctx: &mut ToolDispatchContext<'_>) -> PreDispatchVerdict {
+            PreDispatchVerdict::Stop("blocked by policy".to_string())
+        }
+    }
+
     impl PreDispatchPolicy for ExecutionRootRecorder {
         fn name(&self) -> &str {
             "execution-root-recorder"
@@ -983,5 +1009,68 @@ mod tests {
             &[None],
             "execution_root should remain unknown until a tool-specific root is available"
         );
+    }
+
+    #[tokio::test]
+    async fn pre_dispatch_stop_preserves_result_parity_for_remaining_tool_calls() {
+        let config = test_loop_config(vec![Arc::new(StopBatchPolicy)]);
+        let tool_calls = vec![
+            ToolCallInfo {
+                id: "call_1".to_string(),
+                name: "tool_one".to_string(),
+                arguments: serde_json::json!({ "first": true }),
+                is_incomplete: false,
+            },
+            ToolCallInfo {
+                id: "call_2".to_string(),
+                name: "tool_two".to_string(),
+                arguments: serde_json::json!({ "second": true }),
+                is_incomplete: false,
+            },
+        ];
+        let cancellation_token = CancellationToken::new();
+        let (tx, mut rx) = mpsc::channel(8);
+
+        let outcome =
+            execute_tools_concurrently(&config, &tool_calls, &cancellation_token, &tx).await;
+
+        let ToolExecOutcome::Completed { results, .. } = outcome else {
+            panic!("expected completed outcome");
+        };
+        assert_eq!(results.len(), 2, "each tool call should receive a result");
+        assert_eq!(
+            results
+                .iter()
+                .map(|result| result.tool_call_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["call_1", "call_2"]
+        );
+        assert!(
+            results.iter().all(|result| result.is_error),
+            "stopped tool calls should surface as errors"
+        );
+        assert!(
+            results.iter().all(|result| {
+                matches!(
+                    result.content.as_slice(),
+                    [ContentBlock::Text { text }]
+                        if text.contains("policy stopped tool batch before dispatch")
+                )
+            }),
+            "synthetic results should explain the batch stop"
+        );
+
+        let mut start_ids = Vec::new();
+        let mut end_ids = Vec::new();
+        while let Ok(event) = rx.try_recv() {
+            match event {
+                AgentEvent::ToolExecutionStart { id, .. } => start_ids.push(id),
+                AgentEvent::ToolExecutionEnd { id, .. } => end_ids.push(id),
+                _ => {}
+            }
+        }
+
+        assert_eq!(start_ids, vec!["call_1".to_string(), "call_2".to_string()]);
+        assert_eq!(end_ids, vec!["call_1".to_string(), "call_2".to_string()]);
     }
 }
