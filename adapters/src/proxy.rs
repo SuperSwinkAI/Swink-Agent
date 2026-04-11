@@ -14,8 +14,8 @@ use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
 use swink_agent::{
-    AgentContext, AssistantMessageEvent, Cost, LlmMessage, ModelSpec, StopReason, StreamFn,
-    StreamOptions, Usage,
+    AgentContext, AssistantMessageEvent, Cost, LlmMessage, ModelSpec, StopReason, StreamErrorKind,
+    StreamFn, StreamOptions, Usage,
 };
 
 use crate::classify::error_event_from_status;
@@ -92,6 +92,7 @@ enum SseEventData {
         stop_reason: StopReason,
         error_message: String,
         usage: Option<Usage>,
+        error_kind: Option<StreamErrorKind>,
     },
 }
 
@@ -388,11 +389,12 @@ fn convert_sse_event(event: SseEventData) -> AssistantMessageEvent {
             stop_reason,
             error_message,
             usage,
+            error_kind,
         } => AssistantMessageEvent::Error {
             stop_reason,
             error_message,
             usage,
-            error_kind: None,
+            error_kind,
         },
     }
 }
@@ -533,18 +535,19 @@ mod tests {
 
     #[test]
     fn parse_error_event() {
-        let data = r#"{"type":"error","stop_reason":"error","error_message":"boom","usage":null}"#;
+        let data = r#"{"type":"error","stop_reason":"error","error_message":"boom","usage":null,"error_kind":"auth"}"#;
         let event = parse_sse_event_data(data);
         match event {
             AssistantMessageEvent::Error {
                 stop_reason,
                 error_message,
                 usage,
-                ..
+                error_kind,
             } => {
                 assert_eq!(stop_reason, StopReason::Error);
                 assert_eq!(error_message, "boom");
                 assert!(usage.is_none());
+                assert_eq!(error_kind, Some(StreamErrorKind::Auth));
             }
             other => panic!("expected Error, got {other:?}"),
         }
