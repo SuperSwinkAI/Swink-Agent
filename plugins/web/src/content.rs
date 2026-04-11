@@ -5,8 +5,6 @@ use std::io::Cursor;
 pub enum ContentError {
     #[error("Readability extraction failed: {0}")]
     ExtractionFailed(String),
-    #[error("Content type '{0}' is not HTML")]
-    NotHtml(String),
 }
 
 /// Result of fetching and extracting content from a web page.

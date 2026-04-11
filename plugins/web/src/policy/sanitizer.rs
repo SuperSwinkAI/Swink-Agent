@@ -91,16 +91,13 @@ impl PostTurnPolicy for ContentSanitizerPolicy {
                 continue;
             }
             for block in &result.content {
-                if let ContentBlock::Text { text } = block {
-                    for pattern in &self.patterns {
-                        if pattern.is_match(text) {
-                            tracing::warn!(
-                                tool_call_id = %result.tool_call_id,
-                                pattern = %pattern.as_str(),
-                                "Potential prompt injection detected in web content"
-                            );
-                        }
-                    }
+                if let ContentBlock::Text { text } = block
+                    && self.sanitize_text(text).is_some()
+                {
+                    tracing::warn!(
+                        tool_call_id = %result.tool_call_id,
+                        "Potential prompt injection detected in web content"
+                    );
                 }
             }
         }
