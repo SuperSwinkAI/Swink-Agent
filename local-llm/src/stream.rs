@@ -674,13 +674,10 @@ impl StreamState {
     fn finalize(mut self) -> Vec<AssistantMessageEvent> {
         self.events.extend(finalize_blocks(&mut self.blocks));
 
-        let stop_reason = if self.has_tool_calls {
-            StopReason::ToolUse
-        } else {
-            match self.finish_reason.as_deref() {
-                Some("length") => StopReason::Length,
-                _ => StopReason::Stop,
-            }
+        let stop_reason = match self.finish_reason.as_deref() {
+            Some("length") => StopReason::Length,
+            _ if self.has_tool_calls => StopReason::ToolUse,
+            _ => StopReason::Stop,
         };
 
         self.events.push(AssistantMessageEvent::Done {
@@ -961,6 +958,37 @@ mod tests {
         assert_eq!(usage.total, 55);
         assert_eq!(usage.cache_read, 0);
         assert_eq!(usage.cache_write, 0);
+    }
+
+    #[test]
+    fn finalize_preserves_length_stop_reason_after_tool_calls() {
+        let mut state = StreamState::new(false);
+        state.has_tool_calls = true;
+        state.finish_reason = Some("length".to_string());
+
+        let events = state.finalize();
+        let terminal = events.last().expect("at least one event");
+        match terminal {
+            AssistantMessageEvent::Done { stop_reason, .. } => {
+                assert_eq!(*stop_reason, StopReason::Length);
+            }
+            other => panic!("expected Done terminal, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn finalize_keeps_tool_use_for_non_length_tool_call_turns() {
+        let mut state = StreamState::new(false);
+        state.has_tool_calls = true;
+
+        let events = state.finalize();
+        let terminal = events.last().expect("at least one event");
+        match terminal {
+            AssistantMessageEvent::Done { stop_reason, .. } => {
+                assert_eq!(*stop_reason, StopReason::ToolUse);
+            }
+            other => panic!("expected Done terminal, got {other:?}"),
+        }
     }
 
     #[cfg(feature = "gemma4")]
