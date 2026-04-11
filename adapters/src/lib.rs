@@ -49,22 +49,12 @@ pub mod convert;
 )]
 mod finalize;
 #[cfg_attr(
-    not(any(
-        feature = "openai",
-        feature = "azure",
-        feature = "mistral",
-        feature = "xai"
-    )),
+    not(any(feature = "openai-compat", feature = "azure", feature = "mistral",)),
     allow(dead_code)
 )]
 mod oai_transport;
 #[cfg_attr(
-    not(any(
-        feature = "openai",
-        feature = "azure",
-        feature = "mistral",
-        feature = "xai"
-    )),
+    not(any(feature = "openai-compat", feature = "azure", feature = "mistral",)),
     allow(dead_code)
 )]
 mod openai_compat;
@@ -88,7 +78,7 @@ mod anthropic;
 #[cfg(feature = "anthropic")]
 pub use anthropic::AnthropicStreamFn;
 
-#[cfg(feature = "openai")]
+#[cfg(feature = "openai-compat")]
 #[allow(clippy::doc_markdown)]
 mod openai;
 #[cfg(feature = "openai")]
