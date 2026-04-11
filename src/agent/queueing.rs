@@ -91,15 +91,19 @@ impl MessageProvider for QueueMessageProvider {
     }
 }
 
-pub(super) fn llm_messages_from_queue(
+/// Drain the queue and return only the [`LlmMessage`] variants.
+///
+/// This **removes** every entry from the queue.  Non-LLM messages
+/// (e.g. [`AgentMessage::Custom`]) are silently discarded.
+pub(super) fn drain_llm_messages_from_queue(
     queue: &Arc<Mutex<VecDeque<AgentMessage>>>,
 ) -> Vec<LlmMessage> {
     queue
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .iter()
+        .drain(..)
         .filter_map(|msg| match msg {
-            AgentMessage::Llm(llm) => Some(llm.clone()),
+            AgentMessage::Llm(llm) => Some(llm),
             AgentMessage::Custom(_) => None,
         })
         .collect()

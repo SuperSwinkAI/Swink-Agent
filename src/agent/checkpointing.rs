@@ -8,7 +8,7 @@ use crate::error::AgentError;
 use crate::loop_::AgentEvent;
 
 use super::Agent;
-use super::queueing::llm_messages_from_queue;
+use super::queueing::drain_llm_messages_from_queue;
 
 fn invalid_state_snapshot(error: &serde_json::Error) -> std::io::Error {
     std::io::Error::new(
@@ -154,8 +154,8 @@ impl Agent {
             &self.state.model.model_id,
             &self.state.messages,
         )
-        .with_pending_messages(llm_messages_from_queue(&self.follow_up_queue))
-        .with_pending_steering_messages(llm_messages_from_queue(&self.steering_queue));
+        .with_pending_messages(drain_llm_messages_from_queue(&self.follow_up_queue))
+        .with_pending_steering_messages(drain_llm_messages_from_queue(&self.steering_queue));
 
         let s = self
             .session_state
@@ -220,6 +220,10 @@ impl Agent {
         if self.state.messages.is_empty() {
             return Err(AgentError::NoMessages);
         }
+
+        // Clear live queues before re-enqueueing from the checkpoint so that
+        // an in-process pause→resume cycle does not duplicate pending work.
+        self.clear_queues();
 
         for msg in checkpoint.restore_pending_messages() {
             self.follow_up(msg);
@@ -468,6 +472,12 @@ mod tests {
             },
             _ => panic!("expected user message"),
         }
+
+        // After pause, live queues must be drained (#337).
+        assert!(
+            !agent.has_pending_messages(),
+            "queues should be empty after pause drains them"
+        );
     }
 
     #[tokio::test]
@@ -529,6 +539,76 @@ mod tests {
             },
             _ => panic!("expected user message in follow-up queue"),
         }
+    }
+
+    /// Regression test for #337: pause then resume must not duplicate queued
+    /// messages.  Before the fix, `pause()` snapshotted the queues without
+    /// draining them, and `restore_from_loop_checkpoint()` re-enqueued the
+    /// same entries on top of the still-populated live queues.
+    #[tokio::test]
+    async fn pause_drains_queues_so_resume_does_not_duplicate() {
+        use crate::types::ContentBlock;
+
+        let mut agent = make_agent(None);
+        agent
+            .state
+            .messages
+            .push(AgentMessage::Llm(LlmMessage::User(UserMessage {
+                content: vec![ContentBlock::Text {
+                    text: "hi".to_string(),
+                }],
+                timestamp: 0,
+                cache_hint: None,
+            })));
+
+        // Enqueue one steering and one follow-up message.
+        agent.steer(AgentMessage::Llm(LlmMessage::User(UserMessage {
+            content: vec![ContentBlock::Text {
+                text: "steering-1".to_string(),
+            }],
+            timestamp: 1,
+            cache_hint: None,
+        })));
+        agent.follow_up(AgentMessage::Llm(LlmMessage::User(UserMessage {
+            content: vec![ContentBlock::Text {
+                text: "followup-1".to_string(),
+            }],
+            timestamp: 2,
+            cache_hint: None,
+        })));
+
+        // Simulate a running loop so pause() doesn't return None.
+        agent
+            .loop_active
+            .store(true, std::sync::atomic::Ordering::Release);
+
+        let checkpoint = agent.pause().expect("agent should be running");
+
+        // After pause, live queues must be empty (drained into checkpoint).
+        assert!(
+            !agent.has_pending_messages(),
+            "queues should be drained after pause"
+        );
+
+        // Restore from the checkpoint — queues should have exactly 1 each.
+        agent
+            .loop_active
+            .store(false, std::sync::atomic::Ordering::Release);
+        agent.restore_from_loop_checkpoint(&checkpoint).unwrap();
+
+        let steering = agent.steering_queue.lock().unwrap();
+        let follow_up = agent.follow_up_queue.lock().unwrap();
+
+        assert_eq!(
+            steering.len(),
+            1,
+            "steering queue should have exactly 1 message, not duplicated"
+        );
+        assert_eq!(
+            follow_up.len(),
+            1,
+            "follow-up queue should have exactly 1 message, not duplicated"
+        );
     }
 
     #[tokio::test]
