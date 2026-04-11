@@ -97,6 +97,10 @@ MSRV **1.88** (edition 2024). Workspace deps centralized in root `Cargo.toml`.
 - `on_init(&self, &Agent)` dispatched in priority order, wrapped in `catch_unwind` — panicking `on_init` is logged and skipped, construction continues (plugin's other contributions remain active).
 - Entire module behind `#[cfg(feature = "plugins")]` — opt-in, not default-enabled, zero cost when disabled.
 
+### MCP Integration (`mcp/`)
+
+- `McpManager::shutdown()` must operate on shared connection-owned state, not `Arc::try_unwrap()`: exported `McpTool` handles keep `Arc<McpConnection>` clones alive, so deterministic disconnect has to clear the session/monitor even when callers still retain tool `Arc`s.
+
 ### Streaming (`src/stream.rs`)
 
 - `accumulate_message` enforces strict ordering: one Start, indexed content blocks, one terminal (Done/Error).
