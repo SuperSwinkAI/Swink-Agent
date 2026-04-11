@@ -61,6 +61,7 @@ impl Agent {
         self.abort_controller = None;
         self.in_flight_llm_messages = None;
         self.clear_queues();
+        self.idle_notify.notify_waiters();
     }
 
     /// Returns a future that resolves when the agent is no longer running.
@@ -85,7 +86,13 @@ mod tests {
     use futures::pin_mut;
     use tokio::sync::Notify;
 
-    use super::wait_for_idle_future;
+    use crate::agent_options::AgentOptions;
+    use crate::stream::StreamFn;
+    use crate::testing::{
+        MockStreamFn, default_convert, default_model, text_only_events, user_msg,
+    };
+
+    use super::{Agent, wait_for_idle_future};
 
     #[tokio::test]
     async fn wait_for_idle_returns_when_idle_transition_happens_after_registration() {
@@ -100,7 +107,10 @@ mod tests {
         });
         pin_mut!(wait_for_idle);
 
-        assert!(matches!(futures::poll!(wait_for_idle.as_mut()), Poll::Ready(())));
+        assert!(matches!(
+            futures::poll!(wait_for_idle.as_mut()),
+            Poll::Ready(())
+        ));
     }
 
     #[tokio::test]
@@ -112,12 +122,52 @@ mod tests {
         let wait_for_idle = wait_for_idle_future(Arc::clone(&notify), Arc::clone(&active), || {});
         pin_mut!(wait_for_idle);
 
-        assert!(matches!(futures::poll!(wait_for_idle.as_mut()), Poll::Pending));
+        assert!(matches!(
+            futures::poll!(wait_for_idle.as_mut()),
+            Poll::Pending
+        ));
         assert!(active_for_assert.load(Ordering::Acquire));
 
         active.store(false, Ordering::Release);
         notify.notify_waiters();
 
-        assert!(matches!(futures::poll!(wait_for_idle.as_mut()), Poll::Ready(())));
+        assert!(matches!(
+            futures::poll!(wait_for_idle.as_mut()),
+            Poll::Ready(())
+        ));
+    }
+
+    #[tokio::test]
+    async fn reset_notifies_pending_wait_for_idle_waiters() {
+        let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("done")]));
+        let mut agent = Agent::new(AgentOptions::new(
+            "sys",
+            default_model(),
+            stream_fn as Arc<dyn StreamFn>,
+            default_convert,
+        ));
+
+        let _stream = agent
+            .prompt_stream(vec![user_msg("hi")])
+            .expect("prompt_stream should start a loop");
+
+        let wait_for_idle = wait_for_idle_future(
+            Arc::clone(&agent.idle_notify),
+            Arc::clone(&agent.loop_active),
+            || {},
+        );
+        pin_mut!(wait_for_idle);
+
+        assert!(matches!(
+            futures::poll!(wait_for_idle.as_mut()),
+            Poll::Pending
+        ));
+
+        agent.reset();
+
+        assert!(matches!(
+            futures::poll!(wait_for_idle.as_mut()),
+            Poll::Ready(())
+        ));
     }
 }
