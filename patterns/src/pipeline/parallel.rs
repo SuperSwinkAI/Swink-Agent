@@ -209,6 +209,8 @@ async fn merge_first(
     pipeline_start: Instant,
     child_token: CancellationToken,
 ) -> Result<PipelineOutput, PipelineError> {
+    let mut first_error = None;
+
     // Wait for the first successful result.
     while let Some(item) = rx.recv().await {
         match item {
@@ -235,17 +237,17 @@ async fn merge_first(
                 });
             }
             Err(e) => {
-                // If this was the only branch, propagate the error.
-                // Otherwise, keep waiting for another branch.
-                // We can't easily tell if all branches have failed without
-                // counting, so we continue and let the channel close naturally.
                 tracing::warn!("parallel branch failed: {e}");
+                first_error.get_or_insert(e);
                 continue;
             }
         }
     }
 
-    // All branches failed or no branches.
+    if let Some(error) = first_error {
+        return Err(error);
+    }
+
     Err(PipelineError::StepFailed {
         step_index: 0,
         agent_name: "parallel".to_owned(),
@@ -262,6 +264,7 @@ async fn merge_fastest(
     child_token: CancellationToken,
 ) -> Result<PipelineOutput, PipelineError> {
     let mut collected: Vec<BranchResult> = Vec::with_capacity(n);
+    let mut first_error = None;
 
     while let Some(item) = rx.recv().await {
         match item {
@@ -275,17 +278,18 @@ async fn merge_fastest(
             }
             Err(e) => {
                 tracing::warn!("parallel branch failed during fastest: {e}");
+                first_error.get_or_insert(e);
                 continue;
             }
         }
     }
 
     if collected.is_empty() {
-        return Err(PipelineError::StepFailed {
+        return Err(first_error.unwrap_or_else(|| PipelineError::StepFailed {
             step_index: 0,
             agent_name: "parallel".to_owned(),
             source: "no parallel branches completed successfully".into(),
-        });
+        }));
     }
 
     // Sort by declaration order for deterministic output.
@@ -508,6 +512,50 @@ mod tests {
         .unwrap();
 
         assert_eq!(result.steps.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn first_returns_real_branch_error_when_all_branches_fail() {
+        let factory = make_factory(vec![]);
+
+        let result = super::run_parallel(
+            &(factory as Arc<dyn super::super::executor::AgentFactory>),
+            &None,
+            PipelineId::new("test-first-all-fail"),
+            "test".to_owned(),
+            vec!["agent-a".into(), "agent-b".into()],
+            MergeStrategy::First,
+            "hello".to_owned(),
+            CancellationToken::new(),
+        )
+        .await;
+
+        assert!(
+            matches!(result, Err(super::PipelineError::AgentNotFound { name }) if name == "agent-a" || name == "agent-b"),
+            "expected a real branch error, got: {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn fastest_returns_real_branch_error_when_all_branches_fail() {
+        let factory = make_factory(vec![]);
+
+        let result = super::run_parallel(
+            &(factory as Arc<dyn super::super::executor::AgentFactory>),
+            &None,
+            PipelineId::new("test-fastest-all-fail"),
+            "test".to_owned(),
+            vec!["agent-a".into(), "agent-b".into()],
+            MergeStrategy::Fastest { n: 2 },
+            "hello".to_owned(),
+            CancellationToken::new(),
+        )
+        .await;
+
+        assert!(
+            matches!(result, Err(super::PipelineError::AgentNotFound { name }) if name == "agent-a" || name == "agent-b"),
+            "expected a real branch error, got: {result:?}"
+        );
     }
 
     // T031: Concat fails if any branch errors
