@@ -8,7 +8,7 @@ use crate::error::AgentError;
 use crate::loop_::AgentEvent;
 
 use super::Agent;
-use super::queueing::llm_messages_from_queue;
+use super::queueing::drain_messages_from_queue;
 
 fn invalid_state_snapshot(error: &serde_json::Error) -> std::io::Error {
     std::io::Error::new(
@@ -155,8 +155,8 @@ impl Agent {
             &self.state.model.model_id,
             &self.state.messages,
         )
-        .with_pending_messages(llm_messages_from_queue(&self.follow_up_queue))
-        .with_pending_steering_messages(llm_messages_from_queue(&self.steering_queue));
+        .with_pending_message_batch(&drain_messages_from_queue(&self.follow_up_queue))
+        .with_pending_steering_message_batch(&drain_messages_from_queue(&self.steering_queue));
 
         let s = self
             .session_state
@@ -223,10 +223,16 @@ impl Agent {
             return Err(AgentError::NoMessages);
         }
 
-        for msg in checkpoint.restore_pending_messages() {
+        // Clear live queues before re-enqueueing from the checkpoint so that
+        // an in-process pause→resume cycle does not duplicate pending work.
+        self.clear_queues();
+
+        for msg in checkpoint.restore_pending_messages(self.custom_message_registry.as_deref()) {
             self.follow_up(msg);
         }
-        for msg in checkpoint.restore_pending_steering_messages() {
+        for msg in
+            checkpoint.restore_pending_steering_messages(self.custom_message_registry.as_deref())
+        {
             self.steer(msg);
         }
 
@@ -470,6 +476,12 @@ mod tests {
             },
             _ => panic!("expected user message"),
         }
+
+        // After pause, live queues must be drained (#337).
+        assert!(
+            !agent.has_pending_messages(),
+            "queues should be empty after pause drains them"
+        );
     }
 
     #[tokio::test]
@@ -505,14 +517,8 @@ mod tests {
         agent.restore_from_loop_checkpoint(&cp).unwrap();
 
         // Verify steering went to steering queue, follow-up to follow-up queue
-        let steering = agent
-            .steering_queue
-            .lock()
-            .unwrap();
-        let follow_up = agent
-            .follow_up_queue
-            .lock()
-            .unwrap();
+        let steering = agent.steering_queue.lock().unwrap();
+        let follow_up = agent.follow_up_queue.lock().unwrap();
 
         assert_eq!(steering.len(), 1, "steering queue should have 1 message");
         assert_eq!(follow_up.len(), 1, "follow-up queue should have 1 message");
@@ -530,6 +536,170 @@ mod tests {
                 _ => panic!("expected text"),
             },
             _ => panic!("expected user message in follow-up queue"),
+        }
+    }
+
+    /// Regression test for #337: pause then resume must not duplicate queued
+    /// messages.  Before the fix, `pause()` snapshotted the queues without
+    /// draining them, and `restore_from_loop_checkpoint()` re-enqueued the
+    /// same entries on top of the still-populated live queues.
+    #[tokio::test]
+    async fn pause_drains_queues_so_resume_does_not_duplicate() {
+        use crate::types::ContentBlock;
+
+        let mut agent = make_agent(None);
+        agent
+            .state
+            .messages
+            .push(AgentMessage::Llm(LlmMessage::User(UserMessage {
+                content: vec![ContentBlock::Text {
+                    text: "hi".to_string(),
+                }],
+                timestamp: 0,
+                cache_hint: None,
+            })));
+
+        // Enqueue one steering and one follow-up message.
+        agent.steer(AgentMessage::Llm(LlmMessage::User(UserMessage {
+            content: vec![ContentBlock::Text {
+                text: "steering-1".to_string(),
+            }],
+            timestamp: 1,
+            cache_hint: None,
+        })));
+        agent.follow_up(AgentMessage::Llm(LlmMessage::User(UserMessage {
+            content: vec![ContentBlock::Text {
+                text: "followup-1".to_string(),
+            }],
+            timestamp: 2,
+            cache_hint: None,
+        })));
+
+        // Simulate a running loop so pause() doesn't return None.
+        agent
+            .loop_active
+            .store(true, std::sync::atomic::Ordering::Release);
+
+        let checkpoint = agent.pause().expect("agent should be running");
+
+        // After pause, live queues must be empty (drained into checkpoint).
+        assert!(
+            !agent.has_pending_messages(),
+            "queues should be drained after pause"
+        );
+
+        // Restore from the checkpoint — queues should have exactly 1 each.
+        agent
+            .loop_active
+            .store(false, std::sync::atomic::Ordering::Release);
+        agent.restore_from_loop_checkpoint(&checkpoint).unwrap();
+
+        let steering = agent.steering_queue.lock().unwrap();
+        let follow_up = agent.follow_up_queue.lock().unwrap();
+
+        assert_eq!(
+            steering.len(),
+            1,
+            "steering queue should have exactly 1 message, not duplicated"
+        );
+        assert_eq!(
+            follow_up.len(),
+            1,
+            "follow-up queue should have exactly 1 message, not duplicated"
+        );
+    }
+
+    #[tokio::test]
+    async fn pause_and_resume_preserves_serializable_custom_pending_messages() {
+        use crate::types::ContentBlock;
+
+        let mut agent = make_agent(Some(tagged_registry()));
+        agent
+            .state
+            .messages
+            .push(AgentMessage::Llm(LlmMessage::User(UserMessage {
+                content: vec![ContentBlock::Text {
+                    text: "hi".to_string(),
+                }],
+                timestamp: 0,
+                cache_hint: None,
+            })));
+
+        agent.follow_up(AgentMessage::Llm(LlmMessage::User(UserMessage {
+            content: vec![ContentBlock::Text {
+                text: "followup-1".to_string(),
+            }],
+            timestamp: 1,
+            cache_hint: None,
+        })));
+        agent.follow_up(AgentMessage::Custom(Box::new(Tagged {
+            value: "followup-custom".to_string(),
+        })));
+        agent.steer(AgentMessage::Custom(Box::new(Tagged {
+            value: "steering-custom".to_string(),
+        })));
+        agent.steer(AgentMessage::Llm(LlmMessage::User(UserMessage {
+            content: vec![ContentBlock::Text {
+                text: "steering-1".to_string(),
+            }],
+            timestamp: 2,
+            cache_hint: None,
+        })));
+
+        agent
+            .loop_active
+            .store(true, std::sync::atomic::Ordering::Release);
+
+        let checkpoint = agent.pause().expect("agent should be running");
+        assert!(
+            !agent.has_pending_messages(),
+            "queues should be drained after pause"
+        );
+
+        let json = serde_json::to_string(&checkpoint).unwrap();
+        let loaded: LoopCheckpoint = serde_json::from_str(&json).unwrap();
+
+        agent
+            .loop_active
+            .store(false, std::sync::atomic::Ordering::Release);
+        agent.restore_from_loop_checkpoint(&loaded).unwrap();
+
+        let steering = agent.steering_queue.lock().unwrap();
+        let follow_up = agent.follow_up_queue.lock().unwrap();
+
+        assert_eq!(
+            follow_up.len(),
+            2,
+            "follow-up queue should keep mixed messages"
+        );
+        assert_eq!(
+            steering.len(),
+            2,
+            "steering queue should keep mixed messages"
+        );
+
+        match &follow_up[0] {
+            AgentMessage::Llm(LlmMessage::User(u)) => match &u.content[0] {
+                ContentBlock::Text { text } => assert_eq!(text, "followup-1"),
+                _ => panic!("expected text content"),
+            },
+            _ => panic!("expected llm follow-up message"),
+        }
+        let follow_up_custom = follow_up[1]
+            .downcast_ref::<Tagged>()
+            .expect("custom follow-up should be restored");
+        assert_eq!(follow_up_custom.value, "followup-custom");
+
+        let steering_custom = steering[0]
+            .downcast_ref::<Tagged>()
+            .expect("custom steering should be restored");
+        assert_eq!(steering_custom.value, "steering-custom");
+        match &steering[1] {
+            AgentMessage::Llm(LlmMessage::User(u)) => match &u.content[0] {
+                ContentBlock::Text { text } => assert_eq!(text, "steering-1"),
+                _ => panic!("expected text content"),
+            },
+            _ => panic!("expected llm steering message"),
         }
     }
 
@@ -555,8 +725,7 @@ mod tests {
         );
 
         // Build a checkpoint from a source agent that uses model_b.
-        let source_opts =
-            AgentOptions::new_simple("system", model_b.clone(), stream_b.clone());
+        let source_opts = AgentOptions::new_simple("system", model_b.clone(), stream_b.clone());
         let mut source = Agent::new(source_opts);
         source
             .state

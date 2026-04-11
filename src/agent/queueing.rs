@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
 use crate::message_provider::MessageProvider;
-use crate::types::{AgentMessage, LlmMessage};
+use crate::types::AgentMessage;
 
 use super::{Agent, FollowUpMode, SteeringMode};
 
@@ -91,17 +91,14 @@ impl MessageProvider for QueueMessageProvider {
     }
 }
 
-pub(super) fn llm_messages_from_queue(
+/// Drain the queue and return every queued [`AgentMessage`].
+pub(super) fn drain_messages_from_queue(
     queue: &Arc<Mutex<VecDeque<AgentMessage>>>,
-) -> Vec<LlmMessage> {
+) -> Vec<AgentMessage> {
     queue
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .iter()
-        .filter_map(|msg| match msg {
-            AgentMessage::Llm(llm) => Some(llm.clone()),
-            AgentMessage::Custom(_) => None,
-        })
+        .drain(..)
         .collect()
 }
 
