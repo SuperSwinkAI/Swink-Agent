@@ -10,14 +10,9 @@ use swink_agent::{AgentTool, Plugin, PostTurnPolicy, PreDispatchPolicy};
 use crate::config::{SearchProviderKind, WebPluginConfig, WebPluginConfigBuilder};
 use crate::domain::DomainFilter;
 use crate::playwright::{PlaywrightBridge, Viewport};
-use crate::policy::domain_filter::DomainFilterPolicy;
-use crate::policy::rate_limiter::RateLimitPolicy;
-use crate::policy::sanitizer::ContentSanitizerPolicy;
+use crate::policy::{ContentSanitizerPolicy, DomainFilterPolicy, RateLimitPolicy};
 use crate::search::SearchProvider;
-use crate::tools::extract::ExtractTool;
-use crate::tools::fetch::FetchTool;
-use crate::tools::screenshot::ScreenshotTool;
-use crate::tools::search::SearchTool;
+use crate::tools::{ExtractTool, FetchTool, ScreenshotTool, SearchTool};
 
 /// Errors returned when constructing a [`WebPlugin`].
 ///

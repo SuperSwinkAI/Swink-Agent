@@ -111,3 +111,139 @@ impl AgentTool for SearchTool {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use serde_json::json;
+    use swink_agent::{AgentTool, SessionState};
+    use tokio_util::sync::CancellationToken;
+
+    use super::SearchTool;
+    use crate::search::{SearchError, SearchProvider, SearchResult};
+
+    struct MockProvider {
+        results: Vec<SearchResult>,
+    }
+
+    impl SearchProvider for MockProvider {
+        fn name(&self) -> &str {
+            "mock"
+        }
+
+        fn search(
+            &self,
+            _query: &str,
+            max_results: usize,
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<Output = Result<Vec<SearchResult>, SearchError>>
+                    + Send
+                    + '_,
+            >,
+        > {
+            Box::pin(async move { Ok(self.results.iter().take(max_results).cloned().collect()) })
+        }
+    }
+
+    struct FailingProvider;
+
+    impl SearchProvider for FailingProvider {
+        fn name(&self) -> &str {
+            "failing"
+        }
+
+        fn search(
+            &self,
+            _query: &str,
+            _max_results: usize,
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<Output = Result<Vec<SearchResult>, SearchError>>
+                    + Send
+                    + '_,
+            >,
+        > {
+            Box::pin(async move { Err(SearchError::NetworkError("connection refused".into())) })
+        }
+    }
+
+    #[test]
+    fn formats_results_as_numbered_list() {
+        let results = vec![
+            SearchResult {
+                title: "Rust Lang".to_owned(),
+                url: "https://rust-lang.org".to_owned(),
+                snippet: "A systems programming language.".to_owned(),
+            },
+            SearchResult {
+                title: "Crates.io".to_owned(),
+                url: "https://crates.io".to_owned(),
+                snippet: "Rust package registry.".to_owned(),
+            },
+        ];
+        let formatted = SearchTool::format_results(&results);
+        assert!(formatted.starts_with("1. **Rust Lang**"));
+        assert!(formatted.contains("2. **Crates.io**"));
+    }
+
+    #[tokio::test]
+    async fn execute_returns_formatted_results() {
+        let provider = Arc::new(MockProvider {
+            results: vec![SearchResult {
+                title: "Test".to_owned(),
+                url: "https://test.com".to_owned(),
+                snippet: "A test result.".to_owned(),
+            }],
+        });
+        let tool = SearchTool::new(provider, 10);
+        let state = Arc::new(std::sync::RwLock::new(SessionState::default()));
+        let result = tool
+            .execute(
+                "call-1",
+                json!({"query": "test"}),
+                CancellationToken::new(),
+                None,
+                state,
+                None,
+            )
+            .await;
+
+        assert!(!result.is_error);
+        let text = format!("{:?}", result.content);
+        assert!(text.contains("Test"));
+        assert!(text.contains("https://test.com"));
+    }
+
+    #[tokio::test]
+    async fn execute_returns_errors_for_bad_inputs_or_provider_failure() {
+        let empty_provider = Arc::new(MockProvider { results: vec![] });
+        let empty_tool = SearchTool::new(empty_provider, 10);
+        let state = Arc::new(std::sync::RwLock::new(SessionState::default()));
+        let missing_query = empty_tool
+            .execute(
+                "call-2",
+                json!({}),
+                CancellationToken::new(),
+                None,
+                Arc::clone(&state),
+                None,
+            )
+            .await;
+        assert!(missing_query.is_error);
+
+        let failing_tool = SearchTool::new(Arc::new(FailingProvider), 10);
+        let provider_failure = failing_tool
+            .execute(
+                "call-3",
+                json!({"query": "fail"}),
+                CancellationToken::new(),
+                None,
+                state,
+                None,
+            )
+            .await;
+        assert!(provider_failure.is_error);
+    }
+}

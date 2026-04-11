@@ -50,9 +50,6 @@ pub enum PlaywrightRequest {
     Ping {
         id: u64,
     },
-    Shutdown {
-        id: u64,
-    },
 }
 
 /// Response from the Playwright bridge subprocess.
@@ -89,7 +86,7 @@ const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 /// Spawns a child process running the embedded `playwright_bridge.js` script
 /// and communicates via JSON lines on stdin/stdout.
 pub struct PlaywrightBridge {
-    child: Child,
+    _child: Child,
     stdin: BufWriter<tokio::process::ChildStdin>,
     stdout: BufReader<tokio::process::ChildStdout>,
     next_id: AtomicU64,
@@ -140,7 +137,7 @@ impl PlaywrightBridge {
             .ok_or_else(|| PlaywrightError::Communication("failed to open stdout".into()))?;
 
         let mut bridge = Self {
-            child,
+            _child: child,
             stdin: BufWriter::new(stdin),
             stdout: BufReader::new(stdout),
             next_id: AtomicU64::new(1),
@@ -230,35 +227,6 @@ impl PlaywrightBridge {
             .map_err(|e| PlaywrightError::Communication(format!("failed to parse elements: {e}")))
     }
 
-    /// Shut down the bridge subprocess.
-    pub async fn shutdown(&mut self) -> Result<(), PlaywrightError> {
-        let id = self.next_id();
-        // Best-effort: send shutdown, don't fail if bridge is already gone.
-        let send_result = self.send_request(PlaywrightRequest::Shutdown { id }).await;
-
-        // Wait for the child to exit (with timeout).
-        let wait_result = tokio::time::timeout(Duration::from_secs(5), self.child.wait()).await;
-
-        match wait_result {
-            Ok(Ok(_)) => {}
-            Ok(Err(e)) => {
-                tracing::warn!("bridge process wait error: {e}");
-            }
-            Err(_) => {
-                // Timeout waiting for exit — kill.
-                tracing::warn!("bridge did not exit in time, killing");
-                let _ = self.child.kill().await;
-            }
-        }
-
-        // Surface send errors only if the child did not exit cleanly.
-        if let Err(e) = send_result {
-            tracing::debug!("shutdown send error (may be expected): {e}");
-        }
-
-        Ok(())
-    }
-
     // ── Internals ──────────────────────────────────────────────────────────
 
     fn next_id(&self) -> u64 {
@@ -295,8 +263,23 @@ impl PlaywrightBridge {
             ));
         }
 
-        serde_json::from_str(&response_line)
-            .map_err(|e| PlaywrightError::Communication(format!("deserialize error: {e}")))
+        let response: PlaywrightResponse = serde_json::from_str(&response_line)
+            .map_err(|e| PlaywrightError::Communication(format!("deserialize error: {e}")))?;
+
+        let expected_id = match &request {
+            PlaywrightRequest::Screenshot { id, .. }
+            | PlaywrightRequest::Extract { id, .. }
+            | PlaywrightRequest::Ping { id } => *id,
+        };
+
+        if response.id != expected_id {
+            return Err(PlaywrightError::Communication(format!(
+                "response id mismatch: expected {expected_id}, got {}",
+                response.id
+            )));
+        }
+
+        Ok(response)
     }
 }
 

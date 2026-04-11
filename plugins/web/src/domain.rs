@@ -129,3 +129,70 @@ fn is_private_ipv6(ip: &Ipv6Addr) -> bool {
     }
     false
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{DomainFilter, DomainFilterError};
+    use url::Url;
+
+    #[test]
+    fn rejects_invalid_schemes() {
+        let filter = DomainFilter::default();
+        let file = Url::parse("file:///etc/passwd").unwrap();
+        let ftp = Url::parse("ftp://example.com/pub").unwrap();
+
+        assert!(matches!(
+            filter.is_allowed(&file).unwrap_err(),
+            DomainFilterError::InvalidScheme(_)
+        ));
+        assert!(matches!(
+            filter.is_allowed(&ftp).unwrap_err(),
+            DomainFilterError::InvalidScheme(_)
+        ));
+    }
+
+    #[test]
+    fn allowlist_and_denylist_are_enforced() {
+        let allow_filter = DomainFilter {
+            allowlist: vec!["example.com".to_string()],
+            ..Default::default()
+        };
+        let deny_filter = DomainFilter {
+            denylist: vec!["evil.com".to_string()],
+            ..Default::default()
+        };
+
+        assert!(allow_filter
+            .is_allowed(&Url::parse("https://example.com/page").unwrap())
+            .is_ok());
+        assert!(matches!(
+            allow_filter
+                .is_allowed(&Url::parse("https://evil.com").unwrap())
+                .unwrap_err(),
+            DomainFilterError::NotAllowlisted(_)
+        ));
+        assert!(matches!(
+            deny_filter
+                .is_allowed(&Url::parse("https://evil.com/malware").unwrap())
+                .unwrap_err(),
+            DomainFilterError::DeniedDomain(_)
+        ));
+    }
+
+    #[test]
+    fn private_ip_ranges_are_blocked() {
+        let filter = DomainFilter {
+            block_private_ips: true,
+            ..Default::default()
+        };
+
+        for url in [
+            "http://127.0.0.1/admin",
+            "http://10.0.0.1/internal",
+            "http://172.16.0.1/secret",
+            "http://192.168.1.1/router",
+        ] {
+            assert!(filter.is_allowed(&Url::parse(url).unwrap()).is_err());
+        }
+    }
+}
