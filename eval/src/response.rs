@@ -6,6 +6,7 @@
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use regex::Regex;
+use swink_agent::prefix_chars;
 
 use crate::evaluator::Evaluator;
 use crate::score::Score;
@@ -88,10 +89,10 @@ impl Evaluator for ResponseMatcher {
 
 /// Truncate a string to at most `max_len` characters, appending "..." if truncated.
 fn truncate(s: &str, max_len: usize) -> String {
-    if s.len() <= max_len {
+    if s.chars().count() <= max_len {
         s.to_string()
     } else {
-        format!("{}...", &s[..max_len])
+        format!("{}...", prefix_chars(s, max_len))
     }
 }
 
@@ -163,6 +164,13 @@ mod tests {
         let result = truncate(&long, 100);
         assert_eq!(result.len(), 103); // 100 + "..."
         assert!(result.ends_with("..."));
+    }
+
+    #[test]
+    fn truncate_multibyte_string_is_utf8_safe() {
+        let text = format!("{}🙂tail", "a".repeat(99));
+        let result = truncate(&text, 100);
+        assert_eq!(result, format!("{}🙂...", "a".repeat(99)));
     }
 
     #[test]

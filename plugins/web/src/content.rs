@@ -1,5 +1,7 @@
 use std::io::Cursor;
 
+use swink_agent::{prefix_chars, suffix_chars};
+
 /// Errors that can occur during content extraction.
 #[derive(Debug, thiserror::Error)]
 pub enum ContentError {
@@ -54,23 +56,23 @@ pub fn extract_readable_content(
 /// Otherwise, keeps 80% from the beginning and 20% from the end, inserting a
 /// truncation notice in the middle.
 pub fn truncate_content(text: &str, max_len: usize) -> (String, bool) {
-    if text.len() <= max_len {
+    let original_len = text.chars().count();
+    if original_len <= max_len {
         return (text.to_string(), false);
     }
 
-    let original_len = text.len();
     let head_len = max_len * 80 / 100;
     let tail_len = max_len * 20 / 100;
 
-    let head = &text[..head_len];
-    let tail = &text[original_len - tail_len..];
+    let head = prefix_chars(text, head_len);
+    let tail = suffix_chars(text, tail_len);
 
     let notice = format!(
         "\n\n[... content truncated ({original_len} chars total, \
          showing first {head_len} and last {tail_len}) ...]\n\n"
     );
 
-    let mut result = String::with_capacity(head_len + notice.len() + tail_len);
+    let mut result = String::with_capacity(head.len() + notice.len() + tail.len());
     result.push_str(head);
     result.push_str(&notice);
     result.push_str(tail);
@@ -104,6 +106,18 @@ mod tests {
         assert!(result.starts_with(&"a".repeat(160)));
         assert!(result.ends_with(&"a".repeat(40)));
         assert!(result.contains("[... content truncated"));
+    }
+
+    #[test]
+    fn truncate_content_multibyte_boundaries_are_utf8_safe() {
+        let text = format!("{}🙂{}", "a".repeat(159), "🙂".repeat(50));
+        let (result, truncated) = truncate_content(&text, 200);
+
+        assert!(truncated);
+        assert!(result.starts_with(&format!("{}🙂", "a".repeat(159))));
+        assert!(result.ends_with(&"🙂".repeat(40)));
+        assert!(result.contains("209 chars total"));
+        assert!(result.contains("showing first 160 and last 40"));
     }
 
     #[test]

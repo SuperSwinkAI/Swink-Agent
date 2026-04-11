@@ -157,7 +157,7 @@ pub use types::{
     deserialize_custom_message, restore_messages, restore_single_custom, serialize_custom_message,
     serialize_messages,
 };
-pub use util::now_timestamp;
+pub use util::{now_timestamp, prefix_chars, suffix_chars};
 
 #[cfg(feature = "artifact-store")]
 pub use artifact::{
