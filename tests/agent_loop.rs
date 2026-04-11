@@ -81,6 +81,55 @@ impl AgentTool for MockUpdatingTool {
     }
 }
 
+struct MockCancellationIgnoringTool {
+    tool_name: String,
+}
+
+impl MockCancellationIgnoringTool {
+    fn new(name: &str) -> Self {
+        Self {
+            tool_name: name.to_string(),
+        }
+    }
+}
+
+impl AgentTool for MockCancellationIgnoringTool {
+    fn name(&self) -> &str {
+        &self.tool_name
+    }
+
+    fn label(&self) -> &str {
+        &self.tool_name
+    }
+
+    fn description(&self) -> &'static str {
+        "A tool that ignores cancellation and never completes unless aborted"
+    }
+
+    fn parameters_schema(&self) -> &serde_json::Value {
+        static SCHEMA: std::sync::OnceLock<serde_json::Value> = std::sync::OnceLock::new();
+        SCHEMA.get_or_init(|| {
+            json!({
+                "type": "object",
+                "properties": {},
+                "additionalProperties": true
+            })
+        })
+    }
+
+    fn execute(
+        &self,
+        _tool_call_id: &str,
+        _params: serde_json::Value,
+        _cancellation_token: CancellationToken,
+        _on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
+        _state: std::sync::Arc<std::sync::RwLock<swink_agent::SessionState>>,
+        _credential: Option<swink_agent::ResolvedCredential>,
+    ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>> {
+        Box::pin(async move { std::future::pending::<AgentToolResult>().await })
+    }
+}
+
 // ─── Helper functions ────────────────────────────────────────────────────
 
 /// Test helper that delegates to closures for steering/follow-up.
@@ -593,6 +642,82 @@ async fn steering_interrupt() {
 
     assert!(has_event(&events, "AgentEnd"));
     assert!(has_event(&events, "ToolExecutionStart"));
+}
+
+#[tokio::test]
+async fn steering_interrupt_aborts_cancellation_unaware_tools() {
+    let events_with_2_tools = vec![
+        AssistantMessageEvent::Start,
+        AssistantMessageEvent::ToolCallStart {
+            content_index: 0,
+            id: "tc_1".to_string(),
+            name: "fast_tool".to_string(),
+        },
+        AssistantMessageEvent::ToolCallDelta {
+            content_index: 0,
+            delta: "{}".to_string(),
+        },
+        AssistantMessageEvent::ToolCallEnd { content_index: 0 },
+        AssistantMessageEvent::ToolCallStart {
+            content_index: 1,
+            id: "tc_2".to_string(),
+            name: "stuck_tool".to_string(),
+        },
+        AssistantMessageEvent::ToolCallDelta {
+            content_index: 1,
+            delta: "{}".to_string(),
+        },
+        AssistantMessageEvent::ToolCallEnd { content_index: 1 },
+        AssistantMessageEvent::Done {
+            stop_reason: StopReason::ToolUse,
+            usage: Usage::default(),
+            cost: Cost::default(),
+        },
+    ];
+
+    let stream_fn = Arc::new(MockStreamFn::new(vec![
+        events_with_2_tools,
+        text_only_events("after steering"),
+    ]));
+
+    let fast_tool = Arc::new(MockTool::new("fast_tool").with_delay(Duration::from_millis(10)));
+    let stuck_tool = Arc::new(MockCancellationIgnoringTool::new("stuck_tool"));
+
+    let steering_call_count = Arc::new(AtomicU32::new(0));
+    let steering_count_clone = Arc::clone(&steering_call_count);
+
+    let mut config = default_config(stream_fn);
+    config.tools = vec![fast_tool, stuck_tool];
+    config.message_provider = Some(Arc::new(MockMessageProvider::steering_only(move || {
+        let count = steering_count_clone.fetch_add(1, Ordering::SeqCst);
+        if count == 0 {
+            vec![AgentMessage::Llm(LlmMessage::User(UserMessage {
+                content: vec![ContentBlock::Text {
+                    text: "steering: change direction".to_string(),
+                }],
+                timestamp: 0,
+                cache_hint: None,
+            }))]
+        } else {
+            vec![]
+        }
+    })));
+
+    let events = tokio::time::timeout(
+        Duration::from_millis(250),
+        collect_events(agent_loop(
+            vec![],
+            "system".to_string(),
+            config,
+            CancellationToken::new(),
+        )),
+    )
+    .await
+    .expect("steering interrupt should not wait on cancellation-unaware tools");
+
+    assert!(has_event(&events, "AgentEnd"));
+    assert_eq!(count_events(&events, "TurnStart"), 2);
+    assert_eq!(count_events(&events, "ToolExecutionEnd"), 1);
 }
 
 // ─── 3.8: Follow-up ─────────────────────────────────────────────────────

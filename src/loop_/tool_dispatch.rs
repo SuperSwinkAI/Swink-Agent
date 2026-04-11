@@ -422,6 +422,10 @@ async fn collect_group_results(
     steering_detected: &Arc<std::sync::atomic::AtomicBool>,
     batch_token: &CancellationToken,
 ) -> GroupOutcome {
+    let abort_handles: Vec<_> = handles
+        .iter()
+        .map(|(_, handle)| handle.abort_handle())
+        .collect();
     let mut futs: FuturesUnordered<_> = handles
         .into_iter()
         .map(|(idx, handle)| async move { (idx, handle.await) })
@@ -463,7 +467,11 @@ async fn collect_group_results(
 
         if steering_detected.load(std::sync::atomic::Ordering::SeqCst) {
             batch_token.cancel();
-            // Drain remaining futures in this group.
+            for handle in &abort_handles {
+                handle.abort();
+            }
+            // Drain remaining futures after aborting them so the group can
+            // complete even when a tool ignores the cancellation token.
             while futs.next().await.is_some() {}
             return GroupOutcome::SteeringInterrupt;
         }
