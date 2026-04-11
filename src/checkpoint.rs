@@ -15,11 +15,7 @@ mod store;
 
 pub use store::{CheckpointFuture, CheckpointStore};
 
-fn restore_llm_messages(messages: &[LlmMessage]) -> Vec<AgentMessage> {
-    messages.iter().cloned().map(AgentMessage::Llm).collect()
-}
-
-// ─── Checkpoint ──────────────────────────────────────────────────────────────
+// â”€â”€â”€ Checkpoint â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /// A serializable snapshot of agent conversation state.
 ///
@@ -154,7 +150,7 @@ impl Checkpoint {
     }
 }
 
-// ─── LoopCheckpoint ──────────────────────────────────────────────────────
+// â”€â”€â”€ LoopCheckpoint â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /// A serializable snapshot of the agent loop's in-flight state.
 ///
@@ -175,12 +171,24 @@ pub struct LoopCheckpoint {
     message_order: Vec<MessageSlot>,
     /// Follow-up messages queued for injection into the next turn.
     pub pending_messages: Vec<LlmMessage>,
+    /// Serialized custom follow-up messages queued for the next turn.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pending_custom_messages: Vec<serde_json::Value>,
+    /// Records the original interleaved order of pending follow-up messages.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pending_message_order: Vec<MessageSlot>,
     /// Steering messages queued at the time of pause.
     ///
     /// Older checkpoints without this field deserialize with an empty vec
     /// (backward compatible).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pending_steering_messages: Vec<LlmMessage>,
+    /// Serialized custom steering messages queued at the time of pause.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pending_steering_custom_messages: Vec<serde_json::Value>,
+    /// Records the original interleaved order of pending steering messages.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pending_steering_message_order: Vec<MessageSlot>,
     /// The system prompt active at the time of pause.
     pub system_prompt: String,
     /// Model provider name.
@@ -216,7 +224,11 @@ impl LoopCheckpoint {
             custom_messages: serialized.custom_messages,
             message_order: serialized.message_order,
             pending_messages: Vec::new(),
+            pending_custom_messages: Vec::new(),
+            pending_message_order: Vec::new(),
             pending_steering_messages: Vec::new(),
+            pending_steering_custom_messages: Vec::new(),
+            pending_steering_message_order: Vec::new(),
             system_prompt: system_prompt.into(),
             provider: provider.into(),
             model_id: model_id.into(),
@@ -237,6 +249,8 @@ impl LoopCheckpoint {
     #[must_use]
     pub fn with_pending_messages(mut self, pending: Vec<LlmMessage>) -> Self {
         self.pending_messages = pending;
+        self.pending_custom_messages.clear();
+        self.pending_message_order.clear();
         self
     }
 
@@ -244,6 +258,29 @@ impl LoopCheckpoint {
     #[must_use]
     pub fn with_pending_steering_messages(mut self, pending: Vec<LlmMessage>) -> Self {
         self.pending_steering_messages = pending;
+        self.pending_steering_custom_messages.clear();
+        self.pending_steering_message_order.clear();
+        self
+    }
+
+    /// Set pending follow-up messages from a full `AgentMessage` batch.
+    #[must_use]
+    pub fn with_pending_message_batch(mut self, pending: &[AgentMessage]) -> Self {
+        let serialized = message_codec::serialize_messages(pending, "loop checkpoint pending");
+        self.pending_messages = serialized.llm_messages;
+        self.pending_custom_messages = serialized.custom_messages;
+        self.pending_message_order = serialized.message_order;
+        self
+    }
+
+    /// Set pending steering messages from a full `AgentMessage` batch.
+    #[must_use]
+    pub fn with_pending_steering_message_batch(mut self, pending: &[AgentMessage]) -> Self {
+        let serialized =
+            message_codec::serialize_messages(pending, "loop checkpoint steering pending");
+        self.pending_steering_messages = serialized.llm_messages;
+        self.pending_steering_custom_messages = serialized.custom_messages;
+        self.pending_steering_message_order = serialized.message_order;
         self
     }
 
@@ -271,14 +308,32 @@ impl LoopCheckpoint {
 
     /// Restore pending follow-up messages as `AgentMessage` values.
     #[must_use]
-    pub fn restore_pending_messages(&self) -> Vec<AgentMessage> {
-        restore_llm_messages(&self.pending_messages)
+    pub fn restore_pending_messages(
+        &self,
+        registry: Option<&CustomMessageRegistry>,
+    ) -> Vec<AgentMessage> {
+        message_codec::restore_messages(
+            &self.pending_messages,
+            &self.pending_custom_messages,
+            &self.pending_message_order,
+            registry,
+            "loop checkpoint pending",
+        )
     }
 
     /// Restore pending steering messages as `AgentMessage` values.
     #[must_use]
-    pub fn restore_pending_steering_messages(&self) -> Vec<AgentMessage> {
-        restore_llm_messages(&self.pending_steering_messages)
+    pub fn restore_pending_steering_messages(
+        &self,
+        registry: Option<&CustomMessageRegistry>,
+    ) -> Vec<AgentMessage> {
+        message_codec::restore_messages(
+            &self.pending_steering_messages,
+            &self.pending_steering_custom_messages,
+            &self.pending_steering_message_order,
+            registry,
+            "loop checkpoint steering pending",
+        )
     }
 
     /// Convert this loop checkpoint into a standard [`Checkpoint`] for storage.
@@ -302,7 +357,7 @@ impl LoopCheckpoint {
     }
 }
 
-// ─── Send + Sync assertions ─────────────────────────────────────────────────
+// â”€â”€â”€ Send + Sync assertions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const _: () = {
     const fn assert_send_sync<T: Send + Sync>() {}
@@ -310,7 +365,7 @@ const _: () = {
     assert_send_sync::<LoopCheckpoint>();
 };
 
-// ─── Tests ───────────────────────────────────────────────────────────────────
+// â”€â”€â”€ Tests â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 #[cfg(test)]
 mod tests {
@@ -355,7 +410,7 @@ mod tests {
     #[test]
     fn checkpoint_creation_skips_non_serializable_custom_messages() {
         let mut messages = sample_messages();
-        // Add a custom message without type_name/to_json — should be skipped
+        // Add a custom message without type_name/to_json â€” should be skipped
         messages.push(AgentMessage::Custom(Box::new(TestCustom)));
 
         let checkpoint = Checkpoint::new(
@@ -442,7 +497,7 @@ mod tests {
         let custom = restored[2].downcast_ref::<SerializableCustom>().unwrap();
         assert_eq!(custom.value, "hello");
 
-        // Restore without registry — custom messages skipped
+        // Restore without registry â€” custom messages skipped
         let restored_no_reg = restored_cp.restore_messages(None);
         assert_eq!(restored_no_reg.len(), 2);
     }
@@ -531,7 +586,7 @@ mod tests {
         assert!(checkpoint.custom_messages.is_empty());
     }
 
-    // ─── LoopCheckpoint Tests ────────────────────────────────────────────
+    // â”€â”€â”€ LoopCheckpoint Tests â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     #[test]
     fn loop_checkpoint_creation_skips_non_serializable_custom_messages() {
@@ -622,7 +677,7 @@ mod tests {
         assert_eq!(restored.pending_messages.len(), 1);
         assert_eq!(restored.pending_steering_messages.len(), 1);
 
-        let restored_steering = restored.restore_pending_steering_messages();
+        let restored_steering = restored.restore_pending_steering_messages(None);
         assert_eq!(restored_steering.len(), 1);
         assert!(matches!(
             restored_steering[0],
@@ -633,14 +688,16 @@ mod tests {
     #[test]
     fn loop_checkpoint_backward_compat_no_steering_field() {
         // Simulate a checkpoint created before pending_steering_messages existed
-        let cp = LoopCheckpoint::new("p", "p", "m", &[])
-            .with_pending_messages(vec![LlmMessage::User(UserMessage {
-                content: vec![ContentBlock::Text {
-                    text: "old-follow-up".to_string(),
-                }],
-                timestamp: 100,
-                cache_hint: None,
-            })]);
+        let cp =
+            LoopCheckpoint::new("p", "p", "m", &[]).with_pending_messages(vec![LlmMessage::User(
+                UserMessage {
+                    content: vec![ContentBlock::Text {
+                        text: "old-follow-up".to_string(),
+                    }],
+                    timestamp: 100,
+                    cache_hint: None,
+                },
+            )]);
 
         let mut json_val = serde_json::to_value(&cp).unwrap();
         // Strip the field to simulate old format
@@ -669,12 +726,28 @@ mod tests {
 
         let cp = LoopCheckpoint::new("p", "p", "m", &[]).with_pending_messages(pending);
 
-        let restored_pending = cp.restore_pending_messages();
+        let restored_pending = cp.restore_pending_messages(None);
         assert_eq!(restored_pending.len(), 1);
         assert!(matches!(
             restored_pending[0],
             AgentMessage::Llm(LlmMessage::User(_))
         ));
+    }
+
+    #[test]
+    fn loop_checkpoint_pending_messages_restore_custom_with_registry() {
+        let (registry, factory) = make_registry_and_custom("test");
+        let pending = vec![
+            user_msg("follow-up"),
+            AgentMessage::Custom(factory("pending-custom")),
+        ];
+
+        let cp = LoopCheckpoint::new("p", "p", "m", &[]).with_pending_message_batch(&pending);
+        let restored_pending = cp.restore_pending_messages(Some(&registry));
+
+        assert_eq!(restored_pending.len(), 2);
+        let order: Vec<String> = restored_pending.iter().map(message_text).collect();
+        assert_eq!(order, vec!["user:follow-up", "custom:pending-custom"]);
     }
 
     #[test]
@@ -692,7 +765,7 @@ mod tests {
         assert_eq!(standard.metadata["key"], "val");
     }
 
-    // ─── Interleaved ordering regression tests (issue #51) ──────────────
+    // â”€â”€â”€ Interleaved ordering regression tests (issue #51) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     fn make_registry_and_custom(
         tag: &str,
@@ -882,7 +955,7 @@ mod tests {
         let messages = vec![user_msg("hi"), AgentMessage::Custom(factory("legacy"))];
 
         let checkpoint = Checkpoint::new("cp-legacy", "hello", "p", "m", &messages);
-        // Serialize, strip message_order, deserialize — simulates old format
+        // Serialize, strip message_order, deserialize â€” simulates old format
         let mut json_val = serde_json::to_value(&checkpoint).unwrap();
         json_val.as_object_mut().unwrap().remove("message_order");
         let legacy_cp: Checkpoint = serde_json::from_value(json_val).unwrap();
