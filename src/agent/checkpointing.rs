@@ -86,15 +86,16 @@ impl Agent {
         self.state.model.model_id.clone_from(&checkpoint.model_id);
         self.rebind_stream_fn_for_current_model();
 
-        if let Some(ref state_val) = checkpoint.state {
-            let restored = crate::SessionState::restore_from_snapshot(state_val.clone())
-                .map_err(|e| invalid_state_snapshot(&e))?;
-            let mut s = self
-                .session_state
-                .write()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            *s = restored;
-        }
+        let restored = match checkpoint.state.as_ref() {
+            Some(state_val) => crate::SessionState::restore_from_snapshot(state_val.clone())
+                .map_err(|e| invalid_state_snapshot(&e))?,
+            None => crate::SessionState::new(),
+        };
+        let mut s = self
+            .session_state
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *s = restored;
 
         Ok(())
     }
@@ -206,16 +207,17 @@ impl Agent {
         self.state.model.model_id.clone_from(&checkpoint.model_id);
         self.rebind_stream_fn_for_current_model();
 
-        if let Some(ref state_val) = checkpoint.state {
-            let restored = crate::SessionState::restore_from_snapshot(state_val.clone())
+        let restored = match checkpoint.state.as_ref() {
+            Some(state_val) => crate::SessionState::restore_from_snapshot(state_val.clone())
                 .map_err(|e| invalid_state_snapshot(&e))
-                .map_err(AgentError::stream)?;
-            let mut s = self
-                .session_state
-                .write()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            *s = restored;
-        }
+                .map_err(AgentError::stream)?,
+            None => crate::SessionState::new(),
+        };
+        let mut s = self
+            .session_state
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *s = restored;
 
         if self.state.messages.is_empty() {
             return Err(AgentError::NoMessages);
@@ -693,5 +695,72 @@ mod tests {
             }
             other => panic!("expected StreamError, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn restore_from_checkpoint_clears_session_state_when_snapshot_missing() {
+        let mut source = make_agent(None);
+        source
+            .state
+            .messages
+            .push(AgentMessage::Llm(LlmMessage::User(UserMessage {
+                content: vec![crate::types::ContentBlock::Text {
+                    text: "hi".to_string(),
+                }],
+                timestamp: 0,
+                cache_hint: None,
+            })));
+
+        let mut checkpoint = source.save_checkpoint("cp-empty-state").await.unwrap();
+        checkpoint.state = None;
+
+        let mut agent = make_agent(None);
+        {
+            let mut state = agent
+                .session_state()
+                .write()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            state.set("stale", 42_i64).unwrap();
+        }
+
+        agent.restore_from_checkpoint(&checkpoint).unwrap();
+
+        let state = agent
+            .session_state()
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert!(state.is_empty(), "missing snapshot should clear stale state");
+    }
+
+    #[tokio::test]
+    async fn restore_from_loop_checkpoint_clears_session_state_when_snapshot_missing() {
+        use crate::checkpoint::LoopCheckpoint;
+
+        let messages = vec![AgentMessage::Llm(LlmMessage::User(UserMessage {
+            content: vec![crate::types::ContentBlock::Text {
+                text: "hi".to_string(),
+            }],
+            timestamp: 0,
+            cache_hint: None,
+        }))];
+        let mut checkpoint = LoopCheckpoint::new("system", "mock", "mock-model", &messages);
+        checkpoint.state = None;
+
+        let mut agent = make_agent(None);
+        {
+            let mut state = agent
+                .session_state()
+                .write()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            state.set("stale", 99_i64).unwrap();
+        }
+
+        agent.restore_from_loop_checkpoint(&checkpoint).unwrap();
+
+        let state = agent
+            .session_state()
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert!(state.is_empty(), "missing snapshot should clear stale state");
     }
 }
