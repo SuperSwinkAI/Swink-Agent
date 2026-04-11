@@ -3,12 +3,17 @@
 
 mod common;
 
+use std::sync::Arc;
+use std::time::Duration;
+
 use futures::StreamExt;
 use tokio_util::sync::CancellationToken;
 use wiremock::matchers::{body_string_contains, header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-use swink_agent::{AssistantMessageEvent, ModelSpec, StopReason, StreamErrorKind, StreamFn, StreamOptions};
+use swink_agent::{
+    AssistantMessageEvent, ModelSpec, StopReason, StreamErrorKind, StreamFn, StreamOptions,
+};
 use swink_agent_adapters::{AzureAuth, AzureStreamFn};
 
 use common::{event_name, sse_response, test_context};
@@ -544,6 +549,50 @@ async fn entra_id_token_caching() {
     );
 
     // wiremock will verify expect(1) on drop
+}
+
+#[tokio::test]
+async fn concurrent_entra_id_requests_share_one_token_refresh() {
+    let token_server = MockServer::start().await;
+    let api_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/token"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(token_response_body("deduped-concurrent-token", 3600))
+                .set_delay(Duration::from_millis(75)),
+        )
+        .expect(1)
+        .mount(&token_server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .and(header("Authorization", "Bearer deduped-concurrent-token"))
+        .respond_with(sse_response(&simple_sse_body()))
+        .expect(2)
+        .mount(&api_server)
+        .await;
+
+    let token_url = format!("{}/token", token_server.uri());
+    let stream_fn = Arc::new(entra_stream_fn(&api_server, &token_url));
+    let left = Arc::clone(&stream_fn);
+    let right = Arc::clone(&stream_fn);
+
+    let (left_events, right_events) = tokio::join!(
+        tokio::spawn(async move { collect_events(left.as_ref()).await }),
+        tokio::spawn(async move { collect_events(right.as_ref()).await }),
+    );
+
+    for events in [left_events.unwrap(), right_events.unwrap()] {
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, AssistantMessageEvent::Done { .. })),
+            "expected successful Azure stream events, got: {events:?}"
+        );
+    }
 }
 
 // ── T034: Token refresh — expired token triggers re-acquisition ───────────

@@ -150,6 +150,7 @@ MSRV **1.88** (edition 2024). Workspace deps centralized in root `Cargo.toml`.
 **Adapters crate (`swink-agent-adapters`):**
 - `default = ["all"]` — backward compatible, all 9 adapters enabled.
 - Individual flags: `anthropic`, `openai`, `ollama`, `gemini`, `proxy`, `azure`, `bedrock`, `mistral`, `xai`.
+- Azure Entra ID auth should use the shared `swink-agent-auth::SingleFlightTokenSource`; an adapter-local `RwLock<Option<_>>` cache does not deduplicate concurrent token refreshes.
 - `gemini` feature gates the `google` module (file is `google.rs`, public type is `GeminiStreamFn`).
 - `proxy` activates `eventsource-stream` dep. `bedrock` activates `sha2` dep. All others are marker flags.
 - Shared infra (`base`, `sse`, `classify`, `convert`, `finalize`, `openai_compat`, `remote_presets`) compiles unconditionally.

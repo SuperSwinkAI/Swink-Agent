@@ -31,6 +31,7 @@ xai = ["openai-compat"]
 
 [dependencies]
 swink-agent = { path = "..", default-features = false }
+swink-agent-auth = { path = "../auth" }
 reqwest.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
