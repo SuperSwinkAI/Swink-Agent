@@ -36,10 +36,13 @@ impl Agent {
         let notify = Arc::clone(&self.idle_notify);
         let active = Arc::clone(&self.loop_active);
         async move {
-            if !active.load(Ordering::Acquire) {
-                return;
+            loop {
+                let notified = notify.notified();
+                if !active.load(Ordering::Acquire) {
+                    return;
+                }
+                notified.await;
             }
-            notify.notified().await;
         }
     }
 }
