@@ -11,9 +11,9 @@ repository = "https://github.com/SuperSwinkAI/Swink-Agent"
 proc-macro = true
 
 [dependencies]
-syn = { version = "2", features = ["full", "extra-traits"] }
-quote = "1"
-proc-macro2 = "1"
+syn = { workspace = true, features = ["full", "extra-traits"] }
+quote.workspace = true
+proc-macro2.workspace = true
 
 [dev-dependencies]
 swink-agent = { path = "..", default-features = false }
