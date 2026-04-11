@@ -13,8 +13,9 @@ swink-agent-memory = { path = "../memory" }
 ## Save and load a session (sync)
 
 ```rust
-use swink_agent_memory::{JsonlSessionStore, SessionMeta, SessionStore};
-use swink_agent_memory::time::{now_utc, format_session_id};
+use swink_agent_memory::{
+    JsonlSessionStore, SessionMeta, SessionStore, format_session_id, now_utc,
+};
 
 // Create a store backed by a local directory
 let store = JsonlSessionStore::new("./sessions".into())?;
