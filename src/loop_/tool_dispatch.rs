@@ -116,6 +116,8 @@ pub async fn execute_tools_concurrently(
         Arc::new(Mutex::new(Vec::new()));
     let steering_detected: Arc<std::sync::atomic::AtomicBool> =
         Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let transfer_detected: Arc<std::sync::atomic::AtomicBool> =
+        Arc::new(std::sync::atomic::AtomicBool::new(false));
     let transfer_signal: Arc<Mutex<Option<crate::transfer::TransferSignal>>> =
         Arc::new(Mutex::new(None));
 
@@ -273,6 +275,7 @@ pub async fn execute_tools_concurrently(
                 &results,
                 &tool_timings,
                 &steering_detected,
+                &transfer_detected,
                 &transfer_signal,
                 tx,
             )
@@ -290,6 +293,7 @@ pub async fn execute_tools_concurrently(
             handles,
             &results,
             &steering_detected,
+            &transfer_detected,
             &batch_token,
         )
         .await;
@@ -302,6 +306,16 @@ pub async fn execute_tools_concurrently(
                     tool_calls,
                     results,
                     tool_timings,
+                    injected_messages,
+                )
+                .await;
+            }
+            GroupOutcome::TransferInterrupt => {
+                return build_transfer_outcome(
+                    tool_calls,
+                    results,
+                    tool_timings,
+                    transfer_signal,
                     injected_messages,
                 )
                 .await;
@@ -412,6 +426,8 @@ enum GroupOutcome {
     Continue,
     /// Steering interrupt detected; abort remaining groups.
     SteeringInterrupt,
+    /// Transfer detected; abort remaining groups and end the turn.
+    TransferInterrupt,
 }
 
 /// Collect results for a single execution group's spawned handles.
@@ -420,6 +436,7 @@ async fn collect_group_results(
     handles: Vec<(usize, tokio::task::JoinHandle<()>)>,
     results: &Arc<tokio::sync::Mutex<Vec<(usize, ToolResultMessage)>>>,
     steering_detected: &Arc<std::sync::atomic::AtomicBool>,
+    transfer_detected: &Arc<std::sync::atomic::AtomicBool>,
     batch_token: &CancellationToken,
 ) -> GroupOutcome {
     let abort_handles: Vec<_> = handles
@@ -475,6 +492,15 @@ async fn collect_group_results(
             while futs.next().await.is_some() {}
             return GroupOutcome::SteeringInterrupt;
         }
+
+        if transfer_detected.load(std::sync::atomic::Ordering::SeqCst) {
+            batch_token.cancel();
+            for handle in &abort_handles {
+                handle.abort();
+            }
+            while futs.next().await.is_some() {}
+            return GroupOutcome::TransferInterrupt;
+        }
     }
 
     GroupOutcome::Continue
@@ -524,6 +550,48 @@ async fn build_steering_outcome(
         cancelled,
         steering_messages,
         tool_metrics: collected_timings,
+        injected_messages,
+    }
+}
+
+/// Build a completed outcome after a transfer signal cancels the remaining batch.
+async fn build_transfer_outcome(
+    tool_calls: &[ToolCallInfo],
+    results: Arc<tokio::sync::Mutex<Vec<(usize, ToolResultMessage)>>>,
+    tool_timings: Arc<tokio::sync::Mutex<Vec<crate::metrics::ToolExecMetrics>>>,
+    transfer_signal: Arc<tokio::sync::Mutex<Option<crate::transfer::TransferSignal>>>,
+    injected_messages: Vec<AgentMessage>,
+) -> ToolExecOutcome {
+    let all_results = std::mem::take(&mut *results.lock().await);
+    let result_map: HashMap<&str, &ToolResultMessage> = all_results
+        .iter()
+        .map(|(_, result)| (result.tool_call_id.as_str(), result))
+        .collect();
+    let mut ordered: Vec<ToolResultMessage> = Vec::with_capacity(tool_calls.len());
+
+    for tc in tool_calls {
+        if let Some(result) = result_map.get(tc.id.as_str()) {
+            ordered.push((*result).clone());
+        } else {
+            ordered.push(ToolResultMessage {
+                tool_call_id: tc.id.clone(),
+                content: vec![ContentBlock::Text {
+                    text: "tool call cancelled: transfer initiated".to_string(),
+                }],
+                is_error: true,
+                timestamp: now_timestamp(),
+                details: serde_json::Value::Null,
+                cache_hint: None,
+            });
+        }
+    }
+
+    let collected_timings = std::mem::take(&mut *tool_timings.lock().await);
+    let captured_transfer = transfer_signal.lock().await.take();
+    ToolExecOutcome::Completed {
+        results: ordered,
+        tool_metrics: collected_timings,
+        transfer_signal: captured_transfer,
         injected_messages,
     }
 }
@@ -636,6 +704,7 @@ async fn dispatch_single_tool(
     results: &Arc<tokio::sync::Mutex<Vec<(usize, ToolResultMessage)>>>,
     tool_timings: &Arc<tokio::sync::Mutex<Vec<crate::metrics::ToolExecMetrics>>>,
     steering_flag: &Arc<std::sync::atomic::AtomicBool>,
+    transfer_flag: &Arc<std::sync::atomic::AtomicBool>,
     transfer_signal: &Arc<tokio::sync::Mutex<Option<crate::transfer::TransferSignal>>>,
     tx: &mpsc::Sender<AgentEvent>,
 ) -> DispatchResult {
@@ -657,6 +726,7 @@ async fn dispatch_single_tool(
     let results_clone = Arc::clone(results);
     let timings_clone = Arc::clone(tool_timings);
     let steering_clone = Arc::clone(steering_flag);
+    let transfer_flag_clone = Arc::clone(transfer_flag);
     let transfer_clone = Arc::clone(transfer_signal);
     let config_clone = Arc::clone(config);
     let tx_clone = tx.clone();
@@ -718,6 +788,7 @@ async fn dispatch_single_tool(
                 if guard.is_none() {
                     (*guard).clone_from(&result.transfer_signal);
                 }
+                transfer_flag_clone.store(true, std::sync::atomic::Ordering::SeqCst);
             }
 
             let _ = emit(
