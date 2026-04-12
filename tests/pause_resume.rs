@@ -63,6 +63,21 @@ async fn pause_captures_pending_follow_up_messages() {
         .pause()
         .expect("pause should snapshot a running agent");
     assert_eq!(checkpoint.pending_messages.len(), 1);
+    let restored = checkpoint.restore_messages(None);
+    assert_eq!(
+        restored.len(),
+        1,
+        "pause should preserve the in-flight prompt messages"
+    );
+    match &restored[0] {
+        swink_agent::AgentMessage::Llm(swink_agent::LlmMessage::User(user)) => {
+            match &user.content[0] {
+                swink_agent::ContentBlock::Text { text } => assert_eq!(text, "start"),
+                other => panic!("expected text content, got {other:?}"),
+            }
+        }
+        other => panic!("expected user message, got {other:?}"),
+    }
 }
 
 #[tokio::test]
@@ -197,7 +212,10 @@ async fn pause_keeps_running_until_stream_dropped() {
 
     // Pause cancels the token but the agent stays running.
     let checkpoint = agent.pause().expect("should return checkpoint");
-    assert!(agent.is_running(), "agent should remain running after pause");
+    assert!(
+        agent.is_running(),
+        "agent should remain running after pause"
+    );
 
     // Trying to start a new run should fail — loop is still active.
     let err = agent.prompt_stream(vec![user_msg("again")]);
@@ -216,7 +234,10 @@ async fn pause_keeps_running_until_stream_dropped() {
     );
     let _checkpoint = checkpoint; // keep checkpoint alive for the assertion above
     let new_stream = agent.prompt_stream(vec![user_msg("new run")]);
-    assert!(new_stream.is_ok(), "new run should succeed after stream drop");
+    assert!(
+        new_stream.is_ok(),
+        "new run should succeed after stream drop"
+    );
 
     // Clean up: drain the new stream.
     let mut s = new_stream.unwrap();

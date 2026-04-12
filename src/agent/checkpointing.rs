@@ -148,11 +148,16 @@ impl Agent {
             token.cancel();
         }
 
+        let checkpoint_messages = self
+            .in_flight_llm_messages
+            .as_deref()
+            .unwrap_or(&self.state.messages);
+
         let mut checkpoint = crate::checkpoint::LoopCheckpoint::new(
             &self.state.system_prompt,
             &self.state.model.provider,
             &self.state.model.model_id,
-            &self.state.messages,
+            checkpoint_messages,
         )
         .with_pending_message_batch(&drain_messages_from_queue(&self.follow_up_queue))
         .with_pending_steering_message_batch(&drain_messages_from_queue(&self.steering_queue));
@@ -899,7 +904,10 @@ mod tests {
             .session_state()
             .read()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        assert!(state.is_empty(), "missing snapshot should clear stale state");
+        assert!(
+            state.is_empty(),
+            "missing snapshot should clear stale state"
+        );
     }
 
     #[tokio::test]
@@ -931,6 +939,9 @@ mod tests {
             .session_state()
             .read()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        assert!(state.is_empty(), "missing snapshot should clear stale state");
+        assert!(
+            state.is_empty(),
+            "missing snapshot should clear stale state"
+        );
     }
 }
