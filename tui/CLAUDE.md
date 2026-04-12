@@ -20,6 +20,6 @@
 
 ## Lessons Learned
 
-- **`/model` changes model ID, not provider** — to switch providers, update `.env` and restart.
+- **Smart approval mode auto-approves trusted tools only** — untrusted tools still prompt even if they are read-only.
 - **Panic hook restores terminal** — without it, a panic leaves terminal in raw mode.
 - **Credentials** — env var checked first, then keychain. Env always wins.

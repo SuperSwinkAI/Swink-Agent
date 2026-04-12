@@ -1,7 +1,7 @@
 //! Command system for the TUI.
 //!
 //! Hash commands (`#help`, `#clear`, etc.) are TUI-internal.
-//! Slash commands (`/quit`, `/model`, etc.) affect agent configuration.
+//! Slash commands (`/quit`, `/thinking`, etc.) affect agent configuration.
 
 /// Result of parsing and executing a command.
 #[derive(Debug)]

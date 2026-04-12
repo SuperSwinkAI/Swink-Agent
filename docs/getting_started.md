@@ -113,7 +113,6 @@ On first launch with no keys configured, the setup wizard walks you through prov
 | `#save` / `#load <id>` | Session persistence |
 | `#keys` | Show configured providers |
 | `#key <provider> <key>` | Store an API key in the OS keychain |
-| `/model <id>` | Change model |
 | `/thinking <level>` | Set thinking depth (off/minimal/low/medium/high) |
 | `/system <prompt>` | Set system prompt |
 | `/reset` | Reset conversation |
