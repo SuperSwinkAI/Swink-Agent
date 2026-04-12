@@ -1265,6 +1265,6 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(store.load_interrupt("orphan").unwrap(), None);
+        assert!(store.load_interrupt("orphan").unwrap().is_none());
     }
 }
