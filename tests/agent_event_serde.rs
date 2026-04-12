@@ -136,6 +136,8 @@ fn all_agent_event_variants_serialize_to_json() {
         (
             "ToolExecutionUpdate",
             AgentEvent::ToolExecutionUpdate {
+                id: "tc1".into(),
+                name: "my_tool".into(),
                 partial: AgentToolResult::text("partial output"),
             },
         ),
@@ -422,6 +424,8 @@ fn agent_event_roundtrip_all_variants() {
         (
             "ToolExecutionUpdate",
             AgentEvent::ToolExecutionUpdate {
+                id: "tc1".into(),
+                name: "my_tool".into(),
                 partial: AgentToolResult::text("partial output"),
             },
         ),

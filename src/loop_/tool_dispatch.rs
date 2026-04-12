@@ -82,6 +82,28 @@ async fn emit_tool_execution_start(
     .await
 }
 
+async fn forward_tool_updates(
+    tool_call_id: &str,
+    tool_name: &str,
+    mut updates: mpsc::UnboundedReceiver<AgentToolResult>,
+    tx: &mpsc::Sender<AgentEvent>,
+) {
+    while let Some(partial) = updates.recv().await {
+        if !emit(
+            tx,
+            AgentEvent::ToolExecutionUpdate {
+                id: tool_call_id.to_string(),
+                name: tool_name.to_string(),
+                partial,
+            },
+        )
+        .await
+        {
+            break;
+        }
+    }
+}
+
 async fn emit_batch_stop_results(
     tool_calls: &[ToolCallInfo],
     stop_idx: usize,
@@ -773,13 +795,24 @@ async fn dispatch_single_tool(
                 match resolve_credential(&tool, &config_clone, &tool_call_id).await {
                     Err(cred_error) => (AgentToolResult::error(format!("{cred_error}")), true),
                     Ok(credential) => {
-                        let on_update_tx = tx_clone.clone();
-                        let on_update = Box::new(move |partial: AgentToolResult| {
-                            let _ =
-                                on_update_tx.try_send(AgentEvent::ToolExecutionUpdate { partial });
+                        let (update_tx, update_rx) = mpsc::unbounded_channel();
+                        let updates_tx = tx_clone.clone();
+                        let updates_tool_call_id = tool_call_id.clone();
+                        let updates_tool_name = tool_name.clone();
+                        let update_forwarder = tokio::spawn(async move {
+                            forward_tool_updates(
+                                &updates_tool_call_id,
+                                &updates_tool_name,
+                                update_rx,
+                                &updates_tx,
+                            )
+                            .await;
                         });
-                        let result = tool
-                            .execute(
+                        let result = {
+                            let on_update = Box::new(move |partial: AgentToolResult| {
+                                let _ = update_tx.send(partial);
+                            });
+                            tool.execute(
                                 &tool_call_id,
                                 arguments,
                                 child_token,
@@ -787,7 +820,9 @@ async fn dispatch_single_tool(
                                 config_clone.session_state.clone(),
                                 credential,
                             )
-                            .await;
+                            .await
+                        };
+                        let _ = update_forwarder.await;
                         let is_error = result.is_error;
                         (result, is_error)
                     }
@@ -908,7 +943,10 @@ async fn resolve_credential(
 mod tests {
     use super::*;
 
+    use std::future::Future;
+    use std::sync::Arc as StdArc;
     use std::sync::atomic::{AtomicBool, Ordering};
+    use std::{pin::Pin, sync::Mutex as StdSyncMutex};
 
     use serde_json::json;
     use tokio::sync::mpsc;
@@ -918,6 +956,55 @@ mod tests {
     use crate::{
         ApprovalMode, DefaultRetryStrategy, StreamOptions, ToolApproval, ToolExecutionPolicy,
     };
+
+    struct BurstUpdatingTool {
+        update_count: usize,
+    }
+
+    impl AgentTool for BurstUpdatingTool {
+        fn name(&self) -> &str {
+            "burst_tool"
+        }
+
+        fn label(&self) -> &str {
+            "burst_tool"
+        }
+
+        fn description(&self) -> &'static str {
+            "Emits a burst of partial updates"
+        }
+
+        fn parameters_schema(&self) -> &serde_json::Value {
+            static SCHEMA: std::sync::OnceLock<serde_json::Value> = std::sync::OnceLock::new();
+            SCHEMA.get_or_init(|| {
+                json!({
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": true
+                })
+            })
+        }
+
+        fn execute(
+            &self,
+            _tool_call_id: &str,
+            _params: serde_json::Value,
+            _cancellation_token: CancellationToken,
+            on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
+            _state: std::sync::Arc<std::sync::RwLock<crate::SessionState>>,
+            _credential: Option<crate::ResolvedCredential>,
+        ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>> {
+            let update_count = self.update_count;
+            Box::pin(async move {
+                if let Some(on_update) = on_update {
+                    for idx in 0..update_count {
+                        on_update(AgentToolResult::text(format!("partial-{idx}")));
+                    }
+                }
+                AgentToolResult::text("done")
+            })
+        }
+    }
 
     struct ExecutionRootRecorder {
         saw_none: Arc<AtomicBool>,
@@ -1272,6 +1359,70 @@ mod tests {
                 "path": "rewritten.txt",
                 "content": "updated"
             })
+        );
+    }
+
+    #[tokio::test]
+    async fn tool_execution_updates_include_identity_and_survive_backpressure() {
+        let tool = Arc::new(BurstUpdatingTool { update_count: 32 });
+        let config = test_loop_config_with_options(
+            vec![],
+            vec![tool as Arc<dyn AgentTool>],
+            None,
+            ApprovalMode::Bypassed,
+        );
+        let tool_calls = vec![ToolCallInfo {
+            id: "call_updates".to_string(),
+            name: "burst_tool".to_string(),
+            arguments: json!({}),
+            is_incomplete: false,
+        }];
+        let cancellation_token = CancellationToken::new();
+        let (tx, mut rx) = mpsc::channel(1);
+        let collected = StdArc::new(StdSyncMutex::new(Vec::new()));
+        let collected_clone = StdArc::clone(&collected);
+        let receiver = tokio::spawn(async move {
+            while let Some(event) = rx.recv().await {
+                collected_clone.lock().unwrap().push(event);
+            }
+        });
+
+        let outcome =
+            execute_tools_concurrently(&config, &tool_calls, &cancellation_token, &tx).await;
+        drop(tx);
+        receiver.await.unwrap();
+
+        let ToolExecOutcome::Completed { results, .. } = outcome else {
+            panic!("expected completed outcome");
+        };
+        assert_eq!(results.len(), 1);
+
+        let events = collected.lock().unwrap();
+        let updates: Vec<_> = events
+            .iter()
+            .filter_map(|event| match event {
+                AgentEvent::ToolExecutionUpdate { id, name, partial } => Some((
+                    id.clone(),
+                    name.clone(),
+                    ContentBlock::extract_text(&partial.content),
+                )),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(updates.len(), 32, "partial updates should not be dropped");
+        assert!(
+            updates
+                .iter()
+                .all(|(id, name, _)| id == "call_updates" && name == "burst_tool"),
+            "partial updates should carry the originating tool identity"
+        );
+        assert_eq!(
+            updates.first().map(|(_, _, text)| text.as_str()),
+            Some("partial-0")
+        );
+        assert_eq!(
+            updates.last().map(|(_, _, text)| text.as_str()),
+            Some("partial-31")
         );
     }
 }

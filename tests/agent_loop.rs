@@ -480,7 +480,9 @@ async fn tool_execution_update_events() {
     let partials: Vec<String> = events
         .iter()
         .filter_map(|event| match event {
-            AgentEvent::ToolExecutionUpdate { partial } => {
+            AgentEvent::ToolExecutionUpdate { id, name, partial } => {
+                assert_eq!(id, "tc_1");
+                assert_eq!(name, "updating_tool");
                 Some(ContentBlock::extract_text(&partial.content))
             }
             _ => None,
