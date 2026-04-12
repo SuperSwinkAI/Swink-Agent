@@ -408,6 +408,18 @@ pub(super) async fn emit_turn_end_and_agent_end(
     TurnOutcome::Return
 }
 
+/// Emit only `AgentEnd`, returning `TurnOutcome::Return`.
+async fn emit_agent_end(state: &mut LoopState, tx: &mpsc::Sender<AgentEvent>) -> TurnOutcome {
+    let _ = emit(
+        tx,
+        AgentEvent::AgentEnd {
+            messages: Arc::new(std::mem::take(&mut state.context_messages)),
+        },
+    )
+    .await;
+    TurnOutcome::Return
+}
+
 // ─── Snapshot builder ────────────────────────────────────────────────────
 
 /// Build a `TurnSnapshot` from current loop state.
@@ -690,18 +702,15 @@ async fn handle_no_tool_calls(
     .await;
 
     // Run post-turn policies BEFORE committing to context or emitting TurnEnd.
-    let (assistant_message, policy_stop) = run_post_turn_policy_check(
-        &assistant_message,
-        &[],
-        state,
-        config,
-        system_prompt,
-    );
+    let (assistant_message, policy_stop) =
+        run_post_turn_policy_check(&assistant_message, &[], state, config, system_prompt);
 
     let stop = assistant_message.stop_reason;
     state
         .context_messages
-        .push(AgentMessage::Llm(LlmMessage::Assistant(assistant_message.clone())));
+        .push(AgentMessage::Llm(LlmMessage::Assistant(
+            assistant_message.clone(),
+        )));
     let state_delta = flush_state_delta(config, tx).await;
     let snapshot = build_snapshot(state, stop, state_delta);
     if !emit(
@@ -720,6 +729,7 @@ async fn handle_no_tool_calls(
 
     if let Some(reason) = policy_stop {
         tracing::info!("post-turn policy stopped agent: {reason}");
+        return emit_agent_end(state, tx).await;
     }
 
     TurnOutcome::BreakInner
@@ -746,7 +756,9 @@ async fn handle_tool_calls(
     let assistant_ctx_index = state.context_messages.len();
     state
         .context_messages
-        .push(AgentMessage::Llm(LlmMessage::Assistant(assistant_message.clone())));
+        .push(AgentMessage::Llm(LlmMessage::Assistant(
+            assistant_message.clone(),
+        )));
     let msg_for_turn_end = assistant_message;
 
     // Max tokens recovery: replace incomplete tool calls with error results
@@ -899,7 +911,7 @@ async fn handle_tool_calls(
 
     if let Some(reason) = policy_stop {
         tracing::info!("post-turn policy stopped agent: {reason}");
-        return TurnOutcome::BreakInner;
+        return emit_agent_end(state, tx).await;
     }
 
     // Poll steering if not already interrupted
