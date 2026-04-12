@@ -18,6 +18,10 @@ impl Agent {
     ) -> Result<AgentResult, AgentError> {
         let mut all_messages: Vec<AgentMessage> = Vec::new();
         let mut state_messages = self.in_flight_llm_messages.take().unwrap_or_default();
+        let mut checkpoint_messages = self
+            .in_flight_messages
+            .take()
+            .unwrap_or_else(|| clone_messages(&state_messages));
         let mut received_full_context = false;
         let mut stop_reason = StopReason::Stop;
         let mut usage = Usage::default();
@@ -50,9 +54,12 @@ impl Agent {
                     }
                     let assistant_llm = LlmMessage::Assistant(assistant_message);
                     state_messages.push(AgentMessage::Llm(assistant_llm.clone()));
+                    checkpoint_messages.push(AgentMessage::Llm(assistant_llm.clone()));
                     all_messages.push(AgentMessage::Llm(assistant_llm));
                     for tr in tool_results {
                         state_messages.push(AgentMessage::Llm(LlmMessage::ToolResult(tr.clone())));
+                        checkpoint_messages
+                            .push(AgentMessage::Llm(LlmMessage::ToolResult(tr.clone())));
                         all_messages.push(AgentMessage::Llm(LlmMessage::ToolResult(tr)));
                     }
                 }
@@ -71,7 +78,7 @@ impl Agent {
         }
 
         if !received_full_context {
-            self.state.messages = state_messages;
+            self.state.messages = checkpoint_messages;
         }
         self.state.is_running = false;
         self.loop_active.store(false, Ordering::Release);
@@ -103,8 +110,13 @@ impl Agent {
                 msgs.push(AgentMessage::Llm(LlmMessage::Assistant(
                     assistant_message.clone(),
                 )));
+                let checkpoint_msgs = self.in_flight_messages.get_or_insert_with(Vec::new);
+                checkpoint_msgs.push(AgentMessage::Llm(LlmMessage::Assistant(
+                    assistant_message.clone(),
+                )));
                 for tr in tool_results {
                     msgs.push(AgentMessage::Llm(LlmMessage::ToolResult(tr.clone())));
+                    checkpoint_msgs.push(AgentMessage::Llm(LlmMessage::ToolResult(tr.clone())));
                 }
                 // Capture terminal error so it survives through AgentEnd.
                 if let Some(ref err) = assistant_message.error_message {
@@ -114,6 +126,7 @@ impl Agent {
             AgentEvent::AgentEnd { messages } => {
                 self.state.messages = clone_messages(messages.as_ref());
                 self.in_flight_llm_messages = None;
+                self.in_flight_messages = None;
                 // Preserve terminal error — do not clear self.state.error.
                 self.idle_notify.notify_waiters();
             }

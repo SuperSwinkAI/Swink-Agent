@@ -12,6 +12,7 @@ use crate::agent_options::{ApproveToolFn, GetApiKeyFn};
 use crate::error::AgentError;
 use crate::loop_::{AgentEvent, AgentLoopConfig, agent_loop, agent_loop_continue};
 use crate::message_provider::MessageProvider;
+use crate::types::message_codec::clone_messages_for_send;
 use crate::types::{AgentMessage, AgentResult, ContentBlock, LlmMessage};
 use crate::util::now_timestamp;
 
@@ -254,6 +255,7 @@ impl Agent {
             msgs.extend(input);
             msgs
         };
+        let in_flight_messages = clone_messages_for_send(&messages_for_loop);
 
         let raw_stream = if is_continue {
             agent_loop_continue(messages_for_loop, system_prompt, config, token)
@@ -262,15 +264,15 @@ impl Agent {
         };
 
         self.in_flight_llm_messages = Some(in_flight_llm_messages);
+        self.in_flight_messages = Some(in_flight_messages);
 
-        let guarded: Pin<Box<dyn Stream<Item = AgentEvent> + Send>> =
-            Box::pin(LoopGuardStream {
-                inner: raw_stream,
-                loop_active: Arc::clone(&self.loop_active),
-                idle_notify: Arc::clone(&self.idle_notify),
-                generation,
-                expected_generation: Arc::clone(&self.loop_generation),
-            });
+        let guarded: Pin<Box<dyn Stream<Item = AgentEvent> + Send>> = Box::pin(LoopGuardStream {
+            inner: raw_stream,
+            loop_active: Arc::clone(&self.loop_active),
+            idle_notify: Arc::clone(&self.idle_notify),
+            generation,
+            expected_generation: Arc::clone(&self.loop_generation),
+        });
         Ok(guarded)
     }
 

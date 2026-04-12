@@ -10,8 +10,7 @@ async fn wait_for_idle_future<F>(
     notify: Arc<Notify>,
     active: Arc<std::sync::atomic::AtomicBool>,
     after_register: F,
-)
-where
+) where
     F: Fn() + Send + Sync + 'static,
 {
     loop {
@@ -57,6 +56,7 @@ impl Agent {
         self.state.error = None;
         self.abort_controller = None;
         self.in_flight_llm_messages = None;
+        self.in_flight_messages = None;
         self.clear_queues();
         self.idle_notify.notify_waiters();
     }
