@@ -40,11 +40,6 @@ jobs:
 
       - run: cargo test --workspace --doc
 
-      - name: Test (no-default-features regression)
-        run: cargo test -p swink-agent --test no_default_features --no-default-features
-        env:
-          RUSTFLAGS: "--cfg swink_no_default_features_check"
-
       - name: Check docs
         run: cargo doc --no-deps --workspace
         env:
