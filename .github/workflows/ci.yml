@@ -40,6 +40,8 @@ jobs:
 
       - run: cargo test --workspace --doc
 
+      - run: cargo test -p swink-agent --no-default-features
+
       - name: Check docs
         run: cargo doc --no-deps --workspace
         env:
