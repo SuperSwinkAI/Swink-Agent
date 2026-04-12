@@ -171,11 +171,11 @@ async fn run_loop_inner(
                     TurnOutcome::Return => return,
                 };
 
-                // Post-turn policies are now evaluated inside the turn handlers
-                // (handle_no_tool_calls / handle_tool_calls) BEFORE the assistant
-                // message is committed to context and TurnEnd is emitted. This
-                // ensures Inject verdicts (e.g. PII redaction) can replace the
-                // assistant message before it is observed by listeners.
+                // Post-turn policies are evaluated inside the turn handlers
+                // (handle_no_tool_calls / handle_tool_calls) against the
+                // committed turn snapshot before TurnEnd is emitted or transfer
+                // termination is honored. This lets policies replace the
+                // assistant message before listeners observe the turn.
 
                 if should_break {
                     break 'inner;

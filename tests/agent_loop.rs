@@ -237,6 +237,95 @@ impl PostTurnPolicy for StoppingPostTurnPolicy {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct RecordedTurnContext {
+    message_count: usize,
+    tool_result_count: usize,
+    last_message_kind: &'static str,
+}
+
+struct RecordingPostTurnPolicy {
+    observations: Arc<Mutex<Vec<RecordedTurnContext>>>,
+}
+
+impl PostTurnPolicy for RecordingPostTurnPolicy {
+    fn name(&self) -> &str {
+        "recording-post-turn"
+    }
+
+    fn evaluate(&self, _ctx: &PolicyContext<'_>, turn: &TurnPolicyContext<'_>) -> PolicyVerdict {
+        let last_message_kind = match turn.context_messages.last() {
+            Some(AgentMessage::Llm(LlmMessage::Assistant(_))) => "assistant",
+            Some(AgentMessage::Llm(LlmMessage::ToolResult(_))) => "tool_result",
+            Some(AgentMessage::Llm(LlmMessage::User(_))) => "user",
+            Some(AgentMessage::Custom(_)) => "custom",
+            None => "none",
+        };
+
+        self.observations.lock().unwrap().push(RecordedTurnContext {
+            message_count: turn.context_messages.len(),
+            tool_result_count: turn.tool_results.len(),
+            last_message_kind,
+        });
+
+        PolicyVerdict::Continue
+    }
+}
+
+struct MockTransferTool {
+    tool_name: String,
+    target_agent: String,
+    reason: String,
+}
+
+impl MockTransferTool {
+    fn new(name: &str, target_agent: &str, reason: &str) -> Self {
+        Self {
+            tool_name: name.to_string(),
+            target_agent: target_agent.to_string(),
+            reason: reason.to_string(),
+        }
+    }
+}
+
+impl AgentTool for MockTransferTool {
+    fn name(&self) -> &str {
+        &self.tool_name
+    }
+
+    fn label(&self) -> &str {
+        &self.tool_name
+    }
+
+    fn description(&self) -> &'static str {
+        "A tool that always requests an agent transfer"
+    }
+
+    fn parameters_schema(&self) -> &serde_json::Value {
+        static SCHEMA: std::sync::OnceLock<serde_json::Value> = std::sync::OnceLock::new();
+        SCHEMA.get_or_init(|| {
+            json!({
+                "type": "object",
+                "properties": {},
+                "additionalProperties": true
+            })
+        })
+    }
+
+    fn execute(
+        &self,
+        _tool_call_id: &str,
+        _params: serde_json::Value,
+        _cancellation_token: CancellationToken,
+        _on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
+        _state: std::sync::Arc<std::sync::RwLock<swink_agent::SessionState>>,
+        _credential: Option<swink_agent::ResolvedCredential>,
+    ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>> {
+        let signal = swink_agent::TransferSignal::new(&self.target_agent, &self.reason);
+        Box::pin(async move { AgentToolResult::transfer(signal) })
+    }
+}
+
 // ─── 3.1: Single-turn no-tool ────────────────────────────────────────────
 
 #[tokio::test]
@@ -1486,6 +1575,38 @@ async fn post_turn_inject_replaces_assistant_message_in_turn_end() {
 }
 
 #[tokio::test]
+async fn post_turn_context_messages_include_committed_assistant_without_tools() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("Hello!")]));
+    let observations = Arc::new(Mutex::new(Vec::new()));
+
+    let mut config = default_config(stream_fn);
+    config.post_turn_policies = vec![Arc::new(RecordingPostTurnPolicy {
+        observations: Arc::clone(&observations),
+    })];
+
+    let events = collect_events(agent_loop(
+        vec![],
+        "system".to_string(),
+        config,
+        CancellationToken::new(),
+    ))
+    .await;
+
+    assert!(has_event(&events, "TurnEnd"));
+    let recorded = observations.lock().unwrap().clone();
+    assert_eq!(recorded.len(), 1, "post-turn policy should run once");
+    assert_eq!(
+        recorded[0],
+        RecordedTurnContext {
+            message_count: 1,
+            tool_result_count: 0,
+            last_message_kind: "assistant",
+        },
+        "post-turn policies should observe the committed assistant snapshot even on text-only turns"
+    );
+}
+
+#[tokio::test]
 async fn post_turn_inject_cannot_drop_tool_calls_from_turn_history() {
     let stream_fn = Arc::new(MockStreamFn::new(vec![
         tool_call_events("call_1", "noop", "{}"),
@@ -1555,6 +1676,59 @@ async fn post_turn_inject_cannot_drop_tool_calls_from_turn_history() {
                 if result.tool_call_id == "call_1"
         ),
         "tool call must remain paired with its tool result in final history"
+    );
+}
+
+#[tokio::test]
+async fn post_turn_policy_runs_before_transfer_termination() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![
+        tool_call_events("call_transfer", "handoff", "{}"),
+        text_only_events("should not reach this"),
+    ]));
+    let observations = Arc::new(Mutex::new(Vec::new()));
+
+    let mut config = default_config(stream_fn);
+    config.tools = vec![Arc::new(MockTransferTool::new(
+        "handoff",
+        "billing",
+        "billing question",
+    ))];
+    config.post_turn_policies = vec![Arc::new(RecordingPostTurnPolicy {
+        observations: Arc::clone(&observations),
+    })];
+
+    let events = collect_events(agent_loop(
+        vec![common::user_msg("transfer me")],
+        "system".to_string(),
+        config,
+        CancellationToken::new(),
+    ))
+    .await;
+
+    let recorded = observations.lock().unwrap().clone();
+    assert_eq!(
+        recorded.len(),
+        1,
+        "transfer turns must still run post-turn policies"
+    );
+    assert_eq!(
+        recorded[0],
+        RecordedTurnContext {
+            message_count: 3,
+            tool_result_count: 1,
+            last_message_kind: "tool_result",
+        },
+        "transfer turns should expose the same committed turn snapshot shape as normal tool turns"
+    );
+    assert!(
+        events.iter().any(|event| matches!(
+            event,
+            AgentEvent::TurnEnd {
+                reason: swink_agent::TurnEndReason::Transfer,
+                ..
+            }
+        )),
+        "transfer turn should still terminate with TurnEndReason::Transfer"
     );
 }
 

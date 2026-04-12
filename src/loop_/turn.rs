@@ -707,8 +707,9 @@ fn assistant_replacement_preserves_tool_calls(
     original_tool_calls == replacement_tool_calls
 }
 
-/// Handle the case where no tool calls are present: run post-turn policies,
-/// commit the (possibly replaced) message, emit `TurnEnd`, break inner.
+/// Handle the case where no tool calls are present: commit the assistant,
+/// run post-turn policies against the committed snapshot, emit `TurnEnd`,
+/// and break inner.
 #[allow(clippy::too_many_arguments)]
 async fn handle_no_tool_calls(
     assistant_message: AssistantMessage,
@@ -732,16 +733,22 @@ async fn handle_no_tool_calls(
     )
     .await;
 
-    // Run post-turn policies BEFORE committing to context or emitting TurnEnd.
-    let (assistant_message, policy_stop) =
-        run_post_turn_policy_check(&assistant_message, &[], state, config, system_prompt);
-
-    let stop = assistant_message.stop_reason;
+    let assistant_ctx_index = state.context_messages.len();
     state
         .context_messages
         .push(AgentMessage::Llm(LlmMessage::Assistant(
             assistant_message.clone(),
         )));
+
+    // Run post-turn policies against the committed turn snapshot so text-only,
+    // tool, and transfer turns expose the same history shape.
+    let (assistant_message, policy_stop) =
+        run_post_turn_policy_check(&assistant_message, &[], state, config, system_prompt);
+
+    state.context_messages[assistant_ctx_index] =
+        AgentMessage::Llm(LlmMessage::Assistant(assistant_message.clone()));
+
+    let stop = assistant_message.stop_reason;
     let state_delta = flush_state_delta(config, tx).await;
     let snapshot = build_snapshot(state, stop, state_delta);
     if !emit(
@@ -863,10 +870,23 @@ async fn handle_tool_calls(
     // Store tool results for post-turn hook access
     state.last_tool_results.clone_from(&tool_results);
 
+    // xiii. Run post-turn policies against the committed tool-turn snapshot
+    // before emitting TurnEnd or honoring transfer termination.
+    let (msg_for_turn_end, policy_stop) = run_post_turn_policy_check(
+        &msg_for_turn_end,
+        &tool_results,
+        state,
+        config,
+        system_prompt,
+    );
+
+    // Update the assistant message in context in case a policy replaced it.
+    state.context_messages[assistant_ctx_index] =
+        AgentMessage::Llm(LlmMessage::Assistant(msg_for_turn_end.clone()));
+
     // xiii-a. Transfer signal detection: if a tool signaled a transfer,
-    // enrich the signal with conversation history and exit with Transfer.
+    // enrich the signal with the committed conversation history and exit.
     if let Some(mut signal) = detected_transfer_signal {
-        // Enrich with LLM-only conversation history from context
         let llm_history: Vec<LlmMessage> = state
             .context_messages
             .iter()
@@ -883,7 +903,6 @@ async fn handle_tool_calls(
             "transfer signal detected, terminating turn"
         );
 
-        // Emit TransferInitiated event so callers can capture the signal
         let _ = emit(
             tx,
             AgentEvent::TransferInitiated {
@@ -904,20 +923,6 @@ async fn handle_tool_calls(
         )
         .await;
     }
-
-    // xiii. Run post-turn policies BEFORE emitting TurnEnd so Inject can
-    //       replace the assistant message before it is observed by listeners.
-    let (msg_for_turn_end, policy_stop) = run_post_turn_policy_check(
-        &msg_for_turn_end,
-        &tool_results,
-        state,
-        config,
-        system_prompt,
-    );
-
-    // Update the assistant message in context in case a policy replaced it.
-    state.context_messages[assistant_ctx_index] =
-        AgentMessage::Llm(LlmMessage::Assistant(msg_for_turn_end.clone()));
 
     // xiv. Emit TurnEnd
     let state_delta = flush_state_delta(config, tx).await;
