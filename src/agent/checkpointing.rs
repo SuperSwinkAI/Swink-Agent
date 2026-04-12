@@ -149,7 +149,7 @@ impl Agent {
         }
 
         let checkpoint_messages = self
-            .in_flight_llm_messages
+            .in_flight_messages
             .as_deref()
             .unwrap_or(&self.state.messages);
 
@@ -706,6 +706,65 @@ mod tests {
                 _ => panic!("expected text content"),
             },
             _ => panic!("expected llm steering message"),
+        }
+    }
+
+    #[tokio::test]
+    async fn pause_preserves_in_flight_custom_messages_during_streamed_runs() {
+        use futures::future::pending;
+
+        struct PendingStreamFn;
+
+        impl crate::stream::StreamFn for PendingStreamFn {
+            fn stream<'a>(
+                &'a self,
+                _model: &'a crate::ModelSpec,
+                _context: &'a crate::AgentContext,
+                _options: &'a crate::StreamOptions,
+                _cancellation_token: tokio_util::sync::CancellationToken,
+            ) -> std::pin::Pin<
+                Box<dyn futures::Stream<Item = crate::AssistantMessageEvent> + Send + 'a>,
+            > {
+                Box::pin(futures::stream::once(async {
+                    pending::<()>().await;
+                    crate::AssistantMessageEvent::error("unreachable")
+                }))
+            }
+        }
+
+        let stream_fn = Arc::new(PendingStreamFn);
+        let opts =
+            AgentOptions::new_simple("system", ModelSpec::new("mock", "mock-model"), stream_fn)
+                .with_custom_message_registry(tagged_registry());
+        let mut agent = Agent::new(opts);
+        agent
+            .state
+            .messages
+            .push(AgentMessage::Custom(Box::new(Tagged {
+                value: "history-custom".to_string(),
+            })));
+
+        let _stream = agent.prompt_stream(vec![user_msg("start")]).unwrap();
+        let checkpoint = agent.pause().expect("agent should be running");
+        let restored = checkpoint.restore_messages(agent.custom_message_registry.as_deref());
+
+        assert_eq!(
+            restored.len(),
+            2,
+            "pause should keep custom history in checkpoint"
+        );
+
+        let restored_custom = restored[0]
+            .downcast_ref::<Tagged>()
+            .expect("custom history should be restored from the paused checkpoint");
+        assert_eq!(restored_custom.value, "history-custom");
+
+        match &restored[1] {
+            AgentMessage::Llm(LlmMessage::User(user)) => match &user.content[0] {
+                crate::types::ContentBlock::Text { text } => assert_eq!(text, "start"),
+                other => panic!("expected text content, got {other:?}"),
+            },
+            other => panic!("expected user message, got {other:?}"),
         }
     }
 
