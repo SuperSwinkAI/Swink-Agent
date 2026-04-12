@@ -65,13 +65,18 @@ async fn emit_error_result(
     results.lock().await.push((idx, tool_result_msg));
 }
 
-async fn emit_tool_execution_start(tc: &ToolCallInfo, tx: &mpsc::Sender<AgentEvent>) -> bool {
+async fn emit_tool_execution_start(
+    tool_call_id: &str,
+    tool_name: &str,
+    arguments: &serde_json::Value,
+    tx: &mpsc::Sender<AgentEvent>,
+) -> bool {
     emit(
         tx,
         AgentEvent::ToolExecutionStart {
-            id: tc.id.clone(),
-            name: tc.name.clone(),
-            arguments: tc.arguments.clone(),
+            id: tool_call_id.to_string(),
+            name: tool_name.to_string(),
+            arguments: arguments.clone(),
         },
     )
     .await
@@ -85,10 +90,6 @@ async fn emit_batch_stop_results(
     tx: &mpsc::Sender<AgentEvent>,
 ) {
     for (idx, tc) in tool_calls.iter().enumerate().skip(stop_idx) {
-        if idx != stop_idx {
-            emit_tool_execution_start(tc, tx).await;
-        }
-
         let error_result = AgentToolResult::error(format!(
             "policy stopped tool batch before dispatch: {reason}"
         ));
@@ -167,11 +168,6 @@ pub async fn execute_tools_concurrently(
     let mut injected_messages: Vec<AgentMessage> = Vec::new();
 
     for (idx, tc) in tool_calls.iter().enumerate() {
-        // Emit ToolExecutionStart
-        if !emit_tool_execution_start(tc, tx).await {
-            return ToolExecOutcome::ChannelClosed;
-        }
-
         // ── PreDispatch policies ──
         let mut effective_arguments = tc.arguments.clone();
         {
@@ -304,6 +300,7 @@ pub async fn execute_tools_concurrently(
             match handle {
                 DispatchResult::Spawned(h) => handles.push((prep.idx, h)),
                 DispatchResult::Inline => {}
+                DispatchResult::ChannelClosed => return ToolExecOutcome::ChannelClosed,
             }
         }
 
@@ -710,6 +707,8 @@ enum DispatchResult {
     Spawned(tokio::task::JoinHandle<()>),
     /// Tool result was added inline (unknown tool).
     Inline,
+    /// Event channel closed before execution could start.
+    ChannelClosed,
 }
 
 /// Validate and dispatch a single tool call, returning a join handle or inline result.
@@ -752,6 +751,11 @@ async fn dispatch_single_tool(
     let tx_clone = tx.clone();
 
     let validation = validate_tool_arguments(tool.parameters_schema(), &arguments);
+    if validation.is_ok()
+        && !emit_tool_execution_start(&tool_call_id, &tool_name, &arguments, tx).await
+    {
+        return DispatchResult::ChannelClosed;
+    }
 
     let tool_span = info_span!(
         "agent.tool",
@@ -906,11 +910,14 @@ mod tests {
 
     use std::sync::atomic::{AtomicBool, Ordering};
 
+    use serde_json::json;
     use tokio::sync::mpsc;
 
     use crate::policy::{PreDispatchPolicy, PreDispatchVerdict, ToolDispatchContext};
-    use crate::testing::{MockStreamFn, default_convert, default_model};
-    use crate::{DefaultRetryStrategy, StreamOptions, ToolExecutionPolicy};
+    use crate::testing::{MockStreamFn, MockTool, default_convert, default_model};
+    use crate::{
+        ApprovalMode, DefaultRetryStrategy, StreamOptions, ToolApproval, ToolExecutionPolicy,
+    };
 
     struct ExecutionRootRecorder {
         saw_none: Arc<AtomicBool>,
@@ -948,18 +955,32 @@ mod tests {
     fn test_loop_config(
         pre_dispatch_policies: Vec<Arc<dyn PreDispatchPolicy>>,
     ) -> Arc<AgentLoopConfig> {
+        test_loop_config_with_options(
+            pre_dispatch_policies,
+            vec![],
+            None,
+            crate::ApprovalMode::Bypassed,
+        )
+    }
+
+    fn test_loop_config_with_options(
+        pre_dispatch_policies: Vec<Arc<dyn PreDispatchPolicy>>,
+        tools: Vec<Arc<dyn AgentTool>>,
+        approve_tool: Option<Box<crate::agent_options::ApproveToolFn>>,
+        approval_mode: ApprovalMode,
+    ) -> Arc<AgentLoopConfig> {
         Arc::new(AgentLoopConfig {
             model: default_model(),
             stream_options: StreamOptions::default(),
             retry_strategy: Box::new(DefaultRetryStrategy::default()),
             stream_fn: Arc::new(MockStreamFn::new(vec![])),
-            tools: vec![],
+            tools,
             convert_to_llm: Box::new(default_convert),
             transform_context: None,
             get_api_key: None,
             message_provider: None,
-            approve_tool: None,
-            approval_mode: crate::ApprovalMode::Bypassed,
+            approve_tool,
+            approval_mode,
             pre_turn_policies: vec![],
             pre_dispatch_policies,
             post_turn_policies: vec![],
@@ -974,6 +995,14 @@ mod tests {
             cache_state: std::sync::Mutex::new(crate::CacheState::default()),
             dynamic_system_prompt: None,
         })
+    }
+
+    fn drain_events(rx: &mut mpsc::Receiver<AgentEvent>) -> Vec<AgentEvent> {
+        let mut events = Vec::new();
+        while let Ok(event) = rx.try_recv() {
+            events.push(event);
+        }
+        events
     }
 
     #[tokio::test]
@@ -1063,7 +1092,7 @@ mod tests {
 
         let mut start_ids = Vec::new();
         let mut end_ids = Vec::new();
-        while let Ok(event) = rx.try_recv() {
+        for event in drain_events(&mut rx) {
             match event {
                 AgentEvent::ToolExecutionStart { id, .. } => start_ids.push(id),
                 AgentEvent::ToolExecutionEnd { id, .. } => end_ids.push(id),
@@ -1071,7 +1100,178 @@ mod tests {
             }
         }
 
-        assert_eq!(start_ids, vec!["call_1".to_string(), "call_2".to_string()]);
+        assert!(
+            start_ids.is_empty(),
+            "synthetic stop results should not emit ToolExecutionStart"
+        );
         assert_eq!(end_ids, vec!["call_1".to_string(), "call_2".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn invalid_tool_arguments_do_not_emit_start_event() {
+        let tool = Arc::new(MockTool::new("write_file").with_schema(json!({
+            "type": "object",
+            "properties": {
+                "path": { "type": "string" }
+            },
+            "required": ["path"],
+            "additionalProperties": false
+        })));
+        let config = test_loop_config_with_options(
+            vec![],
+            vec![tool.clone() as Arc<dyn AgentTool>],
+            None,
+            ApprovalMode::Bypassed,
+        );
+        let tool_calls = vec![ToolCallInfo {
+            id: "call_invalid".to_string(),
+            name: "write_file".to_string(),
+            arguments: json!({}),
+            is_incomplete: false,
+        }];
+        let cancellation_token = CancellationToken::new();
+        let (tx, mut rx) = mpsc::channel(8);
+
+        let outcome =
+            execute_tools_concurrently(&config, &tool_calls, &cancellation_token, &tx).await;
+
+        let ToolExecOutcome::Completed { results, .. } = outcome else {
+            panic!("expected completed outcome");
+        };
+        assert_eq!(results.len(), 1);
+        assert!(results[0].is_error);
+        assert_eq!(tool.execution_count(), 0);
+
+        let start_count = drain_events(&mut rx)
+            .into_iter()
+            .filter(|event| matches!(event, AgentEvent::ToolExecutionStart { .. }))
+            .count();
+        assert_eq!(start_count, 0, "schema-invalid calls must not look started");
+    }
+
+    #[tokio::test]
+    async fn unknown_tools_do_not_emit_start_event() {
+        let config = test_loop_config(vec![]);
+        let tool_calls = vec![ToolCallInfo {
+            id: "call_unknown".to_string(),
+            name: "unknown_tool".to_string(),
+            arguments: json!({ "path": "ghost.txt" }),
+            is_incomplete: false,
+        }];
+        let cancellation_token = CancellationToken::new();
+        let (tx, mut rx) = mpsc::channel(8);
+
+        let outcome =
+            execute_tools_concurrently(&config, &tool_calls, &cancellation_token, &tx).await;
+
+        let ToolExecOutcome::Completed { results, .. } = outcome else {
+            panic!("expected completed outcome");
+        };
+        assert_eq!(results.len(), 1);
+        assert!(results[0].is_error);
+
+        let start_count = drain_events(&mut rx)
+            .into_iter()
+            .filter(|event| matches!(event, AgentEvent::ToolExecutionStart { .. }))
+            .count();
+        assert_eq!(start_count, 0, "unknown tools must not look started");
+    }
+
+    #[tokio::test]
+    async fn approval_rejection_does_not_emit_start_event() {
+        let tool = Arc::new(MockTool::new("delete_file").with_requires_approval(true));
+        let approve_tool: Box<crate::agent_options::ApproveToolFn> =
+            Box::new(|_request| Box::pin(async { ToolApproval::Rejected }));
+        let config = test_loop_config_with_options(
+            vec![],
+            vec![tool.clone() as Arc<dyn AgentTool>],
+            Some(approve_tool),
+            ApprovalMode::Enabled,
+        );
+        let tool_calls = vec![ToolCallInfo {
+            id: "call_rejected".to_string(),
+            name: "delete_file".to_string(),
+            arguments: json!({ "path": "danger.txt" }),
+            is_incomplete: false,
+        }];
+        let cancellation_token = CancellationToken::new();
+        let (tx, mut rx) = mpsc::channel(8);
+
+        let outcome =
+            execute_tools_concurrently(&config, &tool_calls, &cancellation_token, &tx).await;
+
+        let ToolExecOutcome::Completed { results, .. } = outcome else {
+            panic!("expected completed outcome");
+        };
+        assert_eq!(results.len(), 1);
+        assert!(results[0].is_error);
+        assert_eq!(tool.execution_count(), 0);
+
+        let start_count = drain_events(&mut rx)
+            .into_iter()
+            .filter(|event| matches!(event, AgentEvent::ToolExecutionStart { .. }))
+            .count();
+        assert_eq!(start_count, 0, "approval rejection must not look started");
+    }
+
+    #[tokio::test]
+    async fn tool_execution_start_uses_approved_arguments() {
+        let tool = Arc::new(MockTool::new("write_file"));
+        let approve_tool: Box<crate::agent_options::ApproveToolFn> = Box::new(|_request| {
+            Box::pin(async {
+                ToolApproval::ApprovedWith(json!({
+                    "path": "rewritten.txt",
+                    "content": "updated"
+                }))
+            })
+        });
+        let config = test_loop_config_with_options(
+            vec![],
+            vec![tool.clone() as Arc<dyn AgentTool>],
+            Some(approve_tool),
+            ApprovalMode::Enabled,
+        );
+        let tool_calls = vec![ToolCallInfo {
+            id: "call_rewritten".to_string(),
+            name: "write_file".to_string(),
+            arguments: json!({
+                "path": "original.txt",
+                "content": "old"
+            }),
+            is_incomplete: false,
+        }];
+        let cancellation_token = CancellationToken::new();
+        let (tx, mut rx) = mpsc::channel(8);
+
+        let outcome =
+            execute_tools_concurrently(&config, &tool_calls, &cancellation_token, &tx).await;
+
+        let ToolExecOutcome::Completed { results, .. } = outcome else {
+            panic!("expected completed outcome");
+        };
+        assert_eq!(results.len(), 1);
+        assert_eq!(tool.execution_count(), 1);
+
+        let start_events: Vec<_> = drain_events(&mut rx)
+            .into_iter()
+            .filter_map(|event| match event {
+                AgentEvent::ToolExecutionStart {
+                    id,
+                    name,
+                    arguments,
+                } => Some((id, name, arguments)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(start_events.len(), 1);
+        assert_eq!(start_events[0].0, "call_rewritten");
+        assert_eq!(start_events[0].1, "write_file");
+        assert_eq!(
+            start_events[0].2,
+            json!({
+                "path": "rewritten.txt",
+                "content": "updated"
+            })
+        );
     }
 }
