@@ -137,13 +137,22 @@ impl<B: LoaderBackend> LazyLoader<B> {
         matches!(*self.inner.state.read().await, LoaderState::Ready { .. })
     }
 
-    /// Block until the model reaches the `Ready` state.
+    /// Block until the current load attempt reaches a terminal state.
+    ///
+    /// Returns immediately if the loader is already `Unloaded`, `Ready`, or
+    /// `Failed`. Callers that need to actively trigger loading should use
+    /// [`Self::ensure_ready`].
     pub async fn wait_until_ready(&self) {
         loop {
-            if self.is_ready().await {
-                return;
-            }
-            self.inner.ready_notify.notified().await;
+            let notified = {
+                let state = self.inner.state.read().await;
+                match classify(&state) {
+                    StateClass::Ready | StateClass::Failed(_) | StateClass::Unloaded => return,
+                    StateClass::Waiting => self.inner.ready_notify.notified(),
+                }
+            };
+
+            notified.await;
         }
     }
 
@@ -164,9 +173,28 @@ impl<B: LoaderBackend> LazyLoader<B> {
     /// Concurrent callers serialize on the `RwLock` — only the first caller
     /// triggers the download/load sequence; others wait for completion.
     pub async fn ensure_ready(&self) -> Result<(), LocalModelError> {
-        // Fast path: already ready (read lock only).
-        {
-            let state = self.inner.state.read().await;
+        loop {
+            // Fast path: already ready (read lock only).
+            {
+                let state = self.inner.state.read().await;
+                match classify(&state) {
+                    StateClass::Ready => return Ok(()),
+                    StateClass::Failed(error) => {
+                        return Err(LocalModelError::loading_message(error));
+                    }
+                    StateClass::Waiting => {
+                        drop(state);
+                        self.wait_until_ready().await;
+                        continue;
+                    }
+                    StateClass::Unloaded => {}
+                }
+            }
+
+            // Slow path: acquire write lock.
+            let mut state = self.inner.state.write().await;
+
+            // Double-check after acquiring write lock.
             match classify(&state) {
                 StateClass::Ready => return Ok(()),
                 StateClass::Failed(error) => {
@@ -175,58 +203,46 @@ impl<B: LoaderBackend> LazyLoader<B> {
                 StateClass::Waiting => {
                     drop(state);
                     self.wait_until_ready().await;
-                    return Ok(());
+                    continue;
                 }
                 StateClass::Unloaded => {}
             }
-        }
 
-        // Slow path: acquire write lock.
-        let mut state = self.inner.state.write().await;
+            // ── Phase 1: Download ──────────────────────────────────────────
+            *state = LoaderState::Downloading;
+            self.notify_progress(ProgressEvent::DownloadProgress {
+                bytes_downloaded: 0,
+                total_bytes: None,
+            });
 
-        // Double-check after acquiring write lock.
-        match classify(&state) {
-            StateClass::Ready => return Ok(()),
-            StateClass::Failed(error) => {
-                return Err(LocalModelError::loading_message(error));
-            }
-            StateClass::Waiting => {
-                drop(state);
-                self.wait_until_ready().await;
-                return Ok(());
-            }
-            StateClass::Unloaded => {}
-        }
-
-        // ── Phase 1: Download ──────────────────────────────────────────
-        *state = LoaderState::Downloading;
-        self.notify_progress(ProgressEvent::DownloadProgress {
-            bytes_downloaded: 0,
-            total_bytes: None,
-        });
-
-        let artifact = match B::download(&self.inner.config, self.inner.progress_cb.clone()).await {
-            Ok(a) => a,
-            Err(e) => {
-                error!(error = %e, "{} download failed", B::label());
-                *state = LoaderState::Failed {
-                    error: e.to_string(),
+            let artifact =
+                match B::download(&self.inner.config, self.inner.progress_cb.clone()).await {
+                    Ok(a) => a,
+                    Err(e) => {
+                        error!(error = %e, "{} download failed", B::label());
+                        *state = LoaderState::Failed {
+                            error: e.to_string(),
+                        };
+                        self.inner.ready_notify.notify_waiters();
+                        return Err(e);
+                    }
                 };
-                self.inner.ready_notify.notify_waiters();
-                return Err(e);
-            }
-        };
 
-        self.notify_progress(ProgressEvent::DownloadComplete);
+            self.notify_progress(ProgressEvent::DownloadComplete);
 
-        // ── Phase 2: Build ─────────────────────────────────────────────
-        *state = LoaderState::Loading;
-        self.notify_progress(ProgressEvent::LoadingProgress {
-            message: format!("loading {}", B::label()),
-        });
+            // ── Phase 2: Build ─────────────────────────────────────────────
+            *state = LoaderState::Loading;
+            self.notify_progress(ProgressEvent::LoadingProgress {
+                message: format!("loading {}", B::label()),
+            });
 
-        let runner =
-            match B::build(&self.inner.config, artifact, self.inner.progress_cb.clone()).await {
+            let runner = match B::build(
+                &self.inner.config,
+                artifact,
+                self.inner.progress_cb.clone(),
+            )
+            .await
+            {
                 Ok(r) => r,
                 Err(e) => {
                     error!(error = %e, "{} loading failed", B::label());
@@ -238,13 +254,14 @@ impl<B: LoaderBackend> LazyLoader<B> {
                 }
             };
 
-        info!("{} ready", B::label());
-        *state = LoaderState::Ready { runner };
-        drop(state);
-        self.notify_progress(ProgressEvent::LoadingComplete);
-        self.inner.ready_notify.notify_waiters();
+            info!("{} ready", B::label());
+            *state = LoaderState::Ready { runner };
+            drop(state);
+            self.notify_progress(ProgressEvent::LoadingComplete);
+            self.inner.ready_notify.notify_waiters();
 
-        Ok(())
+            return Ok(());
+        }
     }
 
     /// Get a read guard over the internal state. Returns `Err(NotReady)` if
@@ -265,6 +282,7 @@ impl<B: LoaderBackend> LazyLoader<B> {
         let mut state = self.inner.state.write().await;
         *state = LoaderState::Unloaded;
         drop(state);
+        self.inner.ready_notify.notify_waiters();
         info!("{} unloaded", B::label());
     }
 
@@ -325,7 +343,51 @@ const _: () = {
 
 #[cfg(test)]
 mod tests {
+    use std::io;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Duration;
+
+    use tokio::time::timeout;
+
     use super::*;
+
+    #[derive(Debug)]
+    struct FailingConfig {
+        download_attempts: Arc<AtomicUsize>,
+    }
+
+    struct FailingBackend;
+
+    impl LoaderBackend for FailingBackend {
+        type Config = FailingConfig;
+        type Artifact = ();
+
+        fn download(
+            config: &Self::Config,
+            _progress_cb: Option<ProgressCallbackFn>,
+        ) -> Pin<Box<dyn Future<Output = Result<Self::Artifact, LocalModelError>> + Send + '_>>
+        {
+            config.download_attempts.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async {
+                Err(LocalModelError::download(io::Error::other(
+                    "synthetic download failure",
+                )))
+            })
+        }
+
+        fn build(
+            _config: &Self::Config,
+            _artifact: Self::Artifact,
+            _progress_cb: Option<ProgressCallbackFn>,
+        ) -> Pin<Box<dyn Future<Output = Result<mistralrs::Model, LocalModelError>> + Send + '_>>
+        {
+            Box::pin(async { unreachable!("failing backend never builds a model") })
+        }
+
+        fn label() -> &'static str {
+            "failing test backend"
+        }
+    }
 
     #[test]
     fn loader_state_debug() {
@@ -371,6 +433,90 @@ mod tests {
         assert!(matches!(
             classify(&LoaderState::Failed { error: "e".into() }),
             StateClass::Failed(_)
+        ));
+    }
+
+    #[tokio::test]
+    async fn wait_until_ready_returns_when_unload_resets_loader() {
+        let loader = LazyLoader::<FailingBackend>::new(FailingConfig {
+            download_attempts: Arc::new(AtomicUsize::new(0)),
+        });
+
+        {
+            let mut state = loader.inner.state.write().await;
+            *state = LoaderState::Downloading;
+        }
+
+        let waiting_loader = loader.clone();
+        let waiter = tokio::spawn(async move {
+            timeout(Duration::from_secs(1), waiting_loader.wait_until_ready()).await
+        });
+
+        tokio::task::yield_now().await;
+        loader.unload().await;
+
+        let result = waiter.await.expect("wait task should join");
+        assert!(result.is_ok(), "wait_until_ready() timed out after unload");
+        assert_eq!(loader.public_state().await, PublicLoaderState::Unloaded);
+    }
+
+    #[tokio::test]
+    async fn wait_until_ready_returns_when_loading_fails() {
+        let loader = LazyLoader::<FailingBackend>::new(FailingConfig {
+            download_attempts: Arc::new(AtomicUsize::new(0)),
+        });
+
+        {
+            let mut state = loader.inner.state.write().await;
+            *state = LoaderState::Loading;
+        }
+
+        let waiting_loader = loader.clone();
+        let waiter = tokio::spawn(async move {
+            timeout(Duration::from_secs(1), waiting_loader.wait_until_ready()).await
+        });
+
+        tokio::task::yield_now().await;
+
+        {
+            let mut state = loader.inner.state.write().await;
+            *state = LoaderState::Failed {
+                error: "synthetic failure".into(),
+            };
+        }
+        loader.inner.ready_notify.notify_waiters();
+
+        let result = waiter.await.expect("wait task should join");
+        assert!(result.is_ok(), "wait_until_ready() timed out after failure");
+    }
+
+    #[tokio::test]
+    async fn ensure_ready_retries_after_unload_wakes_waiter() {
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let loader = LazyLoader::<FailingBackend>::new(FailingConfig {
+            download_attempts: Arc::clone(&attempts),
+        });
+
+        {
+            let mut state = loader.inner.state.write().await;
+            *state = LoaderState::Downloading;
+        }
+
+        let waiting_loader = loader.clone();
+        let ensure = tokio::spawn(async move { waiting_loader.ensure_ready().await });
+
+        tokio::task::yield_now().await;
+        loader.unload().await;
+
+        let err = ensure.await.expect("ensure task should join").unwrap_err();
+        assert!(
+            err.to_string().contains("synthetic download failure"),
+            "unexpected error: {err}"
+        );
+        assert_eq!(attempts.load(Ordering::SeqCst), 1);
+        assert!(matches!(
+            &*loader.inner.state.read().await,
+            LoaderState::Failed { .. }
         ));
     }
 }
