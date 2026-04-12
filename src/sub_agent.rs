@@ -32,7 +32,7 @@ pub struct SubAgent {
     description: String,
     schema: Value,
     requires_approval: bool,
-    options_factory: OptionsFactoryFn,
+    options_factory: Option<OptionsFactoryFn>,
     map_result: MapResultFn,
 }
 
@@ -62,9 +62,7 @@ impl SubAgent {
                 "required": ["prompt"]
             }),
             requires_approval: false,
-            options_factory: Arc::new(|| {
-                panic!("SubAgent options_factory not configured; call with_options() or simple()")
-            }),
+            options_factory: None,
             map_result: Arc::new(default_map_result),
         }
     }
@@ -105,7 +103,7 @@ impl SubAgent {
     /// Set the factory closure that creates agent options for each execution.
     #[must_use]
     pub fn with_options(mut self, f: impl Fn() -> AgentOptions + Send + Sync + 'static) -> Self {
-        self.options_factory = Arc::new(f);
+        self.options_factory = Some(Arc::new(f));
         self
     }
 
@@ -177,9 +175,16 @@ impl AgentTool for SubAgent {
         _state: std::sync::Arc<std::sync::RwLock<crate::SessionState>>,
         _credential: Option<crate::credential::ResolvedCredential>,
     ) -> ToolFuture<'_> {
-        let options = (self.options_factory)();
+        let options_factory = self.options_factory.clone();
         let map_result = Arc::clone(&self.map_result);
         Box::pin(async move {
+            let Some(options_factory) = options_factory else {
+                return AgentToolResult::error(
+                    "Sub-agent options were not configured; call with_options() or simple().",
+                );
+            };
+
+            let options = options_factory();
             let mut agent = Agent::new(options);
             let prompt = params["prompt"].as_str().unwrap_or("").to_owned();
             let result = tokio::select! {
