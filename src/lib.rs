@@ -11,10 +11,10 @@ mod agent;
 mod agent_id;
 pub(crate) mod agent_options;
 pub(crate) mod agent_subscriptions;
-pub mod atomic_fs;
 #[cfg(feature = "artifact-store")]
 pub mod artifact;
 mod async_context_transformer;
+pub mod atomic_fs;
 pub(crate) mod block_accumulator;
 mod checkpoint;
 mod config;
@@ -51,6 +51,7 @@ mod retry;
 mod schema;
 mod state;
 pub(crate) mod stream;
+pub mod stream_assembly;
 mod stream_middleware;
 mod sub_agent;
 pub(crate) mod tool;
@@ -73,7 +74,6 @@ pub use agent::{
     SubscriptionId, default_convert,
 };
 pub use agent_id::AgentId;
-pub use block_accumulator::{BlockAccumulator, OpenBlock, StreamFinalize, finalize_blocks};
 pub use async_context_transformer::{AsyncContextTransformer, AsyncTransformFuture};
 pub use checkpoint::{Checkpoint, CheckpointFuture, CheckpointStore, LoopCheckpoint};
 pub use config::{
