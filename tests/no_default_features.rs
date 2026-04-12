@@ -1,9 +1,12 @@
+#![cfg(swink_no_default_features_check)]
+
 //! Regression test for issue #205: `--no-default-features` must not re-enable
 //! `builtin-tools` or `transfer` through dev-dependency feature unification.
 //!
-//! This file compiles under `cargo test -p swink-agent --no-default-features`.
-//! If a dev-dependency leaks those features back in, the `#[cfg]` assertions
-//! below will fail at compile time, catching the regression immediately.
+//! This file only compiles in the dedicated no-default-features regression run.
+//! That keeps default-feature workspace test commands from evaluating the
+//! assertions under the wrong configuration while still catching feature leaks
+//! in the intended command immediately.
 
 /// When `builtin-tools` is genuinely disabled, `BashTool` must not exist.
 #[cfg(not(feature = "builtin-tools"))]
