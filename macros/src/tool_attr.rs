@@ -91,13 +91,22 @@ pub fn tool_attr_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
                     #[allow(unused_variables)]
                     let __cancel = cancellation_token;
 
+                    let __params = match __params {
+                        ::serde_json::Value::Null => {
+                            ::serde_json::Value::Object(::serde_json::Map::new())
+                        }
+                        value => value,
+                    };
+
                     // Deserialize the whole params JSON into the generated struct.
-                    let __p: #params_struct_name =
-                        ::serde_json::from_value(__params).unwrap_or_else(|_| {
-                            ::serde_json::from_value(::serde_json::Value::Object(
-                                ::serde_json::Map::new()
-                            )).unwrap_or_else(|_| panic!("failed to deserialize tool params"))
-                        });
+                    let __p: #params_struct_name = match ::serde_json::from_value(__params) {
+                        Ok(value) => value,
+                        Err(error) => {
+                            return swink_agent::AgentToolResult::error(format!(
+                                "invalid parameters: {error}"
+                            ));
+                        }
+                    };
 
                     async fn #fn_name(#(#fn_params),*) -> swink_agent::AgentToolResult #body
 
