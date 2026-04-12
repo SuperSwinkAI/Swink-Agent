@@ -6,6 +6,7 @@
 #![allow(dead_code)]
 
 use swink_agent::AgentTool;
+use swink_agent::ContentBlock;
 use swink_agent_macros::tool;
 
 // ── schema from a simple two-param tool ─────────────────────────────────────
@@ -93,4 +94,24 @@ fn tool_attr_cancellation_token_excluded_from_schema() {
     // The regular param is still present.
     assert_eq!(schema["properties"]["message"]["type"], "string");
     assert!(required.contains(&serde_json::json!("message")));
+}
+
+#[tokio::test]
+async fn tool_attr_invalid_params_return_tool_error() {
+    let result = GreetTool
+        .execute(
+            "call-greet",
+            serde_json::json!({}),
+            tokio_util::sync::CancellationToken::new(),
+            None,
+            std::sync::Arc::new(std::sync::RwLock::new(swink_agent::SessionState::default())),
+            None,
+        )
+        .await;
+
+    assert!(result.is_error);
+    let text = ContentBlock::extract_text(&result.content);
+    assert!(text.contains("invalid parameters:"));
+    assert!(text.contains("missing field"));
+    assert!(text.contains("name") || text.contains("times"));
 }
