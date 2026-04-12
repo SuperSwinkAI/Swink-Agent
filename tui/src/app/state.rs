@@ -8,7 +8,8 @@ use ratatui::layout::Rect;
 use tokio::sync::{mpsc, oneshot};
 
 use swink_agent::{
-    Agent, AgentEvent, AgentTool, ApprovalMode, DisplayRole, ToolApproval, ToolApprovalRequest,
+    Agent, AgentEvent, AgentTool, ApprovalMode, AssistantMessage, ContentBlock, DisplayRole,
+    StopReason, ToolApproval, ToolApprovalRequest,
 };
 
 use crate::config::TuiConfig;
@@ -94,6 +95,32 @@ impl DisplayMessage {
             plan_mode: false,
             diff_data: None,
         }
+    }
+
+    /// Extract the assistant text/thinking payload shown by the TUI.
+    pub fn assistant_content(message: &AssistantMessage) -> (String, Option<String>) {
+        let mut text_parts = Vec::new();
+        let mut thinking_parts = Vec::new();
+        for block in &message.content {
+            match block {
+                ContentBlock::Text { text } => text_parts.push(text.as_str()),
+                ContentBlock::Thinking { thinking, .. } => {
+                    thinking_parts.push(thinking.as_str());
+                }
+                _ => {}
+            }
+        }
+
+        let content = if !text_parts.is_empty() {
+            text_parts.join("")
+        } else if message.stop_reason == StopReason::Error {
+            message.error_message.clone().unwrap_or_default()
+        } else {
+            String::new()
+        };
+
+        let thinking = (!thinking_parts.is_empty()).then(|| thinking_parts.join(""));
+        (content, thinking)
     }
 }
 
