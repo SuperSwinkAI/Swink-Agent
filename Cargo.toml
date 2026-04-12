@@ -126,6 +126,7 @@ tracing-subscriber = { version = "0.3", features = ["registry"] }
 
 [lints.rust]
 unsafe_code = "forbid"
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(swink_no_default_features_check)'] }
 
 [lints.clippy]
 all = { level = "warn", priority = -1 }
