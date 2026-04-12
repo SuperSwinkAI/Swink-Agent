@@ -90,22 +90,20 @@ impl App {
                             ));
                         }
                         AgentMessage::Llm(LlmMessage::Assistant(assistant)) => {
-                            let text = ContentBlock::extract_text(&assistant.content);
-                            let (role, content) =
-                                if assistant.stop_reason == StopReason::Error {
-                                    let content = if text.is_empty() {
-                                        assistant
-                                            .error_message
-                                            .clone()
-                                            .unwrap_or_default()
-                                    } else {
-                                        text
-                                    };
-                                    (MessageRole::Error, content)
+                            let (text, thinking) = DisplayMessage::assistant_content(assistant);
+                            let (role, content) = if assistant.stop_reason == StopReason::Error {
+                                let content = if text.is_empty() {
+                                    assistant.error_message.clone().unwrap_or_default()
                                 } else {
-                                    (MessageRole::Assistant, text)
+                                    text
                                 };
-                            self.messages.push(DisplayMessage::new(role, content));
+                                (MessageRole::Error, content)
+                            } else {
+                                (MessageRole::Assistant, text)
+                            };
+                            let mut message = DisplayMessage::new(role, content);
+                            message.thinking = thinking;
+                            self.messages.push(message);
                         }
                         AgentMessage::Llm(LlmMessage::ToolResult(tool_result)) => {
                             let content = ContentBlock::extract_text(&tool_result.content);

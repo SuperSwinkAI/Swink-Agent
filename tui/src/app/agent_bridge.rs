@@ -84,31 +84,7 @@ impl App {
                 }
             }
             AgentEvent::MessageEnd { message } => {
-                let mut text_parts = Vec::new();
-                let mut thinking_parts = Vec::new();
-                for block in &message.content {
-                    match block {
-                        ContentBlock::Text { text } => text_parts.push(text.as_str()),
-                        ContentBlock::Thinking { thinking, .. } => {
-                            thinking_parts.push(thinking.as_str());
-                        }
-                        _ => {}
-                    }
-                }
-
-                let content = if !text_parts.is_empty() {
-                    text_parts.join("")
-                } else if message.stop_reason == swink_agent::StopReason::Error {
-                    message.error_message.clone().unwrap_or_default()
-                } else {
-                    String::new()
-                };
-
-                let thinking = if thinking_parts.is_empty() {
-                    None
-                } else {
-                    Some(thinking_parts.join(""))
-                };
+                let (content, thinking) = DisplayMessage::assistant_content(&message);
 
                 if let Some(msg) = self
                     .messages
