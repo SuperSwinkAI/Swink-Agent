@@ -291,7 +291,7 @@ impl TrajectoryCollector {
                                 cost = collector.accumulated_cost.total,
                                 tokens = collector.accumulated_usage.total,
                                 turns = collector.turn_counter,
-                                elapsed_ms = g.start_time.elapsed().as_millis() as u64,
+                                elapsed_ms = u64::try_from(g.start_time.elapsed().as_millis()).unwrap_or(u64::MAX),
                                 "budget guard triggered (deadline) — cancelling agent run"
                             );
                             g.cancel.cancel();
@@ -321,7 +321,7 @@ impl TrajectoryCollector {
                     cost = collector.accumulated_cost.total,
                     tokens = collector.accumulated_usage.total,
                     turns = collector.turn_counter,
-                    elapsed_ms = g.start_time.elapsed().as_millis() as u64,
+                    elapsed_ms = u64::try_from(g.start_time.elapsed().as_millis()).unwrap_or(u64::MAX),
                     "budget guard triggered — cancelling agent run"
                 );
                 g.cancel.cancel();

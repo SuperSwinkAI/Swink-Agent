@@ -68,6 +68,7 @@ impl SandboxPolicy {
     }
 
     fn resolve_path(&self, path: &Path, execution_root: Option<&Path>) -> Result<PathBuf, String> {
+        let _ = self; // Future use for per-instance resolution config.
         let base_path = if path.is_absolute() {
             path.to_path_buf()
         } else {

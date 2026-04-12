@@ -531,7 +531,7 @@ mod tests {
         .await;
 
         assert!(
-            matches!(result, Err(super::PipelineError::AgentNotFound { name }) if name == "agent-a" || name == "agent-b"),
+            matches!(result, Err(super::PipelineError::AgentNotFound { ref name }) if name == "agent-a" || name == "agent-b"),
             "expected a real branch error, got: {result:?}"
         );
     }
@@ -553,7 +553,7 @@ mod tests {
         .await;
 
         assert!(
-            matches!(result, Err(super::PipelineError::AgentNotFound { name }) if name == "agent-a" || name == "agent-b"),
+            matches!(result, Err(super::PipelineError::AgentNotFound { ref name }) if name == "agent-a" || name == "agent-b"),
             "expected a real branch error, got: {result:?}"
         );
     }

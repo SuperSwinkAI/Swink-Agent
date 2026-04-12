@@ -481,6 +481,10 @@ fn corrupted_interrupt_returns_error() {
     let tmp = tempfile::tempdir().unwrap();
     let store = JsonlSessionStore::new(tmp.path().to_path_buf()).unwrap();
 
+    // Create a session file so the orphan check passes
+    let meta = sample_meta("corrupt_int", "Corrupt interrupt test");
+    store.save("corrupt_int", &meta, &[]).unwrap();
+
     // Write garbage to interrupt file
     std::fs::write(
         tmp.path().join("corrupt_int.interrupt.json"),

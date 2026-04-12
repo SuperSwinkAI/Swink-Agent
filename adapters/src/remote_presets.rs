@@ -100,9 +100,10 @@ pub fn remote_presets(provider_key: Option<&str>) -> Vec<CatalogPreset> {
         .collect()
 }
 
-/// Returns all remote presets from the catalog, regardless of whether the
-/// corresponding adapter feature is compiled in. Useful for discovery UIs
-/// that want to show available models even when the adapter is not enabled.
+/// Returns all remote presets from the catalog, regardless of feature flags.
+///
+/// Useful for discovery UIs that want to show available models even when the
+/// corresponding adapter is not compiled in.
 #[must_use]
 pub fn all_remote_presets(provider_key: Option<&str>) -> Vec<CatalogPreset> {
     let catalog = model_catalog();
