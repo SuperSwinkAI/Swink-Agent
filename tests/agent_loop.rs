@@ -1485,6 +1485,79 @@ async fn post_turn_inject_replaces_assistant_message_in_turn_end() {
     );
 }
 
+#[tokio::test]
+async fn post_turn_inject_cannot_drop_tool_calls_from_turn_history() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![
+        tool_call_events("call_1", "noop", "{}"),
+        text_only_events("done"),
+    ]));
+
+    let policy: Arc<dyn PostTurnPolicy> = Arc::new(ReplacingPostTurnPolicy {
+        replacement_text: "tool output [REDACTED]".to_string(),
+    });
+
+    let mut config = default_config(stream_fn);
+    config.tools = vec![Arc::new(MockTool::new("noop"))];
+    config.post_turn_policies = vec![policy];
+
+    let events = collect_events(agent_loop(
+        vec![],
+        "system".to_string(),
+        config,
+        CancellationToken::new(),
+    ))
+    .await;
+
+    let turn_end_messages: Vec<&AssistantMessage> = events
+        .iter()
+        .filter_map(|event| match event {
+            AgentEvent::TurnEnd {
+                assistant_message, ..
+            } => Some(assistant_message),
+            _ => None,
+        })
+        .collect();
+    let tool_turn_message = turn_end_messages
+        .first()
+        .expect("first turn should emit TurnEnd after tool execution");
+    assert!(
+        tool_turn_message.content.iter().any(
+            |block| matches!(block, ContentBlock::ToolCall { id, name, arguments, .. }
+                if id == "call_1" && name == "noop" && arguments == &json!({}))
+        ),
+        "tool-turn TurnEnd must keep the original tool call block",
+    );
+    assert_eq!(
+        ContentBlock::extract_text(&tool_turn_message.content),
+        "",
+        "tool-turn replacement must not flatten tool calls into text"
+    );
+
+    let agent_end_messages = events.iter().find_map(|event| match event {
+        AgentEvent::AgentEnd { messages } => Some(messages.clone()),
+        _ => None,
+    });
+    let messages = agent_end_messages.expect("should have AgentEnd");
+    let assistant_with_tool_call = messages
+        .iter()
+        .position(|message| match message {
+            AgentMessage::Llm(LlmMessage::Assistant(assistant_message)) => assistant_message
+                .content
+                .iter()
+                .any(|block| matches!(block, ContentBlock::ToolCall { id, .. } if id == "call_1")),
+            _ => false,
+        })
+        .expect("final history should keep the assistant tool call");
+    assert!(
+        matches!(
+            messages.get(assistant_with_tool_call + 1),
+            Some(AgentMessage::Llm(LlmMessage::ToolResult(result)))
+                if result.tool_call_id == "call_1"
+        ),
+        "tool call must remain paired with its tool result in final history"
+    );
+}
+
 /// Regression test: post-turn Stop verdict still emits TurnEnd before stopping.
 #[tokio::test]
 async fn post_turn_stop_still_emits_turn_end() {

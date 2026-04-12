@@ -662,7 +662,13 @@ fn run_post_turn_policy_check(
             for msg in msgs {
                 match msg {
                     AgentMessage::Llm(LlmMessage::Assistant(new_msg)) => {
-                        replaced = new_msg;
+                        if assistant_replacement_preserves_tool_calls(assistant_message, &new_msg) {
+                            replaced = new_msg;
+                        } else {
+                            tracing::warn!(
+                                "ignoring post-turn assistant replacement that would drop tool calls"
+                            );
+                        }
                     }
                     other => {
                         state.pending_messages.push(other);
@@ -674,6 +680,31 @@ fn run_post_turn_policy_check(
             (replaced, None)
         }
     }
+}
+
+fn assistant_replacement_preserves_tool_calls(
+    original: &AssistantMessage,
+    replacement: &AssistantMessage,
+) -> bool {
+    let original_tool_calls: Vec<ContentBlock> = original
+        .content
+        .iter()
+        .filter(|block| matches!(block, ContentBlock::ToolCall { .. }))
+        .cloned()
+        .collect();
+
+    if original_tool_calls.is_empty() {
+        return true;
+    }
+
+    let replacement_tool_calls: Vec<ContentBlock> = replacement
+        .content
+        .iter()
+        .filter(|block| matches!(block, ContentBlock::ToolCall { .. }))
+        .cloned()
+        .collect();
+
+    original_tool_calls == replacement_tool_calls
 }
 
 /// Handle the case where no tool calls are present: run post-turn policies,
