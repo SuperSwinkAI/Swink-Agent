@@ -1,5 +1,3 @@
-# AGENTS.md — loop_
+# Loop Lessons
 
-## Lessons Learned
-
-- `ToolExecutionStart` is reserved for tool calls that reach the committed execution path. Emit it only after pre-dispatch policies, approval, and schema validation succeed, and use the effective arguments that will actually be executed.
+- `ToolExecutionUpdate` must include the originating tool call `id` and `name`, and partial tool updates must flow through an awaited relay instead of `try_send`; otherwise concurrent tool progress becomes unattributed and can be silently dropped under channel backpressure.

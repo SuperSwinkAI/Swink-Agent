@@ -84,7 +84,16 @@ pub enum AgentEvent {
     },
 
     /// Emitted for intermediate partial results from a streaming tool.
-    ToolExecutionUpdate { partial: AgentToolResult },
+    ToolExecutionUpdate {
+        /// The tool call ID so observers can attribute concurrent updates.
+        id: String,
+        /// The tool name (matches `ToolExecutionStart.name`, including any
+        /// plugin namespace prefix) so observers can attribute concurrent
+        /// updates without inspecting tool output content.
+        name: String,
+        /// The partial tool result payload.
+        partial: AgentToolResult,
+    },
 
     /// Emitted when a tool call is pending approval.
     ToolApprovalRequested {
