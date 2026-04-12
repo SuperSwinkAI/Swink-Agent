@@ -458,7 +458,9 @@ impl App {
                 let label = match mode {
                     ApprovalModeArg::On => "enabled",
                     ApprovalModeArg::Off => "disabled (auto-approve)",
-                    ApprovalModeArg::Smart => "smart (auto-approve reads, prompt for writes)",
+                    ApprovalModeArg::Smart => {
+                        "smart (auto-approve trusted tools, prompt for untrusted tools)"
+                    }
                 };
                 self.push_system_message(format!("Tool approval: {label}"));
                 return;
@@ -485,7 +487,9 @@ impl App {
                 let label = match self.approval_mode {
                     ApprovalMode::Enabled => "enabled",
                     ApprovalMode::Bypassed => "disabled (auto-approve)",
-                    ApprovalMode::Smart => "smart (auto-approve reads, prompt for writes)",
+                    ApprovalMode::Smart => {
+                        "smart (auto-approve trusted tools, prompt for untrusted tools)"
+                    }
                     _ => "unknown",
                 };
                 let mut msg = format!("Tool approval: {label}");

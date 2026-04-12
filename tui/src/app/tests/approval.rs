@@ -105,7 +105,7 @@ async fn query_approval_mode_shows_smart() {
     let label = match app.approval_mode {
         ApprovalMode::Enabled => "enabled",
         ApprovalMode::Bypassed => "disabled (auto-approve)",
-        ApprovalMode::Smart => "smart (auto-approve reads, prompt for writes)",
+        ApprovalMode::Smart => "smart (auto-approve trusted tools, prompt for untrusted tools)",
         _ => "unknown",
     };
     let mut msg = format!("Tool approval: {label}");
@@ -133,7 +133,7 @@ fn approval_mode_default_is_smart() {
 }
 
 #[tokio::test]
-async fn smart_mode_auto_approves_readonly_tool() {
+async fn smart_mode_prompts_for_untrusted_readonly_tool() {
     let mut app = App::new(TuiConfig::default());
     app.approval_mode = ApprovalMode::Smart;
 
