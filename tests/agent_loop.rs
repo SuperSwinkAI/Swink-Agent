@@ -225,6 +225,18 @@ fn count_events(events: &[AgentEvent], name: &str) -> usize {
         .count()
 }
 
+struct StoppingPostTurnPolicy;
+
+impl PostTurnPolicy for StoppingPostTurnPolicy {
+    fn name(&self) -> &str {
+        "stopping-post-turn"
+    }
+
+    fn evaluate(&self, _ctx: &PolicyContext<'_>, _turn: &TurnPolicyContext<'_>) -> PolicyVerdict {
+        PolicyVerdict::Stop("budget exceeded".to_string())
+    }
+}
+
 // ─── 3.1: Single-turn no-tool ────────────────────────────────────────────
 
 #[tokio::test]
@@ -1474,22 +1486,6 @@ async fn post_turn_inject_replaces_assistant_message_in_turn_end() {
 /// Regression test: post-turn Stop verdict still emits TurnEnd before stopping.
 #[tokio::test]
 async fn post_turn_stop_still_emits_turn_end() {
-    struct StoppingPostTurnPolicy;
-
-    impl PostTurnPolicy for StoppingPostTurnPolicy {
-        fn name(&self) -> &str {
-            "stopping-post-turn"
-        }
-
-        fn evaluate(
-            &self,
-            _ctx: &PolicyContext<'_>,
-            _turn: &TurnPolicyContext<'_>,
-        ) -> PolicyVerdict {
-            PolicyVerdict::Stop("budget exceeded".to_string())
-        }
-    }
-
     let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("Hello!")]));
     let mut config = default_config(stream_fn);
     config.post_turn_policies = vec![Arc::new(StoppingPostTurnPolicy)];
@@ -1505,4 +1501,86 @@ async fn post_turn_stop_still_emits_turn_end() {
     // TurnEnd should still be emitted even when the policy stops the loop.
     assert!(has_event(&events, "TurnEnd"));
     assert!(has_event(&events, "AgentEnd"));
+}
+
+#[tokio::test]
+async fn post_turn_stop_skips_follow_up_polling_without_tool_calls() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![
+        text_only_events("Hello!"),
+        text_only_events("unexpected follow-up"),
+    ]));
+
+    let follow_up_polled = Arc::new(AtomicBool::new(false));
+    let follow_up_polled_clone = Arc::clone(&follow_up_polled);
+
+    let mut config = default_config(stream_fn);
+    config.post_turn_policies = vec![Arc::new(StoppingPostTurnPolicy)];
+    config.message_provider = Some(Arc::new(MockMessageProvider::follow_up_only(move || {
+        follow_up_polled_clone.store(true, Ordering::SeqCst);
+        vec![AgentMessage::Llm(LlmMessage::User(UserMessage {
+            content: vec![ContentBlock::Text {
+                text: "follow up question".to_string(),
+            }],
+            timestamp: 0,
+            cache_hint: None,
+        }))]
+    })));
+
+    let events = collect_events(agent_loop(
+        vec![],
+        "system".to_string(),
+        config,
+        CancellationToken::new(),
+    ))
+    .await;
+
+    assert_eq!(count_events(&events, "TurnStart"), 1);
+    assert!(has_event(&events, "TurnEnd"));
+    assert!(has_event(&events, "AgentEnd"));
+    assert!(
+        !follow_up_polled.load(Ordering::SeqCst),
+        "follow-up should NOT be polled after a post-turn Stop"
+    );
+}
+
+#[tokio::test]
+async fn post_turn_stop_skips_follow_up_polling_after_tool_calls() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![
+        tool_call_events("call_1", "noop", "{}"),
+        text_only_events("unexpected follow-up"),
+    ]));
+    let tool = Arc::new(MockTool::new("noop"));
+
+    let follow_up_polled = Arc::new(AtomicBool::new(false));
+    let follow_up_polled_clone = Arc::clone(&follow_up_polled);
+
+    let mut config = default_config(stream_fn);
+    config.tools = vec![tool];
+    config.post_turn_policies = vec![Arc::new(StoppingPostTurnPolicy)];
+    config.message_provider = Some(Arc::new(MockMessageProvider::follow_up_only(move || {
+        follow_up_polled_clone.store(true, Ordering::SeqCst);
+        vec![AgentMessage::Llm(LlmMessage::User(UserMessage {
+            content: vec![ContentBlock::Text {
+                text: "follow up question".to_string(),
+            }],
+            timestamp: 0,
+            cache_hint: None,
+        }))]
+    })));
+
+    let events = collect_events(agent_loop(
+        vec![],
+        "system".to_string(),
+        config,
+        CancellationToken::new(),
+    ))
+    .await;
+
+    assert_eq!(count_events(&events, "TurnStart"), 1);
+    assert!(has_event(&events, "TurnEnd"));
+    assert!(has_event(&events, "AgentEnd"));
+    assert!(
+        !follow_up_polled.load(Ordering::SeqCst),
+        "follow-up should NOT be polled after a post-turn Stop"
+    );
 }
