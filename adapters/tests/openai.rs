@@ -644,7 +644,7 @@ async fn openai_multiple_tool_calls() {
 }
 
 #[tokio::test]
-async fn openai_content_filter_stop_reason() {
+async fn openai_content_filter_is_terminal_error() {
     let body = [
         r#"data: {"choices":[{"delta":{"content":"filtered"},"index":0}]}"#,
         "",
@@ -666,15 +666,28 @@ async fn openai_content_filter_stop_reason() {
     let sf = OpenAiStreamFn::new(server.uri(), "test-key");
     let events = collect_events(&sf).await;
 
-    // content_filter maps to the catch-all StopReason::Stop
-    let done = events.iter().find_map(|e| match e {
-        AssistantMessageEvent::Done { stop_reason, .. } => Some(*stop_reason),
-        _ => None,
-    });
-    assert_eq!(
-        done,
-        Some(StopReason::Stop),
-        "content_filter should map to Stop"
+    let error_event = events
+        .iter()
+        .find(|e| matches!(e, AssistantMessageEvent::Error { .. }));
+    assert!(
+        error_event.is_some(),
+        "expected a content-filter terminal error, got: {events:?}"
+    );
+    assert!(
+        matches!(
+            error_event,
+            Some(AssistantMessageEvent::Error {
+                error_kind: Some(swink_agent::StreamErrorKind::ContentFiltered),
+                ..
+            })
+        ),
+        "expected ContentFiltered error kind, got: {events:?}"
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, AssistantMessageEvent::Done { .. })),
+        "content_filter should stop the stream without a trailing Done: {events:?}"
     );
 }
 

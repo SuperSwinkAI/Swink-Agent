@@ -771,6 +771,12 @@ async fn http_401_auth_error() {
         }
         _ => unreachable!(),
     }
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, AssistantMessageEvent::Done { .. })),
+        "content_filter should stop the stream without a trailing Done: {events:?}"
+    );
 }
 
 // ── T042: HTTP 404 → non-retryable error ──────────────────────────────────

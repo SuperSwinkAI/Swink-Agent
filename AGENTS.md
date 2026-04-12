@@ -108,6 +108,10 @@ MSRV **1.88** (edition 2024). Common workspace deps are centralized in root `Car
 - `partial_json` consumed on `ToolCallEnd` — parsed once. Empty string → `{}`, not null.
 - `AssistantMessageEvent::error()` is the canonical error constructor — adapters must use it.
 
+### OpenAI-Compatible Adapters (`adapters/src/openai_compat.rs`)
+
+- `finish_reason == "content_filter"` must be routed through `OaiSseStreamState.terminal_error`; emitting an inline error and then consuming a later `[DONE]` produces a duplicate terminal event that `accumulate_message` rejects.
+
 ### Local LLM Streaming (`local-llm/src/stream.rs`)
 
 - Gemma 4 delimiter scanners must only slice `&str` at UTF-8 character boundaries. For partial `<|channel>thought\n` and `<tool_call|>` matches, use the shared UTF-8-safe suffix helper instead of raw byte-offset suffix slicing.

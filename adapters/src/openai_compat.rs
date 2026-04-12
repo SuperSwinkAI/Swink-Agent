@@ -379,9 +379,9 @@ pub fn process_oai_chunk(
         if let Some(reason) = &choice.finish_reason {
             if reason == "content_filter" {
                 events.extend(crate::finalize::finalize_blocks(state));
-                events.push(AssistantMessageEvent::error_content_filtered(format!(
-                    "{provider} response stopped by content filter"
-                )));
+                state.terminal_error = Some(AssistantMessageEvent::error_content_filtered(
+                    format!("{provider} response stopped by content filter"),
+                ));
                 return;
             }
 
