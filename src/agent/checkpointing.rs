@@ -91,11 +91,13 @@ impl Agent {
                 .map_err(|e| invalid_state_snapshot(&e))?,
             None => crate::SessionState::new(),
         };
-        let mut s = self
-            .session_state
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        *s = restored;
+        {
+            let mut s = self
+                .session_state
+                .write()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            *s = restored;
+        }
 
         Ok(())
     }
@@ -213,11 +215,13 @@ impl Agent {
                 .map_err(AgentError::stream)?,
             None => crate::SessionState::new(),
         };
-        let mut s = self
-            .session_state
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        *s = restored;
+        {
+            let mut s = self
+                .session_state
+                .write()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            *s = restored;
+        }
 
         if self.state.messages.is_empty() {
             return Err(AgentError::NoMessages);

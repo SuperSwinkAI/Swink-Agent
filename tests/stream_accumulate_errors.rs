@@ -133,7 +133,7 @@ fn tool_call_delta_after_partial_json_consumed() {
         },
     ];
     let err = accumulate_message(events, "p", "m").unwrap_err();
-    assert!(err.contains("partial_json already consumed"), "got: {err}");
+    assert!(err.contains("already closed"), "got: {err}");
 }
 
 // ── 9. ToolCallDelta on wrong block type (Text block) ──
@@ -168,7 +168,7 @@ fn tool_call_end_after_partial_json_consumed() {
         AssistantMessageEvent::ToolCallEnd { content_index: 0 },
     ];
     let err = accumulate_message(events, "p", "m").unwrap_err();
-    assert!(err.contains("partial_json already consumed"), "got: {err}");
+    assert!(err.contains("already closed"), "got: {err}");
 }
 
 // ── 11. ToolCallEnd with invalid JSON in partial_json ──
