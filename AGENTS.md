@@ -2,7 +2,7 @@
 
 ## Project
 
-Pure-Rust library for LLM-powered agentic loops. Provider-agnostic core with pluggable streaming, concurrent tool execution, and lifecycle events. Workspace: core (`swink-agent`), adapters (`swink-agent-adapters`), memory (`swink-agent-memory`), local-llm (`swink-agent-local-llm`), eval (`swink-agent-eval`), TUI (`swink-agent-tui`).
+Pure-Rust library for LLM-powered agentic loops. Provider-agnostic core with pluggable streaming, concurrent tool execution, and lifecycle events. Workspace crates: core (`swink-agent`), adapters (`swink-agent-adapters`), artifacts (`swink-agent-artifacts`), auth (`swink-agent-auth`), eval (`swink-agent-eval`), local-llm (`swink-agent-local-llm`), macros (`swink-agent-macros`), MCP (`swink-agent-mcp`), memory (`swink-agent-memory`), patterns (`swink-agent-patterns`), policies (`swink-agent-policies`), TUI (`swink-agent-tui`), web plugin (`swink-agent-plugin-web`), and `xtask`.
 
 ## Development Principles
 
@@ -38,7 +38,7 @@ cargo clippy --workspace -- -D warnings           # zero warnings policy
 cargo run -p swink-agent-tui                      # launch TUI (.env auto-loaded)
 ```
 
-MSRV **1.88** (edition 2024). Workspace deps centralized in root `Cargo.toml`.
+MSRV **1.88** (edition 2024). Common workspace deps are centralized in root `Cargo.toml`, with a few crate-specific dependencies declared locally where needed.
 
 ## Lessons Learned
 
@@ -66,7 +66,7 @@ MSRV **1.88** (edition 2024). Workspace deps centralized in root `Cargo.toml`.
 - Slot runner uses `AssertUnwindSafe` + `catch_unwind` — traits only need `Send + Sync`, not `UnwindSafe`.
 - Empty policy vecs = zero overhead, no allocation. Default is anything-goes.
 - `ToolDispatchContext.execution_root` carries the tool's working directory when known. Policies that validate relative paths must reject them when this context is absent instead of assuming lexical containment.
-- **All policy implementations live in `swink-agent-policies` crate** — core only defines traits and runners.
+- Reusable shared policy implementations primarily live in `swink-agent-policies`; plugin crates can also define crate-local policies against the core traits.
 - Old fields removed from `AgentLoopConfig`: `budget_guard`, `loop_policy`, `post_turn_hook`, `tool_validator`, `tool_call_transformer`. Replaced by 4 policy vecs.
 - `PolicyContext.new_messages` contains only messages added since the last evaluation for that slot. PreTurn: pending batch (tracked via `new_messages_start` index before append). PostTurn/PostLoop/PreDispatch: `&[]` (current-turn data is in `TurnPolicyContext`/`ToolPolicyContext`). This is a slice borrow (zero-copy), not a clone.
 - `RetryStrategy::should_retry()` is the **sole** retryability decision point — `is_retryable()` pre-check was removed.
@@ -74,7 +74,7 @@ MSRV **1.88** (edition 2024). Workspace deps centralized in root `Cargo.toml`.
 ### Policies Crate (`policies/`)
 
 - Separate workspace crate `swink-agent-policies` — depends only on `swink-agent` public API, no internal imports.
-- **All policy implementations live here** (10 total, each feature-gated independently):
+- **Shared reusable policy implementations live here** (10 total, each feature-gated independently):
   - Core: `BudgetPolicy`, `MaxTurnsPolicy`, `ToolDenyListPolicy`, `SandboxPolicy`, `LoopDetectionPolicy`, `CheckpointPolicy`.
   - Application: `PromptInjectionGuard`, `PiiRedactor`, `ContentFilter`, `AuditLogger`.
 - Feature gates: `budget`, `max-turns`, `deny-list`, `sandbox`, `loop-detection`, `checkpoint`, `prompt-guard`, `pii`, `content-filter`, `audit`, `all` (default).
@@ -148,7 +148,7 @@ MSRV **1.88** (edition 2024). Workspace deps centralized in root `Cargo.toml`.
 - Root crate cannot re-export adapters/local-llm/TUI (cyclic dependency). Consumers depend on sub-crates directly.
 
 **Adapters crate (`swink-agent-adapters`):**
-- `default = ["all"]` — backward compatible, all 9 adapters enabled.
+- `default = []`, `full = ["all"]`, and `all` enables all 9 adapter features.
 - Individual flags: `anthropic`, `openai`, `ollama`, `gemini`, `proxy`, `azure`, `bedrock`, `mistral`, `xai`.
 - Azure Entra ID auth should use the shared `swink-agent-auth::SingleFlightTokenSource`; an adapter-local `RwLock<Option<_>>` cache does not deduplicate concurrent token refreshes.
 - `gemini` feature gates the `google` module (file is `google.rs`, public type is `GeminiStreamFn`).
@@ -213,7 +213,7 @@ MSRV **1.88** (edition 2024). Workspace deps centralized in root `Cargo.toml`.
 - Rust 1.88 (edition 2024) + `swink-agent` (core types — policy traits, message types, verdict enums), `regex` (pattern matching for injection/PII/content), `chrono` (timestamps for audit records), `serde`/`serde_json` (audit record serialization), `tracing` (error logging in audit sink) (032-policy-recipes-crate)
 - Local filesystem via JSONL (AuditLogger's `JsonlAuditSink` only) (032-policy-recipes-crate)
 - Rust 1.88 (edition 2024) + `swink-agent` (core), `reqwest`, `futures`, `serde`, `serde_json`, `tokio`, `tokio-util`, `tracing` (015-adapter-gemini)
-- Rust 1.88 (edition 2024) + Workspace deps centralized in root Cargo.toml. Key deps for this feature: `mistralrs` 0.7 (backend features), `eventsource-stream` 0.2 (proxy-only), `sha2` (bedrock-only). (033-workspace-feature-gates)
+- Rust 1.88 (edition 2024) + Common workspace deps centralized in root Cargo.toml. Key deps for this feature: `mistralrs` 0.7 (backend features), `eventsource-stream` 0.2 (proxy-only), `sha2` (bedrock-only). (033-workspace-feature-gates)
 - Rust 1.88 (edition 2024) + `swink-agent` (core), `reqwest`, `futures`, `serde`/`serde_json`, `tokio`, `tokio-util`, `tracing`, `rand` (ID generation) (018-adapter-mistral)
 - Rust 1.88 (edition 2024) + serde, serde_json, tokio, std::sync::RwLock (no new external deps) (034-session-state-store)
 - JSONL via swink-agent-memory crate (extends existing SessionStore) (034-session-state-store)
