@@ -14,9 +14,10 @@ use tracing::{debug, error, warn};
 #[cfg(feature = "gemma4")]
 use uuid::Uuid;
 
+use swink_agent::stream_assembly::{BlockAccumulator, finalize_blocks};
 use swink_agent::{
-    AgentContext, AssistantMessageEvent, BlockAccumulator, Cost, ModelSpec, StopReason, StreamFn,
-    StreamOptions, Usage, finalize_blocks,
+    AgentContext, AssistantMessageEvent, Cost, ModelSpec, StopReason, StreamFn, StreamOptions,
+    Usage,
 };
 
 use crate::loader::LoaderState;
@@ -549,8 +550,7 @@ impl StreamState {
         if let Some(reasoning) = &choice.delta.reasoning_content
             && !reasoning.is_empty()
         {
-            self.events
-                .extend(self.blocks.ensure_thinking_open());
+            self.events.extend(self.blocks.ensure_thinking_open());
             self.events
                 .extend(self.blocks.thinking_delta(reasoning.clone()));
         }
@@ -580,10 +580,8 @@ impl StreamState {
         if let Some(think) = thinking_part
             && !think.is_empty()
         {
-            self.events
-                .extend(self.blocks.ensure_thinking_open());
-            self.events
-                .extend(self.blocks.thinking_delta(think));
+            self.events.extend(self.blocks.ensure_thinking_open());
+            self.events.extend(self.blocks.thinking_delta(think));
         }
 
         // Step 2: Pass text through Gemma 4 tool call parser or emit directly.
@@ -608,12 +606,9 @@ impl StreamState {
         if let Some(text) = final_text
             && !text.is_empty()
         {
-            self.events
-                .extend(self.blocks.close_thinking(None));
-            self.events
-                .extend(self.blocks.ensure_text_open());
-            self.events
-                .extend(self.blocks.text_delta(text));
+            self.events.extend(self.blocks.close_thinking(None));
+            self.events.extend(self.blocks.ensure_text_open());
+            self.events.extend(self.blocks.text_delta(text));
         }
     }
 
@@ -628,14 +623,15 @@ impl StreamState {
 
         let id = Uuid::new_v4().to_string();
         self.has_tool_calls = true;
-        let (tc_content_index, start_ev) =
-            self.blocks.open_tool_call(id.clone(), call.name);
+        let (tc_content_index, start_ev) = self.blocks.open_tool_call(id.clone(), call.name);
         self.active_tool_calls.push((id, tc_content_index));
         self.events.push(start_ev);
 
         if !call.args.is_empty() {
-            self.events
-                .push(BlockAccumulator::tool_call_delta(tc_content_index, call.args));
+            self.events.push(BlockAccumulator::tool_call_delta(
+                tc_content_index,
+                call.args,
+            ));
         }
         // ToolCallEnd emitted in finalize() via BlockAccumulator::drain_open_blocks.
     }
@@ -929,10 +925,11 @@ mod tests {
             other => panic!("expected Error terminal, got {other:?}"),
         }
         // Open text block must be closed before the terminal error.
-        assert!(events.iter().any(|e| matches!(
-            e,
-            AssistantMessageEvent::TextEnd { .. }
-        )));
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, AssistantMessageEvent::TextEnd { .. }))
+        );
     }
 
     #[test]
