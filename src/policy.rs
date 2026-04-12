@@ -129,7 +129,11 @@ pub struct TurnPolicyContext<'a> {
     pub system_prompt: &'a str,
     /// The model specification active during this turn.
     pub model_spec: &'a ModelSpec,
-    /// All context messages (the full conversation history).
+    /// The committed conversation history for the completed turn.
+    ///
+    /// This always includes the current turn's assistant message and any tool
+    /// results before `PostTurn` policies run, regardless of whether the turn
+    /// ended with plain text, tool execution, or transfer termination.
     pub context_messages: &'a [AgentMessage],
 }
 
