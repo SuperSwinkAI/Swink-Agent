@@ -154,6 +154,42 @@ async fn bedrock_text_response_maps_to_text_events() {
     )));
 }
 
+#[tokio::test]
+async fn bedrock_pre_request_cancellation_is_aborted() {
+    let token = CancellationToken::new();
+    token.cancel();
+
+    let stream_fn = BedrockStreamFn::new_with_base_url(
+        "http://127.0.0.1:9",
+        "us-east-1",
+        "AKIDEXAMPLE",
+        "secret",
+        None,
+    );
+    let events = stream_fn
+        .stream(
+            &ModelSpec::new("bedrock", "amazon.nova-pro-v1:0"),
+            &AgentContext {
+                system_prompt: String::new(),
+                messages: Vec::new(),
+                tools: Vec::new(),
+            },
+            &StreamOptions::default(),
+            token,
+        )
+        .collect::<Vec<_>>()
+        .await;
+
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AssistantMessageEvent::Error {
+            stop_reason: StopReason::Aborted,
+            error_kind: None,
+            ..
+        }
+    )));
+}
+
 struct DummyTool;
 
 impl AgentTool for DummyTool {
@@ -291,6 +327,58 @@ async fn bedrock_session_token_is_forwarded() {
         e,
         AssistantMessageEvent::Done {
             stop_reason: StopReason::Stop,
+            ..
+        }
+    )));
+}
+
+#[tokio::test]
+async fn bedrock_stream_cancellation_is_aborted() {
+    let server = MockServer::start().await;
+    let slow_response = ResponseTemplate::new(200)
+        .insert_header("Content-Type", "application/vnd.amazon.eventstream")
+        .set_body_bytes(text_response_body("hello"))
+        .set_delay(std::time::Duration::from_secs(30));
+
+    Mock::given(method("POST"))
+        .and(path("/model/amazon.nova-pro-v1:0/converse-stream"))
+        .respond_with(slow_response)
+        .mount(&server)
+        .await;
+
+    let stream_fn = BedrockStreamFn::new_with_base_url(
+        server.uri(),
+        "us-east-1",
+        "AKIDEXAMPLE",
+        "secret",
+        None,
+    );
+    let token = CancellationToken::new();
+    let cancel_token = token.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        cancel_token.cancel();
+    });
+
+    let events = stream_fn
+        .stream(
+            &ModelSpec::new("bedrock", "amazon.nova-pro-v1:0"),
+            &AgentContext {
+                system_prompt: String::new(),
+                messages: Vec::new(),
+                tools: Vec::new(),
+            },
+            &StreamOptions::default(),
+            token,
+        )
+        .collect::<Vec<_>>()
+        .await;
+
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AssistantMessageEvent::Error {
+            stop_reason: StopReason::Aborted,
+            error_kind: None,
             ..
         }
     )));

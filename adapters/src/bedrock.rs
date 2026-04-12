@@ -259,6 +259,15 @@ impl StreamFinalize for BedrockStreamState {
     }
 }
 
+fn cancelled_event(message: &'static str) -> AssistantMessageEvent {
+    AssistantMessageEvent::Error {
+        stop_reason: StopReason::Aborted,
+        error_message: message.to_string(),
+        usage: None,
+        error_kind: None,
+    }
+}
+
 pub struct BedrockStreamFn {
     base_url: String,
     region: String,
@@ -412,9 +421,7 @@ impl BedrockStreamFn {
                             return Some((
                                 vec![
                                     AssistantMessageEvent::Start,
-                                    AssistantMessageEvent::error_network(
-                                        "Bedrock request cancelled",
-                                    ),
+                                    cancelled_event("Bedrock request cancelled"),
                                 ],
                                 StreamUnfoldState::Done,
                             ));
@@ -501,9 +508,7 @@ impl BedrockStreamFn {
                                 biased;
                                 () = cancellation_token.cancelled() => {
                                     let mut events = finalize::finalize_blocks(state.as_mut());
-                                    events.push(AssistantMessageEvent::error_network(
-                                        "Bedrock stream cancelled",
-                                    ));
+                                    events.push(cancelled_event("Bedrock stream cancelled"));
                                     return Some((events, StreamUnfoldState::Done));
                                 }
                                 chunk = byte_stream.next() => {
