@@ -509,6 +509,10 @@ impl SessionStore for JsonlSessionStore {
 
     fn save_interrupt(&self, id: &str, state: &InterruptState) -> io::Result<()> {
         validate_session_id(id)?;
+        let session = session_path(&self.sessions_dir, id);
+        if !session.exists() {
+            return Err(not_found(id));
+        }
         let path = interrupt_path(&self.sessions_dir, id);
         atomic_write(&path, |writer| {
             serde_json::to_writer_pretty(&mut *writer, state).map_err(io::Error::other)
@@ -517,6 +521,9 @@ impl SessionStore for JsonlSessionStore {
 
     fn load_interrupt(&self, id: &str) -> io::Result<Option<InterruptState>> {
         validate_session_id(id)?;
+        if !session_path(&self.sessions_dir, id).exists() {
+            return Ok(None);
+        }
         let path = interrupt_path(&self.sessions_dir, id);
         if !path.exists() {
             return Ok(None);
@@ -1217,5 +1224,47 @@ mod tests {
             .unwrap();
         assert_eq!(loaded_meta.sequence, 2);
         assert_eq!(loaded_messages.len(), 1);
+    }
+
+    #[test]
+    fn save_interrupt_requires_existing_session() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = JsonlSessionStore::new(dir.path().to_path_buf()).unwrap();
+
+        let err = store
+            .save_interrupt(
+                "missing",
+                &InterruptState {
+                    interrupted_at: 1,
+                    pending_tool_calls: vec![],
+                    context_snapshot: vec![],
+                    system_prompt: "system".to_string(),
+                    model: swink_agent::ModelSpec::new("openai", "gpt-4o"),
+                },
+            )
+            .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::NotFound);
+    }
+
+    #[test]
+    fn load_interrupt_ignores_orphan_file_without_session() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = JsonlSessionStore::new(dir.path().to_path_buf()).unwrap();
+
+        let orphan_path = interrupt_path(dir.path(), "orphan");
+        std::fs::write(
+            &orphan_path,
+            serde_json::to_string(&InterruptState {
+                interrupted_at: 2,
+                pending_tool_calls: vec![],
+                context_snapshot: vec![],
+                system_prompt: "system".to_string(),
+                model: swink_agent::ModelSpec::new("openai", "gpt-4o"),
+            })
+            .unwrap(),
+        )
+        .unwrap();
+
+        assert!(store.load_interrupt("orphan").unwrap().is_none());
     }
 }
