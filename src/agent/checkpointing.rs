@@ -91,13 +91,10 @@ impl Agent {
                 .map_err(|e| invalid_state_snapshot(&e))?,
             None => crate::SessionState::new(),
         };
-        {
-            let mut s = self
-                .session_state
-                .write()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            *s = restored;
-        }
+        *self
+            .session_state
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = restored;
 
         Ok(())
     }

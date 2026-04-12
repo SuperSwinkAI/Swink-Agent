@@ -808,6 +808,7 @@ async fn dispatch_single_tool(
                 if guard.is_none() {
                     (*guard).clone_from(&result.transfer_signal);
                 }
+                drop(guard);
                 transfer_flag_clone.store(true, std::sync::atomic::Ordering::SeqCst);
             }
 
@@ -899,7 +900,7 @@ async fn resolve_credential(
     Ok(Some(credential))
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "testkit"))]
 mod tests {
     use super::*;
 

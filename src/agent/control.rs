@@ -1,4 +1,3 @@
-use std::future::Future;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
@@ -7,23 +6,21 @@ use tracing::info;
 
 use super::Agent;
 
-fn wait_for_idle_future<F>(
+async fn wait_for_idle_future<F>(
     notify: Arc<Notify>,
     active: Arc<std::sync::atomic::AtomicBool>,
     after_register: F,
-) -> impl Future<Output = ()> + Send
+)
 where
     F: Fn() + Send + Sync + 'static,
 {
-    async move {
-        loop {
-            let notified = notify.notified();
-            after_register();
-            if !active.load(Ordering::Acquire) {
-                return;
-            }
-            notified.await;
+    loop {
+        let notified = notify.notified();
+        after_register();
+        if !active.load(Ordering::Acquire) {
+            return;
         }
+        notified.await;
     }
 }
 
@@ -77,7 +74,7 @@ impl Agent {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "testkit"))]
 mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};

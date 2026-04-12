@@ -362,11 +362,10 @@ pub fn accumulate_message(
         event_name: &str,
     ) -> Result<(), String> {
         match open_blocks.get(content_index) {
-            Some(true) => Ok(()),
             Some(false) => Err(format!(
                 "{event_name}: block at index {content_index} is already closed"
             )),
-            None => Ok(()),
+            Some(true) | None => Ok(()),
         }
     }
 
