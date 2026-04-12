@@ -106,6 +106,26 @@ async fn sub_agent_cancellation() {
 }
 
 #[tokio::test]
+async fn sub_agent_without_options_returns_tool_error() {
+    let sub = SubAgent::new("unset", "Unset", "No options configured");
+
+    let result = sub
+        .execute(
+            "call-unset",
+            json!({ "prompt": "go" }),
+            CancellationToken::new(),
+            None,
+            test_state(),
+            None,
+        )
+        .await;
+
+    assert!(result.is_error);
+    let text = ContentBlock::extract_text(&result.content);
+    assert!(text.contains("with_options()") || text.contains("simple()"));
+}
+
+#[tokio::test]
 async fn sub_agent_shares_stream_fn() {
     let stream_fn: Arc<dyn StreamFn> = Arc::new(MockStreamFn::new(vec![text_only_events(
         "shared stream works",
