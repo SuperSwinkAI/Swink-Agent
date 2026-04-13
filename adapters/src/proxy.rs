@@ -290,11 +290,12 @@ fn parse_sse_stream(
                             ))
                         }
                         Some(SseLine::Done) => {
-                            done = true;
-                            Some((
-                                AssistantMessageEvent::error_network("network error: SSE stream ended unexpectedly"),
-                                (sse, token, done),
-                            ))
+                            // [DONE] is the normal SSE stream terminator.
+                            // The proxy protocol's actual Done/Error events
+                            // arrive as JSON data payloads (SseEventData::Done),
+                            // so this sentinel just means the transport is
+                            // finished — stop the unfold cleanly.
+                            None
                         }
                         Some(SseLine::Data(data)) => {
                             let parsed = parse_sse_event_data(&data);
@@ -646,6 +647,94 @@ mod tests {
         let debug = format!("{proxy:?}");
         assert!(!debug.contains("secret-token"));
         assert!(debug.contains("[redacted]"));
+    }
+
+    /// Regression test for #432: SseLine::Done must produce a clean stream
+    /// termination, not a network error.
+    #[tokio::test]
+    async fn sse_done_sentinel_is_clean_termination() {
+        use futures::StreamExt as _;
+
+        // Simulate an SSE byte stream with a Start event, a text delta, a
+        // protocol-level Done event (JSON), and finally the [DONE] sentinel.
+        let sse_body = concat!(
+            "data: {\"type\":\"start\"}\n\n",
+            "data: {\"type\":\"text_start\",\"content_index\":0}\n\n",
+            "data: {\"type\":\"text_delta\",\"content_index\":0,\"delta\":\"hi\"}\n\n",
+            "data: {\"type\":\"text_end\",\"content_index\":0}\n\n",
+            "data: {\"type\":\"done\",\"stop_reason\":\"stop\",",
+            "\"usage\":{\"input\":5,\"output\":3,\"cache_read\":0,\"cache_write\":0,\"total\":8},",
+            "\"cost\":{\"input\":0.01,\"output\":0.02,\"cache_read\":0.0,\"cache_write\":0.0,\"total\":0.03}}\n\n",
+            "data: [DONE]\n\n",
+        );
+
+        let byte_stream =
+            futures::stream::once(
+                async move { Ok::<_, reqwest::Error>(bytes::Bytes::from(sse_body)) },
+            );
+
+        let sse_stream = crate::sse::sse_data_lines(byte_stream);
+
+        let cancel = CancellationToken::new();
+        let event_stream = stream::unfold(
+            (Box::pin(sse_stream), cancel.clone(), false),
+            |(mut sse, token, mut done)| async move {
+                if done {
+                    return None;
+                }
+                tokio::select! {
+                    biased;
+                    () = token.cancelled() => {
+                        Some((AssistantMessageEvent::Error {
+                            stop_reason: StopReason::Aborted,
+                            error_message: "cancelled".to_owned(),
+                            usage: None,
+                            error_kind: None,
+                        }, (sse, token, true)))
+                    }
+                    item = sse.next() => {
+                        match item {
+                            None => {
+                                done = true;
+                                Some((
+                                    AssistantMessageEvent::error_network("SSE stream ended unexpectedly"),
+                                    (sse, token, done),
+                                ))
+                            }
+                            Some(SseLine::Done) => None,
+                            Some(SseLine::Data(data)) => {
+                                let parsed = parse_sse_event_data(&data);
+                                done = is_terminal_event(&parsed);
+                                Some((parsed, (sse, token, done)))
+                            }
+                            Some(SseLine::TransportError(msg)) => Some((
+                                AssistantMessageEvent::error_network(format!("network error: {msg}")),
+                                (sse, token, true),
+                            )),
+                            Some(_) => Some((AssistantMessageEvent::error_network(
+                                "unexpected SSE line",
+                            ), (sse, token, true))),
+                        }
+                    }
+                }
+            },
+        );
+
+        let events: Vec<AssistantMessageEvent> = event_stream.collect().await;
+
+        // The last event must be a clean Done, not an Error.
+        let last = events.last().expect("stream should produce events");
+        assert!(
+            matches!(last, AssistantMessageEvent::Done { .. }),
+            "expected Done as last event, got {last:?}"
+        );
+
+        // No event should be a network error.
+        for event in &events {
+            if let AssistantMessageEvent::Error { error_message, .. } = event {
+                panic!("unexpected error event in stream: {error_message}");
+            }
+        }
     }
 
     #[tokio::test]
