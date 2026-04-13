@@ -110,7 +110,7 @@ struct AgentEntry {
 /// Handle to a spawned orchestrated agent.
 ///
 /// Provides request/response messaging, status polling, and cancellation.
-/// Lifecycle methods (status, cancel, `is_done`) are delegated to [`TaskCore`].
+/// Lifecycle methods (status, cancel, `is_done`) are delegated to a shared task core.
 pub struct OrchestratedHandle {
     name: String,
     request_tx: mpsc::Sender<AgentRequest>,
