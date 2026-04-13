@@ -64,6 +64,7 @@ MSRV **1.88** (edition 2024). Common workspace deps are centralized in root `Car
 - Four configurable policy slots: PreTurn (before LLM call), PreDispatch (per tool call), PostTurn (after turn), PostLoop (after inner loop).
 - Two verdict enums: `PolicyVerdict` (Continue/Stop/Inject) and `PreDispatchVerdict` (+ Skip). Compile-time enforcement that Skip is only valid in PreDispatch.
 - Slot runner uses `AssertUnwindSafe` + `catch_unwind` — traits only need `Send + Sync`, not `UnwindSafe`.
+- Pre-dispatch policy panics must restore the prior `arguments` snapshot before later policies or approval run; otherwise partial `serde_json::Value` rewrites leak through even though the panic is caught.
 - Empty policy vecs = zero overhead, no allocation. Default is anything-goes.
 - `ToolDispatchContext.execution_root` carries the tool's working directory when known. Policies that validate relative paths must reject them when this context is absent instead of assuming lexical containment.
 - Reusable shared policy implementations primarily live in `swink-agent-policies`; plugin crates can also define crate-local policies against the core traits.
