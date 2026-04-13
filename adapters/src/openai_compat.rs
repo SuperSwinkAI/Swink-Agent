@@ -119,6 +119,10 @@ pub struct OaiDelta {
     pub content: Option<String>,
     #[serde(default)]
     pub tool_calls: Option<Vec<OaiToolCallDelta>>,
+    /// Reasoning/thinking content emitted by vLLM and other OpenAI-compatible
+    /// servers when serving thinking-capable models.
+    #[serde(default)]
+    pub reasoning_content: Option<String>,
 }
 
 /// A tool call delta in a streaming response.
@@ -355,9 +359,26 @@ pub fn process_oai_chunk(
     }
 
     for choice in &chunk.choices {
+        // ── Reasoning / thinking content (vLLM, etc.) ──────────────────
+        if let Some(reasoning) = &choice.delta.reasoning_content
+            && !reasoning.is_empty()
+        {
+            if let Some(ev) = state.blocks.ensure_thinking_open() {
+                events.push(ev);
+            }
+            if let Some(ev) = state.blocks.thinking_delta(reasoning.clone()) {
+                events.push(ev);
+            }
+        }
+
+        // ── Regular text content ───────────────────────────────────────
         if let Some(content) = &choice.delta.content
             && !content.is_empty()
         {
+            // Transition from thinking → text: close the thinking block.
+            if let Some(ev) = state.blocks.close_thinking(None) {
+                events.push(ev);
+            }
             if let Some(ev) = state.blocks.ensure_text_open() {
                 events.push(ev);
             }
@@ -366,7 +387,12 @@ pub fn process_oai_chunk(
             }
         }
 
+        // ── Tool calls ────────────────────────────────────────────────
         if let Some(tool_calls) = &choice.delta.tool_calls {
+            // Close thinking if still open when tool calls arrive.
+            if let Some(ev) = state.blocks.close_thinking(None) {
+                events.push(ev);
+            }
             if let Some(ev) = state.blocks.close_text() {
                 events.push(ev);
             }
@@ -554,4 +580,243 @@ pub fn parse_oai_sse_stream(
             Some(_) => SseAction::Skip,
         },
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Helper: create an `OaiChunk` with one choice containing the given delta.
+    fn chunk_with_delta(delta: OaiDelta, finish_reason: Option<&str>) -> OaiChunk {
+        OaiChunk {
+            choices: vec![OaiChoice {
+                delta,
+                finish_reason: finish_reason.map(String::from),
+            }],
+            usage: None,
+        }
+    }
+
+    #[test]
+    fn reasoning_content_emits_thinking_events() {
+        let mut state = OaiSseStreamState::default();
+        let mut events = Vec::new();
+
+        // First reasoning chunk → ThinkingStart + ThinkingDelta
+        let chunk = chunk_with_delta(
+            OaiDelta {
+                reasoning_content: Some("Let me think".to_string()),
+                ..Default::default()
+            },
+            None,
+        );
+        process_oai_chunk(&chunk, &mut state, &mut events, "test");
+
+        assert_eq!(events.len(), 2);
+        assert!(matches!(
+            &events[0],
+            AssistantMessageEvent::ThinkingStart { content_index: 0 }
+        ));
+        assert!(
+            matches!(&events[1], AssistantMessageEvent::ThinkingDelta { content_index: 0, delta } if delta == "Let me think")
+        );
+
+        // Second reasoning chunk → only ThinkingDelta (no new Start)
+        events.clear();
+        let chunk = chunk_with_delta(
+            OaiDelta {
+                reasoning_content: Some(" more".to_string()),
+                ..Default::default()
+            },
+            None,
+        );
+        process_oai_chunk(&chunk, &mut state, &mut events, "test");
+
+        assert_eq!(events.len(), 1);
+        assert!(
+            matches!(&events[0], AssistantMessageEvent::ThinkingDelta { content_index: 0, delta } if delta == " more")
+        );
+    }
+
+    #[test]
+    fn reasoning_to_content_transition_closes_thinking() {
+        let mut state = OaiSseStreamState::default();
+        let mut events = Vec::new();
+
+        // Reasoning chunk
+        let chunk = chunk_with_delta(
+            OaiDelta {
+                reasoning_content: Some("thinking...".to_string()),
+                ..Default::default()
+            },
+            None,
+        );
+        process_oai_chunk(&chunk, &mut state, &mut events, "test");
+        assert_eq!(events.len(), 2); // ThinkingStart + ThinkingDelta
+
+        // Now regular content arrives → should close thinking, then open text
+        events.clear();
+        let chunk = chunk_with_delta(
+            OaiDelta {
+                content: Some("Hello".to_string()),
+                ..Default::default()
+            },
+            None,
+        );
+        process_oai_chunk(&chunk, &mut state, &mut events, "test");
+
+        // ThinkingEnd + TextStart + TextDelta
+        assert_eq!(events.len(), 3);
+        assert!(matches!(
+            &events[0],
+            AssistantMessageEvent::ThinkingEnd {
+                content_index: 0,
+                ..
+            }
+        ));
+        assert!(matches!(
+            &events[1],
+            AssistantMessageEvent::TextStart { content_index: 1 }
+        ));
+        assert!(matches!(
+            &events[2],
+            AssistantMessageEvent::TextDelta { content_index: 1, delta } if delta == "Hello"
+        ));
+    }
+
+    #[test]
+    fn reasoning_to_tool_call_closes_thinking() {
+        let mut state = OaiSseStreamState::default();
+        let mut events = Vec::new();
+
+        // Reasoning chunk
+        let chunk = chunk_with_delta(
+            OaiDelta {
+                reasoning_content: Some("planning...".to_string()),
+                ..Default::default()
+            },
+            None,
+        );
+        process_oai_chunk(&chunk, &mut state, &mut events, "test");
+        events.clear();
+
+        // Tool call arrives
+        let chunk = chunk_with_delta(
+            OaiDelta {
+                tool_calls: Some(vec![OaiToolCallDelta {
+                    index: 0,
+                    id: Some("call_1".to_string()),
+                    function: Some(OaiFunctionDelta {
+                        name: Some("my_tool".to_string()),
+                        arguments: Some(r#"{"a":1}"#.to_string()),
+                    }),
+                }]),
+                ..Default::default()
+            },
+            None,
+        );
+        process_oai_chunk(&chunk, &mut state, &mut events, "test");
+
+        // First event should be ThinkingEnd
+        assert!(matches!(
+            &events[0],
+            AssistantMessageEvent::ThinkingEnd {
+                content_index: 0,
+                ..
+            }
+        ));
+        // Then ToolCallStart
+        assert!(matches!(
+            &events[1],
+            AssistantMessageEvent::ToolCallStart {
+                content_index: 1,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn chunks_without_reasoning_work_normally() {
+        let mut state = OaiSseStreamState::default();
+        let mut events = Vec::new();
+
+        // Regular text chunk
+        let chunk = chunk_with_delta(
+            OaiDelta {
+                content: Some("Hello world".to_string()),
+                ..Default::default()
+            },
+            None,
+        );
+        process_oai_chunk(&chunk, &mut state, &mut events, "test");
+
+        assert_eq!(events.len(), 2); // TextStart + TextDelta
+        assert!(matches!(
+            &events[0],
+            AssistantMessageEvent::TextStart { content_index: 0 }
+        ));
+        assert!(matches!(
+            &events[1],
+            AssistantMessageEvent::TextDelta { content_index: 0, delta } if delta == "Hello world"
+        ));
+    }
+
+    #[test]
+    fn empty_reasoning_content_ignored() {
+        let mut state = OaiSseStreamState::default();
+        let mut events = Vec::new();
+
+        let chunk = chunk_with_delta(
+            OaiDelta {
+                reasoning_content: Some(String::new()),
+                ..Default::default()
+            },
+            None,
+        );
+        process_oai_chunk(&chunk, &mut state, &mut events, "test");
+
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn null_reasoning_content_ignored() {
+        let mut state = OaiSseStreamState::default();
+        let mut events = Vec::new();
+
+        let chunk = chunk_with_delta(
+            OaiDelta {
+                reasoning_content: None,
+                content: Some("text".to_string()),
+                ..Default::default()
+            },
+            None,
+        );
+        process_oai_chunk(&chunk, &mut state, &mut events, "test");
+
+        // Should just get text events, no thinking
+        assert_eq!(events.len(), 2);
+        assert!(matches!(
+            &events[0],
+            AssistantMessageEvent::TextStart { content_index: 0 }
+        ));
+    }
+
+    #[test]
+    fn reasoning_content_deserialized_from_json() {
+        let json = r#"{
+            "choices": [{
+                "delta": {
+                    "reasoning_content": "step by step"
+                },
+                "finish_reason": null
+            }]
+        }"#;
+
+        let chunk: OaiChunk = serde_json::from_str(json).unwrap();
+        assert_eq!(chunk.choices.len(), 1);
+        assert_eq!(
+            chunk.choices[0].delta.reasoning_content.as_deref(),
+            Some("step by step")
+        );
+    }
 }
