@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use swink_agent::{
     AgentOptions, CatalogPreset, ModelConnection, ModelConnections, ModelSpec, StreamFn,
+    model_catalog,
 };
 use swink_agent_adapters::{
     AnthropicStreamFn, OllamaStreamFn, OpenAiStreamFn, ProxyStreamFn, remote_presets,
@@ -219,7 +220,7 @@ fn local_connections() -> ModelConnections {
     let catalog = model_catalog();
     let model = catalog
         .preset("local", "smollm3_3b")
-        .map(|p| p.model_spec())
+        .map(|preset: CatalogPreset| preset.model_spec())
         .unwrap_or_else(|| ModelSpec::new("local", "SmolLM3-3B-Q4_K_M"));
 
     ModelConnections::builder()
@@ -256,7 +257,7 @@ fn append_local_fallback(
     let catalog = model_catalog();
     let model = catalog
         .preset("local", "smollm3_3b")
-        .map(|p| p.model_spec())
+        .map(|preset: CatalogPreset| preset.model_spec())
         .unwrap_or_else(|| ModelSpec::new("local", "SmolLM3-3B-Q4_K_M"));
 
     builder.fallback(ModelConnection::new(model, local))

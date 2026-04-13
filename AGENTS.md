@@ -165,6 +165,7 @@ MSRV **1.88** (edition 2024). Common workspace deps are centralized in root `Car
 **Local-LLM crate (`swink-agent-local-llm`):**
 - Backend flags: `metal`, `cuda`, `cudnn`, `flash-attn`, `mkl`, `accelerate` — each forwards to `mistralrs/<flag>`.
 - No default backend. CPU-only inference when none enabled.
+- Portable CI must not run `cargo ... --all-features` across `swink-agent-local-llm` on a generic Linux runner: `metal`/`accelerate` pull Apple-only dependencies. Cover the rest of the workspace with `--exclude swink-agent-local-llm`, then validate required-feature examples explicitly.
 
 **Policies crate (`swink-agent-policies`):**
 - `default = ["all"]`, 10 individual policy flags. Established pattern for feature gating.
