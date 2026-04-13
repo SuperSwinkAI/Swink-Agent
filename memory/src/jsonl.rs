@@ -174,6 +174,37 @@ fn rewrite_session_file_locked(
     })
 }
 
+fn preserve_existing_lines(
+    path: &Path,
+    id: &str,
+    should_preserve: impl Fn(&str) -> bool,
+) -> io::Result<Vec<String>> {
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+
+    let (_, lines) = read_meta_and_message_lines(path, id)?;
+    Ok(lines
+        .into_iter()
+        .filter(|line| should_preserve(line))
+        .collect())
+}
+
+fn preserve_for_message_save(line: &str) -> bool {
+    match SessionRecord::parse(line) {
+        Ok(SessionRecord::State(_)) => true,
+        Ok(SessionRecord::Llm(_) | SessionRecord::Custom(_)) => false,
+        Err(_) => matches!(
+            SessionEntry::parse(line),
+            Ok(entry) if !matches!(entry, SessionEntry::Message(_))
+        ),
+    }
+}
+
+fn preserve_for_entry_save(line: &str) -> bool {
+    matches!(SessionRecord::parse(line), Ok(SessionRecord::State(_)))
+}
+
 fn save_messages_with_hooks<AfterValidation, WriteOp>(
     path: &Path,
     id: &str,
@@ -202,6 +233,8 @@ fn write_messages_locked(
     messages: &[AgentMessage],
     id: &str,
 ) -> io::Result<()> {
+    let preserved_lines = preserve_existing_lines(path, id, preserve_for_message_save)?;
+
     atomic_write_unlocked(path, |writer| {
         serde_json::to_writer(&mut *writer, meta).map_err(io::Error::other)?;
         writeln!(writer)?;
@@ -210,6 +243,11 @@ fn write_messages_locked(
             if let Some(record) = SessionRecord::from_message(msg, id) {
                 writer.write_all(record.to_json_line()?.as_bytes())?;
                 writeln!(writer)?;
+            }
+        }
+        for line in &preserved_lines {
+            if !line.is_empty() {
+                writeln!(writer, "{line}")?;
             }
         }
         Ok(())
@@ -594,6 +632,7 @@ impl JsonlSessionStore {
             // Increment sequence for the write
             let mut write_meta = meta.clone();
             write_meta.sequence += 1;
+            let preserved_lines = preserve_existing_lines(&path, id, preserve_for_entry_save)?;
 
             atomic_write_unlocked(&path, |writer| {
                 // First line: metadata
@@ -604,6 +643,11 @@ impl JsonlSessionStore {
                 for entry in entries {
                     serde_json::to_writer(&mut *writer, entry).map_err(io::Error::other)?;
                     writeln!(writer)?;
+                }
+                for line in &preserved_lines {
+                    if !line.is_empty() {
+                        writeln!(writer, "{line}")?;
+                    }
                 }
                 Ok(())
             })
@@ -1053,6 +1097,94 @@ mod tests {
             messages[1],
             AgentMessage::Llm(LlmMessage::User(_))
         ));
+    }
+
+    #[test]
+    fn save_preserves_state_and_rich_entries() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = JsonlSessionStore::new(dir.path().to_path_buf()).unwrap();
+
+        let meta = fresh_meta("preserve-save");
+        let entries = vec![
+            SessionEntry::Message(LlmMessage::User(swink_agent::UserMessage {
+                content: vec![swink_agent::ContentBlock::Text {
+                    text: "hello".to_string(),
+                }],
+                timestamp: 1,
+                cache_hint: None,
+            })),
+            SessionEntry::Label {
+                text: "bookmark".to_string(),
+                message_index: 0,
+                timestamp: 2,
+            },
+        ];
+
+        store
+            .save_entries("preserve-save", &meta, &entries)
+            .unwrap();
+        store
+            .save_state("preserve-save", &serde_json::json!({ "cursor": 7 }))
+            .unwrap();
+
+        let (loaded_meta, _) = store.load("preserve-save", None).unwrap();
+        store
+            .save(
+                "preserve-save",
+                &loaded_meta,
+                &[user_msg("updated", 3), user_msg("again", 4)],
+            )
+            .unwrap();
+
+        assert_eq!(
+            store.load_state("preserve-save").unwrap(),
+            Some(serde_json::json!({ "cursor": 7 }))
+        );
+
+        let (_, entries) = store.load_entries("preserve-save").unwrap();
+        assert_eq!(entries.len(), 3, "messages plus preserved label");
+        assert!(matches!(entries[0], SessionEntry::Message(_)));
+        assert!(matches!(entries[1], SessionEntry::Message(_)));
+        assert!(matches!(entries[2], SessionEntry::Label { .. }));
+    }
+
+    #[test]
+    fn save_entries_preserve_saved_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = JsonlSessionStore::new(dir.path().to_path_buf()).unwrap();
+
+        let meta = fresh_meta("preserve-entry-save");
+        store
+            .save("preserve-entry-save", &meta, &[user_msg("hello", 1)])
+            .unwrap();
+        store
+            .save_state("preserve-entry-save", &serde_json::json!({ "cursor": 11 }))
+            .unwrap();
+
+        let (loaded_meta, _) = store.load("preserve-entry-save", None).unwrap();
+        let entries = vec![
+            SessionEntry::Message(LlmMessage::User(swink_agent::UserMessage {
+                content: vec![swink_agent::ContentBlock::Text {
+                    text: "updated".to_string(),
+                }],
+                timestamp: 2,
+                cache_hint: None,
+            })),
+            SessionEntry::Label {
+                text: "kept".to_string(),
+                message_index: 0,
+                timestamp: 3,
+            },
+        ];
+
+        store
+            .save_entries("preserve-entry-save", &loaded_meta, &entries)
+            .unwrap();
+
+        assert_eq!(
+            store.load_state("preserve-entry-save").unwrap(),
+            Some(serde_json::json!({ "cursor": 11 }))
+        );
     }
 
     fn user_msg(text: &str, ts: u64) -> AgentMessage {
