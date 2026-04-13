@@ -3,8 +3,8 @@ use std::sync::Arc;
 use swink_agent::testing::ScriptedStreamFn;
 use swink_agent::testing::text_events;
 use swink_agent::{
-    AgentEvent, AssistantMessage, AssistantMessageEvent, Cost, ModelSpec, StopReason, StreamFn,
-    Usage,
+    AgentEvent, AssistantMessage, AssistantMessageEvent, ContentBlock, Cost, LlmMessage, ModelSpec,
+    StopReason, StreamFn, ToolResultMessage, TurnSnapshot, Usage,
 };
 
 use crate::config::TuiConfig;
@@ -287,4 +287,104 @@ async fn cycle_model_applies_and_restores_provider_binding_on_send() {
             .any(|m| m.role == MessageRole::Assistant && m.content == "from primary after restore")
     );
     assert_eq!(app.model_name, primary_model.model_id);
+}
+
+#[tokio::test]
+async fn turn_end_renders_tool_results_with_diff_data_and_trims_old_turns() {
+    let mut app = App::new(TuiConfig::default());
+
+    for turn in 1..=21 {
+        app.messages
+            .push(make_user_message(&format!("user {turn}")));
+        app.messages
+            .push(make_assistant_message(&format!("assistant {turn}")));
+    }
+
+    let long_first_line = "x".repeat(70);
+    let tool_content = format!("{long_first_line}\nsecond line");
+
+    app.handle_agent_event(AgentEvent::TurnEnd {
+        assistant_message: AssistantMessage {
+            content: vec![ContentBlock::Text {
+                text: "done".to_string(),
+            }],
+            provider: "test".to_string(),
+            model_id: "mock-model".to_string(),
+            usage: Usage::default(),
+            cost: Cost::default(),
+            stop_reason: StopReason::Stop,
+            error_message: None,
+            error_kind: None,
+            timestamp: 0,
+            cache_hint: None,
+        },
+        tool_results: vec![ToolResultMessage {
+            tool_call_id: "call_1".to_string(),
+            content: vec![ContentBlock::Text {
+                text: tool_content.clone(),
+            }],
+            is_error: false,
+            timestamp: 0,
+            details: serde_json::json!({
+                "path": "src/lib.rs",
+                "is_new_file": false,
+                "old_content": "before\nvalue",
+                "new_content": "after\nvalue",
+            }),
+            cache_hint: None,
+        }],
+        reason: swink_agent::TurnEndReason::ToolsExecuted,
+        snapshot: TurnSnapshot {
+            turn_index: 20,
+            messages: Arc::new(vec![LlmMessage::Assistant(AssistantMessage {
+                content: vec![ContentBlock::Text {
+                    text: "done".to_string(),
+                }],
+                provider: "test".to_string(),
+                model_id: "mock-model".to_string(),
+                usage: Usage::default(),
+                cost: Cost::default(),
+                stop_reason: StopReason::Stop,
+                error_message: None,
+                error_kind: None,
+                timestamp: 0,
+                cache_hint: None,
+            })]),
+            usage: Usage::default(),
+            cost: Cost::default(),
+            stop_reason: StopReason::Stop,
+            state_delta: None,
+        },
+    });
+
+    let visible_users: Vec<_> = app
+        .messages
+        .iter()
+        .filter(|message| message.role == MessageRole::User)
+        .map(|message| message.content.as_str())
+        .collect();
+    assert_eq!(visible_users.len(), 20);
+    assert_eq!(visible_users.first(), Some(&"user 2"));
+    assert_eq!(visible_users.last(), Some(&"user 21"));
+
+    let tool_result = app
+        .messages
+        .iter()
+        .find(|message| message.role == MessageRole::ToolResult)
+        .expect("TurnEnd should append a tool result row");
+    assert_eq!(tool_result.content, tool_content);
+    assert_eq!(tool_result.summary, "x".repeat(60));
+    assert!(
+        tool_result.expanded_at.is_some(),
+        "tool results should start expanded"
+    );
+
+    let diff = tool_result
+        .diff_data
+        .as_ref()
+        .expect("tool result should parse diff metadata");
+    assert_eq!(diff.path, "src/lib.rs");
+    assert!(!diff.is_new_file);
+    assert_eq!(diff.old_content, "before\nvalue");
+    assert_eq!(diff.new_content, "after\nvalue");
 }
