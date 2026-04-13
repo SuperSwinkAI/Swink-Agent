@@ -900,6 +900,21 @@ async fn sse_content_filter_finish_reason() {
         }
         _ => unreachable!(),
     }
+
+    // No Done event should follow — the Error is the sole terminal event (#427)
+    let terminal_count = events
+        .iter()
+        .filter(|e| {
+            matches!(
+                e,
+                AssistantMessageEvent::Done { .. } | AssistantMessageEvent::Error { .. }
+            )
+        })
+        .count();
+    assert_eq!(
+        terminal_count, 1,
+        "exactly one terminal event expected, got {terminal_count}"
+    );
 }
 
 // ── T045: HTTP error body with ContentFilterBlocked → ContentFiltered ──────

@@ -689,6 +689,21 @@ async fn openai_content_filter_is_terminal_error() {
             .any(|e| matches!(e, AssistantMessageEvent::Done { .. })),
         "content_filter should stop the stream without a trailing Done: {events:?}"
     );
+
+    // Exactly one terminal event total
+    let terminal_count = events
+        .iter()
+        .filter(|e| {
+            matches!(
+                e,
+                AssistantMessageEvent::Done { .. } | AssistantMessageEvent::Error { .. }
+            )
+        })
+        .count();
+    assert_eq!(
+        terminal_count, 1,
+        "exactly one terminal event expected, got {terminal_count}"
+    );
 }
 
 #[tokio::test]
