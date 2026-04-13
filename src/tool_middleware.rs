@@ -51,8 +51,9 @@ type MiddlewareFn = Arc<
 
 /// Intercepts [`execute()`](AgentTool::execute) on a wrapped [`AgentTool`].
 ///
-/// All metadata methods (`name`, `label`, `description`, `parameters_schema`,
-/// `requires_approval`) delegate to the inner tool.
+/// All descriptor methods (`name`, `label`, `description`,
+/// `parameters_schema`, `metadata`, `requires_approval`, `auth_config`)
+/// delegate to the inner tool.
 pub struct ToolMiddleware {
     inner: Arc<dyn AgentTool>,
     middleware_fn: MiddlewareFn,
@@ -153,12 +154,20 @@ impl AgentTool for ToolMiddleware {
         self.inner.parameters_schema()
     }
 
+    fn metadata(&self) -> Option<crate::tool::ToolMetadata> {
+        self.inner.metadata()
+    }
+
     fn requires_approval(&self) -> bool {
         self.inner.requires_approval()
     }
 
     fn approval_context(&self, params: &Value) -> Option<Value> {
         self.inner.approval_context(params)
+    }
+
+    fn auth_config(&self) -> Option<crate::credential::AuthConfig> {
+        self.inner.auth_config()
     }
 
     fn execute(
@@ -221,8 +230,57 @@ mod tests {
     }
 
     #[test]
-    fn metadata_delegates_to_inner() {
-        let inner: Arc<dyn AgentTool> = dummy_tool();
+    fn metadata_and_auth_config_delegate_to_inner() {
+        struct MetadataAuthTool;
+
+        impl AgentTool for MetadataAuthTool {
+            fn name(&self) -> &str {
+                "auth_tool"
+            }
+
+            fn label(&self) -> &str {
+                "Auth Tool"
+            }
+
+            fn description(&self) -> &str {
+                "A tool with metadata and auth config."
+            }
+
+            fn parameters_schema(&self) -> &Value {
+                &Value::Null
+            }
+
+            fn metadata(&self) -> Option<crate::tool::ToolMetadata> {
+                Some(
+                    crate::tool::ToolMetadata::with_namespace("middleware-tests")
+                        .with_version("1.0.0"),
+                )
+            }
+
+            fn auth_config(&self) -> Option<crate::credential::AuthConfig> {
+                Some(crate::credential::AuthConfig {
+                    credential_key: "weather-api".to_string(),
+                    auth_scheme: crate::credential::AuthScheme::ApiKeyHeader(
+                        "X-Api-Key".to_string(),
+                    ),
+                    credential_type: crate::credential::CredentialType::ApiKey,
+                })
+            }
+
+            fn execute(
+                &self,
+                _tool_call_id: &str,
+                _params: Value,
+                _cancellation_token: CancellationToken,
+                _on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
+                _state: std::sync::Arc<std::sync::RwLock<crate::SessionState>>,
+                _credential: Option<crate::credential::ResolvedCredential>,
+            ) -> ToolFuture<'_> {
+                Box::pin(async { AgentToolResult::text("ok") })
+            }
+        }
+
+        let inner: Arc<dyn AgentTool> = Arc::new(MetadataAuthTool);
         let mw = ToolMiddleware::new(
             inner,
             |tool, id, params, cancel, on_update, state, credential| {
@@ -233,10 +291,29 @@ mod tests {
             },
         );
 
-        assert_eq!(mw.name(), "dummy");
-        assert_eq!(mw.label(), "Dummy");
-        assert_eq!(mw.description(), "A dummy tool.");
-        assert!(mw.requires_approval());
+        assert_eq!(mw.name(), "auth_tool");
+        assert_eq!(mw.label(), "Auth Tool");
+        assert_eq!(mw.description(), "A tool with metadata and auth config.");
+        assert!(!mw.requires_approval());
+        assert_eq!(
+            mw.metadata(),
+            Some(
+                crate::tool::ToolMetadata::with_namespace("middleware-tests").with_version("1.0.0"),
+            )
+        );
+
+        let auth_config = mw
+            .auth_config()
+            .expect("middleware should delegate auth config");
+        assert_eq!(auth_config.credential_key, "weather-api");
+        assert!(matches!(
+            auth_config.auth_scheme,
+            crate::credential::AuthScheme::ApiKeyHeader(ref header) if header == "X-Api-Key"
+        ));
+        assert_eq!(
+            auth_config.credential_type,
+            crate::credential::CredentialType::ApiKey
+        );
     }
 
     fn test_state() -> std::sync::Arc<std::sync::RwLock<crate::SessionState>> {
