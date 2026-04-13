@@ -17,6 +17,18 @@ fn invalid_state_snapshot(error: &serde_json::Error) -> std::io::Error {
     )
 }
 
+fn restore_session_state(
+    snapshot: Option<&serde_json::Value>,
+) -> Result<crate::SessionState, std::io::Error> {
+    snapshot.map_or_else(
+        || Ok(crate::SessionState::new()),
+        |state_val| {
+            crate::SessionState::restore_from_snapshot(state_val.clone())
+                .map_err(|e| invalid_state_snapshot(&e))
+        },
+    )
+}
+
 impl Agent {
     /// Rebind `self.stream_fn` if the current model's `provider`/`model_id`
     /// matches one of the registered `model_stream_fns`.
@@ -78,23 +90,21 @@ impl Agent {
         &mut self,
         checkpoint: &Checkpoint,
     ) -> Result<(), std::io::Error> {
-        self.state.messages = checkpoint.restore_messages(self.custom_message_registry.as_deref());
+        let restored_messages =
+            checkpoint.restore_messages(self.custom_message_registry.as_deref());
+        let restored_state = restore_session_state(checkpoint.state.as_ref())?;
+
+        self.state.messages = restored_messages;
         self.state
             .system_prompt
             .clone_from(&checkpoint.system_prompt);
         self.state.model.provider.clone_from(&checkpoint.provider);
         self.state.model.model_id.clone_from(&checkpoint.model_id);
         self.rebind_stream_fn_for_current_model();
-
-        let restored = match checkpoint.state.as_ref() {
-            Some(state_val) => crate::SessionState::restore_from_snapshot(state_val.clone())
-                .map_err(|e| invalid_state_snapshot(&e))?,
-            None => crate::SessionState::new(),
-        };
         *self
             .session_state
             .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = restored;
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = restored_state;
 
         Ok(())
     }
@@ -203,30 +213,27 @@ impl Agent {
         &mut self,
         checkpoint: &crate::checkpoint::LoopCheckpoint,
     ) -> Result<(), AgentError> {
-        self.state.messages = checkpoint.restore_messages(self.custom_message_registry.as_deref());
+        let restored_messages =
+            checkpoint.restore_messages(self.custom_message_registry.as_deref());
+        if restored_messages.is_empty() {
+            return Err(AgentError::NoMessages);
+        }
+        let restored_state =
+            restore_session_state(checkpoint.state.as_ref()).map_err(AgentError::stream)?;
+
+        self.state.messages = restored_messages;
         self.state
             .system_prompt
             .clone_from(&checkpoint.system_prompt);
         self.state.model.provider.clone_from(&checkpoint.provider);
         self.state.model.model_id.clone_from(&checkpoint.model_id);
         self.rebind_stream_fn_for_current_model();
-
-        let restored = match checkpoint.state.as_ref() {
-            Some(state_val) => crate::SessionState::restore_from_snapshot(state_val.clone())
-                .map_err(|e| invalid_state_snapshot(&e))
-                .map_err(AgentError::stream)?,
-            None => crate::SessionState::new(),
-        };
         {
             let mut s = self
                 .session_state
                 .write()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            *s = restored;
-        }
-
-        if self.state.messages.is_empty() {
-            return Err(AgentError::NoMessages);
+            *s = restored_state;
         }
 
         // Clear live queues before re-enqueueing from the checkpoint so that
@@ -805,7 +812,7 @@ mod tests {
         let checkpoint = source.save_checkpoint("cp-rebind").await.unwrap();
 
         // Restore into agent (currently on model_a).
-        agent.restore_from_checkpoint(&checkpoint);
+        agent.restore_from_checkpoint(&checkpoint).unwrap();
 
         // Model metadata should reflect model_b.
         assert_eq!(agent.state.model.provider, "provider-b");
@@ -929,6 +936,123 @@ mod tests {
             }
             other => panic!("expected StreamError, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn restore_from_checkpoint_keeps_live_state_when_snapshot_is_corrupt() {
+        let checkpoint = Checkpoint::new(
+            "bad-state",
+            "restored-system",
+            "restored",
+            "restored-model",
+            &[user_msg("restored")],
+        )
+        .with_state(serde_json::json!(["bad"]));
+        let mut agent = make_agent(None);
+        agent.state.messages.push(user_msg("existing"));
+        agent.state.system_prompt = "live-system".to_string();
+        agent.state.model = ModelSpec::new("live-provider", "live-model");
+        {
+            let mut state = agent
+                .session_state()
+                .write()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            state.set("live", 7_i64).unwrap();
+        }
+
+        let err = agent.restore_from_checkpoint(&checkpoint).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+
+        assert_eq!(agent.state.messages.len(), 1);
+        match &agent.state.messages[0] {
+            AgentMessage::Llm(LlmMessage::User(user)) => match &user.content[0] {
+                crate::types::ContentBlock::Text { text } => assert_eq!(text, "existing"),
+                other => panic!("expected text content, got {other:?}"),
+            },
+            other => panic!("expected user message, got {other:?}"),
+        }
+        assert_eq!(agent.state.system_prompt, "live-system");
+        assert_eq!(agent.state.model.provider, "live-provider");
+        assert_eq!(agent.state.model.model_id, "live-model");
+
+        let state = agent
+            .session_state()
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert_eq!(state.get::<i64>("live"), Some(7));
+    }
+
+    #[tokio::test]
+    async fn restore_from_loop_checkpoint_keeps_live_state_when_snapshot_is_corrupt() {
+        let checkpoint = LoopCheckpoint::new(
+            "restored-system",
+            "restored",
+            "restored-model",
+            &[user_msg("restored")],
+        )
+        .with_state(serde_json::json!(["bad"]));
+        let mut agent = make_agent(None);
+        agent.state.messages.push(user_msg("existing"));
+        agent.state.system_prompt = "live-system".to_string();
+        agent.state.model = ModelSpec::new("live-provider", "live-model");
+        agent.follow_up(user_msg("live-follow-up"));
+        agent.steer(user_msg("live-steering"));
+        {
+            let mut state = agent
+                .session_state()
+                .write()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            state.set("live", 9_i64).unwrap();
+        }
+
+        let err = agent.resume(&checkpoint).await.unwrap_err();
+        match err {
+            AgentError::StreamError { source } => {
+                let io = source
+                    .downcast_ref::<std::io::Error>()
+                    .expect("expected io::Error source");
+                assert_eq!(io.kind(), std::io::ErrorKind::InvalidData);
+            }
+            other => panic!("expected StreamError, got {other:?}"),
+        }
+
+        assert_eq!(agent.state.messages.len(), 1);
+        match &agent.state.messages[0] {
+            AgentMessage::Llm(LlmMessage::User(user)) => match &user.content[0] {
+                crate::types::ContentBlock::Text { text } => assert_eq!(text, "existing"),
+                other => panic!("expected text content, got {other:?}"),
+            },
+            other => panic!("expected user message, got {other:?}"),
+        }
+        assert_eq!(agent.state.system_prompt, "live-system");
+        assert_eq!(agent.state.model.provider, "live-provider");
+        assert_eq!(agent.state.model.model_id, "live-model");
+
+        let state = agent
+            .session_state()
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert_eq!(state.get::<i64>("live"), Some(9));
+        drop(state);
+
+        let follow_up = agent
+            .follow_up_queue
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let steering = agent
+            .steering_queue
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert_eq!(
+            follow_up.len(),
+            1,
+            "failed restore should not clear follow-up queue"
+        );
+        assert_eq!(
+            steering.len(),
+            1,
+            "failed restore should not clear steering queue"
+        );
     }
 
     #[tokio::test]
