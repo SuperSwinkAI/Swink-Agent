@@ -3,14 +3,15 @@
 //! Tests T038–T043: role-based colors, inline diff coloring, context gauge
 //! thresholds, plan mode, and approval mode classification.
 //!
-//! Because the TUI crate keeps `theme` and `ui` modules private, these tests
-//! exercise the public API surface: `App`, `OperatingMode`, `ApprovalMode`,
-//! `MessageRole`, `AgentStatus`, `DisplayMessage`, and `TuiConfig`.
+//! Because the TUI crate keeps its implementation modules private, these tests
+//! exercise the supported crate-root API surface: `App`, `OperatingMode`,
+//! `ApprovalMode`, `MessageRole`, `AgentStatus`, `DisplayMessage`, and
+//! `TuiConfig`.
 
 use swink_agent::ApprovalMode;
-use swink_agent_tui::App;
-use swink_agent_tui::app::{AgentStatus, DisplayMessage, MessageRole, OperatingMode};
-use swink_agent_tui::config::TuiConfig;
+use swink_agent_tui::{
+    AgentStatus, App, DisplayMessage, MessageRole, OperatingMode, TuiConfig,
+};
 
 // ---------------------------------------------------------------------------
 // Regression: credentials and wizard modules are gated behind `cli` feature

@@ -13,10 +13,11 @@ use swink_agent_adapters::{
 };
 
 use swink_agent_tui::{
-    TuiConfig, credentials, launch, resolve_system_prompt, restore_terminal, setup_terminal, wizard,
+    TuiConfig, TuiError, credentials, launch, resolve_system_prompt, restore_terminal,
+    setup_terminal, wizard,
 };
 
-type AppResult<T> = Result<T, swink_agent_tui::error::TuiError>;
+type AppResult<T> = Result<T, TuiError>;
 
 fn main() -> AppResult<()> {
     if !std::io::stdout().is_terminal() {
@@ -76,7 +77,7 @@ fn run(
 
         launch(config, terminal, create_options(system_prompt))
             .await
-            .map_err(|e| swink_agent_tui::error::TuiError::Other(e.to_string().into()))
+            .map_err(|e| TuiError::Other(e.to_string().into()))
     })
 }
 
