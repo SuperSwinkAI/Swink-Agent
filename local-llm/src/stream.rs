@@ -834,23 +834,25 @@ fn extract_thinking_delta(content: &str) -> (Option<String>, String) {
     let think_start = "<think>";
     let think_end = "</think>";
 
-    if let Some(start_idx) = content.find(think_start)
-        && let Some(end_idx) = content.find(think_end)
-    {
-        let thinking = content[start_idx + think_start.len()..end_idx]
+    if let Some(start_idx) = content.find(think_start) {
+        let search_start = start_idx + think_start.len();
+        if let Some(relative_end_idx) = content[search_start..].find(think_end) {
+            let end_idx = search_start + relative_end_idx;
+            let thinking = content[search_start..end_idx]
             .trim()
             .to_string();
-        let before = &content[..start_idx];
-        let after = &content[end_idx + think_end.len()..];
-        let text = format!("{before}{after}").trim().to_string();
-        return (
-            if thinking.is_empty() {
-                None
-            } else {
-                Some(thinking)
-            },
-            text,
-        );
+            let before = &content[..start_idx];
+            let after = &content[end_idx + think_end.len()..];
+            let text = format!("{before}{after}").trim().to_string();
+            return (
+                if thinking.is_empty() {
+                    None
+                } else {
+                    Some(thinking)
+                },
+                text,
+            );
+        }
     }
 
     (None, content.to_string())
@@ -904,6 +906,22 @@ mod tests {
         let (thinking, text) = extract_thinking_delta(input);
         assert!(thinking.is_none());
         assert_eq!(text, "<think>unclosed thinking");
+    }
+
+    #[test]
+    fn extract_thinking_ignores_closing_tag_before_opening_tag() {
+        let input = "</think> stray <think>later";
+        let (thinking, text) = extract_thinking_delta(input);
+        assert!(thinking.is_none());
+        assert_eq!(text, "</think> stray <think>later");
+    }
+
+    #[test]
+    fn extract_thinking_finds_closing_tag_after_opening_tag() {
+        let input = "</think> stray <think>later</think>";
+        let (thinking, text) = extract_thinking_delta(input);
+        assert_eq!(thinking.as_deref(), Some("later"));
+        assert_eq!(text, "</think> stray");
     }
 
     #[test]

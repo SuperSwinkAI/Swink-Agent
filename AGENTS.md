@@ -115,6 +115,7 @@ MSRV **1.88** (edition 2024). Common workspace deps are centralized in root `Car
 ### Local LLM Streaming (`local-llm/src/stream.rs`)
 
 - Gemma 4 delimiter scanners must only slice `&str` at UTF-8 character boundaries. For partial `<|channel>thought\n` and `<tool_call|>` matches, use the shared UTF-8-safe suffix helper instead of raw byte-offset suffix slicing.
+- `extract_thinking_delta` must search for `</think>` only after the matching `<think>` opener. Stray closing tags can appear earlier in a chunk; treating the first closing tag globally can panic on an invalid slice.
 
 ### Test Infrastructure (`src/testing.rs`)
 
