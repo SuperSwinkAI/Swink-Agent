@@ -174,7 +174,7 @@ fn dispatch_plugin_on_init(agent: &Agent) {
 }
 
 #[cfg(not(feature = "plugins"))]
-fn dispatch_plugin_on_init(_agent: &Agent) {}
+const fn dispatch_plugin_on_init(_agent: &Agent) {}
 // ─── Agent ───────────────────────────────────────────────────────────────────
 
 /// Stateful wrapper over the agent loop.
