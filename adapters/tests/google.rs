@@ -82,6 +82,91 @@ async fn google_text_stream() {
 }
 
 #[tokio::test]
+async fn google_cancellation_after_first_chunk_emits_aborted_and_closes_text() {
+    let body = [
+        r#"data: {"candidates":[{"content":{"parts":[{"text":"hello"}]}}]}"#,
+        "",
+        r#"data: {"candidates":[{"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":5,"totalTokenCount":15}}"#,
+        "",
+        "data: [DONE]",
+        "",
+    ]
+    .join("\n");
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path(
+            "/v1beta/models/gemini-3-flash-preview:streamGenerateContent",
+        ))
+        .and(query_param("alt", "sse"))
+        .and(header("x-goog-api-key", "test-key"))
+        .respond_with(sse_response(&body))
+        .mount(&server)
+        .await;
+
+    let stream_fn = GeminiStreamFn::new(server.uri(), "test-key", ApiVersion::V1beta);
+    let model = test_model();
+    let context = test_context();
+    let options = StreamOptions::default();
+    let token = CancellationToken::new();
+    let cancel_token = token.clone();
+    let mut stream = Box::pin(stream_fn.stream(&model, &context, &options, token));
+    let mut events = Vec::new();
+    let mut cancelled = false;
+
+    while let Some(event) = stream.next().await {
+        if matches!(event, AssistantMessageEvent::TextDelta { .. }) && !cancelled {
+            cancel_token.cancel();
+            cancelled = true;
+        }
+        events.push(event);
+    }
+
+    assert!(cancelled, "expected to cancel after the first text chunk");
+
+    let types: Vec<_> = events.iter().map(event_name).collect();
+    assert!(types.contains(&"Start"), "missing Start: {types:?}");
+    assert!(types.contains(&"TextStart"), "missing TextStart: {types:?}");
+    assert!(types.contains(&"TextDelta"), "missing TextDelta: {types:?}");
+    assert!(types.contains(&"TextEnd"), "missing TextEnd: {types:?}");
+    assert!(types.contains(&"Error"), "missing Error: {types:?}");
+    assert!(!types.contains(&"Done"), "cancellation should not emit Done: {types:?}");
+
+    let text_end_pos = types
+        .iter()
+        .position(|event| *event == "TextEnd")
+        .expect("missing TextEnd");
+    let error_pos = types
+        .iter()
+        .position(|event| *event == "Error")
+        .expect("missing Error");
+    assert!(
+        text_end_pos < error_pos,
+        "open text blocks should close before the abort error: {types:?}"
+    );
+
+    let terminal_error = events
+        .iter()
+        .find_map(|event| match event {
+            AssistantMessageEvent::Error {
+                stop_reason,
+                error_message,
+                error_kind,
+                ..
+            } => Some((*stop_reason, error_message.clone(), *error_kind)),
+            _ => None,
+        })
+        .expect("missing terminal Error event");
+    assert_eq!(terminal_error.0, StopReason::Aborted);
+    assert_eq!(terminal_error.2, None, "cancellation should not be retryable");
+    assert!(
+        terminal_error.1.contains("Google request cancelled"),
+        "unexpected cancellation message: {}",
+        terminal_error.1
+    );
+}
+
+#[tokio::test]
 async fn google_tool_call_stream() {
     let body = [
         r#"data: {"candidates":[{"content":{"parts":[{"functionCall":{"id":"call_1","name":"get_weather","args":{"city":"Paris"}}}]}}]}"#,
