@@ -30,6 +30,7 @@
 /// that exceeds the boilerplate it removes. HTTP status classification
 /// (the truly duplicated logic) is handled by
 /// [`classify::error_event_from_status`](crate::classify::error_event_from_status).
+#[allow(dead_code)]
 pub struct AdapterBase {
     pub base_url: String,
     pub api_key: String,
@@ -37,6 +38,7 @@ pub struct AdapterBase {
 }
 
 impl AdapterBase {
+    #[allow(dead_code)]
     pub fn new(base_url: impl Into<String>, api_key: impl Into<String>) -> Self {
         Self {
             base_url: base_url.into().trim_end_matches('/').to_string(),
