@@ -85,3 +85,20 @@ const _: () = {
     const fn assert_send_sync<T: Send + Sync>() {}
     assert_send_sync::<OpenAiStreamFn>();
 };
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn trailing_slash_stripped() {
+        let oai = OpenAiStreamFn::new("https://api.openai.com/", "key");
+        assert_eq!(oai.base.base_url, "https://api.openai.com");
+    }
+
+    #[test]
+    fn no_trailing_slash_unchanged() {
+        let oai = OpenAiStreamFn::new("https://api.openai.com", "key");
+        assert_eq!(oai.base.base_url, "https://api.openai.com");
+    }
+}
