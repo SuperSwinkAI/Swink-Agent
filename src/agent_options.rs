@@ -149,6 +149,15 @@ pub struct AgentOptions {
     /// appended after direct tools (namespaced with the plugin name).
     #[cfg(feature = "plugins")]
     pub plugins: Vec<Arc<dyn crate::plugin::Plugin>>,
+    /// Optional agent name used for transfer chain safety enforcement.
+    ///
+    /// When set, the loop pushes this name onto the [`TransferChain`](crate::transfer::TransferChain)
+    /// at startup so circular transfers back to this agent are detected.
+    pub agent_name: Option<String>,
+    /// Optional transfer chain carried from a previous handoff.
+    ///
+    /// When set, the loop starts with this chain instead of an empty one.
+    pub transfer_chain: Option<crate::transfer::TransferChain>,
 }
 
 impl AgentOptions {
@@ -199,6 +208,8 @@ impl AgentOptions {
             cache_config: None,
             #[cfg(feature = "plugins")]
             plugins: Vec::new(),
+            agent_name: None,
+            transfer_chain: None,
         }
     }
 
@@ -630,6 +641,27 @@ impl AgentOptions {
         for plugin in plugins {
             self = self.with_plugin(plugin);
         }
+        self
+    }
+
+    /// Set the agent name for transfer chain safety enforcement.
+    ///
+    /// When set, the agent loop pushes this name onto the
+    /// [`TransferChain`](crate::transfer::TransferChain) at startup. Transfers
+    /// back to this agent (circular) or exceeding max depth are rejected.
+    #[must_use]
+    pub fn with_agent_name(mut self, name: impl Into<String>) -> Self {
+        self.agent_name = Some(name.into());
+        self
+    }
+
+    /// Seed transfer chain state from a previous handoff signal.
+    ///
+    /// Use this on the target agent so transfer safety checks continue across
+    /// agent boundaries.
+    #[must_use]
+    pub fn with_transfer_chain(mut self, chain: crate::transfer::TransferChain) -> Self {
+        self.transfer_chain = Some(chain);
         self
     }
 

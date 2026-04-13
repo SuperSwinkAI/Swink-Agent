@@ -890,8 +890,54 @@ async fn handle_tool_calls(
         AgentMessage::Llm(LlmMessage::Assistant(msg_for_turn_end.clone()));
 
     // xiii-a. Transfer signal detection: if a tool signaled a transfer,
-    // enrich the signal with the committed conversation history and exit.
+    // validate against the transfer chain for safety, then enrich and exit.
     if let Some(mut signal) = detected_transfer_signal {
+        // Enforce transfer chain safety: check for circular transfers and
+        // max-depth violations before honoring the transfer.
+        match state.transfer_chain.push(signal.target_agent()) {
+            Ok(()) => {
+                // Chain check passed — proceed with the transfer.
+            }
+            Err(chain_err) => {
+                // Chain check failed — convert transfer to an error tool result
+                // so the LLM can retry or take a different action.
+                tracing::warn!(
+                    target_agent = %signal.target_agent(),
+                    error = %chain_err,
+                    "transfer chain safety check failed, rejecting transfer"
+                );
+
+                // The transfer is rejected; continue the inner loop instead
+                // of terminating.
+                let state_delta = flush_state_delta(config, tx).await;
+                let snapshot = build_snapshot(state, msg_for_turn_end.stop_reason, state_delta);
+                if !emit(
+                    tx,
+                    AgentEvent::TurnEnd {
+                        assistant_message: msg_for_turn_end,
+                        tool_results,
+                        reason: if steering_interrupted {
+                            TurnEndReason::SteeringInterrupt
+                        } else {
+                            TurnEndReason::ToolsExecuted
+                        },
+                        snapshot,
+                    },
+                )
+                .await
+                {
+                    return TurnOutcome::Return;
+                }
+
+                if let Some(reason) = policy_stop {
+                    tracing::info!("post-turn policy stopped agent: {reason}");
+                    return emit_agent_end(state, tx).await;
+                }
+
+                return TurnOutcome::ContinueInner;
+            }
+        }
+
         let llm_history: Vec<LlmMessage> = state
             .context_messages
             .iter()
@@ -900,7 +946,9 @@ async fn handle_tool_calls(
                 AgentMessage::Custom(_) => None,
             })
             .collect();
-        signal = signal.with_conversation_history(llm_history);
+        signal = signal
+            .with_conversation_history(llm_history)
+            .with_transfer_chain(state.transfer_chain.clone());
 
         tracing::info!(
             target_agent = %signal.target_agent(),

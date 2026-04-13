@@ -175,6 +175,8 @@ fn default_convert_to_llm() -> ConvertToLlmBoxed {
 
 fn default_config(stream_fn: Arc<dyn StreamFn>) -> AgentLoopConfig {
     AgentLoopConfig {
+        agent_name: None,
+        transfer_chain: None,
         model: default_model(),
         stream_options: StreamOptions::default(),
         retry_strategy: Box::new(

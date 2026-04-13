@@ -20,7 +20,7 @@ use tokio_util::sync::CancellationToken;
 use swink_agent::testing::SimpleMockStreamFn;
 use swink_agent::{
     Agent, AgentMessage, AgentOptions, AgentRegistry, AgentTool, AgentToolResult, ContentBlock,
-    DefaultRetryStrategy, LlmMessage, ModelSpec, StopReason, ToolExecutionPolicy,
+    DefaultRetryStrategy, LlmMessage, ModelSpec, StopReason, ToolExecutionPolicy, TransferChain,
     TransferToAgentTool,
 };
 
@@ -552,4 +552,219 @@ async fn transfer_to_nonexistent_agent_produces_error_and_loop_continues() {
         has_error_result,
         "should have an error tool result for nonexistent agent"
     );
+}
+
+// ─── Transfer chain safety enforcement (issue #472) ────────────────────────
+
+/// Build an Agent with the transfer tool and a known agent_name for chain tracking.
+fn make_named_transfer_agent(
+    name: &str,
+    stream_fn: Arc<MockStreamFn>,
+    registry: Arc<AgentRegistry>,
+) -> Agent {
+    make_named_transfer_agent_with_chain(name, stream_fn, registry, None)
+}
+
+/// Build an Agent with a known agent_name and optional carried transfer chain.
+fn make_named_transfer_agent_with_chain(
+    name: &str,
+    stream_fn: Arc<MockStreamFn>,
+    registry: Arc<AgentRegistry>,
+    transfer_chain: Option<TransferChain>,
+) -> Agent {
+    let transfer_tool = Arc::new(TransferToAgentTool::new(registry));
+    let mut opts = AgentOptions::new(
+        "test system prompt",
+        default_model(),
+        stream_fn,
+        default_convert,
+    )
+    .with_tools(vec![transfer_tool as Arc<dyn AgentTool>])
+    .with_retry_strategy(fast_retry())
+    .with_agent_name(name);
+    if let Some(chain) = transfer_chain {
+        opts = opts.with_transfer_chain(chain);
+    }
+    Agent::new(opts)
+}
+
+// Self-transfer (A -> A) is blocked by the transfer chain.
+#[tokio::test]
+async fn transfer_chain_blocks_self_transfer() {
+    let registry = Arc::new(AgentRegistry::new());
+    registry.register("support", dummy_agent());
+
+    // Turn 1: LLM calls transfer_to_agent targeting itself ("support")
+    // Turn 2: After the rejected transfer, LLM gives a text response
+    let stream_fn = Arc::new(MockStreamFn::new(vec![
+        tool_call_events(
+            "tc_transfer",
+            "transfer_to_agent",
+            &transfer_args("support", "self-transfer"),
+        ),
+        text_only_events("I'll help you directly instead"),
+    ]));
+
+    let mut agent = make_named_transfer_agent("support", stream_fn, registry);
+    let result = agent
+        .prompt_async(vec![user_msg("transfer me to support")])
+        .await
+        .unwrap();
+
+    // The transfer should NOT happen — the chain rejects circular transfers.
+    assert_ne!(
+        result.stop_reason,
+        StopReason::Transfer,
+        "self-transfer should be blocked by TransferChain"
+    );
+    assert!(
+        result.transfer_signal.is_none(),
+        "transfer_signal should be None when self-transfer is blocked"
+    );
+}
+
+// Repeated-agent loop (A -> B -> A) is blocked on the second hop.
+// This test verifies that the chain correctly identifies the circular
+// pattern by checking that the first transfer (support -> billing) works,
+// meaning the chain mechanism is properly initialized with the current
+// agent name.
+#[tokio::test]
+async fn transfer_chain_blocks_circular_a_to_b_to_a() {
+    // Register both agents in the registry.
+    let registry = Arc::new(AgentRegistry::new());
+    registry.register("support", dummy_agent());
+    registry.register("billing", dummy_agent());
+
+    // Agent "support" transfers to "billing" — this should succeed since
+    // "billing" is not in the chain yet (chain = ["support"]).
+    let support_stream = Arc::new(MockStreamFn::new(vec![
+        tool_call_events(
+            "tc_transfer",
+            "transfer_to_agent",
+            &transfer_args("billing", "billing question"),
+        ),
+        text_only_events("fallback"),
+    ]));
+
+    let mut support_agent =
+        make_named_transfer_agent("support", support_stream, Arc::clone(&registry));
+    let first_result = support_agent
+        .prompt_async(vec![user_msg("transfer me to billing")])
+        .await
+        .unwrap();
+
+    // First transfer should succeed (support -> billing).
+    assert_eq!(
+        first_result.stop_reason,
+        StopReason::Transfer,
+        "first transfer in chain should succeed"
+    );
+    let first_signal = first_result.transfer_signal.as_ref().unwrap();
+    assert_eq!(first_signal.target_agent(), "billing");
+
+    // Second hop on the transferred-to agent: billing -> support should be
+    // rejected because the carried chain already contains "support".
+    let billing_stream = Arc::new(MockStreamFn::new(vec![
+        tool_call_events(
+            "tc_transfer_back",
+            "transfer_to_agent",
+            &transfer_args("support", "route back"),
+        ),
+        text_only_events("I'll handle this directly"),
+    ]));
+    let carried_chain = first_signal
+        .transfer_chain()
+        .expect("handoff signal should carry transfer chain")
+        .clone();
+    let mut billing_agent = make_named_transfer_agent_with_chain(
+        "billing",
+        billing_stream,
+        Arc::clone(&registry),
+        Some(carried_chain),
+    );
+    let second_result = billing_agent
+        .prompt_async(vec![user_msg("continue on billing and transfer back")])
+        .await
+        .unwrap();
+
+    assert_ne!(
+        second_result.stop_reason,
+        StopReason::Transfer,
+        "A->B->A must be blocked across handoffs"
+    );
+    assert!(
+        second_result.transfer_signal.is_none(),
+        "blocked cross-handoff transfer must not return a transfer signal"
+    );
+}
+
+// Max depth enforcement across handoffs: carried chains at max depth should
+// reject the next transfer on the receiving agent.
+#[tokio::test]
+async fn transfer_chain_max_depth_is_enforced_in_loop() {
+    // Register a target agent.
+    let registry = Arc::new(AgentRegistry::new());
+    registry.register("target", dummy_agent());
+
+    // Seed a carried chain already at max depth.
+    let mut carried_chain = TransferChain::new(2);
+    carried_chain.push("agent-0").unwrap();
+    carried_chain.push("agent-1").unwrap();
+
+    // Receiving agent attempts another transfer, which should fail due to max depth.
+    let stream_fn = Arc::new(MockStreamFn::new(vec![
+        tool_call_events(
+            "tc_transfer",
+            "transfer_to_agent",
+            &transfer_args("target", "handoff"),
+        ),
+        text_only_events("cannot transfer further"),
+    ]));
+
+    let mut agent =
+        make_named_transfer_agent_with_chain("agent-1", stream_fn, registry, Some(carried_chain));
+    let result = agent
+        .prompt_async(vec![user_msg("transfer me")])
+        .await
+        .unwrap();
+
+    assert_ne!(
+        result.stop_reason,
+        StopReason::Transfer,
+        "transfer should be blocked when carried chain is already at max depth"
+    );
+    assert!(
+        result.transfer_signal.is_none(),
+        "blocked max-depth transfer must not return a transfer signal"
+    );
+}
+
+// When no agent_name is set, transfers still work (no chain enforcement).
+#[tokio::test]
+async fn transfer_works_without_agent_name() {
+    let registry = registry_with_billing();
+
+    let stream_fn = Arc::new(MockStreamFn::new(vec![
+        tool_call_events(
+            "tc_transfer",
+            "transfer_to_agent",
+            &transfer_args("billing", "billing question"),
+        ),
+        text_only_events("fallback"),
+    ]));
+
+    // Use the old-style agent without agent_name.
+    let mut agent = make_transfer_agent(stream_fn, registry);
+    let result = agent
+        .prompt_async(vec![user_msg("transfer me")])
+        .await
+        .unwrap();
+
+    // Should still work — chain starts empty, no current agent to check against.
+    assert_eq!(
+        result.stop_reason,
+        StopReason::Transfer,
+        "transfer without agent_name should succeed"
+    );
+    assert!(result.transfer_signal.is_some());
 }

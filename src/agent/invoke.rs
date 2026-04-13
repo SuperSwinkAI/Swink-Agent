@@ -308,6 +308,8 @@ impl Agent {
             };
 
         AgentLoopConfig {
+            agent_name: self.agent_name.clone(),
+            transfer_chain: self.transfer_chain.clone(),
             model: self.state.model.clone(),
             stream_options: self.stream_options.clone(),
             retry_strategy: Box::new(SharedRetryStrategy(Arc::clone(&self.retry_strategy))),
