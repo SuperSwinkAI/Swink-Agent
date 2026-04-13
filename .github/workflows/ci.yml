@@ -62,6 +62,24 @@ jobs:
 
       - run: cargo hack check --workspace --each-feature --no-dev-deps
 
+  all-features:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Test portable all-features workspace surface
+        run: cargo test --workspace --all-features --exclude swink-agent-local-llm
+
+      - name: Build policies required-feature example
+        run: cargo build -p swink-agent-policies --all-features --example with_policies
+
+      - name: Build TUI required-feature example
+        run: cargo build -p swink-agent-tui --all-features --example custom_agent
+
   deny:
     runs-on: ubuntu-latest
     steps:
