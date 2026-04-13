@@ -11,7 +11,7 @@ use futures::{
 };
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
-use tracing::{Instrument, debug, error, info, info_span};
+use tracing::{Instrument, debug, error, info, info_span, warn};
 
 use crate::tool::{
     AgentTool, AgentToolResult, ApprovalMode, ToolApproval, ToolApprovalRequest,
@@ -480,6 +480,8 @@ enum GroupOutcome {
     TransferInterrupt,
 }
 
+const INTERRUPT_ABORT_GRACE: std::time::Duration = std::time::Duration::from_millis(50);
+
 /// Collect results for a single execution group's spawned handles.
 async fn collect_group_results(
     tool_calls: &[ToolCallInfo],
@@ -537,9 +539,17 @@ async fn collect_group_results(
             for handle in &abort_handles {
                 handle.abort();
             }
-            // Drain remaining futures after aborting them so the group can
-            // complete even when a tool ignores the cancellation token.
-            while futs.next().await.is_some() {}
+            if tokio::time::timeout(INTERRUPT_ABORT_GRACE, async {
+                while futs.next().await.is_some() {}
+            })
+            .await
+            .is_err()
+            {
+                warn!(
+                    grace_ms = INTERRUPT_ABORT_GRACE.as_millis(),
+                    "timed out waiting for tool tasks to abort after steering interrupt"
+                );
+            }
             return GroupOutcome::SteeringInterrupt;
         }
 
@@ -548,7 +558,17 @@ async fn collect_group_results(
             for handle in &abort_handles {
                 handle.abort();
             }
-            while futs.next().await.is_some() {}
+            if tokio::time::timeout(INTERRUPT_ABORT_GRACE, async {
+                while futs.next().await.is_some() {}
+            })
+            .await
+            .is_err()
+            {
+                warn!(
+                    grace_ms = INTERRUPT_ABORT_GRACE.as_millis(),
+                    "timed out waiting for tool tasks to abort after transfer interrupt"
+                );
+            }
             return GroupOutcome::TransferInterrupt;
         }
     }
@@ -881,6 +901,18 @@ async fn dispatch_single_tool(
                 }
             };
             let exec_duration = exec_start.elapsed();
+
+            if steering_clone.load(std::sync::atomic::Ordering::SeqCst)
+                || transfer_flag_clone.load(std::sync::atomic::Ordering::SeqCst)
+            {
+                debug!(
+                    tool = %tool_name,
+                    id = %tool_call_id,
+                    "dropping tool result because the batch was already interrupted"
+                );
+                return;
+            }
+
             debug!(tool = %tool_name, id = %tool_call_id, is_error, "tool execution finished");
 
             let event_tool_name = tool_name.clone();
@@ -997,7 +1029,7 @@ mod tests {
 
     use std::future::Future;
     use std::sync::Arc as StdArc;
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::{pin::Pin, sync::Mutex as StdSyncMutex};
 
     use serde_json::json;
@@ -1005,6 +1037,7 @@ mod tests {
 
     use crate::policy::{PreDispatchPolicy, PreDispatchVerdict, ToolDispatchContext};
     use crate::testing::{MockStreamFn, MockTool, default_convert, default_model};
+    use crate::types::{AgentMessage, LlmMessage, UserMessage};
     use crate::{
         ApprovalMode, DefaultRetryStrategy, StreamOptions, ToolApproval, ToolExecutionPolicy,
     };
@@ -1055,6 +1088,87 @@ mod tests {
                 }
                 AgentToolResult::text("done")
             })
+        }
+    }
+
+    struct BlockingSleepTool {
+        name: &'static str,
+        sleep_for: std::time::Duration,
+    }
+
+    impl AgentTool for BlockingSleepTool {
+        fn name(&self) -> &str {
+            self.name
+        }
+
+        fn label(&self) -> &str {
+            self.name
+        }
+
+        fn description(&self) -> &'static str {
+            "Blocks synchronously before returning a tool result"
+        }
+
+        fn parameters_schema(&self) -> &serde_json::Value {
+            static SCHEMA: std::sync::OnceLock<serde_json::Value> = std::sync::OnceLock::new();
+            SCHEMA.get_or_init(|| {
+                json!({
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": true
+                })
+            })
+        }
+
+        fn execute(
+            &self,
+            _tool_call_id: &str,
+            _params: serde_json::Value,
+            _cancellation_token: CancellationToken,
+            _on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
+            _state: std::sync::Arc<std::sync::RwLock<crate::SessionState>>,
+            _credential: Option<crate::ResolvedCredential>,
+        ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>> {
+            let tool_name = self.name;
+            let sleep_for = self.sleep_for;
+            Box::pin(async move {
+                std::thread::sleep(sleep_for);
+                AgentToolResult::text(format!("{tool_name}-done"))
+            })
+        }
+    }
+
+    struct ReplayingSteeringProvider {
+        remaining_polls: AtomicUsize,
+    }
+
+    impl ReplayingSteeringProvider {
+        const fn new(remaining_polls: usize) -> Self {
+            Self {
+                remaining_polls: AtomicUsize::new(remaining_polls),
+            }
+        }
+    }
+
+    impl crate::message_provider::MessageProvider for ReplayingSteeringProvider {
+        fn poll_steering(&self) -> Vec<AgentMessage> {
+            let remaining = self.remaining_polls.load(Ordering::SeqCst);
+            if remaining == 0 {
+                return Vec::new();
+            }
+
+            self.remaining_polls.fetch_sub(1, Ordering::SeqCst);
+            vec![AgentMessage::Llm(LlmMessage::User(UserMessage {
+                content: vec![ContentBlock::Text {
+                    text: "interrupt".to_string(),
+                }],
+                timestamp: 0,
+                cache_hint: None,
+            }))]
+        }
+
+        fn poll_follow_up(&self) -> Vec<AgentMessage> {
+            Vec::new()
         }
     }
 
@@ -1122,6 +1236,38 @@ mod tests {
             approval_mode,
             pre_turn_policies: vec![],
             pre_dispatch_policies,
+            post_turn_policies: vec![],
+            post_loop_policies: vec![],
+            async_transform_context: None,
+            metrics_collector: None,
+            fallback: None,
+            tool_execution_policy: ToolExecutionPolicy::Concurrent,
+            session_state: Arc::new(std::sync::RwLock::new(crate::SessionState::new())),
+            credential_resolver: None,
+            cache_config: None,
+            cache_state: std::sync::Mutex::new(crate::CacheState::default()),
+            dynamic_system_prompt: None,
+        })
+    }
+
+    fn test_loop_config_with_message_provider(
+        tools: Vec<Arc<dyn AgentTool>>,
+        message_provider: Arc<dyn crate::message_provider::MessageProvider>,
+    ) -> Arc<AgentLoopConfig> {
+        Arc::new(AgentLoopConfig {
+            model: default_model(),
+            stream_options: StreamOptions::default(),
+            retry_strategy: Box::new(DefaultRetryStrategy::default()),
+            stream_fn: Arc::new(MockStreamFn::new(vec![])),
+            tools,
+            convert_to_llm: Box::new(default_convert),
+            transform_context: None,
+            get_api_key: None,
+            message_provider: Some(message_provider),
+            approve_tool: None,
+            approval_mode: ApprovalMode::Bypassed,
+            pre_turn_policies: vec![],
+            pre_dispatch_policies: vec![],
             post_turn_policies: vec![],
             post_loop_policies: vec![],
             async_transform_context: None,
@@ -1475,6 +1621,89 @@ mod tests {
         assert_eq!(
             updates.last().map(|(_, _, text)| text.as_str()),
             Some("partial-31")
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn steering_interrupt_returns_without_waiting_for_blocking_tools() {
+        let fast_tool = Arc::new(BlockingSleepTool {
+            name: "fast_tool",
+            sleep_for: std::time::Duration::from_millis(0),
+        });
+        let slow_tool = Arc::new(BlockingSleepTool {
+            name: "slow_tool",
+            sleep_for: std::time::Duration::from_millis(400),
+        });
+        let provider = Arc::new(ReplayingSteeringProvider::new(2));
+        let config = test_loop_config_with_message_provider(
+            vec![
+                fast_tool as Arc<dyn AgentTool>,
+                slow_tool as Arc<dyn AgentTool>,
+            ],
+            provider,
+        );
+        let tool_calls = vec![
+            ToolCallInfo {
+                id: "call_fast".to_string(),
+                name: "fast_tool".to_string(),
+                arguments: json!({}),
+                is_incomplete: false,
+            },
+            ToolCallInfo {
+                id: "call_slow".to_string(),
+                name: "slow_tool".to_string(),
+                arguments: json!({}),
+                is_incomplete: false,
+            },
+        ];
+        let cancellation_token = CancellationToken::new();
+        let (tx, mut rx) = mpsc::channel(16);
+
+        let start = std::time::Instant::now();
+        let outcome =
+            execute_tools_concurrently(&config, &tool_calls, &cancellation_token, &tx).await;
+        let elapsed = start.elapsed();
+
+        let ToolExecOutcome::SteeringInterrupt {
+            completed,
+            cancelled,
+            ..
+        } = outcome
+        else {
+            panic!("expected steering interrupt outcome");
+        };
+
+        assert!(
+            elapsed < std::time::Duration::from_millis(250),
+            "steering interrupt should not wait for a blocking sibling tool: {elapsed:?}"
+        );
+        assert_eq!(
+            completed
+                .iter()
+                .map(|result| result.tool_call_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["call_fast"]
+        );
+        assert_eq!(
+            cancelled
+                .iter()
+                .map(|result| result.tool_call_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["call_slow"]
+        );
+
+        tokio::time::sleep(std::time::Duration::from_millis(450)).await;
+        let end_ids: Vec<_> = drain_events(&mut rx)
+            .into_iter()
+            .filter_map(|event| match event {
+                AgentEvent::ToolExecutionEnd { id, .. } => Some(id),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            end_ids,
+            vec!["call_fast".to_string()],
+            "cancelled blocking tools must not emit late completion events"
         );
     }
 }
