@@ -300,7 +300,7 @@ fn run_policies_inner<'a>(
 /// - **Stop** short-circuits: aborts the entire tool batch.
 /// - **Skip** short-circuits: skips this tool call with error text.
 /// - **Inject** accumulates.
-/// - **Panics** are caught and treated as Continue.
+/// - **Panics** are caught, argument mutations are rolled back, and evaluation continues.
 pub fn run_pre_dispatch_policies(
     policies: &[Arc<dyn PreDispatchPolicy>],
     ctx: &mut ToolDispatchContext<'_>,
@@ -309,6 +309,7 @@ pub fn run_pre_dispatch_policies(
 
     for policy in policies {
         let policy_name = policy.name().to_string();
+        let argument_snapshot = ctx.arguments.clone();
         let result = std::panic::catch_unwind(AssertUnwindSafe(|| policy.evaluate(ctx)));
 
         match result {
@@ -325,6 +326,7 @@ pub fn run_pre_dispatch_policies(
                 injections.extend(msgs);
             }
             Err(_) => {
+                *ctx.arguments = argument_snapshot;
                 warn!(policy = %policy_name, "policy panicked during evaluation, skipping");
             }
         }
