@@ -32,6 +32,8 @@ pub struct TransferSignal {
     context_summary: Option<String>,
     #[serde(default)]
     conversation_history: Vec<LlmMessage>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    transfer_chain: Option<TransferChain>,
 }
 
 impl TransferSignal {
@@ -42,6 +44,7 @@ impl TransferSignal {
             reason: reason.into(),
             context_summary: None,
             conversation_history: Vec::new(),
+            transfer_chain: None,
         }
     }
 
@@ -59,6 +62,16 @@ impl TransferSignal {
     #[must_use]
     pub fn with_conversation_history(mut self, history: Vec<LlmMessage>) -> Self {
         self.conversation_history = history;
+        self
+    }
+
+    /// Set the transfer chain to carry across agent handoffs.
+    ///
+    /// The receiving agent can seed its loop with this chain so circular and
+    /// max-depth checks continue across transfers.
+    #[must_use]
+    pub fn with_transfer_chain(mut self, chain: TransferChain) -> Self {
+        self.transfer_chain = Some(chain);
         self
     }
 
@@ -80,6 +93,11 @@ impl TransferSignal {
     /// Messages to carry over to the target agent (LLM messages only).
     pub fn conversation_history(&self) -> &[LlmMessage] {
         &self.conversation_history
+    }
+
+    /// Transfer chain captured at handoff time, if present.
+    pub fn transfer_chain(&self) -> Option<&TransferChain> {
+        self.transfer_chain.as_ref()
     }
 }
 
@@ -105,7 +123,7 @@ pub enum TransferError {
 ///
 /// The orchestrator creates a new chain per user message and carries it forward
 /// through transfers. This prevents infinite handoff loops and enforces depth limits.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TransferChain {
     chain: Vec<String>,
     max_depth: usize,
@@ -308,6 +326,7 @@ mod tests {
         assert_eq!(signal.reason(), "billing issue");
         assert_eq!(signal.context_summary(), None);
         assert!(signal.conversation_history().is_empty());
+        assert!(signal.transfer_chain().is_none());
     }
 
     #[test]
@@ -337,14 +356,20 @@ mod tests {
 
     #[test]
     fn transfer_signal_serde_roundtrip() {
+        let mut chain = TransferChain::new(3);
+        chain.push("support").unwrap();
+        chain.push("billing").unwrap();
         let signal = TransferSignal::new("billing", "billing issue")
-            .with_context_summary("User disputes charge");
+            .with_context_summary("User disputes charge")
+            .with_transfer_chain(chain);
         let json = serde_json::to_string(&signal).unwrap();
         let parsed: TransferSignal = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.target_agent(), "billing");
         assert_eq!(parsed.reason(), "billing issue");
         assert_eq!(parsed.context_summary(), Some("User disputes charge"));
         assert!(parsed.conversation_history().is_empty());
+        let chain = parsed.transfer_chain().expect("expected transfer chain");
+        assert_eq!(chain.chain(), &["support", "billing"]);
     }
 
     #[test]
@@ -355,6 +380,7 @@ mod tests {
         assert_eq!(parsed.reason(), "billing issue");
         assert_eq!(parsed.context_summary(), None);
         assert!(parsed.conversation_history().is_empty());
+        assert!(parsed.transfer_chain().is_none());
     }
 
     #[test]
@@ -362,6 +388,7 @@ mod tests {
         let signal = TransferSignal::new("billing", "billing issue");
         let json = serde_json::to_value(&signal).unwrap();
         assert!(!json.as_object().unwrap().contains_key("context_summary"));
+        assert!(!json.as_object().unwrap().contains_key("transfer_chain"));
     }
 
     #[test]

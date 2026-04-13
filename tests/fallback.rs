@@ -49,6 +49,7 @@ fn default_config(
 ) -> AgentLoopConfig {
     AgentLoopConfig {
         agent_name: None,
+        transfer_chain: None,
         model: primary_model(),
         stream_options: StreamOptions::default(),
         retry_strategy: Box::new(

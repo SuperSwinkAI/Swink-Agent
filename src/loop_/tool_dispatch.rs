@@ -1110,6 +1110,7 @@ mod tests {
     ) -> Arc<AgentLoopConfig> {
         Arc::new(AgentLoopConfig {
             agent_name: None,
+            transfer_chain: None,
             model: default_model(),
             stream_options: StreamOptions::default(),
             retry_strategy: Box::new(DefaultRetryStrategy::default()),

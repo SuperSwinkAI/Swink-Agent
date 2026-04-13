@@ -154,6 +154,10 @@ pub struct AgentOptions {
     /// When set, the loop pushes this name onto the [`TransferChain`](crate::transfer::TransferChain)
     /// at startup so circular transfers back to this agent are detected.
     pub agent_name: Option<String>,
+    /// Optional transfer chain carried from a previous handoff.
+    ///
+    /// When set, the loop starts with this chain instead of an empty one.
+    pub transfer_chain: Option<crate::transfer::TransferChain>,
 }
 
 impl AgentOptions {
@@ -205,6 +209,7 @@ impl AgentOptions {
             #[cfg(feature = "plugins")]
             plugins: Vec::new(),
             agent_name: None,
+            transfer_chain: None,
         }
     }
 
@@ -647,6 +652,16 @@ impl AgentOptions {
     #[must_use]
     pub fn with_agent_name(mut self, name: impl Into<String>) -> Self {
         self.agent_name = Some(name.into());
+        self
+    }
+
+    /// Seed transfer chain state from a previous handoff signal.
+    ///
+    /// Use this on the target agent so transfer safety checks continue across
+    /// agent boundaries.
+    #[must_use]
+    pub fn with_transfer_chain(mut self, chain: crate::transfer::TransferChain) -> Self {
+        self.transfer_chain = Some(chain);
         self
     }
 

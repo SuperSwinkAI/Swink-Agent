@@ -946,7 +946,9 @@ async fn handle_tool_calls(
                 AgentMessage::Custom(_) => None,
             })
             .collect();
-        signal = signal.with_conversation_history(llm_history);
+        signal = signal
+            .with_conversation_history(llm_history)
+            .with_transfer_chain(state.transfer_chain.clone());
 
         tracing::info!(
             target_agent = %signal.target_agent(),

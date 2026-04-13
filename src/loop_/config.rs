@@ -26,6 +26,10 @@ pub struct AgentLoopConfig {
     /// When set, the loop pushes this name onto the [`TransferChain`](crate::transfer::TransferChain)
     /// at startup so circular transfers back to this agent are detected.
     pub agent_name: Option<String>,
+    /// Optional transfer chain carried from a previous handoff.
+    ///
+    /// When set, the loop resumes transfer safety checks from this chain.
+    pub transfer_chain: Option<crate::transfer::TransferChain>,
 
     /// Model specification passed through to `StreamFn`.
     pub model: ModelSpec,

@@ -134,10 +134,10 @@ async fn run_loop_inner(
         );
         // Build the transfer chain and push the current agent name (if known)
         // so that circular transfers back to this agent are detected.
-        let mut transfer_chain = crate::transfer::TransferChain::default();
+        let mut transfer_chain = config.transfer_chain.clone().unwrap_or_default();
         if let Some(ref name) = config.agent_name {
-            // Ignore the error — push only fails if the name is already in the
-            // chain, which cannot happen on a fresh chain.
+            // Ignore the error — when resuming from a handoff chain the agent
+            // name may already be present as the latest hop.
             let _ = transfer_chain.push(name.clone());
         }
 

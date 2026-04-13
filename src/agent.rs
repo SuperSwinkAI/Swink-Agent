@@ -255,6 +255,8 @@ pub struct Agent {
     /// Optional agent name for transfer chain safety enforcement.
     #[allow(clippy::struct_field_names)]
     agent_name: Option<String>,
+    /// Optional transfer chain state carried from a previous handoff.
+    transfer_chain: Option<crate::transfer::TransferChain>,
 }
 
 impl Agent {
@@ -335,6 +337,7 @@ impl Agent {
             #[cfg(feature = "plugins")]
             plugins: options.plugins,
             agent_name: options.agent_name,
+            transfer_chain: options.transfer_chain,
         };
 
         dispatch_plugin_on_init(&agent);
