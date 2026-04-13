@@ -199,8 +199,7 @@ impl AgentTool for FetchTool {
             if truncated {
                 warn!(
                     "Content from {url_str} was truncated from {} to ~{} chars",
-                    fetched.text.len(),
-                    self.max_content_length
+                    fetched.text_length, self.max_content_length
                 );
             }
 
