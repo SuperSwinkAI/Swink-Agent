@@ -96,7 +96,7 @@ impl TransferSignal {
     }
 
     /// Transfer chain captured at handoff time, if present.
-    pub fn transfer_chain(&self) -> Option<&TransferChain> {
+    pub const fn transfer_chain(&self) -> Option<&TransferChain> {
         self.transfer_chain.as_ref()
     }
 }

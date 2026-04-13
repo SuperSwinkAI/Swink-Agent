@@ -7,8 +7,9 @@ use std::sync::Arc;
 
 use swink_agent::{
     AgentOptions, CatalogPreset, ModelConnection, ModelConnections, ModelSpec, StreamFn,
-    model_catalog,
 };
+#[cfg(feature = "local")]
+use swink_agent::model_catalog;
 use swink_agent_adapters::{
     AnthropicStreamFn, OllamaStreamFn, OpenAiStreamFn, ProxyStreamFn, remote_presets,
 };
