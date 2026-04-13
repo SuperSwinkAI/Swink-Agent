@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info_span};
+use tracing::{debug, error, info_span, warn};
 
 use crate::policy::{PolicyContext, PolicyVerdict, TurnPolicyContext, run_post_turn_policies};
 use crate::types::{
@@ -561,27 +561,32 @@ async fn handle_error_stop(
     state: &mut LoopState,
     tx: &mpsc::Sender<AgentEvent>,
 ) -> TurnOutcome {
-    error!(
-        stop_reason = ?assistant_message.stop_reason,
-        error = ?assistant_message.error_message,
-        "agent loop stopping due to error/abort"
-    );
+    let is_abort = assistant_message.stop_reason == StopReason::Aborted;
+    if is_abort {
+        warn!(
+            error = ?assistant_message.error_message,
+            "agent loop stopping due to abort"
+        );
+    } else {
+        error!(
+            stop_reason = ?assistant_message.stop_reason,
+            error = ?assistant_message.error_message,
+            "agent loop stopping due to error"
+        );
+    }
     let msg_for_event = assistant_message.clone();
     let stop = assistant_message.stop_reason;
     state
         .context_messages
         .push(AgentMessage::Llm(LlmMessage::Assistant(assistant_message)));
     let snapshot = build_snapshot(state, stop, None);
+    let reason = if is_abort {
+        TurnEndReason::Aborted
+    } else {
+        TurnEndReason::Error
+    };
     // CRITICAL: On error/abort, exit immediately — no follow-up polling
-    emit_turn_end_and_agent_end(
-        msg_for_event,
-        vec![],
-        TurnEndReason::Error,
-        snapshot,
-        state,
-        tx,
-    )
-    .await
+    emit_turn_end_and_agent_end(msg_for_event, vec![], reason, snapshot, state, tx).await
 }
 
 /// Extract tool call info from the assistant message content blocks.
