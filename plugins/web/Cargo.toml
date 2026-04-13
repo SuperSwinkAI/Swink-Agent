@@ -27,7 +27,7 @@ regex.workspace = true
 url = "2"
 base64 = "0.22"
 readability = "0.3"
-scraper = { version = "0.23", optional = true }
+scraper = { version = "0.25", optional = true }
 
 [dev-dependencies]
 wiremock.workspace = true
