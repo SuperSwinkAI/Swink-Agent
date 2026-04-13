@@ -412,6 +412,53 @@ async fn google_safety_finish_reason_emits_error() {
     );
 }
 
+// T035: SAFETY finish reason is terminal — no Done event after the error (#428)
+#[tokio::test]
+async fn google_safety_finish_reason_is_terminal_no_done_after_error() {
+    let body = [
+        r#"data: {"candidates":[{"content":{"parts":[{"text":"partial"}]},"finishReason":"SAFETY"}],"usageMetadata":{"promptTokenCount":5,"candidatesTokenCount":1,"totalTokenCount":6}}"#,
+        "",
+        "data: [DONE]",
+        "",
+    ]
+    .join("\n");
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path(
+            "/v1beta/models/gemini-3-flash-preview:streamGenerateContent",
+        ))
+        .and(query_param("alt", "sse"))
+        .respond_with(sse_response(&body))
+        .mount(&server)
+        .await;
+
+    let stream_fn = GeminiStreamFn::new(server.uri(), "test-key", ApiVersion::V1beta);
+    let events = collect_events(&stream_fn).await;
+
+    let types: Vec<_> = events.iter().map(event_name).collect();
+
+    // Must contain exactly one terminal event: the Error from SAFETY.
+    assert!(
+        types.contains(&"Error"),
+        "expected Error event for SAFETY finish reason: {types:?}"
+    );
+    assert!(
+        !types.contains(&"Done"),
+        "SAFETY must be terminal — no Done event should follow the Error: {types:?}"
+    );
+
+    // Count terminal events (Error + Done). Must be exactly 1.
+    let terminal_count = types
+        .iter()
+        .filter(|t| **t == "Error" || **t == "Done")
+        .count();
+    assert_eq!(
+        terminal_count, 1,
+        "expected exactly 1 terminal event, got {terminal_count}: {types:?}"
+    );
+}
+
 // ── BlockAccumulator regression tests ─────────────────────────────────────────
 //
 // These tests verify the content-index ordering contract introduced when

@@ -206,6 +206,10 @@ struct GeminiStreamState {
     saw_tool_call: bool,
     usage: Usage,
     stop_reason: Option<StopReason>,
+    /// Set to `true` when a terminal error (e.g. SAFETY finish reason) has
+    /// already been emitted, so the later `[DONE]` sentinel does not produce
+    /// a duplicate terminal event.
+    terminated: bool,
 }
 
 pub struct GeminiStreamFn {
@@ -563,6 +567,11 @@ fn parse_sse_stream(
         "Google request cancelled",
         |item, state| match item {
             None => {
+                // If we already emitted a terminal event (e.g. SAFETY error),
+                // don't produce a second one.
+                if state.terminated {
+                    return SseAction::Done(Vec::new());
+                }
                 let mut events = state.emit_final_tool_deltas();
                 events.extend(crate::finalize::finalize_blocks(state));
                 if state.stop_reason.is_none() {
@@ -579,6 +588,11 @@ fn parse_sse_stream(
                 SseAction::Done(events)
             }
             Some(SseLine::Done) => {
+                // If we already emitted a terminal event (e.g. SAFETY error),
+                // don't produce a second one.
+                if state.terminated {
+                    return SseAction::Done(Vec::new());
+                }
                 let mut events = state.emit_final_tool_deltas();
                 events.extend(crate::finalize::finalize_blocks(state));
                 events.push(AssistantMessageEvent::Done {
@@ -595,11 +609,19 @@ fn parse_sse_stream(
                 SseAction::Done(events)
             }
             Some(SseLine::Data(line)) => {
+                // If we already emitted a terminal event, skip further data.
+                if state.terminated {
+                    return SseAction::Done(Vec::new());
+                }
                 let mut events = Vec::new();
                 match serde_json::from_str::<GeminiChunk>(&line) {
                     Ok(chunk) => {
                         process_chunk(chunk, state, &mut events);
-                        SseAction::Continue(events)
+                        if state.terminated {
+                            SseAction::Done(events)
+                        } else {
+                            SseAction::Continue(events)
+                        }
                     }
                     Err(parse_error) => {
                         error!(error = %parse_error, "Google Gemini JSON parse error");
@@ -684,11 +706,14 @@ fn process_chunk(
     if let Some(ref finish_reason) = candidate.finish_reason {
         if finish_reason == "SAFETY" {
             warn!("Google Gemini response blocked by safety filter");
+            events.extend(state.emit_final_tool_deltas());
             events.extend(state.blocks.close_text());
             events.extend(state.blocks.close_thinking(None));
+            events.extend(crate::finalize::finalize_blocks(state));
             events.push(AssistantMessageEvent::error_content_filtered(
                 "Google Gemini: response blocked by safety filter",
             ));
+            state.terminated = true;
         } else {
             state.stop_reason = Some(map_finish_reason(finish_reason, state.saw_tool_call));
         }
