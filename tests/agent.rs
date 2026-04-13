@@ -7,8 +7,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use common::{
-    MockStreamFn, MockTool, default_convert, default_model, text_only_events, tool_call_events,
-    user_msg,
+    MockStreamFn, MockTool, abort_events, default_convert, default_model, text_only_events,
+    tool_call_events, user_msg,
 };
 use futures::stream::StreamExt;
 
@@ -186,6 +186,40 @@ async fn abort_causes_aborted_stop() {
     // At minimum, the stream should have ended.
     // With the mock's delay, the cancellation should propagate.
     let _ = found_abort; // Abort may or may not be visible depending on timing.
+}
+
+// ─── Regression: abort path emits TurnEndReason::Aborted (#438) ──────────
+
+#[tokio::test]
+async fn abort_stop_reason_emits_turn_end_aborted() {
+    // Simulate a provider that reports StopReason::Aborted (goes through
+    // handle_error_stop). Before the fix, this incorrectly emitted
+    // TurnEndReason::Error instead of TurnEndReason::Aborted.
+    let stream_fn = Arc::new(MockStreamFn::new(vec![abort_events("user cancelled")]));
+    let mut agent = make_agent(stream_fn);
+
+    let mut stream = agent.prompt_stream(vec![user_msg("go")]).unwrap();
+
+    let mut found_aborted_reason = false;
+    let mut found_error_reason = false;
+    while let Some(event) = stream.next().await {
+        if let AgentEvent::TurnEnd { reason, .. } = &event {
+            match reason {
+                swink_agent::TurnEndReason::Aborted => found_aborted_reason = true,
+                swink_agent::TurnEndReason::Error => found_error_reason = true,
+                _ => {}
+            }
+        }
+    }
+
+    assert!(
+        found_aborted_reason,
+        "abort path should emit TurnEndReason::Aborted"
+    );
+    assert!(
+        !found_error_reason,
+        "abort path should NOT emit TurnEndReason::Error for StopReason::Aborted"
+    );
 }
 
 // ─── 4.12: reset() clears state ──────────────────────────────────────────
@@ -399,7 +433,10 @@ async fn reset_cancels_active_loop_and_allows_new_run() {
 
     // Pull at least one event so the stream is actively being consumed.
     let _first_event = stream.next().await;
-    assert!(agent.state().is_running, "agent should be running mid-stream");
+    assert!(
+        agent.state().is_running,
+        "agent should be running mid-stream"
+    );
 
     // Reset while the loop is still active. Before the fix this would not
     // cancel the abort token and would not bump the generation counter,
@@ -411,10 +448,16 @@ async fn reset_cancels_active_loop_and_allows_new_run() {
     drop(stream);
 
     // Agent should be idle after reset.
-    assert!(!agent.state().is_running, "agent should be idle after reset");
+    assert!(
+        !agent.state().is_running,
+        "agent should be idle after reset"
+    );
 
     // A new run should succeed without AlreadyRunning error.
-    let result = agent.prompt_async(vec![user_msg("go again")]).await.unwrap();
+    let result = agent
+        .prompt_async(vec![user_msg("go again")])
+        .await
+        .unwrap();
     assert_eq!(result.stop_reason, StopReason::Stop);
     assert!(!agent.state().is_running);
 }
