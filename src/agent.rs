@@ -126,6 +126,31 @@ pub fn default_convert(msg: &AgentMessage) -> Option<LlmMessage> {
     }
 }
 
+type ModelStreamRegistry = Vec<(ModelSpec, Arc<dyn StreamFn>)>;
+
+fn available_models_and_stream_fns(
+    options: &AgentOptions,
+) -> (Vec<ModelSpec>, ModelStreamRegistry) {
+    let primary_model = options.model.clone();
+    let primary_stream_fn = Arc::clone(&options.stream_fn);
+    let mut available_models = vec![options.model.clone()];
+    available_models.extend(
+        options
+            .available_models
+            .iter()
+            .map(|(model, _): &(ModelSpec, _)| model.clone()),
+    );
+    let mut model_stream_fns = vec![(primary_model, primary_stream_fn)];
+    model_stream_fns.extend(
+        options
+            .available_models
+            .iter()
+            .map(|(model, stream_fn): &(ModelSpec, _)| (model.clone(), Arc::clone(stream_fn))),
+    );
+
+    (available_models, model_stream_fns)
+}
+
 #[cfg(feature = "plugins")]
 fn dispatch_plugin_on_init(agent: &Agent) {
     // Dispatch on_init to each plugin in priority order (already sorted).
@@ -149,8 +174,7 @@ fn dispatch_plugin_on_init(agent: &Agent) {
 }
 
 #[cfg(not(feature = "plugins"))]
-fn dispatch_plugin_on_init(_agent: &Agent) {}
-
+const fn dispatch_plugin_on_init(_agent: &Agent) {}
 // ─── Agent ───────────────────────────────────────────────────────────────────
 
 /// Stateful wrapper over the agent loop.
@@ -238,25 +262,9 @@ impl Agent {
         #[cfg(feature = "plugins")]
         let options = merge_plugin_contributions(options);
 
-        let primary_model = options.model.clone();
-        let primary_stream_fn = Arc::clone(&options.stream_fn);
-        let mut available_models = vec![options.model.clone()];
-        available_models.extend(
-            options
-                .available_models
-                .iter()
-                .map(|(m, _): &(ModelSpec, _)| m.clone()),
-        );
-        let mut model_stream_fns = vec![(primary_model, primary_stream_fn)];
-        model_stream_fns.extend(
-            options
-                .available_models
-                .iter()
-                .map(|(model, stream_fn): &(ModelSpec, _)| (model.clone(), Arc::clone(stream_fn))),
-        );
-
         // Compute the effective system prompt before partial moves.
         let effective_prompt = options.effective_system_prompt().to_owned();
+        let (available_models, model_stream_fns) = available_models_and_stream_fns(&options);
 
         // If a custom token counter is provided and no custom transform_context
         // was set, rebuild the default SlidingWindowTransformer with the counter.

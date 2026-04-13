@@ -161,14 +161,14 @@ fn evaluate_test_runtime(
     runtime: &TestRuntime,
     requirements: TestRuntimeRequirements,
 ) -> Result<(), String> {
-    if let Some(expected_os) = requirements.os {
-        if runtime.os != expected_os {
-            return Err(format!(
-                "requires {}, detected {}",
-                expected_os.as_str(),
-                runtime.os.as_str()
-            ));
-        }
+    if let Some(expected_os) = requirements.os
+        && runtime.os != expected_os
+    {
+        return Err(format!(
+            "requires {}, detected {}",
+            expected_os.as_str(),
+            runtime.os.as_str()
+        ));
     }
 
     match requirements.gpu {
