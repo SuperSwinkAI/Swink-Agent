@@ -3,6 +3,17 @@
 //!
 //! Re-exports the types and helpers needed to embed the interactive TUI
 //! in your own binary or example.
+//!
+//! The supported public API is exposed from the crate root. Internal
+//! implementation modules stay private so they do not become stable surface.
+//!
+//! ```rust
+//! use swink_agent_tui::{App, TuiConfig, TuiError};
+//! ```
+//!
+//! ```compile_fail
+//! use swink_agent_tui::app::Focus;
+//! ```
 
 mod commands;
 mod editor;
@@ -11,9 +22,9 @@ mod session;
 mod theme;
 mod ui;
 
-pub mod app;
-pub mod config;
-pub mod error;
+mod app;
+mod config;
+mod error;
 
 #[cfg(feature = "cli")]
 pub mod credentials;
@@ -39,8 +50,9 @@ use tokio::sync::{mpsc, oneshot};
 
 use swink_agent::{Agent, ToolApproval, ToolApprovalRequest, selective_approve};
 
-pub use app::App;
+pub use app::{AgentStatus, App, DisplayMessage, MessageRole, OperatingMode};
 pub use config::TuiConfig;
+pub use error::TuiError;
 pub use session::JsonlSessionStore;
 pub use ui::conversation::ConversationView;
 pub use ui::input::InputEditor;
