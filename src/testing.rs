@@ -705,6 +705,18 @@ pub fn error_events(
     }]
 }
 
+/// Build events for an aborted response (provider reports `StopReason::Aborted`).
+#[allow(dead_code)]
+#[must_use]
+pub fn abort_events(message: &str) -> Vec<AssistantMessageEvent> {
+    vec![AssistantMessageEvent::Error {
+        stop_reason: StopReason::Aborted,
+        error_message: message.to_string(),
+        usage: None,
+        error_kind: None,
+    }]
+}
+
 // ─── Message helper functions ────────────────────────────────────────────
 
 /// Build a single [`AgentMessage::Llm`] user message with the given text.
