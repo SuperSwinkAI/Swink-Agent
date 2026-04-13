@@ -65,6 +65,10 @@ pub struct AgentLoopConfig {
     /// [`MessageProvider::poll_follow_up`] is called when the agent would otherwise stop.
     pub message_provider: Option<Arc<dyn MessageProvider>>,
 
+    /// Shared snapshot of loop-local pending messages for pause checkpoints.
+    #[allow(private_interfaces)]
+    pub pending_message_snapshot: Arc<crate::pause_state::PendingMessageSnapshot>,
+
     /// Optional async callback for approving/rejecting tool calls before execution.
     /// When `Some` and `approval_mode` is `Enabled`, each tool call is sent through
     /// this callback before dispatch. Rejected tools return an error result to the LLM.

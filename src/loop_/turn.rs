@@ -46,6 +46,7 @@ pub async fn run_single_turn(
     if !state.pending_messages.is_empty() {
         state.context_messages.append(&mut state.pending_messages);
     }
+    clear_pending_message_snapshot(config);
 
     // Check cancellation
     if cancellation_token.is_cancelled() {
@@ -90,6 +91,7 @@ pub async fn run_single_turn(
             }
             PolicyVerdict::Inject(msgs) => {
                 state.pending_messages.extend(msgs);
+                sync_pending_message_snapshot(config, state);
             }
         }
     }
@@ -340,6 +342,16 @@ pub(super) async fn run_context_transformers(
     }
 
     any_compacted
+}
+
+fn clear_pending_message_snapshot(config: &AgentLoopConfig) {
+    config.pending_message_snapshot.clear();
+}
+
+fn sync_pending_message_snapshot(config: &AgentLoopConfig, state: &LoopState) {
+    config
+        .pending_message_snapshot
+        .replace(&state.pending_messages);
 }
 
 // ─── Shared helpers ──────────────────────────────────────────────────────
@@ -677,6 +689,7 @@ fn run_post_turn_policy_check(
                     }
                     other => {
                         state.pending_messages.push(other);
+                        sync_pending_message_snapshot(config, state);
                     }
                 }
             }
@@ -836,6 +849,7 @@ async fn handle_tool_calls(
                 collected_tool_metrics = tool_metrics;
                 detected_transfer_signal = transfer_signal;
                 state.pending_messages.extend(injected_messages);
+                sync_pending_message_snapshot(config, state);
             }
             ToolExecOutcome::SteeringInterrupt {
                 completed,
@@ -850,6 +864,7 @@ async fn handle_tool_calls(
                 collected_tool_metrics = tool_metrics;
                 state.pending_messages.extend(injected_messages);
                 state.pending_messages.extend(steering_messages);
+                sync_pending_message_snapshot(config, state);
             }
             ToolExecOutcome::ChannelClosed => return TurnOutcome::Return,
         }
@@ -1008,6 +1023,7 @@ async fn handle_tool_calls(
         let msgs = provider.poll_steering();
         if !msgs.is_empty() {
             state.pending_messages.extend(msgs);
+            sync_pending_message_snapshot(config, state);
         }
     }
     // Inner loop continues — model must process tool results.

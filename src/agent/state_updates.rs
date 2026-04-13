@@ -82,6 +82,7 @@ impl Agent {
         }
         self.state.is_running = false;
         self.loop_active.store(false, Ordering::Release);
+        self.pending_message_snapshot.clear();
         self.state.error.clone_from(&error);
         self.idle_notify.notify_waiters();
 
@@ -127,6 +128,7 @@ impl Agent {
                 self.state.messages = clone_messages(messages.as_ref());
                 self.in_flight_llm_messages = None;
                 self.in_flight_messages = None;
+                self.pending_message_snapshot.clear();
                 // Preserve terminal error — do not clear self.state.error.
                 self.idle_notify.notify_waiters();
             }

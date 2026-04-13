@@ -206,6 +206,7 @@ pub struct Agent {
     idle_notify: Arc<Notify>,
     in_flight_llm_messages: Option<Vec<AgentMessage>>,
     in_flight_messages: Option<Vec<AgentMessage>>,
+    pending_message_snapshot: Arc<crate::pause_state::PendingMessageSnapshot>,
     approve_tool: Option<ApproveToolArc>,
     approval_mode: ApprovalMode,
     pre_turn_policies: Vec<Arc<dyn crate::policy::PreTurnPolicy>>,
@@ -310,6 +311,9 @@ impl Agent {
             idle_notify: Arc::new(Notify::new()),
             in_flight_llm_messages: None,
             in_flight_messages: None,
+            pending_message_snapshot: Arc::new(
+                crate::pause_state::PendingMessageSnapshot::default(),
+            ),
             approve_tool: options.approve_tool,
             approval_mode: options.approval_mode,
             pre_turn_policies: options.pre_turn_policies,

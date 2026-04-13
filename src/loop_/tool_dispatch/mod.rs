@@ -117,12 +117,9 @@ pub async fn execute_tools_concurrently(
     };
 
     // Phase 2: Compute execution groups and dispatch.
-    let groups = execute::compute_execution_groups(
-        &config.tool_execution_policy,
-        tool_calls,
-        &prepared,
-    )
-    .await;
+    let groups =
+        execute::compute_execution_groups(&config.tool_execution_policy, tool_calls, &prepared)
+            .await;
 
     // Phase 3: Execute each group and collect results.
     for group in groups {
@@ -225,9 +222,7 @@ mod tests {
     use crate::testing::{MockStreamFn, MockTool, default_convert, default_model};
     use crate::tool::{AgentToolResult, ApprovalMode};
     use crate::types::ContentBlock;
-    use crate::{
-        DefaultRetryStrategy, StreamOptions, ToolApproval, ToolExecutionPolicy,
-    };
+    use crate::{DefaultRetryStrategy, StreamOptions, ToolApproval, ToolExecutionPolicy};
 
     struct BurstUpdatingTool {
         update_count: usize,
@@ -340,6 +335,7 @@ mod tests {
             transform_context: None,
             get_api_key: None,
             message_provider: None,
+            pending_message_snapshot: Arc::default(),
             approve_tool,
             approval_mode,
             pre_turn_policies: vec![],
