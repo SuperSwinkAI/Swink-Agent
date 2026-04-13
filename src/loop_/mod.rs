@@ -132,6 +132,15 @@ async fn run_loop_inner(
             tools = config.tools.len(),
             "starting agent loop"
         );
+        // Build the transfer chain and push the current agent name (if known)
+        // so that circular transfers back to this agent are detected.
+        let mut transfer_chain = crate::transfer::TransferChain::default();
+        if let Some(ref name) = config.agent_name {
+            // Ignore the error — push only fails if the name is already in the
+            // chain, which cannot happen on a fresh chain.
+            let _ = transfer_chain.push(name.clone());
+        }
+
         let mut state = LoopState {
             context_messages: initial_messages,
             pending_messages: Vec::new(),
@@ -142,6 +151,7 @@ async fn run_loop_inner(
             accumulated_cost: crate::types::Cost::default(),
             last_assistant_message: None,
             last_tool_results: Vec::new(),
+            transfer_chain,
         };
 
         // 1. Emit AgentStart

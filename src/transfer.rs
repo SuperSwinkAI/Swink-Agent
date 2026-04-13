@@ -87,7 +87,6 @@ impl TransferSignal {
 
 /// Error type for transfer chain safety violations.
 #[derive(Debug, Clone, thiserror::Error)]
-#[allow(dead_code)]
 pub enum TransferError {
     /// Agent already appears in the transfer chain (circular reference).
     #[error("circular transfer detected: agent '{agent_name}' already in chain {chain:?}")]
@@ -107,13 +106,11 @@ pub enum TransferError {
 /// The orchestrator creates a new chain per user message and carries it forward
 /// through transfers. This prevents infinite handoff loops and enforces depth limits.
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct TransferChain {
     chain: Vec<String>,
     max_depth: usize,
 }
 
-#[allow(dead_code)]
 impl TransferChain {
     /// Create a new empty chain with the given maximum depth.
     pub const fn new(max_depth: usize) -> Self {
@@ -194,7 +191,6 @@ pub struct TransferToAgentTool {
     schema: Value,
 }
 
-#[allow(dead_code)]
 impl TransferToAgentTool {
     /// Create a new transfer tool that can transfer to any registered agent.
     pub fn new(registry: Arc<AgentRegistry>) -> Self {

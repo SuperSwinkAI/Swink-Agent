@@ -21,6 +21,12 @@ use super::ConvertToLlmFn;
 /// Carries the model spec, stream options, retry strategy, stream function,
 /// tools, and all the hooks that the loop calls at various points.
 pub struct AgentLoopConfig {
+    /// Optional agent name used for transfer chain safety enforcement.
+    ///
+    /// When set, the loop pushes this name onto the [`TransferChain`](crate::transfer::TransferChain)
+    /// at startup so circular transfers back to this agent are detected.
+    pub agent_name: Option<String>,
+
     /// Model specification passed through to `StreamFn`.
     pub model: ModelSpec,
 

@@ -252,6 +252,9 @@ pub struct Agent {
     /// Registered plugins retained for runtime introspection (priority-sorted).
     #[cfg(feature = "plugins")]
     plugins: Vec<Arc<dyn crate::plugin::Plugin>>,
+    /// Optional agent name for transfer chain safety enforcement.
+    #[allow(clippy::struct_field_names)]
+    agent_name: Option<String>,
 }
 
 impl Agent {
@@ -331,6 +334,7 @@ impl Agent {
             loop_generation: Arc::new(AtomicU64::new(0)),
             #[cfg(feature = "plugins")]
             plugins: options.plugins,
+            agent_name: options.agent_name,
         };
 
         dispatch_plugin_on_init(&agent);

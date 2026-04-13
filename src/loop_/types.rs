@@ -24,6 +24,9 @@ pub struct LoopState {
     pub last_assistant_message: Option<AssistantMessage>,
     /// Tool results from the last completed turn (for post-turn hook).
     pub last_tool_results: Vec<ToolResultMessage>,
+    /// Transfer chain tracking agent handoff sequence for safety enforcement.
+    /// Prevents circular transfers and enforces max-depth limits.
+    pub transfer_chain: crate::transfer::TransferChain,
 }
 
 // ─── TurnOutcome ────────────────────────────────────────────────────────────
