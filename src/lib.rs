@@ -52,6 +52,7 @@ mod schema;
 mod state;
 pub(crate) mod stream;
 pub mod stream_assembly;
+mod task_core;
 mod stream_middleware;
 mod sub_agent;
 pub(crate) mod tool;
