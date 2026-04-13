@@ -73,21 +73,26 @@ pub(super) struct QueueMessageProvider {
     pub(super) follow_up_queue: Arc<Mutex<VecDeque<AgentMessage>>>,
     pub(super) steering_mode: SteeringMode,
     pub(super) follow_up_mode: FollowUpMode,
+    pub(super) pending_message_snapshot: Arc<crate::pause_state::PendingMessageSnapshot>,
 }
 
 impl MessageProvider for QueueMessageProvider {
     fn poll_steering(&self) -> Vec<AgentMessage> {
-        drain_queue(
+        let drained = drain_queue(
             &self.steering_queue,
             self.steering_mode == SteeringMode::OneAtATime,
-        )
+        );
+        self.pending_message_snapshot.append(&drained);
+        drained
     }
 
     fn poll_follow_up(&self) -> Vec<AgentMessage> {
-        drain_queue(
+        let drained = drain_queue(
             &self.follow_up_queue,
             self.follow_up_mode == FollowUpMode::OneAtATime,
-        )
+        );
+        self.pending_message_snapshot.append(&drained);
+        drained
     }
 }
 

@@ -30,6 +30,7 @@ struct LoopGuardStream {
     inner: Pin<Box<dyn Stream<Item = AgentEvent> + Send>>,
     loop_active: Arc<AtomicBool>,
     idle_notify: Arc<Notify>,
+    pending_message_snapshot: Arc<crate::pause_state::PendingMessageSnapshot>,
     generation: u64,
     expected_generation: Arc<AtomicU64>,
 }
@@ -49,6 +50,7 @@ impl Drop for LoopGuardStream {
         // this guard's generation stale.
         if self.expected_generation.load(Ordering::Acquire) == self.generation {
             self.loop_active.store(false, Ordering::Release);
+            self.pending_message_snapshot.clear();
             self.idle_notify.notify_waiters();
         }
     }
@@ -228,6 +230,7 @@ impl Agent {
     ) -> Result<Pin<Box<dyn Stream<Item = AgentEvent> + Send>>, AgentError> {
         self.state.is_running = true;
         self.state.error = None;
+        self.pending_message_snapshot.clear();
         self.loop_active.store(true, Ordering::Release);
         let generation = self.loop_generation.fetch_add(1, Ordering::AcqRel) + 1;
 
@@ -270,6 +273,7 @@ impl Agent {
             inner: raw_stream,
             loop_active: Arc::clone(&self.loop_active),
             idle_notify: Arc::clone(&self.idle_notify),
+            pending_message_snapshot: Arc::clone(&self.pending_message_snapshot),
             generation,
             expected_generation: Arc::clone(&self.loop_generation),
         });
@@ -295,6 +299,7 @@ impl Agent {
             follow_up_queue: Arc::clone(&self.follow_up_queue),
             steering_mode: self.steering_mode,
             follow_up_mode: self.follow_up_mode,
+            pending_message_snapshot: Arc::clone(&self.pending_message_snapshot),
         });
 
         let message_provider: Arc<dyn MessageProvider> =
@@ -319,6 +324,7 @@ impl Agent {
             transform_context: transform,
             get_api_key: api_key_box,
             message_provider: Some(message_provider),
+            pending_message_snapshot: Arc::clone(&self.pending_message_snapshot),
             approve_tool: self.approve_tool.as_ref().map(|a| {
                 let a = Arc::clone(a);
                 let b: Box<ApproveToolFn> = Box::new(move |req| a(req));

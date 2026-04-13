@@ -43,6 +43,8 @@ mod noop_tool;
 mod orchestrator;
 #[cfg(feature = "otel")]
 pub mod otel;
+#[doc(hidden)]
+pub mod pause_state;
 #[cfg(feature = "plugins")]
 pub(crate) mod plugin;
 pub(crate) mod policy;
@@ -52,9 +54,9 @@ mod schema;
 mod state;
 pub(crate) mod stream;
 pub mod stream_assembly;
-mod task_core;
 mod stream_middleware;
 mod sub_agent;
+mod task_core;
 pub(crate) mod tool;
 mod tool_execution_policy;
 pub(crate) mod tool_filter;

@@ -158,6 +158,8 @@ impl Agent {
             token.cancel();
         }
 
+        let mut pending_messages = self.pending_message_snapshot.snapshot();
+        pending_messages.extend(drain_messages_from_queue(&self.follow_up_queue));
         let checkpoint_messages = self
             .in_flight_messages
             .as_deref()
@@ -169,7 +171,7 @@ impl Agent {
             &self.state.model.model_id,
             checkpoint_messages,
         )
-        .with_pending_message_batch(&drain_messages_from_queue(&self.follow_up_queue))
+        .with_pending_message_batch(&pending_messages)
         .with_pending_steering_message_batch(&drain_messages_from_queue(&self.steering_queue));
 
         let s = self
@@ -287,6 +289,9 @@ mod tests {
         }
         fn to_json(&self) -> Option<serde_json::Value> {
             Some(serde_json::json!({ "value": self.value }))
+        }
+        fn clone_box(&self) -> Option<Box<dyn CustomMessage>> {
+            Some(Box::new(self.clone()))
         }
     }
 
@@ -714,6 +719,50 @@ mod tests {
             },
             _ => panic!("expected llm steering message"),
         }
+    }
+
+    #[tokio::test]
+    async fn pause_captures_messages_already_moved_into_loop_local_pending_state() {
+        let mut agent = make_agent(Some(tagged_registry()));
+        agent.state.messages.push(user_msg("hi"));
+        agent.pending_message_snapshot.replace(&[
+            AgentMessage::Llm(LlmMessage::User(UserMessage {
+                content: vec![crate::types::ContentBlock::Text {
+                    text: "polled-follow-up".to_string(),
+                }],
+                timestamp: 1,
+                cache_hint: None,
+            })),
+            AgentMessage::Custom(Box::new(Tagged {
+                value: "polled-custom".to_string(),
+            })),
+        ]);
+
+        agent
+            .loop_active
+            .store(true, std::sync::atomic::Ordering::Release);
+
+        let checkpoint = agent.pause().expect("agent should be running");
+        let pending = checkpoint.restore_pending_messages(agent.custom_message_registry.as_deref());
+
+        assert_eq!(
+            pending.len(),
+            2,
+            "pause should include loop-local pending messages even when the shared queue is already empty"
+        );
+        match &pending[0] {
+            AgentMessage::Llm(LlmMessage::User(user)) => match &user.content[0] {
+                crate::types::ContentBlock::Text { text } => {
+                    assert_eq!(text, "polled-follow-up");
+                }
+                other => panic!("expected text content, got {other:?}"),
+            },
+            other => panic!("expected user message, got {other:?}"),
+        }
+        let restored_custom = pending[1]
+            .downcast_ref::<Tagged>()
+            .expect("custom pending message should be preserved");
+        assert_eq!(restored_custom.value, "polled-custom");
     }
 
     #[tokio::test]

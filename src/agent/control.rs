@@ -57,6 +57,7 @@ impl Agent {
         self.abort_controller = None;
         self.in_flight_llm_messages = None;
         self.in_flight_messages = None;
+        self.pending_message_snapshot.clear();
         self.clear_queues();
         self.idle_notify.notify_waiters();
     }

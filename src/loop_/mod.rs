@@ -227,6 +227,9 @@ async fn run_loop_inner(
                     }
                     PolicyVerdict::Inject(msgs) => {
                         state.pending_messages.extend(msgs);
+                        config
+                            .pending_message_snapshot
+                            .replace(&state.pending_messages);
                         continue 'outer;
                     }
                 }
@@ -237,6 +240,9 @@ async fn run_loop_inner(
                 let msgs = provider.poll_follow_up();
                 if !msgs.is_empty() {
                     state.pending_messages.extend(msgs);
+                    config
+                        .pending_message_snapshot
+                        .replace(&state.pending_messages);
                     continue 'outer;
                 }
             }
