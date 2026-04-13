@@ -119,7 +119,7 @@ impl ProxyStreamFn {
     #[must_use]
     pub fn new(base_url: impl Into<String>, bearer_token: impl Into<String>) -> Self {
         Self {
-            base_url: base_url.into(),
+            base_url: base_url.into().trim_end_matches('/').to_string(),
             bearer_token: bearer_token.into(),
             client: Client::new(),
         }
@@ -420,6 +420,20 @@ const _: () = {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ─── trailing slash normalization ────────────────────────────────────
+
+    #[test]
+    fn trailing_slash_stripped() {
+        let proxy = ProxyStreamFn::new("http://localhost:8080/", "token");
+        assert_eq!(proxy.base_url, "http://localhost:8080");
+    }
+
+    #[test]
+    fn no_trailing_slash_unchanged() {
+        let proxy = ProxyStreamFn::new("http://localhost:8080", "token");
+        assert_eq!(proxy.base_url, "http://localhost:8080");
+    }
 
     #[test]
     fn parse_start_event() {

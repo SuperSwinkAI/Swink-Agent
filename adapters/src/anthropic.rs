@@ -1267,4 +1267,16 @@ mod tests {
             }
         ));
     }
+
+    #[test]
+    fn trailing_slash_stripped() {
+        let anthropic = AnthropicStreamFn::new("https://api.anthropic.com/", "key");
+        assert_eq!(anthropic.base.base_url, "https://api.anthropic.com");
+    }
+
+    #[test]
+    fn no_trailing_slash_unchanged() {
+        let anthropic = AnthropicStreamFn::new("https://api.anthropic.com", "key");
+        assert_eq!(anthropic.base.base_url, "https://api.anthropic.com");
+    }
 }

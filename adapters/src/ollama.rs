@@ -143,7 +143,7 @@ impl OllamaStreamFn {
     #[must_use]
     pub fn new(base_url: impl Into<String>) -> Self {
         Self {
-            base_url: base_url.into(),
+            base_url: base_url.into().trim_end_matches('/').to_string(),
             client: Client::new(),
         }
     }
@@ -611,6 +611,20 @@ mod tests {
         AgentMessage, AssistantMessage as HarnessAssistantMessage, ContentBlock, Cost, LlmMessage,
         StopReason, ToolResultMessage, Usage, UserMessage,
     };
+
+    // ─── trailing slash normalization ────────────────────────────────────
+
+    #[test]
+    fn trailing_slash_stripped() {
+        let ollama = OllamaStreamFn::new("http://localhost:11434/");
+        assert_eq!(ollama.base_url, "http://localhost:11434");
+    }
+
+    #[test]
+    fn no_trailing_slash_unchanged() {
+        let ollama = OllamaStreamFn::new("http://localhost:11434");
+        assert_eq!(ollama.base_url, "http://localhost:11434");
+    }
 
     // ─── convert_messages: user + system ────────────────────────────────
 

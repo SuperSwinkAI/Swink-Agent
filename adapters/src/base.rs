@@ -39,10 +39,33 @@ pub struct AdapterBase {
 impl AdapterBase {
     pub fn new(base_url: impl Into<String>, api_key: impl Into<String>) -> Self {
         Self {
-            base_url: base_url.into(),
+            base_url: base_url.into().trim_end_matches('/').to_string(),
             api_key: api_key.into(),
             client: reqwest::Client::new(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn trailing_slash_stripped() {
+        let base = AdapterBase::new("https://api.example.com/", "key");
+        assert_eq!(base.base_url, "https://api.example.com");
+    }
+
+    #[test]
+    fn multiple_trailing_slashes_stripped() {
+        let base = AdapterBase::new("https://api.example.com///", "key");
+        assert_eq!(base.base_url, "https://api.example.com");
+    }
+
+    #[test]
+    fn no_trailing_slash_unchanged() {
+        let base = AdapterBase::new("https://api.example.com", "key");
+        assert_eq!(base.base_url, "https://api.example.com");
     }
 }
 
