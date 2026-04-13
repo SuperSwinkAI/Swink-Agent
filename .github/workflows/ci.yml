@@ -62,6 +62,30 @@ jobs:
 
       - run: cargo hack check --workspace --each-feature --no-dev-deps
 
+  feature-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Adapters no-default-features sentinel
+        run: cargo test -p swink-agent-adapters --no-default-features --test no_default_features
+
+      - name: Adapters anthropic feature smoke
+        run: cargo check -p swink-agent-adapters --no-default-features --features anthropic
+
+      - name: Adapters gemini feature smoke
+        run: cargo check -p swink-agent-adapters --no-default-features --features gemini
+
+      - name: Local LLM no-default-features sentinel
+        run: cargo test -p swink-agent-local-llm --no-default-features --test no_default_features
+
+      - name: Local LLM gemma4 feature smoke
+        run: cargo check -p swink-agent-local-llm --no-default-features --features gemma4
+
   all-features:
     runs-on: ubuntu-latest
     steps:
