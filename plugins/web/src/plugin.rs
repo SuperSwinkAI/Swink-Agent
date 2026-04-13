@@ -219,7 +219,7 @@ impl Plugin for WebPlugin {
 /// Extracted from [`WebPlugin::on_event`] so the namespace-gating logic can be
 /// exercised directly by unit tests without depending on a tracing subscriber.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum WebEventClass<'a> {
+enum WebEventClass<'a> {
     /// A `web.*` tool has started executing.
     Start(&'a str),
     /// A `web.*` tool has failed.
@@ -228,14 +228,16 @@ pub(crate) enum WebEventClass<'a> {
     Ignored,
 }
 
-pub(crate) fn classify_web_event(event: &AgentEvent) -> WebEventClass<'_> {
+fn classify_web_event(event: &AgentEvent) -> WebEventClass<'_> {
     match event {
         AgentEvent::ToolExecutionStart { name, .. } if name.starts_with("web.") => {
             WebEventClass::Start(name.as_str())
         }
-        AgentEvent::ToolExecutionEnd {
-            name, is_error, ..
-        } if *is_error && name.starts_with("web.") => WebEventClass::Error(name.as_str()),
+        AgentEvent::ToolExecutionEnd { name, is_error, .. }
+            if *is_error && name.starts_with("web.") =>
+        {
+            WebEventClass::Error(name.as_str())
+        }
         _ => WebEventClass::Ignored,
     }
 }
