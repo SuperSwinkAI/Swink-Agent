@@ -191,18 +191,17 @@ async fn selective_approval_by_tool_name() {
         ],
     ];
 
-    let options =
-        make_agent(responses, vec![allowed_tool, blocked_tool])
-            .with_approve_tool(|req| {
-                Box::pin(async move {
-                    if req.tool_name == "allowed" {
-                        ToolApproval::Approved
-                    } else {
-                        ToolApproval::Rejected
-                    }
-                })
+    let options = make_agent(responses, vec![allowed_tool, blocked_tool])
+        .with_approve_tool(|req| {
+            Box::pin(async move {
+                if req.tool_name == "allowed" {
+                    ToolApproval::Approved
+                } else {
+                    ToolApproval::Rejected
+                }
             })
-            .with_approval_mode(ApprovalMode::Enabled);
+        })
+        .with_approval_mode(ApprovalMode::Enabled);
     let mut agent = Agent::new(options);
 
     let result = agent.prompt_async(vec![user_msg("hello")]).await.unwrap();
@@ -473,7 +472,11 @@ async fn approval_sees_post_rewrite_arguments() {
     let result = agent.prompt_async(vec![user_msg("hello")]).await.unwrap();
     assert!(result.error.is_none());
 
-    let args = captured_args.lock().unwrap().take().expect("approval callback should have been called");
+    let args = captured_args
+        .lock()
+        .unwrap()
+        .take()
+        .expect("approval callback should have been called");
     assert_eq!(
         args.get("injected_by_policy"),
         Some(&json!(true)),
@@ -596,10 +599,84 @@ async fn approval_event_carries_rewritten_arguments() {
 
     let _result = agent.prompt_async(vec![user_msg("hello")]).await.unwrap();
 
-    let args = event_args.lock().unwrap().take().expect("ToolApprovalRequested event should have fired");
+    let args = event_args
+        .lock()
+        .unwrap()
+        .take()
+        .expect("ToolApprovalRequested event should have fired");
     assert_eq!(
         args.get("injected_by_policy"),
         Some(&json!(true)),
         "ToolApprovalRequested event must carry post-rewrite arguments"
+    );
+}
+
+/// Regression test for #434: a panic in the async approval future must be
+/// isolated and converted into a rejected tool result instead of unwinding the
+/// whole dispatch task.
+#[tokio::test]
+async fn approval_future_panic_is_reported_as_rejected_tool_error() {
+    let tool = Arc::new(MockTool::new("test_tool"));
+    let tool_ref = Arc::clone(&tool);
+    let events: Arc<Mutex<Vec<(String, bool)>>> = Arc::new(Mutex::new(Vec::new()));
+
+    let responses = tool_call_then_stop("tc1", "test_tool", "{}");
+    let options = make_agent(responses, vec![tool])
+        .with_approve_tool(|_req| {
+            Box::pin(async {
+                tokio::task::yield_now().await;
+                panic!("approval future panic")
+            })
+        })
+        .with_approval_mode(ApprovalMode::Enabled);
+    let mut agent = Agent::new(options);
+
+    let captured = Arc::clone(&events);
+    agent.subscribe(move |event| match event {
+        AgentEvent::ToolApprovalResolved { name, approved, .. } => captured
+            .lock()
+            .unwrap()
+            .push((format!("resolved:{name}"), *approved)),
+        AgentEvent::ToolExecutionEnd { name, is_error, .. } => captured
+            .lock()
+            .unwrap()
+            .push((format!("end:{name}"), *is_error)),
+        _ => {}
+    });
+
+    let result = agent.prompt_async(vec![user_msg("hello")]).await.unwrap();
+    assert!(
+        !tool_ref.was_executed(),
+        "approval panic should reject the tool before execution"
+    );
+
+    let rejection = result.messages.iter().find_map(|msg| match msg {
+        AgentMessage::Llm(LlmMessage::ToolResult(tr)) if tr.tool_call_id == "tc1" => Some(tr),
+        _ => None,
+    });
+    let rejection = rejection.expect("approval panic should still produce a tool result");
+    assert!(
+        rejection.is_error,
+        "panic rejection result should be an error"
+    );
+
+    let text = ContentBlock::extract_text(&rejection.content);
+    assert!(
+        text.contains("approval callback panicked"),
+        "tool result should mention approval panic: {text}"
+    );
+    assert!(
+        text.contains("approval future panic"),
+        "tool result should preserve the panic payload: {text}"
+    );
+
+    let events = events.lock().unwrap().clone();
+    assert!(
+        events.contains(&(String::from("resolved:test_tool"), false)),
+        "approval panic should emit ToolApprovalResolved with approved=false"
+    );
+    assert!(
+        events.contains(&(String::from("end:test_tool"), true)),
+        "approval panic should emit an error ToolExecutionEnd"
     );
 }

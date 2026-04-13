@@ -5,7 +5,10 @@ use std::sync::Arc;
 #[cfg(test)]
 use std::sync::Mutex as StdMutex;
 
-use futures::stream::{FuturesUnordered, StreamExt};
+use futures::{
+    FutureExt,
+    stream::{FuturesUnordered, StreamExt},
+};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, debug, error, info, info_span};
@@ -80,6 +83,14 @@ async fn emit_tool_execution_start(
         },
     )
     .await
+}
+
+fn panic_payload_message(panic_value: &(dyn std::any::Any + Send)) -> String {
+    panic_value
+        .downcast_ref::<&str>()
+        .map(|s| (*s).to_string())
+        .or_else(|| panic_value.downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "unknown panic payload".to_string())
 }
 
 async fn forward_tool_updates(
@@ -693,7 +704,48 @@ async fn check_approval(
         requires_approval,
         context: approval_context,
     };
-    let decision = approve_fn(request).await;
+    let decision = match std::panic::AssertUnwindSafe(approve_fn(request))
+        .catch_unwind()
+        .await
+    {
+        Ok(decision) => decision,
+        Err(panic_value) => {
+            let panic_message = panic_payload_message(panic_value.as_ref());
+            error!(
+                tool_call_id = %tc.id,
+                tool_name = %tc.name,
+                "approval callback panicked: {panic_message}"
+            );
+
+            if !emit(
+                tx,
+                AgentEvent::ToolApprovalResolved {
+                    id: tc.id.clone(),
+                    name: tc.name.clone(),
+                    approved: false,
+                },
+            )
+            .await
+            {
+                return ApprovalOutcome::ChannelClosed;
+            }
+
+            emit_error_result(
+                &tc.name,
+                &tc.id,
+                AgentToolResult::error(format!(
+                    "Tool call '{}' was rejected because the approval callback panicked: \
+                     {panic_message}",
+                    tc.name
+                )),
+                idx,
+                results,
+                tx,
+            )
+            .await;
+            return ApprovalOutcome::Rejected;
+        }
+    };
     let approved = !matches!(decision, ToolApproval::Rejected);
 
     if !emit(
