@@ -9,7 +9,7 @@ Pure-Rust library for LLM-powered agentic loops. Provider-agnostic core with plu
 - **Test-driven.** Run `cargo test --workspace` before every commit. Bug found → regression test first, then fix.
 - **Speed.** Minimize allocations on hot paths. `tokio::spawn` for concurrent tool execution, not sequential awaits.
 - **No unsafe.** `#[forbid(unsafe_code)]` at every crate root.
-- **Lessons learned go in nested CLAUDE.md files.** Update when you discover something non-obvious.
+- **Lessons learned go in nested CLAUDE.md files.** Each subcrate and key subdirectory has its own `CLAUDE.md` (e.g., `adapters/CLAUDE.md`, `local-llm/CLAUDE.md`, `tui/src/ui/CLAUDE.md`). Update when you discover something non-obvious.
 - **Context7 first.** When researching any crate API, dependency docs, or library usage, always query the context7 MCP server before falling back to web search or training data. Training data may be stale; context7 pulls current docs.
 - **No parallel builds in agents.** Never have multiple subagents run `cargo build`/`test`/`clippy` concurrently — Cargo's global lock serializes them anyway, causing extended build times. Run all compilation in the main conversation first; subagents should only read and analyze code.
 - **Check specs and docs first.** Before making large changes, read the relevant spec files in `specs/NNN-*/` (spec.md, plan.md, tasks.md) and architecture docs in `docs/` (HLD, subsystem READMEs, planning docs). The project uses spec-driven development — changes should align with the agreed design.
@@ -191,7 +191,7 @@ MSRV **1.88** (edition 2024). Common workspace deps are centralized in root `Car
 - N/A (in-memory by default; `CheckpointStore` trait abstracts persistence) (010-loop-policies-observability)
 - Rust 1.88 (edition 2024) + `serde`, `serde_json`, `tokio` (fs), `chrono` (timestamps), `tracing` (warning on corrupted lines) (021-memory-crate)
 - Local filesystem via JSONL files (one file per session) (021-memory-crate)
-- Rust 1.88 (edition 2024) + `mistralrs` (0.7, GGUF inference engine), `hf-hub` (HuggingFace model download with ETag/SHA verification), `tokio`, `tokio-stream`, `futures`, `serde`/`serde_json`, `thiserror`, `tracing`, `uuid` (022-local-llm-crate)
+- Rust 1.88 (edition 2024) + `mistralrs` (0.8, GGUF inference engine), `hf-hub` (HuggingFace model download with ETag/SHA verification), `tokio`, `tokio-stream`, `futures`, `serde`/`serde_json`, `thiserror`, `tracing`, `uuid` (022-local-llm-crate)
 - Model weights cached in `~/.cache/huggingface/hub/` (managed by `hf-hub`) (022-local-llm-crate)
 - Rust 1.88, edition 2024 + ratatui 0.30 (terminal UI framework), crossterm 0.29 (terminal control, event-stream feature), tokio (async runtime), toml 0.8 (config parsing), dirs 6 (platform-native config/data dirs), keyring 3 (OS keychain), thiserror (error types), tracing + tracing-subscriber + tracing-appender (file-based logging) (025-tui-scaffold-config)
 - TOML config file at `dirs::config_dir()/swink-agent/tui.toml`; OS keychain for credentials (macOS Keychain, Windows Credential Manager, Linux secret-service) (025-tui-scaffold-config)
@@ -207,7 +207,7 @@ MSRV **1.88** (edition 2024). Common workspace deps are centralized in root `Car
 - Rust 1.88 (edition 2024) + `swink-agent` (core types — policy traits, message types, verdict enums), `regex` (pattern matching for injection/PII/content), `chrono` (timestamps for audit records), `serde`/`serde_json` (audit record serialization), `tracing` (error logging in audit sink) (032-policy-recipes-crate)
 - Local filesystem via JSONL (AuditLogger's `JsonlAuditSink` only) (032-policy-recipes-crate)
 - Rust 1.88 (edition 2024) + `swink-agent` (core), `reqwest`, `futures`, `serde`, `serde_json`, `tokio`, `tokio-util`, `tracing` (015-adapter-gemini)
-- Rust 1.88 (edition 2024) + Common workspace deps centralized in root Cargo.toml. Key deps for this feature: `mistralrs` 0.7 (backend features), `eventsource-stream` 0.2 (proxy-only), `sha2` (bedrock-only). (033-workspace-feature-gates)
+- Rust 1.88 (edition 2024) + Common workspace deps centralized in root Cargo.toml. Key deps for this feature: `mistralrs` 0.8 (backend features), `eventsource-stream` 0.2 (proxy-only), `sha2` (bedrock-only). (033-workspace-feature-gates)
 - Rust 1.88 (edition 2024) + `swink-agent` (core), `reqwest`, `futures`, `serde`/`serde_json`, `tokio`, `tokio-util`, `tracing`, `rand` (ID generation) (018-adapter-mistral)
 - Rust 1.88 (edition 2024) + serde, serde_json, tokio, std::sync::RwLock (no new external deps) (034-session-state-store)
 - JSONL via swink-agent-memory crate (extends existing SessionStore) (034-session-state-store)
