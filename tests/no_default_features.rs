@@ -1,4 +1,4 @@
-#![cfg(swink_no_default_features_check)]
+#![cfg(not(feature = "builtin-tools"))]
 
 //! Regression test for issue #205: `--no-default-features` must not re-enable
 //! `builtin-tools` or `transfer` through dev-dependency feature unification.
