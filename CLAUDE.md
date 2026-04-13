@@ -9,7 +9,7 @@ Pure-Rust library for LLM-powered agentic loops. Provider-agnostic core with plu
 - **Test-driven.** Run `cargo test --workspace` before every commit. Bug found → regression test first, then fix.
 - **Speed.** Minimize allocations on hot paths. `tokio::spawn` for concurrent tool execution, not sequential awaits.
 - **No unsafe.** `#[forbid(unsafe_code)]` at every crate root.
-- **Lessons learned go in nested CLAUDE.md files.** Each subcrate and key subdirectory has its own `CLAUDE.md` (e.g., `adapters/CLAUDE.md`, `local-llm/CLAUDE.md`, `tui/src/ui/CLAUDE.md`). Update when you discover something non-obvious.
+- **Lessons learned go in nested guidance files.** Update the nearest `AGENTS.md` when present; some areas still have legacy `CLAUDE.md` files (for example `adapters/CLAUDE.md`, `local-llm/CLAUDE.md`, `tui/src/ui/CLAUDE.md`) that should stay in sync until they are migrated.
 - **Context7 first.** When researching any crate API, dependency docs, or library usage, always query the context7 MCP server before falling back to web search or training data. Training data may be stale; context7 pulls current docs.
 - **No parallel builds in agents.** Never have multiple subagents run `cargo build`/`test`/`clippy` concurrently — Cargo's global lock serializes them anyway, causing extended build times. Run all compilation in the main conversation first; subagents should only read and analyze code.
 - **Check specs and docs first.** Before making large changes, read the relevant spec files in `specs/NNN-*/` (spec.md, plan.md, tasks.md) and architecture docs in `docs/` (HLD, subsystem READMEs, planning docs). The project uses spec-driven development — changes should align with the agreed design.
