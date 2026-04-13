@@ -9,13 +9,13 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use tokio::sync::{mpsc, oneshot};
-use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use crate::agent::{Agent, AgentOptions};
 use crate::error::AgentError;
 use crate::handle::AgentStatus;
+use crate::task_core::{TaskCore, resolve_status};
 use crate::types::{AgentMessage, AgentResult, ContentBlock, LlmMessage, UserMessage};
 use crate::util::now_timestamp;
 
@@ -110,12 +110,11 @@ struct AgentEntry {
 /// Handle to a spawned orchestrated agent.
 ///
 /// Provides request/response messaging, status polling, and cancellation.
+/// Lifecycle methods (status, cancel, `is_done`) are delegated to a shared task core.
 pub struct OrchestratedHandle {
     name: String,
     request_tx: mpsc::Sender<AgentRequest>,
-    cancellation_token: CancellationToken,
-    join_handle: Option<JoinHandle<Result<AgentResult, AgentError>>>,
-    status: Arc<Mutex<AgentStatus>>,
+    core: TaskCore,
 }
 
 impl OrchestratedHandle {
@@ -161,30 +160,24 @@ impl OrchestratedHandle {
     ///
     /// Drops the request channel so the agent shuts down after processing
     /// any remaining requests.
-    pub async fn await_result(mut self) -> Result<AgentResult, AgentError> {
+    pub async fn await_result(self) -> Result<AgentResult, AgentError> {
         drop(self.request_tx);
-        match self.join_handle.take() {
-            Some(handle) => match handle.await {
-                Ok(result) => result,
-                Err(join_err) => Err(AgentError::stream(join_err)),
-            },
-            None => Err(AgentError::Aborted),
-        }
+        self.core.result().await
     }
 
     /// Cancel the agent.
     pub fn cancel(&self) {
-        self.cancellation_token.cancel();
+        self.core.cancel();
     }
 
     /// Current status of the agent.
     pub fn status(&self) -> AgentStatus {
-        *self.status.lock().unwrap_or_else(PoisonError::into_inner)
+        self.core.status()
     }
 
     /// Whether the agent has finished (completed, failed, or cancelled).
     pub fn is_done(&self) -> bool {
-        self.status() != AgentStatus::Running
+        self.core.is_done()
     }
 }
 
@@ -377,9 +370,7 @@ impl AgentOrchestrator {
         Ok(OrchestratedHandle {
             name: name.to_owned(),
             request_tx,
-            cancellation_token,
-            join_handle: Some(join_handle),
-            status,
+            core: TaskCore::new(join_handle, cancellation_token, status),
         })
     }
 }
@@ -479,12 +470,7 @@ async fn run_agent_loop(
         }
     };
 
-    let mut s = status.lock().unwrap_or_else(PoisonError::into_inner);
-    *s = match &final_result {
-        Ok(_) => AgentStatus::Completed,
-        Err(AgentError::Aborted) => AgentStatus::Cancelled,
-        Err(_) => AgentStatus::Failed,
-    };
+    *status.lock().unwrap_or_else(PoisonError::into_inner) = resolve_status(&final_result);
     final_result
 }
 
