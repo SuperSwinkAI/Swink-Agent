@@ -126,6 +126,31 @@ pub fn default_convert(msg: &AgentMessage) -> Option<LlmMessage> {
     }
 }
 
+#[cfg(feature = "plugins")]
+fn dispatch_plugin_on_init(agent: &Agent) {
+    // Dispatch on_init to each plugin in priority order (already sorted).
+    // Panics are caught and logged — the plugin's other contributions
+    // (policies, tools, event observers) remain active.
+    for plugin in &agent.plugins {
+        let name = plugin.name().to_owned();
+        let plugin_ref = Arc::clone(plugin);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            plugin_ref.on_init(agent);
+        }));
+        if let Err(cause) = result {
+            let msg = cause
+                .downcast_ref::<&str>()
+                .map(|s| (*s).to_owned())
+                .or_else(|| cause.downcast_ref::<String>().cloned())
+                .unwrap_or_else(|| "unknown panic".to_owned());
+            tracing::warn!(plugin = %name, error = %msg, "plugin on_init panicked");
+        }
+    }
+}
+
+#[cfg(not(feature = "plugins"))]
+fn dispatch_plugin_on_init(_agent: &Agent) {}
+
 // ─── Agent ───────────────────────────────────────────────────────────────────
 
 /// Stateful wrapper over the agent loop.
@@ -300,27 +325,7 @@ impl Agent {
             plugins: options.plugins,
         };
 
-        // Dispatch on_init to each plugin in priority order (already sorted).
-        // Panics are caught and logged — the plugin's other contributions
-        // (policies, tools, event observers) remain active.
-        #[cfg(feature = "plugins")]
-        {
-            for plugin in &agent.plugins {
-                let name = plugin.name().to_owned();
-                let plugin_ref = Arc::clone(plugin);
-                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    plugin_ref.on_init(&agent);
-                }));
-                if let Err(cause) = result {
-                    let msg = cause
-                        .downcast_ref::<&str>()
-                        .map(|s| (*s).to_owned())
-                        .or_else(|| cause.downcast_ref::<String>().cloned())
-                        .unwrap_or_else(|| "unknown panic".to_owned());
-                    tracing::warn!(plugin = %name, error = %msg, "plugin on_init panicked");
-                }
-            }
-        }
+        dispatch_plugin_on_init(&agent);
 
         agent
     }
