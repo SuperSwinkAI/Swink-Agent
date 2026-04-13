@@ -370,6 +370,15 @@ impl Agent {
         &self.session_state
     }
 
+    /// Access the custom message registry, if one was configured.
+    ///
+    /// Useful for passing to [`SessionStore::load`](swink_agent_memory) so that
+    /// persisted custom messages are deserialized instead of silently dropped.
+    #[must_use]
+    pub fn custom_message_registry(&self) -> Option<&crate::types::CustomMessageRegistry> {
+        self.custom_message_registry.as_deref()
+    }
+
     /// Returns all registered plugins sorted by priority (highest first).
     #[cfg(feature = "plugins")]
     #[must_use]

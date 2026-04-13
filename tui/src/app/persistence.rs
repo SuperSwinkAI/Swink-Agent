@@ -78,7 +78,11 @@ impl App {
             return Err(io::Error::other("session persistence unavailable"));
         };
         info!(session_id = %id, "loading session");
-        match store.load(id, None) {
+        let registry = self
+            .agent
+            .as_ref()
+            .and_then(|a| a.custom_message_registry());
+        match store.load(id, registry) {
             Ok((meta, messages)) => {
                 self.messages.clear();
                 for msg in &messages {
