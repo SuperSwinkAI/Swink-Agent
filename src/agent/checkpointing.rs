@@ -94,6 +94,7 @@ impl Agent {
             checkpoint.restore_messages(self.custom_message_registry.as_deref());
         let restored_state = restore_session_state(checkpoint.state.as_ref())?;
 
+        self.clear_transient_runtime_state();
         self.state.messages = restored_messages;
         self.state
             .system_prompt
@@ -223,6 +224,7 @@ impl Agent {
         let restored_state =
             restore_session_state(checkpoint.state.as_ref()).map_err(AgentError::stream)?;
 
+        self.clear_transient_runtime_state();
         self.state.messages = restored_messages;
         self.state
             .system_prompt
@@ -265,6 +267,8 @@ mod tests {
     use std::collections::HashMap;
     use std::sync::Arc;
     use std::sync::Mutex;
+
+    use tokio_util::sync::CancellationToken;
 
     use crate::agent::Agent;
     use crate::agent_options::AgentOptions;
@@ -330,6 +334,19 @@ mod tests {
             timestamp: 0,
             cache_hint: None,
         }))
+    }
+
+    fn seed_transient_runtime_state(agent: &mut Agent) {
+        agent.state.is_running = true;
+        agent.state.stream_message = Some(user_msg("streaming"));
+        agent
+            .state
+            .pending_tool_calls
+            .insert("tool-call-1".to_string());
+        agent.state.error = Some("stale error".to_string());
+        agent.abort_controller = Some(CancellationToken::new());
+        agent.in_flight_llm_messages = Some(vec![user_msg("in-flight-llm")]);
+        agent.in_flight_messages = Some(vec![user_msg("in-flight-checkpoint")]);
     }
 
     #[derive(Default)]
@@ -875,6 +892,26 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn restore_from_checkpoint_clears_transient_runtime_state() {
+        let mut source = make_agent(None);
+        source.state.messages.push(user_msg("restored"));
+        let checkpoint = source.save_checkpoint("cp-clear-runtime").await.unwrap();
+
+        let mut agent = make_agent(None);
+        seed_transient_runtime_state(&mut agent);
+
+        agent.restore_from_checkpoint(&checkpoint).unwrap();
+
+        assert!(!agent.state.is_running);
+        assert!(agent.state.stream_message.is_none());
+        assert!(agent.state.pending_tool_calls.is_empty());
+        assert!(agent.state.error.is_none());
+        assert!(agent.abort_controller.is_none());
+        assert!(agent.in_flight_llm_messages.is_none());
+        assert!(agent.in_flight_messages.is_none());
+    }
+
+    #[tokio::test]
     async fn restore_from_loop_checkpoint_rebinds_stream_fn_for_matching_model() {
         use crate::checkpoint::LoopCheckpoint;
         use crate::stream::StreamFn;
@@ -912,6 +949,23 @@ mod tests {
             Arc::ptr_eq(&agent.stream_fn, &(stream_b.clone() as Arc<dyn StreamFn>)),
             "stream_fn should be rebound to stream_b after loop checkpoint restore"
         );
+    }
+
+    #[tokio::test]
+    async fn restore_from_loop_checkpoint_clears_transient_runtime_state() {
+        let checkpoint = LoopCheckpoint::new("system", "mock", "mock-model", &[user_msg("hi")]);
+        let mut agent = make_agent(None);
+        seed_transient_runtime_state(&mut agent);
+
+        agent.restore_from_loop_checkpoint(&checkpoint).unwrap();
+
+        assert!(!agent.state.is_running);
+        assert!(agent.state.stream_message.is_none());
+        assert!(agent.state.pending_tool_calls.is_empty());
+        assert!(agent.state.error.is_none());
+        assert!(agent.abort_controller.is_none());
+        assert!(agent.in_flight_llm_messages.is_none());
+        assert!(agent.in_flight_messages.is_none());
     }
 
     #[tokio::test]

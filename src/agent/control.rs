@@ -24,6 +24,17 @@ async fn wait_for_idle_future<F>(
 }
 
 impl Agent {
+    pub(super) fn clear_transient_runtime_state(&mut self) {
+        self.state.is_running = false;
+        self.state.stream_message = None;
+        self.state.pending_tool_calls.clear();
+        self.state.error = None;
+        self.abort_controller = None;
+        self.in_flight_llm_messages = None;
+        self.in_flight_messages = None;
+        self.pending_message_snapshot.clear();
+    }
+
     /// Cancel the currently running loop, if any.
     pub fn abort(&mut self) {
         if let Some(ref token) = self.abort_controller {
@@ -49,15 +60,8 @@ impl Agent {
         self.loop_generation.fetch_add(1, Ordering::AcqRel);
 
         self.state.messages.clear();
-        self.state.is_running = false;
         self.loop_active.store(false, Ordering::Release);
-        self.state.stream_message = None;
-        self.state.pending_tool_calls.clear();
-        self.state.error = None;
-        self.abort_controller = None;
-        self.in_flight_llm_messages = None;
-        self.in_flight_messages = None;
-        self.pending_message_snapshot.clear();
+        self.clear_transient_runtime_state();
         self.clear_queues();
         self.idle_notify.notify_waiters();
     }
