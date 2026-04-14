@@ -370,6 +370,62 @@ async fn google_multiple_tool_calls() {
     assert_eq!(stop_reason, Some(StopReason::ToolUse));
 }
 
+#[tokio::test]
+async fn google_final_tool_deltas_follow_tool_call_start_order() {
+    let body = [
+        r#"data: {"candidates":[{"content":{"parts":[{"functionCall":{"id":"c1","name":"get_weather","args":{"city":"Paris"}}},{"functionCall":{"id":"c2","name":"get_time","args":{"tz":"UTC"}}}]}}]}"#,
+        "",
+        r#"data: {"candidates":[{"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":12,"totalTokenCount":22}}"#,
+        "",
+        "data: [DONE]",
+        "",
+    ]
+    .join("\n");
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(sse_response(&body))
+        .mount(&server)
+        .await;
+
+    let stream_fn = GeminiStreamFn::new(server.uri(), "test-key", ApiVersion::V1beta);
+
+    for _ in 0..32 {
+        let events = collect_events(&stream_fn).await;
+
+        let starts: Vec<_> = events
+            .iter()
+            .filter_map(|event| match event {
+                AssistantMessageEvent::ToolCallStart {
+                    content_index, id, ..
+                } => Some((*content_index, id.as_str())),
+                _ => None,
+            })
+            .collect();
+        let deltas: Vec<_> = events
+            .iter()
+            .filter_map(|event| match event {
+                AssistantMessageEvent::ToolCallDelta {
+                    content_index,
+                    delta,
+                } => Some((*content_index, delta.as_str())),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(
+            starts,
+            vec![(0, "c1"), (1, "c2")],
+            "unexpected tool-call start order: {starts:?}"
+        );
+        assert_eq!(
+            deltas,
+            vec![(0, r#"{"city":"Paris"}"#), (1, r#"{"tz":"UTC"}"#)],
+            "final tool-call deltas must preserve tool-call order"
+        );
+    }
+}
+
 // T029: HTTP 429 → throttled
 #[tokio::test]
 async fn google_http_429_maps_to_throttled() {
