@@ -105,14 +105,21 @@ impl PipelineExecutor {
         input: String,
         cancellation_token: CancellationToken,
     ) -> Result<PipelineOutput, PipelineError> {
-        let pipeline =
-            self.registry
-                .get(pipeline_id)
-                .ok_or_else(|| PipelineError::PipelineNotFound {
+        let pipeline = match self.registry.get(pipeline_id) {
+            Some(pipeline) => pipeline,
+            None => {
+                let err = PipelineError::PipelineNotFound {
                     id: pipeline_id.clone(),
-                })?;
+                };
+                self.emit(PipelineEvent::Failed {
+                    pipeline_id: pipeline_id.clone(),
+                    error_message: err.to_string(),
+                });
+                return Err(err);
+            }
+        };
 
-        match pipeline {
+        let result = match pipeline {
             Pipeline::Sequential {
                 id,
                 name,
@@ -160,7 +167,16 @@ impl PipelineExecutor {
                 )
                 .await
             }
+        };
+
+        if let Err(err) = &result {
+            self.emit(PipelineEvent::Failed {
+                pipeline_id: pipeline_id.clone(),
+                error_message: err.to_string(),
+            });
         }
+
+        result
     }
 
     async fn run_sequential(

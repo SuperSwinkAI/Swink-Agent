@@ -100,12 +100,73 @@ async fn failed_pipeline_emits_failed_event() {
     let result = executor.run(&id, "input".into(), token).await;
     assert!(result.is_err());
 
-    // The Started event should fire before the AgentNotFound error,
-    // and StepStarted may or may not fire depending on implementation.
-    // At minimum, we verify Started was emitted.
     let captured = events.lock().unwrap();
-    assert!(!captured.is_empty(), "should have at least a Started event");
+    assert!(
+        captured
+            .iter()
+            .any(|event| matches!(event, PipelineEvent::Failed { error_message, .. } if error_message.contains("ghost"))),
+        "expected a Failed event mentioning the missing agent, got: {captured:?}"
+    );
     assert!(matches!(&captured[0], PipelineEvent::Started { .. }));
+}
+
+#[tokio::test]
+async fn failed_parallel_pipeline_emits_failed_event() {
+    let mut factory = SimpleAgentFactory::new();
+    factory.register("agent-a", || make_text_agent("hello"));
+
+    let registry = PipelineRegistry::new();
+    let pipeline = Pipeline::parallel(
+        "parallel-failing",
+        vec!["agent-a".into(), "ghost".into()],
+        crate::pipeline::types::MergeStrategy::Concat {
+            separator: "\n".to_owned(),
+        },
+    );
+    let id = pipeline.id().clone();
+    registry.register(pipeline);
+
+    let (executor, events) = build_executor_with_events(factory, registry);
+    let token = CancellationToken::new();
+
+    let result = executor.run(&id, "input".into(), token).await;
+    assert!(result.is_err());
+
+    let captured = events.lock().unwrap();
+    assert!(
+        captured
+            .iter()
+            .any(|event| matches!(event, PipelineEvent::Failed { error_message, .. } if error_message.contains("ghost"))),
+        "expected a Failed event mentioning the missing agent, got: {captured:?}"
+    );
+}
+
+#[tokio::test]
+async fn failed_loop_pipeline_emits_failed_event() {
+    let factory = SimpleAgentFactory::new();
+
+    let registry = PipelineRegistry::new();
+    let pipeline = Pipeline::loop_(
+        "loop-failing",
+        "ghost",
+        crate::pipeline::types::ExitCondition::MaxIterations,
+    );
+    let id = pipeline.id().clone();
+    registry.register(pipeline);
+
+    let (executor, events) = build_executor_with_events(factory, registry);
+    let token = CancellationToken::new();
+
+    let result = executor.run(&id, "input".into(), token).await;
+    assert!(result.is_err());
+
+    let captured = events.lock().unwrap();
+    assert!(
+        captured
+            .iter()
+            .any(|event| matches!(event, PipelineEvent::Failed { error_message, .. } if error_message.contains("ghost"))),
+        "expected a Failed event mentioning the missing loop body agent, got: {captured:?}"
+    );
 }
 
 // T056: StepCompleted carries agent_name, duration, usage
