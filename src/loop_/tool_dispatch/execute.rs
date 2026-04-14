@@ -9,7 +9,7 @@ use tracing::{Instrument, debug, info_span};
 
 use crate::tool::{AgentTool, AgentToolResult, validate_tool_arguments, validation_error_result};
 use crate::tool_execution_policy::{ToolCallSummary, ToolExecutionPolicy};
-use crate::types::ToolResultMessage;
+use crate::types::{AgentMessage, ToolResultMessage};
 use crate::util::now_timestamp;
 
 use super::shared::{emit_error_result, emit_tool_execution_start, forward_tool_updates};
@@ -45,9 +45,7 @@ pub(super) async fn compute_execution_groups(
         ToolExecutionPolicy::Concurrent => {
             vec![(0..prepared.len()).collect()]
         }
-        ToolExecutionPolicy::Sequential => {
-            (0..prepared.len()).map(|i| vec![i]).collect()
-        }
+        ToolExecutionPolicy::Sequential => (0..prepared.len()).map(|i| vec![i]).collect(),
         ToolExecutionPolicy::Priority(priority_fn) => {
             let mut scored: Vec<(usize, i32)> = prepared
                 .iter()
@@ -112,6 +110,7 @@ pub(super) async fn dispatch_single_tool(
     batch_token: &CancellationToken,
     results: &Arc<tokio::sync::Mutex<Vec<(usize, ToolResultMessage)>>>,
     tool_timings: &Arc<tokio::sync::Mutex<Vec<crate::metrics::ToolExecMetrics>>>,
+    steering_messages: &Arc<tokio::sync::Mutex<Vec<AgentMessage>>>,
     steering_flag: &Arc<std::sync::atomic::AtomicBool>,
     transfer_flag: &Arc<std::sync::atomic::AtomicBool>,
     transfer_signal: &Arc<tokio::sync::Mutex<Option<crate::transfer::TransferSignal>>>,
@@ -133,6 +132,7 @@ pub(super) async fn dispatch_single_tool(
     let child_token = batch_token.child_token();
     let results_clone = Arc::clone(results);
     let timings_clone = Arc::clone(tool_timings);
+    let steering_messages_clone = Arc::clone(steering_messages);
     let steering_clone = Arc::clone(steering_flag);
     let transfer_flag_clone = Arc::clone(transfer_flag);
     let transfer_clone = Arc::clone(transfer_signal);
@@ -242,6 +242,7 @@ pub(super) async fn dispatch_single_tool(
             if let Some(ref provider) = config_clone.message_provider {
                 let msgs = provider.poll_steering();
                 if !msgs.is_empty() {
+                    steering_messages_clone.lock().await.extend(msgs);
                     steering_clone.store(true, std::sync::atomic::Ordering::SeqCst);
                 }
             }

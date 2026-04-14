@@ -107,6 +107,7 @@ pub(super) async fn build_steering_outcome(
     tool_calls: &[ToolCallInfo],
     results: Arc<tokio::sync::Mutex<Vec<(usize, ToolResultMessage)>>>,
     tool_timings: Arc<tokio::sync::Mutex<Vec<crate::metrics::ToolExecMetrics>>>,
+    steering_messages: Arc<tokio::sync::Mutex<Vec<AgentMessage>>>,
     injected_messages: Vec<AgentMessage>,
 ) -> ToolExecOutcome {
     let all_results = std::mem::take(&mut *results.lock().await);
@@ -134,10 +135,10 @@ pub(super) async fn build_steering_outcome(
         }
     }
 
-    let steering_messages = config
-        .message_provider
-        .as_ref()
-        .map_or_else(Vec::new, |provider| provider.poll_steering());
+    let mut steering_messages = std::mem::take(&mut *steering_messages.lock().await);
+    if let Some(provider) = config.message_provider.as_ref() {
+        steering_messages.extend(provider.poll_steering());
+    }
 
     let collected_timings = std::mem::take(&mut *tool_timings.lock().await);
     ToolExecOutcome::SteeringInterrupt {

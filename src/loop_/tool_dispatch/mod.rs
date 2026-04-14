@@ -88,6 +88,8 @@ pub async fn execute_tools_concurrently(
     let results: Arc<Mutex<Vec<(usize, ToolResultMessage)>>> = Arc::new(Mutex::new(Vec::new()));
     let tool_timings: Arc<Mutex<Vec<crate::metrics::ToolExecMetrics>>> =
         Arc::new(Mutex::new(Vec::new()));
+    let steering_messages: Arc<Mutex<Vec<crate::types::AgentMessage>>> =
+        Arc::new(Mutex::new(Vec::new()));
     let steering_detected: Arc<std::sync::atomic::AtomicBool> =
         Arc::new(std::sync::atomic::AtomicBool::new(false));
     let transfer_detected: Arc<std::sync::atomic::AtomicBool> =
@@ -138,6 +140,7 @@ pub async fn execute_tools_concurrently(
                 &batch_token,
                 &results,
                 &tool_timings,
+                &steering_messages,
                 &steering_detected,
                 &transfer_detected,
                 &transfer_signal,
@@ -170,6 +173,7 @@ pub async fn execute_tools_concurrently(
                     tool_calls,
                     results,
                     tool_timings,
+                    steering_messages,
                     injected_messages,
                 )
                 .await;
@@ -211,21 +215,46 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::Arc as StdArc;
     use std::sync::Mutex as StdMutex;
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
     use std::{pin::Pin, sync::Mutex as StdSyncMutex};
 
     use serde_json::json;
     use tokio::sync::mpsc;
     use tokio_util::sync::CancellationToken;
 
+    use crate::MessageProvider;
     use crate::policy::{PreDispatchPolicy, PreDispatchVerdict, ToolDispatchContext};
     use crate::testing::{MockStreamFn, MockTool, default_convert, default_model};
     use crate::tool::{AgentToolResult, ApprovalMode};
-    use crate::types::ContentBlock;
+    use crate::types::{AgentMessage, ContentBlock, LlmMessage, UserMessage};
     use crate::{DefaultRetryStrategy, StreamOptions, ToolApproval, ToolExecutionPolicy};
 
     struct BurstUpdatingTool {
         update_count: usize,
+    }
+
+    struct OneShotSteeringProvider {
+        poll_count: AtomicU32,
+    }
+
+    impl MessageProvider for OneShotSteeringProvider {
+        fn poll_steering(&self) -> Vec<AgentMessage> {
+            if self.poll_count.fetch_add(1, Ordering::SeqCst) == 0 {
+                vec![AgentMessage::Llm(LlmMessage::User(UserMessage {
+                    content: vec![ContentBlock::Text {
+                        text: "redirect".to_string(),
+                    }],
+                    timestamp: 0,
+                    cache_hint: None,
+                }))]
+            } else {
+                vec![]
+            }
+        }
+
+        fn poll_follow_up(&self) -> Vec<AgentMessage> {
+            vec![]
+        }
     }
 
     impl crate::tool::AgentTool for BurstUpdatingTool {
@@ -323,6 +352,22 @@ mod tests {
         approve_tool: Option<Box<crate::agent_options::ApproveToolFn>>,
         approval_mode: ApprovalMode,
     ) -> Arc<AgentLoopConfig> {
+        test_loop_config_with_message_provider(
+            pre_dispatch_policies,
+            tools,
+            approve_tool,
+            approval_mode,
+            None,
+        )
+    }
+
+    fn test_loop_config_with_message_provider(
+        pre_dispatch_policies: Vec<Arc<dyn PreDispatchPolicy>>,
+        tools: Vec<Arc<dyn crate::tool::AgentTool>>,
+        approve_tool: Option<Box<crate::agent_options::ApproveToolFn>>,
+        approval_mode: ApprovalMode,
+        message_provider: Option<Arc<dyn MessageProvider>>,
+    ) -> Arc<AgentLoopConfig> {
         Arc::new(AgentLoopConfig {
             agent_name: None,
             transfer_chain: None,
@@ -334,7 +379,7 @@ mod tests {
             convert_to_llm: Box::new(default_convert),
             transform_context: None,
             get_api_key: None,
-            message_provider: None,
+            message_provider,
             pending_message_snapshot: Arc::default(),
             approve_tool,
             approval_mode,
@@ -694,5 +739,76 @@ mod tests {
             updates.last().map(|(_, _, text)| text.as_str()),
             Some("partial-31")
         );
+    }
+
+    #[tokio::test]
+    async fn steering_interrupt_preserves_worker_polled_messages() {
+        let fast_tool =
+            Arc::new(MockTool::new("fast_tool").with_delay(std::time::Duration::from_millis(10)));
+        let slow_tool =
+            Arc::new(MockTool::new("slow_tool").with_delay(std::time::Duration::from_secs(5)));
+        let config = test_loop_config_with_message_provider(
+            vec![],
+            vec![
+                fast_tool as Arc<dyn crate::tool::AgentTool>,
+                slow_tool as Arc<dyn crate::tool::AgentTool>,
+            ],
+            None,
+            ApprovalMode::Bypassed,
+            Some(Arc::new(OneShotSteeringProvider {
+                poll_count: AtomicU32::new(0),
+            })),
+        );
+
+        let tool_calls = vec![
+            ToolCallInfo {
+                id: "call_fast".to_string(),
+                name: "fast_tool".to_string(),
+                arguments: json!({}),
+                is_incomplete: false,
+            },
+            ToolCallInfo {
+                id: "call_slow".to_string(),
+                name: "slow_tool".to_string(),
+                arguments: json!({}),
+                is_incomplete: false,
+            },
+        ];
+        let cancellation_token = CancellationToken::new();
+        let (tx, _rx) = mpsc::channel(8);
+
+        let outcome =
+            execute_tools_concurrently(&config, &tool_calls, &cancellation_token, &tx).await;
+
+        let ToolExecOutcome::SteeringInterrupt {
+            completed,
+            cancelled,
+            steering_messages,
+            ..
+        } = outcome
+        else {
+            panic!("expected steering interrupt outcome");
+        };
+
+        assert_eq!(
+            completed.len(),
+            1,
+            "fast tool should complete before the interrupt"
+        );
+        assert_eq!(
+            cancelled.len(),
+            1,
+            "slow tool should be cancelled by steering"
+        );
+        assert_eq!(
+            steering_messages.len(),
+            1,
+            "drained steering must survive into the outcome"
+        );
+        assert!(matches!(
+            &steering_messages[0],
+            AgentMessage::Llm(LlmMessage::User(UserMessage { content, .. }))
+                if ContentBlock::extract_text(content) == "redirect"
+        ));
     }
 }
