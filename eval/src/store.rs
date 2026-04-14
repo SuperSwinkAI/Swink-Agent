@@ -4,6 +4,7 @@
 //! ([`FsEvalStore`]) that stores data as JSON files.
 
 use std::fs;
+use std::io::{self, BufWriter, Write};
 use std::path::{Component, Path, PathBuf};
 
 use crate::error::EvalError;
@@ -95,6 +96,18 @@ impl FsEvalStore {
         }
         Ok(())
     }
+
+    fn write_atomically(
+        target: &Path,
+        write: impl FnOnce(&mut BufWriter<&std::fs::File>) -> io::Result<()>,
+    ) -> Result<(), EvalError> {
+        swink_agent::atomic_fs::atomic_write(target, write)?;
+        Ok(())
+    }
+
+    fn write_json_atomically(target: &Path, json: &str) -> Result<(), EvalError> {
+        Self::write_atomically(target, |writer| writer.write_all(json.as_bytes()))
+    }
 }
 
 impl EvalStore for FsEvalStore {
@@ -102,7 +115,7 @@ impl EvalStore for FsEvalStore {
         Self::validate_identifier("eval set", &set.id)?;
         Self::ensure_dir(&self.sets_dir())?;
         let json = serde_json::to_string_pretty(set)?;
-        fs::write(self.set_path(&set.id), json)?;
+        Self::write_json_atomically(&self.set_path(&set.id), &json)?;
         Ok(())
     }
 
@@ -130,9 +143,9 @@ impl EvalStore for FsEvalStore {
         Self::validate_identifier("eval result set", &result.eval_set_id)?;
         Self::ensure_dir(&self.results_dir(&result.eval_set_id))?;
         let json = serde_json::to_string_pretty(result)?;
-        fs::write(
-            self.result_path(&result.eval_set_id, result.timestamp),
-            json,
+        Self::write_json_atomically(
+            &self.result_path(&result.eval_set_id, result.timestamp),
+            &json,
         )?;
         Ok(())
     }
@@ -170,5 +183,37 @@ impl EvalStore for FsEvalStore {
 
         timestamps.sort_unstable();
         Ok(timestamps)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::FsEvalStore;
+    use std::fs;
+    use std::io::{self, Write};
+
+    #[test]
+    fn failed_atomic_rewrite_preserves_existing_eval_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("sets").join("suite.json");
+        fs::create_dir_all(target.parent().unwrap()).unwrap();
+        fs::write(&target, "{\"stable\":true}\n").unwrap();
+
+        let error = FsEvalStore::write_atomically(&target, |writer| {
+            writer.write_all(b"{\"stable\":false")?;
+            Err(io::Error::other("boom"))
+        })
+        .unwrap_err();
+
+        assert!(matches!(error, crate::error::EvalError::Io { .. }));
+        assert_eq!(fs::read_to_string(&target).unwrap(), "{\"stable\":true}\n");
+
+        let temp_files: Vec<_> = fs::read_dir(target.parent().unwrap())
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.starts_with(".suite.json.tmp."))
+            .collect();
+        assert!(temp_files.is_empty());
     }
 }
