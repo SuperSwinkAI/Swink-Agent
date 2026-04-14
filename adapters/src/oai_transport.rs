@@ -12,10 +12,12 @@
 use std::pin::Pin;
 
 use futures::stream::{self, Stream, StreamExt as _};
-use serde::Serialize;
 use tokio_util::sync::CancellationToken;
 use tracing::debug;
 use tracing::warn;
+
+#[cfg(feature = "mistral")]
+use serde::Serialize;
 
 use swink_agent::{AgentContext, AssistantMessageEvent, ModelSpec, StreamOptions};
 
@@ -34,6 +36,7 @@ use crate::openai_compat::{
 pub struct OaiAdapterShell {
     provider: &'static str,
     base: AdapterBase,
+    chat_completions_path: &'static str,
 }
 
 impl OaiAdapterShell {
@@ -45,12 +48,32 @@ impl OaiAdapterShell {
         Self {
             provider,
             base: AdapterBase::new(base_url, api_key),
+            chat_completions_path: "/v1/chat/completions",
         }
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "azure"))]
+    pub(crate) fn new_with_path(
+        provider: &'static str,
+        base_url: impl Into<String>,
+        api_key: impl Into<String>,
+        chat_completions_path: &'static str,
+    ) -> Self {
+        Self {
+            provider,
+            base: AdapterBase::new(base_url, api_key),
+            chat_completions_path,
+        }
+    }
+
+    #[cfg(any(test, feature = "azure"))]
     pub(crate) fn base_url(&self) -> &str {
         &self.base.base_url
+    }
+
+    #[cfg(feature = "azure")]
+    pub(crate) const fn client(&self) -> &reqwest::Client {
+        &self.base.client
     }
 
     pub(crate) fn fmt_debug(
@@ -64,18 +87,20 @@ impl OaiAdapterShell {
             .finish_non_exhaustive()
     }
 
-    pub(crate) fn provider(&self) -> &'static str {
+    #[cfg(any(feature = "azure", feature = "mistral"))]
+    pub(crate) const fn provider(&self) -> &'static str {
         self.provider
     }
 
     pub(crate) fn chat_completions_url(&self) -> String {
-        format!("{}/v1/chat/completions", self.base.base_url)
+        format!("{}{}", self.base.base_url, self.chat_completions_path)
     }
 
     pub(crate) fn api_key<'a>(&'a self, options: &'a StreamOptions) -> &'a str {
         options.api_key.as_deref().unwrap_or(&self.base.api_key)
     }
 
+    #[cfg(feature = "mistral")]
     pub(crate) fn post_json_request<T: Serialize>(
         &self,
         url: &str,
@@ -201,4 +226,24 @@ pub fn oai_send_and_parse<'a>(
         parse_oai_sse_stream(response, cancellation_token, provider).right_stream()
     })
     .flatten()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn custom_chat_path_is_used() {
+        let shell = OaiAdapterShell::new_with_path(
+            "Azure",
+            "https://example.openai.azure.com/openai/deployments/gpt-4/",
+            "",
+            "/chat/completions",
+        );
+
+        assert_eq!(
+            shell.chat_completions_url(),
+            "https://example.openai.azure.com/openai/deployments/gpt-4/chat/completions"
+        );
+    }
 }

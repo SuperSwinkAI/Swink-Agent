@@ -15,7 +15,7 @@ use tracing::debug;
 use swink_agent::{AgentContext, AssistantMessageEvent, ModelSpec, StreamFn, StreamOptions};
 use swink_agent_auth::{ExpiringValue, SingleFlightTokenSource};
 
-use crate::oai_transport::{oai_send_and_parse, prepare_oai_request};
+use crate::oai_transport::{OaiAdapterShell, oai_send_and_parse, prepare_oai_request};
 
 /// Authentication method for Azure `OpenAI` deployments.
 #[derive(Clone)]
@@ -55,8 +55,7 @@ struct TokenResponse {
 }
 
 pub struct AzureStreamFn {
-    client: reqwest::Client,
-    base_url: String,
+    shell: OaiAdapterShell,
     auth: AzureAuth,
     token_source: SingleFlightTokenSource<String>,
     /// Override token endpoint URL (for testing). `None` = use Microsoft default.
@@ -66,9 +65,18 @@ pub struct AzureStreamFn {
 impl AzureStreamFn {
     #[must_use]
     pub fn new(base_url: impl Into<String>, auth: AzureAuth) -> Self {
+        let shell_api_key = match &auth {
+            AzureAuth::ApiKey(key) => key.clone(),
+            AzureAuth::EntraId { .. } => String::new(),
+        };
+
         Self {
-            client: reqwest::Client::new(),
-            base_url: base_url.into().trim_end_matches('/').to_string(),
+            shell: OaiAdapterShell::new_with_path(
+                "Azure",
+                base_url,
+                shell_api_key,
+                "/chat/completions",
+            ),
             auth,
             token_source: SingleFlightTokenSource::new(REFRESH_MARGIN),
             token_endpoint_override: None,
@@ -131,7 +139,7 @@ impl AzureStreamFn {
         client_id: &str,
         client_secret: &str,
     ) -> Result<String, String> {
-        let client = self.client.clone();
+        let client = self.shell.client().clone();
         let token_url = self.token_url(tenant_id);
         let client_id = client_id.to_string();
         let client_secret = client_secret.to_string();
@@ -182,7 +190,7 @@ impl AzureStreamFn {
 impl std::fmt::Debug for AzureStreamFn {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AzureStreamFn")
-            .field("base_url", &self.base_url)
+            .field("base_url", &self.shell.base_url())
             .field("auth", &self.auth)
             .finish_non_exhaustive()
     }
@@ -214,7 +222,7 @@ fn azure_stream<'a>(
     cancellation_token: CancellationToken,
 ) -> impl Stream<Item = AssistantMessageEvent> + Send + 'a {
     stream::once(async move {
-        let url = format!("{}/chat/completions", azure.base_url);
+        let url = azure.shell.chat_completions_url();
         debug!(
             %url,
             model = %model.model_id,
@@ -222,21 +230,26 @@ fn azure_stream<'a>(
             "sending Azure request"
         );
 
-        let request = prepare_oai_request(&azure.client, &url, model, context, options);
+        let request = prepare_oai_request(azure.shell.client(), &url, model, context, options);
         let request = match azure.apply_auth(request, options).await {
             Ok(r) => r,
             Err(event) => return stream::iter(vec![event]).left_stream(),
         };
 
-        oai_send_and_parse(request, "Azure", cancellation_token, |status, body| {
-            if is_content_filter_error(body) {
-                Some(AssistantMessageEvent::error_content_filtered(format!(
-                    "Azure content filter blocked request (HTTP {status})"
-                )))
-            } else {
-                None
-            }
-        })
+        oai_send_and_parse(
+            request,
+            azure.shell.provider(),
+            cancellation_token,
+            |status, body| {
+                if is_content_filter_error(body) {
+                    Some(AssistantMessageEvent::error_content_filtered(format!(
+                        "Azure content filter blocked request (HTTP {status})"
+                    )))
+                } else {
+                    None
+                }
+            },
+        )
         .right_stream()
     })
     .flatten()
