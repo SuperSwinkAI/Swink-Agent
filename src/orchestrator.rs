@@ -249,12 +249,20 @@ impl AgentOrchestrator {
     /// Register an agent by name with a factory that produces its options.
     ///
     /// The factory is called each time the agent is spawned or restarted.
+    ///
+    /// # Panics
+    ///
+    /// Panics if an agent with the same name has already been registered.
     pub fn add_agent(
         &mut self,
         name: impl Into<String>,
         options_factory: impl Fn() -> AgentOptions + Send + Sync + 'static,
     ) {
         let name = name.into();
+        assert!(
+            !self.entries.contains_key(&name),
+            "agent '{name}' already registered"
+        );
         self.entries.insert(
             name,
             AgentEntry {
@@ -270,7 +278,8 @@ impl AgentOrchestrator {
     ///
     /// # Panics
     ///
-    /// Panics if the parent agent has not been registered.
+    /// Panics if the parent agent has not been registered or if the child name
+    /// is already registered.
     pub fn add_child(
         &mut self,
         name: impl Into<String>,
@@ -282,6 +291,10 @@ impl AgentOrchestrator {
         assert!(
             self.entries.contains_key(&parent),
             "parent agent '{parent}' not registered"
+        );
+        assert!(
+            !self.entries.contains_key(&name),
+            "agent '{name}' already registered"
         );
 
         self.entries
@@ -501,6 +514,8 @@ impl std::fmt::Debug for AgentOrchestrator {
 
 #[cfg(test)]
 mod tests {
+    use std::panic::AssertUnwindSafe;
+
     use super::*;
 
     #[test]
@@ -543,6 +558,46 @@ mod tests {
     fn add_child_missing_parent_panics() {
         let mut orch = AgentOrchestrator::new();
         orch.add_child("child", "missing", || panic!("not called"));
+    }
+
+    #[test]
+    #[should_panic(expected = "agent 'alpha' already registered")]
+    fn add_agent_duplicate_name_panics() {
+        let mut orch = AgentOrchestrator::new();
+        orch.add_agent("alpha", || panic!("not called"));
+        orch.add_agent("alpha", || panic!("not called"));
+    }
+
+    #[test]
+    fn duplicate_child_registration_preserves_existing_hierarchy() {
+        let mut orch = AgentOrchestrator::new();
+        orch.add_agent("parent1", || panic!("not called"));
+        orch.add_agent("parent2", || panic!("not called"));
+        orch.add_child("child", "parent1", || panic!("not called"));
+
+        let duplicate = std::panic::catch_unwind(AssertUnwindSafe(|| {
+            orch.add_child("child", "parent2", || panic!("not called"));
+        }));
+
+        assert!(duplicate.is_err());
+        assert_eq!(orch.parent_of("child"), Some("parent1"));
+        assert_eq!(orch.children_of("parent1").unwrap(), &["child"]);
+        assert!(orch.children_of("parent2").unwrap().is_empty());
+    }
+
+    #[test]
+    fn duplicate_top_level_registration_preserves_child_link() {
+        let mut orch = AgentOrchestrator::new();
+        orch.add_agent("parent", || panic!("not called"));
+        orch.add_child("child", "parent", || panic!("not called"));
+
+        let duplicate = std::panic::catch_unwind(AssertUnwindSafe(|| {
+            orch.add_agent("child", || panic!("not called"));
+        }));
+
+        assert!(duplicate.is_err());
+        assert_eq!(orch.parent_of("child"), Some("parent"));
+        assert_eq!(orch.children_of("parent").unwrap(), &["child"]);
     }
 
     #[test]

@@ -99,6 +99,10 @@ MSRV **1.88** (edition 2024). Common workspace deps are centralized in root `Car
 - `on_init(&self, &Agent)` dispatched in priority order, wrapped in `catch_unwind` — panicking `on_init` is logged and skipped, construction continues (plugin's other contributions remain active).
 - Entire module behind `#[cfg(feature = "plugins")]` — opt-in, not default-enabled, zero cost when disabled.
 
+### Orchestrator (`src/orchestrator.rs`)
+
+- `AgentOrchestrator::add_agent()` and `add_child()` reject duplicate names with a panic instead of replacing existing entries. This preserves `parent_of()` / `children_of()` consistency until a dedicated replace/relink API exists.
+
 ### MCP Integration (`mcp/`)
 
 - `McpManager::shutdown()` must operate on shared connection-owned state, not `Arc::try_unwrap()`: exported `McpTool` handles keep `Arc<McpConnection>` clones alive, so deterministic disconnect has to clear the session/monitor even when callers still retain tool `Arc`s.
