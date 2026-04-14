@@ -1,21 +1,82 @@
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use bytes::Bytes;
 use futures::{StreamExt, stream};
+use tokio::fs::OpenOptions;
 use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader, BufWriter};
 
 use swink_agent::{
-    ArtifactByteStream, ArtifactData, ArtifactError, ArtifactStore, ArtifactVersion,
-    StreamingArtifactStore, validate_artifact_name,
+    ArtifactByteStream, ArtifactError, ArtifactVersion, StreamingArtifactStore,
+    validate_artifact_name,
 };
 
-use crate::fs_store::FileArtifactStore;
+use crate::fs_store::{FileArtifactStore, VersionRecord, storage_err};
 
 /// 64 KiB chunk size for buffered streaming I/O.
 const CHUNK_SIZE: usize = 64 * 1024;
+static STREAM_TMP_SEQ: AtomicU64 = AtomicU64::new(0);
 
-fn storage_err(e: impl std::error::Error + Send + Sync + 'static) -> ArtifactError {
-    ArtifactError::Storage(Box::new(e))
+fn temp_version_path(target: &Path) -> Result<PathBuf, ArtifactError> {
+    let parent = target.parent().ok_or_else(|| {
+        storage_err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "target path has no parent directory",
+        ))
+    })?;
+    let file_name = target
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| {
+            storage_err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "target path has no file name",
+            ))
+        })?;
+    let seq = STREAM_TMP_SEQ.fetch_add(1, Ordering::Relaxed);
+
+    Ok(parent.join(format!(
+        ".{file_name}.stream.tmp.{}.{seq}",
+        std::process::id()
+    )))
+}
+
+async fn write_stream_to_temp_file(
+    temp_path: &Path,
+    mut stream: ArtifactByteStream,
+) -> Result<usize, ArtifactError> {
+    let write_result = async {
+        let file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(temp_path)
+            .await
+            .map_err(storage_err)?;
+        let mut writer = BufWriter::with_capacity(CHUNK_SIZE, file);
+        let mut size = 0usize;
+
+        while let Some(chunk) = stream.next().await {
+            let bytes = chunk?;
+            size = size.checked_add(bytes.len()).ok_or_else(|| {
+                storage_err(std::io::Error::other("artifact stream size overflow"))
+            })?;
+            writer.write_all(&bytes).await.map_err(storage_err)?;
+        }
+
+        writer.flush().await.map_err(storage_err)?;
+        let file = writer.into_inner();
+        file.sync_all().await.map_err(storage_err)?;
+
+        Ok(size)
+    }
+    .await;
+
+    if write_result.is_err() {
+        let _ = tokio::fs::remove_file(temp_path).await;
+    }
+
+    write_result
 }
 
 impl StreamingArtifactStore for FileArtifactStore {
@@ -25,29 +86,57 @@ impl StreamingArtifactStore for FileArtifactStore {
         name: &str,
         content_type: String,
         metadata: HashMap<String, String>,
-        mut stream: ArtifactByteStream,
+        stream: ArtifactByteStream,
     ) -> Result<ArtifactVersion, ArtifactError> {
         validate_artifact_name(name)?;
 
-        // Collect the stream into a temp file, then delegate to the base save.
-        // This keeps version numbering and meta.json logic in one place.
-        let mut collected = Vec::new();
-        let mut writer = BufWriter::with_capacity(CHUNK_SIZE, &mut collected);
+        let lock = self.artifact_lock(session_id, name).await;
+        let _guard = lock.lock().await;
 
-        while let Some(chunk) = stream.next().await {
-            let bytes = chunk?;
-            writer.write_all(&bytes).await.map_err(storage_err)?;
+        let dir = self.artifact_dir(session_id, name);
+        tokio::fs::create_dir_all(&dir).await.map_err(storage_err)?;
+
+        let mut meta = self.read_meta(session_id, name).await?;
+
+        #[allow(clippy::cast_possible_truncation)]
+        let next_version = meta.versions.len() as u32 + 1;
+        let now = chrono::Utc::now();
+        let content_path = self.version_path(session_id, name, next_version);
+        let temp_path = temp_version_path(&content_path)?;
+        let size = write_stream_to_temp_file(&temp_path, stream).await?;
+
+        if let Err(error) = tokio::fs::rename(&temp_path, &content_path).await {
+            let _ = tokio::fs::remove_file(&temp_path).await;
+            return Err(storage_err(error));
         }
-        writer.flush().await.map_err(storage_err)?;
-        drop(writer);
 
-        let data = ArtifactData {
-            content: collected,
-            content_type,
-            metadata,
+        let record = VersionRecord {
+            name: name.to_string(),
+            version: next_version,
+            created_at: now,
+            size,
+            content_type: content_type.clone(),
+            metadata: metadata.clone(),
         };
+        let version = ArtifactVersion {
+            name: name.to_string(),
+            version: next_version,
+            created_at: now,
+            size,
+            content_type,
+        };
+        meta.versions.push(record);
+        self.write_meta(session_id, name, &meta).await?;
 
-        self.save(session_id, name, data).await
+        tracing::info!(
+            session_id,
+            name,
+            version = next_version,
+            size,
+            "artifact saved from stream"
+        );
+
+        Ok(version)
     }
 
     async fn load_stream(
@@ -56,27 +145,11 @@ impl StreamingArtifactStore for FileArtifactStore {
         name: &str,
         version: Option<u32>,
     ) -> Result<Option<ArtifactByteStream>, ArtifactError> {
-        #[derive(serde::Deserialize)]
-        struct StreamMetaFile {
-            versions: Vec<StreamVersionEntry>,
-        }
-        #[derive(serde::Deserialize)]
-        struct StreamVersionEntry {
-            version: u32,
-        }
-
         // Resolve the target version number.
         let target_version = if let Some(v) = version {
             v
         } else {
-            let meta_path = self.meta_path(session_id, name);
-            let contents = match tokio::fs::read_to_string(&meta_path).await {
-                Ok(c) => c,
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-                Err(e) => return Err(storage_err(e)),
-            };
-
-            let meta: StreamMetaFile = serde_json::from_str(&contents).map_err(storage_err)?;
+            let meta = self.read_meta(session_id, name).await?;
             match meta.versions.last() {
                 Some(entry) => entry.version,
                 None => return Ok(None),
