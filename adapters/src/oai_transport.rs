@@ -9,15 +9,85 @@
 //! Adapters that need provider-specific hooks (Azure auth, Mistral message
 //! ordering, etc.) apply those before or after calling into this module.
 
+use std::pin::Pin;
+
 use futures::stream::{self, Stream, StreamExt as _};
+use tokio_util::sync::CancellationToken;
+use tracing::debug;
 use tracing::warn;
 
 use swink_agent::{AgentContext, AssistantMessageEvent, ModelSpec, StreamOptions};
 
+use crate::base::AdapterBase;
 use crate::convert;
 use crate::openai_compat::{
     OaiChatRequest, OaiConverter, OaiStreamOptions, build_oai_tools, parse_oai_sse_stream,
 };
+
+/// Shared shell for providers that only customize the OAI-compatible
+/// endpoint label while otherwise using the standard chat-completions flow.
+pub struct OaiAdapterShell {
+    provider: &'static str,
+    base: AdapterBase,
+}
+
+impl OaiAdapterShell {
+    pub(crate) fn new(
+        provider: &'static str,
+        base_url: impl Into<String>,
+        api_key: impl Into<String>,
+    ) -> Self {
+        Self {
+            provider,
+            base: AdapterBase::new(base_url, api_key),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn base_url(&self) -> &str {
+        &self.base.base_url
+    }
+
+    pub(crate) fn fmt_debug(
+        &self,
+        name: &'static str,
+        f: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
+        f.debug_struct(name)
+            .field("base_url", &self.base.base_url)
+            .field("api_key", &"[REDACTED]")
+            .finish_non_exhaustive()
+    }
+
+    pub(crate) fn stream<'a>(
+        &'a self,
+        model: &'a ModelSpec,
+        context: &'a AgentContext,
+        options: &'a StreamOptions,
+        cancellation_token: CancellationToken,
+    ) -> Pin<Box<dyn Stream<Item = AssistantMessageEvent> + Send + 'a>> {
+        let url = format!("{}/v1/chat/completions", self.base.base_url);
+        let api_key = options.api_key.as_deref().unwrap_or(&self.base.api_key);
+
+        debug!(
+            provider = self.provider,
+            %url,
+            model = %model.model_id,
+            messages = context.messages.len(),
+            "sending OAI-compatible request"
+        );
+
+        let request = prepare_oai_request(&self.base.client, &url, model, context, options)
+            .header("Authorization", format!("Bearer {api_key}"));
+
+        Box::pin(oai_send_and_parse(
+            request,
+            self.provider,
+            cancellation_token,
+            |_, _| None,
+        ))
+    }
+}
 
 /// Build a standard OAI-compatible HTTP request (without auth headers).
 ///
