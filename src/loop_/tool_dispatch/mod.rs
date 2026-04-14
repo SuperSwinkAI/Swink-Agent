@@ -255,6 +255,10 @@ mod tests {
         fn poll_follow_up(&self) -> Vec<AgentMessage> {
             vec![]
         }
+
+        fn has_steering(&self) -> bool {
+            self.poll_count.load(Ordering::SeqCst) == 0
+        }
     }
 
     impl crate::tool::AgentTool for BurstUpdatingTool {
