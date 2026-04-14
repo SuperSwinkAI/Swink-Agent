@@ -2,23 +2,24 @@
 // Usage: node playwright_bridge.js
 
 const readline = require('readline');
-const { chromium } = require('playwright');
 
 let browser = null;
-
-const rl = readline.createInterface({
-  input: process.stdin,
-  output: process.stdout,
-  terminal: false,
-});
+let chromium = null;
 
 function respond(obj) {
   process.stdout.write(JSON.stringify(obj) + '\n');
 }
 
+function resolveChromium() {
+  if (!chromium) {
+    ({ chromium } = require('playwright'));
+  }
+  return chromium;
+}
+
 async function ensureBrowser() {
   if (!browser) {
-    browser = await chromium.launch({ headless: true });
+    browser = await resolveChromium().launch({ headless: true });
   }
   return browser;
 }
@@ -43,37 +44,70 @@ async function handleScreenshot(req) {
   }
 }
 
-function extractPreset(preset) {
+function buildExtractionPlan(req) {
+  let selector = req.selector || null;
+
+  if (req.preset) {
+    switch (req.preset) {
+      case 'links':
+        selector = 'a[href]';
+        break;
+      case 'headings':
+        selector = 'h1,h2,h3,h4,h5,h6';
+        break;
+      case 'tables':
+        selector = 'table';
+        break;
+      default:
+        return { error: `Unknown preset: ${req.preset}` };
+    }
+  }
+
+  if (!selector) {
+    return { error: 'No selector or preset provided' };
+  }
+
+  return { selector, preset: req.preset || null };
+}
+
+function collectAttributes(el) {
+  if (!el.attributes) {
+    return {};
+  }
+
+  const attributes = Array.isArray(el.attributes) ? el.attributes : Array.from(el.attributes);
+  return Object.fromEntries(attributes.map((attr) => [attr.name, attr.value]));
+}
+
+function extractElementData(el, preset) {
+  const tag = (el.tagName || '').toLowerCase();
+  const text = (el.textContent || '').trim().slice(0, 500);
+
   switch (preset) {
     case 'links':
       return {
-        selector: 'a[href]',
-        extract: (el) => ({
-          tag: el.tagName.toLowerCase(),
-          text: (el.textContent || '').trim().slice(0, 500),
-          attributes: { href: el.getAttribute('href') || '' },
-        }),
+        tag,
+        text,
+        attributes: { href: el.getAttribute('href') || '' },
       };
     case 'headings':
       return {
-        selector: 'h1,h2,h3,h4,h5,h6',
-        extract: (el) => ({
-          tag: el.tagName.toLowerCase(),
-          text: (el.textContent || '').trim().slice(0, 500),
-          attributes: {},
-        }),
+        tag,
+        text,
+        attributes: {},
       };
     case 'tables':
       return {
-        selector: 'table',
-        extract: (el) => ({
-          tag: 'table',
-          text: el.innerHTML.slice(0, 2000),
-          attributes: {},
-        }),
+        tag: 'table',
+        text: (el.innerHTML || '').slice(0, 2000),
+        attributes: {},
       };
     default:
-      return null;
+      return {
+        tag,
+        text,
+        attributes: collectAttributes(el),
+      };
   }
 }
 
@@ -84,40 +118,54 @@ async function handleExtract(req) {
   try {
     await page.goto(req.url, { waitUntil: 'load', timeout: 30000 });
 
-    let selectorStr = req.selector || null;
-    let presetConfig = null;
-
-    if (req.preset) {
-      presetConfig = extractPreset(req.preset);
-      if (!presetConfig) {
-        respond({ id: req.id, ok: false, error: `Unknown preset: ${req.preset}` });
-        return;
-      }
-      selectorStr = presetConfig.selector;
-    }
-
-    if (!selectorStr) {
-      respond({ id: req.id, ok: false, error: 'No selector or preset provided' });
+    const plan = buildExtractionPlan(req);
+    if (plan.error) {
+      respond({ id: req.id, ok: false, error: plan.error });
       return;
     }
 
-    const extractFnBody = presetConfig
-      ? presetConfig.extract.toString()
-      : `(el) => ({
-          tag: el.tagName.toLowerCase(),
-          text: (el.textContent || '').trim().slice(0, 500),
-          attributes: Object.fromEntries(
-            Array.from(el.attributes).map(a => [a.name, a.value])
-          ),
-        })`;
-
     const elements = await page.evaluate(
-      ({ sel, fnBody }) => {
-        const extractFn = eval('(' + fnBody + ')');
-        const els = document.querySelectorAll(sel);
-        return Array.from(els).slice(0, 200).map(extractFn);
+      ({ selector, preset }) => {
+        function collectAttributes(el) {
+          return Object.fromEntries(Array.from(el.attributes).map((attr) => [attr.name, attr.value]));
+        }
+
+        function extractElementData(el, activePreset) {
+          const tag = el.tagName.toLowerCase();
+          const text = (el.textContent || '').trim().slice(0, 500);
+
+          switch (activePreset) {
+            case 'links':
+              return {
+                tag,
+                text,
+                attributes: { href: el.getAttribute('href') || '' },
+              };
+            case 'headings':
+              return {
+                tag,
+                text,
+                attributes: {},
+              };
+            case 'tables':
+              return {
+                tag: 'table',
+                text: el.innerHTML.slice(0, 2000),
+                attributes: {},
+              };
+            default:
+              return {
+                tag,
+                text,
+                attributes: collectAttributes(el),
+              };
+          }
+        }
+
+        const elements = document.querySelectorAll(selector);
+        return Array.from(elements).slice(0, 200).map((el) => extractElementData(el, preset));
       },
-      { sel: selectorStr, fnBody: extractFnBody }
+      plan
     );
 
     respond({ id: req.id, ok: true, data: elements });
@@ -165,13 +213,32 @@ async function handleRequest(line) {
   }
 }
 
-rl.on('line', (line) => {
-  handleRequest(line);
-});
-
-rl.on('close', async () => {
+async function handleClose() {
   if (browser) {
     await browser.close();
+    browser = null;
   }
   process.exit(0);
-});
+}
+
+if (require.main === module) {
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+    terminal: false,
+  });
+
+  rl.on('line', (line) => {
+    void handleRequest(line);
+  });
+
+  rl.on('close', () => {
+    void handleClose();
+  });
+}
+
+module.exports = {
+  buildExtractionPlan,
+  collectAttributes,
+  extractElementData,
+};
