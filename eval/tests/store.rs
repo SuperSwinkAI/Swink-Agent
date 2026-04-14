@@ -4,8 +4,8 @@ use std::time::Duration;
 
 use swink_agent::{Cost, ModelSpec, StopReason, Usage};
 use swink_agent_eval::{
-    EvalCase, EvalCaseResult, EvalMetricResult, EvalSet, EvalSetResult, EvalStore, EvalSummary,
-    FsEvalStore, Invocation, Score, Verdict,
+    EvalCase, EvalCaseResult, EvalError, EvalMetricResult, EvalSet, EvalSetResult, EvalStore,
+    EvalSummary, FsEvalStore, Invocation, Score, Verdict,
 };
 
 fn sample_eval_set() -> EvalSet {
@@ -114,6 +114,21 @@ fn load_missing_set_returns_error() {
     let dir = tempfile::tempdir().unwrap();
     let store = FsEvalStore::new(dir.path());
     assert!(store.load_set("nonexistent").is_err());
+}
+
+#[test]
+fn load_missing_result_returns_result_not_found() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = FsEvalStore::new(dir.path());
+
+    let error = store.load_result("test-set", 1_000_000).unwrap_err();
+    assert!(matches!(
+        error,
+        EvalError::ResultNotFound {
+            eval_set_id,
+            timestamp
+        } if eval_set_id == "test-set" && timestamp == 1_000_000
+    ));
 }
 
 #[test]

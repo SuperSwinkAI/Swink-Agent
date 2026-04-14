@@ -18,6 +18,10 @@ pub enum EvalError {
     #[error("eval set not found: {id}")]
     SetNotFound { id: String },
 
+    /// The requested eval result was not found.
+    #[error("eval result not found: {eval_set_id}/{timestamp}")]
+    ResultNotFound { eval_set_id: String, timestamp: u64 },
+
     /// An eval case definition is invalid.
     #[error("invalid eval case: {reason}")]
     InvalidCase { reason: String },

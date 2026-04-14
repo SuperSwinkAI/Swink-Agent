@@ -125,8 +125,9 @@ impl EvalStore for FsEvalStore {
     fn load_result(&self, eval_set_id: &str, timestamp: u64) -> Result<EvalSetResult, EvalError> {
         let path = self.result_path(eval_set_id, timestamp);
         if !path.exists() {
-            return Err(EvalError::SetNotFound {
-                id: format!("{eval_set_id}/{timestamp}"),
+            return Err(EvalError::ResultNotFound {
+                eval_set_id: eval_set_id.to_string(),
+                timestamp,
             });
         }
         let json = fs::read_to_string(path)?;
