@@ -3,12 +3,10 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
+use std::sync::{PoisonError, RwLock};
+use std::time::{Duration, Instant};
 
-use chrono::Utc;
-use futures::FutureExt;
-use futures::future::{BoxFuture, Shared};
-use tokio::sync::Mutex;
+use chrono::{DateTime, Utc};
 use tracing::{debug, info};
 
 use swink_agent::{
@@ -16,10 +14,7 @@ use swink_agent::{
     ResolvedCredential,
 };
 
-use crate::oauth2;
-
-/// A shared future for an in-flight credential refresh/resolution.
-type InFlightFuture = Shared<BoxFuture<'static, Result<ResolvedCredential, String>>>;
+use crate::{ExpiringValue, SingleFlightTokenSource, oauth2};
 
 /// Default credential resolver that handles:
 /// - API key passthrough
@@ -29,9 +24,10 @@ pub struct DefaultCredentialResolver {
     store: Arc<dyn CredentialStore>,
     client: reqwest::Client,
     expiry_buffer: Duration,
-    /// In-flight refresh futures keyed by credential key.
-    /// Concurrent resolves for the same key share a single refresh request.
-    in_flight: Mutex<HashMap<String, InFlightFuture>>,
+    /// Per-key token sources used to share a single refresh across concurrent
+    /// OAuth2 resolutions without keeping a second bespoke in-flight map here.
+    refresh_sources:
+        RwLock<HashMap<String, Arc<SingleFlightTokenSource<ResolvedCredential, CredentialError>>>>,
 }
 
 impl DefaultCredentialResolver {
@@ -42,7 +38,7 @@ impl DefaultCredentialResolver {
             store,
             client: reqwest::Client::new(),
             expiry_buffer: Duration::from_secs(60),
-            in_flight: Mutex::new(HashMap::new()),
+            refresh_sources: RwLock::new(HashMap::new()),
         }
     }
 
@@ -73,30 +69,36 @@ impl DefaultCredentialResolver {
             None => false, // No expiry = never expires (FR-022)
         }
     }
+
+    fn refresh_source(
+        &self,
+        key: &str,
+    ) -> Arc<SingleFlightTokenSource<ResolvedCredential, CredentialError>> {
+        if let Some(existing) = self
+            .refresh_sources
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(key)
+        {
+            return Arc::clone(existing);
+        }
+
+        let mut sources = self
+            .refresh_sources
+            .write()
+            .unwrap_or_else(PoisonError::into_inner);
+        Arc::clone(
+            sources
+                .entry(key.to_string())
+                .or_insert_with(|| Arc::new(SingleFlightTokenSource::new(self.expiry_buffer))),
+        )
+    }
 }
 
 impl CredentialResolver for DefaultCredentialResolver {
     fn resolve(&self, key: &str) -> CredentialFuture<'_, ResolvedCredential> {
         let key = key.to_string();
         Box::pin(async move {
-            // Check for in-flight refresh for this key
-            let existing = {
-                let guard = self.in_flight.lock().await;
-                guard.get(&key).cloned()
-            };
-
-            if let Some(shared_future) = existing {
-                debug!(credential_key = %key, "joining existing credential resolution");
-                return shared_future
-                    .await
-                    .map_err(|reason| CredentialError::RefreshFailed {
-                        key: key.clone(),
-                        reason,
-                    });
-            }
-
-            // First, do a quick check — if the credential is valid (no refresh needed),
-            // return immediately without deduplication overhead.
             let credential = self.store.get(&key).await?;
             match &credential {
                 Some(Credential::ApiKey { key: api_key }) => {
@@ -116,72 +118,52 @@ impl CredentialResolver for DefaultCredentialResolver {
                     return Ok(ResolvedCredential::OAuth2AccessToken(access_token.clone()));
                 }
                 Some(Credential::Bearer { .. }) => {
-                    // Bearer token expired — no refresh possible
                     return Err(CredentialError::Expired { key });
                 }
                 None => {
-                    // Credential not found
                     return Err(CredentialError::NotFound { key });
                 }
-                _ => {
-                    // OAuth2 needs refresh — use deduplication path
+                Some(Credential::OAuth2 { refresh_token, .. }) => {
+                    if refresh_token.is_none() {
+                        return Err(CredentialError::Expired { key });
+                    }
                 }
             }
 
-            // Slow path: credential needs refresh or doesn't exist.
-            // Use deduplication to ensure only one refresh runs at a time per key.
-            let shared_future = {
-                let mut guard = self.in_flight.lock().await;
-                // Double-check: another task might have inserted while we waited
-                if let Some(existing) = guard.get(&key) {
-                    existing.clone()
-                } else {
-                    // Create a new shared future for this refresh
-                    let store = Arc::clone(&self.store);
-                    let client = self.client.clone();
-                    let expiry_buffer = self.expiry_buffer;
-                    let key_clone = key.clone();
+            let source = self.refresh_source(&key);
+            source.clear_cached();
+            debug!(
+                credential_key = %key,
+                "resolving refreshable OAuth2 credential via single-flight token source"
+            );
 
-                    let fut: BoxFuture<'static, Result<ResolvedCredential, String>> =
-                        Box::pin(async move {
-                            let resolver = InnerResolver {
-                                store: &store,
-                                client: &client,
-                                expiry_buffer,
-                            };
-                            resolver
-                                .resolve_inner(&key_clone)
-                                .await
-                                .map_err(|e| e.to_string())
-                        });
+            let store = Arc::clone(&self.store);
+            let client = self.client.clone();
+            let expiry_buffer = self.expiry_buffer;
+            let refresh_key = key.clone();
 
-                    let shared = fut.shared();
-                    guard.insert(key.clone(), shared.clone());
-                    shared
-                }
-            };
-
-            let result = shared_future.await;
-
-            // Clean up the in-flight entry
-            {
-                let mut guard = self.in_flight.lock().await;
-                guard.remove(&key);
-            }
-
-            result.map_err(|reason| CredentialError::RefreshFailed { key, reason })
+            source
+                .get_or_refresh(move || async move {
+                    let resolver = InnerResolver {
+                        store,
+                        client,
+                        expiry_buffer,
+                    };
+                    resolver.resolve_refreshable(&refresh_key).await
+                })
+                .await
         })
     }
 }
 
-/// Inner resolver context for use in the shared future (avoids lifetime issues).
-struct InnerResolver<'a> {
-    store: &'a Arc<dyn CredentialStore>,
-    client: &'a reqwest::Client,
+/// Inner resolver context for use in the shared future.
+struct InnerResolver {
+    store: Arc<dyn CredentialStore>,
+    client: reqwest::Client,
     expiry_buffer: Duration,
 }
 
-impl InnerResolver<'_> {
+impl InnerResolver {
     fn is_expired(&self, expires_at: Option<chrono::DateTime<Utc>>) -> bool {
         match expires_at {
             Some(exp) => {
@@ -193,11 +175,27 @@ impl InnerResolver<'_> {
         }
     }
 
-    async fn resolve_inner(&self, key: &str) -> Result<ResolvedCredential, CredentialError> {
+    fn cache_deadline(expires_at: Option<DateTime<Utc>>) -> Instant {
+        match expires_at {
+            Some(exp) => match (exp - Utc::now()).to_std() {
+                Ok(remaining) => Instant::now() + remaining,
+                Err(_) => Instant::now(),
+            },
+            None => Instant::now() + Duration::from_secs(60 * 60 * 24 * 365),
+        }
+    }
+
+    async fn resolve_refreshable(
+        &self,
+        key: &str,
+    ) -> Result<ExpiringValue<ResolvedCredential>, CredentialError> {
         let credential = self.store.get(key).await?;
 
         match credential {
-            Some(Credential::ApiKey { key: api_key }) => Ok(ResolvedCredential::ApiKey(api_key)),
+            Some(Credential::ApiKey { key: api_key }) => Ok(ExpiringValue::new(
+                ResolvedCredential::ApiKey(api_key),
+                Self::cache_deadline(None),
+            )),
 
             Some(Credential::Bearer { token, expires_at }) => {
                 if self.is_expired(expires_at) {
@@ -205,7 +203,10 @@ impl InnerResolver<'_> {
                         key: key.to_string(),
                     });
                 }
-                Ok(ResolvedCredential::Bearer(token))
+                Ok(ExpiringValue::new(
+                    ResolvedCredential::Bearer(token),
+                    Self::cache_deadline(expires_at),
+                ))
             }
 
             Some(Credential::OAuth2 {
@@ -215,16 +216,19 @@ impl InnerResolver<'_> {
                 token_url,
                 client_id,
                 client_secret,
-                scopes: _,
+                scopes,
             }) => {
                 if !self.is_expired(expires_at) {
-                    return Ok(ResolvedCredential::OAuth2AccessToken(access_token));
+                    return Ok(ExpiringValue::new(
+                        ResolvedCredential::OAuth2AccessToken(access_token),
+                        Self::cache_deadline(expires_at),
+                    ));
                 }
 
                 if let Some(ref rt) = refresh_token {
                     info!(credential_key = key, "refreshing expired OAuth2 token");
                     let mut response = oauth2::refresh_token(
-                        self.client,
+                        &self.client,
                         &token_url,
                         rt,
                         &client_id,
@@ -253,13 +257,15 @@ impl InnerResolver<'_> {
                         token_url,
                         client_id,
                         client_secret,
-                        scopes: vec![],
+                        scopes,
                     };
 
                     self.store.set(key, new_credential).await?;
-                    Ok(ResolvedCredential::OAuth2AccessToken(response.access_token))
+                    Ok(ExpiringValue::new(
+                        ResolvedCredential::OAuth2AccessToken(response.access_token),
+                        Self::cache_deadline(new_expires_at),
+                    ))
                 } else {
-                    // Expired OAuth2 with no refresh token — cannot recover
                     Err(CredentialError::Expired {
                         key: key.to_string(),
                     })

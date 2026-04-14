@@ -29,17 +29,18 @@ impl<T> ExpiringValue<T> {
     }
 }
 
-type RefreshFuture<T> = Shared<BoxFuture<'static, Result<ExpiringValue<T>, String>>>;
+type RefreshFuture<T, E> = Shared<BoxFuture<'static, Result<ExpiringValue<T>, E>>>;
 
-pub struct SingleFlightTokenSource<T> {
+pub struct SingleFlightTokenSource<T, E = String> {
     cached: RwLock<Option<ExpiringValue<T>>>,
-    in_flight: Mutex<Option<RefreshFuture<T>>>,
+    in_flight: Mutex<Option<RefreshFuture<T, E>>>,
     refresh_margin: Duration,
 }
 
-impl<T> SingleFlightTokenSource<T>
+impl<T, E> SingleFlightTokenSource<T, E>
 where
     T: Clone + Send + Sync + 'static,
+    E: Clone + Send + Sync + 'static,
 {
     #[must_use]
     pub fn new(refresh_margin: Duration) -> Self {
@@ -50,10 +51,10 @@ where
         }
     }
 
-    pub async fn get_or_refresh<F, Fut>(&self, refresh: F) -> Result<T, String>
+    pub async fn get_or_refresh<F, Fut>(&self, refresh: F) -> Result<T, E>
     where
         F: FnOnce() -> Fut + Send + 'static,
-        Fut: Future<Output = Result<ExpiringValue<T>, String>> + Send + 'static,
+        Fut: Future<Output = Result<ExpiringValue<T>, E>> + Send + 'static,
     {
         {
             let cached = self.cached.read().unwrap_or_else(PoisonError::into_inner);
@@ -83,9 +84,16 @@ where
         self.in_flight.lock().await.take();
         refreshed.map(|value| value.value().clone())
     }
+
+    /// Drop any cached value so the next lookup must rely on a fresh external
+    /// snapshot or a new refresh. This is useful when the caller's source of
+    /// truth lives outside this helper.
+    pub fn clear_cached(&self) {
+        *self.cached.write().unwrap_or_else(PoisonError::into_inner) = None;
+    }
 }
 
-impl<T> std::fmt::Debug for SingleFlightTokenSource<T> {
+impl<T, E> std::fmt::Debug for SingleFlightTokenSource<T, E> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let has_cached = self
             .cached

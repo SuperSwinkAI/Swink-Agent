@@ -79,12 +79,10 @@ async fn bearer_past_expiry_returns_expired() {
     let resolver = DefaultCredentialResolver::new(store);
 
     let err = resolver.resolve("api").await.unwrap_err();
-    // Could be Expired or RefreshFailed depending on the dedup path
-    let err_str = format!("{err}");
-    assert!(
-        err_str.contains("expired") || err_str.contains("api"),
-        "error should mention expiry: {err_str}"
-    );
+    match err {
+        CredentialError::Expired { key } => assert_eq!(key, "api"),
+        other => panic!("expected Expired, got {other:?}"),
+    }
 }
 
 // T039: Bearer with no expiry resolves (FR-022)
@@ -123,11 +121,10 @@ async fn bearer_within_buffer_treated_as_expired() {
     let resolver = DefaultCredentialResolver::new(store);
 
     let err = resolver.resolve("api").await.unwrap_err();
-    let err_str = format!("{err}");
-    assert!(
-        err_str.contains("expired") || err_str.contains("api"),
-        "token within buffer should be expired: {err_str}"
-    );
+    match err {
+        CredentialError::Expired { key } => assert_eq!(key, "api"),
+        other => panic!("expected Expired, got {other:?}"),
+    }
 }
 
 // T041: Custom expiry buffer
@@ -147,11 +144,10 @@ async fn custom_expiry_buffer_respected() {
         DefaultCredentialResolver::new(store).with_expiry_buffer(Duration::from_secs(120));
 
     let err = resolver.resolve("api").await.unwrap_err();
-    let err_str = format!("{err}");
-    assert!(
-        err_str.contains("expired") || err_str.contains("api"),
-        "custom buffer should mark as expired: {err_str}"
-    );
+    match err {
+        CredentialError::Expired { key } => assert_eq!(key, "api"),
+        other => panic!("expected Expired, got {other:?}"),
+    }
 }
 
 // ── US3: OAuth2 (non-HTTP tests) ──────────────────────────────────────────
@@ -202,11 +198,10 @@ async fn expired_oauth2_no_refresh_returns_expired() {
     let resolver = DefaultCredentialResolver::new(store);
 
     let err = resolver.resolve("oauth").await.unwrap_err();
-    let err_str = format!("{err}");
-    assert!(
-        err_str.contains("expired") || err_str.contains("oauth"),
-        "should indicate expired: {err_str}"
-    );
+    match err {
+        CredentialError::Expired { key } => assert_eq!(key, "oauth"),
+        other => panic!("expected Expired, got {other:?}"),
+    }
 }
 
 // T056: Missing credential with no handler returns NotFound
@@ -271,9 +266,8 @@ async fn expired_no_refresh_no_handler_returns_expired() {
     let resolver = DefaultCredentialResolver::new(store);
 
     let err = resolver.resolve("service").await.unwrap_err();
-    let err_str = format!("{err}");
-    assert!(
-        err_str.contains("expired") || err_str.contains("service"),
-        "should indicate expired: {err_str}"
-    );
+    match err {
+        CredentialError::Expired { key } => assert_eq!(key, "service"),
+        other => panic!("expected Expired, got {other:?}"),
+    }
 }
