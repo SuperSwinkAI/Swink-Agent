@@ -138,3 +138,67 @@ fn list_results_empty_set() {
     let timestamps = store.list_results("nonexistent").unwrap();
     assert!(timestamps.is_empty());
 }
+
+#[test]
+fn save_set_rejects_invalid_identifier() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = FsEvalStore::new(dir.path());
+
+    for invalid_id in ["", "..", "nested/id", r"nested\id", "nul\0byte"] {
+        let mut set = sample_eval_set();
+        set.id = invalid_id.to_string();
+
+        assert!(
+            matches!(
+                store.save_set(&set),
+                Err(EvalError::InvalidIdentifier { kind, id })
+                    if kind == "eval set" && id == invalid_id
+            ),
+            "expected invalid eval set id to be rejected: {invalid_id:?}"
+        );
+        assert!(
+            matches!(
+                store.load_set(invalid_id),
+                Err(EvalError::InvalidIdentifier { kind, id })
+                    if kind == "eval set" && id == invalid_id
+            ),
+            "expected invalid eval set id to be rejected on load: {invalid_id:?}"
+        );
+    }
+}
+
+#[test]
+fn result_operations_reject_invalid_eval_set_identifier() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = FsEvalStore::new(dir.path());
+
+    for invalid_id in ["", "..", "nested/id", r"nested\id", "nul\0byte"] {
+        let mut result = sample_result();
+        result.eval_set_id = invalid_id.to_string();
+
+        assert!(
+            matches!(
+                store.save_result(&result),
+                Err(EvalError::InvalidIdentifier { kind, id })
+                    if kind == "eval result set" && id == invalid_id
+            ),
+            "expected invalid eval result set id to be rejected on save: {invalid_id:?}"
+        );
+        assert!(
+            matches!(
+                store.load_result(invalid_id, 1_000_000),
+                Err(EvalError::InvalidIdentifier { kind, id })
+                    if kind == "eval result set" && id == invalid_id
+            ),
+            "expected invalid eval result set id to be rejected on load: {invalid_id:?}"
+        );
+        assert!(
+            matches!(
+                store.list_results(invalid_id),
+                Err(EvalError::InvalidIdentifier { kind, id })
+                    if kind == "eval result set" && id == invalid_id
+            ),
+            "expected invalid eval result set id to be rejected when listing: {invalid_id:?}"
+        );
+    }
+}
