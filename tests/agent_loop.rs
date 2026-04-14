@@ -133,34 +133,74 @@ impl AgentTool for MockCancellationIgnoringTool {
 // ─── Helper functions ────────────────────────────────────────────────────
 
 /// Test helper that delegates to closures for steering/follow-up.
+///
+/// Steering messages are stored in an internal queue so that `has_steering`
+/// can peek non-destructively while `poll_steering` drains. Follow-up uses
+/// the original closure-delegation model.
 struct MockMessageProvider {
-    steering: Box<dyn Fn() -> Vec<AgentMessage> + Send + Sync>,
+    steering_queue: Arc<Mutex<std::collections::VecDeque<AgentMessage>>>,
+    refill_steering: Option<Box<dyn Fn() -> Vec<AgentMessage> + Send + Sync>>,
     follow_up: Box<dyn Fn() -> Vec<AgentMessage> + Send + Sync>,
 }
 
 impl MockMessageProvider {
     fn steering_only(f: impl Fn() -> Vec<AgentMessage> + Send + Sync + 'static) -> Self {
         Self {
-            steering: Box::new(f),
+            steering_queue: Arc::new(Mutex::new(std::collections::VecDeque::new())),
+            refill_steering: Some(Box::new(f)),
             follow_up: Box::new(Vec::new),
         }
     }
 
     fn follow_up_only(f: impl Fn() -> Vec<AgentMessage> + Send + Sync + 'static) -> Self {
         Self {
-            steering: Box::new(Vec::new),
+            steering_queue: Arc::new(Mutex::new(std::collections::VecDeque::new())),
+            refill_steering: None,
             follow_up: Box::new(f),
+        }
+    }
+
+    /// Refill the internal steering queue from the refill closure (if any).
+    ///
+    /// Called lazily from both `has_steering` (for non-destructive peek) and
+    /// `poll_steering` (for drain) so the closure drives whether messages
+    /// become available — mirroring the old behaviour while keeping the two
+    /// methods consistent.
+    fn refill(&self) {
+        if let Some(ref f) = self.refill_steering {
+            let msgs = f();
+            if !msgs.is_empty() {
+                let mut guard = self
+                    .steering_queue
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                guard.extend(msgs);
+            }
         }
     }
 }
 
 impl MessageProvider for MockMessageProvider {
     fn poll_steering(&self) -> Vec<AgentMessage> {
-        (self.steering)()
+        self.refill();
+        let mut guard = self
+            .steering_queue
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        guard.drain(..).collect()
     }
 
     fn poll_follow_up(&self) -> Vec<AgentMessage> {
         (self.follow_up)()
+    }
+
+    fn has_steering(&self) -> bool {
+        self.refill();
+        let guard = self
+            .steering_queue
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        !guard.is_empty()
     }
 }
 

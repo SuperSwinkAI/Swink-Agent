@@ -94,6 +94,14 @@ impl MessageProvider for QueueMessageProvider {
         self.pending_message_snapshot.append(&drained);
         drained
     }
+
+    fn has_steering(&self) -> bool {
+        let guard = self
+            .steering_queue
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        !guard.is_empty()
+    }
 }
 
 /// Drain the queue and return every queued [`AgentMessage`].

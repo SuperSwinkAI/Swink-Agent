@@ -110,7 +110,7 @@ pub(super) async fn dispatch_single_tool(
     batch_token: &CancellationToken,
     results: &Arc<tokio::sync::Mutex<Vec<(usize, ToolResultMessage)>>>,
     tool_timings: &Arc<tokio::sync::Mutex<Vec<crate::metrics::ToolExecMetrics>>>,
-    steering_messages: &Arc<tokio::sync::Mutex<Vec<AgentMessage>>>,
+    _steering_messages: &Arc<tokio::sync::Mutex<Vec<AgentMessage>>>,
     steering_flag: &Arc<std::sync::atomic::AtomicBool>,
     transfer_flag: &Arc<std::sync::atomic::AtomicBool>,
     transfer_signal: &Arc<tokio::sync::Mutex<Option<crate::transfer::TransferSignal>>>,
@@ -132,7 +132,6 @@ pub(super) async fn dispatch_single_tool(
     let child_token = batch_token.child_token();
     let results_clone = Arc::clone(results);
     let timings_clone = Arc::clone(tool_timings);
-    let steering_messages_clone = Arc::clone(steering_messages);
     let steering_clone = Arc::clone(steering_flag);
     let transfer_flag_clone = Arc::clone(transfer_flag);
     let transfer_clone = Arc::clone(transfer_signal);
@@ -239,12 +238,10 @@ pub(super) async fn dispatch_single_tool(
 
             results_clone.lock().await.push((idx, tool_result_msg));
 
-            if let Some(ref provider) = config_clone.message_provider {
-                let msgs = provider.poll_steering();
-                if !msgs.is_empty() {
-                    steering_messages_clone.lock().await.extend(msgs);
-                    steering_clone.store(true, std::sync::atomic::Ordering::SeqCst);
-                }
+            if let Some(ref provider) = config_clone.message_provider
+                && provider.has_steering()
+            {
+                steering_clone.store(true, std::sync::atomic::Ordering::SeqCst);
             }
         }
         .instrument(tool_span),
