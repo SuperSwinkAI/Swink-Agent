@@ -4,7 +4,7 @@
 //! ([`FsEvalStore`]) that stores data as JSON files.
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use crate::error::EvalError;
 use crate::types::{EvalSet, EvalSetResult};
@@ -77,6 +77,18 @@ impl FsEvalStore {
             .join(format!("{timestamp}.json"))
     }
 
+    fn validate_identifier(kind: &'static str, id: &str) -> Result<(), EvalError> {
+        if id.is_empty() || id.contains('\0') || id.contains('/') || id.contains('\\') {
+            return Err(EvalError::invalid_identifier(kind, id));
+        }
+
+        let mut components = Path::new(id).components();
+        match (components.next(), components.next()) {
+            (Some(Component::Normal(_)), None) => Ok(()),
+            _ => Err(EvalError::invalid_identifier(kind, id)),
+        }
+    }
+
     fn ensure_dir(path: &Path) -> Result<(), EvalError> {
         if !path.exists() {
             fs::create_dir_all(path)?;
@@ -87,6 +99,7 @@ impl FsEvalStore {
 
 impl EvalStore for FsEvalStore {
     fn save_set(&self, set: &EvalSet) -> Result<(), EvalError> {
+        Self::validate_identifier("eval set", &set.id)?;
         Self::ensure_dir(&self.sets_dir())?;
         let json = serde_json::to_string_pretty(set)?;
         fs::write(self.set_path(&set.id), json)?;
@@ -94,6 +107,7 @@ impl EvalStore for FsEvalStore {
     }
 
     fn load_set(&self, id: &str) -> Result<EvalSet, EvalError> {
+        Self::validate_identifier("eval set", id)?;
         #[cfg(feature = "yaml")]
         {
             for path in [self.set_path_yaml(id), self.set_path_yml(id)] {
@@ -113,6 +127,7 @@ impl EvalStore for FsEvalStore {
     }
 
     fn save_result(&self, result: &EvalSetResult) -> Result<(), EvalError> {
+        Self::validate_identifier("eval result set", &result.eval_set_id)?;
         Self::ensure_dir(&self.results_dir(&result.eval_set_id))?;
         let json = serde_json::to_string_pretty(result)?;
         fs::write(
@@ -123,6 +138,7 @@ impl EvalStore for FsEvalStore {
     }
 
     fn load_result(&self, eval_set_id: &str, timestamp: u64) -> Result<EvalSetResult, EvalError> {
+        Self::validate_identifier("eval result set", eval_set_id)?;
         let path = self.result_path(eval_set_id, timestamp);
         if !path.exists() {
             return Err(EvalError::ResultNotFound {
@@ -135,6 +151,7 @@ impl EvalStore for FsEvalStore {
     }
 
     fn list_results(&self, eval_set_id: &str) -> Result<Vec<u64>, EvalError> {
+        Self::validate_identifier("eval result set", eval_set_id)?;
         let dir = self.results_dir(eval_set_id);
         if !dir.exists() {
             return Ok(Vec::new());

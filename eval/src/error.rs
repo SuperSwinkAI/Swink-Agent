@@ -26,6 +26,10 @@ pub enum EvalError {
     #[error("invalid eval case: {reason}")]
     InvalidCase { reason: String },
 
+    /// A filesystem-facing identifier is invalid.
+    #[error("invalid {kind} identifier: {id}")]
+    InvalidIdentifier { kind: &'static str, id: String },
+
     /// Filesystem or IO error during persistence.
     #[error("io error")]
     Io {
@@ -59,6 +63,14 @@ impl EvalError {
     pub fn invalid_case(reason: impl Into<String>) -> Self {
         Self::InvalidCase {
             reason: reason.into(),
+        }
+    }
+
+    /// Convenience constructor for [`EvalError::InvalidIdentifier`].
+    pub fn invalid_identifier(kind: &'static str, id: impl Into<String>) -> Self {
+        Self::InvalidIdentifier {
+            kind,
+            id: id.into(),
         }
     }
 }
