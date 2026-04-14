@@ -15,23 +15,23 @@ use swink_agent::{
 // ─── Internal meta.json schema ─────────────────────────────────────────────
 
 #[derive(Serialize, Deserialize)]
-struct MetaFile {
-    versions: Vec<VersionRecord>,
+pub(crate) struct MetaFile {
+    pub(crate) versions: Vec<VersionRecord>,
 }
 
 #[derive(Serialize, Deserialize)]
-struct VersionRecord {
-    name: String,
-    version: u32,
-    created_at: DateTime<Utc>,
-    size: usize,
-    content_type: String,
-    metadata: HashMap<String, String>,
+pub(crate) struct VersionRecord {
+    pub(crate) name: String,
+    pub(crate) version: u32,
+    pub(crate) created_at: DateTime<Utc>,
+    pub(crate) size: usize,
+    pub(crate) content_type: String,
+    pub(crate) metadata: HashMap<String, String>,
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-fn storage_err(e: impl Error + Send + Sync + 'static) -> ArtifactError {
+pub(crate) fn storage_err(e: impl Error + Send + Sync + 'static) -> ArtifactError {
     ArtifactError::Storage(Box::new(e))
 }
 
@@ -60,7 +60,7 @@ impl FileArtifactStore {
     }
 
     /// Get or create the per-artifact lock for a (session, name) pair.
-    async fn artifact_lock(&self, session_id: &str, name: &str) -> Arc<Mutex<()>> {
+    pub(crate) async fn artifact_lock(&self, session_id: &str, name: &str) -> Arc<Mutex<()>> {
         let key = (session_id.to_string(), name.to_string());
         let mut locks = self.locks.lock().await;
         locks
@@ -70,7 +70,7 @@ impl FileArtifactStore {
     }
 
     /// Path to the artifact directory: `{root}/{session_id}/{artifact_name}/`
-    fn artifact_dir(&self, session_id: &str, name: &str) -> PathBuf {
+    pub(crate) fn artifact_dir(&self, session_id: &str, name: &str) -> PathBuf {
         self.root.join(session_id).join(name)
     }
 
@@ -86,7 +86,11 @@ impl FileArtifactStore {
     }
 
     /// Read meta.json, returning an empty `MetaFile` if it doesn't exist.
-    async fn read_meta(&self, session_id: &str, name: &str) -> Result<MetaFile, ArtifactError> {
+    pub(crate) async fn read_meta(
+        &self,
+        session_id: &str,
+        name: &str,
+    ) -> Result<MetaFile, ArtifactError> {
         let path = self.meta_path(session_id, name);
         match tokio::fs::read_to_string(&path).await {
             Ok(contents) => serde_json::from_str(&contents).map_err(storage_err),
@@ -98,7 +102,7 @@ impl FileArtifactStore {
     }
 
     /// Write meta.json atomically via the shared atomic-write helper.
-    async fn write_meta(
+    pub(crate) async fn write_meta(
         &self,
         session_id: &str,
         name: &str,

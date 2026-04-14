@@ -199,3 +199,54 @@ async fn non_streaming_api_still_works() {
     let bytes_v1 = collect_stream(loaded_v1).await;
     assert_eq!(bytes_v1, content);
 }
+
+// T065: streaming_save_error_does_not_publish_partial_version
+// A failed stream write must not leave temp files behind or consume a version number.
+#[tokio::test]
+async fn streaming_save_error_does_not_publish_partial_version() {
+    let tmpdir = tempfile::TempDir::new().unwrap();
+    let store = FileArtifactStore::new(tmpdir.path());
+
+    let input_stream = Box::pin(stream::iter(vec![
+        Ok(Bytes::from_static(b"partial")),
+        Err(ArtifactError::Storage(Box::new(std::io::Error::other(
+            "stream failed",
+        )))),
+    ]));
+
+    let result = store
+        .save_stream(
+            "sess4",
+            "broken",
+            "application/octet-stream".to_string(),
+            HashMap::new(),
+            input_stream,
+        )
+        .await;
+
+    assert!(result.is_err());
+    assert!(
+        store.load("sess4", "broken").await.unwrap().is_none(),
+        "failed stream must not publish a readable artifact"
+    );
+
+    let artifact_dir = tmpdir.path().join("sess4").join("broken");
+    let entries: Vec<_> = std::fs::read_dir(&artifact_dir).unwrap().collect();
+    assert!(
+        entries.is_empty(),
+        "failed stream should clean up temp files and avoid writing metadata"
+    );
+
+    let version = store
+        .save_stream(
+            "sess4",
+            "broken",
+            "application/octet-stream".to_string(),
+            HashMap::new(),
+            Box::pin(stream::iter(vec![Ok(Bytes::from_static(b"recovered"))])),
+        )
+        .await
+        .expect("subsequent save_stream should still succeed");
+
+    assert_eq!(version.version, 1);
+}
