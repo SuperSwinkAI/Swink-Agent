@@ -213,7 +213,14 @@ async fn selective_approval_by_tool_name() {
     assert!(result.error.is_none());
 }
 
-/// Test 5: Events appear in correct order.
+/// Test 5: Events appear in canonical order.
+///
+/// Canonical dispatch order (see `src/loop_/tool_dispatch.rs`):
+///   `ToolApprovalRequested` → `ToolApprovalResolved` → `ToolExecutionStart` → `ToolExecutionEnd`.
+///
+/// Approval always precedes execution — a tool call must be approved before it
+/// is dispatched, so `ToolExecutionStart` cannot be emitted until the approval
+/// gate has resolved.
 #[tokio::test]
 async fn approval_events_in_correct_order() {
     let tool = Arc::new(MockTool::new("test_tool"));
@@ -244,12 +251,13 @@ async fn approval_events_in_correct_order() {
     assert_eq!(
         tool_events,
         vec![
-            "ToolExecutionStart",
             "ToolApprovalRequested",
             "ToolApprovalResolved",
+            "ToolExecutionStart",
             "ToolExecutionEnd",
         ],
-        "events should follow Start → ApprovalRequested → ApprovalResolved → End order"
+        "events should follow ApprovalRequested → ApprovalResolved → ExecutionStart → ExecutionEnd \
+         order (approval precedes execution)"
     );
 }
 
