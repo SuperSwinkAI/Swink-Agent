@@ -12,6 +12,7 @@
 use std::pin::Pin;
 
 use futures::stream::{self, Stream, StreamExt as _};
+use serde::Serialize;
 use tokio_util::sync::CancellationToken;
 use tracing::debug;
 use tracing::warn;
@@ -24,8 +25,12 @@ use crate::openai_compat::{
     OaiChatRequest, OaiConverter, OaiStreamOptions, build_oai_tools, parse_oai_sse_stream,
 };
 
-/// Shared shell for providers that only customize the OAI-compatible
-/// endpoint label while otherwise using the standard chat-completions flow.
+/// Shared shell for Bearer-auth OpenAI-compatible adapters.
+///
+/// Fully standard adapters can delegate their entire `stream()` implementation
+/// to this type, while adapters with provider-specific request normalization
+/// can still reuse the shared constructor, debug redaction, endpoint assembly,
+/// and API-key override handling.
 pub struct OaiAdapterShell {
     provider: &'static str,
     base: AdapterBase,
@@ -59,6 +64,31 @@ impl OaiAdapterShell {
             .finish_non_exhaustive()
     }
 
+    pub(crate) fn provider(&self) -> &'static str {
+        self.provider
+    }
+
+    pub(crate) fn chat_completions_url(&self) -> String {
+        format!("{}/v1/chat/completions", self.base.base_url)
+    }
+
+    pub(crate) fn api_key<'a>(&'a self, options: &'a StreamOptions) -> &'a str {
+        options.api_key.as_deref().unwrap_or(&self.base.api_key)
+    }
+
+    pub(crate) fn post_json_request<T: Serialize>(
+        &self,
+        url: &str,
+        body: &T,
+        options: &StreamOptions,
+    ) -> reqwest::RequestBuilder {
+        self.base
+            .client
+            .post(url)
+            .header("Authorization", format!("Bearer {}", self.api_key(options)))
+            .json(body)
+    }
+
     pub(crate) fn stream<'a>(
         &'a self,
         model: &'a ModelSpec,
@@ -66,8 +96,7 @@ impl OaiAdapterShell {
         options: &'a StreamOptions,
         cancellation_token: CancellationToken,
     ) -> Pin<Box<dyn Stream<Item = AssistantMessageEvent> + Send + 'a>> {
-        let url = format!("{}/v1/chat/completions", self.base.base_url);
-        let api_key = options.api_key.as_deref().unwrap_or(&self.base.api_key);
+        let url = self.chat_completions_url();
 
         debug!(
             provider = self.provider,
@@ -78,7 +107,7 @@ impl OaiAdapterShell {
         );
 
         let request = prepare_oai_request(&self.base.client, &url, model, context, options)
-            .header("Authorization", format!("Bearer {api_key}"));
+            .header("Authorization", format!("Bearer {}", self.api_key(options)));
 
         Box::pin(oai_send_and_parse(
             request,
