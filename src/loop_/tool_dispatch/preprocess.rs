@@ -157,6 +157,19 @@ pub(super) async fn preprocess_tool_calls(
 // ─── Approval helper ────────────────────────────────────────────────────────
 
 /// Run the approval gate for a single tool call.
+///
+/// # Canonical event order
+///
+/// The full per-tool-call event sequence is:
+///
+/// 1. [`AgentEvent::ToolApprovalRequested`] — emitted here, before the callback fires.
+/// 2. [`AgentEvent::ToolApprovalResolved`] — emitted here, after the callback resolves.
+/// 3. [`AgentEvent::ToolExecutionStart`] — emitted later by `dispatch_single_tool`.
+/// 4. [`AgentEvent::ToolExecutionEnd`] — emitted after the tool's `execute()` returns.
+///
+/// Approval always precedes execution: a tool must be approved before it is
+/// dispatched, so `ToolExecutionStart` cannot be observed until after
+/// `ToolApprovalResolved`. Consumers (TUI, eval, tests) may rely on this order.
 #[allow(clippy::too_many_arguments)]
 async fn check_approval(
     approve_fn: &ApproveToolFn,
