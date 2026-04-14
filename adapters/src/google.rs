@@ -777,9 +777,15 @@ impl GeminiStreamState {
     /// **before** [`finalize_blocks`](crate::finalize::finalize_blocks) (which
     /// drains and clears the tool-call map).
     fn emit_final_tool_deltas(&self) -> Vec<AssistantMessageEvent> {
-        self.tool_calls
+        let mut ordered_tool_calls: Vec<_> = self
+            .tool_calls
             .values()
             .filter(|tc| !tc.arguments.is_empty())
+            .collect();
+        ordered_tool_calls.sort_by_key(|tc| tc.content_index);
+
+        ordered_tool_calls
+            .into_iter()
             .map(|tc| AssistantMessageEvent::ToolCallDelta {
                 content_index: tc.content_index,
                 delta: tc.arguments.clone(),
