@@ -15,12 +15,12 @@ use swink_agent::{
 // ─── Internal meta.json schema ─────────────────────────────────────────────
 
 #[derive(Serialize, Deserialize)]
-pub(crate) struct MetaFile {
+pub struct MetaFile {
     pub(crate) versions: Vec<VersionRecord>,
 }
 
 #[derive(Serialize, Deserialize)]
-pub(crate) struct VersionRecord {
+pub struct VersionRecord {
     pub(crate) name: String,
     pub(crate) version: u32,
     pub(crate) created_at: DateTime<Utc>,
@@ -31,7 +31,7 @@ pub(crate) struct VersionRecord {
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-pub(crate) fn storage_err(e: impl Error + Send + Sync + 'static) -> ArtifactError {
+pub fn storage_err(e: impl Error + Send + Sync + 'static) -> ArtifactError {
     ArtifactError::Storage(Box::new(e))
 }
 
@@ -75,7 +75,7 @@ impl FileArtifactStore {
     }
 
     /// Path to meta.json for an artifact.
-    pub(crate) fn meta_path(&self, session_id: &str, name: &str) -> PathBuf {
+    fn meta_path(&self, session_id: &str, name: &str) -> PathBuf {
         self.artifact_dir(session_id, name).join("meta.json")
     }
 
