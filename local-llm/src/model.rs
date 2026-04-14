@@ -8,18 +8,17 @@
 use std::future::Future;
 use std::pin::Pin;
 
-use swink_agent::model_catalog;
 use tracing::{debug, error, info};
 
 use crate::error::LocalModelError;
 use crate::loader::{LazyLoader, LoaderBackend, LoaderState, PublicLoaderState};
-use crate::preset::{DEFAULT_LOCAL_PRESET_ID, ModelPreset};
+use crate::preset::{ModelPreset, default_chat_model_config};
 use crate::progress::ProgressCallbackFn;
 
 // ─── ModelConfig ────────────────────────────────────────────────────────────
 
 /// Configuration for a local GGUF model.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelConfig {
     /// `HuggingFace` repository ID (e.g. `unsloth/SmolLM3-3B-GGUF`).
     pub repo_id: String,
@@ -51,30 +50,7 @@ impl ModelConfig {
 
 impl Default for ModelConfig {
     fn default() -> Self {
-        let preset = model_catalog()
-            .preset("local", DEFAULT_LOCAL_PRESET_ID)
-            .expect("local default preset must exist in src/model_catalog.toml");
-        Self {
-            repo_id: std::env::var("LOCAL_MODEL_REPO").unwrap_or_else(|_| {
-                preset
-                    .repo_id
-                    .expect("local default preset must define repo_id")
-            }),
-            filename: std::env::var("LOCAL_MODEL_FILE").unwrap_or_else(|_| {
-                preset
-                    .filename
-                    .expect("local default preset must define filename")
-            }),
-            gpu_layers: std::env::var("LOCAL_GPU_LAYERS")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(0),
-            context_length: std::env::var("LOCAL_CONTEXT_LENGTH")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(8192),
-            chat_template: None,
-        }
+        default_chat_model_config()
     }
 }
 

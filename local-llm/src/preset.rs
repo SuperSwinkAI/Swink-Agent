@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{str::FromStr, sync::Arc};
 
 use swink_agent::{ModelConnection, ProviderKind, model_catalog};
 use thiserror::Error;
@@ -18,6 +18,118 @@ pub enum LocalPresetError {
     MissingRepoId { preset_id: &'static str },
     #[error("local.{preset_id} is missing filename in the model catalog")]
     MissingFilename { preset_id: &'static str },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ChatPresetDefaults {
+    repo_id: String,
+    filename: String,
+    context_length: usize,
+}
+
+impl ChatPresetDefaults {
+    fn into_config(self) -> ModelConfig {
+        ModelConfig {
+            repo_id: env_or("LOCAL_MODEL_REPO", self.repo_id),
+            filename: env_or("LOCAL_MODEL_FILE", self.filename),
+            context_length: env_parse_or("LOCAL_CONTEXT_LENGTH", self.context_length),
+            chat_template: None,
+            gpu_layers: env_parse_or("LOCAL_GPU_LAYERS", 0),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct EmbeddingPresetDefaults {
+    repo_id: String,
+    filename: String,
+    context_length: usize,
+    dimensions: usize,
+}
+
+impl EmbeddingPresetDefaults {
+    fn into_model_config(self) -> ModelConfig {
+        ModelConfig {
+            repo_id: env_or("LOCAL_EMBED_REPO", self.repo_id),
+            filename: env_or("LOCAL_EMBED_FILE", self.filename),
+            context_length: self.context_length,
+            chat_template: None,
+            gpu_layers: 0,
+        }
+    }
+
+    fn into_embedding_config(self) -> EmbeddingConfig {
+        EmbeddingConfig {
+            repo_id: env_or("LOCAL_EMBED_REPO", self.repo_id),
+            filename: env_or("LOCAL_EMBED_FILE", self.filename),
+            dimensions: env_parse_or("LOCAL_EMBED_DIMS", self.dimensions),
+        }
+    }
+}
+
+fn env_or(key: &str, default: String) -> String {
+    std::env::var(key).unwrap_or(default)
+}
+
+fn env_parse_or<T>(key: &str, default: T) -> T
+where
+    T: Copy + FromStr,
+{
+    std::env::var(key)
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(default)
+}
+
+fn default_chat_preset_defaults() -> ChatPresetDefaults {
+    let preset = model_catalog()
+        .preset("local", DEFAULT_LOCAL_PRESET_ID)
+        .expect("local default preset must exist in src/model_catalog.toml");
+
+    ChatPresetDefaults {
+        repo_id: preset
+            .repo_id
+            .expect("local default preset must define repo_id"),
+        filename: preset
+            .filename
+            .expect("local default preset must define filename"),
+        context_length: preset
+            .context_window_tokens
+            .and_then(|tokens| usize::try_from(tokens).ok())
+            .expect("local default preset must define a valid context window"),
+    }
+}
+
+fn default_embedding_preset_defaults() -> EmbeddingPresetDefaults {
+    EmbeddingPresetDefaults {
+        repo_id: "google/gemma-embedding-300m".to_string(),
+        filename: String::new(),
+        context_length: 2048,
+        dimensions: 768,
+    }
+}
+
+#[cfg(feature = "gemma4")]
+fn gemma4_config(repo_id: &str, context_length: usize) -> ModelConfig {
+    ModelConfig {
+        repo_id: env_or("LOCAL_MODEL_REPO", repo_id.to_string()),
+        filename: String::new(),
+        context_length: env_parse_or("LOCAL_CONTEXT_LENGTH", context_length),
+        chat_template: None,
+        gpu_layers: env_parse_or("LOCAL_GPU_LAYERS", 0),
+    }
+}
+
+pub(crate) fn default_chat_model_config() -> ModelConfig {
+    default_chat_preset_defaults().into_config()
+}
+
+pub(crate) fn default_embedding_model_config() -> ModelConfig {
+    default_embedding_preset_defaults().into_model_config()
+}
+
+pub(crate) fn default_embedding_config() -> EmbeddingConfig {
+    default_embedding_preset_defaults().into_embedding_config()
 }
 
 // ─── ModelPreset ────────────────────────────────────────────────────────────
@@ -51,115 +163,38 @@ impl ModelPreset {
     /// Convert this preset to a [`ModelConfig`] for inference models.
     pub fn config(&self) -> ModelConfig {
         match self {
-            Self::SmolLM3_3B => ModelConfig {
-                repo_id: std::env::var("LOCAL_MODEL_REPO")
-                    .unwrap_or_else(|_| "unsloth/SmolLM3-3B-GGUF".to_string()),
-                filename: std::env::var("LOCAL_MODEL_FILE")
-                    .unwrap_or_else(|_| "SmolLM3-3B-Q4_K_M.gguf".to_string()),
-                context_length: std::env::var("LOCAL_CONTEXT_LENGTH")
-                    .ok()
-                    .and_then(|v| v.parse().ok())
-                    .unwrap_or(8192),
-                chat_template: None,
-                gpu_layers: std::env::var("LOCAL_GPU_LAYERS")
-                    .ok()
-                    .and_then(|v| v.parse().ok())
-                    .unwrap_or(0),
-            },
-            Self::EmbeddingGemma300M => ModelConfig {
-                repo_id: std::env::var("LOCAL_EMBED_REPO")
-                    .unwrap_or_else(|_| "google/gemma-embedding-300m".to_string()),
-                filename: std::env::var("LOCAL_EMBED_FILE").unwrap_or_default(),
-                context_length: 2048,
-                chat_template: None,
-                gpu_layers: 0,
-            },
+            Self::SmolLM3_3B => default_chat_model_config(),
+            Self::EmbeddingGemma300M => default_embedding_model_config(),
             #[cfg(feature = "gemma4")]
-            Self::Gemma4E2B => ModelConfig {
-                repo_id: std::env::var("LOCAL_MODEL_REPO")
-                    .unwrap_or_else(|_| "google/gemma-4-E2B-it".to_string()),
-                filename: String::new(), // safetensors, not GGUF
-                context_length: std::env::var("LOCAL_CONTEXT_LENGTH")
-                    .ok()
-                    .and_then(|v| v.parse().ok())
-                    .unwrap_or(131_072),
-                chat_template: None,
-                gpu_layers: std::env::var("LOCAL_GPU_LAYERS")
-                    .ok()
-                    .and_then(|v| v.parse().ok())
-                    .unwrap_or(0),
-            },
+            Self::Gemma4E2B => gemma4_config("google/gemma-4-E2B-it", 131_072),
             #[cfg(feature = "gemma4")]
-            Self::Gemma4E4B => ModelConfig {
-                repo_id: std::env::var("LOCAL_MODEL_REPO")
-                    .unwrap_or_else(|_| "google/gemma-4-E4B-it".to_string()),
-                filename: String::new(), // safetensors, not GGUF
-                context_length: std::env::var("LOCAL_CONTEXT_LENGTH")
-                    .ok()
-                    .and_then(|v| v.parse().ok())
-                    .unwrap_or(131_072),
-                chat_template: None,
-                gpu_layers: std::env::var("LOCAL_GPU_LAYERS")
-                    .ok()
-                    .and_then(|v| v.parse().ok())
-                    .unwrap_or(0),
-            },
+            Self::Gemma4E4B => gemma4_config("google/gemma-4-E4B-it", 131_072),
             #[cfg(feature = "gemma4")]
-            Self::Gemma4_26B => ModelConfig {
-                repo_id: std::env::var("LOCAL_MODEL_REPO")
-                    .unwrap_or_else(|_| "google/gemma-4-26B-A4B-it".to_string()),
-                filename: String::new(), // safetensors, not GGUF
-                context_length: std::env::var("LOCAL_CONTEXT_LENGTH")
-                    .ok()
-                    .and_then(|v| v.parse().ok())
-                    .unwrap_or(262_144),
-                chat_template: None,
-                gpu_layers: std::env::var("LOCAL_GPU_LAYERS")
-                    .ok()
-                    .and_then(|v| v.parse().ok())
-                    .unwrap_or(0),
-            },
+            Self::Gemma4_26B => gemma4_config("google/gemma-4-26B-A4B-it", 262_144),
             #[cfg(feature = "gemma4")]
-            Self::Gemma4_31B => ModelConfig {
-                repo_id: std::env::var("LOCAL_MODEL_REPO")
-                    .unwrap_or_else(|_| "google/gemma-4-31B-it".to_string()),
-                filename: String::new(), // safetensors, not GGUF
-                context_length: std::env::var("LOCAL_CONTEXT_LENGTH")
-                    .ok()
-                    .and_then(|v| v.parse().ok())
-                    .unwrap_or(262_144),
-                chat_template: None,
-                gpu_layers: std::env::var("LOCAL_GPU_LAYERS")
-                    .ok()
-                    .and_then(|v| v.parse().ok())
-                    .unwrap_or(0),
-            },
+            Self::Gemma4_31B => gemma4_config("google/gemma-4-31B-it", 262_144),
         }
     }
 
     /// Convert this preset to an [`EmbeddingConfig`] for embedding models.
     pub fn embedding_config(&self) -> EmbeddingConfig {
         match self {
-            Self::EmbeddingGemma300M => EmbeddingConfig {
-                repo_id: std::env::var("LOCAL_EMBED_REPO")
-                    .unwrap_or_else(|_| "google/gemma-embedding-300m".to_string()),
-                filename: std::env::var("LOCAL_EMBED_FILE").unwrap_or_default(),
-                dimensions: std::env::var("LOCAL_EMBED_DIMS")
-                    .ok()
-                    .and_then(|v| v.parse().ok())
-                    .unwrap_or(768),
-            },
-            Self::SmolLM3_3B => EmbeddingConfig {
-                repo_id: "unsloth/SmolLM3-3B-GGUF".to_string(),
-                filename: "SmolLM3-3B-Q4_K_M.gguf".to_string(),
-                dimensions: 768,
-            },
+            Self::EmbeddingGemma300M => default_embedding_config(),
+            Self::SmolLM3_3B => {
+                let defaults = default_chat_preset_defaults();
+                EmbeddingConfig {
+                    repo_id: defaults.repo_id,
+                    filename: defaults.filename,
+                    dimensions: 768,
+                }
+            }
             #[cfg(feature = "gemma4")]
             Self::Gemma4E2B | Self::Gemma4E4B | Self::Gemma4_26B | Self::Gemma4_31B => {
+                let defaults = default_embedding_preset_defaults();
                 EmbeddingConfig {
-                    repo_id: "google/gemma-embedding-300m".to_string(),
-                    filename: String::new(),
-                    dimensions: 768,
+                    repo_id: defaults.repo_id,
+                    filename: defaults.filename,
+                    dimensions: defaults.dimensions,
                 }
             }
         }
@@ -217,18 +252,14 @@ pub fn default_local_connection() -> Result<ModelConnection, LocalPresetError> {
     }
 
     let model_spec = preset.model_spec();
-    let repo_id = preset.repo_id.ok_or(LocalPresetError::MissingRepoId {
+    preset.repo_id.ok_or(LocalPresetError::MissingRepoId {
         preset_id: DEFAULT_LOCAL_PRESET_ID,
     })?;
-    let filename = preset.filename.ok_or(LocalPresetError::MissingFilename {
+    preset.filename.ok_or(LocalPresetError::MissingFilename {
         preset_id: DEFAULT_LOCAL_PRESET_ID,
     })?;
 
-    let model = LocalModel::new(ModelConfig {
-        repo_id: std::env::var("LOCAL_MODEL_REPO").unwrap_or(repo_id),
-        filename: std::env::var("LOCAL_MODEL_FILE").unwrap_or(filename),
-        ..ModelConfig::default()
-    });
+    let model = LocalModel::new(default_chat_model_config());
     Ok(ModelConnection::new(
         model_spec,
         Arc::new(LocalStreamFn::new(Arc::new(model))),
@@ -317,6 +348,30 @@ mod tests {
         let config = ModelPreset::SmolLM3_3B.config();
         assert!(config.repo_id.contains("SmolLM3"));
         assert_eq!(config.context_length, 8192);
+    }
+
+    #[test]
+    fn smollm3_default_config_matches_preset_config() {
+        assert_eq!(ModelConfig::default(), ModelPreset::SmolLM3_3B.config());
+    }
+
+    #[test]
+    fn embedding_defaults_match_preset_config() {
+        assert_eq!(
+            EmbeddingConfig::default(),
+            ModelPreset::EmbeddingGemma300M.embedding_config()
+        );
+    }
+
+    #[test]
+    fn embedding_model_config_matches_embedding_defaults() {
+        let model_config = ModelPreset::EmbeddingGemma300M.config();
+        let embedding_config = EmbeddingConfig::default();
+        assert_eq!(model_config.repo_id, embedding_config.repo_id);
+        assert_eq!(model_config.filename, embedding_config.filename);
+        assert_eq!(model_config.context_length, 2048);
+        assert_eq!(model_config.gpu_layers, 0);
+        assert!(model_config.chat_template.is_none());
     }
 
     #[cfg(feature = "gemma4")]
