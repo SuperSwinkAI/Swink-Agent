@@ -472,6 +472,10 @@ struct StreamState {
     has_tool_calls: bool,
     /// Map from tool call index to (`tool_id`, `content_index` at start).
     active_tool_calls: Vec<(String, usize)>,
+    /// True once a `mistralrs::Response::Done` frame has been observed.
+    /// Used to distinguish genuine successful completion from an upstream
+    /// EOF that leaves the stream truncated mid-response.
+    saw_done: bool,
     /// Gemma 4 channel-thought parser (only present for Gemma 4 models).
     #[cfg(feature = "gemma4")]
     channel_parser: Option<channel_thought::ChannelThoughtParser>,
@@ -492,6 +496,7 @@ impl StreamState {
             finish_reason: None,
             has_tool_calls: false,
             active_tool_calls: Vec::new(),
+            saw_done: false,
             #[cfg(feature = "gemma4")]
             channel_parser: if is_gemma4 {
                 Some(channel_thought::ChannelThoughtParser::new())
@@ -528,6 +533,7 @@ impl StreamState {
 
     /// Process a final Done response, extracting usage and metadata.
     fn handle_done(&mut self, resp: &mistralrs::ChatCompletionResponse) {
+        self.saw_done = true;
         if self.accumulated_usage.is_none() {
             self.accumulated_usage = Some(resp.usage.clone());
         }
@@ -691,6 +697,17 @@ impl StreamState {
             .push(AssistantMessageEvent::error("local inference cancelled"));
         self.events
     }
+
+    /// Finalize when the upstream stream ended before a `Response::Done` was
+    /// observed. This indicates a transport or model-side interruption and
+    /// must be reported as a terminal error, not as a successful completion.
+    fn finalize_eof_without_done(mut self) -> Vec<AssistantMessageEvent> {
+        self.events.extend(finalize_blocks(&mut self.blocks));
+        self.events.push(AssistantMessageEvent::error(
+            "local inference stream ended before completion",
+        ));
+        self.events
+    }
 }
 
 // ─── Stream implementation ──────────────────────────────────────────────────
@@ -808,7 +825,12 @@ fn local_stream<'a>(
 
         // Keep state_guard alive until stream is fully consumed.
         drop(state_guard);
-        stream::iter(state.finalize())
+        if state.saw_done {
+            stream::iter(state.finalize())
+        } else {
+            warn!("local stream ended without Response::Done; emitting terminal error");
+            stream::iter(state.finalize_eof_without_done())
+        }
     })
     .flatten()
 }
@@ -838,9 +860,7 @@ fn extract_thinking_delta(content: &str) -> (Option<String>, String) {
         let search_start = start_idx + think_start.len();
         if let Some(relative_end_idx) = content[search_start..].find(think_end) {
             let end_idx = search_start + relative_end_idx;
-            let thinking = content[search_start..end_idx]
-            .trim()
-            .to_string();
+            let thinking = content[search_start..end_idx].trim().to_string();
             let before = &content[..start_idx];
             let after = &content[end_idx + think_end.len()..];
             let text = format!("{before}{after}").trim().to_string();
@@ -1008,6 +1028,82 @@ mod tests {
             }
             other => panic!("expected Done terminal, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn finalize_eof_without_done_emits_error_terminal() {
+        let mut state = StreamState::new(false);
+        // Simulate having started a text block via BlockAccumulator: EOF
+        // partway through a response.
+        let start = state.blocks.ensure_text_open();
+        state.events.extend(start);
+        state
+            .events
+            .extend(state.blocks.text_delta("partial".to_string()));
+
+        // saw_done is false, representing upstream stream exhausted without
+        // a `Response::Done` frame.
+        assert!(!state.saw_done);
+
+        let events = state.finalize_eof_without_done();
+        let terminal = events.last().expect("at least one event");
+        match terminal {
+            AssistantMessageEvent::Error { error_message, .. } => {
+                assert!(
+                    error_message.contains("ended before completion"),
+                    "expected EOF error message, got: {error_message}"
+                );
+            }
+            other => panic!("expected Error terminal, got {other:?}"),
+        }
+        // Any open text block must be closed before the terminal error.
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, AssistantMessageEvent::TextEnd { .. }))
+        );
+        // No Done event must be emitted on the EOF path.
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, AssistantMessageEvent::Done { .. }))
+        );
+    }
+
+    #[test]
+    fn handle_done_marks_saw_done() {
+        let mut state = StreamState::new(false);
+        assert!(!state.saw_done);
+
+        let resp = mistralrs::ChatCompletionResponse {
+            id: String::new(),
+            choices: Vec::new(),
+            created: 0,
+            model: String::new(),
+            system_fingerprint: String::new(),
+            object: String::new(),
+            usage: mistralrs::Usage {
+                prompt_tokens: 0,
+                completion_tokens: 0,
+                total_tokens: 0,
+                avg_tok_per_sec: 0.0,
+                avg_prompt_tok_per_sec: 0.0,
+                avg_compl_tok_per_sec: 0.0,
+                total_time_sec: 0.0,
+                total_prompt_time_sec: 0.0,
+                total_completion_time_sec: 0.0,
+            },
+        };
+        state.handle_done(&resp);
+        assert!(state.saw_done);
+
+        // A normal finalize still yields Done when saw_done is true.
+        let events = state.finalize();
+        let terminal = events.last().expect("at least one event");
+        assert!(
+            matches!(terminal, AssistantMessageEvent::Done { .. }),
+            "expected Done terminal after handle_done, got {terminal:?}"
+        );
     }
 
     #[cfg(feature = "gemma4")]
