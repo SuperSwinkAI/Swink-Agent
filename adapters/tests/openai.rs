@@ -128,6 +128,58 @@ async fn openai_tool_call_stream() {
 }
 
 #[tokio::test]
+async fn openai_tool_call_name_can_arrive_after_arguments() {
+    let body = [
+        r#"data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"tc_1","function":{"arguments":"{\"cmd\":"}}]},"index":0}]}"#,
+        "",
+        r#"data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"name":"bash","arguments":"\"ls\"}"}}]},"index":0}]}"#,
+        "",
+        r#"data: {"choices":[{"delta":{},"finish_reason":"tool_calls","index":0}],"usage":{"prompt_tokens":10,"completion_tokens":20}}"#,
+        "",
+        "data: [DONE]",
+        "",
+        "",
+    ]
+    .join("\n");
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(sse_response(&body))
+        .mount(&server)
+        .await;
+
+    let sf = OpenAiStreamFn::new(server.uri(), "test-key");
+    let events = collect_events(&sf).await;
+
+    let tool_starts: Vec<(String, String)> = events
+        .iter()
+        .filter_map(|e| match e {
+            AssistantMessageEvent::ToolCallStart { id, name, .. } => {
+                Some((id.clone(), name.clone()))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(tool_starts, vec![("tc_1".to_string(), "bash".to_string())]);
+
+    let tool_deltas: Vec<String> = events
+        .iter()
+        .filter_map(|e| match e {
+            AssistantMessageEvent::ToolCallDelta { delta, .. } => Some(delta.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(tool_deltas, vec![r#"{"cmd":"ls"}"#.to_string()]);
+
+    let done = events.iter().find_map(|e| match e {
+        AssistantMessageEvent::Done { stop_reason, .. } => Some(*stop_reason),
+        _ => None,
+    });
+    assert_eq!(done, Some(StopReason::ToolUse));
+}
+
+#[tokio::test]
 async fn openai_text_then_tool() {
     let body = [
         r#"data: {"choices":[{"delta":{"content":"thinking..."},"index":0}]}"#,

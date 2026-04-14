@@ -201,8 +201,10 @@ fn collect_numeric_usage_fields(key: String, value: &Value, extra: &mut HashMap<
 /// [`BlockAccumulator`] when the tool call was first opened.  `arguments`
 /// accumulates the partial JSON across deltas.
 pub struct OaiToolCallEntry {
+    pub id: String,
+    pub name: Option<String>,
     pub arguments: String,
-    pub content_index: usize,
+    pub content_index: Option<usize>,
 }
 
 // ─── MessageConverter impl ──────────────────────────────────────────────────
@@ -404,6 +406,7 @@ pub fn process_oai_chunk(
 
         if let Some(reason) = &choice.finish_reason {
             if reason == "content_filter" {
+                flush_pending_oai_tool_calls(state, events);
                 events.extend(crate::finalize::finalize_blocks(state));
                 state.terminal_error = Some(AssistantMessageEvent::error_content_filtered(
                     format!("{provider} response stopped by content filter"),
@@ -412,6 +415,7 @@ pub fn process_oai_chunk(
             }
 
             if provider == "Mistral" && reason == "error" {
+                flush_pending_oai_tool_calls(state, events);
                 events.extend(crate::finalize::finalize_blocks(state));
                 state.terminal_error = Some(AssistantMessageEvent::Error {
                     stop_reason: StopReason::Error,
@@ -428,6 +432,7 @@ pub fn process_oai_chunk(
                 _ => StopReason::Stop,
             };
 
+            flush_pending_oai_tool_calls(state, events);
             events.extend(crate::finalize::finalize_blocks(state));
             state.stop_reason = Some(stop_reason);
         }
@@ -442,56 +447,123 @@ fn process_oai_tool_call_delta(
     provider: &str,
 ) {
     let tc_index = tc_delta.index;
+    let mut emit_delta = None;
+    let mut open_tool_call = None;
 
-    if let std::collections::hash_map::Entry::Vacant(entry) = state.tool_calls.entry(tc_index) {
-        let id = tc_delta
-            .id
-            .clone()
-            .unwrap_or_else(|| format!("{provider}-tool-{tc_index}"));
-        let name = tc_delta
+    {
+        let tc_entry = state
+            .tool_calls
+            .entry(tc_index)
+            .or_insert_with(|| OaiToolCallEntry {
+                id: tc_delta
+                    .id
+                    .clone()
+                    .unwrap_or_else(|| format!("{provider}-tool-{tc_index}")),
+                name: None,
+                arguments: String::new(),
+                content_index: None,
+            });
+
+        if tc_entry.content_index.is_none()
+            && let Some(id) = &tc_delta.id
+        {
+            tc_entry.id.clone_from(id);
+        }
+
+        if let Some(name) = tc_delta
             .function
             .as_ref()
-            .and_then(|f| f.name.clone())
-            .unwrap_or_default();
+            .and_then(|f| f.name.as_ref())
+            .filter(|name| !name.is_empty())
+        {
+            tc_entry.name = Some(name.clone());
+        }
+
+        if let Some(args) = tc_delta
+            .function
+            .as_ref()
+            .and_then(|f| f.arguments.as_ref())
+            && !args.is_empty()
+        {
+            tc_entry.arguments.push_str(args);
+            if let Some(content_index) = tc_entry.content_index {
+                emit_delta = Some((content_index, args.clone()));
+            }
+        }
+
+        if tc_entry.content_index.is_none()
+            && let Some(name) = tc_entry.name.clone()
+        {
+            open_tool_call = Some((tc_entry.id.clone(), name, tc_entry.arguments.clone()));
+        }
+    }
+
+    if let Some((id, name, buffered_arguments)) = open_tool_call {
+        let (content_index, start_ev) = state.blocks.open_tool_call(id, name);
+        events.push(start_ev);
+
+        if !buffered_arguments.is_empty() {
+            events.push(crate::block_accumulator::BlockAccumulator::tool_call_delta(
+                content_index,
+                buffered_arguments,
+            ));
+        }
+
+        let tc_entry = state
+            .tool_calls
+            .get_mut(&tc_index)
+            .expect("entry exists after opening");
+        tc_entry.content_index = Some(content_index);
+        return;
+    }
+
+    if let Some((content_index, args)) = emit_delta {
+        events.push(crate::block_accumulator::BlockAccumulator::tool_call_delta(
+            content_index,
+            args,
+        ));
+    }
+}
+
+fn flush_pending_oai_tool_calls(
+    state: &mut OaiSseStreamState,
+    events: &mut Vec<AssistantMessageEvent>,
+) {
+    let mut pending_indices: Vec<_> = state
+        .tool_calls
+        .iter()
+        .filter_map(|(tc_index, entry)| entry.content_index.is_none().then_some(*tc_index))
+        .collect();
+    pending_indices.sort_unstable();
+
+    for tc_index in pending_indices {
+        let (id, name, arguments) = {
+            let entry = state
+                .tool_calls
+                .get(&tc_index)
+                .expect("pending entry should exist");
+            (
+                entry.id.clone(),
+                entry.name.clone().unwrap_or_default(),
+                entry.arguments.clone(),
+            )
+        };
 
         let (content_index, start_ev) = state.blocks.open_tool_call(id, name);
         events.push(start_ev);
 
-        entry.insert(OaiToolCallEntry {
-            arguments: String::new(),
-            content_index,
-        });
-
-        if let Some(args) = tc_delta
-            .function
-            .as_ref()
-            .and_then(|f| f.arguments.as_ref())
-            && !args.is_empty()
-        {
-            let tc_entry = state.tool_calls.get_mut(&tc_index).expect("just inserted");
-            tc_entry.arguments.push_str(args);
+        if !arguments.is_empty() {
             events.push(crate::block_accumulator::BlockAccumulator::tool_call_delta(
                 content_index,
-                args.clone(),
+                arguments,
             ));
         }
-    } else {
-        let tc_entry = state
+
+        let entry = state
             .tool_calls
             .get_mut(&tc_index)
-            .expect("entry exists per condition");
-        if let Some(args) = tc_delta
-            .function
-            .as_ref()
-            .and_then(|f| f.arguments.as_ref())
-            && !args.is_empty()
-        {
-            tc_entry.arguments.push_str(args);
-            events.push(crate::block_accumulator::BlockAccumulator::tool_call_delta(
-                tc_entry.content_index,
-                args.clone(),
-            ));
-        }
+            .expect("pending entry should still exist");
+        entry.content_index = Some(content_index);
     }
 }
 
@@ -516,7 +588,9 @@ pub fn parse_oai_sse_stream(
         "operation cancelled",
         move |item, state| match item {
             None => {
-                let mut events = crate::finalize::finalize_blocks(state);
+                let mut events = Vec::new();
+                flush_pending_oai_tool_calls(state, &mut events);
+                events.extend(crate::finalize::finalize_blocks(state));
                 if let Some(error) = state.terminal_error.take() {
                     events.push(error);
                 } else if let Some(stop_reason) = state.stop_reason.take() {
@@ -534,7 +608,9 @@ pub fn parse_oai_sse_stream(
                 SseAction::Done(events)
             }
             Some(SseLine::Done) => {
-                let mut events = crate::finalize::finalize_blocks(state);
+                let mut events = Vec::new();
+                flush_pending_oai_tool_calls(state, &mut events);
+                events.extend(crate::finalize::finalize_blocks(state));
                 if let Some(error) = state.terminal_error.take() {
                     events.push(error);
                 } else {
@@ -553,7 +629,9 @@ pub fn parse_oai_sse_stream(
                     Ok(c) => c,
                     Err(e) => {
                         error!(error = %e, "{provider} JSON parse error");
-                        let mut events = crate::finalize::finalize_blocks(state);
+                        let mut events = Vec::new();
+                        flush_pending_oai_tool_calls(state, &mut events);
+                        events.extend(crate::finalize::finalize_blocks(state));
                         events.push(AssistantMessageEvent::error_network(format!(
                             "{provider} JSON parse error: {e}",
                         )));
@@ -571,7 +649,9 @@ pub fn parse_oai_sse_stream(
                 }
             }
             Some(SseLine::TransportError(message)) => {
-                let mut events = crate::finalize::finalize_blocks(state);
+                let mut events = Vec::new();
+                flush_pending_oai_tool_calls(state, &mut events);
+                events.extend(crate::finalize::finalize_blocks(state));
                 events.push(AssistantMessageEvent::error_network(format!(
                     "{provider} {message}",
                 )));
