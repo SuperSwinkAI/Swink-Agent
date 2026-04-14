@@ -40,7 +40,7 @@ jobs:
         toolchain: ["1.88", "stable"]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - uses: ./.github/actions/rust-setup
         with:
           toolchain: ${{ matrix.toolchain }}
@@ -60,7 +60,7 @@ jobs:
     name: Changelog gate
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - name: Ensure CHANGELOG has an entry for this tag
         shell: bash
         run: |
@@ -82,7 +82,7 @@ jobs:
     needs: [verify, changelog-gate]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - uses: ./.github/actions/rust-setup
         with:
           toolchain: stable
@@ -133,7 +133,7 @@ jobs:
     needs: publish-dry-run
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - name: Create release and upload Cargo.lock
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
