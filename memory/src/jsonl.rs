@@ -307,25 +307,6 @@ fn find_record_line_mut<'a>(
     None
 }
 
-fn parse_message_record(
-    line: &str,
-    line_num: usize,
-    id: &str,
-    registry: Option<&CustomMessageRegistry>,
-) -> Option<AgentMessage> {
-    match crate::codec::decode_jsonl_message_line(line, registry) {
-        Ok(message) => message,
-        Err(error) => {
-            tracing::warn!(
-                line = line_num,
-                error = %error,
-                "skipping unparseable message line in session {id}"
-            );
-            None
-        }
-    }
-}
-
 /// Validate a session ID, rejecting unsafe filesystem characters.
 ///
 /// Rejects IDs containing `/`, `\`, `..`, or null bytes.
@@ -421,36 +402,33 @@ impl SessionStore for JsonlSessionStore {
 
         let path = session_path(&self.sessions_dir, id);
         let (meta, lines) = read_meta_and_message_lines(&path, id)?;
+        let (meta, classified) = self.classify_and_migrate(meta, lines, id)?;
 
-        // Check version
-        if meta.version > crate::migrate::CURRENT_VERSION {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!(
-                    "unsupported session version {} (current: {})",
-                    meta.version,
-                    crate::migrate::CURRENT_VERSION
-                ),
-            ));
-        }
-
-        // Parse lines using dual strategy: try SessionRecord first (handles
-        // raw LlmMessage and _custom/_state markers), then fall back to
-        // SessionEntry parsing (handles entry_type-tagged lines from
-        // save_entries). This ensures backward and forward compatibility.
+        // Project post-migration classification into the `load()` return
+        // shape. Entries collapse to their Message contents (non-message
+        // entries are dropped, matching prior behavior), and custom-message
+        // wrappers pass through unchanged (requires a registry).
         let mut messages = Vec::new();
-        for (line_num, line) in lines.into_iter().enumerate() {
-            if line.trim().is_empty() {
-                continue;
-            }
-            // Try SessionRecord parse first (raw format)
-            if let Some(message) = parse_message_record(&line, line_num + 2, id, registry) {
-                messages.push(message);
-                continue;
-            }
-            // Fall back to SessionEntry parse (tagged format)
-            if let Ok(SessionEntry::Message(llm_msg)) = SessionEntry::parse(&line) {
-                messages.push(AgentMessage::Llm(llm_msg));
+        for item in classified {
+            match item {
+                ClassifiedLine::Entry(entry) => {
+                    if let SessionEntry::Message(llm_msg) = *entry {
+                        messages.push(AgentMessage::Llm(llm_msg));
+                    }
+                }
+                ClassifiedLine::Custom(envelope) => {
+                    match custom_envelope_to_message(&envelope, registry) {
+                        Ok(Some(msg)) => messages.push(msg),
+                        Ok(None) => {}
+                        Err(error) => {
+                            tracing::warn!(
+                                error = %error,
+                                "skipping unrestorable custom message in session {id}"
+                            );
+                        }
+                    }
+                }
+                ClassifiedLine::State => {}
             }
         }
 
@@ -663,30 +641,67 @@ impl JsonlSessionStore {
         validate_session_id(id)?;
 
         let path = session_path(&self.sessions_dir, id);
-        let (mut meta, lines) = read_meta_and_message_lines(&path, id)?;
+        let (meta, lines) = read_meta_and_message_lines(&path, id)?;
+        let (meta, classified) = self.classify_and_migrate(meta, lines, id)?;
 
-        let mut entries: Vec<SessionEntry> = lines
+        let entries = classified
             .into_iter()
-            .enumerate()
-            .filter_map(|(line_num, line)| {
-                if line.trim().is_empty() {
-                    return None;
-                }
-                match SessionEntry::parse(&line) {
-                    Ok(entry) => Some(entry),
-                    Err(error) => {
-                        tracing::warn!(
-                            line = line_num + 2,
-                            error = %error,
-                            "skipping unparseable entry in session {id}"
-                        );
-                        None
-                    }
-                }
+            .filter_map(|item| match item {
+                ClassifiedLine::Entry(entry) => Some(*entry),
+                ClassifiedLine::Custom(_) | ClassifiedLine::State => None,
             })
             .collect();
 
-        // Run migrations if needed
+        Ok((meta, entries))
+    }
+
+    /// Parse every message line, classify each as a migrateable
+    /// [`SessionEntry`] or a pass-through custom/state wrapper, then run any
+    /// configured migrators over the `SessionEntry` subset.
+    ///
+    /// This is the single migration entry point shared by `load()` and
+    /// `load_entries()` so both observe identical post-migration state.
+    /// Positional ordering of pass-through wrappers relative to each other
+    /// (and relative to the migrateable block as a whole) is preserved;
+    /// migrators may freely insert/remove entries within the entry block.
+    fn classify_and_migrate(
+        &self,
+        mut meta: SessionMeta,
+        lines: Vec<String>,
+        id: &str,
+    ) -> io::Result<(SessionMeta, Vec<ClassifiedLine>)> {
+        let mut classified: Vec<ClassifiedLine> = Vec::with_capacity(lines.len());
+        for (idx, line) in lines.into_iter().enumerate() {
+            if line.trim().is_empty() {
+                continue;
+            }
+            let line_num = idx + 2;
+            match classify_line(&line) {
+                Ok(item) => classified.push(item),
+                Err(error) => {
+                    tracing::warn!(
+                        line = line_num,
+                        error = %error,
+                        "skipping unparseable line in session {id}"
+                    );
+                }
+            }
+        }
+
+        // Split out the migrateable subset, run the migrator pipeline, then
+        // weave the migrated entries back into the classified list.
+        let original_entry_count = classified
+            .iter()
+            .filter(|item| matches!(item, ClassifiedLine::Entry(_)))
+            .count();
+        let mut entries: Vec<SessionEntry> = classified
+            .iter()
+            .filter_map(|item| match item {
+                ClassifiedLine::Entry(entry) => Some((**entry).clone()),
+                _ => None,
+            })
+            .collect();
+
         if !self.migrators.is_empty() {
             crate::migrate::run_migrations(&mut meta, &mut entries, &self.migrators)?;
         } else if meta.version > crate::migrate::CURRENT_VERSION {
@@ -700,8 +715,121 @@ impl JsonlSessionStore {
             ));
         }
 
-        Ok((meta, entries))
+        let rebuilt = weave_migrated_entries(classified, entries, original_entry_count);
+        Ok((meta, rebuilt))
     }
+}
+
+/// Weave a migrated entry list back into a classified line sequence.
+///
+/// If the migrator preserved the entry count (`migrated.len() ==
+/// original_entry_count`), each entry slot is replaced 1:1 in position,
+/// preserving the original interleaving with custom/state wrappers (the
+/// common case; matches pre-migration-aware `load()` behavior exactly).
+///
+/// If the migrator added or dropped entries, positional correspondence to
+/// individual slots is no longer defined — we collapse all migrated entries
+/// into the first entry slot (or append them if no entry slots existed)
+/// and keep pass-through wrappers in their original positions.
+fn weave_migrated_entries(
+    classified: Vec<ClassifiedLine>,
+    migrated: Vec<SessionEntry>,
+    original_entry_count: usize,
+) -> Vec<ClassifiedLine> {
+    let mut rebuilt: Vec<ClassifiedLine> = Vec::with_capacity(classified.len().max(migrated.len()));
+    if migrated.len() == original_entry_count {
+        let mut iter = migrated.into_iter();
+        for item in classified {
+            match item {
+                ClassifiedLine::Entry(_) => {
+                    if let Some(next) = iter.next() {
+                        rebuilt.push(ClassifiedLine::Entry(Box::new(next)));
+                    }
+                }
+                passthrough @ (ClassifiedLine::Custom(_) | ClassifiedLine::State) => {
+                    rebuilt.push(passthrough);
+                }
+            }
+        }
+    } else {
+        let mut drained = false;
+        let mut migrated_iter = migrated.into_iter();
+        for item in classified {
+            match item {
+                ClassifiedLine::Entry(_) => {
+                    if !drained {
+                        for e in migrated_iter.by_ref() {
+                            rebuilt.push(ClassifiedLine::Entry(Box::new(e)));
+                        }
+                        drained = true;
+                    }
+                }
+                passthrough @ (ClassifiedLine::Custom(_) | ClassifiedLine::State) => {
+                    rebuilt.push(passthrough);
+                }
+            }
+        }
+        for e in migrated_iter {
+            rebuilt.push(ClassifiedLine::Entry(Box::new(e)));
+        }
+    }
+    rebuilt
+}
+
+/// A JSONL line after parsing, classified so the migration pipeline can treat
+/// migrateable entries distinctly from opaque pass-through wrappers.
+///
+/// The `Entry` variant is boxed because [`SessionEntry`] is comparatively
+/// large (embeds a full `LlmMessage`) and dwarfs the other variants — the
+/// `Box` keeps the enum small enough to avoid `clippy::large_enum_variant`.
+#[derive(Debug, Clone)]
+enum ClassifiedLine {
+    /// A [`SessionEntry`] — either a tagged entry or a legacy raw
+    /// [`LlmMessage`] rehydrated as [`SessionEntry::Message`]. Migrators run
+    /// against these.
+    Entry(Box<SessionEntry>),
+    /// A `_custom: true` envelope — preserved verbatim so
+    /// [`SessionStore::load`] can restore it via the caller's registry.
+    Custom(serde_json::Value),
+    /// A `_state: true` record. `load_state()` reads state directly from the
+    /// file; `load()` and `load_entries()` both skip these, so the payload
+    /// is intentionally discarded here.
+    State,
+}
+
+/// Classify a single non-empty JSONL message line.
+///
+/// Order of checks mirrors the persisted format precedence: state/custom
+/// wrappers win over the tagged [`SessionEntry`] path, which in turn covers
+/// the legacy raw [`LlmMessage`] format.
+fn classify_line(line: &str) -> io::Result<ClassifiedLine> {
+    let value: serde_json::Value = serde_json::from_str(line).map_err(io::Error::other)?;
+
+    if value.get("_state").and_then(serde_json::Value::as_bool) == Some(true) {
+        return Ok(ClassifiedLine::State);
+    }
+    if value.get("_custom").and_then(serde_json::Value::as_bool) == Some(true) {
+        return Ok(ClassifiedLine::Custom(value));
+    }
+
+    // Neither state nor custom wrapper: either a tagged SessionEntry or a
+    // legacy raw LlmMessage. SessionEntry::parse handles both.
+    SessionEntry::parse(line)
+        .map(|entry| ClassifiedLine::Entry(Box::new(entry)))
+        .map_err(io::Error::other)
+}
+
+/// Convert a `_custom` envelope (as stored on disk) back into an
+/// [`AgentMessage::Custom`] using the supplied registry.
+///
+/// Returns `Ok(None)` when the caller supplied no registry (custom messages
+/// are skipped — matching prior `load()` behavior).
+fn custom_envelope_to_message(
+    envelope: &serde_json::Value,
+    registry: Option<&CustomMessageRegistry>,
+) -> io::Result<Option<AgentMessage>> {
+    let line = serde_json::to_string(envelope).map_err(io::Error::other)?;
+    crate::codec::decode_jsonl_message_line(&line, registry)
 }
 
 #[cfg(test)]
@@ -1376,6 +1504,205 @@ mod tests {
             )
             .unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::NotFound);
+    }
+
+    /// Migrator that transforms the first `User` text content in every
+    /// `Message` entry from lower-case to upper-case. Used to detect whether
+    /// the migration pipeline actually ran against a given load path.
+    struct UppercasingMigrator;
+
+    impl crate::migrate::SessionMigrator for UppercasingMigrator {
+        fn source_version(&self) -> u32 {
+            0
+        }
+        fn target_version(&self) -> u32 {
+            1
+        }
+        fn migrate(
+            &self,
+            _meta: &SessionMeta,
+            entries: Vec<SessionEntry>,
+        ) -> io::Result<Vec<SessionEntry>> {
+            Ok(entries
+                .into_iter()
+                .map(|entry| match entry {
+                    SessionEntry::Message(LlmMessage::User(mut m)) => {
+                        for block in &mut m.content {
+                            if let swink_agent::ContentBlock::Text { text } = block {
+                                *text = text.to_uppercase();
+                            }
+                        }
+                        SessionEntry::Message(LlmMessage::User(m))
+                    }
+                    other => other,
+                })
+                .collect())
+        }
+    }
+
+    /// Write a legacy (`version: 0`) session file containing both a
+    /// migrateable raw-`LlmMessage` line AND a custom-message envelope, then
+    /// assert that `load()` and `load_entries()` both observe the migrated
+    /// shape and that `load()` returns the custom wrapper unchanged.
+    ///
+    /// Regression for #522: `load()` previously bypassed the configured
+    /// migrator pipeline, so it returned the raw pre-migration text while
+    /// `load_entries()` returned the migrated text.
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn load_applies_migrators_identically_to_load_entries() {
+        use swink_agent::{CustomMessage, CustomMessageRegistry};
+
+        #[derive(Debug)]
+        struct TestCustomMsg {
+            data: String,
+        }
+
+        impl CustomMessage for TestCustomMsg {
+            fn as_any(&self) -> &dyn std::any::Any {
+                self
+            }
+            fn type_name(&self) -> Option<&str> {
+                Some("TestCustomMsg")
+            }
+            fn to_json(&self) -> Option<serde_json::Value> {
+                Some(serde_json::json!({ "data": self.data }))
+            }
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let id = "legacy";
+
+        // Write a legacy-format file by hand: line 1 = meta @ version 0,
+        // line 2 = raw LlmMessage (migrateable), line 3 = _custom envelope
+        // (pass-through), line 4 = _state wrapper (pass-through, skipped by
+        // load but must not break migration).
+        let path = session_path(dir.path(), id);
+        let now = now_utc();
+        let meta = SessionMeta {
+            id: id.to_string(),
+            title: "legacy".to_string(),
+            created_at: now,
+            updated_at: now,
+            version: 0,
+            sequence: 0,
+        };
+
+        let raw_msg_line = serde_json::to_string(&LlmMessage::User(swink_agent::UserMessage {
+            content: vec![swink_agent::ContentBlock::Text {
+                text: "hello".to_string(),
+            }],
+            timestamp: 1,
+            cache_hint: None,
+        }))
+        .unwrap();
+
+        let custom_envelope = serde_json::json!({
+            "type": "TestCustomMsg",
+            "data": { "data": "custom-payload" },
+            "_custom": true,
+        });
+        let custom_line = serde_json::to_string(&custom_envelope).unwrap();
+
+        let state_line = serde_json::json!({
+            "_state": true,
+            "data": { "cursor": 9 },
+        })
+        .to_string();
+
+        let contents = format!(
+            "{}\n{raw_msg_line}\n{custom_line}\n{state_line}\n",
+            serde_json::to_string(&meta).unwrap()
+        );
+        std::fs::write(&path, contents).unwrap();
+
+        let store = JsonlSessionStore::new(dir.path().to_path_buf())
+            .unwrap()
+            .with_migrators(vec![Box::new(UppercasingMigrator)]);
+
+        // load_entries() runs migrators — this is the pre-fix baseline.
+        let (entries_meta, entries) = store.load_entries(id).unwrap();
+        assert_eq!(entries_meta.version, crate::migrate::CURRENT_VERSION);
+        let entry_msg = entries
+            .iter()
+            .find_map(SessionEntry::as_message)
+            .expect("message entry present");
+        if let LlmMessage::User(user) = entry_msg
+            && let swink_agent::ContentBlock::Text { text } = &user.content[0]
+        {
+            assert_eq!(text, "HELLO", "load_entries must run migrator");
+        } else {
+            panic!("unexpected entry shape");
+        }
+
+        // load() must observe the same post-migration text AND still return
+        // the custom wrapper unchanged (requires the registry).
+        let mut registry = CustomMessageRegistry::new();
+        registry.register(
+            "TestCustomMsg",
+            Box::new(|val: serde_json::Value| {
+                let data = val
+                    .get("data")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| "missing data".to_string())?;
+                Ok(Box::new(TestCustomMsg {
+                    data: data.to_string(),
+                }) as Box<dyn CustomMessage>)
+            }),
+        );
+
+        let (load_meta, messages) = store.load(id, Some(&registry)).unwrap();
+        assert_eq!(load_meta.version, crate::migrate::CURRENT_VERSION);
+
+        let llm_text = messages
+            .iter()
+            .find_map(|m| match m {
+                AgentMessage::Llm(LlmMessage::User(u)) => u.content.iter().find_map(|b| match b {
+                    swink_agent::ContentBlock::Text { text } => Some(text.clone()),
+                    _ => None,
+                }),
+                _ => None,
+            })
+            .expect("user message present");
+        assert_eq!(
+            llm_text, "HELLO",
+            "load() must route through the migrator pipeline"
+        );
+
+        let custom = messages
+            .iter()
+            .find_map(|m| m.downcast_ref::<TestCustomMsg>().ok())
+            .expect("custom wrapper must pass through load() unchanged");
+        assert_eq!(custom.data, "custom-payload");
+    }
+
+    /// Without a registered migrator, a legacy-version file must still fail
+    /// `load()` with the same error that `load_entries()` emits — contract
+    /// consistency between the two APIs.
+    #[test]
+    fn load_rejects_legacy_version_without_migrator_like_load_entries() {
+        let dir = tempfile::tempdir().unwrap();
+        let id = "no-migrator";
+        let path = session_path(dir.path(), id);
+        let now = now_utc();
+        // A future version (> CURRENT_VERSION) triggers the unsupported-
+        // version error in both paths.
+        let meta = SessionMeta {
+            id: id.to_string(),
+            title: "future".to_string(),
+            created_at: now,
+            updated_at: now,
+            version: crate::migrate::CURRENT_VERSION + 1,
+            sequence: 0,
+        };
+        let contents = format!("{}\n", serde_json::to_string(&meta).unwrap());
+        std::fs::write(&path, contents).unwrap();
+
+        let store = JsonlSessionStore::new(dir.path().to_path_buf()).unwrap();
+        let load_err = store.load(id, None).unwrap_err();
+        let entries_err = store.load_entries(id).unwrap_err();
+        assert_eq!(load_err.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(entries_err.kind(), io::ErrorKind::InvalidData);
     }
 
     #[test]
