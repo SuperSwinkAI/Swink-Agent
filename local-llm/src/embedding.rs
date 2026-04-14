@@ -11,13 +11,13 @@ use tracing::{debug, error};
 
 use crate::error::LocalModelError;
 use crate::loader::{LazyLoader, LoaderBackend, LoaderState};
-use crate::preset::ModelPreset;
+use crate::preset::{ModelPreset, default_embedding_config};
 use crate::progress::ProgressCallbackFn;
 
 // ─── EmbeddingConfig ────────────────────────────────────────────────────────
 
 /// Configuration for a local embedding model.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EmbeddingConfig {
     /// `HuggingFace` repository ID for the embedding model.
     pub repo_id: String,
@@ -31,15 +31,7 @@ pub struct EmbeddingConfig {
 
 impl Default for EmbeddingConfig {
     fn default() -> Self {
-        Self {
-            repo_id: std::env::var("LOCAL_EMBED_REPO")
-                .unwrap_or_else(|_| "google/gemma-embedding-300m".to_string()),
-            filename: std::env::var("LOCAL_EMBED_FILE").unwrap_or_else(|_| String::new()),
-            dimensions: std::env::var("LOCAL_EMBED_DIMS")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(768),
-        }
+        default_embedding_config()
     }
 }
 
