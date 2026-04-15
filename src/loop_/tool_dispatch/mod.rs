@@ -411,6 +411,7 @@ mod tests {
     }
 
     struct StopBatchPolicy;
+    struct StopOnToolTwoPolicy;
     struct OriginalIndexStrategy;
     struct DuplicateIndexStrategy;
 
@@ -421,6 +422,20 @@ mod tests {
 
         fn evaluate(&self, _ctx: &mut ToolDispatchContext<'_>) -> PreDispatchVerdict {
             PreDispatchVerdict::Stop("blocked by policy".to_string())
+        }
+    }
+
+    impl PreDispatchPolicy for StopOnToolTwoPolicy {
+        fn name(&self) -> &'static str {
+            "stop-on-tool-two"
+        }
+
+        fn evaluate(&self, ctx: &mut ToolDispatchContext<'_>) -> PreDispatchVerdict {
+            if ctx.tool_name == "tool_two" {
+                PreDispatchVerdict::Stop("blocked after an earlier tool was prepared".to_string())
+            } else {
+                PreDispatchVerdict::Continue
+            }
         }
     }
 
@@ -640,6 +655,76 @@ mod tests {
         assert!(
             start_ids.is_empty(),
             "synthetic stop results should not emit ToolExecutionStart"
+        );
+        assert_eq!(end_ids, vec!["call_1".to_string(), "call_2".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn pre_dispatch_stop_backfills_prepared_tool_calls_without_results() {
+        let config = test_loop_config(vec![Arc::new(StopOnToolTwoPolicy)]);
+        let tool_calls = vec![
+            ToolCallInfo {
+                id: "call_1".to_string(),
+                name: "tool_one".to_string(),
+                arguments: serde_json::json!({ "first": true }),
+                is_incomplete: false,
+            },
+            ToolCallInfo {
+                id: "call_2".to_string(),
+                name: "tool_two".to_string(),
+                arguments: serde_json::json!({ "second": true }),
+                is_incomplete: false,
+            },
+        ];
+        let cancellation_token = CancellationToken::new();
+        let (tx, mut rx) = mpsc::channel(8);
+
+        let outcome =
+            execute_tools_concurrently(&config, &tool_calls, &cancellation_token, &tx).await;
+
+        let ToolExecOutcome::Completed { results, .. } = outcome else {
+            panic!("expected completed outcome");
+        };
+        assert_eq!(
+            results.len(),
+            2,
+            "a later stop must still return one result per tool call"
+        );
+        assert_eq!(
+            results
+                .iter()
+                .map(|result| result.tool_call_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["call_1", "call_2"]
+        );
+        assert!(
+            results.iter().all(|result| result.is_error),
+            "every unresolved tool call should surface as a synthetic error"
+        );
+        assert!(
+            results.iter().all(|result| {
+                matches!(
+                    result.content.as_slice(),
+                    [ContentBlock::Text { text }]
+                        if text.contains("policy stopped tool batch before dispatch")
+                )
+            }),
+            "backfilled results should explain the batch stop"
+        );
+
+        let mut start_ids = Vec::new();
+        let mut end_ids = Vec::new();
+        for event in drain_events(&mut rx) {
+            match event {
+                AgentEvent::ToolExecutionStart { id, .. } => start_ids.push(id),
+                AgentEvent::ToolExecutionEnd { id, .. } => end_ids.push(id),
+                _ => {}
+            }
+        }
+
+        assert!(
+            start_ids.is_empty(),
+            "prepared-but-undispatched calls must not emit ToolExecutionStart"
         );
         assert_eq!(end_ids, vec!["call_1".to_string(), "call_2".to_string()]);
     }

@@ -79,7 +79,7 @@ pub(super) async fn preprocess_tool_calls(
                     injected_messages.extend(msgs);
                 }
                 PreDispatchVerdict::Stop(reason) => {
-                    emit_batch_stop_results(tool_calls, idx, &reason, results, tx).await;
+                    emit_batch_stop_results(tool_calls, &reason, results, tx).await;
                     let all_results = std::mem::take(&mut *results.lock().await);
                     let ordered = order_results_by_tool_calls(tool_calls, &all_results);
                     let collected_timings = std::mem::take(&mut *tool_timings.lock().await);

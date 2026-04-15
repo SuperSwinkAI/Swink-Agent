@@ -1,5 +1,6 @@
 //! Shared helpers used across pre-process, execute, and collect phases.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use tokio::sync::mpsc;
@@ -91,15 +92,27 @@ pub(super) async fn forward_tool_updates(
     }
 }
 
-/// Emit error results for all tool calls starting from `stop_idx`.
+/// Emit stop error results for every tool call that does not already have a
+/// terminal result.
 pub(super) async fn emit_batch_stop_results(
     tool_calls: &[ToolCallInfo],
-    stop_idx: usize,
     reason: &str,
     results: &Arc<tokio::sync::Mutex<Vec<(usize, ToolResultMessage)>>>,
     tx: &mpsc::Sender<AgentEvent>,
 ) {
-    for (idx, tc) in tool_calls.iter().enumerate().skip(stop_idx) {
+    let resolved_ids: HashSet<String> = {
+        let guard = results.lock().await;
+        guard
+            .iter()
+            .map(|(_, result)| result.tool_call_id.clone())
+            .collect()
+    };
+
+    for (idx, tc) in tool_calls.iter().enumerate() {
+        if resolved_ids.contains(&tc.id) {
+            continue;
+        }
+
         let error_result = AgentToolResult::error(format!(
             "policy stopped tool batch before dispatch: {reason}"
         ));
