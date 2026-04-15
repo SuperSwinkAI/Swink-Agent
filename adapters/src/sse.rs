@@ -112,8 +112,8 @@ impl SseStreamParser {
                     if valid > 0 {
                         // SAFETY: `valid_up_to()` is guaranteed to point at
                         // the end of a valid UTF-8 prefix.
-                        let s =
-                            std::str::from_utf8(&bytes[cursor..cursor + valid]).expect("valid utf-8 prefix");
+                        let s = std::str::from_utf8(&bytes[cursor..cursor + valid])
+                            .expect("valid utf-8 prefix");
                         self.buffer.push_str(s);
                     }
                     cursor += valid;
@@ -195,16 +195,15 @@ impl SseStreamParser {
             // SSE comment — skip, but don't flush pending data
             return;
         }
-        if let Some(event_type) = line.strip_prefix("event: ") {
+        if let Some(event_type) = parse_sse_field_value(line, "event:") {
             // Flush any pending data before yielding the event
             if let Some(data) = self.pending_data.take() {
                 output.push(SseLine::Data(data));
             }
-            output.push(SseLine::Event(event_type.trim().to_string()));
+            output.push(SseLine::Event(event_type.to_string()));
             return;
         }
-        if let Some(data) = line.strip_prefix("data: ") {
-            let data = data.trim();
+        if let Some(data) = parse_sse_field_value(line, "data:") {
             if data == "[DONE]" {
                 // Flush pending data, then yield Done
                 if let Some(pending) = self.pending_data.take() {
@@ -229,6 +228,11 @@ impl SseStreamParser {
             output.push(SseLine::Data(data));
         }
     }
+}
+
+fn parse_sse_field_value<'a>(line: &'a str, field_prefix: &str) -> Option<&'a str> {
+    let value = line.strip_prefix(field_prefix)?;
+    Some(value.strip_prefix(' ').unwrap_or(value))
 }
 
 impl Default for SseStreamParser {
@@ -503,6 +507,34 @@ mod tests {
     }
 
     #[test]
+    fn sse_parser_accepts_optional_space_after_colon() {
+        let mut parser = SseStreamParser::new();
+        let lines = parser.feed(b"event:message_start\ndata:{\"ok\":true}\n\n");
+        assert_eq!(
+            lines,
+            vec![
+                SseLine::Event("message_start".to_string()),
+                SseLine::Data("{\"ok\":true}".to_string()),
+                SseLine::Empty,
+            ]
+        );
+    }
+
+    #[test]
+    fn sse_parser_accepts_mixed_spaced_and_unspaced_fields() {
+        let mut parser = SseStreamParser::new();
+        let lines = parser.feed(b"event: message_start\ndata:{\"one\":1}\ndata: {\"two\":2}\n\n");
+        assert_eq!(
+            lines,
+            vec![
+                SseLine::Event("message_start".to_string()),
+                SseLine::Data("{\"one\":1}\n{\"two\":2}".to_string()),
+                SseLine::Empty,
+            ]
+        );
+    }
+
+    #[test]
     fn sse_parser_partial_chunk_buffering() {
         let mut parser = SseStreamParser::new();
         // First feed — partial, no newline yet at end
@@ -663,10 +695,7 @@ mod tests {
         for b in payload {
             all.extend(parser.feed(&[*b]));
         }
-        assert_eq!(
-            all,
-            vec![SseLine::Data("€🦀".to_string()), SseLine::Empty]
-        );
+        assert_eq!(all, vec![SseLine::Data("€🦀".to_string()), SseLine::Empty]);
     }
 
     #[test]
@@ -678,10 +707,7 @@ mod tests {
         let lines = parser.feed(b"data: a\xFFb\n\n");
         assert_eq!(
             lines,
-            vec![
-                SseLine::Data("a\u{FFFD}b".to_string()),
-                SseLine::Empty,
-            ]
+            vec![SseLine::Data("a\u{FFFD}b".to_string()), SseLine::Empty,]
         );
     }
 
