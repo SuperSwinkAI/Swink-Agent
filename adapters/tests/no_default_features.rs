@@ -1,10 +1,15 @@
+#![cfg(feature = "__no_default_features_sentinel")]
+
 //! Regression test for issue #441: `--no-default-features` must keep every
 //! provider gate disabled in `swink-agent-adapters`.
 //!
-//! This file compiles under
-//! `cargo test -p swink-agent-adapters --no-default-features --test no_default_features`.
-//! If a default or dev-dependency leaks adapter features back in, the
-//! `#[cfg(feature = ...)]` assertions below flip and fail loudly.
+//! This sentinel is intentionally opt-in so normal workspace test runs skip it
+//! even when feature unification enables provider flags elsewhere in the graph.
+//! Run it with:
+//! `cargo adapters-no-default-features`.
+//! If a default or dev-dependency leaks adapter features back in during that
+//! dedicated invocation, the `#[cfg(feature = ...)]` assertions below flip and
+//! fail loudly.
 
 #[cfg(not(feature = "anthropic"))]
 #[test]

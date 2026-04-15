@@ -28,6 +28,7 @@ azure = []
 bedrock = ["dep:aws-credential-types", "dep:aws-sigv4", "dep:aws-smithy-eventstream", "dep:aws-smithy-runtime-api", "dep:aws-smithy-types"]
 mistral = []
 xai = ["openai-compat"]
+__no_default_features_sentinel = []
 
 [dependencies]
 swink-agent = { path = "..", default-features = false }
