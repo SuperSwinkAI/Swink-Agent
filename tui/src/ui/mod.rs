@@ -53,7 +53,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     let steered_visible =
         !app.pending_steered.is_empty() || app.steered_fade_ticks > 0;
     let steered_height: u16 = if steered_visible {
-        let lines = app.pending_steered.len().max(1) as u16;
+        let lines = u16::try_from(app.pending_steered.len().max(1)).unwrap_or(u16::MAX);
         (lines + 2).min(7)
     } else {
         0

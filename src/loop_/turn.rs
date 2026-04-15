@@ -247,6 +247,21 @@ pub async fn run_single_turn(
     .await;
     let llm_call_duration = llm_start.elapsed();
 
+    // ─── Steering interrupt: user submitted a message mid-stream ────────
+    // The streaming layer already emitted MessageEnd with partial content.
+    // Poll the steering queue and restart the turn so the agent processes
+    // the new user message immediately.
+    if matches!(stream_result, StreamResult::SteeringInterrupt) {
+        if let Some(ref provider) = config.message_provider {
+            let msgs = provider.poll_steering();
+            if !msgs.is_empty() {
+                state.pending_messages.extend(msgs);
+                sync_pending_message_snapshot(config, state);
+            }
+        }
+        return TurnOutcome::ContinueInner;
+    }
+
     // ─── Emergency in-place overflow recovery (T069/T070) ───────────────
     let stream_result = if matches!(stream_result, StreamResult::ContextOverflow) {
         match attempt_overflow_recovery(
@@ -586,7 +601,10 @@ async fn handle_stream_result(
             .await;
             None
         }
-        StreamResult::ChannelClosed => None,
+        // ChannelClosed and SteeringInterrupt both result in None.
+        // SteeringInterrupt is handled before this function is called in
+        // run_single_turn; this arm is unreachable in normal flow.
+        StreamResult::ChannelClosed | StreamResult::SteeringInterrupt => None,
     }
 }
 

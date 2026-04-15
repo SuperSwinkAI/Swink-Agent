@@ -1,5 +1,6 @@
 use std::borrow::Cow;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use futures::StreamExt;
 use tokio::sync::mpsc;
@@ -57,7 +58,10 @@ pub async fn stream_with_retry(
         {
             return primary_result;
         }
-        StreamResult::ContextOverflow | StreamResult::Aborted | StreamResult::ChannelClosed => {
+        StreamResult::ContextOverflow
+        | StreamResult::Aborted
+        | StreamResult::ChannelClosed
+        | StreamResult::SteeringInterrupt => {
             return primary_result;
         }
         StreamResult::Message(msg) => msg.clone(),
@@ -110,7 +114,10 @@ pub async fn stream_with_retry(
             {
                 return fb_result;
             }
-            StreamResult::ContextOverflow | StreamResult::Aborted | StreamResult::ChannelClosed => {
+            StreamResult::ContextOverflow
+            | StreamResult::Aborted
+            | StreamResult::ChannelClosed
+            | StreamResult::SteeringInterrupt => {
                 return fb_result;
             }
             StreamResult::Message(_) => {
@@ -195,6 +202,7 @@ async fn stream_with_retry_single(
             &call_context,
             &stream_options,
             cancellation_token,
+            config.steering_interrupt.as_deref(),
             tx,
         )
         .await;
@@ -276,6 +284,7 @@ async fn stream_single_attempt(
     call_context: &AgentContext,
     stream_options: &StreamOptions,
     cancellation_token: &CancellationToken,
+    steering_interrupt: Option<&AtomicBool>,
     tx: &mpsc::Sender<AgentEvent>,
 ) -> StreamAttemptResult {
     // Apply capability overrides (e.g. disable thinking for models that
@@ -288,6 +297,13 @@ async fn stream_single_attempt(
         stream_options,
         cancellation_token.clone(),
     );
+
+    // Clear any pre-existing interrupt signal. A steering call made before this
+    // stream started is already in the queue and will be picked up by
+    // poll_steering() at the next turn boundary — no need to interrupt here.
+    if let Some(flag) = steering_interrupt {
+        flag.store(false, Ordering::Release);
+    }
 
     let mut events: Vec<AssistantMessageEvent> = Vec::new();
     let mut had_error: Option<(
@@ -302,6 +318,16 @@ async fn stream_single_attempt(
             let abort_msg = build_abort_message(model);
             let _ = emit(tx, AgentEvent::MessageEnd { message: abort_msg }).await;
             return StreamAttemptResult::EarlyExit(StreamResult::Aborted);
+        }
+
+        // Mid-stream steering interrupt: the user submitted a new message while
+        // the agent was generating. Emit MessageEnd with partial content so the
+        // TUI can finalize the streaming display, then signal the turn handler
+        // to poll the steering queue and restart the turn.
+        if steering_interrupt.is_some_and(|f| f.load(Ordering::Acquire)) {
+            steering_interrupt.unwrap().store(false, Ordering::Release);
+            let _ = finalize_stream_message(model, events, tx).await;
+            return StreamAttemptResult::EarlyExit(StreamResult::SteeringInterrupt);
         }
 
         if let Some(early_exit) = emit_delta_event(&event, tx).await {
