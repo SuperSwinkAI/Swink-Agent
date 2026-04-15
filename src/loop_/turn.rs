@@ -866,6 +866,28 @@ async fn handle_tool_calls(
                 state.pending_messages.extend(steering_messages);
                 sync_pending_message_snapshot(config, state);
             }
+            ToolExecOutcome::Aborted {
+                results,
+                tool_metrics,
+                injected_messages,
+            } => {
+                debug_assert_eq!(
+                    results.len(),
+                    tool_call_data.len(),
+                    "aborted batches should keep result parity with requested tool calls"
+                );
+                let _ = injected_messages;
+                emit_turn_metrics(
+                    config,
+                    state,
+                    &msg_for_turn_end,
+                    llm_call_duration,
+                    tool_metrics,
+                    turn_start,
+                )
+                .await;
+                return handle_cancellation(config, state, tx).await;
+            }
             ToolExecOutcome::ChannelClosed => return TurnOutcome::Return,
         }
     }

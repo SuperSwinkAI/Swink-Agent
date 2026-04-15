@@ -83,5 +83,13 @@ pub enum ToolExecOutcome {
         /// Messages injected by `PreDispatch` policies before the steering interrupt.
         injected_messages: Vec<AgentMessage>,
     },
+    Aborted {
+        /// Deterministic results collected before the abort signal, plus
+        /// synthetic cancellation results for unfinished tool calls.
+        results: Vec<ToolResultMessage>,
+        tool_metrics: Vec<crate::metrics::ToolExecMetrics>,
+        /// Messages injected by `PreDispatch` policies before cancellation.
+        injected_messages: Vec<AgentMessage>,
+    },
     ChannelClosed,
 }

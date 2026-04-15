@@ -178,6 +178,15 @@ pub async fn execute_tools_concurrently(
                 )
                 .await;
             }
+            GroupOutcome::Aborted => {
+                return collect::build_aborted_outcome(
+                    tool_calls,
+                    results,
+                    tool_timings,
+                    injected_messages,
+                )
+                .await;
+            }
             GroupOutcome::TransferInterrupt => {
                 return collect::build_transfer_outcome(
                     tool_calls,
@@ -233,6 +242,10 @@ mod tests {
         update_count: usize,
     }
 
+    struct NonCancellingTool {
+        started: Arc<AtomicBool>,
+    }
+
     struct OneShotSteeringProvider {
         poll_count: AtomicU32,
     }
@@ -262,11 +275,11 @@ mod tests {
     }
 
     impl crate::tool::AgentTool for BurstUpdatingTool {
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             "burst_tool"
         }
 
-        fn label(&self) -> &str {
+        fn label(&self) -> &'static str {
             "burst_tool"
         }
 
@@ -306,6 +319,47 @@ mod tests {
         }
     }
 
+    impl crate::tool::AgentTool for NonCancellingTool {
+        fn name(&self) -> &'static str {
+            "non_cancelling_tool"
+        }
+
+        fn label(&self) -> &'static str {
+            "non_cancelling_tool"
+        }
+
+        fn description(&self) -> &'static str {
+            "Ignores cancellation and waits forever until aborted"
+        }
+
+        fn parameters_schema(&self) -> &serde_json::Value {
+            static SCHEMA: std::sync::OnceLock<serde_json::Value> = std::sync::OnceLock::new();
+            SCHEMA.get_or_init(|| {
+                json!({
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": true
+                })
+            })
+        }
+
+        fn execute(
+            &self,
+            _tool_call_id: &str,
+            _params: serde_json::Value,
+            _cancellation_token: CancellationToken,
+            _on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
+            _state: std::sync::Arc<std::sync::RwLock<crate::SessionState>>,
+            _credential: Option<crate::ResolvedCredential>,
+        ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>> {
+            self.started.store(true, Ordering::SeqCst);
+            Box::pin(async move {
+                std::future::pending::<()>().await;
+                AgentToolResult::text("unreachable")
+            })
+        }
+    }
+
     struct ExecutionRootRecorder {
         saw_none: Arc<AtomicBool>,
         captured_roots: Arc<StdMutex<Vec<Option<PathBuf>>>>,
@@ -314,7 +368,7 @@ mod tests {
     struct StopBatchPolicy;
 
     impl PreDispatchPolicy for StopBatchPolicy {
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             "stop-batch"
         }
 
@@ -324,7 +378,7 @@ mod tests {
     }
 
     impl PreDispatchPolicy for ExecutionRootRecorder {
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             "execution-root-recorder"
         }
 
@@ -813,6 +867,58 @@ mod tests {
             &steering_messages[0],
             AgentMessage::Llm(LlmMessage::User(UserMessage { content, .. }))
                 if ContentBlock::extract_text(content) == "redirect"
+        ));
+    }
+
+    #[tokio::test]
+    async fn parent_cancellation_aborts_non_cancelling_tool_batches() {
+        let started = Arc::new(AtomicBool::new(false));
+        let tool = Arc::new(NonCancellingTool {
+            started: Arc::clone(&started),
+        });
+        let config = test_loop_config_with_options(
+            vec![],
+            vec![tool as Arc<dyn crate::tool::AgentTool>],
+            None,
+            ApprovalMode::Bypassed,
+        );
+        let tool_calls = vec![ToolCallInfo {
+            id: "call_abort".to_string(),
+            name: "non_cancelling_tool".to_string(),
+            arguments: json!({}),
+            is_incomplete: false,
+        }];
+        let cancellation_token = CancellationToken::new();
+        let cancel_clone = cancellation_token.clone();
+        let (tx, _rx) = mpsc::channel(8);
+
+        tokio::spawn(async move {
+            while !started.load(Ordering::SeqCst) {
+                tokio::task::yield_now().await;
+            }
+            cancel_clone.cancel();
+        });
+
+        let outcome = tokio::time::timeout(
+            std::time::Duration::from_millis(250),
+            execute_tools_concurrently(&config, &tool_calls, &cancellation_token, &tx),
+        )
+        .await
+        .expect("parent cancellation should break collection without hanging");
+
+        let ToolExecOutcome::Aborted { results, .. } = outcome else {
+            panic!("expected aborted outcome");
+        };
+        assert_eq!(
+            results.len(),
+            1,
+            "aborted batches should preserve result parity"
+        );
+        assert_eq!(results[0].tool_call_id, "call_abort");
+        assert!(results[0].is_error);
+        assert!(matches!(
+            results[0].content.as_slice(),
+            [ContentBlock::Text { text }] if text.contains("operation aborted")
         ));
     }
 }
