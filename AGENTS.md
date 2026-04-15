@@ -111,6 +111,7 @@ MSRV **1.88** (edition 2024). Common workspace deps are centralized in root `Car
 
 - `accumulate_message` enforces strict ordering: one Start, indexed content blocks, one terminal (Done/Error).
 - `partial_json` consumed on `ToolCallEnd` — parsed once. Empty string → `{}`, not null.
+- `Done(Length)` tolerance is only for unfinished `ToolCall` blocks that preserve `partial_json` for `recover_incomplete_tool_calls`; unterminated text/thinking blocks must still be rejected as malformed.
 - `AssistantMessageEvent::error()` is the canonical error constructor — adapters must use it.
 
 ### OpenAI-Compatible Adapters (`adapters/src/openai_compat.rs`)
