@@ -188,6 +188,73 @@ async fn abort_causes_aborted_stop() {
     let _ = found_abort; // Abort may or may not be visible depending on timing.
 }
 
+#[tokio::test]
+async fn abort_during_tool_turn_keeps_single_turn_and_tool_payloads() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![
+        tool_call_events("tc_abort", "slow_tool", "{}"),
+        text_only_events("should not reach"),
+    ]));
+    let tool = Arc::new(MockTool::new("slow_tool").with_delay(Duration::from_secs(10)));
+    let mut agent = make_agent_with_tools(stream_fn, vec![tool]);
+
+    let mut stream = agent.prompt_stream(vec![user_msg("go")]).unwrap();
+
+    let mut turn_start_count = 0;
+    let mut aborted_turn: Option<(
+        swink_agent::AssistantMessage,
+        Vec<swink_agent::ToolResultMessage>,
+        swink_agent::TurnEndReason,
+    )> = None;
+
+    while let Some(event) = stream.next().await {
+        match event {
+            AgentEvent::TurnStart => turn_start_count += 1,
+            AgentEvent::ToolExecutionStart { .. } => agent.abort(),
+            AgentEvent::TurnEnd {
+                assistant_message,
+                tool_results,
+                reason,
+                ..
+            } if assistant_message.stop_reason == StopReason::Aborted => {
+                aborted_turn = Some((assistant_message, tool_results, reason));
+            }
+            _ => {}
+        }
+    }
+
+    let (assistant_message, tool_results, reason) =
+        aborted_turn.expect("abort during tool execution should emit an aborted TurnEnd");
+
+    assert_eq!(
+        turn_start_count, 1,
+        "aborting a tool turn should not synthesize a second TurnStart"
+    );
+    assert_eq!(
+        reason,
+        swink_agent::TurnEndReason::Cancelled,
+        "external cancellation should still surface as a cancelled turn"
+    );
+    assert!(
+        assistant_message.content.iter().any(|block| matches!(
+            block,
+            ContentBlock::ToolCall { id, name, .. }
+                if id == "tc_abort" && name == "slow_tool"
+        )),
+        "the terminal assistant payload should preserve the original tool call"
+    );
+    assert_eq!(
+        tool_results.len(),
+        1,
+        "aborted tool turns should preserve deterministic tool-result parity"
+    );
+    assert_eq!(tool_results[0].tool_call_id, "tc_abort");
+    let tool_text = ContentBlock::extract_text(&tool_results[0].content);
+    assert!(
+        tool_text.contains("aborted") || tool_text.contains("cancelled"),
+        "expected the preserved tool result to explain the abort, got: {tool_text}"
+    );
+}
+
 // ─── Regression: abort path emits TurnEndReason::Aborted (#438) ──────────
 
 #[tokio::test]

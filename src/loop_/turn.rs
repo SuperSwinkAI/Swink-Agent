@@ -359,6 +359,15 @@ fn sync_pending_message_snapshot(config: &AgentLoopConfig, state: &LoopState) {
         .replace(&state.pending_messages);
 }
 
+fn mark_assistant_message_aborted(message: &AssistantMessage) -> AssistantMessage {
+    let mut aborted = message.clone();
+    aborted.stop_reason = StopReason::Aborted;
+    aborted.error_message = Some("operation aborted via cancellation token".to_string());
+    aborted.error_kind = None;
+    aborted.timestamp = now_timestamp();
+    aborted
+}
+
 /// Sync the full loop context to the shared `loop_context_snapshot` so that
 /// `Agent::pause()` can recover messages already drained from the shared pending
 /// queue but not yet reflected in `in_flight_messages`.
@@ -885,12 +894,7 @@ async fn handle_tool_calls(
                 tool_metrics,
                 injected_messages,
             } => {
-                debug_assert_eq!(
-                    results.len(),
-                    tool_call_data.len(),
-                    "aborted batches should keep result parity with requested tool calls"
-                );
-                let _ = injected_messages;
+                tool_results.extend(results);
                 emit_turn_metrics(
                     config,
                     state,
@@ -900,7 +904,40 @@ async fn handle_tool_calls(
                     turn_start,
                 )
                 .await;
-                return handle_cancellation(config, state, tx).await;
+
+                state.pending_messages.extend(injected_messages);
+                sync_pending_message_snapshot(config, state);
+
+                for tr in &tool_results {
+                    state
+                        .context_messages
+                        .push(AgentMessage::Llm(LlmMessage::ToolResult(tr.clone())));
+                }
+
+                state.last_tool_results.clone_from(&tool_results);
+
+                let aborted_turn_end = mark_assistant_message_aborted(&msg_for_turn_end);
+                let (aborted_turn_end, _) = run_post_turn_policy_check(
+                    &aborted_turn_end,
+                    &tool_results,
+                    state,
+                    config,
+                    system_prompt,
+                );
+                state.context_messages[assistant_ctx_index] =
+                    AgentMessage::Llm(LlmMessage::Assistant(aborted_turn_end.clone()));
+
+                let state_delta = flush_state_delta(config, tx).await;
+                let snapshot = build_snapshot(state, StopReason::Aborted, state_delta);
+                return emit_turn_end_and_agent_end(
+                    aborted_turn_end,
+                    tool_results,
+                    TurnEndReason::Cancelled,
+                    snapshot,
+                    state,
+                    tx,
+                )
+                .await;
             }
             ToolExecOutcome::ChannelClosed => return TurnOutcome::Return,
         }
