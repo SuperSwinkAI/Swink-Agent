@@ -50,6 +50,11 @@ impl App {
                 }
                 Some(event) = self.agent_rx.recv() => {
                     self.handle_agent_event(event);
+                    // Drain any additional pending agent events before the next
+                    // draw so rapid token bursts are batched into a single frame.
+                    while let Ok(event) = self.agent_rx.try_recv() {
+                        self.handle_agent_event(event);
+                    }
                 }
                 Some((request, responder)) = self.approval_rx.recv() => {
                     self.handle_approval_request(request, responder);
