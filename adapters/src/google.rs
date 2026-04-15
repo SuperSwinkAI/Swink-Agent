@@ -21,7 +21,7 @@ use swink_agent::{
 };
 
 use crate::convert::extract_tool_schemas;
-use crate::sse::{SseAction, SseLine, sse_data_lines};
+use crate::sse::{SseAction, SseLine, sse_data_lines_with_callback};
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -292,7 +292,8 @@ fn gemini_stream<'a>(
             return stream::iter(vec![event]).left_stream();
         }
 
-        parse_sse_stream(response, cancellation_token).right_stream()
+        parse_sse_stream(response, cancellation_token, options.on_raw_payload.clone())
+            .right_stream()
     })
     .flatten()
 }
@@ -552,8 +553,9 @@ fn tool_result_part(
 fn parse_sse_stream(
     response: reqwest::Response,
     cancellation_token: CancellationToken,
+    on_raw_payload: Option<swink_agent::OnRawPayload>,
 ) -> impl Stream<Item = AssistantMessageEvent> + Send {
-    let line_stream = sse_data_lines(response.bytes_stream());
+    let line_stream = sse_data_lines_with_callback(response.bytes_stream(), on_raw_payload);
 
     // NOTE: Google's cancel behavior differs from Anthropic/OpenAI — it uses
     // error_network (retryable) rather than Aborted. We preserve this via a

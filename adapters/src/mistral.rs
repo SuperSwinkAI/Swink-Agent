@@ -210,6 +210,7 @@ fn mistral_stream<'a>(
             request,
             mistral.shell.provider(),
             cancellation_token,
+            options.on_raw_payload.clone(),
             |_, _| None,
         );
         normalize_response_stream(raw_stream, id_map)

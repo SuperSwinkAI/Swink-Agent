@@ -8,6 +8,8 @@
 
 mod common;
 
+use std::sync::{Arc, Mutex};
+
 use futures::StreamExt;
 use swink_agent::{
     AssistantMessageEvent, ContentBlock, ModelSpec, StopReason, StreamFn, StreamOptions,
@@ -69,9 +71,15 @@ fn text_and_tool_call_sse_body() -> String {
 }
 
 async fn collect_events(proxy: &ProxyStreamFn) -> Vec<AssistantMessageEvent> {
+    collect_events_with_options(proxy, StreamOptions::default()).await
+}
+
+async fn collect_events_with_options(
+    proxy: &ProxyStreamFn,
+    options: StreamOptions,
+) -> Vec<AssistantMessageEvent> {
     let model = test_model();
     let context = test_context();
-    let options = StreamOptions::default();
     let token = CancellationToken::new();
     let stream = proxy.stream(&model, &context, &options, token);
     stream.collect::<Vec<_>>().await
@@ -256,6 +264,49 @@ async fn http_429_produces_rate_limit_error() {
         }
         other => panic!("expected Error event, got {other:?}"),
     }
+}
+
+#[tokio::test]
+async fn proxy_on_raw_payload_observes_runtime_sse_lines() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/stream"))
+        .respond_with(sse_response(&text_only_sse_body()))
+        .mount(&server)
+        .await;
+
+    let observed = Arc::new(Mutex::new(Vec::<String>::new()));
+    let callback_lines = Arc::clone(&observed);
+    let options = StreamOptions {
+        on_raw_payload: Some(Arc::new(move |line| {
+            callback_lines
+                .lock()
+                .expect("callback buffer poisoned")
+                .push(line.to_owned());
+        })),
+        ..StreamOptions::default()
+    };
+
+    let proxy = ProxyStreamFn::new(server.uri(), "test-token");
+    let events = collect_events_with_options(&proxy, options).await;
+    let observed = observed.lock().expect("callback buffer poisoned").clone();
+
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, AssistantMessageEvent::Done { .. })),
+        "expected runtime stream to complete successfully"
+    );
+    assert_eq!(
+        observed,
+        vec![
+            r#"{"type":"start"}"#.to_string(),
+            r#"{"type":"text_start","content_index":0}"#.to_string(),
+            r#"{"type":"text_delta","content_index":0,"delta":"hello"}"#.to_string(),
+            r#"{"type":"text_end","content_index":0}"#.to_string(),
+            r#"{"type":"done","stop_reason":"stop","usage":{"input":10,"output":20,"cache_read":0,"cache_write":0,"total":30},"cost":{"input":0.01,"output":0.02,"cache_read":0.0,"cache_write":0.0,"total":0.03}}"#.to_string(),
+        ]
+    );
 }
 
 // ── 5.7: 504 response produces network error ───────────────────────────

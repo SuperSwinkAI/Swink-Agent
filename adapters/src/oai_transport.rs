@@ -138,6 +138,7 @@ impl OaiAdapterShell {
             request,
             self.provider,
             cancellation_token,
+            options.on_raw_payload.clone(),
             |_, _| None,
         ))
     }
@@ -193,6 +194,7 @@ pub fn oai_send_and_parse<'a>(
     request: reqwest::RequestBuilder,
     provider: &'static str,
     cancellation_token: tokio_util::sync::CancellationToken,
+    on_raw_payload: Option<swink_agent::OnRawPayload>,
     classify_error: impl Fn(u16, &str) -> Option<AssistantMessageEvent> + Send + 'a,
 ) -> impl Stream<Item = AssistantMessageEvent> + Send + 'a {
     stream::once(async move {
@@ -223,7 +225,7 @@ pub fn oai_send_and_parse<'a>(
             return stream::iter(vec![AssistantMessageEvent::Start, event]).left_stream();
         }
 
-        parse_oai_sse_stream(response, cancellation_token, provider).right_stream()
+        parse_oai_sse_stream(response, cancellation_token, provider, on_raw_payload).right_stream()
     })
     .flatten()
 }
