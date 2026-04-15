@@ -292,12 +292,13 @@ fn parse_sse_stream(
                             ))
                         }
                         Some(SseLine::Done) => {
-                            // [DONE] is the normal SSE stream terminator.
-                            // The proxy protocol's actual Done/Error events
-                            // arrive as JSON data payloads (SseEventData::Done),
-                            // so this sentinel just means the transport is
-                            // finished — stop the unfold cleanly.
-                            None
+                            done = true;
+                            Some((
+                                AssistantMessageEvent::error_network(
+                                    "network error: proxy SSE transport ended before protocol terminal event",
+                                ),
+                                (sse, token, done),
+                            ))
                         }
                         Some(SseLine::Data(data)) => {
                             let parsed = parse_sse_event_data(&data);
@@ -665,22 +666,19 @@ mod tests {
         assert!(debug.contains("[redacted]"));
     }
 
-    /// Regression test for #432: SseLine::Done must produce a clean stream
-    /// termination, not a network error.
+    /// Regression test for #543: transport [DONE] is not a valid substitute
+    /// for the proxy protocol's terminal done/error JSON event.
     #[tokio::test]
-    async fn sse_done_sentinel_is_clean_termination() {
+    async fn sse_done_sentinel_without_protocol_terminal_is_error() {
         use futures::StreamExt as _;
 
-        // Simulate an SSE byte stream with a Start event, a text delta, a
-        // protocol-level Done event (JSON), and finally the [DONE] sentinel.
+        // Simulate an SSE byte stream with a Start event, a text delta, and
+        // then a transport-level [DONE] sentinel without a protocol terminal.
         let sse_body = concat!(
             "data: {\"type\":\"start\"}\n\n",
             "data: {\"type\":\"text_start\",\"content_index\":0}\n\n",
             "data: {\"type\":\"text_delta\",\"content_index\":0,\"delta\":\"hi\"}\n\n",
             "data: {\"type\":\"text_end\",\"content_index\":0}\n\n",
-            "data: {\"type\":\"done\",\"stop_reason\":\"stop\",",
-            "\"usage\":{\"input\":5,\"output\":3,\"cache_read\":0,\"cache_write\":0,\"total\":8},",
-            "\"cost\":{\"input\":0.01,\"output\":0.02,\"cache_read\":0.0,\"cache_write\":0.0,\"total\":0.03}}\n\n",
             "data: [DONE]\n\n",
         );
 
@@ -717,7 +715,15 @@ mod tests {
                                     (sse, token, done),
                                 ))
                             }
-                            Some(SseLine::Done) => None,
+                            Some(SseLine::Done) => {
+                                done = true;
+                                Some((
+                                    AssistantMessageEvent::error_network(
+                                        "network error: proxy SSE transport ended before protocol terminal event",
+                                    ),
+                                    (sse, token, done),
+                                ))
+                            }
                             Some(SseLine::Data(data)) => {
                                 let parsed = parse_sse_event_data(&data);
                                 done = is_terminal_event(&parsed);
@@ -738,18 +744,26 @@ mod tests {
 
         let events: Vec<AssistantMessageEvent> = event_stream.collect().await;
 
-        // The last event must be a clean Done, not an Error.
+        // The last event must be a terminal network error because the proxy
+        // never emitted its protocol-level done/error JSON event.
         let last = events.last().expect("stream should produce events");
         assert!(
-            matches!(last, AssistantMessageEvent::Done { .. }),
-            "expected Done as last event, got {last:?}"
+            matches!(
+                last,
+                AssistantMessageEvent::Error {
+                    stop_reason: StopReason::Error,
+                    ..
+                }
+            ),
+            "expected Error as last event, got {last:?}"
         );
 
-        // No event should be a network error.
-        for event in &events {
-            if let AssistantMessageEvent::Error { error_message, .. } = event {
-                panic!("unexpected error event in stream: {error_message}");
-            }
+        match last {
+            AssistantMessageEvent::Error { error_message, .. } => assert!(
+                error_message.contains("protocol terminal event"),
+                "expected terminal-event diagnostic, got: {error_message}"
+            ),
+            other => panic!("expected Error, got {other:?}"),
         }
     }
 
