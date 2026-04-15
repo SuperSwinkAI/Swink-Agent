@@ -1,8 +1,9 @@
 //! Atomic file-write helpers shared across workspace crates.
 //!
 //! Provides [`atomic_write`] and [`atomic_write_bytes`] — both write to a
-//! unique temporary file, `fsync`, and atomically rename over the target.
-//! On error the temp file is removed so a crash mid-write never leaves a
+//! unique temporary file, sync file contents, rename over the target, and
+//! sync the parent directory where the platform exposes directory fsync.
+//! On error the temp file is removed so an interrupted write never leaves a
 //! partial or zero-length file at the target path.
 //!
 //! Concurrent writes to the **same target** within one process are serialized
@@ -21,8 +22,10 @@ static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
 /// Write to `target` atomically.
 ///
 /// `contents_fn` receives a buffered writer backed by a unique temp file.
-/// After it returns successfully the temp file is fsynced and renamed over
-/// `target`.  If `contents_fn` fails (or panics) the temp file is cleaned up.
+/// After it returns successfully the temp file contents are synced, the temp
+/// file is renamed over `target`, and the parent directory is synced where the
+/// platform supports that durability step. If `contents_fn` fails (or panics)
+/// the temp file is cleaned up.
 ///
 /// Concurrent calls targeting the same path are serialized internally;
 /// distinct paths are fully concurrent.
@@ -97,7 +100,10 @@ where
         }
         file.sync_all()?;
         drop(file);
-        rename_replacing(&tmp_path, target)
+        rename_replacing(&tmp_path, target)?;
+        #[cfg(unix)]
+        sync_parent_dir(parent)?;
+        Ok(())
     })();
 
     if result.is_err() {
@@ -108,17 +114,16 @@ where
 
 /// Rename `from` to `to`, replacing `to` if it already exists.
 ///
-/// On Unix, `std::fs::rename` is an atomic replace. On Windows it fails with
-/// `ERROR_ALREADY_EXISTS` when the destination is present, so we remove it
-/// first. To keep concurrent rewrites of the same target safe on Windows,
-/// callers must serialize via [`lock_for_target`] around the whole
-/// write-and-rename sequence.
+/// Keep the replacement to a single rename operation. The previous
+/// delete-then-rename Windows path could lose both files if the process or
+/// host crashed in the gap between those two syscalls.
 fn rename_replacing(from: &Path, to: &Path) -> io::Result<()> {
-    #[cfg(windows)]
-    if to.exists() {
-        std::fs::remove_file(to)?;
-    }
     std::fs::rename(from, to)
+}
+
+#[cfg(unix)]
+fn sync_parent_dir(parent: &Path) -> io::Result<()> {
+    std::fs::File::open(parent)?.sync_all()
 }
 
 /// Per-target serialization guard.
@@ -206,5 +211,17 @@ mod tests {
         // File should contain one complete writer's output (no corruption).
         let content = fs::read_to_string(&target).unwrap();
         assert!(content.starts_with("writer-"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn atomic_write_replaces_existing_on_windows_without_predelete() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("replace.txt");
+        fs::write(&target, "old").unwrap();
+
+        atomic_write_bytes(&target, b"new").unwrap();
+
+        assert_eq!(fs::read_to_string(&target).unwrap(), "new");
     }
 }
