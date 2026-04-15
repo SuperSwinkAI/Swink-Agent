@@ -9,9 +9,7 @@
 //! `TuiConfig`.
 
 use swink_agent::ApprovalMode;
-use swink_agent_tui::{
-    AgentStatus, App, DisplayMessage, MessageRole, OperatingMode, TuiConfig,
-};
+use swink_agent_tui::{AgentStatus, App, DisplayMessage, MessageRole, OperatingMode, TuiConfig};
 
 // ---------------------------------------------------------------------------
 // Regression: credentials and wizard modules are gated behind `cli` feature

@@ -13,9 +13,9 @@ use serde_json::json;
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 
-use swink_agent::{ContentBlock, UserMessage,
-    AgentContext, AgentMessage, AgentTool, AgentToolResult, AssistantMessageEvent, LlmMessage,
-    ModelSpec, StopReason, StreamFn, StreamOptions,
+use swink_agent::{
+    AgentContext, AgentMessage, AgentTool, AgentToolResult, AssistantMessageEvent, ContentBlock,
+    LlmMessage, ModelSpec, StopReason, StreamFn, StreamOptions, UserMessage,
 };
 use swink_agent_adapters::MistralStreamFn;
 

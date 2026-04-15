@@ -55,8 +55,7 @@ impl AgentHandle {
                     Err(AgentError::Aborted)
                 }
             };
-            *status_clone.lock().unwrap_or_else(PoisonError::into_inner) =
-                resolve_status(&result);
+            *status_clone.lock().unwrap_or_else(PoisonError::into_inner) = resolve_status(&result);
             result
         });
 

@@ -221,7 +221,10 @@ mod tests {
             .with_domain_denylist(vec!["evil.com".into()])
             .build();
 
-        assert!(matches!(config.search_provider_kind, SearchProviderKind::Brave));
+        assert!(matches!(
+            config.search_provider_kind,
+            SearchProviderKind::Brave
+        ));
         assert_eq!(config.brave_api_key.as_deref(), Some("test-key"));
         assert_eq!(config.rate_limit_rpm, 60);
         assert_eq!(config.max_content_length, 100_000);

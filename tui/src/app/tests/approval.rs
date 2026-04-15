@@ -8,8 +8,8 @@ use swink_agent::{AgentTool, ApprovalMode, ToolApproval, ToolApprovalRequest};
 
 use crate::config::TuiConfig;
 
-use super::super::*;
 use super::super::state::TrustFollowUp;
+use super::super::*;
 use super::helpers::*;
 
 #[tokio::test]

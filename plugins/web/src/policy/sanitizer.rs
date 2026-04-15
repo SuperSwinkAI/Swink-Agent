@@ -115,7 +115,11 @@ mod tests {
 
     use super::*;
 
-    fn ctx_from<'a>(usage: &'a Usage, cost: &'a Cost, state: &'a swink_agent::SessionState) -> PolicyContext<'a> {
+    fn ctx_from<'a>(
+        usage: &'a Usage,
+        cost: &'a Cost,
+        state: &'a swink_agent::SessionState,
+    ) -> PolicyContext<'a> {
         PolicyContext {
             turn_index: 0,
             accumulated_usage: usage,
@@ -187,9 +191,11 @@ mod tests {
     #[test]
     fn sanitize_text_leaves_clean_content_unchanged() {
         let policy = ContentSanitizerPolicy::new();
-        assert!(policy
-            .sanitize_text("This is a perfectly normal web page about Rust programming.")
-            .is_none());
+        assert!(
+            policy
+                .sanitize_text("This is a perfectly normal web page about Rust programming.")
+                .is_none()
+        );
     }
 
     #[test]
@@ -221,7 +227,10 @@ mod tests {
             context_messages: &[],
         };
 
-        assert!(matches!(policy.evaluate(&ctx, &turn), PolicyVerdict::Continue));
+        assert!(matches!(
+            policy.evaluate(&ctx, &turn),
+            PolicyVerdict::Continue
+        ));
         assert_eq!(policy.name(), "web.sanitizer");
     }
 }

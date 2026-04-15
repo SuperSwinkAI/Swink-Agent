@@ -413,14 +413,7 @@ async fn handle_stream_error(
     // TurnEndReason::Aborted instead of TurnEndReason::Error (#438).
     if matches!(harness_error, AgentError::Aborted) {
         let abort_msg = build_abort_message(model);
-        if !emit(
-            tx,
-            AgentEvent::MessageEnd {
-                message: abort_msg,
-            },
-        )
-        .await
-        {
+        if !emit(tx, AgentEvent::MessageEnd { message: abort_msg }).await {
             return StreamErrorAction::ChannelClosed;
         }
         return StreamErrorAction::FatalError(StreamResult::Aborted);
