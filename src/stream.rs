@@ -369,6 +369,19 @@ pub fn accumulate_message(
         }
     }
 
+    fn all_open_blocks_are_tool_calls(content: &[ContentBlock], open_blocks: &[bool]) -> bool {
+        open_blocks
+            .iter()
+            .enumerate()
+            .filter(|(_, open)| **open)
+            .all(|(content_index, _)| {
+                matches!(
+                    content.get(content_index),
+                    Some(ContentBlock::ToolCall { .. })
+                )
+            })
+    }
+
     let mut content: Option<Vec<ContentBlock>> = None;
     // Parallel to `content`: tracks whether each block is still open (awaiting
     // its matching `*End` event). Finalization (on `Done`) fails if any block
@@ -639,7 +652,10 @@ pub fn accumulate_message(
                 cost: c,
             } => {
                 if let Some(idx) = open_blocks.iter().position(|open| *open) {
-                    if tolerate_truncated_tool_args {
+                    let content = content.as_ref().ok_or("Done before Start")?;
+                    if tolerate_truncated_tool_args
+                        && all_open_blocks_are_tool_calls(content, &open_blocks)
+                    {
                         // Max-tokens truncation: leave open tool-call blocks
                         // with `partial_json` set so the loop's
                         // `recover_incomplete_tool_calls` path can convert
@@ -937,6 +953,46 @@ mod tests {
             }
             other => panic!("expected ToolCall, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn done_length_with_unterminated_text_block_is_rejected() {
+        let events = vec![
+            AssistantMessageEvent::Start,
+            AssistantMessageEvent::TextStart { content_index: 0 },
+            AssistantMessageEvent::TextDelta {
+                content_index: 0,
+                delta: "partial".into(),
+            },
+            AssistantMessageEvent::Done {
+                stop_reason: StopReason::Length,
+                usage: Usage::default(),
+                cost: Cost::default(),
+            },
+        ];
+
+        let err = accumulate_message(events, "test", "test").unwrap_err();
+        assert!(err.contains("unterminated content block"), "got: {err}");
+    }
+
+    #[test]
+    fn done_length_with_unterminated_thinking_block_is_rejected() {
+        let events = vec![
+            AssistantMessageEvent::Start,
+            AssistantMessageEvent::ThinkingStart { content_index: 0 },
+            AssistantMessageEvent::ThinkingDelta {
+                content_index: 0,
+                delta: "partial".into(),
+            },
+            AssistantMessageEvent::Done {
+                stop_reason: StopReason::Length,
+                usage: Usage::default(),
+                cost: Cost::default(),
+            },
+        ];
+
+        let err = accumulate_message(events, "test", "test").unwrap_err();
+        assert!(err.contains("unterminated content block"), "got: {err}");
     }
 
     #[test]
