@@ -14,6 +14,49 @@ pub struct PendingMessageSnapshot {
     pending_messages: Mutex<Vec<AgentMessage>>,
 }
 
+/// Shared snapshot of the loop's current `context_messages` for pause checkpoints.
+///
+/// `run_single_turn` drains pending messages into `LoopState.context_messages` and
+/// then clears the `PendingMessageSnapshot`. In the window between that drain and
+/// the next `TurnEnd` event (which is when `Agent.in_flight_messages` is updated),
+/// a concurrent `pause()` call would miss the newly consumed messages. This
+/// snapshot is updated immediately after the drain so that `pause()` can read the
+/// full loop context, including messages that are already in `context_messages` but
+/// not yet reflected in `in_flight_messages`.
+#[doc(hidden)]
+#[derive(Default)]
+pub struct LoopContextSnapshot {
+    messages: Mutex<Option<Vec<AgentMessage>>>,
+}
+
+impl LoopContextSnapshot {
+    /// Overwrite the snapshot with a clone of `messages`.
+    pub(crate) fn replace(&self, messages: &[AgentMessage]) {
+        let mut guard = self
+            .messages
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *guard = Some(clone_messages(messages));
+    }
+
+    /// Return a clone of the current snapshot, or `None` if not yet set.
+    pub(crate) fn snapshot(&self) -> Option<Vec<AgentMessage>> {
+        self.messages
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_deref()
+            .map(clone_messages)
+    }
+
+    /// Clear the snapshot (called when the loop finishes or agent is reset).
+    pub(crate) fn clear(&self) {
+        *self
+            .messages
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+    }
+}
+
 impl PendingMessageSnapshot {
     pub(crate) fn replace(&self, pending_messages: &[AgentMessage]) {
         let mut guard = self

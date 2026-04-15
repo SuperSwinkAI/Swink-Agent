@@ -9,15 +9,13 @@ use tracing::error;
 
 use crate::agent_options::ApproveToolFn;
 use crate::policy::{PreDispatchVerdict, ToolDispatchContext, run_pre_dispatch_policies};
-use crate::tool::{
-    AgentTool, AgentToolResult, ApprovalMode, ToolApproval, ToolApprovalRequest,
-};
+use crate::tool::{AgentTool, AgentToolResult, ApprovalMode, ToolApproval, ToolApprovalRequest};
 use crate::types::{AgentMessage, ContentBlock};
 
 use super::shared::{emit_batch_stop_results, emit_error_result, panic_payload_message};
 use super::{
-    AgentEvent, AgentLoopConfig, PreparedToolCall, ToolCallInfo, ToolExecOutcome,
-    emit, order_results_by_tool_calls,
+    AgentEvent, AgentLoopConfig, PreparedToolCall, ToolCallInfo, ToolExecOutcome, emit,
+    order_results_by_tool_calls,
 };
 
 // ─── Pre-process result ─────────────────────────────────────────────────────

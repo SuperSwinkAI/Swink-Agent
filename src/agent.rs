@@ -207,6 +207,7 @@ pub struct Agent {
     in_flight_llm_messages: Option<Vec<AgentMessage>>,
     in_flight_messages: Option<Vec<AgentMessage>>,
     pending_message_snapshot: Arc<crate::pause_state::PendingMessageSnapshot>,
+    loop_context_snapshot: Arc<crate::pause_state::LoopContextSnapshot>,
     approve_tool: Option<ApproveToolArc>,
     approval_mode: ApprovalMode,
     pre_turn_policies: Vec<Arc<dyn crate::policy::PreTurnPolicy>>,
@@ -314,6 +315,7 @@ impl Agent {
             pending_message_snapshot: Arc::new(
                 crate::pause_state::PendingMessageSnapshot::default(),
             ),
+            loop_context_snapshot: Arc::new(crate::pause_state::LoopContextSnapshot::default()),
             approve_tool: options.approve_tool,
             approval_mode: options.approval_mode,
             pre_turn_policies: options.pre_turn_policies,

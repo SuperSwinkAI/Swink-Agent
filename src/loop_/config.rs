@@ -69,6 +69,14 @@ pub struct AgentLoopConfig {
     #[allow(private_interfaces)]
     pub pending_message_snapshot: Arc<crate::pause_state::PendingMessageSnapshot>,
 
+    /// Shared snapshot of the loop's full `context_messages` for pause checkpoints.
+    ///
+    /// Updated after each turn's pending-message drain so that `Agent::pause()`
+    /// can reconstruct the complete message history even for messages that have
+    /// been moved out of the shared pending queue and into loop-local context.
+    #[allow(private_interfaces)]
+    pub loop_context_snapshot: Arc<crate::pause_state::LoopContextSnapshot>,
+
     /// Optional async callback for approving/rejecting tool calls before execution.
     /// When `Some` and `approval_mode` is `Enabled`, each tool call is sent through
     /// this callback before dispatch. Rejected tools return an error result to the LLM.

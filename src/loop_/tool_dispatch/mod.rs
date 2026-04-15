@@ -506,6 +506,7 @@ mod tests {
             get_api_key: None,
             message_provider,
             pending_message_snapshot: Arc::default(),
+            loop_context_snapshot: Arc::default(),
             approve_tool,
             approval_mode,
             pre_turn_policies: vec![],
