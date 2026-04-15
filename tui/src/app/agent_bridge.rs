@@ -74,6 +74,16 @@ impl App {
                 self.status = AgentStatus::Running;
             }
             AgentEvent::MessageStart => {
+                // If any steered messages are waiting, promote them into the
+                // conversation NOW — before the assistant response that processes
+                // them — so the display order matches the logical turn order.
+                if !self.pending_steered.is_empty() {
+                    for text in self.pending_steered.drain(..) {
+                        self.messages
+                            .push(DisplayMessage::new(MessageRole::User, text));
+                    }
+                    self.steered_fade_ticks = 10;
+                }
                 let mut msg = DisplayMessage::new(MessageRole::Assistant, String::new());
                 msg.is_streaming = true;
                 msg.plan_mode = self.operating_mode == OperatingMode::Plan;
@@ -155,14 +165,13 @@ impl App {
                 self.trim_messages_to_recent_turns();
             }
             AgentEvent::AgentEnd { .. } => {
-                // Promote any steered messages into the conversation display now
-                // that the turn they belong to has completed. Start the fade-out.
+                // Safety flush: if the loop ended without a final MessageStart
+                // (e.g. cancelled mid-turn), promote any remaining steered messages.
                 if !self.pending_steered.is_empty() {
                     for text in self.pending_steered.drain(..) {
                         self.messages
                             .push(DisplayMessage::new(MessageRole::User, text));
                     }
-                    // ~10 ticks ≈ 330 ms at the default 33 ms tick rate.
                     self.steered_fade_ticks = 10;
                 }
                 self.status = AgentStatus::Idle;
