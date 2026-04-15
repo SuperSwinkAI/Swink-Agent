@@ -1,5 +1,4 @@
 use std::collections::VecDeque;
-use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 
 use crate::message_provider::MessageProvider;
@@ -12,15 +11,14 @@ impl Agent {
 
     /// Push a steering message into the queue.
     ///
-    /// If a loop is currently streaming an LLM response, the `steering_interrupt`
-    /// flag signals the streaming layer to abort the current generation and restart
-    /// the turn with this message prepended — achieving true mid-stream interruption.
+    /// The message is delivered to the agent at the next turn boundary — after
+    /// the current LLM response or tool-execution batch completes. This preserves
+    /// the agent's in-progress work rather than aborting it mid-generation.
     pub fn steer(&mut self, message: AgentMessage) {
         self.steering_queue
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .push_back(message);
-        self.steering_interrupt.store(true, Ordering::Release);
     }
 
     /// Push a follow-up message into the queue.

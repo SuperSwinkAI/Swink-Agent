@@ -83,7 +83,6 @@ fn default_config(
         cache_config: None,
         cache_state: std::sync::Mutex::new(swink_agent::CacheState::default()),
         dynamic_system_prompt: None,
-        steering_interrupt: None,
     }
 }
 

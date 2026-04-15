@@ -349,7 +349,6 @@ impl Agent {
             cache_config: self.cache_config.clone(),
             cache_state: std::sync::Mutex::new(crate::context_cache::CacheState::new()),
             dynamic_system_prompt: self.dynamic_system_prompt.clone(),
-            steering_interrupt: Some(Arc::clone(&self.steering_interrupt)),
         }
     }
 }

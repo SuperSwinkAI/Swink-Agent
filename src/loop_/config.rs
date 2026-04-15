@@ -1,7 +1,6 @@
 //! Configuration for the agent loop.
 
 use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
 
 use crate::agent_options::{ApproveToolFn, GetApiKeyFn};
 use crate::async_context_transformer::AsyncContextTransformer;
@@ -135,18 +134,6 @@ pub struct AgentLoopConfig {
     /// Its output is injected as a user-role message after the system prompt
     /// to avoid invalidating provider-side caches.
     pub dynamic_system_prompt: Option<Arc<dyn Fn() -> String + Send + Sync>>,
-
-    /// Optional interrupt flag polled after each streaming token.
-    ///
-    /// When set to `true` (by [`Agent::steer`]), the streaming loop aborts
-    /// the current LLM generation, emits `MessageEnd` with partial content,
-    /// and the turn handler polls the steering queue and restarts the turn
-    /// so the agent processes the injected message immediately.
-    ///
-    /// Cleared at the start of each new `stream_single_attempt` to avoid
-    /// phantom interrupts from a previous steering call made before the
-    /// current stream began.
-    pub steering_interrupt: Option<Arc<AtomicBool>>,
 }
 
 impl std::fmt::Debug for AgentLoopConfig {

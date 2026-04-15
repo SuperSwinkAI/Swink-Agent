@@ -60,12 +60,6 @@ pub enum StreamResult {
     ContextOverflow,
     Aborted,
     ChannelClosed,
-    /// The stream was interrupted mid-generation by a steering message.
-    ///
-    /// `MessageEnd` with partial content was already emitted. The turn handler
-    /// should poll the steering queue and restart the turn so the agent
-    /// processes the steering message immediately.
-    SteeringInterrupt,
 }
 
 // ─── ToolExecOutcome ────────────────────────────────────────────────────────

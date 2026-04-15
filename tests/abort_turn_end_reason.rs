@@ -61,7 +61,6 @@ fn default_config(stream_fn: Arc<dyn StreamFn>) -> AgentLoopConfig {
         cache_config: None,
         cache_state: std::sync::Mutex::new(swink_agent::CacheState::default()),
         dynamic_system_prompt: None,
-        steering_interrupt: None,
     }
 }
 

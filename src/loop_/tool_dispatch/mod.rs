@@ -546,7 +546,6 @@ mod tests {
             cache_config: None,
             cache_state: std::sync::Mutex::new(crate::CacheState::default()),
             dynamic_system_prompt: None,
-            steering_interrupt: None,
         })
     }
 

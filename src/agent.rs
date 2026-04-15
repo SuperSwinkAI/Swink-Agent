@@ -248,12 +248,6 @@ pub struct Agent {
     /// whether a loop is still in progress (instead of `state.is_running` which
     /// may lag on the stream-drop path).
     loop_active: Arc<AtomicBool>,
-    /// Interrupt flag set by `steer()` to signal the running loop that a
-    /// steering message is waiting. The streaming layer checks this after every
-    /// token: when true it aborts the current LLM stream, emits `MessageEnd`
-    /// with partial content, and restarts the turn with the steering message
-    /// prepended. Cleared at the start of each new stream attempt.
-    steering_interrupt: Arc<AtomicBool>,
     /// Monotonically increasing counter bumped on each `start_loop`. Prevents a
     /// stale `LoopGuardStream` from clearing `loop_active` for a newer run.
     loop_generation: Arc<AtomicU64>,
@@ -345,7 +339,6 @@ impl Agent {
             cache_config: options.cache_config,
             dynamic_system_prompt: options.dynamic_system_prompt.map(Arc::from),
             loop_active: Arc::new(AtomicBool::new(false)),
-            steering_interrupt: Arc::new(AtomicBool::new(false)),
             loop_generation: Arc::new(AtomicU64::new(0)),
             #[cfg(feature = "plugins")]
             plugins: options.plugins,
