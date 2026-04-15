@@ -1,2 +1,3 @@
 [alias]
 xtask = "run -p xtask --"
+adapters-no-default-features = "test -p swink-agent-adapters --no-default-features --features __no_default_features_sentinel --test no_default_features"
