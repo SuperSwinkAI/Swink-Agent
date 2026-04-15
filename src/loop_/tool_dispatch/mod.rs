@@ -17,7 +17,7 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
-use crate::tool::AgentTool;
+use crate::tool::{AgentTool, AgentToolResult};
 use crate::types::ToolResultMessage;
 
 use super::{AgentEvent, AgentLoopConfig, ToolCallInfo, ToolExecOutcome, emit};
@@ -119,9 +119,41 @@ pub async fn execute_tools_concurrently(
     };
 
     // Phase 2: Compute execution groups and dispatch.
-    let groups =
-        execute::compute_execution_groups(&config.tool_execution_policy, tool_calls, &prepared)
-            .await;
+    let groups = match execute::compute_execution_groups(
+        &config.tool_execution_policy,
+        tool_calls,
+        &prepared,
+    )
+    .await
+    {
+        Ok(groups) => groups,
+        Err(reason) => {
+            for prep in &prepared {
+                let tc = &tool_calls[prep.idx];
+                shared::emit_error_result(
+                    &tc.name,
+                    &tc.id,
+                    AgentToolResult::error(format!(
+                        "custom tool execution strategy returned an invalid partition: {reason}"
+                    )),
+                    prep.idx,
+                    &results,
+                    tx,
+                )
+                .await;
+            }
+
+            let all_results = std::mem::take(&mut *results.lock().await);
+            let ordered = order_results_by_tool_calls(tool_calls, &all_results);
+            let collected_timings = std::mem::take(&mut *tool_timings.lock().await);
+            return ToolExecOutcome::Completed {
+                results: ordered,
+                tool_metrics: collected_timings,
+                transfer_signal: None,
+                injected_messages,
+            };
+        }
+    };
 
     // Phase 3: Execute each group and collect results.
     for group in groups {
@@ -220,6 +252,7 @@ pub async fn execute_tools_concurrently(
 mod tests {
     use super::*;
 
+    use std::collections::HashMap;
     use std::future::Future;
     use std::path::PathBuf;
     use std::sync::Arc as StdArc;
@@ -236,7 +269,10 @@ mod tests {
     use crate::testing::{MockStreamFn, MockTool, default_convert, default_model};
     use crate::tool::{AgentToolResult, ApprovalMode};
     use crate::types::{AgentMessage, ContentBlock, LlmMessage, UserMessage};
-    use crate::{DefaultRetryStrategy, StreamOptions, ToolApproval, ToolExecutionPolicy};
+    use crate::{
+        DefaultRetryStrategy, StreamOptions, ToolApproval, ToolCallSummary, ToolExecutionPolicy,
+        ToolExecutionStrategy,
+    };
 
     struct BurstUpdatingTool {
         update_count: usize,
@@ -366,6 +402,8 @@ mod tests {
     }
 
     struct StopBatchPolicy;
+    struct OriginalIndexStrategy;
+    struct DuplicateIndexStrategy;
 
     impl PreDispatchPolicy for StopBatchPolicy {
         fn name(&self) -> &'static str {
@@ -393,6 +431,31 @@ mod tests {
         }
     }
 
+    impl ToolExecutionStrategy for OriginalIndexStrategy {
+        fn partition(
+            &self,
+            tool_calls: &[ToolCallSummary<'_>],
+        ) -> Pin<Box<dyn Future<Output = Vec<Vec<usize>>> + Send + '_>> {
+            let count = tool_calls.len();
+            Box::pin(async move {
+                if count >= 2 {
+                    vec![vec![0], vec![2]]
+                } else {
+                    vec![vec![0]]
+                }
+            })
+        }
+    }
+
+    impl ToolExecutionStrategy for DuplicateIndexStrategy {
+        fn partition(
+            &self,
+            _tool_calls: &[ToolCallSummary<'_>],
+        ) -> Pin<Box<dyn Future<Output = Vec<Vec<usize>>> + Send + '_>> {
+            Box::pin(async move { vec![vec![0, 0]] })
+        }
+    }
+
     fn test_loop_config(
         pre_dispatch_policies: Vec<Arc<dyn PreDispatchPolicy>>,
     ) -> Arc<AgentLoopConfig> {
@@ -401,6 +464,7 @@ mod tests {
             vec![],
             None,
             crate::ApprovalMode::Bypassed,
+            ToolExecutionPolicy::Concurrent,
         )
     }
 
@@ -409,12 +473,14 @@ mod tests {
         tools: Vec<Arc<dyn crate::tool::AgentTool>>,
         approve_tool: Option<Box<crate::agent_options::ApproveToolFn>>,
         approval_mode: ApprovalMode,
+        tool_execution_policy: ToolExecutionPolicy,
     ) -> Arc<AgentLoopConfig> {
         test_loop_config_with_message_provider(
             pre_dispatch_policies,
             tools,
             approve_tool,
             approval_mode,
+            tool_execution_policy,
             None,
         )
     }
@@ -424,6 +490,7 @@ mod tests {
         tools: Vec<Arc<dyn crate::tool::AgentTool>>,
         approve_tool: Option<Box<crate::agent_options::ApproveToolFn>>,
         approval_mode: ApprovalMode,
+        tool_execution_policy: ToolExecutionPolicy,
         message_provider: Option<Arc<dyn MessageProvider>>,
     ) -> Arc<AgentLoopConfig> {
         Arc::new(AgentLoopConfig {
@@ -448,7 +515,7 @@ mod tests {
             async_transform_context: None,
             metrics_collector: None,
             fallback: None,
-            tool_execution_policy: ToolExecutionPolicy::Concurrent,
+            tool_execution_policy,
             session_state: Arc::new(std::sync::RwLock::new(crate::SessionState::new())),
             credential_resolver: None,
             cache_config: None,
@@ -582,6 +649,7 @@ mod tests {
             vec![tool.clone() as Arc<dyn crate::tool::AgentTool>],
             None,
             ApprovalMode::Bypassed,
+            ToolExecutionPolicy::Concurrent,
         );
         let tool_calls = vec![ToolCallInfo {
             id: "call_invalid".to_string(),
@@ -647,6 +715,7 @@ mod tests {
             vec![tool.clone() as Arc<dyn crate::tool::AgentTool>],
             Some(approve_tool),
             ApprovalMode::Enabled,
+            ToolExecutionPolicy::Concurrent,
         );
         let tool_calls = vec![ToolCallInfo {
             id: "call_rejected".to_string(),
@@ -690,6 +759,7 @@ mod tests {
             vec![tool.clone() as Arc<dyn crate::tool::AgentTool>],
             Some(approve_tool),
             ApprovalMode::Enabled,
+            ToolExecutionPolicy::Concurrent,
         );
         let tool_calls = vec![ToolCallInfo {
             id: "call_rewritten".to_string(),
@@ -736,6 +806,167 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn invalid_custom_partition_after_filtering_returns_errors_without_dispatch() {
+        let tool_a = Arc::new(MockTool::new("tool_a"));
+        let tool_b = Arc::new(MockTool::new("tool_b").with_requires_approval(true));
+        let tool_c = Arc::new(MockTool::new("tool_c"));
+        let approve_tool: Box<crate::agent_options::ApproveToolFn> = Box::new(|request| {
+            let should_reject = request.tool_name == "tool_b";
+            Box::pin(async move {
+                if should_reject {
+                    ToolApproval::Rejected
+                } else {
+                    ToolApproval::Approved
+                }
+            })
+        });
+        let config = test_loop_config_with_options(
+            vec![],
+            vec![
+                tool_a.clone() as Arc<dyn crate::tool::AgentTool>,
+                tool_b.clone() as Arc<dyn crate::tool::AgentTool>,
+                tool_c.clone() as Arc<dyn crate::tool::AgentTool>,
+            ],
+            Some(approve_tool),
+            ApprovalMode::Enabled,
+            ToolExecutionPolicy::Custom(Arc::new(OriginalIndexStrategy)),
+        );
+        let tool_calls = vec![
+            ToolCallInfo {
+                id: "call_a".to_string(),
+                name: "tool_a".to_string(),
+                arguments: json!({}),
+                is_incomplete: false,
+            },
+            ToolCallInfo {
+                id: "call_b".to_string(),
+                name: "tool_b".to_string(),
+                arguments: json!({}),
+                is_incomplete: false,
+            },
+            ToolCallInfo {
+                id: "call_c".to_string(),
+                name: "tool_c".to_string(),
+                arguments: json!({}),
+                is_incomplete: false,
+            },
+        ];
+        let cancellation_token = CancellationToken::new();
+        let (tx, mut rx) = mpsc::channel(16);
+
+        let outcome =
+            execute_tools_concurrently(&config, &tool_calls, &cancellation_token, &tx).await;
+
+        let ToolExecOutcome::Completed { results, .. } = outcome else {
+            panic!("expected completed outcome");
+        };
+        assert_eq!(results.len(), 3, "all tool calls should receive a result");
+        assert_eq!(tool_a.execution_count(), 0);
+        assert_eq!(tool_b.execution_count(), 0);
+        assert_eq!(tool_c.execution_count(), 0);
+
+        let result_texts: HashMap<_, _> = results
+            .iter()
+            .map(|result| {
+                (
+                    result.tool_call_id.as_str(),
+                    ContentBlock::extract_text(&result.content),
+                )
+            })
+            .collect();
+        assert!(
+            result_texts["call_a"].contains("invalid partition"),
+            "prepared tool_a should surface the partition validation error"
+        );
+        assert!(
+            result_texts["call_a"].contains("prepared index 2"),
+            "error should explain the out-of-bounds prepared index"
+        );
+        assert!(
+            result_texts["call_b"].contains("rejected by the approval gate"),
+            "filtered tool_b should keep its approval rejection"
+        );
+        assert!(
+            result_texts["call_c"].contains("invalid partition"),
+            "prepared tool_c should surface the partition validation error"
+        );
+
+        let start_count = drain_events(&mut rx)
+            .into_iter()
+            .filter(|event| matches!(event, AgentEvent::ToolExecutionStart { .. }))
+            .count();
+        assert_eq!(
+            start_count, 0,
+            "invalid custom partitions must not emit ToolExecutionStart"
+        );
+    }
+
+    #[tokio::test]
+    async fn duplicate_custom_partition_indices_return_deterministic_errors() {
+        let tool_a = Arc::new(MockTool::new("tool_a"));
+        let tool_b = Arc::new(MockTool::new("tool_b"));
+        let config = test_loop_config_with_options(
+            vec![],
+            vec![
+                tool_a.clone() as Arc<dyn crate::tool::AgentTool>,
+                tool_b.clone() as Arc<dyn crate::tool::AgentTool>,
+            ],
+            None,
+            ApprovalMode::Bypassed,
+            ToolExecutionPolicy::Custom(Arc::new(DuplicateIndexStrategy)),
+        );
+        let tool_calls = vec![
+            ToolCallInfo {
+                id: "call_a".to_string(),
+                name: "tool_a".to_string(),
+                arguments: json!({}),
+                is_incomplete: false,
+            },
+            ToolCallInfo {
+                id: "call_b".to_string(),
+                name: "tool_b".to_string(),
+                arguments: json!({}),
+                is_incomplete: false,
+            },
+        ];
+        let cancellation_token = CancellationToken::new();
+        let (tx, mut rx) = mpsc::channel(8);
+
+        let outcome =
+            execute_tools_concurrently(&config, &tool_calls, &cancellation_token, &tx).await;
+
+        let ToolExecOutcome::Completed { results, .. } = outcome else {
+            panic!("expected completed outcome");
+        };
+        assert_eq!(
+            results.len(),
+            2,
+            "every prepared tool call should get an error"
+        );
+        assert_eq!(tool_a.execution_count(), 0);
+        assert_eq!(tool_b.execution_count(), 0);
+        assert!(
+            results.iter().all(|result| result.is_error),
+            "invalid partitions should synthesize error results"
+        );
+        assert!(
+            results.iter().all(|result| {
+                ContentBlock::extract_text(&result.content).contains("repeated prepared index 0")
+            }),
+            "duplicate prepared indices should be called out explicitly"
+        );
+
+        let start_count = drain_events(&mut rx)
+            .into_iter()
+            .filter(|event| matches!(event, AgentEvent::ToolExecutionStart { .. }))
+            .count();
+        assert_eq!(
+            start_count, 0,
+            "duplicate custom partitions must fail before dispatch"
+        );
+    }
+
+    #[tokio::test]
     async fn tool_execution_updates_include_identity_and_survive_backpressure() {
         let tool = Arc::new(BurstUpdatingTool { update_count: 32 });
         let config = test_loop_config_with_options(
@@ -743,6 +974,7 @@ mod tests {
             vec![tool as Arc<dyn crate::tool::AgentTool>],
             None,
             ApprovalMode::Bypassed,
+            ToolExecutionPolicy::Concurrent,
         );
         let tool_calls = vec![ToolCallInfo {
             id: "call_updates".to_string(),
@@ -813,6 +1045,7 @@ mod tests {
             ],
             None,
             ApprovalMode::Bypassed,
+            ToolExecutionPolicy::Concurrent,
             Some(Arc::new(OneShotSteeringProvider {
                 poll_count: AtomicU32::new(0),
             })),
@@ -881,6 +1114,7 @@ mod tests {
             vec![tool as Arc<dyn crate::tool::AgentTool>],
             None,
             ApprovalMode::Bypassed,
+            ToolExecutionPolicy::Concurrent,
         );
         let tool_calls = vec![ToolCallInfo {
             id: "call_abort".to_string(),

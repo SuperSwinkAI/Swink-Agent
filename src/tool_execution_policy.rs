@@ -44,17 +44,21 @@ pub type ToolExecutionStrategyFuture<'a> =
 
 /// Fully custom tool execution strategy.
 ///
-/// Implementations receive the ordered list of tool call indices and can
-/// decide which tools to execute in parallel, sequentially, or in any other
-/// arrangement. The strategy returns execution groups — each group is a
-/// `Vec<usize>` of indices into the original tool call list. Tools within a
-/// group execute concurrently; groups execute sequentially in order.
+/// Implementations receive the post-preprocessing tool-call slice that is
+/// actually eligible for dispatch. Calls skipped by policies or rejected by
+/// approval are already removed before this hook runs. The strategy returns
+/// execution groups — each group is a `Vec<usize>` of indices into the
+/// provided `tool_calls` slice. Tools within a group execute concurrently;
+/// groups execute sequentially in order.
 pub trait ToolExecutionStrategy: Send + Sync {
     /// Partition tool calls into sequential execution groups.
     ///
-    /// Each inner `Vec<usize>` contains indices (into the original tool call
-    /// slice) that should execute concurrently. The outer `Vec` is processed
-    /// sequentially — group 0 completes before group 1 starts, etc.
+    /// Each inner `Vec<usize>` contains indices into the provided
+    /// `tool_calls` slice that should execute concurrently. The outer `Vec`
+    /// is processed sequentially — group 0 completes before group 1 starts,
+    /// etc. Every provided tool call must appear exactly once across all
+    /// groups; out-of-bounds, duplicate, or missing indices are rejected by
+    /// the dispatch layer as deterministic tool errors.
     fn partition(&self, tool_calls: &[ToolCallSummary<'_>]) -> ToolExecutionStrategyFuture<'_>;
 }
 
