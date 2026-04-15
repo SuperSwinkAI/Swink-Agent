@@ -3,6 +3,8 @@
 
 mod common;
 
+use std::sync::{Arc, Mutex};
+
 use futures::StreamExt;
 use tokio_util::sync::CancellationToken;
 use wiremock::matchers::{header, method, path};
@@ -20,9 +22,15 @@ fn test_model() -> ModelSpec {
 }
 
 async fn collect_events(stream_fn: &OpenAiStreamFn) -> Vec<AssistantMessageEvent> {
+    collect_events_with_options(stream_fn, StreamOptions::default()).await
+}
+
+async fn collect_events_with_options(
+    stream_fn: &OpenAiStreamFn,
+    options: StreamOptions,
+) -> Vec<AssistantMessageEvent> {
     let model = test_model();
     let context = test_context();
-    let options = StreamOptions::default();
     let token = CancellationToken::new();
     let stream = stream_fn.stream(&model, &context, &options, token);
     stream.collect::<Vec<_>>().await
@@ -298,6 +306,57 @@ async fn openai_usage_in_separate_chunk() {
     assert_eq!(
         usage.output, 25,
         "expected output tokens from separate chunk"
+    );
+}
+
+#[tokio::test]
+async fn openai_on_raw_payload_observes_runtime_sse_lines() {
+    let body = [
+        r#"data: {"choices":[{"delta":{"content":"hello"},"index":0}]}"#,
+        "",
+        r#"data: {"choices":[{"delta":{},"finish_reason":"stop","index":0}],"usage":{"prompt_tokens":10,"completion_tokens":5}}"#,
+        "",
+        "data: [DONE]",
+        "",
+        "",
+    ]
+    .join("\n");
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(sse_response(&body))
+        .mount(&server)
+        .await;
+
+    let observed = Arc::new(Mutex::new(Vec::<String>::new()));
+    let callback_lines = Arc::clone(&observed);
+    let options = StreamOptions {
+        on_raw_payload: Some(Arc::new(move |line| {
+            callback_lines
+                .lock()
+                .expect("callback buffer poisoned")
+                .push(line.to_owned());
+        })),
+        ..StreamOptions::default()
+    };
+
+    let sf = OpenAiStreamFn::new(server.uri(), "test-key");
+    let events = collect_events_with_options(&sf, options).await;
+    let observed = observed.lock().expect("callback buffer poisoned").clone();
+
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, AssistantMessageEvent::Done { .. })),
+        "expected runtime stream to complete successfully"
+    );
+    assert_eq!(
+        observed,
+        vec![
+            r#"{"choices":[{"delta":{"content":"hello"},"index":0}]}"#.to_string(),
+            r#"{"choices":[{"delta":{},"finish_reason":"stop","index":0}],"usage":{"prompt_tokens":10,"completion_tokens":5}}"#.to_string(),
+        ]
     );
 }
 

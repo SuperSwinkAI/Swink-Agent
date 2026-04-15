@@ -22,7 +22,7 @@ use swink_agent::{
 };
 
 use crate::convert::{MessageConverter, extract_tool_schemas};
-use crate::sse::{SseAction, SseLine, sse_data_lines};
+use crate::sse::{SseAction, SseLine, sse_data_lines_with_callback};
 
 // ─── Request types ──────────────────────────────────────────────────────────
 
@@ -578,8 +578,9 @@ pub fn parse_oai_sse_stream(
     response: reqwest::Response,
     cancellation_token: CancellationToken,
     provider: &'static str,
+    on_raw_payload: Option<swink_agent::OnRawPayload>,
 ) -> Pin<Box<dyn Stream<Item = AssistantMessageEvent> + Send>> {
-    let line_stream = sse_data_lines(response.bytes_stream());
+    let line_stream = sse_data_lines_with_callback(response.bytes_stream(), on_raw_payload);
 
     crate::sse::sse_adapter_stream(
         line_stream,

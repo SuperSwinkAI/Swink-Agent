@@ -240,6 +240,7 @@ fn azure_stream<'a>(
             request,
             azure.shell.provider(),
             cancellation_token,
+            options.on_raw_payload.clone(),
             |status, body| {
                 if is_content_filter_error(body) {
                     Some(AssistantMessageEvent::error_content_filtered(format!(

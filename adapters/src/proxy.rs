@@ -19,7 +19,7 @@ use swink_agent::{
 };
 
 use crate::classify::error_event_from_status;
-use crate::sse::{SseLine, sse_data_lines};
+use crate::sse::{SseLine, sse_data_lines_with_callback};
 
 // ─── Request types ──────────────────────────────────────────────────────────
 
@@ -199,7 +199,8 @@ fn proxy_stream<'a>(
             return stream::iter(vec![event]).left_stream();
         }
 
-        parse_sse_stream(response, cancellation_token).right_stream()
+        parse_sse_stream(response, cancellation_token, options.on_raw_payload.clone())
+            .right_stream()
     })
     .flatten()
 }
@@ -258,8 +259,9 @@ async fn send_request(
 fn parse_sse_stream(
     response: reqwest::Response,
     cancellation_token: CancellationToken,
+    on_raw_payload: Option<swink_agent::OnRawPayload>,
 ) -> impl Stream<Item = AssistantMessageEvent> + Send {
-    let sse_stream = sse_data_lines(response.bytes_stream());
+    let sse_stream = sse_data_lines_with_callback(response.bytes_stream(), on_raw_payload);
 
     stream::unfold(
         (Box::pin(sse_stream), cancellation_token, false),

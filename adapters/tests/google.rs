@@ -3,6 +3,8 @@
 
 mod common;
 
+use std::sync::{Arc, Mutex};
+
 use futures::StreamExt;
 use tokio_util::sync::CancellationToken;
 use wiremock::matchers::{header, method, path, query_param};
@@ -19,9 +21,15 @@ fn test_model() -> ModelSpec {
 }
 
 async fn collect_events(stream_fn: &GeminiStreamFn) -> Vec<AssistantMessageEvent> {
+    collect_events_with_options(stream_fn, StreamOptions::default()).await
+}
+
+async fn collect_events_with_options(
+    stream_fn: &GeminiStreamFn,
+    options: StreamOptions,
+) -> Vec<AssistantMessageEvent> {
     let model = test_model();
     let context = test_context();
-    let options = StreamOptions::default();
     let token = CancellationToken::new();
     let stream = stream_fn.stream(&model, &context, &options, token);
     stream.collect::<Vec<_>>().await
@@ -130,7 +138,10 @@ async fn google_cancellation_after_first_chunk_emits_aborted_and_closes_text() {
     assert!(types.contains(&"TextDelta"), "missing TextDelta: {types:?}");
     assert!(types.contains(&"TextEnd"), "missing TextEnd: {types:?}");
     assert!(types.contains(&"Error"), "missing Error: {types:?}");
-    assert!(!types.contains(&"Done"), "cancellation should not emit Done: {types:?}");
+    assert!(
+        !types.contains(&"Done"),
+        "cancellation should not emit Done: {types:?}"
+    );
 
     let text_end_pos = types
         .iter()
@@ -158,7 +169,10 @@ async fn google_cancellation_after_first_chunk_emits_aborted_and_closes_text() {
         })
         .expect("missing terminal Error event");
     assert_eq!(terminal_error.0, StopReason::Aborted);
-    assert_eq!(terminal_error.2, None, "cancellation should not be retryable");
+    assert_eq!(
+        terminal_error.2, None,
+        "cancellation should not be retryable"
+    );
     assert!(
         terminal_error.1.contains("Google request cancelled"),
         "unexpected cancellation message: {}",
@@ -368,6 +382,59 @@ async fn google_multiple_tool_calls() {
         _ => None,
     });
     assert_eq!(stop_reason, Some(StopReason::ToolUse));
+}
+
+#[tokio::test]
+async fn google_on_raw_payload_observes_runtime_sse_lines() {
+    let body = [
+        r#"data: {"candidates":[{"content":{"parts":[{"text":"hello"}]}}]}"#,
+        "",
+        r#"data: {"candidates":[{"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":5,"totalTokenCount":15}}"#,
+        "",
+        "data: [DONE]",
+        "",
+    ]
+    .join("\n");
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path(
+            "/v1beta/models/gemini-3-flash-preview:streamGenerateContent",
+        ))
+        .and(query_param("alt", "sse"))
+        .respond_with(sse_response(&body))
+        .mount(&server)
+        .await;
+
+    let observed = Arc::new(Mutex::new(Vec::<String>::new()));
+    let callback_lines = Arc::clone(&observed);
+    let options = StreamOptions {
+        on_raw_payload: Some(Arc::new(move |line| {
+            callback_lines
+                .lock()
+                .expect("callback buffer poisoned")
+                .push(line.to_owned());
+        })),
+        ..StreamOptions::default()
+    };
+
+    let stream_fn = GeminiStreamFn::new(server.uri(), "test-key", ApiVersion::V1beta);
+    let events = collect_events_with_options(&stream_fn, options).await;
+    let observed = observed.lock().expect("callback buffer poisoned").clone();
+
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, AssistantMessageEvent::Done { .. })),
+        "expected runtime stream to complete successfully"
+    );
+    assert_eq!(
+        observed,
+        vec![
+            r#"{"candidates":[{"content":{"parts":[{"text":"hello"}]}}]}"#.to_string(),
+            r#"{"candidates":[{"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":5,"totalTokenCount":15}}"#.to_string(),
+        ]
+    );
 }
 
 #[tokio::test]
