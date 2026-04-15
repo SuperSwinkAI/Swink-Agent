@@ -5,11 +5,11 @@ use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+#[cfg(feature = "local")]
+use swink_agent::model_catalog;
 use swink_agent::{
     AgentOptions, CatalogPreset, ModelConnection, ModelConnections, ModelSpec, StreamFn,
 };
-#[cfg(feature = "local")]
-use swink_agent::model_catalog;
 use swink_agent_adapters::{
     AnthropicStreamFn, OllamaStreamFn, OpenAiStreamFn, ProxyStreamFn, remote_presets,
 };

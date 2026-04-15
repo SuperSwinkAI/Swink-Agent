@@ -183,7 +183,16 @@ pub async fn execute_tools_concurrently(
             match handle {
                 DispatchResult::Spawned(h) => handles.push((prep.idx, h)),
                 DispatchResult::Inline => {}
-                DispatchResult::ChannelClosed => return ToolExecOutcome::ChannelClosed,
+                DispatchResult::ChannelClosed => {
+                    // Cancel the batch and abort/join all already-spawned handles
+                    // before returning to prevent orphaned side-effecting tasks.
+                    batch_token.cancel();
+                    for (_, h) in handles {
+                        h.abort();
+                        let _ = h.await;
+                    }
+                    return ToolExecOutcome::ChannelClosed;
+                }
             }
         }
 
@@ -1154,5 +1163,80 @@ mod tests {
             results[0].content.as_slice(),
             [ContentBlock::Text { text }] if text.contains("operation aborted")
         ));
+    }
+
+    /// Regression test for #556: when a later tool in a concurrent group returns
+    /// `ChannelClosed`, already-spawned handles must be aborted before returning.
+    ///
+    /// Setup:
+    /// - Channel capacity = 1.  Tool A's `ToolExecutionStart` event fills the buffer
+    ///   and dispatch returns `Spawned`.
+    /// - A companion task receives that one buffered event then drops the receiver,
+    ///   ensuring tool B's `emit_tool_execution_start` send blocks on a full buffer
+    ///   and then fails with `ChannelClosed` once the receiver is gone.
+    /// - Tool A is `NonCancellingTool`, which loops forever unless aborted.  Without
+    ///   the fix the test hangs; with the fix it completes within the timeout.
+    #[tokio::test]
+    async fn channel_closed_mid_group_aborts_already_spawned_handles() {
+        let started = Arc::new(AtomicBool::new(false));
+        let tool_a = Arc::new(NonCancellingTool {
+            started: Arc::clone(&started),
+        });
+        let tool_b = Arc::new(MockTool::new("tool_b"));
+
+        let config = test_loop_config_with_options(
+            vec![],
+            vec![
+                tool_a as Arc<dyn crate::tool::AgentTool>,
+                tool_b as Arc<dyn crate::tool::AgentTool>,
+            ],
+            None,
+            ApprovalMode::Bypassed,
+            // Concurrent: both tools land in one group and are dispatched
+            // sequentially in the for-loop, so tool_a is Spawned before
+            // tool_b returns ChannelClosed.
+            ToolExecutionPolicy::Concurrent,
+        );
+
+        let tool_calls = vec![
+            ToolCallInfo {
+                id: "call_a".to_string(),
+                name: "non_cancelling_tool".to_string(),
+                arguments: json!({}),
+                is_incomplete: false,
+            },
+            ToolCallInfo {
+                id: "call_b".to_string(),
+                name: "tool_b".to_string(),
+                arguments: json!({}),
+                is_incomplete: false,
+            },
+        ];
+        let cancellation_token = CancellationToken::new();
+
+        // Capacity=1: tool_a's ToolExecutionStart fills the single-slot buffer
+        // without blocking.  tool_b's send then blocks on a full buffer, yielding
+        // to the companion task which drops the receiver so the send returns Err.
+        let (tx, mut rx) = mpsc::channel::<AgentEvent>(1);
+
+        // Companion: receive the one buffered event, then drop the receiver so
+        // subsequent sends fail immediately.
+        tokio::spawn(async move {
+            let _ = rx.recv().await;
+        });
+
+        // With the fix this completes quickly; without it the orphaned
+        // NonCancellingTool handle would block collection indefinitely.
+        let outcome = tokio::time::timeout(
+            std::time::Duration::from_millis(500),
+            execute_tools_concurrently(&config, &tool_calls, &cancellation_token, &tx),
+        )
+        .await
+        .expect("channel-closed mid-group must not leave orphaned handles that block shutdown");
+
+        assert!(
+            matches!(outcome, ToolExecOutcome::ChannelClosed),
+            "expected ChannelClosed outcome"
+        );
     }
 }

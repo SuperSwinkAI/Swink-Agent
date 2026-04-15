@@ -654,9 +654,7 @@ fn custom_messages_survive_save_load_save_cycle() {
     }
 
     // Second save (simulates TUI auto-save after resume)
-    store
-        .save("custom_rt", &loaded_meta, &loaded_msgs)
-        .unwrap();
+    store.save("custom_rt", &loaded_meta, &loaded_msgs).unwrap();
 
     // Third load — custom messages must still be present
     let (_, reloaded) = store.load("custom_rt", Some(&registry)).unwrap();

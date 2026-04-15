@@ -162,9 +162,11 @@ mod tests {
             ..Default::default()
         };
 
-        assert!(allow_filter
-            .is_allowed(&Url::parse("https://example.com/page").unwrap())
-            .is_ok());
+        assert!(
+            allow_filter
+                .is_allowed(&Url::parse("https://example.com/page").unwrap())
+                .is_ok()
+        );
         assert!(matches!(
             allow_filter
                 .is_allowed(&Url::parse("https://evil.com").unwrap())

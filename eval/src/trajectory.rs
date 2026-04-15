@@ -267,10 +267,7 @@ impl TrajectoryCollector {
         let mut cancelled = false;
 
         // Compute a tokio deadline from max_duration, if configured.
-        let has_deadline = guard
-            .as_ref()
-            .and_then(|g| g.max_duration)
-            .is_some();
+        let has_deadline = guard.as_ref().and_then(|g| g.max_duration).is_some();
         let deadline = guard.as_ref().and_then(|g| {
             g.max_duration.map(|d| {
                 let elapsed = g.start_time.elapsed();
@@ -321,7 +318,8 @@ impl TrajectoryCollector {
                     cost = collector.accumulated_cost.total,
                     tokens = collector.accumulated_usage.total,
                     turns = collector.turn_counter,
-                    elapsed_ms = u64::try_from(g.start_time.elapsed().as_millis()).unwrap_or(u64::MAX),
+                    elapsed_ms =
+                        u64::try_from(g.start_time.elapsed().as_millis()).unwrap_or(u64::MAX),
                     "budget guard triggered — cancelling agent run"
                 );
                 g.cancel.cancel();
@@ -391,8 +389,7 @@ mod tests {
     fn exceeds_duration() {
         let c = make_collector(1.0, 100, 2);
         // Create a guard with a zero-duration limit — already exceeded.
-        let guard =
-            BudgetGuard::new(CancellationToken::new()).with_max_duration(Duration::ZERO);
+        let guard = BudgetGuard::new(CancellationToken::new()).with_max_duration(Duration::ZERO);
         assert!(c.exceeds_budget(&guard));
     }
 
@@ -400,8 +397,8 @@ mod tests {
     fn within_duration() {
         let c = make_collector(1.0, 100, 2);
         // 1 hour should be well within bounds for this test.
-        let guard = BudgetGuard::new(CancellationToken::new())
-            .with_max_duration(Duration::from_secs(3600));
+        let guard =
+            BudgetGuard::new(CancellationToken::new()).with_max_duration(Duration::from_secs(3600));
         assert!(!c.exceeds_budget(&guard));
     }
 

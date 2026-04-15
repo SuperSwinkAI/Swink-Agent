@@ -127,8 +127,7 @@ impl InputEditor {
             let byte_idx = Self::char_to_byte(&self.lines[self.cursor_row], self.cursor_col);
             // Find the byte range of the char at this position
             if let Some(ch) = self.lines[self.cursor_row][byte_idx..].chars().next() {
-                self.lines[self.cursor_row]
-                    .replace_range(byte_idx..byte_idx + ch.len_utf8(), "");
+                self.lines[self.cursor_row].replace_range(byte_idx..byte_idx + ch.len_utf8(), "");
             }
         } else if self.cursor_row > 0 {
             // Merge with previous line
@@ -146,8 +145,7 @@ impl InputEditor {
         if self.cursor_col < char_count {
             let byte_idx = Self::char_to_byte(&self.lines[self.cursor_row], self.cursor_col);
             if let Some(ch) = self.lines[self.cursor_row][byte_idx..].chars().next() {
-                self.lines[self.cursor_row]
-                    .replace_range(byte_idx..byte_idx + ch.len_utf8(), "");
+                self.lines[self.cursor_row].replace_range(byte_idx..byte_idx + ch.len_utf8(), "");
             }
         } else if self.cursor_row + 1 < self.lines.len() {
             // Merge with next line

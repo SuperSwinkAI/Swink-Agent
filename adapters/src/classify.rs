@@ -193,10 +193,7 @@ mod tests {
                 ..
             } => {
                 assert!(error_message.contains("429"));
-                assert_eq!(
-                    error_kind,
-                    Some(swink_agent::StreamErrorKind::Throttled)
-                );
+                assert_eq!(error_kind, Some(swink_agent::StreamErrorKind::Throttled));
             }
             other => panic!("expected Error, got {other:?}"),
         }
@@ -212,10 +209,7 @@ mod tests {
                 ..
             } => {
                 assert!(error_message.contains("500"));
-                assert_eq!(
-                    error_kind,
-                    Some(swink_agent::StreamErrorKind::Network)
-                );
+                assert_eq!(error_kind, Some(swink_agent::StreamErrorKind::Network));
             }
             other => panic!("expected Error, got {other:?}"),
         }
@@ -254,10 +248,7 @@ mod tests {
             } => {
                 assert!(error_message.contains("Anthropic"));
                 assert!(error_message.contains("529"));
-                assert_eq!(
-                    error_kind,
-                    Some(swink_agent::StreamErrorKind::Network)
-                );
+                assert_eq!(error_kind, Some(swink_agent::StreamErrorKind::Network));
             }
             other => panic!("expected Error, got {other:?}"),
         }
@@ -324,10 +315,7 @@ mod tests {
         let event = error_event_from_status(429, "too many requests", "TestAdapter");
         match event {
             AssistantMessageEvent::Error { error_kind, .. } => {
-                assert_eq!(
-                    error_kind,
-                    Some(swink_agent::StreamErrorKind::Throttled)
-                );
+                assert_eq!(error_kind, Some(swink_agent::StreamErrorKind::Throttled));
             }
             other => panic!("expected Error, got {other:?}"),
         }

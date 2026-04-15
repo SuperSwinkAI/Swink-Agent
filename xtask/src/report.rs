@@ -76,8 +76,7 @@ pub fn write_github_summary(rows: &[VerifyRow]) -> std::io::Result<()> {
         let preset = &row.task.preset_display;
         let model = &row.task.model_id;
         let result = result_label(&row.result);
-        writeln!(md, "| {key} | {preset} | {model} | {result} |")
-            .map_err(std::io::Error::other)?;
+        writeln!(md, "| {key} | {preset} | {model} | {result} |").map_err(std::io::Error::other)?;
     }
     let mut file = std::fs::OpenOptions::new()
         .append(true)

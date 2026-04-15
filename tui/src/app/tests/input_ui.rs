@@ -23,7 +23,8 @@ async fn capital_e_inserts_char() {
     app.handle_key_event(key);
 
     assert_eq!(
-        app.input.lines()[0], "E",
+        app.input.lines()[0],
+        "E",
         "Shift+E should insert 'E' into input"
     );
 }

@@ -1,7 +1,7 @@
 use swink_agent_memory::{
     BlockingSessionStore, CompactionResult, InterruptState, JsonlSessionStore, LoadOptions,
-    PendingToolCall, SessionEntry, SessionMeta, SessionMigrator, SessionStore,
-    SessionStoreFuture, SummarizingCompactor, format_session_id, now_utc,
+    PendingToolCall, SessionEntry, SessionMeta, SessionMigrator, SessionStore, SessionStoreFuture,
+    SummarizingCompactor, format_session_id, now_utc,
 };
 
 #[test]

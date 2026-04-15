@@ -390,12 +390,18 @@ mod tests {
         let msg1 = msg_with_tool_calls(&[("call_abc", "bash", args.clone())]);
         let res1 = vec![tool_result("call_abc", "file1.txt")];
         let t1 = make_turn_ctx(&msg1, &res1);
-        assert!(matches!(policy.evaluate(&ctx, &t1), PolicyVerdict::Continue));
+        assert!(matches!(
+            policy.evaluate(&ctx, &t1),
+            PolicyVerdict::Continue
+        ));
 
         let msg2 = msg_with_tool_calls(&[("call_def", "bash", args.clone())]);
         let res2 = vec![tool_result("call_def", "file1.txt")];
         let t2 = make_turn_ctx(&msg2, &res2);
-        assert!(matches!(policy.evaluate(&ctx, &t2), PolicyVerdict::Continue));
+        assert!(matches!(
+            policy.evaluate(&ctx, &t2),
+            PolicyVerdict::Continue
+        ));
 
         let msg3 = msg_with_tool_calls(&[("call_ghi", "bash", args.clone())]);
         let res3 = vec![tool_result("call_ghi", "file1.txt")];

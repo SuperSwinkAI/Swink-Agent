@@ -44,9 +44,7 @@ async fn run_verify_catalog(provider: Option<&str>, github: bool) {
     let tasks = catalog::build_verify_tasks(provider);
     let rows = verifier::verify_all(tasks).await;
     report::print_table(&rows);
-    if write_summary
-        && let Err(e) = report::write_github_summary(&rows)
-    {
+    if write_summary && let Err(e) = report::write_github_summary(&rows) {
         eprintln!("warning: failed to write GitHub summary: {e}");
     }
     let has_fail = rows

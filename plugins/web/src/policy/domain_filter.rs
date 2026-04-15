@@ -80,7 +80,10 @@ mod tests {
         let state = SessionState::default();
         let mut args = json!({"url": "https://evil.com"});
         let mut ctx = make_dispatch_ctx("bash", "call_1", &mut args, &state);
-        assert!(matches!(policy.evaluate(&mut ctx), PreDispatchVerdict::Continue));
+        assert!(matches!(
+            policy.evaluate(&mut ctx),
+            PreDispatchVerdict::Continue
+        ));
     }
 
     #[test]
@@ -89,7 +92,10 @@ mod tests {
         let state = SessionState::default();
         let mut args = json!({"query": "rust programming"});
         let mut ctx = make_dispatch_ctx("web.search", "call_2", &mut args, &state);
-        assert!(matches!(policy.evaluate(&mut ctx), PreDispatchVerdict::Continue));
+        assert!(matches!(
+            policy.evaluate(&mut ctx),
+            PreDispatchVerdict::Continue
+        ));
     }
 
     #[test]

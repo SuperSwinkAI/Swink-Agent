@@ -8,8 +8,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use common::{
-    MockStreamFn, default_convert, default_model, error_events, text_only_events,
-    tool_call_events, user_msg,
+    MockStreamFn, default_convert, default_model, error_events, text_only_events, tool_call_events,
+    user_msg,
 };
 use futures::stream::StreamExt;
 use serde_json::json;
@@ -370,13 +370,12 @@ async fn prompt_stream_without_handle_stream_event_stays_running() {
 /// state through `AgentEnd` instead of unconditionally clearing it.
 #[tokio::test]
 async fn handle_stream_event_preserves_terminal_error_through_agent_end() {
-    let stream_fn = Arc::new(MockStreamFn::new(vec![error_events(
-        "fatal error",
-        None,
-    )]));
+    let stream_fn = Arc::new(MockStreamFn::new(vec![error_events("fatal error", None)]));
     let mut agent = make_agent(stream_fn);
 
-    let stream = agent.prompt_stream(vec![user_msg("trigger error")]).unwrap();
+    let stream = agent
+        .prompt_stream(vec![user_msg("trigger error")])
+        .unwrap();
     let mut stream = std::pin::pin!(stream);
     while let Some(event) = stream.next().await {
         agent.handle_stream_event(&event);
