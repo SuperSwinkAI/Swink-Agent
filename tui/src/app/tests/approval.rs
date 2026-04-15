@@ -12,10 +12,19 @@ use super::super::*;
 use super::super::state::TrustFollowUp;
 use super::helpers::*;
 
+/// Build a minimal `App` with the given `ApprovalMode` installed on the agent.
+fn make_app_with_mode(mode: ApprovalMode) -> App {
+    let stream_fn = Arc::new(ScriptedStreamFn::new(vec![]));
+    let mut agent = make_test_agent(stream_fn);
+    agent.set_approval_mode(mode);
+    let mut app = App::new(TuiConfig::default());
+    app.set_agent(agent);
+    app
+}
+
 #[tokio::test]
 async fn smart_mode_auto_approves_trusted_tool() {
-    let mut app = App::new(TuiConfig::default());
-    app.approval_mode = ApprovalMode::Smart;
+    let mut app = make_app_with_mode(ApprovalMode::Smart);
     app.session_trusted_tools.insert("bash".to_string());
 
     let (tx, rx) = tokio::sync::oneshot::channel();
@@ -38,8 +47,7 @@ async fn smart_mode_auto_approves_trusted_tool() {
 
 #[tokio::test]
 async fn smart_mode_prompts_for_untrusted_tool() {
-    let mut app = App::new(TuiConfig::default());
-    app.approval_mode = ApprovalMode::Smart;
+    let mut app = make_app_with_mode(ApprovalMode::Smart);
 
     let (tx, _rx) = tokio::sync::oneshot::channel();
     let request = ToolApprovalRequest {
@@ -99,18 +107,17 @@ async fn reset_clears_trusted_tools() {
 
 #[tokio::test]
 async fn query_approval_mode_shows_smart() {
-    let mut app = App::new(TuiConfig::default());
-    app.approval_mode = ApprovalMode::Smart;
+    let mut app = make_app_with_mode(ApprovalMode::Smart);
     app.session_trusted_tools.insert("bash".to_string());
 
-    let label = match app.approval_mode {
+    let label = match app.approval_mode() {
         ApprovalMode::Enabled => "enabled",
         ApprovalMode::Bypassed => "disabled (auto-approve)",
         ApprovalMode::Smart => "smart (auto-approve trusted tools, prompt for untrusted tools)",
         _ => "unknown",
     };
     let mut msg = format!("Tool approval: {label}");
-    if app.approval_mode == ApprovalMode::Smart && !app.session_trusted_tools.is_empty() {
+    if app.approval_mode() == ApprovalMode::Smart && !app.session_trusted_tools.is_empty() {
         msg.push_str("\nTrusted tools: ");
         let mut tools: Vec<&str> = app
             .session_trusted_tools
@@ -130,13 +137,12 @@ async fn query_approval_mode_shows_smart() {
 #[test]
 fn approval_mode_default_is_smart() {
     let app = App::new(TuiConfig::default());
-    assert_eq!(app.approval_mode, ApprovalMode::Smart);
+    assert_eq!(app.approval_mode(), ApprovalMode::Smart);
 }
 
 #[tokio::test]
 async fn smart_mode_prompts_for_untrusted_readonly_tool() {
-    let mut app = App::new(TuiConfig::default());
-    app.approval_mode = ApprovalMode::Smart;
+    let mut app = make_app_with_mode(ApprovalMode::Smart);
 
     let (tx, _rx) = tokio::sync::oneshot::channel();
     let request = ToolApprovalRequest {
@@ -157,8 +163,7 @@ async fn smart_mode_prompts_for_untrusted_readonly_tool() {
 
 #[tokio::test]
 async fn smart_mode_prompts_for_write_tool() {
-    let mut app = App::new(TuiConfig::default());
-    app.approval_mode = ApprovalMode::Smart;
+    let mut app = make_app_with_mode(ApprovalMode::Smart);
 
     let (tx, _rx) = tokio::sync::oneshot::channel();
     let request = ToolApprovalRequest {
@@ -175,8 +180,7 @@ async fn smart_mode_prompts_for_write_tool() {
 
 #[tokio::test]
 async fn enabled_mode_prompts_for_all_tools() {
-    let mut app = App::new(TuiConfig::default());
-    app.approval_mode = ApprovalMode::Enabled;
+    let mut app = make_app_with_mode(ApprovalMode::Enabled);
 
     let (tx, _rx) = tokio::sync::oneshot::channel();
     let request = ToolApprovalRequest {
@@ -196,9 +200,8 @@ async fn enabled_mode_prompts_for_all_tools() {
 
 #[tokio::test]
 async fn bypassed_mode_auto_approves_all() {
-    let mut app = App::new(TuiConfig::default());
-    app.approval_mode = ApprovalMode::Bypassed;
-    assert_eq!(app.approval_mode, ApprovalMode::Bypassed);
+    let app = make_app_with_mode(ApprovalMode::Bypassed);
+    assert_eq!(app.approval_mode(), ApprovalMode::Bypassed);
 }
 
 #[test]
@@ -222,8 +225,7 @@ fn approve_command_switches_modes() {
 
 #[tokio::test]
 async fn trust_follow_up_triggers_after_approval_in_smart_mode() {
-    let mut app = App::new(TuiConfig::default());
-    app.approval_mode = ApprovalMode::Smart;
+    let mut app = make_app_with_mode(ApprovalMode::Smart);
 
     let (tx, _rx) = tokio::sync::oneshot::channel();
     let request = ToolApprovalRequest {
@@ -248,8 +250,7 @@ async fn trust_follow_up_triggers_after_approval_in_smart_mode() {
 
 #[tokio::test]
 async fn trust_follow_up_not_triggered_in_enabled_mode() {
-    let mut app = App::new(TuiConfig::default());
-    app.approval_mode = ApprovalMode::Enabled;
+    let mut app = make_app_with_mode(ApprovalMode::Enabled);
 
     let (tx, _rx) = tokio::sync::oneshot::channel();
     let request = ToolApprovalRequest {
@@ -324,8 +325,7 @@ fn trust_follow_up_timeout_clears() {
 
 #[tokio::test]
 async fn trusted_tool_auto_approves_in_smart_mode() {
-    let mut app = App::new(TuiConfig::default());
-    app.approval_mode = ApprovalMode::Smart;
+    let mut app = make_app_with_mode(ApprovalMode::Smart);
     app.session_trusted_tools.insert("bash".to_string());
 
     let (tx, rx) = tokio::sync::oneshot::channel();
@@ -348,8 +348,7 @@ async fn trusted_tool_auto_approves_in_smart_mode() {
 
 #[tokio::test]
 async fn trusted_tool_still_prompts_in_enabled_mode() {
-    let mut app = App::new(TuiConfig::default());
-    app.approval_mode = ApprovalMode::Enabled;
+    let mut app = make_app_with_mode(ApprovalMode::Enabled);
     app.session_trusted_tools.insert("bash".to_string());
 
     let (tx, _rx) = tokio::sync::oneshot::channel();
@@ -439,8 +438,7 @@ fn untrust_all_clears_set() {
 
 #[tokio::test]
 async fn trust_follow_up_cleared_on_new_approval() {
-    let mut app = App::new(TuiConfig::default());
-    app.approval_mode = ApprovalMode::Smart;
+    let mut app = make_app_with_mode(ApprovalMode::Smart);
     app.trust_follow_up = Some(TrustFollowUp {
         tool_name: "old_tool".to_string(),
         expires_at: Instant::now() + Duration::from_secs(3),

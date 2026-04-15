@@ -8,8 +8,8 @@ use ratatui::layout::Rect;
 use tokio::sync::{mpsc, oneshot};
 
 use swink_agent::{
-    Agent, AgentEvent, AgentTool, ApprovalMode, AssistantMessage, ContentBlock, DisplayRole,
-    StopReason, ToolApproval, ToolApprovalRequest,
+    Agent, AgentEvent, AgentTool, AssistantMessage, ContentBlock, DisplayRole, StopReason,
+    ToolApproval, ToolApprovalRequest,
 };
 
 use crate::config::TuiConfig;
@@ -182,8 +182,6 @@ pub struct App {
     pub(crate) approval_tx: mpsc::Sender<(ToolApprovalRequest, oneshot::Sender<ToolApproval>)>,
     /// Currently pending approval request and its response channel.
     pub(crate) pending_approval: Option<(ToolApprovalRequest, oneshot::Sender<ToolApproval>)>,
-    /// Current approval mode.
-    pub approval_mode: ApprovalMode,
     /// Estimated context window token budget.
     pub context_budget: u64,
     /// Estimated tokens currently used in context.

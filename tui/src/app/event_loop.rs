@@ -233,7 +233,7 @@ impl App {
                     if let Some((req, responder)) = self.pending_approval.take() {
                         let _ = responder.send(ToolApproval::Approved);
                         // In Smart mode, offer trust follow-up
-                        if self.approval_mode == ApprovalMode::Smart {
+                        if self.approval_mode() == ApprovalMode::Smart {
                             self.trust_follow_up = Some(TrustFollowUp {
                                 tool_name: req.tool_name,
                                 expires_at: Instant::now() + Duration::from_secs(3),
@@ -451,7 +451,6 @@ impl App {
                     ApprovalModeArg::Off => ApprovalMode::Bypassed,
                     ApprovalModeArg::Smart => ApprovalMode::Smart,
                 };
-                self.approval_mode = harness_mode;
                 if let Some(agent) = &mut self.agent {
                     agent.set_approval_mode(harness_mode);
                 }
@@ -484,7 +483,7 @@ impl App {
                 return;
             }
             CommandResult::QueryApprovalMode => {
-                let label = match self.approval_mode {
+                let label = match self.approval_mode() {
                     ApprovalMode::Enabled => "enabled",
                     ApprovalMode::Bypassed => "disabled (auto-approve)",
                     ApprovalMode::Smart => {
@@ -493,7 +492,7 @@ impl App {
                     _ => "unknown",
                 };
                 let mut msg = format!("Tool approval: {label}");
-                if self.approval_mode == ApprovalMode::Smart
+                if self.approval_mode() == ApprovalMode::Smart
                     && !self.session_trusted_tools.is_empty()
                 {
                     msg.push_str("\nTrusted tools: ");

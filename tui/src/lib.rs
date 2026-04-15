@@ -51,6 +51,7 @@ use tokio::sync::{mpsc, oneshot};
 use swink_agent::{Agent, ToolApproval, ToolApprovalRequest, selective_approve};
 
 pub use app::{AgentStatus, App, DisplayMessage, MessageRole, OperatingMode};
+pub use swink_agent::ApprovalMode;
 pub use config::TuiConfig;
 pub use error::TuiError;
 pub use session::JsonlSessionStore;
@@ -125,6 +126,13 @@ pub fn tui_approval_callback(approval_tx: &ApprovalSender) -> ApprovalCallbackFn
 ///
 /// The approval callback is wired automatically — callers should **not** set
 /// `with_approve_tool` on the supplied [`swink_agent::AgentOptions`].
+///
+/// To control the startup approval mode, configure it on `options` before calling:
+/// ```ignore
+/// let options = AgentOptions::new(...).with_approval_mode(ApprovalMode::Bypassed);
+/// launch(config, &mut terminal, options).await?;
+/// ```
+/// [`App::approval_mode`] reads the mode from the agent, so both sides stay in sync.
 pub async fn launch(
     config: TuiConfig,
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
