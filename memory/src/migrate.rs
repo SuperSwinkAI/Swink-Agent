@@ -139,7 +139,7 @@ mod tests {
         assert_eq!(migrator.source_version(), 1);
         assert_eq!(migrator.target_version(), 2);
 
-        let result = migrator.migrate(&meta, entries.clone()).unwrap();
+        let result = migrator.migrate(&meta, entries).unwrap();
         assert_eq!(result.len(), 1);
         assert!(matches!(result[0], SessionEntry::Message(_)));
 
