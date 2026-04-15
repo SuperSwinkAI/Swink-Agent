@@ -75,6 +75,15 @@ impl Agent {
         Ok(checkpoint)
     }
 
+    fn ensure_idle_for_checkpoint_restore(&mut self) -> Result<(), std::io::Error> {
+        self.check_not_running().map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::WouldBlock,
+                "cannot restore checkpoint while agent is running",
+            )
+        })
+    }
+
     /// Restore agent message history from a checkpoint.
     ///
     /// Replaces the current messages with those from the checkpoint and
@@ -85,11 +94,14 @@ impl Agent {
     /// restored when a [`CustomMessageRegistry`](crate::types::CustomMessageRegistry)
     /// has been configured on [`AgentOptions`](crate::AgentOptions) via
     /// [`with_custom_message_registry`](crate::AgentOptions::with_custom_message_registry);
-    /// otherwise they are dropped.
+    /// otherwise they are dropped. Returns [`std::io::ErrorKind::WouldBlock`]
+    /// if a loop is still active; callers must wait for the agent to become
+    /// idle before restoring a checkpoint into it.
     pub fn restore_from_checkpoint(
         &mut self,
         checkpoint: &Checkpoint,
     ) -> Result<(), std::io::Error> {
+        self.ensure_idle_for_checkpoint_restore()?;
         let restored_messages =
             checkpoint.restore_messages(self.custom_message_registry.as_deref());
         let restored_state = restore_session_state(checkpoint.state.as_ref())?;
@@ -113,11 +125,13 @@ impl Agent {
     /// Load a checkpoint from the configured store and restore state from it.
     ///
     /// Returns the loaded checkpoint, or `None` if not found.
-    /// Returns an error if no checkpoint store is configured.
+    /// Returns an error if no checkpoint store is configured. Returns
+    /// [`std::io::ErrorKind::WouldBlock`] if the agent is still running.
     pub async fn load_and_restore_checkpoint(
         &mut self,
         id: &str,
     ) -> Result<Option<Checkpoint>, std::io::Error> {
+        self.ensure_idle_for_checkpoint_restore()?;
         let store = self
             .checkpoint_store
             .as_ref()
@@ -912,6 +926,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn restore_from_checkpoint_rejects_restore_while_running() {
+        let mut source = make_agent(None);
+        source.state.messages.push(user_msg("restored"));
+        let checkpoint = source.save_checkpoint("cp-running-guard").await.unwrap();
+
+        let mut agent = make_agent(None);
+        let stream = agent.prompt_stream(vec![user_msg("hi")]).unwrap();
+
+        let err = agent.restore_from_checkpoint(&checkpoint).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::WouldBlock);
+        assert!(
+            err.to_string()
+                .contains("cannot restore checkpoint while agent is running")
+        );
+        assert!(agent.is_running());
+
+        drop(stream);
+        agent.wait_for_idle().await;
+    }
+
+    #[tokio::test]
     async fn restore_from_loop_checkpoint_rebinds_stream_fn_for_matching_model() {
         use crate::checkpoint::LoopCheckpoint;
         use crate::stream::StreamFn;
@@ -1020,6 +1055,40 @@ mod tests {
             .unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
         assert!(err.to_string().contains("corrupted session state snapshot"));
+    }
+
+    #[tokio::test]
+    async fn load_and_restore_checkpoint_rejects_restore_while_running() {
+        let store = TestCheckpointStore::default();
+        let checkpoint = Checkpoint::new(
+            "running-guard",
+            "system",
+            "mock",
+            "mock-model",
+            &[user_msg("hi")],
+        );
+        store.save_checkpoint(&checkpoint).await.unwrap();
+
+        let stream_fn = Arc::new(SimpleMockStreamFn::from_text("ok"));
+        let agent_options =
+            AgentOptions::new_simple("system", ModelSpec::new("mock", "mock-model"), stream_fn)
+                .with_checkpoint_store(store);
+        let mut agent = Agent::new(agent_options);
+        let stream = agent.prompt_stream(vec![user_msg("start")]).unwrap();
+
+        let err = agent
+            .load_and_restore_checkpoint("running-guard")
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::WouldBlock);
+        assert!(
+            err.to_string()
+                .contains("cannot restore checkpoint while agent is running")
+        );
+        assert!(agent.is_running());
+
+        drop(stream);
+        agent.wait_for_idle().await;
     }
 
     #[tokio::test]
