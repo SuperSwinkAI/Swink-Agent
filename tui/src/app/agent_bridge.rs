@@ -18,15 +18,22 @@ impl App {
             return;
         };
 
-        if let Some(pending) = self.pending_model.take() {
-            agent.set_model(pending);
-        }
-
         let user_message = AgentMessage::Llm(LlmMessage::User(UserMessage {
             content: vec![ContentBlock::Text { text }],
             timestamp: timestamp_now(),
             cache_hint: None,
         }));
+
+        // If a loop is already running, inject the message as a steering event
+        // rather than trying to start a second loop (which would error).
+        if self.status == AgentStatus::Running {
+            agent.steer(user_message);
+            return;
+        }
+
+        if let Some(pending) = self.pending_model.take() {
+            agent.set_model(pending);
+        }
 
         let input = vec![user_message];
         self.status = AgentStatus::Running;
