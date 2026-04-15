@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-04-15
+
+### Fixed
+- Enforce proxy terminal event before `[DONE]` to prevent stray trailing tokens (#552).
+- Web plugin rate-limiter cutoff underflow when body is shorter than the byte window (#551).
+- Preserve custom message envelopes during JSONL entry saves (#550).
+- `atomic_fs` replace semantics on Windows — use `MOVEFILE_REPLACE_EXISTING` flag (#549).
+- Guard checkpoint restore against concurrent agent runs to prevent state corruption (#548).
+- Thread raw SSE payload callbacks through all runtime adapters (#547).
+- SSE parser now handles field lines without a trailing space after the colon (#546).
+- Custom tool execution partition validation to reject mismatched call/result pairings (#545).
+- Abort in-flight tool batches when parent `CancellationToken` fires (#544).
+- Delay OpenAI tool-call `Start` event until the tool name is fully known (#532).
+- Validate eval store filesystem IDs to reject path-traversal inputs (#531).
+- Make Gemini final tool-call deltas deterministic (#530).
+- Prevent steering message drop in concurrent tool-dispatch workers (#529).
+- Emit terminal error on local-LLM EOF without a `Response::Done` frame (#528).
+- Apply session migrators in `JsonlSessionStore::load` (#527).
+- Preserve steering interrupt messages across checkpoint cycles (#526).
+- Make artifact streaming saves incremental rather than full-file rewrites (#515).
+- Centralize local LLM preset defaults to avoid divergence across callers (#514).
+- Reject duplicate orchestrator registrations (#513).
+- Emit pipeline failure events on execution errors (#512).
+
 ## [0.7.0] - 2026-04-09
 
 ### Breaking

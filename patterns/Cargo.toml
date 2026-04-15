@@ -1,6 +1,6 @@
 [package]
 name = "swink-agent-patterns"
-version = "0.7.0"
+version = "0.7.1"
 edition = "2024"
 rust-version = "1.88"
 description = "Multi-agent pipeline patterns for swink-agent"
