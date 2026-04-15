@@ -420,6 +420,57 @@ async fn mid_stream_disconnect_produces_network_error() {
     }
 }
 
+#[tokio::test]
+async fn done_sentinel_without_protocol_terminal_produces_network_error() {
+    let body = [
+        r#"data: {"type":"start"}"#,
+        "",
+        r#"data: {"type":"text_start","content_index":0}"#,
+        "",
+        r#"data: {"type":"text_delta","content_index":0,"delta":"partial"}"#,
+        "",
+        r#"data: {"type":"text_end","content_index":0}"#,
+        "",
+        "data: [DONE]",
+        "",
+        "",
+    ]
+    .join("\n");
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/stream"))
+        .respond_with(sse_response(&body))
+        .mount(&server)
+        .await;
+
+    let proxy = ProxyStreamFn::new(server.uri(), "token");
+    let events = collect_events(&proxy).await;
+
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, AssistantMessageEvent::Done { .. })),
+        "expected missing protocol terminal to avoid emitting Done: {events:?}"
+    );
+
+    let last = events.last().expect("should have at least one event");
+    match last {
+        AssistantMessageEvent::Error {
+            error_message,
+            stop_reason,
+            ..
+        } => {
+            assert_eq!(*stop_reason, StopReason::Error);
+            assert!(
+                error_message.contains("protocol terminal event"),
+                "expected terminal-event diagnostic, got: {error_message}"
+            );
+        }
+        other => panic!("expected terminal Error event, got {other:?}"),
+    }
+}
+
 // ── 5.10: Cancellation drops connection and yields Aborted ──────────────
 
 #[tokio::test]
