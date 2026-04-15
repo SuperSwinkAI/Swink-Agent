@@ -36,16 +36,14 @@ pub(super) async fn compute_execution_groups(
     policy: &ToolExecutionPolicy,
     tool_calls: &[ToolCallInfo],
     prepared: &[PreparedToolCall],
-) -> Vec<Vec<usize>> {
+) -> Result<Vec<Vec<usize>>, String> {
     if prepared.is_empty() {
-        return vec![];
+        return Ok(vec![]);
     }
 
     match policy {
-        ToolExecutionPolicy::Concurrent => {
-            vec![(0..prepared.len()).collect()]
-        }
-        ToolExecutionPolicy::Sequential => (0..prepared.len()).map(|i| vec![i]).collect(),
+        ToolExecutionPolicy::Concurrent => Ok(vec![(0..prepared.len()).collect()]),
+        ToolExecutionPolicy::Sequential => Ok((0..prepared.len()).map(|i| vec![i]).collect()),
         ToolExecutionPolicy::Priority(priority_fn) => {
             let mut scored: Vec<(usize, i32)> = prepared
                 .iter()
@@ -77,7 +75,7 @@ pub(super) async fn compute_execution_groups(
                 }
             }
 
-            groups
+            Ok(groups)
         }
         ToolExecutionPolicy::Custom(strategy) => {
             let summaries: Vec<ToolCallSummary<'_>> = prepared
@@ -92,9 +90,53 @@ pub(super) async fn compute_execution_groups(
                 })
                 .collect();
 
-            strategy.partition(&summaries).await
+            let groups = strategy.partition(&summaries).await;
+            validate_custom_execution_groups(&groups, prepared.len())?;
+            Ok(groups)
         }
     }
+}
+
+fn validate_custom_execution_groups(
+    groups: &[Vec<usize>],
+    prepared_len: usize,
+) -> Result<(), String> {
+    let mut seen: Vec<Option<(usize, usize)>> = vec![None; prepared_len];
+
+    for (group_idx, group) in groups.iter().enumerate() {
+        for (position, &prepared_idx) in group.iter().enumerate() {
+            if prepared_idx >= prepared_len {
+                return Err(format!(
+                    "group {group_idx} position {position} referenced prepared index \
+                     {prepared_idx}, but the prepared tool-call slice has length {prepared_len}"
+                ));
+            }
+
+            if let Some((previous_group, previous_position)) = seen[prepared_idx] {
+                return Err(format!(
+                    "group {group_idx} position {position} repeated prepared index \
+                     {prepared_idx}, which was already assigned at group {previous_group} \
+                     position {previous_position}"
+                ));
+            }
+
+            seen[prepared_idx] = Some((group_idx, position));
+        }
+    }
+
+    let missing: Vec<String> = seen
+        .iter()
+        .enumerate()
+        .filter_map(|(prepared_idx, slot)| slot.is_none().then_some(prepared_idx.to_string()))
+        .collect();
+    if !missing.is_empty() {
+        return Err(format!(
+            "the custom strategy omitted prepared indices {}",
+            missing.join(", ")
+        ));
+    }
+
+    Ok(())
 }
 
 // ─── Single tool dispatch ───────────────────────────────────────────────────
