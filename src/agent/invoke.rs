@@ -31,6 +31,7 @@ struct LoopGuardStream {
     loop_active: Arc<AtomicBool>,
     idle_notify: Arc<Notify>,
     pending_message_snapshot: Arc<crate::pause_state::PendingMessageSnapshot>,
+    loop_context_snapshot: Arc<crate::pause_state::LoopContextSnapshot>,
     generation: u64,
     expected_generation: Arc<AtomicU64>,
 }
@@ -51,6 +52,7 @@ impl Drop for LoopGuardStream {
         if self.expected_generation.load(Ordering::Acquire) == self.generation {
             self.loop_active.store(false, Ordering::Release);
             self.pending_message_snapshot.clear();
+            self.loop_context_snapshot.clear();
             self.idle_notify.notify_waiters();
         }
     }
@@ -231,6 +233,7 @@ impl Agent {
         self.state.is_running = true;
         self.state.error = None;
         self.pending_message_snapshot.clear();
+        self.loop_context_snapshot.clear();
         self.loop_active.store(true, Ordering::Release);
         let generation = self.loop_generation.fetch_add(1, Ordering::AcqRel) + 1;
 
@@ -274,6 +277,7 @@ impl Agent {
             loop_active: Arc::clone(&self.loop_active),
             idle_notify: Arc::clone(&self.idle_notify),
             pending_message_snapshot: Arc::clone(&self.pending_message_snapshot),
+            loop_context_snapshot: Arc::clone(&self.loop_context_snapshot),
             generation,
             expected_generation: Arc::clone(&self.loop_generation),
         });
@@ -325,6 +329,7 @@ impl Agent {
             get_api_key: api_key_box,
             message_provider: Some(message_provider),
             pending_message_snapshot: Arc::clone(&self.pending_message_snapshot),
+            loop_context_snapshot: Arc::clone(&self.loop_context_snapshot),
             approve_tool: self.approve_tool.as_ref().map(|a| {
                 let a = Arc::clone(a);
                 let b: Box<ApproveToolFn> = Box::new(move |req| a(req));

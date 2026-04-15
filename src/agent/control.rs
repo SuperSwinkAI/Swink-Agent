@@ -33,6 +33,7 @@ impl Agent {
         self.in_flight_llm_messages = None;
         self.in_flight_messages = None;
         self.pending_message_snapshot.clear();
+        self.loop_context_snapshot.clear();
     }
 
     /// Cancel the currently running loop, if any.

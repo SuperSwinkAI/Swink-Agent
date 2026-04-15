@@ -47,6 +47,11 @@ pub async fn run_single_turn(
         state.context_messages.append(&mut state.pending_messages);
     }
     clear_pending_message_snapshot(config);
+    // Sync the full context (including newly consumed pending messages) to the
+    // loop_context_snapshot so that a concurrent pause() call can reconstruct
+    // the complete message history even before this turn's TurnEnd event is
+    // processed by the agent side.
+    sync_loop_context_snapshot(config, state);
 
     // Check cancellation
     if cancellation_token.is_cancelled() {
@@ -352,6 +357,15 @@ fn sync_pending_message_snapshot(config: &AgentLoopConfig, state: &LoopState) {
     config
         .pending_message_snapshot
         .replace(&state.pending_messages);
+}
+
+/// Sync the full loop context to the shared `loop_context_snapshot` so that
+/// `Agent::pause()` can recover messages already drained from the shared pending
+/// queue but not yet reflected in `in_flight_messages`.
+fn sync_loop_context_snapshot(config: &AgentLoopConfig, state: &LoopState) {
+    config
+        .loop_context_snapshot
+        .replace(&state.context_messages);
 }
 
 // ─── Shared helpers ──────────────────────────────────────────────────────

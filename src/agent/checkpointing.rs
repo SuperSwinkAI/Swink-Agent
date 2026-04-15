@@ -175,10 +175,21 @@ impl Agent {
 
         let mut pending_messages = self.pending_message_snapshot.snapshot();
         pending_messages.extend(drain_messages_from_queue(&self.follow_up_queue));
-        let checkpoint_messages = self
-            .in_flight_messages
-            .as_deref()
-            .unwrap_or(&self.state.messages);
+
+        // Prefer the loop_context_snapshot when available: it is updated
+        // immediately after pending messages are drained into loop-local
+        // context_messages, closing the window where a concurrent pause() would
+        // miss those messages (they've left the shared pending queue but haven't
+        // yet been delivered back via a TurnEnd event that updates
+        // in_flight_messages).
+        let loop_ctx = self.loop_context_snapshot.snapshot();
+        let checkpoint_messages: &[crate::types::AgentMessage] = if let Some(ref ctx) = loop_ctx {
+            ctx.as_slice()
+        } else {
+            self.in_flight_messages
+                .as_deref()
+                .unwrap_or(&self.state.messages)
+        };
 
         let mut checkpoint = crate::checkpoint::LoopCheckpoint::new(
             &self.state.system_prompt,
@@ -1298,5 +1309,95 @@ mod tests {
             state.is_empty(),
             "missing snapshot should clear stale state"
         );
+    }
+
+    /// Regression test for issue #557: `run_single_turn` drains pending messages
+    /// into loop-local `context_messages` and then clears the shared
+    /// `pending_message_snapshot`. A concurrent `pause()` in that window would
+    /// previously miss those messages. The fix syncs `context_messages` to
+    /// `loop_context_snapshot` immediately after the drain, and `pause()` now
+    /// prefers that snapshot over `in_flight_messages`.
+    #[tokio::test]
+    async fn pause_captures_messages_drained_from_pending_into_loop_context() {
+        let mut agent = make_agent(None);
+        // Simulate the agent being mid-turn: in_flight_messages holds the
+        // original messages (before any pending drain), and loop_context_snapshot
+        // holds the expanded context after the drain.
+
+        // in_flight_messages = original message only (set at loop start).
+        agent.in_flight_messages = Some(vec![user_msg("original")]);
+        // pending_message_snapshot is cleared (run_single_turn has already drained it).
+        agent.pending_message_snapshot.clear();
+        // loop_context_snapshot = original + consumed pending (synced just after drain).
+        // replace() uses the internal clone_messages helper which handles AgentMessage variants.
+        agent
+            .loop_context_snapshot
+            .replace(&[user_msg("original"), user_msg("consumed-pending")]);
+
+        agent
+            .loop_active
+            .store(true, std::sync::atomic::Ordering::Release);
+
+        let checkpoint = agent.pause().expect("agent should be paused");
+        let restored = checkpoint.restore_messages(agent.custom_message_registry.as_deref());
+
+        assert_eq!(
+            restored.len(),
+            2,
+            "pause snapshot must include messages already consumed from the pending queue \
+             into loop context, not just in_flight_messages"
+        );
+        match &restored[0] {
+            AgentMessage::Llm(LlmMessage::User(u)) => match &u.content[0] {
+                crate::types::ContentBlock::Text { text } => {
+                    assert_eq!(text, "original");
+                }
+                other => panic!("expected text content, got {other:?}"),
+            },
+            other => panic!("expected user message, got {other:?}"),
+        }
+        match &restored[1] {
+            AgentMessage::Llm(LlmMessage::User(u)) => match &u.content[0] {
+                crate::types::ContentBlock::Text { text } => {
+                    assert_eq!(text, "consumed-pending");
+                }
+                other => panic!("expected text content, got {other:?}"),
+            },
+            other => panic!("expected user message, got {other:?}"),
+        }
+    }
+
+    /// When `loop_context_snapshot` is not set (loop has not yet started its
+    /// first turn), `pause()` must fall back to `in_flight_messages` as before.
+    #[tokio::test]
+    async fn pause_falls_back_to_in_flight_messages_when_context_snapshot_absent() {
+        let mut agent = make_agent(None);
+
+        // in_flight_messages = message set at loop start.
+        agent.in_flight_messages = Some(vec![user_msg("in-flight")]);
+        // loop_context_snapshot is empty (not yet set — pre-first-turn).
+        // (default state after Agent::new)
+
+        agent
+            .loop_active
+            .store(true, std::sync::atomic::Ordering::Release);
+
+        let checkpoint = agent.pause().expect("agent should be paused");
+        let restored = checkpoint.restore_messages(agent.custom_message_registry.as_deref());
+
+        assert_eq!(
+            restored.len(),
+            1,
+            "pause must fall back to in_flight_messages when loop_context_snapshot is absent"
+        );
+        match &restored[0] {
+            AgentMessage::Llm(LlmMessage::User(u)) => match &u.content[0] {
+                crate::types::ContentBlock::Text { text } => {
+                    assert_eq!(text, "in-flight");
+                }
+                other => panic!("expected text content, got {other:?}"),
+            },
+            other => panic!("expected user message, got {other:?}"),
+        }
     }
 }

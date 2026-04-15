@@ -49,6 +49,7 @@ fn default_config(stream_fn: Arc<dyn StreamFn>) -> AgentLoopConfig {
         get_api_key: None,
         message_provider: None,
         pending_message_snapshot: Arc::default(),
+        loop_context_snapshot: Arc::default(),
         approve_tool: None,
         approval_mode: swink_agent::ApprovalMode::default(),
         pre_turn_policies: vec![],
