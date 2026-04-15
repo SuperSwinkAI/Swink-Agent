@@ -21,6 +21,8 @@ pub(super) enum GroupOutcome {
     SteeringInterrupt,
     /// Transfer detected; abort remaining groups and end the turn.
     TransferInterrupt,
+    /// Parent cancellation aborted the batch; stop the turn immediately.
+    Aborted,
 }
 
 // ─── Group result collection ────────────────────────────────────────────────
@@ -43,7 +45,25 @@ pub(super) async fn collect_group_results(
         .map(|(idx, handle)| async move { (idx, handle.await) })
         .collect();
 
-    while let Some((idx, join_result)) = futs.next().await {
+    loop {
+        if futs.is_empty() {
+            return GroupOutcome::Continue;
+        }
+
+        let Some((idx, join_result)) = (tokio::select! {
+            biased;
+            () = batch_token.cancelled() => {
+                for handle in &abort_handles {
+                    handle.abort();
+                }
+                while futs.next().await.is_some() {}
+                return GroupOutcome::Aborted;
+            }
+            result = futs.next() => result
+        }) else {
+            return GroupOutcome::Continue;
+        };
+
         if let Err(join_error) = join_result {
             let panic_message = if join_error.is_panic() {
                 let panic_value = join_error.into_panic();
@@ -95,8 +115,6 @@ pub(super) async fn collect_group_results(
             return GroupOutcome::TransferInterrupt;
         }
     }
-
-    GroupOutcome::Continue
 }
 
 // ─── Outcome builders ───────────────────────────────────────────────────────
@@ -188,6 +206,45 @@ pub(super) async fn build_transfer_outcome(
         results: ordered,
         tool_metrics: collected_timings,
         transfer_signal: captured_transfer,
+        injected_messages,
+    }
+}
+
+/// Build an aborted outcome after parent cancellation interrupts a tool batch.
+pub(super) async fn build_aborted_outcome(
+    tool_calls: &[ToolCallInfo],
+    results: Arc<tokio::sync::Mutex<Vec<(usize, ToolResultMessage)>>>,
+    tool_timings: Arc<tokio::sync::Mutex<Vec<crate::metrics::ToolExecMetrics>>>,
+    injected_messages: Vec<AgentMessage>,
+) -> ToolExecOutcome {
+    let all_results = std::mem::take(&mut *results.lock().await);
+    let result_map: HashMap<&str, &ToolResultMessage> = all_results
+        .iter()
+        .map(|(_, result)| (result.tool_call_id.as_str(), result))
+        .collect();
+    let mut ordered: Vec<ToolResultMessage> = Vec::with_capacity(tool_calls.len());
+
+    for tc in tool_calls {
+        if let Some(result) = result_map.get(tc.id.as_str()) {
+            ordered.push((*result).clone());
+        } else {
+            ordered.push(ToolResultMessage {
+                tool_call_id: tc.id.clone(),
+                content: vec![ContentBlock::Text {
+                    text: "tool call cancelled: operation aborted".to_string(),
+                }],
+                is_error: true,
+                timestamp: now_timestamp(),
+                details: serde_json::Value::Null,
+                cache_hint: None,
+            });
+        }
+    }
+
+    let collected_timings = std::mem::take(&mut *tool_timings.lock().await);
+    ToolExecOutcome::Aborted {
+        results: ordered,
+        tool_metrics: collected_timings,
         injected_messages,
     }
 }
