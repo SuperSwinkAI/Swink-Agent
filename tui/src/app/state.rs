@@ -212,4 +212,10 @@ pub struct App {
     pub(crate) conversation_area: Rect,
     /// Visible line height inside the conversation viewport.
     pub(crate) conversation_visible_height: usize,
+    /// Messages steered into the agent while it was already running.
+    /// Held here until `AgentEnd`, then promoted into `messages`.
+    pub(crate) pending_steered: Vec<String>,
+    /// Ticks remaining for the fade-out animation after steered messages are
+    /// consumed. Zero means the overlay is not visible.
+    pub(crate) steered_fade_ticks: u8,
 }

@@ -47,10 +47,25 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         tool_height = tool_height.max(3) + 1;
     }
 
+    // Queued-message overlay: visible while pending_steered is non-empty or
+    // fading out after AgentEnd. Height = 1 line per queued message + 2 borders,
+    // capped at 5 visible lines total.
+    let steered_visible =
+        !app.pending_steered.is_empty() || app.steered_fade_ticks > 0;
+    let steered_height: u16 = if steered_visible {
+        let lines = app.pending_steered.len().max(1) as u16;
+        (lines + 2).min(7)
+    } else {
+        0
+    };
+
     let mut constraints = vec![Constraint::Min(3)]; // Conversation view
 
     if tool_height > 0 {
         constraints.push(Constraint::Length(tool_height));
+    }
+    if steered_height > 0 {
+        constraints.push(Constraint::Length(steered_height));
     }
     constraints.push(Constraint::Length(input_height)); // Input editor
     constraints.push(Constraint::Length(1)); // Status bar
@@ -90,6 +105,15 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         None
     };
 
+    // Steered message overlay (conditional)
+    let steered_area = if steered_height > 0 {
+        let area = chunks[idx];
+        idx += 1;
+        Some(area)
+    } else {
+        None
+    };
+
     // Input
     let input_area = chunks[idx];
     idx += 1;
@@ -121,6 +145,11 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             .render_with_prompts(frame, area, app.pending_plan_approval, trust_name);
     }
 
+    // Render steered message overlay
+    if let Some(area) = steered_area {
+        render_steered_overlay(frame, area, &app.pending_steered, app.steered_fade_ticks);
+    }
+
     // Render input
     let status_hint = match app.status {
         crate::app::AgentStatus::Running => "running...",
@@ -133,6 +162,70 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     // Render status bar
     status_bar::render(frame, app, status_area);
+}
+
+/// Render the queued-message overlay shown while steered messages are in flight
+/// or fading out after they have been consumed by the agent.
+///
+/// - `pending`: messages currently waiting to be processed (non-empty = queued).
+/// - `fade_ticks`: remaining ticks of the fade-out animation (0 = fully gone).
+fn render_steered_overlay(
+    frame: &mut Frame,
+    area: ratatui::layout::Rect,
+    pending: &[String],
+    fade_ticks: u8,
+) {
+    // Fading = steered messages have just been consumed; show dimmed until gone.
+    let fading = pending.is_empty() && fade_ticks > 0;
+
+    let border_color = if fading {
+        Color::DarkGray
+    } else {
+        Color::Yellow
+    };
+
+    let label_style = if fading {
+        Style::default()
+            .fg(Color::DarkGray)
+            .add_modifier(Modifier::DIM)
+    } else {
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD)
+    };
+
+    let content_style = if fading {
+        Style::default()
+            .fg(Color::DarkGray)
+            .add_modifier(Modifier::DIM)
+    } else {
+        Style::default().fg(Color::White)
+    };
+
+    let title = if fading { " Sent " } else { " Queued " };
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(Span::styled(title, label_style))
+        .border_style(Style::default().fg(border_color));
+
+    let messages: Vec<Line> = if fading {
+        vec![Line::from(Span::styled("↑ delivered to agent", content_style))]
+    } else {
+        pending
+            .iter()
+            .map(|msg| {
+                let preview: String = msg.chars().take(120).collect();
+                Line::from(vec![
+                    Span::styled("⏳ ", label_style),
+                    Span::styled(preview, content_style),
+                ])
+            })
+            .collect()
+    };
+
+    let paragraph = Paragraph::new(messages).block(block);
+    frame.render_widget(paragraph, area);
 }
 
 /// Render a centered warning when the terminal is below minimum size.

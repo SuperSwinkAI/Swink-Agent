@@ -21,6 +21,7 @@
 ## Lessons Learned
 
 - **Approval mode is owned by `Agent`** — `App::approval_mode()` reads through to `agent.approval_mode()` and returns `Smart` before `set_agent` is called. Do not add an `App.approval_mode` field; doing so reintroduces the dual-write drift bug (#565). Configure the startup mode via `AgentOptions::with_approval_mode` before building the agent.
+- **Mid-stream user input uses `agent.steer()`** — when `status == Running`, `send_to_agent` calls `agent.steer()` instead of `prompt_stream` (which would error). The text is held in `App::pending_steered` and shown in a "Queued" overlay above the input. At `AgentEnd`, `pending_steered` is drained into `self.messages` as `User` entries and `steered_fade_ticks` triggers a brief fade-out of the overlay. Do not push the `DisplayMessage::User` in `submit_input` while running — that would show the message mid-stream.
 - **Smart approval mode auto-approves trusted tools only** — untrusted tools still prompt even if they are read-only.
 - **Panic hook restores terminal** — without it, a panic leaves terminal in raw mode.
 - **Credentials** — env var checked first, then keychain. Env always wins.

@@ -19,15 +19,18 @@ impl App {
         };
 
         let user_message = AgentMessage::Llm(LlmMessage::User(UserMessage {
-            content: vec![ContentBlock::Text { text }],
+            content: vec![ContentBlock::Text { text: text.clone() }],
             timestamp: timestamp_now(),
             cache_hint: None,
         }));
 
         // If a loop is already running, inject the message as a steering event
         // rather than trying to start a second loop (which would error).
+        // Store the text so we can promote it into the conversation display at
+        // AgentEnd, and so the queued-message overlay can show it in the meantime.
         if self.status == AgentStatus::Running {
             agent.steer(user_message);
+            self.pending_steered.push(text);
             return;
         }
 
@@ -152,6 +155,16 @@ impl App {
                 self.trim_messages_to_recent_turns();
             }
             AgentEvent::AgentEnd { .. } => {
+                // Promote any steered messages into the conversation display now
+                // that the turn they belong to has completed. Start the fade-out.
+                if !self.pending_steered.is_empty() {
+                    for text in self.pending_steered.drain(..) {
+                        self.messages
+                            .push(DisplayMessage::new(MessageRole::User, text));
+                    }
+                    // ~10 ticks ≈ 330 ms at the default 33 ms tick rate.
+                    self.steered_fade_ticks = 10;
+                }
                 self.status = AgentStatus::Idle;
                 self.retry_attempt = None;
                 if let Err(error) = self.auto_save_session() {

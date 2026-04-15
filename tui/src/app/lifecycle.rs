@@ -82,6 +82,8 @@ impl App {
             saved_system_prompt: None,
             conversation_area: Rect::new(0, 0, 0, 0),
             conversation_visible_height: 0,
+            pending_steered: Vec::new(),
+            steered_fade_ticks: 0,
         }
     }
 
@@ -136,6 +138,12 @@ impl App {
             && follow_up.expires_at < Instant::now()
         {
             self.trust_follow_up = None;
+            self.dirty = true;
+        }
+
+        // Tick down the steered-message fade-out overlay.
+        if self.steered_fade_ticks > 0 {
+            self.steered_fade_ticks -= 1;
             self.dirty = true;
         }
 

@@ -130,6 +130,9 @@ A developer reads assistant responses containing fenced code blocks with languag
 - **FR-013**: Fenced code blocks with recognized language labels MUST be syntax-highlighted.
 - **FR-014**: Fenced code blocks without a language label or with an unrecognized label MUST fall back to plain monospace rendering.
 - **FR-015**: Empty or whitespace-only messages MUST NOT be submitted.
+- **FR-016**: When the developer submits a message while the agent is already running (streaming), the message MUST be queued as a steering event and delivered to the agent at the next turn boundary — it MUST NOT produce an error and MUST NOT be lost.
+- **FR-017**: A queued message MUST NOT appear in the main conversation view while the agent is still streaming the current response. It MUST appear in the conversation in correct chronological order once the agent finishes the current turn and picks up the steering input.
+- **FR-018**: While a message is queued (not yet delivered), the TUI MUST display a "Queued" banner above the input editor, showing the pending message text. The banner MUST fade out briefly after the message is delivered, then disappear.
 
 ### Key Entities
 
@@ -138,6 +141,7 @@ A developer reads assistant responses containing fenced code blocks with languag
 - **MessageRole**: The classification of a message's origin (user, assistant, tool, error, system) that determines its visual treatment.
 - **MarkdownRenderer**: The component that transforms markdown text into styled terminal output, handling headers, emphasis, code, lists, and word wrapping.
 - **InputHistory**: An ordered collection of previously submitted messages that can be navigated with Up/Down keys for recall.
+- **SteeredMessageOverlay**: A transient banner rendered above the input editor while mid-stream submissions are queued in `pending_steered`. Fades out after delivery via `steered_fade_ticks` countdown.
 
 ## Success Criteria *(mandatory)*
 

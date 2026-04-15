@@ -514,10 +514,14 @@ impl App {
             }
         }
 
-        self.messages
-            .push(DisplayMessage::new(MessageRole::User, text.clone()));
-
-        self.trim_messages_to_recent_turns();
+        // Only add to the visible conversation immediately when the agent is idle.
+        // Mid-stream submissions are held in `pending_steered` by `send_to_agent`
+        // and promoted into `messages` at AgentEnd, after the current response.
+        if self.status != AgentStatus::Running {
+            self.messages
+                .push(DisplayMessage::new(MessageRole::User, text.clone()));
+            self.trim_messages_to_recent_turns();
+        }
         self.conversation.auto_scroll = true;
         self.send_to_agent(text);
     }
