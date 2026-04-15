@@ -150,6 +150,11 @@ MSRV **1.88** (edition 2024). Common workspace deps are centralized in root `Car
 
 - `DefaultCredentialResolver` can reuse a per-key `SingleFlightTokenSource`, but the credential store remains the source of truth. Clear the token source's cached value before resolving an expired key from the store, or a previously refreshed token can mask later external store updates.
 
+### Atomic FS (`src/atomic_fs.rs`)
+
+- `atomic_fs` must keep replacement to a single `std::fs::rename` call on Windows. Delete-then-rename widens the crash window enough to lose both old and new files.
+- `atomic_fs` only syncs the parent directory on Unix where directory `sync_all()` is supported. Docs for callers must not promise cross-platform post-rename durability beyond the file-content sync and rename step.
+
 ### Checkpoint / Persistence
 
 - Checkpoint and SessionStore now support CustomMessage persistence via `custom_messages` field and `save_full`/`load_full`. Old checkpoints without `custom_messages` field deserialize fine (backward compat via `#[serde(default)]`).
