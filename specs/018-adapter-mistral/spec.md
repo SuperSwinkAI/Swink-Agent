@@ -90,6 +90,10 @@ A developer encounters various error conditions when communicating with the Mist
 - Mistral API returns an error body with a different JSON schema than OpenAI's `{"error": {"message": ...}}` format — error classifier handles gracefully.
 - Mistral model names not in the catalog can still be used via direct `ModelSpec` construction — unknown model IDs pass through without error.
 - Stream cancellation mid-response correctly closes open text and tool-call blocks via the shared finalization layer.
+- **Tool-call start timing**: The adapter buffers tool call data until both a `content_index` and a tool name are known before emitting `ToolCallStart`. A `ToolCallStart` event is never emitted with an empty or unknown tool name.
+- **`content_filter` finish reason is terminal**: When the provider returns `finish_reason: "content_filter"`, the adapter treats this as a terminal error condition and emits `AssistantMessageEvent::error_content_filtered()`. It does not fall through to the normal `StopReason::Stop` mapping.
+- **Shared transport layer**: This adapter is implemented atop a shared `openai_compat` module that handles SSE parsing, tool call accumulation, and finish-reason classification. The adapter provides provider-specific configuration (endpoint, auth, model mapping) to this shared shell.
+- **Base URL trailing slash normalization**: Trailing slashes on the configured base URL are stripped before constructing request paths, preventing double-slash errors (e.g., `https://api.openai.com/v1/` → `https://api.openai.com/v1`).
 
 ## Requirements *(mandatory)*
 

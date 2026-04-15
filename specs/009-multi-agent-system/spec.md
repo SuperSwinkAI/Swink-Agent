@@ -74,7 +74,7 @@ A developer uses an orchestrator to manage the lifecycle of multiple agents. The
 
 ### Edge Cases
 
-- What happens when two agents are registered with the same name — the second replaces the first (standard HashMap::insert behavior). Enables re-registration after restart or reconfiguration.
+- What happens when two agents are registered with the same name — the registration panics and is rejected; duplicate names are not allowed.
 - How does the system handle circular messaging — no deadlock; mailbox send is non-blocking (push to `Arc<Mutex<Vec>>`). Circular messaging works without issues.
 - What happens when a SubAgent tool call times out — the parent's cancellation token cancels the child via `tokio::select!`; child agent is aborted and returns an error result.
 - How does the orchestrator handle an agent that panics/errors — the supervisor policy's `on_agent_error` decides: Restart (recreate agent, up to max_restarts) or Escalate (report error, keep agent alive).
@@ -115,14 +115,14 @@ A developer uses an orchestrator to manage the lifecycle of multiple agents. The
 
 ### Session 2026-03-20
 
-- Q: Should duplicate agent name registration replace or reject? → A: Replace — second registration silently replaces the first (standard HashMap::insert).
+- Q: Should duplicate agent name registration replace or reject? → A: Reject — duplicate registration panics; agent names must be unique within a registry.
 - Q: Does circular messaging cause deadlock? → A: No; mailbox send is non-blocking (push to mutex-guarded Vec).
 - Q: Does SubAgent timeout cancel the child? → A: Yes; parent's cancellation token cancels child via `tokio::select!`.
 - Q: How does orchestrator handle agent errors? → A: Supervisor policy decides: Restart (up to max_restarts) or Escalate.
 
 ## Assumptions
 
-- Agent names are unique within a registry. Registering a duplicate name replaces the existing agent (not rejected).
+- Agent names are unique within a registry. Registering a duplicate name panics and is rejected.
 - Inter-agent messaging is asynchronous and non-blocking — fire-and-forget with delivery confirmation.
 - SubAgent wraps a complete agent invocation (prompt → run → result), not individual tool calls.
 - The orchestrator is optional — simple multi-agent setups can use registry + messaging directly.

@@ -149,3 +149,4 @@ The approval system needs to determine whether a tool requires approval. Each to
 - Plan mode and approval mode are independent — plan mode restricts available tools, approval mode controls prompting for the tools that are available.
 - The agent can accept rejection signals and adjust its behavior (e.g., choose alternative tools or inform the user).
 - The "PLAN" label or distinct styling is part of the color theme and respects user theme customization from spec 025.
+- **Public API surface**: The `swink-agent-tui` crate exposes a narrow public API: `App`, `TuiConfig`, `TuiError`, `JsonlSessionStore`, and the `launch()` / `launch_with_session()` entry points. Internal modules (`commands`, `editor`, `session`, `ui`) are private implementation details and are not part of the stable consumer API.

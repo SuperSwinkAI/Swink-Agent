@@ -117,6 +117,7 @@ A developer uses Gemma 4 E2B via direct local inference and wants tool calling s
 - What happens when thinking delimiters appear in the model's regular text output (e.g., the model describes its own delimiter format in a response)? The parser should only activate on actual thinking channel markers, not on escaped or quoted references.
 - What happens when the model produces an extremely long thinking block? The thinking parser streams content incrementally via ThinkingDelta events without accumulating the full block in memory. No hard size limit is enforced at the parser level — consumers (agent loop, TUI) apply their own truncation policies.
 - What happens when a user sets conflicting environment variables (e.g., a SmolLM3-3B repo with Gemma 4 E2B filename)? The system should attempt to load the specified configuration and surface any resulting errors clearly.
+- **Malformed `<think>` delimiters**: The thinking-mode parser handles malformed delimiter sequences robustly: unclosed `<think>` tags (no matching `</think>`) are treated as plain text rather than thinking content; stray `</think>` delimiters without a matching opening tag are ignored. Neither case produces spurious thinking events.
 
 ## Requirements *(mandatory)*
 

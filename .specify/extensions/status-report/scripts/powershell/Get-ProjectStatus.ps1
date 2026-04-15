@@ -22,6 +22,12 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+# Define Unicode symbols as escape sequences so the script works
+# regardless of file encoding (BOM or no BOM on Windows).
+$SYM_CHECK  = [string][char]0x2713  # ✓
+$SYM_CIRCLE = [string][char]0x25CB  # ○
+$SYM_BULLET = [string][char]0x25CF  # ●
+
 # Show help if requested
 if ($Help) {
     Write-Output @"
@@ -335,19 +341,19 @@ function Write-Cache {
 
     foreach ($f in $Features) {
         $d = $FeatureData[$f]
-        $specSym  = if ($d.has_spec)  { "✓" } else { "-" }
-        $planSym  = if ($d.has_plan)  { "✓" } else { "-" }
-        $tasksSym = if ($d.has_tasks) { "✓" } else { "-" }
+        $specSym  = if ($d.has_spec)  { $SYM_CHECK } else { "-" }
+        $planSym  = if ($d.has_plan)  { $SYM_CHECK } else { "-" }
+        $tasksSym = if ($d.has_tasks) { $SYM_CHECK } else { "-" }
 
         $implementStr = if (-not $d.has_tasks) {
             "-"
         } elseif ($d.tasks_total -eq 0) {
-            "○ Ready"
+            "$SYM_CIRCLE Ready"
         } elseif ($d.tasks_completed -eq $d.tasks_total) {
-            "✓ Complete"
+            "$SYM_CHECK Complete"
         } else {
             $pct = [int]($d.tasks_completed * 100 / $d.tasks_total)
-            "● $($d.tasks_completed)/$($d.tasks_total) ($pct%)"
+            "$SYM_BULLET $($d.tasks_completed)/$($d.tasks_total) ($pct%)"
         }
 
         $featCol = $f.PadRight($colWidth)

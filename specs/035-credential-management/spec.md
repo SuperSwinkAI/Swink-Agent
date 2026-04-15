@@ -103,7 +103,7 @@ A library consumer deploys an agent in a headless server environment where no br
 - **FR-003**: System MUST provide a built-in in-memory credential store, seeded at agent instantiation via configuration. This is the only built-in store; consumers may implement the trait for custom backends.
 - **FR-007**: System MUST provide a credential resolver that checks credential validity (expiry) before returning it to the requesting tool.
 - **FR-008**: System MUST automatically refresh expired OAuth2 credentials using the stored refresh token, without tool involvement.
-- **FR-009**: When multiple concurrent requests need to refresh the same credential, the system MUST deduplicate to a single refresh request and share the result.
+- **FR-009**: When multiple concurrent requests need to refresh the same credential, the system MUST deduplicate to a single refresh request and share the result. **Single-flight token refresh**: The credential resolver deduplicates concurrent refresh requests using a `SingleFlightTokenSource` wrapper. When multiple callers request the same expired credential simultaneously, only one outbound refresh HTTP call is made; all callers share the same resulting future and receive the token together. This prevents thundering-herd token refreshes when many tool executions start concurrently.
 - **FR-010**: System MUST support an authorization handler abstraction for initiating interactive OAuth2 authorization code flows (browser-based).
 - **FR-011**: When no authorization handler is configured and a credential is missing, the system MUST return a clear error without attempting interactive authorization.
 - **FR-012**: System MUST integrate with the tool dispatch pipeline so that tools declaring auth requirements have credentials resolved before execution.
@@ -120,6 +120,7 @@ A library consumer deploys an agent in a headless server environment where no br
 - **FR-021**: After a successful OAuth2 token refresh, the updated credential MUST be written back to the credential store so subsequent executions use the new token.
 - **FR-022**: The credential resolver MUST treat bearer tokens without an expiry timestamp as perpetually valid (no expiry check).
 - **FR-023**: The credential resolver MUST apply a configurable expiry buffer (default: 60 seconds) — credentials expiring within the buffer period are treated as expired and refreshed proactively.
+- **FR-024**: **ToolMiddleware auth and metadata delegation**: When a tool is wrapped in `ToolMiddleware`, the middleware MUST delegate `auth_config()` and `metadata()` calls to the inner tool unchanged. Without this delegation, the credential resolver cannot discover what credentials the wrapped tool requires, causing auth to silently fail.
 
 ### Key Entities
 

@@ -1,6 +1,6 @@
 # Status Report — Spec Kit Extension
 
-A [Spec Kit](https://github.com/github/spec-kit) extension that adds the `/speckit.status.report` command, giving you an at-a-glance view of project and feature progress across the spec-driven development workflow.
+A [Spec Kit](https://github.com/github/spec-kit) extension that adds the `/speckit.status-report.show` command, giving you an at-a-glance view of project and feature progress across the spec-driven development workflow.
 
 ## Features
 
@@ -17,13 +17,13 @@ A [Spec Kit](https://github.com/github/spec-kit) extension that adds the `/speck
 directly from GitHub:
 
 ```bash
-specify extension add --from https://github.com/Open-Agent-Tools/spec-kit-status/archive/refs/tags/v1.1.5.zip
+specify extension add --from https://github.com/Open-Agent-Tools/spec-kit-status/archive/refs/tags/v1.2.5.zip EXTENSION
 ```
 
 ## Usage
 
 ```
-/speckit.status.report [feature] [flags]
+/speckit.status-report.show [feature] [flags]
 ```
 
 ### Flags
@@ -39,12 +39,12 @@ specify extension add --from https://github.com/Open-Agent-Tools/spec-kit-status
 ### Examples
 
 ```
-/speckit.status.report
-/speckit.status.report --all
-/speckit.status.report --verbose
-/speckit.status.report 002
-/speckit.status.report 002-dashboard
-/speckit.status.report --feature 002-dashboard --json
+/speckit.status-report.show
+/speckit.status-report.show --all
+/speckit.status-report.show --verbose
+/speckit.status-report.show 002
+/speckit.status-report.show 002-dashboard
+/speckit.status-report.show --feature 002-dashboard --json
 ```
 
 ### Output

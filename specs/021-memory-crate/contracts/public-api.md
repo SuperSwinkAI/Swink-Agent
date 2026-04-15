@@ -30,9 +30,9 @@ pub struct SessionMeta {
 
 ```rust
 pub trait SessionStore: Send + Sync {
-    fn save(&self, id: &str, meta: &SessionMeta, messages: &[LlmMessage]) -> io::Result<()>;
-    fn append(&self, id: &str, messages: &[LlmMessage]) -> io::Result<()>;
-    fn load(&self, id: &str) -> io::Result<(SessionMeta, Vec<LlmMessage>)>;
+    fn save(&self, id: &str, meta: &SessionMeta, messages: &[AgentMessage]) -> io::Result<()>;
+    fn append(&self, id: &str, messages: &[AgentMessage]) -> io::Result<()>;
+    fn load(&self, id: &str, registry: Option<&CustomMessageRegistry>) -> io::Result<(SessionMeta, Vec<AgentMessage>)>;
     fn list(&self) -> io::Result<Vec<SessionMeta>>;
     fn delete(&self, id: &str) -> io::Result<()>;
     fn save_interrupt(&self, id: &str, state: &InterruptState) -> io::Result<()>;
@@ -46,7 +46,7 @@ pub trait SessionStore: Send + Sync {
 - `save` overwrites any existing session with the same ID.
 - `append` updates the `updated_at` timestamp on the stored metadata.
 - `load` returns `io::ErrorKind::NotFound` for missing sessions, `io::ErrorKind::InvalidData` for empty files.
-- `CustomMessage` values in `messages` are silently filtered out (not persisted).
+- `AgentMessage::Custom` variants are persisted with a `_custom: true` marker in JSONL. On load, `registry` is required to deserialize them — if `registry` is `None`, custom message lines are skipped with a warning.
 
 ---
 
@@ -55,9 +55,9 @@ pub trait SessionStore: Send + Sync {
 ```rust
 #[async_trait]
 pub trait AsyncSessionStore: Send + Sync {
-    async fn save(&self, id: &str, meta: &SessionMeta, messages: &[LlmMessage]) -> io::Result<()>;
-    async fn append(&self, id: &str, messages: &[LlmMessage]) -> io::Result<()>;
-    async fn load(&self, id: &str) -> io::Result<(SessionMeta, Vec<LlmMessage>)>;
+    async fn save(&self, id: &str, meta: &SessionMeta, messages: &[AgentMessage]) -> io::Result<()>;
+    async fn append(&self, id: &str, messages: &[AgentMessage]) -> io::Result<()>;
+    async fn load(&self, id: &str, registry: Option<&CustomMessageRegistry>) -> io::Result<(SessionMeta, Vec<AgentMessage>)>;
     async fn list(&self) -> io::Result<Vec<SessionMeta>>;
     async fn delete(&self, id: &str) -> io::Result<()>;
 }

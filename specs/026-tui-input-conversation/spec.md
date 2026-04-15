@@ -109,6 +109,7 @@ A developer reads assistant responses containing fenced code blocks with languag
 - How does the conversation view handle a single extremely long line — word-wrap logic fits text to viewport width.
 - What happens when the developer submits an empty message — `input.trim().is_empty()` check prevents submission of whitespace-only messages.
 - How does input history behave when a recalled message is edited then Up pressed — editing a recalled message leaves history unmodified; next Up shows the next history item.
+- **TurnEnd bridge**: When the agent emits `TurnEnd` events containing tool results, the TUI appends each tool result message to the conversation display. The TUI then trims the in-memory conversation history to the 20 most recent turns to bound memory usage in long-running sessions.
 
 ## Requirements *(mandatory)*
 

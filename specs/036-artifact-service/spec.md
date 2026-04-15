@@ -115,6 +115,8 @@ A library consumer wants to remove artifacts that are no longer needed — eithe
 
 ## Clarifications
 
+**Internal types in public surface**: The `swink-agent-artifacts` crate exposes `MetaFile`, `VersionRecord`, and the `storage_err()` helper as `pub` items to satisfy Rust visibility requirements. These are implementation details of the storage layer and are not part of the stable consumer API — consumers interact via the `ArtifactStore` and `StreamingArtifactStore` traits only.
+
 ### Session 2026-04-02
 
 - Q: How should `ArtifactSaved` integrate with the event system? → A: New `AgentEvent::ArtifactSaved` variant on the existing enum, behind the feature gate.

@@ -139,6 +139,10 @@ When the provider stops mid-response because it hit the output token limit and t
 - Does emergency overflow recovery emit TurnStart/TurnEnd events for the retry — no. The recovery is internal to the stream error handling path. The retry re-runs the transform + stream within the same turn. Only the `ContextCompacted` event is emitted during recovery.
 - What happens if the cancellation token fires during emergency overflow recovery — the loop checks cancellation between compaction and the retry stream call. If cancelled, recovery is aborted and the loop emits `Aborted` stop reason, consistent with existing cancellation semantics at turn boundaries.
 - What if transformers run but neither reports compaction (both return `None`) — skip the retry and surface the error immediately. Compaction was ineffective; retrying would hit the same overflow.
+- **Steering message preservation**: Tool-dispatch workers use a two-step pattern — `has_steering()` to check without draining, then a drain-and-handoff before setting the interrupt flag. This prevents steering messages already drained by a worker from being silently dropped. A second `poll_steering()` call cannot recover already-drained messages.
+- **Three-phase tool dispatch**: Tool dispatch is split into three explicit phases: pre-process (argument transformation, policy evaluation, approval), execute (concurrent tool invocation), and collect (gathering results and emitting events). These correspond to separate modules in the implementation.
+- **Approval callback panic isolation**: Approval futures are wrapped in `AssertUnwindSafe` + `catch_unwind`. A panicking approval callback is treated as a denial rather than crashing the loop.
+- **Interrupt abort grace period**: After a steering interrupt is detected, tool tasks are given a 50 ms grace period (`INTERRUPT_ABORT_GRACE`) to finish before being forcibly aborted. This prevents indefinite hangs on blocking tools.
 
 ## Requirements *(mandatory)*
 

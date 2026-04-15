@@ -97,6 +97,7 @@ A developer uses the agent loop with a local model. The agent loop produces mess
 - What happens when two processes attempt to download the same model simultaneously — last-writer-wins; no file locking. Single-process assumption documented.
 - How does inference handle input that exceeds the local model's context window — input is silently truncated to fit, keeping the most recent messages.
 - What happens when the embedding model receives extremely long text — returns an error indicating the input exceeds the model's maximum input length.
+- **Stream ends without `Response::Done`**: If the upstream inference stream ends (EOF) without a `Response::Done` frame — e.g., due to process termination or network interruption — the adapter emits a terminal error event rather than silently completing the stream.
 
 ## Requirements *(mandatory)*
 
@@ -151,6 +152,7 @@ A developer uses the agent loop with a local model. The agent loop produces mess
 - Model weights are downloaded from a public source and cached in a platform-appropriate location (e.g., user cache directory).
 - The local model's output quality is lower than large cloud models — this crate prioritizes offline availability and privacy over output quality.
 - Quantized (4-bit) weights are used to balance quality and resource requirements.
+- Default model configuration values (context window, temperature, quantization settings) are centralized in the `preset` module via `default_chat_preset_defaults()` and `default_embedding_preset_defaults()`. Per-model or per-adapter duplication of defaults is avoided.
 
 ## Addendum: Gemma 4 Deferred for local-llm (2026-04-04)
 

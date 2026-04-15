@@ -188,7 +188,7 @@ A developer loads only a subset of a session's entries — the last N entries, e
 - **FR-007**: The compactor MUST skip compaction when the conversation is already within the context budget.
 - **FR-008**: The system MUST associate metadata with each session: identifier, title, creation timestamp, and last-updated timestamp.
 - **FR-009**: The system MUST return a clear error when attempting to load a non-existent session.
-- **FR-010**: The system MUST support appending messages to an existing session without rewriting the entire file.
+- **FR-010**: The system MUST support appending messages to an existing session without rewriting the entire file. When `save()` rewrites an existing session file, it preserves non-Message rich entry types (`ModelChange`, `Label`, `Compaction`, `Custom`, and `State` entries) while replacing Message entries. `save_entries()` preserves only `State` entries during rewrite.
 - **FR-011**: The system MUST support rich session entry types: `Message`, `ModelChange`, `ThinkingLevelChange`, `Compaction`, `Label`, and `Custom`, each with a timestamp.
 - **FR-012**: Rich entry types (non-Message) MUST NOT be sent to the LLM — only `Message` entries participate in `convert_to_llm`.
 - **FR-013**: The JSONL format MUST use an `entry_type` discriminator field for rich entries, with backward compatibility for old-format sessions (lines without `entry_type` are interpreted as `Message`).
@@ -244,6 +244,10 @@ A developer loads only a subset of a session's entries — the last N entries, e
 
 - Q: How should optimistic concurrency checking work in `save()`? → A: Always check — compare `meta.sequence` against the stored file's sequence. If they don't match, the save is rejected with an error. No API change needed; callers use the sequence from their loaded `SessionMeta`, which matches unless another writer intervened. New sessions (no existing file) skip the check.
 - Q: Should `SessionEntry::Message` flatten `AgentMessage` fields or nest under a `data` key? → A: Nest — `{"entry_type": "message", "data": {AgentMessage fields}}`. Avoids field name collisions with `entry_type` and simplifies backward compatibility (old lines without `entry_type` are raw `AgentMessage`, distinct from nested format).
+
+### Session 2026-04-15
+
+- **Custom message persistence**: `SessionStore::save()` and `load()` operate on `AgentMessage` (not `LlmMessage`), which includes `AgentMessage::Custom` variants. Custom messages are serialized with a `_custom: true` marker in JSONL. Deserialization requires a `CustomMessageRegistry` at load time — without one, custom messages cannot be restored. Callers must supply a compatible registry when loading sessions that contain custom messages.
 
 ## Assumptions
 
