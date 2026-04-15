@@ -275,7 +275,7 @@ fn operating_mode_field_is_writable() {
 #[test]
 fn default_approval_mode_is_smart() {
     let app = make_app();
-    assert_eq!(app.approval_mode, ApprovalMode::Smart);
+    assert_eq!(app.approval_mode(), ApprovalMode::Smart);
 }
 
 #[test]
@@ -295,13 +295,10 @@ fn approval_mode_variants_are_distinct() {
 }
 
 #[test]
-fn approval_mode_field_is_writable() {
-    let mut app = make_app();
-    app.approval_mode = ApprovalMode::Smart;
-    assert_eq!(app.approval_mode, ApprovalMode::Smart);
-
-    app.approval_mode = ApprovalMode::Bypassed;
-    assert_eq!(app.approval_mode, ApprovalMode::Bypassed);
+fn approval_mode_is_readable() {
+    let app = make_app();
+    // Default is Smart (no agent installed).
+    assert_eq!(app.approval_mode(), ApprovalMode::Smart);
 }
 
 #[test]
@@ -313,8 +310,6 @@ fn session_trusted_tools_starts_empty() {
 #[test]
 fn session_trusted_tools_tracks_tool_names() {
     let mut app = make_app();
-    app.approval_mode = ApprovalMode::Smart;
-
     app.session_trusted_tools.insert("ReadFile".to_string());
     app.session_trusted_tools.insert("ListDir".to_string());
 
@@ -332,7 +327,6 @@ fn smart_mode_trust_semantics() {
     // Tools NOT in the set require approval prompts.
     // This mirrors the logic in `handle_approval_request`.
     let mut app = make_app();
-    app.approval_mode = ApprovalMode::Smart;
     app.session_trusted_tools.insert("ReadFile".to_string());
 
     let trusted = app.session_trusted_tools.contains("ReadFile");

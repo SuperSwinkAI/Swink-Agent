@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 use ratatui::layout::Rect;
 use tokio::sync::{mpsc, oneshot};
 
-use swink_agent::{Agent, ToolApproval, ToolApprovalRequest};
+use swink_agent::{Agent, ApprovalMode, ToolApproval, ToolApprovalRequest};
 
 use crate::config::TuiConfig;
 use crate::session::JsonlSessionStore;
@@ -67,7 +67,6 @@ impl App {
             approval_rx,
             approval_tx,
             pending_approval: None,
-            approval_mode: swink_agent::ApprovalMode::default(),
             context_budget: 0,
             context_tokens_used: 0,
             selected_tool_block: None,
@@ -172,6 +171,19 @@ impl App {
         self.model_index = 0;
         self.context_budget = 100_000;
         self.agent = Some(agent);
+    }
+
+    /// Return the current approval mode.
+    ///
+    /// Reads through to the underlying [`Agent`]. Before [`set_agent`](Self::set_agent) is
+    /// called, returns [`ApprovalMode::default()`] (Smart). Pass the desired mode to
+    /// [`swink_agent::AgentOptions::with_approval_mode`] before constructing the agent to
+    /// control startup behavior.
+    pub fn approval_mode(&self) -> ApprovalMode {
+        self.agent
+            .as_ref()
+            .map(Agent::approval_mode)
+            .unwrap_or_default()
     }
 
     /// Get a clone of the approval request sender for use in the agent callback.

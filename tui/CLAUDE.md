@@ -20,6 +20,7 @@
 
 ## Lessons Learned
 
+- **Approval mode is owned by `Agent`** — `App::approval_mode()` reads through to `agent.approval_mode()` and returns `Smart` before `set_agent` is called. Do not add an `App.approval_mode` field; doing so reintroduces the dual-write drift bug (#565). Configure the startup mode via `AgentOptions::with_approval_mode` before building the agent.
 - **Smart approval mode auto-approves trusted tools only** — untrusted tools still prompt even if they are read-only.
 - **Panic hook restores terminal** — without it, a panic leaves terminal in raw mode.
 - **Credentials** — env var checked first, then keychain. Env always wins.
