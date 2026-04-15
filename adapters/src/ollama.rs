@@ -528,43 +528,49 @@ struct StreamState {
 
 /// Convert a byte stream into a stream of complete NDJSON lines.
 ///
-/// Yields `Ok(line)` for each complete line and `Err(message)` if the
-/// underlying `reqwest` byte stream reports a transport-level failure.
-/// A transport error is terminal — downstream consumers must stop after
-/// observing one.
+/// Yields `Ok(line)` for each complete line and `Err(message)` for any
+/// terminal transport or UTF-8 decoding failure.
 fn ndjson_lines(
     byte_stream: impl Stream<Item = Result<bytes::Bytes, reqwest::Error>> + Send + 'static,
 ) -> Pin<Box<dyn Stream<Item = Result<String, String>> + Send + 'static>> {
     Box::pin(stream::unfold(
-        (Box::pin(byte_stream), String::new(), false),
+        (Box::pin(byte_stream), Vec::<u8>::new(), false),
         |(mut stream, mut buf, mut errored)| async move {
             if errored {
                 return None;
             }
             loop {
                 // Check if we have a complete line in the buffer
-                if let Some(pos) = buf.find('\n') {
-                    let line_end = if pos > 0 && buf.as_bytes().get(pos - 1) == Some(&b'\r') {
-                        pos - 1
-                    } else {
-                        pos
-                    };
-                    let line: String = buf[..line_end].to_string();
-                    buf.drain(..=pos);
-                    if !line.is_empty() {
-                        return Some((Ok(line), (stream, buf, errored)));
+                if let Some(pos) = buf.iter().position(|&byte| byte == b'\n') {
+                    let remainder = buf.split_off(pos + 1);
+                    let mut line = std::mem::replace(&mut buf, remainder);
+
+                    line.pop(); // trailing '\n'
+                    if line.last() == Some(&b'\r') {
+                        line.pop();
                     }
-                    continue;
+
+                    if line.is_empty() {
+                        continue;
+                    }
+
+                    match String::from_utf8(line) {
+                        Ok(line) => return Some((Ok(line), (stream, buf, errored))),
+                        Err(err) => {
+                            errored = true;
+                            buf.clear();
+                            return Some((
+                                Err(format!("invalid UTF-8 in NDJSON line: {err}")),
+                                (stream, buf, errored),
+                            ));
+                        }
+                    }
                 }
 
                 // Need more data
                 match stream.next().await {
                     Some(Ok(bytes)) => {
-                        // Attempt zero-copy UTF-8 conversion
-                        match std::str::from_utf8(&bytes) {
-                            Ok(s) => buf.push_str(s),
-                            Err(_) => buf.push_str(&String::from_utf8_lossy(&bytes)),
-                        }
+                        buf.extend_from_slice(&bytes);
                     }
                     Some(Err(err)) => {
                         // Transport failure — surface immediately as a
@@ -579,9 +585,31 @@ fn ndjson_lines(
                     }
                     None => {
                         // Stream ended cleanly — flush remaining buffer
-                        let trimmed = buf.trim();
+                        let trimmed = buf
+                            .iter()
+                            .position(|byte| !byte.is_ascii_whitespace())
+                            .map_or(&[][..], |start| {
+                                let end = buf
+                                    .iter()
+                                    .rposition(|byte| !byte.is_ascii_whitespace())
+                                    .expect("start implies a non-whitespace byte")
+                                    + 1;
+                                &buf[start..end]
+                            });
                         if !trimmed.is_empty() {
-                            let line = trimmed.to_string();
+                            let line = match String::from_utf8(trimmed.to_vec()) {
+                                Ok(line) => line,
+                                Err(err) => {
+                                    errored = true;
+                                    buf.clear();
+                                    return Some((
+                                        Err(format!(
+                                            "invalid UTF-8 in trailing NDJSON line: {err}"
+                                        )),
+                                        (stream, buf, errored),
+                                    ));
+                                }
+                            };
                             buf.clear();
                             return Some((Ok(line), (stream, buf, errored)));
                         }
@@ -680,6 +708,27 @@ mod tests {
 
         assert_eq!(lines.next().await.unwrap().unwrap(), "hello");
         assert_eq!(lines.next().await.unwrap().unwrap(), "world");
+        assert!(lines.next().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn ndjson_preserves_split_utf8_across_chunks() {
+        let prefix = br#"{"message":"caf"#.to_vec();
+        let suffix = br#""}"#.to_vec();
+        let accent = "é".as_bytes();
+        let bytes_stream = stream::iter(vec![
+            Ok(bytes::Bytes::from(prefix)),
+            Ok(bytes::Bytes::from(vec![accent[0]])),
+            Ok(bytes::Bytes::from({
+                let mut tail = vec![accent[1]];
+                tail.extend_from_slice(&suffix);
+                tail.extend_from_slice(b"\n");
+                tail
+            })),
+        ]);
+        let mut lines = ndjson_lines(bytes_stream);
+
+        assert_eq!(lines.next().await.unwrap().unwrap(), r#"{"message":"café"}"#);
         assert!(lines.next().await.is_none());
     }
 
