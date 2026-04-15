@@ -202,7 +202,10 @@ fn preserve_for_message_save(line: &str) -> bool {
 }
 
 fn preserve_for_entry_save(line: &str) -> bool {
-    matches!(SessionRecord::parse(line), Ok(SessionRecord::State(_)))
+    matches!(
+        SessionRecord::parse(line),
+        Ok(SessionRecord::State(_) | SessionRecord::Custom(_))
+    )
 }
 
 fn save_messages_with_hooks<AfterValidation, WriteOp>(
@@ -1315,6 +1318,86 @@ mod tests {
         );
     }
 
+    #[test]
+    fn save_entries_preserves_existing_custom_message_envelopes() {
+        use swink_agent::{CustomMessage, CustomMessageRegistry};
+
+        #[derive(Debug)]
+        struct TestCustomMsg {
+            data: String,
+        }
+
+        impl CustomMessage for TestCustomMsg {
+            fn as_any(&self) -> &dyn std::any::Any {
+                self
+            }
+
+            fn type_name(&self) -> Option<&str> {
+                Some("TestCustomMsg")
+            }
+
+            fn to_json(&self) -> Option<serde_json::Value> {
+                Some(serde_json::json!({ "data": self.data }))
+            }
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let store = JsonlSessionStore::new(dir.path().to_path_buf()).unwrap();
+
+        let meta = fresh_meta("preserve-entry-custom");
+        let messages = vec![
+            user_msg("hello", 1),
+            AgentMessage::Custom(Box::new(TestCustomMsg {
+                data: "custom-payload".to_string(),
+            })),
+        ];
+        store
+            .save("preserve-entry-custom", &meta, &messages)
+            .unwrap();
+
+        let (loaded_meta, _) = store.load("preserve-entry-custom", None).unwrap();
+        let entries = vec![
+            SessionEntry::Message(LlmMessage::User(swink_agent::UserMessage {
+                content: vec![swink_agent::ContentBlock::Text {
+                    text: "updated".to_string(),
+                }],
+                timestamp: 2,
+                cache_hint: None,
+            })),
+            SessionEntry::Label {
+                text: "kept".to_string(),
+                message_index: 0,
+                timestamp: 3,
+            },
+        ];
+
+        store
+            .save_entries("preserve-entry-custom", &loaded_meta, &entries)
+            .unwrap();
+
+        let mut registry = CustomMessageRegistry::new();
+        registry.register(
+            "TestCustomMsg",
+            Box::new(|val: serde_json::Value| {
+                let data = val
+                    .get("data")
+                    .and_then(|value| value.as_str())
+                    .ok_or_else(|| "missing data".to_string())?;
+                Ok(Box::new(TestCustomMsg {
+                    data: data.to_string(),
+                }) as Box<dyn CustomMessage>)
+            }),
+        );
+
+        let (_, loaded_messages) = store
+            .load("preserve-entry-custom", Some(&registry))
+            .unwrap();
+        assert_eq!(loaded_messages.len(), 2, "message plus preserved custom");
+        assert!(matches!(loaded_messages[0], AgentMessage::Llm(_)));
+        let custom = loaded_messages[1].downcast_ref::<TestCustomMsg>().unwrap();
+        assert_eq!(custom.data, "custom-payload");
+    }
+
     fn user_msg(text: &str, ts: u64) -> AgentMessage {
         AgentMessage::Llm(LlmMessage::User(swink_agent::UserMessage {
             content: vec![swink_agent::ContentBlock::Text {
@@ -1441,7 +1524,7 @@ mod tests {
         let (validated_tx, validated_rx) = mpsc::channel();
         let (resume_tx, resume_rx) = mpsc::channel();
 
-        let thread_path = path.clone();
+        let thread_path = path;
         let thread_meta = stale_meta.clone();
         let paused_writer = thread::spawn(move || {
             let messages = vec![user_msg("writer-1", 2)];
@@ -1462,7 +1545,7 @@ mod tests {
         validated_rx.recv().unwrap();
 
         let competitor_messages = vec![user_msg("writer-2", 3)];
-        let competitor_meta = stale_meta.clone();
+        let competitor_meta = stale_meta;
         let competitor =
             thread::spawn(move || store.save("stale-race", &competitor_meta, &competitor_messages));
 
