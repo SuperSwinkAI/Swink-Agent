@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.7] - 2026-04-16
+
+### Fixed
+- Remove `version` field from internal workspace path **dev-dependencies**
+  (8 entries across the workspace). Dev-deps are stripped on publish, so
+  adding `version` does nothing useful, and worse — cargo tries to resolve
+  them via the registry during packaging, failing for crates that aren't on
+  crates.io yet. The v0.7.6 publish job failed at dry-run on swink-agent
+  itself with "no matching package named `swink-agent-adapters` found"
+  because the root crate's dev-dep on adapters was given a version field.
+- Fix topological publish order in `release.yml`: `swink-agent-adapters`
+  was published before `swink-agent-auth`, but adapters has a regular dep
+  on auth. Reordered to: tier 1 (auth, memory, policies, artifacts, eval,
+  local-llm, mcp, patterns, plugin-web) → tier 2 (adapters) → tier 3 (tui).
+  This bug would have surfaced if v0.7.6 had reached the publish step.
+
 ## [0.7.6] - 2026-04-16
 
 ### Fixed
@@ -114,7 +130,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Major additions: Gemma 4 local inference, `BlockAccumulator` for streaming event assembly, `schemars`-based proc-macro engine, multi-agent patterns and artifact service, MCP integration, plugin system, policy slots, credential management, TUI session management, and web browse plugin. 42 specs implemented across the 0.6 lifecycle.
 
-[Unreleased]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.7.6...HEAD
+[Unreleased]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.7.7...HEAD
+[0.7.7]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.7.6...v0.7.7
 [0.7.6]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.7.5...v0.7.6
 [0.7.5]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.7.4...v0.7.5
 [0.7.4]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.7.3...v0.7.4

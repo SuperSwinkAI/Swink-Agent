@@ -42,7 +42,7 @@ aws-smithy-runtime-api = { version = "1.11.6", features = ["client"] }
 
 [package]
 name = "swink-agent"
-version = "0.7.6"
+version = "0.7.7"
 edition = "2024"
 rust-version = "1.88"
 description = "Core scaffolding for running LLM-powered agentic loops"
@@ -107,7 +107,7 @@ name = "context"
 harness = false
 
 [dev-dependencies]
-swink-agent-adapters = { path = "adapters", version = "0.7.6", features = ["proxy"] }
+swink-agent-adapters = { path = "adapters", features = ["proxy"] }
 dotenvy.workspace = true
 pretty_assertions.workspace = true
 tempfile.workspace = true

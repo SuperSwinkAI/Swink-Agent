@@ -1,6 +1,6 @@
 [package]
 name = "swink-agent-mcp"
-version = "0.7.6"
+version = "0.7.7"
 edition = "2024"
 rust-version = "1.88"
 description = "MCP (Model Context Protocol) integration for swink-agent"
@@ -11,7 +11,7 @@ categories = ["development-tools", "network-programming"]
 readme = "../README.md"
 
 [dependencies]
-swink-agent = { path = "..", version = "0.7.6", default-features = false }
+swink-agent = { path = "..", version = "0.7.7", default-features = false }
 rmcp = { version = "1.3", features = ["client", "client-side-sse", "transport-streamable-http-client", "transport-streamable-http-client-reqwest", "transport-child-process"] }
 reqwest = { workspace = true }
 tokio.workspace = true
@@ -23,7 +23,7 @@ tracing.workspace = true
 
 [dev-dependencies]
 rmcp = { version = "1.3", features = ["client", "server", "macros", "client-side-sse", "transport-streamable-http-client", "transport-streamable-http-client-reqwest", "transport-child-process", "transport-streamable-http-server"] }
-swink-agent = { path = "..", version = "0.7.6", default-features = false }
+swink-agent = { path = "..", default-features = false }
 tokio = { workspace = true, features = ["full", "test-util"] }
 tokio-util = { workspace = true }
 serde.workspace = true

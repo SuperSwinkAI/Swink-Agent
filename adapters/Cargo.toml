@@ -1,6 +1,6 @@
 [package]
 name = "swink-agent-adapters"
-version = "0.7.6"
+version = "0.7.7"
 edition = "2024"
 rust-version = "1.88"
 description = "LLM provider adapters for swink-agent"
@@ -31,8 +31,8 @@ xai = ["openai-compat"]
 __no_default_features_sentinel = []
 
 [dependencies]
-swink-agent = { path = "..", version = "0.7.6", default-features = false }
-swink-agent-auth = { path = "../auth", version = "0.7.6" }
+swink-agent = { path = "..", version = "0.7.7", default-features = false }
+swink-agent-auth = { path = "../auth", version = "0.7.7" }
 reqwest.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
@@ -50,7 +50,7 @@ aws-smithy-types = { workspace = true, optional = true }
 bytes.workspace = true
 
 [dev-dependencies]
-swink-agent = { path = "..", version = "0.7.6", default-features = false, features = ["testkit"] }
+swink-agent = { path = "..", default-features = false, features = ["testkit"] }
 tokio = { workspace = true, features = ["full", "test-util"] }
 wiremock.workspace = true
 pretty_assertions.workspace = true
