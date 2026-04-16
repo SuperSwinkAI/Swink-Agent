@@ -19,6 +19,7 @@
 - **SmolLM3 `<think>` tags** — parsed via simple string matching (not regex) and routed to `ThinkingStart/Delta/End` events.
 - **Context capped at 8192 tokens** (NoPE architecture). Override via `LOCAL_CONTEXT_LENGTH` env var.
 - **mistralrs version pin** — API is actively evolving; pin to specific minor version.
+- **SmolLM3 GGUF must fail fast on current `mistralrs`** — `mistralrs` 0.8.1 does not recognize the `smollm3` GGUF architecture. Reject `SmolLM3` configs before download/build with a typed `LocalModelError::Loading` instead of letting the dependency panic on `ensure_ready()`. The follow-up fix for a working default local model is separate work.
 - **`with_progress` returns `Result`** — call before cloning the `Arc`.
 - **`ModelState` split** — public `ModelState` (re-exported from lib.rs) vs internal `InternalModelState` (holds `mistralrs::Model` runner). Stream code uses `InternalModelState`.
 - **Embedding method naming** — `embed(text)` for single text, `embed_batch(texts)` for batch. Errors use `LocalModelError::Embedding` variant.
