@@ -1,11 +1,11 @@
 [package]
 name = "swink-agent-mcp"
-version = "0.7.8"
-edition = "2024"
-rust-version = "1.88"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
 description = "MCP (Model Context Protocol) integration for swink-agent"
-license = "MIT"
-repository = "https://github.com/SuperSwinkAI/Swink-Agent"
+license.workspace = true
+repository.workspace = true
 keywords = ["llm", "agent", "mcp", "tools", "protocol"]
 categories = ["development-tools", "network-programming"]
 readme = "../README.md"

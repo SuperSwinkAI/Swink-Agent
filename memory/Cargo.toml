@@ -1,11 +1,11 @@
 [package]
 name = "swink-agent-memory"
-version = "0.7.8"
-edition = "2024"
-rust-version = "1.88"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
 description = "Session persistence and memory management for swink-agent"
-license = "MIT"
-repository = "https://github.com/SuperSwinkAI/Swink-Agent"
+license.workspace = true
+repository.workspace = true
 readme = "../README.md"
 keywords = ["llm", "agent", "memory", "session", "context"]
 categories = ["development-tools", "data-structures"]
