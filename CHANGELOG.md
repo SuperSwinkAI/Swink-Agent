@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.3] - 2026-04-15
+
+### Added
+- `EditFileTool` — surgical find-and-replace file editing tool, re-exported from crate root.
+- Mid-stream steering interrupt: queued messages now land at the turn boundary without aborting in-flight tool batches.
+
+### Fixed
+- Adapter pre-stream `Start`/`Error` event ordering (#571).
+- Preserve Ollama NDJSON UTF-8 chunk boundaries (#570).
+- Pre-dispatch stop result parity (#568).
+- TUI streaming jitter and per-token redraw churn eliminated.
+
+## [0.7.2] - 2026-04-10
+
+### Fixed
+- TUI approval mode: `Agent` is now the single source of truth (#567).
+- Inline aborted tool turns instead of surfacing them as errors (#566).
+- Isolate `adapters` no-default-features sentinel (#564).
+- Include loop context in pause snapshot to prevent message loss (#563).
+- Abort spawned tool handles on `ChannelClosed` (#562).
+
+### Changed
+- Examples migrated to [SuperSwinkAI/Swink-Agent-Examples](https://github.com/SuperSwinkAI/Swink-Agent-Examples).
+
 ## [0.7.1] - 2026-04-15
 
 ### Fixed
@@ -56,7 +80,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Major additions: Gemma 4 local inference, `BlockAccumulator` for streaming event assembly, `schemars`-based proc-macro engine, multi-agent patterns and artifact service, MCP integration, plugin system, policy slots, credential management, TUI session management, and web browse plugin. 42 specs implemented across the 0.6 lifecycle.
 
-[Unreleased]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.7.1...HEAD
+[Unreleased]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.7.3...HEAD
+[0.7.3]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.7.2...v0.7.3
+[0.7.2]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.6.2...v0.7.0
 [0.6.x]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.5.0...v0.6.2

@@ -1,4 +1,31 @@
 #![forbid(unsafe_code)]
+//! LLM provider adapters for [`swink-agent`](https://docs.rs/swink-agent).
+//!
+//! Provides [`StreamFn`](swink_agent::StreamFn) implementations for nine LLM providers.
+//! Each provider is behind a feature flag — enable only what you need:
+//!
+//! | Feature | Provider |
+//! |---|---|
+//! | `anthropic` (default) | Anthropic Claude |
+//! | `openai` (default) | OpenAI GPT |
+//! | `ollama` (default) | Ollama (local) |
+//! | `gemini` | Google Gemini |
+//! | `azure` | Azure OpenAI / AI Foundry |
+//! | `bedrock` | AWS Bedrock |
+//! | `mistral` | Mistral AI |
+//! | `xai` | xAI Grok |
+//! | `proxy` | Custom SSE proxy |
+//!
+//! # Quick Start
+//!
+//! ```no_run
+//! use swink_agent_adapters::build_remote_connection_for_model;
+//!
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! let conn = build_remote_connection_for_model("claude-sonnet-4-6")?;
+//! # Ok(())
+//! # }
+//! ```
 
 // ── Shared infrastructure (always compiled) ───────────────────────────────
 #[cfg_attr(

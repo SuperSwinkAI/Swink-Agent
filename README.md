@@ -1,6 +1,8 @@
 # Swink Agent
 
 [![CI](https://github.com/SuperSwinkAI/Swink-Agent/actions/workflows/ci.yml/badge.svg)](https://github.com/SuperSwinkAI/Swink-Agent/actions/workflows/ci.yml)
+[![Crates.io](https://img.shields.io/crates/v/swink-agent.svg)](https://crates.io/crates/swink-agent)
+[![Docs.rs](https://docs.rs/swink-agent/badge.svg)](https://docs.rs/swink-agent)
 [![MSRV](https://img.shields.io/badge/rustc-1.88+-blue.svg)](https://blog.rust-lang.org/2025/06/05/Rust-1.88.0/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 

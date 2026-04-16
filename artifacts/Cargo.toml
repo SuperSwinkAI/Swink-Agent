@@ -8,6 +8,7 @@ license = "MIT"
 repository = "https://github.com/SuperSwinkAI/Swink-Agent"
 keywords = ["llm", "agent", "artifacts", "storage", "versioned"]
 categories = ["development-tools", "filesystem"]
+readme = "../README.md"
 
 [dependencies]
 swink-agent = { path = "..", default-features = false, features = ["artifact-store"] }
