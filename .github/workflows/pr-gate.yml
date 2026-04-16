@@ -59,6 +59,20 @@ jobs:
               }
             } catch {}
 
+            // ── Gate 0: base branch ──────────────────────────────────
+            // Outside contributors must target `integration`. Only
+            // collaborators may open PRs directly against `main` (e.g.
+            // the integration → main release merge).
+            if (!isCollaborator && pr.base.ref === 'main') {
+              await closePr(
+                `Hi @${author}, this PR has been automatically closed.\n\n` +
+                `All contributions must target the \`integration\` branch, not \`main\`. ` +
+                `Please reopen your PR with \`integration\` as the base branch.\n\n` +
+                `See [CONTRIBUTING.md](../blob/main/CONTRIBUTING.md) for details.`
+              );
+              return;
+            }
+
             if (!isCollaborator) {
               const fs = require('fs');
               let approved = { lgtm: [] };

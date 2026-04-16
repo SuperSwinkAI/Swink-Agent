@@ -103,6 +103,21 @@ Refactor streaming accumulator into separate module
 
 No ticket numbers in commit messages — link issues in the PR description.
 
+## Branch Model
+
+This repo uses a two-branch model:
+
+| Branch | Purpose |
+|---|---|
+| `main` | Stable releases only — every commit is a tagged crates.io publish |
+| `integration` | Active development — all feature PRs target here |
+
+**All PRs must target `integration`.** PRs against `main` from outside contributors are auto-closed.
+
+Releases are cut by squash-merging `integration` into `main` and pushing a version tag. Release candidates (`v0.8.0-rc.1`) are tagged directly from `integration` for pre-release testing.
+
+**Hotfixes** (critical bugs in a published release): branch off `main`, fix, squash-merge back to `main` + tag, then cherry-pick to `integration`.
+
 ## Branch Naming
 
 | Type | Pattern | Example |
@@ -111,8 +126,9 @@ No ticket numbers in commit messages — link issues in the PR description.
 | Bug fix | `fix/<short-description>` | `fix/overflow-retry-loop` |
 | Refactor | `refactor/<short-description>` | `refactor/split-agent-context` |
 | Docs | `docs/<short-description>` | `docs/streaming-guide` |
+| Hotfix | `hotfix/<short-description>` | `hotfix/context-overflow-panic` |
 
-Branch off `main`. One concern per PR.
+Branch off `integration`. One concern per PR.
 
 ## Workspace Structure
 
