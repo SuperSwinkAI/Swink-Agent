@@ -281,7 +281,7 @@ impl ToolPanel {
                 .lines()
                 .rev()
                 .find(|line| !line.trim().is_empty())
-                .unwrap_or(tool.streamed_output.trim());
+                .unwrap_or_else(|| tool.streamed_output.trim());
             let preview = truncate_preview(preview, 60);
             let mut spans = vec![
                 Span::styled(

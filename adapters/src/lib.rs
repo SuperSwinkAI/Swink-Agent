@@ -7,10 +7,10 @@
 //! | Feature | Provider |
 //! |---|---|
 //! | `anthropic` (default) | Anthropic Claude |
-//! | `openai` (default) | OpenAI GPT |
-//! | `ollama` (default) | Ollama (local) |
+//! | `openai` (default) | `OpenAI` GPT |
+//! | `ollama` (default) | `Ollama` (local) |
 //! | `gemini` | Google Gemini |
-//! | `azure` | Azure OpenAI / AI Foundry |
+//! | `azure` | Azure `OpenAI` / AI Foundry |
 //! | `bedrock` | AWS Bedrock |
 //! | `mistral` | Mistral AI |
 //! | `xai` | xAI Grok |

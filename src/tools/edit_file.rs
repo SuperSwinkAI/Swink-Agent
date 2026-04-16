@@ -73,8 +73,11 @@ struct Params {
 fn sha256_hex(data: &[u8]) -> String {
     Sha256::digest(data)
         .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect()
+        .fold(String::with_capacity(64), |mut s, b| {
+            use std::fmt::Write as _;
+            let _ = write!(s, "{b:02x}");
+            s
+        })
 }
 
 /// Return `(byte_start, line_content_without_newline)` for every line.
@@ -177,9 +180,7 @@ fn apply_op(content: &str, op: &EditOp) -> Result<String, String> {
     // Prefer exact match; fall back to whitespace-normalised line matching.
     let candidates: Vec<Range<usize>> = {
         let exact = find_exact(content, &op.old_string);
-        if !exact.is_empty() {
-            exact
-        } else {
+        if exact.is_empty() {
             let norm = find_normalized(content, &op.old_string);
             if norm.is_empty() {
                 return Err(format!(
@@ -188,6 +189,8 @@ fn apply_op(content: &str, op: &EditOp) -> Result<String, String> {
                 ));
             }
             norm
+        } else {
+            exact
         }
     };
 
@@ -198,16 +201,19 @@ fn apply_op(content: &str, op: &EditOp) -> Result<String, String> {
     match candidates.len() {
         0 => unreachable!("candidates is non-empty at this point"),
         1 => Ok(replace_ranges(content, &candidates, &op.new_string)),
-        n => match op.line_hint {
-            None => Err(format!(
-                "old_string matched {n} times; set replace_all to replace every \
-                 occurrence, or provide line_hint to select one"
-            )),
-            Some(hint) => {
+        n => op.line_hint.map_or_else(
+            || {
+                Err(format!(
+                    "old_string matched {n} times; set replace_all to replace every \
+                     occurrence, or provide line_hint to select one"
+                ))
+            },
+            |hint| {
                 let best = candidates
                     .iter()
                     .min_by_key(|r| {
-                        let line = line_number_at(content, r.start) as i64;
+                        let line =
+                            i64::try_from(line_number_at(content, r.start)).unwrap_or(i64::MAX);
                         (line - i64::from(hint)).abs()
                     })
                     .expect("candidates is non-empty");
@@ -216,8 +222,8 @@ fn apply_op(content: &str, op: &EditOp) -> Result<String, String> {
                     std::slice::from_ref(best),
                     &op.new_string,
                 ))
-            }
-        },
+            },
+        ),
     }
 }
 
