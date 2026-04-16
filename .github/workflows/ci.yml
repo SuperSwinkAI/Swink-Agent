@@ -33,7 +33,7 @@ jobs:
 
       - uses: cargo-bins/cargo-binstall@f8ce4d55b131f4a1e373b8747ca6b6a54133ae5a # v1.18.0
 
-      - run: cargo binstall --no-confirm cargo-nextest
+      - run: cargo binstall --no-confirm --force cargo-nextest
 
       - run: cargo nextest run --workspace
 
@@ -62,7 +62,7 @@ jobs:
 
       - uses: cargo-bins/cargo-binstall@f8ce4d55b131f4a1e373b8747ca6b6a54133ae5a # v1.18.0
 
-      - run: cargo binstall --no-confirm cargo-hack
+      - run: cargo binstall --no-confirm --force cargo-hack
 
       # Exclude swink-agent-local-llm because its `metal` / `accelerate` / `mkl`
       # features activate Apple-only backends (objc2) and fail to compile on
@@ -131,7 +131,7 @@ jobs:
 
       - uses: cargo-bins/cargo-binstall@f8ce4d55b131f4a1e373b8747ca6b6a54133ae5a # v1.18.0
 
-      - run: cargo binstall --no-confirm cargo-semver-checks
+      - run: cargo binstall --no-confirm --force cargo-semver-checks
 
       - name: Fetch main branch for baseline
         run: git fetch origin main
