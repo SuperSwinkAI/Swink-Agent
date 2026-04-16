@@ -388,10 +388,8 @@ fn convert_messages(
                 let mut content = Vec::new();
                 for block in &assistant.content {
                     match block {
-                        ContentBlock::Text { text } => {
-                            if !text.is_empty() {
-                                content.push(AnthropicContentBlock::Text { text: text.clone() });
-                            }
+                        ContentBlock::Text { text } if !text.is_empty() => {
+                            content.push(AnthropicContentBlock::Text { text: text.clone() });
                         }
                         ContentBlock::ToolCall {
                             id,

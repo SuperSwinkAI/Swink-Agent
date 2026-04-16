@@ -138,10 +138,8 @@ impl TrajectoryCollector {
             AgentEvent::AgentStart => {
                 self.start_time = Some(Instant::now());
             }
-            AgentEvent::BeforeLlmCall { model, .. } => {
-                if self.model.is_none() {
-                    self.model = Some(model.clone());
-                }
+            AgentEvent::BeforeLlmCall { model, .. } if self.model.is_none() => {
+                self.model = Some(model.clone());
             }
             AgentEvent::TurnStart => {
                 let idx = self.turn_counter;

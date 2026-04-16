@@ -274,10 +274,8 @@ impl App {
 
     fn handle_input_key(&mut self, key: KeyEvent) {
         match (key.modifiers, key.code) {
-            (_, KeyCode::Esc) => {
-                if self.status == AgentStatus::Running {
-                    self.abort_agent();
-                }
+            (_, KeyCode::Esc) if self.status == AgentStatus::Running => {
+                self.abort_agent();
             }
             (KeyModifiers::SHIFT, KeyCode::BackTab) => {
                 self.toggle_operating_mode();
