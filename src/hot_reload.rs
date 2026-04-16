@@ -397,11 +397,13 @@ description = "Run command"
 command = "echo {input}"
 "#;
         let tool = ScriptTool::from_toml(toml).unwrap();
-        let cmd = tool.interpolate_command(&json!({"input": "; rm -rf /"}));
-        assert!(cmd.contains("'\\''"));
-        assert!(!cmd.contains("; rm -rf /\""));
-        // The dangerous command should be wrapped in single quotes
-        assert!(cmd.contains("'; rm -rf /'"));
+        // Input contains a single quote to exercise the '\'' escape path
+        let cmd = tool.interpolate_command(&json!({"input": "it's; rm -rf /"}));
+        assert!(
+            cmd.contains("'\\''"),
+            "expected '\\'' escape sequence in {cmd}"
+        );
+        assert!(cmd.contains("'it'\\''s; rm -rf /'"));
     }
 
     #[tokio::test]
@@ -427,13 +429,22 @@ command = "echo hello"
 
     #[test]
     fn duplicate_tool_names_last_write_wins() {
-        // Simulate two ScriptTools with the same name
-        let tool1 =
-            ScriptTool::from_toml(r#"name = "dup" description = "First" command = "echo 1""#)
-                .unwrap();
-        let tool2 =
-            ScriptTool::from_toml(r#"name = "dup" description = "Second" command = "echo 2""#)
-                .unwrap();
+        let tool1 = ScriptTool::from_toml(
+            r#"
+name = "dup"
+description = "First"
+command = "echo 1"
+"#,
+        )
+        .unwrap();
+        let tool2 = ScriptTool::from_toml(
+            r#"
+name = "dup"
+description = "Second"
+command = "echo 2"
+"#,
+        )
+        .unwrap();
 
         let mut map: HashMap<PathBuf, ScriptTool> = HashMap::new();
         map.insert(PathBuf::from("/a.toml"), tool1);

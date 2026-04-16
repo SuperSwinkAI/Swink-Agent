@@ -1,4 +1,16 @@
-#![cfg(feature = "__no_default_features_sentinel")]
+#![cfg(all(
+    feature = "__no_default_features_sentinel",
+    not(feature = "anthropic"),
+    not(feature = "openai"),
+    not(feature = "openai-compat"),
+    not(feature = "ollama"),
+    not(feature = "gemini"),
+    not(feature = "proxy"),
+    not(feature = "azure"),
+    not(feature = "bedrock"),
+    not(feature = "mistral"),
+    not(feature = "xai"),
+))]
 
 //! Regression test for issue #441: `--no-default-features` must keep every
 //! provider gate disabled in `swink-agent-adapters`.
@@ -7,9 +19,10 @@
 //! even when feature unification enables provider flags elsewhere in the graph.
 //! Run it with:
 //! `cargo adapters-no-default-features`.
-//! If a default or dev-dependency leaks adapter features back in during that
-//! dedicated invocation, the `#[cfg(feature = ...)]` assertions below flip and
-//! fail loudly.
+//!
+//! The module-level `cfg` also requires all provider flags to be off, so under
+//! `cargo test --all-features` (which activates everything including the
+//! sentinel) the file compiles to an empty test target instead of panicking.
 
 #[cfg(not(feature = "anthropic"))]
 #[test]

@@ -545,7 +545,7 @@ async fn smart_mode_calls_callback_for_write_tools() {
         .with_approval_mode(ApprovalMode::Smart);
     let mut agent = Agent::new(options);
 
-    let result = agent.prompt_async(vec![user_msg("hello")]).await.unwrap();
+    let _result = agent.prompt_async(vec![user_msg("hello")]).await.unwrap();
     assert!(
         !tool_ref.was_executed(),
         "write tool should be rejected in Smart mode when callback rejects"
@@ -574,7 +574,7 @@ async fn enabled_mode_routes_readonly_tools_through_callback() {
         .with_approval_mode(ApprovalMode::Enabled);
     let mut agent = Agent::new(options);
 
-    let result = agent.prompt_async(vec![user_msg("hello")]).await.unwrap();
+    let _result = agent.prompt_async(vec![user_msg("hello")]).await.unwrap();
     assert!(
         !tool_ref.was_executed(),
         "Enabled mode should route ALL tools through callback, including read-only"

@@ -272,12 +272,12 @@ fn tick_toggles_blink_and_sets_dirty() {
     app.status = AgentStatus::Running;
     app.dirty = false;
 
-    // Tick 5 times to trigger a blink toggle (every 5 ticks)
-    for _ in 0..5 {
+    // Blink toggles every 23 ticks (~759ms at 33ms tick cadence)
+    for _ in 0..23 {
         app.tick();
     }
 
-    assert!(!app.blink_on, "blink should have toggled after 5 ticks");
+    assert!(!app.blink_on, "blink should have toggled after 23 ticks");
     assert!(app.dirty, "dirty should be set when agent is running");
 }
 

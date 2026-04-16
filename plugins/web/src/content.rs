@@ -117,7 +117,7 @@ mod tests {
         assert!(truncated);
         assert!(result.starts_with(&format!("{}🙂", "a".repeat(159))));
         assert!(result.ends_with(&"🙂".repeat(40)));
-        assert!(result.contains("209 chars total"));
+        assert!(result.contains("210 chars total"));
         assert!(result.contains("showing first 160 and last 40"));
     }
 

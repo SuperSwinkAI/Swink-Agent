@@ -209,6 +209,9 @@ pub struct TransferToAgentTool {
     schema: Value,
 }
 
+// Constructors only used externally via `pub use` under `feature = "transfer"`;
+// integration tests don't count for lib's dead_code analysis.
+#[allow(dead_code)]
 impl TransferToAgentTool {
     /// Create a new transfer tool that can transfer to any registered agent.
     pub fn new(registry: Arc<AgentRegistry>) -> Self {

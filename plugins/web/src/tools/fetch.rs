@@ -232,11 +232,8 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/article"))
-            .respond_with(
-                ResponseTemplate::new(200)
-                    .insert_header("content-type", "text/html; charset=utf-8")
-                    .set_body_string(
-                        r#"<!DOCTYPE html>
+            .respond_with(ResponseTemplate::new(200).set_body_raw(
+                r#"<!DOCTYPE html>
                         <html>
                         <head><title>Fetch Test</title></head>
                         <body>
@@ -246,8 +243,8 @@ mod tests {
                             </article>
                         </body>
                         </html>"#,
-                    ),
-            )
+                "text/html; charset=utf-8",
+            ))
             .mount(&server)
             .await;
 
@@ -280,9 +277,7 @@ mod tests {
         Mock::given(method("GET"))
             .and(path("/oversized"))
             .respond_with(
-                ResponseTemplate::new(200)
-                    .insert_header("content-type", "text/html; charset=utf-8")
-                    .set_body_string(oversized_html),
+                ResponseTemplate::new(200).set_body_raw(oversized_html, "text/html; charset=utf-8"),
             )
             .mount(&server)
             .await;
