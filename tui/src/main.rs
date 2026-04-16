@@ -309,8 +309,8 @@ mod tests {
             "catalog should have openai presets"
         );
         assert!(
-            openai_presets.iter().any(|p| p.model_id == "gpt-4o"),
-            "openai presets should contain gpt-4o"
+            openai_presets.iter().any(|p| p.model_id == "gpt-5.4"),
+            "openai presets should contain gpt-5.4"
         );
     }
 
