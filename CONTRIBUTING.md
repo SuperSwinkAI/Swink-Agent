@@ -39,7 +39,7 @@ If you spam the tracker with agent-generated issues or PRs, your GitHub account 
   ```bash
   rustup component add clippy rustfmt
   ```
-- For TUI development: copy `.env.example` to `.env` and populate your API keys.
+- For TUI development, live adapter tests, or any work touching provider crates: copy `.env.example` to `.env` and populate the API keys for the providers you need. The `.env` file is auto-loaded by the TUI and by `cargo test` in the adapters crate.
 
 ## Development Setup
 
