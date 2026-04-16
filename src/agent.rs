@@ -385,7 +385,7 @@ impl Agent {
 
     /// Access the custom message registry, if one was configured.
     ///
-    /// Useful for passing to [`SessionStore::load`](swink_agent_memory) so that
+    /// Useful for passing to `SessionStore::load` (from `swink-agent-memory`) so that
     /// persisted custom messages are deserialized instead of silently dropped.
     #[must_use]
     pub fn custom_message_registry(&self) -> Option<&crate::types::CustomMessageRegistry> {

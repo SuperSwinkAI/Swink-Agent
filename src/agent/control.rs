@@ -47,7 +47,7 @@ impl Agent {
     /// Reset the agent to its initial state, clearing messages, queues, and error.
     ///
     /// If a loop is currently active, the abort token is cancelled and the
-    /// generation counter is bumped so the stale [`LoopGuardStream`] cannot
+    /// generation counter is bumped so the stale `LoopGuardStream` cannot
     /// clear `loop_active` for any future run.
     pub fn reset(&mut self) {
         // Cancel the running loop *before* dropping the token, so the spawned

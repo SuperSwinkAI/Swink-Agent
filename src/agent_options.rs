@@ -99,7 +99,7 @@ pub struct AgentOptions {
     ///
     /// When set, the agent's `restore_from_checkpoint` / `load_and_restore_checkpoint`
     /// / `resume` / `resume_stream` paths thread this registry into
-    /// [`Checkpoint::restore_messages`] so that custom messages survive a round
+    /// [`Checkpoint::restore_messages`](crate::checkpoint::Checkpoint::restore_messages) so that custom messages survive a round
     /// trip through the checkpoint store. When `None`, persisted custom messages
     /// are silently dropped on restore (legacy behavior).
     pub custom_message_registry: Option<Arc<CustomMessageRegistry>>,

@@ -4,11 +4,11 @@
 //! This crate provides two proc macros:
 //!
 //! - `#[derive(ToolSchema)]` — generates a `ToolParameters` implementation that
-//!   delegates schema generation to [`schemars`]. The struct must also derive
-//!   [`schemars::JsonSchema`] (available as `swink_agent::JsonSchema`).
+//!   delegates schema generation to `schemars`. The struct must also derive
+//!   `schemars::JsonSchema` (available as `swink_agent::JsonSchema`).
 //! - `#[tool(name = "...", description = "...")]` — wraps an async function as
 //!   an `AgentTool` implementation. Schema is derived from a hidden params struct
-//!   via [`schemars`], replacing the previous bespoke type mapper.
+//!   via `schemars`, replacing the previous bespoke type mapper.
 
 mod tool_attr;
 mod tool_schema;
@@ -17,7 +17,7 @@ use proc_macro::TokenStream;
 
 /// Derive macro that generates a `ToolParameters` implementation.
 ///
-/// Delegates JSON Schema generation to [`schemars`] by implementing
+/// Delegates JSON Schema generation to `schemars` by implementing
 /// `ToolParameters::json_schema` via `swink_agent::schema_for::<Self>()`.
 ///
 /// **The annotated struct must also derive `JsonSchema`** (via
