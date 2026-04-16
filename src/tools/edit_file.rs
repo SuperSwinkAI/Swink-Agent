@@ -4,8 +4,8 @@ use std::ops::Range;
 
 use schemars::JsonSchema;
 use serde::Deserialize;
-use sha2::{Digest as _, Sha256};
 use serde_json::Value;
+use sha2::{Digest as _, Sha256};
 use tokio_util::sync::CancellationToken;
 
 use crate::tool::{AgentTool, AgentToolResult, ToolFuture, validated_schema_for};
@@ -71,7 +71,10 @@ struct Params {
 
 /// Compute the SHA-256 hex digest of `data`.
 fn sha256_hex(data: &[u8]) -> String {
-    Sha256::digest(data).iter().map(|b| format!("{b:02x}")).collect()
+    Sha256::digest(data)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
 }
 
 /// Return `(byte_start, line_content_without_newline)` for every line.
@@ -291,20 +294,14 @@ impl AgentTool for EditFileTool {
             let raw_bytes = match tokio::fs::read(path).await {
                 Ok(b) => b,
                 Err(e) => {
-                    return AgentToolResult::error(format!(
-                        "failed to read {}: {e}",
-                        parsed.path
-                    ));
+                    return AgentToolResult::error(format!("failed to read {}: {e}", parsed.path));
                 }
             };
 
             let original = match std::str::from_utf8(&raw_bytes) {
                 Ok(s) => s.to_owned(),
                 Err(_) => {
-                    return AgentToolResult::error(format!(
-                        "{} is not valid UTF-8",
-                        parsed.path
-                    ));
+                    return AgentToolResult::error(format!("{} is not valid UTF-8", parsed.path));
                 }
             };
 
@@ -340,10 +337,7 @@ impl AgentTool for EditFileTool {
             }
 
             if let Err(e) = atomic_write(path, &content).await {
-                return AgentToolResult::error(format!(
-                    "failed to write {}: {e}",
-                    parsed.path
-                ));
+                return AgentToolResult::error(format!("failed to write {}: {e}", parsed.path));
             }
 
             let n = parsed.edits.len();
@@ -518,8 +512,8 @@ mod tests {
 
         use serde_json::json;
 
-        use crate::tool::AgentTool;
         use crate::SessionState;
+        use crate::tool::AgentTool;
 
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("test.txt");
@@ -555,8 +549,8 @@ mod tests {
 
         use serde_json::json;
 
-        use crate::tool::AgentTool;
         use crate::SessionState;
+        use crate::tool::AgentTool;
 
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("test.txt");

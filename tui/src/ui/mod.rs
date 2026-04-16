@@ -50,8 +50,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     // Queued-message overlay: visible while pending_steered is non-empty or
     // fading out after AgentEnd. Height = 1 line per queued message + 2 borders,
     // capped at 5 visible lines total.
-    let steered_visible =
-        !app.pending_steered.is_empty() || app.steered_fade_ticks > 0;
+    let steered_visible = !app.pending_steered.is_empty() || app.steered_fade_ticks > 0;
     let steered_height: u16 = if steered_visible {
         let lines = u16::try_from(app.pending_steered.len().max(1)).unwrap_or(u16::MAX);
         (lines + 2).min(7)
@@ -210,7 +209,10 @@ fn render_steered_overlay(
         .border_style(Style::default().fg(border_color));
 
     let messages: Vec<Line> = if fading {
-        vec![Line::from(Span::styled("↑ delivered to agent", content_style))]
+        vec![Line::from(Span::styled(
+            "↑ delivered to agent",
+            content_style,
+        ))]
     } else {
         pending
             .iter()

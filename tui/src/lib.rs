@@ -51,10 +51,10 @@ use tokio::sync::{mpsc, oneshot};
 use swink_agent::{Agent, ToolApproval, ToolApprovalRequest, selective_approve};
 
 pub use app::{AgentStatus, App, DisplayMessage, MessageRole, OperatingMode};
-pub use swink_agent::ApprovalMode;
 pub use config::TuiConfig;
 pub use error::TuiError;
 pub use session::JsonlSessionStore;
+pub use swink_agent::ApprovalMode;
 pub use ui::conversation::ConversationView;
 pub use ui::input::InputEditor;
 pub use ui::markdown::markdown_to_lines;
