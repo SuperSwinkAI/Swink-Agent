@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.8] - 2026-04-16
+
+### Changed
+- Model catalog: add GPT-5 series (`gpt-5`, `gpt-5-mini`, `gpt-5-nano` +
+  dated variants) and GPT-5.4 series (`gpt-5.4`, `gpt-5.4-mini`,
+  `gpt-5.4-nano`). Remove deprecated OpenAI models below version 5
+  (`gpt-4o`, `gpt-4o-mini`, `gpt-4.1`, `gpt-4.1-mini`, `o3-mini`, `o1`).
+- CI consolidated from 9 jobs to 3 on PRs (~5 min instead of ~20 min).
+  Full platform matrix, semver, and MSRV checks now run only on main
+  pushes or weekly schedule. `integration` branch removed from push trigger
+  to avoid redundant double-runs.
+
+### Fixed
+- Fail fast with a clear error when the unsupported SmolLM3 local preset
+  is selected instead of silently producing garbage output (#587).
+- Force-reinstall `cargo-binstall` tools (`cargo-hack`, `cargo-nextest`,
+  `cargo-semver-checks`) on every CI run to prevent stale binary cache
+  failures (#589).
+
 ## [0.7.7] - 2026-04-16
 
 ### Fixed
@@ -130,7 +149,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Major additions: Gemma 4 local inference, `BlockAccumulator` for streaming event assembly, `schemars`-based proc-macro engine, multi-agent patterns and artifact service, MCP integration, plugin system, policy slots, credential management, TUI session management, and web browse plugin. 42 specs implemented across the 0.6 lifecycle.
 
-[Unreleased]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.7.7...HEAD
+[Unreleased]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.7.8...HEAD
+[0.7.8]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.7.7...v0.7.8
 [0.7.7]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.7.6...v0.7.7
 [0.7.6]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.7.5...v0.7.6
 [0.7.5]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.7.4...v0.7.5
