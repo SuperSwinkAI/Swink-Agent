@@ -8,7 +8,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 use serde_json::Value;
-use swink_agent::redact_sensitive_values;
+use swink_agent::{AgentToolResult, ContentBlock, redact_sensitive_values};
 
 use crate::theme;
 
@@ -20,6 +20,7 @@ const SPINNER: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧
 pub struct ToolExecution {
     pub id: String,
     pub name: String,
+    pub streamed_output: String,
     pub started_at: Instant,
     pub completed_at: Option<Instant>,
     pub is_error: bool,
@@ -70,10 +71,35 @@ impl ToolPanel {
         self.active.push(ToolExecution {
             id,
             name,
+            streamed_output: String::new(),
             started_at: Instant::now(),
             completed_at: None,
             is_error: false,
         });
+    }
+
+    /// Append a partial output update for an active tool.
+    pub fn update_tool(&mut self, id: &str, name: &str, partial: &AgentToolResult) {
+        let update = ContentBlock::extract_text(&partial.content);
+        if update.is_empty() {
+            return;
+        }
+
+        let Some(tool) = self.active.iter_mut().find(|tool| tool.id == id) else {
+            self.start_tool(id.to_string(), name.to_string());
+            let tool = self
+                .active
+                .last_mut()
+                .expect("start_tool should add the missing tool");
+            tool.streamed_output = update;
+            return;
+        };
+
+        if update.starts_with(&tool.streamed_output) {
+            tool.streamed_output = update;
+        } else {
+            tool.streamed_output.push_str(&update);
+        }
     }
 
     /// Mark a tool as completed, moving it from active to completed.
@@ -250,7 +276,14 @@ impl ToolPanel {
         for tool in &self.active {
             let elapsed = tool.started_at.elapsed().as_secs();
             let spinner = SPINNER[self.spinner_frame % SPINNER.len()];
-            lines.push(Line::from(vec![
+            let preview = tool
+                .streamed_output
+                .lines()
+                .rev()
+                .find(|line| !line.trim().is_empty())
+                .unwrap_or(tool.streamed_output.trim());
+            let preview = truncate_preview(preview, 60);
+            let mut spans = vec![
                 Span::styled(
                     format!(" {spinner} "),
                     Style::default().fg(theme::tool_color()),
@@ -259,13 +292,22 @@ impl ToolPanel {
                     tool.name.clone(),
                     Style::default().add_modifier(Modifier::BOLD),
                 ),
-                Span::styled(
-                    format!("  {elapsed}s"),
+            ];
+            if !preview.is_empty() {
+                spans.push(Span::styled(
+                    format!(": {preview}"),
                     Style::default()
-                        .fg(theme::border_color())
+                        .fg(theme::border_focused_color())
                         .add_modifier(Modifier::DIM),
-                ),
-            ]));
+                ));
+            }
+            spans.push(Span::styled(
+                format!("  {elapsed}s"),
+                Style::default()
+                    .fg(theme::border_color())
+                    .add_modifier(Modifier::DIM),
+            ));
+            lines.push(Line::from(spans));
         }
 
         // Completed tools with check/cross
@@ -344,6 +386,15 @@ fn summarize_arguments(args: &Value) -> String {
     }
 }
 
+fn truncate_preview(text: &str, max_chars: usize) -> String {
+    let preview: String = text.chars().take(max_chars).collect();
+    if text.chars().count() > max_chars {
+        format!("{preview}...")
+    } else {
+        preview
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -355,6 +406,7 @@ mod tests {
         assert_eq!(panel.active.len(), 1);
         assert_eq!(panel.active[0].id, "t1");
         assert_eq!(panel.active[0].name, "bash");
+        assert!(panel.active[0].streamed_output.is_empty());
     }
 
     #[test]
@@ -443,6 +495,39 @@ mod tests {
         panel.end_tool("nonexistent", false);
         assert_eq!(panel.active.len(), 1);
         assert!(panel.completed.is_empty());
+    }
+
+    #[test]
+    fn update_tool_accumulates_incremental_output() {
+        let mut panel = ToolPanel::new();
+        panel.start_tool("t1".into(), "bash".into());
+
+        panel.update_tool("t1", "bash", &AgentToolResult::text("line 1\n"));
+        panel.update_tool("t1", "bash", &AgentToolResult::text("line 2"));
+
+        assert_eq!(panel.active[0].streamed_output, "line 1\nline 2");
+    }
+
+    #[test]
+    fn update_tool_replaces_with_latest_snapshot() {
+        let mut panel = ToolPanel::new();
+        panel.start_tool("t1".into(), "bash".into());
+
+        panel.update_tool("t1", "bash", &AgentToolResult::text("line 1"));
+        panel.update_tool("t1", "bash", &AgentToolResult::text("line 1\nline 2"));
+
+        assert_eq!(panel.active[0].streamed_output, "line 1\nline 2");
+    }
+
+    #[test]
+    fn update_tool_registers_missing_active_tool() {
+        let mut panel = ToolPanel::new();
+
+        panel.update_tool("t1", "bash", &AgentToolResult::text("working"));
+
+        assert_eq!(panel.active.len(), 1);
+        assert_eq!(panel.active[0].name, "bash");
+        assert_eq!(panel.active[0].streamed_output, "working");
     }
 
     #[test]

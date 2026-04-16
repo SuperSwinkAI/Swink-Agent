@@ -3,8 +3,8 @@ use std::sync::Arc;
 use swink_agent::testing::ScriptedStreamFn;
 use swink_agent::testing::text_events;
 use swink_agent::{
-    AgentEvent, AssistantMessage, AssistantMessageEvent, ContentBlock, Cost, LlmMessage, ModelSpec,
-    StopReason, StreamFn, ToolResultMessage, TurnSnapshot, Usage,
+    AgentEvent, AgentToolResult, AssistantMessage, AssistantMessageEvent, ContentBlock, Cost,
+    LlmMessage, ModelSpec, StopReason, StreamFn, ToolResultMessage, TurnSnapshot, Usage,
 };
 
 use crate::config::TuiConfig;
@@ -387,4 +387,33 @@ async fn turn_end_renders_tool_results_with_diff_data_and_trims_old_turns() {
     assert!(!diff.is_new_file);
     assert_eq!(diff.old_content, "before\nvalue");
     assert_eq!(diff.new_content, "after\nvalue");
+}
+
+#[test]
+fn tool_execution_update_surfaces_live_tool_output() {
+    let mut app = App::new(TuiConfig::default());
+
+    app.handle_agent_event(AgentEvent::ToolExecutionStart {
+        id: "call_1".to_string(),
+        name: "bash".to_string(),
+        arguments: serde_json::json!({
+            "command": "cargo test -p swink-agent-tui",
+        }),
+    });
+    app.handle_agent_event(AgentEvent::ToolExecutionUpdate {
+        id: "call_1".to_string(),
+        name: "bash".to_string(),
+        partial: AgentToolResult::text("Compiling swink-agent-tui\n"),
+    });
+    app.handle_agent_event(AgentEvent::ToolExecutionUpdate {
+        id: "call_1".to_string(),
+        name: "bash".to_string(),
+        partial: AgentToolResult::text("Finished test profile"),
+    });
+
+    assert_eq!(app.tool_panel.active.len(), 1);
+    assert_eq!(
+        app.tool_panel.active[0].streamed_output,
+        "Compiling swink-agent-tui\nFinished test profile"
+    );
 }
