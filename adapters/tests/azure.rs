@@ -988,6 +988,11 @@ async fn entra_id_token_endpoint_failure() {
     let stream_fn = entra_stream_fn(&api_server, &token_url);
     let events = collect_events(&stream_fn).await;
 
+    assert!(
+        matches!(events.first(), Some(AssistantMessageEvent::Start)),
+        "pre-stream token failures must start with Start: {events:?}"
+    );
+
     let error_event = events
         .iter()
         .find(|e| matches!(e, AssistantMessageEvent::Error { .. }));

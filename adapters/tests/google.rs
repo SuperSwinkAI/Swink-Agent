@@ -505,6 +505,11 @@ async fn google_http_429_maps_to_throttled() {
     let stream_fn = GeminiStreamFn::new(server.uri(), "test-key", ApiVersion::V1beta);
     let events = collect_events(&stream_fn).await;
 
+    assert!(
+        matches!(events.first(), Some(AssistantMessageEvent::Start)),
+        "pre-stream HTTP failures must start with Start: {events:?}"
+    );
+
     let msg = find_error_message(&events).expect("expected error event");
     assert!(
         msg.contains("throttled") || msg.contains("rate") || msg.contains("429"),

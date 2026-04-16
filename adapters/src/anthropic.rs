@@ -194,7 +194,7 @@ fn anthropic_stream<'a>(
     stream::once(async move {
         let response = match send_request(anthropic, model, context, options).await {
             Ok(resp) => resp,
-            Err(event) => return stream::iter(vec![event]).left_stream(),
+            Err(event) => return stream::iter(crate::base::pre_stream_error(event)).left_stream(),
         };
 
         let status = response.status();
@@ -213,7 +213,7 @@ fn anthropic_stream<'a>(
                     (504, crate::classify::HttpErrorKind::Network),
                 ],
             );
-            return stream::iter(vec![event]).left_stream();
+            return stream::iter(crate::base::pre_stream_error(event)).left_stream();
         }
 
         parse_sse_stream(response, cancellation_token).right_stream()

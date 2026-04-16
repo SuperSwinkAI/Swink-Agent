@@ -187,7 +187,7 @@ fn ollama_stream<'a>(
     stream::once(async move {
         let response = match send_request(ollama, model, context, options).await {
             Ok(resp) => resp,
-            Err(event) => return stream::iter(vec![event]).left_stream(),
+            Err(event) => return stream::iter(crate::base::pre_stream_error(event)).left_stream(),
         };
 
         if !response.status().is_success() {
@@ -195,7 +195,7 @@ fn ollama_stream<'a>(
             let body = response.text().await.unwrap_or_default();
             warn!(status = code, "Ollama HTTP error");
             let event = crate::classify::error_event_from_status(code, &body, "Ollama");
-            return stream::iter(vec![event]).left_stream();
+            return stream::iter(crate::base::pre_stream_error(event)).left_stream();
         }
 
         parse_ndjson_stream(response, cancellation_token).right_stream()
@@ -728,7 +728,10 @@ mod tests {
         ]);
         let mut lines = ndjson_lines(bytes_stream);
 
-        assert_eq!(lines.next().await.unwrap().unwrap(), r#"{"message":"café"}"#);
+        assert_eq!(
+            lines.next().await.unwrap().unwrap(),
+            r#"{"message":"café"}"#
+        );
         assert!(lines.next().await.is_none());
     }
 
