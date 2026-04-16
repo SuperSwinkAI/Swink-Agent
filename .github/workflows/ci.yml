@@ -2,15 +2,17 @@ name: CI
 
 on:
   push:
-    branches: [main, integration]
+    branches: [main]
   pull_request:
+  schedule:
+    # MSRV check: weekly Monday 6am UTC. Rarely breaks from normal changes;
+    # catching it weekly is enough. Also runs on main pushes (releases).
+    - cron: '0 6 * * 1'
 
 jobs:
+  # ── Primary gate: runs on every PR and main push ────────────────────────
   check:
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
@@ -22,11 +24,7 @@ jobs:
 
       - run: cargo fmt --check
 
-      # The typos action's entrypoint script uses `wget`, which isn't
-      # available on Windows runners by default. Text content doesn't vary
-      # by OS, so running spell-check on Ubuntu + macOS is sufficient.
       - name: Spell check
-        if: runner.os != 'Windows'
         uses: crate-ci/typos@cf5f1c29a8ac336af8568821ec41919923b05a83 # v1
 
       - run: cargo clippy --workspace -- -D warnings
@@ -51,6 +49,7 @@ jobs:
         env:
           RUSTDOCFLAGS: "-D warnings"
 
+  # ── Feature matrix: consolidated from features + feature-smoke + all-features ─
   features:
     runs-on: ubuntu-latest
     steps:
@@ -64,22 +63,11 @@ jobs:
 
       - run: cargo binstall --no-confirm --force cargo-hack
 
-      # Exclude swink-agent-local-llm because its `metal` / `accelerate` / `mkl`
-      # features activate Apple-only backends (objc2) and fail to compile on
-      # Linux. The dedicated feature-smoke job below exercises local-llm's
-      # portable features on Linux; `metal` / `accelerate` are covered on
-      # macOS by the main `check` job on the macos-latest runner.
-      - run: cargo hack check --workspace --each-feature --no-dev-deps --exclude swink-agent-local-llm
+      # Each-feature check (excludes local-llm: metal/accelerate/mkl need macOS)
+      - name: cargo hack (each feature)
+        run: cargo hack check --workspace --each-feature --no-dev-deps --exclude swink-agent-local-llm
 
-  feature-smoke:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-
-      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
-
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
-
+      # Feature-smoke sentinels
       - name: Adapters no-default-features sentinel
         run: cargo test -p swink-agent-adapters --no-default-features --test no_default_features
 
@@ -95,24 +83,17 @@ jobs:
       - name: Local LLM gemma4 feature smoke
         run: cargo check -p swink-agent-local-llm --no-default-features --features gemma4
 
-  all-features:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-
-      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
-
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
-
-      - name: Test portable all-features workspace surface
+      # All-features workspace test
+      - name: Test (all features)
         run: cargo test --workspace --all-features --exclude swink-agent-local-llm
 
-      - name: Build policies required-feature example
+      - name: Build policies example (all features)
         run: cargo build -p swink-agent-policies --all-features --example with_policies
 
-      - name: Build TUI required-feature example
+      - name: Build TUI example (all features)
         run: cargo build -p swink-agent-tui --all-features --example custom_agent
 
+  # ── Dependency policy ───────────────────────────────────────────────────
   deny:
     runs-on: ubuntu-latest
     steps:
@@ -120,7 +101,45 @@ jobs:
 
       - uses: EmbarkStudios/cargo-deny-action@175dc7fd4fb85ec8f46948fb98f44db001149081 # v2
 
+  # ── Platform smoke: macOS + Windows on main push only ───────────────────
+  # PRs are validated on Ubuntu; cross-platform issues are caught on the
+  # post-merge main push. Saves ~10 min of runner time per PR.
+  check-platform:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+
+      - run: cargo fmt --check
+
+      - run: cargo clippy --workspace -- -D warnings
+
+      - uses: cargo-bins/cargo-binstall@f8ce4d55b131f4a1e373b8747ca6b6a54133ae5a # v1.18.0
+
+      - run: cargo binstall --no-confirm --force cargo-nextest
+
+      - run: cargo nextest run --workspace
+
+      - run: cargo test --workspace --doc
+
+      - name: Check docs
+        run: cargo doc --no-deps --workspace
+        env:
+          RUSTDOCFLAGS: "-D warnings"
+
+  # ── Semver: only on main push (release boundary) ────────────────────────
   semver:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -136,13 +155,11 @@ jobs:
       - name: Fetch main branch for baseline
         run: git fetch origin main
 
-      # Exclude swink-agent-local-llm: its metal/cuda/accelerate features
-      # transitively pull in objc2 (Apple-only) via mistralrs; building
-      # rustdoc on Linux fails regardless of which features we check. The
-      # crate's public API surface is evaluated on macOS via the main check.
       - run: cargo semver-checks --workspace --exclude swink-agent-local-llm --baseline-rev origin/main
 
+  # ── MSRV: weekly schedule + main push ───────────────────────────────────
   msrv:
+    if: github.event_name == 'schedule' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
