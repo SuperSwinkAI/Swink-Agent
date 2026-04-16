@@ -55,7 +55,7 @@
 
 ### 6. Session ID Validation
 
-**Decision**: Validate session IDs — reject `/`, `\`, `..`, and null bytes with a clear error. Auto-generated IDs use `YYYYMMDD_HHMMSS` format.
+**Decision**: Validate session IDs — reject `/`, `\`, `..`, and null bytes with a clear error. Auto-generated IDs use a readable UTC timestamp prefix plus random hex entropy (`YYYYMMDD_HHMMSS_<random-hex>`).
 
 **Rationale**: Session IDs map directly to filenames. Unsafe characters enable path traversal attacks or filesystem errors. Validation at the API boundary prevents these issues.
 

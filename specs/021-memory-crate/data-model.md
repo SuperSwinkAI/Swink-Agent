@@ -10,7 +10,7 @@ Descriptive information about a persisted session.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `id` | `String` | Unique session identifier. Validated: no `/`, `\`, `..`, null bytes. Auto-generated format: `YYYYMMDD_HHMMSS`. |
+| `id` | `String` | Unique session identifier. Validated: no `/`, `\`, `..`, null bytes. Auto-generated format: `YYYYMMDD_HHMMSS_<random-hex>`. |
 | `title` | `String` | Human-readable session title. |
 | `created_at` | `DateTime<Utc>` | Timestamp when the session was first created. |
 | `updated_at` | `DateTime<Utc>` | Timestamp of the most recent save. Updated on every save. |

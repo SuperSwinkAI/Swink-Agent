@@ -192,7 +192,7 @@ pub struct LoadOptions {
 // Not public, but behavior is part of the contract:
 // - Rejects IDs containing: '/', '\', "..", '\0'
 // - Returns io::Error with ErrorKind::InvalidInput
-// - Auto-generated IDs use format: YYYYMMDD_HHMMSS
+// - Auto-generated IDs use format: YYYYMMDD_HHMMSS_<random-hex>
 ```
 
 ---
@@ -201,7 +201,7 @@ pub struct LoadOptions {
 
 ```rust
 pub fn now_utc() -> DateTime<Utc>;
-pub fn format_session_id() -> String;  // YYYYMMDD_HHMMSS
+pub fn format_session_id() -> String;  // YYYYMMDD_HHMMSS_<random-hex>
 ```
 
 ---

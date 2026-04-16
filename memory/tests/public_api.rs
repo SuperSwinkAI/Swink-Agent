@@ -20,7 +20,9 @@ fn memory_root_reexports_remain_consumable() {
     let _ = std::any::type_name::<SessionStoreFuture<'static, ()>>();
 
     let id = format_session_id();
-    assert_eq!(id.len(), 15);
+    let (timestamp, suffix) = id.rsplit_once('_').unwrap();
+    assert_eq!(timestamp.len(), 15);
+    assert_eq!(suffix.len(), 32);
     let now = now_utc();
     assert!(now.timestamp() > 1_700_000_000);
 }
