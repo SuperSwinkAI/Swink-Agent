@@ -487,7 +487,7 @@ mod tests {
     #[cfg(feature = "openai")]
     #[test]
     fn preset_finds_openai_when_compiled() {
-        let gpt = preset("gpt-5.4").expect("gpt-4o preset should exist");
+        let gpt = preset("gpt-5.4").expect("gpt-5.4 preset should exist");
         assert_eq!(gpt.provider_key, "openai");
     }
 
