@@ -3,12 +3,16 @@
 #[cfg(feature = "builtin-tools")]
 mod bash;
 #[cfg(feature = "builtin-tools")]
+mod edit_file;
+#[cfg(feature = "builtin-tools")]
 mod read_file;
 #[cfg(feature = "builtin-tools")]
 mod write_file;
 
 #[cfg(feature = "builtin-tools")]
 pub use bash::BashTool;
+#[cfg(feature = "builtin-tools")]
+pub use edit_file::EditFileTool;
 #[cfg(feature = "builtin-tools")]
 pub use read_file::ReadFileTool;
 #[cfg(feature = "builtin-tools")]
@@ -24,6 +28,7 @@ pub(crate) const MAX_OUTPUT_BYTES: usize = 100 * 1024;
 pub fn builtin_tools() -> Vec<std::sync::Arc<dyn crate::tool::AgentTool>> {
     vec![
         std::sync::Arc::new(BashTool::new()),
+        std::sync::Arc::new(EditFileTool::new()),
         std::sync::Arc::new(ReadFileTool::new()),
         std::sync::Arc::new(WriteFileTool::new()),
     ]
