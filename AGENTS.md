@@ -53,6 +53,15 @@ cargo run -p swink-agent-tui                      # launch TUI (.env auto-loaded
 
 MSRV **1.88** (edition 2024). Common workspace deps are centralized in root `Cargo.toml`, with a few crate-specific dependencies declared locally where needed.
 
+## Branch Model
+
+Two long-lived branches:
+- **`integration`** — default branch. All feature PRs target here. **New work always branches off `integration`.**
+- **`main`** — stable releases only. Every commit is a tagged crates.io publish.
+
+Release flow: squash-merge `integration` → `main` + push version tag → crates.io publish triggered automatically.
+Hotfix flow: branch off `main` → fix → squash-merge to `main` + tag → cherry-pick to `integration`.
+
 ## Contribution Gate
 
 PRs are gated by two sequential checks in `.github/workflows/pr-gate.yml`:
@@ -99,12 +108,12 @@ When working a PR after approval:
 gh pr diff <number>
 gh pr view <number>
 
-# If approved: create feature branch, pull PR, rebase, merge
+# If approved: checkout PR branch, rebase onto integration, merge
 gh pr checkout <number>
-git rebase main
+git rebase integration
 # ... review / adjust ...
-git checkout main && git merge --ff-only <branch> && git push
-gh pr close <number> --comment "Merged via main."
+git checkout integration && git merge --ff-only <branch> && git push
+gh pr close <number> --comment "Merged via integration."
 ```
 
 Post comments via file to avoid shell escaping issues:
