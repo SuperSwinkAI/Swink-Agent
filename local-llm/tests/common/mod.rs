@@ -2,6 +2,7 @@
 
 use std::sync::{Arc, Mutex};
 
+#[cfg(feature = "gemma4")]
 use swink_agent::testing::{
     TestGpu, TestOs, TestRuntimeRequirements, should_run_test, test_runtime,
 };
@@ -38,6 +39,7 @@ pub fn progress_collector() -> (ProgressCallbackFn, ProgressCollector) {
 ///
 /// Gemma 4 direct inference is only practical when the crate is compiled with
 /// a supported GPU backend and the corresponding hardware is present.
+#[cfg(feature = "gemma4")]
 pub fn require_gemma4_local_runtime() -> bool {
     if cfg!(feature = "metal") {
         let runtime = test_runtime();

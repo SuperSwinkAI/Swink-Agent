@@ -37,6 +37,28 @@ pub struct ModelConfig {
 }
 
 impl ModelConfig {
+    /// Returns `true` if this configuration targets a `SmolLM3` GGUF model.
+    ///
+    /// The currently bundled `mistralrs` GGUF loader does not recognize the
+    /// `smollm3` architecture and panics deep inside the dependency. We guard
+    /// that path before any download or model build starts so callers receive a
+    /// normal typed error instead.
+    fn is_smollm3(&self) -> bool {
+        let repo_id = self.repo_id.to_ascii_lowercase();
+        let filename = self.filename.to_ascii_lowercase();
+        repo_id.contains("smollm3") || filename.contains("smollm3")
+    }
+
+    fn unsupported_architecture_error(&self) -> Option<LocalModelError> {
+        if self.is_smollm3() {
+            return Some(LocalModelError::loading_message(
+                "SmolLM3 GGUF models are not supported by the bundled mistralrs loader (`Unknown GGUF architecture smollm3`). Override `LOCAL_MODEL_REPO`/`LOCAL_MODEL_FILE` to a supported model or use Ollama / another local backend until upstream support lands.",
+            ));
+        }
+
+        None
+    }
+
     /// Returns `true` if this configuration targets a Gemma 4 model family.
     ///
     /// Used for model-family branching: builder selection, thinking token
@@ -105,6 +127,10 @@ impl LoaderBackend for ChatBackend {
         _progress_cb: Option<ProgressCallbackFn>,
     ) -> Pin<Box<dyn Future<Output = Result<Self::Artifact, LocalModelError>> + Send + '_>> {
         Box::pin(async move {
+            if let Some(err) = config.unsupported_architecture_error() {
+                return Err(err);
+            }
+
             // Gemma 4 uses MultimodalModelBuilder which handles its own
             // downloading internally — skip the hf-hub download phase.
             #[cfg(feature = "gemma4")]
@@ -350,6 +376,25 @@ mod tests {
     fn model_config_context_length_env_override() {
         let config = ModelConfig::default();
         assert_eq!(config.context_length, 8192);
+    }
+
+    #[tokio::test]
+    async fn ensure_ready_rejects_smollm3_before_download() {
+        let model = LocalModel::new(ModelConfig {
+            repo_id: "unsloth/SmolLM3-3B-GGUF".to_string(),
+            filename: "SmolLM3-3B-Q4_K_M.gguf".to_string(),
+            gpu_layers: 0,
+            context_length: 8192,
+            chat_template: None,
+        });
+
+        let err = model.ensure_ready().await.unwrap_err();
+        let msg = err.to_string();
+
+        assert!(matches!(err, LocalModelError::Loading { .. }));
+        assert!(msg.contains("SmolLM3 GGUF models are not supported"));
+        assert!(msg.contains("LOCAL_MODEL_REPO"));
+        assert!(matches!(model.state().await, ModelState::Failed(state_msg) if state_msg == msg));
     }
 
     #[tokio::test]
