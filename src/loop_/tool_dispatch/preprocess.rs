@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use futures::FutureExt;
 use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
 use tracing::error;
 
 use crate::agent_options::ApproveToolFn;
@@ -14,7 +15,7 @@ use crate::types::{AgentMessage, ContentBlock};
 
 use super::shared::{emit_batch_stop_results, emit_error_result, panic_payload_message};
 use super::{
-    AgentEvent, AgentLoopConfig, PreparedToolCall, ToolCallInfo, ToolExecOutcome, emit,
+    AgentEvent, AgentLoopConfig, PreparedToolCall, ToolCallInfo, ToolExecOutcome, collect, emit,
     order_results_by_tool_calls,
 };
 
@@ -28,12 +29,28 @@ pub(super) struct PreprocessResult {
     pub injected_messages: Vec<AgentMessage>,
 }
 
+async fn aborted_preprocess_outcome(
+    tool_calls: &[ToolCallInfo],
+    results: &Arc<tokio::sync::Mutex<Vec<(usize, crate::types::ToolResultMessage)>>>,
+    tool_timings: &Arc<tokio::sync::Mutex<Vec<crate::metrics::ToolExecMetrics>>>,
+    injected_messages: Vec<AgentMessage>,
+) -> ToolExecOutcome {
+    collect::build_aborted_outcome(
+        tool_calls,
+        Arc::clone(results),
+        Arc::clone(tool_timings),
+        injected_messages,
+    )
+    .await
+}
+
 /// Result of checking the approval gate for a single tool call.
 enum ApprovalOutcome {
     Approved,
     /// Approved with modified parameters.
     ApprovedWith(serde_json::Value),
     Rejected,
+    Cancelled,
     ChannelClosed,
 }
 
@@ -44,9 +61,11 @@ enum ApprovalOutcome {
 /// Returns `Ok(PreprocessResult)` when pre-processing completes (even if some
 /// calls were skipped/rejected). Returns `Err(ToolExecOutcome)` for early
 /// exits (policy Stop, channel closed).
+#[allow(clippy::too_many_lines)]
 pub(super) async fn preprocess_tool_calls(
     config: &Arc<AgentLoopConfig>,
     tool_calls: &[ToolCallInfo],
+    cancellation_token: &CancellationToken,
     tool_map: &HashMap<&str, &Arc<dyn AgentTool>>,
     results: &Arc<tokio::sync::Mutex<Vec<(usize, crate::types::ToolResultMessage)>>>,
     tool_timings: &Arc<tokio::sync::Mutex<Vec<crate::metrics::ToolExecMetrics>>>,
@@ -56,6 +75,16 @@ pub(super) async fn preprocess_tool_calls(
     let mut injected_messages: Vec<AgentMessage> = Vec::new();
 
     for (idx, tc) in tool_calls.iter().enumerate() {
+        if cancellation_token.is_cancelled() {
+            return Err(aborted_preprocess_outcome(
+                tool_calls,
+                results,
+                tool_timings,
+                injected_messages,
+            )
+            .await);
+        }
+
         // ── PreDispatch policies ──
         let mut effective_arguments = tc.arguments.clone();
         {
@@ -103,6 +132,16 @@ pub(super) async fn preprocess_tool_calls(
             }
         }
 
+        if cancellation_token.is_cancelled() {
+            return Err(aborted_preprocess_outcome(
+                tool_calls,
+                results,
+                tool_timings,
+                injected_messages,
+            )
+            .await);
+        }
+
         // ── Approval gate ──
         if let Some(ref approve_fn) = config.approve_tool
             && config.approval_mode != ApprovalMode::Bypassed
@@ -123,6 +162,7 @@ pub(super) async fn preprocess_tool_calls(
                     tc,
                     &effective_arguments,
                     idx,
+                    cancellation_token,
                     requires_approval,
                     tool_map,
                     results,
@@ -135,6 +175,15 @@ pub(super) async fn preprocess_tool_calls(
                         effective_arguments = new_params;
                     }
                     ApprovalOutcome::Rejected => continue,
+                    ApprovalOutcome::Cancelled => {
+                        return Err(aborted_preprocess_outcome(
+                            tool_calls,
+                            results,
+                            tool_timings,
+                            injected_messages,
+                        )
+                        .await);
+                    }
                     ApprovalOutcome::ChannelClosed => return Err(ToolExecOutcome::ChannelClosed),
                 }
             }
@@ -150,6 +199,22 @@ pub(super) async fn preprocess_tool_calls(
         prepared,
         injected_messages,
     })
+}
+
+async fn emit_approval_resolved(
+    tx: &mpsc::Sender<AgentEvent>,
+    tc: &ToolCallInfo,
+    approved: bool,
+) -> bool {
+    emit(
+        tx,
+        AgentEvent::ToolApprovalResolved {
+            id: tc.id.clone(),
+            name: tc.name.clone(),
+            approved,
+        },
+    )
+    .await
 }
 
 // ─── Approval helper ────────────────────────────────────────────────────────
@@ -174,11 +239,16 @@ async fn check_approval(
     tc: &ToolCallInfo,
     effective_arguments: &serde_json::Value,
     idx: usize,
+    cancellation_token: &CancellationToken,
     requires_approval: bool,
     tool_map: &HashMap<&str, &Arc<dyn AgentTool>>,
     results: &Arc<tokio::sync::Mutex<Vec<(usize, crate::types::ToolResultMessage)>>>,
     tx: &mpsc::Sender<AgentEvent>,
 ) -> ApprovalOutcome {
+    if cancellation_token.is_cancelled() {
+        return ApprovalOutcome::Cancelled;
+    }
+
     if !emit(
         tx,
         AgentEvent::ToolApprovalRequested {
@@ -210,10 +280,17 @@ async fn check_approval(
         requires_approval,
         context: approval_context,
     };
-    let decision = match std::panic::AssertUnwindSafe(approve_fn(request))
-        .catch_unwind()
-        .await
-    {
+    let decision = match tokio::select! {
+        biased;
+        () = cancellation_token.cancelled() => {
+            if !emit_approval_resolved(tx, tc, false).await {
+                return ApprovalOutcome::ChannelClosed;
+            }
+
+            return ApprovalOutcome::Cancelled;
+        }
+        decision = std::panic::AssertUnwindSafe(approve_fn(request)).catch_unwind() => decision
+    } {
         Ok(decision) => decision,
         Err(panic_value) => {
             let panic_message = panic_payload_message(panic_value.as_ref());
@@ -223,16 +300,7 @@ async fn check_approval(
                 "approval callback panicked: {panic_message}"
             );
 
-            if !emit(
-                tx,
-                AgentEvent::ToolApprovalResolved {
-                    id: tc.id.clone(),
-                    name: tc.name.clone(),
-                    approved: false,
-                },
-            )
-            .await
-            {
+            if !emit_approval_resolved(tx, tc, false).await {
                 return ApprovalOutcome::ChannelClosed;
             }
 
@@ -254,16 +322,7 @@ async fn check_approval(
     };
     let approved = !matches!(decision, ToolApproval::Rejected);
 
-    if !emit(
-        tx,
-        AgentEvent::ToolApprovalResolved {
-            id: tc.id.clone(),
-            name: tc.name.clone(),
-            approved,
-        },
-    )
-    .await
-    {
+    if !emit_approval_resolved(tx, tc, approved).await {
         return ApprovalOutcome::ChannelClosed;
     }
 
