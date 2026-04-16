@@ -134,6 +134,9 @@ impl App {
             AgentEvent::ToolExecutionStart { id, name, .. } => {
                 self.tool_panel.start_tool(id, name);
             }
+            AgentEvent::ToolExecutionUpdate { id, name, partial } => {
+                self.tool_panel.update_tool(&id, &name, &partial);
+            }
             AgentEvent::ToolExecutionEnd { id, is_error, .. } => {
                 self.tool_panel.end_tool(&id, is_error);
             }
