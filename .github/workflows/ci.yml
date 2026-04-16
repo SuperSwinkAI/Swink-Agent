@@ -22,7 +22,11 @@ jobs:
 
       - run: cargo fmt --check
 
+      # The typos action's entrypoint script uses `wget`, which isn't
+      # available on Windows runners by default. Text content doesn't vary
+      # by OS, so running spell-check on Ubuntu + macOS is sufficient.
       - name: Spell check
+        if: runner.os != 'Windows'
         uses: crate-ci/typos@cf5f1c29a8ac336af8568821ec41919923b05a83 # v1
 
       - run: cargo clippy --workspace -- -D warnings
@@ -132,7 +136,11 @@ jobs:
       - name: Fetch main branch for baseline
         run: git fetch origin main
 
-      - run: cargo semver-checks --workspace --baseline-rev origin/main
+      # Exclude swink-agent-local-llm: its metal/cuda/accelerate features
+      # transitively pull in objc2 (Apple-only) via mistralrs; building
+      # rustdoc on Linux fails regardless of which features we check. The
+      # crate's public API surface is evaluated on macOS via the main check.
+      - run: cargo semver-checks --workspace --exclude swink-agent-local-llm --baseline-rev origin/main
 
   msrv:
     runs-on: ubuntu-latest
