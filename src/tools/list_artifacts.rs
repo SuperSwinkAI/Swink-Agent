@@ -64,7 +64,9 @@ impl<S: ArtifactStore + 'static> AgentTool for ListArtifactsTool<S> {
             }
 
             let session_id = {
-                let guard = state.read().unwrap_or_else(|e| e.into_inner());
+                let guard = state
+                    .read()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 match guard.get::<String>("session_id") {
                     Some(id) => id,
                     None => return AgentToolResult::error("no session_id in state"),

@@ -219,10 +219,10 @@ fn local_connections() -> ModelConnections {
         local_model,
     )));
     let catalog = model_catalog();
-    let model = catalog
-        .preset("local", "smollm3_3b")
-        .map(|preset: CatalogPreset| preset.model_spec())
-        .unwrap_or_else(|| ModelSpec::new("local", "SmolLM3-3B-Q4_K_M"));
+    let model = catalog.preset("local", "smollm3_3b").map_or_else(
+        || ModelSpec::new("local", "SmolLM3-3B-Q4_K_M"),
+        |preset: CatalogPreset| preset.model_spec(),
+    );
 
     ModelConnections::builder()
         .primary(ModelConnection::new(model, local))
@@ -256,10 +256,10 @@ fn append_local_fallback(
         local_model,
     )));
     let catalog = model_catalog();
-    let model = catalog
-        .preset("local", "smollm3_3b")
-        .map(|preset: CatalogPreset| preset.model_spec())
-        .unwrap_or_else(|| ModelSpec::new("local", "SmolLM3-3B-Q4_K_M"));
+    let model = catalog.preset("local", "smollm3_3b").map_or_else(
+        || ModelSpec::new("local", "SmolLM3-3B-Q4_K_M"),
+        |preset: CatalogPreset| preset.model_spec(),
+    );
 
     builder.fallback(ModelConnection::new(model, local))
 }

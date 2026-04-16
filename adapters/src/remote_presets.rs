@@ -76,6 +76,7 @@ pub enum RemoteModelConnectionError {
 /// constant for each provider. Provider keys that don't map to any adapter
 /// feature (e.g. `"local"`) always return `false`.
 #[must_use]
+#[allow(clippy::match_like_matches_macro)] // arms evaluate different cfg! flags, not a set membership check
 pub fn is_provider_compiled(provider_key: &str) -> bool {
     match provider_key {
         "anthropic" => cfg!(feature = "anthropic"),

@@ -918,7 +918,7 @@ impl MockPlugin {
 
     /// Set the priority for this plugin.
     #[must_use]
-    pub fn with_priority(mut self, priority: i32) -> Self {
+    pub const fn with_priority(mut self, priority: i32) -> Self {
         self.priority = priority;
         self
     }
@@ -926,7 +926,7 @@ impl MockPlugin {
     /// Contribute tools with the given names (each wrapped with a permissive schema).
     #[must_use]
     pub fn with_tools(mut self, names: &[&str]) -> Self {
-        self.tool_names = names.iter().map(|s| s.to_string()).collect();
+        self.tool_names = names.iter().copied().map(ToString::to_string).collect();
         self
     }
 
@@ -994,7 +994,7 @@ impl MockPlugin {
 
     /// Make the contributed pre-turn policy return `PolicyVerdict::Stop`.
     #[must_use]
-    pub fn with_stopping_pre_turn(mut self) -> Self {
+    pub const fn with_stopping_pre_turn(mut self) -> Self {
         self.stopping_pre_turn = true;
         self
     }
@@ -1097,7 +1097,7 @@ pub struct RecordingPostTurnPolicy {
 
 #[cfg(feature = "plugins")]
 impl PostTurnPolicy for RecordingPostTurnPolicy {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "recording-post-turn"
     }
 
