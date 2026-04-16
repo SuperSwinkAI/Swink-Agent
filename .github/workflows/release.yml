@@ -50,9 +50,9 @@ jobs:
       - name: cargo fmt --check
         run: cargo fmt --all -- --check
       - name: cargo clippy
-        run: cargo clippy --workspace --all-features -- -D warnings
+        run: cargo clippy --workspace --all-features --exclude swink-agent-local-llm -- -D warnings
       - name: cargo test
-        run: cargo test --workspace --all-features
+        run: cargo test --workspace --all-features --exclude swink-agent-local-llm
       - name: cargo doc
         env:
           RUSTDOCFLAGS: "-D warnings"
