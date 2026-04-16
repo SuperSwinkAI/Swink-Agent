@@ -370,7 +370,7 @@ impl JsonlSessionStore {
         dirs::config_dir().map(|d| d.join("swink-agent").join("sessions"))
     }
 
-    /// Generate a new unique session ID using `YYYYMMDD_HHMMSS` format.
+    /// Generate a new unique session ID using a UTC timestamp plus UUID suffix.
     pub fn new_session_id() -> String {
         format_session_id()
     }
@@ -842,8 +842,10 @@ mod tests {
     #[test]
     fn new_session_id_format() {
         let id = JsonlSessionStore::new_session_id();
-        assert_eq!(id.len(), 15);
-        assert_eq!(id.as_bytes()[8], b'_');
+        let (timestamp, suffix) = id.rsplit_once('_').unwrap();
+        assert_eq!(timestamp.len(), 15);
+        assert_eq!(timestamp.as_bytes()[8], b'_');
+        assert_eq!(suffix.len(), 32);
     }
 
     #[test]
