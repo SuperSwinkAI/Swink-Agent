@@ -146,6 +146,7 @@ MSRV **1.88** (edition 2024). Common workspace deps are centralized in root `Car
 - `AgentToolResult.is_error` replaces old `text.starts_with("error")` heuristic. Use `error()` / `text()` constructors.
 - `ToolCallTransformer` runs unconditionally (not gated by approval). Distinct from `ToolValidator` (rejects vs rewrites).
 - `#[tool]` macro param decoding must return `AgentToolResult::error("invalid parameters: ...")` on serde failures rather than panicking. The generated code still retries deserialization from `{}` so zero-param / all-optional tools can execute when appropriate.
+- `FnTool::with_execute_typed::<T>()` is the zero-boilerplate typed path: it derives the schema from `T` and must mirror the rest of the tool stack by returning `AgentToolResult::error("invalid parameters: ...")` on serde decode failures.
 
 ### Credential Management (`auth/`)
 
