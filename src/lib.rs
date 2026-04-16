@@ -149,7 +149,7 @@ pub use tool_execution_policy::{
 pub use tool_filter::{ToolFilter, ToolPattern};
 pub use tool_middleware::ToolMiddleware;
 #[cfg(feature = "builtin-tools")]
-pub use tools::{BashTool, ReadFileTool, WriteFileTool, builtin_tools};
+pub use tools::{BashTool, EditFileTool, ReadFileTool, WriteFileTool, builtin_tools};
 #[cfg(feature = "artifact-tools")]
 pub use tools::{ListArtifactsTool, LoadArtifactTool, SaveArtifactTool, artifact_tools};
 pub use types::{

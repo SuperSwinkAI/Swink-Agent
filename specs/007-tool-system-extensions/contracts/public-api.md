@@ -259,6 +259,7 @@ pub use fn_tool::FnTool;
 
 #[cfg(feature = "builtin-tools")]
 pub use tools::{BashTool, EditFileTool, ReadFileTool, WriteFileTool, builtin_tools};
+// EditFileTool is individually constructable: EditFileTool::new() or Default::default()
 
 pub use tool_filter::{ToolFilter, ToolPattern};
 pub use noop_tool::NoopTool;
