@@ -1,6 +1,6 @@
 [package]
 name = "swink-agent-artifacts"
-version = "0.7.5"
+version = "0.7.6"
 edition = "2024"
 rust-version = "1.88"
 description = "Versioned artifact storage for swink-agent sessions"
@@ -11,7 +11,7 @@ categories = ["development-tools", "filesystem"]
 readme = "../README.md"
 
 [dependencies]
-swink-agent = { path = "..", default-features = false, features = ["artifact-store"] }
+swink-agent = { path = "..", version = "0.7.6", default-features = false, features = ["artifact-store"] }
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

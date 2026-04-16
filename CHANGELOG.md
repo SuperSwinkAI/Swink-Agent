@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.6] - 2026-04-16
+
+### Fixed
+- Add explicit `version` field to every internal workspace path dependency
+  (e.g. `swink-agent = { path = "..", version = "0.7.6", ... }`). `cargo
+  publish` requires a version on every dep so it can strip the path and
+  resolve via crates.io. The v0.7.5 publish run shipped `swink-agent` and
+  `swink-agent-macros` (no internal deps) but failed on
+  `swink-agent-adapters` with "all dependencies must have a version
+  requirement specified when publishing." The CI `cargo package --list`
+  fallback used for downstream crates does not validate this; only real
+  `cargo publish` does. v0.7.6 republishes everything; `swink-agent` and
+  `swink-agent-macros` v0.7.5 remain on crates.io but have no dependents.
+
 ## [0.7.5] - 2026-04-16
 
 ### Fixed
@@ -100,7 +114,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Major additions: Gemma 4 local inference, `BlockAccumulator` for streaming event assembly, `schemars`-based proc-macro engine, multi-agent patterns and artifact service, MCP integration, plugin system, policy slots, credential management, TUI session management, and web browse plugin. 42 specs implemented across the 0.6 lifecycle.
 
-[Unreleased]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.7.5...HEAD
+[Unreleased]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.7.6...HEAD
+[0.7.6]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.7.5...v0.7.6
 [0.7.5]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.7.4...v0.7.5
 [0.7.4]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.7.3...v0.7.4
 [0.7.3]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.7.2...v0.7.3
