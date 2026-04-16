@@ -9,6 +9,8 @@ use std::time::Duration;
 use common::{
     MockStreamFn, default_convert, default_model, text_only_events, tool_call_events, user_msg,
 };
+use schemars::JsonSchema;
+use serde::Deserialize;
 use serde_json::json;
 
 use swink_agent::{Agent, AgentOptions, AgentToolResult, DefaultRetryStrategy, FnTool};
@@ -48,6 +50,42 @@ async fn fn_tool_executes_in_agent_loop() {
     let result = agent.prompt_async(vec![user_msg("hi")]).await.unwrap();
 
     // The agent completed both turns — tool execution + final response.
+    assert!(
+        !result.messages.is_empty(),
+        "agent should have produced messages"
+    );
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct TypedParams {
+    name: String,
+}
+
+#[tokio::test]
+async fn fn_tool_typed_executes_in_agent_loop() {
+    let tool = FnTool::new("greet", "Greet", "Greet a person.").with_execute_typed(
+        |params: TypedParams, _cancel| async move {
+            AgentToolResult::text(format!("Hello, {}!", params.name))
+        },
+    );
+
+    let stream_fn = Arc::new(MockStreamFn::new(vec![
+        tool_call_events("call_1", "greet", r#"{"name":"Alice"}"#),
+        text_only_events("Done greeting."),
+    ]));
+
+    let mut agent = Agent::new(
+        AgentOptions::new("test", default_model(), stream_fn, default_convert)
+            .with_tools(vec![Arc::new(tool)])
+            .with_retry_strategy(Box::new(
+                DefaultRetryStrategy::default()
+                    .with_jitter(false)
+                    .with_base_delay(Duration::from_millis(1)),
+            )),
+    );
+
+    let result = agent.prompt_async(vec![user_msg("hi")]).await.unwrap();
+
     assert!(
         !result.messages.is_empty(),
         "agent should have produced messages"

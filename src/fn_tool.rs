@@ -12,10 +12,8 @@
 //! struct Params { city: String }
 //!
 //! let tool = FnTool::new("get_weather", "Weather", "Get weather for a city.")
-//!     .with_schema_for::<Params>()
-//!     .with_execute_simple(|params, _cancel| async move {
-//!         let city = params["city"].as_str().unwrap_or("unknown");
-//!         AgentToolResult::text(format!("72F in {city}"))
+//!     .with_execute_typed(|params: Params, _cancel| async move {
+//!         AgentToolResult::text(format!("72F in {}", params.city))
 //!     });
 //!
 //! assert_eq!(swink_agent::AgentTool::name(&tool), "get_weather");
@@ -24,6 +22,7 @@
 use std::future::Future;
 use std::sync::Arc;
 
+use serde::de::DeserializeOwned;
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
@@ -148,6 +147,33 @@ impl FnTool {
         self
     }
 
+    /// Set the execution function using a typed parameter struct.
+    ///
+    /// This derives the schema from `T` and deserializes validated params into
+    /// `T` before calling the closure. On deserialization failure, execution
+    /// returns `AgentToolResult::error("invalid parameters: ...")`.
+    #[must_use]
+    pub fn with_execute_typed<T, F, Fut>(mut self, f: F) -> Self
+    where
+        T: DeserializeOwned + schemars::JsonSchema + Send + 'static,
+        F: Fn(T, CancellationToken) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = AgentToolResult> + Send + 'static,
+    {
+        self.schema = validated_schema_for::<T>();
+        self.execute_fn = Arc::new(move |_id, params, cancel, _on_update| {
+            let parsed: T = match serde_json::from_value(params) {
+                Ok(parsed) => parsed,
+                Err(err) => {
+                    return Box::pin(async move {
+                        AgentToolResult::error(format!("invalid parameters: {err}"))
+                    });
+                }
+            };
+            Box::pin(f(parsed, cancel))
+        });
+        self
+    }
+
     /// Set a closure that provides rich context for the approval UI.
     ///
     /// When the tool requires approval, this closure is called to produce
@@ -232,6 +258,7 @@ mod tests {
     use tokio_util::sync::CancellationToken;
 
     use super::*;
+    use crate::ContentBlock;
 
     fn test_state() -> std::sync::Arc<std::sync::RwLock<crate::SessionState>> {
         std::sync::Arc::new(std::sync::RwLock::new(crate::SessionState::new()))
@@ -334,5 +361,63 @@ mod tests {
             )
             .await;
         assert!(!result.is_error);
+    }
+
+    #[derive(Deserialize, JsonSchema)]
+    struct TypedParams {
+        city: String,
+    }
+
+    #[tokio::test]
+    async fn typed_execute_deserializes_params_and_sets_schema() {
+        let tool = FnTool::new("typed", "Typed", "Typed params.").with_execute_typed(
+            |params: TypedParams, _cancel| async move { AgentToolResult::text(params.city) },
+        );
+
+        let schema = tool.parameters_schema();
+        assert_eq!(schema["type"], "object");
+        assert!(
+            schema["required"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("city"))
+        );
+
+        let result = tool
+            .execute(
+                "id",
+                json!({"city": "Chicago"}),
+                CancellationToken::new(),
+                None,
+                test_state(),
+                None,
+            )
+            .await;
+        assert!(!result.is_error);
+        assert_eq!(ContentBlock::extract_text(&result.content), "Chicago");
+    }
+
+    #[tokio::test]
+    async fn typed_execute_reports_deserialization_errors() {
+        let tool = FnTool::new("typed", "Typed", "Typed params.").with_execute_typed(
+            |params: TypedParams, _cancel| async move { AgentToolResult::text(params.city) },
+        );
+
+        let result = tool
+            .execute(
+                "id",
+                json!({"city": 42}),
+                CancellationToken::new(),
+                None,
+                test_state(),
+                None,
+            )
+            .await;
+        assert!(result.is_error);
+        assert!(
+            ContentBlock::extract_text(&result.content).contains("invalid parameters"),
+            "expected invalid parameters error, got: {:?}",
+            result.content
+        );
     }
 }
