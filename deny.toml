@@ -6,6 +6,10 @@ ignore = [
     # transitive path (statrs → nalgebra → mistralrs) is pinned to rand 0.8
     # upstream. Revisit when statrs/nalgebra bump to rand 0.9+.
     "RUSTSEC-2026-0097",
+    # RUSTSEC-2024-0384 — `instant` is unmaintained (replaced by `web_time`).
+    # Transitive via notify-types → instant. No direct action available until
+    # the `notify` crate drops this dependency upstream.
+    "RUSTSEC-2024-0384",
 ]
 
 [licenses]
