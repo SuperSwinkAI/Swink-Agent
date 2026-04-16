@@ -1,11 +1,41 @@
 # Contributing to Swink Agent
 
-Thank you for your interest in contributing. This document covers everything you need to get started.
+This guide exists to save both sides time.
+
+## The Standard
+
+**You must understand your code.** If you cannot explain what your changes do and how they interact with the rest of the system, your PR will be closed.
+
+Using AI to write code is fine. Submitting AI-generated code without understanding it is not.
+
+If you use an agent, run it from the repo root so it picks up `AGENTS.md` automatically. Your agent must follow the rules in that file.
+
+## Contribution Gate
+
+PRs from new contributors are auto-closed by default. Issues are open to everyone.
+
+Maintainers review auto-closed PRs and reopen worthwhile ones. Reply `lgtm` on any issue or PR from a contributor to grant them PR rights going forward.
+
+## Quality Bar for Issues
+
+Use one of the [GitHub issue templates](https://github.com/SuperSwinkAI/Swink-Agent/issues/new/choose).
+
+Keep it short and concrete:
+
+- One screen or less. If it does not fit, it is too long.
+- Write in your own voice.
+- State the bug or request clearly.
+- Explain why it matters to users of this library.
+- If you want to implement the fix yourself, say so.
+
+## Blocking
+
+If you spam the tracker with agent-generated issues or PRs, your GitHub account will be permanently blocked.
 
 ## Prerequisites
 
 - **Rust 1.88+** (MSRV). Install via [rustup](https://rustup.rs).
-- After installing Rust, add the required toolchain components:
+- Add required toolchain components:
   ```bash
   rustup component add clippy rustfmt
   ```
@@ -19,7 +49,59 @@ cd Swink-Agent
 cargo build --workspace
 ```
 
-For the TUI, create a `.env` file at the repo root (see `.env.example` for all supported keys).
+## Spec-Driven Development
+
+This project uses spec-driven development via [GitHub Specify](https://github.com/apps/specify).
+
+- **New features require a spec first.** Open an issue requesting a new spec, or propose one directly via the Specify app. Implementation PRs for unspecced features are closed.
+- **Changes to existing features must update the spec.** If your PR changes behavior covered by a spec in `specs/`, that spec must be updated in the same PR.
+- Specs live in `specs/NNN-<name>/` (spec.md, plan.md, tasks.md). Read the relevant spec before touching the code it covers.
+- It is perfectly valid to open an issue requesting a new or revised spec without implementing it yourself.
+
+## Before Submitting a PR
+
+Three requirements before opening a PR:
+
+1. **Open an issue first.** Discuss the change, get feedback, and confirm the direction before writing code. PRs without a linked issue are auto-closed.
+2. **New features need an approved spec** (see Spec-Driven Development above).
+3. **Get `lgtm` approval** (see Contribution Gate above).
+
+Link your PR to its issue using `Closes #<issue>` or `Related to #<issue>` in the PR description.
+
+Run this locally before opening:
+
+```bash
+cargo fmt --check                                    # formatting
+cargo clippy --workspace -- -D warnings              # zero warnings
+cargo test --workspace                               # all tests
+cargo test -p swink-agent --no-default-features      # feature gate coverage
+```
+
+All four must pass. Do not edit `CHANGELOG.md` — entries are added by maintainers.
+
+Some tests hit live APIs and are `#[ignore]`. Run them with:
+```bash
+cargo test -p swink-agent-adapters -- --ignored      # requires API keys in .env
+```
+
+## Pull Request Process
+
+1. Open a PR against `main` with a clear title and description.
+2. Describe *what* changed and *why* — not just what the diff shows.
+3. Reference related issues with `Closes #<issue>` or `Related to #<issue>`.
+4. All CI checks must pass before merge.
+5. At least one maintainer review is required.
+
+## Commit Messages
+
+Concise, imperative-mood subject lines:
+```
+Add tool approval callback to agent loop
+Fix context overflow sentinel not resetting after transform
+Refactor streaming accumulator into separate module
+```
+
+No ticket numbers in commit messages — link issues in the PR description.
 
 ## Branch Naming
 
@@ -30,42 +112,7 @@ For the TUI, create a `.env` file at the repo root (see `.env.example` for all s
 | Refactor | `refactor/<short-description>` | `refactor/split-agent-context` |
 | Docs | `docs/<short-description>` | `docs/streaming-guide` |
 
-Branch off of `main`. Keep branches focused — one concern per PR.
-
-## Before You Submit
-
-Run this checklist locally before opening a PR:
-
-```bash
-cargo fmt --check                                    # formatting
-cargo clippy --workspace -- -D warnings              # zero warnings
-cargo test --workspace                               # all tests
-cargo test -p swink-agent --no-default-features      # feature gate coverage
-```
-
-Some tests hit live APIs and are marked `#[ignore]`. Run them with:
-```bash
-cargo test -p swink-agent-adapters -- --ignored      # requires API keys in .env
-```
-
-## Pull Request Process
-
-1. Open a PR against `main` with a clear title and description.
-2. Describe *what* changed and *why* — not just what the diff shows.
-3. Reference any related issues with `Closes #<issue>` or `Related to #<issue>`.
-4. All CI checks must pass before merge.
-5. At least one maintainer review is required.
-
-## Commit Messages
-
-Use concise, imperative-mood subject lines:
-```
-Add tool approval callback to agent loop
-Fix context overflow sentinel not resetting after transform
-Refactor streaming accumulator into separate module
-```
-
-No ticket numbers required in commit messages (link in the PR description instead).
+Branch off `main`. One concern per PR.
 
 ## Workspace Structure
 
@@ -73,16 +120,24 @@ No ticket numbers required in commit messages (link in the PR description instea
 |---|---|---|
 | `swink-agent` | `.` | Core agentic loop, tool system, context management |
 | `swink-agent-adapters` | `adapters/` | Provider adapters (Anthropic, OpenAI, Ollama, …) |
-| `swink-agent-memory` | `memory/` | Session persistence and compaction |
+| `swink-agent-artifacts` | `artifacts/` | Versioned artifact storage |
+| `swink-agent-auth` | `auth/` | Credential management and OAuth2 |
 | `swink-agent-eval` | `eval/` | Trajectory tracing and evaluation framework |
 | `swink-agent-local-llm` | `local-llm/` | On-device inference via mistral.rs |
+| `swink-agent-macros` | `macros/` | `#[derive(ToolSchema)]` and `#[tool]` proc macros |
+| `swink-agent-mcp` | `mcp/` | Model Context Protocol integration |
+| `swink-agent-memory` | `memory/` | Session persistence and compaction |
+| `swink-agent-patterns` | `patterns/` | Multi-agent pipeline patterns |
+| `swink-agent-plugin-web` | `plugins/web/` | Web browsing and search plugin |
+| `swink-agent-policies` | `policies/` | Feature-gated policy implementations |
 | `swink-agent-tui` | `tui/` | Interactive terminal UI |
+| `xtask` | `xtask/` | Developer task runner (`cargo xtask`) |
 
-Each crate has a `CLAUDE.md` with architecture notes, gotchas, and lessons learned. Read the relevant one before making changes in that crate.
+Each crate has an `AGENTS.md` with architecture notes, gotchas, and lessons learned. Read the relevant one before making changes in that crate.
 
 ## Code Style
 
-See `CLAUDE.md` for full conventions. Key rules:
+See `AGENTS.md` for full conventions. Key rules:
 
 - No `unsafe` code — enforced by `#[forbid(unsafe_code)]` at every crate root.
 - `new()` primary constructor; `with_*()` builder chain.

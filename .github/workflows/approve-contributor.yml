@@ -1,0 +1,92 @@
+name: Approve Contributor
+
+on:
+  issue_comment:
+    types: [created]
+
+jobs:
+  approve:
+    # Only fire on lgtm comments (whole line, case-insensitive)
+    if: ${{ toLower(trim(github.event.comment.body)) == 'lgtm' }}
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      pull-requests: write
+      contents: write
+    steps:
+      - uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7
+        with:
+          script: |
+            const commenter = context.payload.comment.user.login;
+
+            // Verify commenter has admin or maintain permission
+            let commenterPerm;
+            try {
+              const { data } = await github.rest.repos.getCollaboratorPermissionLevel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                username: commenter,
+              });
+              commenterPerm = data.permission;
+            } catch {
+              return; // not a collaborator, ignore
+            }
+
+            if (!['admin', 'maintain'].includes(commenterPerm)) return;
+
+            // Determine the target author (issue or PR)
+            const isOnPr = !!context.payload.issue.pull_request;
+            const targetNumber = context.issue.number;
+            const targetAuthor = context.payload.issue.user.login;
+
+            // Read current contributors.json via GitHub API
+            let fileSha;
+            let contributors = { lgtm: [] };
+            try {
+              const { data: file } = await github.rest.repos.getContent({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                path: '.github/contributors.json',
+              });
+              fileSha = file.sha;
+              contributors = JSON.parse(Buffer.from(file.content, 'base64').toString('utf8'));
+            } catch {}
+
+            // Add to lgtm list (avoid duplicates)
+            if (!contributors.lgtm.includes(targetAuthor)) {
+              contributors.lgtm.push(targetAuthor);
+            }
+
+            // Write back via API (no checkout needed)
+            const updatedContent = Buffer.from(
+              JSON.stringify(contributors, null, 2) + '\n'
+            ).toString('base64');
+
+            await github.rest.repos.createOrUpdateFileContents({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              path: '.github/contributors.json',
+              message: `chore: lgtm @${targetAuthor} [skip ci]`,
+              content: updatedContent,
+              sha: fileSha,
+            });
+
+            // Reopen if it was a PR that was auto-closed
+            if (isOnPr) {
+              try {
+                await github.rest.pulls.update({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  pull_number: targetNumber,
+                  state: 'open',
+                });
+              } catch {}
+            }
+
+            // Confirmation comment
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: targetNumber,
+              body: `@${targetAuthor} approved. Future PRs from this contributor will not be auto-closed.`,
+            });

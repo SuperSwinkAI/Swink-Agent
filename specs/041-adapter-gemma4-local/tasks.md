@@ -202,7 +202,7 @@
 - [x] T059 Run `cargo clippy -p swink-agent-local-llm --features gemma4 -- -D warnings` — zero warnings
 - [x] T060 Run `cargo test --workspace --features testkit` — verify no regressions across workspace (pre-existing `bash_output_truncation` failure in `swink-agent --test tools` is unrelated to 041)
 - [x] T061 Run `cargo build -p swink-agent-local-llm --no-default-features` — verify builds without gemma4 feature (SmolLM3-3B only)
-- [x] T062 Update `local-llm/CLAUDE.md` — document Gemma 4 default change, thinking behavior, MultimodalModelBuilder branching, feature gate
+- [x] T062 Update `local-llm/AGENTS.md` — document Gemma 4 default change, thinking behavior, MultimodalModelBuilder branching, feature gate
 - [x] T063 Update lib.rs doc comment in `local-llm/src/lib.rs` — add Gemma 4 E2B to the crate-level documentation alongside SmolLM3-3B
 
 ---

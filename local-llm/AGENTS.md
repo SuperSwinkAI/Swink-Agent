@@ -1,4 +1,4 @@
-# CLAUDE.md — Local Inference
+# AGENTS.md — Local Inference
 
 ## Scope
 
@@ -24,7 +24,7 @@
 - **Embedding method naming** — `embed(text)` for single text, `embed_batch(texts)` for batch. Errors use `LocalModelError::Embedding` variant.
 - **Gemma 4 requires GPU** — CPU-only inference hangs silently on non-trivial prompts (BF16 safetensors on CPU is not viable). Build with `--features gemma4,cuda` (NVIDIA) or `--features gemma4,metal` (Apple Silicon). On Windows, `cl.exe` (MSVC) must be in PATH for the cuda feature to compile — use a VS 2022 Developer Command Prompt. A `tracing::warn!` is emitted at load time when Gemma 4 is used without any GPU feature compiled in.
 - **Gemma 4 live tests are runtime-gated** — `local-llm/tests/common/mod.rs` uses `swink_agent::testing::should_run_test()` to detect OS/GPU support before calling `ensure_ready()`. This avoids hanging on unsupported hosts and keeps the skip reason close to the real constraint.
-- **Metal builds need Apple’s Metal toolchain** — on macOS, compiling with `--features metal` requires the `metal` compiler from Apple’s Metal Toolchain. If the build script says `cannot execute tool 'metal'`, install it with `xcodebuild -downloadComponent MetalToolchain`.
+- **Metal builds need Apple's Metal toolchain** — on macOS, compiling with `--features metal` requires the `metal` compiler from Apple's Metal Toolchain. If the build script says `cannot execute tool 'metal'`, install it with `xcodebuild -downloadComponent MetalToolchain`.
 - **Gemma 4 uses `MultimodalModelBuilder`** — `GgufModelBuilder` cannot load Gemma 4 (Per-Layer Embeddings architecture). `MultimodalModelBuilder::new(repo_id)` handles download internally, so the hf-hub download phase is skipped for Gemma 4.
 - **Gemma 4 model family detection** — `ModelConfig::is_gemma4()` checks `repo_id` for `"gemma-4"` or `"gemma4"` substrings (behind `gemma4` feature flag).
 - **Gemma 4 thinking mode** — `<|think|>\n` prepended to system prompt in `convert.rs` when `config.is_gemma4() && thinking_enabled`. mistralrs has no `think: true` API for direct inference.
@@ -73,6 +73,6 @@ cargo test -p swink-agent-local-llm --features gemma4 --test local_live -- --ign
 SmolLM3 downloads ~1.92 GB on first run. Embedding model requires `HF_TOKEN` (gated). Gemma 4 E2B downloads ~5 GB safetensors on first run.
 
 Gemma 4 live tests now short-circuit unless the host matches the compiled backend:
-- `metal`: macOS on Apple Silicon, Metal-capable GPU, and Apple’s Metal toolchain installed.
+- `metal`: macOS on Apple Silicon, Metal-capable GPU, and Apple's Metal toolchain installed.
 - `cuda` / `cudnn`: NVIDIA GPU detected on the host.
 - no GPU backend feature: tests print a skip reason and return immediately.

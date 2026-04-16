@@ -44,7 +44,7 @@
 - [x] T009 Update `SessionStore` trait in `memory/src/store.rs`: change to `save(&self, id: &str, meta: &SessionMeta, messages: &[LlmMessage]) -> io::Result<()>`, `append(&self, id: &str, messages: &[LlmMessage]) -> io::Result<()>`, `load(&self, id: &str) -> io::Result<(SessionMeta, Vec<LlmMessage>)>`, `list`, `delete`. Remove `new_session_id()` from trait. Use `LlmMessage` instead of `AgentMessage`. Remove `SessionFilter` and `list_filtered` (not in contract). Delete associated `SessionFilter` tests.
 - [x] T010 Update `memory/src/lib.rs` re-exports: export `SessionMeta`, `SessionStore`, `AsyncSessionStore`, `JsonlSessionStore`, `SummarizingCompactor`, `CompactionResult`, and time utilities (`now_utc`, `format_session_id`). Rename `SessionStoreAsync` → `AsyncSessionStore`. Keep `BlockingSessionStore`.
 - [x] T011 Update existing test file `memory/tests/session_roundtrip.rs`: align with new API signatures (new `SessionMeta` fields, `LlmMessage` instead of `AgentMessage`, new `save()` signature). Or delete and replace with `memory/tests/round_trip.rs` in Phase 3.
-- [x] T012 [P] Update `memory/CLAUDE.md` with any new conventions or lessons learned during foundation work
+- [x] T012 [P] Update `memory/AGENTS.md` with any new conventions or lessons learned during foundation work
 
 **Checkpoint**: Core types aligned with spec — ready for user story implementation
 

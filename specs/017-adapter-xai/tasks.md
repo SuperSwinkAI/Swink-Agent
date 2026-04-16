@@ -94,7 +94,7 @@
 - [x] T014 Run cargo test --workspace and verify all tests pass
 - [x] T015 Run cargo clippy --workspace -- -D warnings and verify zero warnings
 - [x] T016 Run cargo test -p swink-agent-adapters --no-default-features --features xai and verify xai feature compiles and runs in isolation
-- [x] T017 Update adapters/CLAUDE.md to change xai status from "Stub" to "Implemented" in the feature gates table
+- [x] T017 Update adapters/AGENTS.md to change xai status from "Stub" to "Implemented" in the feature gates table
 
 ---
 

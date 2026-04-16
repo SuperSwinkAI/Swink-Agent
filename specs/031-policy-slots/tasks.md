@@ -252,7 +252,7 @@
 - [x] T080 [P] Add doc comments to all public types and trait methods in `src/policy.rs` with usage examples
 - [x] T081 [P] Add doc comments to all built-in policies in `src/policies/*.rs` with builder examples
 - [x] T082 Validate quickstart.md examples compile and work (spot-check 3 examples)
-- [x] T083 Update `CLAUDE.md` Lessons Learned section with policy slot design notes
+- [x] T083 Update `AGENTS.md` Lessons Learned section with policy slot design notes
 
 ---
 

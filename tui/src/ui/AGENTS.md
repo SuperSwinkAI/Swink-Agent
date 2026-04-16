@@ -1,4 +1,4 @@
-# CLAUDE.md — TUI UI Components
+# AGENTS.md — TUI UI Components
 
 ## Scope
 

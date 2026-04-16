@@ -137,7 +137,7 @@
 - [x] T037 Run `cargo test --workspace` and verify all tests pass
 - [x] T038 Run `cargo clippy --workspace -- -D warnings` and verify zero warnings
 - [x] T039 Run `cargo test -p swink-agent-adapters --no-default-features --features bedrock` and verify bedrock feature compiles and runs in isolation
-- [x] T040 Update adapters/CLAUDE.md to change bedrock status from "Stub" to "Implemented" in the feature gates table, update extra deps to include `aws-smithy-eventstream`, `aws-smithy-types`
+- [x] T040 Update adapters/AGENTS.md to change bedrock status from "Stub" to "Implemented" in the feature gates table, update extra deps to include `aws-smithy-eventstream`, `aws-smithy-types`
 - [x] T041 Remove old non-streaming `BedrockResponse`, `BedrockOutput`, `BedrockOutputMessage`, `BedrockOutputContentBlock` types from adapters/src/bedrock.rs (replaced by streaming event types)
 
 ---

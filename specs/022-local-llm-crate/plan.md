@@ -52,7 +52,7 @@ specs/022-local-llm-crate/
 ```text
 local-llm/
 ├── Cargo.toml
-├── CLAUDE.md
+├── AGENTS.md
 └── src/
     ├── lib.rs            # Re-exports public API
     ├── model.rs          # LocalModel — model lifecycle (Unloaded → Downloading → Loading → Ready)

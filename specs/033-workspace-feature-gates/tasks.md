@@ -95,8 +95,8 @@
 - [x] T020 Verify `cargo clippy --workspace -- -D warnings` passes (zero warnings policy)
 - [x] T020a [US4] Verify `cargo build -p swink-agent-tui --features local` still compiles (FR-007 — TUI `local` feature preserved)
 - [x] T020b Verify `cargo tree -p swink-agent-adapters --no-default-features --features anthropic` shows fewer crate dependencies than `cargo tree -p swink-agent-adapters` (SC-001 — measurable dependency reduction)
-- [x] T021 [P] Update `CLAUDE.md` feature gates section to document the new adapter, local-llm, and root feature flags for future development reference
-- [x] T022 [P] Update `adapters/CLAUDE.md` (if it exists) with feature gate documentation for the adapter pattern
+- [x] T021 [P] Update `AGENTS.md` feature gates section to document the new adapter, local-llm, and root feature flags for future development reference
+- [x] T022 [P] Update `adapters/AGENTS.md` (if it exists) with feature gate documentation for the adapter pattern
 
 ---
 

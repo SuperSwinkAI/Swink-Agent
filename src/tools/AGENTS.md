@@ -1,4 +1,4 @@
-# CLAUDE.md — Built-in Tools
+# AGENTS.md — Built-in Tools
 
 ## Scope
 

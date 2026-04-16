@@ -4,8 +4,10 @@ version = "0.7.3"
 edition = "2024"
 rust-version = "1.88"
 description = "Credential management and OAuth2 support for swink-agent"
-license = "MIT OR Apache-2.0"
+license = "MIT"
 repository = "https://github.com/SuperSwinkAI/Swink-Agent"
+keywords = ["llm", "agent", "oauth2", "credentials", "auth"]
+categories = ["development-tools", "authentication"]
 
 [dependencies]
 swink-agent = { path = "..", default-features = false }

@@ -131,9 +131,9 @@ End-to-end tests: agent with authenticated tools, credential resolution, refresh
 
 ### Phase 7: Polish
 
-Update workspace Cargo.toml, ensure clippy clean, verify no secrets in tracing output, update CLAUDE.md with active technologies.
+Update workspace Cargo.toml, ensure clippy clean, verify no secrets in tracing output, update AGENTS.md with active technologies.
 
-**Files**: `Cargo.toml`, `CLAUDE.md`
+**Files**: `Cargo.toml`, `AGENTS.md`
 
 ## Complexity Tracking
 

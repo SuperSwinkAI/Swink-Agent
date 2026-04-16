@@ -4,7 +4,10 @@ version = "0.7.3"
 edition = "2024"
 rust-version = "1.88"
 description = "Multi-agent pipeline patterns for swink-agent"
-license = "MIT OR Apache-2.0"
+license = "MIT"
+repository = "https://github.com/SuperSwinkAI/Swink-Agent"
+keywords = ["llm", "agent", "pipeline", "multi-agent", "orchestration"]
+categories = ["development-tools", "asynchronous"]
 
 [features]
 default = ["pipelines"]

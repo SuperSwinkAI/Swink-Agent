@@ -1,4 +1,4 @@
-# CLAUDE.md — swink-agent-policies
+# AGENTS.md — swink-agent-policies
 
 ## Scope
 

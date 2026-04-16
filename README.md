@@ -80,27 +80,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-```bash
-cargo run -p swink-agent-tui --features local --example custom_agent
-```
-
 ## More Examples
 
-Runnable examples live in `examples/` (core) and `tui/examples/` (TUI):
+Runnable examples are in [SuperSwinkAI/Swink-Agent-Examples](https://github.com/SuperSwinkAI/Swink-Agent-Examples):
 
 | Example | What it demonstrates |
 |---|---|
-| [`simple_prompt`](examples/simple_prompt.rs) | Create an Agent with a mock stream function, send a prompt, print the result |
-| [`with_tools`](examples/with_tools.rs) | Register BashTool / ReadFileTool / WriteFileTool and wire up the approval callback |
-| [`custom_adapter`](examples/custom_adapter.rs) | Implement the `StreamFn` trait for a custom provider |
-| [`custom_agent`](tui/examples/custom_agent.rs) | Full agent with Anthropic adapter, tools, and interactive TUI |
-
-```bash
-cargo run --example simple_prompt
-cargo run --example with_tools
-cargo run --example custom_adapter
-cargo run -p swink-agent-tui --features local --example custom_agent
-```
+| `simple_prompt` | Create an Agent with a mock stream function, send a prompt, print the result |
+| `with_tools` | Register BashTool / ReadFileTool / WriteFileTool and wire up the approval callback |
+| `custom_adapter` | Implement the `StreamFn` trait for a custom provider |
+| `custom_agent` | Full agent with Anthropic adapter, tools, and interactive TUI |
 
 See [docs/getting_started.md](docs/getting_started.md) for setup and configuration.
 See [docs/architecture/HLD.md](docs/architecture/HLD.md) for system design.

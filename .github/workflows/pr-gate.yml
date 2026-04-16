@@ -1,0 +1,114 @@
+name: PR Gate
+
+on:
+  pull_request_target:
+    types: [opened]
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      contents: read
+      issues: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const author = pr.user.login;
+            const prNumber = pr.number;
+            const body = pr.body || '';
+            const title = pr.title || '';
+
+            // ── Helper ────────────────────────────────────────────────
+            async function closePr(reason) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                body: reason,
+              });
+              await github.rest.pulls.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: prNumber,
+                state: 'closed',
+              });
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                labels: ['auto-closed'],
+              });
+            }
+
+            // ── Gate 1: contributor approval ─────────────────────────
+            // Org members and repo collaborators with write+ always pass.
+            let isCollaborator = false;
+            try {
+              const { data: perm } = await github.rest.repos.getCollaboratorPermissionLevel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                username: author,
+              });
+              if (['admin', 'write', 'maintain'].includes(perm.permission)) {
+                isCollaborator = true;
+              }
+            } catch {}
+
+            if (!isCollaborator) {
+              const fs = require('fs');
+              let approved = { lgtm: [] };
+              try {
+                approved = JSON.parse(fs.readFileSync('.github/contributors.json', 'utf8'));
+              } catch {}
+
+              if (!approved.lgtm.includes(author)) {
+                await closePr(
+                  `Hi @${author}, thank you for the PR.\n\n` +
+                  `This PR has been automatically closed. Submitting PRs requires prior maintainer approval. ` +
+                  `Please read [CONTRIBUTING.md](../blob/main/CONTRIBUTING.md) and open an issue first to discuss the change.\n\n` +
+                  `Maintainers review auto-closed PRs daily.`
+                );
+                return;
+              }
+            }
+
+            // ── Gate 2: must reference an approved issue ──────────────
+            // Applies to outside contributors only; collaborators are exempt.
+            if (isCollaborator) return;
+
+            // Extract all #N references from title and body.
+            const refs = [...new Set(
+              [...(title + '\n' + body).matchAll(/#(\d+)/g)].map(m => parseInt(m[1], 10))
+            )];
+
+            // Verify at least one reference points to an actual issue (not a PR).
+            let hasApprovedIssue = false;
+            for (const num of refs) {
+              try {
+                const { data: issue } = await github.rest.issues.get({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: num,
+                });
+                // issues.get also returns PRs; filter those out via pull_request field
+                if (!issue.pull_request) {
+                  hasApprovedIssue = true;
+                  break;
+                }
+              } catch {}
+            }
+
+            if (!hasApprovedIssue) {
+              await closePr(
+                `Hi @${author}, this PR has been automatically closed.\n\n` +
+                `Every PR must reference an existing issue. Please open an issue first to discuss ` +
+                `the change, get feedback, and link this PR to it using ` +
+                `\`Closes #<issue>\` or \`Related to #<issue>\` in the PR description.\n\n` +
+                `See [CONTRIBUTING.md](../blob/main/CONTRIBUTING.md) for details.`
+              );
+            }

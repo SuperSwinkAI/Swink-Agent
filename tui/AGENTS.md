@@ -1,8 +1,8 @@
-# CLAUDE.md — Terminal UI
+# AGENTS.md — Terminal UI
 
 ## Scope
 
-`tui/` — Interactive terminal binary (`swink`). ratatui + crossterm. See `tui/src/ui/CLAUDE.md` for rendering components.
+`tui/` — Interactive terminal binary (`swink`). ratatui + crossterm. See `tui/src/ui/AGENTS.md` for rendering components.
 
 ## Key Facts
 

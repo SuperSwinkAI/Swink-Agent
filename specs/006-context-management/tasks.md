@@ -3,7 +3,7 @@
 **Input**: Design documents from `/specs/006-context-management/`
 **Prerequisites**: plan.md (required), spec.md (required for user stories), research.md, data-model.md, contracts/public-api.md, quickstart.md
 
-**Tests**: Inline unit tests per module (Rust convention). Tests are included as this is a test-driven project per CLAUDE.md.
+**Tests**: Inline unit tests per module (Rust convention). Tests are included as this is a test-driven project per AGENTS.md.
 
 **Organization**: Tasks are grouped by user story to enable independent implementation and testing of each story.
 

@@ -162,7 +162,7 @@
 - [x] T051 [P] Add error handling for disk-full during download: verify `Download` error propagates OS I/O error in `local-llm/src/model.rs`
 - [x] T052 [P] Add error handling for corrupted GGUF file: verify `Loading` error covers parse failures in `local-llm/src/model.rs`
 - [x] T053 [P] Add error handling for out-of-memory during load: verify `Loading` error covers OOM in `local-llm/src/model.rs`
-- [x] T054 Verify `local-llm/CLAUDE.md` documents lessons learned, active technologies, and test commands
+- [x] T054 Verify `local-llm/AGENTS.md` documents lessons learned, active technologies, and test commands
 - [x] T055 Run `cargo build -p swink-agent-local-llm` and verify clean compilation with zero warnings
 - [x] T056 Run `cargo test -p swink-agent-local-llm` and verify all non-ignored tests pass
 - [x] T057 Run `cargo clippy -p swink-agent-local-llm -- -D warnings` and verify zero clippy warnings

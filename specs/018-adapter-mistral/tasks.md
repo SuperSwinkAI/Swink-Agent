@@ -164,7 +164,7 @@
 
 **Purpose**: Documentation, cleanup, and final validation
 
-- [x] T038 [P] Update `adapters/CLAUDE.md` lessons learned with Mistral-specific divergences (tool call ID format, `max_tokens`, no `stream_options`, message ordering constraint, `model_length` finish reason)
+- [x] T038 [P] Update `adapters/AGENTS.md` lessons learned with Mistral-specific divergences (tool call ID format, `max_tokens`, no `stream_options`, message ordering constraint, `model_length` finish reason)
 - [x] T039 [P] Verify `adapters/src/lib.rs` re-exports and feature gate are correct — `MistralStreamFn` available when `mistral` feature enabled, dead_code suppression includes `mistral` in the openai_compat gate
 - [x] T040 Run `cargo test --workspace` to verify no regressions
 - [x] T041 Run `cargo clippy --workspace -- -D warnings` to verify zero warnings

@@ -4,8 +4,10 @@ version = "0.7.3"
 edition = "2024"
 rust-version = "1.88"
 description = "Versioned artifact storage for swink-agent sessions"
-license = "MIT OR Apache-2.0"
+license = "MIT"
 repository = "https://github.com/SuperSwinkAI/Swink-Agent"
+keywords = ["llm", "agent", "artifacts", "storage", "versioned"]
+categories = ["development-tools", "filesystem"]
 
 [dependencies]
 swink-agent = { path = "..", default-features = false, features = ["artifact-store"] }

@@ -6,7 +6,7 @@
 ## Technical Context Resolution
 
 No NEEDS CLARIFICATION items. All decisions determined by the PRD
-(§4, §7, §11), HLD core abstractions layer, CLAUDE.md lessons learned,
+(§4, §7, §11), HLD core abstractions layer, AGENTS.md lessons learned,
 and clarification session.
 
 ## Decisions
@@ -38,7 +38,7 @@ and clarification session.
   `details: Option<Value>`, and `is_error: bool`. Convenience constructors
   `text()`, `error()`.
 - **Rationale**: PRD §4.2 specifies content + details. The `is_error` flag
-  replaces the old `text.starts_with("error")` heuristic (CLAUDE.md lesson).
+  replaces the old `text.starts_with("error")` heuristic (AGENTS.md lesson).
 - **Alternatives considered**: Separate success/error result types —
   rejected because the LLM always receives content blocks regardless of
   success/failure.
@@ -59,7 +59,7 @@ and clarification session.
   enforced: one Start, indexed content blocks, one terminal (Done/Error).
   Out-of-order events return an error and terminate. Empty streams produce
   "no Start event found" error.
-- **Rationale**: CLAUDE.md lessons learned document this exact behavior.
+- **Rationale**: AGENTS.md lessons learned document this exact behavior.
   Clarification session confirmed strict enforcement (no silent recovery).
 - **Alternatives considered**: Best-effort reorder — rejected per
   clarification (would mask adapter bugs).
@@ -69,7 +69,7 @@ and clarification session.
 - **Decision**: Exponential backoff with configurable max_attempts (3),
   base_delay (1s), max_delay (60s), multiplier (2.0), and jitter ([0.5, 1.5)
   range). Retries only `ModelThrottled` and `NetworkError`.
-- **Rationale**: PRD §11 and CLAUDE.md lessons learned specify these
+- **Rationale**: PRD §11 and AGENTS.md lessons learned specify these
   exact parameters. `RetryStrategy::should_retry()` is the sole
   retryability decision point.
 - **Alternatives considered**: Per-error retry configuration — rejected

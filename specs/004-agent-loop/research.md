@@ -6,7 +6,7 @@
 ## Technical Context Resolution
 
 No NEEDS CLARIFICATION items. All decisions determined by the PRD (§12),
-HLD execution layer, CLAUDE.md lessons learned, and clarification session.
+HLD execution layer, AGENTS.md lessons learned, and clarification session.
 
 ## Decisions
 
@@ -26,7 +26,7 @@ HLD execution layer, CLAUDE.md lessons learned, and clarification session.
 - **Decision**: `tokio::spawn` per tool call with per-tool child
   cancellation tokens.
 - **Rationale**: Constitution principle III mandates efficiency;
-  CLAUDE.md explicitly calls out `tokio::spawn` for concurrent tool
+  AGENTS.md explicitly calls out `tokio::spawn` for concurrent tool
   execution. Child cancellation tokens enable selective cancellation
   during steering interrupts.
 - **Alternatives considered**: Sequential tool execution — rejected
@@ -38,19 +38,19 @@ HLD execution layer, CLAUDE.md lessons learned, and clarification session.
 
 - **Decision**: `transform_context` (synchronous) runs before
   `convert_to_llm` on every turn.
-- **Rationale**: CLAUDE.md lessons learned explicitly state this order.
+- **Rationale**: AGENTS.md lessons learned explicitly state this order.
   Transform operates on `AgentMessage` values (pruning, budget),
   then convert filters to `LlmMessage` values for the provider.
   When no transform hook is provided, context passes through unchanged
   (identity behavior, per clarification).
-- **Alternatives considered**: Async transform — rejected per CLAUDE.md
+- **Alternatives considered**: Async transform — rejected per AGENTS.md
   lesson learned ("transform_context is synchronous, not async").
 
 ### Overflow Signal Mechanism
 
 - **Decision**: Boolean flag on `LoopState`, reset after
   `transform_context` processes it.
-- **Rationale**: CLAUDE.md lessons learned state "overflow_signal lives
+- **Rationale**: AGENTS.md lessons learned state "overflow_signal lives
   on LoopState, not AgentContext. Resets after transform_context."
   The sentinel `CONTEXT_OVERFLOW_SENTINEL` is a loop control signal,
   not an error that propagates to the caller.

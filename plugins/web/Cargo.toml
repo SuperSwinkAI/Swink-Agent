@@ -1,10 +1,13 @@
 [package]
 name = "swink-agent-plugin-web"
-version = "0.1.0"
+version = "0.7.3"
 edition = "2024"
 rust-version = "1.88"
 description = "Web browsing plugin for swink-agent: fetch, search, screenshot, extract"
-license = "MIT OR Apache-2.0"
+license = "MIT"
+repository = "https://github.com/SuperSwinkAI/Swink-Agent"
+keywords = ["llm", "agent", "web", "browse", "search"]
+categories = ["development-tools", "web-programming"]
 
 [features]
 default = ["duckduckgo"]

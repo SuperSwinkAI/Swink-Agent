@@ -209,7 +209,7 @@
 - [x] T068 [P] Write test that `tracing` output from credential resolution contains no secret values — enable tracing subscriber in test, resolve a credential, assert log output contains key name but not token value — in `auth/tests/resolver_tests.rs`
 - [x] T069 [P] Run `cargo clippy --workspace -- -D warnings` and fix any warnings across all modified files
 - [x] T070 [P] Run `cargo test --workspace` to verify no regressions in existing tests (especially tools that now have the new `credential` parameter)
-- [x] T071 Update `CLAUDE.md` Active Technologies section with 035 entry: Rust 1.88 + swink-agent-auth crate dependencies and in-memory storage
+- [x] T071 Update `AGENTS.md` Active Technologies section with 035 entry: Rust 1.88 + swink-agent-auth crate dependencies and in-memory storage
 - [x] T072 Verify `cargo test -p swink-agent --no-default-features` still passes (builtin-tools disabled path)
 - [x] T073 Run quickstart.md examples as validation: verify code patterns compile and work as documented
 

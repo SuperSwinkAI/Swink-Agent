@@ -196,7 +196,7 @@
 **Purpose**: Final integration, documentation, and validation
 
 - [x] T063 Update `eval/src/lib.rs` re-exports to include all public types and verify no submodule reach-through
-- [x] T064 [P] Update `eval/CLAUDE.md` with lessons learned and key facts from implementation
+- [x] T064 [P] Update `eval/AGENTS.md` with lessons learned and key facts from implementation
 - [x] T065 [P] Run `cargo clippy --workspace -- -D warnings` and fix any warnings
 - [x] T066 Run `cargo test -p swink-agent-eval` and verify all tests pass
 - [x] T067 Run `cargo test -p swink-agent-eval --features yaml` and verify YAML tests pass

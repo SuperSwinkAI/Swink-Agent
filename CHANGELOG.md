@@ -34,59 +34,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.7.0] - 2026-04-09
 
 ### Breaking
-- **Stabilize public API surface (#263).** 15 internal modules (`stream`, `types`, `tool`, `policy`, `plugin`, `convert`, etc.) changed from `pub mod` to `pub(crate) mod`. All public items remain accessible via root re-exports (`use swink_agent::StreamFn` instead of `use swink_agent::stream::StreamFn`). Downstream consumers must update module-path imports.
+- **Stabilize public API surface (#263).** 15 internal modules changed from `pub mod` to `pub(crate) mod`. All public items remain accessible via root re-exports (`use swink_agent::StreamFn`). Downstream consumers must update module-path imports.
 
 ### Added
-- Feature-matrix smoke tests for all optional root features: `artifact-store`, `artifact-tools`, `hot-reload`, `tiktoken`, `plugins`, `otel` (#292).
-- Expanded `tests/public_api.rs` with 9 new type-existence assertions covering stream, policy, tool, convert, model, display, metrics, and plugin re-exports.
-- `pub const VERSION` re-exported from `swink-agent` lib root, sourced from `CARGO_PKG_VERSION`.
-- Release engineering: `.github/workflows/release.yml` triggered on `v*` tags, dry-run publishing every workspace crate in topological order and producing a GitHub release with generated notes and `Cargo.lock` attached.
-- Workspace-wide publish metadata via `[workspace.package]` inheritance: dual-licensing (`MIT OR Apache-2.0`), keywords, categories, exclude patterns, and per-crate READMEs pointing at the workspace README.
-- Top-level `LICENSE-MIT` and `LICENSE-APACHE` files.
+- Feature-matrix smoke tests for all optional root features (#292).
+- `pub const VERSION` re-exported from the lib root, sourced from `CARGO_PKG_VERSION`.
+- Release workflow triggered on `v*` tags: dry-run publish of all workspace crates, GitHub release with generated notes and `Cargo.lock` attached.
 - Windows CI coverage for default builtin tools (#294).
 
 ### Fixed
 - Remove duplicate `#![forbid(unsafe_code)]` attributes in policies and mcp crates (#262).
 - Replace panicking unwraps in xtask report with proper error handling (#288).
-- `SessionState::set` now returns `Result` instead of panicking on serialization failure (#291).
+- `SessionState::set` now returns `Result` instead of panicking (#291).
 - Gate builtin-tools references behind feature flag in tests and examples (#261).
-- Make `InputEditor` fields private and remove unwrap panics (#300).
 
 ### Changed
 - Centralize shared workspace dependencies: `regex`, `dirs`, `toml`, `bytes` (#264).
-- License bumped from `MIT` to `MIT OR Apache-2.0` across all publishable workspace crates.
+- License simplified to MIT-only.
 
-## [0.6.2] - 2026-04-05
+## [0.6.x] - 2026-03-10 to 2026-04-05
 
-### Fixed
-- Preserve repeated same-name Ollama tool calls (#213).
-- Preserve TUI session metadata across saves and surface failures (#200).
-- Make Gemma 4 delimiter parsing UTF-8 safe (#182).
-- Expose session store injection and public resume API in `swink-agent-tui` (#191).
-- Remove hand-coded remote preset keys; the catalog is now authoritative for preset identity (#198).
+Major additions: Gemma 4 local inference, `BlockAccumulator` for streaming event assembly, `schemars`-based proc-macro engine, multi-agent patterns and artifact service, MCP integration, plugin system, policy slots, credential management, TUI session management, and web browse plugin. 42 specs implemented across the 0.6 lifecycle.
 
-### Changed
-- Migrate `GeminiStreamState` to the shared `BlockAccumulator` (#199).
-- Extract `BlockAccumulator` to consolidate streaming event assembly (#194).
-- Replace the bespoke tool-schema proc-macro engine with `schemars` (#192).
-- Remove the unused SQLite session store backend (#190).
-- Collapse memory persistence codecs (#181).
-
-## [0.6.1] - 2026-03-20
-
-### Fixed
-- Satisfy workspace clippy across all crates (#184).
-
-### Changed
-- Clear workspace test warnings (#183).
-
-## [0.6.0] - 2026-03-10
-
-### Added
-- Gemma 4 E2B direct local inference (GPU-validated) (#163).
-- `Gemma4_31B` preset for `google/gemma-4-31B-it`.
-
-[Unreleased]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.6.2...HEAD
-[0.6.2]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.6.1...v0.6.2
-[0.6.1]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.6.0...v0.6.1
-[0.6.0]: https://github.com/SuperSwinkAI/Swink-Agent/releases/tag/v0.6.0
+[Unreleased]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.7.0...v0.7.1
+[0.7.0]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.6.2...v0.7.0
+[0.6.x]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.5.0...v0.6.2
