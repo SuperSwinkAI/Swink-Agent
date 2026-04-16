@@ -260,7 +260,7 @@ pub fn preset(model_id: &str) -> Option<CatalogPreset> {
 }
 
 /// Builds a [`ModelConnection`] for a model identified by its `model_id`
-/// (e.g. `"claude-sonnet-4-6"`, `"gpt-4o"`).
+/// (e.g. `"claude-sonnet-4-6"`, `"gpt-5.4"`).
 ///
 /// This is the simplest way to get a connection — it resolves the preset from
 /// the catalog by `model_id`, reads credentials from the environment, and
@@ -487,7 +487,7 @@ mod tests {
     #[cfg(feature = "openai")]
     #[test]
     fn preset_finds_openai_when_compiled() {
-        let gpt = preset("gpt-4o").expect("gpt-4o preset should exist");
+        let gpt = preset("gpt-5.4").expect("gpt-4o preset should exist");
         assert_eq!(gpt.provider_key, "openai");
     }
 
@@ -504,7 +504,7 @@ mod tests {
     #[cfg(feature = "openai")]
     #[test]
     fn remote_preset_requires_key() {
-        let preset = preset("gpt-4o").unwrap();
+        let preset = preset("gpt-5.4").unwrap();
         let err = match build_connection_from_preset(&preset, None, None) {
             Ok(_) => panic!("expected missing credential error"),
             Err(err) => err,
@@ -512,7 +512,7 @@ mod tests {
         assert_eq!(
             err,
             RemoteModelConnectionError::MissingCredential {
-                preset: "OpenAI GPT-4o".to_string(),
+                preset: "OpenAI GPT-5.4".to_string(),
                 env_var: "OPENAI_API_KEY".to_string(),
             }
         );
@@ -555,7 +555,7 @@ mod tests {
     #[cfg(feature = "openai")]
     #[test]
     fn preset_finds_representative_openai_model() {
-        let p = preset("gpt-4o").expect("openai preset should exist");
+        let p = preset("gpt-5.4").expect("openai preset should exist");
         assert_eq!(p.provider_key, "openai");
     }
 

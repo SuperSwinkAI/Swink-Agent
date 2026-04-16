@@ -279,9 +279,9 @@ mod tests {
 
     #[test]
     fn preset_lookup_returns_provider_metadata() {
-        let preset = model_catalog().preset("openai", "gpt_4o").unwrap();
-        assert_eq!(preset.display_name, "OpenAI GPT-4o");
-        assert_eq!(preset.model_id, "gpt-4o");
+        let preset = model_catalog().preset("openai", "gpt_5_4").unwrap();
+        assert_eq!(preset.display_name, "OpenAI GPT-5.4");
+        assert_eq!(preset.model_id, "gpt-5.4");
         assert_eq!(preset.credential_env_var.as_deref(), Some("OPENAI_API_KEY"));
         assert_eq!(preset.base_url_env_var.as_deref(), Some("OPENAI_BASE_URL"));
         assert_eq!(preset.auth_mode, Some(AuthMode::Bearer));
@@ -353,14 +353,14 @@ mod tests {
 
     #[test]
     fn openai_preset_no_thinking() {
-        let preset = model_catalog().preset("openai", "gpt_4o").unwrap();
+        let preset = model_catalog().preset("openai", "gpt_5_4_mini").unwrap();
         let caps = preset.model_capabilities();
         assert!(!caps.supports_thinking);
         assert!(caps.supports_tool_use);
         assert!(caps.supports_vision);
         assert!(caps.supports_streaming);
         assert!(caps.supports_structured_output);
-        assert_eq!(caps.max_context_window, Some(128_000));
+        assert_eq!(caps.max_context_window, Some(400_000));
     }
 
     #[test]
@@ -469,10 +469,10 @@ mod tests {
 
     #[test]
     fn capabilities_context_window_and_output() {
-        let preset = model_catalog().preset("openai", "gpt_4o").unwrap();
+        let preset = model_catalog().preset("openai", "gpt_5_4").unwrap();
         let caps = preset.model_capabilities();
-        assert_eq!(caps.max_context_window, Some(128_000));
-        assert_eq!(caps.max_output_tokens, Some(16384));
+        assert_eq!(caps.max_context_window, Some(1_050_000));
+        assert_eq!(caps.max_output_tokens, Some(128_000));
     }
 
     #[test]
