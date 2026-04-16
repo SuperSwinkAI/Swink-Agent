@@ -122,7 +122,7 @@ impl App {
     /// Tick handler for animations.
     pub fn tick(&mut self) {
         self.tick_count += 1;
-        if self.tick_count.is_multiple_of(5) {
+        if self.tick_count.is_multiple_of(23) {
             self.blink_on = !self.blink_on;
             if self.status == AgentStatus::Running {
                 self.dirty = true;
