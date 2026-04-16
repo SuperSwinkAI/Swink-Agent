@@ -1,6 +1,6 @@
 [package]
 name = "swink-agent-tui"
-version = "0.7.4"
+version = "0.7.5"
 edition = "2024"
 rust-version = "1.88"
 description = "Interactive terminal UI for swink-agent"

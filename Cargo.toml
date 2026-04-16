@@ -42,7 +42,7 @@ aws-smithy-runtime-api = { version = "1.11.6", features = ["client"] }
 
 [package]
 name = "swink-agent"
-version = "0.7.4"
+version = "0.7.5"
 edition = "2024"
 rust-version = "1.88"
 description = "Core scaffolding for running LLM-powered agentic loops"

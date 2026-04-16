@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.5] - 2026-04-16
+
+### Fixed
+- Replace invalid crates.io category slugs (`development-tools::proc-macros` →
+  `development-tools::procedural-macro-helpers` in `swink-agent-macros`;
+  `machine-learning` → `science` in `swink-agent-local-llm`). The v0.7.4
+  publish run uploaded `swink-agent` to crates.io but failed at the macros step
+  because crates.io validates categories server-side only during real upload —
+  `cargo publish --dry-run` cannot detect this. v0.7.5 republishes everything
+  with corrected metadata; `swink-agent` v0.7.4 remains on crates.io but has no
+  dependents.
+
 ## [0.7.4] - 2026-04-16
 
 ### Changed
@@ -88,7 +100,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Major additions: Gemma 4 local inference, `BlockAccumulator` for streaming event assembly, `schemars`-based proc-macro engine, multi-agent patterns and artifact service, MCP integration, plugin system, policy slots, credential management, TUI session management, and web browse plugin. 42 specs implemented across the 0.6 lifecycle.
 
-[Unreleased]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.7.4...HEAD
+[Unreleased]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.7.5...HEAD
+[0.7.5]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.7.4...v0.7.5
 [0.7.4]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.7.3...v0.7.4
 [0.7.3]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.7.2...v0.7.3
 [0.7.2]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.7.1...v0.7.2
