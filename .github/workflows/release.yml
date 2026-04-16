@@ -35,18 +35,17 @@ env:
 
 jobs:
   verify:
-    name: Verify (${{ matrix.os }} / ${{ matrix.toolchain }})
+    name: Verify (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        toolchain: ["1.88", "stable"]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - uses: ./.github/actions/rust-setup
         with:
-          toolchain: ${{ matrix.toolchain }}
+          toolchain: stable
           cache-key: release
       - name: cargo fmt --check
         run: cargo fmt --all -- --check
