@@ -1,12 +1,28 @@
 [advisories]
 
 [licenses]
-unlicensed = "deny"
-allow = ["MIT", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "ISC", "Unicode-3.0"]
+# `unlicensed = "deny"` was removed in cargo-deny 0.16 (see PR #611);
+# crates with no detectable license now fail by default. Anything not in
+# `allow` below also fails.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "MIT-0",                   # used by `borrow-or-share` (transitive via fluent-uri)
+    "CDLA-Permissive-2.0",     # used by `webpki-root-certs` (transitive via reqwest)
+]
 
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"
+# Internal workspace dev-deps use `path = ".."` without a `version` field
+# because adding `version` forces cargo publish dry-run to resolve them via
+# the registry — see CHANGELOG entry for v0.7.7. Path-only workspace deps
+# are inherently safe (they only resolve locally, never published).
+allow-wildcard-paths = true
 
 [sources]
 unknown-registry = "deny"

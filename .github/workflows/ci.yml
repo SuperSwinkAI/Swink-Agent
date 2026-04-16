@@ -60,7 +60,12 @@ jobs:
 
       - run: cargo binstall --no-confirm cargo-hack
 
-      - run: cargo hack check --workspace --each-feature --no-dev-deps
+      # Exclude swink-agent-local-llm because its `metal` / `accelerate` / `mkl`
+      # features activate Apple-only backends (objc2) and fail to compile on
+      # Linux. The dedicated feature-smoke job below exercises local-llm's
+      # portable features on Linux; `metal` / `accelerate` are covered on
+      # macOS by the main `check` job on the macos-latest runner.
+      - run: cargo hack check --workspace --each-feature --no-dev-deps --exclude swink-agent-local-llm
 
   feature-smoke:
     runs-on: ubuntu-latest
