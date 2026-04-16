@@ -1,6 +1,6 @@
 [package]
 name = "swink-agent-local-llm"
-version = "0.7.7"
+version = "0.7.8"
 edition = "2024"
 rust-version = "1.88"
 description = "Local on-device LLM inference for swink-agent using mistral.rs"
@@ -24,7 +24,7 @@ mkl = ["mistralrs/mkl"]
 accelerate = ["mistralrs/accelerate"]
 
 [dependencies]
-swink-agent = { path = "..", version = "0.7.7", default-features = false }
+swink-agent = { path = "..", version = "0.7.8", default-features = false }
 mistralrs = "0.8"
 hf-hub = { version = "0.5", features = ["tokio"] }
 tokio.workspace = true

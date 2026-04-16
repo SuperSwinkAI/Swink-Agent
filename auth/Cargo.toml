@@ -1,6 +1,6 @@
 [package]
 name = "swink-agent-auth"
-version = "0.7.7"
+version = "0.7.8"
 edition = "2024"
 rust-version = "1.88"
 description = "Credential management and OAuth2 support for swink-agent"
@@ -11,7 +11,7 @@ categories = ["development-tools", "authentication"]
 readme = "../README.md"
 
 [dependencies]
-swink-agent = { path = "..", version = "0.7.7", default-features = false }
+swink-agent = { path = "..", version = "0.7.8", default-features = false }
 reqwest.workspace = true
 chrono.workspace = true
 serde.workspace = true

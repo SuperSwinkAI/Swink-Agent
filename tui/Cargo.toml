@@ -1,6 +1,6 @@
 [package]
 name = "swink-agent-tui"
-version = "0.7.7"
+version = "0.7.8"
 edition = "2024"
 rust-version = "1.88"
 description = "Interactive terminal UI for swink-agent"
@@ -20,10 +20,10 @@ path = "src/main.rs"
 required-features = ["cli"]
 
 [dependencies]
-swink-agent = { path = "..", version = "0.7.7", default-features = false, features = ["builtin-tools", "transfer"] }
-swink-agent-adapters = { path = "../adapters", version = "0.7.7", default-features = false, features = ["anthropic", "openai", "ollama", "proxy"], optional = true }
-swink-agent-memory = { path = "../memory", version = "0.7.7" }
-swink-agent-local-llm = { path = "../local-llm", version = "0.7.7", optional = true }
+swink-agent = { path = "..", version = "0.7.8", default-features = false, features = ["builtin-tools", "transfer"] }
+swink-agent-adapters = { path = "../adapters", version = "0.7.8", default-features = false, features = ["anthropic", "openai", "ollama", "proxy"], optional = true }
+swink-agent-memory = { path = "../memory", version = "0.7.8" }
+swink-agent-local-llm = { path = "../local-llm", version = "0.7.8", optional = true }
 ratatui = "0.30"
 crossterm = { version = "0.29", features = ["event-stream"] }
 tokio.workspace = true

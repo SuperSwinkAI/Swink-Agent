@@ -1,6 +1,6 @@
 [package]
 name = "swink-agent-adapters"
-version = "0.7.7"
+version = "0.7.8"
 edition = "2024"
 rust-version = "1.88"
 description = "LLM provider adapters for swink-agent"
@@ -31,8 +31,8 @@ xai = ["openai-compat"]
 __no_default_features_sentinel = []
 
 [dependencies]
-swink-agent = { path = "..", version = "0.7.7", default-features = false }
-swink-agent-auth = { path = "../auth", version = "0.7.7" }
+swink-agent = { path = "..", version = "0.7.8", default-features = false }
+swink-agent-auth = { path = "../auth", version = "0.7.8" }
 reqwest.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true

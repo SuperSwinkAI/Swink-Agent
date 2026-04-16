@@ -1,6 +1,6 @@
 [package]
 name = "swink-agent-plugin-web"
-version = "0.7.7"
+version = "0.7.8"
 edition = "2024"
 rust-version = "1.88"
 description = "Web browsing plugin for swink-agent: fetch, search, screenshot, extract"
@@ -18,7 +18,7 @@ all = ["duckduckgo", "brave", "tavily"]
 integration = []
 
 [dependencies]
-swink-agent = { path = "../..", version = "0.7.7", default-features = false, features = ["plugins"] }
+swink-agent = { path = "../..", version = "0.7.8", default-features = false, features = ["plugins"] }
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
