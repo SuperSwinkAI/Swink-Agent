@@ -33,7 +33,7 @@ jobs:
 
       - uses: cargo-bins/cargo-binstall@f8ce4d55b131f4a1e373b8747ca6b6a54133ae5a # v1.18.0
 
-      - run: cargo binstall --no-confirm --force cargo-nextest
+      - run: cargo binstall --no-confirm --force --locked cargo-nextest
 
       - run: cargo nextest run --workspace
 

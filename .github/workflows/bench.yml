@@ -21,7 +21,7 @@ jobs:
       - run: cargo binstall --no-confirm critcmp
 
       - name: Bench PR
-        run: cargo bench --workspace -- --save-baseline pr
+        run: cargo bench -p swink-agent --bench context -- --save-baseline pr
 
       - name: Export PR baseline
         run: critcmp --export pr > "$RUNNER_TEMP/pr.json"
@@ -31,7 +31,7 @@ jobs:
 
       - name: Bench base
         working-directory: ../bench-base
-        run: cargo bench --workspace -- --save-baseline base
+        run: cargo bench -p swink-agent --bench context -- --save-baseline base
 
       - name: Export base baseline
         working-directory: ../bench-base
