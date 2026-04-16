@@ -233,7 +233,7 @@ fn azure_stream<'a>(
         let request = prepare_oai_request(azure.shell.client(), &url, model, context, options);
         let request = match azure.apply_auth(request, options).await {
             Ok(r) => r,
-            Err(event) => return stream::iter(vec![event]).left_stream(),
+            Err(event) => return stream::iter(crate::base::pre_stream_error(event)).left_stream(),
         };
 
         oai_send_and_parse(

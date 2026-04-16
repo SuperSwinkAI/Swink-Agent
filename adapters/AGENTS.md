@@ -2,6 +2,7 @@
 
 ## Lessons Learned
 
+- In the remote adapters, any failure before the provider yields its first streaming payload must still emit `[Start, Error]`. Returning only a terminal `Error` makes `accumulate_message()` fail with `no Start event found` and hides the real provider error.
 - In `src/ollama.rs`, the NDJSON parser must buffer raw bytes until it has a full newline-delimited record. Decoding each transport chunk independently with `from_utf8_lossy` corrupts split multibyte UTF-8 in streamed text and tool arguments.
 - In `src/openai_compat.rs`, OpenAI-compatible providers can stream tool-call arguments before `function.name`. Buffer those arguments and delay `ToolCallStart` until a non-empty name is known; otherwise the harness locks in an empty tool name and later deltas cannot repair it.
 - Runtime SSE adapters must thread `StreamOptions.on_raw_payload` into the callback-aware shared parser (`sse_data_lines_with_callback` or an equivalent hook). Calling the callback-free helper silently disables payload observers in production even though the shared SSE unit tests still pass.

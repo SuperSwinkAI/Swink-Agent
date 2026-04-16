@@ -299,6 +299,11 @@ async fn anthropic_http_401() {
     let sf = AnthropicStreamFn::new(server.uri(), "test-key");
     let events = collect_events(&sf).await;
 
+    assert!(
+        matches!(events.first(), Some(AssistantMessageEvent::Start)),
+        "pre-stream HTTP failures must start with Start: {events:?}"
+    );
+
     let err = find_error_message(&events).expect("expected error event");
     assert!(
         err.contains("auth error"),

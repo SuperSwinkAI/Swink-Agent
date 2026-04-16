@@ -280,7 +280,7 @@ fn gemini_stream<'a>(
     stream::once(async move {
         let response = match send_request(gemini, model, context, options).await {
             Ok(response) => response,
-            Err(event) => return stream::iter(vec![event]).left_stream(),
+            Err(event) => return stream::iter(crate::base::pre_stream_error(event)).left_stream(),
         };
 
         let status = response.status();
@@ -289,7 +289,7 @@ fn gemini_stream<'a>(
             let body = response.text().await.unwrap_or_default();
             warn!(status = code, "Google Gemini HTTP error");
             let event = crate::classify::error_event_from_status(code, &body, "Google");
-            return stream::iter(vec![event]).left_stream();
+            return stream::iter(crate::base::pre_stream_error(event)).left_stream();
         }
 
         parse_sse_stream(response, cancellation_token, options.on_raw_payload.clone())

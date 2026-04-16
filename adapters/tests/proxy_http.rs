@@ -183,8 +183,9 @@ async fn connection_failure_produces_network_error() {
     let proxy = ProxyStreamFn::new("http://127.0.0.1:1", "token");
     let events = collect_events(&proxy).await;
 
-    assert_eq!(events.len(), 1);
-    match &events[0] {
+    assert_eq!(events.len(), 2);
+    assert!(matches!(events[0], AssistantMessageEvent::Start));
+    match &events[1] {
         AssistantMessageEvent::Error {
             error_message,
             stop_reason,
@@ -214,8 +215,9 @@ async fn http_401_produces_auth_error() {
     let proxy = ProxyStreamFn::new(server.uri(), "bad-token");
     let events = collect_events(&proxy).await;
 
-    assert_eq!(events.len(), 1);
-    match &events[0] {
+    assert_eq!(events.len(), 2);
+    assert!(matches!(events[0], AssistantMessageEvent::Start));
+    match &events[1] {
         AssistantMessageEvent::Error {
             error_message,
             stop_reason,
@@ -245,8 +247,9 @@ async fn http_429_produces_rate_limit_error() {
     let proxy = ProxyStreamFn::new(server.uri(), "token");
     let events = collect_events(&proxy).await;
 
-    assert_eq!(events.len(), 1);
-    match &events[0] {
+    assert_eq!(events.len(), 2);
+    assert!(matches!(events[0], AssistantMessageEvent::Start));
+    match &events[1] {
         AssistantMessageEvent::Error {
             error_message,
             stop_reason,
@@ -323,8 +326,9 @@ async fn http_504_produces_network_error() {
     let proxy = ProxyStreamFn::new(server.uri(), "token");
     let events = collect_events(&proxy).await;
 
-    assert_eq!(events.len(), 1);
-    match &events[0] {
+    assert_eq!(events.len(), 2);
+    assert!(matches!(events[0], AssistantMessageEvent::Start));
+    match &events[1] {
         AssistantMessageEvent::Error {
             error_message,
             stop_reason,

@@ -255,8 +255,9 @@ async fn ollama_http_error() {
     let ollama = OllamaStreamFn::new(server.uri());
     let events = collect_events(&ollama).await;
 
-    assert_eq!(events.len(), 1);
-    match &events[0] {
+    assert_eq!(events.len(), 2);
+    assert!(matches!(events[0], AssistantMessageEvent::Start));
+    match &events[1] {
         AssistantMessageEvent::Error {
             error_message,
             stop_reason,
@@ -278,8 +279,9 @@ async fn ollama_connection_error() {
     let ollama = OllamaStreamFn::new("http://127.0.0.1:1");
     let events = collect_events(&ollama).await;
 
-    assert_eq!(events.len(), 1);
-    match &events[0] {
+    assert_eq!(events.len(), 2);
+    assert!(matches!(events[0], AssistantMessageEvent::Start));
+    match &events[1] {
         AssistantMessageEvent::Error {
             error_message,
             stop_reason,

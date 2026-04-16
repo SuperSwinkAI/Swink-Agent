@@ -190,13 +190,13 @@ fn proxy_stream<'a>(
     stream::once(async move {
         let response = match send_request(proxy, model, context, options).await {
             Ok(resp) => resp,
-            Err(event) => return stream::iter(vec![event]).left_stream(),
+            Err(event) => return stream::iter(crate::base::pre_stream_error(event)).left_stream(),
         };
 
         let status = response.status();
         if !status.is_success() {
             let event = error_event_from_status(status.as_u16(), "", "Proxy");
-            return stream::iter(vec![event]).left_stream();
+            return stream::iter(crate::base::pre_stream_error(event)).left_stream();
         }
 
         parse_sse_stream(response, cancellation_token, options.on_raw_payload.clone())

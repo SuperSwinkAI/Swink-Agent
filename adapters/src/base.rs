@@ -48,6 +48,24 @@ impl AdapterBase {
     }
 }
 
+impl std::fmt::Debug for AdapterBase {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AdapterBase")
+            .field("base_url", &self.base_url)
+            .field("api_key", &"[REDACTED]")
+            .finish_non_exhaustive()
+    }
+}
+
+/// Prefix a pre-stream terminal error with `Start` so the core accumulator
+/// still receives a valid stream envelope.
+#[must_use]
+pub const fn pre_stream_error(
+    event: swink_agent::AssistantMessageEvent,
+) -> [swink_agent::AssistantMessageEvent; 2] {
+    [swink_agent::AssistantMessageEvent::Start, event]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -69,13 +87,16 @@ mod tests {
         let base = AdapterBase::new("https://api.example.com", "key");
         assert_eq!(base.base_url, "https://api.example.com");
     }
-}
 
-impl std::fmt::Debug for AdapterBase {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("AdapterBase")
-            .field("base_url", &self.base_url)
-            .field("api_key", &"[REDACTED]")
-            .finish_non_exhaustive()
+    #[test]
+    fn pre_stream_error_prefixes_start() {
+        let events = pre_stream_error(swink_agent::AssistantMessageEvent::error("boom"));
+        assert!(matches!(
+            events,
+            [
+                swink_agent::AssistantMessageEvent::Start,
+                swink_agent::AssistantMessageEvent::Error { .. }
+            ]
+        ));
     }
 }
