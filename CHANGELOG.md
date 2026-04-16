@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.4] - 2026-04-16
+
+### Changed
+- Repo made public. Open-source readiness: MIT-only license, full Cargo.toml
+  metadata across all crates, crates.io + docs.rs badges, CONTRIBUTING.md,
+  SECURITY.md, THANKYOU.md, branch model (`main` + `integration`), PR gate,
+  approve-contributor workflow, issue templates, and AGENTS.md for all crates.
+
 ## [0.7.3] - 2026-04-15
 
 ### Added
@@ -80,7 +88,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Major additions: Gemma 4 local inference, `BlockAccumulator` for streaming event assembly, `schemars`-based proc-macro engine, multi-agent patterns and artifact service, MCP integration, plugin system, policy slots, credential management, TUI session management, and web browse plugin. 42 specs implemented across the 0.6 lifecycle.
 
-[Unreleased]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.7.3...HEAD
+[Unreleased]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.7.4...HEAD
+[0.7.4]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.7.3...v0.7.4
 [0.7.3]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.7.2...v0.7.3
 [0.7.2]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/SuperSwinkAI/Swink-Agent/compare/v0.7.0...v0.7.1
