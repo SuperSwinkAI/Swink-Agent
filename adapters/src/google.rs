@@ -760,9 +760,7 @@ fn process_function_call(
         Value::Null => String::new(),
         value => value.to_string(),
     };
-    if !serialized_args.is_empty() {
-        entry.arguments = serialized_args;
-    }
+    entry.arguments = serialized_args;
 }
 
 fn map_finish_reason(finish_reason: &str, saw_tool_call: bool) -> StopReason {
