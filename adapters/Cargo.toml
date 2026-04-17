@@ -31,8 +31,8 @@ xai = ["openai-compat"]
 __no_default_features_sentinel = []
 
 [dependencies]
-swink-agent = { path = "..", version = "0.7.8", default-features = false }
-swink-agent-auth = { path = "../auth", version = "0.7.8" }
+swink-agent = { path = "..", version = "0.7.9", default-features = false }
+swink-agent-auth = { path = "../auth", version = "0.7.9" }
 reqwest.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true

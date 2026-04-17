@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.9] - 2026-04-16
+
+### Changed
+- **Breaking**: `swink-agent-local-llm` backend replaced from `mistralrs 0.8`
+  to `llama-cpp-2` (Rust bindings for llama.cpp). All models now use GGUF
+  format uniformly. Feature flags changed: removed `cudnn`, `flash-attn`,
+  `mkl`, `accelerate`; added `vulkan`.
+- Gemma 4 presets updated to GGUF repos (`bartowski/`). EmbeddingGemma
+  updated to GGUF (`unsloth/embeddinggemma-300m-GGUF`).
+- TUI no longer auto-wires the local model as a default/fallback. The
+  `local` feature is kept for explicit opt-in.
+- Spec 041 (Gemma 4 local adapter) folded into spec 022 (local-llm crate).
+
+### Fixed
+- SmolLM3 GGUF models now produce text output instead of empty responses
+  (#594, #586). The `mistralrs` backend rejected the SmolLM3 architecture;
+  `llama-cpp-2` supports it natively.
+- Gemma 4 E2B/E4B models now produce text output. The GGUF-embedded Jinja
+  template was too complex for llama.cpp's template engine; prompt is now
+  formatted manually for Gemma 4 models.
+- Tool pre-dispatch is now cancellation-aware (#592).
+- Turn index increments correctly after no-tool turns (#595).
+
 ## [0.7.8] - 2026-04-16
 
 ### Changed
