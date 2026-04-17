@@ -138,9 +138,27 @@ impl LlamaRunner {
         let config = self.config.clone();
 
         std::thread::spawn(move || {
-            let result = run_inference(&backend, &model, &config, &tokens, &tx, &cancel);
-            if let Err(e) = result {
-                let _ = tx.blocking_send(TokenEvent::Error(e.to_string()));
+            let result =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    run_inference(&backend, &model, &config, &tokens, &tx, &cancel)
+                }));
+            match result {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => {
+                    tracing::error!(error = %e, "inference error");
+                    let _ = tx.blocking_send(TokenEvent::Error(e.to_string()));
+                }
+                Err(panic) => {
+                    let msg = panic
+                        .downcast_ref::<String>()
+                        .map(String::as_str)
+                        .or_else(|| panic.downcast_ref::<&str>().copied())
+                        .unwrap_or("unknown panic");
+                    tracing::error!(panic = msg, "inference thread panicked");
+                    let _ = tx.blocking_send(TokenEvent::Error(format!(
+                        "inference thread panicked: {msg}"
+                    )));
+                }
             }
         });
 
@@ -253,9 +271,6 @@ fn run_inference(
 
     debug!("prompt decoded, starting generation");
 
-    // Set up UTF-8 decoder for incremental token-to-string conversion
-    let mut decoder = encoding_rs::UTF_8.new_decoder();
-
     // Generation loop: sample token, decode, repeat
     let mut sampler = LlamaSampler::greedy();
     let mut completion_tokens: u32 = 0;
@@ -281,8 +296,11 @@ fn run_inference(
         completion_tokens += 1;
 
         let token_str = model
-            .token_to_piece(new_token, &mut decoder, true, None)
-            .unwrap_or_default();
+            .token_to_piece_bytes(new_token, 32, true, None)
+            .map_or_else(
+                |_| String::new(),
+                |bytes| String::from_utf8_lossy(&bytes).into_owned(),
+            );
 
         if !token_str.is_empty()
             && tx.blocking_send(TokenEvent::Token(token_str)).is_err()

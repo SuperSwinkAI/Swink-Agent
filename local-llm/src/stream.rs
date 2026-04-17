@@ -625,8 +625,18 @@ fn local_stream<'a>(
         // Build chat messages and apply template
         let chat_messages: Vec<LlamaChatMessage> = local_messages
             .into_iter()
-            .filter_map(|m| LlamaChatMessage::new(m.role, m.content).ok())
+            .filter_map(|m| {
+                match LlamaChatMessage::new(m.role.clone(), m.content) {
+                    Ok(msg) => Some(msg),
+                    Err(e) => {
+                        warn!(role = %m.role, error = %e, "failed to create chat message, skipping");
+                        None
+                    }
+                }
+            })
             .collect();
+
+        debug!(chat_message_count = chat_messages.len(), "built chat messages");
 
         let prompt = match runner.apply_chat_template(&chat_messages, true) {
             Ok(p) => p,
@@ -639,6 +649,8 @@ fn local_stream<'a>(
             }
         };
 
+        debug!(prompt_len = prompt.len(), "chat template applied");
+
         let tokens = match runner.tokenize(&prompt) {
             Ok(t) => t,
             Err(e) => {
@@ -649,6 +661,8 @@ fn local_stream<'a>(
                 ]);
             }
         };
+
+        debug!(token_count = tokens.len(), "prompt tokenized");
 
         let mut rx = runner.generate_stream(tokens, cancellation_token.clone());
 
