@@ -43,6 +43,8 @@ cargo run -p swink-agent-tui --features local  # include bundled local-LLM suppo
 cargo test --workspace             # run all tests
 ```
 
+Workspace-wide `cargo build/test/clippy` commands also compile `swink-agent-local-llm`. That crate currently depends on `llama-cpp-sys-2`, so contributor machines need LLVM/libclang available for `bindgen`; if auto-discovery fails, set `LIBCLANG_PATH` to the LLVM `bin` directory before running workspace checks.
+
 ## Example: Build a Custom Agent
 
 Wire up an LLM provider, register tools, and launch the interactive TUI — all in one file:

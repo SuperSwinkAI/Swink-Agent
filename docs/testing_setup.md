@@ -20,6 +20,8 @@ cargo build --workspace
 
 This compiles all workspace crates: core library, adapters, local-llm, memory, eval, and TUI. First build pulls dependencies and takes a few minutes.
 
+`swink-agent-local-llm` currently builds `llama-cpp-sys-2`, which runs `bindgen` during compilation. Install LLVM/libclang before running workspace-wide commands; if the build reports `Unable to find libclang`, set `LIBCLANG_PATH` to the LLVM directory that contains the shared library (`bin` on Windows).
+
 ## 3. Run Unit Tests
 
 Verify everything compiles and passes before connecting to live APIs:
@@ -70,6 +72,8 @@ Ollama runs entirely on your machine — no account, no API key, no cost.
 ### Local On-Device (swink-agent-local-llm)
 
 No API key needed. Models are lazily downloaded from HuggingFace on first use and cached in `~/.cache/huggingface/hub/`.
+
+Build prerequisite: local-LLM compilation currently requires LLVM/libclang because `llama-cpp-sys-2` uses `bindgen`. On Windows, the usual fix is installing LLVM and setting `LIBCLANG_PATH` to something like `C:\Program Files\LLVM\bin` before running `cargo build/test/clippy --workspace`.
 
 - **SmolLM3-3B** (GGUF Q4_K_M, ~1.92 GB) — text generation, tool use, reasoning
 - **EmbeddingGemma-300M** (<200 MB) — text vectorization/embeddings
