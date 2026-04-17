@@ -264,61 +264,80 @@ fn parse_sse_stream(
     let sse_stream = sse_data_lines_with_callback(response.bytes_stream(), on_raw_payload);
 
     stream::unfold(
-        (Box::pin(sse_stream), cancellation_token, false),
-        |(mut sse, token, mut done)| async move {
+        (Box::pin(sse_stream), cancellation_token, false, false, None),
+        |(mut sse, token, done, started, pending)| async move {
+            if let Some(event) = pending {
+                return Some((event, (sse, token, true, started, None)));
+            }
+
             if done {
                 return None;
             }
 
-            tokio::select! {
+            let raw_event = tokio::select! {
                 biased;
                 () = token.cancelled() => {
-                    Some((AssistantMessageEvent::Error {
+                    AssistantMessageEvent::Error {
                         stop_reason: StopReason::Aborted,
                         error_message: "operation cancelled".to_owned(),
                         usage: None,
                         error_kind: None,
-                    }, (sse, token, true)))
+                    }
                 }
                 item = sse.next() => {
                     match item {
                         None => {
                             // Stream ended without a Done/Error event — treat as
                             // connection drop.
-                            done = true;
-                            Some((
-                                AssistantMessageEvent::error_network("network error: SSE stream ended unexpectedly"),
-                                (sse, token, done),
-                            ))
+                            AssistantMessageEvent::error_network(
+                                "network error: SSE stream ended unexpectedly",
+                            )
                         }
                         Some(SseLine::Done) => {
-                            done = true;
-                            Some((
-                                AssistantMessageEvent::error_network(
-                                    "network error: proxy SSE transport ended before protocol terminal event",
-                                ),
-                                (sse, token, done),
-                            ))
+                            AssistantMessageEvent::error_network(
+                                "network error: proxy SSE transport ended before protocol terminal event",
+                            )
                         }
                         Some(SseLine::Data(data)) => {
-                            let parsed = parse_sse_event_data(&data);
-                            done = is_terminal_event(&parsed);
-                            Some((parsed, (sse, token, done)))
+                            parse_sse_event_data(&data)
                         }
-                        Some(SseLine::TransportError(message)) => Some((
-                            AssistantMessageEvent::error_network(format!(
+                        Some(SseLine::TransportError(message)) => AssistantMessageEvent::error_network(format!(
                                 "network error: {message}",
                             )),
-                            (sse, token, true),
-                        )),
-                        Some(_) => Some((AssistantMessageEvent::error_network(
+                        Some(_) => AssistantMessageEvent::error_network(
                             "network error: unexpected non-data SSE line",
-                        ), (sse, token, true))),
+                        ),
                     }
                 }
-            }
+            };
+
+            let (event, started, pending, done) = prepare_stream_event(raw_event, started);
+            Some((event, (sse, token, done, started, pending)))
         },
     )
+}
+
+fn prepare_stream_event(
+    event: AssistantMessageEvent,
+    started: bool,
+) -> (
+    AssistantMessageEvent,
+    bool,
+    Option<AssistantMessageEvent>,
+    bool,
+) {
+    if matches!(
+        event,
+        AssistantMessageEvent::Done { .. } | AssistantMessageEvent::Error { .. }
+    ) && !started
+    {
+        let [start, terminal] = crate::base::pre_stream_error(event);
+        return (start, true, Some(terminal), false);
+    }
+
+    let started = started || matches!(event, AssistantMessageEvent::Start);
+    let done = is_terminal_event(&event);
+    (event, started, None, done)
 }
 
 /// Parse a single SSE event's `data` field into an `AssistantMessageEvent`.
@@ -656,6 +675,28 @@ mod tests {
 
         let start = AssistantMessageEvent::Start;
         assert!(!is_terminal_event(&start));
+    }
+
+    #[test]
+    fn terminal_error_before_start_is_prefixed() {
+        let (first, started, pending, done) =
+            prepare_stream_event(AssistantMessageEvent::error_network("boom"), false);
+
+        assert!(matches!(first, AssistantMessageEvent::Start));
+        assert!(started);
+        assert!(!done);
+        assert!(matches!(pending, Some(AssistantMessageEvent::Error { .. })));
+    }
+
+    #[test]
+    fn terminal_error_after_start_is_not_prefixed() {
+        let error = AssistantMessageEvent::error_network("boom");
+        let (event, started, pending, done) = prepare_stream_event(error.clone(), true);
+
+        assert!(matches!(event, AssistantMessageEvent::Error { .. }));
+        assert!(started);
+        assert!(done);
+        assert!(pending.is_none());
     }
 
     #[test]
