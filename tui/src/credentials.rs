@@ -115,9 +115,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn providers_returns_five_entries() {
+    fn providers_returns_four_entries() {
         let p = providers();
-        assert_eq!(p.len(), 5);
+        assert_eq!(p.len(), 4);
     }
 
     #[test]
