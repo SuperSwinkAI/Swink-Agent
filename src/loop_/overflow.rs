@@ -15,7 +15,8 @@ use crate::types::{AgentMessage, LlmMessage, StopReason};
 
 use super::stream::stream_with_retry;
 use super::turn::{
-    build_snapshot, emit_turn_end_and_agent_end, handle_cancellation, run_context_transformers,
+    build_snapshot, emit_turn_end_and_agent_end, handle_started_turn_cancellation,
+    run_context_transformers,
 };
 use super::{
     AgentEvent, AgentLoopConfig, LoopState, StreamResult, TurnEndReason, TurnOutcome,
@@ -75,7 +76,9 @@ pub(super) async fn attempt_overflow_recovery(
 
     // Check cancellation before retrying.
     if cancellation_token.is_cancelled() {
-        return OverflowRecoveryResult::Failed(handle_cancellation(config, state, tx).await);
+        return OverflowRecoveryResult::Failed(
+            handle_started_turn_cancellation(config, state, tx).await,
+        );
     }
 
     // Re-run convert-to-LLM pipeline with compacted context.

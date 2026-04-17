@@ -512,18 +512,18 @@ async fn flush_state_delta(
 
 // ─── run_single_turn helpers ─────────────────────────────────────────────────
 
-/// Emit cancellation events and return from the loop.
-pub(super) async fn handle_cancellation(
+async fn emit_cancellation_for_turn(
     config: &Arc<AgentLoopConfig>,
     state: &mut LoopState,
     tx: &mpsc::Sender<AgentEvent>,
+    emit_turn_start: bool,
 ) -> TurnOutcome {
     let abort_msg = build_abort_message(&config.model);
     let msg_for_event = abort_msg.clone();
     state
         .context_messages
         .push(AgentMessage::Llm(LlmMessage::Assistant(abort_msg)));
-    if !emit(tx, AgentEvent::TurnStart).await {
+    if emit_turn_start && !emit(tx, AgentEvent::TurnStart).await {
         return TurnOutcome::Return;
     }
     if !emit(tx, AgentEvent::MessageStart).await {
@@ -549,6 +549,24 @@ pub(super) async fn handle_cancellation(
         tx,
     )
     .await
+}
+
+/// Emit cancellation events and return before the turn has started.
+pub(super) async fn handle_cancellation(
+    config: &Arc<AgentLoopConfig>,
+    state: &mut LoopState,
+    tx: &mpsc::Sender<AgentEvent>,
+) -> TurnOutcome {
+    emit_cancellation_for_turn(config, state, tx, true).await
+}
+
+/// Emit cancellation events for a turn that already emitted `TurnStart`.
+pub(super) async fn handle_started_turn_cancellation(
+    config: &Arc<AgentLoopConfig>,
+    state: &mut LoopState,
+    tx: &mpsc::Sender<AgentEvent>,
+) -> TurnOutcome {
+    emit_cancellation_for_turn(config, state, tx, false).await
 }
 
 /// Process the `StreamResult`, returning the assistant message on success,
