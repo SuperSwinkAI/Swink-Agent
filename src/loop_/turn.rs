@@ -267,7 +267,7 @@ pub async fn run_single_turn(
         stream_result
     };
 
-    let Some(assistant_message) = handle_stream_result(stream_result, config, state, tx).await
+    let Some(mut assistant_message) = handle_stream_result(stream_result, config, state, tx).await
     else {
         return TurnOutcome::Return;
     };
@@ -286,8 +286,23 @@ pub async fn run_single_turn(
         return handle_error_stop(assistant_message, state, tx).await;
     }
 
-    // viii. Extract tool calls from assistant message content
+    // viii. Extract tool calls from assistant message content. `extract_tool_calls`
+    // derives `is_incomplete` from `partial_json.is_some()`, so it must run BEFORE
+    // `sanitize_incomplete_tool_calls` clears that field.
     let tool_calls = extract_tool_calls(&assistant_message);
+
+    // Issue #619: coerce any `ToolCall` blocks with `partial_json.is_some()` or
+    // non-object `arguments` into a valid empty-object call before the assistant
+    // message reaches any adapter again. Pairs with `recover_incomplete_tool_calls`
+    // which inserts a matching synthetic error `ToolResult` for each incomplete
+    // call so the provider sees a well-formed tool_use / tool_result pair.
+    let fixed = crate::stream::sanitize_incomplete_tool_calls(&mut assistant_message);
+    if fixed > 0 {
+        debug!(
+            fixed,
+            "sanitized incomplete tool-use blocks before adapter dispatch"
+        );
+    }
 
     // ix. If no tool calls: emit TurnEnd, exit inner loop
     if tool_calls.is_empty() {
@@ -610,10 +625,15 @@ async fn handle_stream_result(
 
 /// Handle an error or aborted stop reason: emit `TurnEnd` + `AgentEnd` and return.
 async fn handle_error_stop(
-    assistant_message: AssistantMessage,
+    mut assistant_message: AssistantMessage,
     state: &mut LoopState,
     tx: &mpsc::Sender<AgentEvent>,
 ) -> TurnOutcome {
+    // Issue #619: scrub any incomplete tool-use blocks before we persist the
+    // message into `context_messages` — even on terminal error paths a resumed
+    // session (e.g. continuation) could replay this history to an adapter.
+    crate::stream::sanitize_incomplete_tool_calls(&mut assistant_message);
+
     let is_abort = assistant_message.stop_reason == StopReason::Aborted;
     if is_abort {
         warn!(

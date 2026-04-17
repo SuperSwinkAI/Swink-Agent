@@ -133,7 +133,7 @@ pub use schemars::JsonSchema;
 pub use state::{SessionState, StateDelta};
 pub use stream::{
     AssistantMessageDelta, AssistantMessageEvent, CacheStrategy, OnRawPayload, StreamErrorKind,
-    StreamFn, StreamOptions, StreamTransport, accumulate_message,
+    StreamFn, StreamOptions, StreamTransport, accumulate_message, sanitize_incomplete_tool_calls,
 };
 pub use stream_middleware::StreamMiddleware;
 pub use sub_agent::SubAgent;

@@ -898,14 +898,23 @@ fn convert_messages(messages: &[AgentMessage]) -> Vec<BedrockMessage> {
                             name,
                             arguments,
                             ..
-                        } => content.push(BedrockContentBlock {
-                            tool_use: Some(BedrockToolUse {
-                                tool_use_id: id.clone(),
-                                name: name.clone(),
-                                input: arguments.clone(),
-                            }),
-                            ..BedrockContentBlock::default()
-                        }),
+                        } => {
+                            // Issue #619: loop-level scrub coerces incomplete tool-use
+                            // blocks into object-typed arguments before reaching here.
+                            // Debug builds assert the invariant to catch regressions.
+                            debug_assert!(
+                                arguments.is_object(),
+                                "bedrock adapter: toolUse input must be a JSON object (got {arguments:?}); loop-level sanitize_incomplete_tool_calls should have coerced this before dispatch"
+                            );
+                            content.push(BedrockContentBlock {
+                                tool_use: Some(BedrockToolUse {
+                                    tool_use_id: id.clone(),
+                                    name: name.clone(),
+                                    input: arguments.clone(),
+                                }),
+                                ..BedrockContentBlock::default()
+                            });
+                        }
                         _ => {}
                     }
                 }
@@ -1838,5 +1847,50 @@ mod tests {
             AssistantMessageEvent::Error { error_message, .. }
                 if error_message.contains("Bedrock contentBlockDelta parse error")
         ));
+    }
+
+    // ── Issue #619: incomplete tool_use sanitization ─────────────────────
+
+    /// Regression for #619: after the loop-level scrub runs, an assistant
+    /// message that originally carried `arguments: Null` with `partial_json`
+    /// set must serialize with `toolUse.input: {}` so Bedrock Converse accepts
+    /// the replayed history on the next turn.
+    #[test]
+    fn convert_messages_sanitized_tool_use_becomes_empty_object_input() {
+        use swink_agent::AssistantMessage as HarnessAssistantMessage;
+
+        let mut assistant = HarnessAssistantMessage {
+            content: vec![ContentBlock::ToolCall {
+                id: "tooluse_abc".into(),
+                name: "read_file".into(),
+                arguments: serde_json::Value::Null,
+                partial_json: Some(r#"{"path": "/tm"#.into()),
+            }],
+            provider: "bedrock".into(),
+            model_id: "anthropic.claude-3-sonnet".into(),
+            usage: Usage::default(),
+            cost: Cost::default(),
+            stop_reason: StopReason::Length,
+            error_message: None,
+            error_kind: None,
+            timestamp: 0,
+            cache_hint: None,
+        };
+
+        swink_agent::sanitize_incomplete_tool_calls(&mut assistant);
+
+        let messages = vec![AgentMessage::Llm(LlmMessage::Assistant(assistant))];
+        let converted = convert_messages(&messages);
+
+        assert_eq!(converted.len(), 1);
+        assert_eq!(converted[0].role, "assistant");
+        let json = serde_json::to_value(&converted[0]).unwrap();
+        let block = &json["content"][0];
+        let input = &block["toolUse"]["input"];
+        assert!(
+            input.is_object(),
+            "toolUse.input must be a JSON object, got {input:?}"
+        );
+        assert_eq!(input.as_object().unwrap().len(), 0);
     }
 }
