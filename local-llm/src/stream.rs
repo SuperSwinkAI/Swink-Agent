@@ -22,7 +22,7 @@ use swink_agent::{
 
 use crate::loader::LoaderState;
 use crate::model::LocalModel;
-use crate::runner::TokenEvent;
+use crate::runner::{FinishReason, TokenEvent};
 
 // ─── LocalStreamFn ──────────────────────────────────────────────────────────
 
@@ -419,6 +419,7 @@ struct StreamState {
     prompt_tokens: u32,
     completion_tokens: u32,
     has_tool_calls: bool,
+    finish_reason: FinishReason,
     saw_done: bool,
     #[cfg(feature = "gemma4")]
     channel_parser: Option<channel_thought::ChannelThoughtParser>,
@@ -437,6 +438,7 @@ impl StreamState {
             prompt_tokens: 0,
             completion_tokens: 0,
             has_tool_calls: false,
+            finish_reason: FinishReason::Stop,
             saw_done: false,
             #[cfg(feature = "gemma4")]
             channel_parser: if is_gemma4 {
@@ -524,10 +526,10 @@ impl StreamState {
     fn finalize(mut self) -> Vec<AssistantMessageEvent> {
         self.events.extend(finalize_blocks(&mut self.blocks));
 
-        let stop_reason = if self.has_tool_calls {
-            StopReason::ToolUse
-        } else {
-            StopReason::Stop
+        let stop_reason = match self.finish_reason {
+            FinishReason::Length => StopReason::Length,
+            FinishReason::Stop if self.has_tool_calls => StopReason::ToolUse,
+            FinishReason::Stop => StopReason::Stop,
         };
 
         self.events.push(AssistantMessageEvent::Done {
@@ -699,9 +701,11 @@ fn local_stream<'a>(
                 TokenEvent::Done {
                     prompt_tokens,
                     completion_tokens,
+                    finish_reason,
                 } => {
                     state.prompt_tokens = prompt_tokens;
                     state.completion_tokens = completion_tokens;
+                    state.finish_reason = finish_reason;
                     state.saw_done = true;
                     break;
                 }
@@ -848,12 +852,29 @@ mod tests {
     fn finalize_keeps_tool_use_stop_reason() {
         let mut state = StreamState::new(false);
         state.has_tool_calls = true;
+        state.finish_reason = FinishReason::Stop;
 
         let events = state.finalize();
         let terminal = events.last().expect("at least one event");
         match terminal {
             AssistantMessageEvent::Done { stop_reason, .. } => {
                 assert_eq!(*stop_reason, StopReason::ToolUse);
+            }
+            other => panic!("expected Done terminal, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn finalize_preserves_length_stop_reason_over_tool_use() {
+        let mut state = StreamState::new(false);
+        state.has_tool_calls = true;
+        state.finish_reason = FinishReason::Length;
+
+        let events = state.finalize();
+        let terminal = events.last().expect("at least one event");
+        match terminal {
+            AssistantMessageEvent::Done { stop_reason, .. } => {
+                assert_eq!(*stop_reason, StopReason::Length);
             }
             other => panic!("expected Done terminal, got {other:?}"),
         }

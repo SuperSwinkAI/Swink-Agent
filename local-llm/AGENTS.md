@@ -33,6 +33,7 @@
 - **Gemma 4 thinking output** — `ChannelThoughtParser` in `stream.rs` handles cross-chunk `<|channel>thought\n...<channel|>` delimiters. Stateful 4-state machine (Normal → PartialOpen → InThinking → PartialClose).
 - **Gemma 4 tool calls** — `ToolCallParser` in `stream.rs` handles cross-chunk `<|tool_call>call:{name}{args}<tool_call|>` format. IDs are generated as UUIDs. `Gemma4LocalConverter` wraps tool results as `<|tool_result>{tool_call_id}\n{text}<tool_result|>`.
 - **Gemma 4 partial delimiter matching must be UTF-8 safe** — when scanning for split `<|channel>thought\n` and `<tool_call|>` delimiters, only slice `&str` values at character boundaries. Reuse the shared suffix helper in `stream.rs`; raw byte-offset suffix slicing can panic on multibyte output.
+- **Local stream finish reasons must survive finalization** — `runner.rs` must propagate whether generation ended naturally or because it exhausted `max_tokens`, and `stream.rs` must preserve `Length` ahead of synthesized `ToolUse` so the core loop can recover incomplete tool-call JSON.
 - **Two converter types** — `LocalConverter` (SmolLM3) and `Gemma4LocalConverter` (Gemma 4) both implement `MessageConverter`. `convert_context_messages` dispatches based on `config.is_gemma4()`.
 - **LazyLoader waiters must treat `Unloaded` as terminal for the current attempt** — `wait_until_ready()` now returns on `Unloaded`/`Failed` as well as `Ready`, and `ensure_ready()` re-checks loader state after every wakeup so an `unload()` during another caller's load does not strand waiters forever.
 
