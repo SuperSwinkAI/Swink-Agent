@@ -84,6 +84,7 @@ impl App {
             conversation_visible_height: 0,
             pending_steered: Vec::new(),
             steered_fade_ticks: 0,
+            selection: None,
         }
     }
 
