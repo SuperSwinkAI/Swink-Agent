@@ -112,6 +112,34 @@ pub fn convert_context_messages(
     convert_messages::<LocalConverter>(&context.messages, &system_prompt)
 }
 
+/// Format `LocalMessage`s into a Gemma 4 prompt string directly.
+///
+/// Bypasses `llama_chat_apply_template` because Gemma 4's GGUF-embedded Jinja
+/// template uses features (namespace, dictsort, get) that llama.cpp's template
+/// engine cannot render (returns FFI error -1).
+///
+/// Format: `<|turn>{role}\n{content}<turn|>\n` per message, with "assistant"
+/// mapped to "model". Ends with `<|turn>model\n` for generation.
+#[cfg(feature = "gemma4")]
+pub fn format_gemma4_prompt(messages: &[LocalMessage]) -> String {
+    let mut prompt = String::new();
+    for msg in messages {
+        let role = if msg.role == "assistant" {
+            "model"
+        } else {
+            &msg.role
+        };
+        prompt.push_str("<|turn>");
+        prompt.push_str(role);
+        prompt.push('\n');
+        prompt.push_str(&msg.content);
+        prompt.push_str("<turn|>\n");
+    }
+    // Add generation prompt
+    prompt.push_str("<|turn>model\n");
+    prompt
+}
+
 fn inject_think_token(system_prompt: &str, config: &ModelConfig, thinking_enabled: bool) -> String {
     #[cfg(feature = "gemma4")]
     if config.is_gemma4() && thinking_enabled {

@@ -622,34 +622,53 @@ fn local_stream<'a>(
             ]);
         };
 
-        // Build chat messages and apply template
-        let chat_messages: Vec<LlamaChatMessage> = local_messages
-            .into_iter()
-            .filter_map(|m| {
-                match LlamaChatMessage::new(m.role.clone(), m.content) {
-                    Ok(msg) => Some(msg),
-                    Err(e) => {
-                        warn!(role = %m.role, error = %e, "failed to create chat message, skipping");
-                        None
+        // Build prompt string from messages.
+        // Gemma 4: format manually (GGUF Jinja template is too complex for llama.cpp's engine).
+        // Other models: use the model's built-in chat template via apply_chat_template.
+        #[cfg(feature = "gemma4")]
+        let use_manual_format = is_gemma4;
+        #[cfg(not(feature = "gemma4"))]
+        let use_manual_format = false;
+
+        let prompt = if use_manual_format {
+            #[cfg(feature = "gemma4")]
+            {
+                let p = crate::convert::format_gemma4_prompt(&local_messages);
+                debug!(prompt_len = p.len(), "gemma4 prompt formatted manually");
+                p
+            }
+            #[cfg(not(feature = "gemma4"))]
+            unreachable!()
+        } else {
+            let chat_messages: Vec<LlamaChatMessage> = local_messages
+                .into_iter()
+                .filter_map(|m| {
+                    match LlamaChatMessage::new(m.role.clone(), m.content) {
+                        Ok(msg) => Some(msg),
+                        Err(e) => {
+                            warn!(role = %m.role, error = %e, "failed to create chat message, skipping");
+                            None
+                        }
                     }
+                })
+                .collect();
+
+            debug!(chat_message_count = chat_messages.len(), "built chat messages");
+
+            match runner.apply_chat_template(&chat_messages, true) {
+                Ok(p) => {
+                    debug!(prompt_len = p.len(), "chat template applied");
+                    p
                 }
-            })
-            .collect();
-
-        debug!(chat_message_count = chat_messages.len(), "built chat messages");
-
-        let prompt = match runner.apply_chat_template(&chat_messages, true) {
-            Ok(p) => p,
-            Err(e) => {
-                error!(error = %e, "chat template application failed");
-                return stream::iter(vec![
-                    AssistantMessageEvent::Start,
-                    AssistantMessageEvent::error(format!("chat template error: {e}")),
-                ]);
+                Err(e) => {
+                    error!(error = %e, "chat template application failed");
+                    return stream::iter(vec![
+                        AssistantMessageEvent::Start,
+                        AssistantMessageEvent::error(format!("chat template error: {e}")),
+                    ]);
+                }
             }
         };
-
-        debug!(prompt_len = prompt.len(), "chat template applied");
 
         let tokens = match runner.tokenize(&prompt) {
             Ok(t) => t,
