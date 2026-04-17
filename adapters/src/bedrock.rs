@@ -268,6 +268,22 @@ fn cancelled_event(message: &'static str) -> AssistantMessageEvent {
     }
 }
 
+fn prefix_pre_start_terminal_error(
+    events: Vec<AssistantMessageEvent>,
+    started: &mut bool,
+) -> Vec<AssistantMessageEvent> {
+    if *started || !matches!(events.as_slice(), [AssistantMessageEvent::Error { .. }]) {
+        return events;
+    }
+
+    *started = true;
+    let event = events
+        .into_iter()
+        .next()
+        .expect("matched single terminal error");
+    Vec::from(crate::base::pre_stream_error(event))
+}
+
 pub struct BedrockStreamFn {
     base_url: String,
     region: String,
@@ -499,6 +515,8 @@ impl BedrockStreamFn {
                                     events.push(AssistantMessageEvent::error_network(format!(
                                         "Bedrock event-stream decode error: {e}"
                                     )));
+                                    let events =
+                                        prefix_pre_start_terminal_error(events, &mut state.started);
                                     return Some((events, StreamUnfoldState::Done));
                                 }
                             }
@@ -509,6 +527,8 @@ impl BedrockStreamFn {
                                 () = cancellation_token.cancelled() => {
                                     let mut events = finalize::finalize_blocks(state.as_mut());
                                     events.push(cancelled_event("Bedrock stream cancelled"));
+                                    let events =
+                                        prefix_pre_start_terminal_error(events, &mut state.started);
                                     return Some((events, StreamUnfoldState::Done));
                                 }
                                 chunk = byte_stream.next() => {
@@ -522,6 +542,10 @@ impl BedrockStreamFn {
                                             events.push(AssistantMessageEvent::error_network(
                                                 format!("Bedrock stream read error: {e}"),
                                             ));
+                                            let events = prefix_pre_start_terminal_error(
+                                                events,
+                                                &mut state.started,
+                                            );
                                             return Some((events, StreamUnfoldState::Done));
                                         }
                                         None => {
@@ -549,6 +573,10 @@ impl BedrockStreamFn {
                                                     "Bedrock stream ended unexpectedly",
                                                 ));
                                             }
+                                            let events = prefix_pre_start_terminal_error(
+                                                events,
+                                                &mut state.started,
+                                            );
                                             return Some((events, StreamUnfoldState::Done));
                                         }
                                     }
@@ -635,7 +663,7 @@ fn process_smithy_message(
             warn!(event_type = %et, "Bedrock event deserialization failed for known event type");
             let mut events = finalize::finalize_blocks(state);
             events.push(AssistantMessageEvent::error_network(error_text));
-            events
+            prefix_pre_start_terminal_error(events, &mut state.started)
         }
     })
 }
@@ -1755,11 +1783,30 @@ mod tests {
         let mut state = BedrockStreamState::new();
         let msg = make_event_message("metadata", br#"{"usage":"bad"}"#);
         let events = process_smithy_message(&msg, &mut state);
-        assert_eq!(events.len(), 1);
+        assert_eq!(events.len(), 2);
+        assert!(matches!(events[0], AssistantMessageEvent::Start));
         assert!(matches!(
-            &events[0],
+            &events[1],
             AssistantMessageEvent::Error { error_message, .. }
                 if error_message.contains("Bedrock metadata parse error")
+        ));
+    }
+
+    #[test]
+    fn pre_start_terminal_error_is_prefixed() {
+        let mut started = false;
+        let events = prefix_pre_start_terminal_error(
+            vec![AssistantMessageEvent::error_network("boom")],
+            &mut started,
+        );
+
+        assert!(started);
+        assert!(matches!(
+            events.as_slice(),
+            [
+                AssistantMessageEvent::Start,
+                AssistantMessageEvent::Error { .. }
+            ]
         ));
     }
 
