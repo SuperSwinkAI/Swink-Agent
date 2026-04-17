@@ -5,7 +5,9 @@ use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use swink_agent::{AgentOptions, CatalogPreset, ModelConnection, ModelConnections, ModelSpec, StreamFn};
+use swink_agent::{
+    AgentOptions, CatalogPreset, ModelConnection, ModelConnections, ModelSpec, StreamFn,
+};
 use swink_agent_adapters::{
     AnthropicStreamFn, OllamaStreamFn, OpenAiStreamFn, ProxyStreamFn, remote_presets,
 };

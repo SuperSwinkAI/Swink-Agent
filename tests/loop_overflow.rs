@@ -453,12 +453,14 @@ async fn cancellation_during_recovery_aborts() {
     let cancel_clone = cancel_token.clone();
 
     // Compacting transformer so recovery tries.
-    config.transform_context = Some(Arc::new(move |msgs: &mut Vec<AgentMessage>, overflow: bool| {
-        if overflow && msgs.len() > 1 {
-            cancel_clone.cancel();
-            msgs.truncate(1);
-        }
-    }));
+    config.transform_context = Some(Arc::new(
+        move |msgs: &mut Vec<AgentMessage>, overflow: bool| {
+            if overflow && msgs.len() > 1 {
+                cancel_clone.cancel();
+                msgs.truncate(1);
+            }
+        },
+    ));
 
     let events = collect_events(agent_loop(
         vec![user_msg("msg1"), user_msg("msg2"), user_msg("msg3")],
