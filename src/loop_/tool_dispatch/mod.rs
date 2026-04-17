@@ -107,6 +107,7 @@ pub async fn execute_tools_concurrently(
     } = match preprocess::preprocess_tool_calls(
         config,
         tool_calls,
+        &batch_token,
         &tool_map,
         &results,
         &tool_timings,
@@ -117,6 +118,16 @@ pub async fn execute_tools_concurrently(
         Ok(result) => result,
         Err(early_outcome) => return early_outcome,
     };
+
+    if batch_token.is_cancelled() {
+        return collect::build_aborted_outcome(
+            tool_calls,
+            results,
+            tool_timings,
+            injected_messages,
+        )
+        .await;
+    }
 
     // Phase 2: Compute execution groups and dispatch.
     let groups = match execute::compute_execution_groups(
@@ -157,9 +168,34 @@ pub async fn execute_tools_concurrently(
 
     // Phase 3: Execute each group and collect results.
     for group in groups {
-        let mut handles = Vec::new();
+        if batch_token.is_cancelled() {
+            return collect::build_aborted_outcome(
+                tool_calls,
+                Arc::clone(&results),
+                Arc::clone(&tool_timings),
+                injected_messages,
+            )
+            .await;
+        }
+
+        let mut handles: Vec<(usize, tokio::task::JoinHandle<()>)> = Vec::new();
 
         for &prepared_idx in &group {
+            if batch_token.is_cancelled() {
+                for (_, handle) in handles {
+                    handle.abort();
+                    let _ = handle.await;
+                }
+
+                return collect::build_aborted_outcome(
+                    tool_calls,
+                    Arc::clone(&results),
+                    Arc::clone(&tool_timings),
+                    injected_messages,
+                )
+                .await;
+            }
+
             let prep = &prepared[prepared_idx];
             let tc = &tool_calls[prep.idx];
 
@@ -1247,6 +1283,224 @@ mod tests {
         assert!(results[0].is_error);
         assert!(matches!(
             results[0].content.as_slice(),
+            [ContentBlock::Text { text }] if text.contains("operation aborted")
+        ));
+    }
+
+    #[tokio::test]
+    async fn cancellation_during_approval_wait_aborts_without_dispatch() {
+        let tool = Arc::new(MockTool::new("delete_file").with_requires_approval(true));
+        let tool_ref = Arc::clone(&tool);
+        let config = test_loop_config_with_options(
+            vec![],
+            vec![tool as Arc<dyn crate::tool::AgentTool>],
+            Some(Box::new(|_request| {
+                Box::pin(async { std::future::pending::<crate::tool::ToolApproval>().await })
+            })),
+            ApprovalMode::Enabled,
+            ToolExecutionPolicy::Concurrent,
+        );
+        let tool_calls = vec![ToolCallInfo {
+            id: "call_waiting".to_string(),
+            name: "delete_file".to_string(),
+            arguments: json!({ "path": "danger.txt" }),
+            is_incomplete: false,
+        }];
+        let cancellation_token = CancellationToken::new();
+        let cancel_clone = cancellation_token.clone();
+        let (tx, mut rx) = mpsc::channel(8);
+        let saw_requested = Arc::new(AtomicBool::new(false));
+        let saw_start = Arc::new(AtomicBool::new(false));
+        let saw_requested_clone = Arc::clone(&saw_requested);
+        let saw_start_clone = Arc::clone(&saw_start);
+
+        let receiver = tokio::spawn(async move {
+            while let Some(event) = rx.recv().await {
+                match event {
+                    AgentEvent::ToolApprovalRequested { .. } => {
+                        saw_requested_clone.store(true, Ordering::SeqCst);
+                        cancel_clone.cancel();
+                    }
+                    AgentEvent::ToolExecutionStart { .. } => {
+                        saw_start_clone.store(true, Ordering::SeqCst);
+                    }
+                    _ => {}
+                }
+            }
+        });
+
+        let outcome = tokio::time::timeout(
+            std::time::Duration::from_millis(250),
+            execute_tools_concurrently(&config, &tool_calls, &cancellation_token, &tx),
+        )
+        .await
+        .expect("cancellation-aware approval wait should not hang");
+        drop(tx);
+        receiver.await.unwrap();
+
+        let ToolExecOutcome::Aborted { results, .. } = outcome else {
+            panic!("expected aborted outcome");
+        };
+        assert!(saw_requested.load(Ordering::SeqCst));
+        assert!(!saw_start.load(Ordering::SeqCst));
+        assert_eq!(tool_ref.execution_count(), 0);
+        assert_eq!(results.len(), 1);
+        assert!(results[0].is_error);
+        assert!(matches!(
+            results[0].content.as_slice(),
+            [ContentBlock::Text { text }] if text.contains("operation aborted")
+        ));
+    }
+
+    #[tokio::test]
+    async fn cancellation_after_first_approval_does_not_touch_later_tools() {
+        let tool_a = Arc::new(MockTool::new("tool_a").with_requires_approval(true));
+        let tool_b = Arc::new(MockTool::new("tool_b").with_requires_approval(true));
+        let tool_a_ref = Arc::clone(&tool_a);
+        let tool_b_ref = Arc::clone(&tool_b);
+        let approval_calls = Arc::new(AtomicU32::new(0));
+        let approval_calls_clone = Arc::clone(&approval_calls);
+        let cancellation_token = CancellationToken::new();
+        let cancel_clone = cancellation_token.clone();
+
+        let approve_tool: Box<crate::agent_options::ApproveToolFn> = Box::new(move |_request| {
+            let call_index = approval_calls_clone.fetch_add(1, Ordering::SeqCst);
+            let cancel = cancel_clone.clone();
+            Box::pin(async move {
+                if call_index == 0 {
+                    cancel.cancel();
+                }
+                ToolApproval::Approved
+            })
+        });
+
+        let config = test_loop_config_with_options(
+            vec![],
+            vec![
+                tool_a as Arc<dyn crate::tool::AgentTool>,
+                tool_b as Arc<dyn crate::tool::AgentTool>,
+            ],
+            Some(approve_tool),
+            ApprovalMode::Enabled,
+            ToolExecutionPolicy::Concurrent,
+        );
+        let tool_calls = vec![
+            ToolCallInfo {
+                id: "call_a".to_string(),
+                name: "tool_a".to_string(),
+                arguments: json!({}),
+                is_incomplete: false,
+            },
+            ToolCallInfo {
+                id: "call_b".to_string(),
+                name: "tool_b".to_string(),
+                arguments: json!({}),
+                is_incomplete: false,
+            },
+        ];
+        let (tx, mut rx) = mpsc::channel(16);
+        let saw_start = Arc::new(AtomicBool::new(false));
+        let saw_start_clone = Arc::clone(&saw_start);
+        let receiver = tokio::spawn(async move {
+            while let Some(event) = rx.recv().await {
+                if matches!(event, AgentEvent::ToolExecutionStart { .. }) {
+                    saw_start_clone.store(true, Ordering::SeqCst);
+                }
+            }
+        });
+
+        let outcome = tokio::time::timeout(
+            std::time::Duration::from_millis(250),
+            execute_tools_concurrently(&config, &tool_calls, &cancellation_token, &tx),
+        )
+        .await
+        .expect("pre-dispatch cancellation should not hang");
+        drop(tx);
+        receiver.await.unwrap();
+
+        let ToolExecOutcome::Aborted { results, .. } = outcome else {
+            panic!("expected aborted outcome");
+        };
+        assert_eq!(approval_calls.load(Ordering::SeqCst), 1);
+        assert!(!saw_start.load(Ordering::SeqCst));
+        assert_eq!(tool_a_ref.execution_count(), 0);
+        assert_eq!(tool_b_ref.execution_count(), 0);
+        assert_eq!(results.len(), 2);
+        assert!(results.iter().all(|result| result.is_error));
+    }
+
+    #[tokio::test]
+    async fn cancellation_between_sequential_groups_skips_later_dispatch() {
+        let tool_a = Arc::new(MockTool::new("tool_a"));
+        let tool_b = Arc::new(MockTool::new("tool_b"));
+        let tool_a_ref = Arc::clone(&tool_a);
+        let tool_b_ref = Arc::clone(&tool_b);
+        let config = test_loop_config_with_options(
+            vec![],
+            vec![
+                tool_a as Arc<dyn crate::tool::AgentTool>,
+                tool_b as Arc<dyn crate::tool::AgentTool>,
+            ],
+            None,
+            ApprovalMode::Bypassed,
+            ToolExecutionPolicy::Sequential,
+        );
+        let tool_calls = vec![
+            ToolCallInfo {
+                id: "call_a".to_string(),
+                name: "tool_a".to_string(),
+                arguments: json!({}),
+                is_incomplete: false,
+            },
+            ToolCallInfo {
+                id: "call_b".to_string(),
+                name: "tool_b".to_string(),
+                arguments: json!({}),
+                is_incomplete: false,
+            },
+        ];
+        let cancellation_token = CancellationToken::new();
+        let cancel_clone = cancellation_token.clone();
+        let (tx, mut rx) = mpsc::channel(16);
+        let saw_b_start = Arc::new(AtomicBool::new(false));
+        let saw_b_start_clone = Arc::clone(&saw_b_start);
+
+        let receiver = tokio::spawn(async move {
+            while let Some(event) = rx.recv().await {
+                match event {
+                    AgentEvent::ToolExecutionEnd { id, .. } if id == "call_a" => {
+                        cancel_clone.cancel();
+                    }
+                    AgentEvent::ToolExecutionStart { id, .. } if id == "call_b" => {
+                        saw_b_start_clone.store(true, Ordering::SeqCst);
+                    }
+                    _ => {}
+                }
+            }
+        });
+
+        let outcome = tokio::time::timeout(
+            std::time::Duration::from_millis(250),
+            execute_tools_concurrently(&config, &tool_calls, &cancellation_token, &tx),
+        )
+        .await
+        .expect("sequential dispatch should stop before later groups once cancelled");
+        drop(tx);
+        receiver.await.unwrap();
+
+        let ToolExecOutcome::Aborted { results, .. } = outcome else {
+            panic!("expected aborted outcome");
+        };
+        assert_eq!(tool_a_ref.execution_count(), 1);
+        assert_eq!(tool_b_ref.execution_count(), 0);
+        assert!(!saw_b_start.load(Ordering::SeqCst));
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].tool_call_id, "call_a");
+        assert_eq!(results[0].is_error, false);
+        assert_eq!(results[1].tool_call_id, "call_b");
+        assert!(results[1].is_error);
+        assert!(matches!(
+            results[1].content.as_slice(),
             [ContentBlock::Text { text }] if text.contains("operation aborted")
         ));
     }
