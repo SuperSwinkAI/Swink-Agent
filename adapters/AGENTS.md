@@ -43,6 +43,7 @@
 - **Mistral divergences from OpenAI** — Tool call IDs must be exactly 9-char `[a-zA-Z0-9]`. `stream_options` field rejected (usage comes in final chunk). Must use `max_tokens` not `max_completion_tokens`. `finish_reason: "model_length"` is Mistral-specific. User messages cannot immediately follow tool messages (synthetic assistant message inserted).
 - Any failure before the provider yields its first streaming payload must still emit `[Start, Error]`. Returning only a terminal `Error` makes `accumulate_message()` fail with `no Start event found`.
 - `finish_reason == "content_filter"` must be routed through `OaiSseStreamState.terminal_error`; emitting an inline error and then consuming a later `[DONE]` produces a duplicate terminal event that `accumulate_message` rejects.
+- In `src/google.rs`, `function_call.args` chunks are full snapshots, not deltas. Always overwrite the buffered args, including `null`, or a later empty snapshot can leave stale JSON from an earlier chunk.
 - In `src/ollama.rs`, the NDJSON parser must buffer raw bytes until it has a full newline-delimited record. Decoding each transport chunk independently with `from_utf8_lossy` corrupts split multibyte UTF-8.
 - In `src/openai_compat.rs`, buffer tool-call arguments and delay `ToolCallStart` until a non-empty `function.name` is known; some providers stream arguments before the name.
 - Runtime SSE adapters must thread `StreamOptions.on_raw_payload` into the callback-aware shared parser (`sse_data_lines_with_callback`). The callback-free helper silently disables payload observers.
