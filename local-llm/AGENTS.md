@@ -36,6 +36,7 @@
 - **Local stream finish reasons must survive finalization** — `runner.rs` must propagate whether generation ended naturally or because it exhausted `max_tokens`, and `stream.rs` must preserve `Length` ahead of synthesized `ToolUse` so the core loop can recover incomplete tool-call JSON.
 - **Two converter types** — `LocalConverter` (SmolLM3) and `Gemma4LocalConverter` (Gemma 4) both implement `MessageConverter`. `convert_context_messages` dispatches based on `config.is_gemma4()`.
 - **LazyLoader waiters must treat `Unloaded` as terminal for the current attempt** — `wait_until_ready()` now returns on `Unloaded`/`Failed` as well as `Ready`, and `ensure_ready()` re-checks loader state after every wakeup so an `unload()` during another caller's load does not strand waiters forever.
+- Workspace-wide `cargo build` / `test` / `clippy` now compile `llama-cpp-sys-2` through this crate, so contributors need LLVM/libclang installed and Windows contributors commonly need `LIBCLANG_PATH` pointed at the LLVM `bin` directory.
 
 ## Design Decisions
 
