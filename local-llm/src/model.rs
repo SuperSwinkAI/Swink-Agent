@@ -129,10 +129,9 @@ impl LoaderBackend for ChatBackend {
             };
 
             let model_path = artifact;
-            let build_result = tokio::task::spawn_blocking(move || {
-                LlamaRunner::load(&model_path, runner_config)
-            })
-            .await;
+            let build_result =
+                tokio::task::spawn_blocking(move || LlamaRunner::load(&model_path, runner_config))
+                    .await;
 
             match build_result {
                 Ok(Ok(runner)) => Ok(Arc::new(runner)),

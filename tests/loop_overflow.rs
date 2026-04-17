@@ -12,16 +12,16 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use common::{
-    MockContextCapturingStreamFn, MockStreamFn, MockTool, default_model, next_response,
-    text_only_events, tool_call_events, user_msg,
+    MockContextCapturingStreamFn, MockStreamFn, MockTool, default_model, text_only_events,
+    tool_call_events, user_msg,
 };
 use futures::Stream;
 use futures::stream::StreamExt;
 use tokio_util::sync::CancellationToken;
 
 use swink_agent::{
-    AgentContext, AgentEvent, AgentLoopConfig, AgentMessage, AssistantMessageEvent, ContentBlock,
-    DefaultRetryStrategy, LlmMessage, ModelSpec, StreamFn, StreamOptions, UserMessage, agent_loop,
+    AgentEvent, AgentLoopConfig, AgentMessage, AssistantMessageEvent, ContentBlock,
+    DefaultRetryStrategy, LlmMessage, StreamFn, StreamOptions, UserMessage, agent_loop,
 };
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -441,56 +441,26 @@ async fn no_compaction_skip_surfaces_error() {
 // T073: Cancellation during emergency recovery aborts the loop
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// A `StreamFn` that cancels the token after the first overflow, before the retry.
-struct CancellingAfterOverflowStreamFn {
-    responses: Mutex<Vec<Vec<AssistantMessageEvent>>>,
-    cancel_token: CancellationToken,
-    call_count: std::sync::atomic::AtomicU32,
-}
-
-impl StreamFn for CancellingAfterOverflowStreamFn {
-    fn stream<'a>(
-        &'a self,
-        _model: &'a ModelSpec,
-        _context: &'a AgentContext,
-        _options: &'a StreamOptions,
-        _cancellation_token: CancellationToken,
-    ) -> Pin<Box<dyn Stream<Item = AssistantMessageEvent> + Send + 'a>> {
-        let count = self
-            .call_count
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        if count == 0 {
-            // First call: return overflow and cancel the token so recovery
-            // detects cancellation before retry.
-            self.cancel_token.cancel();
-        }
-        let fallback = vec![AssistantMessageEvent::error("exhausted")];
-        let events = next_response(&self.responses, fallback);
-        Box::pin(futures::stream::iter(events))
-    }
-}
-
 #[tokio::test]
 async fn cancellation_during_recovery_aborts() {
     let cancel_token = CancellationToken::new();
+    let stream_fn = Arc::new(MockStreamFn::new(vec![
+        overflow_error_events(),
+        text_only_events("should not reach — cancelled"),
+    ]));
 
-    let stream_fn = Arc::new(CancellingAfterOverflowStreamFn {
-        responses: Mutex::new(vec![
-            overflow_error_events(),
-            text_only_events("should not reach — cancelled"),
-        ]),
-        cancel_token: cancel_token.clone(),
-        call_count: std::sync::atomic::AtomicU32::new(0),
-    });
-
-    let mut config = default_config(stream_fn as Arc<dyn StreamFn>);
+    let mut config = default_config(stream_fn);
+    let cancel_clone = cancel_token.clone();
 
     // Compacting transformer so recovery tries.
-    config.transform_context = Some(Arc::new(|msgs: &mut Vec<AgentMessage>, overflow: bool| {
-        if overflow && msgs.len() > 1 {
-            msgs.truncate(1);
-        }
-    }));
+    config.transform_context = Some(Arc::new(
+        move |msgs: &mut Vec<AgentMessage>, overflow: bool| {
+            if overflow && msgs.len() > 1 {
+                cancel_clone.cancel();
+                msgs.truncate(1);
+            }
+        },
+    ));
 
     let events = collect_events(agent_loop(
         vec![user_msg("msg1"), user_msg("msg2"), user_msg("msg3")],
@@ -501,6 +471,11 @@ async fn cancellation_during_recovery_aborts() {
     .await;
 
     assert!(has_event(&events, "AgentEnd"), "loop should complete");
+    assert_eq!(
+        count_events(&events, "TurnStart"),
+        1,
+        "cancellation during overflow recovery must not emit a duplicate TurnStart"
+    );
 
     // Should have a TurnEnd with Cancelled or Aborted reason.
     assert!(
