@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::tool::{AgentTool, AgentToolResult};
 use crate::types::ToolResultMessage;
@@ -52,6 +52,30 @@ fn order_results_by_tool_calls(
         }
     }
     ordered
+}
+
+/// Build a tool lookup table that preserves the first registered tool for a
+/// given name.
+///
+/// Public lookup paths such as `Agent::find_tool()` return the first matching
+/// tool. Dispatch must use the same rule so duplicate tool names do not expose
+/// one tool to the model while executing another.
+fn build_tool_map(tools: &[Arc<dyn AgentTool>]) -> HashMap<&str, &Arc<dyn AgentTool>> {
+    let mut tool_map: HashMap<&str, &Arc<dyn AgentTool>> = HashMap::with_capacity(tools.len());
+
+    for tool in tools {
+        if tool_map.contains_key(tool.name()) {
+            warn!(
+                tool_name = %tool.name(),
+                "duplicate tool name detected during dispatch; keeping first registered tool"
+            );
+            continue;
+        }
+
+        tool_map.insert(tool.name(), tool);
+    }
+
+    tool_map
 }
 
 // ─── Public entry point ─────────────────────────────────────────────────────
@@ -97,8 +121,7 @@ pub async fn execute_tools_concurrently(
     let transfer_signal: Arc<Mutex<Option<crate::transfer::TransferSignal>>> =
         Arc::new(Mutex::new(None));
 
-    let tool_map: HashMap<&str, &Arc<dyn AgentTool>> =
-        config.tools.iter().map(|t| (t.name(), t)).collect();
+    let tool_map = build_tool_map(&config.tools);
 
     // Phase 1: Pre-process — policies, approval, argument rewriting.
     let preprocess::PreprocessResult {
