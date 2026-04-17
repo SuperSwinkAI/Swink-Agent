@@ -177,7 +177,10 @@ async fn run_loop_inner(
                         state.turn_index += 1;
                         false
                     }
-                    TurnOutcome::BreakInner => true,
+                    TurnOutcome::BreakInner => {
+                        state.turn_index += 1;
+                        true
+                    }
                     TurnOutcome::Return => return,
                 };
 

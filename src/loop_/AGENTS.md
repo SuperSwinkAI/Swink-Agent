@@ -10,3 +10,5 @@
 - `ToolExecutionStrategy::partition()` indices target the post-preprocessing `tool_calls` slice passed into the strategy, not the original LLM-emitted tool-call list. The dispatch layer must reject out-of-bounds, duplicate, or missing prepared indices with synthetic tool errors before any tool starts.
 - `PreDispatchVerdict::Stop` must synthesize one terminal error result for every unresolved tool call in the batch, including calls that already passed preprocessing before a later stop fires. Stop aborts dispatch, but it does not relax tool-result parity.
 - Cancellation has to be observed in preprocessing and before each execution group/tool dispatch, not just while collecting spawned handles. Otherwise approval waits can hang forever and later tools can still launch after the batch is already cancelled.
+- `LoopState.turn_index` must advance after every completed turn, not just tool-loop continuation. Text-only or other `BreakInner` turns still finish a turn before the outer loop polls follow-up messages.
+
