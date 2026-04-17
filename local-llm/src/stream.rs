@@ -2,7 +2,7 @@
 //!
 //! [`LocalStreamFn`] wraps a [`LocalModel`] and produces
 //! [`AssistantMessageEvent`] values by incrementally streaming responses
-//! from the llama.cpp inference engine via [`LlamaRunner`].
+//! from the llama.cpp inference engine via the internal `LlamaRunner`.
 
 use std::pin::Pin;
 use std::sync::Arc;
