@@ -26,7 +26,7 @@ content-filter = ["regex"]
 audit = ["chrono", "serde", "serde_json", "unicode-truncate"]
 
 [dependencies]
-swink-agent = { path = "..", version = "0.7.8", default-features = false }
+swink-agent = { path = "..", version = "0.7.9", default-features = false }
 regex = { workspace = true, optional = true }
 chrono = { workspace = true, optional = true }
 serde = { workspace = true, optional = true }
