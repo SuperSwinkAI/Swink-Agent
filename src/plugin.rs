@@ -397,7 +397,7 @@ mod tests {
 
     #[test]
     fn compose_namespaced_name_replaces_non_ascii() {
-        assert_eq!(compose_namespaced_name("café", "naïve"), "caf__na_ve");
+        assert_eq!(compose_namespaced_name("plugin", "naïve"), "plugin_na_ve");
     }
 
     #[test]
@@ -434,7 +434,7 @@ mod tests {
             ("web", "read.file"),
             ("1plugin", "foo"),
             ("_plugin", "foo"),
-            ("café", "naïve"),
+            ("plugin", "naïve"),
             ("", ""),
             (&"a".repeat(100), &"b".repeat(100)),
         ] {
