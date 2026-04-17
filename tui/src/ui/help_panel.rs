@@ -74,6 +74,8 @@ pub fn help_lines() -> Vec<Line<'static>> {
         key_line("Up/Down", "Scroll / History", normal),
         key_line("PgUp/PgDn", "Page scroll", normal),
         key_line("Mouse wheel", "Chat scroll", normal),
+        key_line("Click+drag", "Select / copy", normal),
+        key_line("Esc", "Clear selection", normal),
         key_line("F1", "Toggle help", normal),
         key_line("F2", "Collapse tool", normal),
         key_line("F3", "Color mode", normal),
