@@ -9,7 +9,7 @@ This guide covers every supported path for running a local LLM with Swink Agent.
 - [vLLM](#vllm)
 - [LM Studio](#lm-studio)
 - [Custom Ollama Modelfile](#custom-ollama-modelfile)
-- [Direct mistral.rs Path](#direct-mistralrs-path)
+- [Direct llama.cpp Path](#direct-llamacpp-path)
 
 ---
 
@@ -220,9 +220,9 @@ This approach is useful when you need to:
 
 ---
 
-## Direct mistral.rs Path
+## Direct llama.cpp Path
 
-The `swink-agent-local-llm` crate provides direct in-process inference via the mistral.rs engine. This eliminates the need for an external server process but requires compiling mistral.rs into your binary.
+The `swink-agent-local-llm` crate provides direct in-process inference via llama.cpp (Rust bindings: `llama-cpp-2`). This eliminates the need for an external server process. All models use GGUF format.
 
 ### When to use this
 
@@ -239,12 +239,9 @@ Enable GPU acceleration via Cargo feature flags on `swink-agent-local-llm`:
 | _(none)_     | CPU-only       | All               |
 | `metal`      | Apple Metal    | macOS (Apple Silicon) |
 | `cuda`       | NVIDIA CUDA    | Linux, Windows    |
-| `cudnn`      | NVIDIA cuDNN   | Linux, Windows    |
-| `flash-attn` | Flash Attention| Linux (NVIDIA)    |
-| `mkl`        | Intel MKL      | Linux, Windows    |
-| `accelerate` | Apple Accelerate| macOS             |
+| `vulkan`     | Vulkan         | Linux, Windows    |
 
-**Important:** Gemma 4 E2B requires GPU acceleration. CPU-only inference will hang silently on non-trivial prompts. Enable the `gemma4` feature alongside a GPU backend:
+Gemma 4 E2B works on CPU (unlike the previous mistralrs-based implementation), but GPU acceleration is strongly recommended for usable performance:
 
 ```toml
 [dependencies]

@@ -30,12 +30,9 @@ xai         → (marker only, delegates to openai)
 ```
 (no default backend — CPU inference when no backend feature enabled)
 
-metal       → mistralrs/metal
-cuda        → mistralrs/cuda
-cudnn       → mistralrs/cudnn
-flash-attn  → mistralrs/flash-attn (implies cuda)
-mkl         → mistralrs/mkl
-accelerate  → mistralrs/accelerate
+metal       → llama-cpp-2/metal
+cuda        → llama-cpp-2/cuda
+vulkan      → llama-cpp-2/vulkan
 ```
 
 ### swink-agent-tui (existing, unchanged)

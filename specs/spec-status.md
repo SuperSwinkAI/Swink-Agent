@@ -43,7 +43,7 @@
 | 038-mcp-integration               |    ✓    |  ✓   |   ✓   | ✓ Complete   |
 | 039-multi-agent-patterns          |    ✓    |  ✓   |   ✓   | ✓ Complete   |
 | 040-agent-transfer-handoff        |    ✓    |  ✓   |   ✓   | ✓ Complete   |
-| 041-adapter-gemma4-local          |    ✓    |  ✓   |   ✓   | ✓ Complete   |
+| ~~041-adapter-gemma4-local~~      |    —    |  —   |   —   | Folded → 022 |
 | 042-web-browse-plugin             |    ✓    |  ✓   |   ✓   | ✓ Complete   |
 
 Legend: ✓ complete  ● in progress  ○ ready  - not started

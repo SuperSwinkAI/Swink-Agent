@@ -12,7 +12,7 @@ On-device language model capable of text generation from quantized GGUF weights.
 |-------|------|-------------|
 | `state` | `Arc<Mutex<ModelState>>` | Current lifecycle state: `Unloaded`, `Downloading`, `Loading`, `Ready`, or `Failed`. |
 | `config` | `ModelConfig` | Configuration for this model (source, context length, quantization). |
-| `runner` | `Option<Arc<MistralRs>>` | The loaded mistral.rs inference runner. `None` until `Ready`. |
+| `runner` | `Option<Arc<LlamaModel>>` | The loaded llama.cpp inference model. `None` until `Ready`. |
 | `progress_callback` | `Option<ProgressCallbackFn>` | Optional callback for download/load progress reporting. |
 
 | Method | Signature | Description |
@@ -69,7 +69,7 @@ On-device embedding model that converts text passages into fixed-dimensional vec
 |-------|------|-------------|
 | `state` | `Arc<Mutex<ModelState>>` | Current lifecycle state (same as `LocalModel`). |
 | `config` | `ModelConfig` | Configuration for the embedding model. |
-| `runner` | `Option<Arc<MistralRs>>` | The loaded mistral.rs embedding runner. `None` until `Ready`. |
+| `runner` | `Option<Arc<LlamaModel>>` | The loaded llama.cpp embedding model. `None` until `Ready`. |
 | `progress_callback` | `Option<ProgressCallbackFn>` | Optional callback for download/load progress reporting. |
 
 | Method | Signature | Description |
@@ -111,7 +111,7 @@ Progress events emitted during download and loading.
 |---------|--------|-------------|
 | `DownloadProgress` | `bytes_downloaded: u64, total_bytes: Option<u64>` | Download progress. `total_bytes` may be `None` if server does not report content length. |
 | `DownloadComplete` | — | Download finished successfully. |
-| `LoadingProgress` | `message: String` | Loading status message from mistral.rs. |
+| `LoadingProgress` | `message: String` | Loading status message from llama.cpp. |
 | `LoadingComplete` | — | Model loaded and ready. |
 
 ### LocalModelError (enum, thiserror)

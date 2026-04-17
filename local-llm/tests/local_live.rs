@@ -426,8 +426,8 @@ mod gemma4_live {
         }
     }
 
-    /// Validation gate: verify Gemma 4 E2B works on mistralrs 0.8 without
-    /// NaN logits. Sends 3 prompts of increasing complexity.
+    /// Validation gate: verify Gemma 4 E2B works on llama-cpp-2 (llama.cpp).
+    /// Sends 3 prompts of increasing complexity.
     ///
     /// **STOP/GO decision point** — if this test fails (NaN, hang, garbage),
     /// pause all downstream Gemma 4 work and fall back to Ollama path.

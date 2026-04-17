@@ -10,7 +10,7 @@ Add granular Cargo feature flags across two workspace crates (adapters, local-ll
 ## Technical Context
 
 **Language/Version**: Rust 1.88 (edition 2024)
-**Primary Dependencies**: Workspace deps centralized in root Cargo.toml. Key deps for this feature: `mistralrs` 0.7 (backend features), `eventsource-stream` 0.2 (proxy-only), `sha2` (bedrock-only).
+**Primary Dependencies**: Workspace deps centralized in root Cargo.toml. Key deps for this feature: `llama-cpp-2` (backend features), `eventsource-stream` 0.2 (proxy-only), `sha2` (bedrock-only).
 **Storage**: N/A
 **Testing**: `cargo test --workspace` + `cargo build` with various feature combinations
 **Target Platform**: Cross-platform (macOS/Metal, Windows+Linux/CUDA, all/CPU)
@@ -28,7 +28,7 @@ Add granular Cargo feature flags across two workspace crates (adapters, local-ll
 | I. Library-First | **PASS** | Feature flags are the standard library mechanism for optional compilation. No new crates introduced. |
 | II. Test-Driven | **PASS** | Existing tests pass with default features. New CI matrix entries verify minimal feature sets. |
 | III. Efficiency & Performance | **PASS** | Feature gates reduce compile time and binary size for selective consumers. Zero runtime overhead. |
-| IV. Leverage the Ecosystem | **PASS** | Uses standard Cargo feature flag mechanism. Forwards mistralrs features rather than reimplementing. |
+| IV. Leverage the Ecosystem | **PASS** | Uses standard Cargo feature flag mechanism. Forwards llama-cpp-2 features rather than reimplementing. |
 | V. Provider Agnosticism | **PASS** | Core crate remains provider-free. Adapters are a separate workspace crate — consumers opt-in by adding a direct dependency. |
 | VI. Safety & Correctness | **PASS** | `#[forbid(unsafe_code)]` unchanged. No new unsafe paths. |
 
@@ -61,7 +61,7 @@ specs/033-workspace-feature-gates/
 # Files modified (no new files created)
 adapters/Cargo.toml           # Add [features] section, gate eventsource-stream + sha2
 adapters/src/lib.rs           # Add cfg(feature) guards on mod + pub use
-local-llm/Cargo.toml          # Add backend feature flags forwarding to mistralrs
+local-llm/Cargo.toml          # Add backend feature flags forwarding to llama-cpp-2
 # Root Cargo.toml and src/lib.rs unchanged — cyclic dependency prevents root → adapters
 ```
 

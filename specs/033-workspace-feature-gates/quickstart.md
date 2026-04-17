@@ -9,7 +9,7 @@ Adds granular Cargo feature flags to the adapters and local-llm crates so consum
 ## Implementation Order
 
 1. **Adapters crate** — Add 9 feature flags + `all` + `default`. Gate `mod` + `pub use` in lib.rs. Gate `eventsource-stream` behind `proxy`, `sha2` behind `bedrock`.
-2. **Local-LLM crate** — Add backend features (`metal`, `cuda`, `cudnn`, `flash-attn`, `mkl`, `accelerate`) forwarding to mistralrs.
+2. **Local-LLM crate** — Add backend features (`metal`, `cuda`, `vulkan`) forwarding to llama-cpp-2.
 3. **Verification** — `cargo test --workspace` with defaults. Minimal feature builds. CI matrix additions.
 
 ## Key Pattern (from policies crate)

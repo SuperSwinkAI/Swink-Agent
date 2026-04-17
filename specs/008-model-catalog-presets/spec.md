@@ -183,4 +183,4 @@ Three Gemma 4 presets added under the `local` provider for Ollama-based inferenc
 | `gemma4_e4b` | `gemma4:e4b` | 128K | text, tools, streaming, thinking | No |
 | `gemma4_26b` | `gemma4:26b` | 256K | text, tools, streaming, thinking | No |
 
-`smollm3_3b` demoted to `group = "legacy"`, `include_by_default = false`. These presets target Ollama (not local-llm/mistral.rs), so they omit `repo_id`/`filename`. The `thinking` capability enables the Ollama `think` request field via the adapter.
+`smollm3_3b` demoted to `group = "legacy"`, `include_by_default = false`. These presets target Ollama (not local-llm/llama.cpp), so they omit `repo_id`/`filename`. The `thinking` capability enables the Ollama `think` request field via the adapter.

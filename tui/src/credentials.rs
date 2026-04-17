@@ -49,13 +49,6 @@ pub fn providers() -> Vec<ProviderInfo> {
             description: "Custom SSE proxy endpoint",
             requires_key: true,
         },
-        ProviderInfo {
-            name: "Local (SmolLM3-3B)",
-            key_name: "local",
-            env_var: "LOCAL_MODEL_REPO",
-            description: "Local on-device inference (no API key needed)",
-            requires_key: false,
-        },
     ]
 }
 

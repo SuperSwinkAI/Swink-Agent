@@ -2,7 +2,7 @@
 
 ## Scope
 
-`local-llm/` — On-device inference via mistral.rs. SmolLM3-3B (default), Gemma 4 E2B (opt-in, `gemma4` feature), and EmbeddingGemma-300M (embeddings).
+`local-llm/` — On-device inference via llama.cpp (Rust bindings: `llama-cpp-2`). SmolLM3-3B (default), Gemma 4 E2B (opt-in, `gemma4` feature), and EmbeddingGemma-300M (embeddings). All models use GGUF format.
 
 ## Key Facts
 
@@ -18,17 +18,18 @@
 
 - **SmolLM3 `<think>` tags** — parsed via simple string matching (not regex) and routed to `ThinkingStart/Delta/End` events.
 - **Context capped at 8192 tokens** (NoPE architecture). Override via `LOCAL_CONTEXT_LENGTH` env var.
-- **mistralrs version pin** — API is actively evolving; pin to specific minor version.
-- **SmolLM3 GGUF must fail fast on current `mistralrs`** — `mistralrs` 0.8.1 does not recognize the `smollm3` GGUF architecture. Reject `SmolLM3` configs before download/build with a typed `LocalModelError::Loading` instead of letting the dependency panic on `ensure_ready()`. The follow-up fix for a working default local model is separate work.
+- **llama-cpp-2 version pin** — API is actively evolving; pin to specific minor version.
+- **SmolLM3 is fully supported** — `llama-cpp-2` (llama.cpp) natively supports the SmolLM3 GGUF architecture. No fail-fast rejection needed.
 - **`with_progress` returns `Result`** — call before cloning the `Arc`.
-- **`ModelState` split** — public `ModelState` (re-exported from lib.rs) vs internal `InternalModelState` (holds `mistralrs::Model` runner). Stream code uses `InternalModelState`.
+- **`ModelState` split** — public `ModelState` (re-exported from lib.rs) vs internal `InternalModelState` (holds the llama.cpp model handle). Stream code uses `InternalModelState`.
+- **`LlamaContext` is `!Send`** — llama.cpp contexts cannot be sent across threads. Inference uses a dedicated thread pattern (`std::thread::spawn` + channel) to keep the context on a single OS thread.
 - **Embedding method naming** — `embed(text)` for single text, `embed_batch(texts)` for batch. Errors use `LocalModelError::Embedding` variant.
-- **Gemma 4 requires GPU** — CPU-only inference hangs silently on non-trivial prompts (BF16 safetensors on CPU is not viable). Build with `--features gemma4,cuda` (NVIDIA) or `--features gemma4,metal` (Apple Silicon). On Windows, `cl.exe` (MSVC) must be in PATH for the cuda feature to compile — use a VS 2022 Developer Command Prompt. A `tracing::warn!` is emitted at load time when Gemma 4 is used without any GPU feature compiled in.
+- **Gemma 4 works on CPU** — unlike the previous mistralrs-based implementation which hung silently on CPU, llama.cpp handles Gemma 4 GGUF inference on CPU correctly (though slowly). GPU acceleration (`--features gemma4,metal` on Apple Silicon, `--features gemma4,cuda` on NVIDIA) is strongly recommended for usable performance.
 - **Gemma 4 live tests are runtime-gated** — `local-llm/tests/common/mod.rs` uses `swink_agent::testing::should_run_test()` to detect OS/GPU support before calling `ensure_ready()`. This avoids hanging on unsupported hosts and keeps the skip reason close to the real constraint.
 - **Metal builds need Apple's Metal toolchain** — on macOS, compiling with `--features metal` requires the `metal` compiler from Apple's Metal Toolchain. If the build script says `cannot execute tool 'metal'`, install it with `xcodebuild -downloadComponent MetalToolchain`.
-- **Gemma 4 uses `MultimodalModelBuilder`** — `GgufModelBuilder` cannot load Gemma 4 (Per-Layer Embeddings architecture). `MultimodalModelBuilder::new(repo_id)` handles download internally, so the hf-hub download phase is skipped for Gemma 4.
+- **Gemma 4 uses GGUF** — all models (including Gemma 4) now use GGUF format loaded via `LlamaModel::load_from_file`. Gemma 4 GGUF repos are from `bartowski/` (e.g., `bartowski/google_gemma-4-E2B-it-GGUF`).
 - **Gemma 4 model family detection** — `ModelConfig::is_gemma4()` checks `repo_id` for `"gemma-4"` or `"gemma4"` substrings (behind `gemma4` feature flag).
-- **Gemma 4 thinking mode** — `<|think|>\n` prepended to system prompt in `convert.rs` when `config.is_gemma4() && thinking_enabled`. mistralrs has no `think: true` API for direct inference.
+- **Gemma 4 thinking mode** — `<|think|>\n` prepended to system prompt in `convert.rs` when `config.is_gemma4() && thinking_enabled`. llama.cpp has no `think: true` API for direct inference.
 - **Gemma 4 thinking output** — `ChannelThoughtParser` in `stream.rs` handles cross-chunk `<|channel>thought\n...<channel|>` delimiters. Stateful 4-state machine (Normal → PartialOpen → InThinking → PartialClose).
 - **Gemma 4 tool calls** — `ToolCallParser` in `stream.rs` handles cross-chunk `<|tool_call>call:{name}{args}<tool_call|>` format. IDs are generated as UUIDs. `Gemma4LocalConverter` wraps tool results as `<|tool_result>{tool_call_id}\n{text}<tool_result|>`.
 - **Gemma 4 partial delimiter matching must be UTF-8 safe** — when scanning for split `<|channel>thought\n` and `<tool_call|>` delimiters, only slice `&str` values at character boundaries. Reuse the shared suffix helper in `stream.rs`; raw byte-offset suffix slicing can panic on multibyte output.
@@ -41,7 +42,7 @@
 
 Both modules follow the same `Arc<Inner>` + state-machine pattern (`Unloaded -> Downloading -> Loading -> Ready | Failed`), `RwLock`-guarded state, `Notify`-based readiness signalling, and progress callbacks. This structural similarity is deliberate rather than extracted into a generic type because:
 
-- **Different runner types** — `model.rs` uses `mistralrs::GgufModelBuilder` for chat completion pipelines; `embedding.rs` uses `mistralrs::EmbeddingModelBuilder` for vectorization pipelines. These are distinct mistral.rs types with incompatible builder and inference APIs.
+- **Different runner types** — `model.rs` uses `LlamaModel::load_from_file` for chat completion pipelines; `embedding.rs` uses the same loader for vectorization pipelines. Both use GGUF format but have distinct inference APIs.
 - **Different public APIs** — `LocalModel` exposes `runner()` for streaming chat completion; `EmbeddingModel` exposes `embed(text)` and `embed_batch(texts)` returning `Vec<f32>`.
 - **Complexity trade-off** — A generic `LazyModel<Config, State>` abstraction would require type parameters threading through config, state, runner, and builder types. With only two implementations this adds indirection without meaningful deduplication.
 
@@ -71,7 +72,7 @@ cargo test -p swink-agent-local-llm --test embedding_live -- --ignored
 cargo test -p swink-agent-local-llm --features gemma4 --test local_live -- --ignored
 ```
 
-SmolLM3 downloads ~1.92 GB on first run. Embedding model requires `HF_TOKEN` (gated). Gemma 4 E2B downloads ~5 GB safetensors on first run.
+SmolLM3 downloads ~1.92 GB on first run. Embedding model downloads GGUF from `unsloth/embeddinggemma-300m-GGUF`. Gemma 4 E2B downloads ~3.5 GB GGUF on first run.
 
 Gemma 4 live tests now short-circuit unless the host matches the compiled backend:
 - `metal`: macOS on Apple Silicon, Metal-capable GPU, and Apple's Metal toolchain installed.

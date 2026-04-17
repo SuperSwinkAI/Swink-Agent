@@ -41,7 +41,7 @@ A downstream crate depends on the workspace crates directly and wants to select 
 
 ### User Story 3 - Local LLM Backend Selection (Priority: P2)
 
-A macOS developer building a desktop app wants local inference via Metal acceleration. They enable the `local-llm` and `metal` features. The build pulls the mistral.rs Metal backend without CUDA dependencies. Conversely, a Windows developer enables `local-llm` and `cuda` for GPU-accelerated inference.
+A macOS developer building a desktop app wants local inference via Metal acceleration. They enable the `local-llm` and `metal` features. The build pulls the llama.cpp Metal backend without CUDA dependencies. Conversely, a Windows developer enables `local-llm` and `cuda` for GPU-accelerated inference.
 
 **Why this priority**: The local-llm dependency chain is the heaviest in the workspace and platform-sensitive. Incorrect backend selection causes build failures or bloated binaries.
 
@@ -91,7 +91,7 @@ A headless daemon or library consumer depends on `swink-agent` for its agent loo
 - **FR-001**: The adapters crate MUST expose individual feature flags for all 9 adapter modules — implemented (`anthropic`, `openai`, `ollama`, `gemini`, `proxy`) and stubs (`azure`, `bedrock`, `mistral`, `xai`) — that gate each provider's module compilation and re-exports. Note: the `gemini` feature gates the `google` module (which exports `GeminiStreamFn`); the feature name matches the public type and user mental model.
 - **FR-002**: The adapters crate MUST compile shared infrastructure (base HTTP client, SSE parsing, error types, conversion utilities) unconditionally, regardless of which provider features are enabled.
 - **FR-003**: The adapters crate MUST provide an `all` feature that enables all 9 adapter feature flags (5 implemented + 4 stubs), plus a `full` convenience feature for the all-adapters profile.
-- **FR-004**: The local-llm crate MUST expose backend feature flags (`metal`, `cuda`, `cudnn`, `flash-attn`, `mkl`, `accelerate`) that forward to the corresponding mistralrs compile-time features.
+- **FR-004**: The local-llm crate MUST expose backend feature flags (`metal`, `cuda`, `vulkan`) that forward to the corresponding llama-cpp-2 compile-time features.
 - **FR-005**: The local-llm crate MUST default to CPU-only inference when no backend feature is explicitly selected (no `default` or `all` feature for backends — explicit opt-in only).
 - **FR-006**: The TUI crate MUST remain opt-in from the workspace root — it MUST NOT be included in the root crate's default features.
 - **FR-007**: The TUI crate MUST preserve its existing `local` feature that optionally depends on `swink-agent-local-llm`.
@@ -124,6 +124,6 @@ A headless daemon or library consumer depends on `swink-agent` for its agent loo
 
 - The existing `swink-agent-policies` crate feature pattern (individual marker flags plus an `all` convenience feature) is the established convention, but not every crate uses the same default-feature policy.
 - Provider-specific dependencies can be cleanly separated — each adapter module's dependencies are identifiable and do not overlap with other providers beyond shared infrastructure.
-- The `mistral.rs` crate exposes the backend feature flags needed by `swink-agent-local-llm` (`metal`, `cuda`, `cudnn`, `flash-attn`, `mkl`, `accelerate`), while CPU-only inference remains the no-feature fallback.
+- The `llama-cpp-2` crate exposes the backend feature flags needed by `swink-agent-local-llm` (`metal`, `cuda`, `vulkan`), while CPU-only inference remains the no-feature fallback.
 - The workspace `members` list in root `Cargo.toml` will continue to list all crates, but consumers compile optional functionality by depending on the relevant sub-crates directly.
 - Future adapters (016-azure, 017-xai, 018-mistral, 019-bedrock) are not yet implemented; this spec only establishes the pattern they will follow. Existing stub modules for these adapters will be feature-gated alongside implemented ones.
