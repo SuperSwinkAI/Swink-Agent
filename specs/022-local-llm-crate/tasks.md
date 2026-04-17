@@ -17,7 +17,7 @@
 
 **Purpose**: Crate scaffolding, workspace integration, and dependency configuration
 
-- [x] T001 Verify `local-llm/Cargo.toml` declares correct workspace dependencies (`mistralrs`, `hf-hub`, `tokio`, `tokio-stream`, `futures`, `serde`, `serde_json`, `thiserror`, `tracing`, `uuid`) and add any missing entries to the root `Cargo.toml` `[workspace.dependencies]`
+- [x] T001 Verify `local-llm/Cargo.toml` declares correct workspace dependencies (`llama-cpp-2`, `hf-hub`, `tokio`, `tokio-stream`, `futures`, `serde`, `serde_json`, `thiserror`, `tracing`, `uuid`) and add any missing entries to the root `Cargo.toml` `[workspace.dependencies]`
 - [x] T002 Verify `local-llm/src/lib.rs` has `#![forbid(unsafe_code)]` and re-exports all public types (`LocalModel`, `LocalStreamFn`, `EmbeddingModel`, `ModelPreset`, `ModelConfig`, `ModelState`, `ProgressCallbackFn`, `ProgressEvent`, `LocalModelError`)
 - [x] T003 [P] Create `local-llm/tests/common/mod.rs` with shared test helpers (mock progress callback collector, test `ModelConfig` factory)
 
@@ -60,7 +60,7 @@
 - [x] T016 [US1] Implement `LocalModel::new(config)` constructor creating a model in `Unloaded` state with `Arc<Mutex<ModelState>>` in `local-llm/src/model.rs`
 - [x] T017 [US1] Implement `LocalModel::from_preset(preset)` as `Self::new(preset.config())` in `local-llm/src/model.rs`
 - [x] T018 [US1] Implement `LocalModel::with_progress(callback)` that attaches a `ProgressCallbackFn` (must be called before `ensure_ready`, returns `Err` if called after) in `local-llm/src/model.rs`
-- [x] T019 [US1] Implement `LocalModel::ensure_ready()` — download model via `hf-hub` if not cached, load via `mistralrs` GGUF pipeline, transition through `Unloaded → Downloading → Loading → Ready` (or `Failed`), idempotent if already `Ready`, re-attempt if `Failed`. Integrity verification delegated to hf-hub ETag/SHA (FR-009) in `local-llm/src/model.rs`
+- [x] T019 [US1] Implement `LocalModel::ensure_ready()` — download model via `hf-hub` if not cached, load via `llama-cpp-2` GGUF pipeline, transition through `Unloaded → Downloading → Loading → Ready` (or `Failed`), idempotent if already `Ready`, re-attempt if `Failed`. Integrity verification delegated to hf-hub ETag/SHA (FR-009) in `local-llm/src/model.rs`
 - [x] T020 [US1] Implement `LocalModel::send_chat_request()` — run inference on the loaded `MistralRs` runner, return `NotReady` error if model not loaded, in `local-llm/src/model.rs`
 - [x] T021 [US1] Implement message conversion from `LlmMessage` to local model format — system prompts, user/assistant messages, tool calls, tool results, filter out `CustomMessage` — in `local-llm/src/convert.rs`
 - [x] T022 [US1] Implement `LocalStreamFn::new(model)` constructor in `local-llm/src/stream.rs`
@@ -108,7 +108,7 @@
 
 - [x] T033 [US3] Implement `EmbeddingModel::new(config)` and `EmbeddingModel::from_preset(preset)` constructors in `local-llm/src/embedding.rs`
 - [x] T034 [US3] Implement `EmbeddingModel::with_progress(callback)` in `local-llm/src/embedding.rs`
-- [x] T035 [US3] Implement `EmbeddingModel::ensure_ready()` — download and load the embedding model via `mistralrs`, same lifecycle as `LocalModel` in `local-llm/src/embedding.rs`
+- [x] T035 [US3] Implement `EmbeddingModel::ensure_ready()` — download and load the embedding model via `llama-cpp-2`, same lifecycle as `LocalModel` in `local-llm/src/embedding.rs`
 - [x] T036 [US3] Implement `EmbeddingModel::embed(text)` — compute a fixed-dimensional vector, return `Embedding` error if input exceeds max length, return valid vector for empty input in `local-llm/src/embedding.rs`
 - [x] T037 [US3] Implement `EmbeddingModel::embed_batch(texts)` — batch embedding, fail on first invalid input in `local-llm/src/embedding.rs`
 - [x] T038 [US3] Add live embedding test: load `EmbeddingGemma300M`, embed similar/dissimilar text pairs, verify cosine similarity ordering in `local-llm/tests/embedding_live.rs` (`#[ignore]`)
@@ -259,4 +259,4 @@ US3 (T032–T040, embedding) | US4 (T041–T045, presets) | US5 (T046–T050, co
 - [Story] label maps task to specific user story for traceability
 - Live tests (`#[ignore]`) require ~2.1 GB model download for inference, separate download for embeddings
 - Source files already exist in `local-llm/src/` — tasks modify/complete existing files, not create from scratch
-- The `mistralrs` and `hf-hub` crates handle the heavy lifting; implementation wraps their APIs
+- The `llama-cpp-2` and `hf-hub` crates handle the heavy lifting; implementation wraps their APIs

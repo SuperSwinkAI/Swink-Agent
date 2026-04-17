@@ -139,7 +139,7 @@ Branch off `integration`. One concern per PR.
 | `swink-agent-artifacts` | `artifacts/` | Versioned artifact storage |
 | `swink-agent-auth` | `auth/` | Credential management and OAuth2 |
 | `swink-agent-eval` | `eval/` | Trajectory tracing and evaluation framework |
-| `swink-agent-local-llm` | `local-llm/` | On-device inference via mistral.rs |
+| `swink-agent-local-llm` | `local-llm/` | On-device inference via llama.cpp |
 | `swink-agent-macros` | `macros/` | `#[derive(ToolSchema)]` and `#[tool]` proc macros |
 | `swink-agent-mcp` | `mcp/` | Model Context Protocol integration |
 | `swink-agent-memory` | `memory/` | Session persistence and compaction |

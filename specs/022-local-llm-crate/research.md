@@ -4,15 +4,15 @@
 
 ## Design Decisions
 
-### 1. mistral.rs for GGUF Inference
+### 1. llama-cpp-2 for GGUF Inference
 
-**Decision**: Use `mistralrs` (0.7) as the inference engine for loading and running quantized GGUF models.
+**Decision**: Use `llama-cpp-2` (Rust bindings for llama.cpp) as the inference engine for loading and running quantized GGUF models. (Migrated from `mistralrs` which had architecture support gaps and stability issues.)
 
-**Rationale**: mistral.rs provides a mature, actively maintained Rust-native inference engine with GGUF support, streaming token generation, and tool-call handling. It handles quantization, KV-cache management, and hardware-specific optimizations internally. Wrapping it avoids rebuilding inference from scratch.
+**Rationale**: llama.cpp is the most widely used GGUF inference engine with broad model architecture support (including SmolLM3 and Gemma 4). The `llama-cpp-2` crate provides Rust bindings. Key advantages over the previous `mistralrs` choice: full SmolLM3 support (mistralrs rejected the architecture), Gemma 4 GGUF support without special builders, and working CPU inference for all models. The `LlamaContext` is `!Send`, so inference uses a dedicated thread pattern.
 
 **Alternatives Rejected**:
-- **llama.cpp bindings (llama-cpp-rs)**: C++ dependency with FFI boundary; mistral.rs is pure Rust and aligns with the `#[forbid(unsafe_code)]` policy at the crate boundary (mistral.rs handles its own internals).
-- **candle**: Lower-level tensor library requiring manual model architecture implementation; mistral.rs provides ready-to-use model runners.
+- **mistralrs**: Previously used; rejected due to SmolLM3 architecture rejection, Gemma 4 requiring `MultimodalModelBuilder` with safetensors (not GGUF), and CPU inference hanging silently for Gemma 4.
+- **candle**: Lower-level tensor library requiring manual model architecture implementation.
 - **Custom GGUF parser**: Massive engineering effort with no benefit over established libraries.
 
 ### 2. SmolLM3-3B as Default Inference Model
@@ -35,7 +35,7 @@
 **Alternatives Rejected**:
 - **all-MiniLM-L6-v2**: Older architecture; lower embedding quality on modern benchmarks.
 - **Nomic Embed**: Larger model; unnecessary for local developer use cases.
-- **BGE-small**: Comparable but less ecosystem support in mistral.rs.
+- **BGE-small**: Comparable but less ecosystem support. EmbeddingGemma now uses GGUF from `unsloth/embeddinggemma-300m-GGUF`.
 
 ### 4. Lazy Download with HuggingFace Verification
 

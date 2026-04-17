@@ -207,9 +207,9 @@ pub enum LocalModelError {
 |----------|--------------|-------------|
 | Network failure during download | `Download` | Wraps network or I/O error from `hf-hub`. |
 | Disk full during download | `Download` | Propagates OS I/O error. |
-| Corrupted/incomplete GGUF file | `Loading` | GGUF parse failure from mistral.rs. |
-| Out of memory during load | `Loading` | OOM error from mistral.rs. |
+| Corrupted/incomplete GGUF file | `Loading` | GGUF parse failure from llama.cpp. |
+| Out of memory during load | `Loading` | OOM error from llama.cpp. |
 | Inference on unloaded model | `NotReady` | Must call `ensure_ready()` first. |
 | Input exceeds embedding max length | `Embedding` | Explicit error with length details. |
 | No network and no cached weights | `Download` | Clear error indicating download is required. |
-| Runtime inference failure | `Inference` | Wraps mistral.rs runtime error. |
+| Runtime inference failure | `Inference` | Wraps llama.cpp runtime error. |

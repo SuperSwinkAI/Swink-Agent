@@ -50,7 +50,7 @@ local = ["dep:swink-agent-local-llm"]
 
 [[example]]
 name = "custom_agent"
-required-features = ["local"]
+required-features = ["cli"]
 
 [dev-dependencies]
 swink-agent = { path = "..", default-features = false, features = ["testkit"] }

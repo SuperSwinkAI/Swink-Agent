@@ -36,42 +36,12 @@ fn cuda_must_not_leak_into_no_default_features() {
     panic!("cuda feature is enabled but should not be");
 }
 
-#[cfg(not(feature = "cudnn"))]
+#[cfg(not(feature = "vulkan"))]
 #[test]
-fn cudnn_feature_is_off() {}
+fn vulkan_feature_is_off() {}
 
-#[cfg(feature = "cudnn")]
+#[cfg(feature = "vulkan")]
 #[test]
-fn cudnn_must_not_leak_into_no_default_features() {
-    panic!("cudnn feature is enabled but should not be");
-}
-
-#[cfg(not(feature = "flash-attn"))]
-#[test]
-fn flash_attn_feature_is_off() {}
-
-#[cfg(feature = "flash-attn")]
-#[test]
-fn flash_attn_must_not_leak_into_no_default_features() {
-    panic!("flash-attn feature is enabled but should not be");
-}
-
-#[cfg(not(feature = "mkl"))]
-#[test]
-fn mkl_feature_is_off() {}
-
-#[cfg(feature = "mkl")]
-#[test]
-fn mkl_must_not_leak_into_no_default_features() {
-    panic!("mkl feature is enabled but should not be");
-}
-
-#[cfg(not(feature = "accelerate"))]
-#[test]
-fn accelerate_feature_is_off() {}
-
-#[cfg(feature = "accelerate")]
-#[test]
-fn accelerate_must_not_leak_into_no_default_features() {
-    panic!("accelerate feature is enabled but should not be");
+fn vulkan_must_not_leak_into_no_default_features() {
+    panic!("vulkan feature is enabled but should not be");
 }

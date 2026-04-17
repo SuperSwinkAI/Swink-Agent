@@ -38,7 +38,7 @@ Pure-Rust library for LLM-powered agentic loops. Provider-agnostic core with plu
 | reqwest | 0.13 | HTTP client |
 | schemars / jsonschema | 1 | JSON schema gen + validation |
 | ratatui / crossterm | 0.30 / 0.29 | TUI rendering |
-| mistralrs | 0.8 | Local LLM inference |
+| llama-cpp-2 | latest | Local LLM inference (llama.cpp Rust bindings) |
 | rmcp | latest | MCP SDK (stdio + SSE) |
 
 ## Build & Test

@@ -4,13 +4,11 @@
 //! and `swink-agent-tui` as external crates — the same code you'd write in your
 //! own project after `cargo add`ing the three crates.
 //!
-//! Run: `cargo run -p swink-agent-tui --features local --example custom_agent`
-//! Requires: remote provider keys in `.env` or environment. The local SmolLM3-3B
-//! model is always available and is included in the F4 cycle by default.
+//! Run: `cargo run -p swink-agent-tui --example custom_agent`
+//! Requires: remote provider keys in `.env` or environment.
 
 use swink_agent::prelude::*;
 use swink_agent_adapters::build_remote_connection_for_model;
-use swink_agent_local_llm::default_local_connection;
 use swink_agent_tui::{TuiConfig, launch, restore_terminal, setup_terminal};
 
 #[tokio::main]
@@ -21,7 +19,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let connections = ModelConnections::builder()
         .primary(build_remote_connection_for_model("claude-sonnet-4-6")?)
         .fallback(build_remote_connection_for_model("gpt-4.1")?)
-        .fallback(default_local_connection()?)
         .build();
 
     // 2. Build options and register built-in tools in one call.

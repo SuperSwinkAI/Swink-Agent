@@ -20,16 +20,16 @@ use crate::progress::{ProgressCallbackFn, ProgressEvent};
 
 // ─── LoaderState ───────────────────────────────────────────────────────────
 
-/// Internal lifecycle state with the runner reference.
-pub enum LoaderState {
+/// Internal lifecycle state, generic over the runner type `R`.
+pub enum LoaderState<R> {
     Unloaded,
     Downloading,
     Loading,
-    Ready { runner: mistralrs::Model },
+    Ready { runner: R },
     Failed { error: String },
 }
 
-impl std::fmt::Debug for LoaderState {
+impl<R> std::fmt::Debug for LoaderState<R> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Unloaded => write!(f, "Unloaded"),
@@ -47,7 +47,7 @@ impl std::fmt::Debug for LoaderState {
 ///
 /// Implementors provide two phases:
 /// 1. **Download** — fetch model artifacts (returns an intermediate value).
-/// 2. **Build** — load the downloaded artifact into a `mistralrs::Model`.
+/// 2. **Build** — load the downloaded artifact into a runner.
 ///
 /// The [`LazyLoader`] drives the state machine around these two phases.
 pub trait LoaderBackend: Send + Sync + 'static {
@@ -57,21 +57,21 @@ pub trait LoaderBackend: Send + Sync + 'static {
     /// Intermediate artifact produced by `download` and consumed by `build`.
     type Artifact: Send + 'static;
 
+    /// The runner type stored in `LoaderState::Ready`.
+    type Runner: Send + Sync + 'static;
+
     /// Download model artifacts. Called while state is `Downloading`.
-    ///
-    /// Receives the config and an optional progress callback for emitting
-    /// download progress events.
     fn download(
         config: &Self::Config,
         progress_cb: Option<ProgressCallbackFn>,
     ) -> Pin<Box<dyn Future<Output = Result<Self::Artifact, LocalModelError>> + Send + '_>>;
 
-    /// Build the model from downloaded artifacts. Called while state is `Loading`.
+    /// Build the runner from downloaded artifacts. Called while state is `Loading`.
     fn build(
         config: &Self::Config,
         artifact: Self::Artifact,
         progress_cb: Option<ProgressCallbackFn>,
-    ) -> Pin<Box<dyn Future<Output = Result<mistralrs::Model, LocalModelError>> + Send + '_>>;
+    ) -> Pin<Box<dyn Future<Output = Result<Self::Runner, LocalModelError>> + Send + '_>>;
 
     /// Human-readable label for log messages (e.g. "local model", "embedding model").
     fn label() -> &'static str;
@@ -88,7 +88,7 @@ pub struct LazyLoader<B: LoaderBackend> {
 }
 
 struct LazyLoaderInner<B: LoaderBackend> {
-    state: RwLock<LoaderState>,
+    state: RwLock<LoaderState<B::Runner>>,
     ready_notify: Notify,
     config: B::Config,
     progress_cb: Option<ProgressCallbackFn>,
@@ -138,10 +138,6 @@ impl<B: LoaderBackend> LazyLoader<B> {
     }
 
     /// Block until the current load attempt reaches a terminal state.
-    ///
-    /// Returns immediately if the loader is already `Unloaded`, `Ready`, or
-    /// `Failed`. Callers that need to actively trigger loading should use
-    /// [`Self::ensure_ready`].
     pub async fn wait_until_ready(&self) {
         loop {
             let notified = {
@@ -169,12 +165,8 @@ impl<B: LoaderBackend> LazyLoader<B> {
     }
 
     /// Idempotent: download → load → ready.
-    ///
-    /// Concurrent callers serialize on the `RwLock` — only the first caller
-    /// triggers the download/load sequence; others wait for completion.
     pub async fn ensure_ready(&self) -> Result<(), LocalModelError> {
         loop {
-            // Fast path: already ready (read lock only).
             {
                 let state = self.inner.state.read().await;
                 match classify(&state) {
@@ -191,10 +183,8 @@ impl<B: LoaderBackend> LazyLoader<B> {
                 }
             }
 
-            // Slow path: acquire write lock.
             let mut state = self.inner.state.write().await;
 
-            // Double-check after acquiring write lock.
             match classify(&state) {
                 StateClass::Ready => return Ok(()),
                 StateClass::Failed(error) => {
@@ -268,7 +258,7 @@ impl<B: LoaderBackend> LazyLoader<B> {
     /// the model is not in the `Ready` state.
     pub async fn runner(
         &self,
-    ) -> Result<tokio::sync::RwLockReadGuard<'_, LoaderState>, LocalModelError> {
+    ) -> Result<tokio::sync::RwLockReadGuard<'_, LoaderState<B::Runner>>, LocalModelError> {
         let state = self.inner.state.read().await;
         if matches!(&*state, LoaderState::Ready { .. }) {
             Ok(state)
@@ -303,15 +293,10 @@ impl<B: LoaderBackend> LazyLoader<B> {
 /// Public-facing lifecycle state (without the runner reference).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PublicLoaderState {
-    /// Model has not been downloaded or loaded.
     Unloaded,
-    /// Model weights are being downloaded.
     Downloading,
-    /// Model is being loaded into the inference engine.
     Loading,
-    /// Model is ready for inference.
     Ready,
-    /// Model failed to load.
     Failed(String),
 }
 
@@ -324,7 +309,7 @@ enum StateClass {
     Unloaded,
 }
 
-fn classify(state: &LoaderState) -> StateClass {
+fn classify<R>(state: &LoaderState<R>) -> StateClass {
     match state {
         LoaderState::Ready { .. } => StateClass::Ready,
         LoaderState::Failed { error } => StateClass::Failed(error.clone()),
@@ -333,13 +318,7 @@ fn classify(state: &LoaderState) -> StateClass {
     }
 }
 
-// ─── Compile-time assertions ───────────────────────────────────────────────
-
-const _: () = {
-    // LazyLoader<B> is Send + Sync when B is Send + Sync (always true
-    // since LoaderBackend requires Send + Sync + 'static).
-    // Concrete assertions are in model.rs and embedding.rs.
-};
+// ─── Tests ─────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
@@ -361,6 +340,7 @@ mod tests {
     impl LoaderBackend for FailingBackend {
         type Config = FailingConfig;
         type Artifact = ();
+        type Runner = ();
 
         fn download(
             config: &Self::Config,
@@ -379,9 +359,9 @@ mod tests {
             _config: &Self::Config,
             _artifact: Self::Artifact,
             _progress_cb: Option<ProgressCallbackFn>,
-        ) -> Pin<Box<dyn Future<Output = Result<mistralrs::Model, LocalModelError>> + Send + '_>>
+        ) -> Pin<Box<dyn Future<Output = Result<Self::Runner, LocalModelError>> + Send + '_>>
         {
-            Box::pin(async { unreachable!("failing backend never builds a model") })
+            Box::pin(async { unreachable!("failing backend never builds") })
         }
 
         fn label() -> &'static str {
@@ -391,7 +371,7 @@ mod tests {
 
     #[test]
     fn loader_state_debug() {
-        let states = [
+        let states: Vec<LoaderState<()>> = vec![
             LoaderState::Unloaded,
             LoaderState::Downloading,
             LoaderState::Loading,
@@ -419,19 +399,19 @@ mod tests {
     #[test]
     fn classify_states() {
         assert!(matches!(
-            classify(&LoaderState::Unloaded),
+            classify::<()>(&LoaderState::Unloaded),
             StateClass::Unloaded
         ));
         assert!(matches!(
-            classify(&LoaderState::Downloading),
+            classify::<()>(&LoaderState::Downloading),
             StateClass::Waiting
         ));
         assert!(matches!(
-            classify(&LoaderState::Loading),
+            classify::<()>(&LoaderState::Loading),
             StateClass::Waiting
         ));
         assert!(matches!(
-            classify(&LoaderState::Failed { error: "e".into() }),
+            classify::<()>(&LoaderState::Failed { error: "e".into() }),
             StateClass::Failed(_)
         ));
     }

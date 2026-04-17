@@ -1,11 +1,9 @@
-//! Message conversion from swink-agent types to mistral.rs types.
+//! Message conversion from swink-agent types to chat message pairs.
 //!
 //! Implements core's [`MessageConverter`] trait so the shared
 //! [`convert_messages`](swink_agent::convert_messages) function handles
 //! iteration / pattern-matching, while this module supplies the
-//! mistral.rs-specific construction.
-
-use mistralrs::{TextMessageRole, TextMessages};
+//! role+content construction for llama.cpp chat templates.
 
 use swink_agent::{
     AgentContext, AssistantMessage, ContentBlock, MessageConverter, ToolResultMessage, UserMessage,
@@ -16,10 +14,10 @@ use crate::model::ModelConfig;
 
 // ─── Intermediate message type ──────────────────────────────────────────────
 
-/// A role + content pair that can be folded into mistral.rs [`TextMessages`].
-struct LocalMessage {
-    role: TextMessageRole,
-    content: String,
+/// A role + content pair for building chat template input.
+pub struct LocalMessage {
+    pub role: String,
+    pub content: String,
 }
 
 // ─── MessageConverter impl ──────────────────────────────────────────────────
@@ -31,31 +29,30 @@ impl MessageConverter for LocalConverter {
 
     fn system_message(system_prompt: &str) -> Option<Self::Message> {
         Some(LocalMessage {
-            role: TextMessageRole::System,
+            role: "system".to_string(),
             content: system_prompt.to_string(),
         })
     }
 
     fn user_message(user: &UserMessage) -> Self::Message {
         LocalMessage {
-            role: TextMessageRole::User,
+            role: "user".to_string(),
             content: ContentBlock::extract_text(&user.content),
         }
     }
 
     fn assistant_message(assistant: &AssistantMessage) -> Self::Message {
         LocalMessage {
-            role: TextMessageRole::Assistant,
+            role: "assistant".to_string(),
             content: ContentBlock::extract_text(&assistant.content),
         }
     }
 
     fn tool_result_message(result: &ToolResultMessage) -> Self::Message {
         let text = ContentBlock::extract_text(&result.content);
-        // Tool results include the tool_call_id for matching.
         let content = format!("[tool_call_id: {}]\n{text}", result.tool_call_id);
         LocalMessage {
-            role: TextMessageRole::Tool,
+            role: "tool".to_string(),
             content,
         }
     }
@@ -63,11 +60,6 @@ impl MessageConverter for LocalConverter {
 
 // ─── Gemma 4 converter ──────────────────────────────────────────────────────
 
-/// Message converter for Gemma 4 direct inference.
-///
-/// Identical to [`LocalConverter`] except `tool_result_message` wraps results
-/// in Gemma 4's native `<|tool_result>...<tool_result|>` format instead of
-/// the generic `[tool_call_id: ...]` format.
 #[cfg(feature = "gemma4")]
 struct Gemma4LocalConverter;
 
@@ -90,7 +82,7 @@ impl MessageConverter for Gemma4LocalConverter {
     fn tool_result_message(result: &ToolResultMessage) -> Self::Message {
         let text = ContentBlock::extract_text(&result.content);
         LocalMessage {
-            role: TextMessageRole::Tool,
+            role: "tool".to_string(),
             content: format!(
                 "<|tool_result>{}\n{text}<tool_result|>",
                 result.tool_call_id
@@ -101,46 +93,31 @@ impl MessageConverter for Gemma4LocalConverter {
 
 // ─── Public API ─────────────────────────────────────────────────────────────
 
-/// Convert an [`AgentContext`] into mistral.rs [`TextMessages`].
-///
-/// Delegates to core's generic [`convert_messages`] with the appropriate
-/// converter (Gemma 4 or standard), then folds the intermediate messages into
-/// the mistral.rs builder.
+/// Convert an [`AgentContext`] into a list of role+content message pairs.
 ///
 /// When `config` identifies a Gemma 4 model and `thinking_enabled` is `true`,
-/// prepends `<|think|>\n` to the system prompt to activate thinking mode
-/// (mistral.rs has no `think: true` API for direct inference).
+/// prepends `<|think|>\n` to the system prompt to activate thinking mode.
 pub fn convert_context_messages(
     context: &AgentContext,
     config: &ModelConfig,
     thinking_enabled: bool,
-) -> TextMessages {
+) -> Vec<LocalMessage> {
     let system_prompt = inject_think_token(&context.system_prompt, config, thinking_enabled);
 
     #[cfg(feature = "gemma4")]
-    let converted: Vec<LocalMessage> = if config.is_gemma4() {
-        convert_messages::<Gemma4LocalConverter>(&context.messages, &system_prompt)
-    } else {
-        convert_messages::<LocalConverter>(&context.messages, &system_prompt)
-    };
-    #[cfg(not(feature = "gemma4"))]
-    let converted = convert_messages::<LocalConverter>(&context.messages, &system_prompt);
-
-    let mut messages = TextMessages::new();
-    for msg in converted {
-        messages = messages.add_message(msg.role, msg.content);
+    if config.is_gemma4() {
+        return convert_messages::<Gemma4LocalConverter>(&context.messages, &system_prompt);
     }
-    messages
+
+    convert_messages::<LocalConverter>(&context.messages, &system_prompt)
 }
 
-/// Conditionally prepend `<|think|>\n` to the system prompt for Gemma 4 thinking mode.
 fn inject_think_token(system_prompt: &str, config: &ModelConfig, thinking_enabled: bool) -> String {
     #[cfg(feature = "gemma4")]
     if config.is_gemma4() && thinking_enabled {
         return format!("<|think|>\n{system_prompt}");
     }
 
-    // Suppress unused variable warnings when gemma4 feature is disabled.
     let _ = (config, thinking_enabled);
     system_prompt.to_string()
 }
@@ -156,8 +133,6 @@ mod tests {
         ToolResultMessage, Usage, UserMessage,
     };
 
-    // ── Helpers ───────────────────────────────────────────────────────────
-
     fn make_context(system: &str, messages: Vec<AgentMessage>) -> AgentContext {
         AgentContext {
             system_prompt: system.to_string(),
@@ -166,7 +141,6 @@ mod tests {
         }
     }
 
-    /// `SmolLM3` config — used as the default non-Gemma4 config for existing tests.
     fn smollm_config() -> ModelConfig {
         ModelConfig {
             repo_id: "unsloth/SmolLM3-3B-GGUF".to_string(),
@@ -174,20 +148,19 @@ mod tests {
         }
     }
 
-    // ── Tests ─────────────────────────────────────────────────────────────
-
     #[test]
-    fn empty_context_produces_empty_messages() {
-        let ctx = make_context("", vec![]);
-        let _msgs = convert_context_messages(&ctx, &smollm_config(), false);
-        // TextMessages doesn't expose length, but it shouldn't panic.
+    fn empty_context_produces_system_only() {
+        let ctx = make_context("sys", vec![]);
+        let msgs = convert_context_messages(&ctx, &smollm_config(), false);
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].role, "system");
     }
 
     #[test]
     fn system_prompt_is_included() {
         let ctx = make_context("You are helpful.", vec![]);
-        let _msgs = convert_context_messages(&ctx, &smollm_config(), false);
-        // System prompt is set — no panic.
+        let msgs = convert_context_messages(&ctx, &smollm_config(), false);
+        assert_eq!(msgs[0].content, "You are helpful.");
     }
 
     #[test]
@@ -200,8 +173,11 @@ mod tests {
                 tool_result_msg("tc1", "result"),
             ],
         );
-        let _msgs = convert_context_messages(&ctx, &smollm_config(), false);
-        // All message types handled — no panic.
+        let msgs = convert_context_messages(&ctx, &smollm_config(), false);
+        assert_eq!(msgs.len(), 4); // system + 3 messages
+        assert_eq!(msgs[1].role, "user");
+        assert_eq!(msgs[2].role, "assistant");
+        assert_eq!(msgs[3].role, "tool");
     }
 
     #[test]
@@ -217,15 +193,16 @@ mod tests {
         }
 
         let ctx = make_context(
-            "",
+            "sys",
             vec![
                 user_msg("before"),
                 AgentMessage::Custom(Box::new(Custom)),
                 user_msg("after"),
             ],
         );
-        let _msgs = convert_context_messages(&ctx, &smollm_config(), false);
-        // Custom skipped — no panic.
+        let msgs = convert_context_messages(&ctx, &smollm_config(), false);
+        // system + 2 user messages (custom skipped)
+        assert_eq!(msgs.len(), 3);
     }
 
     #[test]
@@ -242,15 +219,17 @@ mod tests {
             timestamp: 0,
             cache_hint: None,
         }));
-        let ctx = make_context("", vec![msg]);
-        let _msgs = convert_context_messages(&ctx, &smollm_config(), false);
-        // Empty content blocks produce empty text — no panic.
+        let ctx = make_context("sys", vec![msg]);
+        let msgs = convert_context_messages(&ctx, &smollm_config(), false);
+        assert_eq!(msgs[1].role, "assistant");
     }
 
     #[test]
     fn tool_result_includes_call_id() {
-        let ctx = make_context("", vec![tool_result_msg("tc-42", "file contents")]);
-        let _msgs = convert_context_messages(&ctx, &smollm_config(), false);
+        let ctx = make_context("sys", vec![tool_result_msg("tc-42", "file contents")]);
+        let msgs = convert_context_messages(&ctx, &smollm_config(), false);
+        assert!(msgs[1].content.contains("tc-42"));
+        assert!(msgs[1].content.contains("file contents"));
     }
 
     #[test]
@@ -267,9 +246,9 @@ mod tests {
             timestamp: 0,
             cache_hint: None,
         }));
-        let ctx = make_context("", vec![msg]);
-        let _msgs = convert_context_messages(&ctx, &smollm_config(), false);
-        // Multiple text blocks concatenated — no panic.
+        let ctx = make_context("sys", vec![msg]);
+        let msgs = convert_context_messages(&ctx, &smollm_config(), false);
+        assert_eq!(msgs[1].content, "Hello world!");
     }
 
     #[test]
@@ -293,9 +272,9 @@ mod tests {
             timestamp: 0,
             cache_hint: None,
         }));
-        let ctx = make_context("", vec![msg]);
-        // Only Text blocks are extracted — others silently ignored.
-        let _msgs = convert_context_messages(&ctx, &smollm_config(), false);
+        let ctx = make_context("sys", vec![msg]);
+        let msgs = convert_context_messages(&ctx, &smollm_config(), false);
+        assert_eq!(msgs[1].content, "text part");
     }
 
     #[test]
@@ -312,10 +291,7 @@ mod tests {
         }));
         let ctx = make_context("", vec![msg]);
         let _msgs = convert_context_messages(&ctx, &smollm_config(), false);
-        // Error tool results convert without panic.
     }
-
-    // ── T051: Gemma 4 tool result formatting ─────────────────────────────
 
     #[cfg(feature = "gemma4")]
     #[test]
@@ -339,8 +315,6 @@ mod tests {
             "<|tool_result>read_file\nfile contents<tool_result|>"
         );
     }
-
-    // ── Think token injection tests (T029-T031) ─────────────────────────
 
     #[cfg(feature = "gemma4")]
     mod think_token_tests {

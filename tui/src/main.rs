@@ -5,11 +5,7 @@ use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-#[cfg(feature = "local")]
-use swink_agent::model_catalog;
-use swink_agent::{
-    AgentOptions, CatalogPreset, ModelConnection, ModelConnections, ModelSpec, StreamFn,
-};
+use swink_agent::{AgentOptions, CatalogPreset, ModelConnection, ModelConnections, ModelSpec, StreamFn};
 use swink_agent_adapters::{
     AnthropicStreamFn, OllamaStreamFn, OpenAiStreamFn, ProxyStreamFn, remote_presets,
 };
@@ -89,8 +85,7 @@ fn run(
 /// 1. **Proxy** — `LLM_BASE_URL` set (custom SSE endpoint)
 /// 2. **`OpenAI`** — `OPENAI_API_KEY` env or keychain
 /// 3. **`Anthropic`** — `ANTHROPIC_API_KEY` env or keychain
-/// 4. **Local** — on-device inference (when `local` feature enabled)
-/// 5. **Ollama** — local Ollama instance (default fallback)
+/// 4. **Ollama** — local Ollama instance (default fallback)
 ///
 /// Model IDs and base URLs are resolved from the shared model catalog.
 /// Provider-specific env var overrides (`OPENAI_MODEL`, `ANTHROPIC_MODEL`, etc.)
@@ -111,12 +106,6 @@ fn resolve_connections() -> ModelConnections {
         return conns;
     }
 
-    #[cfg(feature = "local")]
-    {
-        return local_connections();
-    }
-
-    #[allow(unreachable_code)]
     ollama_connections()
 }
 
@@ -195,9 +184,6 @@ fn try_catalog_provider(provider_key: &str, model_env: &str) -> Option<ModelConn
         }
     }
 
-    #[cfg(feature = "local")]
-    let builder = append_local_fallback(builder);
-
     Some(builder.build())
 }
 
@@ -210,25 +196,6 @@ fn build_stream_fn(provider_key: &str, base_url: &str, api_key: &str) -> Option<
     }
 }
 
-/// Build connections for local on-device inference.
-#[cfg(feature = "local")]
-fn local_connections() -> ModelConnections {
-    let config = swink_agent_local_llm::ModelConfig::default();
-    let local_model = swink_agent_local_llm::LocalModel::new(config);
-    let local: Arc<dyn StreamFn> = Arc::new(swink_agent_local_llm::LocalStreamFn::new(Arc::new(
-        local_model,
-    )));
-    let catalog = model_catalog();
-    let model = catalog.preset("local", "smollm3_3b").map_or_else(
-        || ModelSpec::new("local", "SmolLM3-3B-Q4_K_M"),
-        |preset: CatalogPreset| preset.model_spec(),
-    );
-
-    ModelConnections::builder()
-        .primary(ModelConnection::new(model, local))
-        .build()
-}
-
 /// Build connections for Ollama (lowest priority fallback).
 fn ollama_connections() -> ModelConnections {
     let host =
@@ -237,31 +204,9 @@ fn ollama_connections() -> ModelConnections {
     let stream_fn: Arc<dyn StreamFn> = Arc::new(OllamaStreamFn::new(&host));
     let model = ModelSpec::new("ollama", &model_id);
 
-    let builder = ModelConnections::builder().primary(ModelConnection::new(model, stream_fn));
-
-    #[cfg(feature = "local")]
-    let builder = append_local_fallback(builder);
-
-    builder.build()
-}
-
-/// Append local model as a fallback when the `local` feature is enabled.
-#[cfg(feature = "local")]
-fn append_local_fallback(
-    builder: swink_agent::ModelConnectionsBuilder,
-) -> swink_agent::ModelConnectionsBuilder {
-    let config = swink_agent_local_llm::ModelConfig::default();
-    let local_model = swink_agent_local_llm::LocalModel::new(config);
-    let local: Arc<dyn StreamFn> = Arc::new(swink_agent_local_llm::LocalStreamFn::new(Arc::new(
-        local_model,
-    )));
-    let catalog = model_catalog();
-    let model = catalog.preset("local", "smollm3_3b").map_or_else(
-        || ModelSpec::new("local", "SmolLM3-3B-Q4_K_M"),
-        |preset: CatalogPreset| preset.model_spec(),
-    );
-
-    builder.fallback(ModelConnection::new(model, local))
+    ModelConnections::builder()
+        .primary(ModelConnection::new(model, stream_fn))
+        .build()
 }
 
 #[cfg(test)]

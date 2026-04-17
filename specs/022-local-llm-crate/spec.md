@@ -154,6 +154,53 @@ A developer uses the agent loop with a local model. The agent loop produces mess
 - Quantized (4-bit) weights are used to balance quality and resource requirements.
 - Default model configuration values (context window, temperature, quantization settings) are centralized in the `preset` module via `default_chat_preset_defaults()` and `default_embedding_preset_defaults()`. Per-model or per-adapter duplication of defaults is avoided.
 
-## Addendum: Gemma 4 Deferred for local-llm (2026-04-04)
+## Addendum: Gemma 4 Direct Inference (2026-04-04, updated 2026-04-16)
 
-Gemma 4 direct inference via `mistral.rs` is deferred. Version 0.7 (current) does not support the Gemma 4 architecture. Version 0.8 (latest, released 2026-04-02) adds Gemma 4 but requires `MultimodalModelBuilder` instead of `GgufModelBuilder`, and has an open NaN logits bug (#2051). The `ModelPreset` enum and `DEFAULT_LOCAL_PRESET_ID` remain unchanged until a stable release lands. Until then, Gemma 4 is available through the Ollama adapter (see spec 014 addendum) or any OpenAI-compatible local server (llama.cpp, vLLM, LM Studio) via the existing `openai_compat` adapter.
+Gemma 4 direct inference is supported via the `llama-cpp-2` backend (llama.cpp). All models use GGUF format uniformly — no builder branching required. Gemma 4 is also available through the Ollama adapter (spec 014) or any OpenAI-compatible local server via the `openai_compat` adapter.
+
+*(Previously tracked as spec 041-adapter-gemma4-local; folded into this spec 2026-04-16 after the llama-cpp-2 migration unified the loading path.)*
+
+### User Story 6 - Run Gemma 4 Locally Without Ollama (Priority: P1)
+
+A developer wants to run Gemma 4 E2B entirely in-process without installing Ollama. The model weights (~3.5 GB Q4_K_M) are automatically downloaded from HuggingFace on first use. Streaming inference works identically to SmolLM3 — same `LocalStreamFn` interface, same progress reporting, same lazy loading. Gemma 4 is opt-in: SmolLM3-3B remains the default.
+
+**Acceptance Scenarios**:
+
+1. **Given** `ModelPreset::Gemma4E2B` is selected, **When** inference is requested, **Then** the Gemma 4 E2B GGUF model is downloaded, loaded, and produces streaming text responses.
+2. **Given** no explicit preset is selected, **When** inference is requested, **Then** SmolLM3-3B is used (backward compatibility preserved).
+3. **Given** the `gemma4` feature flag is disabled, **When** `ModelPreset::Gemma4E2B` is referenced, **Then** a compile error occurs (feature-gated).
+
+### User Story 7 - Gemma 4 Thinking Mode (Priority: P1)
+
+A developer enables thinking mode for Gemma 4 direct inference. The system injects `<|think|>\n` at the start of the system prompt to activate thinking. The model's output uses `<|channel>thought\n...<channel|>` delimiters for thinking blocks. A stateful `ChannelThoughtParser` handles cross-chunk delimiter splitting and emits standard `ThinkingStart`/`ThinkingDelta`/`ThinkingEnd` events.
+
+**Acceptance Scenarios**:
+
+1. **Given** thinking is enabled for a Gemma 4 model, **When** the system prompt is converted, **Then** `<|think|>\n` is prepended.
+2. **Given** a streaming response contains `<|channel>thought\n...<channel|>`, **When** parsed, **Then** the thinking content is emitted as `ThinkingDelta` events and the surrounding text as `TextDelta` events.
+3. **Given** a thinking delimiter is split across two streaming chunks, **When** both chunks are processed, **Then** the parser correctly reassembles and emits the thinking block.
+4. **Given** a SmolLM3 model (not Gemma 4), **When** thinking is enabled, **Then** `<think>...</think>` tags are parsed instead (existing behavior unchanged).
+
+### User Story 8 - Gemma 4 Tool Calling (Priority: P3)
+
+A developer uses tool calling with Gemma 4 direct inference. The model emits tool calls in its native `<|tool_call>call:{name}{args}<tool_call|>` format. A stateful `ToolCallParser` extracts function names and JSON arguments, emitting standard `ToolCallStart`/`ToolCallDelta`/`ToolCallEnd` events. Tool results are formatted as `<|tool_result>{id}\n{content}<tool_result|>` via the Gemma 4 message converter.
+
+**Acceptance Scenarios**:
+
+1. **Given** a Gemma 4 model emits `<|tool_call>call:read_file{"path":"foo.rs"}<tool_call|>`, **When** parsed, **Then** a tool call event is emitted with name `read_file` and arguments `{"path":"foo.rs"}`.
+2. **Given** a tool call delimiter is split across chunks, **When** both chunks are processed, **Then** the parser correctly reassembles the tool call.
+
+### Gemma 4 Model Presets
+
+All behind `#[cfg(feature = "gemma4")]`:
+
+| Preset | Repository | Size (Q4_K_M) | Context |
+|--------|-----------|----------------|---------|
+| Gemma4E2B | `bartowski/google_gemma-4-E2B-it-GGUF` | ~3.5 GB | 128K |
+| Gemma4E4B | `bartowski/google_gemma-4-E4B-it-GGUF` | ~5.5 GB | 128K |
+| Gemma4_26B | `bartowski/google_gemma-4-26B-A4B-it-GGUF` | ~16 GB | 256K |
+| Gemma4_31B | `bartowski/google_gemma-4-31B-it-GGUF` | ~20 GB | 256K |
+
+### Gemma 4 Feature Gate
+
+All Gemma 4-specific code (presets, `is_gemma4()`, `ChannelThoughtParser`, `ToolCallParser`, `<|think|>` injection) is behind the `gemma4` feature flag. When disabled, zero compile/binary-size cost. SmolLM3 and EmbeddingGemma presets are always compiled.

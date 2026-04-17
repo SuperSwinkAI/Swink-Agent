@@ -3,10 +3,9 @@ name = "swink-agent-local-llm"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-description = "Local on-device LLM inference for swink-agent using mistral.rs"
+description = "Local on-device LLM inference for swink-agent using llama.cpp"
 license.workspace = true
-repository.workspace = true
-readme = "../README.md"
+repository.workspace = truereadme = "../README.md"
 keywords = ["llm", "local", "inference", "gguf", "embedding"]
 categories = ["development-tools", "science"]
 
@@ -16,16 +15,13 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
 gemma4 = []
-metal = ["mistralrs/metal"]
-cuda = ["mistralrs/cuda"]
-cudnn = ["mistralrs/cudnn"]
-flash-attn = ["mistralrs/flash-attn"]
-mkl = ["mistralrs/mkl"]
-accelerate = ["mistralrs/accelerate"]
+metal = ["llama-cpp-2/metal"]
+cuda = ["llama-cpp-2/cuda"]
+vulkan = ["llama-cpp-2/vulkan"]
 
 [dependencies]
 swink-agent = { path = "..", version = "0.7.8", default-features = false }
-mistralrs = "0.8"
+llama-cpp-2 = "0.1"
 hf-hub = { version = "0.5", features = ["tokio"] }
 tokio.workspace = true
 tokio-util.workspace = true

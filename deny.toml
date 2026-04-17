@@ -1,11 +1,5 @@
 [advisories]
 ignore = [
-    # RUSTSEC-2026-0097 / GHSA-cq8v-f236-94qc — low-severity unsoundness in
-    # rand 0.8.x when a custom `log::Logger` calls `rand::rng()` during a
-    # ThreadRng reseed. We don't implement such a logger, and the runtime
-    # transitive path (statrs → nalgebra → mistralrs) is pinned to rand 0.8
-    # upstream. Revisit when statrs/nalgebra bump to rand 0.9+.
-    "RUSTSEC-2026-0097",
     # RUSTSEC-2024-0384 — `instant` is unmaintained (replaced by `web_time`).
     # Transitive via notify-types → instant. No direct action available until
     # the `notify` crate drops this dependency upstream.
