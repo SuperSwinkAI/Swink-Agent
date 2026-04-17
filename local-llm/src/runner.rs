@@ -278,6 +278,12 @@ fn run_inference(
     let max_tokens = config.context_length.saturating_sub(prompt_len_u32);
     let mut n_cur = prompt_len;
 
+    debug!(
+        max_tokens,
+        batch_n_tokens = batch.n_tokens(),
+        "entering generation loop"
+    );
+
     for _ in 0..max_tokens {
         if cancel.is_cancelled() {
             debug!("inference cancelled");
@@ -289,7 +295,11 @@ fn run_inference(
         sampler.accept(new_token);
 
         if model.is_eog_token(new_token) {
-            debug!(completion_tokens, "hit EOG token");
+            debug!(
+                completion_tokens,
+                token_id = new_token.0,
+                "hit EOG token"
+            );
             break;
         }
 
@@ -301,6 +311,15 @@ fn run_inference(
                 |_| String::new(),
                 |bytes| String::from_utf8_lossy(&bytes).into_owned(),
             );
+
+        if completion_tokens <= 3 {
+            debug!(
+                completion_tokens,
+                token_id = new_token.0,
+                token_str_len = token_str.len(),
+                "sampled token"
+            );
+        }
 
         if !token_str.is_empty()
             && tx.blocking_send(TokenEvent::Token(token_str)).is_err()
