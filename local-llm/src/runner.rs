@@ -12,8 +12,6 @@ use llama_cpp_2::context::params::LlamaContextParams;
 use llama_cpp_2::llama_backend::LlamaBackend;
 use llama_cpp_2::llama_batch::LlamaBatch;
 use llama_cpp_2::model::params::LlamaModelParams;
-#[allow(deprecated)]
-use llama_cpp_2::model::Special;
 use llama_cpp_2::model::{AddBos, LlamaChatMessage, LlamaModel};
 use llama_cpp_2::sampling::LlamaSampler;
 use tokio::sync::mpsc;
@@ -213,21 +211,33 @@ fn run_inference(
     tx: &mpsc::Sender<TokenEvent>,
     cancel: &CancellationToken,
 ) -> Result<(), LocalModelError> {
-    #[allow(clippy::cast_possible_wrap)]
+    let n_threads = i32::try_from(config.n_threads).unwrap_or(4);
     let ctx_params = LlamaContextParams::default()
         .with_n_ctx(std::num::NonZeroU32::new(config.context_length))
         .with_n_batch(config.batch_size)
-        .with_n_threads(i32::try_from(config.n_threads).unwrap_or(i32::MAX));
+        .with_n_threads(n_threads)
+        .with_n_threads_batch(n_threads);
 
     let mut ctx = model.new_context(backend, ctx_params).map_err(|e| {
         LocalModelError::inference(format!("context creation failed: {e}"))
     })?;
 
-    let batch_size = config.batch_size as usize;
-    let mut batch = LlamaBatch::new(batch_size, 1);
     let prompt_len = tokens.len();
+    debug!(prompt_tokens = prompt_len, "starting inference");
 
-    // Add prompt tokens to batch
+    if prompt_len == 0 {
+        let _ = tx.blocking_send(TokenEvent::Done {
+            prompt_tokens: 0,
+            completion_tokens: 0,
+        });
+        return Ok(());
+    }
+
+    // Add all prompt tokens to batch. Only the last token needs logits
+    // computed (for sampling the first output token).
+    let batch_capacity = config.batch_size as usize;
+    let mut batch = LlamaBatch::new(batch_capacity.max(prompt_len), 1);
+
     for (i, token) in tokens.iter().enumerate() {
         let is_last = i == prompt_len - 1;
         let pos = i32::try_from(i).unwrap_or(i32::MAX);
@@ -236,45 +246,53 @@ fn run_inference(
             .map_err(|e| LocalModelError::inference(format!("batch add failed: {e}")))?;
     }
 
-    // Decode prompt
+    // Decode prompt — logits are computed for the last token
     ctx.decode(&mut batch).map_err(|e| {
         LocalModelError::inference(format!("prompt decode failed: {e}"))
     })?;
 
-    // Sample tokens
+    debug!("prompt decoded, starting generation");
+
+    // Set up UTF-8 decoder for incremental token-to-string conversion
+    let mut decoder = encoding_rs::UTF_8.new_decoder();
+
+    // Generation loop: sample token, decode, repeat
     let mut sampler = LlamaSampler::greedy();
     let mut completion_tokens: u32 = 0;
     let prompt_len_u32 = u32::try_from(prompt_len).unwrap_or(u32::MAX);
     let max_tokens = config.context_length.saturating_sub(prompt_len_u32);
+    let mut n_cur = prompt_len;
 
     for _ in 0..max_tokens {
         if cancel.is_cancelled() {
+            debug!("inference cancelled");
             break;
         }
 
+        // Sample at the last logits position in the current batch
         let new_token = sampler.sample(&ctx, batch.n_tokens() - 1);
         sampler.accept(new_token);
 
         if model.is_eog_token(new_token) {
+            debug!(completion_tokens, "hit EOG token");
             break;
         }
 
         completion_tokens += 1;
 
-        #[allow(deprecated)]
-        let token_bytes = model
-            .token_to_bytes(new_token, Special::Tokenize)
+        let token_str = model
+            .token_to_piece(new_token, &mut decoder, true, None)
             .unwrap_or_default();
-        let token_str = String::from_utf8_lossy(&token_bytes).into_owned();
 
-        if tx.blocking_send(TokenEvent::Token(token_str)).is_err() {
+        if !token_str.is_empty()
+            && tx.blocking_send(TokenEvent::Token(token_str)).is_err()
+        {
             return Ok(());
         }
 
-        let pos = i32::try_from(prompt_len)
-            .unwrap_or(0)
-            .saturating_add(i32::try_from(completion_tokens).unwrap_or(0))
-            .saturating_sub(1);
+        // Prepare next decode: single token at the next position
+        n_cur += 1;
+        let pos = i32::try_from(n_cur - 1).unwrap_or(i32::MAX);
 
         batch.clear();
         batch
@@ -282,9 +300,11 @@ fn run_inference(
             .map_err(|e| LocalModelError::inference(format!("batch add failed: {e}")))?;
 
         ctx.decode(&mut batch).map_err(|e| {
-            LocalModelError::inference(format!("decode failed: {e}"))
+            LocalModelError::inference(format!("decode failed at position {n_cur}: {e}"))
         })?;
     }
+
+    debug!(completion_tokens, "inference complete");
 
     let _ = tx.blocking_send(TokenEvent::Done {
         prompt_tokens: prompt_len_u32,

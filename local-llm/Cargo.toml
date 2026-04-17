@@ -22,6 +22,7 @@ vulkan = ["llama-cpp-2/vulkan"]
 [dependencies]
 swink-agent = { path = "..", version = "0.7.8", default-features = false }
 llama-cpp-2 = "0.1"
+encoding_rs = "0.8"
 hf-hub = { version = "0.5", features = ["tokio"] }
 tokio.workspace = true
 tokio-util.workspace = true

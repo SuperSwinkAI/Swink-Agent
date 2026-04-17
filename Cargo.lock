@@ -4912,6 +4912,7 @@ dependencies = [
 name = "swink-agent-local-llm"
 version = "0.7.8"
 dependencies = [
+ "encoding_rs",
  "futures",
  "hf-hub",
  "llama-cpp-2",
