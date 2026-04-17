@@ -273,7 +273,7 @@ mod tests {
         assert!(
             spec.capabilities
                 .as_ref()
-                .map_or(false, |c| c.supports_tool_use),
+                .is_some_and(|c| c.supports_tool_use),
             "sonnet should support tool use"
         );
     }
