@@ -1499,6 +1499,56 @@ async fn turn_snapshot_accumulates_across_tool_turns() {
 }
 
 #[tokio::test]
+async fn follow_up_turn_after_no_tool_turn_advances_turn_index() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![
+        text_only_events("first response"),
+        text_only_events("second response"),
+    ]));
+
+    let follow_up_count = Arc::new(AtomicU32::new(0));
+    let follow_up_clone = Arc::clone(&follow_up_count);
+
+    let mut config = default_config(stream_fn);
+    config.message_provider = Some(Arc::new(MockMessageProvider::follow_up_only(move || {
+        let count = follow_up_clone.fetch_add(1, Ordering::SeqCst);
+        if count == 0 {
+            vec![AgentMessage::Llm(LlmMessage::User(UserMessage {
+                content: vec![ContentBlock::Text {
+                    text: "follow up question".to_string(),
+                }],
+                timestamp: 0,
+                cache_hint: None,
+            }))]
+        } else {
+            vec![]
+        }
+    })));
+
+    let events = collect_events(agent_loop(
+        vec![],
+        "system".to_string(),
+        config,
+        CancellationToken::new(),
+    ))
+    .await;
+
+    let snapshots: Vec<TurnSnapshot> = events
+        .iter()
+        .filter_map(|event| match event {
+            AgentEvent::TurnEnd { snapshot, .. } => Some(snapshot.clone()),
+            _ => None,
+        })
+        .collect();
+
+    assert_eq!(snapshots.len(), 2, "should have two completed turns");
+    assert_eq!(snapshots[0].turn_index, 0);
+    assert_eq!(
+        snapshots[1].turn_index, 1,
+        "the follow-up turn should observe the incremented turn index"
+    );
+}
+
+#[tokio::test]
 async fn turn_snapshot_serializes_to_json() {
     let snapshot = TurnSnapshot {
         turn_index: 3,
