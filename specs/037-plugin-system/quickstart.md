@@ -45,7 +45,7 @@ let agent = Agent::new(
 
 ## Plugin with Tools
 
-Plugins can contribute tools. Tools are auto-namespaced as `{plugin_name}.{tool_name}`:
+Plugins can contribute tools. Tools are auto-namespaced as `{plugin_name}_{tool_name}` (both components sanitized to `^[a-zA-Z][a-zA-Z0-9_]{0,63}$` so the result is accepted by every supported provider):
 
 ```rust
 impl Plugin for ArtifactPlugin {
@@ -53,8 +53,8 @@ impl Plugin for ArtifactPlugin {
 
     fn tools(&self) -> Vec<Arc<dyn AgentTool>> {
         vec![
-            Arc::new(SaveArtifactTool::new(self.store.clone())),  // → "artifacts.save_artifact"
-            Arc::new(LoadArtifactTool::new(self.store.clone())),  // → "artifacts.load_artifact"
+            Arc::new(SaveArtifactTool::new(self.store.clone())),  // → "artifacts_save_artifact"
+            Arc::new(LoadArtifactTool::new(self.store.clone())),  // → "artifacts_load_artifact"
         ]
     }
 }

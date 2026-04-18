@@ -220,9 +220,9 @@ impl Plugin for WebPlugin {
 /// exercised directly by unit tests without depending on a tracing subscriber.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum WebEventClass<'a> {
-    /// A `web.*` tool has started executing.
+    /// A `web_*` tool has started executing.
     Start(&'a str),
-    /// A `web.*` tool has failed.
+    /// A `web_*` tool has failed.
     Error(&'a str),
     /// Not a web-namespaced tool event — plugin should ignore it.
     Ignored,
@@ -230,11 +230,11 @@ enum WebEventClass<'a> {
 
 fn classify_web_event(event: &AgentEvent) -> WebEventClass<'_> {
     match event {
-        AgentEvent::ToolExecutionStart { name, .. } if name.starts_with("web.") => {
+        AgentEvent::ToolExecutionStart { name, .. } if name.starts_with("web_") => {
             WebEventClass::Start(name.as_str())
         }
         AgentEvent::ToolExecutionEnd { name, is_error, .. }
-            if *is_error && name.starts_with("web.") =>
+            if *is_error && name.starts_with("web_") =>
         {
             WebEventClass::Error(name.as_str())
         }
@@ -340,15 +340,15 @@ mod on_event_tests {
     #[test]
     fn web_tool_error_is_attributed_to_web_plugin() {
         assert_eq!(
-            classify_web_event(&tool_end("web.fetch", true)),
-            WebEventClass::Error("web.fetch")
+            classify_web_event(&tool_end("web_fetch", true)),
+            WebEventClass::Error("web_fetch")
         );
     }
 
     #[test]
     fn successful_web_tool_end_is_ignored() {
         assert_eq!(
-            classify_web_event(&tool_end("web.fetch", false)),
+            classify_web_event(&tool_end("web_fetch", false)),
             WebEventClass::Ignored
         );
     }
@@ -356,8 +356,8 @@ mod on_event_tests {
     #[test]
     fn web_tool_start_is_classified() {
         assert_eq!(
-            classify_web_event(&tool_start("web.search")),
-            WebEventClass::Start("web.search")
+            classify_web_event(&tool_start("web_search")),
+            WebEventClass::Start("web_search")
         );
         assert_eq!(
             classify_web_event(&tool_start("bash.run")),

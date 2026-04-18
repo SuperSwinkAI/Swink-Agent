@@ -139,7 +139,7 @@ A library consumer uses a plugin that provides specialized tools — for example
 - **FR-006**: The registry MUST support lookup by name and listing all registered plugins.
 - **FR-007**: Plugin-contributed policies MUST be merged with directly-registered policies at each slot. Plugin policies MUST run before directly-registered policies. Among plugin-contributed policies, higher-priority plugins' policies MUST run first.
 - **FR-008**: Short-circuit semantics (Stop verdict) MUST apply across the merged policy list — a Stop from a plugin policy prevents evaluation of subsequent plugin policies and all directly-registered policies in that slot.
-- **FR-009**: Plugin-contributed tools MUST be namespace-prefixed as `{plugin_name}.{tool_name}` (e.g., a tool "save" from plugin "artifacts" becomes "artifacts.save"). This prevents name collisions between plugins. Directly-registered tools are not namespaced. If a namespace-prefixed plugin tool collides with a directly-registered tool name, the directly-registered tool MUST take precedence.
+- **FR-009**: Plugin-contributed tools MUST be namespace-prefixed as `{plugin_name}_{tool_name}` (e.g., a tool "save" from plugin "artifacts" becomes "artifacts_save"). Both components are sanitized to the common subset accepted by every supported provider's tool-name grammar (`^[a-zA-Z][a-zA-Z0-9_]{0,63}$`). This prevents name collisions between plugins and guarantees the composed name is accepted by Anthropic, OpenAI, Bedrock, Mistral, Gemini, Ollama, and Azure. Directly-registered tools are not namespaced. If a namespace-prefixed plugin tool collides with a directly-registered tool name, the directly-registered tool MUST take precedence. *(Separator was changed from `.` to `_` in response to issue #608; dots are rejected by Anthropic and Bedrock.)*
 - **FR-010**: Plugin event observers MUST be called for every agent event, in plugin priority order (highest first), before any directly-registered event forwarders.
 - **FR-011**: Plugin initialization callbacks MUST be called once during agent construction, in priority order, after the agent is fully configured but before the first conversation turn.
 - **FR-012**: Panics in plugin initialization callbacks MUST be caught and logged. The agent MUST continue construction. The plugin's other contributions (policies, tools, observers) MUST remain active.
@@ -170,7 +170,7 @@ A library consumer uses a plugin that provides specialized tools — for example
 
 ### Session 2026-04-01
 
-- Q: What happens when two different plugins both contribute a tool with the same name? → A: Plugin tools are namespace-prefixed as `{plugin_name}.{tool_name}`, preventing collisions entirely. Two plugins can both provide a tool named "export" — they become "alpha.export" and "beta.export".
+- Q: What happens when two different plugins both contribute a tool with the same name? → A: Plugin tools are namespace-prefixed as `{plugin_name}_{tool_name}`, preventing collisions entirely. Two plugins can both provide a tool named "export" — they become "alpha_export" and "beta_export". *(Separator was `.` in the original design; changed to `_` in #608 for provider compatibility.)*
 - Q: Should plugins have a shutdown/cleanup callback? → A: No dedicated shutdown callback. Plugins use `on_event(AgentEnd)` for cleanup signaling or standard drop semantics for resource release. A dedicated `on_shutdown` can be added later if needed (backward-compatible addition).
 
 ## Assumptions

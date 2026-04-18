@@ -51,13 +51,13 @@ let agent = Agent::builder()
     // ... other config
     .build();
 
-// Tools are auto-namespaced as: web.fetch, web.search, web.screenshot, web.extract
+// Tools are auto-namespaced as: web_fetch, web_search, web_screenshot, web_extract
 // Policies are auto-contributed: DomainFilterPolicy, RateLimitPolicy, ContentSanitizerPolicy
 ```
 
 ## Tool Schemas
 
-### web.fetch
+### web_fetch
 
 ```json
 {
@@ -74,7 +74,7 @@ let agent = Agent::builder()
 
 **Returns**: `AgentToolResult` with `ContentBlock::Text` containing the readable content. Error result if domain blocked, non-200, non-HTML content type, or network failure.
 
-### web.search
+### web_search
 
 ```json
 {
