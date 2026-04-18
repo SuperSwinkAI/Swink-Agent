@@ -153,7 +153,7 @@ impl Default for PluginRegistry {
 // ─── Tool name sanitization ────────────────────────────────────────────────
 
 /// Maximum length for a composed tool name (the tightest cap across providers:
-/// OpenAI, Bedrock, and Gemini all cap at 64; Anthropic allows 128).
+/// `OpenAI`, Bedrock, and Gemini all cap at 64; Anthropic allows 128).
 const MAX_TOOL_NAME_LEN: usize = 64;
 
 /// Sanitize a single component (plugin name or inner tool name) to the common
@@ -218,7 +218,7 @@ fn compose_namespaced_name(plugin_name: &str, tool_name: &str) -> String {
 /// This prevents name collisions when multiple plugins contribute tools with
 /// the same name. The composed name format is `"{plugin_name}_{tool_name}"`,
 /// with each component sanitized so the result matches the strictest tool-name
-/// grammar across supported providers (Anthropic, OpenAI, Bedrock, Mistral,
+/// grammar across supported providers (Anthropic, `OpenAI`, Bedrock, Mistral,
 /// Gemini, Ollama, Azure). See [`sanitize_tool_name_component`].
 ///
 /// The original (unsanitized) plugin name is preserved in
