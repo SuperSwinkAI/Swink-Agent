@@ -106,6 +106,13 @@ pub enum AgentError {
     /// panic.  Use the `_async` or `_stream` variants instead.
     #[error("sync API called inside an active Tokio runtime — use the async variant instead")]
     SyncInAsyncContext,
+
+    /// The internal Tokio runtime used by blocking sync APIs failed to start.
+    #[error("failed to create Tokio runtime for sync API")]
+    RuntimeInit {
+        #[source]
+        source: std::io::Error,
+    },
 }
 
 impl AgentError {
@@ -154,6 +161,11 @@ impl AgentError {
             name: name.into(),
             source: Box::new(source),
         }
+    }
+
+    /// Convenience constructor for [`AgentError::RuntimeInit`].
+    pub const fn runtime_init(source: std::io::Error) -> Self {
+        Self::RuntimeInit { source }
     }
 }
 
