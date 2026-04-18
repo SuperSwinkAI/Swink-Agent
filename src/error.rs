@@ -2,7 +2,8 @@
 //!
 //! All error conditions surfaced to the caller are represented as variants of
 //! [`AgentError`]. Transient failures (`ModelThrottled`, `NetworkError`) are
-//! retryable; all other variants are terminal for the current operation.
+//! retryable by the default strategy; all other variants are terminal for the
+//! current operation unless a custom retry strategy opts into retrying them.
 
 /// Error returned when downcasting an [`AgentMessage`](crate::types::AgentMessage) to a concrete
 /// custom message type fails.
@@ -83,8 +84,9 @@ pub enum AgentError {
 
     /// Provider-side context cache was not found (evicted or expired).
     ///
-    /// The framework resets [`CacheState`](crate::context_cache::CacheState) and
-    /// retries with `CacheHint::Write`.
+    /// The framework resets [`CacheState`](crate::context_cache::CacheState)
+    /// before consulting the configured retry strategy. Custom strategies can
+    /// choose to retry with `CacheHint::Write`.
     #[error("provider cache miss")]
     CacheMiss,
 
@@ -107,14 +109,11 @@ pub enum AgentError {
 }
 
 impl AgentError {
-    /// Returns `true` for error variants that are safe to retry
-    /// (`ModelThrottled`, `NetworkError`, and `CacheMiss`).
+    /// Returns `true` for error variants that are safe to retry by default
+    /// (`ModelThrottled` and `NetworkError`).
     #[must_use]
     pub const fn is_retryable(&self) -> bool {
-        matches!(
-            self,
-            Self::ModelThrottled | Self::NetworkError { .. } | Self::CacheMiss
-        )
+        matches!(self, Self::ModelThrottled | Self::NetworkError { .. })
     }
 
     /// Convenience constructor for [`AgentError::NetworkError`].
