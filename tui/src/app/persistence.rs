@@ -89,20 +89,25 @@ impl App {
             .agent
             .as_ref()
             .and_then(|a| a.custom_message_registry());
-        match store.load(id, registry) {
-            Ok((meta, messages)) => {
-                let restored_state = match store.load_state(id)? {
-                    Some(snapshot) => {
-                        SessionState::restore_from_snapshot(snapshot).map_err(|error| {
-                            io::Error::new(
-                                io::ErrorKind::InvalidData,
-                                format!("invalid session state snapshot for session {id}: {error}"),
-                            )
-                        })?
-                    }
-                    None => SessionState::new(),
-                };
+        let result: io::Result<_> = (|| {
+            let (meta, messages) = store.load(id, registry)?;
+            let restored_state = match store.load_state(id)? {
+                Some(snapshot) => {
+                    SessionState::restore_from_snapshot(snapshot).map_err(|error| {
+                        io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!("invalid session state snapshot for session {id}: {error}"),
+                        )
+                    })?
+                }
+                None => SessionState::new(),
+            };
 
+            Ok((meta, messages, restored_state))
+        })();
+
+        match result {
+            Ok((meta, messages, restored_state)) => {
                 let mut display_messages = Vec::new();
                 for msg in &messages {
                     match msg {
