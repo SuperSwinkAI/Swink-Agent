@@ -96,22 +96,93 @@ fn metrics_types_re_exported() {
 
 #[test]
 fn stream_assembly_types_remain_available_via_narrow_module() {
+    type BlockAccumulator = swink_agent::stream_assembly::BlockAccumulator;
+    type OpenBlock = swink_agent::stream_assembly::OpenBlock;
+
     struct FakeState {
-        blocks: Vec<swink_agent::stream_assembly::OpenBlock>,
+        blocks: Vec<OpenBlock>,
     }
 
     impl swink_agent::stream_assembly::StreamFinalize for FakeState {
-        fn drain_open_blocks(&mut self) -> Vec<swink_agent::stream_assembly::OpenBlock> {
+        fn drain_open_blocks(&mut self) -> Vec<OpenBlock> {
             std::mem::take(&mut self.blocks)
         }
     }
 
-    let _ = std::any::type_name::<swink_agent::stream_assembly::BlockAccumulator>();
+    let _ = std::any::type_name::<BlockAccumulator>();
+
+    let mut accumulator = BlockAccumulator::new();
+    assert!(matches!(
+        accumulator.ensure_text_open(),
+        Some(swink_agent::AssistantMessageEvent::TextStart { content_index: 0 })
+    ));
+    assert!(matches!(
+        accumulator.text_delta("alpha".to_string()),
+        Some(swink_agent::AssistantMessageEvent::TextDelta {
+            content_index: 0,
+            delta,
+        }) if delta == "alpha"
+    ));
+    assert!(matches!(
+        accumulator.close_text(),
+        Some(swink_agent::AssistantMessageEvent::TextEnd { content_index: 0 })
+    ));
+
+    assert!(matches!(
+        accumulator.ensure_thinking_open(),
+        Some(swink_agent::AssistantMessageEvent::ThinkingStart { content_index: 1 })
+    ));
+    assert!(matches!(
+        accumulator.thinking_delta("beta".to_string()),
+        Some(swink_agent::AssistantMessageEvent::ThinkingDelta {
+            content_index: 1,
+            delta,
+        }) if delta == "beta"
+    ));
+    assert!(matches!(
+        accumulator.close_thinking(Some("sig".to_string())),
+        Some(swink_agent::AssistantMessageEvent::ThinkingEnd {
+            content_index: 1,
+            signature,
+        }) if signature.as_deref() == Some("sig")
+    ));
+
+    let (tool_call_index, tool_call_start) =
+        accumulator.open_tool_call("tool-id".to_string(), "tool-name".to_string());
+    assert_eq!(tool_call_index, 2);
+    assert!(matches!(
+        tool_call_start,
+        swink_agent::AssistantMessageEvent::ToolCallStart {
+            content_index: 2,
+            id,
+            name,
+        } if id == "tool-id" && name == "tool-name"
+    ));
+    assert!(matches!(
+        BlockAccumulator::tool_call_delta(tool_call_index, r#"{"ok":true}"#.to_string()),
+        swink_agent::AssistantMessageEvent::ToolCallDelta {
+            content_index: 2,
+            delta,
+        } if delta == r#"{"ok":true}"#
+    ));
+    assert!(matches!(
+        accumulator.close_tool_call(tool_call_index),
+        Some(swink_agent::AssistantMessageEvent::ToolCallEnd { content_index: 2 })
+    ));
+
+    assert!(matches!(
+        accumulator.ensure_text_open(),
+        Some(swink_agent::AssistantMessageEvent::TextStart { content_index: 3 })
+    ));
+    assert!(matches!(
+        accumulator.close_text(),
+        Some(swink_agent::AssistantMessageEvent::TextEnd { content_index: 3 })
+    ));
 
     let mut state = FakeState {
         blocks: vec![
-            swink_agent::stream_assembly::OpenBlock::Text { content_index: 0 },
-            swink_agent::stream_assembly::OpenBlock::ToolCall { content_index: 1 },
+            OpenBlock::Text { content_index: 0 },
+            OpenBlock::ToolCall { content_index: 1 },
         ],
     };
     let events = swink_agent::stream_assembly::finalize_blocks(&mut state);
