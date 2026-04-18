@@ -26,6 +26,25 @@ pub trait SessionStore: Send + Sync {
     /// `CustomMessage::type_name`.
     fn save(&self, id: &str, meta: &SessionMeta, messages: &[AgentMessage]) -> io::Result<()>;
 
+    /// Persist a session transcript plus its state snapshot.
+    ///
+    /// Stores with optimistic-concurrency metadata should return the metadata
+    /// as persisted on disk so callers can keep their local sequence in sync.
+    /// The default implementation composes [`SessionStore::save`] and
+    /// [`SessionStore::save_state`], then reloads metadata from the store.
+    fn save_full(
+        &self,
+        id: &str,
+        meta: &SessionMeta,
+        messages: &[AgentMessage],
+        state: &serde_json::Value,
+    ) -> io::Result<SessionMeta> {
+        self.save(id, meta, messages)?;
+        self.save_state(id, state)?;
+        let (persisted_meta, _) = self.load(id, None)?;
+        Ok(persisted_meta)
+    }
+
     /// Append messages to an existing session without rewriting the entire file.
     fn append(&self, id: &str, messages: &[AgentMessage]) -> io::Result<()>;
 

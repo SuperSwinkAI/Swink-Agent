@@ -32,7 +32,7 @@ impl App {
 
         // Build the meta to send to the store. Preserve `created_at` and the
         // optimistic-concurrency `sequence` from the last successful save.
-        let mut meta = match self.session_meta.clone() {
+        let meta = match self.session_meta.clone() {
             Some(mut existing) => {
                 existing.id.clone_from(&self.session_id);
                 existing.title.clone_from(&self.model_name);
@@ -49,29 +49,15 @@ impl App {
             },
         };
 
-        match store.save(&self.session_id, &meta, &state.messages) {
-            Ok(()) => {
-                // Auto-save persists both transcript messages and the session-state
-                // snapshot, and each store write advances optimistic concurrency.
-                meta.sequence += 1;
-                self.session_meta = Some(meta.clone());
-
-                match store.save_state(&self.session_id, &session_state_snapshot) {
-                    Ok(()) => {
-                        meta.sequence += 1;
-                        meta.updated_at = now_utc();
-                        self.session_meta = Some(meta);
-                        Ok(())
-                    }
-                    Err(error) => {
-                        warn!(
-                            session_id = %self.session_id,
-                            error = %error,
-                            "failed to save session state"
-                        );
-                        Err(error)
-                    }
-                }
+        match store.save_full(
+            &self.session_id,
+            &meta,
+            &state.messages,
+            &session_state_snapshot,
+        ) {
+            Ok(persisted_meta) => {
+                self.session_meta = Some(persisted_meta);
+                Ok(())
             }
             Err(error) => {
                 warn!(session_id = %self.session_id, error = %error, "failed to save session");
