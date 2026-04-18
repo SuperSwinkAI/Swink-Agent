@@ -124,7 +124,7 @@ pub struct AssistantMessage {
     /// When present, the agent loop uses this to classify the error without
     /// falling back to string matching on `error_message`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub error_kind: Option<crate::stream::StreamErrorKind>,
+    pub error_kind: Option<crate::stream_error_kind::StreamErrorKind>,
     pub timestamp: u64,
     /// Provider-agnostic cache hint for this message.
     #[serde(default, skip_serializing_if = "Option::is_none")]

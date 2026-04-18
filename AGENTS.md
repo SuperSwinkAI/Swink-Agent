@@ -177,6 +177,7 @@ gh pr comment <number> --body-file /tmp/comment.md
 
 ### Streaming (`src/stream.rs`)
 
+- `StreamErrorKind` lives in `src/stream_error_kind.rs`; `stream.rs` re-exports it so `AssistantMessageEvent` helpers and the crate root keep the same public API while `types` stays decoupled from `stream`.
 - `accumulate_message` enforces strict ordering: one Start, indexed content blocks, one terminal (Done/Error).
 - `partial_json` consumed on `ToolCallEnd` — parsed once. Empty string → `{}`, not null.
 - `Done(Length)` tolerance is only for unfinished `ToolCall` blocks that preserve `partial_json` for `recover_incomplete_tool_calls`; unterminated text/thinking blocks must still be rejected as malformed.
