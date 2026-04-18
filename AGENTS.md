@@ -210,6 +210,7 @@ gh pr comment <number> --body-file /tmp/comment.md
 - `ToolCallTransformer` runs unconditionally (not gated by approval). Distinct from `ToolValidator` (rejects vs rewrites).
 - `#[tool]` macro param decoding must return `AgentToolResult::error("invalid parameters: ...")` on serde failures rather than panicking. The generated code still retries deserialization from `{}` so zero-param / all-optional tools can execute when appropriate.
 - `FnTool::with_execute_typed::<T>()` is the zero-boilerplate typed path: it derives the schema from `T` and must mirror the rest of the tool stack by returning `AgentToolResult::error("invalid parameters: ...")` on serde decode failures.
+- `ToolApprovalRequest` debug output must keep `arguments` fully redacted and run `redact_sensitive_values()` over `context`. MCP tools intentionally pass raw params through `approval_context()` for policy/approval inspection, so the logging boundary is where sanitization has to happen.
 
 ### Credential Management (`auth/`)
 
