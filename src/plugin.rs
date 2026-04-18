@@ -8,7 +8,7 @@
 //! [`PluginRegistry`] manages a collection of plugins with deduplication and priority
 //! ordering. [`NamespacedTool`] wraps a plugin-contributed tool, prefixing the plugin
 //! name so the composed identifier is unique and safe for every provider's tool-name
-//! grammar (see [`sanitize_tool_name_component`]).
+//! grammar (see `sanitize_tool_name_component`).
 
 use std::sync::Arc;
 
@@ -80,7 +80,7 @@ pub trait Plugin: Send + Sync {
     /// plugin's name as prefix. The prefix and inner name are joined with an
     /// underscore and sanitized to the common subset accepted by every
     /// provider's tool-name grammar (e.g., `"myplugin_mytool"`). See
-    /// [`sanitize_tool_name_component`] for the exact rule.
+    /// `sanitize_tool_name_component` for the exact rule.
     fn tools(&self) -> Vec<Arc<dyn AgentTool>> {
         vec![]
     }
@@ -219,7 +219,7 @@ fn compose_namespaced_name(plugin_name: &str, tool_name: &str) -> String {
 /// the same name. The composed name format is `"{plugin_name}_{tool_name}"`,
 /// with each component sanitized so the result matches the strictest tool-name
 /// grammar across supported providers (Anthropic, `OpenAI`, Bedrock, Mistral,
-/// Gemini, Ollama, Azure). See [`sanitize_tool_name_component`].
+/// Gemini, Ollama, Azure). See `sanitize_tool_name_component`.
 ///
 /// The original (unsanitized) plugin name is preserved in
 /// [`ToolMetadata::namespace`] for introspection.
