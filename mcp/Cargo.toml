@@ -22,6 +22,7 @@ thiserror.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+axum = "0.8"
 rmcp = { version = "1.3", features = ["client", "server", "macros", "client-side-sse", "transport-streamable-http-client", "transport-streamable-http-client-reqwest", "transport-child-process", "transport-streamable-http-server"] }
 swink-agent = { path = "..", default-features = false }
 tokio = { workspace = true, features = ["full", "test-util"] }
