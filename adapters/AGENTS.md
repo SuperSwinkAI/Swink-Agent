@@ -10,6 +10,7 @@
 
 - `gemini` gates `mod google` — feature name matches public type `GeminiStreamFn`, not the file name.
 - `proxy` activates `eventsource-stream` dep. `bedrock` activates `sha2`/`hmac`/`chrono`/`aws-smithy-*` deps.
+- Provider-only support crates must stay optional and hang off the owning feature. In particular, `swink-agent-auth` belongs under `azure = ["dep:swink-agent-auth"]`; leaving it unconditional leaks Azure auth into non-Azure builds.
 - **Always compiled** (shared infra): `base`, `sse`, `classify`, `convert`, `finalize`, `openai_compat`, `remote_presets`.
 - `openai_compat` is shared by `openai`, `azure`, `mistral`, `xai` — compiles unconditionally but has `allow(dead_code)` when none enabled.
 - Portable CI must not run `--all-features` on a generic Linux runner — `metal`/`accelerate` pull Apple-only deps. Exclude `swink-agent-local-llm` or target explicit feature sets.
@@ -48,6 +49,7 @@
 - In `src/openai_compat.rs`, buffer tool-call arguments and delay `ToolCallStart` until a non-empty `function.name` is known; some providers stream arguments before the name.
 - Runtime SSE adapters must thread `StreamOptions.on_raw_payload` into the callback-aware shared parser (`sse_data_lines_with_callback`). The callback-free helper silently disables payload observers.
 - In `src/proxy.rs`, treat transport `data: [DONE]` as a protocol error unless the proxy has already emitted a typed `done` or `error` JSON event.
+- In `src/oai_transport.rs`, gate `OaiAdapterShell` helper methods to the provider features that actually call them. Azure-only builds reuse the request/parse pipeline but not the Bearer-auth convenience helpers, and otherwise `cargo clippy --no-default-features --features azure -D warnings` trips dead-code failures.
 
 ## Live Tests
 

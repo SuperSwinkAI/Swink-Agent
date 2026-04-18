@@ -9,12 +9,15 @@
 //! Adapters that need provider-specific hooks (Azure auth, Mistral message
 //! ordering, etc.) apply those before or after calling into this module.
 
+#[cfg(feature = "openai-compat")]
 use std::pin::Pin;
 
 use futures::stream::{self, Stream, StreamExt as _};
-use tokio_util::sync::CancellationToken;
-use tracing::debug;
 use tracing::warn;
+#[cfg(feature = "openai-compat")]
+use tokio_util::sync::CancellationToken;
+#[cfg(feature = "openai-compat")]
+use tracing::debug;
 
 #[cfg(feature = "mistral")]
 use serde::Serialize;
@@ -40,6 +43,7 @@ pub struct OaiAdapterShell {
 }
 
 impl OaiAdapterShell {
+    #[cfg(any(feature = "openai-compat", feature = "mistral"))]
     pub(crate) fn new(
         provider: &'static str,
         base_url: impl Into<String>,
@@ -76,6 +80,7 @@ impl OaiAdapterShell {
         &self.base.client
     }
 
+    #[cfg(any(feature = "openai-compat", feature = "mistral"))]
     pub(crate) fn fmt_debug(
         &self,
         name: &'static str,
@@ -96,6 +101,7 @@ impl OaiAdapterShell {
         format!("{}{}", self.base.base_url, self.chat_completions_path)
     }
 
+    #[cfg(any(feature = "openai-compat", feature = "mistral"))]
     pub(crate) fn api_key<'a>(&'a self, options: &'a StreamOptions) -> &'a str {
         options.api_key.as_deref().unwrap_or(&self.base.api_key)
     }
@@ -114,6 +120,7 @@ impl OaiAdapterShell {
             .json(body)
     }
 
+    #[cfg(feature = "openai-compat")]
     pub(crate) fn stream<'a>(
         &'a self,
         model: &'a ModelSpec,

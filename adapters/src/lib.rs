@@ -2,19 +2,21 @@
 //! LLM provider adapters for [`swink-agent`](https://docs.rs/swink-agent).
 //!
 //! Provides [`StreamFn`](swink_agent::StreamFn) implementations for nine LLM providers.
-//! Each provider is behind a feature flag — enable only what you need:
+//! No provider is enabled by default; enable only what you need:
 //!
 //! | Feature | Provider |
 //! |---|---|
-//! | `anthropic` (default) | Anthropic Claude |
-//! | `openai` (default) | `OpenAI` GPT |
-//! | `ollama` (default) | `Ollama` (local) |
+//! | `anthropic` | Anthropic Claude |
+//! | `openai` | `OpenAI` GPT |
+//! | `ollama` | `Ollama` (local) |
 //! | `gemini` | Google Gemini |
 //! | `azure` | Azure `OpenAI` / AI Foundry |
 //! | `bedrock` | AWS Bedrock |
 //! | `mistral` | Mistral AI |
 //! | `xai` | xAI Grok |
 //! | `proxy` | Custom SSE proxy |
+//!
+//! Use `full` or `all` to compile every provider adapter.
 //!
 //! # Quick Start
 //!
