@@ -203,16 +203,33 @@ impl InputEditor {
         self.cursor_col = Self::byte_to_char(&self.lines[self.cursor_row]);
     }
 
-    /// Submit the current input, returning the full text. Clears the editor.
-    /// Returns None if the input is empty/whitespace.
+    /// Submit the current input, returning the full text. Clears the editor
+    /// and pushes the submitted lines onto the history buffer.
+    ///
+    /// Returns `None` if the input is empty/whitespace.
     pub fn submit(&mut self) -> Option<String> {
+        self.submit_inner(true)
+    }
+
+    /// Submit the current input WITHOUT persisting the lines to history.
+    ///
+    /// Used for submissions that contain user-supplied secrets (e.g.
+    /// `#key <provider> <api-key>`) so that the value cannot be recalled
+    /// via history navigation. Returns `None` if the input is empty.
+    pub fn submit_without_history(&mut self) -> Option<String> {
+        self.submit_inner(false)
+    }
+
+    fn submit_inner(&mut self, push_to_history: bool) -> Option<String> {
         let text: String = self.lines.join("\n");
         let trimmed = text.trim().to_string();
         if trimmed.is_empty() {
             return None;
         }
-        // Save to history
-        self.history.push(self.lines.clone());
+        if push_to_history {
+            // Save to history
+            self.history.push(self.lines.clone());
+        }
         // Reset editor
         self.lines = vec![String::new()];
         self.cursor_row = 0;
@@ -506,6 +523,84 @@ mod tests {
         assert_eq!(editor.cursor_row, 0);
         assert_eq!(editor.cursor_col, 0);
         assert_eq!(editor.history.len(), 1);
+    }
+
+    #[test]
+    fn submit_without_history_clears_but_skips_history() {
+        let mut editor = InputEditor::new();
+        for c in "#key openai sk-leak-sentinel".chars() {
+            editor.insert_char(c);
+        }
+        let result = editor.submit_without_history();
+        assert_eq!(result.as_deref(), Some("#key openai sk-leak-sentinel"));
+        assert_eq!(editor.lines, vec![String::new()]);
+        assert_eq!(editor.cursor_row, 0);
+        assert_eq!(editor.cursor_col, 0);
+        assert!(
+            editor.history.is_empty(),
+            "submit_without_history must not push to history"
+        );
+    }
+
+    #[test]
+    fn submit_without_history_on_empty_returns_none() {
+        let mut editor = InputEditor::new();
+        assert_eq!(editor.submit_without_history(), None);
+        assert!(editor.history.is_empty());
+    }
+
+    #[test]
+    fn history_navigation_after_submit_without_history_is_empty() {
+        let mut editor = InputEditor::new();
+        for c in "#key openai sk-leak-sentinel-xyz".chars() {
+            editor.insert_char(c);
+        }
+        let submitted = editor.submit_without_history();
+        assert!(submitted.is_some());
+
+        // History is empty, so navigating backwards must not recall the key.
+        editor.history_prev();
+        assert_eq!(
+            editor.lines,
+            vec![String::new()],
+            "sensitive submission must not be recallable via history"
+        );
+        for line in &editor.lines {
+            assert!(
+                !line.contains("sk-leak-sentinel-xyz"),
+                "secret value leaked into history: {line}"
+            );
+        }
+    }
+
+    #[test]
+    fn multiline_sensitive_submission_does_not_enter_history() {
+        let mut editor = InputEditor::new();
+        editor.insert_char('p');
+        editor.insert_char('r');
+        editor.insert_char('e');
+        editor.insert_newline();
+        for c in "#key anthropic sk-ant-top-secret".chars() {
+            editor.insert_char(c);
+        }
+        editor.insert_newline();
+        editor.insert_char('p');
+        editor.insert_char('o');
+        editor.insert_char('s');
+        editor.insert_char('t');
+        let submitted = editor.submit_without_history();
+        assert!(submitted.is_some());
+
+        // Nothing should be recallable — the ENTIRE multi-line entry is
+        // withheld, not just the key line.
+        editor.history_prev();
+        for line in &editor.lines {
+            assert!(
+                !line.contains("sk-ant-top-secret"),
+                "multi-line sensitive entry leaked secret into history: {line}"
+            );
+        }
+        assert_eq!(editor.lines, vec![String::new()]);
     }
 
     #[test]
