@@ -210,11 +210,7 @@ async fn current_session_id(session_manager: &Arc<LocalSessionManager>) -> Strin
         .expect("session should exist")
 }
 
-fn assert_mcp_event(
-    event: AgentEvent,
-    server_name: &str,
-    expect_discovery: bool,
-) {
+fn assert_mcp_event(event: AgentEvent, server_name: &str, expect_discovery: bool) {
     match (expect_discovery, event) {
         (
             false,
@@ -258,7 +254,9 @@ async fn sse_session_expiry_recovers_without_wrapper_disconnect() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("listener should bind");
-    let addr = listener.local_addr().expect("listener should expose an addr");
+    let addr = listener
+        .local_addr()
+        .expect("listener should expose an addr");
     let server_task = tokio::spawn({
         let shutdown = shutdown.clone();
         async move {
@@ -284,7 +282,11 @@ async fn sse_session_expiry_recovers_without_wrapper_disconnect() {
     .await
     .expect("SSE connection should succeed");
 
-    assert_mcp_event(event_rx.try_recv().expect("connect event"), "sse-recovery-server", false);
+    assert_mcp_event(
+        event_rx.try_recv().expect("connect event"),
+        "sse-recovery-server",
+        false,
+    );
     assert_mcp_event(
         event_rx.try_recv().expect("discovery event"),
         "sse-recovery-server",
