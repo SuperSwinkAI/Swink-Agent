@@ -54,6 +54,7 @@ mod schema;
 mod state;
 pub(crate) mod stream;
 pub mod stream_assembly;
+mod stream_error_kind;
 mod stream_middleware;
 mod sub_agent;
 mod task_core;

@@ -35,6 +35,7 @@ fn stream_types_re_exported() {
     let _ = swink_agent::StreamOptions::default();
     let _ = std::any::type_name::<swink_agent::AssistantMessageEvent>();
     let _ = std::any::type_name::<swink_agent::AssistantMessageDelta>();
+    let _ = std::any::type_name::<swink_agent::StreamErrorKind>();
 }
 
 #[test]
