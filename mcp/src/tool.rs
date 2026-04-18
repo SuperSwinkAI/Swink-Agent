@@ -123,7 +123,13 @@ impl AgentTool for McpTool {
     ) -> ToolFuture<'_> {
         let original_name = self.original_name.clone();
         Box::pin(async move {
-            tokio::select! {
+            // Emit call-started before forwarding so observers see the full
+            // lifecycle bracket even if the call never returns.
+            crate::connection::emit_event(self.connection.event_tx(), || {
+                crate::event::tool_call_started(&self.server_name, &original_name)
+            });
+
+            let agent_result = tokio::select! {
                 result = self.connection.call_tool(&original_name, params) => {
                     match result {
                         Ok(call_result) => convert::call_result_to_agent_result(&call_result),
@@ -133,7 +139,17 @@ impl AgentTool for McpTool {
                 () = cancellation_token.cancelled() => {
                     AgentToolResult::error("MCP tool call cancelled")
                 }
-            }
+            };
+
+            crate::connection::emit_event(self.connection.event_tx(), || {
+                crate::event::tool_call_completed(
+                    &self.server_name,
+                    &original_name,
+                    agent_result.is_error,
+                )
+            });
+
+            agent_result
         })
     }
 }
