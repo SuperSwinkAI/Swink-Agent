@@ -79,7 +79,7 @@ impl PostTurnPolicy for CheckpointPolicy {
 
         let store = Arc::clone(&self.store);
         self.handle.spawn(async move {
-            if let Err(e) = store.save_checkpoint(&checkpoint).await {
+            if let Err(e) = store.save_checkpoint(checkpoint).await {
                 tracing::warn!(error = %e, "checkpoint save failed");
             }
         });
@@ -114,9 +114,9 @@ mod tests {
     }
 
     impl CheckpointStore for MockCheckpointStore {
-        fn save_checkpoint(&self, checkpoint: &Checkpoint) -> CheckpointFuture<'_, ()> {
-            let json = serde_json::to_string(checkpoint).unwrap();
-            let id = checkpoint.id.clone();
+        fn save_checkpoint(&self, checkpoint: Checkpoint) -> CheckpointFuture<'_, ()> {
+            let json = serde_json::to_string(&checkpoint).unwrap();
+            let id = checkpoint.id;
             Box::pin(async move {
                 self.data.lock().unwrap().insert(id, json);
                 Ok(())

@@ -12,7 +12,7 @@ pub type CheckpointFuture<'a, T> = Pin<Box<dyn Future<Output = io::Result<T>> + 
 /// Implementations can back onto any storage: filesystem, database, cloud, etc.
 pub trait CheckpointStore: Send + Sync {
     /// Save a checkpoint. Overwrites any existing checkpoint with the same ID.
-    fn save_checkpoint(&self, checkpoint: &Checkpoint) -> CheckpointFuture<'_, ()>;
+    fn save_checkpoint(&self, checkpoint: Checkpoint) -> CheckpointFuture<'_, ()>;
 
     /// Load a checkpoint by ID.
     fn load_checkpoint(&self, id: &str) -> CheckpointFuture<'_, Option<Checkpoint>>;
@@ -50,9 +50,9 @@ mod tests {
     }
 
     impl CheckpointStore for InMemoryCheckpointStore {
-        fn save_checkpoint(&self, checkpoint: &Checkpoint) -> CheckpointFuture<'_, ()> {
-            let json = serde_json::to_string(checkpoint).unwrap();
-            let id = checkpoint.id.clone();
+        fn save_checkpoint(&self, checkpoint: Checkpoint) -> CheckpointFuture<'_, ()> {
+            let json = serde_json::to_string(&checkpoint).unwrap();
+            let id = checkpoint.id;
             Box::pin(async move {
                 self.lock_data()?.insert(id, json);
                 Ok(())
@@ -88,7 +88,7 @@ mod tests {
         let checkpoint =
             Checkpoint::new("cp-store-test", "prompt", "provider", "model", &[]).with_turn_count(2);
 
-        store.save_checkpoint(&checkpoint).await.unwrap();
+        store.save_checkpoint(checkpoint).await.unwrap();
 
         let ids = store.list_checkpoints().await.unwrap();
         assert_eq!(ids, vec!["cp-store-test".to_string()]);
