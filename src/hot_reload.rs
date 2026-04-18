@@ -215,9 +215,8 @@ impl ToolWatcher {
         let watch_dir = watch_dir.into();
         let (tx, rx) = mpsc::channel(100);
 
-        let watcher_tx = tx.clone();
         let mut watcher = notify::recommended_watcher(move |res| {
-            let _ = watcher_tx.blocking_send(res);
+            let _ = tx.blocking_send(res);
         })
         .map_err(|e| e.to_string())?;
 
@@ -237,6 +236,7 @@ impl ToolWatcher {
     ///
     /// The returned closure should be called to get the current tool list
     /// whenever an update occurs.
+    #[allow(clippy::unused_async)] // public API: keep async signature for future extension
     pub async fn start(
         mut self,
         cancellation_token: CancellationToken,
@@ -251,20 +251,18 @@ impl ToolWatcher {
             if let Ok(entries) = std::fs::read_dir(&self.watch_dir) {
                 for entry in entries.flatten() {
                     let path = entry.path();
-                    if is_tool_file(&path) {
-                        if let Ok(tool) = ScriptTool::from_file(&path) {
-                            // Check for duplicate names
-                            if tools.values().any(|t| t.def.name == tool.def.name) {
-                                warn!(
-                                    name = %tool.def.name,
-                                    path = %path.display(),
-                                    "duplicate tool name — last write wins"
-                                );
-                                // Remove old entry with same name
-                                tools.retain(|_, t| t.def.name != tool.def.name);
-                            }
-                            tools.insert(path, tool);
+                    if is_tool_file(&path)
+                        && let Ok(tool) = ScriptTool::from_file(&path)
+                    {
+                        if tools.values().any(|t| t.def.name == tool.def.name) {
+                            warn!(
+                                name = %tool.def.name,
+                                path = %path.display(),
+                                "duplicate tool name — last write wins"
+                            );
+                            tools.retain(|_, t| t.def.name != tool.def.name);
                         }
+                        tools.insert(path, tool);
                     }
                 }
                 let _ = update_tx.send(self.build_tool_list(&tools)).await;
@@ -399,11 +397,13 @@ description = "Run command"
 command = "echo {input}"
 "#;
         let tool = ScriptTool::from_toml(toml).unwrap();
-        let cmd = tool.interpolate_command(&json!({"input": "; rm -rf /"}));
-        assert!(cmd.contains("'\\''"));
-        assert!(!cmd.contains("; rm -rf /\""));
-        // The dangerous command should be wrapped in single quotes
-        assert!(cmd.contains("'; rm -rf /'"));
+        // Input contains a single quote to exercise the '\'' escape path
+        let cmd = tool.interpolate_command(&json!({"input": "it's; rm -rf /"}));
+        assert!(
+            cmd.contains("'\\''"),
+            "expected '\\'' escape sequence in {cmd}"
+        );
+        assert!(cmd.contains("'it'\\''s; rm -rf /'"));
     }
 
     #[tokio::test]
@@ -429,13 +429,22 @@ command = "echo hello"
 
     #[test]
     fn duplicate_tool_names_last_write_wins() {
-        // Simulate two ScriptTools with the same name
-        let tool1 =
-            ScriptTool::from_toml(r#"name = "dup" description = "First" command = "echo 1""#)
-                .unwrap();
-        let tool2 =
-            ScriptTool::from_toml(r#"name = "dup" description = "Second" command = "echo 2""#)
-                .unwrap();
+        let tool1 = ScriptTool::from_toml(
+            r#"
+name = "dup"
+description = "First"
+command = "echo 1"
+"#,
+        )
+        .unwrap();
+        let tool2 = ScriptTool::from_toml(
+            r#"
+name = "dup"
+description = "Second"
+command = "echo 2"
+"#,
+        )
+        .unwrap();
 
         let mut map: HashMap<PathBuf, ScriptTool> = HashMap::new();
         map.insert(PathBuf::from("/a.toml"), tool1);

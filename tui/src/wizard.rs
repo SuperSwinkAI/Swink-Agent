@@ -366,15 +366,11 @@ impl SetupWizard {
         let max_index = self.providers.len(); // includes "Continue" item
 
         match (key.modifiers, key.code) {
-            (_, KeyCode::Up) => {
-                if self.selected > 0 {
-                    self.selected -= 1;
-                }
+            (_, KeyCode::Up) if self.selected > 0 => {
+                self.selected -= 1;
             }
-            (_, KeyCode::Down) => {
-                if self.selected < max_index {
-                    self.selected += 1;
-                }
+            (_, KeyCode::Down) if self.selected < max_index => {
+                self.selected += 1;
             }
             (_, KeyCode::Enter) => {
                 if self.selected == max_index {
@@ -430,11 +426,9 @@ impl SetupWizard {
                 }
                 self.step = WizardStep::ProviderList;
             }
-            (_, KeyCode::Backspace) => {
-                if !input.is_empty() && *cursor > 0 {
-                    input.remove(*cursor - 1);
-                    *cursor -= 1;
-                }
+            (_, KeyCode::Backspace) if !input.is_empty() && *cursor > 0 => {
+                input.remove(*cursor - 1);
+                *cursor -= 1;
             }
             (KeyModifiers::NONE | KeyModifiers::SHIFT, KeyCode::Char(c)) => {
                 input.insert(*cursor, c);

@@ -3,8 +3,9 @@ use std::time::{Duration, Instant};
 
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info_span};
+use tracing::{debug, error, info_span, warn};
 
+use crate::policy::{PolicyContext, PolicyVerdict, TurnPolicyContext, run_post_turn_policies};
 use crate::types::{
     AgentContext, AgentMessage, AssistantMessage, ContentBlock, LlmMessage, StopReason,
     ToolResultMessage, TurnSnapshot,
@@ -45,6 +46,12 @@ pub async fn run_single_turn(
     if !state.pending_messages.is_empty() {
         state.context_messages.append(&mut state.pending_messages);
     }
+    clear_pending_message_snapshot(config);
+    // Sync the full context (including newly consumed pending messages) to the
+    // loop_context_snapshot so that a concurrent pause() call can reconstruct
+    // the complete message history even before this turn's TurnEnd event is
+    // processed by the agent side.
+    sync_loop_context_snapshot(config, state);
 
     // Check cancellation
     if cancellation_token.is_cancelled() {
@@ -89,6 +96,7 @@ pub async fn run_single_turn(
             }
             PolicyVerdict::Inject(msgs) => {
                 state.pending_messages.extend(msgs);
+                sync_pending_message_snapshot(config, state);
             }
         }
     }
@@ -287,6 +295,7 @@ pub async fn run_single_turn(
             assistant_message,
             state,
             config,
+            system_prompt,
             llm_call_duration,
             turn_start,
             tx,
@@ -300,6 +309,7 @@ pub async fn run_single_turn(
         state,
         assistant_message,
         tool_calls,
+        system_prompt,
         llm_call_duration,
         turn_start,
         cancellation_token,
@@ -337,6 +347,34 @@ pub(super) async fn run_context_transformers(
     }
 
     any_compacted
+}
+
+fn clear_pending_message_snapshot(config: &AgentLoopConfig) {
+    config.pending_message_snapshot.clear();
+}
+
+fn sync_pending_message_snapshot(config: &AgentLoopConfig, state: &LoopState) {
+    config
+        .pending_message_snapshot
+        .replace(&state.pending_messages);
+}
+
+fn mark_assistant_message_aborted(message: &AssistantMessage) -> AssistantMessage {
+    let mut aborted = message.clone();
+    aborted.stop_reason = StopReason::Aborted;
+    aborted.error_message = Some("operation aborted via cancellation token".to_string());
+    aborted.error_kind = None;
+    aborted.timestamp = now_timestamp();
+    aborted
+}
+
+/// Sync the full loop context to the shared `loop_context_snapshot` so that
+/// `Agent::pause()` can recover messages already drained from the shared pending
+/// queue but not yet reflected in `in_flight_messages`.
+fn sync_loop_context_snapshot(config: &AgentLoopConfig, state: &LoopState) {
+    config
+        .loop_context_snapshot
+        .replace(&state.context_messages);
 }
 
 // ─── Shared helpers ──────────────────────────────────────────────────────
@@ -405,6 +443,18 @@ pub(super) async fn emit_turn_end_and_agent_end(
     TurnOutcome::Return
 }
 
+/// Emit only `AgentEnd`, returning `TurnOutcome::Return`.
+async fn emit_agent_end(state: &mut LoopState, tx: &mpsc::Sender<AgentEvent>) -> TurnOutcome {
+    let _ = emit(
+        tx,
+        AgentEvent::AgentEnd {
+            messages: Arc::new(std::mem::take(&mut state.context_messages)),
+        },
+    )
+    .await;
+    TurnOutcome::Return
+}
+
 // ─── Snapshot builder ────────────────────────────────────────────────────
 
 /// Build a `TurnSnapshot` from current loop state.
@@ -462,18 +512,18 @@ async fn flush_state_delta(
 
 // ─── run_single_turn helpers ─────────────────────────────────────────────────
 
-/// Emit cancellation events and return from the loop.
-pub(super) async fn handle_cancellation(
+async fn emit_cancellation_for_turn(
     config: &Arc<AgentLoopConfig>,
     state: &mut LoopState,
     tx: &mpsc::Sender<AgentEvent>,
+    emit_turn_start: bool,
 ) -> TurnOutcome {
     let abort_msg = build_abort_message(&config.model);
     let msg_for_event = abort_msg.clone();
     state
         .context_messages
         .push(AgentMessage::Llm(LlmMessage::Assistant(abort_msg)));
-    if !emit(tx, AgentEvent::TurnStart).await {
+    if emit_turn_start && !emit(tx, AgentEvent::TurnStart).await {
         return TurnOutcome::Return;
     }
     if !emit(tx, AgentEvent::MessageStart).await {
@@ -499,6 +549,24 @@ pub(super) async fn handle_cancellation(
         tx,
     )
     .await
+}
+
+/// Emit cancellation events and return before the turn has started.
+pub(super) async fn handle_cancellation(
+    config: &Arc<AgentLoopConfig>,
+    state: &mut LoopState,
+    tx: &mpsc::Sender<AgentEvent>,
+) -> TurnOutcome {
+    emit_cancellation_for_turn(config, state, tx, true).await
+}
+
+/// Emit cancellation events for a turn that already emitted `TurnStart`.
+pub(super) async fn handle_started_turn_cancellation(
+    config: &Arc<AgentLoopConfig>,
+    state: &mut LoopState,
+    tx: &mpsc::Sender<AgentEvent>,
+) -> TurnOutcome {
+    emit_cancellation_for_turn(config, state, tx, false).await
 }
 
 /// Process the `StreamResult`, returning the assistant message on success,
@@ -546,27 +614,32 @@ async fn handle_error_stop(
     state: &mut LoopState,
     tx: &mpsc::Sender<AgentEvent>,
 ) -> TurnOutcome {
-    error!(
-        stop_reason = ?assistant_message.stop_reason,
-        error = ?assistant_message.error_message,
-        "agent loop stopping due to error/abort"
-    );
+    let is_abort = assistant_message.stop_reason == StopReason::Aborted;
+    if is_abort {
+        warn!(
+            error = ?assistant_message.error_message,
+            "agent loop stopping due to abort"
+        );
+    } else {
+        error!(
+            stop_reason = ?assistant_message.stop_reason,
+            error = ?assistant_message.error_message,
+            "agent loop stopping due to error"
+        );
+    }
     let msg_for_event = assistant_message.clone();
     let stop = assistant_message.stop_reason;
     state
         .context_messages
         .push(AgentMessage::Llm(LlmMessage::Assistant(assistant_message)));
     let snapshot = build_snapshot(state, stop, None);
+    let reason = if is_abort {
+        TurnEndReason::Aborted
+    } else {
+        TurnEndReason::Error
+    };
     // CRITICAL: On error/abort, exit immediately — no follow-up polling
-    emit_turn_end_and_agent_end(
-        msg_for_event,
-        vec![],
-        TurnEndReason::Error,
-        snapshot,
-        state,
-        tx,
-    )
-    .await
+    emit_turn_end_and_agent_end(msg_for_event, vec![], reason, snapshot, state, tx).await
 }
 
 /// Extract tool call info from the assistant message content blocks.
@@ -595,12 +668,113 @@ fn extract_tool_calls(message: &AssistantMessage) -> Vec<ToolCallInfo> {
         .collect()
 }
 
-/// Handle the case where no tool calls are present: emit `TurnEnd`, break inner.
+/// Run post-turn policies and return the (possibly replaced) assistant message.
+///
+/// If a policy returns `Inject` with an `AssistantMessage`, it replaces the
+/// original — the replacement is what gets committed to context and emitted in
+/// `TurnEnd`. Non-assistant injected messages go to `pending_messages`.
+///
+/// Returns `(final_assistant_message, Option<stop_reason>)`.
+fn run_post_turn_policy_check(
+    assistant_message: &AssistantMessage,
+    tool_results: &[ToolResultMessage],
+    state: &mut LoopState,
+    config: &Arc<AgentLoopConfig>,
+    system_prompt: &str,
+) -> (AssistantMessage, Option<String>) {
+    if config.post_turn_policies.is_empty() {
+        return (assistant_message.clone(), None);
+    }
+
+    let state_snapshot = {
+        let guard = config
+            .session_state
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        guard.clone()
+    };
+    let policy_ctx = PolicyContext {
+        turn_index: state.turn_index,
+        accumulated_usage: &state.accumulated_usage,
+        accumulated_cost: &state.accumulated_cost,
+        message_count: state.context_messages.len(),
+        overflow_signal: state.overflow_signal,
+        new_messages: &[], // current-turn data is in TurnPolicyContext
+        state: &state_snapshot,
+    };
+    let turn_ctx = TurnPolicyContext {
+        assistant_message,
+        tool_results,
+        stop_reason: assistant_message.stop_reason,
+        system_prompt,
+        model_spec: &config.model,
+        context_messages: &state.context_messages,
+    };
+    match run_post_turn_policies(&config.post_turn_policies, &policy_ctx, &turn_ctx) {
+        PolicyVerdict::Continue => (assistant_message.clone(), None),
+        PolicyVerdict::Stop(reason) => (assistant_message.clone(), Some(reason)),
+        PolicyVerdict::Inject(msgs) => {
+            // If the injection includes an assistant message, use the last one
+            // as a replacement. All other injected messages go to pending.
+            let mut replaced = assistant_message.clone();
+            for msg in msgs {
+                match msg {
+                    AgentMessage::Llm(LlmMessage::Assistant(new_msg)) => {
+                        if assistant_replacement_preserves_tool_calls(assistant_message, &new_msg) {
+                            replaced = new_msg;
+                        } else {
+                            tracing::warn!(
+                                "ignoring post-turn assistant replacement that would drop tool calls"
+                            );
+                        }
+                    }
+                    other => {
+                        state.pending_messages.push(other);
+                        sync_pending_message_snapshot(config, state);
+                    }
+                }
+            }
+            // Update last_assistant_message to reflect the replacement.
+            state.last_assistant_message = Some(replaced.clone());
+            (replaced, None)
+        }
+    }
+}
+
+fn assistant_replacement_preserves_tool_calls(
+    original: &AssistantMessage,
+    replacement: &AssistantMessage,
+) -> bool {
+    let original_tool_calls: Vec<ContentBlock> = original
+        .content
+        .iter()
+        .filter(|block| matches!(block, ContentBlock::ToolCall { .. }))
+        .cloned()
+        .collect();
+
+    if original_tool_calls.is_empty() {
+        return true;
+    }
+
+    let replacement_tool_calls: Vec<ContentBlock> = replacement
+        .content
+        .iter()
+        .filter(|block| matches!(block, ContentBlock::ToolCall { .. }))
+        .cloned()
+        .collect();
+
+    original_tool_calls == replacement_tool_calls
+}
+
+/// Handle the case where no tool calls are present: commit the assistant,
+/// run post-turn policies against the committed snapshot, emit `TurnEnd`,
+/// and break inner.
 #[allow(clippy::too_many_arguments)]
 async fn handle_no_tool_calls(
     assistant_message: AssistantMessage,
     state: &mut LoopState,
     config: &Arc<AgentLoopConfig>,
+    system_prompt: &str,
     llm_call_duration: Duration,
     turn_start: Instant,
     tx: &mpsc::Sender<AgentEvent>,
@@ -618,17 +792,28 @@ async fn handle_no_tool_calls(
     )
     .await;
 
-    let msg_for_event = assistant_message.clone();
-    let stop = assistant_message.stop_reason;
+    let assistant_ctx_index = state.context_messages.len();
     state
         .context_messages
-        .push(AgentMessage::Llm(LlmMessage::Assistant(assistant_message)));
+        .push(AgentMessage::Llm(LlmMessage::Assistant(
+            assistant_message.clone(),
+        )));
+
+    // Run post-turn policies against the committed turn snapshot so text-only,
+    // tool, and transfer turns expose the same history shape.
+    let (assistant_message, policy_stop) =
+        run_post_turn_policy_check(&assistant_message, &[], state, config, system_prompt);
+
+    state.context_messages[assistant_ctx_index] =
+        AgentMessage::Llm(LlmMessage::Assistant(assistant_message.clone()));
+
+    let stop = assistant_message.stop_reason;
     let state_delta = flush_state_delta(config, tx).await;
     let snapshot = build_snapshot(state, stop, state_delta);
     if !emit(
         tx,
         AgentEvent::TurnEnd {
-            assistant_message: msg_for_event,
+            assistant_message,
             tool_results: vec![],
             reason: TurnEndReason::Complete,
             snapshot,
@@ -638,17 +823,24 @@ async fn handle_no_tool_calls(
     {
         return TurnOutcome::Return;
     }
+
+    if let Some(reason) = policy_stop {
+        tracing::info!("post-turn policy stopped agent: {reason}");
+        return emit_agent_end(state, tx).await;
+    }
+
     TurnOutcome::BreakInner
 }
 
 /// Handle tool calls: separate incomplete ones, execute the rest, collect results,
-/// emit `TurnEnd`, and poll steering.
+/// run post-turn policies, emit `TurnEnd`, and poll steering.
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 async fn handle_tool_calls(
     config: &Arc<AgentLoopConfig>,
     state: &mut LoopState,
     assistant_message: AssistantMessage,
     mut tool_call_data: Vec<ToolCallInfo>,
+    system_prompt: &str,
     llm_call_duration: Duration,
     turn_start: Instant,
     cancellation_token: &CancellationToken,
@@ -656,10 +848,15 @@ async fn handle_tool_calls(
 ) -> TurnOutcome {
     accumulate_turn_state(state, &assistant_message);
 
-    let msg_for_turn_end = assistant_message.clone();
+    // Record the index where we insert the assistant message so we can replace
+    // it later if a post-turn policy returns a mutated version.
+    let assistant_ctx_index = state.context_messages.len();
     state
         .context_messages
-        .push(AgentMessage::Llm(LlmMessage::Assistant(assistant_message)));
+        .push(AgentMessage::Llm(LlmMessage::Assistant(
+            assistant_message.clone(),
+        )));
+    let msg_for_turn_end = assistant_message;
 
     // Max tokens recovery: replace incomplete tool calls with error results
     let max_token_results =
@@ -693,6 +890,7 @@ async fn handle_tool_calls(
                 collected_tool_metrics = tool_metrics;
                 detected_transfer_signal = transfer_signal;
                 state.pending_messages.extend(injected_messages);
+                sync_pending_message_snapshot(config, state);
             }
             ToolExecOutcome::SteeringInterrupt {
                 completed,
@@ -707,6 +905,57 @@ async fn handle_tool_calls(
                 collected_tool_metrics = tool_metrics;
                 state.pending_messages.extend(injected_messages);
                 state.pending_messages.extend(steering_messages);
+                sync_pending_message_snapshot(config, state);
+            }
+            ToolExecOutcome::Aborted {
+                results,
+                tool_metrics,
+                injected_messages,
+            } => {
+                tool_results.extend(results);
+                emit_turn_metrics(
+                    config,
+                    state,
+                    &msg_for_turn_end,
+                    llm_call_duration,
+                    tool_metrics,
+                    turn_start,
+                )
+                .await;
+
+                state.pending_messages.extend(injected_messages);
+                sync_pending_message_snapshot(config, state);
+
+                for tr in &tool_results {
+                    state
+                        .context_messages
+                        .push(AgentMessage::Llm(LlmMessage::ToolResult(tr.clone())));
+                }
+
+                state.last_tool_results.clone_from(&tool_results);
+
+                let aborted_turn_end = mark_assistant_message_aborted(&msg_for_turn_end);
+                let (aborted_turn_end, _) = run_post_turn_policy_check(
+                    &aborted_turn_end,
+                    &tool_results,
+                    state,
+                    config,
+                    system_prompt,
+                );
+                state.context_messages[assistant_ctx_index] =
+                    AgentMessage::Llm(LlmMessage::Assistant(aborted_turn_end.clone()));
+
+                let state_delta = flush_state_delta(config, tx).await;
+                let snapshot = build_snapshot(state, StopReason::Aborted, state_delta);
+                return emit_turn_end_and_agent_end(
+                    aborted_turn_end,
+                    tool_results,
+                    TurnEndReason::Cancelled,
+                    snapshot,
+                    state,
+                    tx,
+                )
+                .await;
             }
             ToolExecOutcome::ChannelClosed => return TurnOutcome::Return,
         }
@@ -732,10 +981,69 @@ async fn handle_tool_calls(
     // Store tool results for post-turn hook access
     state.last_tool_results.clone_from(&tool_results);
 
+    // xiii. Run post-turn policies against the committed tool-turn snapshot
+    // before emitting TurnEnd or honoring transfer termination.
+    let (msg_for_turn_end, policy_stop) = run_post_turn_policy_check(
+        &msg_for_turn_end,
+        &tool_results,
+        state,
+        config,
+        system_prompt,
+    );
+
+    // Update the assistant message in context in case a policy replaced it.
+    state.context_messages[assistant_ctx_index] =
+        AgentMessage::Llm(LlmMessage::Assistant(msg_for_turn_end.clone()));
+
     // xiii-a. Transfer signal detection: if a tool signaled a transfer,
-    // enrich the signal with conversation history and exit with Transfer.
+    // validate against the transfer chain for safety, then enrich and exit.
     if let Some(mut signal) = detected_transfer_signal {
-        // Enrich with LLM-only conversation history from context
+        // Enforce transfer chain safety: check for circular transfers and
+        // max-depth violations before honoring the transfer.
+        match state.transfer_chain.push(signal.target_agent()) {
+            Ok(()) => {
+                // Chain check passed — proceed with the transfer.
+            }
+            Err(chain_err) => {
+                // Chain check failed — convert transfer to an error tool result
+                // so the LLM can retry or take a different action.
+                tracing::warn!(
+                    target_agent = %signal.target_agent(),
+                    error = %chain_err,
+                    "transfer chain safety check failed, rejecting transfer"
+                );
+
+                // The transfer is rejected; continue the inner loop instead
+                // of terminating.
+                let state_delta = flush_state_delta(config, tx).await;
+                let snapshot = build_snapshot(state, msg_for_turn_end.stop_reason, state_delta);
+                if !emit(
+                    tx,
+                    AgentEvent::TurnEnd {
+                        assistant_message: msg_for_turn_end,
+                        tool_results,
+                        reason: if steering_interrupted {
+                            TurnEndReason::SteeringInterrupt
+                        } else {
+                            TurnEndReason::ToolsExecuted
+                        },
+                        snapshot,
+                    },
+                )
+                .await
+                {
+                    return TurnOutcome::Return;
+                }
+
+                if let Some(reason) = policy_stop {
+                    tracing::info!("post-turn policy stopped agent: {reason}");
+                    return emit_agent_end(state, tx).await;
+                }
+
+                return TurnOutcome::ContinueInner;
+            }
+        }
+
         let llm_history: Vec<LlmMessage> = state
             .context_messages
             .iter()
@@ -744,7 +1052,9 @@ async fn handle_tool_calls(
                 AgentMessage::Custom(_) => None,
             })
             .collect();
-        signal = signal.with_conversation_history(llm_history);
+        signal = signal
+            .with_conversation_history(llm_history)
+            .with_transfer_chain(state.transfer_chain.clone());
 
         tracing::info!(
             target_agent = %signal.target_agent(),
@@ -752,7 +1062,6 @@ async fn handle_tool_calls(
             "transfer signal detected, terminating turn"
         );
 
-        // Emit TransferInitiated event so callers can capture the signal
         let _ = emit(
             tx,
             AgentEvent::TransferInitiated {
@@ -774,7 +1083,7 @@ async fn handle_tool_calls(
         .await;
     }
 
-    // xiii. Emit TurnEnd
+    // xiv. Emit TurnEnd
     let state_delta = flush_state_delta(config, tx).await;
     let snapshot = build_snapshot(state, msg_for_turn_end.stop_reason, state_delta);
     if !emit(
@@ -795,11 +1104,17 @@ async fn handle_tool_calls(
         return TurnOutcome::Return;
     }
 
+    if let Some(reason) = policy_stop {
+        tracing::info!("post-turn policy stopped agent: {reason}");
+        return emit_agent_end(state, tx).await;
+    }
+
     // Poll steering if not already interrupted
     if !steering_interrupted && let Some(ref provider) = config.message_provider {
         let msgs = provider.poll_steering();
         if !msgs.is_empty() {
             state.pending_messages.extend(msgs);
+            sync_pending_message_snapshot(config, state);
         }
     }
     // Inner loop continues — model must process tool results.

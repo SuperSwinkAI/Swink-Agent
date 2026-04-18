@@ -154,6 +154,31 @@ Not a struct. Syntax highlighting is a stateless function with cached resources:
 
 ---
 
+## Entity: SteeredMessageOverlay (logical, on App)
+
+Not a separate widget. Mid-stream user submissions are held in two fields on `App`
+and rendered as a banner above the input editor by `ui/mod.rs::render_steered_overlay`.
+
+| Field | Type | Purpose |
+|-------|------|---------|
+| `pending_steered` | `Vec<String>` | Messages queued via `agent.steer()` while streaming; not yet in `messages` |
+| `steered_fade_ticks` | `u8` | Fade-out countdown (~10 ticks ≈ 330 ms) after messages are consumed at `MessageStart` |
+
+**Lifecycle**:
+1. User presses Enter while `status == Running` → `send_to_agent` calls `agent.steer(msg)` and pushes text to `pending_steered` (no `DisplayMessage` added yet). The agent completes its current LLM response; the message is queued for the next turn boundary.
+2. UI renders a yellow "Queued" banner showing each pending message (above the input editor).
+3. `MessageStart` fires (next LLM turn begins) → `pending_steered` is drained into `messages` as `MessageRole::User` entries immediately before the new assistant message, preserving correct chronological order. `steered_fade_ticks` is set to 10.
+4. Banner switches to a dimmed "Sent" state while `steered_fade_ticks > 0`, then disappears.
+5. Safety flush: if a turn is cancelled and `AgentEnd` fires with messages still in `pending_steered`, they are flushed there instead.
+
+**Rendering** (`ui/mod.rs`):
+- Visible when `!pending_steered.is_empty() || steered_fade_ticks > 0`.
+- Height = `min(pending.len() + 2, 7)` rows; collapses to zero when invisible.
+- Queued state: yellow border, `⏳` prefix, white text, truncated at 120 chars.
+- Fading state: dark-gray border and text, `DIM` modifier, "↑ delivered to agent" message.
+
+---
+
 ## Relationship Diagram
 
 ```text
@@ -163,7 +188,8 @@ App (state.rs)
   │     ├── lines: Vec<String>          ── text buffer
   │     ├── cursor_row/col              ── cursor state
   │     ├── history: Vec<Vec<String>>   ── input history
-  │     ├── submit() ──► Option<String> ── submitted text sent to agent
+  │     ├── submit() ──► Option<String> ── submitted text; only pushed to
+  │     │                                  messages when agent is idle
   │     └── render() ──► Frame          ── renders with line numbers + cursor
   │
   ├── ConversationView (ui/conversation.rs)
@@ -182,6 +208,11 @@ App (state.rs)
   │           ├── content: String       ── markdown text
   │           ├── is_streaming: bool    ── streaming indicator
   │           └── thinking/collapsed/diff_data ── auxiliary display state
+  │
+  ├── SteeredMessageOverlay (logical, ui/mod.rs)
+  │     ├── pending_steered: Vec<String> ── queued mid-stream inputs
+  │     ├── steered_fade_ticks: u8       ── fade-out countdown
+  │     └── render_steered_overlay()     ── yellow/gray banner above input
   │
   └── Focus (state.rs)
         ├── Input ──► key events go to InputEditor

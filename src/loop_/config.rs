@@ -21,6 +21,16 @@ use super::ConvertToLlmFn;
 /// Carries the model spec, stream options, retry strategy, stream function,
 /// tools, and all the hooks that the loop calls at various points.
 pub struct AgentLoopConfig {
+    /// Optional agent name used for transfer chain safety enforcement.
+    ///
+    /// When set, the loop pushes this name onto the [`TransferChain`](crate::transfer::TransferChain)
+    /// at startup so circular transfers back to this agent are detected.
+    pub agent_name: Option<String>,
+    /// Optional transfer chain carried from a previous handoff.
+    ///
+    /// When set, the loop resumes transfer safety checks from this chain.
+    pub transfer_chain: Option<crate::transfer::TransferChain>,
+
     /// Model specification passed through to `StreamFn`.
     pub model: ModelSpec,
 
@@ -54,6 +64,18 @@ pub struct AgentLoopConfig {
     /// [`MessageProvider::poll_steering`] is called after each tool execution batch.
     /// [`MessageProvider::poll_follow_up`] is called when the agent would otherwise stop.
     pub message_provider: Option<Arc<dyn MessageProvider>>,
+
+    /// Shared snapshot of loop-local pending messages for pause checkpoints.
+    #[allow(private_interfaces)]
+    pub pending_message_snapshot: Arc<crate::pause_state::PendingMessageSnapshot>,
+
+    /// Shared snapshot of the loop's full `context_messages` for pause checkpoints.
+    ///
+    /// Updated after each turn's pending-message drain so that `Agent::pause()`
+    /// can reconstruct the complete message history even for messages that have
+    /// been moved out of the shared pending queue and into loop-local context.
+    #[allow(private_interfaces)]
+    pub loop_context_snapshot: Arc<crate::pause_state::LoopContextSnapshot>,
 
     /// Optional async callback for approving/rejecting tool calls before execution.
     /// When `Some` and `approval_mode` is `Enabled`, each tool call is sent through

@@ -14,12 +14,12 @@ use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
 use swink_agent::{
-    AgentContext, AssistantMessageEvent, Cost, LlmMessage, ModelSpec, StopReason, StreamFn,
-    StreamOptions, Usage,
+    AgentContext, AssistantMessageEvent, Cost, LlmMessage, ModelSpec, StopReason, StreamErrorKind,
+    StreamFn, StreamOptions, Usage,
 };
 
 use crate::classify::error_event_from_status;
-use crate::sse::{SseLine, sse_data_lines};
+use crate::sse::{SseLine, sse_data_lines_with_callback};
 
 // ─── Request types ──────────────────────────────────────────────────────────
 
@@ -92,6 +92,7 @@ enum SseEventData {
         stop_reason: StopReason,
         error_message: String,
         usage: Option<Usage>,
+        error_kind: Option<StreamErrorKind>,
     },
 }
 
@@ -118,7 +119,7 @@ impl ProxyStreamFn {
     #[must_use]
     pub fn new(base_url: impl Into<String>, bearer_token: impl Into<String>) -> Self {
         Self {
-            base_url: base_url.into(),
+            base_url: base_url.into().trim_end_matches('/').to_string(),
             bearer_token: bearer_token.into(),
             client: Client::new(),
         }
@@ -189,16 +190,17 @@ fn proxy_stream<'a>(
     stream::once(async move {
         let response = match send_request(proxy, model, context, options).await {
             Ok(resp) => resp,
-            Err(event) => return stream::iter(vec![event]).left_stream(),
+            Err(event) => return stream::iter(crate::base::pre_stream_error(event)).left_stream(),
         };
 
         let status = response.status();
         if !status.is_success() {
             let event = error_event_from_status(status.as_u16(), "", "Proxy");
-            return stream::iter(vec![event]).left_stream();
+            return stream::iter(crate::base::pre_stream_error(event)).left_stream();
         }
 
-        parse_sse_stream(response, cancellation_token).right_stream()
+        parse_sse_stream(response, cancellation_token, options.on_raw_payload.clone())
+            .right_stream()
     })
     .flatten()
 }
@@ -257,8 +259,9 @@ async fn send_request(
 fn parse_sse_stream(
     response: reqwest::Response,
     cancellation_token: CancellationToken,
+    on_raw_payload: Option<swink_agent::OnRawPayload>,
 ) -> impl Stream<Item = AssistantMessageEvent> + Send {
-    let sse_stream = sse_data_lines(response.bytes_stream());
+    let sse_stream = sse_data_lines_with_callback(response.bytes_stream(), on_raw_payload);
 
     stream::unfold(
         (Box::pin(sse_stream), cancellation_token, false),
@@ -291,7 +294,9 @@ fn parse_sse_stream(
                         Some(SseLine::Done) => {
                             done = true;
                             Some((
-                                AssistantMessageEvent::error_network("network error: SSE stream ended unexpectedly"),
+                                AssistantMessageEvent::error_network(
+                                    "network error: proxy SSE transport ended before protocol terminal event",
+                                ),
                                 (sse, token, done),
                             ))
                         }
@@ -388,11 +393,12 @@ fn convert_sse_event(event: SseEventData) -> AssistantMessageEvent {
             stop_reason,
             error_message,
             usage,
+            error_kind,
         } => AssistantMessageEvent::Error {
             stop_reason,
             error_message,
             usage,
-            error_kind: None,
+            error_kind,
         },
     }
 }
@@ -417,6 +423,20 @@ const _: () = {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ─── trailing slash normalization ────────────────────────────────────
+
+    #[test]
+    fn trailing_slash_stripped() {
+        let proxy = ProxyStreamFn::new("http://localhost:8080/", "token");
+        assert_eq!(proxy.base_url, "http://localhost:8080");
+    }
+
+    #[test]
+    fn no_trailing_slash_unchanged() {
+        let proxy = ProxyStreamFn::new("http://localhost:8080", "token");
+        assert_eq!(proxy.base_url, "http://localhost:8080");
+    }
 
     #[test]
     fn parse_start_event() {
@@ -533,18 +553,19 @@ mod tests {
 
     #[test]
     fn parse_error_event() {
-        let data = r#"{"type":"error","stop_reason":"error","error_message":"boom","usage":null}"#;
+        let data = r#"{"type":"error","stop_reason":"error","error_message":"boom","usage":null,"error_kind":"auth"}"#;
         let event = parse_sse_event_data(data);
         match event {
             AssistantMessageEvent::Error {
                 stop_reason,
                 error_message,
                 usage,
-                ..
+                error_kind,
             } => {
                 assert_eq!(stop_reason, StopReason::Error);
                 assert_eq!(error_message, "boom");
                 assert!(usage.is_none());
+                assert_eq!(error_kind, Some(StreamErrorKind::Auth));
             }
             other => panic!("expected Error, got {other:?}"),
         }
@@ -643,6 +664,107 @@ mod tests {
         let debug = format!("{proxy:?}");
         assert!(!debug.contains("secret-token"));
         assert!(debug.contains("[redacted]"));
+    }
+
+    /// Regression test for #543: transport [DONE] is not a valid substitute
+    /// for the proxy protocol's terminal done/error JSON event.
+    #[tokio::test]
+    async fn sse_done_sentinel_without_protocol_terminal_is_error() {
+        use futures::StreamExt as _;
+
+        // Simulate an SSE byte stream with a Start event, a text delta, and
+        // then a transport-level [DONE] sentinel without a protocol terminal.
+        let sse_body = concat!(
+            "data: {\"type\":\"start\"}\n\n",
+            "data: {\"type\":\"text_start\",\"content_index\":0}\n\n",
+            "data: {\"type\":\"text_delta\",\"content_index\":0,\"delta\":\"hi\"}\n\n",
+            "data: {\"type\":\"text_end\",\"content_index\":0}\n\n",
+            "data: [DONE]\n\n",
+        );
+
+        let byte_stream =
+            futures::stream::once(
+                async move { Ok::<_, reqwest::Error>(bytes::Bytes::from(sse_body)) },
+            );
+
+        let sse_stream = crate::sse::sse_data_lines(byte_stream);
+
+        let cancel = CancellationToken::new();
+        let event_stream = stream::unfold(
+            (Box::pin(sse_stream), cancel.clone(), false),
+            |(mut sse, token, mut done)| async move {
+                if done {
+                    return None;
+                }
+                tokio::select! {
+                    biased;
+                    () = token.cancelled() => {
+                        Some((AssistantMessageEvent::Error {
+                            stop_reason: StopReason::Aborted,
+                            error_message: "cancelled".to_owned(),
+                            usage: None,
+                            error_kind: None,
+                        }, (sse, token, true)))
+                    }
+                    item = sse.next() => {
+                        match item {
+                            None => {
+                                done = true;
+                                Some((
+                                    AssistantMessageEvent::error_network("SSE stream ended unexpectedly"),
+                                    (sse, token, done),
+                                ))
+                            }
+                            Some(SseLine::Done) => {
+                                done = true;
+                                Some((
+                                    AssistantMessageEvent::error_network(
+                                        "network error: proxy SSE transport ended before protocol terminal event",
+                                    ),
+                                    (sse, token, done),
+                                ))
+                            }
+                            Some(SseLine::Data(data)) => {
+                                let parsed = parse_sse_event_data(&data);
+                                done = is_terminal_event(&parsed);
+                                Some((parsed, (sse, token, done)))
+                            }
+                            Some(SseLine::TransportError(msg)) => Some((
+                                AssistantMessageEvent::error_network(format!("network error: {msg}")),
+                                (sse, token, true),
+                            )),
+                            Some(_) => Some((AssistantMessageEvent::error_network(
+                                "unexpected SSE line",
+                            ), (sse, token, true))),
+                        }
+                    }
+                }
+            },
+        );
+
+        let events: Vec<AssistantMessageEvent> = event_stream.collect().await;
+
+        // The last event must be a terminal network error because the proxy
+        // never emitted its protocol-level done/error JSON event.
+        let last = events.last().expect("stream should produce events");
+        assert!(
+            matches!(
+                last,
+                AssistantMessageEvent::Error {
+                    stop_reason: StopReason::Error,
+                    ..
+                }
+            ),
+            "expected Error as last event, got {last:?}"
+        );
+
+        match last {
+            AssistantMessageEvent::Error { error_message, .. } => assert!(
+                error_message.contains("protocol terminal event"),
+                "expected terminal-event diagnostic, got: {error_message}"
+            ),
+            other => panic!("expected Error, got {other:?}"),
+        }
     }
 
     #[tokio::test]

@@ -189,11 +189,13 @@ impl ConversationView {
                 }
             }
 
-            // Streaming cursor
-            if msg.is_streaming && blink_on {
+            // Streaming cursor — always occupies a line so rendered_lines stays
+            // stable across blink cycles (prevents scroll jitter).
+            if msg.is_streaming {
+                let cursor_char = if blink_on { "█" } else { " " };
                 all_lines.push(Line::from(vec![
                     Span::styled("│ ", Style::default().fg(role_color)),
-                    Span::styled("█", Style::default().fg(role_color)),
+                    Span::styled(cursor_char, Style::default().fg(role_color)),
                 ]));
             }
 

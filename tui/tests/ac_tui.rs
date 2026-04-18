@@ -3,14 +3,13 @@
 //! Tests T038–T043: role-based colors, inline diff coloring, context gauge
 //! thresholds, plan mode, and approval mode classification.
 //!
-//! Because the TUI crate keeps `theme` and `ui` modules private, these tests
-//! exercise the public API surface: `App`, `OperatingMode`, `ApprovalMode`,
-//! `MessageRole`, `AgentStatus`, `DisplayMessage`, and `TuiConfig`.
+//! Because the TUI crate keeps its implementation modules private, these tests
+//! exercise the supported crate-root API surface: `App`, `OperatingMode`,
+//! `ApprovalMode`, `MessageRole`, `AgentStatus`, `DisplayMessage`, and
+//! `TuiConfig`.
 
 use swink_agent::ApprovalMode;
-use swink_agent_tui::App;
-use swink_agent_tui::app::{AgentStatus, DisplayMessage, MessageRole, OperatingMode};
-use swink_agent_tui::config::TuiConfig;
+use swink_agent_tui::{AgentStatus, App, DisplayMessage, MessageRole, OperatingMode, TuiConfig};
 
 // ---------------------------------------------------------------------------
 // Regression: credentials and wizard modules are gated behind `cli` feature
@@ -276,7 +275,7 @@ fn operating_mode_field_is_writable() {
 #[test]
 fn default_approval_mode_is_smart() {
     let app = make_app();
-    assert_eq!(app.approval_mode, ApprovalMode::Smart);
+    assert_eq!(app.approval_mode(), ApprovalMode::Smart);
 }
 
 #[test]
@@ -296,13 +295,10 @@ fn approval_mode_variants_are_distinct() {
 }
 
 #[test]
-fn approval_mode_field_is_writable() {
-    let mut app = make_app();
-    app.approval_mode = ApprovalMode::Smart;
-    assert_eq!(app.approval_mode, ApprovalMode::Smart);
-
-    app.approval_mode = ApprovalMode::Bypassed;
-    assert_eq!(app.approval_mode, ApprovalMode::Bypassed);
+fn approval_mode_is_readable() {
+    let app = make_app();
+    // Default is Smart (no agent installed).
+    assert_eq!(app.approval_mode(), ApprovalMode::Smart);
 }
 
 #[test]
@@ -314,8 +310,6 @@ fn session_trusted_tools_starts_empty() {
 #[test]
 fn session_trusted_tools_tracks_tool_names() {
     let mut app = make_app();
-    app.approval_mode = ApprovalMode::Smart;
-
     app.session_trusted_tools.insert("ReadFile".to_string());
     app.session_trusted_tools.insert("ListDir".to_string());
 
@@ -333,7 +327,6 @@ fn smart_mode_trust_semantics() {
     // Tools NOT in the set require approval prompts.
     // This mirrors the logic in `handle_approval_request`.
     let mut app = make_app();
-    app.approval_mode = ApprovalMode::Smart;
     app.session_trusted_tools.insert("ReadFile".to_string());
 
     let trusted = app.session_trusted_tools.contains("ReadFile");

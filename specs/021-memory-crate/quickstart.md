@@ -13,14 +13,15 @@ swink-agent-memory = { path = "../memory" }
 ## Save and load a session (sync)
 
 ```rust
-use swink_agent_memory::{JsonlSessionStore, SessionMeta, SessionStore};
-use swink_agent_memory::time::{now_utc, format_session_id};
+use swink_agent_memory::{
+    JsonlSessionStore, SessionMeta, SessionStore, format_session_id, now_utc,
+};
 
 // Create a store backed by a local directory
 let store = JsonlSessionStore::new("./sessions".into())?;
 
 // Build session metadata
-let id = format_session_id(); // e.g., "20260320_143000"
+let id = format_session_id(); // e.g., "20260320_143000_6f00bfe3f7c54b2f86d780df58ccf0a1"
 let meta = SessionMeta {
     id: id.clone(),
     title: "Debug session".into(),

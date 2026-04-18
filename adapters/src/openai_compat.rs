@@ -18,11 +18,11 @@ use swink_agent::AgentTool;
 use swink_agent::ContentBlock;
 use swink_agent::{
     AssistantMessage as HarnessAssistantMessage, AssistantMessageEvent, Cost, StopReason,
-    ToolResultMessage, Usage, UserMessage,
+    StreamErrorKind, ToolResultMessage, Usage, UserMessage,
 };
 
 use crate::convert::{MessageConverter, extract_tool_schemas};
-use crate::sse::{SseAction, SseLine, sse_data_lines};
+use crate::sse::{SseAction, SseLine, sse_data_lines_with_callback};
 
 // ─── Request types ──────────────────────────────────────────────────────────
 
@@ -119,6 +119,10 @@ pub struct OaiDelta {
     pub content: Option<String>,
     #[serde(default)]
     pub tool_calls: Option<Vec<OaiToolCallDelta>>,
+    /// Reasoning/thinking content emitted by vLLM and other OpenAI-compatible
+    /// servers when serving thinking-capable models.
+    #[serde(default)]
+    pub reasoning_content: Option<String>,
 }
 
 /// A tool call delta in a streaming response.
@@ -147,6 +151,46 @@ pub struct OaiUsage {
     pub prompt_tokens: u64,
     #[serde(default)]
     pub completion_tokens: u64,
+    #[serde(default)]
+    pub total_tokens: Option<u64>,
+    #[serde(flatten)]
+    pub extra: HashMap<String, Value>,
+}
+
+impl OaiUsage {
+    fn to_usage(&self) -> Usage {
+        let mut extra = HashMap::new();
+        for (key, value) in &self.extra {
+            collect_numeric_usage_fields(key.clone(), value, &mut extra);
+        }
+
+        Usage {
+            input: self.prompt_tokens,
+            output: self.completion_tokens,
+            cache_read: 0,
+            cache_write: 0,
+            total: self
+                .total_tokens
+                .unwrap_or(self.prompt_tokens + self.completion_tokens),
+            extra,
+        }
+    }
+}
+
+fn collect_numeric_usage_fields(key: String, value: &Value, extra: &mut HashMap<String, u64>) {
+    match value {
+        Value::Number(number) => {
+            if let Some(value) = number.as_u64() {
+                extra.insert(key, value);
+            }
+        }
+        Value::Object(fields) => {
+            for (child_key, child_value) in fields {
+                collect_numeric_usage_fields(format!("{key}.{child_key}"), child_value, extra);
+            }
+        }
+        _ => {}
+    }
 }
 
 // ─── Tool call state tracking ───────────────────────────────────────────────
@@ -157,8 +201,10 @@ pub struct OaiUsage {
 /// [`BlockAccumulator`] when the tool call was first opened.  `arguments`
 /// accumulates the partial JSON across deltas.
 pub struct OaiToolCallEntry {
+    pub id: String,
+    pub name: Option<String>,
     pub arguments: String,
-    pub content_index: usize,
+    pub content_index: Option<usize>,
 }
 
 // ─── MessageConverter impl ──────────────────────────────────────────────────
@@ -286,6 +332,9 @@ pub struct OaiSseStreamState {
     pub usage: Option<Usage>,
     /// Saved stop reason from `finish_reason`; emitted with `Done` on `[DONE]`.
     pub stop_reason: Option<StopReason>,
+    /// Terminal provider error captured from a finish reason that should not
+    /// be downgraded into a normal `Done` event.
+    pub terminal_error: Option<AssistantMessageEvent>,
 }
 
 impl crate::finalize::StreamFinalize for OaiSseStreamState {
@@ -308,20 +357,30 @@ pub fn process_oai_chunk(
     provider: &str,
 ) {
     if let Some(u) = &chunk.usage {
-        state.usage = Some(Usage {
-            input: u.prompt_tokens,
-            output: u.completion_tokens,
-            cache_read: 0,
-            cache_write: 0,
-            total: u.prompt_tokens + u.completion_tokens,
-            extra: HashMap::new(),
-        });
+        state.usage = Some(u.to_usage());
     }
 
     for choice in &chunk.choices {
+        // ── Reasoning / thinking content (vLLM, etc.) ──────────────────
+        if let Some(reasoning) = &choice.delta.reasoning_content
+            && !reasoning.is_empty()
+        {
+            if let Some(ev) = state.blocks.ensure_thinking_open() {
+                events.push(ev);
+            }
+            if let Some(ev) = state.blocks.thinking_delta(reasoning.clone()) {
+                events.push(ev);
+            }
+        }
+
+        // ── Regular text content ───────────────────────────────────────
         if let Some(content) = &choice.delta.content
             && !content.is_empty()
         {
+            // Transition from thinking → text: close the thinking block.
+            if let Some(ev) = state.blocks.close_thinking(None) {
+                events.push(ev);
+            }
             if let Some(ev) = state.blocks.ensure_text_open() {
                 events.push(ev);
             }
@@ -330,7 +389,12 @@ pub fn process_oai_chunk(
             }
         }
 
+        // ── Tool calls ────────────────────────────────────────────────
         if let Some(tool_calls) = &choice.delta.tool_calls {
+            // Close thinking if still open when tool calls arrive.
+            if let Some(ev) = state.blocks.close_thinking(None) {
+                events.push(ev);
+            }
             if let Some(ev) = state.blocks.close_text() {
                 events.push(ev);
             }
@@ -342,10 +406,23 @@ pub fn process_oai_chunk(
 
         if let Some(reason) = &choice.finish_reason {
             if reason == "content_filter" {
+                flush_pending_oai_tool_calls(state, events);
                 events.extend(crate::finalize::finalize_blocks(state));
-                events.push(AssistantMessageEvent::error_content_filtered(format!(
-                    "{provider} response stopped by content filter"
-                )));
+                state.terminal_error = Some(AssistantMessageEvent::error_content_filtered(
+                    format!("{provider} response stopped by content filter"),
+                ));
+                return;
+            }
+
+            if provider == "Mistral" && reason == "error" {
+                flush_pending_oai_tool_calls(state, events);
+                events.extend(crate::finalize::finalize_blocks(state));
+                state.terminal_error = Some(AssistantMessageEvent::Error {
+                    stop_reason: StopReason::Error,
+                    error_message: "Mistral reported finish_reason=error".to_string(),
+                    usage: state.usage.clone(),
+                    error_kind: Some(StreamErrorKind::Network),
+                });
                 return;
             }
 
@@ -355,8 +432,8 @@ pub fn process_oai_chunk(
                 _ => StopReason::Stop,
             };
 
+            flush_pending_oai_tool_calls(state, events);
             events.extend(crate::finalize::finalize_blocks(state));
-
             state.stop_reason = Some(stop_reason);
         }
     }
@@ -370,56 +447,123 @@ fn process_oai_tool_call_delta(
     provider: &str,
 ) {
     let tc_index = tc_delta.index;
+    let mut emit_delta = None;
+    let mut open_tool_call = None;
 
-    if let std::collections::hash_map::Entry::Vacant(entry) = state.tool_calls.entry(tc_index) {
-        let id = tc_delta
-            .id
-            .clone()
-            .unwrap_or_else(|| format!("{provider}-tool-{tc_index}"));
-        let name = tc_delta
+    {
+        let tc_entry = state
+            .tool_calls
+            .entry(tc_index)
+            .or_insert_with(|| OaiToolCallEntry {
+                id: tc_delta
+                    .id
+                    .clone()
+                    .unwrap_or_else(|| format!("{provider}-tool-{tc_index}")),
+                name: None,
+                arguments: String::new(),
+                content_index: None,
+            });
+
+        if tc_entry.content_index.is_none()
+            && let Some(id) = &tc_delta.id
+        {
+            tc_entry.id.clone_from(id);
+        }
+
+        if let Some(name) = tc_delta
             .function
             .as_ref()
-            .and_then(|f| f.name.clone())
-            .unwrap_or_default();
+            .and_then(|f| f.name.as_ref())
+            .filter(|name| !name.is_empty())
+        {
+            tc_entry.name = Some(name.clone());
+        }
+
+        if let Some(args) = tc_delta
+            .function
+            .as_ref()
+            .and_then(|f| f.arguments.as_ref())
+            && !args.is_empty()
+        {
+            tc_entry.arguments.push_str(args);
+            if let Some(content_index) = tc_entry.content_index {
+                emit_delta = Some((content_index, args.clone()));
+            }
+        }
+
+        if tc_entry.content_index.is_none()
+            && let Some(name) = tc_entry.name.clone()
+        {
+            open_tool_call = Some((tc_entry.id.clone(), name, tc_entry.arguments.clone()));
+        }
+    }
+
+    if let Some((id, name, buffered_arguments)) = open_tool_call {
+        let (content_index, start_ev) = state.blocks.open_tool_call(id, name);
+        events.push(start_ev);
+
+        if !buffered_arguments.is_empty() {
+            events.push(crate::block_accumulator::BlockAccumulator::tool_call_delta(
+                content_index,
+                buffered_arguments,
+            ));
+        }
+
+        let tc_entry = state
+            .tool_calls
+            .get_mut(&tc_index)
+            .expect("entry exists after opening");
+        tc_entry.content_index = Some(content_index);
+        return;
+    }
+
+    if let Some((content_index, args)) = emit_delta {
+        events.push(crate::block_accumulator::BlockAccumulator::tool_call_delta(
+            content_index,
+            args,
+        ));
+    }
+}
+
+fn flush_pending_oai_tool_calls(
+    state: &mut OaiSseStreamState,
+    events: &mut Vec<AssistantMessageEvent>,
+) {
+    let mut pending_indices: Vec<_> = state
+        .tool_calls
+        .iter()
+        .filter_map(|(tc_index, entry)| entry.content_index.is_none().then_some(*tc_index))
+        .collect();
+    pending_indices.sort_unstable();
+
+    for tc_index in pending_indices {
+        let (id, name, arguments) = {
+            let entry = state
+                .tool_calls
+                .get(&tc_index)
+                .expect("pending entry should exist");
+            (
+                entry.id.clone(),
+                entry.name.clone().unwrap_or_default(),
+                entry.arguments.clone(),
+            )
+        };
 
         let (content_index, start_ev) = state.blocks.open_tool_call(id, name);
         events.push(start_ev);
 
-        entry.insert(OaiToolCallEntry {
-            arguments: String::new(),
-            content_index,
-        });
-
-        if let Some(args) = tc_delta
-            .function
-            .as_ref()
-            .and_then(|f| f.arguments.as_ref())
-            && !args.is_empty()
-        {
-            let tc_entry = state.tool_calls.get_mut(&tc_index).expect("just inserted");
-            tc_entry.arguments.push_str(args);
+        if !arguments.is_empty() {
             events.push(crate::block_accumulator::BlockAccumulator::tool_call_delta(
                 content_index,
-                args.clone(),
+                arguments,
             ));
         }
-    } else {
-        let tc_entry = state
+
+        let entry = state
             .tool_calls
             .get_mut(&tc_index)
-            .expect("entry exists per condition");
-        if let Some(args) = tc_delta
-            .function
-            .as_ref()
-            .and_then(|f| f.arguments.as_ref())
-            && !args.is_empty()
-        {
-            tc_entry.arguments.push_str(args);
-            events.push(crate::block_accumulator::BlockAccumulator::tool_call_delta(
-                tc_entry.content_index,
-                args.clone(),
-            ));
-        }
+            .expect("pending entry should still exist");
+        entry.content_index = Some(content_index);
     }
 }
 
@@ -434,8 +578,9 @@ pub fn parse_oai_sse_stream(
     response: reqwest::Response,
     cancellation_token: CancellationToken,
     provider: &'static str,
+    on_raw_payload: Option<swink_agent::OnRawPayload>,
 ) -> Pin<Box<dyn Stream<Item = AssistantMessageEvent> + Send>> {
-    let line_stream = sse_data_lines(response.bytes_stream());
+    let line_stream = sse_data_lines_with_callback(response.bytes_stream(), on_raw_payload);
 
     crate::sse::sse_adapter_stream(
         line_stream,
@@ -444,8 +589,12 @@ pub fn parse_oai_sse_stream(
         "operation cancelled",
         move |item, state| match item {
             None => {
-                let mut events = crate::finalize::finalize_blocks(state);
-                if let Some(stop_reason) = state.stop_reason.take() {
+                let mut events = Vec::new();
+                flush_pending_oai_tool_calls(state, &mut events);
+                events.extend(crate::finalize::finalize_blocks(state));
+                if let Some(error) = state.terminal_error.take() {
+                    events.push(error);
+                } else if let Some(stop_reason) = state.stop_reason.take() {
                     let usage = state.usage.take();
                     events.push(AssistantMessageEvent::Done {
                         stop_reason,
@@ -460,14 +609,20 @@ pub fn parse_oai_sse_stream(
                 SseAction::Done(events)
             }
             Some(SseLine::Done) => {
-                let mut events = crate::finalize::finalize_blocks(state);
-                let stop_reason = state.stop_reason.take().unwrap_or(StopReason::Stop);
-                let usage = state.usage.take();
-                events.push(AssistantMessageEvent::Done {
-                    stop_reason,
-                    usage: usage.unwrap_or_default(),
-                    cost: Cost::default(),
-                });
+                let mut events = Vec::new();
+                flush_pending_oai_tool_calls(state, &mut events);
+                events.extend(crate::finalize::finalize_blocks(state));
+                if let Some(error) = state.terminal_error.take() {
+                    events.push(error);
+                } else {
+                    let stop_reason = state.stop_reason.take().unwrap_or(StopReason::Stop);
+                    let usage = state.usage.take();
+                    events.push(AssistantMessageEvent::Done {
+                        stop_reason,
+                        usage: usage.unwrap_or_default(),
+                        cost: Cost::default(),
+                    });
+                }
                 SseAction::Done(events)
             }
             Some(SseLine::Data(data)) => {
@@ -475,7 +630,9 @@ pub fn parse_oai_sse_stream(
                     Ok(c) => c,
                     Err(e) => {
                         error!(error = %e, "{provider} JSON parse error");
-                        let mut events = crate::finalize::finalize_blocks(state);
+                        let mut events = Vec::new();
+                        flush_pending_oai_tool_calls(state, &mut events);
+                        events.extend(crate::finalize::finalize_blocks(state));
                         events.push(AssistantMessageEvent::error_network(format!(
                             "{provider} JSON parse error: {e}",
                         )));
@@ -485,10 +642,17 @@ pub fn parse_oai_sse_stream(
 
                 let mut events = Vec::new();
                 process_oai_chunk(&chunk, state, &mut events, provider);
-                SseAction::Continue(events)
+                if let Some(error) = state.terminal_error.take() {
+                    events.push(error);
+                    SseAction::Done(events)
+                } else {
+                    SseAction::Continue(events)
+                }
             }
             Some(SseLine::TransportError(message)) => {
-                let mut events = crate::finalize::finalize_blocks(state);
+                let mut events = Vec::new();
+                flush_pending_oai_tool_calls(state, &mut events);
+                events.extend(crate::finalize::finalize_blocks(state));
                 events.push(AssistantMessageEvent::error_network(format!(
                     "{provider} {message}",
                 )));
@@ -497,4 +661,243 @@ pub fn parse_oai_sse_stream(
             Some(_) => SseAction::Skip,
         },
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Helper: create an `OaiChunk` with one choice containing the given delta.
+    fn chunk_with_delta(delta: OaiDelta, finish_reason: Option<&str>) -> OaiChunk {
+        OaiChunk {
+            choices: vec![OaiChoice {
+                delta,
+                finish_reason: finish_reason.map(String::from),
+            }],
+            usage: None,
+        }
+    }
+
+    #[test]
+    fn reasoning_content_emits_thinking_events() {
+        let mut state = OaiSseStreamState::default();
+        let mut events = Vec::new();
+
+        // First reasoning chunk → ThinkingStart + ThinkingDelta
+        let chunk = chunk_with_delta(
+            OaiDelta {
+                reasoning_content: Some("Let me think".to_string()),
+                ..Default::default()
+            },
+            None,
+        );
+        process_oai_chunk(&chunk, &mut state, &mut events, "test");
+
+        assert_eq!(events.len(), 2);
+        assert!(matches!(
+            &events[0],
+            AssistantMessageEvent::ThinkingStart { content_index: 0 }
+        ));
+        assert!(
+            matches!(&events[1], AssistantMessageEvent::ThinkingDelta { content_index: 0, delta } if delta == "Let me think")
+        );
+
+        // Second reasoning chunk → only ThinkingDelta (no new Start)
+        events.clear();
+        let chunk = chunk_with_delta(
+            OaiDelta {
+                reasoning_content: Some(" more".to_string()),
+                ..Default::default()
+            },
+            None,
+        );
+        process_oai_chunk(&chunk, &mut state, &mut events, "test");
+
+        assert_eq!(events.len(), 1);
+        assert!(
+            matches!(&events[0], AssistantMessageEvent::ThinkingDelta { content_index: 0, delta } if delta == " more")
+        );
+    }
+
+    #[test]
+    fn reasoning_to_content_transition_closes_thinking() {
+        let mut state = OaiSseStreamState::default();
+        let mut events = Vec::new();
+
+        // Reasoning chunk
+        let chunk = chunk_with_delta(
+            OaiDelta {
+                reasoning_content: Some("thinking...".to_string()),
+                ..Default::default()
+            },
+            None,
+        );
+        process_oai_chunk(&chunk, &mut state, &mut events, "test");
+        assert_eq!(events.len(), 2); // ThinkingStart + ThinkingDelta
+
+        // Now regular content arrives → should close thinking, then open text
+        events.clear();
+        let chunk = chunk_with_delta(
+            OaiDelta {
+                content: Some("Hello".to_string()),
+                ..Default::default()
+            },
+            None,
+        );
+        process_oai_chunk(&chunk, &mut state, &mut events, "test");
+
+        // ThinkingEnd + TextStart + TextDelta
+        assert_eq!(events.len(), 3);
+        assert!(matches!(
+            &events[0],
+            AssistantMessageEvent::ThinkingEnd {
+                content_index: 0,
+                ..
+            }
+        ));
+        assert!(matches!(
+            &events[1],
+            AssistantMessageEvent::TextStart { content_index: 1 }
+        ));
+        assert!(matches!(
+            &events[2],
+            AssistantMessageEvent::TextDelta { content_index: 1, delta } if delta == "Hello"
+        ));
+    }
+
+    #[test]
+    fn reasoning_to_tool_call_closes_thinking() {
+        let mut state = OaiSseStreamState::default();
+        let mut events = Vec::new();
+
+        // Reasoning chunk
+        let chunk = chunk_with_delta(
+            OaiDelta {
+                reasoning_content: Some("planning...".to_string()),
+                ..Default::default()
+            },
+            None,
+        );
+        process_oai_chunk(&chunk, &mut state, &mut events, "test");
+        events.clear();
+
+        // Tool call arrives
+        let chunk = chunk_with_delta(
+            OaiDelta {
+                tool_calls: Some(vec![OaiToolCallDelta {
+                    index: 0,
+                    id: Some("call_1".to_string()),
+                    function: Some(OaiFunctionDelta {
+                        name: Some("my_tool".to_string()),
+                        arguments: Some(r#"{"a":1}"#.to_string()),
+                    }),
+                }]),
+                ..Default::default()
+            },
+            None,
+        );
+        process_oai_chunk(&chunk, &mut state, &mut events, "test");
+
+        // First event should be ThinkingEnd
+        assert!(matches!(
+            &events[0],
+            AssistantMessageEvent::ThinkingEnd {
+                content_index: 0,
+                ..
+            }
+        ));
+        // Then ToolCallStart
+        assert!(matches!(
+            &events[1],
+            AssistantMessageEvent::ToolCallStart {
+                content_index: 1,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn chunks_without_reasoning_work_normally() {
+        let mut state = OaiSseStreamState::default();
+        let mut events = Vec::new();
+
+        // Regular text chunk
+        let chunk = chunk_with_delta(
+            OaiDelta {
+                content: Some("Hello world".to_string()),
+                ..Default::default()
+            },
+            None,
+        );
+        process_oai_chunk(&chunk, &mut state, &mut events, "test");
+
+        assert_eq!(events.len(), 2); // TextStart + TextDelta
+        assert!(matches!(
+            &events[0],
+            AssistantMessageEvent::TextStart { content_index: 0 }
+        ));
+        assert!(matches!(
+            &events[1],
+            AssistantMessageEvent::TextDelta { content_index: 0, delta } if delta == "Hello world"
+        ));
+    }
+
+    #[test]
+    fn empty_reasoning_content_ignored() {
+        let mut state = OaiSseStreamState::default();
+        let mut events = Vec::new();
+
+        let chunk = chunk_with_delta(
+            OaiDelta {
+                reasoning_content: Some(String::new()),
+                ..Default::default()
+            },
+            None,
+        );
+        process_oai_chunk(&chunk, &mut state, &mut events, "test");
+
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn null_reasoning_content_ignored() {
+        let mut state = OaiSseStreamState::default();
+        let mut events = Vec::new();
+
+        let chunk = chunk_with_delta(
+            OaiDelta {
+                reasoning_content: None,
+                content: Some("text".to_string()),
+                ..Default::default()
+            },
+            None,
+        );
+        process_oai_chunk(&chunk, &mut state, &mut events, "test");
+
+        // Should just get text events, no thinking
+        assert_eq!(events.len(), 2);
+        assert!(matches!(
+            &events[0],
+            AssistantMessageEvent::TextStart { content_index: 0 }
+        ));
+    }
+
+    #[test]
+    fn reasoning_content_deserialized_from_json() {
+        let json = r#"{
+            "choices": [{
+                "delta": {
+                    "reasoning_content": "step by step"
+                },
+                "finish_reason": null
+            }]
+        }"#;
+
+        let chunk: OaiChunk = serde_json::from_str(json).unwrap();
+        assert_eq!(chunk.choices.len(), 1);
+        assert_eq!(
+            chunk.choices[0].delta.reasoning_content.as_deref(),
+            Some("step by step")
+        );
+    }
 }

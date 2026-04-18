@@ -1,15 +1,17 @@
 [package]
 name = "swink-agent-mcp"
-version = "0.7.0"
-edition = "2024"
-rust-version = "1.88"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
 description = "MCP (Model Context Protocol) integration for swink-agent"
-license = "MIT OR Apache-2.0"
-repository = "https://github.com/SuperSwinkAI/Swink-Agent"
+license.workspace = true
+repository.workspace = true
 keywords = ["llm", "agent", "mcp", "tools", "protocol"]
+categories = ["development-tools", "network-programming"]
+readme = "../README.md"
 
 [dependencies]
-swink-agent = { path = "..", default-features = false }
+swink-agent = { path = "..", version = "0.7.9", default-features = false }
 rmcp = { version = "1.3", features = ["client", "client-side-sse", "transport-streamable-http-client", "transport-streamable-http-client-reqwest", "transport-child-process"] }
 reqwest = { workspace = true }
 tokio.workspace = true

@@ -78,6 +78,10 @@ A developer encounters various error conditions when communicating with the xAI 
 - xAI rate limiting (HTTP 429) is handled by the shared error classifier + core retry backoff strategy; no `Retry-After` header extraction (consistent with other adapters).
 - What happens when the xAI API returns an error format different from OpenAI's error schema?
 - xAI-specific model names (Grok variants) are handled via comprehensive model catalog presets covering all currently available models (Grok-2, Grok-2-mini, Grok-3, vision variants).
+- **Tool-call start timing**: The adapter buffers tool call data until both a `content_index` and a tool name are known before emitting `ToolCallStart`. A `ToolCallStart` event is never emitted with an empty or unknown tool name.
+- **`content_filter` finish reason is terminal**: When the provider returns `finish_reason: "content_filter"`, the adapter treats this as a terminal error condition and emits `AssistantMessageEvent::error_content_filtered()`. It does not fall through to the normal `StopReason::Stop` mapping.
+- **Shared transport layer**: This adapter is implemented atop a shared `openai_compat` module that handles SSE parsing, tool call accumulation, and finish-reason classification. The adapter provides provider-specific configuration (endpoint, auth, model mapping) to this shared shell.
+- **Base URL trailing slash normalization**: Trailing slashes on the configured base URL are stripped before constructing request paths, preventing double-slash errors (e.g., `https://api.openai.com/v1/` → `https://api.openai.com/v1`).
 
 ## Requirements *(mandatory)*
 

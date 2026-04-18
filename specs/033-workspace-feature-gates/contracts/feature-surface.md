@@ -51,12 +51,9 @@ pub fn remote_presets::*;
 
 | Feature | Forwards to | Description |
 |---------|------------|-------------|
-| `metal` | `mistralrs/metal` | Apple Metal GPU acceleration |
-| `cuda` | `mistralrs/cuda` | NVIDIA CUDA GPU acceleration |
-| `cudnn` | `mistralrs/cudnn` | NVIDIA cuDNN acceleration |
-| `flash-attn` | `mistralrs/flash-attn` | Flash Attention (implies cuda) |
-| `mkl` | `mistralrs/mkl` | Intel MKL math acceleration |
-| `accelerate` | `mistralrs/accelerate` | Apple Accelerate framework |
+| `metal` | `llama-cpp-2/metal` | Apple Metal GPU acceleration |
+| `cuda` | `llama-cpp-2/cuda` | NVIDIA CUDA GPU acceleration |
+| `vulkan` | `llama-cpp-2/vulkan` | Vulkan GPU acceleration |
 
 No default backend feature. Without any backend feature, CPU inference is used.
 

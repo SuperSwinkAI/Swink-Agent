@@ -1,12 +1,14 @@
 [package]
 name = "swink-agent-policies"
-version = "0.7.0"
-edition = "2024"
-rust-version = "1.88"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
 description = "Policy implementations for swink-agent"
-license = "MIT OR Apache-2.0"
-repository = "https://github.com/SuperSwinkAI/Swink-Agent"
+license.workspace = true
+repository.workspace = true
 keywords = ["llm", "agent", "policy", "security", "audit"]
+categories = ["development-tools", "security"]
+readme = "../README.md"
 
 [features]
 default = ["all"]
@@ -24,7 +26,7 @@ content-filter = ["regex"]
 audit = ["chrono", "serde", "serde_json", "unicode-truncate"]
 
 [dependencies]
-swink-agent = { path = "..", default-features = false }
+swink-agent = { path = "..", version = "0.7.9", default-features = false }
 regex = { workspace = true, optional = true }
 chrono = { workspace = true, optional = true }
 serde = { workspace = true, optional = true }

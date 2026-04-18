@@ -1,11 +1,11 @@
 [package]
 name = "swink-agent-adapters"
-version = "0.7.0"
-edition = "2024"
-rust-version = "1.88"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
 description = "LLM provider adapters for swink-agent"
-license = "MIT OR Apache-2.0"
-repository = "https://github.com/SuperSwinkAI/Swink-Agent"
+license.workspace = true
+repository.workspace = true
 readme = "../README.md"
 keywords = ["llm", "anthropic", "openai", "adapter", "streaming"]
 categories = ["development-tools", "api-bindings", "asynchronous"]
@@ -19,17 +19,20 @@ default = []
 full = ["all"]
 all = ["anthropic", "openai", "ollama", "gemini", "proxy", "azure", "bedrock", "mistral", "xai"]
 anthropic = []
-openai = []
+openai-compat = []
+openai = ["openai-compat"]
 ollama = []
 gemini = []
 proxy = []
 azure = []
 bedrock = ["dep:aws-credential-types", "dep:aws-sigv4", "dep:aws-smithy-eventstream", "dep:aws-smithy-runtime-api", "dep:aws-smithy-types"]
 mistral = []
-xai = ["openai"]
+xai = ["openai-compat"]
+__no_default_features_sentinel = []
 
 [dependencies]
-swink-agent = { path = "..", default-features = false }
+swink-agent = { path = "..", version = "0.7.9", default-features = false }
+swink-agent-auth = { path = "../auth", version = "0.7.9" }
 reqwest.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
@@ -47,6 +50,7 @@ aws-smithy-types = { workspace = true, optional = true }
 bytes.workspace = true
 
 [dev-dependencies]
+swink-agent = { path = "..", default-features = false, features = ["testkit"] }
 tokio = { workspace = true, features = ["full", "test-util"] }
 wiremock.workspace = true
 pretty_assertions.workspace = true

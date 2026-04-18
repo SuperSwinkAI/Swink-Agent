@@ -24,6 +24,9 @@ pub struct LoopState {
     pub last_assistant_message: Option<AssistantMessage>,
     /// Tool results from the last completed turn (for post-turn hook).
     pub last_tool_results: Vec<ToolResultMessage>,
+    /// Transfer chain tracking agent handoff sequence for safety enforcement.
+    /// Prevents circular transfers and enforces max-depth limits.
+    pub transfer_chain: crate::transfer::TransferChain,
 }
 
 // ─── TurnOutcome ────────────────────────────────────────────────────────────
@@ -78,6 +81,14 @@ pub enum ToolExecOutcome {
         steering_messages: Vec<AgentMessage>,
         tool_metrics: Vec<crate::metrics::ToolExecMetrics>,
         /// Messages injected by `PreDispatch` policies before the steering interrupt.
+        injected_messages: Vec<AgentMessage>,
+    },
+    Aborted {
+        /// Deterministic results collected before the abort signal, plus
+        /// synthetic cancellation results for unfinished tool calls.
+        results: Vec<ToolResultMessage>,
+        tool_metrics: Vec<crate::metrics::ToolExecMetrics>,
+        /// Messages injected by `PreDispatch` policies before cancellation.
         injected_messages: Vec<AgentMessage>,
     },
     ChannelClosed,

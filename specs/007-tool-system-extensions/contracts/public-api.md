@@ -185,6 +185,11 @@ impl FnTool {
     where
         F: Fn(Value, CancellationToken) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = AgentToolResult> + Send + 'static;
+    pub fn with_execute_typed<T, F, Fut>(mut self, f: F) -> Self
+    where
+        T: DeserializeOwned + JsonSchema + Send + 'static,
+        F: Fn(T, CancellationToken) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = AgentToolResult> + Send + 'static;
 }
 
 impl AgentTool for FnTool { ... }
@@ -203,6 +208,20 @@ impl BashTool {
 impl Default for BashTool { ... }
 impl AgentTool for BashTool { ... }  // name: "bash", requires_approval: true
 
+/// Surgical find-and-replace editing tool. Supports:
+/// - Multiple edits per call, applied top-to-bottom in-memory (fail-fast)
+/// - Exact match with whitespace-normalised fallback (trailing whitespace per line)
+/// - replace_all flag for replacing every occurrence
+/// - line_hint for disambiguating when old_string matches multiple times
+/// - expected_hash (SHA-256 hex) for stale-read detection
+/// - Atomic write via sibling temp file + rename
+pub struct EditFileTool { /* schema: Value */ }
+impl EditFileTool {
+    pub fn new() -> Self;
+}
+impl Default for EditFileTool { ... }
+impl AgentTool for EditFileTool { ... }  // name: "edit_file", requires_approval: true
+
 pub struct ReadFileTool { /* schema: Value */ }
 impl ReadFileTool {
     pub fn new() -> Self;
@@ -217,7 +236,7 @@ impl WriteFileTool {
 impl Default for WriteFileTool { ... }
 impl AgentTool for WriteFileTool { ... }  // name: "write_file", requires_approval: true
 
-/// Returns all built-in tools wrapped in Arc.
+/// Returns all built-in tools (bash, edit_file, read_file, write_file) wrapped in Arc.
 pub fn builtin_tools() -> Vec<Arc<dyn AgentTool>>;
 ```
 
@@ -239,7 +258,8 @@ pub use tool_execution_policy::{
 pub use fn_tool::FnTool;
 
 #[cfg(feature = "builtin-tools")]
-pub use tools::{BashTool, ReadFileTool, WriteFileTool, builtin_tools};
+pub use tools::{BashTool, EditFileTool, ReadFileTool, WriteFileTool, builtin_tools};
+// EditFileTool is individually constructable: EditFileTool::new() or Default::default()
 
 pub use tool_filter::{ToolFilter, ToolPattern};
 pub use noop_tool::NoopTool;

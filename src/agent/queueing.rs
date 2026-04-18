@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
 use crate::message_provider::MessageProvider;
-use crate::types::{AgentMessage, LlmMessage};
+use crate::types::AgentMessage;
 
 use super::{Agent, FollowUpMode, SteeringMode};
 
@@ -10,6 +10,10 @@ impl Agent {
     // ── Queue Management ─────────────────────────────────────────────────
 
     /// Push a steering message into the queue.
+    ///
+    /// The message is delivered to the agent at the next turn boundary — after
+    /// the current LLM response or tool-execution batch completes. This preserves
+    /// the agent's in-progress work rather than aborting it mid-generation.
     pub fn steer(&mut self, message: AgentMessage) {
         self.steering_queue
             .lock()
@@ -73,35 +77,45 @@ pub(super) struct QueueMessageProvider {
     pub(super) follow_up_queue: Arc<Mutex<VecDeque<AgentMessage>>>,
     pub(super) steering_mode: SteeringMode,
     pub(super) follow_up_mode: FollowUpMode,
+    pub(super) pending_message_snapshot: Arc<crate::pause_state::PendingMessageSnapshot>,
 }
 
 impl MessageProvider for QueueMessageProvider {
     fn poll_steering(&self) -> Vec<AgentMessage> {
-        drain_queue(
+        let drained = drain_queue(
             &self.steering_queue,
             self.steering_mode == SteeringMode::OneAtATime,
-        )
+        );
+        self.pending_message_snapshot.append(&drained);
+        drained
     }
 
     fn poll_follow_up(&self) -> Vec<AgentMessage> {
-        drain_queue(
+        let drained = drain_queue(
             &self.follow_up_queue,
             self.follow_up_mode == FollowUpMode::OneAtATime,
-        )
+        );
+        self.pending_message_snapshot.append(&drained);
+        drained
+    }
+
+    fn has_steering(&self) -> bool {
+        let guard = self
+            .steering_queue
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        !guard.is_empty()
     }
 }
 
-pub(super) fn llm_messages_from_queue(
+/// Drain the queue and return every queued [`AgentMessage`].
+pub(super) fn drain_messages_from_queue(
     queue: &Arc<Mutex<VecDeque<AgentMessage>>>,
-) -> Vec<LlmMessage> {
+) -> Vec<AgentMessage> {
     queue
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .iter()
-        .filter_map(|msg| match msg {
-            AgentMessage::Llm(llm) => Some(llm.clone()),
-            AgentMessage::Custom(_) => None,
-        })
+        .drain(..)
         .collect()
 }
 

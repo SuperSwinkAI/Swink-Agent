@@ -1,19 +1,22 @@
 [package]
 name = "swink-agent-macros"
-version = "0.7.0"
-edition = "2024"
-rust-version = "1.88"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
 description = "Proc macros for swink-agent: #[derive(ToolSchema)] and #[tool]"
-license = "MIT OR Apache-2.0"
-repository = "https://github.com/SuperSwinkAI/Swink-Agent"
+license.workspace = true
+repository.workspace = true
+keywords = ["llm", "agent", "macros", "proc-macro", "tools"]
+categories = ["development-tools", "development-tools::procedural-macro-helpers"]
+readme = "../README.md"
 
 [lib]
 proc-macro = true
 
 [dependencies]
-syn = { version = "2", features = ["full", "extra-traits"] }
-quote = "1"
-proc-macro2 = "1"
+syn = { workspace = true, features = ["full", "extra-traits"] }
+quote.workspace = true
+proc-macro2.workspace = true
 
 [dev-dependencies]
 swink-agent = { path = "..", default-features = false }

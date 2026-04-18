@@ -1,11 +1,11 @@
 [package]
 name = "swink-agent-tui"
-version = "0.7.1"
-edition = "2024"
-rust-version = "1.88"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
 description = "Interactive terminal UI for swink-agent"
-license = "MIT OR Apache-2.0"
-repository = "https://github.com/SuperSwinkAI/Swink-Agent"
+license.workspace = true
+repository.workspace = true
 readme = "../README.md"
 keywords = ["tui", "terminal", "llm", "agent", "chat"]
 categories = ["command-line-utilities", "development-tools"]
@@ -20,10 +20,10 @@ path = "src/main.rs"
 required-features = ["cli"]
 
 [dependencies]
-swink-agent = { path = "..", default-features = false, features = ["builtin-tools", "transfer"] }
-swink-agent-adapters = { path = "../adapters", default-features = false, features = ["anthropic", "openai", "ollama", "proxy"], optional = true }
-swink-agent-memory = { path = "../memory" }
-swink-agent-local-llm = { path = "../local-llm", optional = true }
+swink-agent = { path = "..", version = "0.7.9", default-features = false, features = ["builtin-tools", "transfer"] }
+swink-agent-adapters = { path = "../adapters", version = "0.7.9", default-features = false, features = ["anthropic", "openai", "ollama", "proxy"], optional = true }
+swink-agent-memory = { path = "../memory", version = "0.7.9" }
+swink-agent-local-llm = { path = "../local-llm", version = "0.7.9", optional = true }
 ratatui = "0.30"
 crossterm = { version = "0.29", features = ["event-stream"] }
 tokio.workspace = true
@@ -50,7 +50,7 @@ local = ["dep:swink-agent-local-llm"]
 
 [[example]]
 name = "custom_agent"
-required-features = ["local"]
+required-features = ["cli"]
 
 [dev-dependencies]
 swink-agent = { path = "..", default-features = false, features = ["testkit"] }

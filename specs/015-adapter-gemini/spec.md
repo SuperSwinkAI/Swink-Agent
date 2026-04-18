@@ -85,6 +85,10 @@ A developer encounters various error conditions when communicating with the Gemi
 - Image inputs are converted to Gemini's `inlineData` parts with the appropriate `mime_type`.
 - Tool definition schemas are passed through to Gemini as-is; unsupported schema features (e.g., `oneOf`, `$ref`) are the caller's responsibility — the Gemini API will reject invalid schemas.
 - When the conversation history contains thinking blocks, tool calls, or tool definitions, the adapter enables Gemini's thinking mode (`includeThoughts: true`) and streams thinking blocks as ThinkingStart/ThinkingDelta/ThinkingEnd events with `thoughtSignature`.
+- **Deterministic final tool delta ordering**: At stream finalization, pending tool call deltas are sorted by `content_index` before emission. This prevents argument corruption when Gemini rewrites argument snapshots across multiple streaming chunks (non-prefix changes).
+- **SAFETY finish reason is terminal**: When `finish_reason: "SAFETY"` is received, the adapter: (a) emits all pending tool call deltas, (b) closes any open text and thinking content blocks, (c) emits an `AssistantMessageEvent::error_content_filtered()` event, and (d) sets an internal `terminated` flag so no subsequent Done event is emitted. SAFETY is non-retryable and terminal — it does not fall through to normal stop-reason mapping.
+- **Cancellation**: When the stream is cancelled via `CancellationToken`, the adapter: (a) emits `StopReason::Aborted` (non-retryable), (b) closes any open text or thinking blocks, (c) emits an error event, and (d) does NOT emit a Done event. Cancellation is terminal.
+- **Aborted vs Error stop reasons**: Provider stop conditions representing user/caller cancellation map to `TurnEndReason::Aborted`. Conditions representing model or content errors (SAFETY, recitation, etc.) map to `TurnEndReason::Error`. These are distinct — callers should not treat them interchangeably.
 
 ## Requirements *(mandatory)*
 

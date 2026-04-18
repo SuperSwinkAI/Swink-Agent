@@ -28,6 +28,20 @@ pub trait MessageProvider: Send + Sync {
     /// Called when the model has finished a turn and no tool calls remain.
     /// Returning a non-empty vec triggers another outer-loop iteration.
     fn poll_follow_up(&self) -> Vec<AgentMessage>;
+
+    /// Non-draining check for pending steering messages.
+    ///
+    /// Used by tool-dispatch workers to detect steering interrupts early
+    /// without consuming queued messages — the authoritative drain happens
+    /// via [`poll_steering`](Self::poll_steering) in the interrupt collector.
+    ///
+    /// The default implementation returns `false`, so external providers
+    /// that only implement `poll_steering`/`poll_follow_up` will never
+    /// trigger a worker-initiated early interrupt. Built-in channel/queue
+    /// providers override this with a non-draining peek.
+    fn has_steering(&self) -> bool {
+        false
+    }
 }
 
 /// A [`MessageProvider`] built from two closures.
@@ -156,6 +170,14 @@ impl MessageProvider for ChannelMessageProvider {
     fn poll_follow_up(&self) -> Vec<AgentMessage> {
         Self::drain_receiver(&self.follow_up_rx)
     }
+
+    fn has_steering(&self) -> bool {
+        let guard = self
+            .steering_rx
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        !guard.is_empty()
+    }
 }
 
 /// A [`MessageProvider`] that combines two providers, draining both on each poll.
@@ -188,6 +210,10 @@ impl MessageProvider for ComposedMessageProvider {
         let mut msgs = self.primary.poll_follow_up();
         msgs.extend(self.secondary.poll_follow_up());
         msgs
+    }
+
+    fn has_steering(&self) -> bool {
+        self.primary.has_steering() || self.secondary.has_steering()
     }
 }
 

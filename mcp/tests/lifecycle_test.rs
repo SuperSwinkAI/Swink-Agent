@@ -1,4 +1,4 @@
-//! Lifecycle management tests for MCP integration (T039, T040, T042, T043).
+//! Lifecycle management tests for MCP integration (T039, T040, T041, T042, T043).
 
 mod common;
 
@@ -6,8 +6,12 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use swink_agent::AgentTool;
-use swink_agent_mcp::{McpConnection, McpManager, McpServerConfig, McpTool, McpTransport};
+use swink_agent::{AgentEvent, AgentTool, ContentBlock, SessionState};
+use swink_agent_mcp::{
+    McpConnection, McpConnectionStatus, McpManager, McpServerConfig, McpTool, McpTransport,
+};
+use tokio::sync::mpsc::unbounded_channel;
+use tokio::sync::oneshot;
 
 /// T039: Drop McpManager cleans up without hang or panic.
 ///
@@ -23,9 +27,7 @@ async fn drop_manager_cleans_up_without_panic() {
 
     assert!(!manager.tools().is_empty(), "should have tools before drop");
 
-    // Drop the manager — this exercises the Drop impl.
     drop(manager);
-    // If we reach here without hanging, cleanup succeeded.
 }
 
 /// T040: call_tool on a disconnected McpConnection returns an error immediately.
@@ -61,19 +63,59 @@ async fn call_tool_on_disconnected_connection_returns_error() {
     );
 }
 
+/// T041: `McpManager::shutdown()` disconnects shared connections even when
+/// exported tool handles are still cloned by the caller.
+#[tokio::test]
+async fn shutdown_disconnects_cloned_tool_handles() {
+    let conn = common::spawn_mock_connection("shared-shutdown-test", None, vec![]).await;
+    let mut manager =
+        McpManager::from_connections(vec![conn]).expect("manager creation should succeed");
+
+    let kept_tool = manager
+        .tools()
+        .into_iter()
+        .next()
+        .expect("manager should expose at least one tool");
+
+    tokio::time::timeout(Duration::from_secs(2), manager.shutdown())
+        .await
+        .expect("shutdown should complete even when tool handles are still alive");
+
+    let cancel = tokio_util::sync::CancellationToken::new();
+    let state = Arc::new(std::sync::RwLock::new(SessionState::default()));
+
+    let result = kept_tool
+        .execute(
+            "call-shutdown",
+            serde_json::json!({"text": "hello"}),
+            cancel,
+            None,
+            state,
+            None,
+        )
+        .await;
+
+    assert!(
+        result.is_error,
+        "retained tool handles should fail fast after manager shutdown"
+    );
+
+    let text = ContentBlock::extract_text(&result.content);
+    assert!(
+        text.contains("disconnected") || text.contains("active session"),
+        "shutdown should disconnect shared tool handles, got: {text}"
+    );
+}
+
 /// T042: Background monitor detects transport closure, updates status to
 /// Disconnected, and emits McpServerDisconnected on the event channel.
 ///
 /// We simulate a crash by properly cancelling the server's `RunningService`,
 /// which drops its side of the duplex transport and causes the client to see
-/// EOF — triggering `QuitReason::Closed` in the monitor task.
+/// EOF, triggering `QuitReason::Closed` in the monitor task.
 #[tokio::test]
 async fn monitor_detects_transport_close_and_emits_event() {
     use rmcp::service::ServiceExt;
-    use swink_agent::AgentEvent;
-    use swink_agent_mcp::{McpConnection, McpConnectionStatus, McpServerConfig, McpTransport};
-    use tokio::sync::mpsc::unbounded_channel;
-    use tokio::sync::oneshot;
 
     let (event_tx, mut event_rx) = unbounded_channel::<AgentEvent>();
 
@@ -82,10 +124,6 @@ async fn monitor_detects_transport_close_and_emits_event() {
     let mock_cfg = common::MockServerConfig::new(vec![]);
     let server = common::MockMcpServer::from_config(&mock_cfg);
 
-    // Signal channel: test → server task, to cancel the server RunningService.
-    // Aborting the outer task only detaches rmcp's internal I/O task (dropping
-    // JoinHandle detaches, doesn't abort), so the duplex stays open. We must
-    // explicitly cancel the RunningService to drop the transport.
     let (cancel_tx, cancel_rx) = oneshot::channel::<()>();
     let server_task = tokio::spawn(async move {
         let svc = server
@@ -93,7 +131,6 @@ async fn monitor_detects_transport_close_and_emits_event() {
             .await
             .expect("server should start");
         let _ = cancel_rx.await;
-        // cancel() calls ct.cancel() → internal loop breaks → server_stream dropped
         let _ = svc.cancel().await;
     });
 
@@ -124,11 +161,9 @@ async fn monitor_detects_transport_close_and_emits_event() {
         "should start Connected"
     );
 
-    // Simulate crash: cancel the server → drops server_stream → client sees EOF.
     let _ = cancel_tx.send(());
     let _ = server_task.await;
 
-    // Poll until the monitor detects QuitReason::Closed and updates status.
     let deadline = std::time::Instant::now() + Duration::from_secs(2);
     loop {
         if conn.status() == McpConnectionStatus::Disconnected {
@@ -147,7 +182,6 @@ async fn monitor_detects_transport_close_and_emits_event() {
         "monitor should have transitioned status to Disconnected"
     );
 
-    // The disconnect event should have been emitted.
     let event = event_rx
         .try_recv()
         .expect("McpServerDisconnected event should be in channel");
@@ -165,13 +199,11 @@ async fn monitor_detects_transport_close_and_emits_event() {
 /// returning an error AgentToolResult, not panicking or hanging.
 #[tokio::test]
 async fn mcp_tool_execute_on_disconnected_returns_error_result() {
-    // Get a real tool definition from the mock server.
     let mock_cfg = common::MockServerConfig::new(vec![]);
     let client = common::spawn_mock_server_with_client(&mock_cfg).await;
     let tools = client.peer().list_all_tools().await.unwrap();
     let echo_def = tools.iter().find(|t| t.name == "echo").unwrap();
 
-    // Create a disconnected connection.
     let config = McpServerConfig {
         name: "disconnected-server".into(),
         transport: McpTransport::Stdio {
@@ -187,7 +219,7 @@ async fn mcp_tool_execute_on_disconnected_returns_error_result() {
     let tool = McpTool::new(echo_def, None, "disconnected-server", false, conn);
 
     let cancel = tokio_util::sync::CancellationToken::new();
-    let state = Arc::new(std::sync::RwLock::new(swink_agent::SessionState::default()));
+    let state = Arc::new(std::sync::RwLock::new(SessionState::default()));
 
     let result = tool
         .execute(

@@ -11,26 +11,24 @@ use tokio_util::sync::CancellationToken;
 
 use swink_agent::{AgentContext, AssistantMessageEvent, ModelSpec, StreamFn, StreamOptions};
 
-use crate::OpenAiStreamFn;
+use crate::oai_transport::OaiAdapterShell;
 
 pub struct XAiStreamFn {
-    inner: OpenAiStreamFn,
+    shell: OaiAdapterShell,
 }
 
 impl XAiStreamFn {
     #[must_use]
     pub fn new(base_url: impl Into<String>, api_key: impl Into<String>) -> Self {
         Self {
-            inner: OpenAiStreamFn::new(base_url, api_key),
+            shell: OaiAdapterShell::new("xAI", base_url, api_key),
         }
     }
 }
 
 impl std::fmt::Debug for XAiStreamFn {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("XAiStreamFn")
-            .field("inner", &self.inner)
-            .finish()
+        self.shell.fmt_debug("XAiStreamFn", f)
     }
 }
 
@@ -42,7 +40,7 @@ impl StreamFn for XAiStreamFn {
         options: &'a StreamOptions,
         cancellation_token: CancellationToken,
     ) -> Pin<Box<dyn Stream<Item = AssistantMessageEvent> + Send + 'a>> {
-        self.inner
+        self.shell
             .stream(model, context, options, cancellation_token)
     }
 }

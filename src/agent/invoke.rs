@@ -12,6 +12,7 @@ use crate::agent_options::{ApproveToolFn, GetApiKeyFn};
 use crate::error::AgentError;
 use crate::loop_::{AgentEvent, AgentLoopConfig, agent_loop, agent_loop_continue};
 use crate::message_provider::MessageProvider;
+use crate::types::message_codec::clone_messages_for_send;
 use crate::types::{AgentMessage, AgentResult, ContentBlock, LlmMessage};
 use crate::util::now_timestamp;
 
@@ -29,6 +30,8 @@ struct LoopGuardStream {
     inner: Pin<Box<dyn Stream<Item = AgentEvent> + Send>>,
     loop_active: Arc<AtomicBool>,
     idle_notify: Arc<Notify>,
+    pending_message_snapshot: Arc<crate::pause_state::PendingMessageSnapshot>,
+    loop_context_snapshot: Arc<crate::pause_state::LoopContextSnapshot>,
     generation: u64,
     expected_generation: Arc<AtomicU64>,
 }
@@ -48,6 +51,8 @@ impl Drop for LoopGuardStream {
         // this guard's generation stale.
         if self.expected_generation.load(Ordering::Acquire) == self.generation {
             self.loop_active.store(false, Ordering::Release);
+            self.pending_message_snapshot.clear();
+            self.loop_context_snapshot.clear();
             self.idle_notify.notify_waiters();
         }
     }
@@ -227,6 +232,8 @@ impl Agent {
     ) -> Result<Pin<Box<dyn Stream<Item = AgentEvent> + Send>>, AgentError> {
         self.state.is_running = true;
         self.state.error = None;
+        self.pending_message_snapshot.clear();
+        self.loop_context_snapshot.clear();
         self.loop_active.store(true, Ordering::Release);
         let generation = self.loop_generation.fetch_add(1, Ordering::AcqRel) + 1;
 
@@ -254,6 +261,7 @@ impl Agent {
             msgs.extend(input);
             msgs
         };
+        let in_flight_messages = clone_messages_for_send(&messages_for_loop);
 
         let raw_stream = if is_continue {
             agent_loop_continue(messages_for_loop, system_prompt, config, token)
@@ -262,15 +270,17 @@ impl Agent {
         };
 
         self.in_flight_llm_messages = Some(in_flight_llm_messages);
+        self.in_flight_messages = Some(in_flight_messages);
 
-        let guarded: Pin<Box<dyn Stream<Item = AgentEvent> + Send>> =
-            Box::pin(LoopGuardStream {
-                inner: raw_stream,
-                loop_active: Arc::clone(&self.loop_active),
-                idle_notify: Arc::clone(&self.idle_notify),
-                generation,
-                expected_generation: Arc::clone(&self.loop_generation),
-            });
+        let guarded: Pin<Box<dyn Stream<Item = AgentEvent> + Send>> = Box::pin(LoopGuardStream {
+            inner: raw_stream,
+            loop_active: Arc::clone(&self.loop_active),
+            idle_notify: Arc::clone(&self.idle_notify),
+            pending_message_snapshot: Arc::clone(&self.pending_message_snapshot),
+            loop_context_snapshot: Arc::clone(&self.loop_context_snapshot),
+            generation,
+            expected_generation: Arc::clone(&self.loop_generation),
+        });
         Ok(guarded)
     }
 
@@ -293,6 +303,7 @@ impl Agent {
             follow_up_queue: Arc::clone(&self.follow_up_queue),
             steering_mode: self.steering_mode,
             follow_up_mode: self.follow_up_mode,
+            pending_message_snapshot: Arc::clone(&self.pending_message_snapshot),
         });
 
         let message_provider: Arc<dyn MessageProvider> =
@@ -306,6 +317,8 @@ impl Agent {
             };
 
         AgentLoopConfig {
+            agent_name: self.agent_name.clone(),
+            transfer_chain: self.transfer_chain.clone(),
             model: self.state.model.clone(),
             stream_options: self.stream_options.clone(),
             retry_strategy: Box::new(SharedRetryStrategy(Arc::clone(&self.retry_strategy))),
@@ -315,6 +328,8 @@ impl Agent {
             transform_context: transform,
             get_api_key: api_key_box,
             message_provider: Some(message_provider),
+            pending_message_snapshot: Arc::clone(&self.pending_message_snapshot),
+            loop_context_snapshot: Arc::clone(&self.loop_context_snapshot),
             approve_tool: self.approve_tool.as_ref().map(|a| {
                 let a = Arc::clone(a);
                 let b: Box<ApproveToolFn> = Box::new(move |req| a(req));

@@ -74,6 +74,11 @@ impl Agent {
         self.state.tools.len() < before
     }
 
+    /// Return the current approval mode.
+    pub const fn approval_mode(&self) -> ApprovalMode {
+        self.approval_mode
+    }
+
     /// Set the approval mode at runtime.
     pub const fn set_approval_mode(&mut self, mode: ApprovalMode) {
         self.approval_mode = mode;

@@ -5,8 +5,13 @@
 
 #![allow(dead_code)]
 
+use std::sync::{Arc, RwLock};
+
+use serde_json::json;
 use swink_agent::AgentTool;
+use swink_agent::{AgentToolResult, ContentBlock, SessionState};
 use swink_agent_macros::tool;
+use tokio_util::sync::CancellationToken;
 
 // ── schema from a simple two-param tool ─────────────────────────────────────
 
@@ -93,4 +98,51 @@ fn tool_attr_cancellation_token_excluded_from_schema() {
     // The regular param is still present.
     assert_eq!(schema["properties"]["message"]["type"], "string");
     assert!(required.contains(&serde_json::json!("message")));
+}
+
+#[tokio::test]
+async fn tool_attr_invalid_params_return_tool_error() {
+    let result = GreetTool
+        .execute(
+            "call-greet",
+            serde_json::json!({}),
+            tokio_util::sync::CancellationToken::new(),
+            None,
+            std::sync::Arc::new(std::sync::RwLock::new(swink_agent::SessionState::default())),
+            None,
+        )
+        .await;
+
+    assert!(result.is_error);
+    let text = ContentBlock::extract_text(&result.content);
+    assert!(text.contains("invalid parameters:"));
+    assert!(text.contains("missing field"));
+    assert!(text.contains("name") || text.contains("times"));
+}
+
+#[tokio::test]
+async fn tool_attr_invalid_type_params_return_tool_error() {
+    let result = GreetTool
+        .execute(
+            "call-1",
+            json!({ "name": "Ada", "times": "twice" }),
+            CancellationToken::new(),
+            None,
+            Arc::new(RwLock::new(SessionState::new())),
+            None,
+        )
+        .await;
+
+    assert!(result.is_error);
+    assert_eq!(
+        first_text(&result),
+        "invalid parameters: invalid type: string \"twice\", expected u32"
+    );
+}
+
+fn first_text(result: &AgentToolResult) -> &str {
+    match result.content.first() {
+        Some(ContentBlock::Text { text }) => text,
+        other => panic!("expected text content, got {other:?}"),
+    }
 }

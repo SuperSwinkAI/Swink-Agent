@@ -79,6 +79,8 @@ A developer wants to persist their conversation so they can resume it later. The
 3. **Given** a restored session, **When** the developer sends a new message, **Then** the agent continues the conversation with full history context.
 4. **Given** no saved sessions exist, **When** the developer attempts to load, **Then** a message indicates no sessions are available.
 
+**Custom message preservation**: When a saved session is loaded with `launch_with_session()`, the TUI supplies the agent's `CustomMessageRegistry` to the session store's `load()` method, ensuring `AgentMessage::Custom` messages survive the save/load/resume round trip.
+
 ---
 
 ### User Story 5 - Copy Conversation Content to Clipboard (Priority: P3)
@@ -108,6 +110,7 @@ A developer wants to share or save parts of the conversation by copying them to 
 - How does session save handle thousands of messages — streaming JSONL write line-by-line; no full buffering.
 - What if editor binary doesn't exist — falls back: `$EDITOR` → `$VISUAL` → `vi`.
 - How does #copy code behave with no code blocks — extracts zero blocks; shows feedback message.
+- **`TurnEndReason::Aborted` handling**: When the agent emits `TurnEndReason::Aborted` (user-initiated abort), the TUI displays this distinctly from an error stop — the status bar shows "ABORTED" and the streaming message is annotated with "[aborted]" rather than an error indicator.
 
 ## Requirements *(mandatory)*
 

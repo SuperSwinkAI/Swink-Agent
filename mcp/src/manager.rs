@@ -7,8 +7,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use swink_agent::AgentEvent;
-use swink_agent::AgentTool;
+use swink_agent::{AgentEvent, AgentTool};
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::warn;
 
@@ -94,31 +93,10 @@ impl McpManager {
 
         for connection in connections {
             let conn = Arc::new(connection);
-            let config = &conn.config;
-
-            for tool_def in &conn.discovered_tools {
-                // Apply tool filter if configured. Filter on original (unprefixed) name.
-                let (original_name, _, _) = convert::tool_definition(tool_def);
-                if let Some(ref filter) = config.tool_filter
-                    && !filter.matches(&original_name)
-                {
-                    continue;
-                }
-                let mcp_tool = McpTool::new(
-                    tool_def,
-                    config.tool_prefix.as_deref(),
-                    &config.name,
-                    config.requires_approval,
-                    Arc::clone(&conn),
-                );
-                let name = mcp_tool.name().to_string();
-                all_tools.push((name, config.name.clone(), Arc::new(mcp_tool)));
-            }
-
+            all_tools.extend(build_tools_for_connection(&conn));
             arc_connections.push(conn);
         }
 
-        // Check for name collisions across all servers.
         let tools = detect_collisions_and_collect(all_tools)?;
 
         Ok(Self {
@@ -131,7 +109,7 @@ impl McpManager {
 
     /// Connect to all configured servers, discover tools.
     ///
-    /// Servers that fail to connect are logged and skipped — the remaining
+    /// Servers that fail to connect are logged and skipped; the remaining
     /// servers' tools are still available. Returns an error only if a tool
     /// name collision is detected across servers.
     pub async fn connect_all(&mut self) -> Result<(), McpError> {
@@ -141,26 +119,7 @@ impl McpManager {
             match McpConnection::connect(config.clone(), self.event_tx.clone()).await {
                 Ok(connection) => {
                     let conn = Arc::new(connection);
-
-                    for tool_def in &conn.discovered_tools {
-                        // Apply tool filter if configured. Filter on original (unprefixed) name.
-                        let (original_name, _, _) = convert::tool_definition(tool_def);
-                        if let Some(ref filter) = config.tool_filter
-                            && !filter.matches(&original_name)
-                        {
-                            continue;
-                        }
-                        let mcp_tool = McpTool::new(
-                            tool_def,
-                            config.tool_prefix.as_deref(),
-                            &config.name,
-                            config.requires_approval,
-                            Arc::clone(&conn),
-                        );
-                        let name = mcp_tool.name().to_string();
-                        all_tools.push((name, config.name.clone(), Arc::new(mcp_tool)));
-                    }
-
+                    all_tools.extend(build_tools_for_connection(&conn));
                     self.connections.push(conn);
                 }
                 Err(e) => {
@@ -186,30 +145,17 @@ impl McpManager {
 
     /// Disconnect all servers and clean up resources.
     pub async fn shutdown(&mut self) {
-        // Drop tool references first so Arc refcount decreases.
         self.tools.clear();
 
         for conn in self.connections.drain(..) {
-            match Arc::try_unwrap(conn) {
-                Ok(c) => c.shutdown().await,
-                Err(arc) => {
-                    warn!(
-                        server = %arc.config.name,
-                        "MCP connection still referenced, cannot shut down cleanly"
-                    );
-                }
-            }
+            conn.shutdown().await;
         }
     }
 }
 
 impl Drop for McpManager {
     fn drop(&mut self) {
-        // Release tool Arc references so connection refcounts can decrease.
         self.tools.clear();
-        // Dropping Arc<McpConnection> releases connections.
-        // For stdio transport, rmcp's ChildWithCleanup terminates the subprocess on drop.
-        // For SSE transport, the HTTP connection is dropped.
         self.connections.clear();
     }
 }
@@ -246,4 +192,36 @@ fn detect_collisions_and_collect(
     }
 
     Ok(all_tools.into_iter().map(|(_, _, tool)| tool).collect())
+}
+
+fn build_tools_for_connection(
+    conn: &Arc<McpConnection>,
+) -> Vec<(String, String, Arc<dyn AgentTool>)> {
+    let config = &conn.config;
+
+    conn.discovered_tools
+        .iter()
+        .filter_map(|tool_def| {
+            let (original_name, _, _) = convert::tool_definition(tool_def);
+            if let Some(ref filter) = config.tool_filter
+                && !filter.matches(&original_name)
+            {
+                return None;
+            }
+
+            let mcp_tool = McpTool::new(
+                tool_def,
+                config.tool_prefix.as_deref(),
+                &config.name,
+                config.requires_approval,
+                Arc::clone(conn),
+            );
+            let name = mcp_tool.name().to_string();
+            Some((
+                name,
+                config.name.clone(),
+                Arc::new(mcp_tool) as Arc<dyn AgentTool>,
+            ))
+        })
+        .collect()
 }

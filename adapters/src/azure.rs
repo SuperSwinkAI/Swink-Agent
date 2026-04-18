@@ -5,7 +5,6 @@
 //! the shared transport pipeline from [`oai_transport`].
 
 use std::pin::Pin;
-use std::sync::{Arc, PoisonError, RwLock};
 use std::time::{Duration, Instant};
 
 use futures::stream::{self, Stream, StreamExt as _};
@@ -14,8 +13,9 @@ use tokio_util::sync::CancellationToken;
 use tracing::debug;
 
 use swink_agent::{AgentContext, AssistantMessageEvent, ModelSpec, StreamFn, StreamOptions};
+use swink_agent_auth::{ExpiringValue, SingleFlightTokenSource};
 
-use crate::oai_transport::{oai_send_and_parse, prepare_oai_request};
+use crate::oai_transport::{OaiAdapterShell, oai_send_and_parse, prepare_oai_request};
 
 /// Authentication method for Azure `OpenAI` deployments.
 #[derive(Clone)]
@@ -47,12 +47,6 @@ impl std::fmt::Debug for AzureAuth {
 /// Refresh tokens proactively 5 minutes before expiry.
 const REFRESH_MARGIN: Duration = Duration::from_secs(300);
 
-/// Cached `OAuth2` token for Entra ID authentication.
-struct CachedToken {
-    access_token: String,
-    expires_at: Instant,
-}
-
 /// Response from the Microsoft identity platform token endpoint.
 #[derive(Deserialize)]
 struct TokenResponse {
@@ -61,10 +55,9 @@ struct TokenResponse {
 }
 
 pub struct AzureStreamFn {
-    client: reqwest::Client,
-    base_url: String,
+    shell: OaiAdapterShell,
     auth: AzureAuth,
-    token_cache: Arc<RwLock<Option<CachedToken>>>,
+    token_source: SingleFlightTokenSource<String>,
     /// Override token endpoint URL (for testing). `None` = use Microsoft default.
     token_endpoint_override: Option<String>,
 }
@@ -72,11 +65,20 @@ pub struct AzureStreamFn {
 impl AzureStreamFn {
     #[must_use]
     pub fn new(base_url: impl Into<String>, auth: AzureAuth) -> Self {
+        let shell_api_key = match &auth {
+            AzureAuth::ApiKey(key) => key.clone(),
+            AzureAuth::EntraId { .. } => String::new(),
+        };
+
         Self {
-            client: reqwest::Client::new(),
-            base_url: base_url.into().trim_end_matches('/').to_string(),
+            shell: OaiAdapterShell::new_with_path(
+                "Azure",
+                base_url,
+                shell_api_key,
+                "/chat/completions",
+            ),
             auth,
-            token_cache: Arc::new(RwLock::new(None)),
+            token_source: SingleFlightTokenSource::new(REFRESH_MARGIN),
             token_endpoint_override: None,
         }
     }
@@ -92,21 +94,22 @@ impl AzureStreamFn {
 impl AzureStreamFn {
     /// Acquire a fresh token from the Microsoft identity platform.
     async fn acquire_token(
-        &self,
-        tenant_id: &str,
-        client_id: &str,
-        client_secret: &str,
-    ) -> Result<CachedToken, String> {
-        let token_url = self.token_url(tenant_id);
+        client: reqwest::Client,
+        token_url: String,
+        client_id: String,
+        client_secret: String,
+    ) -> Result<ExpiringValue<String>, String> {
         let params = [
-            ("grant_type", "client_credentials"),
+            ("grant_type", "client_credentials".to_string()),
             ("client_id", client_id),
             ("client_secret", client_secret),
-            ("scope", "https://cognitiveservices.azure.com/.default"),
+            (
+                "scope",
+                "https://cognitiveservices.azure.com/.default".to_string(),
+            ),
         ];
 
-        let resp = self
-            .client
+        let resp = client
             .post(&token_url)
             .form(&params)
             .send()
@@ -123,10 +126,10 @@ impl AzureStreamFn {
             .await
             .map_err(|e| format!("failed to parse token response: {e}"))?;
 
-        Ok(CachedToken {
-            access_token: token_resp.access_token,
-            expires_at: Instant::now() + Duration::from_secs(token_resp.expires_in),
-        })
+        Ok(ExpiringValue::new(
+            token_resp.access_token,
+            Instant::now() + Duration::from_secs(token_resp.expires_in),
+        ))
     }
 
     /// Get a valid token, refreshing if necessary.
@@ -136,32 +139,16 @@ impl AzureStreamFn {
         client_id: &str,
         client_secret: &str,
     ) -> Result<String, String> {
-        // Check cache first
-        {
-            let cache = self
-                .token_cache
-                .read()
-                .unwrap_or_else(PoisonError::into_inner);
-            if let Some(cached) = cache.as_ref()
-                && Instant::now() + REFRESH_MARGIN < cached.expires_at
-            {
-                return Ok(cached.access_token.clone());
-            }
-        }
+        let client = self.shell.client().clone();
+        let token_url = self.token_url(tenant_id);
+        let client_id = client_id.to_string();
+        let client_secret = client_secret.to_string();
 
-        // Acquire new token
-        let token = self
-            .acquire_token(tenant_id, client_id, client_secret)
-            .await?;
-        let access_token = token.access_token.clone();
-
-        // Update cache
-        *self
-            .token_cache
-            .write()
-            .unwrap_or_else(PoisonError::into_inner) = Some(token);
-
-        Ok(access_token)
+        self.token_source
+            .get_or_refresh(move || {
+                Self::acquire_token(client, token_url, client_id, client_secret)
+            })
+            .await
     }
 
     /// Build the token endpoint URL. Uses override if set, otherwise Microsoft default.
@@ -203,7 +190,7 @@ impl AzureStreamFn {
 impl std::fmt::Debug for AzureStreamFn {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AzureStreamFn")
-            .field("base_url", &self.base_url)
+            .field("base_url", &self.shell.base_url())
             .field("auth", &self.auth)
             .finish_non_exhaustive()
     }
@@ -235,7 +222,7 @@ fn azure_stream<'a>(
     cancellation_token: CancellationToken,
 ) -> impl Stream<Item = AssistantMessageEvent> + Send + 'a {
     stream::once(async move {
-        let url = format!("{}/chat/completions", azure.base_url);
+        let url = azure.shell.chat_completions_url();
         debug!(
             %url,
             model = %model.model_id,
@@ -243,21 +230,27 @@ fn azure_stream<'a>(
             "sending Azure request"
         );
 
-        let request = prepare_oai_request(&azure.client, &url, model, context, options);
+        let request = prepare_oai_request(azure.shell.client(), &url, model, context, options);
         let request = match azure.apply_auth(request, options).await {
             Ok(r) => r,
-            Err(event) => return stream::iter(vec![event]).left_stream(),
+            Err(event) => return stream::iter(crate::base::pre_stream_error(event)).left_stream(),
         };
 
-        oai_send_and_parse(request, "Azure", cancellation_token, |status, body| {
-            if is_content_filter_error(body) {
-                Some(AssistantMessageEvent::error_content_filtered(format!(
-                    "Azure content filter blocked request (HTTP {status})"
-                )))
-            } else {
-                None
-            }
-        })
+        oai_send_and_parse(
+            request,
+            azure.shell.provider(),
+            cancellation_token,
+            options.on_raw_payload.clone(),
+            |status, body| {
+                if is_content_filter_error(body) {
+                    Some(AssistantMessageEvent::error_content_filtered(format!(
+                        "Azure content filter blocked request (HTTP {status})"
+                    )))
+                } else {
+                    None
+                }
+            },
+        )
         .right_stream()
     })
     .flatten()

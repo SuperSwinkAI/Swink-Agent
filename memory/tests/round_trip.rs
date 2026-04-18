@@ -5,7 +5,9 @@ mod common;
 use std::io;
 
 use chrono::DateTime;
-use swink_agent::{LlmMessage, ModelSpec};
+use swink_agent::{
+    AgentMessage, CustomMessageRegistry, LlmMessage, ModelSpec, SerializedCustomMessage,
+};
 use swink_agent_memory::{
     InterruptState, JsonlSessionStore, LoadOptions, PendingToolCall, SessionEntry, SessionMeta,
     SessionStore,
@@ -481,6 +483,10 @@ fn corrupted_interrupt_returns_error() {
     let tmp = tempfile::tempdir().unwrap();
     let store = JsonlSessionStore::new(tmp.path().to_path_buf()).unwrap();
 
+    // Create a session file so the orphan check passes
+    let meta = sample_meta("corrupt_int", "Corrupt interrupt test");
+    store.save("corrupt_int", &meta, &[]).unwrap();
+
     // Write garbage to interrupt file
     std::fs::write(
         tmp.path().join("corrupt_int.interrupt.json"),
@@ -598,4 +604,83 @@ fn load_options_all_none_returns_full() {
     let options = LoadOptions::default();
     let (_, loaded) = store.load_with_options("filter_none", &options).unwrap();
     assert_eq!(loaded.len(), 3);
+}
+
+// --- Regression: custom messages survive save-load-save cycle (#444) ---
+
+/// Build a [`CustomMessageRegistry`] that restores [`SerializedCustomMessage`]
+/// by type name, mirroring the opaque round-trip path used by the TUI.
+fn serialized_custom_registry() -> CustomMessageRegistry {
+    let mut registry = CustomMessageRegistry::new();
+    registry.register(
+        "TestNote",
+        Box::new(|value| {
+            // Re-wrap into a SerializedCustomMessage so it round-trips.
+            Ok(Box::new(SerializedCustomMessage::new("TestNote", value)))
+        }),
+    );
+    registry
+}
+
+#[test]
+fn custom_messages_survive_save_load_save_cycle() {
+    let tmp = tempfile::tempdir().unwrap();
+    let store = JsonlSessionStore::new(tmp.path().to_path_buf()).unwrap();
+    let registry = serialized_custom_registry();
+
+    let meta = sample_meta("custom_rt", "Custom round-trip");
+    let custom = AgentMessage::Custom(Box::new(SerializedCustomMessage::new(
+        "TestNote",
+        serde_json::json!({"text": "remember this"}),
+    )));
+    let messages = vec![user_message("hello"), custom, assistant_message("hi")];
+
+    // First save
+    store.save("custom_rt", &meta, &messages).unwrap();
+
+    // Load WITH registry — custom messages must be present
+    let (loaded_meta, loaded_msgs) = store.load("custom_rt", Some(&registry)).unwrap();
+    assert_eq!(loaded_msgs.len(), 3, "custom message must not be dropped");
+    assert!(
+        matches!(&loaded_msgs[1], AgentMessage::Custom(_)),
+        "second message must be Custom"
+    );
+
+    // Verify the custom payload survived
+    if let AgentMessage::Custom(ref cm) = loaded_msgs[1] {
+        assert_eq!(cm.type_name(), Some("TestNote"));
+        let json = cm.to_json().expect("custom must serialize");
+        assert_eq!(json["text"], "remember this");
+    }
+
+    // Second save (simulates TUI auto-save after resume)
+    store.save("custom_rt", &loaded_meta, &loaded_msgs).unwrap();
+
+    // Third load — custom messages must still be present
+    let (_, reloaded) = store.load("custom_rt", Some(&registry)).unwrap();
+    assert_eq!(reloaded.len(), 3, "custom message lost on re-save");
+    assert!(matches!(&reloaded[1], AgentMessage::Custom(_)));
+}
+
+#[test]
+fn custom_messages_dropped_when_no_registry() {
+    let tmp = tempfile::tempdir().unwrap();
+    let store = JsonlSessionStore::new(tmp.path().to_path_buf()).unwrap();
+
+    let meta = sample_meta("custom_none", "No registry");
+    let custom = AgentMessage::Custom(Box::new(SerializedCustomMessage::new(
+        "TestNote",
+        serde_json::json!({"text": "ephemeral"}),
+    )));
+    let messages = vec![user_message("hello"), custom];
+
+    store.save("custom_none", &meta, &messages).unwrap();
+
+    // Load WITHOUT registry — custom messages are silently skipped (existing behavior)
+    let (_, loaded) = store.load("custom_none", None).unwrap();
+    assert_eq!(
+        loaded.len(),
+        1,
+        "custom message should be skipped without registry"
+    );
 }

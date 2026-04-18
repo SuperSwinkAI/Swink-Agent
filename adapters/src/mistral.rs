@@ -28,9 +28,8 @@ use swink_agent::{
     AgentContext, AgentMessage, AssistantMessageEvent, ModelSpec, StreamFn, StreamOptions,
 };
 
-use crate::base::AdapterBase;
 use crate::convert;
-use crate::oai_transport::oai_send_and_parse;
+use crate::oai_transport::{OaiAdapterShell, oai_send_and_parse};
 use crate::openai_compat::{OaiConverter, OaiMessage, build_oai_tools};
 
 /// Charset for generating Mistral-compatible 9-char tool call IDs.
@@ -44,7 +43,7 @@ const MISTRAL_ID_CHARSET: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQR
 /// tool call ID format, `max_tokens` naming, no `stream_options`,
 /// `model_length` finish reason, and message ordering constraints.
 pub struct MistralStreamFn {
-    base: AdapterBase,
+    shell: OaiAdapterShell,
 }
 
 impl MistralStreamFn {
@@ -57,17 +56,14 @@ impl MistralStreamFn {
     #[must_use]
     pub fn new(base_url: impl Into<String>, api_key: impl Into<String>) -> Self {
         Self {
-            base: AdapterBase::new(base_url.into().trim_end_matches('/').to_string(), api_key),
+            shell: OaiAdapterShell::new("Mistral", base_url, api_key),
         }
     }
 }
 
 impl std::fmt::Debug for MistralStreamFn {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("MistralStreamFn")
-            .field("base_url", &self.base.base_url)
-            .field("api_key", &"[REDACTED]")
-            .finish_non_exhaustive()
+        self.shell.fmt_debug("MistralStreamFn", f)
     }
 }
 
@@ -186,7 +182,7 @@ fn mistral_stream<'a>(
     stream::once(async move {
         let mut id_map = MistralIdMap::new();
 
-        let url = format!("{}/v1/chat/completions", mistral.base.base_url);
+        let url = mistral.shell.chat_completions_url();
         debug!(
             %url,
             model = %model.model_id,
@@ -208,15 +204,15 @@ fn mistral_stream<'a>(
             tool_choice,
         };
 
-        let api_key = options.api_key.as_deref().unwrap_or(&mistral.base.api_key);
-        let request = mistral
-            .base
-            .client
-            .post(&url)
-            .header("Authorization", format!("Bearer {api_key}"))
-            .json(&body);
+        let request = mistral.shell.post_json_request(&url, &body, options);
 
-        let raw_stream = oai_send_and_parse(request, "Mistral", cancellation_token, |_, _| None);
+        let raw_stream = oai_send_and_parse(
+            request,
+            mistral.shell.provider(),
+            cancellation_token,
+            options.on_raw_payload.clone(),
+            |_, _| None,
+        );
         normalize_response_stream(raw_stream, id_map)
     })
     .flatten()

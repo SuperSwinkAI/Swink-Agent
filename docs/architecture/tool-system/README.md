@@ -272,6 +272,7 @@ flowchart TB
 | `.with_requires_approval(bool)` | Mark the tool as requiring user approval before execution. |
 | `.with_execute(closure)` | Full signature: `(tool_call_id, params, cancel, on_update) -> Future<AgentToolResult>`. |
 | `.with_execute_simple(closure)` | Simplified: `(params, cancel) -> Future<AgentToolResult>`. Ignores tool call ID and update callback. |
+| `.with_execute_typed::<T>(closure)` | Derive the schema from `T` and deserialize params into `T` before execution. Returns `invalid parameters` on serde decode failure. |
 
 ### Example
 
@@ -284,10 +285,8 @@ use swink_agent::{AgentToolResult, FnTool};
 struct Params { city: String }
 
 let tool = FnTool::new("get_weather", "Weather", "Get weather for a city.")
-    .with_schema_for::<Params>()
-    .with_execute_simple(|params, _cancel| async move {
-        let city = params["city"].as_str().unwrap_or("unknown");
-        AgentToolResult::text(format!("72F in {city}"))
+    .with_execute_typed(|params: Params, _cancel| async move {
+        AgentToolResult::text(format!("72F in {}", params.city))
     });
 ```
 
@@ -326,10 +325,8 @@ struct LookupParams {
 }
 
 let tool = FnTool::new("lookup", "Lookup", "Look up a term in the glossary.")
-    .with_schema_for::<LookupParams>()
-    .with_execute_simple(|params, _cancel| async move {
-        let term = params["term"].as_str().unwrap_or("");
-        AgentToolResult::text(format!("Definition of '{term}': ..."))
+    .with_execute_typed(|params: LookupParams, _cancel| async move {
+        AgentToolResult::text(format!("Definition of '{}': ...", params.term))
     });
 ```
 

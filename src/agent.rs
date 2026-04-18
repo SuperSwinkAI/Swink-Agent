@@ -126,6 +126,55 @@ pub fn default_convert(msg: &AgentMessage) -> Option<LlmMessage> {
     }
 }
 
+type ModelStreamRegistry = Vec<(ModelSpec, Arc<dyn StreamFn>)>;
+
+fn available_models_and_stream_fns(
+    options: &AgentOptions,
+) -> (Vec<ModelSpec>, ModelStreamRegistry) {
+    let primary_model = options.model.clone();
+    let primary_stream_fn = Arc::clone(&options.stream_fn);
+    let mut available_models = vec![options.model.clone()];
+    available_models.extend(
+        options
+            .available_models
+            .iter()
+            .map(|(model, _): &(ModelSpec, _)| model.clone()),
+    );
+    let mut model_stream_fns = vec![(primary_model, primary_stream_fn)];
+    model_stream_fns.extend(
+        options
+            .available_models
+            .iter()
+            .map(|(model, stream_fn): &(ModelSpec, _)| (model.clone(), Arc::clone(stream_fn))),
+    );
+
+    (available_models, model_stream_fns)
+}
+
+#[cfg(feature = "plugins")]
+fn dispatch_plugin_on_init(agent: &Agent) {
+    // Dispatch on_init to each plugin in priority order (already sorted).
+    // Panics are caught and logged — the plugin's other contributions
+    // (policies, tools, event observers) remain active.
+    for plugin in &agent.plugins {
+        let name = plugin.name().to_owned();
+        let plugin_ref = Arc::clone(plugin);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            plugin_ref.on_init(agent);
+        }));
+        if let Err(cause) = result {
+            let msg = cause
+                .downcast_ref::<&str>()
+                .map(|s| (*s).to_owned())
+                .or_else(|| cause.downcast_ref::<String>().cloned())
+                .unwrap_or_else(|| "unknown panic".to_owned());
+            tracing::warn!(plugin = %name, error = %msg, "plugin on_init panicked");
+        }
+    }
+}
+
+#[cfg(not(feature = "plugins"))]
+const fn dispatch_plugin_on_init(_agent: &Agent) {}
 // ─── Agent ───────────────────────────────────────────────────────────────────
 
 /// Stateful wrapper over the agent loop.
@@ -156,6 +205,9 @@ pub struct Agent {
     structured_output_max_retries: usize,
     idle_notify: Arc<Notify>,
     in_flight_llm_messages: Option<Vec<AgentMessage>>,
+    in_flight_messages: Option<Vec<AgentMessage>>,
+    pending_message_snapshot: Arc<crate::pause_state::PendingMessageSnapshot>,
+    loop_context_snapshot: Arc<crate::pause_state::LoopContextSnapshot>,
     approve_tool: Option<ApproveToolArc>,
     approval_mode: ApprovalMode,
     pre_turn_policies: Vec<Arc<dyn crate::policy::PreTurnPolicy>>,
@@ -202,6 +254,11 @@ pub struct Agent {
     /// Registered plugins retained for runtime introspection (priority-sorted).
     #[cfg(feature = "plugins")]
     plugins: Vec<Arc<dyn crate::plugin::Plugin>>,
+    /// Optional agent name for transfer chain safety enforcement.
+    #[allow(clippy::struct_field_names)]
+    agent_name: Option<String>,
+    /// Optional transfer chain state carried from a previous handoff.
+    transfer_chain: Option<crate::transfer::TransferChain>,
 }
 
 impl Agent {
@@ -212,25 +269,9 @@ impl Agent {
         #[cfg(feature = "plugins")]
         let options = merge_plugin_contributions(options);
 
-        let primary_model = options.model.clone();
-        let primary_stream_fn = Arc::clone(&options.stream_fn);
-        let mut available_models = vec![options.model.clone()];
-        available_models.extend(
-            options
-                .available_models
-                .iter()
-                .map(|(m, _): &(ModelSpec, _)| m.clone()),
-        );
-        let mut model_stream_fns = vec![(primary_model, primary_stream_fn)];
-        model_stream_fns.extend(
-            options
-                .available_models
-                .iter()
-                .map(|(model, stream_fn): &(ModelSpec, _)| (model.clone(), Arc::clone(stream_fn))),
-        );
-
         // Compute the effective system prompt before partial moves.
         let effective_prompt = options.effective_system_prompt().to_owned();
+        let (available_models, model_stream_fns) = available_models_and_stream_fns(&options);
 
         // If a custom token counter is provided and no custom transform_context
         // was set, rebuild the default SlidingWindowTransformer with the counter.
@@ -270,6 +311,11 @@ impl Agent {
             structured_output_max_retries: options.structured_output_max_retries,
             idle_notify: Arc::new(Notify::new()),
             in_flight_llm_messages: None,
+            in_flight_messages: None,
+            pending_message_snapshot: Arc::new(
+                crate::pause_state::PendingMessageSnapshot::default(),
+            ),
+            loop_context_snapshot: Arc::new(crate::pause_state::LoopContextSnapshot::default()),
             approve_tool: options.approve_tool,
             approval_mode: options.approval_mode,
             pre_turn_policies: options.pre_turn_policies,
@@ -296,29 +342,11 @@ impl Agent {
             loop_generation: Arc::new(AtomicU64::new(0)),
             #[cfg(feature = "plugins")]
             plugins: options.plugins,
+            agent_name: options.agent_name,
+            transfer_chain: options.transfer_chain,
         };
 
-        // Dispatch on_init to each plugin in priority order (already sorted).
-        // Panics are caught and logged — the plugin's other contributions
-        // (policies, tools, event observers) remain active.
-        #[cfg(feature = "plugins")]
-        {
-            for plugin in &agent.plugins {
-                let name = plugin.name().to_owned();
-                let plugin_ref = Arc::clone(plugin);
-                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    plugin_ref.on_init(&agent);
-                }));
-                if let Err(cause) = result {
-                    let msg = cause
-                        .downcast_ref::<&str>()
-                        .map(|s| (*s).to_owned())
-                        .or_else(|| cause.downcast_ref::<String>().cloned())
-                        .unwrap_or_else(|| "unknown panic".to_owned());
-                    tracing::warn!(plugin = %name, error = %msg, "plugin on_init panicked");
-                }
-            }
-        }
+        dispatch_plugin_on_init(&agent);
 
         agent
     }
@@ -353,6 +381,15 @@ impl Agent {
     #[must_use]
     pub const fn session_state(&self) -> &Arc<std::sync::RwLock<crate::SessionState>> {
         &self.session_state
+    }
+
+    /// Access the custom message registry, if one was configured.
+    ///
+    /// Useful for passing to `SessionStore::load` (from `swink-agent-memory`) so that
+    /// persisted custom messages are deserialized instead of silently dropped.
+    #[must_use]
+    pub fn custom_message_registry(&self) -> Option<&crate::types::CustomMessageRegistry> {
+        self.custom_message_registry.as_deref()
     }
 
     /// Returns all registered plugins sorted by priority (highest first).

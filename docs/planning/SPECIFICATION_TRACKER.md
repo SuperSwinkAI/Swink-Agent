@@ -353,15 +353,12 @@ After their respective dependencies are met, 9.1 (Artifact Service), 9.2 (Plugin
 
 **Goal:** On-device model expansion and plugin-based tool ecosystems.
 
-**Status:** 2/2 specs planned, 2/2 have tasks, 1/2 complete, 2/2 specs defined
+**Status:** 2/2 specs planned, 2/2 have tasks, 2/2 complete, 2/2 specs defined
 
 ### Implementation Checklist
 
-- [ ] **10.1** Adapter: Gemma 4 Local — Gemma4LocalStreamFn, mistralrs 0.8+ upgrade, UTF-8-safe delimiter scanning
-  - Spec: `specs/041-adapter-gemma4-local/spec.md`
-  - Branch: `041-adapter-gemma4-local`
-  - Status: In Progress (60%)
-  - Depends on: 4.2
+- [x] **10.1** ~~Adapter: Gemma 4 Local~~ — Folded into spec 022 (local-llm crate) after llama-cpp-2 migration unified GGUF loading path. Gemma 4 thinking/tool-call parsing now in spec 022.
+  - Status: Complete (merged into 022, spec removed)
 - [x] **10.2** Web Browse Plugin — Web search, page fetch, content extraction, screenshot via Playwright
   - Spec: `specs/042-web-browse-plugin/spec.md`
   - Branch: `042-web-browse-plugin`

@@ -1,7 +1,7 @@
-pub mod extract;
-pub mod fetch;
-pub mod screenshot;
-pub mod search;
+mod extract;
+mod fetch;
+mod screenshot;
+mod search;
 
 pub use extract::ExtractTool;
 pub use fetch::FetchTool;

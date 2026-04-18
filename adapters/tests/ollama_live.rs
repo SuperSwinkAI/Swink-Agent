@@ -13,6 +13,7 @@ use serde_json::json;
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 
+use swink_agent::testing::{TestGpu, TestRuntimeRequirements, should_run_test};
 use swink_agent::{
     AgentContext, AgentMessage, AgentTool, AgentToolResult, AssistantMessage,
     AssistantMessageEvent, ContentBlock, Cost, LlmMessage, ModelCapabilities, ModelSpec,
@@ -48,12 +49,20 @@ fn simple_context(prompt: &str) -> AgentContext {
     }
 }
 
-async fn collect_events(sf: &OllamaStreamFn, context: &AgentContext) -> Vec<AssistantMessageEvent> {
-    let m = model();
+async fn collect_model_events(
+    sf: &OllamaStreamFn,
+    model: &ModelSpec,
+    context: &AgentContext,
+) -> Vec<AssistantMessageEvent> {
     let options = StreamOptions::default();
     let token = CancellationToken::new();
-    let stream = sf.stream(&m, context, &options, token);
+    let stream = sf.stream(model, context, &options, token);
     stream.collect::<Vec<_>>().await
+}
+
+async fn collect_events(sf: &OllamaStreamFn, context: &AgentContext) -> Vec<AssistantMessageEvent> {
+    let m = model();
+    collect_model_events(sf, &m, context).await
 }
 
 const fn event_name(event: &AssistantMessageEvent) -> &'static str {
@@ -349,7 +358,47 @@ async fn live_model_not_found() {
 
 #[tokio::test]
 #[ignore = "hits live Ollama instance — requires `ollama pull gemma4:e2b`"]
+async fn live_gemma4_text_stream() {
+    if !should_run_test(TestRuntimeRequirements::new().with_gpu(TestGpu::Any)) {
+        return;
+    }
+
+    let sf = ollama();
+    let m = ModelSpec::new("ollama", "gemma4:e2b");
+    let context = simple_context("Reply with one short sentence about the sky.");
+    let events: Vec<AssistantMessageEvent> =
+        timeout(TIMEOUT, collect_model_events(&sf, &m, &context))
+            .await
+            .expect("timed out");
+
+    let types: Vec<&str> = events.iter().map(event_name).collect();
+    assert!(types.contains(&"Start"), "missing Start: {types:?}");
+    assert!(types.contains(&"TextStart"), "missing TextStart: {types:?}");
+    assert!(types.contains(&"TextDelta"), "missing TextDelta: {types:?}");
+    assert!(types.contains(&"TextEnd"), "missing TextEnd: {types:?}");
+    assert!(types.contains(&"Done"), "missing Done: {types:?}");
+    assert!(
+        !types.contains(&"ThinkingStart"),
+        "unexpected ThinkingStart for plain text stream: {types:?}"
+    );
+
+    let text: String = events
+        .iter()
+        .filter_map(|e| match e {
+            AssistantMessageEvent::TextDelta { delta, .. } => Some(delta.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert!(!text.trim().is_empty(), "expected non-empty text response");
+}
+
+#[tokio::test]
+#[ignore = "hits live Ollama instance — requires `ollama pull gemma4:e2b`"]
 async fn live_gemma4_e2b_thinking() {
+    if !should_run_test(TestRuntimeRequirements::new().with_gpu(TestGpu::Any)) {
+        return;
+    }
+
     let sf = ollama();
     let m = ModelSpec::new("ollama", "gemma4:e2b")
         .with_thinking_level(ThinkingLevel::Medium)
@@ -374,4 +423,172 @@ async fn live_gemma4_e2b_thinking() {
     );
     assert!(types.contains(&"TextStart"), "missing TextStart: {types:?}");
     assert!(types.contains(&"Done"), "missing Done: {types:?}");
+}
+
+#[tokio::test]
+#[ignore = "hits live Ollama instance — requires `ollama pull gemma4:e2b`"]
+async fn live_gemma4_tool_call() {
+    if !should_run_test(TestRuntimeRequirements::new().with_gpu(TestGpu::Any)) {
+        return;
+    }
+
+    let sf = ollama();
+    let m = ModelSpec::new("ollama", "gemma4:e2b")
+        .with_capabilities(ModelCapabilities::default().with_tool_use(true));
+    let context = AgentContext {
+        system_prompt:
+            "You must use the get_weather tool before answering. Do not answer from memory.".into(),
+        messages: vec![AgentMessage::Llm(LlmMessage::User(UserMessage {
+            content: vec![ContentBlock::Text {
+                text: "What is the weather in Paris? Use the get_weather tool first.".into(),
+            }],
+            timestamp: 0,
+            cache_hint: None,
+        }))],
+        tools: vec![Arc::new(DummyWeatherTool)],
+    };
+    let events: Vec<AssistantMessageEvent> =
+        timeout(TIMEOUT, collect_model_events(&sf, &m, &context))
+            .await
+            .expect("timed out");
+
+    let types: Vec<&str> = events.iter().map(event_name).collect();
+    assert!(types.contains(&"Start"), "missing Start: {types:?}");
+    assert!(
+        types.contains(&"ToolCallStart"),
+        "missing ToolCallStart — did you pull gemma4:e2b? types: {types:?}"
+    );
+    assert!(
+        types.contains(&"ToolCallDelta"),
+        "missing ToolCallDelta: {types:?}"
+    );
+    assert!(types.contains(&"Done"), "missing Done: {types:?}");
+
+    let tool_name = events.iter().find_map(|e| match e {
+        AssistantMessageEvent::ToolCallStart { name, .. } => Some(name.clone()),
+        _ => None,
+    });
+    assert_eq!(tool_name.as_deref(), Some("get_weather"));
+
+    let stop_reason = events.iter().find_map(|e| match e {
+        AssistantMessageEvent::Done { stop_reason, .. } => Some(*stop_reason),
+        _ => None,
+    });
+    assert_eq!(stop_reason, Some(StopReason::ToolUse));
+}
+
+#[tokio::test]
+#[ignore = "hits live Ollama instance — requires `ollama pull gemma4:e2b`"]
+async fn live_gemma4_multi_turn() {
+    if !should_run_test(TestRuntimeRequirements::new().with_gpu(TestGpu::Any)) {
+        return;
+    }
+
+    let sf = ollama();
+    let thinking_model = ModelSpec::new("ollama", "gemma4:e2b")
+        .with_thinking_level(ThinkingLevel::Medium)
+        .with_capabilities(ModelCapabilities::default().with_thinking(true));
+    let first_context = simple_context(
+        "My favorite color is teal. Think briefly, then reply in one short sentence.",
+    );
+    let first_events: Vec<AssistantMessageEvent> = timeout(
+        TIMEOUT,
+        collect_model_events(&sf, &thinking_model, &first_context),
+    )
+    .await
+    .expect("timed out on first turn");
+
+    let thinking: String = first_events
+        .iter()
+        .filter_map(|e| match e {
+            AssistantMessageEvent::ThinkingDelta { delta, .. } => Some(delta.as_str()),
+            _ => None,
+        })
+        .collect();
+    let first_reply: String = first_events
+        .iter()
+        .filter_map(|e| match e {
+            AssistantMessageEvent::TextDelta { delta, .. } => Some(delta.as_str()),
+            _ => None,
+        })
+        .collect();
+
+    assert!(
+        !thinking.trim().is_empty(),
+        "expected first turn to include thinking output"
+    );
+    assert!(
+        !first_reply.trim().is_empty(),
+        "expected first turn to include visible text"
+    );
+
+    let second_context = AgentContext {
+        system_prompt: "Reply with one word.".into(),
+        messages: vec![
+            AgentMessage::Llm(LlmMessage::User(UserMessage {
+                content: vec![ContentBlock::Text {
+                    text: "My favorite color is teal.".into(),
+                }],
+                timestamp: 0,
+                cache_hint: None,
+            })),
+            AgentMessage::Llm(LlmMessage::Assistant(AssistantMessage {
+                content: vec![
+                    ContentBlock::Thinking {
+                        thinking,
+                        signature: None,
+                    },
+                    ContentBlock::Text {
+                        text: first_reply.clone(),
+                    },
+                ],
+                provider: "ollama".into(),
+                model_id: thinking_model.model_id.clone(),
+                usage: Usage::default(),
+                cost: Cost::default(),
+                stop_reason: StopReason::Stop,
+                error_message: None,
+                error_kind: None,
+                timestamp: 1,
+                cache_hint: None,
+            })),
+            AgentMessage::Llm(LlmMessage::User(UserMessage {
+                content: vec![ContentBlock::Text {
+                    text: "What is my favorite color?".into(),
+                }],
+                timestamp: 2,
+                cache_hint: None,
+            })),
+        ],
+        tools: Vec::new(),
+    };
+
+    let second_events: Vec<AssistantMessageEvent> = timeout(
+        TIMEOUT,
+        collect_model_events(&sf, &thinking_model, &second_context),
+    )
+    .await
+    .expect("timed out on second turn");
+
+    let types: Vec<&str> = second_events.iter().map(event_name).collect();
+    assert!(
+        types.contains(&"Done"),
+        "missing Done on second turn: {types:?}"
+    );
+    assert!(
+        !types.contains(&"Error"),
+        "unexpected Error when resending assistant thinking history: {types:?}"
+    );
+
+    let reply: String = second_events
+        .iter()
+        .filter_map(|e| match e {
+            AssistantMessageEvent::TextDelta { delta, .. } => Some(delta.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        reply.to_lowercase().contains("teal"),
+        "expected second turn to preserve context and mention teal, got: {reply}"
+    );
 }

@@ -8,7 +8,8 @@ use ratatui::layout::Rect;
 use tokio::sync::{mpsc, oneshot};
 
 use swink_agent::{
-    Agent, AgentEvent, AgentTool, ApprovalMode, DisplayRole, ToolApproval, ToolApprovalRequest,
+    Agent, AgentEvent, AgentTool, AssistantMessage, ContentBlock, DisplayRole, StopReason,
+    ToolApproval, ToolApprovalRequest,
 };
 
 use crate::config::TuiConfig;
@@ -95,6 +96,32 @@ impl DisplayMessage {
             diff_data: None,
         }
     }
+
+    /// Extract the assistant text/thinking payload shown by the TUI.
+    pub fn assistant_content(message: &AssistantMessage) -> (String, Option<String>) {
+        let mut text_parts = Vec::new();
+        let mut thinking_parts = Vec::new();
+        for block in &message.content {
+            match block {
+                ContentBlock::Text { text } => text_parts.push(text.as_str()),
+                ContentBlock::Thinking { thinking, .. } => {
+                    thinking_parts.push(thinking.as_str());
+                }
+                _ => {}
+            }
+        }
+
+        let content = if !text_parts.is_empty() {
+            text_parts.join("")
+        } else if message.stop_reason == StopReason::Error {
+            message.error_message.clone().unwrap_or_default()
+        } else {
+            String::new()
+        };
+
+        let thinking = (!thinking_parts.is_empty()).then(|| thinking_parts.join(""));
+        (content, thinking)
+    }
 }
 
 /// Top-level application state.
@@ -155,8 +182,6 @@ pub struct App {
     pub(crate) approval_tx: mpsc::Sender<(ToolApprovalRequest, oneshot::Sender<ToolApproval>)>,
     /// Currently pending approval request and its response channel.
     pub(crate) pending_approval: Option<(ToolApprovalRequest, oneshot::Sender<ToolApproval>)>,
-    /// Current approval mode.
-    pub approval_mode: ApprovalMode,
     /// Estimated context window token budget.
     pub context_budget: u64,
     /// Estimated tokens currently used in context.
@@ -187,4 +212,10 @@ pub struct App {
     pub(crate) conversation_area: Rect,
     /// Visible line height inside the conversation viewport.
     pub(crate) conversation_visible_height: usize,
+    /// Messages steered into the agent while it was already running.
+    /// Held here until `AgentEnd`, then promoted into `messages`.
+    pub(crate) pending_steered: Vec<String>,
+    /// Ticks remaining for the fade-out animation after steered messages are
+    /// consumed. Zero means the overlay is not visible.
+    pub(crate) steered_fade_ticks: u8,
 }

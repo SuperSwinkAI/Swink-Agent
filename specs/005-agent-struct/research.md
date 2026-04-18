@@ -38,7 +38,7 @@
 
 **Decision**: `dispatch_event` in `ListenerRegistry` wraps each callback invocation in `std::panic::catch_unwind`. Panicking subscribers are automatically removed.
 
-**Rationale**: A UI subscriber bug should not crash the agent loop. Auto-removal prevents repeated panics on every event. This is documented in CLAUDE.md as a QA-discovered behavior.
+**Rationale**: A UI subscriber bug should not crash the agent loop. Auto-removal prevents repeated panics on every event. This is documented in AGENTS.md as a QA-discovered behavior.
 
 ### D5: Structured output via synthetic tool injection
 

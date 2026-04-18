@@ -95,8 +95,34 @@ fn metrics_types_re_exported() {
 }
 
 #[test]
-fn block_accumulator_re_exported() {
-    let _ = std::any::type_name::<swink_agent::BlockAccumulator>();
+fn stream_assembly_types_remain_available_via_narrow_module() {
+    struct FakeState {
+        blocks: Vec<swink_agent::stream_assembly::OpenBlock>,
+    }
+
+    impl swink_agent::stream_assembly::StreamFinalize for FakeState {
+        fn drain_open_blocks(&mut self) -> Vec<swink_agent::stream_assembly::OpenBlock> {
+            std::mem::take(&mut self.blocks)
+        }
+    }
+
+    let _ = std::any::type_name::<swink_agent::stream_assembly::BlockAccumulator>();
+
+    let mut state = FakeState {
+        blocks: vec![
+            swink_agent::stream_assembly::OpenBlock::Text { content_index: 0 },
+            swink_agent::stream_assembly::OpenBlock::ToolCall { content_index: 1 },
+        ],
+    };
+    let events = swink_agent::stream_assembly::finalize_blocks(&mut state);
+
+    assert!(matches!(
+        events.as_slice(),
+        [
+            swink_agent::AssistantMessageEvent::TextEnd { content_index: 0 },
+            swink_agent::AssistantMessageEvent::ToolCallEnd { content_index: 1 }
+        ]
+    ));
 }
 
 #[test]

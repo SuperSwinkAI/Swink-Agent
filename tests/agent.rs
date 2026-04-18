@@ -7,8 +7,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use common::{
-    MockStreamFn, MockTool, default_convert, default_model, text_only_events, tool_call_events,
-    user_msg,
+    MockStreamFn, MockTool, abort_events, default_convert, default_model, text_only_events,
+    tool_call_events, user_msg,
 };
 use futures::stream::StreamExt;
 
@@ -186,6 +186,107 @@ async fn abort_causes_aborted_stop() {
     // At minimum, the stream should have ended.
     // With the mock's delay, the cancellation should propagate.
     let _ = found_abort; // Abort may or may not be visible depending on timing.
+}
+
+#[tokio::test]
+async fn abort_during_tool_turn_keeps_single_turn_and_tool_payloads() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![
+        tool_call_events("tc_abort", "slow_tool", "{}"),
+        text_only_events("should not reach"),
+    ]));
+    let tool = Arc::new(MockTool::new("slow_tool").with_delay(Duration::from_secs(10)));
+    let mut agent = make_agent_with_tools(stream_fn, vec![tool]);
+
+    let mut stream = agent.prompt_stream(vec![user_msg("go")]).unwrap();
+
+    let mut turn_start_count = 0;
+    let mut aborted_turn: Option<(
+        swink_agent::AssistantMessage,
+        Vec<swink_agent::ToolResultMessage>,
+        swink_agent::TurnEndReason,
+    )> = None;
+
+    while let Some(event) = stream.next().await {
+        match event {
+            AgentEvent::TurnStart => turn_start_count += 1,
+            AgentEvent::ToolExecutionStart { .. } => agent.abort(),
+            AgentEvent::TurnEnd {
+                assistant_message,
+                tool_results,
+                reason,
+                ..
+            } if assistant_message.stop_reason == StopReason::Aborted => {
+                aborted_turn = Some((assistant_message, tool_results, reason));
+            }
+            _ => {}
+        }
+    }
+
+    let (assistant_message, tool_results, reason) =
+        aborted_turn.expect("abort during tool execution should emit an aborted TurnEnd");
+
+    assert_eq!(
+        turn_start_count, 1,
+        "aborting a tool turn should not synthesize a second TurnStart"
+    );
+    assert_eq!(
+        reason,
+        swink_agent::TurnEndReason::Cancelled,
+        "external cancellation should still surface as a cancelled turn"
+    );
+    assert!(
+        assistant_message.content.iter().any(|block| matches!(
+            block,
+            ContentBlock::ToolCall { id, name, .. }
+                if id == "tc_abort" && name == "slow_tool"
+        )),
+        "the terminal assistant payload should preserve the original tool call"
+    );
+    assert_eq!(
+        tool_results.len(),
+        1,
+        "aborted tool turns should preserve deterministic tool-result parity"
+    );
+    assert_eq!(tool_results[0].tool_call_id, "tc_abort");
+    let tool_text = ContentBlock::extract_text(&tool_results[0].content);
+    assert!(
+        tool_text.contains("aborted") || tool_text.contains("cancelled"),
+        "expected the preserved tool result to explain the abort, got: {tool_text}"
+    );
+}
+
+// ─── Regression: abort path emits TurnEndReason::Aborted (#438) ──────────
+
+#[tokio::test]
+async fn abort_stop_reason_emits_turn_end_aborted() {
+    // Simulate a provider that reports StopReason::Aborted (goes through
+    // handle_error_stop). Before the fix, this incorrectly emitted
+    // TurnEndReason::Error instead of TurnEndReason::Aborted.
+    let stream_fn = Arc::new(MockStreamFn::new(vec![abort_events("user cancelled")]));
+    let mut agent = make_agent(stream_fn);
+
+    let mut stream = agent.prompt_stream(vec![user_msg("go")]).unwrap();
+
+    let mut found_aborted_reason = false;
+    let mut found_error_reason = false;
+    while let Some(event) = stream.next().await {
+        if let AgentEvent::TurnEnd { reason, .. } = &event {
+            match reason {
+                swink_agent::TurnEndReason::Aborted => found_aborted_reason = true,
+                swink_agent::TurnEndReason::Error => found_error_reason = true,
+                _ => {}
+            }
+        }
+    }
+
+    assert!(
+        found_aborted_reason,
+        "abort path should emit TurnEndReason::Aborted"
+    );
+    assert!(
+        !found_error_reason,
+        "abort path should NOT emit TurnEndReason::Error for StopReason::Aborted"
+    );
 }
 
 // ─── 4.12: reset() clears state ──────────────────────────────────────────
@@ -399,7 +500,10 @@ async fn reset_cancels_active_loop_and_allows_new_run() {
 
     // Pull at least one event so the stream is actively being consumed.
     let _first_event = stream.next().await;
-    assert!(agent.state().is_running, "agent should be running mid-stream");
+    assert!(
+        agent.state().is_running,
+        "agent should be running mid-stream"
+    );
 
     // Reset while the loop is still active. Before the fix this would not
     // cancel the abort token and would not bump the generation counter,
@@ -411,10 +515,16 @@ async fn reset_cancels_active_loop_and_allows_new_run() {
     drop(stream);
 
     // Agent should be idle after reset.
-    assert!(!agent.state().is_running, "agent should be idle after reset");
+    assert!(
+        !agent.state().is_running,
+        "agent should be idle after reset"
+    );
 
     // A new run should succeed without AlreadyRunning error.
-    let result = agent.prompt_async(vec![user_msg("go again")]).await.unwrap();
+    let result = agent
+        .prompt_async(vec![user_msg("go again")])
+        .await
+        .unwrap();
     assert_eq!(result.stop_reason, StopReason::Stop);
     assert!(!agent.state().is_running);
 }

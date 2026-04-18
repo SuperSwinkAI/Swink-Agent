@@ -1,14 +1,17 @@
 [package]
 name = "swink-agent-artifacts"
-version = "0.7.0"
-edition = "2024"
-rust-version = "1.88"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
 description = "Versioned artifact storage for swink-agent sessions"
-license = "MIT OR Apache-2.0"
-repository = "https://github.com/SuperSwinkAI/Swink-Agent"
+license.workspace = true
+repository.workspace = true
+keywords = ["llm", "agent", "artifacts", "storage", "versioned"]
+categories = ["development-tools", "filesystem"]
+readme = "../README.md"
 
 [dependencies]
-swink-agent = { path = "..", default-features = false, features = ["artifact-store"] }
+swink-agent = { path = "..", version = "0.7.9", default-features = false, features = ["artifact-store"] }
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

@@ -14,9 +14,10 @@ use tokio_util::sync::CancellationToken;
 use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-use swink_agent::{AssistantMessage, ContentBlock, ToolResultMessage, UserMessage,
-    AgentContext, AgentMessage, AgentTool, AgentToolResult, AssistantMessageEvent, LlmMessage,
-    ModelSpec, StopReason, StreamFn, StreamOptions,
+use swink_agent::{
+    AgentContext, AgentMessage, AgentTool, AgentToolResult, AssistantMessage,
+    AssistantMessageEvent, ContentBlock, LlmMessage, ModelSpec, StopReason, StreamErrorKind,
+    StreamFn, StreamOptions, ToolResultMessage, UserMessage,
 };
 use swink_agent_adapters::MistralStreamFn;
 
@@ -732,8 +733,42 @@ async fn finish_reason_error() {
     let sf = MistralStreamFn::new(server.uri(), "test-key");
     let events = collect_events(&sf).await;
 
-    let stop_reason = extract_stop_reason(&events).expect("missing Done event");
-    assert_eq!(stop_reason, StopReason::Stop);
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, AssistantMessageEvent::Error { .. })),
+        "expected Error event, got: {events:?}"
+    );
+    assert!(
+        events
+            .iter()
+            .all(|event| !matches!(event, AssistantMessageEvent::Done { .. })),
+        "did not expect Done event, got: {events:?}"
+    );
+
+    let (message, usage, error_kind) = events
+        .iter()
+        .find_map(|event| match event {
+            AssistantMessageEvent::Error {
+                error_message,
+                usage,
+                error_kind,
+                ..
+            } => Some((error_message.clone(), usage.clone(), *error_kind)),
+            _ => None,
+        })
+        .expect("missing Error event");
+
+    assert!(
+        message.contains("finish_reason=error"),
+        "expected finish_reason in message, got: {message}"
+    );
+    assert_eq!(error_kind, Some(StreamErrorKind::Network));
+
+    let usage = usage.expect("expected usage on terminal error");
+    assert_eq!(usage.input, 5);
+    assert_eq!(usage.output, 2);
+    assert_eq!(usage.total, 7);
 }
 
 // ── US4: Error Handling ────────────────────────────────────────────────────

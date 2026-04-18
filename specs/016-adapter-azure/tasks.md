@@ -137,7 +137,7 @@
 - [x] T048 [P] Create live test file `adapters/tests/azure_live.rs` with `#[ignore]` tests for text streaming against real Azure deployment
 - [x] T049 [P] Add live test for tool call streaming in `adapters/tests/azure_live.rs`
 - [x] T050 [P] Add live test for error handling (invalid API key) in `adapters/tests/azure_live.rs`
-- [x] T051 Update `adapters/CLAUDE.md` — change Azure status from "Stub" to "Implemented", add auth/protocol notes to Lessons Learned
+- [x] T051 Update `adapters/AGENTS.md` — change Azure status from "Stub" to "Implemented", add auth/protocol notes to Lessons Learned
 - [x] T052 Run `cargo test --workspace` to verify no regressions across entire workspace
 - [x] T053 Run `cargo clippy --workspace -- -D warnings` to verify zero warnings
 - [x] T054 Run `cargo test -p swink-agent-adapters --features azure` as final validation of all Azure adapter tests

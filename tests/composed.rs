@@ -451,22 +451,28 @@ async fn subscriber_receives_approval_events() {
     let tool_end = find("ToolExecutionEnd").expect("should have ToolExecutionEnd");
     let agent_end = find("AgentEnd").expect("should have AgentEnd");
 
+    // Canonical order (see `src/loop_/tool_dispatch.rs`):
+    //   AgentStart → TurnStart → ToolApprovalRequested → ToolApprovalResolved
+    //   → ToolExecutionStart → ToolExecutionEnd → AgentEnd.
+    //
+    // Approval always precedes execution: a tool cannot be dispatched until the
+    // approval gate has resolved.
     assert!(agent_start < turn_start, "AgentStart before TurnStart");
     assert!(
-        turn_start < tool_start,
-        "TurnStart before ToolExecutionStart"
-    );
-    assert!(
-        tool_start < approval_requested,
-        "ToolExecutionStart before ApprovalRequested"
+        turn_start < approval_requested,
+        "TurnStart before ToolApprovalRequested"
     );
     assert!(
         approval_requested < approval_resolved,
         "ApprovalRequested before ApprovalResolved"
     );
     assert!(
-        approval_resolved < tool_end,
-        "ApprovalResolved before ToolExecutionEnd"
+        approval_resolved < tool_start,
+        "ApprovalResolved before ToolExecutionStart (approval precedes execution)"
+    );
+    assert!(
+        tool_start < tool_end,
+        "ToolExecutionStart before ToolExecutionEnd"
     );
     assert!(tool_end < agent_end, "ToolExecutionEnd before AgentEnd");
 }

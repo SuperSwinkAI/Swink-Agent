@@ -194,7 +194,7 @@ fn anthropic_stream<'a>(
     stream::once(async move {
         let response = match send_request(anthropic, model, context, options).await {
             Ok(resp) => resp,
-            Err(event) => return stream::iter(vec![event]).left_stream(),
+            Err(event) => return stream::iter(crate::base::pre_stream_error(event)).left_stream(),
         };
 
         let status = response.status();
@@ -213,7 +213,7 @@ fn anthropic_stream<'a>(
                     (504, crate::classify::HttpErrorKind::Network),
                 ],
             );
-            return stream::iter(vec![event]).left_stream();
+            return stream::iter(crate::base::pre_stream_error(event)).left_stream();
         }
 
         parse_sse_stream(response, cancellation_token).right_stream()
@@ -388,10 +388,8 @@ fn convert_messages(
                 let mut content = Vec::new();
                 for block in &assistant.content {
                     match block {
-                        ContentBlock::Text { text } => {
-                            if !text.is_empty() {
-                                content.push(AnthropicContentBlock::Text { text: text.clone() });
-                            }
+                        ContentBlock::Text { text } if !text.is_empty() => {
+                            content.push(AnthropicContentBlock::Text { text: text.clone() });
                         }
                         ContentBlock::ToolCall {
                             id,
@@ -1266,5 +1264,17 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn trailing_slash_stripped() {
+        let anthropic = AnthropicStreamFn::new("https://api.anthropic.com/", "key");
+        assert_eq!(anthropic.base.base_url, "https://api.anthropic.com");
+    }
+
+    #[test]
+    fn no_trailing_slash_unchanged() {
+        let anthropic = AnthropicStreamFn::new("https://api.anthropic.com", "key");
+        assert_eq!(anthropic.base.base_url, "https://api.anthropic.com");
     }
 }

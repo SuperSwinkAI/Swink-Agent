@@ -8,10 +8,8 @@
 
 use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 
-static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
-
+use swink_agent::atomic_fs::{atomic_write, atomic_write_unlocked, with_target_lock};
 use swink_agent::{AgentMessage, CustomMessageRegistry, LlmMessage};
 
 use crate::entry::SessionEntry;
@@ -158,109 +156,12 @@ fn read_meta_with_line_len(path: &Path, id: &str) -> io::Result<(SessionMeta, us
     Ok((meta, line_len))
 }
 
-/// Write `contents_fn` to a sibling temp file, fsync, then atomically rename
-/// over `target`. The temp file is removed on any error so a crash mid-write
-/// never leaves a zero-length or partial file at `target`.
-fn with_target_lock<T>(target: &Path, op: impl FnOnce() -> io::Result<T>) -> io::Result<T> {
-    let lock = lock_for_target(target);
-    let _guard = lock
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    op()
-}
-
-fn atomic_write_locked<F>(target: &Path, contents_fn: F) -> io::Result<()>
-where
-    F: FnOnce(&mut io::BufWriter<&std::fs::File>) -> io::Result<()>,
-{
-    let parent = target.parent().ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "target path has no parent directory",
-        )
-    })?;
-    let file_name = target.file_name().and_then(|s| s.to_str()).ok_or_else(|| {
-        io::Error::new(io::ErrorKind::InvalidInput, "target path has no file name")
-    })?;
-    // Unique per write attempt: pid + monotonic counter. Two overlapping
-    // rewrites of the same target inside one process must not share a temp
-    // path, or they would truncate/rename each other's files.
-    let seq = TMP_SEQ.fetch_add(1, Ordering::Relaxed);
-    let tmp_path = parent.join(format!(".{file_name}.tmp.{}.{seq}", std::process::id()));
-
-    let result: io::Result<()> = (|| {
-        // `create_new` guarantees we never clobber a pre-existing temp file
-        // from another writer that happened to pick the same path.
-        let file = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&tmp_path)?;
-        {
-            let mut writer = io::BufWriter::new(&file);
-            contents_fn(&mut writer)?;
-            writer.flush()?;
-        }
-        file.sync_all()?;
-        drop(file);
-        rename_replacing(&tmp_path, target)
-    })();
-
-    if result.is_err() {
-        let _ = std::fs::remove_file(&tmp_path);
-    }
-    result
-}
-
-/// Write `contents_fn` to a sibling temp file, fsync, then atomically rename
-/// over `target`. The temp file is removed on any error so a crash mid-write
-/// never leaves a zero-length or partial file at `target`.
-fn atomic_write<F>(target: &Path, contents_fn: F) -> io::Result<()>
-where
-    F: FnOnce(&mut io::BufWriter<&std::fs::File>) -> io::Result<()>,
-{
-    with_target_lock(target, || atomic_write_locked(target, contents_fn))
-}
-
-/// Rename `from` to `to`, replacing `to` if it already exists.
-///
-/// On Unix, `std::fs::rename` is an atomic replace. On Windows it fails with
-/// `ERROR_ALREADY_EXISTS` when the destination is present, so we remove it
-/// first. To keep concurrent rewrites of the same target safe on Windows,
-/// callers must serialize via [`lock_for_target`] around the whole
-/// write+rename sequence.
-fn rename_replacing(from: &Path, to: &Path) -> io::Result<()> {
-    #[cfg(windows)]
-    if to.exists() {
-        std::fs::remove_file(to)?;
-    }
-    std::fs::rename(from, to)
-}
-
-/// Per-target serialization guard. Two overlapping atomic rewrites of the
-/// same path inside one process must not race on the final rename step —
-/// on Windows this is especially important because the replace sequence is
-/// not a single kernel operation. We key a global mutex map on the target
-/// path so writes to different sessions remain fully concurrent.
-fn lock_for_target(target: &Path) -> std::sync::Arc<std::sync::Mutex<()>> {
-    use std::collections::HashMap;
-    use std::sync::{Arc, Mutex, OnceLock};
-    static LOCKS: OnceLock<Mutex<HashMap<PathBuf, Arc<Mutex<()>>>>> = OnceLock::new();
-    let map = LOCKS.get_or_init(|| Mutex::new(HashMap::new()));
-    let mut guard = map
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    guard
-        .entry(target.to_path_buf())
-        .or_insert_with(|| Arc::new(Mutex::new(())))
-        .clone()
-}
-
 fn rewrite_session_file_locked(
     path: &Path,
     meta: &SessionMeta,
     lines: &[String],
 ) -> io::Result<()> {
-    atomic_write_locked(path, |writer| {
+    atomic_write_unlocked(path, |writer| {
         serde_json::to_writer(&mut *writer, meta).map_err(io::Error::other)?;
         writeln!(writer)?;
 
@@ -271,6 +172,40 @@ fn rewrite_session_file_locked(
         }
         Ok(())
     })
+}
+
+fn preserve_existing_lines(
+    path: &Path,
+    id: &str,
+    should_preserve: impl Fn(&str) -> bool,
+) -> io::Result<Vec<String>> {
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+
+    let (_, lines) = read_meta_and_message_lines(path, id)?;
+    Ok(lines
+        .into_iter()
+        .filter(|line| should_preserve(line))
+        .collect())
+}
+
+fn preserve_for_message_save(line: &str) -> bool {
+    match SessionRecord::parse(line) {
+        Ok(SessionRecord::State(_)) => true,
+        Ok(SessionRecord::Llm(_) | SessionRecord::Custom(_)) => false,
+        Err(_) => matches!(
+            SessionEntry::parse(line),
+            Ok(entry) if !matches!(entry, SessionEntry::Message(_))
+        ),
+    }
+}
+
+fn preserve_for_entry_save(line: &str) -> bool {
+    matches!(
+        SessionRecord::parse(line),
+        Ok(SessionRecord::State(_) | SessionRecord::Custom(_))
+    )
 }
 
 fn save_messages_with_hooks<AfterValidation, WriteOp>(
@@ -301,7 +236,9 @@ fn write_messages_locked(
     messages: &[AgentMessage],
     id: &str,
 ) -> io::Result<()> {
-    atomic_write_locked(path, |writer| {
+    let preserved_lines = preserve_existing_lines(path, id, preserve_for_message_save)?;
+
+    atomic_write_unlocked(path, |writer| {
         serde_json::to_writer(&mut *writer, meta).map_err(io::Error::other)?;
         writeln!(writer)?;
 
@@ -309,6 +246,11 @@ fn write_messages_locked(
             if let Some(record) = SessionRecord::from_message(msg, id) {
                 writer.write_all(record.to_json_line()?.as_bytes())?;
                 writeln!(writer)?;
+            }
+        }
+        for line in &preserved_lines {
+            if !line.is_empty() {
+                writeln!(writer, "{line}")?;
             }
         }
         Ok(())
@@ -366,25 +308,6 @@ fn find_record_line_mut<'a>(
         }
     }
     None
-}
-
-fn parse_message_record(
-    line: &str,
-    line_num: usize,
-    id: &str,
-    registry: Option<&CustomMessageRegistry>,
-) -> Option<AgentMessage> {
-    match crate::codec::decode_jsonl_message_line(line, registry) {
-        Ok(message) => message,
-        Err(error) => {
-            tracing::warn!(
-                line = line_num,
-                error = %error,
-                "skipping unparseable message line in session {id}"
-            );
-            None
-        }
-    }
 }
 
 /// Validate a session ID, rejecting unsafe filesystem characters.
@@ -447,7 +370,7 @@ impl JsonlSessionStore {
         dirs::config_dir().map(|d| d.join("swink-agent").join("sessions"))
     }
 
-    /// Generate a new unique session ID using `YYYYMMDD_HHMMSS` format.
+    /// Generate a new unique session ID using a UTC timestamp plus UUID suffix.
     pub fn new_session_id() -> String {
         format_session_id()
     }
@@ -482,36 +405,33 @@ impl SessionStore for JsonlSessionStore {
 
         let path = session_path(&self.sessions_dir, id);
         let (meta, lines) = read_meta_and_message_lines(&path, id)?;
+        let (meta, classified) = self.classify_and_migrate(meta, lines, id)?;
 
-        // Check version
-        if meta.version > crate::migrate::CURRENT_VERSION {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!(
-                    "unsupported session version {} (current: {})",
-                    meta.version,
-                    crate::migrate::CURRENT_VERSION
-                ),
-            ));
-        }
-
-        // Parse lines using dual strategy: try SessionRecord first (handles
-        // raw LlmMessage and _custom/_state markers), then fall back to
-        // SessionEntry parsing (handles entry_type-tagged lines from
-        // save_entries). This ensures backward and forward compatibility.
+        // Project post-migration classification into the `load()` return
+        // shape. Entries collapse to their Message contents (non-message
+        // entries are dropped, matching prior behavior), and custom-message
+        // wrappers pass through unchanged (requires a registry).
         let mut messages = Vec::new();
-        for (line_num, line) in lines.into_iter().enumerate() {
-            if line.trim().is_empty() {
-                continue;
-            }
-            // Try SessionRecord parse first (raw format)
-            if let Some(message) = parse_message_record(&line, line_num + 2, id, registry) {
-                messages.push(message);
-                continue;
-            }
-            // Fall back to SessionEntry parse (tagged format)
-            if let Ok(SessionEntry::Message(llm_msg)) = SessionEntry::parse(&line) {
-                messages.push(AgentMessage::Llm(llm_msg));
+        for item in classified {
+            match item {
+                ClassifiedLine::Entry(entry) => {
+                    if let SessionEntry::Message(llm_msg) = *entry {
+                        messages.push(AgentMessage::Llm(llm_msg));
+                    }
+                }
+                ClassifiedLine::Custom(envelope) => {
+                    match custom_envelope_to_message(&envelope, registry) {
+                        Ok(Some(msg)) => messages.push(msg),
+                        Ok(None) => {}
+                        Err(error) => {
+                            tracing::warn!(
+                                error = %error,
+                                "skipping unrestorable custom message in session {id}"
+                            );
+                        }
+                    }
+                }
+                ClassifiedLine::State => {}
             }
         }
 
@@ -547,7 +467,7 @@ impl SessionStore for JsonlSessionStore {
             }
         }
 
-        sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        sessions.sort_by_key(|b| std::cmp::Reverse(b.updated_at));
         Ok(sessions)
     }
 
@@ -608,6 +528,10 @@ impl SessionStore for JsonlSessionStore {
 
     fn save_interrupt(&self, id: &str, state: &InterruptState) -> io::Result<()> {
         validate_session_id(id)?;
+        let session = session_path(&self.sessions_dir, id);
+        if !session.exists() {
+            return Err(not_found(id));
+        }
         let path = interrupt_path(&self.sessions_dir, id);
         atomic_write(&path, |writer| {
             serde_json::to_writer_pretty(&mut *writer, state).map_err(io::Error::other)
@@ -616,6 +540,9 @@ impl SessionStore for JsonlSessionStore {
 
     fn load_interrupt(&self, id: &str) -> io::Result<Option<InterruptState>> {
         validate_session_id(id)?;
+        if !session_path(&self.sessions_dir, id).exists() {
+            return Ok(None);
+        }
         let path = interrupt_path(&self.sessions_dir, id);
         if !path.exists() {
             return Ok(None);
@@ -686,8 +613,9 @@ impl JsonlSessionStore {
             // Increment sequence for the write
             let mut write_meta = meta.clone();
             write_meta.sequence += 1;
+            let preserved_lines = preserve_existing_lines(&path, id, preserve_for_entry_save)?;
 
-            atomic_write_locked(&path, |writer| {
+            atomic_write_unlocked(&path, |writer| {
                 // First line: metadata
                 serde_json::to_writer(&mut *writer, &write_meta).map_err(io::Error::other)?;
                 writeln!(writer)?;
@@ -696,6 +624,11 @@ impl JsonlSessionStore {
                 for entry in entries {
                     serde_json::to_writer(&mut *writer, entry).map_err(io::Error::other)?;
                     writeln!(writer)?;
+                }
+                for line in &preserved_lines {
+                    if !line.is_empty() {
+                        writeln!(writer, "{line}")?;
+                    }
                 }
                 Ok(())
             })
@@ -711,30 +644,67 @@ impl JsonlSessionStore {
         validate_session_id(id)?;
 
         let path = session_path(&self.sessions_dir, id);
-        let (mut meta, lines) = read_meta_and_message_lines(&path, id)?;
+        let (meta, lines) = read_meta_and_message_lines(&path, id)?;
+        let (meta, classified) = self.classify_and_migrate(meta, lines, id)?;
 
-        let mut entries: Vec<SessionEntry> = lines
+        let entries = classified
             .into_iter()
-            .enumerate()
-            .filter_map(|(line_num, line)| {
-                if line.trim().is_empty() {
-                    return None;
-                }
-                match SessionEntry::parse(&line) {
-                    Ok(entry) => Some(entry),
-                    Err(error) => {
-                        tracing::warn!(
-                            line = line_num + 2,
-                            error = %error,
-                            "skipping unparseable entry in session {id}"
-                        );
-                        None
-                    }
-                }
+            .filter_map(|item| match item {
+                ClassifiedLine::Entry(entry) => Some(*entry),
+                ClassifiedLine::Custom(_) | ClassifiedLine::State => None,
             })
             .collect();
 
-        // Run migrations if needed
+        Ok((meta, entries))
+    }
+
+    /// Parse every message line, classify each as a migrateable
+    /// [`SessionEntry`] or a pass-through custom/state wrapper, then run any
+    /// configured migrators over the `SessionEntry` subset.
+    ///
+    /// This is the single migration entry point shared by `load()` and
+    /// `load_entries()` so both observe identical post-migration state.
+    /// Positional ordering of pass-through wrappers relative to each other
+    /// (and relative to the migrateable block as a whole) is preserved;
+    /// migrators may freely insert/remove entries within the entry block.
+    fn classify_and_migrate(
+        &self,
+        mut meta: SessionMeta,
+        lines: Vec<String>,
+        id: &str,
+    ) -> io::Result<(SessionMeta, Vec<ClassifiedLine>)> {
+        let mut classified: Vec<ClassifiedLine> = Vec::with_capacity(lines.len());
+        for (idx, line) in lines.into_iter().enumerate() {
+            if line.trim().is_empty() {
+                continue;
+            }
+            let line_num = idx + 2;
+            match classify_line(&line) {
+                Ok(item) => classified.push(item),
+                Err(error) => {
+                    tracing::warn!(
+                        line = line_num,
+                        error = %error,
+                        "skipping unparseable line in session {id}"
+                    );
+                }
+            }
+        }
+
+        // Split out the migrateable subset, run the migrator pipeline, then
+        // weave the migrated entries back into the classified list.
+        let original_entry_count = classified
+            .iter()
+            .filter(|item| matches!(item, ClassifiedLine::Entry(_)))
+            .count();
+        let mut entries: Vec<SessionEntry> = classified
+            .iter()
+            .filter_map(|item| match item {
+                ClassifiedLine::Entry(entry) => Some((**entry).clone()),
+                _ => None,
+            })
+            .collect();
+
         if !self.migrators.is_empty() {
             crate::migrate::run_migrations(&mut meta, &mut entries, &self.migrators)?;
         } else if meta.version > crate::migrate::CURRENT_VERSION {
@@ -748,8 +718,121 @@ impl JsonlSessionStore {
             ));
         }
 
-        Ok((meta, entries))
+        let rebuilt = weave_migrated_entries(classified, entries, original_entry_count);
+        Ok((meta, rebuilt))
     }
+}
+
+/// Weave a migrated entry list back into a classified line sequence.
+///
+/// If the migrator preserved the entry count (`migrated.len() ==
+/// original_entry_count`), each entry slot is replaced 1:1 in position,
+/// preserving the original interleaving with custom/state wrappers (the
+/// common case; matches pre-migration-aware `load()` behavior exactly).
+///
+/// If the migrator added or dropped entries, positional correspondence to
+/// individual slots is no longer defined — we collapse all migrated entries
+/// into the first entry slot (or append them if no entry slots existed)
+/// and keep pass-through wrappers in their original positions.
+fn weave_migrated_entries(
+    classified: Vec<ClassifiedLine>,
+    migrated: Vec<SessionEntry>,
+    original_entry_count: usize,
+) -> Vec<ClassifiedLine> {
+    let mut rebuilt: Vec<ClassifiedLine> = Vec::with_capacity(classified.len().max(migrated.len()));
+    if migrated.len() == original_entry_count {
+        let mut iter = migrated.into_iter();
+        for item in classified {
+            match item {
+                ClassifiedLine::Entry(_) => {
+                    if let Some(next) = iter.next() {
+                        rebuilt.push(ClassifiedLine::Entry(Box::new(next)));
+                    }
+                }
+                passthrough @ (ClassifiedLine::Custom(_) | ClassifiedLine::State) => {
+                    rebuilt.push(passthrough);
+                }
+            }
+        }
+    } else {
+        let mut drained = false;
+        let mut migrated_iter = migrated.into_iter();
+        for item in classified {
+            match item {
+                ClassifiedLine::Entry(_) => {
+                    if !drained {
+                        for e in migrated_iter.by_ref() {
+                            rebuilt.push(ClassifiedLine::Entry(Box::new(e)));
+                        }
+                        drained = true;
+                    }
+                }
+                passthrough @ (ClassifiedLine::Custom(_) | ClassifiedLine::State) => {
+                    rebuilt.push(passthrough);
+                }
+            }
+        }
+        for e in migrated_iter {
+            rebuilt.push(ClassifiedLine::Entry(Box::new(e)));
+        }
+    }
+    rebuilt
+}
+
+/// A JSONL line after parsing, classified so the migration pipeline can treat
+/// migrateable entries distinctly from opaque pass-through wrappers.
+///
+/// The `Entry` variant is boxed because [`SessionEntry`] is comparatively
+/// large (embeds a full `LlmMessage`) and dwarfs the other variants — the
+/// `Box` keeps the enum small enough to avoid `clippy::large_enum_variant`.
+#[derive(Debug, Clone)]
+enum ClassifiedLine {
+    /// A [`SessionEntry`] — either a tagged entry or a legacy raw
+    /// [`LlmMessage`] rehydrated as [`SessionEntry::Message`]. Migrators run
+    /// against these.
+    Entry(Box<SessionEntry>),
+    /// A `_custom: true` envelope — preserved verbatim so
+    /// [`SessionStore::load`] can restore it via the caller's registry.
+    Custom(serde_json::Value),
+    /// A `_state: true` record. `load_state()` reads state directly from the
+    /// file; `load()` and `load_entries()` both skip these, so the payload
+    /// is intentionally discarded here.
+    State,
+}
+
+/// Classify a single non-empty JSONL message line.
+///
+/// Order of checks mirrors the persisted format precedence: state/custom
+/// wrappers win over the tagged [`SessionEntry`] path, which in turn covers
+/// the legacy raw [`LlmMessage`] format.
+fn classify_line(line: &str) -> io::Result<ClassifiedLine> {
+    let value: serde_json::Value = serde_json::from_str(line).map_err(io::Error::other)?;
+
+    if value.get("_state").and_then(serde_json::Value::as_bool) == Some(true) {
+        return Ok(ClassifiedLine::State);
+    }
+    if value.get("_custom").and_then(serde_json::Value::as_bool) == Some(true) {
+        return Ok(ClassifiedLine::Custom(value));
+    }
+
+    // Neither state nor custom wrapper: either a tagged SessionEntry or a
+    // legacy raw LlmMessage. SessionEntry::parse handles both.
+    SessionEntry::parse(line)
+        .map(|entry| ClassifiedLine::Entry(Box::new(entry)))
+        .map_err(io::Error::other)
+}
+
+/// Convert a `_custom` envelope (as stored on disk) back into an
+/// [`AgentMessage::Custom`] using the supplied registry.
+///
+/// Returns `Ok(None)` when the caller supplied no registry (custom messages
+/// are skipped — matching prior `load()` behavior).
+fn custom_envelope_to_message(
+    envelope: &serde_json::Value,
+    registry: Option<&CustomMessageRegistry>,
+) -> io::Result<Option<AgentMessage>> {
+    let line = serde_json::to_string(envelope).map_err(io::Error::other)?;
+    crate::codec::decode_jsonl_message_line(&line, registry)
 }
 
 #[cfg(test)]
@@ -759,8 +842,10 @@ mod tests {
     #[test]
     fn new_session_id_format() {
         let id = JsonlSessionStore::new_session_id();
-        assert_eq!(id.len(), 15);
-        assert_eq!(id.as_bytes()[8], b'_');
+        let (timestamp, suffix) = id.rsplit_once('_').unwrap();
+        assert_eq!(timestamp.len(), 15);
+        assert_eq!(timestamp.as_bytes()[8], b'_');
+        assert_eq!(suffix.len(), 32);
     }
 
     #[test]
@@ -1147,6 +1232,174 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn save_preserves_state_and_rich_entries() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = JsonlSessionStore::new(dir.path().to_path_buf()).unwrap();
+
+        let meta = fresh_meta("preserve-save");
+        let entries = vec![
+            SessionEntry::Message(LlmMessage::User(swink_agent::UserMessage {
+                content: vec![swink_agent::ContentBlock::Text {
+                    text: "hello".to_string(),
+                }],
+                timestamp: 1,
+                cache_hint: None,
+            })),
+            SessionEntry::Label {
+                text: "bookmark".to_string(),
+                message_index: 0,
+                timestamp: 2,
+            },
+        ];
+
+        store
+            .save_entries("preserve-save", &meta, &entries)
+            .unwrap();
+        store
+            .save_state("preserve-save", &serde_json::json!({ "cursor": 7 }))
+            .unwrap();
+
+        let (loaded_meta, _) = store.load("preserve-save", None).unwrap();
+        store
+            .save(
+                "preserve-save",
+                &loaded_meta,
+                &[user_msg("updated", 3), user_msg("again", 4)],
+            )
+            .unwrap();
+
+        assert_eq!(
+            store.load_state("preserve-save").unwrap(),
+            Some(serde_json::json!({ "cursor": 7 }))
+        );
+
+        let (_, entries) = store.load_entries("preserve-save").unwrap();
+        assert_eq!(entries.len(), 3, "messages plus preserved label");
+        assert!(matches!(entries[0], SessionEntry::Message(_)));
+        assert!(matches!(entries[1], SessionEntry::Message(_)));
+        assert!(matches!(entries[2], SessionEntry::Label { .. }));
+    }
+
+    #[test]
+    fn save_entries_preserve_saved_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = JsonlSessionStore::new(dir.path().to_path_buf()).unwrap();
+
+        let meta = fresh_meta("preserve-entry-save");
+        store
+            .save("preserve-entry-save", &meta, &[user_msg("hello", 1)])
+            .unwrap();
+        store
+            .save_state("preserve-entry-save", &serde_json::json!({ "cursor": 11 }))
+            .unwrap();
+
+        let (loaded_meta, _) = store.load("preserve-entry-save", None).unwrap();
+        let entries = vec![
+            SessionEntry::Message(LlmMessage::User(swink_agent::UserMessage {
+                content: vec![swink_agent::ContentBlock::Text {
+                    text: "updated".to_string(),
+                }],
+                timestamp: 2,
+                cache_hint: None,
+            })),
+            SessionEntry::Label {
+                text: "kept".to_string(),
+                message_index: 0,
+                timestamp: 3,
+            },
+        ];
+
+        store
+            .save_entries("preserve-entry-save", &loaded_meta, &entries)
+            .unwrap();
+
+        assert_eq!(
+            store.load_state("preserve-entry-save").unwrap(),
+            Some(serde_json::json!({ "cursor": 11 }))
+        );
+    }
+
+    #[test]
+    fn save_entries_preserves_existing_custom_message_envelopes() {
+        use swink_agent::{CustomMessage, CustomMessageRegistry};
+
+        #[derive(Debug)]
+        struct TestCustomMsg {
+            data: String,
+        }
+
+        impl CustomMessage for TestCustomMsg {
+            fn as_any(&self) -> &dyn std::any::Any {
+                self
+            }
+
+            fn type_name(&self) -> Option<&str> {
+                Some("TestCustomMsg")
+            }
+
+            fn to_json(&self) -> Option<serde_json::Value> {
+                Some(serde_json::json!({ "data": self.data }))
+            }
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let store = JsonlSessionStore::new(dir.path().to_path_buf()).unwrap();
+
+        let meta = fresh_meta("preserve-entry-custom");
+        let messages = vec![
+            user_msg("hello", 1),
+            AgentMessage::Custom(Box::new(TestCustomMsg {
+                data: "custom-payload".to_string(),
+            })),
+        ];
+        store
+            .save("preserve-entry-custom", &meta, &messages)
+            .unwrap();
+
+        let (loaded_meta, _) = store.load("preserve-entry-custom", None).unwrap();
+        let entries = vec![
+            SessionEntry::Message(LlmMessage::User(swink_agent::UserMessage {
+                content: vec![swink_agent::ContentBlock::Text {
+                    text: "updated".to_string(),
+                }],
+                timestamp: 2,
+                cache_hint: None,
+            })),
+            SessionEntry::Label {
+                text: "kept".to_string(),
+                message_index: 0,
+                timestamp: 3,
+            },
+        ];
+
+        store
+            .save_entries("preserve-entry-custom", &loaded_meta, &entries)
+            .unwrap();
+
+        let mut registry = CustomMessageRegistry::new();
+        registry.register(
+            "TestCustomMsg",
+            Box::new(|val: serde_json::Value| {
+                let data = val
+                    .get("data")
+                    .and_then(|value| value.as_str())
+                    .ok_or_else(|| "missing data".to_string())?;
+                Ok(Box::new(TestCustomMsg {
+                    data: data.to_string(),
+                }) as Box<dyn CustomMessage>)
+            }),
+        );
+
+        let (_, loaded_messages) = store
+            .load("preserve-entry-custom", Some(&registry))
+            .unwrap();
+        assert_eq!(loaded_messages.len(), 2, "message plus preserved custom");
+        assert!(matches!(loaded_messages[0], AgentMessage::Llm(_)));
+        let custom = loaded_messages[1].downcast_ref::<TestCustomMsg>().unwrap();
+        assert_eq!(custom.data, "custom-payload");
+    }
+
     fn user_msg(text: &str, ts: u64) -> AgentMessage {
         AgentMessage::Llm(LlmMessage::User(swink_agent::UserMessage {
             content: vec![swink_agent::ContentBlock::Text {
@@ -1273,7 +1526,7 @@ mod tests {
         let (validated_tx, validated_rx) = mpsc::channel();
         let (resume_tx, resume_rx) = mpsc::channel();
 
-        let thread_path = path.clone();
+        let thread_path = path;
         let thread_meta = stale_meta.clone();
         let paused_writer = thread::spawn(move || {
             let messages = vec![user_msg("writer-1", 2)];
@@ -1294,7 +1547,7 @@ mod tests {
         validated_rx.recv().unwrap();
 
         let competitor_messages = vec![user_msg("writer-2", 3)];
-        let competitor_meta = stale_meta.clone();
+        let competitor_meta = stale_meta;
         let competitor =
             thread::spawn(move || store.save("stale-race", &competitor_meta, &competitor_messages));
 
@@ -1316,5 +1569,246 @@ mod tests {
             .unwrap();
         assert_eq!(loaded_meta.sequence, 2);
         assert_eq!(loaded_messages.len(), 1);
+    }
+
+    #[test]
+    fn save_interrupt_requires_existing_session() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = JsonlSessionStore::new(dir.path().to_path_buf()).unwrap();
+
+        let err = store
+            .save_interrupt(
+                "missing",
+                &InterruptState {
+                    interrupted_at: 1,
+                    pending_tool_calls: vec![],
+                    context_snapshot: vec![],
+                    system_prompt: "system".to_string(),
+                    model: swink_agent::ModelSpec::new("openai", "gpt-4o"),
+                },
+            )
+            .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::NotFound);
+    }
+
+    /// Migrator that transforms the first `User` text content in every
+    /// `Message` entry from lower-case to upper-case. Used to detect whether
+    /// the migration pipeline actually ran against a given load path.
+    struct UppercasingMigrator;
+
+    impl crate::migrate::SessionMigrator for UppercasingMigrator {
+        fn source_version(&self) -> u32 {
+            0
+        }
+        fn target_version(&self) -> u32 {
+            1
+        }
+        fn migrate(
+            &self,
+            _meta: &SessionMeta,
+            entries: Vec<SessionEntry>,
+        ) -> io::Result<Vec<SessionEntry>> {
+            Ok(entries
+                .into_iter()
+                .map(|entry| match entry {
+                    SessionEntry::Message(LlmMessage::User(mut m)) => {
+                        for block in &mut m.content {
+                            if let swink_agent::ContentBlock::Text { text } = block {
+                                *text = text.to_uppercase();
+                            }
+                        }
+                        SessionEntry::Message(LlmMessage::User(m))
+                    }
+                    other => other,
+                })
+                .collect())
+        }
+    }
+
+    /// Write a legacy (`version: 0`) session file containing both a
+    /// migrateable raw-`LlmMessage` line AND a custom-message envelope, then
+    /// assert that `load()` and `load_entries()` both observe the migrated
+    /// shape and that `load()` returns the custom wrapper unchanged.
+    ///
+    /// Regression for #522: `load()` previously bypassed the configured
+    /// migrator pipeline, so it returned the raw pre-migration text while
+    /// `load_entries()` returned the migrated text.
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn load_applies_migrators_identically_to_load_entries() {
+        use swink_agent::{CustomMessage, CustomMessageRegistry};
+
+        #[derive(Debug)]
+        struct TestCustomMsg {
+            data: String,
+        }
+
+        impl CustomMessage for TestCustomMsg {
+            fn as_any(&self) -> &dyn std::any::Any {
+                self
+            }
+            fn type_name(&self) -> Option<&str> {
+                Some("TestCustomMsg")
+            }
+            fn to_json(&self) -> Option<serde_json::Value> {
+                Some(serde_json::json!({ "data": self.data }))
+            }
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let id = "legacy";
+
+        // Write a legacy-format file by hand: line 1 = meta @ version 0,
+        // line 2 = raw LlmMessage (migrateable), line 3 = _custom envelope
+        // (pass-through), line 4 = _state wrapper (pass-through, skipped by
+        // load but must not break migration).
+        let path = session_path(dir.path(), id);
+        let now = now_utc();
+        let meta = SessionMeta {
+            id: id.to_string(),
+            title: "legacy".to_string(),
+            created_at: now,
+            updated_at: now,
+            version: 0,
+            sequence: 0,
+        };
+
+        let raw_msg_line = serde_json::to_string(&LlmMessage::User(swink_agent::UserMessage {
+            content: vec![swink_agent::ContentBlock::Text {
+                text: "hello".to_string(),
+            }],
+            timestamp: 1,
+            cache_hint: None,
+        }))
+        .unwrap();
+
+        let custom_envelope = serde_json::json!({
+            "type": "TestCustomMsg",
+            "data": { "data": "custom-payload" },
+            "_custom": true,
+        });
+        let custom_line = serde_json::to_string(&custom_envelope).unwrap();
+
+        let state_line = serde_json::json!({
+            "_state": true,
+            "data": { "cursor": 9 },
+        })
+        .to_string();
+
+        let contents = format!(
+            "{}\n{raw_msg_line}\n{custom_line}\n{state_line}\n",
+            serde_json::to_string(&meta).unwrap()
+        );
+        std::fs::write(&path, contents).unwrap();
+
+        let store = JsonlSessionStore::new(dir.path().to_path_buf())
+            .unwrap()
+            .with_migrators(vec![Box::new(UppercasingMigrator)]);
+
+        // load_entries() runs migrators — this is the pre-fix baseline.
+        let (entries_meta, entries) = store.load_entries(id).unwrap();
+        assert_eq!(entries_meta.version, crate::migrate::CURRENT_VERSION);
+        let entry_msg = entries
+            .iter()
+            .find_map(SessionEntry::as_message)
+            .expect("message entry present");
+        if let LlmMessage::User(user) = entry_msg
+            && let swink_agent::ContentBlock::Text { text } = &user.content[0]
+        {
+            assert_eq!(text, "HELLO", "load_entries must run migrator");
+        } else {
+            panic!("unexpected entry shape");
+        }
+
+        // load() must observe the same post-migration text AND still return
+        // the custom wrapper unchanged (requires the registry).
+        let mut registry = CustomMessageRegistry::new();
+        registry.register(
+            "TestCustomMsg",
+            Box::new(|val: serde_json::Value| {
+                let data = val
+                    .get("data")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| "missing data".to_string())?;
+                Ok(Box::new(TestCustomMsg {
+                    data: data.to_string(),
+                }) as Box<dyn CustomMessage>)
+            }),
+        );
+
+        let (load_meta, messages) = store.load(id, Some(&registry)).unwrap();
+        assert_eq!(load_meta.version, crate::migrate::CURRENT_VERSION);
+
+        let llm_text = messages
+            .iter()
+            .find_map(|m| match m {
+                AgentMessage::Llm(LlmMessage::User(u)) => u.content.iter().find_map(|b| match b {
+                    swink_agent::ContentBlock::Text { text } => Some(text.clone()),
+                    _ => None,
+                }),
+                _ => None,
+            })
+            .expect("user message present");
+        assert_eq!(
+            llm_text, "HELLO",
+            "load() must route through the migrator pipeline"
+        );
+
+        let custom = messages
+            .iter()
+            .find_map(|m| m.downcast_ref::<TestCustomMsg>().ok())
+            .expect("custom wrapper must pass through load() unchanged");
+        assert_eq!(custom.data, "custom-payload");
+    }
+
+    /// Without a registered migrator, a legacy-version file must still fail
+    /// `load()` with the same error that `load_entries()` emits — contract
+    /// consistency between the two APIs.
+    #[test]
+    fn load_rejects_legacy_version_without_migrator_like_load_entries() {
+        let dir = tempfile::tempdir().unwrap();
+        let id = "no-migrator";
+        let path = session_path(dir.path(), id);
+        let now = now_utc();
+        // A future version (> CURRENT_VERSION) triggers the unsupported-
+        // version error in both paths.
+        let meta = SessionMeta {
+            id: id.to_string(),
+            title: "future".to_string(),
+            created_at: now,
+            updated_at: now,
+            version: crate::migrate::CURRENT_VERSION + 1,
+            sequence: 0,
+        };
+        let contents = format!("{}\n", serde_json::to_string(&meta).unwrap());
+        std::fs::write(&path, contents).unwrap();
+
+        let store = JsonlSessionStore::new(dir.path().to_path_buf()).unwrap();
+        let load_err = store.load(id, None).unwrap_err();
+        let entries_err = store.load_entries(id).unwrap_err();
+        assert_eq!(load_err.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(entries_err.kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn load_interrupt_ignores_orphan_file_without_session() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = JsonlSessionStore::new(dir.path().to_path_buf()).unwrap();
+
+        let orphan_path = interrupt_path(dir.path(), "orphan");
+        std::fs::write(
+            &orphan_path,
+            serde_json::to_string(&InterruptState {
+                interrupted_at: 2,
+                pending_tool_calls: vec![],
+                context_snapshot: vec![],
+                system_prompt: "system".to_string(),
+                model: swink_agent::ModelSpec::new("openai", "gpt-4o"),
+            })
+            .unwrap(),
+        )
+        .unwrap();
+
+        assert!(store.load_interrupt("orphan").unwrap().is_none());
     }
 }

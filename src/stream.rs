@@ -356,6 +356,32 @@ pub fn accumulate_message(
     provider: &str,
     model_id: &str,
 ) -> Result<AssistantMessage, String> {
+    fn ensure_block_open(
+        open_blocks: &[bool],
+        content_index: usize,
+        event_name: &str,
+    ) -> Result<(), String> {
+        match open_blocks.get(content_index) {
+            Some(false) => Err(format!(
+                "{event_name}: block at index {content_index} is already closed"
+            )),
+            Some(true) | None => Ok(()),
+        }
+    }
+
+    fn all_open_blocks_are_tool_calls(content: &[ContentBlock], open_blocks: &[bool]) -> bool {
+        open_blocks
+            .iter()
+            .enumerate()
+            .filter(|(_, open)| **open)
+            .all(|(content_index, _)| {
+                matches!(
+                    content.get(content_index),
+                    Some(ContentBlock::ToolCall { .. })
+                )
+            })
+    }
+
     let mut content: Option<Vec<ContentBlock>> = None;
     // Parallel to `content`: tracks whether each block is still open (awaiting
     // its matching `*End` event). Finalization (on `Done`) fails if any block
@@ -439,6 +465,7 @@ pub fn accumulate_message(
                 delta,
             } => {
                 let blocks = content.as_mut().ok_or("TextDelta before Start")?;
+                ensure_block_open(&open_blocks, content_index, "TextDelta")?;
                 let block = blocks
                     .get_mut(content_index)
                     .ok_or_else(|| format!("TextDelta: invalid content_index {content_index}"))?;
@@ -462,6 +489,7 @@ pub fn accumulate_message(
                         "TextEnd: block at index {content_index} is not Text"
                     ));
                 }
+                ensure_block_open(&open_blocks, content_index, "TextEnd")?;
                 if let Some(open) = open_blocks.get_mut(content_index) {
                     *open = false;
                 }
@@ -487,6 +515,7 @@ pub fn accumulate_message(
                 delta,
             } => {
                 let blocks = content.as_mut().ok_or("ThinkingDelta before Start")?;
+                ensure_block_open(&open_blocks, content_index, "ThinkingDelta")?;
                 let block = blocks.get_mut(content_index).ok_or_else(|| {
                     format!("ThinkingDelta: invalid content_index {content_index}")
                 })?;
@@ -505,6 +534,7 @@ pub fn accumulate_message(
                 signature,
             } => {
                 let blocks = content.as_mut().ok_or("ThinkingEnd before Start")?;
+                ensure_block_open(&open_blocks, content_index, "ThinkingEnd")?;
                 let block = blocks
                     .get_mut(content_index)
                     .ok_or_else(|| format!("ThinkingEnd: invalid content_index {content_index}"))?;
@@ -547,6 +577,7 @@ pub fn accumulate_message(
                 delta,
             } => {
                 let blocks = content.as_mut().ok_or("ToolCallDelta before Start")?;
+                ensure_block_open(&open_blocks, content_index, "ToolCallDelta")?;
                 let block = blocks.get_mut(content_index).ok_or_else(|| {
                     format!("ToolCallDelta: invalid content_index {content_index}")
                 })?;
@@ -570,6 +601,7 @@ pub fn accumulate_message(
                 let block = blocks
                     .get_mut(content_index)
                     .ok_or_else(|| format!("ToolCallEnd: invalid content_index {content_index}"))?;
+                ensure_block_open(&open_blocks, content_index, "ToolCallEnd")?;
                 match block {
                     ContentBlock::ToolCall {
                         arguments,
@@ -620,7 +652,10 @@ pub fn accumulate_message(
                 cost: c,
             } => {
                 if let Some(idx) = open_blocks.iter().position(|open| *open) {
-                    if tolerate_truncated_tool_args {
+                    let content = content.as_ref().ok_or("Done before Start")?;
+                    if tolerate_truncated_tool_args
+                        && all_open_blocks_are_tool_calls(content, &open_blocks)
+                    {
                         // Max-tokens truncation: leave open tool-call blocks
                         // with `partial_json` set so the loop's
                         // `recover_incomplete_tool_calls` path can convert
@@ -921,11 +956,181 @@ mod tests {
     }
 
     #[test]
+    fn done_length_with_unterminated_text_block_is_rejected() {
+        let events = vec![
+            AssistantMessageEvent::Start,
+            AssistantMessageEvent::TextStart { content_index: 0 },
+            AssistantMessageEvent::TextDelta {
+                content_index: 0,
+                delta: "partial".into(),
+            },
+            AssistantMessageEvent::Done {
+                stop_reason: StopReason::Length,
+                usage: Usage::default(),
+                cost: Cost::default(),
+            },
+        ];
+
+        let err = accumulate_message(events, "test", "test").unwrap_err();
+        assert!(err.contains("unterminated content block"), "got: {err}");
+    }
+
+    #[test]
+    fn done_length_with_unterminated_thinking_block_is_rejected() {
+        let events = vec![
+            AssistantMessageEvent::Start,
+            AssistantMessageEvent::ThinkingStart { content_index: 0 },
+            AssistantMessageEvent::ThinkingDelta {
+                content_index: 0,
+                delta: "partial".into(),
+            },
+            AssistantMessageEvent::Done {
+                stop_reason: StopReason::Length,
+                usage: Usage::default(),
+                cost: Cost::default(),
+            },
+        ];
+
+        let err = accumulate_message(events, "test", "test").unwrap_err();
+        assert!(err.contains("unterminated content block"), "got: {err}");
+    }
+
+    #[test]
     fn text_response_accumulates_correctly() {
         let events = AssistantMessageEvent::text_response("accumulated text");
         let msg = accumulate_message(events, "test", "test-model").expect("accumulation failed");
         assert_eq!(msg.content.len(), 1);
         assert_eq!(ContentBlock::extract_text(&msg.content), "accumulated text");
         assert_eq!(msg.stop_reason, StopReason::Stop);
+    }
+
+    #[test]
+    fn text_delta_after_text_end_is_rejected() {
+        let events = vec![
+            AssistantMessageEvent::Start,
+            AssistantMessageEvent::TextStart { content_index: 0 },
+            AssistantMessageEvent::TextDelta {
+                content_index: 0,
+                delta: "hello".into(),
+            },
+            AssistantMessageEvent::TextEnd { content_index: 0 },
+            AssistantMessageEvent::TextDelta {
+                content_index: 0,
+                delta: " again".into(),
+            },
+            AssistantMessageEvent::Done {
+                stop_reason: StopReason::Stop,
+                usage: Usage::default(),
+                cost: Cost::default(),
+            },
+        ];
+
+        let err = accumulate_message(events, "test", "test").unwrap_err();
+        assert_eq!(err, "TextDelta: block at index 0 is already closed");
+    }
+
+    #[test]
+    fn duplicate_text_end_is_rejected() {
+        let events = vec![
+            AssistantMessageEvent::Start,
+            AssistantMessageEvent::TextStart { content_index: 0 },
+            AssistantMessageEvent::TextDelta {
+                content_index: 0,
+                delta: "hello".into(),
+            },
+            AssistantMessageEvent::TextEnd { content_index: 0 },
+            AssistantMessageEvent::TextEnd { content_index: 0 },
+            AssistantMessageEvent::Done {
+                stop_reason: StopReason::Stop,
+                usage: Usage::default(),
+                cost: Cost::default(),
+            },
+        ];
+
+        let err = accumulate_message(events, "test", "test").unwrap_err();
+        assert_eq!(err, "TextEnd: block at index 0 is already closed");
+    }
+
+    #[test]
+    fn duplicate_thinking_end_is_rejected() {
+        let events = vec![
+            AssistantMessageEvent::Start,
+            AssistantMessageEvent::ThinkingStart { content_index: 0 },
+            AssistantMessageEvent::ThinkingDelta {
+                content_index: 0,
+                delta: "step 1".into(),
+            },
+            AssistantMessageEvent::ThinkingEnd {
+                content_index: 0,
+                signature: Some("sig-1".into()),
+            },
+            AssistantMessageEvent::ThinkingEnd {
+                content_index: 0,
+                signature: Some("sig-2".into()),
+            },
+            AssistantMessageEvent::Done {
+                stop_reason: StopReason::Stop,
+                usage: Usage::default(),
+                cost: Cost::default(),
+            },
+        ];
+
+        let err = accumulate_message(events, "test", "test").unwrap_err();
+        assert_eq!(err, "ThinkingEnd: block at index 0 is already closed");
+    }
+
+    #[test]
+    fn tool_call_delta_after_end_is_rejected() {
+        let events = vec![
+            AssistantMessageEvent::Start,
+            AssistantMessageEvent::ToolCallStart {
+                content_index: 0,
+                id: "tool-1".into(),
+                name: "read_file".into(),
+            },
+            AssistantMessageEvent::ToolCallDelta {
+                content_index: 0,
+                delta: "{\"path\":\"/tmp/a\"}".into(),
+            },
+            AssistantMessageEvent::ToolCallEnd { content_index: 0 },
+            AssistantMessageEvent::ToolCallDelta {
+                content_index: 0,
+                delta: ",\"extra\":true}".into(),
+            },
+            AssistantMessageEvent::Done {
+                stop_reason: StopReason::ToolUse,
+                usage: Usage::default(),
+                cost: Cost::default(),
+            },
+        ];
+
+        let err = accumulate_message(events, "test", "test").unwrap_err();
+        assert_eq!(err, "ToolCallDelta: block at index 0 is already closed");
+    }
+
+    #[test]
+    fn duplicate_tool_call_end_is_rejected() {
+        let events = vec![
+            AssistantMessageEvent::Start,
+            AssistantMessageEvent::ToolCallStart {
+                content_index: 0,
+                id: "tool-1".into(),
+                name: "read_file".into(),
+            },
+            AssistantMessageEvent::ToolCallDelta {
+                content_index: 0,
+                delta: "{\"path\":\"/tmp/a\"}".into(),
+            },
+            AssistantMessageEvent::ToolCallEnd { content_index: 0 },
+            AssistantMessageEvent::ToolCallEnd { content_index: 0 },
+            AssistantMessageEvent::Done {
+                stop_reason: StopReason::ToolUse,
+                usage: Usage::default(),
+                cost: Cost::default(),
+            },
+        ];
+
+        let err = accumulate_message(events, "test", "test").unwrap_err();
+        assert_eq!(err, "ToolCallEnd: block at index 0 is already closed");
     }
 }

@@ -259,6 +259,15 @@ impl StreamFinalize for BedrockStreamState {
     }
 }
 
+fn cancelled_event(message: &'static str) -> AssistantMessageEvent {
+    AssistantMessageEvent::Error {
+        stop_reason: StopReason::Aborted,
+        error_message: message.to_string(),
+        usage: None,
+        error_kind: None,
+    }
+}
+
 pub struct BedrockStreamFn {
     base_url: String,
     region: String,
@@ -412,9 +421,7 @@ impl BedrockStreamFn {
                             return Some((
                                 vec![
                                     AssistantMessageEvent::Start,
-                                    AssistantMessageEvent::error_network(
-                                        "Bedrock request cancelled",
-                                    ),
+                                    cancelled_event("Bedrock request cancelled"),
                                 ],
                                 StreamUnfoldState::Done,
                             ));
@@ -501,9 +508,7 @@ impl BedrockStreamFn {
                                 biased;
                                 () = cancellation_token.cancelled() => {
                                     let mut events = finalize::finalize_blocks(state.as_mut());
-                                    events.push(AssistantMessageEvent::error_network(
-                                        "Bedrock stream cancelled",
-                                    ));
+                                    events.push(cancelled_event("Bedrock stream cancelled"));
                                     return Some((events, StreamUnfoldState::Done));
                                 }
                                 chunk = byte_stream.next() => {
@@ -655,9 +660,7 @@ fn classify_bedrock_exception(exc_type: &str, payload: &str) -> AssistantMessage
         || lower.contains("validation")
         || lower.contains("resourcenotfound")
     {
-        AssistantMessageEvent::error_auth(format!(
-            "Bedrock client error ({exc_type}): {payload}"
-        ))
+        AssistantMessageEvent::error_auth(format!("Bedrock client error ({exc_type}): {payload}"))
     } else if lower.contains("internalserver")
         || lower.contains("modelstreamerror")
         || lower.contains("modeltimeout")
@@ -668,9 +671,7 @@ fn classify_bedrock_exception(exc_type: &str, payload: &str) -> AssistantMessage
         ))
     } else {
         // Unknown exception type — do not assume retryable.
-        AssistantMessageEvent::error(format!(
-            "Bedrock exception ({exc_type}): {payload}"
-        ))
+        AssistantMessageEvent::error(format!("Bedrock exception ({exc_type}): {payload}"))
     }
 }
 
@@ -1372,8 +1373,7 @@ mod tests {
     #[test]
     fn exception_frame_too_many_requests_is_throttled() {
         let mut state = BedrockStreamState::new();
-        let msg =
-            make_exception_message("tooManyRequestsException", br#"{"message":"Slow down"}"#);
+        let msg = make_exception_message("tooManyRequestsException", br#"{"message":"Slow down"}"#);
         let events = process_smithy_message(&msg, &mut state);
         assert_eq!(events.len(), 2);
         assert!(matches!(events[0], AssistantMessageEvent::Start));
@@ -1474,8 +1474,7 @@ mod tests {
     #[test]
     fn exception_frame_model_timeout_is_network() {
         let mut state = BedrockStreamState::new();
-        let msg =
-            make_exception_message("modelTimeoutException", br#"{"message":"Timeout"}"#);
+        let msg = make_exception_message("modelTimeoutException", br#"{"message":"Timeout"}"#);
         let events = process_smithy_message(&msg, &mut state);
         assert_eq!(events.len(), 2);
         assert!(matches!(events[0], AssistantMessageEvent::Start));
@@ -1508,16 +1507,16 @@ mod tests {
     #[test]
     fn exception_frame_unknown_type_is_unclassified() {
         let mut state = BedrockStreamState::new();
-        let msg = make_exception_message(
-            "someFutureException",
-            br#"{"message":"Something new"}"#,
-        );
+        let msg = make_exception_message("someFutureException", br#"{"message":"Something new"}"#);
         let events = process_smithy_message(&msg, &mut state);
         assert_eq!(events.len(), 2);
         assert!(matches!(events[0], AssistantMessageEvent::Start));
         match &events[1] {
             AssistantMessageEvent::Error { error_kind, .. } => {
-                assert_eq!(*error_kind, None, "unknown exceptions should not be classified as retryable");
+                assert_eq!(
+                    *error_kind, None,
+                    "unknown exceptions should not be classified as retryable"
+                );
             }
             other => panic!("expected Error, got {other:?}"),
         }
@@ -1733,7 +1732,11 @@ mod tests {
             br#"{"message":"Stream failed mid-response"}"#,
         );
         let events = process_smithy_message(&msg, &mut state);
-        assert_eq!(events.len(), 1, "should not prepend Start when already started");
+        assert_eq!(
+            events.len(),
+            1,
+            "should not prepend Start when already started"
+        );
         assert!(matches!(events[0], AssistantMessageEvent::Error { .. }));
     }
 

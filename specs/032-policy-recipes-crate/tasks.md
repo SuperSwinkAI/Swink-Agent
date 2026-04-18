@@ -156,7 +156,7 @@
 - [x] T039 [P] Add doc comments to all public types in `policies/src/audit_logger.rs` with usage examples
 - [x] T040 Add crate-level doc comment in `policies/src/lib.rs` describing the crate's dual purpose (usable policies + reference examples)
 - [x] T041 Validate quickstart.md examples match the implemented API (spot-check 3 examples)
-- [x] T042 Update `CLAUDE.md` Lessons Learned section with policy recipes crate notes
+- [x] T042 Update `AGENTS.md` Lessons Learned section with policy recipes crate notes
 - [x] T043 Run `cargo test --workspace` — verify no regressions across the entire workspace
 
 **Checkpoint**: All documented. Zero warnings. All tests green. Feature complete.

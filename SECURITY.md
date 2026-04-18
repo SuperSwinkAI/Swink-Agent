@@ -2,31 +2,23 @@
 
 ## Supported Versions
 
-Only the latest release on `main` is actively supported with security fixes.
+Only the latest published version on crates.io receives security fixes. We do not backport to older versions.
 
 ## Reporting a Vulnerability
 
-**Please do not report security vulnerabilities through public GitHub issues.**
+**Please do not open a public GitHub issue for security vulnerabilities.**
 
-To report a vulnerability, open a [GitHub Security Advisory](https://github.com/SuperSwinkAI/Swink-Agent/security/advisories/new). This keeps the report private while it is investigated.
+Use GitHub's private vulnerability reporting:
+[Report a vulnerability](https://github.com/SuperSwinkAI/Swink-Agent/security/advisories/new)
 
-Include as much of the following as possible:
+Include:
+- A clear description of the vulnerability and its impact
+- Steps to reproduce or a minimal proof-of-concept
+- The affected crate(s) and version(s)
+- Any suggested fix if you have one
 
-- Type of issue (e.g., credential leak, unsafe deserialization, dependency vulnerability)
-- File paths and line numbers relevant to the issue
-- Steps to reproduce or proof-of-concept
-- Potential impact and attack scenario
-
-You can expect an acknowledgment within **48 hours** and a resolution timeline within **7 days** for critical issues.
+We aim to acknowledge reports within **3 business days** and to publish a fix and advisory within **30 days** for confirmed vulnerabilities. We will credit reporters in the advisory unless you request otherwise.
 
 ## Scope
 
-Security concerns most relevant to this project:
-
-- **API key handling** — keys are read from environment variables and never logged or serialized
-- **Tool execution** — `BashTool` and file tools execute arbitrary commands; approval policies should be configured appropriately in production
-- **Dependency vulnerabilities** — tracked via `cargo deny` (see `deny.toml`) and audited in CI
-
-## Dependency Audits
-
-This project uses [`cargo-deny`](https://github.com/EmbarkStudios/cargo-deny) with a strict advisory policy. All known vulnerabilities in the dependency tree are blocked in CI. If you discover a vulnerable dependency not yet caught by the audit, please report it as described above.
+This policy covers the `swink-agent` workspace crates published to crates.io. Vulnerabilities in upstream dependencies should be reported to those projects directly; we will update our dependency on a fixed version as promptly as possible.

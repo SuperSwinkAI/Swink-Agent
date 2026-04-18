@@ -120,8 +120,8 @@ impl<S: crate::store::SessionStore + 'static> BlockingSessionStore<S> {
     ///
     /// Custom messages are restored using the registry supplied to
     /// [`BlockingSessionStore::with_registry`]. Without a registry, custom
-    /// messages are returned as raw `SerializedCustomMessage` wrappers (preserved
-    /// but not fully deserialized).
+    /// messages are discarded on load because the blocking adapter has no
+    /// serialized-wrapper fallback.
     pub fn load(&self, id: &str) -> SessionStoreFuture<'_, (SessionMeta, Vec<AgentMessage>)> {
         let inner = Arc::clone(&self.inner);
         let id = id.to_string();
@@ -385,6 +385,48 @@ mod tests {
         assert!(matches!(loaded[0], AgentMessage::Custom(_)));
         let custom = loaded[0].downcast_ref::<TestCustomMsg>().unwrap();
         assert_eq!(custom.data, "via-registry");
+    }
+
+    #[tokio::test]
+    async fn blocking_adapter_without_registry_drops_custom_messages_on_load() {
+        let dir = tempfile::tempdir().unwrap();
+
+        {
+            let sync_store = JsonlSessionStore::new(dir.path().to_path_buf()).unwrap();
+            let meta = test_meta("drop_custom");
+            let messages: Vec<AgentMessage> = vec![
+                AgentMessage::Llm(swink_agent::LlmMessage::User(swink_agent::UserMessage {
+                    content: vec![swink_agent::ContentBlock::Text {
+                        text: "before".to_string(),
+                    }],
+                    timestamp: 1,
+                    cache_hint: None,
+                })),
+                AgentMessage::Custom(Box::new(TestCustomMsg {
+                    data: "not-restored".to_string(),
+                })),
+                AgentMessage::Llm(swink_agent::LlmMessage::User(swink_agent::UserMessage {
+                    content: vec![swink_agent::ContentBlock::Text {
+                        text: "after".to_string(),
+                    }],
+                    timestamp: 2,
+                    cache_hint: None,
+                })),
+            ];
+            crate::store::SessionStore::save(&sync_store, "drop_custom", &meta, &messages).unwrap();
+        }
+
+        let jsonl_store = JsonlSessionStore::new(dir.path().to_path_buf()).unwrap();
+        let async_store = BlockingSessionStore::new(jsonl_store);
+        let (_, loaded) = async_store.load("drop_custom").await.unwrap();
+
+        assert_eq!(
+            loaded.len(),
+            2,
+            "custom messages should be skipped without a registry"
+        );
+        assert!(matches!(loaded[0], AgentMessage::Llm(_)));
+        assert!(matches!(loaded[1], AgentMessage::Llm(_)));
     }
 
     #[tokio::test]

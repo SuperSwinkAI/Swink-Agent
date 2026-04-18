@@ -53,9 +53,16 @@ body:
       options:
         - swink-agent (core)
         - swink-agent-adapters
-        - swink-agent-memory
+        - swink-agent-artifacts
+        - swink-agent-auth
         - swink-agent-eval
         - swink-agent-local-llm
+        - swink-agent-macros
+        - swink-agent-mcp
+        - swink-agent-memory
+        - swink-agent-patterns
+        - swink-agent-plugin-web
+        - swink-agent-policies
         - swink-agent-tui
         - unsure
 

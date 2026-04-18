@@ -50,6 +50,11 @@ impl App {
                 }
                 Some(event) = self.agent_rx.recv() => {
                     self.handle_agent_event(event);
+                    // Drain any additional pending agent events before the next
+                    // draw so rapid token bursts are batched into a single frame.
+                    while let Ok(event) = self.agent_rx.try_recv() {
+                        self.handle_agent_event(event);
+                    }
                 }
                 Some((request, responder)) = self.approval_rx.recv() => {
                     self.handle_approval_request(request, responder);
@@ -233,7 +238,7 @@ impl App {
                     if let Some((req, responder)) = self.pending_approval.take() {
                         let _ = responder.send(ToolApproval::Approved);
                         // In Smart mode, offer trust follow-up
-                        if self.approval_mode == ApprovalMode::Smart {
+                        if self.approval_mode() == ApprovalMode::Smart {
                             self.trust_follow_up = Some(TrustFollowUp {
                                 tool_name: req.tool_name,
                                 expires_at: Instant::now() + Duration::from_secs(3),
@@ -269,10 +274,8 @@ impl App {
 
     fn handle_input_key(&mut self, key: KeyEvent) {
         match (key.modifiers, key.code) {
-            (_, KeyCode::Esc) => {
-                if self.status == AgentStatus::Running {
-                    self.abort_agent();
-                }
+            (_, KeyCode::Esc) if self.status == AgentStatus::Running => {
+                self.abort_agent();
             }
             (KeyModifiers::SHIFT, KeyCode::BackTab) => {
                 self.toggle_operating_mode();
@@ -451,14 +454,15 @@ impl App {
                     ApprovalModeArg::Off => ApprovalMode::Bypassed,
                     ApprovalModeArg::Smart => ApprovalMode::Smart,
                 };
-                self.approval_mode = harness_mode;
                 if let Some(agent) = &mut self.agent {
                     agent.set_approval_mode(harness_mode);
                 }
                 let label = match mode {
                     ApprovalModeArg::On => "enabled",
                     ApprovalModeArg::Off => "disabled (auto-approve)",
-                    ApprovalModeArg::Smart => "smart (auto-approve reads, prompt for writes)",
+                    ApprovalModeArg::Smart => {
+                        "smart (auto-approve trusted tools, prompt for untrusted tools)"
+                    }
                 };
                 self.push_system_message(format!("Tool approval: {label}"));
                 return;
@@ -482,14 +486,16 @@ impl App {
                 return;
             }
             CommandResult::QueryApprovalMode => {
-                let label = match self.approval_mode {
+                let label = match self.approval_mode() {
                     ApprovalMode::Enabled => "enabled",
                     ApprovalMode::Bypassed => "disabled (auto-approve)",
-                    ApprovalMode::Smart => "smart (auto-approve reads, prompt for writes)",
+                    ApprovalMode::Smart => {
+                        "smart (auto-approve trusted tools, prompt for untrusted tools)"
+                    }
                     _ => "unknown",
                 };
                 let mut msg = format!("Tool approval: {label}");
-                if self.approval_mode == ApprovalMode::Smart
+                if self.approval_mode() == ApprovalMode::Smart
                     && !self.session_trusted_tools.is_empty()
                 {
                     msg.push_str("\nTrusted tools: ");
@@ -506,10 +512,14 @@ impl App {
             }
         }
 
-        self.messages
-            .push(DisplayMessage::new(MessageRole::User, text.clone()));
-
-        self.trim_messages_to_recent_turns();
+        // Only add to the visible conversation immediately when the agent is idle.
+        // Mid-stream submissions are held in `pending_steered` by `send_to_agent`
+        // and promoted into `messages` at AgentEnd, after the current response.
+        if self.status != AgentStatus::Running {
+            self.messages
+                .push(DisplayMessage::new(MessageRole::User, text.clone()));
+            self.trim_messages_to_recent_turns();
+        }
         self.conversation.auto_scroll = true;
         self.send_to_agent(text);
     }

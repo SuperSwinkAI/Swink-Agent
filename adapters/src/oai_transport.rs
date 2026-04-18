@@ -9,15 +9,140 @@
 //! Adapters that need provider-specific hooks (Azure auth, Mistral message
 //! ordering, etc.) apply those before or after calling into this module.
 
+use std::pin::Pin;
+
 use futures::stream::{self, Stream, StreamExt as _};
+use tokio_util::sync::CancellationToken;
+use tracing::debug;
 use tracing::warn;
+
+#[cfg(feature = "mistral")]
+use serde::Serialize;
 
 use swink_agent::{AgentContext, AssistantMessageEvent, ModelSpec, StreamOptions};
 
+use crate::base::AdapterBase;
 use crate::convert;
 use crate::openai_compat::{
     OaiChatRequest, OaiConverter, OaiStreamOptions, build_oai_tools, parse_oai_sse_stream,
 };
+
+/// Shared shell for Bearer-auth OpenAI-compatible adapters.
+///
+/// Fully standard adapters can delegate their entire `stream()` implementation
+/// to this type, while adapters with provider-specific request normalization
+/// can still reuse the shared constructor, debug redaction, endpoint assembly,
+/// and API-key override handling.
+pub struct OaiAdapterShell {
+    provider: &'static str,
+    base: AdapterBase,
+    chat_completions_path: &'static str,
+}
+
+impl OaiAdapterShell {
+    pub(crate) fn new(
+        provider: &'static str,
+        base_url: impl Into<String>,
+        api_key: impl Into<String>,
+    ) -> Self {
+        Self {
+            provider,
+            base: AdapterBase::new(base_url, api_key),
+            chat_completions_path: "/v1/chat/completions",
+        }
+    }
+
+    #[cfg(any(test, feature = "azure"))]
+    pub(crate) fn new_with_path(
+        provider: &'static str,
+        base_url: impl Into<String>,
+        api_key: impl Into<String>,
+        chat_completions_path: &'static str,
+    ) -> Self {
+        Self {
+            provider,
+            base: AdapterBase::new(base_url, api_key),
+            chat_completions_path,
+        }
+    }
+
+    #[cfg(any(test, feature = "azure"))]
+    pub(crate) fn base_url(&self) -> &str {
+        &self.base.base_url
+    }
+
+    #[cfg(feature = "azure")]
+    pub(crate) const fn client(&self) -> &reqwest::Client {
+        &self.base.client
+    }
+
+    pub(crate) fn fmt_debug(
+        &self,
+        name: &'static str,
+        f: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
+        f.debug_struct(name)
+            .field("base_url", &self.base.base_url)
+            .field("api_key", &"[REDACTED]")
+            .finish_non_exhaustive()
+    }
+
+    #[cfg(any(feature = "azure", feature = "mistral"))]
+    pub(crate) const fn provider(&self) -> &'static str {
+        self.provider
+    }
+
+    pub(crate) fn chat_completions_url(&self) -> String {
+        format!("{}{}", self.base.base_url, self.chat_completions_path)
+    }
+
+    pub(crate) fn api_key<'a>(&'a self, options: &'a StreamOptions) -> &'a str {
+        options.api_key.as_deref().unwrap_or(&self.base.api_key)
+    }
+
+    #[cfg(feature = "mistral")]
+    pub(crate) fn post_json_request<T: Serialize>(
+        &self,
+        url: &str,
+        body: &T,
+        options: &StreamOptions,
+    ) -> reqwest::RequestBuilder {
+        self.base
+            .client
+            .post(url)
+            .header("Authorization", format!("Bearer {}", self.api_key(options)))
+            .json(body)
+    }
+
+    pub(crate) fn stream<'a>(
+        &'a self,
+        model: &'a ModelSpec,
+        context: &'a AgentContext,
+        options: &'a StreamOptions,
+        cancellation_token: CancellationToken,
+    ) -> Pin<Box<dyn Stream<Item = AssistantMessageEvent> + Send + 'a>> {
+        let url = self.chat_completions_url();
+
+        debug!(
+            provider = self.provider,
+            %url,
+            model = %model.model_id,
+            messages = context.messages.len(),
+            "sending OAI-compatible request"
+        );
+
+        let request = prepare_oai_request(&self.base.client, &url, model, context, options)
+            .header("Authorization", format!("Bearer {}", self.api_key(options)));
+
+        Box::pin(oai_send_and_parse(
+            request,
+            self.provider,
+            cancellation_token,
+            options.on_raw_payload.clone(),
+            |_, _| None,
+        ))
+    }
+}
 
 /// Build a standard OAI-compatible HTTP request (without auth headers).
 ///
@@ -69,6 +194,7 @@ pub fn oai_send_and_parse<'a>(
     request: reqwest::RequestBuilder,
     provider: &'static str,
     cancellation_token: tokio_util::sync::CancellationToken,
+    on_raw_payload: Option<swink_agent::OnRawPayload>,
     classify_error: impl Fn(u16, &str) -> Option<AssistantMessageEvent> + Send + 'a,
 ) -> impl Stream<Item = AssistantMessageEvent> + Send + 'a {
     stream::once(async move {
@@ -99,7 +225,27 @@ pub fn oai_send_and_parse<'a>(
             return stream::iter(vec![AssistantMessageEvent::Start, event]).left_stream();
         }
 
-        parse_oai_sse_stream(response, cancellation_token, provider).right_stream()
+        parse_oai_sse_stream(response, cancellation_token, provider, on_raw_payload).right_stream()
     })
     .flatten()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn custom_chat_path_is_used() {
+        let shell = OaiAdapterShell::new_with_path(
+            "Azure",
+            "https://example.openai.azure.com/openai/deployments/gpt-4/",
+            "",
+            "/chat/completions",
+        );
+
+        assert_eq!(
+            shell.chat_completions_url(),
+            "https://example.openai.azure.com/openai/deployments/gpt-4/chat/completions"
+        );
+    }
 }

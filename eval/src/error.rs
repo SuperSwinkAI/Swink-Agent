@@ -18,9 +18,17 @@ pub enum EvalError {
     #[error("eval set not found: {id}")]
     SetNotFound { id: String },
 
+    /// The requested eval result was not found.
+    #[error("eval result not found: {eval_set_id}/{timestamp}")]
+    ResultNotFound { eval_set_id: String, timestamp: u64 },
+
     /// An eval case definition is invalid.
     #[error("invalid eval case: {reason}")]
     InvalidCase { reason: String },
+
+    /// A filesystem-facing identifier is invalid.
+    #[error("invalid {kind} identifier: {id}")]
+    InvalidIdentifier { kind: &'static str, id: String },
 
     /// Filesystem or IO error during persistence.
     #[error("io error")]
@@ -55,6 +63,14 @@ impl EvalError {
     pub fn invalid_case(reason: impl Into<String>) -> Self {
         Self::InvalidCase {
             reason: reason.into(),
+        }
+    }
+
+    /// Convenience constructor for [`EvalError::InvalidIdentifier`].
+    pub fn invalid_identifier(kind: &'static str, id: impl Into<String>) -> Self {
+        Self::InvalidIdentifier {
+            kind,
+            id: id.into(),
         }
     }
 }

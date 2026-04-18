@@ -112,7 +112,7 @@ Why the turn ended. Enum.
 
 - Events MUST be emitted in lifecycle order (FR-003)
 - Tool calls MUST execute concurrently (FR-007)
-- Overflow signal MUST reset after transform_context (CLAUDE.md lesson)
+- Overflow signal MUST reset after transform_context (AGENTS.md lesson)
 - `overflow_recovery_attempted` MUST reset at the start of each turn (allows recovery once per turn)
 - Emergency overflow recovery MUST NOT occur when `overflow_recovery_attempted` is true (prevents infinite loops)
 - Error/abort MUST skip follow-up polling (FR-011)

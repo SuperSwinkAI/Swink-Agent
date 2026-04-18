@@ -1,6 +1,7 @@
 # ── Build artifacts ───────────────────────────────────────────────────
 debug/
 target/
+target.old/
 
 # ── Environment & secrets ────────────────────────────────────────────
 .env
@@ -36,6 +37,8 @@ tmp/
 
 # ── Tool / agent state ──────────────────────────────────────────────
 .claude/
+.agents/
+.specify/
 .worktrees/
 QA_Report.md
 AG_QA.md

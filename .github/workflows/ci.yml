@@ -4,32 +4,34 @@ on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    # MSRV check: weekly Monday 6am UTC. Rarely breaks from normal changes;
+    # catching it weekly is enough. Also runs on main pushes (releases).
+    - cron: '0 6 * * 1'
 
 jobs:
+  # ── Primary gate: runs on every PR and main push ────────────────────────
   check:
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
           components: clippy, rustfmt
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
 
       - run: cargo fmt --check
 
       - name: Spell check
-        uses: crate-ci/typos@v1
+        uses: crate-ci/typos@cf5f1c29a8ac336af8568821ec41919923b05a83 # v1
 
       - run: cargo clippy --workspace -- -D warnings
 
-      - uses: cargo-bins/cargo-binstall@v1.17.9
+      - uses: cargo-bins/cargo-binstall@f8ce4d55b131f4a1e373b8747ca6b6a54133ae5a # v1.18.0
 
-      - run: cargo binstall --no-confirm cargo-nextest
+      - run: cargo binstall --no-confirm --force --locked cargo-nextest
 
       - run: cargo nextest run --workspace
 
@@ -47,53 +49,123 @@ jobs:
         env:
           RUSTDOCFLAGS: "-D warnings"
 
+  # ── Feature matrix: consolidated from features + feature-smoke + all-features ─
   features:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
 
-      - uses: cargo-bins/cargo-binstall@v1.17.9
+      - uses: cargo-bins/cargo-binstall@f8ce4d55b131f4a1e373b8747ca6b6a54133ae5a # v1.18.0
 
-      - run: cargo binstall --no-confirm cargo-hack
+      - run: cargo binstall --no-confirm --force cargo-hack
 
-      - run: cargo hack check --workspace --each-feature --no-dev-deps
+      # Each-feature check (excludes local-llm: metal/accelerate/mkl need macOS)
+      - name: cargo hack (each feature)
+        run: cargo hack check --workspace --each-feature --no-dev-deps --exclude swink-agent-local-llm
 
+      # Feature-smoke sentinels
+      - name: Adapters no-default-features sentinel
+        run: cargo test -p swink-agent-adapters --no-default-features --test no_default_features
+
+      - name: Adapters anthropic feature smoke
+        run: cargo check -p swink-agent-adapters --no-default-features --features anthropic
+
+      - name: Adapters gemini feature smoke
+        run: cargo check -p swink-agent-adapters --no-default-features --features gemini
+
+      - name: Local LLM no-default-features sentinel
+        run: cargo test -p swink-agent-local-llm --no-default-features --test no_default_features
+
+      - name: Local LLM gemma4 feature smoke
+        run: cargo check -p swink-agent-local-llm --no-default-features --features gemma4
+
+      # All-features workspace test
+      - name: Test (all features)
+        run: cargo test --workspace --all-features --exclude swink-agent-local-llm
+
+      - name: Build policies example (all features)
+        run: cargo build -p swink-agent-policies --all-features --example with_policies
+
+      - name: Build TUI example (all features)
+        run: cargo build -p swink-agent-tui --all-features --example custom_agent
+
+  # ── Dependency policy ───────────────────────────────────────────────────
   deny:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
-      - uses: EmbarkStudios/cargo-deny-action@v2
+      - uses: EmbarkStudios/cargo-deny-action@175dc7fd4fb85ec8f46948fb98f44db001149081 # v2
 
+  # ── Platform smoke: macOS + Windows on main push only ───────────────────
+  # PRs are validated on Ubuntu; cross-platform issues are caught on the
+  # post-merge main push. Saves ~10 min of runner time per PR.
+  check-platform:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+
+      - run: cargo fmt --check
+
+      - run: cargo clippy --workspace -- -D warnings
+
+      - uses: cargo-bins/cargo-binstall@f8ce4d55b131f4a1e373b8747ca6b6a54133ae5a # v1.18.0
+
+      - run: cargo binstall --no-confirm --force cargo-nextest
+
+      - run: cargo nextest run --workspace
+
+      - run: cargo test --workspace --doc
+
+      - name: Check docs
+        run: cargo doc --no-deps --workspace
+        env:
+          RUSTDOCFLAGS: "-D warnings"
+
+  # ── Semver: only on main push (release boundary) ────────────────────────
   semver:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
 
-      - uses: cargo-bins/cargo-binstall@v1.17.9
+      - uses: cargo-bins/cargo-binstall@f8ce4d55b131f4a1e373b8747ca6b6a54133ae5a # v1.18.0
 
-      - run: cargo binstall --no-confirm cargo-semver-checks
+      - run: cargo binstall --no-confirm --force cargo-semver-checks
 
       - name: Fetch main branch for baseline
         run: git fetch origin main
 
-      - run: cargo semver-checks --workspace --baseline-rev origin/main
+      - run: cargo semver-checks --workspace --exclude swink-agent-local-llm --baseline-rev origin/main
 
+  # ── MSRV: weekly schedule + main push ───────────────────────────────────
   msrv:
+    if: github.event_name == 'schedule' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
-      - uses: dtolnay/rust-toolchain@1.88
+      - uses: dtolnay/rust-toolchain@98e1b82157cd469e843cb7f524c1313b4ad9492c # 1.88
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
 
       - run: cargo build --workspace

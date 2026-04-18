@@ -193,7 +193,7 @@
 - [x] T044 [P] Verify `cargo test -p swink-agent --features plugins` passes (all plugin tests run)
 - [x] T045 [P] Verify `cargo clippy --workspace -- -D warnings` passes with plugins feature enabled
 - [x] T046 Update `src/lib.rs` public API re-exports: `Plugin`, `PluginRegistry` behind `#[cfg(feature = "plugins")]`
-- [x] T047 Add plugin system entry to CLAUDE.md lessons learned section
+- [x] T047 Add plugin system entry to AGENTS.md lessons learned section
 
 ---
 

@@ -10,13 +10,6 @@ use swink_agent::{AgentTool, AgentToolResult, ContentBlock, ImageSource, ToolFut
 
 use crate::playwright::{PlaywrightBridge, PlaywrightError, Viewport};
 
-/// Default viewport: 1280x720.
-const DEFAULT_WIDTH: u32 = 1280;
-const DEFAULT_HEIGHT: u32 = 720;
-
-/// Default timeout for the screenshot operation.
-const DEFAULT_TIMEOUT: Duration = Duration::from_secs(60);
-
 /// Tool for taking screenshots of web pages.
 ///
 /// Lazily starts a Playwright bridge subprocess on first use and reuses it for
@@ -47,19 +40,6 @@ impl ScreenshotTool {
             timeout,
             schema: build_schema(),
         }
-    }
-
-    /// Create a `ScreenshotTool` with sensible defaults and a fresh bridge slot.
-    pub fn with_defaults() -> Self {
-        Self::new(
-            Arc::new(Mutex::new(None)),
-            None,
-            Viewport {
-                width: DEFAULT_WIDTH,
-                height: DEFAULT_HEIGHT,
-            },
-            DEFAULT_TIMEOUT,
-        )
     }
 }
 

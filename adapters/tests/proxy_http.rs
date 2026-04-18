@@ -8,6 +8,8 @@
 
 mod common;
 
+use std::sync::{Arc, Mutex};
+
 use futures::StreamExt;
 use swink_agent::{
     AssistantMessageEvent, ContentBlock, ModelSpec, StopReason, StreamFn, StreamOptions,
@@ -69,9 +71,15 @@ fn text_and_tool_call_sse_body() -> String {
 }
 
 async fn collect_events(proxy: &ProxyStreamFn) -> Vec<AssistantMessageEvent> {
+    collect_events_with_options(proxy, StreamOptions::default()).await
+}
+
+async fn collect_events_with_options(
+    proxy: &ProxyStreamFn,
+    options: StreamOptions,
+) -> Vec<AssistantMessageEvent> {
     let model = test_model();
     let context = test_context();
-    let options = StreamOptions::default();
     let token = CancellationToken::new();
     let stream = proxy.stream(&model, &context, &options, token);
     stream.collect::<Vec<_>>().await
@@ -175,8 +183,9 @@ async fn connection_failure_produces_network_error() {
     let proxy = ProxyStreamFn::new("http://127.0.0.1:1", "token");
     let events = collect_events(&proxy).await;
 
-    assert_eq!(events.len(), 1);
-    match &events[0] {
+    assert_eq!(events.len(), 2);
+    assert!(matches!(events[0], AssistantMessageEvent::Start));
+    match &events[1] {
         AssistantMessageEvent::Error {
             error_message,
             stop_reason,
@@ -206,8 +215,9 @@ async fn http_401_produces_auth_error() {
     let proxy = ProxyStreamFn::new(server.uri(), "bad-token");
     let events = collect_events(&proxy).await;
 
-    assert_eq!(events.len(), 1);
-    match &events[0] {
+    assert_eq!(events.len(), 2);
+    assert!(matches!(events[0], AssistantMessageEvent::Start));
+    match &events[1] {
         AssistantMessageEvent::Error {
             error_message,
             stop_reason,
@@ -237,8 +247,9 @@ async fn http_429_produces_rate_limit_error() {
     let proxy = ProxyStreamFn::new(server.uri(), "token");
     let events = collect_events(&proxy).await;
 
-    assert_eq!(events.len(), 1);
-    match &events[0] {
+    assert_eq!(events.len(), 2);
+    assert!(matches!(events[0], AssistantMessageEvent::Start));
+    match &events[1] {
         AssistantMessageEvent::Error {
             error_message,
             stop_reason,
@@ -258,6 +269,49 @@ async fn http_429_produces_rate_limit_error() {
     }
 }
 
+#[tokio::test]
+async fn proxy_on_raw_payload_observes_runtime_sse_lines() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/stream"))
+        .respond_with(sse_response(&text_only_sse_body()))
+        .mount(&server)
+        .await;
+
+    let observed = Arc::new(Mutex::new(Vec::<String>::new()));
+    let callback_lines = Arc::clone(&observed);
+    let options = StreamOptions {
+        on_raw_payload: Some(Arc::new(move |line| {
+            callback_lines
+                .lock()
+                .expect("callback buffer poisoned")
+                .push(line.to_owned());
+        })),
+        ..StreamOptions::default()
+    };
+
+    let proxy = ProxyStreamFn::new(server.uri(), "test-token");
+    let events = collect_events_with_options(&proxy, options).await;
+    let observed = observed.lock().expect("callback buffer poisoned").clone();
+
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, AssistantMessageEvent::Done { .. })),
+        "expected runtime stream to complete successfully"
+    );
+    assert_eq!(
+        observed,
+        vec![
+            r#"{"type":"start"}"#.to_string(),
+            r#"{"type":"text_start","content_index":0}"#.to_string(),
+            r#"{"type":"text_delta","content_index":0,"delta":"hello"}"#.to_string(),
+            r#"{"type":"text_end","content_index":0}"#.to_string(),
+            r#"{"type":"done","stop_reason":"stop","usage":{"input":10,"output":20,"cache_read":0,"cache_write":0,"total":30},"cost":{"input":0.01,"output":0.02,"cache_read":0.0,"cache_write":0.0,"total":0.03}}"#.to_string(),
+        ]
+    );
+}
+
 // ── 5.7: 504 response produces network error ───────────────────────────
 
 #[tokio::test]
@@ -272,8 +326,9 @@ async fn http_504_produces_network_error() {
     let proxy = ProxyStreamFn::new(server.uri(), "token");
     let events = collect_events(&proxy).await;
 
-    assert_eq!(events.len(), 1);
-    match &events[0] {
+    assert_eq!(events.len(), 2);
+    assert!(matches!(events[0], AssistantMessageEvent::Start));
+    match &events[1] {
         AssistantMessageEvent::Error {
             error_message,
             stop_reason,
@@ -363,6 +418,57 @@ async fn mid_stream_disconnect_produces_network_error() {
             assert!(
                 error_message.contains("network error"),
                 "expected 'network error', got: {error_message}"
+            );
+        }
+        other => panic!("expected terminal Error event, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn done_sentinel_without_protocol_terminal_produces_network_error() {
+    let body = [
+        r#"data: {"type":"start"}"#,
+        "",
+        r#"data: {"type":"text_start","content_index":0}"#,
+        "",
+        r#"data: {"type":"text_delta","content_index":0,"delta":"partial"}"#,
+        "",
+        r#"data: {"type":"text_end","content_index":0}"#,
+        "",
+        "data: [DONE]",
+        "",
+        "",
+    ]
+    .join("\n");
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/stream"))
+        .respond_with(sse_response(&body))
+        .mount(&server)
+        .await;
+
+    let proxy = ProxyStreamFn::new(server.uri(), "token");
+    let events = collect_events(&proxy).await;
+
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, AssistantMessageEvent::Done { .. })),
+        "expected missing protocol terminal to avoid emitting Done: {events:?}"
+    );
+
+    let last = events.last().expect("should have at least one event");
+    match last {
+        AssistantMessageEvent::Error {
+            error_message,
+            stop_reason,
+            ..
+        } => {
+            assert_eq!(*stop_reason, StopReason::Error);
+            assert!(
+                error_message.contains("protocol terminal event"),
+                "expected terminal-event diagnostic, got: {error_message}"
             );
         }
         other => panic!("expected terminal Error event, got {other:?}"),

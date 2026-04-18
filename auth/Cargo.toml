@@ -1,14 +1,17 @@
 [package]
 name = "swink-agent-auth"
-version = "0.7.0"
-edition = "2024"
-rust-version = "1.88"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
 description = "Credential management and OAuth2 support for swink-agent"
-license = "MIT OR Apache-2.0"
-repository = "https://github.com/SuperSwinkAI/Swink-Agent"
+license.workspace = true
+repository.workspace = true
+keywords = ["llm", "agent", "oauth2", "credentials", "auth"]
+categories = ["development-tools", "authentication"]
+readme = "../README.md"
 
 [dependencies]
-swink-agent = { path = "..", default-features = false }
+swink-agent = { path = "..", version = "0.7.9", default-features = false }
 reqwest.workspace = true
 chrono.workspace = true
 serde.workspace = true

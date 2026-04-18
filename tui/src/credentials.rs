@@ -49,13 +49,6 @@ pub fn providers() -> Vec<ProviderInfo> {
             description: "Custom SSE proxy endpoint",
             requires_key: true,
         },
-        ProviderInfo {
-            name: "Local (SmolLM3-3B)",
-            key_name: "local",
-            env_var: "LOCAL_MODEL_REPO",
-            description: "Local on-device inference (no API key needed)",
-            requires_key: false,
-        },
     ]
 }
 
@@ -122,9 +115,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn providers_returns_five_entries() {
+    fn providers_returns_four_entries() {
         let p = providers();
-        assert_eq!(p.len(), 5);
+        assert_eq!(p.len(), 4);
     }
 
     #[test]

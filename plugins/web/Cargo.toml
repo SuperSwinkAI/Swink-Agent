@@ -1,10 +1,13 @@
 [package]
 name = "swink-agent-plugin-web"
-version = "0.1.0"
-edition = "2024"
-rust-version = "1.88"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
 description = "Web browsing plugin for swink-agent: fetch, search, screenshot, extract"
-license = "MIT OR Apache-2.0"
+license.workspace = true
+repository.workspace = true
+keywords = ["llm", "agent", "web", "browse", "search"]
+categories = ["development-tools", "web-programming"]
 
 [features]
 default = ["duckduckgo"]
@@ -15,7 +18,7 @@ all = ["duckduckgo", "brave", "tavily"]
 integration = []
 
 [dependencies]
-swink-agent = { path = "../..", default-features = false, features = ["plugins"] }
+swink-agent = { path = "../..", version = "0.7.9", default-features = false, features = ["plugins"] }
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -27,7 +30,7 @@ regex.workspace = true
 url = "2"
 base64 = "0.22"
 readability = "0.3"
-scraper = { version = "0.23", optional = true }
+scraper = { version = "0.25", optional = true }
 
 [dev-dependencies]
 wiremock.workspace = true

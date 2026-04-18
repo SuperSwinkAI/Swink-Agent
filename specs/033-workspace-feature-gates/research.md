@@ -21,25 +21,21 @@
 | `bedrock` | `sha2` (AWS SigV4 signing) |
 | All others | No provider-specific deps (only shared) |
 
-## R2: Mistralrs Backend Feature Flags
+## R2: llama-cpp-2 Backend Feature Flags
 
-**Decision**: Forward mistralrs feature flags (`metal`, `cuda`, `cudnn`, `flash-attn`, `mkl`, `accelerate`) through the local-llm crate. Default to no backend features (CPU-only inference via candle's default behavior).
+**Decision**: Forward llama-cpp-2 feature flags (`metal`, `cuda`, `vulkan`) through the local-llm crate. Default to no backend features (CPU-only inference). (Migrated from mistralrs which had `cudnn`, `flash-attn`, `mkl`, `accelerate` — these are no longer applicable.)
 
-**Rationale**: Mistralrs 0.7 exposes compile-time backend features: `metal`, `cuda`, `cudnn`, `flash-attn`, `mkl`, `accelerate`, `nccl`, `ring`. Without any backend feature enabled, mistralrs uses CPU-only inference. The `gpu_layers` runtime config already exists in the crate but only matters if a GPU backend was compiled in.
+**Rationale**: `llama-cpp-2` exposes compile-time backend features: `metal`, `cuda`, `vulkan`. Without any backend feature enabled, llama-cpp-2 uses CPU-only inference. The `gpu_layers` runtime config already exists in the crate but only matters if a GPU backend was compiled in.
 
 **Alternatives considered**:
-- Only expose `metal` and `cuda`: Rejected — `mkl` (Intel MKL math acceleration) and `accelerate` (Apple Accelerate framework) are also valuable. Forward all that are safe.
 - Make `metal` default on macOS via `cfg(target_os)`: Rejected — feature defaults must be platform-agnostic in Cargo.toml. Consumers select based on their target.
 
 **Feature mapping**:
-| local-llm feature | Forwards to mistralrs |
+| local-llm feature | Forwards to llama-cpp-2 |
 |---|---|
-| `metal` | `mistralrs/metal` |
-| `cuda` | `mistralrs/cuda` |
-| `cudnn` | `mistralrs/cudnn` |
-| `flash-attn` | `mistralrs/flash-attn` (implies cuda) |
-| `mkl` | `mistralrs/mkl` |
-| `accelerate` | `mistralrs/accelerate` |
+| `metal` | `llama-cpp-2/metal` |
+| `cuda` | `llama-cpp-2/cuda` |
+| `vulkan` | `llama-cpp-2/vulkan` |
 
 No `default` or `all` feature for backends — explicit opt-in only (wrong backend = build failure or wasted compile time).
 

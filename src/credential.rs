@@ -223,6 +223,32 @@ pub enum CredentialError {
     },
 }
 
+impl Clone for CredentialError {
+    fn clone(&self) -> Self {
+        match self {
+            Self::NotFound { key } => Self::NotFound { key: key.clone() },
+            Self::Expired { key } => Self::Expired { key: key.clone() },
+            Self::RefreshFailed { key, reason } => Self::RefreshFailed {
+                key: key.clone(),
+                reason: reason.clone(),
+            },
+            Self::TypeMismatch {
+                key,
+                expected,
+                actual,
+            } => Self::TypeMismatch {
+                key: key.clone(),
+                expected: *expected,
+                actual: *actual,
+            },
+            Self::StoreError(error) => {
+                Self::StoreError(Box::new(std::io::Error::other(error.to_string())))
+            }
+            Self::Timeout { key } => Self::Timeout { key: key.clone() },
+        }
+    }
+}
+
 /// Boxed async result used by credential traits.
 pub type CredentialFuture<'a, T> =
     Pin<Box<dyn Future<Output = Result<T, CredentialError>> + Send + 'a>>;

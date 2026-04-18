@@ -3,6 +3,8 @@
 
 mod common;
 
+use std::sync::{Arc, Mutex};
+
 use futures::StreamExt;
 use tokio_util::sync::CancellationToken;
 use wiremock::matchers::{header, method, path, query_param};
@@ -19,9 +21,15 @@ fn test_model() -> ModelSpec {
 }
 
 async fn collect_events(stream_fn: &GeminiStreamFn) -> Vec<AssistantMessageEvent> {
+    collect_events_with_options(stream_fn, StreamOptions::default()).await
+}
+
+async fn collect_events_with_options(
+    stream_fn: &GeminiStreamFn,
+    options: StreamOptions,
+) -> Vec<AssistantMessageEvent> {
     let model = test_model();
     let context = test_context();
-    let options = StreamOptions::default();
     let token = CancellationToken::new();
     let stream = stream_fn.stream(&model, &context, &options, token);
     stream.collect::<Vec<_>>().await
@@ -79,6 +87,97 @@ async fn google_text_stream() {
     assert_eq!(usage.input, 10);
     assert_eq!(usage.output, 5);
     assert_eq!(usage.total, 15);
+}
+
+#[tokio::test]
+async fn google_cancellation_after_first_chunk_emits_aborted_and_closes_text() {
+    let body = [
+        r#"data: {"candidates":[{"content":{"parts":[{"text":"hello"}]}}]}"#,
+        "",
+        r#"data: {"candidates":[{"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":5,"totalTokenCount":15}}"#,
+        "",
+        "data: [DONE]",
+        "",
+    ]
+    .join("\n");
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path(
+            "/v1beta/models/gemini-3-flash-preview:streamGenerateContent",
+        ))
+        .and(query_param("alt", "sse"))
+        .and(header("x-goog-api-key", "test-key"))
+        .respond_with(sse_response(&body))
+        .mount(&server)
+        .await;
+
+    let stream_fn = GeminiStreamFn::new(server.uri(), "test-key", ApiVersion::V1beta);
+    let model = test_model();
+    let context = test_context();
+    let options = StreamOptions::default();
+    let token = CancellationToken::new();
+    let cancel_token = token.clone();
+    let mut stream = Box::pin(stream_fn.stream(&model, &context, &options, token));
+    let mut events = Vec::new();
+    let mut cancelled = false;
+
+    while let Some(event) = stream.next().await {
+        if matches!(event, AssistantMessageEvent::TextDelta { .. }) && !cancelled {
+            cancel_token.cancel();
+            cancelled = true;
+        }
+        events.push(event);
+    }
+
+    assert!(cancelled, "expected to cancel after the first text chunk");
+
+    let types: Vec<_> = events.iter().map(event_name).collect();
+    assert!(types.contains(&"Start"), "missing Start: {types:?}");
+    assert!(types.contains(&"TextStart"), "missing TextStart: {types:?}");
+    assert!(types.contains(&"TextDelta"), "missing TextDelta: {types:?}");
+    assert!(types.contains(&"TextEnd"), "missing TextEnd: {types:?}");
+    assert!(types.contains(&"Error"), "missing Error: {types:?}");
+    assert!(
+        !types.contains(&"Done"),
+        "cancellation should not emit Done: {types:?}"
+    );
+
+    let text_end_pos = types
+        .iter()
+        .position(|event| *event == "TextEnd")
+        .expect("missing TextEnd");
+    let error_pos = types
+        .iter()
+        .position(|event| *event == "Error")
+        .expect("missing Error");
+    assert!(
+        text_end_pos < error_pos,
+        "open text blocks should close before the abort error: {types:?}"
+    );
+
+    let terminal_error = events
+        .iter()
+        .find_map(|event| match event {
+            AssistantMessageEvent::Error {
+                stop_reason,
+                error_message,
+                error_kind,
+                ..
+            } => Some((*stop_reason, error_message.clone(), *error_kind)),
+            _ => None,
+        })
+        .expect("missing terminal Error event");
+    assert_eq!(terminal_error.0, StopReason::Aborted);
+    assert_eq!(
+        terminal_error.2, None,
+        "cancellation should not be retryable"
+    );
+    assert!(
+        terminal_error.1.contains("Google request cancelled"),
+        "unexpected cancellation message: {}",
+        terminal_error.1
+    );
 }
 
 #[tokio::test]
@@ -285,6 +384,115 @@ async fn google_multiple_tool_calls() {
     assert_eq!(stop_reason, Some(StopReason::ToolUse));
 }
 
+#[tokio::test]
+async fn google_on_raw_payload_observes_runtime_sse_lines() {
+    let body = [
+        r#"data: {"candidates":[{"content":{"parts":[{"text":"hello"}]}}]}"#,
+        "",
+        r#"data: {"candidates":[{"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":5,"totalTokenCount":15}}"#,
+        "",
+        "data: [DONE]",
+        "",
+    ]
+    .join("\n");
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path(
+            "/v1beta/models/gemini-3-flash-preview:streamGenerateContent",
+        ))
+        .and(query_param("alt", "sse"))
+        .respond_with(sse_response(&body))
+        .mount(&server)
+        .await;
+
+    let observed = Arc::new(Mutex::new(Vec::<String>::new()));
+    let callback_lines = Arc::clone(&observed);
+    let options = StreamOptions {
+        on_raw_payload: Some(Arc::new(move |line| {
+            callback_lines
+                .lock()
+                .expect("callback buffer poisoned")
+                .push(line.to_owned());
+        })),
+        ..StreamOptions::default()
+    };
+
+    let stream_fn = GeminiStreamFn::new(server.uri(), "test-key", ApiVersion::V1beta);
+    let events = collect_events_with_options(&stream_fn, options).await;
+    let observed = observed.lock().expect("callback buffer poisoned").clone();
+
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, AssistantMessageEvent::Done { .. })),
+        "expected runtime stream to complete successfully"
+    );
+    assert_eq!(
+        observed,
+        vec![
+            r#"{"candidates":[{"content":{"parts":[{"text":"hello"}]}}]}"#.to_string(),
+            r#"{"candidates":[{"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":5,"totalTokenCount":15}}"#.to_string(),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn google_final_tool_deltas_follow_tool_call_start_order() {
+    let body = [
+        r#"data: {"candidates":[{"content":{"parts":[{"functionCall":{"id":"c1","name":"get_weather","args":{"city":"Paris"}}},{"functionCall":{"id":"c2","name":"get_time","args":{"tz":"UTC"}}}]}}]}"#,
+        "",
+        r#"data: {"candidates":[{"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":12,"totalTokenCount":22}}"#,
+        "",
+        "data: [DONE]",
+        "",
+    ]
+    .join("\n");
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(sse_response(&body))
+        .mount(&server)
+        .await;
+
+    let stream_fn = GeminiStreamFn::new(server.uri(), "test-key", ApiVersion::V1beta);
+
+    for _ in 0..32 {
+        let events = collect_events(&stream_fn).await;
+
+        let starts: Vec<_> = events
+            .iter()
+            .filter_map(|event| match event {
+                AssistantMessageEvent::ToolCallStart {
+                    content_index, id, ..
+                } => Some((*content_index, id.as_str())),
+                _ => None,
+            })
+            .collect();
+        let deltas: Vec<_> = events
+            .iter()
+            .filter_map(|event| match event {
+                AssistantMessageEvent::ToolCallDelta {
+                    content_index,
+                    delta,
+                } => Some((*content_index, delta.as_str())),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(
+            starts,
+            vec![(0, "c1"), (1, "c2")],
+            "unexpected tool-call start order: {starts:?}"
+        );
+        assert_eq!(
+            deltas,
+            vec![(0, r#"{"city":"Paris"}"#), (1, r#"{"tz":"UTC"}"#)],
+            "final tool-call deltas must preserve tool-call order"
+        );
+    }
+}
+
 // T029: HTTP 429 → throttled
 #[tokio::test]
 async fn google_http_429_maps_to_throttled() {
@@ -296,6 +504,11 @@ async fn google_http_429_maps_to_throttled() {
 
     let stream_fn = GeminiStreamFn::new(server.uri(), "test-key", ApiVersion::V1beta);
     let events = collect_events(&stream_fn).await;
+
+    assert!(
+        matches!(events.first(), Some(AssistantMessageEvent::Start)),
+        "pre-stream HTTP failures must start with Start: {events:?}"
+    );
 
     let msg = find_error_message(&events).expect("expected error event");
     assert!(
@@ -409,6 +622,53 @@ async fn google_safety_finish_reason_emits_error() {
     assert!(
         msg.contains("safety"),
         "error message should mention safety: {msg}"
+    );
+}
+
+// T035: SAFETY finish reason is terminal — no Done event after the error (#428)
+#[tokio::test]
+async fn google_safety_finish_reason_is_terminal_no_done_after_error() {
+    let body = [
+        r#"data: {"candidates":[{"content":{"parts":[{"text":"partial"}]},"finishReason":"SAFETY"}],"usageMetadata":{"promptTokenCount":5,"candidatesTokenCount":1,"totalTokenCount":6}}"#,
+        "",
+        "data: [DONE]",
+        "",
+    ]
+    .join("\n");
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path(
+            "/v1beta/models/gemini-3-flash-preview:streamGenerateContent",
+        ))
+        .and(query_param("alt", "sse"))
+        .respond_with(sse_response(&body))
+        .mount(&server)
+        .await;
+
+    let stream_fn = GeminiStreamFn::new(server.uri(), "test-key", ApiVersion::V1beta);
+    let events = collect_events(&stream_fn).await;
+
+    let types: Vec<_> = events.iter().map(event_name).collect();
+
+    // Must contain exactly one terminal event: the Error from SAFETY.
+    assert!(
+        types.contains(&"Error"),
+        "expected Error event for SAFETY finish reason: {types:?}"
+    );
+    assert!(
+        !types.contains(&"Done"),
+        "SAFETY must be terminal — no Done event should follow the Error: {types:?}"
+    );
+
+    // Count terminal events (Error + Done). Must be exactly 1.
+    let terminal_count = types
+        .iter()
+        .filter(|t| **t == "Error" || **t == "Done")
+        .count();
+    assert_eq!(
+        terminal_count, 1,
+        "expected exactly 1 terminal event, got {terminal_count}: {types:?}"
     );
 }
 

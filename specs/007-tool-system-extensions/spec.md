@@ -103,7 +103,7 @@ A developer creates a simple tool from a closure without defining a full tool st
 
 ### User Story 6 - Use Built-In Shell and File Tools (Priority: P3)
 
-A developer enables the built-in tools feature to get pre-made tools for shell command execution, file reading, and file writing. These tools are gated behind a feature flag so they can be excluded from builds that don't need them.
+A developer enables the built-in tools feature to get pre-made tools for shell command execution, file reading, file writing, and surgical file editing. These tools are gated behind a feature flag so they can be excluded from builds that don't need them.
 
 **Why this priority**: Built-in tools are a convenience — many agents need shell/file access, but the tools are optional and behind a feature gate.
 
@@ -111,9 +111,11 @@ A developer enables the built-in tools feature to get pre-made tools for shell c
 
 **Acceptance Scenarios**:
 
-1. **Given** the built-in tools feature enabled, **When** the developer registers built-in tools, **Then** shell, file read, and file write tools are available.
+1. **Given** the built-in tools feature enabled, **When** the developer registers built-in tools, **Then** shell, file read, file write, and file edit tools are available.
 2. **Given** the built-in tools feature disabled, **When** the developer builds the crate, **Then** built-in tools are not available and the crate compiles without them.
 3. **Given** a built-in tool, **When** it is invoked, **Then** it respects the cancellation token for cooperative cancellation.
+4. **Given** `EditFileTool` with multiple edits, **When** one edit fails, **Then** no changes are written to disk (fail-fast, no partial writes).
+5. **Given** `EditFileTool` with an `expected_hash`, **When** the file has changed since it was read, **Then** the edit is rejected with a hash mismatch error.
 
 ---
 
@@ -228,7 +230,7 @@ A tool provides rich context to the approval UI by implementing an optional `app
 - **FR-006**: Middleware MUST NOT alter the tool's name, description, or schema — only the execution behavior.
 - **FR-007**: System MUST support configurable tool execution policies: concurrent (default), sequential, and priority.
 - **FR-008**: System MUST provide a convenience mechanism for creating tools from closures without defining a full struct.
-- **FR-009**: System MUST provide built-in tools for shell execution, file reading, and file writing, gated behind an optional feature flag that is enabled by default.
+- **FR-009**: System MUST provide built-in tools for shell execution, file reading, file writing, and surgical file editing, gated behind an optional feature flag that is enabled by default.
 - **FR-010**: Built-in tools MUST respect the cancellation token for cooperative cancellation.
 - **FR-011**: Built-in tools MUST define appropriate parameter schemas for argument validation.
 - **FR-012**: System MUST provide a `#[derive(ToolSchema)]` proc macro in a separate `swink-agent-macros` crate that generates JSON Schema from Rust struct definitions, mapping field types and doc comments to schema properties and descriptions.
@@ -250,6 +252,7 @@ A tool provides rich context to the approval UI by implementing an optional `app
 - **ToolExecutionPolicy**: Configuration controlling how a batch of tool calls is executed: concurrent, sequential, or priority.
 - **FnTool**: Convenience wrapper that creates a tool from a closure.
 - **BashTool**: Built-in shell command execution tool (feature-gated).
+- **EditFileTool**: Built-in surgical file editing tool (feature-gated). Supports multiple edits per call, whitespace-normalised matching, atomic writes, stale-read detection via SHA-256, and line-number disambiguation.
 - **ReadFileTool**: Built-in file reading tool (feature-gated).
 - **WriteFileTool**: Built-in file writing tool (feature-gated).
 - **ToolSchema (derive macro)**: Proc macro generating JSON Schema from Rust struct definitions. Lives in `swink-agent-macros` crate.
@@ -270,7 +273,7 @@ A tool provides rich context to the approval UI by implementing an optional `app
 - **SC-004**: Tool middleware wraps execution without altering the tool's identity (name, description, schema).
 - **SC-005**: Execution policies correctly control concurrency: concurrent runs in parallel, sequential runs in order.
 - **SC-006**: Closure-based tools implement the tool trait and execute correctly when invoked.
-- **SC-007**: Built-in tools are available when the feature flag is enabled and absent when disabled.
+- **SC-007**: Built-in tools (bash, edit_file, read_file, write_file) are available when the feature flag is enabled and absent when disabled.
 - **SC-008**: `#[derive(ToolSchema)]` generates correct JSON Schema from Rust types, mapping `String` → `"string"`, `u64` → `"integer"`, `Option<T>` → not required, `Vec<T>` → `"array"`, and doc comments → `description`.
 - **SC-009**: `#[tool]` attribute macro generates a valid `AgentTool` implementation from an async function signature.
 - **SC-010**: `ToolWatcher` detects file additions, modifications, and deletions in the watched directory and updates the agent's tool list accordingly.

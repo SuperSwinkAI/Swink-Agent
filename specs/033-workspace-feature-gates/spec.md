@@ -23,25 +23,25 @@ A downstream product (e.g., SuperSwink-Core) depends on swink-agent but only use
 
 ---
 
-### User Story 2 - Root-Level Feature Forwarding (Priority: P2)
+### User Story 2 - Direct Sub-Crate Feature Selection (Priority: P2)
 
-A downstream crate depends on the root `swink-agent` crate and wants to select specific adapters without directly depending on the adapters sub-crate. The developer writes `swink-agent = { path = "../Swink-Agent", features = ["anthropic", "openai"] }` and the features flow through to the adapters crate automatically.
+A downstream crate depends on the workspace crates directly and wants to select specific adapters without compiling unrelated providers. The developer writes `swink-agent-adapters = { path = "../Swink-Agent/adapters", features = ["anthropic", "openai"] }` and only those adapter modules compile.
 
-**Why this priority**: Consumers interact with the root crate, not sub-crates directly. Without feature forwarding, the per-adapter gates are inconvenient to use and the ergonomics gap undermines adoption.
+**Why this priority**: Adapter and local-LLM crates are the actual feature-gated compilation boundaries. Clear documentation is still necessary so consumers use the supported dependency surface instead of assuming the root crate forwards features.
 
-**Independent Test**: Can be tested by creating a minimal crate that depends on `swink-agent` with specific adapter features and verifying it compiles without pulling unwanted providers.
+**Independent Test**: Can be tested by creating a minimal crate that depends on `swink-agent-adapters` with specific adapter features and verifying it compiles without pulling unwanted providers.
 
 **Acceptance Scenarios**:
 
-1. **Given** a consumer depends on root `swink-agent` with `features = ["anthropic"]`, **When** the consumer builds, **Then** only the Anthropic adapter compiles from the adapters crate.
-2. **Given** a consumer depends on root `swink-agent` with no adapter features, **When** the consumer builds, **Then** no adapters compile (shared infrastructure is still available).
-3. **Given** a consumer depends on root `swink-agent` with `features = ["adapters-all"]`, **When** the consumer builds, **Then** all implemented adapters compile.
+1. **Given** a consumer depends on `swink-agent-adapters` with `features = ["anthropic"]`, **When** the consumer builds, **Then** only the Anthropic adapter compiles from the adapters crate.
+2. **Given** a consumer depends on `swink-agent-adapters` with no adapter features, **When** the consumer builds, **Then** no provider modules compile and only shared infrastructure remains available.
+3. **Given** a consumer depends on `swink-agent-adapters` with `features = ["full"]`, **When** the consumer builds, **Then** all implemented adapter modules compile.
 
 ---
 
 ### User Story 3 - Local LLM Backend Selection (Priority: P2)
 
-A macOS developer building a desktop app wants local inference via Metal acceleration. They enable the `local-llm` and `metal` features. The build pulls the mistral.rs Metal backend without CUDA dependencies. Conversely, a Windows developer enables `local-llm` and `cuda` for GPU-accelerated inference.
+A macOS developer building a desktop app wants local inference via Metal acceleration. They enable the `local-llm` and `metal` features. The build pulls the llama.cpp Metal backend without CUDA dependencies. Conversely, a Windows developer enables `local-llm` and `cuda` for GPU-accelerated inference.
 
 **Why this priority**: The local-llm dependency chain is the heaviest in the workspace and platform-sensitive. Incorrect backend selection causes build failures or bloated binaries.
 
@@ -75,14 +75,14 @@ A headless daemon or library consumer depends on `swink-agent` for its agent loo
 - What happens when a consumer enables zero adapter features? Only shared infrastructure (base HTTP client, SSE parsing, error types) compiles. No provider types are available.
 - What happens when a consumer enables conflicting local-llm backends (e.g., both `metal` and `cuda`)? Both backends compile; runtime selection determines which is used. No compile-time conflict.
 - What happens when a consumer uses `default-features = false` on the root crate? Only the bare core compiles — no builtin-tools, no adapters, no TUI, no local-llm.
-- What happens when a future adapter (e.g., 016-azure) is implemented? It follows the established pattern: add a feature flag to the adapters crate, gate the module, forward the feature from the root crate.
-- What happens when existing tests run with default features? All tests pass identically to current behavior since `default = ["all"]` enables everything.
+- What happens when a future adapter (e.g., 016-azure) is implemented? It follows the established pattern: add a feature flag to the adapters crate, gate the module, and expose it through the adapters crate directly.
+- What happens when existing tests run with default features? Workspace tests continue to pass, but the adapters crate now uses explicit opt-in defaults (`default = []`, `full = ["all"]`) instead of enabling every provider implicitly.
 
 ## Clarifications
 
 ### Session 2026-03-25
 
-- Q: Should the `all` feature include flags for the 4 stub adapters (azure, bedrock, mistral, xai) so they compile under `default = ["all"]`? → A: Yes — include stub flags in `all`. Stubs get their own feature flags and `all` enables all 9 adapter modules, preserving current behavior.
+- Q: Should the `all` feature include flags for the 4 stub adapters (azure, bedrock, mistral, xai) so they compile under the full-adapter profile? → A: Yes — include stub flags in `all`. Stubs get their own feature flags and `full` enables the all-adapters profile.
 
 ## Requirements *(mandatory)*
 
@@ -90,8 +90,8 @@ A headless daemon or library consumer depends on `swink-agent` for its agent loo
 
 - **FR-001**: The adapters crate MUST expose individual feature flags for all 9 adapter modules — implemented (`anthropic`, `openai`, `ollama`, `gemini`, `proxy`) and stubs (`azure`, `bedrock`, `mistral`, `xai`) — that gate each provider's module compilation and re-exports. Note: the `gemini` feature gates the `google` module (which exports `GeminiStreamFn`); the feature name matches the public type and user mental model.
 - **FR-002**: The adapters crate MUST compile shared infrastructure (base HTTP client, SSE parsing, error types, conversion utilities) unconditionally, regardless of which provider features are enabled.
-- **FR-003**: The adapters crate MUST provide an `all` feature that enables all 9 adapter feature flags (5 implemented + 4 stubs), and `default` MUST include `all`.
-- **FR-004**: The local-llm crate MUST expose backend feature flags (`metal`, `cuda`, `cudnn`, `flash-attn`, `mkl`, `accelerate`) that forward to the corresponding mistralrs compile-time features.
+- **FR-003**: The adapters crate MUST provide an `all` feature that enables all 9 adapter feature flags (5 implemented + 4 stubs), plus a `full` convenience feature for the all-adapters profile.
+- **FR-004**: The local-llm crate MUST expose backend feature flags (`metal`, `cuda`, `vulkan`) that forward to the corresponding llama-cpp-2 compile-time features.
 - **FR-005**: The local-llm crate MUST default to CPU-only inference when no backend feature is explicitly selected (no `default` or `all` feature for backends — explicit opt-in only).
 - **FR-006**: The TUI crate MUST remain opt-in from the workspace root — it MUST NOT be included in the root crate's default features.
 - **FR-007**: The TUI crate MUST preserve its existing `local` feature that optionally depends on `swink-agent-local-llm`.
@@ -104,9 +104,9 @@ A headless daemon or library consumer depends on `swink-agent` for its agent loo
 
 ### Key Entities
 
-- **Feature Flag**: A Cargo feature marker that gates compilation of a module and its dependencies. Follows the `default = ["all"]` pattern established by the policies crate.
+- **Feature Flag**: A Cargo feature marker that gates compilation of a module and its dependencies. Adapters use `default = []` plus `full = ["all"]`; the policies crate keeps its own `default = ["all"]` profile.
 - **Shared Infrastructure**: The always-compiled foundation of the adapters crate (base HTTP client, SSE utilities, error types, conversion functions) that all providers depend on.
-- **Backend Feature**: A local-llm feature flag (`metal`, `cuda`, `cpu`) that selects the hardware acceleration strategy for on-device inference.
+- **Backend Feature**: A local-llm feature flag (`metal`, `cuda`, `cudnn`, `flash-attn`, `mkl`, `accelerate`) that selects optional hardware acceleration for on-device inference. CPU-only inference is the no-feature fallback.
 
 ## Success Criteria *(mandatory)*
 
@@ -117,13 +117,13 @@ A headless daemon or library consumer depends on `swink-agent` for its agent loo
 - **SC-003**: Building the adapters crate with `--no-default-features --features anthropic` succeeds and excludes all other provider modules from compilation.
 - **SC-004**: Building the root crate with `default-features = false` succeeds with only the core agent loop available.
 - **SC-005**: A consumer referencing an ungated adapter type receives a compile error indicating the type is unavailable (Rust's "unresolved import" error).
-- **SC-006**: The local-llm crate builds with each backend feature (`metal`, `cuda`, `cpu`) independently on its target platform.
+- **SC-006**: The local-llm crate builds with each supported backend feature (`metal`, `cuda`, `cudnn`, `flash-attn`, `mkl`, `accelerate`) independently on its target platform, and also builds with no backend feature selected.
 - **SC-007**: The TUI crate and its dependencies do not appear in the dependency tree of a consumer that depends only on `swink-agent` (TUI is a separate workspace crate, not a root dependency).
 
 ## Assumptions
 
-- The existing `swink-agent-policies` crate feature pattern (`default = ["all"]`, individual marker flags, `cfg(feature = "...")` guards) is the established convention and will be followed consistently.
+- The existing `swink-agent-policies` crate feature pattern (individual marker flags plus an `all` convenience feature) is the established convention, but not every crate uses the same default-feature policy.
 - Provider-specific dependencies can be cleanly separated — each adapter module's dependencies are identifiable and do not overlap with other providers beyond shared infrastructure.
-- The `mistral.rs` crate exposes feature flags for Metal, CUDA, and CPU backends that can be forwarded through the local-llm crate's own features.
-- The workspace `members` list in root `Cargo.toml` will continue to list all crates, but the root `swink-agent` library crate's optional dependencies gate what consumers actually compile.
+- The `llama-cpp-2` crate exposes the backend feature flags needed by `swink-agent-local-llm` (`metal`, `cuda`, `vulkan`), while CPU-only inference remains the no-feature fallback.
+- The workspace `members` list in root `Cargo.toml` will continue to list all crates, but consumers compile optional functionality by depending on the relevant sub-crates directly.
 - Future adapters (016-azure, 017-xai, 018-mistral, 019-bedrock) are not yet implemented; this spec only establishes the pattern they will follow. Existing stub modules for these adapters will be feature-gated alongside implemented ones.

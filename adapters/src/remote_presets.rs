@@ -76,6 +76,7 @@ pub enum RemoteModelConnectionError {
 /// constant for each provider. Provider keys that don't map to any adapter
 /// feature (e.g. `"local"`) always return `false`.
 #[must_use]
+#[allow(clippy::match_like_matches_macro)] // arms evaluate different cfg! flags, not a set membership check
 pub fn is_provider_compiled(provider_key: &str) -> bool {
     match provider_key {
         "anthropic" => cfg!(feature = "anthropic"),
@@ -100,9 +101,10 @@ pub fn remote_presets(provider_key: Option<&str>) -> Vec<CatalogPreset> {
         .collect()
 }
 
-/// Returns all remote presets from the catalog, regardless of whether the
-/// corresponding adapter feature is compiled in. Useful for discovery UIs
-/// that want to show available models even when the adapter is not enabled.
+/// Returns all remote presets from the catalog, regardless of feature flags.
+///
+/// Useful for discovery UIs that want to show available models even when the
+/// corresponding adapter is not compiled in.
 #[must_use]
 pub fn all_remote_presets(provider_key: Option<&str>) -> Vec<CatalogPreset> {
     let catalog = model_catalog();
@@ -258,7 +260,7 @@ pub fn preset(model_id: &str) -> Option<CatalogPreset> {
 }
 
 /// Builds a [`ModelConnection`] for a model identified by its `model_id`
-/// (e.g. `"claude-sonnet-4-6"`, `"gpt-4o"`).
+/// (e.g. `"claude-sonnet-4-6"`, `"gpt-5.4"`).
 ///
 /// This is the simplest way to get a connection — it resolves the preset from
 /// the catalog by `model_id`, reads credentials from the environment, and
@@ -355,7 +357,10 @@ mod tests {
     #[test]
     fn is_provider_compiled_matches_feature_gates() {
         // Each assertion matches the compile-time cfg for the corresponding feature.
-        assert_eq!(is_provider_compiled("anthropic"), cfg!(feature = "anthropic"));
+        assert_eq!(
+            is_provider_compiled("anthropic"),
+            cfg!(feature = "anthropic")
+        );
         assert_eq!(is_provider_compiled("openai"), cfg!(feature = "openai"));
         assert_eq!(is_provider_compiled("google"), cfg!(feature = "gemini"));
         assert_eq!(is_provider_compiled("azure"), cfg!(feature = "azure"));
@@ -391,7 +396,8 @@ mod tests {
         // Every filtered preset must also appear in the unfiltered list.
         for p in &filtered {
             assert!(
-                all.iter().any(|a| a.model_id == p.model_id && a.provider_key == p.provider_key),
+                all.iter()
+                    .any(|a| a.model_id == p.model_id && a.provider_key == p.provider_key),
                 "filtered preset '{}.{}' not found in all_remote_presets",
                 p.provider_key,
                 p.preset_id
@@ -415,6 +421,19 @@ mod tests {
             presets.is_empty(),
             "remote_presets() should be empty with no adapter features, got {} presets",
             presets.len()
+        );
+    }
+
+    #[cfg(all(feature = "xai", not(feature = "openai")))]
+    #[test]
+    fn xai_feature_does_not_mark_openai_as_compiled() {
+        assert!(is_provider_compiled("xai"));
+        assert!(!is_provider_compiled("openai"));
+        assert!(
+            remote_presets(None)
+                .into_iter()
+                .all(|preset| preset.provider_key != "openai"),
+            "xai-only builds must not expose OpenAI presets as compiled",
         );
     }
 
@@ -468,7 +487,7 @@ mod tests {
     #[cfg(feature = "openai")]
     #[test]
     fn preset_finds_openai_when_compiled() {
-        let gpt = preset("gpt-4o").expect("gpt-4o preset should exist");
+        let gpt = preset("gpt-5.4").expect("gpt-5.4 preset should exist");
         assert_eq!(gpt.provider_key, "openai");
     }
 
@@ -485,7 +504,7 @@ mod tests {
     #[cfg(feature = "openai")]
     #[test]
     fn remote_preset_requires_key() {
-        let preset = preset("gpt-4o").unwrap();
+        let preset = preset("gpt-5.4").unwrap();
         let err = match build_connection_from_preset(&preset, None, None) {
             Ok(_) => panic!("expected missing credential error"),
             Err(err) => err,
@@ -493,7 +512,7 @@ mod tests {
         assert_eq!(
             err,
             RemoteModelConnectionError::MissingCredential {
-                preset: "OpenAI GPT-4o".to_string(),
+                preset: "OpenAI GPT-5.4".to_string(),
                 env_var: "OPENAI_API_KEY".to_string(),
             }
         );
@@ -536,7 +555,7 @@ mod tests {
     #[cfg(feature = "openai")]
     #[test]
     fn preset_finds_representative_openai_model() {
-        let p = preset("gpt-4o").expect("openai preset should exist");
+        let p = preset("gpt-5.4").expect("openai preset should exist");
         assert_eq!(p.provider_key, "openai");
     }
 

@@ -59,88 +59,130 @@ base_url_env_var = "OPENAI_BASE_URL"
 default_base_url = "https://api.openai.com"
 
 [[providers.presets]]
-id = "gpt_4o"
-display_name = "OpenAI GPT-4o"
-group = "gpt4o"
-model_id = "gpt-4o"
+id = "gpt_5"
+display_name = "OpenAI GPT-5"
+group = "gpt5"
+model_id = "gpt-5"
+capabilities = ["text", "tools", "thinking", "images_in", "streaming", "structured_output"]
+status = "ga"
+context_window_tokens = 1000000
+max_output_tokens = 32768
+cost_per_million_input = 10.0
+cost_per_million_output = 30.0
+cost_per_million_cache_read = 2.50
+cost_per_million_cache_write = 10.0
+
+[[providers.presets]]
+id = "gpt_5_2025_08_07"
+display_name = "OpenAI GPT-5 (2025-08-07)"
+group = "gpt5"
+model_id = "gpt-5-2025-08-07"
+capabilities = ["text", "tools", "thinking", "images_in", "streaming", "structured_output"]
+status = "ga"
+context_window_tokens = 1000000
+max_output_tokens = 32768
+cost_per_million_input = 10.0
+cost_per_million_output = 30.0
+cost_per_million_cache_read = 2.50
+cost_per_million_cache_write = 10.0
+
+[[providers.presets]]
+id = "gpt_5_mini"
+display_name = "OpenAI GPT-5 Mini"
+group = "gpt5"
+model_id = "gpt-5-mini"
+capabilities = ["text", "tools", "thinking", "images_in", "streaming", "structured_output"]
+status = "ga"
+context_window_tokens = 1000000
+max_output_tokens = 32768
+cost_per_million_input = 1.50
+cost_per_million_output = 6.0
+cost_per_million_cache_read = 0.375
+cost_per_million_cache_write = 1.50
+
+[[providers.presets]]
+id = "gpt_5_mini_2025_08_07"
+display_name = "OpenAI GPT-5 Mini (2025-08-07)"
+group = "gpt5"
+model_id = "gpt-5-mini-2025-08-07"
+capabilities = ["text", "tools", "thinking", "images_in", "streaming", "structured_output"]
+status = "ga"
+context_window_tokens = 1000000
+max_output_tokens = 32768
+cost_per_million_input = 1.50
+cost_per_million_output = 6.0
+cost_per_million_cache_read = 0.375
+cost_per_million_cache_write = 1.50
+
+[[providers.presets]]
+id = "gpt_5_nano"
+display_name = "OpenAI GPT-5 Nano"
+group = "gpt5"
+model_id = "gpt-5-nano"
 capabilities = ["text", "tools", "images_in", "streaming", "structured_output"]
 status = "ga"
-context_window_tokens = 128000
-max_output_tokens = 16384
+context_window_tokens = 1000000
+max_output_tokens = 32768
+cost_per_million_input = 0.50
+cost_per_million_output = 2.0
+cost_per_million_cache_read = 0.125
+cost_per_million_cache_write = 0.50
+
+[[providers.presets]]
+id = "gpt_5_nano_2025_08_07"
+display_name = "OpenAI GPT-5 Nano (2025-08-07)"
+group = "gpt5"
+model_id = "gpt-5-nano-2025-08-07"
+capabilities = ["text", "tools", "images_in", "streaming", "structured_output"]
+status = "ga"
+context_window_tokens = 1000000
+max_output_tokens = 32768
+cost_per_million_input = 0.50
+cost_per_million_output = 2.0
+cost_per_million_cache_read = 0.125
+cost_per_million_cache_write = 0.50
+
+[[providers.presets]]
+id = "gpt_5_4"
+display_name = "OpenAI GPT-5.4"
+group = "gpt54"
+model_id = "gpt-5.4"
+capabilities = ["text", "tools", "thinking", "images_in", "streaming", "structured_output"]
+status = "ga"
+context_window_tokens = 1050000
+max_output_tokens = 128000
 cost_per_million_input = 2.50
-cost_per_million_output = 10.0
-cost_per_million_cache_read = 1.25
+cost_per_million_output = 15.0
+cost_per_million_cache_read = 0.25
 cost_per_million_cache_write = 2.50
 
 [[providers.presets]]
-id = "gpt_4_1"
-display_name = "OpenAI GPT-4.1"
-group = "gpt41"
-model_id = "gpt-4.1"
+id = "gpt_5_4_mini"
+display_name = "OpenAI GPT-5.4 Mini"
+group = "gpt54"
+model_id = "gpt-5.4-mini"
 capabilities = ["text", "tools", "images_in", "streaming", "structured_output"]
 status = "ga"
-context_window_tokens = 1000000
+context_window_tokens = 400000
 max_output_tokens = 32768
-cost_per_million_input = 2.0
-cost_per_million_output = 8.0
-cost_per_million_cache_read = 0.50
-cost_per_million_cache_write = 2.0
-
-[[providers.presets]]
-id = "gpt_4o_mini"
-display_name = "OpenAI GPT-4o Mini"
-group = "gpt4o"
-model_id = "gpt-4o-mini"
-capabilities = ["text", "tools", "images_in", "streaming", "structured_output"]
-status = "ga"
-context_window_tokens = 128000
-max_output_tokens = 16384
-cost_per_million_input = 0.15
-cost_per_million_output = 0.60
+cost_per_million_input = 0.75
+cost_per_million_output = 4.50
 cost_per_million_cache_read = 0.075
-cost_per_million_cache_write = 0.15
+cost_per_million_cache_write = 0.75
 
 [[providers.presets]]
-id = "gpt_4_1_mini"
-display_name = "OpenAI GPT-4.1 Mini"
-group = "gpt41"
-model_id = "gpt-4.1-mini"
+id = "gpt_5_4_nano"
+display_name = "OpenAI GPT-5.4 Nano"
+group = "gpt54"
+model_id = "gpt-5.4-nano"
 capabilities = ["text", "tools", "images_in", "streaming", "structured_output"]
 status = "ga"
-context_window_tokens = 1000000
+context_window_tokens = 400000
 max_output_tokens = 32768
-cost_per_million_input = 0.40
-cost_per_million_output = 1.60
-cost_per_million_cache_read = 0.10
-cost_per_million_cache_write = 0.40
-
-[[providers.presets]]
-id = "o3_mini"
-display_name = "OpenAI o3-mini"
-group = "o3"
-model_id = "o3-mini"
-capabilities = ["text", "tools", "streaming", "structured_output"]
-status = "ga"
-context_window_tokens = 200000
-max_output_tokens = 100000
-cost_per_million_input = 1.10
-cost_per_million_output = 4.40
-cost_per_million_cache_read = 0.55
-cost_per_million_cache_write = 1.10
-
-[[providers.presets]]
-id = "o1"
-display_name = "OpenAI o1"
-group = "o1"
-model_id = "o1"
-capabilities = ["text", "tools", "images_in", "streaming", "structured_output"]
-status = "ga"
-context_window_tokens = 200000
-max_output_tokens = 100000
-cost_per_million_input = 15.0
-cost_per_million_output = 60.0
-cost_per_million_cache_read = 7.50
-cost_per_million_cache_write = 15.0
+cost_per_million_input = 0.20
+cost_per_million_output = 1.25
+cost_per_million_cache_read = 0.02
+cost_per_million_cache_write = 0.20
 
 [[providers]]
 key = "local"

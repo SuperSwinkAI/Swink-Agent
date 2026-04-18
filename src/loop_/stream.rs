@@ -409,6 +409,16 @@ async fn handle_stream_error(
         return StreamErrorAction::Retry(std::time::Duration::ZERO);
     }
 
+    // Aborted — preserve as StreamResult::Aborted so the turn emits
+    // TurnEndReason::Aborted instead of TurnEndReason::Error (#438).
+    if matches!(harness_error, AgentError::Aborted) {
+        let abort_msg = build_abort_message(model);
+        if !emit(tx, AgentEvent::MessageEnd { message: abort_msg }).await {
+            return StreamErrorAction::ChannelClosed;
+        }
+        return StreamErrorAction::FatalError(StreamResult::Aborted);
+    }
+
     // Check if retryable — RetryStrategy is the sole decision point
     if config.retry_strategy.should_retry(&harness_error, attempt) {
         let delay = config.retry_strategy.delay(attempt);

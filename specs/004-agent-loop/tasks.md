@@ -3,7 +3,7 @@
 **Input**: Design documents from `/specs/004-agent-loop/`
 **Prerequisites**: plan.md (required), spec.md (required for user stories), research.md, data-model.md, contracts/
 
-**Tests**: Tests are included as the spec explicitly lists test files and the project follows test-driven development principles (CLAUDE.md: "Test-driven. Run `cargo test --workspace` before every commit.").
+**Tests**: Tests are included as the spec explicitly lists test files and the project follows test-driven development principles (AGENTS.md: "Test-driven. Run `cargo test --workspace` before every commit.").
 
 **Organization**: Tasks are grouped by user story to enable independent implementation and testing of each story.
 

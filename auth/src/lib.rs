@@ -10,6 +10,8 @@
 mod in_memory;
 pub mod oauth2;
 mod resolver;
+mod token_source;
 
 pub use in_memory::InMemoryCredentialStore;
 pub use resolver::DefaultCredentialResolver;
+pub use token_source::{ExpiringValue, SingleFlightTokenSource};

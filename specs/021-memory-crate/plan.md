@@ -52,7 +52,7 @@ specs/021-memory-crate/
 ```text
 memory/
 ├── Cargo.toml
-├── CLAUDE.md
+├── AGENTS.md
 └── src/
     ├── lib.rs            # Re-exports public API
     ├── store.rs          # SessionStore trait (sync)

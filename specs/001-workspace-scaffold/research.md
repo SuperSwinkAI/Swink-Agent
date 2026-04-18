@@ -7,7 +7,7 @@
 
 No NEEDS CLARIFICATION items in the technical context. All decisions are
 pre-determined by the project requirements (MSRV 1.88, edition 2024) and
-the existing CLAUDE.md conventions.
+the existing AGENTS.md conventions.
 
 ## Decisions
 

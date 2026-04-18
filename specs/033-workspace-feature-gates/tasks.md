@@ -49,13 +49,13 @@
 
 ## Phase 4: User Story 3 - Local LLM Backend Selection (Priority: P2)
 
-**Goal**: Expose mistralrs backend feature flags (`metal`, `cuda`, `cudnn`, `flash-attn`, `mkl`, `accelerate`) through the local-llm crate. No default backend — CPU inference when none enabled.
+**Goal**: Expose llama-cpp-2 backend feature flags (`metal`, `cuda`, `vulkan`) through the local-llm crate. No default backend — CPU inference when none enabled.
 
 **Independent Test**: `cargo build -p swink-agent-local-llm --features metal` on macOS succeeds; `cargo build -p swink-agent-local-llm` succeeds (CPU-only).
 
 ### Implementation for User Story 3
 
-- [x] T007 [US3] Add `[features]` section to `local-llm/Cargo.toml` with backend feature flags that forward to corresponding `mistralrs` features. No `default` or `all` feature for backends — explicit opt-in only. Example: `metal = ["mistralrs/metal"]`. **Before implementation**: verify actual feature names in the `mistralrs` 0.7 Cargo.toml manifest (e.g., confirm `metal`, `cuda`, `flash-attn` etc. match exactly). Adjust the list to match what mistralrs actually exposes.
+- [x] T007 [US3] Add `[features]` section to `local-llm/Cargo.toml` with backend feature flags that forward to corresponding `llama-cpp-2` features. No `default` or `all` feature for backends — explicit opt-in only. Example: `metal = ["llama-cpp-2/metal"]`.
 - [x] T008 [US3] Verify `cargo build -p swink-agent-local-llm` succeeds without any backend features (CPU-only)
 - [x] T009 [US3] Verify `cargo build -p swink-agent-local-llm --features metal` succeeds on macOS (Metal backend)
 - [x] T010 [US3] Verify `cargo test -p swink-agent-local-llm` passes (zero regressions)
@@ -95,8 +95,8 @@
 - [x] T020 Verify `cargo clippy --workspace -- -D warnings` passes (zero warnings policy)
 - [x] T020a [US4] Verify `cargo build -p swink-agent-tui --features local` still compiles (FR-007 — TUI `local` feature preserved)
 - [x] T020b Verify `cargo tree -p swink-agent-adapters --no-default-features --features anthropic` shows fewer crate dependencies than `cargo tree -p swink-agent-adapters` (SC-001 — measurable dependency reduction)
-- [x] T021 [P] Update `CLAUDE.md` feature gates section to document the new adapter, local-llm, and root feature flags for future development reference
-- [x] T022 [P] Update `adapters/CLAUDE.md` (if it exists) with feature gate documentation for the adapter pattern
+- [x] T021 [P] Update `AGENTS.md` feature gates section to document the new adapter, local-llm, and root feature flags for future development reference
+- [x] T022 [P] Update `adapters/AGENTS.md` (if it exists) with feature gate documentation for the adapter pattern
 
 ---
 

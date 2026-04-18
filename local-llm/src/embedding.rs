@@ -1,28 +1,30 @@
 //! Local embedding model for text vectorization.
 //!
 //! `EmbeddingModel` is a thin typed wrapper over the shared lazy-loader,
-//! providing the embedding-specific build logic (via
-//! `mistralrs::EmbeddingModelBuilder`) as a `LoaderBackend` implementation.
+//! providing the embedding-specific build logic (via `llama-cpp-2`) as a
+//! `LoaderBackend` implementation.
 
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::Arc;
 
-use tracing::{debug, error};
+use tracing::{debug, error, info};
 
 use crate::error::LocalModelError;
 use crate::loader::{LazyLoader, LoaderBackend, LoaderState};
-use crate::preset::ModelPreset;
+use crate::preset::{ModelPreset, default_embedding_config};
 use crate::progress::ProgressCallbackFn;
+use crate::runner::{LlamaRunner, RunnerConfig};
 
 // ─── EmbeddingConfig ────────────────────────────────────────────────────────
 
 /// Configuration for a local embedding model.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EmbeddingConfig {
     /// `HuggingFace` repository ID for the embedding model.
     pub repo_id: String,
 
-    /// Model filename (GGUF or safetensors).
+    /// Model filename (GGUF).
     pub filename: String,
 
     /// Output embedding dimensions (default 768, configurable 128–768).
@@ -31,54 +33,71 @@ pub struct EmbeddingConfig {
 
 impl Default for EmbeddingConfig {
     fn default() -> Self {
-        Self {
-            repo_id: std::env::var("LOCAL_EMBED_REPO")
-                .unwrap_or_else(|_| "google/gemma-embedding-300m".to_string()),
-            filename: std::env::var("LOCAL_EMBED_FILE").unwrap_or_else(|_| String::new()),
-            dimensions: std::env::var("LOCAL_EMBED_DIMS")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(768),
-        }
+        default_embedding_config()
     }
 }
 
-// ─── EmbeddingBackend ──────────────────────────────────────────────────────────
+// ─── EmbeddingBackend ──────────────────────────────────────────────────────
 
-/// [`LoaderBackend`] for embedding models: downloads and builds via
-/// `EmbeddingModelBuilder` (which handles its own download internally).
 pub(crate) struct EmbeddingBackend;
 
 impl LoaderBackend for EmbeddingBackend {
     type Config = EmbeddingConfig;
-    /// Embedding builder handles its own download, so no intermediate artifact.
-    type Artifact = ();
+    type Artifact = std::path::PathBuf;
+    type Runner = Arc<LlamaRunner>;
 
     fn download(
         config: &EmbeddingConfig,
         _progress_cb: Option<ProgressCallbackFn>,
     ) -> Pin<Box<dyn Future<Output = Result<Self::Artifact, LocalModelError>> + Send + '_>> {
         Box::pin(async move {
-            tracing::info!(repo = %config.repo_id, "downloading embedding model");
-            // EmbeddingModelBuilder handles its own download — nothing to do here.
-            Ok(())
+            info!(repo = %config.repo_id, "downloading embedding model");
+
+            let api = hf_hub::api::tokio::Api::new().map_err(|e| {
+                error!(error = %e, "HuggingFace API init failed");
+                LocalModelError::download(e)
+            })?;
+
+            let repo = api.model(config.repo_id.clone());
+            let model_path = repo.get(&config.filename).await.map_err(|e| {
+                error!(error = %e, "embedding model download failed");
+                LocalModelError::download(e)
+            })?;
+
+            debug!(path = %model_path.display(), "embedding model downloaded");
+            Ok(model_path)
         })
     }
 
     fn build(
-        config: &EmbeddingConfig,
-        _artifact: Self::Artifact,
+        _config: &EmbeddingConfig,
+        artifact: Self::Artifact,
         _progress_cb: Option<ProgressCallbackFn>,
-    ) -> Pin<Box<dyn Future<Output = Result<mistralrs::Model, LocalModelError>> + Send + '_>> {
+    ) -> Pin<Box<dyn Future<Output = Result<Self::Runner, LocalModelError>> + Send + '_>> {
         Box::pin(async move {
-            mistralrs::EmbeddingModelBuilder::new(config.repo_id.clone())
-                .build()
-                .await
-                .map_err(|e| {
-                    let msg = format!("embedding model loading failed: {e}");
+            let runner_config = RunnerConfig {
+                context_length: 2048,
+                gpu_layers: 0,
+                ..RunnerConfig::default()
+            };
+
+            let model_path = artifact;
+            let build_result =
+                tokio::task::spawn_blocking(move || LlamaRunner::load(&model_path, runner_config))
+                    .await;
+
+            match build_result {
+                Ok(Ok(runner)) => Ok(Arc::new(runner)),
+                Ok(Err(e)) => {
+                    error!(error = %e, "embedding model loading failed");
+                    Err(e)
+                }
+                Err(join_err) => {
+                    let msg = format!("embedding model loading panicked: {join_err}");
                     error!(%msg);
-                    LocalModelError::loading_message(msg)
-                })
+                    Err(LocalModelError::loading_message(msg))
+                }
+            }
         })
     }
 
@@ -90,9 +109,6 @@ impl LoaderBackend for EmbeddingBackend {
 // ─── EmbeddingModel ─────────────────────────────────────────────────────────
 
 /// A lazily-loaded local embedding model for text vectorization.
-///
-/// Wraps a shared lazy-loader for cheap cloning — multiple tasks can
-/// share the same loaded model concurrently.
 #[derive(Clone)]
 pub struct EmbeddingModel {
     loader: LazyLoader<EmbeddingBackend>,
@@ -107,7 +123,6 @@ impl std::fmt::Debug for EmbeddingModel {
 }
 
 impl EmbeddingModel {
-    /// Create a new `EmbeddingModel` in the `Unloaded` state.
     #[must_use]
     pub fn new(config: EmbeddingConfig) -> Self {
         Self {
@@ -115,34 +130,24 @@ impl EmbeddingModel {
         }
     }
 
-    /// Create an `EmbeddingModel` from a [`ModelPreset`].
     #[must_use]
     pub fn from_preset(preset: ModelPreset) -> Self {
         Self::new(preset.embedding_config())
     }
 
-    /// Attaches a progress callback for model download/load reporting.
-    ///
-    /// # Errors
-    ///
-    /// Returns `Err` if this instance has already been cloned (the internal `Arc` is
-    /// shared). **Must be called before cloning the model**.
     pub fn with_progress(mut self, cb: ProgressCallbackFn) -> Result<Self, LocalModelError> {
         self.loader = self.loader.with_progress(cb)?;
         Ok(self)
     }
 
-    /// Returns `true` if the model is loaded and ready.
     pub async fn is_ready(&self) -> bool {
         self.loader.is_ready().await
     }
 
-    /// Idempotent: download → load → ready.
     pub async fn ensure_ready(&self) -> Result<(), LocalModelError> {
         self.loader.ensure_ready().await
     }
 
-    /// Embed a single text, returning a fixed-dimensional vector.
     pub async fn embed(&self, text: &str) -> Result<Vec<f32>, LocalModelError> {
         self.ensure_ready().await?;
 
@@ -151,15 +156,15 @@ impl EmbeddingModel {
             return Err(LocalModelError::NotReady);
         };
 
-        let result = runner
-            .generate_embedding(text)
-            .await
-            .map_err(|e| LocalModelError::embedding(format!("embedding failed: {e}")));
+        let runner = Arc::clone(runner);
+        let owned_text = text.to_string();
         drop(state);
-        result
+
+        tokio::task::spawn_blocking(move || runner.generate_embedding(&owned_text))
+            .await
+            .map_err(|e| LocalModelError::embedding(format!("embedding task panicked: {e}")))?
     }
 
-    /// Embed a batch of texts, returning one vector per input.
     pub async fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, LocalModelError> {
         self.ensure_ready().await?;
 
@@ -170,26 +175,22 @@ impl EmbeddingModel {
 
         debug!(count = texts.len(), "sending embedding request");
 
-        let mut request = mistralrs::EmbeddingRequestBuilder::new();
-        for text in texts {
-            request = request.add_prompt(*text);
-        }
-
-        let embeddings = runner
-            .generate_embeddings(request)
-            .await
-            .map_err(|e| LocalModelError::embedding(format!("embedding failed: {e}")))?;
-
+        let runner = Arc::clone(runner);
+        let owned_texts: Vec<String> = texts.iter().map(|t| (*t).to_string()).collect();
         drop(state);
-        Ok(embeddings)
+
+        tokio::task::spawn_blocking(move || {
+            let refs: Vec<&str> = owned_texts.iter().map(String::as_str).collect();
+            runner.generate_embeddings_batch(&refs)
+        })
+        .await
+        .map_err(|e| LocalModelError::embedding(format!("embedding task panicked: {e}")))?
     }
 
-    /// Drop the loaded model, returning to `Unloaded` state.
     pub async fn unload(&self) {
         self.loader.unload().await;
     }
 
-    /// Access the configuration.
     pub fn config(&self) -> &EmbeddingConfig {
         self.loader.config()
     }

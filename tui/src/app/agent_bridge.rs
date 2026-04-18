@@ -18,15 +18,25 @@ impl App {
             return;
         };
 
-        if let Some(pending) = self.pending_model.take() {
-            agent.set_model(pending);
-        }
-
         let user_message = AgentMessage::Llm(LlmMessage::User(UserMessage {
-            content: vec![ContentBlock::Text { text }],
+            content: vec![ContentBlock::Text { text: text.clone() }],
             timestamp: timestamp_now(),
             cache_hint: None,
         }));
+
+        // If a loop is already running, inject the message as a steering event
+        // rather than trying to start a second loop (which would error).
+        // Store the text so we can promote it into the conversation display at
+        // AgentEnd, and so the queued-message overlay can show it in the meantime.
+        if self.status == AgentStatus::Running {
+            agent.steer(user_message);
+            self.pending_steered.push(text);
+            return;
+        }
+
+        if let Some(pending) = self.pending_model.take() {
+            agent.set_model(pending);
+        }
 
         let input = vec![user_message];
         self.status = AgentStatus::Running;
@@ -64,6 +74,16 @@ impl App {
                 self.status = AgentStatus::Running;
             }
             AgentEvent::MessageStart => {
+                // If any steered messages are waiting, promote them into the
+                // conversation NOW — before the assistant response that processes
+                // them — so the display order matches the logical turn order.
+                if !self.pending_steered.is_empty() {
+                    for text in self.pending_steered.drain(..) {
+                        self.messages
+                            .push(DisplayMessage::new(MessageRole::User, text));
+                    }
+                    self.steered_fade_ticks = 10;
+                }
                 let mut msg = DisplayMessage::new(MessageRole::Assistant, String::new());
                 msg.is_streaming = true;
                 msg.plan_mode = self.operating_mode == OperatingMode::Plan;
@@ -84,31 +104,7 @@ impl App {
                 }
             }
             AgentEvent::MessageEnd { message } => {
-                let mut text_parts = Vec::new();
-                let mut thinking_parts = Vec::new();
-                for block in &message.content {
-                    match block {
-                        ContentBlock::Text { text } => text_parts.push(text.as_str()),
-                        ContentBlock::Thinking { thinking, .. } => {
-                            thinking_parts.push(thinking.as_str());
-                        }
-                        _ => {}
-                    }
-                }
-
-                let content = if !text_parts.is_empty() {
-                    text_parts.join("")
-                } else if message.stop_reason == swink_agent::StopReason::Error {
-                    message.error_message.clone().unwrap_or_default()
-                } else {
-                    String::new()
-                };
-
-                let thinking = if thinking_parts.is_empty() {
-                    None
-                } else {
-                    Some(thinking_parts.join(""))
-                };
+                let (content, thinking) = DisplayMessage::assistant_content(&message);
 
                 if let Some(msg) = self
                     .messages
@@ -137,6 +133,9 @@ impl App {
             }
             AgentEvent::ToolExecutionStart { id, name, .. } => {
                 self.tool_panel.start_tool(id, name);
+            }
+            AgentEvent::ToolExecutionUpdate { id, name, partial } => {
+                self.tool_panel.update_tool(&id, &name, &partial);
             }
             AgentEvent::ToolExecutionEnd { id, is_error, .. } => {
                 self.tool_panel.end_tool(&id, is_error);
@@ -169,6 +168,15 @@ impl App {
                 self.trim_messages_to_recent_turns();
             }
             AgentEvent::AgentEnd { .. } => {
+                // Safety flush: if the loop ended without a final MessageStart
+                // (e.g. cancelled mid-turn), promote any remaining steered messages.
+                if !self.pending_steered.is_empty() {
+                    for text in self.pending_steered.drain(..) {
+                        self.messages
+                            .push(DisplayMessage::new(MessageRole::User, text));
+                    }
+                    self.steered_fade_ticks = 10;
+                }
                 self.status = AgentStatus::Idle;
                 self.retry_attempt = None;
                 if let Err(error) = self.auto_save_session() {
@@ -197,7 +205,7 @@ impl App {
         request: swink_agent::ToolApprovalRequest,
         responder: tokio::sync::oneshot::Sender<ToolApproval>,
     ) {
-        if self.approval_mode == swink_agent::ApprovalMode::Smart
+        if self.approval_mode() == swink_agent::ApprovalMode::Smart
             && self.session_trusted_tools.contains(&request.tool_name)
         {
             let _ = responder.send(ToolApproval::Approved);

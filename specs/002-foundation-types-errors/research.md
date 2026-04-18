@@ -6,7 +6,7 @@
 ## Technical Context Resolution
 
 No NEEDS CLARIFICATION items. All technical decisions are determined by
-the project conventions (CLAUDE.md), the PRD data model (§3, §10.3), and
+the project conventions (AGENTS.md), the PRD data model (§3, §10.3), and
 the clarification session.
 
 ## Decisions

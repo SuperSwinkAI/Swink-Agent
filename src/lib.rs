@@ -14,6 +14,7 @@ pub(crate) mod agent_subscriptions;
 #[cfg(feature = "artifact-store")]
 pub mod artifact;
 mod async_context_transformer;
+pub mod atomic_fs;
 pub(crate) mod block_accumulator;
 mod checkpoint;
 mod config;
@@ -42,6 +43,8 @@ mod noop_tool;
 mod orchestrator;
 #[cfg(feature = "otel")]
 pub mod otel;
+#[doc(hidden)]
+pub mod pause_state;
 #[cfg(feature = "plugins")]
 pub(crate) mod plugin;
 pub(crate) mod policy;
@@ -50,8 +53,10 @@ mod retry;
 mod schema;
 mod state;
 pub(crate) mod stream;
+pub mod stream_assembly;
 mod stream_middleware;
 mod sub_agent;
+mod task_core;
 pub(crate) mod tool;
 mod tool_execution_policy;
 pub(crate) mod tool_filter;
@@ -72,7 +77,6 @@ pub use agent::{
     SubscriptionId, default_convert,
 };
 pub use agent_id::AgentId;
-pub use block_accumulator::{BlockAccumulator, OpenBlock, StreamFinalize, finalize_blocks};
 pub use async_context_transformer::{AsyncContextTransformer, AsyncTransformFuture};
 pub use checkpoint::{Checkpoint, CheckpointFuture, CheckpointStore, LoopCheckpoint};
 pub use config::{
@@ -145,7 +149,7 @@ pub use tool_execution_policy::{
 pub use tool_filter::{ToolFilter, ToolPattern};
 pub use tool_middleware::ToolMiddleware;
 #[cfg(feature = "builtin-tools")]
-pub use tools::{BashTool, ReadFileTool, WriteFileTool, builtin_tools};
+pub use tools::{BashTool, EditFileTool, ReadFileTool, WriteFileTool, builtin_tools};
 #[cfg(feature = "artifact-tools")]
 pub use tools::{ListArtifactsTool, LoadArtifactTool, SaveArtifactTool, artifact_tools};
 pub use types::{
@@ -156,7 +160,7 @@ pub use types::{
     deserialize_custom_message, restore_messages, restore_single_custom, serialize_custom_message,
     serialize_messages,
 };
-pub use util::now_timestamp;
+pub use util::{now_timestamp, prefix_chars, suffix_chars};
 
 #[cfg(feature = "artifact-store")]
 pub use artifact::{

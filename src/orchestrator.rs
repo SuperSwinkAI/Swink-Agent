@@ -9,13 +9,13 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use tokio::sync::{mpsc, oneshot};
-use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use crate::agent::{Agent, AgentOptions};
 use crate::error::AgentError;
 use crate::handle::AgentStatus;
+use crate::task_core::{TaskCore, resolve_status};
 use crate::types::{AgentMessage, AgentResult, ContentBlock, LlmMessage, UserMessage};
 use crate::util::now_timestamp;
 
@@ -110,12 +110,11 @@ struct AgentEntry {
 /// Handle to a spawned orchestrated agent.
 ///
 /// Provides request/response messaging, status polling, and cancellation.
+/// Lifecycle methods (status, cancel, `is_done`) are delegated to a shared task core.
 pub struct OrchestratedHandle {
     name: String,
     request_tx: mpsc::Sender<AgentRequest>,
-    cancellation_token: CancellationToken,
-    join_handle: Option<JoinHandle<Result<AgentResult, AgentError>>>,
-    status: Arc<Mutex<AgentStatus>>,
+    core: TaskCore,
 }
 
 impl OrchestratedHandle {
@@ -161,30 +160,24 @@ impl OrchestratedHandle {
     ///
     /// Drops the request channel so the agent shuts down after processing
     /// any remaining requests.
-    pub async fn await_result(mut self) -> Result<AgentResult, AgentError> {
+    pub async fn await_result(self) -> Result<AgentResult, AgentError> {
         drop(self.request_tx);
-        match self.join_handle.take() {
-            Some(handle) => match handle.await {
-                Ok(result) => result,
-                Err(join_err) => Err(AgentError::stream(join_err)),
-            },
-            None => Err(AgentError::Aborted),
-        }
+        self.core.result().await
     }
 
     /// Cancel the agent.
     pub fn cancel(&self) {
-        self.cancellation_token.cancel();
+        self.core.cancel();
     }
 
     /// Current status of the agent.
     pub fn status(&self) -> AgentStatus {
-        *self.status.lock().unwrap_or_else(PoisonError::into_inner)
+        self.core.status()
     }
 
     /// Whether the agent has finished (completed, failed, or cancelled).
     pub fn is_done(&self) -> bool {
-        self.status() != AgentStatus::Running
+        self.core.is_done()
     }
 }
 
@@ -256,12 +249,20 @@ impl AgentOrchestrator {
     /// Register an agent by name with a factory that produces its options.
     ///
     /// The factory is called each time the agent is spawned or restarted.
+    ///
+    /// # Panics
+    ///
+    /// Panics if an agent with the same name has already been registered.
     pub fn add_agent(
         &mut self,
         name: impl Into<String>,
         options_factory: impl Fn() -> AgentOptions + Send + Sync + 'static,
     ) {
         let name = name.into();
+        assert!(
+            !self.entries.contains_key(&name),
+            "agent '{name}' already registered"
+        );
         self.entries.insert(
             name,
             AgentEntry {
@@ -277,7 +278,8 @@ impl AgentOrchestrator {
     ///
     /// # Panics
     ///
-    /// Panics if the parent agent has not been registered.
+    /// Panics if the parent agent has not been registered or if the child name
+    /// is already registered.
     pub fn add_child(
         &mut self,
         name: impl Into<String>,
@@ -289,6 +291,10 @@ impl AgentOrchestrator {
         assert!(
             self.entries.contains_key(&parent),
             "parent agent '{parent}' not registered"
+        );
+        assert!(
+            !self.entries.contains_key(&name),
+            "agent '{name}' already registered"
         );
 
         self.entries
@@ -377,9 +383,7 @@ impl AgentOrchestrator {
         Ok(OrchestratedHandle {
             name: name.to_owned(),
             request_tx,
-            cancellation_token,
-            join_handle: Some(join_handle),
-            status,
+            core: TaskCore::new(join_handle, cancellation_token, status),
         })
     }
 }
@@ -479,12 +483,7 @@ async fn run_agent_loop(
         }
     };
 
-    let mut s = status.lock().unwrap_or_else(PoisonError::into_inner);
-    *s = match &final_result {
-        Ok(_) => AgentStatus::Completed,
-        Err(AgentError::Aborted) => AgentStatus::Cancelled,
-        Err(_) => AgentStatus::Failed,
-    };
+    *status.lock().unwrap_or_else(PoisonError::into_inner) = resolve_status(&final_result);
     final_result
 }
 
@@ -515,6 +514,8 @@ impl std::fmt::Debug for AgentOrchestrator {
 
 #[cfg(test)]
 mod tests {
+    use std::panic::AssertUnwindSafe;
+
     use super::*;
 
     #[test]
@@ -557,6 +558,46 @@ mod tests {
     fn add_child_missing_parent_panics() {
         let mut orch = AgentOrchestrator::new();
         orch.add_child("child", "missing", || panic!("not called"));
+    }
+
+    #[test]
+    #[should_panic(expected = "agent 'alpha' already registered")]
+    fn add_agent_duplicate_name_panics() {
+        let mut orch = AgentOrchestrator::new();
+        orch.add_agent("alpha", || panic!("not called"));
+        orch.add_agent("alpha", || panic!("not called"));
+    }
+
+    #[test]
+    fn duplicate_child_registration_preserves_existing_hierarchy() {
+        let mut orch = AgentOrchestrator::new();
+        orch.add_agent("parent1", || panic!("not called"));
+        orch.add_agent("parent2", || panic!("not called"));
+        orch.add_child("child", "parent1", || panic!("not called"));
+
+        let duplicate = std::panic::catch_unwind(AssertUnwindSafe(|| {
+            orch.add_child("child", "parent2", || panic!("not called"));
+        }));
+
+        assert!(duplicate.is_err());
+        assert_eq!(orch.parent_of("child"), Some("parent1"));
+        assert_eq!(orch.children_of("parent1").unwrap(), &["child"]);
+        assert!(orch.children_of("parent2").unwrap().is_empty());
+    }
+
+    #[test]
+    fn duplicate_top_level_registration_preserves_child_link() {
+        let mut orch = AgentOrchestrator::new();
+        orch.add_agent("parent", || panic!("not called"));
+        orch.add_child("child", "parent", || panic!("not called"));
+
+        let duplicate = std::panic::catch_unwind(AssertUnwindSafe(|| {
+            orch.add_agent("child", || panic!("not called"));
+        }));
+
+        assert!(duplicate.is_err());
+        assert_eq!(orch.parent_of("child"), Some("parent"));
+        assert_eq!(orch.children_of("parent").unwrap(), &["child"]);
     }
 
     #[test]

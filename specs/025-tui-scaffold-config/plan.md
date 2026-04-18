@@ -55,7 +55,7 @@ specs/025-tui-scaffold-config/
 ```text
 tui/
 ├── Cargo.toml               # Crate manifest (workspace member)
-├── CLAUDE.md                # Lessons learned
+├── AGENTS.md                # Lessons learned
 ├── src/
 │   ├── lib.rs               # Library entry: setup_terminal(), restore_terminal(), resolve_system_prompt(), tui_approval_callback(), launch()
 │   ├── main.rs              # Binary entry: panic hook, TTY check, wizard gate, provider detection, tokio runtime

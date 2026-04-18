@@ -4,7 +4,7 @@
 
 ## Why
 
-<!-- Why is this change needed? Link to an issue if applicable. Closes #__ -->
+<!-- Why is this change needed? Every PR must reference an issue. Closes #__ -->
 
 ## Test plan
 

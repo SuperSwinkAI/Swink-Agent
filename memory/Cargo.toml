@@ -1,11 +1,11 @@
 [package]
 name = "swink-agent-memory"
-version = "0.7.0"
-edition = "2024"
-rust-version = "1.88"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
 description = "Session persistence and memory management for swink-agent"
-license = "MIT OR Apache-2.0"
-repository = "https://github.com/SuperSwinkAI/Swink-Agent"
+license.workspace = true
+repository.workspace = true
 readme = "../README.md"
 keywords = ["llm", "agent", "memory", "session", "context"]
 categories = ["development-tools", "data-structures"]
@@ -15,13 +15,14 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-swink-agent = { path = "..", default-features = false }
+swink-agent = { path = "..", version = "0.7.9", default-features = false }
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 dirs.workspace = true
 tracing.workspace = true
 chrono.workspace = true
+uuid.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

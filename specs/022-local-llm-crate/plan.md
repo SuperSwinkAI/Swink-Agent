@@ -5,12 +5,12 @@
 
 ## Summary
 
-Implement the `swink-agent-local-llm` workspace crate providing on-device LLM inference using mistral.rs for GGUF model loading. The crate defines `LocalModel` for text generation with quantized weights, `LocalStreamFn` implementing the standard `StreamFn` interface so local models are interchangeable with cloud providers, `EmbeddingModel` for local text vectorization, automatic message conversion to local model format, model presets (SmolLM3-3B for inference, EmbeddingGemma-300M for embeddings), lazy download with HuggingFace Hub caching, and `ProgressCallbackFn` for download/load progress reporting.
+Implement the `swink-agent-local-llm` workspace crate providing on-device LLM inference using llama.cpp (via `llama-cpp-2` Rust bindings) for GGUF model loading. The crate defines `LocalModel` for text generation with quantized weights, `LocalStreamFn` implementing the standard `StreamFn` interface so local models are interchangeable with cloud providers, `EmbeddingModel` for local text vectorization, automatic message conversion to local model format, model presets (SmolLM3-3B for inference, EmbeddingGemma-300M for embeddings), lazy download with HuggingFace Hub caching, and `ProgressCallbackFn` for download/load progress reporting.
 
 ## Technical Context
 
 **Language/Version**: Rust 1.88 (edition 2024)
-**Primary Dependencies**: `mistralrs` (0.7, GGUF inference engine), `hf-hub` (HuggingFace model download with ETag/SHA verification), `tokio`, `tokio-stream`, `futures`, `serde`/`serde_json`, `thiserror`, `tracing`, `uuid`
+**Primary Dependencies**: `llama-cpp-2` (Rust bindings for llama.cpp, GGUF inference engine), `hf-hub` (HuggingFace model download with ETag/SHA verification), `tokio`, `tokio-stream`, `futures`, `serde`/`serde_json`, `thiserror`, `tracing`, `uuid`
 **Storage**: Model weights cached in `~/.cache/huggingface/hub/` (managed by `hf-hub`)
 **Testing**: `cargo test -p swink-agent-local-llm`; live tests (`--ignored`) for real inference requiring ~2.1 GB download
 **Target Platform**: Cross-platform library crate (Linux, macOS, Windows); consumer hardware with 8GB+ RAM
@@ -25,10 +25,10 @@ Implement the `swink-agent-local-llm` workspace crate providing on-device LLM in
 
 | # | Principle | Status | Notes |
 |---|-----------|--------|-------|
-| I | Library-First | PASS | `swink-agent-local-llm` is its own workspace crate isolating heavy native dependencies (mistral.rs) from core. Depends on `swink-agent` via path; no reverse dependency. |
+| I | Library-First | PASS | `swink-agent-local-llm` is its own workspace crate isolating heavy native dependencies (llama.cpp) from core. Depends on `swink-agent` via path; no reverse dependency. |
 | II | Test-Driven Development | PASS | Unit tests for message conversion, presets, error variants, progress callbacks. Live integration tests (`--ignored`) exercise real inference and embedding with downloaded models. |
 | III | Efficiency & Performance | PASS | Lazy model download avoids unnecessary work. Streaming token delivery minimizes latency to first token. Context capped at 8192 tokens to match model architecture. |
-| IV | Leverage the Ecosystem | PASS | Uses `mistralrs` for GGUF inference (not hand-rolled), `hf-hub` for model download/caching with built-in integrity verification. No custom download or model loading code. |
+| IV | Leverage the Ecosystem | PASS | Uses `llama-cpp-2` (llama.cpp) for GGUF inference (not hand-rolled), `hf-hub` for model download/caching with built-in integrity verification. No custom download or model loading code. |
 | V | Provider Agnosticism | PASS | `LocalStreamFn` implements the standard `StreamFn` interface. The agent loop treats local models identically to cloud providers. No provider-specific types leak into core. |
 | VI | Safety & Correctness | PASS | `#[forbid(unsafe_code)]`. Model download/load errors produce `LocalModelError` variants with clear messages. Silent truncation for context overflow; explicit error for embedding length overflow. Cost is always zero. |
 
@@ -52,7 +52,7 @@ specs/022-local-llm-crate/
 ```text
 local-llm/
 ├── Cargo.toml
-├── CLAUDE.md
+├── AGENTS.md
 └── src/
     ├── lib.rs            # Re-exports public API
     ├── model.rs          # LocalModel — model lifecycle (Unloaded → Downloading → Loading → Ready)

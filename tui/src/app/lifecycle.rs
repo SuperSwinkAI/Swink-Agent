@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 use ratatui::layout::Rect;
 use tokio::sync::{mpsc, oneshot};
 
-use swink_agent::{Agent, ToolApproval, ToolApprovalRequest};
+use swink_agent::{Agent, ApprovalMode, ToolApproval, ToolApprovalRequest};
 
 use crate::config::TuiConfig;
 use crate::session::JsonlSessionStore;
@@ -67,7 +67,6 @@ impl App {
             approval_rx,
             approval_tx,
             pending_approval: None,
-            approval_mode: swink_agent::ApprovalMode::default(),
             context_budget: 0,
             context_tokens_used: 0,
             selected_tool_block: None,
@@ -83,6 +82,8 @@ impl App {
             saved_system_prompt: None,
             conversation_area: Rect::new(0, 0, 0, 0),
             conversation_visible_height: 0,
+            pending_steered: Vec::new(),
+            steered_fade_ticks: 0,
         }
     }
 
@@ -121,7 +122,7 @@ impl App {
     /// Tick handler for animations.
     pub fn tick(&mut self) {
         self.tick_count += 1;
-        if self.tick_count.is_multiple_of(5) {
+        if self.tick_count.is_multiple_of(23) {
             self.blink_on = !self.blink_on;
             if self.status == AgentStatus::Running {
                 self.dirty = true;
@@ -137,6 +138,12 @@ impl App {
             && follow_up.expires_at < Instant::now()
         {
             self.trust_follow_up = None;
+            self.dirty = true;
+        }
+
+        // Tick down the steered-message fade-out overlay.
+        if self.steered_fade_ticks > 0 {
+            self.steered_fade_ticks -= 1;
             self.dirty = true;
         }
 
@@ -172,6 +179,19 @@ impl App {
         self.model_index = 0;
         self.context_budget = 100_000;
         self.agent = Some(agent);
+    }
+
+    /// Return the current approval mode.
+    ///
+    /// Reads through to the underlying [`Agent`]. Before [`set_agent`](Self::set_agent) is
+    /// called, returns [`ApprovalMode::default()`] (Smart). Pass the desired mode to
+    /// [`swink_agent::AgentOptions::with_approval_mode`] before constructing the agent to
+    /// control startup behavior.
+    pub fn approval_mode(&self) -> ApprovalMode {
+        self.agent
+            .as_ref()
+            .map(Agent::approval_mode)
+            .unwrap_or_default()
     }
 
     /// Get a clone of the approval request sender for use in the agent callback.

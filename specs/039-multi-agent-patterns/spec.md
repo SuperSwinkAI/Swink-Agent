@@ -157,6 +157,7 @@ A library consumer building a monitoring dashboard wants to track pipeline execu
 - **FR-020**: The pipeline module MUST be feature-gated under a `pipelines` feature flag (default-enabled). Future pattern modules MUST get their own independent feature gates.
 - **FR-021**: If any step in a sequential or loop pipeline errors, execution MUST halt immediately — no subsequent steps run.
 - **FR-022**: The crate MUST be added to the workspace members with its dependencies centralized in workspace dependency management.
+- **FR-023**: **TransferChain safety enforcement**: Agent transfer handoffs MUST enforce safety constraints via `TransferChain`. A transfer cannot target an agent that is already in the handoff chain (circular reference detection). The chain enforces a configurable maximum depth to prevent unbounded recursion. Violations return `TransferError::CircularTransfer` or `TransferError::MaxDepthExceeded` respectively.
 
 ### Key Entities
 
@@ -168,6 +169,7 @@ A library consumer building a monitoring dashboard wants to track pipeline execu
 - **PipelineTool**: Bridge between the pipeline system and the tool system — wraps a pipeline as a tool so agents can invoke pipelines as tools in their turns.
 - **MergeStrategy**: Controls how parallel pipeline branch outputs are combined — Concat, First, Fastest(N), or Custom (delegating to an aggregator agent).
 - **ExitCondition**: Controls when a loop pipeline terminates — ToolCalled, OutputContains (regex), or MaxIterations.
+- **TransferChain**: Tracks agent ancestry during handoffs. Enforces circular reference detection and configurable maximum depth. Lives in the core `swink-agent` crate and is carried across agent boundaries via `TransferSignal`.
 
 ## Success Criteria *(mandatory)*
 
@@ -184,7 +186,7 @@ A library consumer building a monitoring dashboard wants to track pipeline execu
 
 ## Assumptions
 
-- The patterns crate is the designated home for all higher-level multi-agent composition patterns. Pipelines are the first feature; future additions (agent transfer/handoff, swarm patterns, graph-based orchestration) will be added as independently feature-gated modules in this same crate.
+- The patterns crate is the designated home for all higher-level multi-agent composition patterns. Pipelines are the first feature; future additions (swarm patterns, graph-based orchestration) will be added as independently feature-gated modules in this same crate. Agent transfer/handoff is already implemented — `TransferSignal`, `TransferChain`, and `TransferError` live in the core `swink-agent` crate (spec 040).
 - Agents are resolved by name from the `AgentRegistry` at execution time (late binding). This enables hot-swapping agent implementations between pipeline runs and avoids holding stale agent handles in pipeline definitions.
 - The `PipelineExecutor` is intentionally stateless — it does not cache agents, track execution history, or maintain session state. All state lives in the registries and agents themselves. This makes the executor safe to share across threads and simple to reason about.
 - Pipeline definitions are data-only structures (no closures, no trait objects) that are fully serializable. This enables persistence, transmission, and inspection of pipeline configurations by downstream consumers.

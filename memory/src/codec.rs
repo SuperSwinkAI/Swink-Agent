@@ -19,7 +19,7 @@ use crate::entry::SessionEntry;
 
 /// Discriminator tag for an encoded agent message.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MessageKind {
+enum MessageKind {
     /// An [`LlmMessage`] (user, assistant, tool result).
     Llm,
     /// A custom message serialised via `swink_agent::CustomMessage::to_json`.
@@ -28,6 +28,7 @@ pub enum MessageKind {
 
 impl MessageKind {
     /// The string tag stored in the `SQLite` `kind` column.
+    #[allow(dead_code)]
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Llm => "llm",
@@ -53,7 +54,8 @@ impl MessageKind {
 /// `swink_agent::CustomMessage::type_name`
 /// implementations return `None`). LLM messages always succeed unless
 /// `serde_json` itself errors, which should not happen in practice.
-pub fn encode(msg: &AgentMessage, session_id: &str) -> Option<(MessageKind, String)> {
+#[allow(dead_code)]
+fn encode(msg: &AgentMessage, session_id: &str) -> Option<(MessageKind, String)> {
     match msg {
         AgentMessage::Llm(llm) => serde_json::to_string(llm)
             .ok()
@@ -79,7 +81,7 @@ pub fn encode(msg: &AgentMessage, session_id: &str) -> Option<(MessageKind, Stri
 /// - `Custom`: returns `Ok(None)` when no `registry` is provided (the caller
 ///   chose not to restore custom messages). Returns `Ok(None)` on a
 ///   deserialisation error so callers can skip without propagating.
-pub fn decode(
+fn decode(
     kind: MessageKind,
     data: &str,
     registry: Option<&CustomMessageRegistry>,
@@ -161,7 +163,8 @@ pub fn decode_jsonl_message_line(
 /// contains the canonical JSON payload. Message entries keep their
 /// `entry_type = "message"` tagged representation for compatibility with
 /// existing rich-entry storage.
-pub fn encode_session_entry(entry: &SessionEntry) -> io::Result<(String, String)> {
+#[allow(dead_code)]
+fn encode_session_entry(entry: &SessionEntry) -> io::Result<(String, String)> {
     let kind = entry.entry_type_name().to_string();
     let data = serde_json::to_string(entry).map_err(io::Error::other)?;
     Ok((kind, data))
@@ -171,7 +174,8 @@ pub fn encode_session_entry(entry: &SessionEntry) -> io::Result<(String, String)
 ///
 /// Returns `Ok(None)` for stored custom-agent-message rows (`kind = "custom"`),
 /// which are not representable as `SessionEntry`.
-pub fn decode_session_entry(kind: &str, data: &str) -> io::Result<Option<SessionEntry>> {
+#[allow(dead_code)]
+fn decode_session_entry(kind: &str, data: &str) -> io::Result<Option<SessionEntry>> {
     match MessageKind::parse(kind) {
         Some(MessageKind::Llm) => serde_json::from_str::<LlmMessage>(data)
             .map(SessionEntry::Message)

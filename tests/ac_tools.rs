@@ -5,10 +5,13 @@ mod common;
 
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use serde_json::{Value, json};
+use tokio::sync::Barrier;
+use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 
 use swink_agent::{
@@ -76,6 +79,71 @@ impl AgentTool for MockArgCapturingTool {
     ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>> {
         *self.captured_args.lock().unwrap() = Some(params);
         Box::pin(async { AgentToolResult::text("ok") })
+    }
+}
+
+/// A tool that proves concurrent dispatch by blocking until the full batch
+/// has started execution.
+struct BarrierTool {
+    name: String,
+    schema: Value,
+    barrier: Arc<Barrier>,
+    started: Arc<AtomicUsize>,
+}
+
+impl BarrierTool {
+    fn new(name: &str, barrier: Arc<Barrier>, started: Arc<AtomicUsize>) -> Self {
+        Self {
+            name: name.to_string(),
+            schema: json!({
+                "type": "object",
+                "properties": {},
+                "additionalProperties": true
+            }),
+            barrier,
+            started,
+        }
+    }
+}
+
+impl AgentTool for BarrierTool {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn label(&self) -> &str {
+        &self.name
+    }
+
+    fn description(&self) -> &'static str {
+        "A tool that waits for sibling tool calls to start"
+    }
+
+    fn parameters_schema(&self) -> &Value {
+        &self.schema
+    }
+
+    fn requires_approval(&self) -> bool {
+        false
+    }
+
+    fn execute(
+        &self,
+        _tool_call_id: &str,
+        _params: Value,
+        _cancellation_token: CancellationToken,
+        _on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
+        _state: std::sync::Arc<std::sync::RwLock<swink_agent::SessionState>>,
+        _credential: Option<swink_agent::ResolvedCredential>,
+    ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>> {
+        let barrier = Arc::clone(&self.barrier);
+        let started = Arc::clone(&self.started);
+
+        Box::pin(async move {
+            started.fetch_add(1, Ordering::SeqCst);
+            barrier.wait().await;
+            AgentToolResult::text("ok")
+        })
     }
 }
 
@@ -220,9 +288,23 @@ async fn tool_execution_with_valid_args() {
 
 #[tokio::test]
 async fn concurrent_tool_execution() {
-    let tool_a = Arc::new(MockTool::new("tool_a").with_delay(Duration::from_millis(50)));
-    let tool_b = Arc::new(MockTool::new("tool_b").with_delay(Duration::from_millis(50)));
-    let tool_c = Arc::new(MockTool::new("tool_c").with_delay(Duration::from_millis(50)));
+    let barrier = Arc::new(Barrier::new(3));
+    let started = Arc::new(AtomicUsize::new(0));
+    let tool_a = Arc::new(BarrierTool::new(
+        "tool_a",
+        Arc::clone(&barrier),
+        Arc::clone(&started),
+    ));
+    let tool_b = Arc::new(BarrierTool::new(
+        "tool_b",
+        Arc::clone(&barrier),
+        Arc::clone(&started),
+    ));
+    let tool_c = Arc::new(BarrierTool::new(
+        "tool_c",
+        Arc::clone(&barrier),
+        Arc::clone(&started),
+    ));
 
     let stream_fn = Arc::new(MockStreamFn::new(vec![
         tool_call_events_multi(&[
@@ -239,23 +321,18 @@ async fn concurrent_tool_execution() {
             .with_retry_strategy(fast_retry()),
     );
 
-    let start = Instant::now();
-    let result = agent.prompt_async(vec![user_msg("run all")]).await.unwrap();
-    let elapsed = start.elapsed();
+    let result = timeout(
+        Duration::from_secs(3),
+        agent.prompt_async(vec![user_msg("run all")]),
+    )
+    .await
+    .expect("barrier-synchronized tool batch should finish once all calls are spawned")
+    .unwrap();
 
     assert!(!result.messages.is_empty());
-    assert_eq!(tool_a.execution_count(), 1, "tool_a should execute once");
-    assert_eq!(tool_b.execution_count(), 1, "tool_b should execute once");
-    assert_eq!(tool_c.execution_count(), 1, "tool_c should execute once");
-
-    // 3 tools × 50ms each = 150ms sequential minimum.
-    // If concurrent, elapsed ≈ 50ms. Use a generous upper bound (200ms)
-    // that is still well below the 150ms sequential floor, avoiding
-    // flaky failures on slow CI runners while still proving overlap.
-    let sequential_total = Duration::from_millis(150);
     assert!(
-        elapsed < sequential_total + Duration::from_millis(50),
-        "elapsed {elapsed:?} should be significantly less than the {sequential_total:?} sequential total, proving concurrency"
+        started.load(Ordering::SeqCst) == 3,
+        "all three tool calls should have reached execute() before the batch completes"
     );
 }
 

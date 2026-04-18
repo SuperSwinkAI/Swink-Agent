@@ -15,23 +15,23 @@ use swink_agent::{
 // ─── Internal meta.json schema ─────────────────────────────────────────────
 
 #[derive(Serialize, Deserialize)]
-struct MetaFile {
-    versions: Vec<VersionRecord>,
+pub struct MetaFile {
+    pub(crate) versions: Vec<VersionRecord>,
 }
 
 #[derive(Serialize, Deserialize)]
-struct VersionRecord {
-    name: String,
-    version: u32,
-    created_at: DateTime<Utc>,
-    size: usize,
-    content_type: String,
-    metadata: HashMap<String, String>,
+pub struct VersionRecord {
+    pub(crate) name: String,
+    pub(crate) version: u32,
+    pub(crate) created_at: DateTime<Utc>,
+    pub(crate) size: usize,
+    pub(crate) content_type: String,
+    pub(crate) metadata: HashMap<String, String>,
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-fn storage_err(e: impl Error + Send + Sync + 'static) -> ArtifactError {
+pub fn storage_err(e: impl Error + Send + Sync + 'static) -> ArtifactError {
     ArtifactError::Storage(Box::new(e))
 }
 
@@ -60,7 +60,7 @@ impl FileArtifactStore {
     }
 
     /// Get or create the per-artifact lock for a (session, name) pair.
-    async fn artifact_lock(&self, session_id: &str, name: &str) -> Arc<Mutex<()>> {
+    pub(crate) async fn artifact_lock(&self, session_id: &str, name: &str) -> Arc<Mutex<()>> {
         let key = (session_id.to_string(), name.to_string());
         let mut locks = self.locks.lock().await;
         locks
@@ -70,12 +70,12 @@ impl FileArtifactStore {
     }
 
     /// Path to the artifact directory: `{root}/{session_id}/{artifact_name}/`
-    fn artifact_dir(&self, session_id: &str, name: &str) -> PathBuf {
+    pub(crate) fn artifact_dir(&self, session_id: &str, name: &str) -> PathBuf {
         self.root.join(session_id).join(name)
     }
 
     /// Path to meta.json for an artifact.
-    pub(crate) fn meta_path(&self, session_id: &str, name: &str) -> PathBuf {
+    fn meta_path(&self, session_id: &str, name: &str) -> PathBuf {
         self.artifact_dir(session_id, name).join("meta.json")
     }
 
@@ -86,7 +86,11 @@ impl FileArtifactStore {
     }
 
     /// Read meta.json, returning an empty `MetaFile` if it doesn't exist.
-    async fn read_meta(&self, session_id: &str, name: &str) -> Result<MetaFile, ArtifactError> {
+    pub(crate) async fn read_meta(
+        &self,
+        session_id: &str,
+        name: &str,
+    ) -> Result<MetaFile, ArtifactError> {
         let path = self.meta_path(session_id, name);
         match tokio::fs::read_to_string(&path).await {
             Ok(contents) => serde_json::from_str(&contents).map_err(storage_err),
@@ -97,26 +101,22 @@ impl FileArtifactStore {
         }
     }
 
-    /// Write meta.json atomically via temp file + rename.
-    async fn write_meta(
+    /// Write meta.json atomically via the shared atomic-write helper.
+    pub(crate) async fn write_meta(
         &self,
         session_id: &str,
         name: &str,
         meta: &MetaFile,
     ) -> Result<(), ArtifactError> {
-        let dir = self.artifact_dir(session_id, name);
-        let meta_path = dir.join("meta.json");
-        let tmp_path = dir.join("meta.json.tmp");
-
+        let meta_path = self.meta_path(session_id, name);
         let json = serde_json::to_string_pretty(meta).map_err(storage_err)?;
-        tokio::fs::write(&tmp_path, json.as_bytes())
-            .await
-            .map_err(storage_err)?;
-        tokio::fs::rename(&tmp_path, &meta_path)
-            .await
-            .map_err(storage_err)?;
-
-        Ok(())
+        let bytes = json.into_bytes();
+        tokio::task::spawn_blocking(move || {
+            swink_agent::atomic_fs::atomic_write_bytes(&meta_path, &bytes)
+        })
+        .await
+        .map_err(|e| storage_err(std::io::Error::other(e)))?
+        .map_err(storage_err)
     }
 
     /// Scan a session directory to find all artifact names.
@@ -188,15 +188,16 @@ impl ArtifactStore for FileArtifactStore {
             metadata: data.metadata.clone(),
         };
 
-        // Write content via temp file + atomic rename
+        // Write content atomically via the shared helper.
         let content_path = self.version_path(session_id, name, next_version);
-        let tmp_content_path = dir.join(format!("v{next_version}.bin.tmp"));
-        tokio::fs::write(&tmp_content_path, &data.content)
-            .await
-            .map_err(storage_err)?;
-        tokio::fs::rename(&tmp_content_path, &content_path)
-            .await
-            .map_err(storage_err)?;
+        let content_bytes = data.content.clone();
+        tokio::task::spawn_blocking({
+            let content_path = content_path.clone();
+            move || swink_agent::atomic_fs::atomic_write_bytes(&content_path, &content_bytes)
+        })
+        .await
+        .map_err(|e| storage_err(std::io::Error::other(e)))?
+        .map_err(storage_err)?;
 
         // Update meta.json
         let version = ArtifactVersion {

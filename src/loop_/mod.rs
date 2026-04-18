@@ -132,6 +132,15 @@ async fn run_loop_inner(
             tools = config.tools.len(),
             "starting agent loop"
         );
+        // Build the transfer chain and push the current agent name (if known)
+        // so that circular transfers back to this agent are detected.
+        let mut transfer_chain = config.transfer_chain.clone().unwrap_or_default();
+        if let Some(ref name) = config.agent_name {
+            // Ignore the error — when resuming from a handoff chain the agent
+            // name may already be present as the latest hop.
+            let _ = transfer_chain.push(name.clone());
+        }
+
         let mut state = LoopState {
             context_messages: initial_messages,
             pending_messages: Vec::new(),
@@ -142,6 +151,7 @@ async fn run_loop_inner(
             accumulated_cost: crate::types::Cost::default(),
             last_assistant_message: None,
             last_tool_results: Vec::new(),
+            transfer_chain,
         };
 
         // 1. Emit AgentStart
@@ -167,52 +177,18 @@ async fn run_loop_inner(
                         state.turn_index += 1;
                         false
                     }
-                    TurnOutcome::BreakInner => true,
+                    TurnOutcome::BreakInner => {
+                        state.turn_index += 1;
+                        true
+                    }
                     TurnOutcome::Return => return,
                 };
 
-                // Post-turn policies: invoke after each completed turn
-                if let Some(ref msg) = state.last_assistant_message {
-                    use crate::policy::{
-                        PolicyContext, PolicyVerdict, TurnPolicyContext, run_post_turn_policies,
-                    };
-
-                    let state_snapshot = {
-                        let guard = config
-                            .session_state
-                            .read()
-                            .unwrap_or_else(std::sync::PoisonError::into_inner);
-                        guard.clone()
-                    };
-                    let policy_ctx = PolicyContext {
-                        turn_index: state.turn_index,
-                        accumulated_usage: &state.accumulated_usage,
-                        accumulated_cost: &state.accumulated_cost,
-                        message_count: state.context_messages.len(),
-                        overflow_signal: state.overflow_signal,
-                        new_messages: &[], // current-turn data is in TurnPolicyContext
-                        state: &state_snapshot,
-                    };
-                    let turn_ctx = TurnPolicyContext {
-                        assistant_message: msg,
-                        tool_results: &state.last_tool_results,
-                        stop_reason: msg.stop_reason,
-                        system_prompt: &system_prompt,
-                        model_spec: &config.model,
-                        context_messages: &state.context_messages,
-                    };
-                    match run_post_turn_policies(&config.post_turn_policies, &policy_ctx, &turn_ctx)
-                    {
-                        PolicyVerdict::Continue => {}
-                        PolicyVerdict::Stop(reason) => {
-                            info!("post-turn policy stopped agent: {reason}");
-                            break 'inner;
-                        }
-                        PolicyVerdict::Inject(msgs) => {
-                            state.pending_messages.extend(msgs);
-                        }
-                    }
-                }
+                // Post-turn policies are evaluated inside the turn handlers
+                // (handle_no_tool_calls / handle_tool_calls) against the
+                // committed turn snapshot before TurnEnd is emitted or transfer
+                // termination is honored. This lets policies replace the
+                // assistant message before listeners observe the turn.
 
                 if should_break {
                     break 'inner;
@@ -254,6 +230,9 @@ async fn run_loop_inner(
                     }
                     PolicyVerdict::Inject(msgs) => {
                         state.pending_messages.extend(msgs);
+                        config
+                            .pending_message_snapshot
+                            .replace(&state.pending_messages);
                         continue 'outer;
                     }
                 }
@@ -264,6 +243,9 @@ async fn run_loop_inner(
                 let msgs = provider.poll_follow_up();
                 if !msgs.is_empty() {
                     state.pending_messages.extend(msgs);
+                    config
+                        .pending_message_snapshot
+                        .replace(&state.pending_messages);
                     continue 'outer;
                 }
             }

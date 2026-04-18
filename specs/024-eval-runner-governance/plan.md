@@ -60,7 +60,7 @@ specs/024-eval-runner-governance/
 ```text
 eval/
 ├── Cargo.toml
-├── CLAUDE.md
+├── AGENTS.md
 ├── src/
 │   ├── lib.rs           # Public API re-exports
 │   ├── types.rs         # Core data types: EvalCase, EvalSet, Invocation, TurnRecord, results

@@ -17,9 +17,10 @@ use serde_json::json;
 use tokio_util::sync::CancellationToken;
 
 use swink_agent::{
-    AgentEvent, AgentLoopConfig, AgentMessage, AgentTool, AgentToolResult, AssistantMessageEvent,
-    ContentBlock, Cost, CustomMessage, DefaultRetryStrategy, LlmMessage, MessageProvider,
-    StopReason, StreamFn, StreamOptions, ToolResultMessage, TurnSnapshot, Usage, UserMessage,
+    AgentEvent, AgentLoopConfig, AgentMessage, AgentTool, AgentToolResult, AssistantMessage,
+    AssistantMessageEvent, ContentBlock, Cost, CustomMessage, DefaultRetryStrategy, LlmMessage,
+    MessageProvider, PolicyContext, PolicyVerdict, PostTurnPolicy, StopReason, StreamFn,
+    StreamOptions, ToolResultMessage, TurnPolicyContext, TurnSnapshot, Usage, UserMessage,
     agent_loop,
 };
 
@@ -80,37 +81,126 @@ impl AgentTool for MockUpdatingTool {
     }
 }
 
+struct MockCancellationIgnoringTool {
+    tool_name: String,
+}
+
+impl MockCancellationIgnoringTool {
+    fn new(name: &str) -> Self {
+        Self {
+            tool_name: name.to_string(),
+        }
+    }
+}
+
+impl AgentTool for MockCancellationIgnoringTool {
+    fn name(&self) -> &str {
+        &self.tool_name
+    }
+
+    fn label(&self) -> &str {
+        &self.tool_name
+    }
+
+    fn description(&self) -> &'static str {
+        "A tool that ignores cancellation and never completes unless aborted"
+    }
+
+    fn parameters_schema(&self) -> &serde_json::Value {
+        static SCHEMA: std::sync::OnceLock<serde_json::Value> = std::sync::OnceLock::new();
+        SCHEMA.get_or_init(|| {
+            json!({
+                "type": "object",
+                "properties": {},
+                "additionalProperties": true
+            })
+        })
+    }
+
+    fn execute(
+        &self,
+        _tool_call_id: &str,
+        _params: serde_json::Value,
+        _cancellation_token: CancellationToken,
+        _on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
+        _state: std::sync::Arc<std::sync::RwLock<swink_agent::SessionState>>,
+        _credential: Option<swink_agent::ResolvedCredential>,
+    ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>> {
+        Box::pin(async move { std::future::pending::<AgentToolResult>().await })
+    }
+}
+
 // ─── Helper functions ────────────────────────────────────────────────────
 
 /// Test helper that delegates to closures for steering/follow-up.
+///
+/// Steering messages are stored in an internal queue so that `has_steering`
+/// can peek non-destructively while `poll_steering` drains. Follow-up uses
+/// the original closure-delegation model.
 struct MockMessageProvider {
-    steering: Box<dyn Fn() -> Vec<AgentMessage> + Send + Sync>,
+    steering_queue: Arc<Mutex<std::collections::VecDeque<AgentMessage>>>,
+    refill_steering: Option<Box<dyn Fn() -> Vec<AgentMessage> + Send + Sync>>,
     follow_up: Box<dyn Fn() -> Vec<AgentMessage> + Send + Sync>,
 }
 
 impl MockMessageProvider {
     fn steering_only(f: impl Fn() -> Vec<AgentMessage> + Send + Sync + 'static) -> Self {
         Self {
-            steering: Box::new(f),
+            steering_queue: Arc::new(Mutex::new(std::collections::VecDeque::new())),
+            refill_steering: Some(Box::new(f)),
             follow_up: Box::new(Vec::new),
         }
     }
 
     fn follow_up_only(f: impl Fn() -> Vec<AgentMessage> + Send + Sync + 'static) -> Self {
         Self {
-            steering: Box::new(Vec::new),
+            steering_queue: Arc::new(Mutex::new(std::collections::VecDeque::new())),
+            refill_steering: None,
             follow_up: Box::new(f),
+        }
+    }
+
+    /// Refill the internal steering queue from the refill closure (if any).
+    ///
+    /// Called lazily from both `has_steering` (for non-destructive peek) and
+    /// `poll_steering` (for drain) so the closure drives whether messages
+    /// become available — mirroring the old behaviour while keeping the two
+    /// methods consistent.
+    fn refill(&self) {
+        if let Some(ref f) = self.refill_steering {
+            let msgs = f();
+            if !msgs.is_empty() {
+                let mut guard = self
+                    .steering_queue
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                guard.extend(msgs);
+            }
         }
     }
 }
 
 impl MessageProvider for MockMessageProvider {
     fn poll_steering(&self) -> Vec<AgentMessage> {
-        (self.steering)()
+        self.refill();
+        let mut guard = self
+            .steering_queue
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        guard.drain(..).collect()
     }
 
     fn poll_follow_up(&self) -> Vec<AgentMessage> {
         (self.follow_up)()
+    }
+
+    fn has_steering(&self) -> bool {
+        self.refill();
+        let guard = self
+            .steering_queue
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        !guard.is_empty()
     }
 }
 
@@ -125,6 +215,8 @@ fn default_convert_to_llm() -> ConvertToLlmBoxed {
 
 fn default_config(stream_fn: Arc<dyn StreamFn>) -> AgentLoopConfig {
     AgentLoopConfig {
+        agent_name: None,
+        transfer_chain: None,
         model: default_model(),
         stream_options: StreamOptions::default(),
         retry_strategy: Box::new(
@@ -138,6 +230,8 @@ fn default_config(stream_fn: Arc<dyn StreamFn>) -> AgentLoopConfig {
         transform_context: None,
         get_api_key: None,
         message_provider: None,
+        pending_message_snapshot: Arc::default(),
+        loop_context_snapshot: Arc::default(),
         approve_tool: None,
         approval_mode: swink_agent::ApprovalMode::default(),
         pre_turn_policies: vec![],
@@ -173,6 +267,107 @@ fn count_events(events: &[AgentEvent], name: &str) -> usize {
         .iter()
         .filter(|e| format!("{e:?}").starts_with(name))
         .count()
+}
+
+struct StoppingPostTurnPolicy;
+
+impl PostTurnPolicy for StoppingPostTurnPolicy {
+    fn name(&self) -> &str {
+        "stopping-post-turn"
+    }
+
+    fn evaluate(&self, _ctx: &PolicyContext<'_>, _turn: &TurnPolicyContext<'_>) -> PolicyVerdict {
+        PolicyVerdict::Stop("budget exceeded".to_string())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct RecordedTurnContext {
+    message_count: usize,
+    tool_result_count: usize,
+    last_message_kind: &'static str,
+}
+
+struct RecordingPostTurnPolicy {
+    observations: Arc<Mutex<Vec<RecordedTurnContext>>>,
+}
+
+impl PostTurnPolicy for RecordingPostTurnPolicy {
+    fn name(&self) -> &str {
+        "recording-post-turn"
+    }
+
+    fn evaluate(&self, _ctx: &PolicyContext<'_>, turn: &TurnPolicyContext<'_>) -> PolicyVerdict {
+        let last_message_kind = match turn.context_messages.last() {
+            Some(AgentMessage::Llm(LlmMessage::Assistant(_))) => "assistant",
+            Some(AgentMessage::Llm(LlmMessage::ToolResult(_))) => "tool_result",
+            Some(AgentMessage::Llm(LlmMessage::User(_))) => "user",
+            Some(AgentMessage::Custom(_)) => "custom",
+            None => "none",
+        };
+
+        self.observations.lock().unwrap().push(RecordedTurnContext {
+            message_count: turn.context_messages.len(),
+            tool_result_count: turn.tool_results.len(),
+            last_message_kind,
+        });
+
+        PolicyVerdict::Continue
+    }
+}
+
+struct MockTransferTool {
+    tool_name: String,
+    target_agent: String,
+    reason: String,
+}
+
+impl MockTransferTool {
+    fn new(name: &str, target_agent: &str, reason: &str) -> Self {
+        Self {
+            tool_name: name.to_string(),
+            target_agent: target_agent.to_string(),
+            reason: reason.to_string(),
+        }
+    }
+}
+
+impl AgentTool for MockTransferTool {
+    fn name(&self) -> &str {
+        &self.tool_name
+    }
+
+    fn label(&self) -> &str {
+        &self.tool_name
+    }
+
+    fn description(&self) -> &'static str {
+        "A tool that always requests an agent transfer"
+    }
+
+    fn parameters_schema(&self) -> &serde_json::Value {
+        static SCHEMA: std::sync::OnceLock<serde_json::Value> = std::sync::OnceLock::new();
+        SCHEMA.get_or_init(|| {
+            json!({
+                "type": "object",
+                "properties": {},
+                "additionalProperties": true
+            })
+        })
+    }
+
+    fn execute(
+        &self,
+        _tool_call_id: &str,
+        _params: serde_json::Value,
+        _cancellation_token: CancellationToken,
+        _on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
+        _state: std::sync::Arc<std::sync::RwLock<swink_agent::SessionState>>,
+        _credential: Option<swink_agent::ResolvedCredential>,
+    ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>> {
+        let signal = swink_agent::TransferSignal::new(&self.target_agent, &self.reason);
+        Box::pin(async move { AgentToolResult::transfer(signal) })
+    }
 }
 
 // ─── 3.1: Single-turn no-tool ────────────────────────────────────────────
@@ -418,7 +613,9 @@ async fn tool_execution_update_events() {
     let partials: Vec<String> = events
         .iter()
         .filter_map(|event| match event {
-            AgentEvent::ToolExecutionUpdate { partial } => {
+            AgentEvent::ToolExecutionUpdate { id, name, partial } => {
+                assert_eq!(id, "tc_1");
+                assert_eq!(name, "updating_tool");
                 Some(ContentBlock::extract_text(&partial.content))
             }
             _ => None,
@@ -592,6 +789,82 @@ async fn steering_interrupt() {
 
     assert!(has_event(&events, "AgentEnd"));
     assert!(has_event(&events, "ToolExecutionStart"));
+}
+
+#[tokio::test]
+async fn steering_interrupt_aborts_cancellation_unaware_tools() {
+    let events_with_2_tools = vec![
+        AssistantMessageEvent::Start,
+        AssistantMessageEvent::ToolCallStart {
+            content_index: 0,
+            id: "tc_1".to_string(),
+            name: "fast_tool".to_string(),
+        },
+        AssistantMessageEvent::ToolCallDelta {
+            content_index: 0,
+            delta: "{}".to_string(),
+        },
+        AssistantMessageEvent::ToolCallEnd { content_index: 0 },
+        AssistantMessageEvent::ToolCallStart {
+            content_index: 1,
+            id: "tc_2".to_string(),
+            name: "stuck_tool".to_string(),
+        },
+        AssistantMessageEvent::ToolCallDelta {
+            content_index: 1,
+            delta: "{}".to_string(),
+        },
+        AssistantMessageEvent::ToolCallEnd { content_index: 1 },
+        AssistantMessageEvent::Done {
+            stop_reason: StopReason::ToolUse,
+            usage: Usage::default(),
+            cost: Cost::default(),
+        },
+    ];
+
+    let stream_fn = Arc::new(MockStreamFn::new(vec![
+        events_with_2_tools,
+        text_only_events("after steering"),
+    ]));
+
+    let fast_tool = Arc::new(MockTool::new("fast_tool").with_delay(Duration::from_millis(10)));
+    let stuck_tool = Arc::new(MockCancellationIgnoringTool::new("stuck_tool"));
+
+    let steering_call_count = Arc::new(AtomicU32::new(0));
+    let steering_count_clone = Arc::clone(&steering_call_count);
+
+    let mut config = default_config(stream_fn);
+    config.tools = vec![fast_tool, stuck_tool];
+    config.message_provider = Some(Arc::new(MockMessageProvider::steering_only(move || {
+        let count = steering_count_clone.fetch_add(1, Ordering::SeqCst);
+        if count == 0 {
+            vec![AgentMessage::Llm(LlmMessage::User(UserMessage {
+                content: vec![ContentBlock::Text {
+                    text: "steering: change direction".to_string(),
+                }],
+                timestamp: 0,
+                cache_hint: None,
+            }))]
+        } else {
+            vec![]
+        }
+    })));
+
+    let events = tokio::time::timeout(
+        Duration::from_millis(250),
+        collect_events(agent_loop(
+            vec![],
+            "system".to_string(),
+            config,
+            CancellationToken::new(),
+        )),
+    )
+    .await
+    .expect("steering interrupt should not wait on cancellation-unaware tools");
+
+    assert!(has_event(&events, "AgentEnd"));
+    assert_eq!(count_events(&events, "TurnStart"), 2);
+    assert_eq!(count_events(&events, "ToolExecutionEnd"), 1);
 }
 
 // ─── 3.8: Follow-up ─────────────────────────────────────────────────────
@@ -1226,6 +1499,56 @@ async fn turn_snapshot_accumulates_across_tool_turns() {
 }
 
 #[tokio::test]
+async fn follow_up_turn_after_no_tool_turn_advances_turn_index() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![
+        text_only_events("first response"),
+        text_only_events("second response"),
+    ]));
+
+    let follow_up_count = Arc::new(AtomicU32::new(0));
+    let follow_up_clone = Arc::clone(&follow_up_count);
+
+    let mut config = default_config(stream_fn);
+    config.message_provider = Some(Arc::new(MockMessageProvider::follow_up_only(move || {
+        let count = follow_up_clone.fetch_add(1, Ordering::SeqCst);
+        if count == 0 {
+            vec![AgentMessage::Llm(LlmMessage::User(UserMessage {
+                content: vec![ContentBlock::Text {
+                    text: "follow up question".to_string(),
+                }],
+                timestamp: 0,
+                cache_hint: None,
+            }))]
+        } else {
+            vec![]
+        }
+    })));
+
+    let events = collect_events(agent_loop(
+        vec![],
+        "system".to_string(),
+        config,
+        CancellationToken::new(),
+    ))
+    .await;
+
+    let snapshots: Vec<TurnSnapshot> = events
+        .iter()
+        .filter_map(|event| match event {
+            AgentEvent::TurnEnd { snapshot, .. } => Some(snapshot.clone()),
+            _ => None,
+        })
+        .collect();
+
+    assert_eq!(snapshots.len(), 2, "should have two completed turns");
+    assert_eq!(snapshots[0].turn_index, 0);
+    assert_eq!(
+        snapshots[1].turn_index, 1,
+        "the follow-up turn should observe the incremented turn index"
+    );
+}
+
+#[tokio::test]
 async fn turn_snapshot_serializes_to_json() {
     let snapshot = TurnSnapshot {
         turn_index: 3,
@@ -1253,4 +1576,354 @@ async fn turn_snapshot_serializes_to_json() {
     assert!((parsed.cost.total - 0.05).abs() < f64::EPSILON);
     assert_eq!(parsed.stop_reason, StopReason::Stop);
     assert!(parsed.messages.is_empty());
+}
+
+// ─── Post-turn policy replaces assistant message before TurnEnd ──────────
+
+/// A post-turn policy that replaces the assistant message text.
+/// Simulates what PiiRedactor does: returns Inject with a modified
+/// AssistantMessage to replace the original.
+struct ReplacingPostTurnPolicy {
+    replacement_text: String,
+}
+
+impl PostTurnPolicy for ReplacingPostTurnPolicy {
+    fn name(&self) -> &str {
+        "replacing-post-turn"
+    }
+
+    fn evaluate(&self, _ctx: &PolicyContext<'_>, turn: &TurnPolicyContext<'_>) -> PolicyVerdict {
+        let orig = turn.assistant_message;
+        let msg = AssistantMessage {
+            content: vec![ContentBlock::Text {
+                text: self.replacement_text.clone(),
+            }],
+            provider: orig.provider.clone(),
+            model_id: orig.model_id.clone(),
+            usage: orig.usage.clone(),
+            cost: orig.cost.clone(),
+            stop_reason: orig.stop_reason,
+            error_message: orig.error_message.clone(),
+            error_kind: orig.error_kind,
+            timestamp: orig.timestamp,
+            cache_hint: None,
+        };
+        PolicyVerdict::Inject(vec![AgentMessage::Llm(LlmMessage::Assistant(msg))])
+    }
+}
+
+/// Regression test for #313: post-turn Inject verdicts must replace the
+/// assistant message in TurnEnd and context BEFORE the event is emitted.
+#[tokio::test]
+async fn post_turn_inject_replaces_assistant_message_in_turn_end() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events(
+        "secret SSN 123-45-6789",
+    )]));
+
+    let policy: Arc<dyn PostTurnPolicy> = Arc::new(ReplacingPostTurnPolicy {
+        replacement_text: "secret SSN [REDACTED]".to_string(),
+    });
+
+    let mut config = default_config(stream_fn);
+    config.post_turn_policies = vec![policy];
+
+    let events = collect_events(agent_loop(
+        vec![],
+        "system".to_string(),
+        config,
+        CancellationToken::new(),
+    ))
+    .await;
+
+    // Find the TurnEnd event and verify the assistant message was replaced.
+    let turn_end = events.iter().find_map(|e| match e {
+        AgentEvent::TurnEnd {
+            assistant_message, ..
+        } => Some(assistant_message),
+        _ => None,
+    });
+
+    let msg = turn_end.expect("should have TurnEnd event");
+    let text = ContentBlock::extract_text(&msg.content);
+    assert_eq!(
+        text, "secret SSN [REDACTED]",
+        "TurnEnd must contain the replaced assistant message, not the original"
+    );
+
+    // Verify the AgentEnd snapshot also contains the replaced message.
+    let agent_end_messages = events.iter().find_map(|e| match e {
+        AgentEvent::AgentEnd { messages } => Some(messages.clone()),
+        _ => None,
+    });
+    let msgs = agent_end_messages.expect("should have AgentEnd");
+    let last_assistant = msgs.iter().rev().find_map(|m| match m {
+        AgentMessage::Llm(LlmMessage::Assistant(a)) => Some(a),
+        _ => None,
+    });
+    let a = last_assistant.expect("should have assistant message in AgentEnd");
+    let final_text = ContentBlock::extract_text(&a.content);
+    assert_eq!(
+        final_text, "secret SSN [REDACTED]",
+        "AgentEnd context_messages must contain the replaced assistant message"
+    );
+}
+
+#[tokio::test]
+async fn post_turn_context_messages_include_committed_assistant_without_tools() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("Hello!")]));
+    let observations = Arc::new(Mutex::new(Vec::new()));
+
+    let mut config = default_config(stream_fn);
+    config.post_turn_policies = vec![Arc::new(RecordingPostTurnPolicy {
+        observations: Arc::clone(&observations),
+    })];
+
+    let events = collect_events(agent_loop(
+        vec![],
+        "system".to_string(),
+        config,
+        CancellationToken::new(),
+    ))
+    .await;
+
+    assert!(has_event(&events, "TurnEnd"));
+    let recorded = observations.lock().unwrap().clone();
+    assert_eq!(recorded.len(), 1, "post-turn policy should run once");
+    assert_eq!(
+        recorded[0],
+        RecordedTurnContext {
+            message_count: 1,
+            tool_result_count: 0,
+            last_message_kind: "assistant",
+        },
+        "post-turn policies should observe the committed assistant snapshot even on text-only turns"
+    );
+}
+
+#[tokio::test]
+async fn post_turn_inject_cannot_drop_tool_calls_from_turn_history() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![
+        tool_call_events("call_1", "noop", "{}"),
+        text_only_events("done"),
+    ]));
+
+    let policy: Arc<dyn PostTurnPolicy> = Arc::new(ReplacingPostTurnPolicy {
+        replacement_text: "tool output [REDACTED]".to_string(),
+    });
+
+    let mut config = default_config(stream_fn);
+    config.tools = vec![Arc::new(MockTool::new("noop"))];
+    config.post_turn_policies = vec![policy];
+
+    let events = collect_events(agent_loop(
+        vec![],
+        "system".to_string(),
+        config,
+        CancellationToken::new(),
+    ))
+    .await;
+
+    let turn_end_messages: Vec<&AssistantMessage> = events
+        .iter()
+        .filter_map(|event| match event {
+            AgentEvent::TurnEnd {
+                assistant_message, ..
+            } => Some(assistant_message),
+            _ => None,
+        })
+        .collect();
+    let tool_turn_message = turn_end_messages
+        .first()
+        .expect("first turn should emit TurnEnd after tool execution");
+    assert!(
+        tool_turn_message.content.iter().any(
+            |block| matches!(block, ContentBlock::ToolCall { id, name, arguments, .. }
+                if id == "call_1" && name == "noop" && arguments == &json!({}))
+        ),
+        "tool-turn TurnEnd must keep the original tool call block",
+    );
+    assert_eq!(
+        ContentBlock::extract_text(&tool_turn_message.content),
+        "",
+        "tool-turn replacement must not flatten tool calls into text"
+    );
+
+    let agent_end_messages = events.iter().find_map(|event| match event {
+        AgentEvent::AgentEnd { messages } => Some(messages.clone()),
+        _ => None,
+    });
+    let messages = agent_end_messages.expect("should have AgentEnd");
+    let assistant_with_tool_call = messages
+        .iter()
+        .position(|message| match message {
+            AgentMessage::Llm(LlmMessage::Assistant(assistant_message)) => assistant_message
+                .content
+                .iter()
+                .any(|block| matches!(block, ContentBlock::ToolCall { id, .. } if id == "call_1")),
+            _ => false,
+        })
+        .expect("final history should keep the assistant tool call");
+    assert!(
+        matches!(
+            messages.get(assistant_with_tool_call + 1),
+            Some(AgentMessage::Llm(LlmMessage::ToolResult(result)))
+                if result.tool_call_id == "call_1"
+        ),
+        "tool call must remain paired with its tool result in final history"
+    );
+}
+
+#[tokio::test]
+async fn post_turn_policy_runs_before_transfer_termination() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![
+        tool_call_events("call_transfer", "handoff", "{}"),
+        text_only_events("should not reach this"),
+    ]));
+    let observations = Arc::new(Mutex::new(Vec::new()));
+
+    let mut config = default_config(stream_fn);
+    config.tools = vec![Arc::new(MockTransferTool::new(
+        "handoff",
+        "billing",
+        "billing question",
+    ))];
+    config.post_turn_policies = vec![Arc::new(RecordingPostTurnPolicy {
+        observations: Arc::clone(&observations),
+    })];
+
+    let events = collect_events(agent_loop(
+        vec![common::user_msg("transfer me")],
+        "system".to_string(),
+        config,
+        CancellationToken::new(),
+    ))
+    .await;
+
+    let recorded = observations.lock().unwrap().clone();
+    assert_eq!(
+        recorded.len(),
+        1,
+        "transfer turns must still run post-turn policies"
+    );
+    assert_eq!(
+        recorded[0],
+        RecordedTurnContext {
+            message_count: 3,
+            tool_result_count: 1,
+            last_message_kind: "tool_result",
+        },
+        "transfer turns should expose the same committed turn snapshot shape as normal tool turns"
+    );
+    assert!(
+        events.iter().any(|event| matches!(
+            event,
+            AgentEvent::TurnEnd {
+                reason: swink_agent::TurnEndReason::Transfer,
+                ..
+            }
+        )),
+        "transfer turn should still terminate with TurnEndReason::Transfer"
+    );
+}
+
+/// Regression test: post-turn Stop verdict still emits TurnEnd before stopping.
+#[tokio::test]
+async fn post_turn_stop_still_emits_turn_end() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("Hello!")]));
+    let mut config = default_config(stream_fn);
+    config.post_turn_policies = vec![Arc::new(StoppingPostTurnPolicy)];
+
+    let events = collect_events(agent_loop(
+        vec![],
+        "system".to_string(),
+        config,
+        CancellationToken::new(),
+    ))
+    .await;
+
+    // TurnEnd should still be emitted even when the policy stops the loop.
+    assert!(has_event(&events, "TurnEnd"));
+    assert!(has_event(&events, "AgentEnd"));
+}
+
+#[tokio::test]
+async fn post_turn_stop_skips_follow_up_polling_without_tool_calls() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![
+        text_only_events("Hello!"),
+        text_only_events("unexpected follow-up"),
+    ]));
+
+    let follow_up_polled = Arc::new(AtomicBool::new(false));
+    let follow_up_polled_clone = Arc::clone(&follow_up_polled);
+
+    let mut config = default_config(stream_fn);
+    config.post_turn_policies = vec![Arc::new(StoppingPostTurnPolicy)];
+    config.message_provider = Some(Arc::new(MockMessageProvider::follow_up_only(move || {
+        follow_up_polled_clone.store(true, Ordering::SeqCst);
+        vec![AgentMessage::Llm(LlmMessage::User(UserMessage {
+            content: vec![ContentBlock::Text {
+                text: "follow up question".to_string(),
+            }],
+            timestamp: 0,
+            cache_hint: None,
+        }))]
+    })));
+
+    let events = collect_events(agent_loop(
+        vec![],
+        "system".to_string(),
+        config,
+        CancellationToken::new(),
+    ))
+    .await;
+
+    assert_eq!(count_events(&events, "TurnStart"), 1);
+    assert!(has_event(&events, "TurnEnd"));
+    assert!(has_event(&events, "AgentEnd"));
+    assert!(
+        !follow_up_polled.load(Ordering::SeqCst),
+        "follow-up should NOT be polled after a post-turn Stop"
+    );
+}
+
+#[tokio::test]
+async fn post_turn_stop_skips_follow_up_polling_after_tool_calls() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![
+        tool_call_events("call_1", "noop", "{}"),
+        text_only_events("unexpected follow-up"),
+    ]));
+    let tool = Arc::new(MockTool::new("noop"));
+
+    let follow_up_polled = Arc::new(AtomicBool::new(false));
+    let follow_up_polled_clone = Arc::clone(&follow_up_polled);
+
+    let mut config = default_config(stream_fn);
+    config.tools = vec![tool];
+    config.post_turn_policies = vec![Arc::new(StoppingPostTurnPolicy)];
+    config.message_provider = Some(Arc::new(MockMessageProvider::follow_up_only(move || {
+        follow_up_polled_clone.store(true, Ordering::SeqCst);
+        vec![AgentMessage::Llm(LlmMessage::User(UserMessage {
+            content: vec![ContentBlock::Text {
+                text: "follow up question".to_string(),
+            }],
+            timestamp: 0,
+            cache_hint: None,
+        }))]
+    })));
+
+    let events = collect_events(agent_loop(
+        vec![],
+        "system".to_string(),
+        config,
+        CancellationToken::new(),
+    ))
+    .await;
+
+    assert_eq!(count_events(&events, "TurnStart"), 1);
+    assert!(has_event(&events, "TurnEnd"));
+    assert!(has_event(&events, "AgentEnd"));
+    assert!(
+        !follow_up_polled.load(Ordering::SeqCst),
+        "follow-up should NOT be polled after a post-turn Stop"
+    );
 }

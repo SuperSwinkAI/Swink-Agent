@@ -5,12 +5,11 @@
 
 use std::sync::{Arc, Mutex, PoisonError};
 
-use futures::FutureExt;
-use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use crate::agent::Agent;
 use crate::error::AgentError;
+use crate::task_core::{TaskCore, resolve_status};
 use crate::types::{AgentMessage, AgentResult, ContentBlock, LlmMessage, UserMessage};
 use crate::util::now_timestamp;
 
@@ -33,9 +32,7 @@ pub enum AgentStatus {
 /// move an [`Agent`] into a background tokio task. The handle allows the caller
 /// to poll status, cancel, and retrieve the final result.
 pub struct AgentHandle {
-    join_handle: Option<JoinHandle<Result<AgentResult, AgentError>>>,
-    cancellation_token: CancellationToken,
-    status: Arc<Mutex<AgentStatus>>,
+    core: TaskCore,
 }
 
 impl AgentHandle {
@@ -58,19 +55,12 @@ impl AgentHandle {
                     Err(AgentError::Aborted)
                 }
             };
-            let mut s = status_clone.lock().unwrap_or_else(PoisonError::into_inner);
-            *s = match &result {
-                Ok(_) => AgentStatus::Completed,
-                Err(AgentError::Aborted) => AgentStatus::Cancelled,
-                Err(_) => AgentStatus::Failed,
-            };
+            *status_clone.lock().unwrap_or_else(PoisonError::into_inner) = resolve_status(&result);
             result
         });
 
         Self {
-            join_handle: Some(join_handle),
-            cancellation_token,
-            status,
+            core: TaskCore::new(join_handle, cancellation_token, status),
         }
     }
 
@@ -89,12 +79,12 @@ impl AgentHandle {
 
     /// Returns the current status of the spawned agent task.
     pub fn status(&self) -> AgentStatus {
-        *self.status.lock().unwrap_or_else(PoisonError::into_inner)
+        self.core.status()
     }
 
     /// Returns `true` if the agent task is no longer running.
     pub fn is_done(&self) -> bool {
-        self.status() != AgentStatus::Running
+        self.core.is_done()
     }
 
     /// Request cancellation of the spawned agent task.
@@ -102,21 +92,15 @@ impl AgentHandle {
     /// This is non-blocking. The task will transition to `Cancelled` status
     /// asynchronously.
     pub fn cancel(&self) {
-        self.cancellation_token.cancel();
+        self.core.cancel();
     }
 
     /// Consume the handle and await the final result.
     ///
     /// If the task panicked, returns an [`AgentError::StreamError`] wrapping
     /// the panic message.
-    pub async fn result(mut self) -> Result<AgentResult, AgentError> {
-        match self.join_handle.take() {
-            Some(handle) => match handle.await {
-                Ok(result) => result,
-                Err(join_err) => Err(AgentError::stream(join_err)),
-            },
-            None => Err(AgentError::Aborted),
-        }
+    pub async fn result(self) -> Result<AgentResult, AgentError> {
+        self.core.result().await
     }
 
     /// Check if the task is finished and, if so, return the result without
@@ -125,21 +109,7 @@ impl AgentHandle {
     /// Returns `None` if the task is still running. Once a result is returned,
     /// subsequent calls will return `None`.
     pub fn try_result(&mut self) -> Option<Result<AgentResult, AgentError>> {
-        let finished = self
-            .join_handle
-            .as_ref()
-            .is_some_and(JoinHandle::is_finished);
-        if finished {
-            let handle = self.join_handle.take()?;
-            // Task is finished, so `now_or_never` resolves immediately.
-            let join_result = handle.now_or_never()?;
-            Some(match join_result {
-                Ok(result) => result,
-                Err(join_err) => Err(AgentError::stream(join_err)),
-            })
-        } else {
-            None
-        }
+        self.core.try_result()
     }
 }
 
@@ -147,8 +117,8 @@ impl std::fmt::Debug for AgentHandle {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AgentHandle")
             .field("status", &self.status())
-            .field("join_handle", &self.join_handle)
-            .field("cancellation_token", &self.cancellation_token)
+            .field("join_handle", &self.core.join_handle)
+            .field("cancellation_token", &self.core.cancellation_token)
             .finish()
     }
 }
