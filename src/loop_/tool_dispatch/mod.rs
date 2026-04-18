@@ -789,6 +789,69 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn pre_dispatch_stop_aborts_before_any_approval_side_effects() {
+        let tool_one = Arc::new(MockTool::new("tool_one").with_requires_approval(true));
+        let tool_two = Arc::new(MockTool::new("tool_two").with_requires_approval(true));
+        let tool_one_ref = Arc::clone(&tool_one);
+        let tool_two_ref = Arc::clone(&tool_two);
+        let approval_calls = Arc::new(AtomicU32::new(0));
+        let approval_calls_clone = Arc::clone(&approval_calls);
+
+        let config = test_loop_config_with_options(
+            vec![Arc::new(StopOnToolTwoPolicy)],
+            vec![
+                tool_one as Arc<dyn crate::tool::AgentTool>,
+                tool_two as Arc<dyn crate::tool::AgentTool>,
+            ],
+            Some(Box::new(move |_request| {
+                approval_calls_clone.fetch_add(1, Ordering::SeqCst);
+                Box::pin(async { ToolApproval::Approved })
+            })),
+            ApprovalMode::Enabled,
+            ToolExecutionPolicy::Concurrent,
+        );
+        let tool_calls = vec![
+            ToolCallInfo {
+                id: "call_1".to_string(),
+                name: "tool_one".to_string(),
+                arguments: serde_json::json!({ "first": true }),
+                is_incomplete: false,
+            },
+            ToolCallInfo {
+                id: "call_2".to_string(),
+                name: "tool_two".to_string(),
+                arguments: serde_json::json!({ "second": true }),
+                is_incomplete: false,
+            },
+        ];
+        let cancellation_token = CancellationToken::new();
+        let (tx, mut rx) = mpsc::channel(16);
+
+        let outcome =
+            execute_tools_concurrently(&config, &tool_calls, &cancellation_token, &tx).await;
+
+        let ToolExecOutcome::Completed { results, .. } = outcome else {
+            panic!("expected completed outcome");
+        };
+        assert_eq!(approval_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(tool_one_ref.execution_count(), 0);
+        assert_eq!(tool_two_ref.execution_count(), 0);
+        assert_eq!(results.len(), 2);
+        assert!(results.iter().all(|result| result.is_error));
+
+        let events = drain_events(&mut rx);
+        assert!(
+            !events.iter().any(|event| matches!(
+                event,
+                AgentEvent::ToolApprovalRequested { .. }
+                    | AgentEvent::ToolApprovalResolved { .. }
+                    | AgentEvent::ToolExecutionStart { .. }
+            )),
+            "a later pre-dispatch stop must prevent earlier approval or execution events"
+        );
+    }
+
+    #[tokio::test]
     async fn invalid_tool_arguments_do_not_emit_start_event() {
         let tool = Arc::new(MockTool::new("write_file").with_schema(json!({
             "type": "object",
