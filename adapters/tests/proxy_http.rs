@@ -367,16 +367,27 @@ async fn malformed_sse_event_produces_stream_error() {
     let proxy = ProxyStreamFn::new(server.uri(), "token");
     let events = collect_events(&proxy).await;
 
-    let has_malformed_error = events.iter().any(|e| match e {
-        AssistantMessageEvent::Error { error_message, .. } => {
-            error_message.contains("malformed SSE event JSON")
+    let error = events
+        .iter()
+        .find(|event| matches!(event, AssistantMessageEvent::Error { .. }))
+        .expect("expected terminal error");
+    match error {
+        AssistantMessageEvent::Error {
+            error_message,
+            error_kind,
+            ..
+        } => {
+            assert!(
+                error_message.contains("malformed SSE event JSON"),
+                "expected malformed-JSON diagnostic, got: {error_message}"
+            );
+            assert_eq!(
+                *error_kind, None,
+                "malformed proxy payloads must not be marked retryable network errors"
+            );
         }
-        _ => false,
-    });
-    assert!(
-        has_malformed_error,
-        "expected an error containing 'malformed SSE event JSON', got: {events:?}"
-    );
+        other => panic!("expected Error event, got {other:?}"),
+    }
 }
 
 // ── 5.9: Mid-stream disconnect produces network error ───────────────────
@@ -425,7 +436,7 @@ async fn mid_stream_disconnect_produces_network_error() {
 }
 
 #[tokio::test]
-async fn done_sentinel_without_protocol_terminal_produces_network_error() {
+async fn done_sentinel_without_protocol_terminal_produces_stream_error() {
     let body = [
         r#"data: {"type":"start"}"#,
         "",
@@ -463,12 +474,17 @@ async fn done_sentinel_without_protocol_terminal_produces_network_error() {
         AssistantMessageEvent::Error {
             error_message,
             stop_reason,
+            error_kind,
             ..
         } => {
             assert_eq!(*stop_reason, StopReason::Error);
             assert!(
                 error_message.contains("protocol terminal event"),
                 "expected terminal-event diagnostic, got: {error_message}"
+            );
+            assert_eq!(
+                *error_kind, None,
+                "protocol faults must not be marked retryable network errors"
             );
         }
         other => panic!("expected terminal Error event, got {other:?}"),

@@ -293,20 +293,16 @@ fn parse_sse_stream(
                                 "network error: SSE stream ended unexpectedly",
                             )
                         }
-                        Some(SseLine::Done) => {
-                            AssistantMessageEvent::error_network(
-                                "network error: proxy SSE transport ended before protocol terminal event",
-                            )
-                        }
+                        Some(SseLine::Done) => AssistantMessageEvent::error(
+                            "proxy SSE transport ended before protocol terminal event",
+                        ),
                         Some(SseLine::Data(data)) => {
                             parse_sse_event_data(&data)
                         }
                         Some(SseLine::TransportError(message)) => AssistantMessageEvent::error_network(format!(
                                 "network error: {message}",
                             )),
-                        Some(_) => AssistantMessageEvent::error_network(
-                            "network error: unexpected non-data SSE line",
-                        ),
+                        Some(_) => AssistantMessageEvent::error("unexpected non-data SSE line"),
                     }
                 }
             };
@@ -344,7 +340,7 @@ fn prepare_stream_event(
 fn parse_sse_event_data(data: &str) -> AssistantMessageEvent {
     match serde_json::from_str::<SseEventData>(data) {
         Ok(event) => convert_sse_event(event),
-        Err(e) => AssistantMessageEvent::error_network(format!("malformed SSE event JSON: {e}")),
+        Err(e) => AssistantMessageEvent::error(format!("malformed SSE event JSON: {e}")),
     }
 }
 

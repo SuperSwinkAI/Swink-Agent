@@ -45,6 +45,7 @@
 - `finish_reason == "content_filter"` must be routed through `OaiSseStreamState.terminal_error`; emitting an inline error and then consuming a later `[DONE]` produces a duplicate terminal event that `accumulate_message` rejects.
 - In `src/google.rs`, `function_call.args` chunks are full snapshots, not deltas. Always overwrite the buffered args, including `null`, or a later empty snapshot can leave stale JSON from an earlier chunk.
 - In `src/ollama.rs`, the NDJSON parser must buffer raw bytes until it has a full newline-delimited record. Decoding each transport chunk independently with `from_utf8_lossy` corrupts split multibyte UTF-8.
+- In `src/ollama.rs` and `src/proxy.rs`, deterministic parse/protocol faults (malformed NDJSON/SSE JSON, proxy terminal-frame violations, unexpected `done` EOF) must use `AssistantMessageEvent::error(...)`, not `error_network(...)`; only transport failures stay retryable.
 - In `src/openai_compat.rs`, buffer tool-call arguments and delay `ToolCallStart` until a non-empty `function.name` is known; some providers stream arguments before the name.
 - Runtime SSE adapters must thread `StreamOptions.on_raw_payload` into the callback-aware shared parser (`sse_data_lines_with_callback`). The callback-free helper silently disables payload observers.
 - In `src/proxy.rs`, treat transport `data: [DONE]` as a protocol error unless the proxy has already emitted a typed `done` or `error` JSON event.
