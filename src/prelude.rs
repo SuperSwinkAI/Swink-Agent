@@ -1,7 +1,11 @@
 //! Convenience re-exports for common Swink-Agent types.
 //!
 //! ```
+//! use std::sync::Arc;
 //! use swink_agent::prelude::*;
+//!
+//! let tool = Arc::new(FnTool::new("echo", "Echo", "Echoes input"));
+//! let _logged = ToolMiddleware::with_logging(tool, |_name, _id, _is_start| {});
 //! ```
 
 pub use crate::{
@@ -13,7 +17,7 @@ pub use crate::{
     FnTool, InMemoryVersionStore, IntoTool, LlmMessage, LoopCheckpoint, MetricsCollector,
     ModelConnection, ModelConnections, ModelConnectionsBuilder, ModelFallback, ModelSpec,
     StopReason, StreamErrorKind, StreamFn, StreamMiddleware, StreamOptions, SubAgent, TokenCounter,
-    Usage, UserMessage, VersioningTransformer,
+    ToolMiddleware, Usage, UserMessage, VersioningTransformer,
 };
 
 #[cfg(feature = "builtin-tools")]
