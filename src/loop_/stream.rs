@@ -386,13 +386,6 @@ async fn handle_stream_error(
     // Context window overflow — signal and retry
     if matches!(harness_error, AgentError::ContextWindowOverflow { .. }) {
         warn!("context window overflow, signaling prune");
-        let _ = emit(
-            tx,
-            AgentEvent::MessageEnd {
-                message: build_error_message(model, &harness_error),
-            },
-        )
-        .await;
         return StreamErrorAction::ContextOverflow;
     }
 

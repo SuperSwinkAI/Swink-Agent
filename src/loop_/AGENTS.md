@@ -13,4 +13,5 @@
 - Pre-dispatch snapshots `SessionState` once per tool batch and reuses that borrow for every `ToolDispatchContext`. Cloning the full state inside the per-tool loop quietly turns large sessions into avoidable hot-path overhead.
 - Cancellation has to be observed in preprocessing and before each execution group/tool dispatch, not just while collecting spawned handles. Otherwise approval waits can hang forever and later tools can still launch after the batch is already cancelled.
 - Overflow recovery cancellation must reuse a started-turn cancellation path. Calling the pre-turn helper after `TurnStart` has already been emitted duplicates `TurnStart` and breaks lifecycle ordering for the interrupted turn.
+- `handle_stream_error()` must not emit `MessageEnd` for context overflow. Overflow recovery owns the terminal message lifecycle, and unrecoverable overflow must still surface exactly one `MessageEnd`.
 - `LoopState.turn_index` must advance after every completed turn, not just tool-loop continuation. Text-only or other `BreakInner` turns still finish a turn before the outer loop polls follow-up messages.
