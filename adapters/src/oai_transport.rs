@@ -13,11 +13,11 @@
 use std::pin::Pin;
 
 use futures::stream::{self, Stream, StreamExt as _};
-use tracing::warn;
 #[cfg(feature = "openai-compat")]
 use tokio_util::sync::CancellationToken;
 #[cfg(feature = "openai-compat")]
 use tracing::debug;
+use tracing::warn;
 
 #[cfg(feature = "mistral")]
 use serde::Serialize;
