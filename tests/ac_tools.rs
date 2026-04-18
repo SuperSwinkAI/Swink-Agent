@@ -437,6 +437,27 @@ impl swink_agent::PreDispatchPolicy for InjectFieldPolicy {
     }
 }
 
+struct RecordStateSnapshotPolicy {
+    snapshots: Arc<Mutex<Vec<usize>>>,
+}
+
+impl swink_agent::PreDispatchPolicy for RecordStateSnapshotPolicy {
+    fn name(&self) -> &'static str {
+        "record_state_snapshot"
+    }
+
+    fn evaluate(
+        &self,
+        ctx: &mut swink_agent::ToolDispatchContext<'_>,
+    ) -> swink_agent::PreDispatchVerdict {
+        self.snapshots
+            .lock()
+            .unwrap()
+            .push(std::ptr::from_ref(ctx.state) as usize);
+        swink_agent::PreDispatchVerdict::Continue
+    }
+}
+
 #[tokio::test]
 async fn tool_call_transformation() {
     let tool = Arc::new(MockArgCapturingTool::new(
@@ -533,6 +554,47 @@ async fn tool_validator_rejects_call() {
     assert!(
         has_error_result,
         "should have an error tool result when policy skips"
+    );
+}
+
+#[tokio::test]
+async fn pre_dispatch_reuses_one_session_state_snapshot_per_batch() {
+    let tool_a = Arc::new(MockTool::new("tool_a"));
+    let tool_b = Arc::new(MockTool::new("tool_b"));
+    let tool_c = Arc::new(MockTool::new("tool_c"));
+    let snapshots = Arc::new(Mutex::new(Vec::new()));
+
+    let stream_fn = Arc::new(MockStreamFn::new(vec![
+        tool_call_events_multi(&[
+            ("call_a", "tool_a", "{}"),
+            ("call_b", "tool_b", "{}"),
+            ("call_c", "tool_c", "{}"),
+        ]),
+        text_only_events("done"),
+    ]));
+
+    let mut agent = Agent::new(
+        AgentOptions::new("test", default_model(), stream_fn, default_convert)
+            .with_tools(vec![tool_a, tool_b, tool_c])
+            .with_pre_dispatch_policy(RecordStateSnapshotPolicy {
+                snapshots: snapshots.clone(),
+            })
+            .with_retry_strategy(fast_retry()),
+    );
+
+    let _ = agent.prompt_async(vec![user_msg("run all")]).await.unwrap();
+
+    let snapshots = snapshots.lock().unwrap().clone();
+    let unique: std::collections::BTreeSet<_> = snapshots.iter().copied().collect();
+    assert_eq!(
+        snapshots.len(),
+        3,
+        "policy should evaluate once for each tool call in the batch"
+    );
+    assert_eq!(
+        unique.len(),
+        1,
+        "all tool calls in the same batch should reuse one session-state snapshot"
     );
 }
 

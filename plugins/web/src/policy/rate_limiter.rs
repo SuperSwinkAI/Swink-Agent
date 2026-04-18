@@ -45,7 +45,7 @@ impl PreDispatchPolicy for RateLimitPolicy {
 
     fn evaluate(&self, ctx: &mut ToolDispatchContext<'_>) -> PreDispatchVerdict {
         // Only apply to web-namespaced tools.
-        if !ctx.tool_name.starts_with("web.") {
+        if !ctx.tool_name.starts_with("web_") {
             return PreDispatchVerdict::Continue;
         }
 
@@ -102,7 +102,7 @@ mod tests {
         for i in 0..5 {
             let call_id = format!("tc_{i}");
             let mut args = json!({"url": "https://example.com"});
-            let mut ctx = make_dispatch_ctx("web.fetch", &call_id, &mut args, &session);
+            let mut ctx = make_dispatch_ctx("web_fetch", &call_id, &mut args, &session);
             assert!(matches!(
                 policy.evaluate(&mut ctx),
                 PreDispatchVerdict::Continue
@@ -118,7 +118,7 @@ mod tests {
         for i in 0..3 {
             let call_id = format!("tc_{i}");
             let mut args = json!({"url": "https://example.com"});
-            let mut ctx = make_dispatch_ctx("web.fetch", &call_id, &mut args, &session);
+            let mut ctx = make_dispatch_ctx("web_fetch", &call_id, &mut args, &session);
             assert!(matches!(
                 policy.evaluate(&mut ctx),
                 PreDispatchVerdict::Continue
@@ -126,7 +126,7 @@ mod tests {
         }
 
         let mut args = json!({"url": "https://example.com"});
-        let mut ctx = make_dispatch_ctx("web.fetch", "tc_over", &mut args, &session);
+        let mut ctx = make_dispatch_ctx("web_fetch", "tc_over", &mut args, &session);
         assert!(matches!(
             policy.evaluate(&mut ctx),
             PreDispatchVerdict::Skip(_)
@@ -159,7 +159,7 @@ mod tests {
         let policy = RateLimitPolicy::new(rl_state, 5);
         let session = SessionState::default();
         let mut args = json!({"url": "https://example.com"});
-        let mut ctx = make_dispatch_ctx("web.fetch", "tc_after_prune", &mut args, &session);
+        let mut ctx = make_dispatch_ctx("web_fetch", "tc_after_prune", &mut args, &session);
         assert!(matches!(
             policy.evaluate(&mut ctx),
             PreDispatchVerdict::Continue

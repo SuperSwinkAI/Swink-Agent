@@ -3,7 +3,7 @@
 //! Wraps an `rmcp` client session, handling tool discovery and providing
 //! access to the peer for tool call forwarding. A background monitor task
 //! awaits the service lifecycle and emits a disconnect event when the
-//! transport closes unexpectedly.
+//! underlying service stops running.
 
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -52,6 +52,12 @@ pub struct McpConnection {
     pub discovered_tools: Vec<rmcp::model::Tool>,
     /// Shared connection state used by callers, shutdown, and the monitor task.
     state: Arc<Mutex<McpConnectionState>>,
+    /// Optional event channel for emitting MCP lifecycle events such as
+    /// `McpToolCallStarted` / `McpToolCallCompleted`. Connect, discovery, and
+    /// disconnect events are emitted through this sender during
+    /// [`connect`](Self::connect) / [`from_service`](Self::from_service) and
+    /// the background monitor task respectively.
+    event_tx: Option<UnboundedSender<AgentEvent>>,
 }
 
 impl std::fmt::Debug for McpConnection {
@@ -86,7 +92,16 @@ impl McpConnection {
                 peer: None,
                 monitor: None,
             })),
+            event_tx: None,
         }
+    }
+
+    /// Shared reference to the optional event sender.
+    ///
+    /// Used by tool wrappers to emit `McpToolCallStarted` /
+    /// `McpToolCallCompleted` around forwarded calls.
+    pub(crate) const fn event_tx(&self) -> Option<&UnboundedSender<AgentEvent>> {
+        self.event_tx.as_ref()
     }
 
     /// Create a connection from a pre-established rmcp service.
@@ -100,6 +115,11 @@ impl McpConnection {
         event_tx: Option<UnboundedSender<AgentEvent>>,
     ) -> Result<Self, McpError> {
         let peer = service.peer().clone();
+
+        // Handshake already completed before we were given the service.
+        emit_event(event_tx.as_ref(), || {
+            crate::event::server_connected(&config.name)
+        });
 
         let discovered_tools =
             peer.list_all_tools()
@@ -115,18 +135,28 @@ impl McpConnection {
             "MCP server connected via provided service, tools discovered"
         );
 
+        emit_event(event_tx.as_ref(), || {
+            crate::event::tools_discovered(&config.name, discovered_tools.len())
+        });
+
         let state = Arc::new(Mutex::new(McpConnectionState {
             status: McpConnectionStatus::Connected,
             peer: Some(peer),
             monitor: None,
         }));
-        let monitor = spawn_monitor(service, Arc::clone(&state), config.name.clone(), event_tx);
+        let monitor = spawn_monitor(
+            service,
+            Arc::clone(&state),
+            config.name.clone(),
+            event_tx.clone(),
+        );
         state.lock().unwrap_or_else(PoisonError::into_inner).monitor = Some(monitor);
 
         Ok(Self {
             config,
             discovered_tools,
             state,
+            event_tx,
         })
     }
 
@@ -134,7 +164,12 @@ impl McpConnection {
     ///
     /// Supports stdio and SSE (HTTP) transports. Spawns a background lifecycle
     /// monitor that sends `AgentEvent::McpServerDisconnected` on `event_tx`
-    /// when the transport closes unexpectedly.
+    /// when the underlying service terminates.
+    ///
+    /// For SSE, transient stream drops and stale-session recovery are handled
+    /// by rmcp's streamable HTTP transport. This wrapper only transitions to
+    /// [`McpConnectionStatus::Disconnected`] once rmcp has given up and the
+    /// service itself exits.
     pub async fn connect(
         config: McpServerConfig,
         event_tx: Option<UnboundedSender<AgentEvent>>,
@@ -147,6 +182,11 @@ impl McpConnection {
                 Self::connect_sse(url, bearer_token.as_deref(), &config.name).await?
             }
         };
+
+        // Handshake succeeded, transport is live.
+        emit_event(event_tx.as_ref(), || {
+            crate::event::server_connected(&config.name)
+        });
 
         let peer = service.peer().clone();
 
@@ -165,18 +205,28 @@ impl McpConnection {
             "MCP server connected, tools discovered"
         );
 
+        emit_event(event_tx.as_ref(), || {
+            crate::event::tools_discovered(&config.name, discovered_tools.len())
+        });
+
         let state = Arc::new(Mutex::new(McpConnectionState {
             status: McpConnectionStatus::Connected,
             peer: Some(peer),
             monitor: None,
         }));
-        let monitor = spawn_monitor(service, Arc::clone(&state), config.name.clone(), event_tx);
+        let monitor = spawn_monitor(
+            service,
+            Arc::clone(&state),
+            config.name.clone(),
+            event_tx.clone(),
+        );
         state.lock().unwrap_or_else(PoisonError::into_inner).monitor = Some(monitor);
 
         Ok(Self {
             config,
             discovered_tools,
             state,
+            event_tx,
         })
     }
 
@@ -317,6 +367,19 @@ impl Drop for McpConnection {
     }
 }
 
+/// Send an event on the optional channel, ignoring closed-receiver errors.
+///
+/// The emitter is lazy so we never allocate event payloads when no channel
+/// is wired.
+pub fn emit_event(
+    event_tx: Option<&UnboundedSender<AgentEvent>>,
+    build: impl FnOnce() -> AgentEvent,
+) {
+    if let Some(tx) = event_tx {
+        let _ = tx.send(build());
+    }
+}
+
 /// Build the `ClientInfo` used for MCP handshakes.
 fn client_info() -> ClientInfo {
     let mut info = ClientInfo::default();
@@ -326,8 +389,8 @@ fn client_info() -> ClientInfo {
 
 /// Spawn a background task that awaits the service lifecycle.
 ///
-/// When the transport closes with `QuitReason::Closed` (remote disconnect or
-/// crash), the shared state is updated to `Disconnected` and
+/// When the underlying service exits with `QuitReason::Closed` or a join error,
+/// the shared state is updated to `Disconnected` and
 /// `McpServerDisconnected` is sent on `event_tx`. Voluntary cancellations
 /// (`QuitReason::Cancelled`) and join errors are silently ignored since they
 /// are initiated by the caller via `shutdown()`.

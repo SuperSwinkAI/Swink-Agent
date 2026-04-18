@@ -167,12 +167,12 @@ pub async fn launch_with_session(
 ) -> Result<(), Box<dyn std::error::Error>> {
     dotenvy::dotenv().ok();
     let mut app = App::new(config).with_session_store(store, session_id);
-    if let Some(id) = resume_id {
-        app.resume_into(id)?;
-    }
     let approval_tx = app.approval_sender();
     let options = options.with_approve_tool(tui_approval_callback(&approval_tx));
     app.set_agent(Agent::new(options));
+    if let Some(id) = resume_id {
+        app.resume_into(id)?;
+    }
     app.run(terminal).await
 }
 

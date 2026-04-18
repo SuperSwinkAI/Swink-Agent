@@ -5,7 +5,7 @@ use swink_agent::{ContentBlock, PolicyContext, PolicyVerdict, PostTurnPolicy, Tu
 
 /// `PostTurnPolicy` that detects known prompt injection patterns in web content.
 ///
-/// After each turn, this policy scans tool results from `web.*` tools for text
+/// After each turn, this policy scans tool results from `web_*` tools for text
 /// matching common prompt-injection signatures (e.g. "ignore previous
 /// instructions", "you are now", fake `system:` prefixes). Because `PostTurnPolicy`
 /// runs after messages are already committed to context, this policy **logs
@@ -66,14 +66,14 @@ impl PostTurnPolicy for ContentSanitizerPolicy {
     }
 
     fn evaluate(&self, _ctx: &PolicyContext<'_>, turn: &TurnPolicyContext<'_>) -> PolicyVerdict {
-        // Collect tool-call IDs that belong to web.* tools from the assistant message.
+        // Collect tool-call IDs that belong to web_* tools from the assistant message.
         let web_call_ids: HashSet<&str> = turn
             .assistant_message
             .content
             .iter()
             .filter_map(|block| {
                 if let ContentBlock::ToolCall { id, name, .. } = block
-                    && name.starts_with("web.")
+                    && name.starts_with("web_")
                 {
                     return Some(id.as_str());
                 }
@@ -85,7 +85,7 @@ impl PostTurnPolicy for ContentSanitizerPolicy {
             return PolicyVerdict::Continue;
         }
 
-        // Scan only tool results that correspond to web.* tool calls.
+        // Scan only tool results that correspond to web_* tool calls.
         for result in turn.tool_results {
             if !web_call_ids.contains(result.tool_call_id.as_str()) {
                 continue;
@@ -208,9 +208,9 @@ mod tests {
         let model = make_model_spec();
 
         let assistant = make_assistant_message(vec![
-            ("call_1", "web.fetch"),
+            ("call_1", "web_fetch"),
             ("call_2", "bash"),
-            ("call_3", "web.search"),
+            ("call_3", "web_search"),
         ]);
         let results = vec![
             make_tool_result("call_1", "Normal page content."),

@@ -3,13 +3,15 @@
 use std::io;
 use std::time::{Duration, Instant};
 
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
+use crossterm::event::{
+    Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+};
 use futures::StreamExt;
 use ratatui::{Terminal, backend::CrosstermBackend};
 
 use swink_agent::{ApprovalMode, ToolApproval};
 
-use super::state::TrustFollowUp;
+use super::state::{Selection, TrustFollowUp};
 use crate::commands::{self, ApprovalModeArg, ClipboardContent, CommandResult};
 use crate::theme;
 use crate::ui;
@@ -115,19 +117,51 @@ impl App {
     }
 
     pub(super) fn handle_mouse_event(&mut self, mouse: MouseEvent) {
-        if !self.mouse_in_conversation(mouse.column, mouse.row) {
-            return;
-        }
-
         match mouse.kind {
             MouseEventKind::ScrollUp => {
+                if !self.mouse_in_conversation(mouse.column, mouse.row) {
+                    return;
+                }
+                self.selection = None;
                 self.conversation.scroll_up(MOUSE_SCROLL_STEP);
                 self.dirty = true;
             }
             MouseEventKind::ScrollDown => {
+                if !self.mouse_in_conversation(mouse.column, mouse.row) {
+                    return;
+                }
+                self.selection = None;
                 self.conversation
                     .scroll_down(MOUSE_SCROLL_STEP, self.conversation_page_height());
                 self.dirty = true;
+            }
+            MouseEventKind::Down(MouseButton::Left) => {
+                if !self.mouse_in_conversation(mouse.column, mouse.row) {
+                    self.selection = None;
+                    self.dirty = true;
+                    return;
+                }
+                if let Some((row, col)) = self.inner_conversation_coords(mouse.column, mouse.row) {
+                    self.selection = Some(Selection::new(row, col));
+                    self.dirty = true;
+                }
+            }
+            MouseEventKind::Drag(MouseButton::Left) => {
+                if self.selection.is_none() {
+                    return;
+                }
+                let (row, col) = self.clamped_conversation_coords(mouse.column, mouse.row);
+                if let Some(sel) = self.selection.as_mut() {
+                    sel.cursor = (row, col);
+                    sel.dragging = true;
+                }
+                self.dirty = true;
+            }
+            MouseEventKind::Up(MouseButton::Left) => {
+                if let Some(sel) = self.selection.as_mut() {
+                    sel.dragging = false;
+                }
+                self.copy_selection_to_clipboard();
             }
             _ => {}
         }
@@ -140,6 +174,57 @@ impl App {
         within_x && within_y
     }
 
+    /// Translate absolute terminal coordinates into `(row, col)` inside the
+    /// conversation's inner area (i.e. excluding the border). Returns `None`
+    /// if the position falls outside the inner area.
+    fn inner_conversation_coords(&self, column: u16, row: u16) -> Option<(u16, u16)> {
+        let area = self.conversation_area;
+        let inner_x = area.x.checked_add(1)?;
+        let inner_y = area.y.checked_add(1)?;
+        let inner_w = area.width.saturating_sub(2);
+        let inner_h = area.height.saturating_sub(2);
+        if column < inner_x || row < inner_y {
+            return None;
+        }
+        let col = column - inner_x;
+        let r = row - inner_y;
+        if col >= inner_w || r >= inner_h {
+            return None;
+        }
+        Some((r, col))
+    }
+
+    /// Like [`Self::inner_conversation_coords`] but clamps to the viewport
+    /// edges instead of returning `None` — used during drag so the selection
+    /// still extends when the cursor leaves the conversation area.
+    fn clamped_conversation_coords(&self, column: u16, row: u16) -> (u16, u16) {
+        let area = self.conversation_area;
+        let inner_x = area.x.saturating_add(1);
+        let inner_y = area.y.saturating_add(1);
+        let inner_w = area.width.saturating_sub(2);
+        let inner_h = area.height.saturating_sub(2);
+        let max_col = inner_w.saturating_sub(1);
+        let max_row = inner_h.saturating_sub(1);
+        let col = column.saturating_sub(inner_x).min(max_col);
+        let r = row.saturating_sub(inner_y).min(max_row);
+        (r, col)
+    }
+
+    /// Copy the current selection (if any) to the system clipboard.
+    pub(super) fn copy_selection_to_clipboard(&mut self) {
+        let Some(sel) = self.selection else { return };
+        let Some(text) = self.conversation.selection_text(&sel) else {
+            return;
+        };
+        match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(text)) {
+            Ok(()) => {}
+            Err(error) => {
+                self.push_system_message(format!("Clipboard error: {error}"));
+            }
+        }
+        self.dirty = true;
+    }
+
     pub(super) fn handle_key_event(&mut self, key: KeyEvent) {
         match (key.modifiers, key.code) {
             (KeyModifiers::CONTROL, KeyCode::Char('q')) => {
@@ -148,11 +233,19 @@ impl App {
                 return;
             }
             (KeyModifiers::CONTROL, KeyCode::Char('c')) => {
-                if self.status == AgentStatus::Running {
+                if self.selection.is_some() {
+                    self.copy_selection_to_clipboard();
+                    self.selection = None;
+                } else if self.status == AgentStatus::Running {
                     self.abort_agent();
                 } else {
                     self.should_quit = true;
                 }
+                self.dirty = true;
+                return;
+            }
+            (_, KeyCode::Esc) if self.selection.is_some() => {
+                self.selection = None;
                 self.dirty = true;
                 return;
             }
@@ -362,7 +455,17 @@ impl App {
 
     #[allow(clippy::too_many_lines)]
     pub(super) fn submit_input(&mut self) {
-        let Some(text) = self.input.submit() else {
+        // Classify the pending input BEFORE draining the editor so that
+        // secret-bearing commands (e.g. `#key <provider> <api-key>`) can be
+        // submitted without entering the input history. See issue #614.
+        let pending = self.input.lines().join("\n");
+        let sensitive = commands::is_sensitive_input(&pending);
+        let submit_result = if sensitive {
+            self.input.submit_without_history()
+        } else {
+            self.input.submit()
+        };
+        let Some(text) = submit_result else {
             return;
         };
 

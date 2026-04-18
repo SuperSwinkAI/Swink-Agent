@@ -49,8 +49,15 @@ pub enum TokenEvent {
     Done {
         prompt_tokens: u32,
         completion_tokens: u32,
+        finish_reason: FinishReason,
     },
     Error(String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FinishReason {
+    Stop,
+    Length,
 }
 
 // ─── LlamaRunner ───────────────────────────────────────────────────────────
@@ -247,6 +254,7 @@ fn run_inference(
         let _ = tx.blocking_send(TokenEvent::Done {
             prompt_tokens: 0,
             completion_tokens: 0,
+            finish_reason: FinishReason::Stop,
         });
         return Ok(());
     }
@@ -276,6 +284,11 @@ fn run_inference(
     let prompt_len_u32 = u32::try_from(prompt_len).unwrap_or(u32::MAX);
     let max_tokens = config.context_length.saturating_sub(prompt_len_u32);
     let mut n_cur = prompt_len;
+    let mut finish_reason = if max_tokens == 0 {
+        FinishReason::Length
+    } else {
+        FinishReason::Stop
+    };
 
     debug!(
         max_tokens,
@@ -283,7 +296,7 @@ fn run_inference(
         "entering generation loop"
     );
 
-    for _ in 0..max_tokens {
+    for step in 0..max_tokens {
         if cancel.is_cancelled() {
             debug!("inference cancelled");
             break;
@@ -332,6 +345,10 @@ fn run_inference(
         ctx.decode(&mut batch).map_err(|e| {
             LocalModelError::inference(format!("decode failed at position {n_cur}: {e}"))
         })?;
+
+        if step + 1 == max_tokens {
+            finish_reason = FinishReason::Length;
+        }
     }
 
     debug!(completion_tokens, "inference complete");
@@ -339,6 +356,7 @@ fn run_inference(
     let _ = tx.blocking_send(TokenEvent::Done {
         prompt_tokens: prompt_len_u32,
         completion_tokens,
+        finish_reason,
     });
 
     Ok(())

@@ -24,7 +24,7 @@ jobs:
         run: cargo bench -p swink-agent --bench context -- --save-baseline pr
 
       - name: Export PR baseline
-        run: critcmp --export pr > "$RUNNER_TEMP/pr.json"
+        run: "$CARGO_HOME/bin/critcmp" --export pr > "$RUNNER_TEMP/pr.json"
 
       - name: Add base worktree
         run: git worktree add ../bench-base ${{ github.event.pull_request.base.sha }}
@@ -35,10 +35,10 @@ jobs:
 
       - name: Export base baseline
         working-directory: ../bench-base
-        run: critcmp --export base > "$RUNNER_TEMP/base.json"
+        run: "$CARGO_HOME/bin/critcmp" --export base > "$RUNNER_TEMP/base.json"
 
       - name: Compare
-        run: critcmp "$RUNNER_TEMP/base.json" "$RUNNER_TEMP/pr.json" | tee bench-diff.txt
+        run: "$CARGO_HOME/bin/critcmp" "$RUNNER_TEMP/base.json" "$RUNNER_TEMP/pr.json" | tee bench-diff.txt
 
       - name: Post comment
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9

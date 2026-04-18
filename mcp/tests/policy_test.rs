@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use serde_json::Value;
 use swink_agent::AgentTool;
+use swink_agent::ToolApprovalRequest;
 use swink_agent_mcp::{McpConnection, McpServerConfig, McpTool, McpTransport};
 
 /// Helper to create a disconnected McpConnection for metadata-only tests.
@@ -86,6 +87,39 @@ async fn mcp_tool_approval_context_returns_params_for_policy_inspection() {
         params,
         "approval context should be the full params so policies can inspect arguments"
     );
+}
+
+/// Debug output must sanitize MCP approval context even though the raw params
+/// stay available to approval and policy code.
+#[tokio::test]
+async fn mcp_tool_approval_context_is_redacted_in_tool_approval_request_debug() {
+    let config = common::MockServerConfig::new(vec![]);
+    let client = common::spawn_mock_server_with_client(&config).await;
+    let tools = client.peer().list_all_tools().await.unwrap();
+    let echo_def = tools.iter().find(|t| t.name == "echo").unwrap();
+
+    let (_, conn) = disconnected_connection(true);
+    let tool = McpTool::new(echo_def, None, "policy-test-server", true, conn);
+
+    let params = serde_json::json!({
+        "Authorization": "Bearer top-secret",
+        "path": "/tmp/output.txt",
+        "text": "${API_KEY}"
+    });
+    let request = ToolApprovalRequest {
+        tool_call_id: "call_1".into(),
+        tool_name: tool.name().into(),
+        arguments: params.clone(),
+        requires_approval: true,
+        context: tool.approval_context(&params),
+    };
+
+    let debug = format!("{request:?}");
+
+    assert!(!debug.contains("top-secret"));
+    assert!(!debug.contains("${API_KEY}"));
+    assert!(debug.contains("/tmp/output.txt"));
+    assert!(debug.contains("[REDACTED]"));
 }
 
 /// T026: approval_context is non-None — policies receive params for inspection.

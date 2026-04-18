@@ -235,7 +235,6 @@ struct BedrockStreamState {
     /// Bedrock block index → `(BlockType, harness content_index)`.
     provider_blocks: HashMap<usize, (BlockType, usize)>,
     stop_reason: Option<String>,
-    usage: Option<Usage>,
     /// Whether `AssistantMessageEvent::Start` has been emitted.
     started: bool,
 }
@@ -246,7 +245,6 @@ impl BedrockStreamState {
             blocks: BlockAccumulator::default(),
             provider_blocks: HashMap::new(),
             stop_reason: None,
-            usage: None,
             started: false,
         }
     }
@@ -266,6 +264,30 @@ fn cancelled_event(message: &'static str) -> AssistantMessageEvent {
         usage: None,
         error_kind: None,
     }
+}
+
+fn unexpected_eof_events(state: &mut BedrockStreamState) -> Vec<AssistantMessageEvent> {
+    let mut events = finalize::finalize_blocks(state);
+    events.push(AssistantMessageEvent::error_network(
+        "Bedrock stream ended unexpectedly",
+    ));
+    prefix_pre_start_terminal_error(events, &mut state.started)
+}
+
+fn prefix_pre_start_terminal_error(
+    events: Vec<AssistantMessageEvent>,
+    started: &mut bool,
+) -> Vec<AssistantMessageEvent> {
+    if *started || !matches!(events.as_slice(), [AssistantMessageEvent::Error { .. }]) {
+        return events;
+    }
+
+    *started = true;
+    let event = events
+        .into_iter()
+        .next()
+        .expect("matched single terminal error");
+    Vec::from(crate::base::pre_stream_error(event))
 }
 
 pub struct BedrockStreamFn {
@@ -499,6 +521,8 @@ impl BedrockStreamFn {
                                     events.push(AssistantMessageEvent::error_network(format!(
                                         "Bedrock event-stream decode error: {e}"
                                     )));
+                                    let events =
+                                        prefix_pre_start_terminal_error(events, &mut state.started);
                                     return Some((events, StreamUnfoldState::Done));
                                 }
                             }
@@ -509,6 +533,8 @@ impl BedrockStreamFn {
                                 () = cancellation_token.cancelled() => {
                                     let mut events = finalize::finalize_blocks(state.as_mut());
                                     events.push(cancelled_event("Bedrock stream cancelled"));
+                                    let events =
+                                        prefix_pre_start_terminal_error(events, &mut state.started);
                                     return Some((events, StreamUnfoldState::Done));
                                 }
                                 chunk = byte_stream.next() => {
@@ -522,33 +548,14 @@ impl BedrockStreamFn {
                                             events.push(AssistantMessageEvent::error_network(
                                                 format!("Bedrock stream read error: {e}"),
                                             ));
+                                            let events = prefix_pre_start_terminal_error(
+                                                events,
+                                                &mut state.started,
+                                            );
                                             return Some((events, StreamUnfoldState::Done));
                                         }
                                         None => {
-                                            // Stream ended — emit Done if we haven't yet
-                                            let mut events = finalize::finalize_blocks(state.as_mut());
-                                            if !events.is_empty() || state.stop_reason.is_some() {
-                                                let usage = state.usage.take().unwrap_or_default();
-                                                let stop_reason = map_stop_reason(
-                                                    state.stop_reason.as_deref(),
-                                                );
-                                                match stop_reason {
-                                                    Ok(sr) => events.push(
-                                                        AssistantMessageEvent::Done {
-                                                            stop_reason: sr,
-                                                            usage,
-                                                            cost: Cost::default(),
-                                                        },
-                                                    ),
-                                                    Err(err) => events.push(err),
-                                                }
-                                            }
-                                            if events.is_empty() {
-                                                // Stream ended without any terminal event
-                                                events.push(AssistantMessageEvent::error_network(
-                                                    "Bedrock stream ended unexpectedly",
-                                                ));
-                                            }
+                                            let events = unexpected_eof_events(state.as_mut());
                                             return Some((events, StreamUnfoldState::Done));
                                         }
                                     }
@@ -635,7 +642,7 @@ fn process_smithy_message(
             warn!(event_type = %et, "Bedrock event deserialization failed for known event type");
             let mut events = finalize::finalize_blocks(state);
             events.push(AssistantMessageEvent::error_network(error_text));
-            events
+            prefix_pre_start_terminal_error(events, &mut state.started)
         }
     })
 }
@@ -870,14 +877,23 @@ fn convert_messages(messages: &[AgentMessage]) -> Vec<BedrockMessage> {
                             name,
                             arguments,
                             ..
-                        } => content.push(BedrockContentBlock {
-                            tool_use: Some(BedrockToolUse {
-                                tool_use_id: id.clone(),
-                                name: name.clone(),
-                                input: arguments.clone(),
-                            }),
-                            ..BedrockContentBlock::default()
-                        }),
+                        } => {
+                            // Issue #619: loop-level scrub coerces incomplete tool-use
+                            // blocks into object-typed arguments before reaching here.
+                            // Debug builds assert the invariant to catch regressions.
+                            debug_assert!(
+                                arguments.is_object(),
+                                "bedrock adapter: toolUse input must be a JSON object (got {arguments:?}); loop-level sanitize_incomplete_tool_calls should have coerced this before dispatch"
+                            );
+                            content.push(BedrockContentBlock {
+                                tool_use: Some(BedrockToolUse {
+                                    tool_use_id: id.clone(),
+                                    name: name.clone(),
+                                    input: arguments.clone(),
+                                }),
+                                ..BedrockContentBlock::default()
+                            });
+                        }
                         _ => {}
                     }
                 }
@@ -1542,6 +1558,74 @@ mod tests {
     }
 
     #[test]
+    fn unexpected_eof_after_message_stop_is_network_error_not_done() {
+        let mut state = BedrockStreamState::new();
+
+        parse_event_frame("messageStart", br#"{"role":"assistant"}"#, &mut state).unwrap();
+        parse_event_frame(
+            "contentBlockStart",
+            br#"{"contentBlockIndex":0,"start":{"type":"text"}}"#,
+            &mut state,
+        )
+        .unwrap();
+        parse_event_frame(
+            "contentBlockDelta",
+            br#"{"contentBlockIndex":0,"delta":{"type":"text","text":"partial"}}"#,
+            &mut state,
+        )
+        .unwrap();
+        parse_event_frame(
+            "contentBlockStop",
+            br#"{"contentBlockIndex":0}"#,
+            &mut state,
+        )
+        .unwrap();
+        parse_event_frame("messageStop", br#"{"stopReason":"end_turn"}"#, &mut state).unwrap();
+
+        let events = unexpected_eof_events(&mut state);
+
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, AssistantMessageEvent::Done { .. })),
+            "bare EOF must not synthesize a Done event"
+        );
+        assert!(matches!(
+            events.last(),
+            Some(AssistantMessageEvent::Error {
+                error_kind: Some(swink_agent::StreamErrorKind::Network),
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn unexpected_eof_finalizes_open_blocks_before_error() {
+        let mut state = BedrockStreamState::new();
+
+        parse_event_frame("messageStart", br#"{"role":"assistant"}"#, &mut state).unwrap();
+        parse_event_frame(
+            "contentBlockStart",
+            br#"{"contentBlockIndex":0,"start":{"type":"text"}}"#,
+            &mut state,
+        )
+        .unwrap();
+
+        let events = unexpected_eof_events(&mut state);
+
+        assert!(matches!(
+            events.as_slice(),
+            [
+                AssistantMessageEvent::TextEnd { content_index: 0 },
+                AssistantMessageEvent::Error {
+                    error_kind: Some(swink_agent::StreamErrorKind::Network),
+                    ..
+                }
+            ]
+        ));
+    }
+
+    #[test]
     fn stream_finalize_closes_open_text_block() {
         use crate::finalize::OpenBlock;
         let mut state = BedrockStreamState::new();
@@ -1755,11 +1839,30 @@ mod tests {
         let mut state = BedrockStreamState::new();
         let msg = make_event_message("metadata", br#"{"usage":"bad"}"#);
         let events = process_smithy_message(&msg, &mut state);
-        assert_eq!(events.len(), 1);
+        assert_eq!(events.len(), 2);
+        assert!(matches!(events[0], AssistantMessageEvent::Start));
         assert!(matches!(
-            &events[0],
+            &events[1],
             AssistantMessageEvent::Error { error_message, .. }
                 if error_message.contains("Bedrock metadata parse error")
+        ));
+    }
+
+    #[test]
+    fn pre_start_terminal_error_is_prefixed() {
+        let mut started = false;
+        let events = prefix_pre_start_terminal_error(
+            vec![AssistantMessageEvent::error_network("boom")],
+            &mut started,
+        );
+
+        assert!(started);
+        assert!(matches!(
+            events.as_slice(),
+            [
+                AssistantMessageEvent::Start,
+                AssistantMessageEvent::Error { .. }
+            ]
         ));
     }
 
@@ -1791,5 +1894,50 @@ mod tests {
             AssistantMessageEvent::Error { error_message, .. }
                 if error_message.contains("Bedrock contentBlockDelta parse error")
         ));
+    }
+
+    // ── Issue #619: incomplete tool_use sanitization ─────────────────────
+
+    /// Regression for #619: after the loop-level scrub runs, an assistant
+    /// message that originally carried `arguments: Null` with `partial_json`
+    /// set must serialize with `toolUse.input: {}` so Bedrock Converse accepts
+    /// the replayed history on the next turn.
+    #[test]
+    fn convert_messages_sanitized_tool_use_becomes_empty_object_input() {
+        use swink_agent::AssistantMessage as HarnessAssistantMessage;
+
+        let mut assistant = HarnessAssistantMessage {
+            content: vec![ContentBlock::ToolCall {
+                id: "tooluse_abc".into(),
+                name: "read_file".into(),
+                arguments: serde_json::Value::Null,
+                partial_json: Some(r#"{"path": "/tm"#.into()),
+            }],
+            provider: "bedrock".into(),
+            model_id: "anthropic.claude-3-sonnet".into(),
+            usage: Usage::default(),
+            cost: Cost::default(),
+            stop_reason: StopReason::Length,
+            error_message: None,
+            error_kind: None,
+            timestamp: 0,
+            cache_hint: None,
+        };
+
+        swink_agent::sanitize_incomplete_tool_calls(&mut assistant);
+
+        let messages = vec![AgentMessage::Llm(LlmMessage::Assistant(assistant))];
+        let converted = convert_messages(&messages);
+
+        assert_eq!(converted.len(), 1);
+        assert_eq!(converted[0].role, "assistant");
+        let json = serde_json::to_value(&converted[0]).unwrap();
+        let block = &json["content"][0];
+        let input = &block["toolUse"]["input"];
+        assert!(
+            input.is_object(),
+            "toolUse.input must be a JSON object, got {input:?}"
+        );
+        assert_eq!(input.as_object().unwrap().len(), 0);
     }
 }

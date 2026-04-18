@@ -14,6 +14,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
+pub use crate::stream_error_kind::StreamErrorKind;
 use crate::types::{
     AgentContext, AssistantMessage, ContentBlock, Cost, ModelSpec, StopReason, Usage,
 };
@@ -99,28 +100,6 @@ impl std::fmt::Debug for StreamOptions {
             )
             .finish()
     }
-}
-
-// ─── StreamErrorKind ─────────────────────────────────────────────────────────
-
-/// Structured classification of stream errors.
-///
-/// Adapters can attach a `StreamErrorKind` to an `Error` event so the agent
-/// loop can classify errors structurally instead of relying on string matching.
-#[non_exhaustive]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum StreamErrorKind {
-    /// The provider throttled the request (HTTP 429 / rate limit).
-    Throttled,
-    /// The request exceeded the model's context window.
-    ContextWindowExceeded,
-    /// Authentication or authorization failure (HTTP 401/403).
-    Auth,
-    /// Transient network or server error (connection drop, 5xx, etc.).
-    Network,
-    /// Provider safety/content filter blocked the response.
-    ContentFiltered,
 }
 
 // ─── AssistantMessageEvent ───────────────────────────────────────────────────
@@ -339,6 +318,48 @@ pub trait StreamFn: Send + Sync {
         options: &'a StreamOptions,
         cancellation_token: CancellationToken,
     ) -> Pin<Box<dyn Stream<Item = AssistantMessageEvent> + Send + 'a>>;
+}
+
+// ─── Tool-call sanitization ──────────────────────────────────────────────────
+
+/// Scrub incomplete `ToolCall` blocks in an assistant message so it can safely
+/// be replayed to a provider.
+///
+/// When a stream hits [`StopReason::Length`] mid tool-use, the resulting
+/// [`ContentBlock::ToolCall`] may carry `arguments: Value::Null` with
+/// `partial_json: Some(..)` (see `accumulate_message`). Provider adapters
+/// forward `arguments` verbatim; Anthropic/Google/Bedrock reject null inputs
+/// and OpenAI-compatible providers reject the literal string `"null"`. On the
+/// next turn this causes a 400.
+///
+/// This helper coerces any `ToolCall` block whose `partial_json` is still set
+/// OR whose `arguments` is not a JSON object into a valid empty-object call:
+/// `arguments = Value::Object({})` and `partial_json = None`. The loop pairs
+/// this with a synthetic tool-result message (see
+/// `recover_incomplete_tool_calls`) so the provider sees a well-formed pair.
+///
+/// Safe to call multiple times and safe to call on messages that contain no
+/// tool-use blocks. Returns the number of blocks modified.
+///
+/// See <https://github.com/SuperSwinkAI/Swink-Agent/issues/619>.
+pub fn sanitize_incomplete_tool_calls(message: &mut AssistantMessage) -> usize {
+    let mut fixed = 0;
+    for block in &mut message.content {
+        if let ContentBlock::ToolCall {
+            arguments,
+            partial_json,
+            ..
+        } = block
+        {
+            let needs_fix = partial_json.is_some() || !arguments.is_object();
+            if needs_fix {
+                *arguments = Value::Object(serde_json::Map::new());
+                *partial_json = None;
+                fixed += 1;
+            }
+        }
+    }
+    fixed
 }
 
 // ─── Delta Accumulation ──────────────────────────────────────────────────────
@@ -1132,5 +1153,187 @@ mod tests {
 
         let err = accumulate_message(events, "test", "test").unwrap_err();
         assert_eq!(err, "ToolCallEnd: block at index 0 is already closed");
+    }
+
+    // ── sanitize_incomplete_tool_calls (#619) ──────────────────────────────
+
+    fn build_assistant_with_tool_call(
+        arguments: Value,
+        partial_json: Option<String>,
+    ) -> AssistantMessage {
+        AssistantMessage {
+            content: vec![ContentBlock::ToolCall {
+                id: "tc_1".into(),
+                name: "read_file".into(),
+                arguments,
+                partial_json,
+            }],
+            provider: "test".into(),
+            model_id: "test".into(),
+            usage: Usage::default(),
+            cost: Cost::default(),
+            stop_reason: StopReason::Length,
+            error_message: None,
+            error_kind: None,
+            timestamp: 0,
+            cache_hint: None,
+        }
+    }
+
+    #[test]
+    fn sanitize_null_arguments_with_partial_json_returns_empty_object() {
+        let mut msg = build_assistant_with_tool_call(Value::Null, Some("{\"path\": \"/tm".into()));
+        let fixed = sanitize_incomplete_tool_calls(&mut msg);
+        assert_eq!(fixed, 1);
+        match &msg.content[0] {
+            ContentBlock::ToolCall {
+                arguments,
+                partial_json,
+                ..
+            } => {
+                assert_eq!(*arguments, Value::Object(serde_json::Map::new()));
+                assert!(
+                    partial_json.is_none(),
+                    "partial_json must be cleared after scrub"
+                );
+            }
+            other => panic!("expected ToolCall, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn sanitize_leaves_valid_object_arguments_untouched() {
+        let args = serde_json::json!({ "path": "/tmp/a" });
+        let mut msg = build_assistant_with_tool_call(args.clone(), None);
+        let fixed = sanitize_incomplete_tool_calls(&mut msg);
+        assert_eq!(fixed, 0);
+        match &msg.content[0] {
+            ContentBlock::ToolCall {
+                arguments,
+                partial_json,
+                ..
+            } => {
+                assert_eq!(*arguments, args);
+                assert!(partial_json.is_none());
+            }
+            other => panic!("expected ToolCall, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn sanitize_coerces_non_object_arguments() {
+        // `Value::String` / arrays / numbers are all not objects — they would
+        // confuse downstream providers even if `partial_json` is absent.
+        let mut msg = build_assistant_with_tool_call(Value::String("truncated".into()), None);
+        let fixed = sanitize_incomplete_tool_calls(&mut msg);
+        assert_eq!(fixed, 1);
+        match &msg.content[0] {
+            ContentBlock::ToolCall { arguments, .. } => {
+                assert_eq!(*arguments, Value::Object(serde_json::Map::new()));
+            }
+            other => panic!("expected ToolCall, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn sanitize_is_idempotent() {
+        let mut msg = build_assistant_with_tool_call(Value::Null, Some("{\"path\":".into()));
+        assert_eq!(sanitize_incomplete_tool_calls(&mut msg), 1);
+        // A second pass should be a no-op.
+        assert_eq!(sanitize_incomplete_tool_calls(&mut msg), 0);
+    }
+
+    #[test]
+    fn sanitize_preserves_non_tool_blocks() {
+        let mut msg = AssistantMessage {
+            content: vec![
+                ContentBlock::Text {
+                    text: "hello".into(),
+                },
+                ContentBlock::ToolCall {
+                    id: "tc_1".into(),
+                    name: "foo".into(),
+                    arguments: Value::Null,
+                    partial_json: Some("{".into()),
+                },
+                ContentBlock::Text {
+                    text: "world".into(),
+                },
+            ],
+            provider: "test".into(),
+            model_id: "test".into(),
+            usage: Usage::default(),
+            cost: Cost::default(),
+            stop_reason: StopReason::Length,
+            error_message: None,
+            error_kind: None,
+            timestamp: 0,
+            cache_hint: None,
+        };
+        let fixed = sanitize_incomplete_tool_calls(&mut msg);
+        assert_eq!(fixed, 1);
+        // Text blocks preserved in place.
+        match &msg.content[0] {
+            ContentBlock::Text { text } => assert_eq!(text, "hello"),
+            other => panic!("expected Text, got {other:?}"),
+        }
+        match &msg.content[2] {
+            ContentBlock::Text { text } => assert_eq!(text, "world"),
+            other => panic!("expected Text, got {other:?}"),
+        }
+    }
+
+    /// Regression for #619: the canned "Length + partial tool-call" stream from
+    /// the issue, when run through `accumulate_message` and then scrubbed,
+    /// produces a block suitable for replay to any provider adapter.
+    #[test]
+    fn accumulate_plus_sanitize_yields_adapter_safe_tool_call() {
+        let events = vec![
+            AssistantMessageEvent::Start,
+            AssistantMessageEvent::ToolCallStart {
+                content_index: 0,
+                id: "tc_1".into(),
+                name: "read_file".into(),
+            },
+            AssistantMessageEvent::ToolCallDelta {
+                content_index: 0,
+                delta: r#"{"path": "/tm"#.into(),
+            },
+            AssistantMessageEvent::Done {
+                stop_reason: StopReason::Length,
+                usage: Usage::default(),
+                cost: Cost::default(),
+            },
+        ];
+        let mut msg = accumulate_message(events, "test", "test")
+            .expect("Done(Length) with unterminated tool-call should accumulate");
+        // Pre-scrub: partial_json present, arguments null.
+        match &msg.content[0] {
+            ContentBlock::ToolCall {
+                arguments,
+                partial_json,
+                ..
+            } => {
+                assert!(partial_json.is_some());
+                assert!(arguments.is_null());
+            }
+            other => panic!("expected ToolCall, got {other:?}"),
+        }
+
+        sanitize_incomplete_tool_calls(&mut msg);
+
+        // Post-scrub: arguments is an empty object, partial_json cleared.
+        match &msg.content[0] {
+            ContentBlock::ToolCall {
+                arguments,
+                partial_json,
+                ..
+            } => {
+                assert!(arguments.is_object());
+                assert_eq!(arguments.as_object().unwrap().len(), 0);
+                assert!(partial_json.is_none());
+            }
+            other => panic!("expected ToolCall, got {other:?}"),
+        }
     }
 }

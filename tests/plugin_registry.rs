@@ -89,7 +89,7 @@ fn namespaced_tool_prefixes_name() {
     let inner = Arc::new(MockTool::new("save")) as Arc<dyn AgentTool>;
     let namespaced = NamespacedTool::new("artifacts", inner);
 
-    assert_eq!(namespaced.name(), "artifacts.save");
+    assert_eq!(namespaced.name(), "artifacts_save");
 }
 
 #[test]
@@ -152,7 +152,7 @@ fn two_namespaced_tools_from_different_plugins_are_distinct() {
     let ns1 = NamespacedTool::new("plugin_a", tool.clone());
     let ns2 = NamespacedTool::new("plugin_b", tool);
 
-    assert_eq!(ns1.name(), "plugin_a.run");
-    assert_eq!(ns2.name(), "plugin_b.run");
+    assert_eq!(ns1.name(), "plugin_a_run");
+    assert_eq!(ns2.name(), "plugin_b_run");
     assert_ne!(ns1.name(), ns2.name());
 }

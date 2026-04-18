@@ -7,7 +7,8 @@
 //!
 //! [`PluginRegistry`] manages a collection of plugins with deduplication and priority
 //! ordering. [`NamespacedTool`] wraps a plugin-contributed tool, prefixing the plugin
-//! name to avoid collisions.
+//! name so the composed identifier is unique and safe for every provider's tool-name
+//! grammar (see `sanitize_tool_name_component`).
 
 use std::sync::Arc;
 
@@ -76,7 +77,10 @@ pub trait Plugin: Send + Sync {
     /// Tools contributed by this plugin.
     ///
     /// Each tool is automatically wrapped in a [`NamespacedTool`] with the
-    /// plugin's name as prefix (e.g., `"myplugin.mytool"`).
+    /// plugin's name as prefix. The prefix and inner name are joined with an
+    /// underscore and sanitized to the common subset accepted by every
+    /// provider's tool-name grammar (e.g., `"myplugin_mytool"`). See
+    /// `sanitize_tool_name_component` for the exact rule.
     fn tools(&self) -> Vec<Arc<dyn AgentTool>> {
         vec![]
     }
@@ -146,12 +150,79 @@ impl Default for PluginRegistry {
     }
 }
 
+// ─── Tool name sanitization ────────────────────────────────────────────────
+
+/// Maximum length for a composed tool name (the tightest cap across providers:
+/// `OpenAI`, Bedrock, and Gemini all cap at 64; Anthropic allows 128).
+const MAX_TOOL_NAME_LEN: usize = 64;
+
+/// Sanitize a single component (plugin name or inner tool name) to the common
+/// subset of characters accepted by every provider's tool-name grammar.
+///
+/// The strictest grammar is Bedrock's `^[a-zA-Z][a-zA-Z0-9_]*` (max 64). This
+/// is also a subset of what Anthropic (`^[a-zA-Z0-9_-]{1,128}$`), OpenAI-style
+/// providers (same pattern, cap 64), and Gemini accept, so names produced here
+/// round-trip safely across providers.
+///
+/// Rules:
+/// - Every character outside `[a-zA-Z0-9_]` is replaced with `_`.
+/// - The result is not truncated here; truncation happens on the composed name
+///   in [`NamespacedTool::new`] so both components survive when possible.
+/// - An empty input becomes `"_"` — callers should still prepend a letter
+///   prefix if the composed result needs to start with a letter.
+fn sanitize_tool_name_component(input: &str) -> String {
+    if input.is_empty() {
+        return "_".to_owned();
+    }
+    input
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+/// Compose a plugin-namespaced tool name that is safe across every provider.
+///
+/// Joins `plugin_name` and `tool_name` with `_`, sanitizes each half, prepends
+/// `t_` if the result would start with a non-letter (Bedrock/Gemini require a
+/// leading letter or underscore — we pick letter for maximum safety), and
+/// truncates to [`MAX_TOOL_NAME_LEN`]. Truncation preserves the plugin prefix
+/// where possible so distinct plugins keep distinct names.
+fn compose_namespaced_name(plugin_name: &str, tool_name: &str) -> String {
+    let plugin = sanitize_tool_name_component(plugin_name);
+    let tool = sanitize_tool_name_component(tool_name);
+    let joined = format!("{plugin}_{tool}");
+    let with_leading_letter = match joined.chars().next() {
+        Some(c) if c.is_ascii_alphabetic() => joined,
+        _ => format!("t_{joined}"),
+    };
+    if with_leading_letter.len() <= MAX_TOOL_NAME_LEN {
+        with_leading_letter
+    } else {
+        with_leading_letter
+            .chars()
+            .take(MAX_TOOL_NAME_LEN)
+            .collect()
+    }
+}
+
 // ─── NamespacedTool ────────────────────────────────────────────────────────
 
 /// Wraps a plugin-contributed tool, prefixing the plugin name onto the tool name.
 ///
 /// This prevents name collisions when multiple plugins contribute tools with
-/// the same name. The prefixed name format is `"{plugin_name}.{tool_name}"`.
+/// the same name. The composed name format is `"{plugin_name}_{tool_name}"`,
+/// with each component sanitized so the result matches the strictest tool-name
+/// grammar across supported providers (Anthropic, `OpenAI`, Bedrock, Mistral,
+/// Gemini, Ollama, Azure). See `sanitize_tool_name_component`.
+///
+/// The original (unsanitized) plugin name is preserved in
+/// [`ToolMetadata::namespace`] for introspection.
 ///
 /// All other trait methods delegate unchanged to the inner tool.
 pub struct NamespacedTool {
@@ -164,7 +235,7 @@ impl NamespacedTool {
     /// Create a new namespaced tool wrapper.
     pub fn new(plugin_name: impl Into<String>, inner: Arc<dyn AgentTool>) -> Self {
         let plugin_name = plugin_name.into();
-        let prefixed_name = format!("{}.{}", plugin_name, inner.name());
+        let prefixed_name = compose_namespaced_name(&plugin_name, inner.name());
         Self {
             prefixed_name,
             plugin_name,
@@ -298,6 +369,92 @@ mod tests {
         let list = reg.list();
         let names: Vec<&str> = list.iter().map(|p| p.name()).collect();
         assert_eq!(names, vec!["high", "mid", "low"]);
+    }
+
+    // ─── Tool-name sanitization tests ───────────────────────────────────
+
+    #[test]
+    fn compose_namespaced_name_dot_becomes_underscore() {
+        assert_eq!(compose_namespaced_name("web", "search"), "web_search");
+        assert_eq!(compose_namespaced_name("web", "fetch"), "web_fetch");
+    }
+
+    #[test]
+    fn compose_namespaced_name_replaces_dashes_and_dots() {
+        assert_eq!(compose_namespaced_name("my-web", "search"), "my_web_search");
+        assert_eq!(compose_namespaced_name("web", "read.file"), "web_read_file");
+        assert_eq!(compose_namespaced_name("my.ns", "x.y.z"), "my_ns_x_y_z");
+    }
+
+    #[test]
+    fn compose_namespaced_name_prepends_letter_when_leading_non_alpha() {
+        // Plugin starting with a digit would otherwise produce "1plugin_foo" —
+        // Bedrock requires a leading letter, so we prepend "t_".
+        assert_eq!(compose_namespaced_name("1plugin", "foo"), "t_1plugin_foo");
+        // Same for a leading underscore (valid for Gemini, rejected by Bedrock).
+        assert_eq!(compose_namespaced_name("_plugin", "foo"), "t__plugin_foo");
+    }
+
+    #[test]
+    fn compose_namespaced_name_replaces_non_ascii() {
+        assert_eq!(compose_namespaced_name("plugin", "naïve"), "plugin_na_ve");
+    }
+
+    #[test]
+    fn compose_namespaced_name_truncates_to_max_length() {
+        let long_plugin = "a".repeat(40);
+        let long_tool = "b".repeat(40);
+        let result = compose_namespaced_name(&long_plugin, &long_tool);
+        assert_eq!(result.len(), MAX_TOOL_NAME_LEN);
+        // Prefix is preserved (plugin name survives at the front).
+        assert!(result.starts_with(&long_plugin));
+    }
+
+    #[test]
+    fn compose_namespaced_name_empty_components() {
+        // Empty plugin name collapses to "_", then the leading-letter rule kicks in.
+        assert_eq!(compose_namespaced_name("", "foo"), "t___foo");
+        assert_eq!(compose_namespaced_name("foo", ""), "foo__");
+        // "" → "_", "" → "_", joined "___" (3 underscores), leading non-alpha → prepend "t_".
+        assert_eq!(compose_namespaced_name("", ""), "t____");
+    }
+
+    #[test]
+    fn compose_namespaced_name_satisfies_strictest_grammar() {
+        // Regex equivalent to Bedrock's ^[a-zA-Z][a-zA-Z0-9_]*$ (the strictest
+        // provider pattern). Every output from this function must match.
+        let is_valid = |s: &str| {
+            s.len() <= MAX_TOOL_NAME_LEN
+                && s.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
+                && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        };
+        for (plugin, tool) in [
+            ("web", "search"),
+            ("my-web", "search"),
+            ("web", "read.file"),
+            ("1plugin", "foo"),
+            ("_plugin", "foo"),
+            ("plugin", "naïve"),
+            ("", ""),
+            (&"a".repeat(100), &"b".repeat(100)),
+        ] {
+            let name = compose_namespaced_name(plugin, tool);
+            assert!(
+                is_valid(&name),
+                "composed name {name:?} (from {plugin:?} + {tool:?}) violates the strictest grammar"
+            );
+        }
+    }
+
+    #[test]
+    fn namespaced_tool_preserves_unsanitized_plugin_name_in_metadata() {
+        use crate::testing::MockTool;
+        let tool: Arc<dyn AgentTool> = Arc::new(MockTool::new("search"));
+        let wrapped = NamespacedTool::new("my-web", tool);
+        assert_eq!(wrapped.name(), "my_web_search");
+        // Metadata namespace keeps the original plugin name for introspection.
+        let meta = wrapped.metadata().expect("metadata present");
+        assert_eq!(meta.namespace.as_deref(), Some("my-web"));
     }
 
     #[test]

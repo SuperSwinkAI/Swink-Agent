@@ -54,12 +54,12 @@ fn plugin_tools_appear_namespaced_in_agent_tool_list() {
 
     let tool_names: Vec<&str> = agent.state().tools.iter().map(|t| t.name()).collect();
     assert!(
-        tool_names.contains(&"myplugin.save"),
-        "expected namespaced tool 'myplugin.save', got: {tool_names:?}"
+        tool_names.contains(&"myplugin_save"),
+        "expected namespaced tool 'myplugin_save', got: {tool_names:?}"
     );
     assert!(
-        tool_names.contains(&"myplugin.load"),
-        "expected namespaced tool 'myplugin.load', got: {tool_names:?}"
+        tool_names.contains(&"myplugin_load"),
+        "expected namespaced tool 'myplugin_load', got: {tool_names:?}"
     );
 }
 
@@ -631,7 +631,7 @@ async fn plugin_stop_prevents_all_direct_policies() {
 
 // ─── Phase 8: User Story 7 — Plugin Tool Contribution ──────────────────
 
-// ─── T035: Plugin tools appear as "{plugin_name}.{tool_name}" ───────────
+// ─── T035: Plugin tools appear as "{plugin_name}_{tool_name}" ───────────
 
 #[test]
 fn plugin_tools_namespaced_format() {
@@ -642,12 +642,12 @@ fn plugin_tools_namespaced_format() {
 
     let tool_names: Vec<&str> = agent.state().tools.iter().map(|t| t.name()).collect();
     assert!(
-        tool_names.contains(&"analyzer.scan"),
-        "expected 'analyzer.scan', got: {tool_names:?}"
+        tool_names.contains(&"analyzer_scan"),
+        "expected 'analyzer_scan', got: {tool_names:?}"
     );
     assert!(
-        tool_names.contains(&"analyzer.report"),
-        "expected 'analyzer.report', got: {tool_names:?}"
+        tool_names.contains(&"analyzer_report"),
+        "expected 'analyzer_report', got: {tool_names:?}"
     );
 }
 
@@ -662,23 +662,23 @@ fn two_plugins_same_tool_names_distinct_namespaces() {
 
     let tool_names: Vec<&str> = agent.state().tools.iter().map(|t| t.name()).collect();
     assert!(
-        tool_names.contains(&"alpha.run"),
-        "expected 'alpha.run', got: {tool_names:?}"
+        tool_names.contains(&"alpha_run"),
+        "expected 'alpha_run', got: {tool_names:?}"
     );
     assert!(
-        tool_names.contains(&"beta.run"),
-        "expected 'beta.run', got: {tool_names:?}"
+        tool_names.contains(&"beta_run"),
+        "expected 'beta_run', got: {tool_names:?}"
     );
     // Both should coexist — no collision.
     assert_eq!(
-        tool_names.iter().filter(|&&n| n == "alpha.run").count(),
+        tool_names.iter().filter(|&&n| n == "alpha_run").count(),
         1,
-        "alpha.run should appear exactly once"
+        "alpha_run should appear exactly once"
     );
     assert_eq!(
-        tool_names.iter().filter(|&&n| n == "beta.run").count(),
+        tool_names.iter().filter(|&&n| n == "beta_run").count(),
         1,
-        "beta.run should appear exactly once"
+        "beta_run should appear exactly once"
     );
 }
 
@@ -688,10 +688,10 @@ fn two_plugins_same_tool_names_distinct_namespaces() {
 fn direct_tool_found_first_over_namespaced_plugin_tool() {
     use swink_agent::AgentTool;
 
-    // Create a direct tool named "myns.fetch" and a plugin named "myns" contributing "fetch".
-    // The direct tool should be found first by find_tool.
+    // Create a direct tool named "myns_fetch" and a plugin named "myns" contributing "fetch".
+    // Both resolve to the same public name — the direct tool should be found first.
     let direct_tool: Arc<dyn AgentTool> =
-        Arc::new(swink_agent::testing::MockTool::new("myns.fetch"));
+        Arc::new(swink_agent::testing::MockTool::new("myns_fetch"));
     let plugin: Arc<dyn Plugin> = Arc::new(MockPlugin::new("myns").with_tools(&["fetch"]));
 
     let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("hello")]));
@@ -704,21 +704,21 @@ fn direct_tool_found_first_over_namespaced_plugin_tool() {
     // The direct tool is first in the list (direct tools before plugin tools).
     let tool_names: Vec<&str> = agent.state().tools.iter().map(|t| t.name()).collect();
     // Both should exist.
-    let count = tool_names.iter().filter(|&&n| n == "myns.fetch").count();
+    let count = tool_names.iter().filter(|&&n| n == "myns_fetch").count();
     assert_eq!(
         count, 2,
         "both direct and namespaced tool should be present, got {count}"
     );
 
     // find_tool returns the first match — should be the direct tool.
-    let found = agent.find_tool("myns.fetch");
-    assert!(found.is_some(), "find_tool should find 'myns.fetch'");
+    let found = agent.find_tool("myns_fetch");
+    assert!(found.is_some(), "find_tool should find 'myns_fetch'");
 
     // Verify it's the direct tool (not the NamespacedTool wrapper).
-    // NamespacedTool has description "plugin stub tool" and label "myns.fetch" (overridden).
-    // Direct MockTool has label "myns.fetch" (set in constructor).
+    // NamespacedTool has description "plugin stub tool" and label "myns_fetch" (overridden).
+    // Direct MockTool has label "myns_fetch" (set in constructor).
     // Both have the same description, so check order by position.
-    let first_idx = tool_names.iter().position(|&n| n == "myns.fetch").unwrap();
+    let first_idx = tool_names.iter().position(|&n| n == "myns_fetch").unwrap();
     assert_eq!(
         first_idx, 0,
         "direct tool should be at index 0 (before plugin tools), got {first_idx}"
@@ -755,7 +755,7 @@ fn unregistered_plugin_contributions_absent() {
 
     let tool_names: Vec<&str> = agent.state().tools.iter().map(|t| t.name()).collect();
     assert!(
-        tool_names.contains(&"keep.tool_a"),
+        tool_names.contains(&"keep_tool_a"),
         "kept plugin's tools should be present: {tool_names:?}"
     );
     assert!(

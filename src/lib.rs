@@ -54,6 +54,7 @@ mod schema;
 mod state;
 pub(crate) mod stream;
 pub mod stream_assembly;
+mod stream_error_kind;
 mod stream_middleware;
 mod sub_agent;
 mod task_core;
@@ -133,7 +134,7 @@ pub use schemars::JsonSchema;
 pub use state::{SessionState, StateDelta};
 pub use stream::{
     AssistantMessageDelta, AssistantMessageEvent, CacheStrategy, OnRawPayload, StreamErrorKind,
-    StreamFn, StreamOptions, StreamTransport, accumulate_message,
+    StreamFn, StreamOptions, StreamTransport, accumulate_message, sanitize_incomplete_tool_calls,
 };
 pub use stream_middleware::StreamMiddleware;
 pub use sub_agent::SubAgent;
@@ -165,7 +166,7 @@ pub use util::{now_timestamp, prefix_chars, suffix_chars};
 #[cfg(feature = "artifact-store")]
 pub use artifact::{
     ArtifactByteStream, ArtifactData, ArtifactError, ArtifactMeta, ArtifactStore, ArtifactVersion,
-    StreamingArtifactStore, validate_artifact_name,
+    StreamingArtifactStore, validate_artifact_name, validate_session_id,
 };
 pub use display::{CoreDisplayMessage, DisplayRole, IntoDisplayMessages};
 #[cfg(feature = "plugins")]

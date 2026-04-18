@@ -353,12 +353,36 @@ impl Agent {
     }
 }
 
-/// Create a new Tokio runtime for blocking sync APIs, returning
-/// [`AgentError::SyncInAsyncContext`] if a runtime is already active on
-/// the current thread.
-pub(super) fn new_blocking_runtime() -> Result<tokio::runtime::Runtime, AgentError> {
+fn new_blocking_runtime_with(
+    build: impl FnOnce() -> std::io::Result<tokio::runtime::Runtime>,
+) -> Result<tokio::runtime::Runtime, AgentError> {
     if tokio::runtime::Handle::try_current().is_ok() {
         return Err(AgentError::SyncInAsyncContext);
     }
-    Ok(tokio::runtime::Runtime::new().expect("failed to create tokio runtime"))
+    build().map_err(AgentError::runtime_init)
+}
+
+/// Create a new Tokio runtime for blocking sync APIs, returning
+/// [`AgentError::SyncInAsyncContext`] if a runtime is already active on
+/// the current thread and [`AgentError::RuntimeInit`] if runtime construction
+/// fails.
+pub(super) fn new_blocking_runtime() -> Result<tokio::runtime::Runtime, AgentError> {
+    new_blocking_runtime_with(tokio::runtime::Runtime::new)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::new_blocking_runtime_with;
+    use crate::error::AgentError;
+
+    #[test]
+    fn new_blocking_runtime_returns_runtime_init_error() {
+        let err = new_blocking_runtime_with(|| Err(std::io::Error::other("boom"))).unwrap_err();
+
+        assert!(matches!(err, AgentError::RuntimeInit { .. }));
+        assert_eq!(
+            err.to_string(),
+            "failed to create Tokio runtime for sync API"
+        );
+    }
 }

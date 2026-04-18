@@ -130,6 +130,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         app.focus == Focus::Conversation,
         app.blink_on,
         app.selected_tool_block,
+        app.selection.as_ref(),
     );
 
     // Render help panel

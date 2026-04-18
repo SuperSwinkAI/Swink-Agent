@@ -8,7 +8,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
-use crate::artifact::{ArtifactData, ArtifactStore};
+use crate::artifact::{ArtifactData, ArtifactStore, validate_session_id};
 use crate::tool::{AgentTool, AgentToolResult, ToolFuture, validated_schema_for};
 
 /// Built-in tool that saves content as a versioned artifact.
@@ -85,6 +85,10 @@ impl<S: ArtifactStore + 'static> AgentTool for SaveArtifactTool<S> {
                     None => return AgentToolResult::error("no session_id in state"),
                 }
             };
+
+            if let Err(e) = validate_session_id(&session_id) {
+                return AgentToolResult::error(format!("{e}"));
+            }
 
             let content_type = parsed
                 .content_type

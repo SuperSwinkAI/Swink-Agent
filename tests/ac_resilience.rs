@@ -6,6 +6,7 @@
 mod common;
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
 use common::{
@@ -15,9 +16,9 @@ use common::{
 use futures::stream::StreamExt;
 
 use swink_agent::{
-    Agent, AgentEvent, AgentMessage, AgentOptions, ContentBlock, CustomMessage,
-    DefaultRetryStrategy, LlmMessage, PolicyContext, PolicyVerdict, PreTurnPolicy, StopReason,
-    StreamErrorKind,
+    Agent, AgentError, AgentEvent, AgentMessage, AgentOptions, ContentBlock, CustomMessage,
+    DefaultRetryStrategy, LlmMessage, PolicyContext, PolicyVerdict, PreTurnPolicy, RetryStrategy,
+    StopReason, StreamErrorKind,
 };
 
 /// Inline max-turns policy for this test (the real one lives in swink-agent-policies).
@@ -46,6 +47,31 @@ impl PreTurnPolicy for MaxTurnsPolicy {
         } else {
             PolicyVerdict::Continue
         }
+    }
+}
+
+#[derive(Debug)]
+struct CountingRetryStrategy {
+    calls: Arc<AtomicU32>,
+    allow_retry: bool,
+}
+
+impl RetryStrategy for CountingRetryStrategy {
+    fn should_retry(&self, error: &AgentError, _attempt: u32) -> bool {
+        if matches!(error, AgentError::CacheMiss) {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            return self.allow_retry;
+        }
+
+        false
+    }
+
+    fn delay(&self, _attempt: u32) -> Duration {
+        Duration::ZERO
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 
@@ -505,6 +531,46 @@ async fn retry_exhaustion_surfaces_error() {
             assert!(
                 r.error.is_some() || r.stop_reason == StopReason::Error,
                 "exhausted retries should surface an error in the result"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn cache_miss_denied_by_retry_strategy_surfaces_cache_miss_error() {
+    let strategy_calls = Arc::new(AtomicU32::new(0));
+    let stream_fn = Arc::new(MockStreamFn::new(vec![error_events("cache miss", None)]));
+
+    let mut agent = Agent::new(
+        AgentOptions::new("test", default_model(), stream_fn, default_convert).with_retry_strategy(
+            Box::new(CountingRetryStrategy {
+                calls: Arc::clone(&strategy_calls),
+                allow_retry: false,
+            }),
+        ),
+    );
+
+    let result = agent.prompt_async(vec![user_msg("hello")]).await;
+
+    assert_eq!(
+        strategy_calls.load(Ordering::SeqCst),
+        1,
+        "cache miss should consult RetryStrategy exactly once"
+    );
+
+    match result {
+        Err(err) => assert!(
+            err.to_string().contains("cache miss"),
+            "expected cache miss error, got {err}"
+        ),
+        Ok(run) => {
+            assert_eq!(run.stop_reason, StopReason::Error);
+            assert!(
+                run.error
+                    .as_deref()
+                    .is_some_and(|error| error.contains("cache miss")),
+                "expected cache miss error, got {:?}",
+                run.error
             );
         }
     }

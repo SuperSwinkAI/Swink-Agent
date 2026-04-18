@@ -53,6 +53,41 @@ pub struct TrustFollowUp {
     pub expires_at: Instant,
 }
 
+/// Click-drag text selection within the conversation viewport.
+///
+/// Coordinates are cell offsets inside the conversation's inner area (after
+/// the border): `(row, col)` where `(0, 0)` is the top-left visible cell.
+#[derive(Debug, Clone, Copy)]
+pub struct Selection {
+    pub anchor: (u16, u16),
+    pub cursor: (u16, u16),
+    pub dragging: bool,
+}
+
+impl Selection {
+    pub const fn new(row: u16, col: u16) -> Self {
+        Self {
+            anchor: (row, col),
+            cursor: (row, col),
+            dragging: true,
+        }
+    }
+
+    /// Return `(start, end)` with `start <= end` in row-major order.
+    pub fn normalized(&self) -> ((u16, u16), (u16, u16)) {
+        if (self.anchor.0, self.anchor.1) <= (self.cursor.0, self.cursor.1) {
+            (self.anchor, self.cursor)
+        } else {
+            (self.cursor, self.anchor)
+        }
+    }
+
+    /// True when the selection covers at least one cell.
+    pub fn is_empty(&self) -> bool {
+        self.anchor == self.cursor
+    }
+}
+
 /// Message role for display styling.
 ///
 /// Type alias for [`DisplayRole`] from the core crate. Kept as an alias
@@ -218,4 +253,6 @@ pub struct App {
     /// Ticks remaining for the fade-out animation after steered messages are
     /// consumed. Zero means the overlay is not visible.
     pub(crate) steered_fade_ticks: u8,
+    /// Active click-drag selection in the conversation viewport.
+    pub(crate) selection: Option<Selection>,
 }

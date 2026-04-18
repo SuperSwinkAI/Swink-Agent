@@ -153,11 +153,13 @@ Agent integration uses `prompt_stream()` with an mpsc forwarder task that sends 
 |---|---|
 | `Enter` | Send message (when input is non-empty) |
 | `Shift+Enter` | Insert newline in input editor |
-| `Escape` | Abort running agent |
-| `Ctrl+C` | Abort agent or quit if idle |
+| `Escape` | Clear active chat selection; otherwise abort running agent |
+| `Ctrl+C` | Copy active chat selection; otherwise abort agent or quit if idle |
 | `Ctrl+Q` | Quit application |
 | `Up/Down` | Scroll conversation (conversation focus) / input history (input focus) |
 | `Page Up/Down` | Scroll conversation by page |
+| `Mouse wheel` | Scroll conversation (clears any active selection) |
+| `Click + drag` (conversation) | Anchor/extend in-app text selection; release copies to clipboard |
 | `Home` / `Ctrl+A` | Move cursor to start of line |
 | `End` / `Ctrl+E` | Move cursor to end of line |
 | `Tab` | Cycle focus between Input and Conversation |
@@ -185,7 +187,7 @@ Tab cycles focus between the Input Editor and Conversation View. The focused com
 1. **State update** — Terminal or agent events mutate `App` state and set the dirty flag
 2. **Layout** — `ratatui::Layout` computes widget areas from terminal dimensions
 3. **Render** — Each component renders into its allocated `Rect`:
-   - Conversation view: iterates messages, renders each with role-colored left border and markdown-formatted content
+   - Conversation view: iterates messages, renders each with role-colored left border and markdown-formatted content; after the `Paragraph` draws, a post-render pass captures per-row cell symbols (for selection copy) and applies `Modifier::REVERSED` to any cells inside the active selection range
    - Input editor: renders editable text with line number gutter and cursor
    - Tool panel: renders tool status list with braille spinners or completion badges
    - Status bar: renders formatted token counts, elapsed time, cost, and retry state
@@ -238,7 +240,22 @@ Two command prefixes are supported:
 - `/editor` — open external editor for prompt composition
 - `/plan` — toggle plan mode (read-only analysis)
 
-Clipboard operations use the `arboard` crate.
+Clipboard operations use the `arboard` crate — both hash-command copies (`#copy`, `#copy all`, `#copy code`) and in-app click-drag selection share the same bridge. When the clipboard is unavailable, the failure surfaces as a non-fatal system message.
+
+---
+
+## Chat Text Selection
+
+Because the TUI owns mouse capture for scroll-wheel support, the terminal emulator cannot do its own click-drag selection. The TUI provides an in-app equivalent:
+
+- `MouseEventKind::Down(Left)` inside the conversation viewport anchors a `Selection` at the pointer cell.
+- `Drag(Left)` extends `Selection::cursor` (clamped to the viewport edges so the highlight keeps extending when the pointer leaves the area).
+- `Up(Left)` writes the selected text to the system clipboard via `arboard` and leaves the highlight visible until explicitly cleared.
+- `Ctrl+C` with an active selection copies and clears; `Esc` clears without copying; starting a new click-drag or rolling the scroll wheel also clears the existing selection.
+
+Coordinates are `(row, col)` inside the conversation's inner area (after the block border). Copy text is extracted from per-row cell symbols captured during the same render pass that applied the highlight, so the clipboard reflects exactly what was on screen (wrapping included). The role-colored gutter (`│ `) is stripped per line and trailing whitespace is trimmed.
+
+Terminal-native bypasses continue to work unchanged on terminals that support them: Shift-drag on kitty / Alacritty / WezTerm / Ghostty, Option-drag on iTerm2, Fn-drag on Terminal.app.
 
 ---
 
