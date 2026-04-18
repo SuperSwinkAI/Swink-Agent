@@ -34,6 +34,7 @@ A pure-Rust library for building LLM-powered agentic loops. Provider-agnostic co
 - Errors stay in the message log — the loop keeps running. Typed `AgentError` variants for callers.
 - Events are push-only (`AgentEvent` stream). No inward mutation through events.
 - No `unsafe` code. No global mutable state.
+- Optional `tiktoken` support ships a built-in `TiktokenCounter` for more accurate context budgets.
 
 ## Quick Reference
 

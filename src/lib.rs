@@ -58,6 +58,8 @@ mod stream_error_kind;
 mod stream_middleware;
 mod sub_agent;
 mod task_core;
+#[cfg(feature = "tiktoken")]
+mod tiktoken_counter;
 pub(crate) mod tool;
 mod tool_execution_policy;
 pub(crate) mod tool_filter;
@@ -138,6 +140,8 @@ pub use stream::{
 };
 pub use stream_middleware::StreamMiddleware;
 pub use sub_agent::SubAgent;
+#[cfg(feature = "tiktoken")]
+pub use tiktoken_counter::{TiktokenCounter, TiktokenError};
 pub use tool::{
     AgentTool, AgentToolResult, ApprovalMode, IntoTool, ToolApproval, ToolApprovalRequest,
     ToolFuture, ToolMetadata, ToolParameters, redact_sensitive_values, selective_approve,
