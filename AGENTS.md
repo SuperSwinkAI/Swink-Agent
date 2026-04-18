@@ -14,6 +14,7 @@ Pure-Rust library for LLM-powered agentic loops. Provider-agnostic core with plu
 - **No parallel builds in agents.** Never have multiple subagents run `cargo build`/`test`/`clippy` concurrently — Cargo's global lock serializes them anyway. Run all compilation in the main conversation first; subagents should only read and analyze code.
 - **Check specs and docs first.** Before making large changes, read the relevant spec files in `specs/NNN-*/` and architecture docs in `docs/`. The project uses spec-driven development — changes should align with the agreed design.
 - **No GitHub Actions triggers.** Do not create, modify, or use workflows/events that run GitHub Actions for this repo.
+- **graphify skill available.** When the user types `/graphify`, invoke the Skill tool with `skill: "graphify"` before doing anything else — converts any input to a knowledge graph.
 
 ## Style (project-specific conventions)
 
