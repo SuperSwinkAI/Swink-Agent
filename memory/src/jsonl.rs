@@ -283,6 +283,39 @@ fn upsert_state_line(
     Ok(())
 }
 
+fn parse_state_line(line: &str, id: &str) -> io::Result<Option<serde_json::Value>> {
+    let value: serde_json::Value = match serde_json::from_str(line) {
+        Ok(value) => value,
+        Err(error) => {
+            if line.contains("\"_state\"") {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("corrupted state line in session {id}: {error}"),
+                ));
+            }
+            return Ok(None);
+        }
+    };
+
+    let Some(state_marker) = value.get("_state") else {
+        return Ok(None);
+    };
+
+    if state_marker.as_bool() != Some(true) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("invalid state marker in session {id}: expected `_state: true`"),
+        ));
+    }
+
+    Ok(Some(
+        value
+            .get("data")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null),
+    ))
+}
+
 fn append_records(
     path: &Path,
     id: &str,
@@ -567,7 +600,7 @@ impl SessionStore for JsonlSessionStore {
 
         let (_, lines) = read_meta_and_message_lines(&path, id)?;
         for line in lines {
-            if let Ok(SessionRecord::State(state)) = SessionRecord::parse(&line) {
+            if let Some(state) = parse_state_line(&line, id)? {
                 return Ok(Some(state));
             }
         }
@@ -1077,6 +1110,26 @@ mod tests {
 
         let (_, messages) = store.load("test-state", None).unwrap();
         assert_eq!(messages.len(), 2);
+    }
+
+    #[test]
+    fn load_state_errors_on_corrupted_state_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = JsonlSessionStore::new(dir.path().to_path_buf()).unwrap();
+
+        let meta = fresh_meta("corrupt-state");
+        store
+            .save("corrupt-state", &meta, &[user_msg("hello", 1)])
+            .unwrap();
+
+        let path = session_path(dir.path(), "corrupt-state");
+        let mut contents = std::fs::read_to_string(&path).unwrap();
+        contents.push_str("{\"_state\":true,\"data\":\n");
+        std::fs::write(&path, contents).unwrap();
+
+        let err = store.load_state("corrupt-state").unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("state line"));
     }
 
     #[test]
