@@ -6,6 +6,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
+use rmcp::transport::streamable_http_server::{
+    StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
+};
 use swink_agent::{AgentEvent, AgentTool, ContentBlock, SessionState};
 use swink_agent_mcp::{
     McpConnection, McpConnectionStatus, McpManager, McpServerConfig, McpTool, McpTransport,
@@ -196,6 +199,134 @@ async fn monitor_detects_transport_close_and_emits_event() {
         }
         other => panic!("unexpected event: {other:?}"),
     }
+}
+
+async fn current_session_id(session_manager: &Arc<LocalSessionManager>) -> String {
+    let sessions = session_manager.sessions.read().await;
+    sessions
+        .keys()
+        .next()
+        .map(std::string::ToString::to_string)
+        .expect("session should exist")
+}
+
+fn assert_mcp_event(
+    event: AgentEvent,
+    server_name: &str,
+    expect_discovery: bool,
+) {
+    match (expect_discovery, event) {
+        (
+            false,
+            AgentEvent::McpServerConnected {
+                server_name: actual,
+            },
+        ) => assert_eq!(actual, server_name),
+        (
+            true,
+            AgentEvent::McpToolsDiscovered {
+                server_name: actual,
+                tool_count,
+            },
+        ) => {
+            assert_eq!(actual, server_name);
+            assert!(tool_count >= 1, "expected at least one discovered tool");
+        }
+        (_, other) => panic!("unexpected MCP lifecycle event: {other:?}"),
+    }
+}
+
+/// SSE transport keeps the wrapper connected while rmcp transparently
+/// re-initializes after the server drops the active session.
+#[tokio::test]
+async fn sse_session_expiry_recovers_without_wrapper_disconnect() {
+    let (event_tx, mut event_rx) = unbounded_channel::<AgentEvent>();
+    let session_manager = Arc::new(LocalSessionManager::default());
+    let shutdown = tokio_util::sync::CancellationToken::new();
+
+    let mock_cfg = common::MockServerConfig::new(vec![]);
+    let server = common::MockMcpServer::from_config(&mock_cfg);
+    let service = StreamableHttpService::new(
+        move || Ok(server.clone()),
+        Arc::clone(&session_manager),
+        StreamableHttpServerConfig::default()
+            .with_sse_keep_alive(None)
+            .with_cancellation_token(shutdown.child_token()),
+    );
+
+    let router = axum::Router::new().nest_service("/mcp", service);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("listener should bind");
+    let addr = listener.local_addr().expect("listener should expose an addr");
+    let server_task = tokio::spawn({
+        let shutdown = shutdown.clone();
+        async move {
+            let _ = axum::serve(listener, router)
+                .with_graceful_shutdown(async move { shutdown.cancelled_owned().await })
+                .await;
+        }
+    });
+
+    let conn = McpConnection::connect(
+        McpServerConfig {
+            name: "sse-recovery-server".into(),
+            transport: McpTransport::Sse {
+                url: format!("http://{addr}/mcp"),
+                bearer_token: None,
+            },
+            tool_prefix: None,
+            tool_filter: None,
+            requires_approval: false,
+        },
+        Some(event_tx),
+    )
+    .await
+    .expect("SSE connection should succeed");
+
+    assert_mcp_event(event_rx.try_recv().expect("connect event"), "sse-recovery-server", false);
+    assert_mcp_event(
+        event_rx.try_recv().expect("discovery event"),
+        "sse-recovery-server",
+        true,
+    );
+
+    let original_session_id = current_session_id(&session_manager).await;
+
+    {
+        let mut sessions = session_manager.sessions.write().await;
+        sessions.clear();
+    }
+
+    let result = conn
+        .call_tool("echo", serde_json::json!({ "text": "reconnected" }))
+        .await
+        .expect("tool call should transparently recover after session expiry");
+    let agent_result = swink_agent_mcp::convert::call_result_to_agent_result(&result);
+    let text = ContentBlock::extract_text(&agent_result.content);
+    assert!(
+        text.contains("reconnected"),
+        "recovered call should still reach the server, got: {text}"
+    );
+    assert_eq!(
+        conn.status(),
+        McpConnectionStatus::Connected,
+        "wrapper should remain connected while rmcp re-establishes the session"
+    );
+
+    let replacement_session_id = current_session_id(&session_manager).await;
+    assert_ne!(
+        replacement_session_id, original_session_id,
+        "transport recovery should create a fresh server session"
+    );
+    assert!(
+        event_rx.try_recv().is_err(),
+        "wrapper monitor should not emit a disconnect for transparent SSE recovery"
+    );
+
+    conn.shutdown().await;
+    shutdown.cancel();
+    let _ = server_task.await;
 }
 
 /// Issue #611: `McpServerConnected` is emitted once the handshake completes.

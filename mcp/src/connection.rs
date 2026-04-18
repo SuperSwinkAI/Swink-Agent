@@ -3,7 +3,7 @@
 //! Wraps an `rmcp` client session, handling tool discovery and providing
 //! access to the peer for tool call forwarding. A background monitor task
 //! awaits the service lifecycle and emits a disconnect event when the
-//! transport closes unexpectedly.
+//! underlying service stops running.
 
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -164,7 +164,12 @@ impl McpConnection {
     ///
     /// Supports stdio and SSE (HTTP) transports. Spawns a background lifecycle
     /// monitor that sends `AgentEvent::McpServerDisconnected` on `event_tx`
-    /// when the transport closes unexpectedly.
+    /// when the underlying service terminates.
+    ///
+    /// For SSE, transient stream drops and stale-session recovery are handled
+    /// by rmcp's streamable HTTP transport. This wrapper only transitions to
+    /// [`McpConnectionStatus::Disconnected`] once rmcp has given up and the
+    /// service itself exits.
     pub async fn connect(
         config: McpServerConfig,
         event_tx: Option<UnboundedSender<AgentEvent>>,
@@ -384,8 +389,8 @@ fn client_info() -> ClientInfo {
 
 /// Spawn a background task that awaits the service lifecycle.
 ///
-/// When the transport closes with `QuitReason::Closed` (remote disconnect or
-/// crash), the shared state is updated to `Disconnected` and
+/// When the underlying service exits with `QuitReason::Closed` or a join error,
+/// the shared state is updated to `Disconnected` and
 /// `McpServerDisconnected` is sent on `event_tx`. Voluntary cancellations
 /// (`QuitReason::Cancelled`) and join errors are silently ignored since they
 /// are initiated by the caller via `shutdown()`.
