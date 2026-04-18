@@ -518,3 +518,99 @@ async fn hash_help_toggles_panel() {
 
     assert!(app.help_panel.visible);
 }
+
+/// Helper: type a literal string into the input editor.
+fn type_input(app: &mut App, s: &str) {
+    for c in s.chars() {
+        app.input.insert_char(c);
+    }
+}
+
+/// Regression: secrets submitted via `#key <provider> <api-key>` must NOT
+/// be recallable via Up-arrow history navigation. Covers issue #614.
+#[tokio::test]
+async fn hash_key_submission_is_not_recallable_via_history() {
+    let mut app = App::new(TuiConfig::default());
+
+    type_input(&mut app, "#key openai sk-leak-sentinel-xyz");
+    app.submit_input();
+
+    // Navigate history up — nothing should come back.
+    app.input.history_prev();
+
+    assert_eq!(
+        app.input.lines(),
+        &[String::new()],
+        "sensitive `#key` submission must not be recallable via history"
+    );
+    for line in app.input.lines() {
+        assert!(
+            !line.contains("sk-leak-sentinel-xyz"),
+            "secret value leaked into recalled history line: {line}"
+        );
+    }
+}
+
+/// Regression: multi-line submissions containing a `#key` line must be
+/// withheld from history in full — not just the key line.
+#[tokio::test]
+async fn multiline_hash_key_submission_is_fully_redacted() {
+    let mut app = App::new(TuiConfig::default());
+
+    type_input(&mut app, "preamble");
+    app.input.insert_newline();
+    type_input(&mut app, "#key anthropic sk-ant-top-secret-multi");
+    app.input.insert_newline();
+    type_input(&mut app, "epilogue");
+
+    app.submit_input();
+
+    app.input.history_prev();
+
+    for line in app.input.lines() {
+        assert!(
+            !line.contains("sk-ant-top-secret-multi"),
+            "multi-line sensitive entry leaked into history: {line}"
+        );
+    }
+    assert_eq!(
+        app.input.lines(),
+        &[String::new()],
+        "multi-line sensitive entry must be fully absent from history"
+    );
+}
+
+/// Regression: non-sensitive commands must continue to enter history so
+/// users can recall them with Up-arrow.
+#[tokio::test]
+async fn non_sensitive_command_is_recallable_via_history() {
+    let mut app = App::new(TuiConfig::default());
+
+    type_input(&mut app, "/help");
+    app.submit_input();
+
+    app.input.history_prev();
+
+    assert_eq!(
+        app.input.lines(),
+        &["/help".to_string()],
+        "non-sensitive command should remain recallable via history"
+    );
+}
+
+/// Regression: plain text submissions continue to enter history.
+#[tokio::test]
+async fn plain_text_submission_is_recallable_via_history() {
+    let mut app = App::new(TuiConfig::default());
+
+    type_input(&mut app, "hello world");
+    app.submit_input();
+
+    app.input.history_prev();
+
+    assert_eq!(
+        app.input.lines(),
+        &["hello world".to_string()],
+        "plain text should remain recallable via history"
+    );
+}

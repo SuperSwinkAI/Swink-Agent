@@ -86,6 +86,37 @@ pub fn execute_command(input: &str) -> CommandResult {
     CommandResult::NotACommand
 }
 
+/// Classify whether the given input carries a user-supplied secret.
+///
+/// The classification runs BEFORE the input is persisted to the editor's
+/// history buffer, so that callers can skip history persistence for sensitive
+/// submissions. Currently this covers `#key <provider> <api-key>` entries;
+/// other hash/slash commands are treated as non-sensitive.
+///
+/// Detection is intentionally permissive: any line (in possibly multi-line
+/// input) whose trimmed content starts with `#key ` followed by both a
+/// provider and a key marks the whole submission as sensitive so that the
+/// full entry is withheld from history, not just the offending line.
+#[must_use]
+pub fn is_sensitive_input(input: &str) -> bool {
+    input.lines().any(|line| {
+        let Some(rest) = line.trim_start().strip_prefix('#') else {
+            return false;
+        };
+        let Some(after_key) = rest.trim_start().strip_prefix("key") else {
+            return false;
+        };
+        // Require whitespace after `key` so `#keys` is NOT flagged.
+        let Some(args) = after_key.strip_prefix(|c: char| c.is_whitespace()) else {
+            return false;
+        };
+        // Must contain both a provider and a key.
+        args.trim()
+            .split_once(char::is_whitespace)
+            .is_some_and(|(_, key)| !key.trim().is_empty())
+    })
+}
+
 fn execute_hash_command(cmd: &str) -> CommandResult {
     match cmd {
         "help" => CommandResult::ToggleHelp,
@@ -444,5 +475,49 @@ mod tests {
         assert_ne!(ApprovalModeArg::On, ApprovalModeArg::Off);
         // Ensure Debug is implemented
         let _ = format!("{:?}", ApprovalModeArg::On);
+    }
+
+    // --- Sensitive input classification ---
+
+    #[test]
+    fn hash_key_with_provider_and_key_is_sensitive() {
+        assert!(is_sensitive_input("#key openai sk-leak-sentinel-xyz"));
+    }
+
+    #[test]
+    fn hash_key_with_leading_whitespace_is_sensitive() {
+        assert!(is_sensitive_input("   #key anthropic sk-ant-xyz   "));
+    }
+
+    #[test]
+    fn hash_key_only_is_not_sensitive() {
+        // `#key` alone (no provider/key) exposes no secret.
+        assert!(!is_sensitive_input("#key"));
+    }
+
+    #[test]
+    fn hash_key_with_provider_only_is_not_sensitive() {
+        // No key present yet; treat as non-secret so the usage hint is
+        // recallable via history.
+        assert!(!is_sensitive_input("#key openai"));
+    }
+
+    #[test]
+    fn hash_keys_list_is_not_sensitive() {
+        // `#keys` lists provider names and carries no secret material.
+        assert!(!is_sensitive_input("#keys"));
+    }
+
+    #[test]
+    fn plain_text_is_not_sensitive() {
+        assert!(!is_sensitive_input("hello world"));
+        assert!(!is_sensitive_input("/help"));
+        assert!(!is_sensitive_input("#help"));
+    }
+
+    #[test]
+    fn multiline_with_embedded_key_is_sensitive() {
+        let input = "line one\n#key openai sk-embedded\nline three";
+        assert!(is_sensitive_input(input));
     }
 }

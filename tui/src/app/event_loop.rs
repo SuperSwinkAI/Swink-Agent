@@ -455,7 +455,17 @@ impl App {
 
     #[allow(clippy::too_many_lines)]
     pub(super) fn submit_input(&mut self) {
-        let Some(text) = self.input.submit() else {
+        // Classify the pending input BEFORE draining the editor so that
+        // secret-bearing commands (e.g. `#key <provider> <api-key>`) can be
+        // submitted without entering the input history. See issue #614.
+        let pending = self.input.lines().join("\n");
+        let sensitive = commands::is_sensitive_input(&pending);
+        let submit_result = if sensitive {
+            self.input.submit_without_history()
+        } else {
+            self.input.submit()
+        };
+        let Some(text) = submit_result else {
             return;
         };
 
