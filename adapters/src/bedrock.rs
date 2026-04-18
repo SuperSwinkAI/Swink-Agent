@@ -235,7 +235,6 @@ struct BedrockStreamState {
     /// Bedrock block index → `(BlockType, harness content_index)`.
     provider_blocks: HashMap<usize, (BlockType, usize)>,
     stop_reason: Option<String>,
-    usage: Option<Usage>,
     /// Whether `AssistantMessageEvent::Start` has been emitted.
     started: bool,
 }
@@ -246,7 +245,6 @@ impl BedrockStreamState {
             blocks: BlockAccumulator::default(),
             provider_blocks: HashMap::new(),
             stop_reason: None,
-            usage: None,
             started: false,
         }
     }
@@ -266,6 +264,14 @@ fn cancelled_event(message: &'static str) -> AssistantMessageEvent {
         usage: None,
         error_kind: None,
     }
+}
+
+fn unexpected_eof_events(state: &mut BedrockStreamState) -> Vec<AssistantMessageEvent> {
+    let mut events = finalize::finalize_blocks(state);
+    events.push(AssistantMessageEvent::error_network(
+        "Bedrock stream ended unexpectedly",
+    ));
+    prefix_pre_start_terminal_error(events, &mut state.started)
 }
 
 fn prefix_pre_start_terminal_error(
@@ -549,34 +555,7 @@ impl BedrockStreamFn {
                                             return Some((events, StreamUnfoldState::Done));
                                         }
                                         None => {
-                                            // Stream ended — emit Done if we haven't yet
-                                            let mut events = finalize::finalize_blocks(state.as_mut());
-                                            if !events.is_empty() || state.stop_reason.is_some() {
-                                                let usage = state.usage.take().unwrap_or_default();
-                                                let stop_reason = map_stop_reason(
-                                                    state.stop_reason.as_deref(),
-                                                );
-                                                match stop_reason {
-                                                    Ok(sr) => events.push(
-                                                        AssistantMessageEvent::Done {
-                                                            stop_reason: sr,
-                                                            usage,
-                                                            cost: Cost::default(),
-                                                        },
-                                                    ),
-                                                    Err(err) => events.push(err),
-                                                }
-                                            }
-                                            if events.is_empty() {
-                                                // Stream ended without any terminal event
-                                                events.push(AssistantMessageEvent::error_network(
-                                                    "Bedrock stream ended unexpectedly",
-                                                ));
-                                            }
-                                            let events = prefix_pre_start_terminal_error(
-                                                events,
-                                                &mut state.started,
-                                            );
+                                            let events = unexpected_eof_events(state.as_mut());
                                             return Some((events, StreamUnfoldState::Done));
                                         }
                                     }
@@ -1576,6 +1555,74 @@ mod tests {
         let events = process_smithy_message(&msg, &mut state);
         assert_eq!(events.len(), 1);
         assert!(matches!(events[0], AssistantMessageEvent::Error { .. }));
+    }
+
+    #[test]
+    fn unexpected_eof_after_message_stop_is_network_error_not_done() {
+        let mut state = BedrockStreamState::new();
+
+        parse_event_frame("messageStart", br#"{"role":"assistant"}"#, &mut state).unwrap();
+        parse_event_frame(
+            "contentBlockStart",
+            br#"{"contentBlockIndex":0,"start":{"type":"text"}}"#,
+            &mut state,
+        )
+        .unwrap();
+        parse_event_frame(
+            "contentBlockDelta",
+            br#"{"contentBlockIndex":0,"delta":{"type":"text","text":"partial"}}"#,
+            &mut state,
+        )
+        .unwrap();
+        parse_event_frame(
+            "contentBlockStop",
+            br#"{"contentBlockIndex":0}"#,
+            &mut state,
+        )
+        .unwrap();
+        parse_event_frame("messageStop", br#"{"stopReason":"end_turn"}"#, &mut state).unwrap();
+
+        let events = unexpected_eof_events(&mut state);
+
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, AssistantMessageEvent::Done { .. })),
+            "bare EOF must not synthesize a Done event"
+        );
+        assert!(matches!(
+            events.last(),
+            Some(AssistantMessageEvent::Error {
+                error_kind: Some(swink_agent::StreamErrorKind::Network),
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn unexpected_eof_finalizes_open_blocks_before_error() {
+        let mut state = BedrockStreamState::new();
+
+        parse_event_frame("messageStart", br#"{"role":"assistant"}"#, &mut state).unwrap();
+        parse_event_frame(
+            "contentBlockStart",
+            br#"{"contentBlockIndex":0,"start":{"type":"text"}}"#,
+            &mut state,
+        )
+        .unwrap();
+
+        let events = unexpected_eof_events(&mut state);
+
+        assert!(matches!(
+            events.as_slice(),
+            [
+                AssistantMessageEvent::TextEnd { content_index: 0 },
+                AssistantMessageEvent::Error {
+                    error_kind: Some(swink_agent::StreamErrorKind::Network),
+                    ..
+                }
+            ]
+        ));
     }
 
     #[test]
