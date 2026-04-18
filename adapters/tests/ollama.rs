@@ -580,16 +580,68 @@ async fn ollama_unexpected_stream_end() {
     let ollama = OllamaStreamFn::new(server.uri());
     let events = collect_events(&ollama).await;
 
-    let has_unexpected_end = events.iter().any(|e| match e {
-        AssistantMessageEvent::Error { error_message, .. } => error_message
-            .to_lowercase()
-            .contains("stream ended unexpectedly"),
-        _ => false,
-    });
-    assert!(
-        has_unexpected_end,
-        "expected error about 'stream ended unexpectedly', got: {events:?}"
-    );
+    let error = events
+        .iter()
+        .find(|event| matches!(event, AssistantMessageEvent::Error { .. }))
+        .expect("expected terminal error");
+    match error {
+        AssistantMessageEvent::Error {
+            error_message,
+            error_kind,
+            ..
+        } => {
+            assert!(
+                error_message
+                    .to_lowercase()
+                    .contains("stream ended unexpectedly"),
+                "expected error about 'stream ended unexpectedly', got: {error_message}"
+            );
+            assert_eq!(
+                *error_kind, None,
+                "unexpected Ollama EOF should not be marked retryable network error"
+            );
+        }
+        other => panic!("expected Error event, got {other:?}"),
+    }
+}
+
+/// 15. Malformed NDJSON should surface as a non-network terminal stream error.
+#[tokio::test]
+async fn ollama_malformed_ndjson_is_non_network_error() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/chat"))
+        .respond_with(ndjson_response(&[
+            r#"{"message":{"role":"assistant","content":"partial"},"done":false}"#,
+            "{not valid json at all!!!}",
+        ]))
+        .mount(&server)
+        .await;
+
+    let ollama = OllamaStreamFn::new(server.uri());
+    let events = collect_events(&ollama).await;
+
+    let error = events
+        .iter()
+        .find(|event| matches!(event, AssistantMessageEvent::Error { .. }))
+        .expect("expected terminal error");
+    match error {
+        AssistantMessageEvent::Error {
+            error_message,
+            error_kind,
+            ..
+        } => {
+            assert!(
+                error_message.contains("Ollama JSON parse error"),
+                "expected parse diagnostic, got: {error_message}"
+            );
+            assert_eq!(
+                *error_kind, None,
+                "malformed Ollama NDJSON should not be marked retryable network error"
+            );
+        }
+        other => panic!("expected Error event, got {other:?}"),
+    }
 }
 
 /// 15. A chunk with an empty thinking string should be skipped — no `ThinkingStart`
