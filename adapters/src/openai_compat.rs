@@ -251,6 +251,16 @@ impl MessageConverter for OaiConverter {
                     arguments,
                     ..
                 } => {
+                    // Issue #619: loop-level scrub coerces incomplete tool-use blocks
+                    // into object-typed arguments before reaching here. Debug builds
+                    // assert the invariant to catch regressions. OpenAI-compat is the
+                    // most dangerous case: `Value::Null.to_string()` is the literal
+                    // string "null", which the provider accepts structurally but then
+                    // rejects when parsing arguments.
+                    debug_assert!(
+                        arguments.is_object(),
+                        "openai-compat adapter: function.arguments must stringify from a JSON object (got {arguments:?}); loop-level sanitize_incomplete_tool_calls should have coerced this before dispatch"
+                    );
                     tool_calls.push(OaiToolCallRequest {
                         id: id.clone(),
                         r#type: "function".to_string(),
@@ -899,5 +909,47 @@ mod tests {
             chunk.choices[0].delta.reasoning_content.as_deref(),
             Some("step by step")
         );
+    }
+
+    // ── Issue #619: incomplete tool_use sanitization ─────────────────────
+
+    /// Regression for #619: after the loop-level scrub runs, an assistant
+    /// message that originally carried `arguments: Null` with `partial_json`
+    /// set must serialize with `function.arguments: "{}"` (a stringified empty
+    /// object) rather than the literal string `"null"` that `Value::Null.to_string()`
+    /// would produce. Otherwise OpenAI-compatible providers reject the request
+    /// when they try to parse the arguments.
+    #[test]
+    fn assistant_message_sanitized_tool_call_serializes_empty_object_string() {
+        use swink_agent::AssistantMessage;
+
+        let mut assistant = AssistantMessage {
+            content: vec![ContentBlock::ToolCall {
+                id: "call_01".into(),
+                name: "read_file".into(),
+                arguments: Value::Null,
+                partial_json: Some(r#"{"path": "/tm"#.into()),
+            }],
+            provider: "openai".into(),
+            model_id: "gpt-4o-mini".into(),
+            usage: Usage::default(),
+            cost: Cost::default(),
+            stop_reason: StopReason::Length,
+            error_message: None,
+            error_kind: None,
+            timestamp: 0,
+            cache_hint: None,
+        };
+
+        swink_agent::sanitize_incomplete_tool_calls(&mut assistant);
+
+        let oai_msg = OaiConverter::assistant_message(&assistant);
+        assert_eq!(oai_msg.role, "assistant");
+        let tool_calls = oai_msg.tool_calls.expect("tool_calls must be Some");
+        assert_eq!(tool_calls.len(), 1);
+        assert_eq!(tool_calls[0].function.name, "read_file");
+        // Critical: the stringified arguments must be a valid JSON object, NOT
+        // the literal "null" that `Value::Null.to_string()` would produce.
+        assert_eq!(tool_calls[0].function.arguments, "{}");
     }
 }
