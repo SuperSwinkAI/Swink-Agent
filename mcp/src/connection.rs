@@ -52,6 +52,12 @@ pub struct McpConnection {
     pub discovered_tools: Vec<rmcp::model::Tool>,
     /// Shared connection state used by callers, shutdown, and the monitor task.
     state: Arc<Mutex<McpConnectionState>>,
+    /// Optional event channel for emitting MCP lifecycle events such as
+    /// `McpToolCallStarted` / `McpToolCallCompleted`. Connect, discovery, and
+    /// disconnect events are emitted through this sender during
+    /// [`connect`](Self::connect) / [`from_service`](Self::from_service) and
+    /// the background monitor task respectively.
+    event_tx: Option<UnboundedSender<AgentEvent>>,
 }
 
 impl std::fmt::Debug for McpConnection {
@@ -86,7 +92,16 @@ impl McpConnection {
                 peer: None,
                 monitor: None,
             })),
+            event_tx: None,
         }
+    }
+
+    /// Shared reference to the optional event sender.
+    ///
+    /// Used by tool wrappers to emit `McpToolCallStarted` /
+    /// `McpToolCallCompleted` around forwarded calls.
+    pub(crate) const fn event_tx(&self) -> Option<&UnboundedSender<AgentEvent>> {
+        self.event_tx.as_ref()
     }
 
     /// Create a connection from a pre-established rmcp service.
@@ -100,6 +115,11 @@ impl McpConnection {
         event_tx: Option<UnboundedSender<AgentEvent>>,
     ) -> Result<Self, McpError> {
         let peer = service.peer().clone();
+
+        // Handshake already completed before we were given the service.
+        emit_event(event_tx.as_ref(), || {
+            crate::event::server_connected(&config.name)
+        });
 
         let discovered_tools =
             peer.list_all_tools()
@@ -115,18 +135,28 @@ impl McpConnection {
             "MCP server connected via provided service, tools discovered"
         );
 
+        emit_event(event_tx.as_ref(), || {
+            crate::event::tools_discovered(&config.name, discovered_tools.len())
+        });
+
         let state = Arc::new(Mutex::new(McpConnectionState {
             status: McpConnectionStatus::Connected,
             peer: Some(peer),
             monitor: None,
         }));
-        let monitor = spawn_monitor(service, Arc::clone(&state), config.name.clone(), event_tx);
+        let monitor = spawn_monitor(
+            service,
+            Arc::clone(&state),
+            config.name.clone(),
+            event_tx.clone(),
+        );
         state.lock().unwrap_or_else(PoisonError::into_inner).monitor = Some(monitor);
 
         Ok(Self {
             config,
             discovered_tools,
             state,
+            event_tx,
         })
     }
 
@@ -148,6 +178,11 @@ impl McpConnection {
             }
         };
 
+        // Handshake succeeded, transport is live.
+        emit_event(event_tx.as_ref(), || {
+            crate::event::server_connected(&config.name)
+        });
+
         let peer = service.peer().clone();
 
         // Discover tools from the server.
@@ -165,18 +200,28 @@ impl McpConnection {
             "MCP server connected, tools discovered"
         );
 
+        emit_event(event_tx.as_ref(), || {
+            crate::event::tools_discovered(&config.name, discovered_tools.len())
+        });
+
         let state = Arc::new(Mutex::new(McpConnectionState {
             status: McpConnectionStatus::Connected,
             peer: Some(peer),
             monitor: None,
         }));
-        let monitor = spawn_monitor(service, Arc::clone(&state), config.name.clone(), event_tx);
+        let monitor = spawn_monitor(
+            service,
+            Arc::clone(&state),
+            config.name.clone(),
+            event_tx.clone(),
+        );
         state.lock().unwrap_or_else(PoisonError::into_inner).monitor = Some(monitor);
 
         Ok(Self {
             config,
             discovered_tools,
             state,
+            event_tx,
         })
     }
 
@@ -314,6 +359,19 @@ impl Drop for McpConnection {
         if let Some(monitor) = state.monitor.take() {
             monitor.abort();
         }
+    }
+}
+
+/// Send an event on the optional channel, ignoring closed-receiver errors.
+///
+/// The emitter is lazy so we never allocate event payloads when no channel
+/// is wired.
+pub fn emit_event(
+    event_tx: Option<&UnboundedSender<AgentEvent>>,
+    build: impl FnOnce() -> AgentEvent,
+) {
+    if let Some(tx) = event_tx {
+        let _ = tx.send(build());
     }
 }
 

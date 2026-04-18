@@ -161,6 +161,11 @@ async fn monitor_detects_transport_close_and_emits_event() {
         "should start Connected"
     );
 
+    // Drain the connect + discovery events emitted during construction so
+    // only the disconnect event remains to be asserted below.
+    let _connect = event_rx.try_recv().expect("connect event");
+    let _discovery = event_rx.try_recv().expect("discovery event");
+
     let _ = cancel_tx.send(());
     let _ = server_task.await;
 
@@ -190,6 +195,264 @@ async fn monitor_detects_transport_close_and_emits_event() {
             assert_eq!(server_name, "crash-test-server");
         }
         other => panic!("unexpected event: {other:?}"),
+    }
+}
+
+/// Issue #611: `McpServerConnected` is emitted once the handshake completes.
+///
+/// Uses `from_service` to take a pre-established rmcp service past the
+/// handshake boundary and asserts the connect event is the first lifecycle
+/// event observed.
+#[tokio::test]
+async fn connected_event_emitted_after_handshake() {
+    let (event_tx, mut event_rx) = unbounded_channel::<AgentEvent>();
+
+    let mock_cfg = common::MockServerConfig::new(vec![]);
+    let service = common::spawn_mock_server_with_client(&mock_cfg).await;
+
+    let config = McpServerConfig {
+        name: "connect-event-server".into(),
+        transport: McpTransport::Stdio {
+            command: "mock".into(),
+            args: vec![],
+            env: HashMap::default(),
+        },
+        tool_prefix: None,
+        tool_filter: None,
+        requires_approval: false,
+    };
+
+    let _conn = McpConnection::from_service(config, service, Some(event_tx))
+        .await
+        .expect("connection should succeed");
+
+    let first = event_rx.try_recv().expect("connect event should be queued");
+    match first {
+        AgentEvent::McpServerConnected { server_name } => {
+            assert_eq!(server_name, "connect-event-server");
+        }
+        other => panic!("expected McpServerConnected first, got: {other:?}"),
+    }
+}
+
+/// Issue #611: `McpToolsDiscovered` is emitted after the list_tools round trip
+/// and carries the discovered tool count.
+#[tokio::test]
+async fn tools_discovered_event_emitted_after_discovery() {
+    let (event_tx, mut event_rx) = unbounded_channel::<AgentEvent>();
+
+    let mock_cfg = common::MockServerConfig::new(vec![]);
+    let service = common::spawn_mock_server_with_client(&mock_cfg).await;
+
+    let config = McpServerConfig {
+        name: "discovery-event-server".into(),
+        transport: McpTransport::Stdio {
+            command: "mock".into(),
+            args: vec![],
+            env: HashMap::default(),
+        },
+        tool_prefix: None,
+        tool_filter: None,
+        requires_approval: false,
+    };
+
+    let conn = McpConnection::from_service(config, service, Some(event_tx))
+        .await
+        .expect("connection should succeed");
+
+    // Drain events in order and assert we see connect followed by discovery.
+    let connect_evt = event_rx.try_recv().expect("connect event should fire");
+    assert!(
+        matches!(connect_evt, AgentEvent::McpServerConnected { .. }),
+        "first event should be McpServerConnected, got: {connect_evt:?}"
+    );
+
+    let discovery_evt = event_rx.try_recv().expect("discovery event should fire");
+    match discovery_evt {
+        AgentEvent::McpToolsDiscovered {
+            server_name,
+            tool_count,
+        } => {
+            assert_eq!(server_name, "discovery-event-server");
+            assert_eq!(
+                tool_count,
+                conn.discovered_tools.len(),
+                "discovery event tool_count should match connection's discovered tool list"
+            );
+        }
+        other => panic!("expected McpToolsDiscovered after connect, got: {other:?}"),
+    }
+}
+
+/// Issue #611: Forwarded tool calls are bracketed by
+/// `McpToolCallStarted` / `McpToolCallCompleted`, with `is_error=false` for
+/// successful calls.
+#[tokio::test]
+async fn tool_call_events_bracket_successful_call() {
+    use swink_agent::AgentTool;
+
+    let (event_tx, mut event_rx) = unbounded_channel::<AgentEvent>();
+
+    let mock_cfg = common::MockServerConfig::new(vec![]);
+    let service = common::spawn_mock_server_with_client(&mock_cfg).await;
+
+    let config = McpServerConfig {
+        name: "call-event-server".into(),
+        transport: McpTransport::Stdio {
+            command: "mock".into(),
+            args: vec![],
+            env: HashMap::default(),
+        },
+        tool_prefix: None,
+        tool_filter: None,
+        requires_approval: false,
+    };
+
+    let conn = McpConnection::from_service(config, service, Some(event_tx))
+        .await
+        .expect("connection should succeed");
+
+    // Drain the connect + discovery events emitted during construction.
+    let _connect = event_rx.try_recv().expect("connect event");
+    let _discovery = event_rx.try_recv().expect("discovery event");
+
+    let echo_def = conn
+        .discovered_tools
+        .iter()
+        .find(|t| t.name == "echo")
+        .expect("mock server advertises echo tool")
+        .clone();
+    let conn = Arc::new(conn);
+    let tool = McpTool::new(
+        &echo_def,
+        None,
+        "call-event-server",
+        false,
+        Arc::clone(&conn),
+    );
+
+    let cancel = tokio_util::sync::CancellationToken::new();
+    let state = Arc::new(std::sync::RwLock::new(SessionState::default()));
+    let result = tool
+        .execute(
+            "call-1",
+            serde_json::json!({"text": "hello"}),
+            cancel,
+            None,
+            state,
+            None,
+        )
+        .await;
+
+    assert!(!result.is_error, "echo call should succeed");
+
+    let started = event_rx.try_recv().expect("tool_call_started event");
+    match started {
+        AgentEvent::McpToolCallStarted {
+            server_name,
+            tool_name,
+        } => {
+            assert_eq!(server_name, "call-event-server");
+            assert_eq!(tool_name, "echo");
+        }
+        other => panic!("expected McpToolCallStarted first, got: {other:?}"),
+    }
+
+    let completed = event_rx.try_recv().expect("tool_call_completed event");
+    match completed {
+        AgentEvent::McpToolCallCompleted {
+            server_name,
+            tool_name,
+            is_error,
+        } => {
+            assert_eq!(server_name, "call-event-server");
+            assert_eq!(tool_name, "echo");
+            assert!(
+                !is_error,
+                "successful echo call should report is_error=false"
+            );
+        }
+        other => panic!("expected McpToolCallCompleted, got: {other:?}"),
+    }
+}
+
+/// Issue #611: A failing tool call still emits `McpToolCallCompleted` with
+/// `is_error=true` — the completion event is guaranteed even in the error
+/// path so observers never see an unclosed bracket.
+#[tokio::test]
+async fn tool_call_completed_event_reports_error_on_failure() {
+    use swink_agent::AgentTool;
+
+    let (event_tx, mut event_rx) = unbounded_channel::<AgentEvent>();
+
+    let mock_cfg = common::MockServerConfig::new(vec![]);
+    let service = common::spawn_mock_server_with_client(&mock_cfg).await;
+
+    let config = McpServerConfig {
+        name: "error-call-event-server".into(),
+        transport: McpTransport::Stdio {
+            command: "mock".into(),
+            args: vec![],
+            env: HashMap::default(),
+        },
+        tool_prefix: None,
+        tool_filter: None,
+        requires_approval: false,
+    };
+
+    let conn = McpConnection::from_service(config, service, Some(event_tx))
+        .await
+        .expect("connection should succeed");
+
+    // Drain connect + discovery events so only call-related events remain.
+    let _connect = event_rx.try_recv().expect("connect event");
+    let _discovery = event_rx.try_recv().expect("discovery event");
+
+    let echo_def = conn
+        .discovered_tools
+        .iter()
+        .find(|t| t.name == "echo")
+        .expect("echo tool")
+        .clone();
+
+    // Force the call to fail by shutting down the connection before invoking.
+    conn.shutdown().await;
+
+    let conn = Arc::new(conn);
+    let tool = McpTool::new(
+        &echo_def,
+        None,
+        "error-call-event-server",
+        false,
+        Arc::clone(&conn),
+    );
+
+    let cancel = tokio_util::sync::CancellationToken::new();
+    let state = Arc::new(std::sync::RwLock::new(SessionState::default()));
+    let result = tool
+        .execute(
+            "call-err",
+            serde_json::json!({"text": "hello"}),
+            cancel,
+            None,
+            state,
+            None,
+        )
+        .await;
+
+    assert!(result.is_error, "disconnected call should error");
+
+    let started = event_rx.try_recv().expect("tool_call_started event");
+    assert!(
+        matches!(started, AgentEvent::McpToolCallStarted { .. }),
+        "first event should be McpToolCallStarted, got: {started:?}"
+    );
+    let completed = event_rx.try_recv().expect("tool_call_completed event");
+    match completed {
+        AgentEvent::McpToolCallCompleted { is_error, .. } => {
+            assert!(is_error, "failing call should report is_error=true");
+        }
+        other => panic!("expected McpToolCallCompleted, got: {other:?}"),
     }
 }
 
