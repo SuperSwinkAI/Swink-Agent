@@ -9,6 +9,10 @@ set dotenv-load
 test:
     cargo nextest run --workspace
 
+# Run full workspace tests with testkit enabled
+test-testkit:
+    cargo test --workspace --features testkit
+
 # Run core crate tests with no default features (verifies builtin-tools disabled)
 test-no-features:
     cargo nextest run -p swink-agent --no-default-features
@@ -37,8 +41,17 @@ bench:
 tui:
     cargo run -p swink-agent-tui
 
-# Run all checks: lint, format check, docs
-check: lint fmt-check doc
+# Run the canonical local validation gate required before opening a PR
+validate:
+    cargo fmt --all --check
+    cargo clippy --workspace -- -D warnings
+    cargo test --workspace
+    cargo build --workspace
+    cargo test --workspace --features testkit
+    cargo test -p swink-agent --no-default-features
+
+# Backward-compatible alias for the canonical local validation gate
+check: validate
 
 # Build the entire workspace
 build:
