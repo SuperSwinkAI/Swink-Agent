@@ -7,10 +7,7 @@ use futures::{StreamExt, stream};
 use tokio::fs::OpenOptions;
 use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader, BufWriter};
 
-use swink_agent::{
-    ArtifactByteStream, ArtifactError, ArtifactVersion, StreamingArtifactStore,
-    validate_artifact_name,
-};
+use swink_agent::{ArtifactByteStream, ArtifactError, ArtifactVersion, StreamingArtifactStore};
 
 use crate::fs_store::{FileArtifactStore, VersionRecord, storage_err};
 
@@ -88,12 +85,11 @@ impl StreamingArtifactStore for FileArtifactStore {
         metadata: HashMap<String, String>,
         stream: ArtifactByteStream,
     ) -> Result<ArtifactVersion, ArtifactError> {
-        validate_artifact_name(name)?;
+        let dir = self.resolve_artifact_dir(session_id, name)?;
 
         let lock = self.artifact_lock(session_id, name).await;
         let _guard = lock.lock().await;
 
-        let dir = self.artifact_dir(session_id, name);
         tokio::fs::create_dir_all(&dir).await.map_err(storage_err)?;
 
         let mut meta = self.read_meta(session_id, name).await?;
@@ -145,6 +141,8 @@ impl StreamingArtifactStore for FileArtifactStore {
         name: &str,
         version: Option<u32>,
     ) -> Result<Option<ArtifactByteStream>, ArtifactError> {
+        self.resolve_artifact_dir(session_id, name)?;
+
         // Resolve the target version number.
         let target_version = if let Some(v) = version {
             v

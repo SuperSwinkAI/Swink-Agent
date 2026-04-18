@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::error::Error;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
@@ -9,7 +9,7 @@ use tokio::sync::Mutex;
 
 use swink_agent::{
     ArtifactData, ArtifactError, ArtifactMeta, ArtifactStore, ArtifactVersion,
-    validate_artifact_name,
+    validate_artifact_name, validate_session_id,
 };
 
 // ─── Internal meta.json schema ─────────────────────────────────────────────
@@ -35,12 +35,62 @@ pub fn storage_err(e: impl Error + Send + Sync + 'static) -> ArtifactError {
     ArtifactError::Storage(Box::new(e))
 }
 
+/// Canonicalize `root`, creating it first if it does not already exist.
+///
+/// This returns an absolute, symlink-free path so later operations can prove
+/// their resolved target stays under it.
+fn canonicalize_root(root: &Path) -> std::io::Result<PathBuf> {
+    if !root.exists() {
+        std::fs::create_dir_all(root)?;
+    }
+    root.canonicalize()
+}
+
+/// Ensure `candidate` stays contained within `root` after canonicalization.
+///
+/// `candidate` need not exist yet. We canonicalize the longest existing
+/// ancestor and re-join the remaining components, so newly created
+/// subdirectories are still checked for containment once materialized.
+fn ensure_within_root(root: &Path, candidate: &Path) -> Result<PathBuf, ArtifactError> {
+    // Walk up until we find an existing ancestor we can canonicalize.
+    let mut existing = candidate;
+    let mut suffix: Vec<&std::ffi::OsStr> = Vec::new();
+    let canonical_anchor = loop {
+        if let Ok(canonical) = existing.canonicalize() {
+            break canonical;
+        }
+        let Some(name) = existing.file_name() else {
+            return Err(ArtifactError::PathOutsideRoot);
+        };
+        suffix.push(name);
+        let Some(parent) = existing.parent() else {
+            return Err(ArtifactError::PathOutsideRoot);
+        };
+        existing = parent;
+    };
+
+    let mut resolved = canonical_anchor;
+    for component in suffix.iter().rev() {
+        resolved.push(component);
+    }
+
+    if !resolved.starts_with(root) {
+        return Err(ArtifactError::PathOutsideRoot);
+    }
+    Ok(resolved)
+}
+
 // ─── FileArtifactStore ──────────────────────────────────────────────────────
 
 /// Filesystem-backed artifact store with per-artifact locking and atomic writes.
 ///
 /// Artifacts are stored under `{root}/{session_id}/{artifact_name}/` with a
 /// `meta.json` sidecar and versioned content files (`v1.bin`, `v2.bin`, ...).
+///
+/// The `root` is canonicalized on construction (creating the directory if it
+/// does not yet exist). Every operation validates `session_id` and verifies
+/// that the resolved target path remains under the canonical root, so a
+/// crafted `session_id` cannot escape the artifact root.
 type LockMap = HashMap<(String, String), Arc<Mutex<()>>>;
 
 pub struct FileArtifactStore {
@@ -51,12 +101,26 @@ pub struct FileArtifactStore {
 impl FileArtifactStore {
     /// Create a new file artifact store rooted at the given directory.
     ///
-    /// The directory does not need to exist yet — it will be created on first save.
+    /// The directory does not need to exist yet — it will be created.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the directory cannot be created or canonicalized. Most
+    /// callers want [`Self::try_new`] instead, which surfaces I/O errors
+    /// as a `Result`.
     pub fn new(root: impl Into<PathBuf>) -> Self {
-        Self {
-            root: root.into(),
+        Self::try_new(root).expect("failed to canonicalize artifact root")
+    }
+
+    /// Fallible constructor: returns an error if the root cannot be created
+    /// or canonicalized.
+    pub fn try_new(root: impl Into<PathBuf>) -> Result<Self, ArtifactError> {
+        let root = root.into();
+        let canonical = canonicalize_root(&root).map_err(storage_err)?;
+        Ok(Self {
+            root: canonical,
             locks: Arc::new(Mutex::new(HashMap::new())),
-        }
+        })
     }
 
     /// Get or create the per-artifact lock for a (session, name) pair.
@@ -85,12 +149,34 @@ impl FileArtifactStore {
             .join(format!("v{version}.bin"))
     }
 
+    /// Validate `session_id` and confirm that the resolved `session_dir`
+    /// stays beneath the canonical root. Returns the resolved session dir.
+    pub(crate) fn resolve_session_dir(&self, session_id: &str) -> Result<PathBuf, ArtifactError> {
+        validate_session_id(session_id)?;
+        let candidate = self.root.join(session_id);
+        ensure_within_root(&self.root, &candidate)
+    }
+
+    /// Validate `session_id`/`name` and resolve the artifact directory,
+    /// enforcing root containment.
+    pub(crate) fn resolve_artifact_dir(
+        &self,
+        session_id: &str,
+        name: &str,
+    ) -> Result<PathBuf, ArtifactError> {
+        validate_session_id(session_id)?;
+        validate_artifact_name(name)?;
+        let candidate = self.artifact_dir(session_id, name);
+        ensure_within_root(&self.root, &candidate)
+    }
+
     /// Read meta.json, returning an empty `MetaFile` if it doesn't exist.
     pub(crate) async fn read_meta(
         &self,
         session_id: &str,
         name: &str,
     ) -> Result<MetaFile, ArtifactError> {
+        self.resolve_artifact_dir(session_id, name)?;
         let path = self.meta_path(session_id, name);
         match tokio::fs::read_to_string(&path).await {
             Ok(contents) => serde_json::from_str(&contents).map_err(storage_err),
@@ -108,6 +194,7 @@ impl FileArtifactStore {
         name: &str,
         meta: &MetaFile,
     ) -> Result<(), ArtifactError> {
+        self.resolve_artifact_dir(session_id, name)?;
         let meta_path = self.meta_path(session_id, name);
         let json = serde_json::to_string_pretty(meta).map_err(storage_err)?;
         let bytes = json.into_bytes();
@@ -124,7 +211,7 @@ impl FileArtifactStore {
     /// Recursively discovers artifact directories (those containing `meta.json`),
     /// returning artifact names relative to the session directory.
     async fn discover_artifacts(&self, session_id: &str) -> Result<Vec<String>, ArtifactError> {
-        let session_dir = self.root.join(session_id);
+        let session_dir = self.resolve_session_dir(session_id)?;
         if !session_dir.exists() {
             return Ok(Vec::new());
         }
@@ -164,12 +251,11 @@ impl ArtifactStore for FileArtifactStore {
         name: &str,
         data: ArtifactData,
     ) -> Result<ArtifactVersion, ArtifactError> {
-        validate_artifact_name(name)?;
+        let dir = self.resolve_artifact_dir(session_id, name)?;
 
         let lock = self.artifact_lock(session_id, name).await;
         let _guard = lock.lock().await;
 
-        let dir = self.artifact_dir(session_id, name);
         tokio::fs::create_dir_all(&dir).await.map_err(storage_err)?;
 
         // Read or create meta
@@ -226,6 +312,7 @@ impl ArtifactStore for FileArtifactStore {
         session_id: &str,
         name: &str,
     ) -> Result<Option<(ArtifactData, ArtifactVersion)>, ArtifactError> {
+        self.resolve_artifact_dir(session_id, name)?;
         let meta = self.read_meta(session_id, name).await?;
         let Some(record) = meta.versions.last() else {
             tracing::debug!(session_id, name, "artifact not found");
@@ -275,6 +362,7 @@ impl ArtifactStore for FileArtifactStore {
         name: &str,
         version: u32,
     ) -> Result<Option<(ArtifactData, ArtifactVersion)>, ArtifactError> {
+        self.resolve_artifact_dir(session_id, name)?;
         let meta = self.read_meta(session_id, name).await?;
         let Some(record) = meta.versions.iter().find(|r| r.version == version) else {
             tracing::debug!(session_id, name, version, "version not found");
@@ -330,7 +418,7 @@ impl ArtifactStore for FileArtifactStore {
     }
 
     async fn delete(&self, session_id: &str, name: &str) -> Result<(), ArtifactError> {
-        let dir = self.artifact_dir(session_id, name);
+        let dir = self.resolve_artifact_dir(session_id, name)?;
         match tokio::fs::remove_dir_all(&dir).await {
             Ok(()) => {
                 tracing::debug!(session_id, name, "artifact deleted");

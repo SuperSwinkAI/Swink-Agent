@@ -165,7 +165,7 @@ pub use util::{now_timestamp, prefix_chars, suffix_chars};
 #[cfg(feature = "artifact-store")]
 pub use artifact::{
     ArtifactByteStream, ArtifactData, ArtifactError, ArtifactMeta, ArtifactStore, ArtifactVersion,
-    StreamingArtifactStore, validate_artifact_name,
+    StreamingArtifactStore, validate_artifact_name, validate_session_id,
 };
 pub use display::{CoreDisplayMessage, DisplayRole, IntoDisplayMessages};
 #[cfg(feature = "plugins")]

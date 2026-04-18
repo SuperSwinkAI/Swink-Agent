@@ -15,6 +15,12 @@ pub enum ArtifactError {
     #[error("invalid artifact name '{name}': {reason}")]
     InvalidName { name: String, reason: String },
 
+    #[error("invalid session id '{session_id}': {reason}")]
+    InvalidSessionId { session_id: String, reason: String },
+
+    #[error("resolved artifact path escapes the artifact root")]
+    PathOutsideRoot,
+
     #[error("artifact storage error: {0}")]
     Storage(#[from] Box<dyn std::error::Error + Send + Sync>),
 
@@ -189,6 +195,75 @@ pub fn validate_artifact_name(name: &str) -> Result<(), ArtifactError> {
             name: name.to_string(),
             reason: "name contains invalid characters (allowed: alphanumeric, -, _, ., /)"
                 .to_string(),
+        });
+    }
+
+    Ok(())
+}
+
+/// Validate a session ID for use in filesystem-backed artifact stores.
+///
+/// Session IDs are embedded directly in filesystem paths, so they must not
+/// contain characters that can alter path resolution. This rejects:
+///
+/// - Empty strings
+/// - Path separators (`/` and `\`)
+/// - Path traversal sequences (any occurrence of `..`)
+/// - Null bytes and ASCII control characters
+/// - Windows drive prefixes (e.g. `C:`) — by virtue of the `:` control filter
+/// - Leading/trailing whitespace
+///
+/// The rules match the stricter-than-default filter used by
+/// `swink-agent-memory`'s `JsonlSessionStore`, extended to also reject
+/// other ASCII control characters.
+pub fn validate_session_id(session_id: &str) -> Result<(), ArtifactError> {
+    if session_id.is_empty() {
+        return Err(ArtifactError::InvalidSessionId {
+            session_id: session_id.to_string(),
+            reason: "session id must not be empty".to_string(),
+        });
+    }
+
+    if session_id.trim() != session_id {
+        return Err(ArtifactError::InvalidSessionId {
+            session_id: session_id.to_string(),
+            reason: "session id must not contain leading or trailing whitespace".to_string(),
+        });
+    }
+
+    if session_id.contains('/') || session_id.contains('\\') {
+        return Err(ArtifactError::InvalidSessionId {
+            session_id: session_id.to_string(),
+            reason: "session id must not contain path separators".to_string(),
+        });
+    }
+
+    if session_id.contains("..") {
+        return Err(ArtifactError::InvalidSessionId {
+            session_id: session_id.to_string(),
+            reason: "session id must not contain path traversal".to_string(),
+        });
+    }
+
+    if session_id
+        .chars()
+        .any(|c| c == '\0' || c.is_ascii_control())
+    {
+        return Err(ArtifactError::InvalidSessionId {
+            session_id: session_id.to_string(),
+            reason: "session id must not contain control characters".to_string(),
+        });
+    }
+
+    // Reject anything that would be interpreted as an absolute path on either
+    // platform (Unix starts with `/`, Windows drive prefixes like `C:\`).
+    // Path separators and control chars above cover `\` and `\0`; the only
+    // remaining absolute-path shape is a single-letter drive prefix such as
+    // `C:` — reject any occurrence of `:` to be safe.
+    if session_id.contains(':') {
+        return Err(ArtifactError::InvalidSessionId {
+            session_id: session_id.to_string(),
+            reason: "session id must not contain ':'".to_string(),
         });
     }
 
