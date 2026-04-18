@@ -389,7 +389,7 @@ mod tests {
                 matches!(err, AgentError::CacheMiss),
                 "expected CacheMiss for \"{msg}\", got {err:?}"
             );
-            assert!(err.is_retryable());
+            assert!(!err.is_retryable());
         }
     }
 

@@ -71,6 +71,7 @@ fn retryable_classification() {
 
     assert!(!AgentError::Aborted.is_retryable());
     assert!(!AgentError::AlreadyRunning.is_retryable());
+    assert!(!AgentError::CacheMiss.is_retryable());
     assert!(!AgentError::NoMessages.is_retryable());
     assert!(!AgentError::InvalidContinue.is_retryable());
     assert!(!AgentError::context_overflow("x").is_retryable());
@@ -250,6 +251,7 @@ fn error_retryable_classification() {
     assert!(AgentError::ModelThrottled.is_retryable());
     assert!(AgentError::network(io::Error::other("x")).is_retryable());
 
+    assert!(!AgentError::CacheMiss.is_retryable());
     assert!(!AgentError::context_overflow("m").is_retryable());
     assert!(!AgentError::structured_output_failed(1, "e").is_retryable());
     assert!(!AgentError::AlreadyRunning.is_retryable());
