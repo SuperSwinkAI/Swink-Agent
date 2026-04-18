@@ -16,51 +16,60 @@
 cargo test --workspace
 ```
 
-### Run only integration tests in the core crate
+### Run the core-crate integration tests
 
 ```bash
-cargo test --test ac_lifecycle --test ac_tools --test ac_context --test ac_resilience --test ac_structured --test ac_tui
+cargo test -p swink-agent --test ac_lifecycle --test ac_tools --test ac_context --test ac_resilience --test ac_structured
+```
+
+### Run the TUI integration tests
+
+```bash
+cargo test -p swink-agent-tui --test ac_tui
 ```
 
 ### Run a specific test file
 
 ```bash
-cargo test --test ac_lifecycle
+cargo test -p swink-agent --test ac_lifecycle
 ```
 
 ### Run a specific test by name
 
 ```bash
-cargo test --test ac_tools concurrent_tool_execution
+cargo test -p swink-agent --test ac_tools concurrent_tool_execution
 ```
 
 ### Run with output visible
 
 ```bash
-cargo test --test ac_lifecycle -- --nocapture
+cargo test -p swink-agent --test ac_lifecycle -- --nocapture
 ```
 
 ## Project Layout
 
-```
+```text
 tests/
 ├── common/
 │   └── mod.rs           # Shared mocks and helpers (MockStreamFn, MockTool, etc.)
 ├── integration.rs       # Existing integration tests
-├── ac_lifecycle.rs      # AC 1–5:  Agent lifecycle and events
-├── ac_tools.rs          # AC 6–12: Tool execution and validation
-├── ac_context.rs        # AC 13–16: Context management and overflow
-├── ac_resilience.rs     # AC 17–22: Retry, steering, abort
-├── ac_structured.rs     # AC 23–25: Structured output, proxy reconstruction
-└── ac_tui.rs            # AC 26–30: TUI rendering and interaction
+├── ac_lifecycle.rs      # AC 1-5: Agent lifecycle and events
+├── ac_tools.rs          # AC 6-12: Tool execution and validation
+├── ac_context.rs        # AC 13-16: Context management and overflow
+├── ac_resilience.rs     # AC 17-22: Retry, steering, abort
+└── ac_structured.rs     # AC 23-25: Structured output, proxy reconstruction
+
+tui/tests/
+├── ac_tui.rs            # AC 26-30: TUI rendering and interaction
+└── public_api.rs        # TUI public API integration coverage
 ```
 
 ## Writing a New Test
 
 1. Identify which acceptance criterion the test covers.
-2. Open the corresponding `ac_*.rs` file.
-3. Add `mod common;` if not already present (all files need it).
-4. Use shared helpers:
+2. Open the corresponding `ac_*.rs` file in `tests/` or `tui/tests/`.
+3. For core integration tests under `tests/`, add `mod common;` if the file uses the shared helpers.
+4. Use shared helpers in the core test suite when needed:
 
 ```rust
 mod common;

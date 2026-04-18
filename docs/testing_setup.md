@@ -164,11 +164,11 @@ Once the TUI is running, test each configured provider:
 #info
 ```
 
-**Switch model within the current provider:**
+**Cycle available models in the TUI:**
 ```
-/model claude-sonnet-4-6
+Press F4
 ```
-Note: `/model` changes the model ID on the active provider. To test a different provider, update `.env` and restart the TUI.
+Note: `F4` cycles the models currently available to the TUI and applies the selected model on the next prompt. Use `#info` to confirm the active model. To test a different provider, update `.env` and restart the TUI.
 
 **Test basic conversation:**
 ```
@@ -208,7 +208,7 @@ Thinking mode availability by provider:
 | Long output | Conversation scrolls, manual scroll with arrow keys works |
 | Session save/load | `#save` then `#load <id>` restores conversation |
 | Error recovery | Send a prompt that exceeds context window — agent should recover |
-| Model switching | `/model <id>` changes model within current provider, `#info` confirms |
+| Model switching | Press `F4` to cycle available models; `#info` confirms the active model |
 
 ## 9. Logs
 
