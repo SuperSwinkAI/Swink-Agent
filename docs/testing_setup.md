@@ -22,13 +22,20 @@ This compiles all workspace crates: core library, adapters, local-llm, memory, e
 
 `swink-agent-local-llm` currently builds `llama-cpp-sys-2`, which runs `bindgen` during compilation. Install LLVM/libclang before running workspace-wide commands; if the build reports `Unable to find libclang`, set `LIBCLANG_PATH` to the LLVM directory that contains the shared library (`bin` on Windows).
 
-## 3. Run Unit Tests
+## 3. Run the Local Validation Gate
 
-Verify everything compiles and passes before connecting to live APIs:
+Verify the same local validation sequence required for PRs before connecting to live APIs:
 
 ```bash
+cargo fmt --all --check
+cargo clippy --workspace -- -D warnings
 cargo test --workspace
+cargo build --workspace
+cargo test --workspace --features testkit
+cargo test -p swink-agent --no-default-features
 ```
+
+`just validate` and `just check` run this exact command set.
 
 ## 4. Get API Keys
 

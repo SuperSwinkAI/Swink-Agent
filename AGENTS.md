@@ -44,10 +44,13 @@ Pure-Rust library for LLM-powered agentic loops. Provider-agnostic core with plu
 ## Build & Test
 
 ```bash
-cargo build --workspace
+cargo fmt --all --check                           # formatting
+cargo clippy --workspace -- -D warnings           # zero warnings policy
+cargo test --workspace                            # full workspace tests
+cargo build --workspace                           # full workspace build
 cargo test --workspace --features testkit         # testkit enables test helpers
 cargo test -p swink-agent --no-default-features   # verify builtin-tools disabled
-cargo clippy --workspace -- -D warnings           # zero warnings policy
+just validate                                     # same canonical gate via justfile
 cargo run -p swink-agent-tui                      # launch TUI (.env auto-loaded)
 ```
 
