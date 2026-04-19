@@ -11,6 +11,7 @@
 - `validate_artifact_name` enforces name constraints shared by both backends.
 - `FileArtifactStore` layout: versioned files + JSON metadata sidecar per artifact.
 - Streaming reads available via the `streaming` module.
+- All filesystem mutations for one artifact key must share `artifact_lock(session_id, name)`. `delete` needs the same lock path as `save` and `save_stream` or concurrent writers can race directory removal.
 
 ## Build & Test
 
