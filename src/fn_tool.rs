@@ -147,6 +147,19 @@ impl FnTool {
         self
     }
 
+    /// Set the execution function using an explicit untyped async signature.
+    ///
+    /// This is equivalent to [`Self::with_execute_simple`] and exists as a
+    /// discoverability alias for callers looking for an untyped async builder.
+    #[must_use]
+    pub fn with_execute_async<F, Fut>(self, f: F) -> Self
+    where
+        F: Fn(Value, CancellationToken) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = AgentToolResult> + Send + 'static,
+    {
+        self.with_execute_simple(f)
+    }
+
     /// Set the execution function using a typed parameter struct.
     ///
     /// This derives the schema from `T` and deserializes validated params into
@@ -314,6 +327,29 @@ mod tests {
             .await;
         assert!(!result.is_error);
         assert_eq!(result.content.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn async_execute_receives_params() {
+        let tool = FnTool::new("echo", "Echo", "Echo params.").with_execute_async(
+            |params, _cancel| async move {
+                let msg = params["msg"].as_str().unwrap_or("none").to_owned();
+                AgentToolResult::text(msg)
+            },
+        );
+
+        let result = tool
+            .execute(
+                "id",
+                json!({"msg": "hello"}),
+                CancellationToken::new(),
+                None,
+                test_state(),
+                None,
+            )
+            .await;
+        assert!(!result.is_error);
+        assert_eq!(ContentBlock::extract_text(&result.content), "hello");
     }
 
     #[derive(Deserialize, JsonSchema)]

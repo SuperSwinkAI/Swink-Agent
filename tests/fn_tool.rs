@@ -16,7 +16,7 @@ use serde_json::json;
 use swink_agent::{Agent, AgentOptions, AgentToolResult, DefaultRetryStrategy, FnTool};
 
 #[tokio::test]
-async fn fn_tool_executes_in_agent_loop() {
+async fn fn_tool_async_executes_in_agent_loop() {
     let tool = FnTool::new("greet", "Greet", "Greet a person.")
         .with_schema(json!({
             "type": "object",
@@ -26,7 +26,7 @@ async fn fn_tool_executes_in_agent_loop() {
             "required": ["name"],
             "additionalProperties": false
         }))
-        .with_execute_simple(|params, _cancel| async move {
+        .with_execute_async(|params, _cancel| async move {
             let name = params["name"].as_str().unwrap_or("world");
             AgentToolResult::text(format!("Hello, {name}!"))
         });
