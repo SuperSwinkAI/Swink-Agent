@@ -272,6 +272,7 @@ async fn sse_session_expiry_recovers_without_wrapper_disconnect() {
             transport: McpTransport::Sse {
                 url: format!("http://{addr}/mcp"),
                 bearer_token: None,
+                headers: HashMap::new(),
             },
             tool_prefix: None,
             tool_filter: None,

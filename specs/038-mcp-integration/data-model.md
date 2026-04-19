@@ -12,7 +12,7 @@ Describes how to connect to an MCP server.
 | Variant | Fields | Description |
 |---------|--------|-------------|
 | Stdio | `command: String`, `args: Vec<String>`, `env: HashMap<String, String>` | Subprocess spawned with stdin/stdout communication. `env` merges with (and overrides) parent process environment. |
-| Sse | `url: String`, `bearer_token: Option<String>` | HTTP connection using Server-Sent Events. Optional bearer token for `Authorization` header. |
+| Sse | `url: String`, `bearer_token: Option<String>`, `headers: HashMap<String, String>` | HTTP connection using Server-Sent Events. Optional bearer token for `Authorization` plus additional custom headers on every request. |
 
 ### McpServerConfig
 
