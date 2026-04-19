@@ -256,49 +256,45 @@ async fn abort_during_tool_turn_keeps_single_turn_and_tool_payloads() {
     );
 }
 
-#[tokio::test]
-async fn duplicate_tool_names_dispatch_first_registered_tool() {
+#[test]
+fn duplicate_tool_names_are_rejected_during_agent_construction() {
     let stream_fn = Arc::new(MockStreamFn::new(vec![
         tool_call_events("tc_dup", "dup_tool", "{}"),
         text_only_events("done"),
     ]));
     let first = Arc::new(MockTool::new("dup_tool").with_result(AgentToolResult::text("first")));
     let second = Arc::new(MockTool::new("dup_tool").with_result(AgentToolResult::text("second")));
-    let mut agent = make_agent_with_tools(
-        stream_fn,
-        vec![
-            Arc::clone(&first) as Arc<dyn AgentTool>,
-            Arc::clone(&second) as Arc<dyn AgentTool>,
-        ],
-    );
+    let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _agent = make_agent_with_tools(
+            stream_fn,
+            vec![
+                Arc::clone(&first) as Arc<dyn AgentTool>,
+                Arc::clone(&second) as Arc<dyn AgentTool>,
+            ],
+        );
+    }))
+    .expect_err("duplicate tool names should be rejected during construction");
 
-    let resolved = agent
-        .find_tool("dup_tool")
-        .expect("duplicate tool name should still resolve");
+    let panic_message = panic
+        .downcast_ref::<String>()
+        .cloned()
+        .or_else(|| {
+            panic
+                .downcast_ref::<&str>()
+                .map(|message| (*message).to_owned())
+        })
+        .expect("panic should carry a message");
+
     assert!(
-        std::ptr::eq::<dyn AgentTool>(resolved.as_ref(), first.as_ref()),
-        "find_tool should expose the first registered tool"
+        panic_message.contains("duplicate tool names are not allowed after composition: dup_tool"),
+        "unexpected panic message: {panic_message}"
     );
-
-    let result = agent.prompt_async(vec![user_msg("go")]).await.unwrap();
-
     assert_eq!(
         first.execution_count(),
-        1,
-        "dispatch should execute the same first registered tool that lookup exposes"
+        0,
+        "duplicate tools should be rejected before any execution can happen"
     );
-    assert_eq!(second.execution_count(), 0, "later duplicates must not run");
-    assert!(
-        result.messages.iter().any(|message| {
-            matches!(
-                message,
-                AgentMessage::Llm(LlmMessage::ToolResult(tool_result))
-                    if tool_result.tool_call_id == "tc_dup"
-                        && ContentBlock::extract_text(&tool_result.content) == "first"
-            )
-        }),
-        "the persisted tool result should come from the first registered tool"
-    );
+    assert_eq!(second.execution_count(), 0);
 }
 
 // ─── Regression: abort path emits TurnEndReason::Aborted (#438) ──────────
