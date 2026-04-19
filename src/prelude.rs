@@ -23,5 +23,8 @@ pub use crate::{
     VersioningTransformer,
 };
 
+#[cfg(feature = "tiktoken")]
+pub use crate::{TiktokenCounter, TiktokenError};
+
 #[cfg(feature = "builtin-tools")]
 pub use crate::{BashTool, ReadFileTool, WriteFileTool, builtin_tools};

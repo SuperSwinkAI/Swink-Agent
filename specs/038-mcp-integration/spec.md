@@ -10,7 +10,7 @@
 ### Session 2026-04-01
 
 - Q: Should MCP operations emit events through the existing AgentEvent system? → A: Yes — MCP emits events for connect, disconnect, tool discovery, and tool call forwarded/completed via the existing AgentEvent system.
-- Q: How should the agent authenticate to remote SSE MCP servers? → A: Optional bearer token (API key or OAuth2 token) per SSE connection, integrated with the credential resolver (spec 035).
+- Q: How should the agent authenticate to remote SSE MCP servers? → A: Optional bearer token (API key or OAuth2 token) plus optional additional HTTP headers per SSE connection, with bearer-token support integrated with the credential resolver (spec 035).
 - Q: Can consumers pass environment variables and working directory to MCP subprocess? → A: Command, arguments, and optional environment variable overrides — no working directory config.
 
 ## User Scenarios & Testing *(mandatory)*
@@ -140,12 +140,12 @@ A library consumer configures an MCP server that runs as a subprocess (stdio tra
 - **FR-014**: System MUST detect and report tool name collisions across MCP servers at connection time.
 - **FR-015**: System MUST be feature-gated so that projects not using MCP incur no compilation or runtime cost.
 - **FR-016**: System MUST emit events through the existing agent event system for MCP lifecycle operations: server connect, server disconnect, tool discovery completed, tool call forwarded, and tool call completed.
-- **FR-017**: System MUST support optional bearer token authentication for SSE transport connections, integrated with the credential resolver (spec 035).
+- **FR-017**: System MUST support optional bearer token authentication and optional additional HTTP headers for SSE transport connections, integrated with the credential resolver (spec 035) for bearer-token resolution.
 - **FR-018**: System MUST support optional environment variable overrides when spawning MCP server subprocesses (stdio transport).
 
 ### Key Entities
 
-- **MCP Connection**: Represents a configured connection to an MCP server — transport type (stdio or SSE), connection parameters (command + args + optional env vars for stdio; URL + optional bearer token for SSE), optional name prefix, and optional tool filters.
+- **MCP Connection**: Represents a configured connection to an MCP server — transport type (stdio or SSE), connection parameters (command + args + optional env vars for stdio; URL + optional bearer token + optional custom headers for SSE), optional name prefix, and optional tool filters.
 - **MCP Tool**: A tool discovered from an MCP server — wraps the MCP tool definition and implements the agent's standard tool interface, routing execution calls to the originating MCP server.
 - **Tool Filter**: A configuration that controls which tools from an MCP server are exposed to the agent — supports allow-list and deny-list patterns.
 

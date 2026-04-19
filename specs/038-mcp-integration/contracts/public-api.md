@@ -50,6 +50,7 @@ pub enum McpTransport {
     Sse {
         url: String,
         bearer_token: Option<String>,
+        headers: HashMap<String, String>,
     },
 }
 ```

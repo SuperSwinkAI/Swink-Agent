@@ -13,6 +13,8 @@ Pure-Rust library for LLM-powered agentic loops. Provider-agnostic core with plu
 - **Context7 first.** When researching any crate API, dependency docs, or library usage, always query the context7 MCP server before falling back to web search or training data. Training data may be stale; context7 pulls current docs.
 - **No parallel builds in agents.** Never have multiple subagents run `cargo build`/`test`/`clippy` concurrently — Cargo's global lock serializes them anyway. Run all compilation in the main conversation first; subagents should only read and analyze code.
 - **Check specs and docs first.** Before making large changes, read the relevant spec files in `specs/NNN-*/` and architecture docs in `docs/`. The project uses spec-driven development — changes should align with the agreed design.
+- **No GitHub Actions triggers.** Do not create, modify, or use workflows/events that run GitHub Actions for this repo.
+- **graphify skill available.** When the user types `/graphify`, invoke the Skill tool with `skill: "graphify"` before doing anything else — converts any input to a knowledge graph.
 
 ## Style (project-specific conventions)
 
@@ -197,6 +199,7 @@ gh pr comment <number> --body-file /tmp/comment.md
 - Sliding window: anchor (first N) + tail (recent), middle removed to fit budget.
 - Tool-result pairs preserved together even if it exceeds budget. Correctness > token count.
 - Token estimation: chars/4 heuristic. CustomMessage = 100 tokens flat.
+- `TiktokenCounter` is feature-gated behind `tiktoken`; it keeps `CustomMessage` at the same flat 100-token estimate because those messages never reach provider tokenizers.
 
 ### Error / Retry
 
@@ -212,6 +215,7 @@ gh pr comment <number> --body-file /tmp/comment.md
 - `FnTool::with_execute_typed::<T>()` is the zero-boilerplate typed path: it derives the schema from `T` and must mirror the rest of the tool stack by returning `AgentToolResult::error("invalid parameters: ...")` on serde decode failures.
 - `FnTool::with_execute_simple()` already accepts async closures; `FnTool::with_execute_async()` is the explicit untyped async alias for discoverability, not a separate execution path.
 - `ToolApprovalRequest` debug output must keep `arguments` fully redacted and run `redact_sensitive_values()` over `context`. MCP tools intentionally pass raw params through `approval_context()` for policy/approval inspection, so the logging boundary is where sanitization has to happen.
+- `ScriptTool` TOML definitions use a top-level `[parameters_schema]` section, not a legacy `[parameters]` table. Keep rustdoc and examples aligned with `src/hot_reload.rs` so hot-reload tool authors do not have to reverse-engineer the format from source.
 
 ### Credential Management (`auth/`)
 
