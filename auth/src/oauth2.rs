@@ -20,60 +20,38 @@ pub struct TokenResponse {
 
 /// Standard OAuth2 error response body (RFC 6749 §5.2).
 ///
-/// Used to extract a stable `error` code (and optional `error_description`)
-/// from a token endpoint failure without surfacing the full raw body — which
-/// may contain provider-specific diagnostic data that should not leak into
-/// tool output or user-visible logs.
+/// Only the stable `error` code is surfaced from a token endpoint failure.
+/// `error_description` is intentionally ignored because providers can place
+/// sensitive details there.
 #[derive(Debug, Deserialize)]
 struct OAuth2ErrorBody {
     error: String,
     #[serde(default)]
-    error_description: Option<String>,
+    _error_description: Option<String>,
 }
 
 /// Build a sanitized refresh-failure reason string from the HTTP status and
 /// optional response body.
 ///
 /// The returned string NEVER includes the raw body verbatim. When the body
-/// parses as an RFC 6749 §5.2 OAuth2 error response, the stable `error` code
-/// (and a length-capped `error_description`, if present) is included. All
-/// other bodies are ignored and only the status appears in the surfaced
-/// reason.
+/// parses as an RFC 6749 §5.2 OAuth2 error response, only the stable `error`
+/// code is included. All other bodies are ignored and only the status appears
+/// in the surfaced reason.
 ///
-/// The full body is expected to be emitted separately via `tracing::debug!`
-/// by the caller so operators can still diagnose failures when debug logging
-/// is enabled — but it never reaches `CredentialError::RefreshFailed.reason`
-/// and therefore never propagates into tool output.
+/// The caller may emit redacted metadata such as body length via
+/// `tracing::debug!`, but the raw body never reaches
+/// `CredentialError::RefreshFailed.reason` and therefore never propagates into
+/// tool output.
 fn sanitize_refresh_reason(status: reqwest::StatusCode, body: &str) -> String {
     // Attempt to parse a standard OAuth2 error response. Anything else
     // (HTML error pages, opaque vendor JSON, plain text, empty) degrades to a
     // status-only reason.
     if let Ok(parsed) = serde_json::from_str::<OAuth2ErrorBody>(body) {
-        // Cap the description to prevent a pathological vendor from stuffing
-        // sensitive content into `error_description`.
-        const DESCRIPTION_MAX: usize = 200;
-        let trimmed_description = parsed.error_description.as_deref().map(|d| {
-            if d.len() > DESCRIPTION_MAX {
-                format!("{}…", &d[..DESCRIPTION_MAX])
-            } else {
-                d.to_string()
-            }
-        });
-
-        if let Some(desc) = trimmed_description {
-            format!(
-                "token refresh failed: HTTP {} ({}: {})",
-                status.as_u16(),
-                parsed.error,
-                desc
-            )
-        } else {
-            format!(
-                "token refresh failed: HTTP {} ({})",
-                status.as_u16(),
-                parsed.error
-            )
-        }
+        format!(
+            "token refresh failed: HTTP {} ({})",
+            status.as_u16(),
+            parsed.error
+        )
     } else {
         format!("token refresh failed: HTTP {}", status.as_u16())
     }
@@ -86,9 +64,9 @@ fn sanitize_refresh_reason(status: reqwest::StatusCode, body: &str) -> String {
 ///
 /// On failure, the returned [`CredentialError::RefreshFailed`] contains only
 /// a sanitized reason: HTTP status plus (if the body is a standard OAuth2
-/// error JSON) the stable `error` code and truncated description. The raw
-/// response body is NEVER included in the surfaced error — it is emitted only
-/// via `tracing::debug!` so it cannot leak into user-visible tool output.
+/// error JSON) the stable `error` code. The raw response body is NEVER
+/// included in the surfaced error, and debug logs only emit redacted metadata
+/// so body contents cannot leak into user-visible tool output.
 pub async fn refresh_token(
     client: &reqwest::Client,
     token_url: &str,
@@ -122,12 +100,7 @@ pub async fn refresh_token(
         let body = response.text().await.unwrap_or_default();
         // Raw body stays in debug tracing only; never surfaced in the error
         // reason to avoid leaking token-endpoint payloads into tool output.
-        debug!(
-            status = %status,
-            body_len = body.len(),
-            body = %body,
-            "OAuth2 token refresh failed; raw body held for debug only"
-        );
+        debug!(status = %status, body_len = body.len(), "OAuth2 token refresh failed; response body redacted");
         let reason = sanitize_refresh_reason(status, &body);
         return Err(CredentialError::RefreshFailed {
             key: String::new(),
@@ -146,31 +119,60 @@ pub async fn refresh_token(
 
 #[cfg(test)]
 mod tests {
+    use std::io::{self, Write};
+    use std::sync::{Arc, Mutex};
+
     use super::*;
     use reqwest::StatusCode;
+    use tracing_subscriber::fmt::MakeWriter;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     const LEAK_SENTINEL: &str = "LEAK_SENTINEL_ABC123";
 
+    #[derive(Clone, Default)]
+    struct SharedLogBuffer(Arc<Mutex<Vec<u8>>>);
+
+    impl SharedLogBuffer {
+        fn contents(&self) -> String {
+            let bytes = self.0.lock().unwrap().clone();
+            String::from_utf8(bytes).unwrap()
+        }
+    }
+
+    struct SharedLogWriter(Arc<Mutex<Vec<u8>>>);
+
+    impl Write for SharedLogWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> MakeWriter<'a> for SharedLogBuffer {
+        type Writer = SharedLogWriter;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            SharedLogWriter(Arc::clone(&self.0))
+        }
+    }
+
     #[test]
-    fn sanitized_reason_with_standard_oauth2_error_json() {
+    fn sanitized_reason_with_standard_oauth2_error_json_ignores_description() {
         let body = format!(
             r#"{{"error":"invalid_grant","error_description":"refresh token expired {LEAK_SENTINEL}"}}"#
         );
         let reason = sanitize_refresh_reason(StatusCode::UNAUTHORIZED, &body);
 
-        // Status and standard code are included.
-        assert!(reason.contains("401"), "reason missing status: {reason}");
+        assert_eq!(reason, "token refresh failed: HTTP 401 (invalid_grant)");
         assert!(
-            reason.contains("invalid_grant"),
-            "reason missing error code: {reason}"
+            !reason.contains(LEAK_SENTINEL),
+            "error_description leaked into reason: {reason}"
         );
-        // The description is preserved here because it is a stable field in
-        // the RFC 6749 §5.2 contract; callers are responsible for not
-        // stuffing secrets into `error_description`. The sentinel may appear
-        // because it lives inside the standard description field, which is
-        // intentionally surfaced — the leak test below uses a body OUTSIDE
-        // the standard schema to prove non-standard fields never leak.
-        assert!(reason.starts_with("token refresh failed:"));
     }
 
     #[test]
@@ -222,21 +224,6 @@ mod tests {
     }
 
     #[test]
-    fn sanitized_reason_caps_error_description_length() {
-        let long_desc = "x".repeat(500);
-        let body = format!(r#"{{"error":"invalid_grant","error_description":"{long_desc}"}}"#);
-        let reason = sanitize_refresh_reason(StatusCode::UNAUTHORIZED, &body);
-
-        // Cap is 200 chars + trailing ellipsis.
-        assert!(
-            reason.len() < 300,
-            "reason should be length-capped, got {} chars: {reason}",
-            reason.len()
-        );
-        assert!(reason.contains("…"), "reason missing truncation marker");
-    }
-
-    #[test]
     fn sanitized_reason_does_not_include_body_for_ignored_fields() {
         // A standard OAuth2 body with an extra sensitive field outside the
         // recognized schema. serde's default behavior ignores unknown fields,
@@ -250,5 +237,54 @@ mod tests {
             "non-standard field leaked into reason: {reason}"
         );
         assert!(reason.contains("invalid_grant"));
+    }
+
+    #[tokio::test]
+    async fn refresh_token_debug_log_redacts_response_body() {
+        let mock_server = MockServer::start().await;
+        let body = format!(
+            r#"{{"error":"invalid_grant","error_description":"refresh token expired {LEAK_SENTINEL}"}}"#
+        );
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .respond_with(ResponseTemplate::new(401).set_body_string(body))
+            .mount(&mock_server)
+            .await;
+
+        let logs = SharedLogBuffer::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::DEBUG)
+            .without_time()
+            .with_writer(logs.clone())
+            .finish();
+        let _guard = tracing::subscriber::set_default(subscriber);
+
+        let err = refresh_token(
+            &reqwest::Client::new(),
+            &format!("{}/token", mock_server.uri()),
+            "refresh-token",
+            "client-id",
+            Some("client-secret"),
+        )
+        .await
+        .unwrap_err();
+        let log_output = logs.contents();
+
+        assert!(
+            !format!("{err}").contains(LEAK_SENTINEL),
+            "refresh error leaked sentinel: {err}"
+        );
+        assert!(
+            !log_output.contains(LEAK_SENTINEL),
+            "debug log leaked response body: {log_output}"
+        );
+        assert!(
+            log_output.contains("body_len"),
+            "debug log should include body length metadata: {log_output}"
+        );
+        assert!(
+            log_output.contains("response body redacted"),
+            "debug log should state the body is redacted: {log_output}"
+        );
     }
 }

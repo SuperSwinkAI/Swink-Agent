@@ -234,6 +234,7 @@ async fn refresh_error_standard_oauth2_surface_includes_error_code_only() {
         .and(path("/token"))
         .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
             "error": "invalid_grant",
+            "error_description": format!("refresh token expired {LEAK_SENTINEL}"),
         })))
         .mount(&mock_server)
         .await;
@@ -254,6 +255,10 @@ async fn refresh_error_standard_oauth2_surface_includes_error_code_only() {
     assert!(
         display.contains("invalid_grant"),
         "standard error code missing from Display: {display}"
+    );
+    assert!(
+        !display.contains(LEAK_SENTINEL),
+        "error_description leaked into Display: {display}"
     );
 }
 
