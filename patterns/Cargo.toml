@@ -16,7 +16,7 @@ pipelines = []
 testkit = ["swink-agent/testkit"]
 
 [dependencies]
-swink-agent = { path = "..", version = "0.7.9", default-features = false }
+swink-agent = { path = "..", version = "0.8.0", default-features = false }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
 serde = { workspace = true }
