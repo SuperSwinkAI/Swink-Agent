@@ -1095,6 +1095,85 @@ async fn retry_success() {
     );
 }
 
+#[tokio::test]
+async fn retry_success_emits_one_logical_message_lifecycle() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![
+        vec![
+            AssistantMessageEvent::Start,
+            AssistantMessageEvent::TextStart { content_index: 0 },
+            AssistantMessageEvent::TextDelta {
+                content_index: 0,
+                delta: "stale partial".to_string(),
+            },
+            AssistantMessageEvent::TextEnd { content_index: 0 },
+            AssistantMessageEvent::Error {
+                stop_reason: StopReason::Error,
+                error_message: "rate limit exceeded (429)".to_string(),
+                usage: None,
+                error_kind: None,
+            },
+        ],
+        text_only_events("retried successfully"),
+    ]));
+
+    let mut config = default_config(stream_fn);
+    config.retry_strategy = Box::new(
+        DefaultRetryStrategy::default()
+            .with_max_attempts(3)
+            .with_jitter(false)
+            .with_base_delay(Duration::from_millis(1)),
+    );
+
+    let events = collect_events(agent_loop(
+        vec![],
+        "system".to_string(),
+        config,
+        CancellationToken::new(),
+    ))
+    .await;
+
+    assert_eq!(
+        count_events(&events, "MessageStart"),
+        1,
+        "retry should preserve a single logical MessageStart"
+    );
+    assert_eq!(
+        count_events(&events, "MessageEnd"),
+        1,
+        "retry should preserve a single logical MessageEnd"
+    );
+
+    let update_text = events
+        .iter()
+        .filter_map(|event| match event {
+            AgentEvent::MessageUpdate { delta } => Some(format!("{delta:?}")),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert!(
+        !update_text.contains("stale partial"),
+        "failed-attempt partials should not leak into the logical message lifecycle: {update_text}"
+    );
+
+    let final_text = events.iter().find_map(|event| match event {
+        AgentEvent::MessageEnd { message } => Some(
+            message
+                .content
+                .iter()
+                .filter_map(|block| match block {
+                    ContentBlock::Text { text } => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect::<String>(),
+        ),
+        _ => None,
+    });
+
+    assert_eq!(final_text.as_deref(), Some("retried successfully"));
+}
+
 // ─── 3.12: Non-retryable error ──────────────────────────────────────────
 
 #[tokio::test]

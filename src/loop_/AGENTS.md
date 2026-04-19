@@ -17,3 +17,4 @@
 - `LoopState.turn_index` must advance after every completed turn, not just tool-loop continuation. Text-only or other `BreakInner` turns still finish a turn before the outer loop polls follow-up messages.
 - First-turn `PreTurn` policies must receive the initial prompt batch in `PolicyContext::new_messages`; only `agent_loop_continue()` resumes with an empty initial batch.
 - Text-only turns cannot break the inner loop while `pending_messages` is non-empty. Post-turn or post-loop injections queued for the next turn must continue loop processing before follow-up polling or `AgentEnd`.
+- Retry attempts share one logical assistant-message lifecycle. Emit `MessageStart` once per turn, buffer attempt-local deltas until the terminal attempt is known, and never leak failed-attempt partials into downstream `MessageUpdate` streams.
