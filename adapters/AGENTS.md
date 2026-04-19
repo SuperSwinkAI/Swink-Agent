@@ -46,6 +46,7 @@
 - Any failure before the provider yields its first streaming payload must still emit `[Start, Error]`. Returning only a terminal `Error` makes `accumulate_message()` fail with `no Start event found`.
 - `finish_reason == "content_filter"` must be routed through `OaiSseStreamState.terminal_error`; emitting an inline error and then consuming a later `[DONE]` produces a duplicate terminal event that `accumulate_message` rejects.
 - In `src/google.rs`, `function_call.args` chunks are full snapshots, not deltas. Always overwrite the buffered args, including `null`, or a later empty snapshot can leave stale JSON from an earlier chunk.
+- In `src/google.rs`, terminal error exits must flush buffered tool-call snapshots and finalize open blocks before emitting `Error`; otherwise `accumulate_message()` can observe dangling block state on parse/transport failures.
 - In `src/ollama.rs`, the NDJSON parser must buffer raw bytes until it has a full newline-delimited record. Decoding each transport chunk independently with `from_utf8_lossy` corrupts split multibyte UTF-8.
 - In `src/ollama.rs` and `src/proxy.rs`, deterministic parse/protocol faults (malformed NDJSON/SSE JSON, proxy terminal-frame violations, unexpected `done` EOF) must use `AssistantMessageEvent::error(...)`, not `error_network(...)`; only transport failures stay retryable.
 - In `src/openai_compat.rs`, buffer tool-call arguments and delay `ToolCallStart` until a non-empty `function.name` is known; some providers stream arguments before the name.
