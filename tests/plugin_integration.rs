@@ -707,10 +707,15 @@ fn duplicate_composed_tool_names_are_rejected() {
     let panic_message = panic
         .downcast_ref::<String>()
         .cloned()
-        .or_else(|| panic.downcast_ref::<&str>().map(|message| (*message).to_owned()))
+        .or_else(|| {
+            panic
+                .downcast_ref::<&str>()
+                .map(|message| (*message).to_owned())
+        })
         .expect("panic should carry a message");
     assert!(
-        panic_message.contains("duplicate tool names are not allowed after composition: myns_fetch"),
+        panic_message
+            .contains("duplicate tool names are not allowed after composition: myns_fetch"),
         "unexpected panic message: {panic_message}"
     );
 }
