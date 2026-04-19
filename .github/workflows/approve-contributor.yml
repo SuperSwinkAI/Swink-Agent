@@ -7,7 +7,7 @@ on:
 jobs:
   approve:
     # Only fire on lgtm comments (whole line, case-insensitive)
-    if: ${{ toLower(trim(github.event.comment.body)) == 'lgtm' }}
+    if: toLower(trim(github.event.comment.body)) == 'lgtm'
     runs-on: ubuntu-latest
     permissions:
       issues: write
