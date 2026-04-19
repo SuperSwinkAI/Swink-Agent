@@ -6,14 +6,17 @@
 //! # Definition file format (TOML)
 //!
 //! ```toml
-//! name = "my_tool"
-//! description = "Does something useful"
-//! command = "echo {message}"
+//! name = "greet"
+//! description = "Greet a person by name"
+//! command = "echo 'Hello, {name}!'"
 //!
 //! [parameters_schema]
 //! type = "object"
-//! [parameters_schema.properties.message]
+//! required = ["name"]
+//!
+//! [parameters_schema.properties.name]
 //! type = "string"
+//! description = "The name to greet"
 //! ```
 
 use std::collections::HashMap;
@@ -63,6 +66,24 @@ pub struct ScriptTool {
 impl ScriptTool {
     /// Parse a tool definition from TOML content.
     ///
+    /// TOML definitions use a top-level `[parameters_schema]` section for the
+    /// optional JSON Schema payload, and command templates interpolate
+    /// arguments with `{param_name}` placeholders.
+    ///
+    /// ```toml
+    /// name = "greet"
+    /// description = "Greet a person by name"
+    /// command = "echo 'Hello, {name}!'"
+    ///
+    /// [parameters_schema]
+    /// type = "object"
+    /// required = ["name"]
+    ///
+    /// [parameters_schema.properties.name]
+    /// type = "string"
+    /// description = "The name to greet"
+    /// ```
+    ///
     /// # Errors
     ///
     /// Returns `Err` if the TOML is invalid or missing required fields.
@@ -88,6 +109,10 @@ impl ScriptTool {
     }
 
     /// Load from a file, auto-detecting format by extension.
+    ///
+    /// `.toml` files use the same top-level `[parameters_schema]` section as
+    /// [`Self::from_toml`], and `command` values interpolate runtime arguments
+    /// with `{param_name}` placeholders.
     ///
     /// # Errors
     ///
@@ -374,6 +399,30 @@ command = "echo Hello {name}"
         assert_eq!(tool.name(), "greet");
         assert_eq!(tool.description(), "Greet someone");
         assert!(tool.requires_approval());
+    }
+
+    #[test]
+    fn script_tool_from_toml_with_parameter_schema_section() {
+        let toml = r#"
+name = "greet"
+description = "Greet a person by name"
+command = "echo 'Hello, {name}!'"
+
+[parameters_schema]
+type = "object"
+required = ["name"]
+
+[parameters_schema.properties.name]
+type = "string"
+description = "The name to greet"
+"#;
+
+        let tool = ScriptTool::from_toml(toml).unwrap();
+        assert_eq!(tool.parameters_schema()["required"], json!(["name"]));
+        assert_eq!(
+            tool.parameters_schema()["properties"]["name"]["description"],
+            json!("The name to greet")
+        );
     }
 
     #[test]

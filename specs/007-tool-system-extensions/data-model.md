@@ -298,10 +298,14 @@ A tool loaded from a TOML/YAML/JSON definition file that executes a shell comman
 name = "list_files"
 description = "List files in a directory"
 command = "ls -la {path}"
-requires_approval = false
 
-[parameters]
-path = { type = "string", description = "Directory path" }
+[parameters_schema]
+type = "object"
+required = ["path"]
+
+[parameters_schema.properties.path]
+type = "string"
+description = "Directory path"
 ```
 
 Implements `AgentTool`. The `execute()` method interpolates parameters into the command template and runs it via `sh -c`.

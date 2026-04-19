@@ -241,10 +241,14 @@ Example tool definition (`tools/list_files.toml`):
 name = "list_files"
 description = "List files in a directory"
 command = "ls -la {path}"
-requires_approval = false
 
-[parameters]
-path = { type = "string", description = "Directory path" }
+[parameters_schema]
+type = "object"
+required = ["path"]
+
+[parameters_schema.properties.path]
+type = "string"
+description = "Directory path"
 ```
 
 ### Noop Tool for Session Compatibility
