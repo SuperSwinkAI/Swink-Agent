@@ -30,8 +30,10 @@ pub trait SessionStore: Send + Sync {
     ///
     /// Stores with optimistic-concurrency metadata should return the metadata
     /// as persisted on disk so callers can keep their local sequence in sync.
-    /// The default implementation composes [`SessionStore::save`] and
-    /// [`SessionStore::save_state`], then reloads metadata from the store.
+    /// Backends must implement this explicitly if they support atomic
+    /// transcript+state persistence; the default returns
+    /// [`io::ErrorKind::Unsupported`] so callers do not accidentally rely on a
+    /// non-atomic fallback.
     fn save_full(
         &self,
         id: &str,
@@ -39,10 +41,11 @@ pub trait SessionStore: Send + Sync {
         messages: &[AgentMessage],
         state: &serde_json::Value,
     ) -> io::Result<SessionMeta> {
-        self.save(id, meta, messages)?;
-        self.save_state(id, state)?;
-        let (persisted_meta, _) = self.load(id, None)?;
-        Ok(persisted_meta)
+        let _ = (id, meta, messages, state);
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "SessionStore::save_full requires an explicit atomic backend implementation",
+        ))
     }
 
     /// Append messages to an existing session without rewriting the entire file.
@@ -112,4 +115,94 @@ pub trait SessionStore: Send + Sync {
         id: &str,
         options: &LoadOptions,
     ) -> io::Result<(SessionMeta, Vec<SessionEntry>)>;
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use chrono::Utc;
+    use serde_json::json;
+
+    use super::*;
+
+    struct CountingStore {
+        save_calls: Arc<AtomicUsize>,
+        save_state_calls: Arc<AtomicUsize>,
+    }
+
+    impl SessionStore for CountingStore {
+        fn save(
+            &self,
+            _id: &str,
+            _meta: &SessionMeta,
+            _messages: &[AgentMessage],
+        ) -> io::Result<()> {
+            self.save_calls.fetch_add(1, Ordering::Relaxed);
+            Ok(())
+        }
+
+        fn append(&self, _id: &str, _messages: &[AgentMessage]) -> io::Result<()> {
+            Ok(())
+        }
+
+        fn load(
+            &self,
+            _id: &str,
+            _registry: Option<&CustomMessageRegistry>,
+        ) -> io::Result<(SessionMeta, Vec<AgentMessage>)> {
+            Ok((sample_meta(), Vec::new()))
+        }
+
+        fn list(&self) -> io::Result<Vec<SessionMeta>> {
+            Ok(Vec::new())
+        }
+
+        fn delete(&self, _id: &str) -> io::Result<()> {
+            Ok(())
+        }
+
+        fn save_state(&self, _id: &str, _state: &serde_json::Value) -> io::Result<()> {
+            self.save_state_calls.fetch_add(1, Ordering::Relaxed);
+            Ok(())
+        }
+
+        fn load_with_options(
+            &self,
+            _id: &str,
+            _options: &LoadOptions,
+        ) -> io::Result<(SessionMeta, Vec<SessionEntry>)> {
+            Ok((sample_meta(), Vec::new()))
+        }
+    }
+
+    fn sample_meta() -> SessionMeta {
+        SessionMeta {
+            id: "session-1".to_string(),
+            title: "Session 1".to_string(),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            version: 1,
+            sequence: 0,
+        }
+    }
+
+    #[test]
+    fn default_save_full_rejects_non_atomic_fallback_without_writing() {
+        let save_calls = Arc::new(AtomicUsize::new(0));
+        let save_state_calls = Arc::new(AtomicUsize::new(0));
+        let store = CountingStore {
+            save_calls: Arc::clone(&save_calls),
+            save_state_calls: Arc::clone(&save_state_calls),
+        };
+
+        let error = store
+            .save_full("session-1", &sample_meta(), &[], &json!({"draft": true}))
+            .unwrap_err();
+
+        assert_eq!(error.kind(), io::ErrorKind::Unsupported);
+        assert_eq!(save_calls.load(Ordering::Relaxed), 0);
+        assert_eq!(save_state_calls.load(Ordering::Relaxed), 0);
+    }
 }
