@@ -682,14 +682,14 @@ fn two_plugins_same_tool_names_distinct_namespaces() {
     );
 }
 
-// ─── T037: Direct tool takes precedence over namespaced plugin tool ─────
+// ─── T037: Duplicate composed tool names are rejected ───────────────────
 
 #[test]
-fn direct_tool_found_first_over_namespaced_plugin_tool() {
+fn duplicate_composed_tool_names_are_rejected() {
     use swink_agent::AgentTool;
 
     // Create a direct tool named "myns_fetch" and a plugin named "myns" contributing "fetch".
-    // Both resolve to the same public name — the direct tool should be found first.
+    // Both resolve to the same public name, so construction must fail fast.
     let direct_tool: Arc<dyn AgentTool> =
         Arc::new(swink_agent::testing::MockTool::new("myns_fetch"));
     let plugin: Arc<dyn Plugin> = Arc::new(MockPlugin::new("myns").with_tools(&["fetch"]));
@@ -699,35 +699,28 @@ fn direct_tool_found_first_over_namespaced_plugin_tool() {
         .with_tools(vec![direct_tool])
         .with_plugin(plugin);
 
-    let agent = Agent::new(options);
+    let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _agent = Agent::new(options);
+    }))
+    .expect_err("duplicate composed tool names should be rejected");
 
-    // The direct tool is first in the list (direct tools before plugin tools).
-    let tool_names: Vec<&str> = agent.state().tools.iter().map(|t| t.name()).collect();
-    // Both should exist.
-    let count = tool_names.iter().filter(|&&n| n == "myns_fetch").count();
-    assert_eq!(
-        count, 2,
-        "both direct and namespaced tool should be present, got {count}"
-    );
-
-    // find_tool returns the first match — should be the direct tool.
-    let found = agent.find_tool("myns_fetch");
-    assert!(found.is_some(), "find_tool should find 'myns_fetch'");
-
-    // Verify it's the direct tool (not the NamespacedTool wrapper).
-    // NamespacedTool has description "plugin stub tool" and label "myns_fetch" (overridden).
-    // Direct MockTool has label "myns_fetch" (set in constructor).
-    // Both have the same description, so check order by position.
-    let first_idx = tool_names.iter().position(|&n| n == "myns_fetch").unwrap();
-    assert_eq!(
-        first_idx, 0,
-        "direct tool should be at index 0 (before plugin tools), got {first_idx}"
+    let panic_message = panic
+        .downcast_ref::<String>()
+        .cloned()
+        .or_else(|| {
+            panic
+                .downcast_ref::<&str>()
+                .map(|message| (*message).to_owned())
+        })
+        .expect("panic should carry a message");
+    assert!(
+        panic_message
+            .contains("duplicate tool names are not allowed after composition: myns_fetch"),
+        "unexpected panic message: {panic_message}"
     );
 }
 
 // ─── T038: Verify tool merge order — direct first, then plugin ──────────
-// (Already confirmed by T037 above: direct tools at lower indices,
-//  plugin tools appended after.)
 
 // ─── Phase 9: User Story 6 — Plugin Removal ────────────────────────────
 

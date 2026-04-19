@@ -168,7 +168,9 @@ gh pr comment <number> --body-file /tmp/comment.md
 - `PluginRegistry` deduplicates by name on `register()` — the new plugin **replaces** the old one (with a `tracing::warn`), not an error.
 - `list()` returns plugins sorted by priority descending; insertion order preserved for ties.
 - `NamespacedTool` prefixes as `"{plugin_name}_{tool_name}"` (underscore, not dot — Anthropic/Bedrock/OpenAI reject dots) and sanitizes both components to the common subset `^[a-zA-Z][a-zA-Z0-9_]{0,63}$` accepted by every provider. Prevents tool name collisions across plugins and guarantees wire-level validity.
+- Long namespaced tool names must keep a deterministic hash suffix when truncated; raw prefix truncation can collapse distinct plugin/tool pairs onto the same wire name.
 - Contributions merged in `Agent::new()`: plugin policies **prepended** (priority-sorted), direct policies appended; plugin tools appended after direct tools.
+- `Agent::new()` and `Agent::set_tools()` must reject duplicate final tool names after composition instead of relying on dispatch's "keep first" fallback; schema export and lookup need the same unique wire-name set.
 - `on_init(&self, &Agent)` dispatched in priority order, wrapped in `catch_unwind` — panicking `on_init` is logged and skipped, construction continues.
 - Entire module behind `#[cfg(feature = "plugins")]` — opt-in, not default-enabled, zero cost when disabled.
 

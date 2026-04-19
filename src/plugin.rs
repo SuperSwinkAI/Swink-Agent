@@ -155,6 +155,8 @@ impl Default for PluginRegistry {
 /// Maximum length for a composed tool name (the tightest cap across providers:
 /// `OpenAI`, Bedrock, and Gemini all cap at 64; Anthropic allows 128).
 const MAX_TOOL_NAME_LEN: usize = 64;
+/// Hex characters preserved from the stable hash when truncation is required.
+const TOOL_NAME_HASH_HEX_LEN: usize = 16;
 
 /// Sanitize a single component (plugin name or inner tool name) to the common
 /// subset of characters accepted by every provider's tool-name grammar.
@@ -191,8 +193,9 @@ fn sanitize_tool_name_component(input: &str) -> String {
 /// Joins `plugin_name` and `tool_name` with `_`, sanitizes each half, prepends
 /// `t_` if the result would start with a non-letter (Bedrock/Gemini require a
 /// leading letter or underscore — we pick letter for maximum safety), and
-/// truncates to [`MAX_TOOL_NAME_LEN`]. Truncation preserves the plugin prefix
-/// where possible so distinct plugins keep distinct names.
+/// truncates to [`MAX_TOOL_NAME_LEN`]. When truncation is required, a stable
+/// hash suffix is appended so long names do not silently collapse onto the same
+/// dispatch key.
 fn compose_namespaced_name(plugin_name: &str, tool_name: &str) -> String {
     let plugin = sanitize_tool_name_component(plugin_name);
     let tool = sanitize_tool_name_component(tool_name);
@@ -204,11 +207,20 @@ fn compose_namespaced_name(plugin_name: &str, tool_name: &str) -> String {
     if with_leading_letter.len() <= MAX_TOOL_NAME_LEN {
         with_leading_letter
     } else {
-        with_leading_letter
-            .chars()
-            .take(MAX_TOOL_NAME_LEN)
-            .collect()
+        let hash_suffix = stable_name_hash_hex(&with_leading_letter);
+        let prefix_len = MAX_TOOL_NAME_LEN - TOOL_NAME_HASH_HEX_LEN - 1;
+        let prefix: String = with_leading_letter.chars().take(prefix_len).collect();
+        format!("{prefix}_{hash_suffix}")
     }
+}
+
+fn stable_name_hash_hex(input: &str) -> String {
+    let mut hash = 0xcbf2_9ce4_8422_2325_u64;
+    for byte in input.bytes() {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    format!("{hash:0TOOL_NAME_HASH_HEX_LEN$x}")
 }
 
 // ─── NamespacedTool ────────────────────────────────────────────────────────
@@ -408,6 +420,33 @@ mod tests {
         assert_eq!(result.len(), MAX_TOOL_NAME_LEN);
         // Prefix is preserved (plugin name survives at the front).
         assert!(result.starts_with(&long_plugin));
+        assert_eq!(result.chars().filter(|c| *c == '_').count(), 2);
+        assert_eq!(
+            result.rsplit_once('_').unwrap().1.len(),
+            TOOL_NAME_HASH_HEX_LEN
+        );
+    }
+
+    #[test]
+    fn compose_namespaced_name_long_collisions_get_distinct_hash_suffixes() {
+        let long_plugin = "a".repeat(40);
+        let first_tool = format!("{}x", "b".repeat(40));
+        let second_tool = format!("{}y", "b".repeat(40));
+
+        let first = compose_namespaced_name(&long_plugin, &first_tool);
+        let second = compose_namespaced_name(&long_plugin, &second_tool);
+
+        assert_eq!(first.len(), MAX_TOOL_NAME_LEN);
+        assert_eq!(second.len(), MAX_TOOL_NAME_LEN);
+        assert_ne!(first, second);
+        assert_eq!(
+            first[..MAX_TOOL_NAME_LEN - TOOL_NAME_HASH_HEX_LEN - 1],
+            second[..MAX_TOOL_NAME_LEN - TOOL_NAME_HASH_HEX_LEN - 1]
+        );
+        assert_ne!(
+            first.rsplit_once('_').unwrap().1,
+            second.rsplit_once('_').unwrap().1
+        );
     }
 
     #[test]
