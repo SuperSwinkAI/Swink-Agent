@@ -42,3 +42,4 @@ tmp/
 .worktrees/
 QA_Report.md
 AG_QA.md
+graphify-out/
