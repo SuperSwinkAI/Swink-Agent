@@ -42,10 +42,18 @@ pub async fn run_single_turn(
 
     // i. Inject any pending messages into context.
     // Track where new messages start so PreTurn policies only see the fresh batch.
-    let new_messages_start = state.context_messages.len();
+    let new_messages_start = if state.turn_index == 0 {
+        state
+            .context_messages
+            .len()
+            .saturating_sub(state.initial_new_messages_len)
+    } else {
+        state.context_messages.len()
+    };
     if !state.pending_messages.is_empty() {
         state.context_messages.append(&mut state.pending_messages);
     }
+    state.initial_new_messages_len = 0;
     clear_pending_message_snapshot(config);
     // Sync the full context (including newly consumed pending messages) to the
     // loop_context_snapshot so that a concurrent pause() call can reconstruct
@@ -849,7 +857,11 @@ async fn handle_no_tool_calls(
         return emit_agent_end(state, tx).await;
     }
 
-    TurnOutcome::BreakInner
+    if state.pending_messages.is_empty() {
+        TurnOutcome::BreakInner
+    } else {
+        TurnOutcome::ContinueInner
+    }
 }
 
 /// Handle tool calls: separate incomplete ones, execute the rest, collect results,
