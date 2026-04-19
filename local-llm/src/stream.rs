@@ -546,19 +546,19 @@ impl StreamState {
         self.events
     }
 
-    fn finalize_cancelled(mut self) -> Vec<AssistantMessageEvent> {
+    fn finalize_error(mut self, message: impl Into<String>) -> Vec<AssistantMessageEvent> {
         self.events.extend(finalize_blocks(&mut self.blocks));
         self.events
-            .push(AssistantMessageEvent::error("local inference cancelled"));
+            .push(AssistantMessageEvent::error(message.into()));
         self.events
     }
 
-    fn finalize_eof_without_done(mut self) -> Vec<AssistantMessageEvent> {
-        self.events.extend(finalize_blocks(&mut self.blocks));
-        self.events.push(AssistantMessageEvent::error(
-            "local inference stream ended before completion",
-        ));
-        self.events
+    fn finalize_cancelled(self) -> Vec<AssistantMessageEvent> {
+        self.finalize_error("local inference cancelled")
+    }
+
+    fn finalize_eof_without_done(self) -> Vec<AssistantMessageEvent> {
+        self.finalize_error("local inference stream ended before completion")
     }
 }
 
@@ -711,10 +711,9 @@ fn local_stream<'a>(
                 }
                 TokenEvent::Error(msg) => {
                     error!(error = %msg, "error during local streaming");
-                    state.events.push(AssistantMessageEvent::error(format!(
-                        "local inference error: {msg}"
-                    )));
-                    return stream::iter(state.events);
+                    return stream::iter(
+                        state.finalize_error(format!("local inference error: {msg}"))
+                    );
                 }
             }
         }
@@ -845,6 +844,36 @@ mod tests {
             events
                 .iter()
                 .any(|e| matches!(e, AssistantMessageEvent::TextEnd { .. }))
+        );
+    }
+
+    #[test]
+    fn finalize_error_closes_open_blocks_before_terminal_error() {
+        let mut state = StreamState::new(false);
+        state.events.extend(state.blocks.ensure_text_open());
+        state
+            .events
+            .extend(state.blocks.text_delta("partial".to_string()));
+
+        let events = state.finalize_error("local inference error: runner crashed");
+        let terminal_index = events
+            .iter()
+            .position(|event| matches!(event, AssistantMessageEvent::Error { .. }))
+            .expect("terminal error event");
+        let text_end_index = events
+            .iter()
+            .position(|event| matches!(event, AssistantMessageEvent::TextEnd { .. }))
+            .expect("text end event");
+
+        assert!(
+            text_end_index < terminal_index,
+            "open blocks must be finalized before the terminal error: {events:?}"
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, AssistantMessageEvent::Done { .. })),
+            "terminal error path must not emit Done"
         );
     }
 

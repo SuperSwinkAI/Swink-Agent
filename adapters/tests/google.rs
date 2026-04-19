@@ -850,7 +850,6 @@ async fn gemini_non_prefix_arg_rewrite_produces_correct_json() {
 
     let stream_fn = GeminiStreamFn::new(server.uri(), "test-key", ApiVersion::V1beta);
     let events = collect_events(&stream_fn).await;
-
     let arguments: String = events
         .iter()
         .filter_map(|event| match event {
