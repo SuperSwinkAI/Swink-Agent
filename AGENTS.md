@@ -214,6 +214,7 @@ gh pr comment <number> --body-file /tmp/comment.md
 - `#[tool]` macro param decoding must return `AgentToolResult::error("invalid parameters: ...")` on serde failures rather than panicking. The generated code still retries deserialization from `{}` so zero-param / all-optional tools can execute when appropriate.
 - `FnTool::with_execute_typed::<T>()` is the zero-boilerplate typed path: it derives the schema from `T` and must mirror the rest of the tool stack by returning `AgentToolResult::error("invalid parameters: ...")` on serde decode failures.
 - `ToolApprovalRequest` debug output must keep `arguments` fully redacted and run `redact_sensitive_values()` over `context`. MCP tools intentionally pass raw params through `approval_context()` for policy/approval inspection, so the logging boundary is where sanitization has to happen.
+- `ScriptTool` TOML definitions use a top-level `[parameters_schema]` section, not a legacy `[parameters]` table. Keep rustdoc and examples aligned with `src/hot_reload.rs` so hot-reload tool authors do not have to reverse-engineer the format from source.
 
 ### Credential Management (`auth/`)
 

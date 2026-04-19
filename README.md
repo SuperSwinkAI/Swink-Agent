@@ -46,6 +46,26 @@ cargo test --workspace             # run all tests
 
 Workspace-wide `cargo build/test/clippy` commands also compile `swink-agent-local-llm`. That crate currently depends on `llama-cpp-sys-2`, so contributor machines need LLVM/libclang available for `bindgen`; if auto-discovery fails, set `LIBCLANG_PATH` to the LLVM `bin` directory before running workspace checks.
 
+## Hot-Reloaded Script Tools
+
+When the `hot-reload` feature is enabled, `ScriptTool` definitions use a
+top-level `[parameters_schema]` TOML section, and `command` interpolates
+runtime arguments with `{param}` placeholders:
+
+```toml
+name = "greet"
+description = "Greet a person by name"
+command = "echo 'Hello, {name}!'"
+
+[parameters_schema]
+type = "object"
+required = ["name"]
+
+[parameters_schema.properties.name]
+type = "string"
+description = "The name to greet"
+```
+
 ## Example: Build a Custom Agent
 
 Wire up an LLM provider, register tools, and launch the interactive TUI — all in one file:
