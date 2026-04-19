@@ -16,6 +16,7 @@
 
 - `DefaultCredentialResolver` can reuse a per-key `SingleFlightTokenSource`, but the credential store remains the source of truth. Clear the token source's cached value before resolving an expired key from the store, or a previously refreshed token can mask later external store updates.
 - Adapters that need token caching should depend on `SingleFlightTokenSource` from this crate rather than rolling an adapter-local `RwLock<Option<_>>` cache, which does not deduplicate concurrent refreshes.
+- OAuth2 refresh failures must only surface `HTTP status + OAuth2 error code`; never include provider `error_description` text or raw token-endpoint bodies in debug logs, because those errors propagate into tool-visible output.
 
 ## Build & Test
 
