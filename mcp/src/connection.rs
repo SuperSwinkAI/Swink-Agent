@@ -9,15 +9,20 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
+use futures::stream::BoxStream;
 use reqwest::header::{HeaderName, HeaderValue};
 use rmcp::model::{CallToolRequestParams, CallToolResult, ClientInfo, Implementation};
 use rmcp::service::{Peer, QuitReason, RoleClient, RunningService, ServiceExt};
 use rmcp::transport::TokioChildProcess;
 use rmcp::transport::streamable_http_client::{
-    StreamableHttpClientTransport, StreamableHttpClientTransportConfig,
+    StreamableHttpClient, StreamableHttpClientTransport, StreamableHttpClientTransportConfig,
+    StreamableHttpError, StreamableHttpPostResponse,
 };
 use serde_json::Value;
-use swink_agent::{AgentEvent, CredentialResolver, CredentialType, ResolvedCredential};
+use sse_stream::{Error as SseError, Sse};
+use swink_agent::{
+    AgentEvent, CredentialError, CredentialResolver, CredentialType, ResolvedCredential,
+};
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::task::JoinHandle;
 use tracing::{info, warn};
@@ -38,6 +43,125 @@ struct McpConnectionState {
     status: McpConnectionStatus,
     peer: Option<Peer<RoleClient>>,
     monitor: Option<JoinHandle<()>>,
+}
+
+#[derive(Debug, thiserror::Error)]
+enum SseBearerResolutionError {
+    #[error("credential resolution timed out for {key}")]
+    Timeout { key: String },
+    #[error(transparent)]
+    Credential(#[from] CredentialError),
+    #[error("credential type mismatch for {key}: expected {expected:?}, got {actual:?}")]
+    TypeMismatch {
+        key: String,
+        expected: CredentialType,
+        actual: CredentialType,
+    },
+}
+
+#[derive(Debug, thiserror::Error)]
+enum ResolverBackedSseHttpClientError {
+    #[error(transparent)]
+    Credential(#[from] SseBearerResolutionError),
+    #[error(transparent)]
+    Http(#[from] reqwest::Error),
+}
+
+#[derive(Clone)]
+struct ResolverBackedSseHttpClient {
+    inner: reqwest::Client,
+    bearer_auth: SseBearerAuth,
+    credential_resolver: Arc<dyn CredentialResolver>,
+}
+
+impl ResolverBackedSseHttpClient {
+    fn new(bearer_auth: SseBearerAuth, credential_resolver: Arc<dyn CredentialResolver>) -> Self {
+        Self {
+            inner: reqwest::Client::default(),
+            bearer_auth,
+            credential_resolver,
+        }
+    }
+
+    async fn resolve_bearer_token(&self) -> Result<String, ResolverBackedSseHttpClientError> {
+        resolve_sse_bearer_secret(&self.bearer_auth, self.credential_resolver.as_ref())
+            .await
+            .map_err(ResolverBackedSseHttpClientError::from)
+    }
+}
+
+impl StreamableHttpClient for ResolverBackedSseHttpClient {
+    type Error = ResolverBackedSseHttpClientError;
+
+    async fn post_message(
+        &self,
+        uri: Arc<str>,
+        message: rmcp::model::ClientJsonRpcMessage,
+        session_id: Option<Arc<str>>,
+        _auth_header: Option<String>,
+        custom_headers: HashMap<HeaderName, HeaderValue>,
+    ) -> Result<StreamableHttpPostResponse, StreamableHttpError<Self::Error>> {
+        let bearer_token = self
+            .resolve_bearer_token()
+            .await
+            .map_err(StreamableHttpError::Client)?;
+        <reqwest::Client as StreamableHttpClient>::post_message(
+            &self.inner,
+            uri,
+            message,
+            session_id,
+            Some(bearer_token),
+            custom_headers,
+        )
+        .await
+        .map_err(map_reqwest_streamable_http_error)
+    }
+
+    async fn delete_session(
+        &self,
+        uri: Arc<str>,
+        session_id: Arc<str>,
+        _auth_header: Option<String>,
+        custom_headers: HashMap<HeaderName, HeaderValue>,
+    ) -> Result<(), StreamableHttpError<Self::Error>> {
+        let bearer_token = self
+            .resolve_bearer_token()
+            .await
+            .map_err(StreamableHttpError::Client)?;
+        <reqwest::Client as StreamableHttpClient>::delete_session(
+            &self.inner,
+            uri,
+            session_id,
+            Some(bearer_token),
+            custom_headers,
+        )
+        .await
+        .map_err(map_reqwest_streamable_http_error)
+    }
+
+    async fn get_stream(
+        &self,
+        uri: Arc<str>,
+        session_id: Arc<str>,
+        last_event_id: Option<String>,
+        _auth_header: Option<String>,
+        custom_headers: HashMap<HeaderName, HeaderValue>,
+    ) -> Result<BoxStream<'static, Result<Sse, SseError>>, StreamableHttpError<Self::Error>> {
+        let bearer_token = self
+            .resolve_bearer_token()
+            .await
+            .map_err(StreamableHttpError::Client)?;
+        <reqwest::Client as StreamableHttpClient>::get_stream(
+            &self.inner,
+            uri,
+            session_id,
+            last_event_id,
+            Some(bearer_token),
+            custom_headers,
+        )
+        .await
+        .map_err(map_reqwest_streamable_http_error)
+    }
 }
 
 /// A connection to a single MCP server.
@@ -196,16 +320,29 @@ impl McpConnection {
                 bearer_token,
                 bearer_auth,
                 headers,
-            } => {
-                let resolved_bearer = resolve_sse_bearer_token(
-                    bearer_token.as_deref(),
-                    bearer_auth.as_ref(),
-                    credential_resolver.as_deref(),
-                    &config.name,
-                )
-                .await?;
-                Self::connect_sse(url, resolved_bearer.as_deref(), headers, &config.name).await?
-            }
+            } => match bearer_auth.as_ref() {
+                Some(bearer_auth) => {
+                    let credential_resolver =
+                        credential_resolver.clone().ok_or_else(|| McpError::ConnectionFailed {
+                            server: config.name.clone(),
+                            reason: format!(
+                                "SSE bearer auth for credential `{}` requires a credential resolver",
+                                bearer_auth.credential_key
+                            ),
+                        })?;
+                    Self::connect_sse_with_resolver(
+                        url,
+                        bearer_auth,
+                        credential_resolver,
+                        headers,
+                        &config.name,
+                    )
+                    .await?
+                }
+                None => {
+                    Self::connect_sse(url, bearer_token.as_deref(), headers, &config.name).await?
+                }
+            },
         };
 
         // Handshake succeeded, transport is live.
@@ -313,6 +450,39 @@ impl McpConnection {
             })
     }
 
+    /// Connect to a remote MCP server via HTTP streaming transport, resolving
+    /// bearer auth on every HTTP request so rmcp reconnect/reinit paths can
+    /// pick up rotated credentials.
+    async fn connect_sse_with_resolver(
+        url: &str,
+        bearer_auth: &SseBearerAuth,
+        credential_resolver: Arc<dyn CredentialResolver>,
+        headers: &HashMap<String, String>,
+        server_name: &str,
+    ) -> Result<RunningService<RoleClient, ClientInfo>, McpError> {
+        resolve_sse_bearer_secret(bearer_auth, credential_resolver.as_ref())
+            .await
+            .map_err(|error| sse_bearer_resolution_error(error, server_name))?;
+
+        let mut config = StreamableHttpClientTransportConfig::with_uri(url);
+        if !headers.is_empty() {
+            config = config.custom_headers(parse_custom_headers(headers, server_name)?);
+        }
+
+        let transport = StreamableHttpClientTransport::with_client(
+            ResolverBackedSseHttpClient::new(bearer_auth.clone(), credential_resolver),
+            config,
+        );
+
+        client_info()
+            .serve(transport)
+            .await
+            .map_err(|e| McpError::ConnectionFailed {
+                server: server_name.to_string(),
+                reason: format!("HTTP streaming handshake failed: {e}"),
+            })
+    }
+
     /// Call a tool on the connected MCP server.
     ///
     /// Returns an error if the connection is disconnected.
@@ -385,54 +555,91 @@ impl McpConnection {
     }
 }
 
-async fn resolve_sse_bearer_token(
-    bearer_token: Option<&str>,
-    bearer_auth: Option<&SseBearerAuth>,
-    credential_resolver: Option<&dyn CredentialResolver>,
-    server_name: &str,
-) -> Result<Option<String>, McpError> {
-    let Some(bearer_auth) = bearer_auth else {
-        return Ok(bearer_token.map(str::to_owned));
-    };
-
-    let resolver = credential_resolver.ok_or_else(|| McpError::ConnectionFailed {
-        server: server_name.to_string(),
-        reason: format!(
-            "SSE bearer auth for credential `{}` requires a credential resolver",
-            bearer_auth.credential_key
-        ),
-    })?;
-
-    let resolve_future = resolver.resolve(&bearer_auth.credential_key);
+async fn resolve_sse_bearer_secret(
+    bearer_auth: &SseBearerAuth,
+    credential_resolver: &dyn CredentialResolver,
+) -> Result<String, SseBearerResolutionError> {
+    let resolve_future = credential_resolver.resolve(&bearer_auth.credential_key);
     let credential = tokio::time::timeout(Duration::from_secs(30), resolve_future)
         .await
-        .map_err(|_| McpError::ConnectionFailed {
-            server: server_name.to_string(),
-            reason: format!(
-                "timed out resolving SSE credential `{}`",
-                bearer_auth.credential_key
-            ),
-        })?
-        .map_err(|error| McpError::ConnectionFailed {
-            server: server_name.to_string(),
-            reason: format!(
-                "failed to resolve SSE credential `{}`: {error}",
-                bearer_auth.credential_key
-            ),
-        })?;
+        .map_err(|_| SseBearerResolutionError::Timeout {
+            key: bearer_auth.credential_key.clone(),
+        })??;
 
     let actual_type = resolved_credential_type(&credential);
     if actual_type != bearer_auth.credential_type {
-        return Err(McpError::ConnectionFailed {
-            server: server_name.to_string(),
-            reason: format!(
-                "SSE credential type mismatch for `{}`: expected {:?}, got {:?}",
-                bearer_auth.credential_key, bearer_auth.credential_type, actual_type
-            ),
+        return Err(SseBearerResolutionError::TypeMismatch {
+            key: bearer_auth.credential_key.clone(),
+            expected: bearer_auth.credential_type,
+            actual: actual_type,
         });
     }
 
-    Ok(Some(resolved_credential_secret(&credential).to_string()))
+    Ok(resolved_credential_secret(&credential).to_string())
+}
+
+fn sse_bearer_resolution_error(error: SseBearerResolutionError, server_name: &str) -> McpError {
+    let reason = match error {
+        SseBearerResolutionError::Timeout { key } => {
+            format!("timed out resolving SSE credential `{key}`")
+        }
+        SseBearerResolutionError::Credential(error) => {
+            format!("failed to resolve SSE credential: {error}")
+        }
+        SseBearerResolutionError::TypeMismatch {
+            key,
+            expected,
+            actual,
+        } => {
+            format!(
+                "SSE credential type mismatch for `{key}`: expected {expected:?}, got {actual:?}"
+            )
+        }
+    };
+
+    McpError::ConnectionFailed {
+        server: server_name.to_string(),
+        reason,
+    }
+}
+
+fn map_reqwest_streamable_http_error(
+    error: StreamableHttpError<reqwest::Error>,
+) -> StreamableHttpError<ResolverBackedSseHttpClientError> {
+    match error {
+        StreamableHttpError::Sse(error) => StreamableHttpError::Sse(error),
+        StreamableHttpError::Io(error) => StreamableHttpError::Io(error),
+        StreamableHttpError::Client(error) => {
+            StreamableHttpError::Client(ResolverBackedSseHttpClientError::Http(error))
+        }
+        StreamableHttpError::UnexpectedEndOfStream => StreamableHttpError::UnexpectedEndOfStream,
+        StreamableHttpError::UnexpectedServerResponse(error) => {
+            StreamableHttpError::UnexpectedServerResponse(error)
+        }
+        StreamableHttpError::UnexpectedContentType(content_type) => {
+            StreamableHttpError::UnexpectedContentType(content_type)
+        }
+        StreamableHttpError::ServerDoesNotSupportSse => {
+            StreamableHttpError::ServerDoesNotSupportSse
+        }
+        StreamableHttpError::ServerDoesNotSupportDeleteSession => {
+            StreamableHttpError::ServerDoesNotSupportDeleteSession
+        }
+        StreamableHttpError::TokioJoinError(error) => StreamableHttpError::TokioJoinError(error),
+        StreamableHttpError::Deserialize(error) => StreamableHttpError::Deserialize(error),
+        StreamableHttpError::TransportChannelClosed => StreamableHttpError::TransportChannelClosed,
+        StreamableHttpError::AuthRequired(error) => StreamableHttpError::AuthRequired(error),
+        StreamableHttpError::InsufficientScope(error) => {
+            StreamableHttpError::InsufficientScope(error)
+        }
+        StreamableHttpError::ReservedHeaderConflict(header) => {
+            StreamableHttpError::ReservedHeaderConflict(header)
+        }
+        StreamableHttpError::SessionExpired => StreamableHttpError::SessionExpired,
+        other => StreamableHttpError::UnexpectedServerResponse(
+            format!("unexpected streamable HTTP error: {other:?}").into(),
+        ),
+    }
 }
 
 const fn resolved_credential_type(credential: &ResolvedCredential) -> CredentialType {

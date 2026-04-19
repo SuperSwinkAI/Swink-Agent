@@ -5017,11 +5017,13 @@ name = "swink-agent-mcp"
 version = "0.7.9"
 dependencies = [
  "axum",
+ "futures",
  "reqwest 0.13.2",
  "rmcp",
  "schemars",
  "serde",
  "serde_json",
+ "sse-stream",
  "swink-agent",
  "thiserror 2.0.18",
  "tokio",

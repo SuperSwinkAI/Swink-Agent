@@ -3,16 +3,26 @@
 mod common;
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use axum::Router;
-use axum::extract::State;
+use axum::extract::{Request, State};
 use axum::http::header::AUTHORIZATION;
 use axum::http::{HeaderMap, StatusCode};
+use axum::middleware::{Next, from_fn_with_state};
+use axum::response::{IntoResponse, Response};
 use axum::routing::post;
-use swink_agent::{CredentialFuture, CredentialResolver, CredentialType, ResolvedCredential};
+use rmcp::transport::streamable_http_server::{
+    StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
+};
+use swink_agent::{
+    ContentBlock, CredentialFuture, CredentialResolver, CredentialType, ResolvedCredential,
+};
+use tokio::sync::RwLock;
 use tokio::sync::oneshot;
+use tokio_util::sync::CancellationToken;
 
 use swink_agent_mcp::{McpConnection, McpServerConfig, McpTransport, SseBearerAuth};
 
@@ -52,6 +62,84 @@ impl CredentialResolver for StaticCredentialResolver {
             Ok(credential)
         })
     }
+}
+
+struct RotatingCredentialResolver {
+    expected_key: String,
+    current_token: Arc<RwLock<String>>,
+    calls: Arc<AtomicUsize>,
+}
+
+impl RotatingCredentialResolver {
+    fn new(expected_key: impl Into<String>, current_token: Arc<RwLock<String>>) -> Self {
+        Self {
+            expected_key: expected_key.into(),
+            current_token,
+            calls: Arc::new(AtomicUsize::new(0)),
+        }
+    }
+
+    fn call_count(&self) -> usize {
+        self.calls.load(Ordering::SeqCst)
+    }
+}
+
+impl CredentialResolver for RotatingCredentialResolver {
+    fn resolve(&self, key: &str) -> CredentialFuture<'_, ResolvedCredential> {
+        let expected_key = self.expected_key.clone();
+        let actual_key = key.to_string();
+        let current_token = Arc::clone(&self.current_token);
+        let calls = Arc::clone(&self.calls);
+        Box::pin(async move {
+            assert_eq!(actual_key, expected_key);
+            calls.fetch_add(1, Ordering::SeqCst);
+            Ok(ResolvedCredential::Bearer(
+                current_token.read().await.clone(),
+            ))
+        })
+    }
+}
+
+#[derive(Clone)]
+struct AuthGateState {
+    current_token: Arc<RwLock<String>>,
+    seen_authorization: Arc<Mutex<Vec<String>>>,
+}
+
+async fn require_bearer_auth(
+    State(state): State<AuthGateState>,
+    request: Request,
+    next: Next,
+) -> Response {
+    let authorization = request
+        .headers()
+        .get(AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned);
+
+    if let Some(ref header) = authorization {
+        state
+            .seen_authorization
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(header.clone());
+    }
+
+    let expected = format!("Bearer {}", state.current_token.read().await.as_str());
+    if authorization.as_deref() != Some(expected.as_str()) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+
+    next.run(request).await
+}
+
+async fn current_session_id(session_manager: &Arc<LocalSessionManager>) -> String {
+    let sessions = session_manager.sessions.read().await;
+    sessions
+        .keys()
+        .next()
+        .map(std::string::ToString::to_string)
+        .expect("session should exist")
 }
 
 async fn capture_headers(
@@ -340,4 +428,121 @@ async fn connect_sse_with_resolver_auth_requires_resolver() {
         error.contains("mcp-sse-token"),
         "error should mention the missing credential key, got: {error}"
     );
+}
+
+#[tokio::test]
+#[allow(clippy::too_many_lines)]
+async fn sse_resolver_auth_refreshes_during_session_recovery() {
+    let session_manager = Arc::new(LocalSessionManager::default());
+    let shutdown = CancellationToken::new();
+    let current_token = Arc::new(RwLock::new("initial-token".to_string()));
+    let auth_gate = AuthGateState {
+        current_token: Arc::clone(&current_token),
+        seen_authorization: Arc::new(Mutex::new(Vec::new())),
+    };
+
+    let mock_cfg = common::MockServerConfig::new(vec![]);
+    let server = common::MockMcpServer::from_config(&mock_cfg);
+    let service = StreamableHttpService::new(
+        move || Ok(server.clone()),
+        Arc::clone(&session_manager),
+        StreamableHttpServerConfig::default()
+            .with_sse_keep_alive(None)
+            .with_cancellation_token(shutdown.child_token()),
+    );
+
+    let router = Router::new()
+        .nest_service("/mcp", service)
+        .layer(from_fn_with_state(auth_gate.clone(), require_bearer_auth));
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind test server");
+    let address = listener.local_addr().expect("listener address");
+
+    let server_task = tokio::spawn({
+        let shutdown = shutdown.clone();
+        async move {
+            let _ = axum::serve(listener, router)
+                .with_graceful_shutdown(async move { shutdown.cancelled_owned().await })
+                .await;
+        }
+    });
+
+    let resolver = Arc::new(RotatingCredentialResolver::new(
+        "mcp-sse-token",
+        Arc::clone(&current_token),
+    ));
+    let config = McpServerConfig {
+        name: "sse-refresh-auth".into(),
+        transport: McpTransport::Sse {
+            url: format!("http://{address}/mcp"),
+            bearer_token: Some("stale-static-token".into()),
+            bearer_auth: Some(SseBearerAuth {
+                credential_key: "mcp-sse-token".into(),
+                credential_type: CredentialType::Bearer,
+            }),
+            headers: HashMap::new(),
+        },
+        tool_prefix: None,
+        tool_filter: None,
+        requires_approval: false,
+    };
+
+    let conn = McpConnection::connect_with_resolver(config, Some(resolver.clone()), None)
+        .await
+        .expect("SSE connection should succeed");
+
+    let original_session_id = current_session_id(&session_manager).await;
+    *current_token.write().await = "rotated-token".to_string();
+    session_manager.sessions.write().await.clear();
+
+    let result = conn
+        .call_tool("echo", serde_json::json!({ "text": "recovered" }))
+        .await
+        .expect("tool call should recover with the refreshed bearer token");
+    let agent_result = swink_agent_mcp::convert::call_result_to_agent_result(&result);
+    let text = ContentBlock::extract_text(&agent_result.content);
+    assert!(
+        text.contains("recovered"),
+        "recovered call should still reach the server, got: {text}"
+    );
+
+    let replacement_session_id = current_session_id(&session_manager).await;
+    assert_ne!(
+        replacement_session_id, original_session_id,
+        "session recovery should create a new server session"
+    );
+
+    let seen_authorization = auth_gate
+        .seen_authorization
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .clone();
+    assert!(
+        seen_authorization
+            .iter()
+            .any(|header| header == "Bearer initial-token"),
+        "initial handshake should use the resolver token, got: {seen_authorization:?}"
+    );
+    assert!(
+        seen_authorization
+            .iter()
+            .any(|header| header == "Bearer rotated-token"),
+        "session recovery should use the rotated resolver token, got: {seen_authorization:?}"
+    );
+    assert!(
+        !seen_authorization
+            .iter()
+            .any(|header| header == "Bearer stale-static-token"),
+        "static bearer fallback should not override resolver auth, got: {seen_authorization:?}"
+    );
+    assert!(
+        resolver.call_count() >= 2,
+        "resolver should be consulted again for session recovery"
+    );
+
+    conn.shutdown().await;
+    shutdown.cancel();
+    let _ = server_task.await;
 }
