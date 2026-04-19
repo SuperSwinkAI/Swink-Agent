@@ -1,10 +1,11 @@
 #![forbid(unsafe_code)]
 //! Session persistence and memory management for swink-agent.
 //!
-//! This crate provides pluggable session storage and context compaction
-//! strategies for the swink-agent framework. It extracts session persistence
-//! from the TUI into a reusable library and lays the groundwork for
-//! multi-layer memory research (summarization, RAG, tool-aware compaction).
+//! This crate provides pluggable session storage, durable checkpoint storage,
+//! and context compaction strategies for the swink-agent framework. It
+//! extracts session persistence from the TUI into a reusable library and lays
+//! the groundwork for multi-layer memory research (summarization, RAG,
+//! tool-aware compaction).
 //!
 //! # Quick Start
 //!
@@ -26,7 +27,10 @@
 //! };
 //! store.save(&id, &meta, &messages)?;
 //! ```
+//!
+//! For durable agent checkpoints, use [`FileCheckpointStore`].
 
+mod checkpoint_store;
 mod codec;
 mod compaction;
 mod entry;
@@ -39,6 +43,7 @@ mod store;
 mod store_async;
 mod time;
 
+pub use checkpoint_store::FileCheckpointStore;
 pub use compaction::{CompactionResult, SummarizingCompactor};
 pub use entry::SessionEntry;
 pub use interrupt::{InterruptState, PendingToolCall};
