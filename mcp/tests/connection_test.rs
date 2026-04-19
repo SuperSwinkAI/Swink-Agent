@@ -11,9 +11,10 @@ use axum::extract::State;
 use axum::http::header::AUTHORIZATION;
 use axum::http::{HeaderMap, StatusCode};
 use axum::routing::post;
+use swink_agent::{CredentialFuture, CredentialResolver, CredentialType, ResolvedCredential};
 use tokio::sync::oneshot;
 
-use swink_agent_mcp::{McpConnection, McpServerConfig, McpTransport};
+use swink_agent_mcp::{McpConnection, McpServerConfig, McpTransport, SseBearerAuth};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct CapturedHeaders {
@@ -25,6 +26,32 @@ struct CapturedHeaders {
 #[derive(Clone)]
 struct HeaderCaptureState {
     sender: Arc<Mutex<Option<oneshot::Sender<CapturedHeaders>>>>,
+}
+
+struct StaticCredentialResolver {
+    expected_key: String,
+    credential: ResolvedCredential,
+}
+
+impl StaticCredentialResolver {
+    fn new(expected_key: impl Into<String>, credential: ResolvedCredential) -> Self {
+        Self {
+            expected_key: expected_key.into(),
+            credential,
+        }
+    }
+}
+
+impl CredentialResolver for StaticCredentialResolver {
+    fn resolve(&self, key: &str) -> CredentialFuture<'_, ResolvedCredential> {
+        let expected_key = self.expected_key.clone();
+        let actual_key = key.to_string();
+        let credential = self.credential.clone();
+        Box::pin(async move {
+            assert_eq!(actual_key, expected_key);
+            Ok(credential)
+        })
+    }
 }
 
 async fn capture_headers(
@@ -157,6 +184,7 @@ async fn connect_sse_to_unreachable_url_returns_error() {
         transport: McpTransport::Sse {
             url: "http://127.0.0.1:1/mcp".into(),
             bearer_token: Some("test-bearer-token-123".into()),
+            bearer_auth: None,
             headers: HashMap::new(),
         },
         tool_prefix: None,
@@ -193,6 +221,7 @@ async fn connect_sse_sends_bearer_and_custom_headers() {
         transport: McpTransport::Sse {
             url: format!("http://{address}/mcp"),
             bearer_token: Some("test-bearer-token-123".into()),
+            bearer_auth: None,
             headers: HashMap::from([
                 ("x-api-key".into(), "custom-key-456".into()),
                 ("x-trace-id".into(), "trace-789".into()),
@@ -223,4 +252,92 @@ async fn connect_sse_sends_bearer_and_custom_headers() {
 
     server.abort();
     let _ = server.await;
+}
+
+#[tokio::test]
+async fn connect_sse_uses_resolved_bearer_auth_over_static_token() {
+    let (sender, receiver) = oneshot::channel();
+    let state = HeaderCaptureState {
+        sender: Arc::new(Mutex::new(Some(sender))),
+    };
+
+    let app = Router::new()
+        .route("/mcp", post(capture_headers))
+        .with_state(state);
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind test server");
+    let address = listener.local_addr().expect("listener address");
+
+    let server = tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+
+    let config = McpServerConfig {
+        name: "sse-resolver-auth".into(),
+        transport: McpTransport::Sse {
+            url: format!("http://{address}/mcp"),
+            bearer_token: Some("static-token".into()),
+            bearer_auth: Some(SseBearerAuth {
+                credential_key: "mcp-sse-token".into(),
+                credential_type: CredentialType::ApiKey,
+            }),
+            headers: HashMap::new(),
+        },
+        tool_prefix: None,
+        tool_filter: None,
+        requires_approval: false,
+    };
+
+    let resolver = Arc::new(StaticCredentialResolver::new(
+        "mcp-sse-token",
+        ResolvedCredential::ApiKey("resolved-token-789".into()),
+    ));
+
+    let result = McpConnection::connect_with_resolver(config, Some(resolver), None).await;
+    assert!(
+        result.is_err(),
+        "the mock HTTP server should reject the handshake"
+    );
+
+    let captured = tokio::time::timeout(Duration::from_secs(5), receiver)
+        .await
+        .expect("timed out waiting for header capture")
+        .expect("header capture channel closed");
+
+    assert_eq!(
+        captured.authorization.as_deref(),
+        Some("Bearer resolved-token-789")
+    );
+
+    server.abort();
+    let _ = server.await;
+}
+
+#[tokio::test]
+async fn connect_sse_with_resolver_auth_requires_resolver() {
+    let config = McpServerConfig {
+        name: "sse-missing-resolver".into(),
+        transport: McpTransport::Sse {
+            url: "http://127.0.0.1:1/mcp".into(),
+            bearer_token: None,
+            bearer_auth: Some(SseBearerAuth {
+                credential_key: "mcp-sse-token".into(),
+                credential_type: CredentialType::Bearer,
+            }),
+            headers: HashMap::new(),
+        },
+        tool_prefix: None,
+        tool_filter: None,
+        requires_approval: false,
+    };
+
+    let result = McpConnection::connect(config, None).await;
+    assert!(result.is_err(), "missing resolver should fail fast");
+    let error = result.unwrap_err().to_string();
+    assert!(
+        error.contains("mcp-sse-token"),
+        "error should mention the missing credential key, got: {error}"
+    );
 }

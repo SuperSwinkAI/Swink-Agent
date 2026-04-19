@@ -7,6 +7,7 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
+use std::time::Duration;
 
 use reqwest::header::{HeaderName, HeaderValue};
 use rmcp::model::{CallToolRequestParams, CallToolResult, ClientInfo, Implementation};
@@ -16,12 +17,12 @@ use rmcp::transport::streamable_http_client::{
     StreamableHttpClientTransport, StreamableHttpClientTransportConfig,
 };
 use serde_json::Value;
-use swink_agent::AgentEvent;
+use swink_agent::{AgentEvent, CredentialResolver, CredentialType, ResolvedCredential};
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::task::JoinHandle;
 use tracing::{info, warn};
 
-use crate::config::{McpServerConfig, McpTransport};
+use crate::config::{McpServerConfig, McpTransport, SseBearerAuth};
 use crate::error::McpError;
 
 /// Status of an MCP server connection.
@@ -176,6 +177,16 @@ impl McpConnection {
         config: McpServerConfig,
         event_tx: Option<UnboundedSender<AgentEvent>>,
     ) -> Result<Self, McpError> {
+        Self::connect_with_resolver(config, None, event_tx).await
+    }
+
+    /// Connect to an MCP server using the configured transport and optional
+    /// credential resolver for SSE bearer auth.
+    pub async fn connect_with_resolver(
+        config: McpServerConfig,
+        credential_resolver: Option<Arc<dyn CredentialResolver>>,
+        event_tx: Option<UnboundedSender<AgentEvent>>,
+    ) -> Result<Self, McpError> {
         let service = match &config.transport {
             McpTransport::Stdio { command, args, env } => {
                 Self::connect_stdio(command, args, env, &config.name).await?
@@ -183,8 +194,18 @@ impl McpConnection {
             McpTransport::Sse {
                 url,
                 bearer_token,
+                bearer_auth,
                 headers,
-            } => Self::connect_sse(url, bearer_token.as_deref(), headers, &config.name).await?,
+            } => {
+                let resolved_bearer = resolve_sse_bearer_token(
+                    bearer_token.as_deref(),
+                    bearer_auth.as_ref(),
+                    credential_resolver.as_deref(),
+                    &config.name,
+                )
+                .await?;
+                Self::connect_sse(url, resolved_bearer.as_deref(), headers, &config.name).await?
+            }
         };
 
         // Handshake succeeded, transport is live.
@@ -361,6 +382,72 @@ impl McpConnection {
             monitor.abort();
             let _ = monitor.await;
         }
+    }
+}
+
+async fn resolve_sse_bearer_token(
+    bearer_token: Option<&str>,
+    bearer_auth: Option<&SseBearerAuth>,
+    credential_resolver: Option<&dyn CredentialResolver>,
+    server_name: &str,
+) -> Result<Option<String>, McpError> {
+    let Some(bearer_auth) = bearer_auth else {
+        return Ok(bearer_token.map(str::to_owned));
+    };
+
+    let resolver = credential_resolver.ok_or_else(|| McpError::ConnectionFailed {
+        server: server_name.to_string(),
+        reason: format!(
+            "SSE bearer auth for credential `{}` requires a credential resolver",
+            bearer_auth.credential_key
+        ),
+    })?;
+
+    let resolve_future = resolver.resolve(&bearer_auth.credential_key);
+    let credential = tokio::time::timeout(Duration::from_secs(30), resolve_future)
+        .await
+        .map_err(|_| McpError::ConnectionFailed {
+            server: server_name.to_string(),
+            reason: format!(
+                "timed out resolving SSE credential `{}`",
+                bearer_auth.credential_key
+            ),
+        })?
+        .map_err(|error| McpError::ConnectionFailed {
+            server: server_name.to_string(),
+            reason: format!(
+                "failed to resolve SSE credential `{}`: {error}",
+                bearer_auth.credential_key
+            ),
+        })?;
+
+    let actual_type = resolved_credential_type(&credential);
+    if actual_type != bearer_auth.credential_type {
+        return Err(McpError::ConnectionFailed {
+            server: server_name.to_string(),
+            reason: format!(
+                "SSE credential type mismatch for `{}`: expected {:?}, got {:?}",
+                bearer_auth.credential_key, bearer_auth.credential_type, actual_type
+            ),
+        });
+    }
+
+    Ok(Some(resolved_credential_secret(&credential).to_string()))
+}
+
+const fn resolved_credential_type(credential: &ResolvedCredential) -> CredentialType {
+    match credential {
+        ResolvedCredential::ApiKey(_) => CredentialType::ApiKey,
+        ResolvedCredential::Bearer(_) => CredentialType::Bearer,
+        ResolvedCredential::OAuth2AccessToken(_) => CredentialType::OAuth2,
+    }
+}
+
+fn resolved_credential_secret(credential: &ResolvedCredential) -> &str {
+    match credential {
+        ResolvedCredential::ApiKey(secret)
+        | ResolvedCredential::Bearer(secret)
+        | ResolvedCredential::OAuth2AccessToken(secret) => secret,
     }
 }
 

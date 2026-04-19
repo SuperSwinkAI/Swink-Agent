@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use swink_agent::{AgentEvent, AgentTool};
+use swink_agent::{AgentEvent, AgentTool, CredentialResolver};
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::warn;
 
@@ -55,6 +55,7 @@ pub struct McpManager {
     connections: Vec<Arc<McpConnection>>,
     tools: Vec<Arc<dyn AgentTool>>,
     event_tx: Option<UnboundedSender<AgentEvent>>,
+    credential_resolver: Option<Arc<dyn CredentialResolver>>,
 }
 
 impl McpManager {
@@ -68,6 +69,7 @@ impl McpManager {
             connections: Vec::new(),
             tools: Vec::new(),
             event_tx: None,
+            credential_resolver: None,
         }
     }
 
@@ -79,6 +81,13 @@ impl McpManager {
     #[must_use]
     pub fn with_event_tx(mut self, tx: UnboundedSender<AgentEvent>) -> Self {
         self.event_tx = Some(tx);
+        self
+    }
+
+    /// Wire up a credential resolver for SSE bearer auth.
+    #[must_use]
+    pub fn with_credential_resolver(mut self, resolver: Arc<dyn CredentialResolver>) -> Self {
+        self.credential_resolver = Some(resolver);
         self
     }
 
@@ -104,6 +113,7 @@ impl McpManager {
             connections: arc_connections,
             tools,
             event_tx: None,
+            credential_resolver: None,
         })
     }
 
@@ -116,7 +126,13 @@ impl McpManager {
         let mut all_tools: Vec<(String, String, Arc<dyn AgentTool>)> = Vec::new();
 
         for config in self.configs.clone() {
-            match McpConnection::connect(config.clone(), self.event_tx.clone()).await {
+            match McpConnection::connect_with_resolver(
+                config.clone(),
+                self.credential_resolver.clone(),
+                self.event_tx.clone(),
+            )
+            .await
+            {
                 Ok(connection) => {
                     let conn = Arc::new(connection);
                     all_tools.extend(build_tools_for_connection(&conn));
@@ -167,6 +183,7 @@ impl std::fmt::Debug for McpManager {
             .field("connections", &self.connections.len())
             .field("tools", &self.tools.len())
             .field("event_tx", &self.event_tx.is_some())
+            .field("credential_resolver", &self.credential_resolver.is_some())
             .finish()
     }
 }
