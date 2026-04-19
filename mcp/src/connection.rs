@@ -5,8 +5,10 @@
 //! awaits the service lifecycle and emits a disconnect event when the
 //! underlying service stops running.
 
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
 
+use reqwest::header::{HeaderName, HeaderValue};
 use rmcp::model::{CallToolRequestParams, CallToolResult, ClientInfo, Implementation};
 use rmcp::service::{Peer, QuitReason, RoleClient, RunningService, ServiceExt};
 use rmcp::transport::TokioChildProcess;
@@ -178,9 +180,11 @@ impl McpConnection {
             McpTransport::Stdio { command, args, env } => {
                 Self::connect_stdio(command, args, env, &config.name).await?
             }
-            McpTransport::Sse { url, bearer_token } => {
-                Self::connect_sse(url, bearer_token.as_deref(), &config.name).await?
-            }
+            McpTransport::Sse {
+                url,
+                bearer_token,
+                headers,
+            } => Self::connect_sse(url, bearer_token.as_deref(), headers, &config.name).await?,
         };
 
         // Handshake succeeded, transport is live.
@@ -266,11 +270,15 @@ impl McpConnection {
     async fn connect_sse(
         url: &str,
         bearer_token: Option<&str>,
+        headers: &HashMap<String, String>,
         server_name: &str,
     ) -> Result<RunningService<RoleClient, ClientInfo>, McpError> {
         let mut config = StreamableHttpClientTransportConfig::with_uri(url);
         if let Some(token) = bearer_token {
-            config = config.auth_header(format!("Bearer {token}"));
+            config = config.auth_header(token.to_owned());
+        }
+        if !headers.is_empty() {
+            config = config.custom_headers(parse_custom_headers(headers, server_name)?);
         }
 
         let transport = StreamableHttpClientTransport::from_config(config);
@@ -354,6 +362,29 @@ impl McpConnection {
             let _ = monitor.await;
         }
     }
+}
+
+fn parse_custom_headers(
+    headers: &HashMap<String, String>,
+    server_name: &str,
+) -> Result<HashMap<HeaderName, HeaderValue>, McpError> {
+    headers
+        .iter()
+        .map(|(name, value)| {
+            let header_name = HeaderName::from_bytes(name.as_bytes()).map_err(|error| {
+                McpError::ConnectionFailed {
+                    server: server_name.to_string(),
+                    reason: format!("invalid SSE header name `{name}`: {error}"),
+                }
+            })?;
+            let header_value =
+                HeaderValue::from_str(value).map_err(|error| McpError::ConnectionFailed {
+                    server: server_name.to_string(),
+                    reason: format!("invalid SSE header value for `{name}`: {error}"),
+                })?;
+            Ok((header_name, header_value))
+        })
+        .collect()
 }
 
 impl Drop for McpConnection {
