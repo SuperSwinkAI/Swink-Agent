@@ -19,9 +19,9 @@ use tokio_util::sync::CancellationToken;
 use swink_agent::{
     AgentEvent, AgentLoopConfig, AgentMessage, AgentTool, AgentToolResult, AssistantMessage,
     AssistantMessageEvent, ContentBlock, Cost, CustomMessage, DefaultRetryStrategy, LlmMessage,
-    MessageProvider, PolicyContext, PolicyVerdict, PostTurnPolicy, StopReason, StreamFn,
-    StreamOptions, ToolResultMessage, TurnPolicyContext, TurnSnapshot, Usage, UserMessage,
-    agent_loop,
+    MessageProvider, PolicyContext, PolicyVerdict, PostTurnPolicy, PreTurnPolicy, StopReason,
+    StreamFn, StreamOptions, ToolResultMessage, TurnPolicyContext, TurnSnapshot, Usage,
+    UserMessage, agent_loop,
 };
 
 // ─── MockUpdatingTool ─────────────────────────────────────────────────────────
@@ -272,7 +272,7 @@ fn count_events(events: &[AgentEvent], name: &str) -> usize {
 struct StoppingPostTurnPolicy;
 
 impl PostTurnPolicy for StoppingPostTurnPolicy {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "stopping-post-turn"
     }
 
@@ -293,7 +293,7 @@ struct RecordingPostTurnPolicy {
 }
 
 impl PostTurnPolicy for RecordingPostTurnPolicy {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "recording-post-turn"
     }
 
@@ -313,6 +313,76 @@ impl PostTurnPolicy for RecordingPostTurnPolicy {
         });
 
         PolicyVerdict::Continue
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct RecordedPreTurnBatch {
+    turn_index: usize,
+    message_count: usize,
+    new_messages: Vec<String>,
+}
+
+struct RecordingPreTurnPolicy {
+    observations: Arc<Mutex<Vec<RecordedPreTurnBatch>>>,
+}
+
+impl PreTurnPolicy for RecordingPreTurnPolicy {
+    fn name(&self) -> &'static str {
+        "recording-pre-turn"
+    }
+
+    fn evaluate(&self, ctx: &PolicyContext<'_>) -> PolicyVerdict {
+        let new_messages = ctx
+            .new_messages
+            .iter()
+            .filter_map(|message| match message {
+                AgentMessage::Llm(LlmMessage::User(user)) => {
+                    Some(ContentBlock::extract_text(&user.content))
+                }
+                AgentMessage::Llm(LlmMessage::Assistant(assistant)) => {
+                    Some(ContentBlock::extract_text(&assistant.content))
+                }
+                AgentMessage::Llm(LlmMessage::ToolResult(result)) => {
+                    Some(ContentBlock::extract_text(&result.content))
+                }
+                AgentMessage::Custom(_) => None,
+            })
+            .collect();
+        self.observations
+            .lock()
+            .unwrap()
+            .push(RecordedPreTurnBatch {
+                turn_index: ctx.turn_index,
+                message_count: ctx.message_count,
+                new_messages,
+            });
+        PolicyVerdict::Continue
+    }
+}
+
+struct InjectingOncePostTurnPolicy {
+    injected: AtomicBool,
+    text: String,
+}
+
+impl PostTurnPolicy for InjectingOncePostTurnPolicy {
+    fn name(&self) -> &'static str {
+        "injecting-once-post-turn"
+    }
+
+    fn evaluate(&self, _ctx: &PolicyContext<'_>, _turn: &TurnPolicyContext<'_>) -> PolicyVerdict {
+        if self.injected.swap(true, Ordering::SeqCst) {
+            PolicyVerdict::Continue
+        } else {
+            PolicyVerdict::Inject(vec![AgentMessage::Llm(LlmMessage::User(UserMessage {
+                content: vec![ContentBlock::Text {
+                    text: self.text.clone(),
+                }],
+                timestamp: 0,
+                cache_hint: None,
+            }))])
+        }
     }
 }
 
@@ -1549,6 +1619,73 @@ async fn follow_up_turn_after_no_tool_turn_advances_turn_index() {
 }
 
 #[tokio::test]
+async fn pre_turn_new_messages_include_initial_prompt_batch() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("ok")]));
+    let observations = Arc::new(Mutex::new(Vec::new()));
+
+    let mut config = default_config(stream_fn);
+    config.pre_turn_policies = vec![Arc::new(RecordingPreTurnPolicy {
+        observations: Arc::clone(&observations),
+    })];
+
+    let events = collect_events(agent_loop(
+        vec![common::user_msg("hello from prompt")],
+        "system".to_string(),
+        config,
+        CancellationToken::new(),
+    ))
+    .await;
+
+    assert!(has_event(&events, "AgentEnd"));
+    let recorded = observations.lock().unwrap().clone();
+    assert_eq!(recorded.len(), 1, "pre-turn policy should run once");
+    assert_eq!(
+        recorded[0],
+        RecordedPreTurnBatch {
+            turn_index: 0,
+            message_count: 1,
+            new_messages: vec!["hello from prompt".to_string()],
+        },
+        "first-turn pre-turn policies must see the initial prompt batch as new_messages"
+    );
+}
+
+#[tokio::test]
+async fn post_turn_inject_without_tool_calls_continues_inner_loop() {
+    let capturing_fn = Arc::new(MockContextCapturingStreamFn::new(vec![
+        text_only_events("first response"),
+        text_only_events("second response"),
+    ]));
+    let stream_fn: Arc<dyn StreamFn> = Arc::clone(&capturing_fn) as Arc<dyn StreamFn>;
+
+    let mut config = default_config(stream_fn);
+    config.post_turn_policies = vec![Arc::new(InjectingOncePostTurnPolicy {
+        injected: AtomicBool::new(false),
+        text: "policy follow-up".to_string(),
+    })];
+
+    let events = collect_events(agent_loop(
+        vec![common::user_msg("start")],
+        "system".to_string(),
+        config,
+        CancellationToken::new(),
+    ))
+    .await;
+
+    assert_eq!(
+        count_events(&events, "TurnStart"),
+        2,
+        "post-turn injections on text-only turns should schedule another inner-loop turn"
+    );
+    let counts = capturing_fn.captured_message_counts.lock().unwrap().clone();
+    assert_eq!(
+        counts,
+        vec![1, 3],
+        "second stream call should include the injected pending batch"
+    );
+}
+
+#[tokio::test]
 async fn turn_snapshot_serializes_to_json() {
     let snapshot = TurnSnapshot {
         turn_index: 3,
@@ -1581,14 +1718,14 @@ async fn turn_snapshot_serializes_to_json() {
 // ─── Post-turn policy replaces assistant message before TurnEnd ──────────
 
 /// A post-turn policy that replaces the assistant message text.
-/// Simulates what PiiRedactor does: returns Inject with a modified
-/// AssistantMessage to replace the original.
+/// Simulates what `PiiRedactor` does: returns `Inject` with a modified
+/// `AssistantMessage` to replace the original.
 struct ReplacingPostTurnPolicy {
     replacement_text: String,
 }
 
 impl PostTurnPolicy for ReplacingPostTurnPolicy {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "replacing-post-turn"
     }
 
@@ -1613,7 +1750,7 @@ impl PostTurnPolicy for ReplacingPostTurnPolicy {
 }
 
 /// Regression test for #313: post-turn Inject verdicts must replace the
-/// assistant message in TurnEnd and context BEFORE the event is emitted.
+/// assistant message in `TurnEnd` and context BEFORE the event is emitted.
 #[tokio::test]
 async fn post_turn_inject_replaces_assistant_message_in_turn_end() {
     let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events(
@@ -1826,7 +1963,7 @@ async fn post_turn_policy_runs_before_transfer_termination() {
     );
 }
 
-/// Regression test: post-turn Stop verdict still emits TurnEnd before stopping.
+/// Regression test: post-turn Stop verdict still emits `TurnEnd` before stopping.
 #[tokio::test]
 async fn post_turn_stop_still_emits_turn_end() {
     let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("Hello!")]));
