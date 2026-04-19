@@ -74,6 +74,7 @@ let configs = vec![
         transport: McpTransport::Sse {
             url: "https://mcp.example.com/sse".into(),
             bearer_token: Some("sk-...".into()),
+            headers: [("x-api-key".into(), "api-key-123".into())].into(),
         },
         tool_prefix: None,
         tool_filter: None,
