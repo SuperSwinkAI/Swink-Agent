@@ -57,21 +57,19 @@ if let Some(report) = transformer.transform(&mut messages, false) {
 ### Custom token counter
 
 ```rust
-use swink_agent::{TokenCounter, SlidingWindowTransformer};
-use swink_agent::types::AgentMessage;
+use swink_agent::{SlidingWindowTransformer, TiktokenCounter};
 use std::sync::Arc;
 
-struct TiktokenCounter;
-
-impl TokenCounter for TiktokenCounter {
-    fn count_tokens(&self, message: &AgentMessage) -> usize {
-        // Use tiktoken or any tokenizer library here
-        todo!()
-    }
-}
-
 let transformer = SlidingWindowTransformer::new(100_000, 50_000, 2)
-    .with_token_counter(Arc::new(TiktokenCounter));
+    .with_token_counter(Arc::new(
+        TiktokenCounter::cl100k().expect("built-in cl100k tokenizer"),
+    ));
+```
+
+Enable the `tiktoken` feature to use the built-in wrapper:
+
+```bash
+cargo add swink-agent --features tiktoken
 ```
 
 ### Custom synchronous context transformer
