@@ -17,6 +17,7 @@
 ## Lessons Learned
 
 - **SmolLM3 `<think>` tags** — parsed via simple string matching (not regex) and routed to `ThinkingStart/Delta/End` events.
+- **Non-Gemma `<think>` parsing is stateful across chunks** — `local-llm/src/stream.rs` now tracks split `<think>` / `</think>` delimiters across token boundaries and flushes any buffered partial delimiter fragments on terminal paths so streamed thinking/text content is not dropped at chunk boundaries.
 - **Context capped at 8192 tokens** (NoPE architecture). Override via `LOCAL_CONTEXT_LENGTH` env var.
 - **llama-cpp-2 version pin** — API is actively evolving; pin to specific minor version.
 - **SmolLM3 is fully supported** — `llama-cpp-2` (llama.cpp) natively supports the SmolLM3 GGUF architecture. No fail-fast rejection needed.
