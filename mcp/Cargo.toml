@@ -14,12 +14,14 @@ readme = "../README.md"
 swink-agent = { path = "..", version = "0.7.9", default-features = false }
 rmcp = { version = "1.3", features = ["client", "client-side-sse", "transport-streamable-http-client", "transport-streamable-http-client-reqwest", "transport-child-process"] }
 reqwest = { workspace = true }
+futures.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
+sse-stream = "0.2"
 
 [dev-dependencies]
 axum = "0.8"
