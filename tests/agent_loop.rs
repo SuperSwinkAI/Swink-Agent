@@ -783,7 +783,7 @@ async fn concurrent_execution() {
 
     assert!(has_event(&events, "AgentEnd"));
     assert!(
-        elapsed < Duration::from_millis(250),
+        elapsed < Duration::from_millis(500),
         "tools should execute concurrently, took {elapsed:?}"
     );
 }

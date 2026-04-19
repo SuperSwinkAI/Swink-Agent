@@ -11,7 +11,7 @@ categories = ["development-tools", "filesystem"]
 readme = "../README.md"
 
 [dependencies]
-swink-agent = { path = "..", version = "0.7.9", default-features = false, features = ["artifact-store"] }
+swink-agent = { path = "..", version = "0.8.0", default-features = false, features = ["artifact-store"] }
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
