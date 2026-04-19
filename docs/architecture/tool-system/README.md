@@ -272,6 +272,7 @@ flowchart TB
 | `.with_requires_approval(bool)` | Mark the tool as requiring user approval before execution. |
 | `.with_execute(closure)` | Full signature: `(tool_call_id, params, cancel, on_update) -> Future<AgentToolResult>`. |
 | `.with_execute_simple(closure)` | Simplified: `(params, cancel) -> Future<AgentToolResult>`. Ignores tool call ID and update callback. |
+| `.with_execute_async(closure)` | Explicit untyped async alias for `.with_execute_simple(closure)`. |
 | `.with_execute_typed::<T>(closure)` | Derive the schema from `T` and deserialize params into `T` before execution. Returns `invalid parameters` on serde decode failure. |
 
 ### Example
@@ -330,7 +331,7 @@ let tool = FnTool::new("lookup", "Lookup", "Look up a term in the glossary.")
     });
 ```
 
-For tools that need the full call context, use `.with_execute()` instead of `.with_execute_simple()` — it receives `(tool_call_id, params, cancellation_token, on_update)`.
+For tools that need the full call context, use `.with_execute()` instead of `.with_execute_simple()` / `.with_execute_async()` — it receives `(tool_call_id, params, cancellation_token, on_update)`.
 
 ### Struct-based `impl AgentTool` pattern
 

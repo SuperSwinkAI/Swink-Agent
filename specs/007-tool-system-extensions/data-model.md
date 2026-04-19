@@ -140,7 +140,7 @@ Closure-based tool builder. Implements `AgentTool`.
 
 **Type alias**: `ExecuteFn = dyn Fn(String, Value, CancellationToken, Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send>> + Send + Sync`
 
-**Builders**: `new(name, label, description)`, `with_schema_for::<T>()`, `with_schema(Value)`, `with_requires_approval(bool)`, `with_execute(closure)`, `with_execute_simple(closure)`, `with_execute_typed::<T>(closure)`
+**Builders**: `new(name, label, description)`, `with_schema_for::<T>()`, `with_schema(Value)`, `with_requires_approval(bool)`, `with_execute(closure)`, `with_execute_simple(closure)`, `with_execute_async(closure)`, `with_execute_typed::<T>(closure)`
 
 ---
 

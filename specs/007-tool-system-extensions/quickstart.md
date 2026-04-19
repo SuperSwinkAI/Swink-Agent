@@ -40,7 +40,7 @@ struct WeatherParams {
 
 let tool = FnTool::new("get_weather", "Weather", "Get weather for a city.")
     .with_schema_for::<WeatherParams>()
-    .with_execute_simple(|params, _cancel| async move {
+    .with_execute_async(|params, _cancel| async move {
         let city = params["city"].as_str().unwrap_or("unknown");
         AgentToolResult::text(format!("72F in {city}"))
     });

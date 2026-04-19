@@ -185,6 +185,10 @@ impl FnTool {
     where
         F: Fn(Value, CancellationToken) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = AgentToolResult> + Send + 'static;
+    pub fn with_execute_async<F, Fut>(self, f: F) -> Self
+    where
+        F: Fn(Value, CancellationToken) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = AgentToolResult> + Send + 'static;
     pub fn with_execute_typed<T, F, Fut>(mut self, f: F) -> Self
     where
         T: DeserializeOwned + JsonSchema + Send + 'static,
