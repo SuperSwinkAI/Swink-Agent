@@ -511,6 +511,13 @@ fn assistant_parts(
                 arguments,
                 ..
             } => {
+                // Issue #619: loop-level scrub coerces incomplete tool-use blocks
+                // into object-typed arguments before reaching here. Debug builds
+                // assert the invariant to catch regressions.
+                debug_assert!(
+                    arguments.is_object(),
+                    "google adapter: function_call args must be a JSON object (got {arguments:?}); loop-level sanitize_incomplete_tool_calls should have coerced this before dispatch"
+                );
                 tool_names_by_id.insert(id.clone(), name.clone());
                 parts.push(GeminiPart {
                     function_call: Some(GeminiFunctionCall {
@@ -760,9 +767,7 @@ fn process_function_call(
         Value::Null => String::new(),
         value => value.to_string(),
     };
-    if !serialized_args.is_empty() {
-        entry.arguments = serialized_args;
-    }
+    entry.arguments = serialized_args;
 }
 
 fn map_finish_reason(finish_reason: &str, saw_tool_call: bool) -> StopReason {
@@ -808,3 +813,49 @@ const _: () = {
     const fn assert_send_sync<T: Send + Sync>() {}
     assert_send_sync::<GeminiStreamFn>();
 };
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Regression for #619: after the loop-level scrub runs, an assistant
+    /// message that originally carried `arguments: Null` with `partial_json`
+    /// set must serialize with `args: {}` so the Gemini API accepts the
+    /// replayed history on the next turn.
+    #[test]
+    fn convert_messages_sanitized_tool_use_becomes_empty_object_args() {
+        let mut assistant = HarnessAssistantMessage {
+            content: vec![ContentBlock::ToolCall {
+                id: "call_1".into(),
+                name: "read_file".into(),
+                arguments: Value::Null,
+                partial_json: Some(r#"{"path": "/tm"#.into()),
+            }],
+            provider: "google".into(),
+            model_id: "gemini-2.0-flash".into(),
+            usage: Usage::default(),
+            cost: Cost::default(),
+            stop_reason: StopReason::Length,
+            error_message: None,
+            error_kind: None,
+            timestamp: 0,
+            cache_hint: None,
+        };
+
+        swink_agent::sanitize_incomplete_tool_calls(&mut assistant);
+
+        let messages = vec![AgentMessage::Llm(LlmMessage::Assistant(assistant))];
+        let converted = convert_messages(&messages);
+
+        assert_eq!(converted.len(), 1);
+        assert_eq!(converted[0].role, "model");
+        let json = serde_json::to_value(&converted[0]).unwrap();
+        let part = &json["parts"][0];
+        let args = &part["functionCall"]["args"];
+        assert!(
+            args.is_object(),
+            "functionCall.args must be a JSON object, got {args:?}"
+        );
+        assert_eq!(args.as_object().unwrap().len(), 0);
+    }
+}

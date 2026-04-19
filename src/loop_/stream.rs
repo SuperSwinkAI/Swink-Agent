@@ -386,17 +386,11 @@ async fn handle_stream_error(
     // Context window overflow — signal and retry
     if matches!(harness_error, AgentError::ContextWindowOverflow { .. }) {
         warn!("context window overflow, signaling prune");
-        let _ = emit(
-            tx,
-            AgentEvent::MessageEnd {
-                message: build_error_message(model, &harness_error),
-            },
-        )
-        .await;
         return StreamErrorAction::ContextOverflow;
     }
 
     // Cache miss — reset cache state so next attempt re-sends with Write hint
+    let mut retry_strategy_consulted = false;
     if matches!(harness_error, AgentError::CacheMiss) {
         warn!("provider cache miss, resetting cache state for retry");
         {
@@ -406,7 +400,17 @@ async fn handle_stream_error(
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             cache_state.reset();
         }
-        return StreamErrorAction::Retry(std::time::Duration::ZERO);
+        retry_strategy_consulted = true;
+        if config.retry_strategy.should_retry(&harness_error, attempt) {
+            let delay = config.retry_strategy.delay(attempt);
+            warn!(
+                attempt,
+                ?delay,
+                error = %harness_error,
+                "retrying after cache miss"
+            );
+            return StreamErrorAction::Retry(delay);
+        }
     }
 
     // Aborted — preserve as StreamResult::Aborted so the turn emits
@@ -420,7 +424,7 @@ async fn handle_stream_error(
     }
 
     // Check if retryable — RetryStrategy is the sole decision point
-    if config.retry_strategy.should_retry(&harness_error, attempt) {
+    if !retry_strategy_consulted && config.retry_strategy.should_retry(&harness_error, attempt) {
         let delay = config.retry_strategy.delay(attempt);
         warn!(attempt, ?delay, error = %harness_error, "retrying after transient error");
         return StreamErrorAction::Retry(delay);

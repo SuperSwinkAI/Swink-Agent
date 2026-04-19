@@ -2,7 +2,7 @@
 
 use std::io;
 
-use swink_agent::{AgentMessage, ContentBlock, LlmMessage, StopReason};
+use swink_agent::{AgentMessage, ContentBlock, LlmMessage, SessionState, StopReason};
 use swink_agent_memory::now_utc;
 use tracing::{info, warn};
 
@@ -23,11 +23,16 @@ impl App {
             return Ok(());
         };
         let state = agent.state();
+        let session_state_snapshot = agent
+            .session_state()
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .snapshot();
         let now = now_utc();
 
         // Build the meta to send to the store. Preserve `created_at` and the
         // optimistic-concurrency `sequence` from the last successful save.
-        let mut meta = match self.session_meta.clone() {
+        let meta = match self.session_meta.clone() {
             Some(mut existing) => {
                 existing.id.clone_from(&self.session_id);
                 existing.title.clone_from(&self.model_name);
@@ -44,12 +49,14 @@ impl App {
             },
         };
 
-        match store.save(&self.session_id, &meta, &state.messages) {
-            Ok(()) => {
-                // Store increments sequence by 1 on successful write — mirror that
-                // locally so the next save doesn't race on a stale sequence.
-                meta.sequence += 1;
-                self.session_meta = Some(meta);
+        match store.save_full(
+            &self.session_id,
+            &meta,
+            &state.messages,
+            &session_state_snapshot,
+        ) {
+            Ok(persisted_meta) => {
+                self.session_meta = Some(persisted_meta);
                 Ok(())
             }
             Err(error) => {
@@ -82,13 +89,30 @@ impl App {
             .agent
             .as_ref()
             .and_then(|a| a.custom_message_registry());
-        match store.load(id, registry) {
-            Ok((meta, messages)) => {
-                self.messages.clear();
+        let result: io::Result<_> = (|| {
+            let (meta, messages) = store.load(id, registry)?;
+            let restored_state = match store.load_state(id)? {
+                Some(snapshot) => {
+                    SessionState::restore_from_snapshot(snapshot).map_err(|error| {
+                        io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!("invalid session state snapshot for session {id}: {error}"),
+                        )
+                    })?
+                }
+                None => SessionState::new(),
+            };
+
+            Ok((meta, messages, restored_state))
+        })();
+
+        match result {
+            Ok((meta, messages, restored_state)) => {
+                let mut display_messages = Vec::new();
                 for msg in &messages {
                     match msg {
                         AgentMessage::Llm(LlmMessage::User(user)) => {
-                            self.messages.push(DisplayMessage::new(
+                            display_messages.push(DisplayMessage::new(
                                 MessageRole::User,
                                 ContentBlock::extract_text(&user.content),
                             ));
@@ -107,7 +131,7 @@ impl App {
                             };
                             let mut message = DisplayMessage::new(role, content);
                             message.thinking = thinking;
-                            self.messages.push(message);
+                            display_messages.push(message);
                         }
                         AgentMessage::Llm(LlmMessage::ToolResult(tool_result)) => {
                             let content = ContentBlock::extract_text(&tool_result.content);
@@ -124,7 +148,7 @@ impl App {
                                 dm.summary = summary;
                                 dm.diff_data =
                                     crate::ui::diff::DiffData::from_details(&tool_result.details);
-                                self.messages.push(dm);
+                                display_messages.push(dm);
                             }
                         }
                         AgentMessage::Custom(_) => {
@@ -132,12 +156,17 @@ impl App {
                         }
                     }
                 }
+                self.messages = display_messages;
                 self.session_id = id.to_string();
                 self.model_name.clone_from(&meta.title);
                 self.session_meta = Some(meta.clone());
                 self.conversation = ConversationView::new();
                 self.trim_messages_to_recent_turns();
                 if let Some(agent) = &mut self.agent {
+                    *agent
+                        .session_state()
+                        .write()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner) = restored_state;
                     agent.set_messages(messages);
                 }
                 self.push_system_message(format!(

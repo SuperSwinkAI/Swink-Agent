@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::tool::{AgentTool, AgentToolResult};
 use crate::types::ToolResultMessage;
@@ -52,6 +52,30 @@ fn order_results_by_tool_calls(
         }
     }
     ordered
+}
+
+/// Build a tool lookup table that preserves the first registered tool for a
+/// given name.
+///
+/// Public lookup paths such as `Agent::find_tool()` return the first matching
+/// tool. Dispatch must use the same rule so duplicate tool names do not expose
+/// one tool to the model while executing another.
+fn build_tool_map(tools: &[Arc<dyn AgentTool>]) -> HashMap<&str, &Arc<dyn AgentTool>> {
+    let mut tool_map: HashMap<&str, &Arc<dyn AgentTool>> = HashMap::with_capacity(tools.len());
+
+    for tool in tools {
+        if tool_map.contains_key(tool.name()) {
+            warn!(
+                tool_name = %tool.name(),
+                "duplicate tool name detected during dispatch; keeping first registered tool"
+            );
+            continue;
+        }
+
+        tool_map.insert(tool.name(), tool);
+    }
+
+    tool_map
 }
 
 // ─── Public entry point ─────────────────────────────────────────────────────
@@ -97,8 +121,7 @@ pub async fn execute_tools_concurrently(
     let transfer_signal: Arc<Mutex<Option<crate::transfer::TransferSignal>>> =
         Arc::new(Mutex::new(None));
 
-    let tool_map: HashMap<&str, &Arc<dyn AgentTool>> =
-        config.tools.iter().map(|t| (t.name(), t)).collect();
+    let tool_map = build_tool_map(&config.tools);
 
     // Phase 1: Pre-process — policies, approval, argument rewriting.
     let preprocess::PreprocessResult {
@@ -763,6 +786,69 @@ mod tests {
             "prepared-but-undispatched calls must not emit ToolExecutionStart"
         );
         assert_eq!(end_ids, vec!["call_1".to_string(), "call_2".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn pre_dispatch_stop_aborts_before_any_approval_side_effects() {
+        let tool_one = Arc::new(MockTool::new("tool_one").with_requires_approval(true));
+        let tool_two = Arc::new(MockTool::new("tool_two").with_requires_approval(true));
+        let tool_one_ref = Arc::clone(&tool_one);
+        let tool_two_ref = Arc::clone(&tool_two);
+        let approval_calls = Arc::new(AtomicU32::new(0));
+        let approval_calls_clone = Arc::clone(&approval_calls);
+
+        let config = test_loop_config_with_options(
+            vec![Arc::new(StopOnToolTwoPolicy)],
+            vec![
+                tool_one as Arc<dyn crate::tool::AgentTool>,
+                tool_two as Arc<dyn crate::tool::AgentTool>,
+            ],
+            Some(Box::new(move |_request| {
+                approval_calls_clone.fetch_add(1, Ordering::SeqCst);
+                Box::pin(async { ToolApproval::Approved })
+            })),
+            ApprovalMode::Enabled,
+            ToolExecutionPolicy::Concurrent,
+        );
+        let tool_calls = vec![
+            ToolCallInfo {
+                id: "call_1".to_string(),
+                name: "tool_one".to_string(),
+                arguments: serde_json::json!({ "first": true }),
+                is_incomplete: false,
+            },
+            ToolCallInfo {
+                id: "call_2".to_string(),
+                name: "tool_two".to_string(),
+                arguments: serde_json::json!({ "second": true }),
+                is_incomplete: false,
+            },
+        ];
+        let cancellation_token = CancellationToken::new();
+        let (tx, mut rx) = mpsc::channel(16);
+
+        let outcome =
+            execute_tools_concurrently(&config, &tool_calls, &cancellation_token, &tx).await;
+
+        let ToolExecOutcome::Completed { results, .. } = outcome else {
+            panic!("expected completed outcome");
+        };
+        assert_eq!(approval_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(tool_one_ref.execution_count(), 0);
+        assert_eq!(tool_two_ref.execution_count(), 0);
+        assert_eq!(results.len(), 2);
+        assert!(results.iter().all(|result| result.is_error));
+
+        let events = drain_events(&mut rx);
+        assert!(
+            !events.iter().any(|event| matches!(
+                event,
+                AgentEvent::ToolApprovalRequested { .. }
+                    | AgentEvent::ToolApprovalResolved { .. }
+                    | AgentEvent::ToolExecutionStart { .. }
+            )),
+            "a later pre-dispatch stop must prevent earlier approval or execution events"
+        );
     }
 
     #[tokio::test]

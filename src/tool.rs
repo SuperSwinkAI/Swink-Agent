@@ -339,8 +339,9 @@ pub enum ToolApproval {
 
 /// Information about a tool call pending approval.
 ///
-/// The [`Debug`] implementation redacts the `arguments` field to prevent
-/// sensitive values from leaking into logs and debug output.
+/// The [`Debug`] implementation redacts the `arguments` field and sanitizes
+/// `context` to prevent sensitive values from leaking into logs and debug
+/// output.
 #[derive(Clone)]
 pub struct ToolApprovalRequest {
     /// The unique ID of this tool call.
@@ -357,12 +358,13 @@ pub struct ToolApprovalRequest {
 
 impl fmt::Debug for ToolApprovalRequest {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let redacted_context = self.context.as_ref().map(redact_sensitive_values);
         f.debug_struct("ToolApprovalRequest")
             .field("tool_call_id", &self.tool_call_id)
             .field("tool_name", &self.tool_name)
             .field("arguments", &"[REDACTED]")
             .field("requires_approval", &self.requires_approval)
-            .field("context", &self.context)
+            .field("context", &redacted_context)
             .finish()
     }
 }
@@ -521,19 +523,24 @@ mod tests {
     // ─── ToolApprovalRequest Debug ──────────────────────────────────────────
 
     #[test]
-    fn approval_request_debug_redacts_arguments() {
+    fn approval_request_debug_redacts_arguments_and_context() {
         let req = ToolApprovalRequest {
             tool_call_id: "call_1".into(),
             tool_name: "bash".into(),
             arguments: json!({"command": "echo secret"}),
             requires_approval: true,
-            context: None,
+            context: Some(json!({
+                "Authorization": "Bearer top-secret",
+                "path": "/tmp/output.txt",
+            })),
         };
         let debug = format!("{req:?}");
         assert!(debug.contains("tool_call_id: \"call_1\""));
         assert!(debug.contains("tool_name: \"bash\""));
         assert!(debug.contains("[REDACTED]"));
         assert!(!debug.contains("echo secret"));
+        assert!(!debug.contains("top-secret"));
+        assert!(debug.contains("/tmp/output.txt"));
     }
 
     // ─── redact_sensitive_values ────────────────────────────────────────────

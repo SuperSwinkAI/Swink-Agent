@@ -57,6 +57,7 @@ impl Agent {
 
     /// Replace the tool set.
     pub fn set_tools(&mut self, tools: Vec<Arc<dyn AgentTool>>) {
+        super::assert_unique_tool_names(&tools);
         self.state.tools = tools;
     }
 

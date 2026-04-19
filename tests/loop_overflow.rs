@@ -263,6 +263,15 @@ async fn double_overflow_surfaces_error() {
         }),
         "should have a TurnEnd with Error reason"
     );
+
+    let message_end_count = events
+        .iter()
+        .filter(|e| common::event_variant_name(e) == "MessageEnd")
+        .count();
+    assert_eq!(
+        message_end_count, 1,
+        "unrecoverable overflow should emit exactly one MessageEnd"
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

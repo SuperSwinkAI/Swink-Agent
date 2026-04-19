@@ -69,7 +69,7 @@ impl Agent {
         }
 
         if let Some(ref store) = self.checkpoint_store {
-            store.save_checkpoint(&checkpoint).await?;
+            store.save_checkpoint(checkpoint.clone()).await?;
         }
 
         Ok(checkpoint)
@@ -380,9 +380,9 @@ mod tests {
     }
 
     impl CheckpointStore for TestCheckpointStore {
-        fn save_checkpoint(&self, checkpoint: &Checkpoint) -> CheckpointFuture<'_, ()> {
-            let json = serde_json::to_string(checkpoint).unwrap();
-            let id = checkpoint.id.clone();
+        fn save_checkpoint(&self, checkpoint: Checkpoint) -> CheckpointFuture<'_, ()> {
+            let json = serde_json::to_string(&checkpoint).unwrap();
+            let id = checkpoint.id;
             Box::pin(async move {
                 self.data
                     .lock()
@@ -1052,7 +1052,7 @@ mod tests {
             &[user_msg("hi")],
         )
         .with_state(serde_json::json!(["bad"]));
-        store.save_checkpoint(&checkpoint).await.unwrap();
+        store.save_checkpoint(checkpoint).await.unwrap();
 
         let stream_fn = Arc::new(SimpleMockStreamFn::from_text("ok"));
         let agent_options =
@@ -1078,7 +1078,7 @@ mod tests {
             "mock-model",
             &[user_msg("hi")],
         );
-        store.save_checkpoint(&checkpoint).await.unwrap();
+        store.save_checkpoint(checkpoint).await.unwrap();
 
         let stream_fn = Arc::new(SimpleMockStreamFn::from_text("ok"));
         let agent_options =

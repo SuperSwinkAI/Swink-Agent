@@ -13,6 +13,9 @@ pub type ConvertToLlmFn = dyn Fn(&AgentMessage) -> Option<LlmMessage> + Send + S
 pub struct LoopState {
     pub context_messages: Vec<AgentMessage>,
     pub pending_messages: Vec<AgentMessage>,
+    /// Initial prompt messages that should be exposed once as the first
+    /// pre-turn `new_messages` batch. `agent_loop_continue` resumes with 0.
+    pub initial_new_messages_len: usize,
     pub overflow_signal: bool,
     /// Whether emergency overflow recovery has already been attempted this turn.
     /// Resets to `false` at the start of each turn.

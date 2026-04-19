@@ -44,7 +44,7 @@ let agent = Agent::builder()
     // ... stream_fn, model, etc.
     .build();
 
-// Agent now has tools: web.fetch, web.search, web.screenshot, web.extract
+// Agent now has tools: web_fetch, web_search, web_screenshot, web_extract
 // - DuckDuckGo search (no API key needed)
 // - SSRF protection enabled by default
 // - Rate limit: 30 req/min
@@ -95,10 +95,10 @@ Once the plugin is registered, the agent has access to:
 
 | Tool | Description | Requires Playwright? |
 |------|-------------|---------------------|
-| `web.fetch` | Fetch a URL, return clean readable text | No |
-| `web.search` | Search the web, return ranked results | No |
-| `web.screenshot` | Capture a PNG screenshot of a page | Yes |
-| `web.extract` | Extract structured content via CSS selectors | Yes |
+| `web_fetch` | Fetch a URL, return clean readable text | No |
+| `web_search` | Search the web, return ranked results | No |
+| `web_screenshot` | Capture a PNG screenshot of a page | Yes |
+| `web_extract` | Extract structured content via CSS selectors | Yes |
 
 Policies are automatically active:
 - **Domain filter** (PreDispatch): Blocks private IPs and denied domains

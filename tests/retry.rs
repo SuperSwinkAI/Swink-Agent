@@ -48,6 +48,7 @@ fn does_not_retry_non_retryable_variants() {
 
     assert!(!strategy.should_retry(&AgentError::Aborted, 1));
     assert!(!strategy.should_retry(&AgentError::AlreadyRunning, 1));
+    assert!(!strategy.should_retry(&AgentError::CacheMiss, 1));
     assert!(!strategy.should_retry(&AgentError::NoMessages, 1));
     assert!(!strategy.should_retry(&AgentError::InvalidContinue, 1));
     assert!(!strategy.should_retry(&AgentError::structured_output_failed(3, "bad"), 1));

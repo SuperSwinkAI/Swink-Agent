@@ -24,7 +24,7 @@ openai = ["openai-compat"]
 ollama = []
 gemini = []
 proxy = []
-azure = []
+azure = ["dep:swink-agent-auth"]
 bedrock = ["dep:aws-credential-types", "dep:aws-sigv4", "dep:aws-smithy-eventstream", "dep:aws-smithy-runtime-api", "dep:aws-smithy-types"]
 mistral = []
 xai = ["openai-compat"]
@@ -32,7 +32,7 @@ __no_default_features_sentinel = []
 
 [dependencies]
 swink-agent = { path = "..", version = "0.7.9", default-features = false }
-swink-agent-auth = { path = "../auth", version = "0.7.9" }
+swink-agent-auth = { path = "../auth", version = "0.7.9", optional = true }
 reqwest.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true

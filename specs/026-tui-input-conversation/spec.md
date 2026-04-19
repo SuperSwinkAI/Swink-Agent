@@ -48,7 +48,7 @@ A developer views the ongoing conversation between themselves and the agent. Eac
 
 ### User Story 3 - Scroll Through Conversation History (Priority: P2)
 
-A developer wants to review earlier parts of a long conversation. They scroll up using Up/Down arrow keys (when the conversation view has focus), PageUp/PageDown for larger jumps. When the developer has scrolled away from the bottom, a "scroll to bottom" indicator appears. Auto-scroll is paused while the developer is manually scrolling — new content does not yank the viewport away. When the developer scrolls back to the bottom (or activates the indicator), auto-scroll resumes.
+A developer wants to review earlier parts of a long conversation. They scroll up using Up/Down arrow keys (when the conversation view has focus), PageUp/PageDown for larger jumps, or the mouse wheel. When the developer has scrolled away from the bottom, a "scroll to bottom" indicator appears. Auto-scroll is paused while the developer is manually scrolling — new content does not yank the viewport away. When the developer scrolls back to the bottom (or activates the indicator), auto-scroll resumes.
 
 **Why this priority**: Reviewing history is important for understanding context, but secondary to seeing current responses.
 
@@ -60,6 +60,30 @@ A developer wants to review earlier parts of a long conversation. They scroll up
 2. **Given** the view is scrolled away from the bottom, **When** new content arrives, **Then** auto-scroll is paused and the viewport stays in place.
 3. **Given** the view is scrolled up, **When** looking at the UI, **Then** a "scroll to bottom" indicator is visible.
 4. **Given** the view is scrolled up, **When** the developer scrolls back to the bottom, **Then** auto-scroll resumes and the indicator disappears.
+5. **Given** a long conversation, **When** the developer rolls the mouse wheel over the conversation view, **Then** the view scrolls by a fixed step and behaves like keyboard scrolling.
+
+---
+
+### User Story 3a - Select and Copy Chat Content (Priority: P2)
+
+A developer wants to capture text from the conversation — an error message, a snippet of assistant output, a path — without copying the entire message. Pressing and holding the primary mouse button inside the conversation view anchors a selection at the pointer cell; dragging extends it cell-by-cell across rows (including multi-line selections). The selected cells are visually highlighted (reversed video). Releasing the button copies the selected text to the system clipboard. Pressing Ctrl+C while a selection is active also copies it; Escape clears the selection. The scroll wheel keeps working throughout, and rolling the wheel clears any active selection.
+
+Because the TUI owns mouse capture for scroll-wheel support, the terminal emulator cannot do its own click-drag selection. This user story provides an in-app equivalent so copying behaves naturally without requiring terminal-specific modifier bypasses (Shift/Option/Fn drag) — those continue to work on terminals that support them.
+
+**Why this priority**: Copy-out of chat content is a common interaction that significantly reduces friction when collaborating on errors and snippets, but is not required to operate the agent.
+
+**Independent Test**: Can be tested by clicking inside the conversation view, dragging across a multi-line range, verifying the cells are highlighted, releasing the button, and confirming the clipboard contains the selected text with trailing whitespace and the role-border gutter stripped.
+
+**Acceptance Scenarios**:
+
+1. **Given** the conversation view has visible content, **When** the developer presses the left mouse button inside the viewport, **Then** a selection is anchored at that cell.
+2. **Given** an anchored selection, **When** the developer drags the mouse to another cell inside the viewport, **Then** the highlighted range extends from the anchor to the current cell in row-major order.
+3. **Given** an anchored selection, **When** the developer drags the pointer outside the viewport, **Then** the selection clamps to the viewport edges and keeps extending.
+4. **Given** an active selection, **When** the developer releases the left mouse button, **Then** the selected text is written to the system clipboard (with the role-colored gutter prefix stripped per line and trailing whitespace removed).
+5. **Given** an active selection, **When** the developer presses Ctrl+C, **Then** the selected text is copied to the clipboard and the selection clears.
+6. **Given** an active selection, **When** the developer presses Escape, **Then** the selection clears without copying.
+7. **Given** an active selection, **When** the developer rolls the mouse wheel or begins a new click-drag, **Then** the existing selection clears before the new interaction proceeds.
+8. **Given** the clipboard is unavailable (e.g., headless environment), **When** a copy is attempted, **Then** a non-fatal system message is surfaced and the TUI does not crash.
 
 ---
 
@@ -133,6 +157,13 @@ A developer reads assistant responses containing fenced code blocks with languag
 - **FR-016**: When the developer submits a message while the agent is already running (streaming), the message MUST be queued as a steering event and delivered to the agent at the next turn boundary — it MUST NOT produce an error and MUST NOT be lost.
 - **FR-017**: A queued message MUST NOT appear in the main conversation view while the agent is still streaming the current response. It MUST appear in the conversation in correct chronological order once the agent finishes the current turn and picks up the steering input.
 - **FR-018**: While a message is queued (not yet delivered), the TUI MUST display a "Queued" banner above the input editor, showing the pending message text. The banner MUST fade out briefly after the message is delivered, then disappear.
+- **FR-019**: The conversation view MUST support mouse-wheel scrolling with the same semantics as keyboard scrolling (auto-scroll disengages on manual scroll up; re-engages when the user scrolls back to the bottom).
+- **FR-020**: The conversation view MUST support in-app click-drag text selection: pressing the primary mouse button anchors a selection at the pointer cell inside the viewport; dragging extends the selection in row-major order; releasing copies the selected text to the system clipboard via the clipboard bridge.
+- **FR-021**: While an in-app selection is active, Ctrl+C MUST copy the selected text and clear the selection; Escape MUST clear the selection without copying. When no selection is active, Ctrl+C and Escape MUST retain their existing behavior (abort/quit, modal dismiss).
+- **FR-022**: Starting a new click-drag, rolling the mouse wheel, or clicking outside the conversation viewport MUST clear any active selection before the new interaction proceeds.
+- **FR-023**: Selection drags MUST clamp to the viewport edges when the pointer leaves the conversation area so that the highlight continues to extend to the edge.
+- **FR-024**: Copied selection text MUST reflect exactly what is visible on screen (wrapped lines included), with the role-colored gutter prefix (`│ `) stripped per line and trailing whitespace removed.
+- **FR-025**: When the system clipboard is unavailable, a failed selection copy MUST surface a non-fatal system message and MUST NOT crash the TUI.
 
 ### Key Entities
 
@@ -142,6 +173,7 @@ A developer reads assistant responses containing fenced code blocks with languag
 - **MarkdownRenderer**: The component that transforms markdown text into styled terminal output, handling headers, emphasis, code, lists, and word wrapping.
 - **InputHistory**: An ordered collection of previously submitted messages that can be navigated with Up/Down keys for recall.
 - **SteeredMessageOverlay**: A transient banner rendered above the input editor while mid-stream submissions are queued in `pending_steered`. Fades out after delivery via `steered_fade_ticks` countdown.
+- **Selection**: In-app click-drag text selection within the conversation viewport. Holds an anchor cell, a cursor cell, and a dragging flag. Coordinates are `(row, col)` inside the conversation's inner area (after the border). Selection text is extracted from per-row cell symbols captured during the same render pass that applies the visual highlight, so the copy reflects the wrapped on-screen content.
 
 ## Success Criteria *(mandatory)*
 
@@ -153,6 +185,7 @@ A developer reads assistant responses containing fenced code blocks with languag
 - **SC-004**: Markdown-formatted responses are rendered with visual differentiation for all supported elements (headers, bold, italic, code, lists).
 - **SC-005**: Scrolling through a conversation with 500+ messages has no perceptible lag.
 - **SC-006**: Previously submitted messages can be recalled from history with Up/Down keys.
+- **SC-007**: Click-drag selection places the selected conversation text on the system clipboard on all supported platforms, with the role-colored gutter stripped. When the clipboard is unavailable the TUI surfaces a system message instead of crashing.
 
 ## Clarifications
 
@@ -166,6 +199,12 @@ A developer reads assistant responses containing fenced code blocks with languag
 - Q: Extremely long line? → A: Word-wrap fits to viewport width.
 - Q: Empty/whitespace submission? → A: `trim().is_empty()` check prevents it.
 - Q: Edited recalled message then Up? → A: History unmodified; next Up shows next item.
+
+### Session 2026-04-17
+
+- Q: How should users copy text out of the chat view when the TUI owns mouse capture for scroll? → A: In-app click-drag selection. The TUI tracks anchor + cursor cells inside the conversation viewport, renders a reversed-video highlight, and on mouse-up (or Ctrl+C) writes the selected text to the clipboard via `arboard`. Terminal-native bypasses (Shift/Option/Fn drag) continue to work on terminals that support them.
+- Q: Should the selection follow content when the user scrolls mid-selection? → A: No — scroll-wheel clears the selection. Simpler model, and the user can re-select against the new viewport content.
+- Q: Should the copied text include the role-colored gutter `│ `? → A: No — the gutter is a rendering decoration, not part of the message content. It is stripped per line before writing to the clipboard. Trailing whitespace is also trimmed.
 
 ## Assumptions
 

@@ -58,7 +58,14 @@ pub fn agent_loop(
     config: AgentLoopConfig,
     cancellation_token: CancellationToken,
 ) -> Pin<Box<dyn Stream<Item = AgentEvent> + Send>> {
-    run_loop(prompt_messages, system_prompt, config, cancellation_token)
+    let initial_new_messages_len = prompt_messages.len();
+    run_loop(
+        prompt_messages,
+        initial_new_messages_len,
+        system_prompt,
+        config,
+        cancellation_token,
+    )
 }
 
 /// Resume an agent loop from existing messages.
@@ -72,7 +79,7 @@ pub fn agent_loop_continue(
     config: AgentLoopConfig,
     cancellation_token: CancellationToken,
 ) -> Pin<Box<dyn Stream<Item = AgentEvent> + Send>> {
-    run_loop(messages, system_prompt, config, cancellation_token)
+    run_loop(messages, 0, system_prompt, config, cancellation_token)
 }
 
 // ─── Internal Loop ───────────────────────────────────────────────────────────
@@ -81,6 +88,7 @@ pub fn agent_loop_continue(
 /// events through an mpsc channel, returning a stream of events.
 fn run_loop(
     initial_messages: Vec<AgentMessage>,
+    initial_new_messages_len: usize,
     system_prompt: String,
     config: AgentLoopConfig,
     cancellation_token: CancellationToken,
@@ -90,6 +98,7 @@ fn run_loop(
     tokio::spawn(async move {
         run_loop_inner(
             initial_messages,
+            initial_new_messages_len,
             system_prompt,
             config,
             cancellation_token,
@@ -112,6 +121,7 @@ pub async fn emit(tx: &mpsc::Sender<AgentEvent>, event: AgentEvent) -> bool {
 #[allow(clippy::too_many_lines)]
 async fn run_loop_inner(
     initial_messages: Vec<AgentMessage>,
+    initial_new_messages_len: usize,
     system_prompt: String,
     config: AgentLoopConfig,
     cancellation_token: CancellationToken,
@@ -144,6 +154,7 @@ async fn run_loop_inner(
         let mut state = LoopState {
             context_messages: initial_messages,
             pending_messages: Vec::new(),
+            initial_new_messages_len,
             overflow_signal: false,
             overflow_recovery_attempted: false,
             turn_index: 0,
@@ -389,7 +400,7 @@ mod tests {
                 matches!(err, AgentError::CacheMiss),
                 "expected CacheMiss for \"{msg}\", got {err:?}"
             );
-            assert!(err.is_retryable());
+            assert!(!err.is_retryable());
         }
     }
 

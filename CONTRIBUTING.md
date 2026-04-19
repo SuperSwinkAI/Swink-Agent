@@ -71,13 +71,17 @@ Link your PR to its issue using `Closes #<issue>` or `Related to #<issue>` in th
 Run this locally before opening:
 
 ```bash
-cargo fmt --check                                    # formatting
+cargo fmt --all --check                              # formatting
 cargo clippy --workspace -- -D warnings              # zero warnings
-cargo test --workspace                               # all tests
-cargo test -p swink-agent --no-default-features      # feature gate coverage
+cargo test --workspace                               # all workspace tests
+cargo build --workspace                              # full workspace build
+cargo test --workspace --features testkit            # testkit-enabled workspace tests
+cargo test -p swink-agent --no-default-features      # builtin-tools disabled coverage
 ```
 
-All four must pass. Do not edit `CHANGELOG.md` — entries are added by maintainers.
+`just validate` and `just check` run the same canonical gate.
+
+All six commands must pass. Do not edit `CHANGELOG.md` — entries are added by maintainers.
 
 Some tests hit live APIs and are `#[ignore]`. Run them with:
 ```bash

@@ -13,8 +13,9 @@ use common::{
 use futures::stream::StreamExt;
 
 use swink_agent::{
-    Agent, AgentError, AgentEvent, AgentMessage, AgentOptions, AgentTool, AssistantMessageEvent,
-    ContentBlock, DefaultRetryStrategy, LlmMessage, ModelSpec, StopReason, StreamFn,
+    Agent, AgentError, AgentEvent, AgentMessage, AgentOptions, AgentTool, AgentToolResult,
+    AssistantMessageEvent, ContentBlock, DefaultRetryStrategy, LlmMessage, ModelSpec, StopReason,
+    StreamFn,
 };
 
 // ─── Helpers ─────────────────────────────────────────────────────────────
@@ -253,6 +254,47 @@ async fn abort_during_tool_turn_keeps_single_turn_and_tool_payloads() {
         tool_text.contains("aborted") || tool_text.contains("cancelled"),
         "expected the preserved tool result to explain the abort, got: {tool_text}"
     );
+}
+
+#[test]
+fn duplicate_tool_names_are_rejected_during_agent_construction() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![
+        tool_call_events("tc_dup", "dup_tool", "{}"),
+        text_only_events("done"),
+    ]));
+    let first = Arc::new(MockTool::new("dup_tool").with_result(AgentToolResult::text("first")));
+    let second = Arc::new(MockTool::new("dup_tool").with_result(AgentToolResult::text("second")));
+    let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _agent = make_agent_with_tools(
+            stream_fn,
+            vec![
+                Arc::clone(&first) as Arc<dyn AgentTool>,
+                Arc::clone(&second) as Arc<dyn AgentTool>,
+            ],
+        );
+    }))
+    .expect_err("duplicate tool names should be rejected during construction");
+
+    let panic_message = panic
+        .downcast_ref::<String>()
+        .cloned()
+        .or_else(|| {
+            panic
+                .downcast_ref::<&str>()
+                .map(|message| (*message).to_owned())
+        })
+        .expect("panic should carry a message");
+
+    assert!(
+        panic_message.contains("duplicate tool names are not allowed after composition: dup_tool"),
+        "unexpected panic message: {panic_message}"
+    );
+    assert_eq!(
+        first.execution_count(),
+        0,
+        "duplicate tools should be rejected before any execution can happen"
+    );
+    assert_eq!(second.execution_count(), 0);
 }
 
 // ─── Regression: abort path emits TurnEndReason::Aborted (#438) ──────────

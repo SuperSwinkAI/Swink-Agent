@@ -238,6 +238,16 @@ fn write_messages_locked(
 ) -> io::Result<()> {
     let preserved_lines = preserve_existing_lines(path, id, preserve_for_message_save)?;
 
+    write_messages_with_preserved_lines(path, meta, messages, id, &preserved_lines)
+}
+
+fn write_messages_with_preserved_lines(
+    path: &Path,
+    meta: &SessionMeta,
+    messages: &[AgentMessage],
+    id: &str,
+    preserved_lines: &[String],
+) -> io::Result<()> {
     atomic_write_unlocked(path, |writer| {
         serde_json::to_writer(&mut *writer, meta).map_err(io::Error::other)?;
         writeln!(writer)?;
@@ -248,13 +258,62 @@ fn write_messages_locked(
                 writeln!(writer)?;
             }
         }
-        for line in &preserved_lines {
+        for line in preserved_lines {
             if !line.is_empty() {
                 writeln!(writer, "{line}")?;
             }
         }
         Ok(())
     })
+}
+
+fn upsert_state_line(
+    lines: &mut Vec<String>,
+    session_id: &str,
+    state: &serde_json::Value,
+) -> io::Result<()> {
+    let state_line = SessionRecord::state(state.clone()).to_json_line()?;
+    if let Some(line) = find_record_line_mut(lines.as_mut_slice(), session_id, |record| {
+        matches!(record, SessionRecord::State(_))
+    }) {
+        line.clone_from(&state_line);
+    } else {
+        lines.push(state_line);
+    }
+    Ok(())
+}
+
+fn parse_state_line(line: &str, id: &str) -> io::Result<Option<serde_json::Value>> {
+    let value: serde_json::Value = match serde_json::from_str(line) {
+        Ok(value) => value,
+        Err(error) => {
+            if line.contains("\"_state\"") {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("corrupted state line in session {id}: {error}"),
+                ));
+            }
+            return Ok(None);
+        }
+    };
+
+    let Some(state_marker) = value.get("_state") else {
+        return Ok(None);
+    };
+
+    if state_marker.as_bool() != Some(true) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("invalid state marker in session {id}: expected `_state: true`"),
+        ));
+    }
+
+    Ok(Some(
+        value
+            .get("data")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null),
+    ))
 }
 
 fn append_records(
@@ -383,6 +442,37 @@ impl SessionStore for JsonlSessionStore {
         save_messages_with_hooks(&path, id, meta, messages, || Ok(()), write_messages_locked)
     }
 
+    fn save_full(
+        &self,
+        id: &str,
+        meta: &SessionMeta,
+        messages: &[AgentMessage],
+        state: &serde_json::Value,
+    ) -> io::Result<SessionMeta> {
+        validate_session_id(id)?;
+
+        let path = session_path(&self.sessions_dir, id);
+        with_target_lock(&path, || {
+            check_sequence_path(&path, id, meta.sequence)?;
+
+            let mut write_meta = meta.clone();
+            write_meta.sequence += 1;
+
+            let mut preserved_lines =
+                preserve_existing_lines(&path, id, preserve_for_message_save)?;
+            upsert_state_line(&mut preserved_lines, id, state)?;
+            write_messages_with_preserved_lines(
+                &path,
+                &write_meta,
+                messages,
+                id,
+                &preserved_lines,
+            )?;
+
+            Ok(write_meta)
+        })
+    }
+
     fn append(&self, id: &str, messages: &[AgentMessage]) -> io::Result<()> {
         validate_session_id(id)?;
 
@@ -495,15 +585,7 @@ impl SessionStore for JsonlSessionStore {
             let (mut meta, mut lines) = read_meta_and_message_lines(&path, id)?;
             meta.updated_at = now_utc();
             meta.sequence += 1;
-            let state_line = SessionRecord::state(state.clone()).to_json_line()?;
-
-            if let Some(line) = find_record_line_mut(&mut lines, id, |record| {
-                matches!(record, SessionRecord::State(_))
-            }) {
-                line.clone_from(&state_line);
-            } else {
-                lines.push(state_line);
-            }
+            upsert_state_line(&mut lines, id, state)?;
             rewrite_session_file_locked(&path, &meta, &lines)
         })
     }
@@ -518,7 +600,7 @@ impl SessionStore for JsonlSessionStore {
 
         let (_, lines) = read_meta_and_message_lines(&path, id)?;
         for line in lines {
-            if let Ok(SessionRecord::State(state)) = SessionRecord::parse(&line) {
+            if let Some(state) = parse_state_line(&line, id)? {
                 return Ok(Some(state));
             }
         }
@@ -1031,6 +1113,26 @@ mod tests {
     }
 
     #[test]
+    fn load_state_errors_on_corrupted_state_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = JsonlSessionStore::new(dir.path().to_path_buf()).unwrap();
+
+        let meta = fresh_meta("corrupt-state");
+        store
+            .save("corrupt-state", &meta, &[user_msg("hello", 1)])
+            .unwrap();
+
+        let path = session_path(dir.path(), "corrupt-state");
+        let mut contents = std::fs::read_to_string(&path).unwrap();
+        contents.push_str("{\"_state\":true,\"data\":\n");
+        std::fs::write(&path, contents).unwrap();
+
+        let err = store.load_state("corrupt-state").unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("state line"));
+    }
+
+    #[test]
     fn atomic_write_leaves_no_temp_file_on_success() {
         let dir = tempfile::tempdir().unwrap();
         let target = dir.path().join("sess.jsonl");
@@ -1506,6 +1608,45 @@ mod tests {
             .save("seq-state", &stale, &[user_msg("c", 3)])
             .unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
+    }
+
+    #[test]
+    fn save_full_updates_messages_and_state_with_single_sequence_bump() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = JsonlSessionStore::new(dir.path().to_path_buf()).unwrap();
+
+        let meta = fresh_meta("save-full");
+        store
+            .save("save-full", &meta, &[user_msg("before", 1)])
+            .unwrap();
+        store
+            .save_state("save-full", &serde_json::json!({ "cursor": 1 }))
+            .unwrap();
+
+        let (loaded_meta, _) = store.load("save-full", None).unwrap();
+        assert_eq!(loaded_meta.sequence, 2);
+
+        let persisted_meta = store
+            .save_full(
+                "save-full",
+                &loaded_meta,
+                &[user_msg("after", 2), user_msg("again", 3)],
+                &serde_json::json!({ "cursor": 9, "draft": "synced" }),
+            )
+            .unwrap();
+
+        assert_eq!(
+            persisted_meta.sequence, 3,
+            "combined transcript+state save should advance sequence once"
+        );
+
+        let (reloaded_meta, reloaded_messages) = store.load("save-full", None).unwrap();
+        assert_eq!(reloaded_meta.sequence, 3);
+        assert_eq!(reloaded_messages.len(), 2);
+        assert_eq!(
+            store.load_state("save-full").unwrap(),
+            Some(serde_json::json!({ "cursor": 9, "draft": "synced" }))
+        );
     }
 
     #[test]

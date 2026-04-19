@@ -46,12 +46,17 @@ Pure-Rust library for LLM-powered agentic loops. Provider-agnostic core with plu
 ## Build & Test
 
 ```bash
-cargo build --workspace
+cargo fmt --all --check                           # formatting
+cargo clippy --workspace -- -D warnings           # zero warnings policy
+cargo test --workspace                            # full workspace tests
+cargo build --workspace                           # full workspace build
 cargo test --workspace --features testkit         # testkit enables test helpers
 cargo test -p swink-agent --no-default-features   # verify builtin-tools disabled
-cargo clippy --workspace -- -D warnings           # zero warnings policy
+just validate                                     # same canonical gate via justfile
 cargo run -p swink-agent-tui                      # launch TUI (.env auto-loaded)
 ```
+
+Workspace-wide `build` / `test` / `clippy` commands compile `swink-agent-local-llm`, which currently pulls `llama-cpp-sys-2` and its `bindgen` build step. Install LLVM/libclang first and set `LIBCLANG_PATH` if your platform does not auto-discover the shared library (especially common on Windows).
 
 MSRV **1.88** (edition 2024). Common workspace deps are centralized in root `Cargo.toml`, with a few crate-specific dependencies declared locally where needed.
 
@@ -162,8 +167,10 @@ gh pr comment <number> --body-file /tmp/comment.md
 - `Plugin` trait requires only `name()` — all contribution methods default to no-op/empty.
 - `PluginRegistry` deduplicates by name on `register()` — the new plugin **replaces** the old one (with a `tracing::warn`), not an error.
 - `list()` returns plugins sorted by priority descending; insertion order preserved for ties.
-- `NamespacedTool` prefixes as `"{plugin_name}.{tool_name}"` — prevents tool name collisions across plugins.
+- `NamespacedTool` prefixes as `"{plugin_name}_{tool_name}"` (underscore, not dot — Anthropic/Bedrock/OpenAI reject dots) and sanitizes both components to the common subset `^[a-zA-Z][a-zA-Z0-9_]{0,63}$` accepted by every provider. Prevents tool name collisions across plugins and guarantees wire-level validity.
+- Long namespaced tool names must keep a deterministic hash suffix when truncated; raw prefix truncation can collapse distinct plugin/tool pairs onto the same wire name.
 - Contributions merged in `Agent::new()`: plugin policies **prepended** (priority-sorted), direct policies appended; plugin tools appended after direct tools.
+- `Agent::new()` and `Agent::set_tools()` must reject duplicate final tool names after composition instead of relying on dispatch's "keep first" fallback; schema export and lookup need the same unique wire-name set.
 - `on_init(&self, &Agent)` dispatched in priority order, wrapped in `catch_unwind` — panicking `on_init` is logged and skipped, construction continues.
 - Entire module behind `#[cfg(feature = "plugins")]` — opt-in, not default-enabled, zero cost when disabled.
 
@@ -177,6 +184,7 @@ gh pr comment <number> --body-file /tmp/comment.md
 
 ### Streaming (`src/stream.rs`)
 
+- `StreamErrorKind` lives in `src/stream_error_kind.rs`; `stream.rs` re-exports it so `AssistantMessageEvent` helpers and the crate root keep the same public API while `types` stays decoupled from `stream`.
 - `accumulate_message` enforces strict ordering: one Start, indexed content blocks, one terminal (Done/Error).
 - `partial_json` consumed on `ToolCallEnd` — parsed once. Empty string → `{}`, not null.
 - `Done(Length)` tolerance is only for unfinished `ToolCall` blocks that preserve `partial_json` for `recover_incomplete_tool_calls`; unterminated text/thinking blocks must still be rejected as malformed.
@@ -193,6 +201,7 @@ gh pr comment <number> --body-file /tmp/comment.md
 - Sliding window: anchor (first N) + tail (recent), middle removed to fit budget.
 - Tool-result pairs preserved together even if it exceeds budget. Correctness > token count.
 - Token estimation: chars/4 heuristic. CustomMessage = 100 tokens flat.
+- `TiktokenCounter` is feature-gated behind `tiktoken`; it keeps `CustomMessage` at the same flat 100-token estimate because those messages never reach provider tokenizers.
 
 ### Error / Retry
 
@@ -206,6 +215,9 @@ gh pr comment <number> --body-file /tmp/comment.md
 - `ToolCallTransformer` runs unconditionally (not gated by approval). Distinct from `ToolValidator` (rejects vs rewrites).
 - `#[tool]` macro param decoding must return `AgentToolResult::error("invalid parameters: ...")` on serde failures rather than panicking. The generated code still retries deserialization from `{}` so zero-param / all-optional tools can execute when appropriate.
 - `FnTool::with_execute_typed::<T>()` is the zero-boilerplate typed path: it derives the schema from `T` and must mirror the rest of the tool stack by returning `AgentToolResult::error("invalid parameters: ...")` on serde decode failures.
+- `FnTool::with_execute_simple()` already accepts async closures; `FnTool::with_execute_async()` is the explicit untyped async alias for discoverability, not a separate execution path.
+- `ToolApprovalRequest` debug output must keep `arguments` fully redacted and run `redact_sensitive_values()` over `context`. MCP tools intentionally pass raw params through `approval_context()` for policy/approval inspection, so the logging boundary is where sanitization has to happen.
+- `ScriptTool` TOML definitions use a top-level `[parameters_schema]` section, not a legacy `[parameters]` table. Keep rustdoc and examples aligned with `src/hot_reload.rs` so hot-reload tool authors do not have to reverse-engineer the format from source.
 
 ### Credential Management (`auth/`)
 

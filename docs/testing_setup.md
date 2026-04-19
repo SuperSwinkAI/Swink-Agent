@@ -20,13 +20,22 @@ cargo build --workspace
 
 This compiles all workspace crates: core library, adapters, local-llm, memory, eval, and TUI. First build pulls dependencies and takes a few minutes.
 
-## 3. Run Unit Tests
+`swink-agent-local-llm` currently builds `llama-cpp-sys-2`, which runs `bindgen` during compilation. Install LLVM/libclang before running workspace-wide commands; if the build reports `Unable to find libclang`, set `LIBCLANG_PATH` to the LLVM directory that contains the shared library (`bin` on Windows).
 
-Verify everything compiles and passes before connecting to live APIs:
+## 3. Run the Local Validation Gate
+
+Verify the same local validation sequence required for PRs before connecting to live APIs:
 
 ```bash
+cargo fmt --all --check
+cargo clippy --workspace -- -D warnings
 cargo test --workspace
+cargo build --workspace
+cargo test --workspace --features testkit
+cargo test -p swink-agent --no-default-features
 ```
+
+`just validate` and `just check` run this exact command set.
 
 ## 4. Get API Keys
 
@@ -70,6 +79,8 @@ Ollama runs entirely on your machine — no account, no API key, no cost.
 ### Local On-Device (swink-agent-local-llm)
 
 No API key needed. Models are lazily downloaded from HuggingFace on first use and cached in `~/.cache/huggingface/hub/`.
+
+Build prerequisite: local-LLM compilation currently requires LLVM/libclang because `llama-cpp-sys-2` uses `bindgen`. On Windows, the usual fix is installing LLVM and setting `LIBCLANG_PATH` to something like `C:\Program Files\LLVM\bin` before running `cargo build/test/clippy --workspace`.
 
 - **SmolLM3-3B** (GGUF Q4_K_M, ~1.92 GB) — text generation, tool use, reasoning
 - **EmbeddingGemma-300M** (<200 MB) — text vectorization/embeddings
@@ -153,11 +164,11 @@ Once the TUI is running, test each configured provider:
 #info
 ```
 
-**Switch model within the current provider:**
+**Cycle available models in the TUI:**
 ```
-/model claude-sonnet-4-6
+Press F4
 ```
-Note: `/model` changes the model ID on the active provider. To test a different provider, update `.env` and restart the TUI.
+Note: `F4` cycles the models currently available to the TUI and applies the selected model on the next prompt. Use `#info` to confirm the active model. To test a different provider, update `.env` and restart the TUI.
 
 **Test basic conversation:**
 ```
@@ -197,7 +208,7 @@ Thinking mode availability by provider:
 | Long output | Conversation scrolls, manual scroll with arrow keys works |
 | Session save/load | `#save` then `#load <id>` restores conversation |
 | Error recovery | Send a prompt that exceeds context window — agent should recover |
-| Model switching | `/model <id>` changes model within current provider, `#info` confirms |
+| Model switching | Press `F4` to cycle available models; `#info` confirms the active model |
 
 ## 9. Logs
 

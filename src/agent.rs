@@ -151,6 +151,27 @@ fn available_models_and_stream_fns(
     (available_models, model_stream_fns)
 }
 
+fn assert_unique_tool_names(tools: &[Arc<dyn AgentTool>]) {
+    let mut seen = HashSet::with_capacity(tools.len());
+    let mut duplicates = Vec::new();
+
+    for tool in tools {
+        let name = tool.name();
+        if !seen.insert(name.to_owned()) {
+            duplicates.push(name.to_owned());
+        }
+    }
+
+    if !duplicates.is_empty() {
+        duplicates.sort();
+        duplicates.dedup();
+        panic!(
+            "duplicate tool names are not allowed after composition: {}",
+            duplicates.join(", ")
+        );
+    }
+}
+
 #[cfg(feature = "plugins")]
 fn dispatch_plugin_on_init(agent: &Agent) {
     // Dispatch on_init to each plugin in priority order (already sorted).
@@ -268,6 +289,8 @@ impl Agent {
         // Merge plugin contributions (policies, tools, event observers) into options.
         #[cfg(feature = "plugins")]
         let options = merge_plugin_contributions(options);
+
+        assert_unique_tool_names(&options.tools);
 
         // Compute the effective system prompt before partial moves.
         let effective_prompt = options.effective_system_prompt().to_owned();
@@ -504,5 +527,32 @@ impl RetryStrategy for SharedRetryStrategy {
 
     fn as_any(&self) -> &dyn std::any::Any {
         self
+    }
+}
+
+#[cfg(all(test, feature = "plugins"))]
+mod tests {
+    use std::sync::Arc;
+
+    use crate::testing::{MockPlugin, MockTool, SimpleMockStreamFn};
+
+    use super::*;
+
+    #[test]
+    #[should_panic(expected = "duplicate tool names are not allowed after composition")]
+    fn agent_new_rejects_duplicate_names_after_plugin_composition() {
+        let stream_fn = Arc::new(SimpleMockStreamFn::from_text("ok"));
+        let options = AgentOptions::new(
+            "test",
+            crate::testing::default_model(),
+            stream_fn,
+            crate::testing::default_convert,
+        )
+        .with_tools(vec![
+            Arc::new(MockTool::new("my_web_search")) as Arc<dyn AgentTool>
+        ])
+        .with_plugin(Arc::new(MockPlugin::new("my-web").with_tools(&["search"])));
+
+        let _agent = Agent::new(options);
     }
 }

@@ -182,6 +182,192 @@ async fn refresh_per_key_independence() {
     // wiremock verifies exactly 2 requests
 }
 
+// Issue #613: the raw token-endpoint response body must never leak into the
+// surfaced `CredentialError::RefreshFailed` reason / Display output. The
+// tests below feed a unique sentinel string in the body and assert the
+// sentinel does NOT appear in the public-facing error text.
+const LEAK_SENTINEL: &str = "LEAK_SENTINEL_ABC123";
+
+#[tokio::test]
+async fn refresh_error_does_not_leak_non_standard_body() {
+    let mock_server = MockServer::start().await;
+
+    // Non-standard JSON body with a sensitive-looking sentinel field.
+    Mock::given(method("POST"))
+        .and(path("/token"))
+        .respond_with(ResponseTemplate::new(401).set_body_json(serde_json::json!({
+            "trace_id": "t-42",
+            "internal_message": format!("raw token dump {LEAK_SENTINEL}"),
+        })))
+        .mount(&mock_server)
+        .await;
+
+    let token_url = format!("{}/token", mock_server.uri());
+    let store = Arc::new(
+        InMemoryCredentialStore::empty().with_credential("oauth-key", expired_oauth2(&token_url)),
+    );
+    let resolver = DefaultCredentialResolver::new(store);
+
+    let err = resolver.resolve("oauth-key").await.unwrap_err();
+    let display = format!("{err}");
+    let debug = format!("{err:?}");
+
+    assert!(
+        !display.contains(LEAK_SENTINEL),
+        "sentinel leaked into Display: {display}"
+    );
+    assert!(
+        !debug.contains(LEAK_SENTINEL),
+        "sentinel leaked into Debug: {debug}"
+    );
+    assert!(
+        display.contains("401"),
+        "status missing from Display: {display}"
+    );
+}
+
+#[tokio::test]
+async fn refresh_error_standard_oauth2_surface_includes_error_code_only() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/token"))
+        .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
+            "error": "invalid_grant",
+            "error_description": format!("refresh token expired {LEAK_SENTINEL}"),
+        })))
+        .mount(&mock_server)
+        .await;
+
+    let token_url = format!("{}/token", mock_server.uri());
+    let store = Arc::new(
+        InMemoryCredentialStore::empty().with_credential("oauth-key", expired_oauth2(&token_url)),
+    );
+    let resolver = DefaultCredentialResolver::new(store);
+
+    let err = resolver.resolve("oauth-key").await.unwrap_err();
+    let display = format!("{err}");
+
+    assert!(
+        display.contains("400"),
+        "status missing from Display: {display}"
+    );
+    assert!(
+        display.contains("invalid_grant"),
+        "standard error code missing from Display: {display}"
+    );
+    assert!(
+        !display.contains(LEAK_SENTINEL),
+        "error_description leaked into Display: {display}"
+    );
+}
+
+#[tokio::test]
+async fn refresh_error_malformed_body_degrades_to_status_only() {
+    let mock_server = MockServer::start().await;
+
+    let html_body = format!("<html><body>boom {LEAK_SENTINEL}</body></html>");
+    Mock::given(method("POST"))
+        .and(path("/token"))
+        .respond_with(ResponseTemplate::new(502).set_body_string(html_body))
+        .mount(&mock_server)
+        .await;
+
+    let token_url = format!("{}/token", mock_server.uri());
+    let store = Arc::new(
+        InMemoryCredentialStore::empty().with_credential("oauth-key", expired_oauth2(&token_url)),
+    );
+    let resolver = DefaultCredentialResolver::new(store);
+
+    let err = resolver.resolve("oauth-key").await.unwrap_err();
+    let display = format!("{err}");
+
+    assert!(
+        !display.contains(LEAK_SENTINEL),
+        "sentinel leaked into Display: {display}"
+    );
+    assert!(
+        !display.contains("<html"),
+        "raw HTML leaked into Display: {display}"
+    );
+    assert!(
+        display.contains("502"),
+        "status missing from Display: {display}"
+    );
+}
+
+#[tokio::test]
+async fn refresh_error_standard_body_ignores_non_standard_fields() {
+    // A mostly-standard OAuth2 error body with an extra vendor diagnostic
+    // field that serde should ignore. The sentinel lives in the ignored
+    // field and must NOT leak.
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/token"))
+        .respond_with(ResponseTemplate::new(401).set_body_json(serde_json::json!({
+            "error": "invalid_grant",
+            "debug_info": format!("diagnostic payload {LEAK_SENTINEL}"),
+        })))
+        .mount(&mock_server)
+        .await;
+
+    let token_url = format!("{}/token", mock_server.uri());
+    let store = Arc::new(
+        InMemoryCredentialStore::empty().with_credential("oauth-key", expired_oauth2(&token_url)),
+    );
+    let resolver = DefaultCredentialResolver::new(store);
+
+    let err = resolver.resolve("oauth-key").await.unwrap_err();
+    let display = format!("{err}");
+
+    assert!(
+        !display.contains(LEAK_SENTINEL),
+        "non-standard field leaked into Display: {display}"
+    );
+    assert!(display.contains("invalid_grant"));
+    assert!(display.contains("401"));
+}
+
+#[tokio::test]
+async fn refresh_error_tool_output_path_does_not_leak_body() {
+    // Simulates the flow in `src/loop_/tool_dispatch/execute.rs` where a
+    // `CredentialError` is converted into tool output via
+    // `AgentToolResult::error(format!("{cred_error}"))`. This asserts that
+    // the tool-facing string carries no body fragments.
+    let mock_server = MockServer::start().await;
+
+    let vendor_body = serde_json::json!({
+        "internal_trace": format!("secret {LEAK_SENTINEL} fragment"),
+        "request_id": "req-1",
+    });
+    Mock::given(method("POST"))
+        .and(path("/token"))
+        .respond_with(ResponseTemplate::new(500).set_body_json(vendor_body))
+        .mount(&mock_server)
+        .await;
+
+    let token_url = format!("{}/token", mock_server.uri());
+    let store = Arc::new(
+        InMemoryCredentialStore::empty().with_credential("oauth-key", expired_oauth2(&token_url)),
+    );
+    let resolver = DefaultCredentialResolver::new(store);
+
+    let err = resolver.resolve("oauth-key").await.unwrap_err();
+    // Mirror execute.rs:203 exactly.
+    let tool_output_text = format!("{err}");
+
+    assert!(
+        !tool_output_text.contains(LEAK_SENTINEL),
+        "sentinel leaked into tool output: {tool_output_text}"
+    );
+    assert!(
+        !tool_output_text.contains("internal_trace"),
+        "vendor field name leaked into tool output: {tool_output_text}"
+    );
+    assert!(tool_output_text.contains("500"));
+}
+
 // T064: Pre-provisioned expired OAuth2 auto-refreshes without handler
 #[tokio::test]
 async fn pre_provisioned_expired_auto_refreshes() {

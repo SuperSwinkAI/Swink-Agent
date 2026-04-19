@@ -29,6 +29,18 @@ pub(super) struct PreprocessResult {
     pub injected_messages: Vec<AgentMessage>,
 }
 
+/// Result of the batch-wide pre-dispatch policy pass for a single tool call.
+enum PreDispatchPassResult {
+    Ready {
+        idx: usize,
+        effective_arguments: serde_json::Value,
+    },
+    Skip {
+        idx: usize,
+        error_text: String,
+    },
+}
+
 async fn aborted_preprocess_outcome(
     tool_calls: &[ToolCallInfo],
     results: &Arc<tokio::sync::Mutex<Vec<(usize, crate::types::ToolResultMessage)>>>,
@@ -73,6 +85,16 @@ pub(super) async fn preprocess_tool_calls(
 ) -> Result<PreprocessResult, ToolExecOutcome> {
     let mut prepared: Vec<PreparedToolCall> = Vec::new();
     let mut injected_messages: Vec<AgentMessage> = Vec::new();
+    let mut pre_dispatch_results: Vec<PreDispatchPassResult> = Vec::with_capacity(tool_calls.len());
+    let mut batch_stop_reason: Option<String> = None;
+
+    let state_snapshot = {
+        let guard = config
+            .session_state
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        guard.clone()
+    };
 
     for (idx, tc) in tool_calls.iter().enumerate() {
         if cancellation_token.is_cancelled() {
@@ -87,51 +109,55 @@ pub(super) async fn preprocess_tool_calls(
 
         // ── PreDispatch policies ──
         let mut effective_arguments = tc.arguments.clone();
-        {
-            let state_snapshot = {
-                let guard = config
-                    .session_state
-                    .read()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
-                guard.clone()
-            };
-            let mut dispatch_ctx = ToolDispatchContext {
-                tool_name: &tc.name,
-                tool_call_id: &tc.id,
-                arguments: &mut effective_arguments,
-                execution_root: None,
-                state: &state_snapshot,
-            };
-            match run_pre_dispatch_policies(&config.pre_dispatch_policies, &mut dispatch_ctx) {
-                PreDispatchVerdict::Continue => {}
-                PreDispatchVerdict::Inject(msgs) => {
-                    injected_messages.extend(msgs);
-                }
-                PreDispatchVerdict::Stop(reason) => {
-                    emit_batch_stop_results(tool_calls, &reason, results, tx).await;
-                    let all_results = std::mem::take(&mut *results.lock().await);
-                    let ordered = order_results_by_tool_calls(tool_calls, &all_results);
-                    let collected_timings = std::mem::take(&mut *tool_timings.lock().await);
-                    return Err(ToolExecOutcome::Completed {
-                        results: ordered,
-                        tool_metrics: collected_timings,
-                        transfer_signal: None,
-                        injected_messages,
-                    });
-                }
-                PreDispatchVerdict::Skip(error_text) => {
-                    let error_result = AgentToolResult {
-                        content: vec![ContentBlock::Text { text: error_text }],
-                        details: serde_json::Value::Null,
-                        is_error: true,
-                        transfer_signal: None,
-                    };
-                    emit_error_result(&tc.name, &tc.id, error_result, idx, results, tx).await;
-                    continue;
+        let mut dispatch_ctx = ToolDispatchContext {
+            tool_name: &tc.name,
+            tool_call_id: &tc.id,
+            arguments: &mut effective_arguments,
+            execution_root: None,
+            state: &state_snapshot,
+        };
+        match run_pre_dispatch_policies(&config.pre_dispatch_policies, &mut dispatch_ctx) {
+            PreDispatchVerdict::Continue => {
+                pre_dispatch_results.push(PreDispatchPassResult::Ready {
+                    idx,
+                    effective_arguments,
+                });
+            }
+            PreDispatchVerdict::Inject(msgs) => {
+                injected_messages.extend(msgs);
+                pre_dispatch_results.push(PreDispatchPassResult::Ready {
+                    idx,
+                    effective_arguments,
+                });
+            }
+            PreDispatchVerdict::Stop(reason) => {
+                if batch_stop_reason.is_none() {
+                    batch_stop_reason = Some(reason);
                 }
             }
+            PreDispatchVerdict::Skip(error_text) => {
+                pre_dispatch_results.push(PreDispatchPassResult::Skip { idx, error_text });
+            }
         }
+    }
 
+    if let Some(reason) = batch_stop_reason {
+        emit_batch_stop_results(tool_calls, &reason, results, tx).await;
+        let all_results = std::mem::take(&mut *results.lock().await);
+        let ordered = order_results_by_tool_calls(tool_calls, &all_results);
+        let collected_timings = std::mem::take(&mut *tool_timings.lock().await);
+        return Err(ToolExecOutcome::Completed {
+            results: ordered,
+            tool_metrics: collected_timings,
+            transfer_signal: None,
+            injected_messages,
+        });
+    }
+
+    // A later `Stop` must abort the entire batch before any approval side
+    // effects are emitted, so approval runs only after the whole batch clears
+    // pre-dispatch.
+    for pre_dispatch_result in pre_dispatch_results {
         if cancellation_token.is_cancelled() {
             return Err(aborted_preprocess_outcome(
                 tool_calls,
@@ -142,7 +168,28 @@ pub(super) async fn preprocess_tool_calls(
             .await);
         }
 
-        // ── Approval gate ──
+        let (idx, mut effective_arguments, skipped_error) = match pre_dispatch_result {
+            PreDispatchPassResult::Ready {
+                idx,
+                effective_arguments,
+            } => (idx, effective_arguments, None),
+            PreDispatchPassResult::Skip { idx, error_text } => {
+                (idx, serde_json::Value::Null, Some(error_text))
+            }
+        };
+        let tc = &tool_calls[idx];
+
+        if let Some(error_text) = skipped_error {
+            let error_result = AgentToolResult {
+                content: vec![ContentBlock::Text { text: error_text }],
+                details: serde_json::Value::Null,
+                is_error: true,
+                transfer_signal: None,
+            };
+            emit_error_result(&tc.name, &tc.id, error_result, idx, results, tx).await;
+            continue;
+        }
+
         if let Some(ref approve_fn) = config.approve_tool
             && config.approval_mode != ApprovalMode::Bypassed
         {

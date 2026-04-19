@@ -36,7 +36,9 @@ pub trait Plugin: Send + Sync {
     /// Panics are caught and logged (consistent with event forwarders).
     fn on_event(&self, _event: &AgentEvent) {}
 
-    /// Tools contributed to the agent. Auto-namespaced as "{plugin_name}.{tool_name}".
+    /// Tools contributed to the agent. Auto-namespaced as "{plugin_name}_{tool_name}".
+    /// Both components are sanitized to match the strictest provider tool-name
+    /// grammar (`^[a-zA-Z][a-zA-Z0-9_]{0,63}$`).
     fn tools(&self) -> Vec<Arc<dyn AgentTool>> { vec![] }
 }
 ```

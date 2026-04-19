@@ -772,8 +772,8 @@ async fn gemini_two_tool_calls_have_sequential_content_indices() {
     assert_eq!(cis[1], cis[0] + 1, "content indices must be sequential");
 }
 
-/// When a tool call is emitted but finishReason is MAX_TOKENS, the stop reason
-/// must be Length — not ToolUse. Regression test for #273.
+/// When a tool call is emitted but finishReason is `MAX_TOKENS`, the stop
+/// reason must be `Length` and not `ToolUse`. Regression test for #273.
 #[tokio::test]
 async fn gemini_max_tokens_after_tool_call_reports_length() {
     let body = [
@@ -867,6 +867,52 @@ async fn gemini_non_prefix_arg_rewrite_produces_correct_json() {
         parsed,
         serde_json::json!({"b": 2}),
         "final args must match the last Gemini snapshot, got: {arguments}"
+    );
+}
+
+/// Regression test for #583: when Gemini rewrites a previously non-empty
+/// `function_call.args` snapshot to `null`, the buffered final args must clear
+/// instead of reusing stale JSON from the earlier chunk.
+#[tokio::test]
+async fn gemini_null_arg_rewrite_clears_buffered_args() {
+    let body = [
+        r#"data: {"candidates":[{"content":{"parts":[{"functionCall":{"id":"c1","name":"do_stuff","args":{"city":"Paris"}}}]}}]}"#,
+        "",
+        r#"data: {"candidates":[{"content":{"parts":[{"functionCall":{"id":"c1","name":"do_stuff","args":null}]}}]}"#,
+        "",
+        r#"data: {"candidates":[{"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":5,"candidatesTokenCount":5,"totalTokenCount":10}}"#,
+        "",
+        "data: [DONE]",
+        "",
+    ]
+    .join("\n");
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(sse_response(&body))
+        .mount(&server)
+        .await;
+
+    let stream_fn = GeminiStreamFn::new(server.uri(), "test-key", ApiVersion::V1beta);
+    let events = collect_events(&stream_fn).await;
+
+    let arguments: String = events
+        .iter()
+        .filter_map(|event| match event {
+            AssistantMessageEvent::ToolCallDelta { delta, .. } => Some(delta.as_str()),
+            _ => None,
+        })
+        .collect();
+
+    assert!(
+        arguments.is_empty(),
+        "null rewrite must clear buffered args instead of keeping stale JSON: {arguments}"
+    );
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, AssistantMessageEvent::ToolCallStart { .. })),
+        "tool call should still start before the null rewrite is finalized"
     );
 }
 

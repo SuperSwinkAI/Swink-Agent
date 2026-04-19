@@ -3,6 +3,7 @@
 ## Prerequisites
 
 - **Rust 1.88+** (edition 2024)
+- **LLVM/libclang** available for workspace-wide `cargo build/test/clippy` commands because `swink-agent-local-llm` builds `llama-cpp-sys-2` via `bindgen`
 - At least one LLM provider:
   - [Ollama](https://ollama.ai) running locally (no key required)
   - An Anthropic API key
@@ -21,6 +22,8 @@
 git clone <repo-url> && cd swink-agent
 cargo build --workspace
 ```
+
+If `cargo build --workspace` fails with `Unable to find libclang` or asks for `LIBCLANG_PATH`, install LLVM and point `LIBCLANG_PATH` at the directory containing `libclang` (`bin` on Windows LLVM installs).
 
 ## Configure a Provider
 
@@ -82,6 +85,12 @@ Keys can also be stored in the OS keychain instead of env vars — the first-run
 |---|---|
 | `OLLAMA_HOST` | `http://localhost:11434` |
 | `OLLAMA_MODEL` | `llama3.2` |
+
+**Local build prerequisite**
+
+| Variable | Default | Description |
+|---|---|---|
+| `LIBCLANG_PATH` | auto-discovered | Directory containing `libclang` / `clang.dll` when `llama-cpp-sys-2` bindgen cannot find LLVM automatically |
 
 ## Run the TUI
 

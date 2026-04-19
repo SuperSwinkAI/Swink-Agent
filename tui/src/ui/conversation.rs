@@ -6,7 +6,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 
-use crate::app::{DisplayMessage, MessageRole};
+use crate::app::{DisplayMessage, MessageRole, Selection};
 use crate::theme;
 use crate::ui::markdown;
 
@@ -18,6 +18,10 @@ pub struct ConversationView {
     pub auto_scroll: bool,
     /// Total rendered lines (computed each frame).
     rendered_lines: usize,
+    /// Per-row cell symbols captured from the last render pass, indexed
+    /// `[row][col]` over the conversation's inner area. Used by selection
+    /// copy to extract exactly what the user sees on screen.
+    pub(crate) visible_cells: Vec<Vec<String>>,
 }
 
 impl Default for ConversationView {
@@ -32,6 +36,54 @@ impl ConversationView {
             scroll_offset: 0,
             auto_scroll: true,
             rendered_lines: 0,
+            visible_cells: Vec::new(),
+        }
+    }
+
+    /// Extract the text inside `selection` from the last captured render.
+    /// Returns the selected text with a leading `"│ "` gutter stripped per
+    /// line and trailing whitespace removed. Returns `None` if the selection
+    /// is empty or out of bounds.
+    pub(crate) fn selection_text(&self, selection: &Selection) -> Option<String> {
+        if selection.is_empty() || self.visible_cells.is_empty() {
+            return None;
+        }
+        let (start, end) = selection.normalized();
+        let start_row = start.0 as usize;
+        let end_row = end.0 as usize;
+        let mut out = String::new();
+        for row_idx in start_row..=end_row {
+            let Some(row) = self.visible_cells.get(row_idx) else {
+                break;
+            };
+            let width = row.len();
+            let col_start = if row_idx == start_row {
+                start.1 as usize
+            } else {
+                0
+            };
+            let col_end = if row_idx == end_row {
+                end.1 as usize
+            } else {
+                width
+            };
+            let col_start = col_start.min(width);
+            let col_end = col_end.min(width).max(col_start);
+            let mut line: String = row[col_start..col_end].concat();
+            if line.starts_with("│ ") {
+                line.drain(.."│ ".len());
+            }
+            let trimmed = line.trim_end();
+            out.push_str(trimmed);
+            if row_idx != end_row {
+                out.push('\n');
+            }
+        }
+        let trimmed = out.trim_matches('\n').to_string();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
         }
     }
 
@@ -75,7 +127,7 @@ impl ConversationView {
     }
 
     /// Render the conversation view.
-    #[allow(clippy::too_many_lines)]
+    #[allow(clippy::too_many_lines, clippy::too_many_arguments)]
     pub fn render(
         &mut self,
         frame: &mut Frame,
@@ -84,6 +136,7 @@ impl ConversationView {
         focused: bool,
         blink_on: bool,
         selected_tool_block: Option<usize>,
+        selection: Option<&Selection>,
     ) {
         let border_color = if focused {
             theme::border_focused_color()
@@ -233,6 +286,50 @@ impl ConversationView {
             .scroll((u16::try_from(self.scroll_offset).unwrap_or(u16::MAX), 0));
 
         frame.render_widget(paragraph, area);
+
+        // Capture the inner-area cells so selection copy can extract exactly
+        // what the user sees (after wrapping). Then apply the selection
+        // highlight on top.
+        let inner_x = area.x.saturating_add(1);
+        let inner_y = area.y.saturating_add(1);
+        let inner_w = area.width.saturating_sub(2);
+        let inner_h = area.height.saturating_sub(2);
+        let buf = frame.buffer_mut();
+
+        let mut rows: Vec<Vec<String>> = Vec::with_capacity(inner_h as usize);
+        for y in 0..inner_h {
+            let mut row: Vec<String> = Vec::with_capacity(inner_w as usize);
+            for x in 0..inner_w {
+                let symbol = buf
+                    .cell((inner_x + x, inner_y + y))
+                    .map(|c| c.symbol().to_string())
+                    .unwrap_or_default();
+                row.push(symbol);
+            }
+            rows.push(row);
+        }
+        self.visible_cells = rows;
+
+        if let Some(sel) = selection
+            && !sel.is_empty()
+        {
+            let (start, end) = sel.normalized();
+            let highlight = Style::default().add_modifier(Modifier::REVERSED);
+            for row_idx in start.0..=end.0 {
+                if row_idx >= inner_h {
+                    break;
+                }
+                let col_start = if row_idx == start.0 { start.1 } else { 0 };
+                let col_end = if row_idx == end.0 { end.1 } else { inner_w };
+                let col_start = col_start.min(inner_w);
+                let col_end = col_end.min(inner_w).max(col_start);
+                for col in col_start..col_end {
+                    if let Some(cell) = buf.cell_mut((inner_x + col, inner_y + row_idx)) {
+                        cell.set_style(highlight);
+                    }
+                }
+            }
+        }
     }
 }
 

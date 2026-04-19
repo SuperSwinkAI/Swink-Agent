@@ -3,10 +3,12 @@
 //! Wraps an `rmcp` client session, handling tool discovery and providing
 //! access to the peer for tool call forwarding. A background monitor task
 //! awaits the service lifecycle and emits a disconnect event when the
-//! transport closes unexpectedly.
+//! underlying service stops running.
 
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
 
+use reqwest::header::{HeaderName, HeaderValue};
 use rmcp::model::{CallToolRequestParams, CallToolResult, ClientInfo, Implementation};
 use rmcp::service::{Peer, QuitReason, RoleClient, RunningService, ServiceExt};
 use rmcp::transport::TokioChildProcess;
@@ -52,6 +54,12 @@ pub struct McpConnection {
     pub discovered_tools: Vec<rmcp::model::Tool>,
     /// Shared connection state used by callers, shutdown, and the monitor task.
     state: Arc<Mutex<McpConnectionState>>,
+    /// Optional event channel for emitting MCP lifecycle events such as
+    /// `McpToolCallStarted` / `McpToolCallCompleted`. Connect, discovery, and
+    /// disconnect events are emitted through this sender during
+    /// [`connect`](Self::connect) / [`from_service`](Self::from_service) and
+    /// the background monitor task respectively.
+    event_tx: Option<UnboundedSender<AgentEvent>>,
 }
 
 impl std::fmt::Debug for McpConnection {
@@ -86,7 +94,16 @@ impl McpConnection {
                 peer: None,
                 monitor: None,
             })),
+            event_tx: None,
         }
+    }
+
+    /// Shared reference to the optional event sender.
+    ///
+    /// Used by tool wrappers to emit `McpToolCallStarted` /
+    /// `McpToolCallCompleted` around forwarded calls.
+    pub(crate) const fn event_tx(&self) -> Option<&UnboundedSender<AgentEvent>> {
+        self.event_tx.as_ref()
     }
 
     /// Create a connection from a pre-established rmcp service.
@@ -100,6 +117,11 @@ impl McpConnection {
         event_tx: Option<UnboundedSender<AgentEvent>>,
     ) -> Result<Self, McpError> {
         let peer = service.peer().clone();
+
+        // Handshake already completed before we were given the service.
+        emit_event(event_tx.as_ref(), || {
+            crate::event::server_connected(&config.name)
+        });
 
         let discovered_tools =
             peer.list_all_tools()
@@ -115,18 +137,28 @@ impl McpConnection {
             "MCP server connected via provided service, tools discovered"
         );
 
+        emit_event(event_tx.as_ref(), || {
+            crate::event::tools_discovered(&config.name, discovered_tools.len())
+        });
+
         let state = Arc::new(Mutex::new(McpConnectionState {
             status: McpConnectionStatus::Connected,
             peer: Some(peer),
             monitor: None,
         }));
-        let monitor = spawn_monitor(service, Arc::clone(&state), config.name.clone(), event_tx);
+        let monitor = spawn_monitor(
+            service,
+            Arc::clone(&state),
+            config.name.clone(),
+            event_tx.clone(),
+        );
         state.lock().unwrap_or_else(PoisonError::into_inner).monitor = Some(monitor);
 
         Ok(Self {
             config,
             discovered_tools,
             state,
+            event_tx,
         })
     }
 
@@ -134,7 +166,12 @@ impl McpConnection {
     ///
     /// Supports stdio and SSE (HTTP) transports. Spawns a background lifecycle
     /// monitor that sends `AgentEvent::McpServerDisconnected` on `event_tx`
-    /// when the transport closes unexpectedly.
+    /// when the underlying service terminates.
+    ///
+    /// For SSE, transient stream drops and stale-session recovery are handled
+    /// by rmcp's streamable HTTP transport. This wrapper only transitions to
+    /// [`McpConnectionStatus::Disconnected`] once rmcp has given up and the
+    /// service itself exits.
     pub async fn connect(
         config: McpServerConfig,
         event_tx: Option<UnboundedSender<AgentEvent>>,
@@ -143,10 +180,17 @@ impl McpConnection {
             McpTransport::Stdio { command, args, env } => {
                 Self::connect_stdio(command, args, env, &config.name).await?
             }
-            McpTransport::Sse { url, bearer_token } => {
-                Self::connect_sse(url, bearer_token.as_deref(), &config.name).await?
-            }
+            McpTransport::Sse {
+                url,
+                bearer_token,
+                headers,
+            } => Self::connect_sse(url, bearer_token.as_deref(), headers, &config.name).await?,
         };
+
+        // Handshake succeeded, transport is live.
+        emit_event(event_tx.as_ref(), || {
+            crate::event::server_connected(&config.name)
+        });
 
         let peer = service.peer().clone();
 
@@ -165,18 +209,28 @@ impl McpConnection {
             "MCP server connected, tools discovered"
         );
 
+        emit_event(event_tx.as_ref(), || {
+            crate::event::tools_discovered(&config.name, discovered_tools.len())
+        });
+
         let state = Arc::new(Mutex::new(McpConnectionState {
             status: McpConnectionStatus::Connected,
             peer: Some(peer),
             monitor: None,
         }));
-        let monitor = spawn_monitor(service, Arc::clone(&state), config.name.clone(), event_tx);
+        let monitor = spawn_monitor(
+            service,
+            Arc::clone(&state),
+            config.name.clone(),
+            event_tx.clone(),
+        );
         state.lock().unwrap_or_else(PoisonError::into_inner).monitor = Some(monitor);
 
         Ok(Self {
             config,
             discovered_tools,
             state,
+            event_tx,
         })
     }
 
@@ -216,11 +270,15 @@ impl McpConnection {
     async fn connect_sse(
         url: &str,
         bearer_token: Option<&str>,
+        headers: &HashMap<String, String>,
         server_name: &str,
     ) -> Result<RunningService<RoleClient, ClientInfo>, McpError> {
         let mut config = StreamableHttpClientTransportConfig::with_uri(url);
         if let Some(token) = bearer_token {
-            config = config.auth_header(format!("Bearer {token}"));
+            config = config.auth_header(token.to_owned());
+        }
+        if !headers.is_empty() {
+            config = config.custom_headers(parse_custom_headers(headers, server_name)?);
         }
 
         let transport = StreamableHttpClientTransport::from_config(config);
@@ -306,6 +364,29 @@ impl McpConnection {
     }
 }
 
+fn parse_custom_headers(
+    headers: &HashMap<String, String>,
+    server_name: &str,
+) -> Result<HashMap<HeaderName, HeaderValue>, McpError> {
+    headers
+        .iter()
+        .map(|(name, value)| {
+            let header_name = HeaderName::from_bytes(name.as_bytes()).map_err(|error| {
+                McpError::ConnectionFailed {
+                    server: server_name.to_string(),
+                    reason: format!("invalid SSE header name `{name}`: {error}"),
+                }
+            })?;
+            let header_value =
+                HeaderValue::from_str(value).map_err(|error| McpError::ConnectionFailed {
+                    server: server_name.to_string(),
+                    reason: format!("invalid SSE header value for `{name}`: {error}"),
+                })?;
+            Ok((header_name, header_value))
+        })
+        .collect()
+}
+
 impl Drop for McpConnection {
     fn drop(&mut self) {
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
@@ -314,6 +395,19 @@ impl Drop for McpConnection {
         if let Some(monitor) = state.monitor.take() {
             monitor.abort();
         }
+    }
+}
+
+/// Send an event on the optional channel, ignoring closed-receiver errors.
+///
+/// The emitter is lazy so we never allocate event payloads when no channel
+/// is wired.
+pub fn emit_event(
+    event_tx: Option<&UnboundedSender<AgentEvent>>,
+    build: impl FnOnce() -> AgentEvent,
+) {
+    if let Some(tx) = event_tx {
+        let _ = tx.send(build());
     }
 }
 
@@ -326,8 +420,8 @@ fn client_info() -> ClientInfo {
 
 /// Spawn a background task that awaits the service lifecycle.
 ///
-/// When the transport closes with `QuitReason::Closed` (remote disconnect or
-/// crash), the shared state is updated to `Disconnected` and
+/// When the underlying service exits with `QuitReason::Closed` or a join error,
+/// the shared state is updated to `Disconnected` and
 /// `McpServerDisconnected` is sent on `event_tx`. Voluntary cancellations
 /// (`QuitReason::Cancelled`) and join errors are silently ignored since they
 /// are initiated by the caller via `shutdown()`.

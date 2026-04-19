@@ -7,7 +7,7 @@ on:
 jobs:
   approve:
     # Only fire on lgtm comments (whole line, case-insensitive)
-    if: ${{ toLower(trim(github.event.comment.body)) == 'lgtm' }}
+    if: contains(github.event.comment.body, 'lgtm') || contains(github.event.comment.body, 'LGTM')
     runs-on: ubuntu-latest
     permissions:
       issues: write
@@ -17,6 +17,7 @@ jobs:
       - uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7
         with:
           script: |
+            if (context.payload.comment.body.trim().toLowerCase() !== 'lgtm') return;
             const commenter = context.payload.comment.user.login;
 
             // Verify commenter has admin or maintain permission
