@@ -159,7 +159,8 @@ pub enum AuthScheme {
 // ─── CredentialType ─────────────────────────────────────────────────────────
 
 /// Credential type discriminant for mismatch checking (FR-018).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum CredentialType {
     /// Expects an API key credential.
     ApiKey,
