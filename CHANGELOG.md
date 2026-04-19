@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-04-19
+
+### Added
+- `FileCheckpointStore` in `swink-agent-memory` — durable file-backed checkpoint persistence across process restarts (#666).
+- `FnTool::with_execute_async` alias — explicit untyped async builder for discoverability (#663).
+- Custom SSE MCP headers (`McpTransport::Sse { headers }`) — supports `x-api-key` and other non-standard MCP server auth; also fixes bearer-token prefix duplication (#665).
+- Built-in `TiktokenCounter` for token counting without external dependencies (#662).
+- TUI click-drag text selection and copy in chat view (#605).
+
+### Changed
+- Composed plugin tool names now use hash-tail truncation to prevent long-name collisions; `Agent::new()` and `Agent::set_tools()` fail fast on duplicate final names (#674).
+- Agent loop `PreTurn` now exposes the initial prompt batch as the first-turn `new_messages` slice; post-turn policy-injected messages are processed before follow-up polling or `AgentEnd` (#676).
+
+### Fixed
+- OAuth2 refresh failures no longer leak `error_description` or raw token-endpoint bodies into tool-facing errors or debug logs (#675).
+- Fixed pre-dispatch state snapshot reuse, two-pass `PreDispatch` enforcement before approval, and cache-miss retry strategy (#627, #639, #643).
+- Fixed overflow terminal event emission, stream/import cycle, and sync runtime init errors (#642, #644, #649).
+- Fixed TUI corrupted session state load, Bedrock terminal frame requirement, and approval debug context redaction (#646, #647, #650).
+- Fixed Azure auth dependency gate, adapter retry on parse/protocol faults, plugin tool name sanitization for provider compatibility, and incomplete `tool_use` argument sanitization (#620, #621, #629, #631).
+- Fixed MCP lifecycle event emission and artifact session/root validation (#622, #625).
+- `ApprovalMode` and `ToolMiddleware` exported from prelude (#659, #660).
+- `Checkpoint` now taken by value in `save_checkpoint` (#661).
+
 ## [0.7.9] - 2026-04-16
 
 ### Changed
