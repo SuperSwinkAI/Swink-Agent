@@ -199,6 +199,7 @@ gh pr comment <number> --body-file /tmp/comment.md
 - Sliding window: anchor (first N) + tail (recent), middle removed to fit budget.
 - Tool-result pairs preserved together even if it exceeds budget. Correctness > token count.
 - Token estimation: chars/4 heuristic. CustomMessage = 100 tokens flat.
+- `TiktokenCounter` is feature-gated behind `tiktoken`; it keeps `CustomMessage` at the same flat 100-token estimate because those messages never reach provider tokenizers.
 
 ### Error / Retry
 
