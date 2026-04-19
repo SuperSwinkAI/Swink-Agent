@@ -419,6 +419,9 @@ impl ArtifactStore for FileArtifactStore {
 
     async fn delete(&self, session_id: &str, name: &str) -> Result<(), ArtifactError> {
         let dir = self.resolve_artifact_dir(session_id, name)?;
+        let lock = self.artifact_lock(session_id, name).await;
+        let _guard = lock.lock().await;
+
         match tokio::fs::remove_dir_all(&dir).await {
             Ok(()) => {
                 tracing::debug!(session_id, name, "artifact deleted");
@@ -429,5 +432,70 @@ impl ArtifactStore for FileArtifactStore {
             Err(e) => return Err(storage_err(e)),
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    use tokio::sync::oneshot;
+    use tokio::time::sleep;
+
+    use super::FileArtifactStore;
+    use swink_agent::{ArtifactData, ArtifactStore};
+
+    fn text_data(content: &str) -> ArtifactData {
+        ArtifactData {
+            content: content.as_bytes().to_vec(),
+            content_type: "text/plain".to_string(),
+            metadata: HashMap::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn delete_waits_for_in_flight_artifact_lock() {
+        let tmpdir = tempfile::TempDir::new().expect("tempdir");
+        let store = Arc::new(FileArtifactStore::new(tmpdir.path()));
+        store
+            .save("s1", "report.md", text_data("v1"))
+            .await
+            .expect("initial save");
+
+        let lock = store.artifact_lock("s1", "report.md").await;
+        let guard = lock.lock().await;
+
+        let (started_tx, started_rx) = oneshot::channel();
+        let delete_store = Arc::clone(&store);
+        let delete_task = tokio::spawn(async move {
+            started_tx.send(()).expect("notify delete start");
+            delete_store.delete("s1", "report.md").await
+        });
+
+        started_rx.await.expect("delete task started");
+        sleep(Duration::from_millis(50)).await;
+        let delete_finished = delete_task.is_finished();
+        assert!(
+            !delete_finished,
+            "delete should wait for the per-artifact lock before removing files"
+        );
+
+        drop(guard);
+
+        delete_task
+            .await
+            .expect("delete task join")
+            .expect("delete should succeed after lock release");
+
+        assert!(
+            store
+                .load("s1", "report.md")
+                .await
+                .expect("load after delete")
+                .is_none(),
+            "artifact should be deleted once the lock is released"
+        );
     }
 }
