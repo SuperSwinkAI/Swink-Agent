@@ -12,16 +12,16 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use common::{
-    MockContextCapturingStreamFn, MockStreamFn, MockTool, default_model, text_only_events,
-    tool_call_events, user_msg,
+    MockContextCapturingStreamFn, MockStreamFn, MockTool, default_exhausted_fallback,
+    default_model, next_response, text_only_events, tool_call_events, user_msg,
 };
 use futures::Stream;
 use futures::stream::StreamExt;
 use tokio_util::sync::CancellationToken;
 
 use swink_agent::{
-    AgentEvent, AgentLoopConfig, AgentMessage, AssistantMessageEvent, ContentBlock,
-    DefaultRetryStrategy, LlmMessage, StreamFn, StreamOptions, UserMessage, agent_loop,
+    AgentContext, AgentEvent, AgentLoopConfig, AgentMessage, AssistantMessageEvent, ContentBlock,
+    DefaultRetryStrategy, LlmMessage, ModelSpec, StreamFn, StreamOptions, UserMessage, agent_loop,
 };
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -101,6 +101,54 @@ fn count_events(events: &[AgentEvent], name: &str) -> usize {
         .iter()
         .filter(|e| common::event_variant_name(e) == name)
         .count()
+}
+
+struct MockMessageCapturingStreamFn {
+    responses: Mutex<Vec<Vec<AssistantMessageEvent>>>,
+    captured_first_user_texts: Mutex<Vec<Option<String>>>,
+}
+
+impl MockMessageCapturingStreamFn {
+    const fn new(responses: Vec<Vec<AssistantMessageEvent>>) -> Self {
+        Self {
+            responses: Mutex::new(responses),
+            captured_first_user_texts: Mutex::new(Vec::new()),
+        }
+    }
+}
+
+impl StreamFn for MockMessageCapturingStreamFn {
+    fn stream<'a>(
+        &'a self,
+        _model: &'a ModelSpec,
+        context: &'a AgentContext,
+        _options: &'a StreamOptions,
+        _cancellation_token: CancellationToken,
+    ) -> Pin<Box<dyn Stream<Item = AssistantMessageEvent> + Send + 'a>> {
+        self.captured_first_user_texts
+            .lock()
+            .unwrap()
+            .push(context.messages.first().and_then(agent_user_text));
+        let events = next_response(&self.responses, default_exhausted_fallback());
+        Box::pin(futures::stream::iter(events))
+    }
+}
+
+fn user_text(message: &LlmMessage) -> Option<&str> {
+    match message {
+        LlmMessage::User(user) => match user.content.first() {
+            Some(ContentBlock::Text { text }) => Some(text.as_str()),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn agent_user_text(message: &AgentMessage) -> Option<String> {
+    match message {
+        AgentMessage::Llm(llm_message) => user_text(llm_message).map(ToString::to_string),
+        AgentMessage::Custom(_) => None,
+    }
 }
 
 // ─── Mock async context transformer ─────────────────────────────────────────
@@ -211,6 +259,64 @@ async fn emergency_overflow_recovery() {
         "retry should see fewer messages: first={}, second={}",
         counts[0],
         counts[1]
+    );
+}
+
+#[tokio::test]
+async fn overflow_recovery_preserves_dynamic_system_prompt() {
+    let capturing_fn = Arc::new(MockMessageCapturingStreamFn::new(vec![
+        overflow_error_events(),
+        text_only_events("recovered after compaction"),
+    ]));
+    let stream_fn: Arc<dyn StreamFn> = Arc::clone(&capturing_fn) as Arc<dyn StreamFn>;
+
+    let dynamic_prompt_calls = Arc::new(Mutex::new(0usize));
+    let dynamic_prompt_calls_clone = Arc::clone(&dynamic_prompt_calls);
+
+    let mut config = default_config(stream_fn);
+    config.dynamic_system_prompt = Some(Arc::new(move || {
+        let mut calls = dynamic_prompt_calls_clone.lock().unwrap();
+        *calls += 1;
+        format!("dynamic prompt invocation {}", *calls)
+    }));
+    config.transform_context = Some(Arc::new(
+        |messages: &mut Vec<AgentMessage>, overflow: bool| {
+            if overflow && messages.len() > 1 {
+                messages.truncate(1);
+            }
+        },
+    ));
+
+    let events = collect_events(agent_loop(
+        vec![user_msg("msg1"), user_msg("msg2"), user_msg("msg3")],
+        "system".to_string(),
+        config,
+        CancellationToken::new(),
+    ))
+    .await;
+
+    assert!(has_event(&events, "AgentEnd"), "loop should complete");
+    assert_eq!(
+        *dynamic_prompt_calls.lock().unwrap(),
+        1,
+        "dynamic system prompt should be computed once per turn"
+    );
+
+    let captured_first_user_texts = capturing_fn
+        .captured_first_user_texts
+        .lock()
+        .unwrap()
+        .clone();
+    assert_eq!(captured_first_user_texts.len(), 2, "exactly 2 stream calls");
+    assert_eq!(
+        captured_first_user_texts[0].as_deref(),
+        Some("dynamic prompt invocation 1"),
+        "initial call should start with the injected dynamic prompt"
+    );
+    assert_eq!(
+        captured_first_user_texts[1].as_deref(),
+        Some("dynamic prompt invocation 1"),
+        "overflow retry should preserve the same injected dynamic prompt"
     );
 }
 

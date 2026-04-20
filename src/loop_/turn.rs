@@ -182,33 +182,14 @@ pub async fn run_single_turn(
     }
 
     // ii-d. Inject dynamic system prompt as a user-role message (non-cacheable)
-    let dynamic_prompt_injected = config
-        .dynamic_system_prompt
-        .as_ref()
-        .and_then(|dynamic_fn| {
-            let dynamic_text = dynamic_fn();
-            if dynamic_text.is_empty() {
-                None
-            } else {
-                Some(LlmMessage::User(crate::types::UserMessage {
-                    content: vec![ContentBlock::Text { text: dynamic_text }],
-                    timestamp: crate::util::now_timestamp(),
-                    cache_hint: None,
-                }))
-            }
-        });
+    let dynamic_prompt_injected = build_dynamic_system_prompt_message(config);
 
     // iii. Apply convert_to_llm to filter messages for the provider
-    let mut llm_messages: Vec<LlmMessage> = state
-        .context_messages
-        .iter()
-        .filter_map(|m| (config.convert_to_llm)(m))
-        .collect();
-
-    // Insert dynamic prompt as the first message (after system prompt, before history)
-    if let Some(dynamic_msg) = dynamic_prompt_injected {
-        llm_messages.insert(0, dynamic_msg);
-    }
+    let llm_messages = build_llm_messages(
+        config,
+        &state.context_messages,
+        dynamic_prompt_injected.as_ref(),
+    );
 
     // iv. Resolve a per-call API key if configured
     let api_key = if let Some(ref get_key) = config.get_api_key {
@@ -262,6 +243,7 @@ pub async fn run_single_turn(
             state,
             system_prompt,
             &agent_context,
+            dynamic_prompt_injected.as_ref(),
             api_key,
             cancellation_token,
             tx,
@@ -339,6 +321,43 @@ pub async fn run_single_turn(
         tx,
     )
     .await
+}
+
+pub(super) fn build_dynamic_system_prompt_message(
+    config: &Arc<AgentLoopConfig>,
+) -> Option<LlmMessage> {
+    config
+        .dynamic_system_prompt
+        .as_ref()
+        .and_then(|dynamic_fn| {
+            let dynamic_text = dynamic_fn();
+            if dynamic_text.is_empty() {
+                None
+            } else {
+                Some(LlmMessage::User(crate::types::UserMessage {
+                    content: vec![ContentBlock::Text { text: dynamic_text }],
+                    timestamp: now_timestamp(),
+                    cache_hint: None,
+                }))
+            }
+        })
+}
+
+pub(super) fn build_llm_messages(
+    config: &AgentLoopConfig,
+    context_messages: &[AgentMessage],
+    dynamic_prompt_injected: Option<&LlmMessage>,
+) -> Vec<LlmMessage> {
+    let mut llm_messages: Vec<LlmMessage> = context_messages
+        .iter()
+        .filter_map(|message| (config.convert_to_llm)(message))
+        .collect();
+
+    if let Some(dynamic_prompt) = dynamic_prompt_injected {
+        llm_messages.insert(0, dynamic_prompt.clone());
+    }
+
+    llm_messages
 }
 
 // ─── Context transformer runner ─────────────────────────────────────────
