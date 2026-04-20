@@ -16,6 +16,7 @@
 ## Lessons Learned
 
 - `McpManager::shutdown()` must operate on shared connection-owned state, not `Arc::try_unwrap()`: exported `McpTool` handles keep `Arc<McpConnection>` clones alive, so deterministic disconnect has to clear the session/monitor even when callers still retain tool `Arc`s.
+- Explicit `McpServerDisconnected` events for intentional teardown come from `McpConnection::shutdown()`, not the monitor task. Tests that shut a connection down with an event channel must drain that lifecycle event before asserting later tool-call events.
 - Tool discovery happens at `connect_all()` time. Tools added to a server after connection are not auto-refreshed; call `reconnect()` to rediscover.
 - SSE recovery is delegated to rmcp's streamable HTTP transport: transient stream drops and stale-session 404s are retried/re-initialized inside rmcp, so `McpConnection` should only flip to `Disconnected` after the underlying service fully exits.
 - rmcp stores SSE `auth_header` as a static string inside the transport config and reuses it for reconnect/re-init paths. Resolver-backed SSE auth that must survive token rotation therefore needs a custom `StreamableHttpClient` wrapper that resolves credentials per HTTP request instead of only at initial connect.
