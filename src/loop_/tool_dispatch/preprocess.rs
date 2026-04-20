@@ -146,10 +146,10 @@ pub(super) async fn preprocess_tool_calls(
         let all_results = std::mem::take(&mut *results.lock().await);
         let ordered = order_results_by_tool_calls(tool_calls, &all_results);
         let collected_timings = std::mem::take(&mut *tool_timings.lock().await);
-        return Err(ToolExecOutcome::Completed {
+        return Err(ToolExecOutcome::Stopped {
             results: ordered,
             tool_metrics: collected_timings,
-            transfer_signal: None,
+            reason,
             injected_messages,
         });
     }

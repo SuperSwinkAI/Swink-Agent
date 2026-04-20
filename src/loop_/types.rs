@@ -78,6 +78,14 @@ pub enum ToolExecOutcome {
         /// to be appended to `pending_messages` for the next turn.
         injected_messages: Vec<AgentMessage>,
     },
+    Stopped {
+        results: Vec<ToolResultMessage>,
+        tool_metrics: Vec<crate::metrics::ToolExecMetrics>,
+        /// Stop reason returned by the batch-wide pre-dispatch pass.
+        reason: String,
+        /// Messages injected by `PreDispatch` policies before the stop fired.
+        injected_messages: Vec<AgentMessage>,
+    },
     SteeringInterrupt {
         completed: Vec<ToolResultMessage>,
         cancelled: Vec<ToolResultMessage>,

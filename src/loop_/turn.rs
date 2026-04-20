@@ -906,6 +906,7 @@ async fn handle_tool_calls(
     let mut steering_interrupted = false;
     let mut collected_tool_metrics: Vec<crate::metrics::ToolExecMetrics> = Vec::new();
     let mut detected_transfer_signal: Option<crate::transfer::TransferSignal> = None;
+    let mut dispatch_stop_reason: Option<String> = None;
 
     if !tool_call_data.is_empty() {
         let exec_results =
@@ -921,6 +922,18 @@ async fn handle_tool_calls(
                 tool_results.extend(results);
                 collected_tool_metrics = tool_metrics;
                 detected_transfer_signal = transfer_signal;
+                state.pending_messages.extend(injected_messages);
+                sync_pending_message_snapshot(config, state);
+            }
+            ToolExecOutcome::Stopped {
+                results,
+                tool_metrics,
+                reason,
+                injected_messages,
+            } => {
+                tool_results.extend(results);
+                collected_tool_metrics = tool_metrics;
+                dispatch_stop_reason = Some(reason);
                 state.pending_messages.extend(injected_messages);
                 sync_pending_message_snapshot(config, state);
             }
@@ -1134,6 +1147,11 @@ async fn handle_tool_calls(
     .await
     {
         return TurnOutcome::Return;
+    }
+
+    if let Some(reason) = dispatch_stop_reason {
+        tracing::info!("tool dispatch stopped agent: {reason}");
+        return emit_agent_end(state, tx).await;
     }
 
     if let Some(reason) = policy_stop {

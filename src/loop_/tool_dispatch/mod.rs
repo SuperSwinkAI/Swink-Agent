@@ -675,10 +675,14 @@ mod tests {
         let outcome =
             execute_tools_concurrently(&config, &tool_calls, &cancellation_token, &tx).await;
 
-        let ToolExecOutcome::Completed { results, .. } = outcome else {
-            panic!("expected completed outcome");
+        let ToolExecOutcome::Stopped {
+            results, reason, ..
+        } = outcome
+        else {
+            panic!("expected stopped outcome");
         };
         assert_eq!(results.len(), 2, "each tool call should receive a result");
+        assert_eq!(reason, "blocked by policy");
         assert_eq!(
             results
                 .iter()
@@ -741,14 +745,18 @@ mod tests {
         let outcome =
             execute_tools_concurrently(&config, &tool_calls, &cancellation_token, &tx).await;
 
-        let ToolExecOutcome::Completed { results, .. } = outcome else {
-            panic!("expected completed outcome");
+        let ToolExecOutcome::Stopped {
+            results, reason, ..
+        } = outcome
+        else {
+            panic!("expected stopped outcome");
         };
         assert_eq!(
             results.len(),
             2,
             "a later stop must still return one result per tool call"
         );
+        assert_eq!(reason, "blocked after an earlier tool was prepared");
         assert_eq!(
             results
                 .iter()
@@ -830,9 +838,13 @@ mod tests {
         let outcome =
             execute_tools_concurrently(&config, &tool_calls, &cancellation_token, &tx).await;
 
-        let ToolExecOutcome::Completed { results, .. } = outcome else {
-            panic!("expected completed outcome");
+        let ToolExecOutcome::Stopped {
+            results, reason, ..
+        } = outcome
+        else {
+            panic!("expected stopped outcome");
         };
+        assert_eq!(reason, "blocked after an earlier tool was prepared");
         assert_eq!(approval_calls.load(Ordering::SeqCst), 0);
         assert_eq!(tool_one_ref.execution_count(), 0);
         assert_eq!(tool_two_ref.execution_count(), 0);
