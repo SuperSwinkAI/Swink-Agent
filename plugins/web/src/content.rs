@@ -1,17 +1,16 @@
-use std::io::Cursor;
-
+use scraper::{ElementRef, Html, Selector};
 use swink_agent::{prefix_chars, suffix_chars};
 
 /// Errors that can occur during content extraction.
 #[derive(Debug, thiserror::Error)]
 pub enum ContentError {
-    #[error("Readability extraction failed: {0}")]
+    #[error("content extraction failed: {0}")]
     ExtractionFailed(String),
 }
 
 /// Result of extracting readable content from raw HTML.
 ///
-/// Contains only data the readability extractor actually knows. HTTP metadata
+/// Contains only data the extractor actually knows. HTTP metadata
 /// (status code, content type, truncation) belongs in the caller that holds the
 /// real HTTP response.
 #[derive(Debug, Clone)]
@@ -23,32 +22,86 @@ pub struct FetchedContent {
     pub text_length: usize,
 }
 
-/// Extract readable content from raw HTML bytes using the readability algorithm.
+/// Extract readable content from raw HTML bytes.
 ///
-/// Strips navigation, ads, scripts, and boilerplate, returning the main article
-/// text with an optional title.
+/// Prefers article-like containers and falls back to the page body, then
+/// flattens common text-bearing block elements into plain text.
 pub fn extract_readable_content(
     html: &[u8],
     url: &url::Url,
 ) -> Result<FetchedContent, ContentError> {
-    let mut cursor = Cursor::new(html);
-    let product = readability::extractor::extract(&mut cursor, url)
-        .map_err(|e| ContentError::ExtractionFailed(e.to_string()))?;
+    let html = String::from_utf8_lossy(html);
+    let document = Html::parse_document(&html);
 
-    let title = if product.title.is_empty() {
-        None
-    } else {
-        Some(product.title)
-    };
-
-    let text_length = product.text.chars().count();
+    let title = extract_title(&document);
+    let text = extract_main_text(&document).ok_or_else(|| {
+        ContentError::ExtractionFailed("no readable text blocks found".to_string())
+    })?;
+    let text_length = text.chars().count();
 
     Ok(FetchedContent {
         url: url.to_string(),
         title,
-        text: product.text,
+        text,
         text_length,
     })
+}
+
+fn extract_title(document: &Html) -> Option<String> {
+    let selector = Selector::parse("title").expect("valid selector");
+    document
+        .select(&selector)
+        .next()
+        .map(element_text)
+        .filter(|title| !title.is_empty())
+}
+
+fn extract_main_text(document: &Html) -> Option<String> {
+    let candidate_selector = Selector::parse(
+        "article, main, [role='main'], .article, .post, .entry-content, .content, section, body",
+    )
+    .expect("valid selector");
+    let block_selector =
+        Selector::parse("h1, h2, h3, h4, h5, h6, p, li, blockquote, pre").expect("valid selector");
+
+    let mut best: Option<String> = None;
+    let mut best_score = 0usize;
+
+    for candidate in document.select(&candidate_selector) {
+        let text = collect_block_text(candidate, &block_selector);
+        let score = text.chars().count();
+        if score > best_score {
+            best_score = score;
+            best = Some(text);
+        }
+    }
+
+    best.filter(|text| !text.is_empty())
+}
+
+fn collect_block_text(root: ElementRef<'_>, block_selector: &Selector) -> String {
+    let mut blocks = Vec::new();
+
+    for block in root.select(block_selector) {
+        let text = element_text(block);
+        if !text.is_empty() {
+            blocks.push(text);
+        }
+    }
+
+    if blocks.is_empty() {
+        return element_text(root);
+    }
+
+    blocks.join("\n\n")
+}
+
+fn element_text(element: ElementRef<'_>) -> String {
+    normalize_text(&element.text().collect::<Vec<_>>().join(" "))
+}
+
+fn normalize_text(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// Truncate content to fit within `max_len` characters.
@@ -140,8 +193,8 @@ mod tests {
             <nav>Navigation links here</nav>
             <article>
                 <h1>Main Heading</h1>
-                <p>This is the main article content that should be extracted by the readability algorithm. It contains enough text to be considered the primary content of the page.</p>
-                <p>Here is a second paragraph with more meaningful content to help the readability algorithm identify this as the main content block of the page.</p>
+                <p>This is the main article content that should be extracted from the page. It contains enough text to be considered the primary content of the page.</p>
+                <p>Here is a second paragraph with more meaningful content to help the extractor identify this as the main content block of the page.</p>
             </article>
             <footer>Footer content here</footer>
         </body>
@@ -182,7 +235,7 @@ mod tests {
         <body>
             <article>
                 <p>Content without a meaningful title in the document head. This paragraph
-                   has enough text for readability to pick it up as the main content block.</p>
+                   has enough text for the extractor to pick it up as the main content block.</p>
                 <p>A second paragraph to reinforce that this is the article body content.</p>
             </article>
         </body>
@@ -206,8 +259,8 @@ mod tests {
         <body>
             <article>
                 <p>Here are some emoji characters for testing multibyte length counting
-                in the readability extractor output.</p>
-                <p>Second paragraph to ensure readability picks this up as the main content.</p>
+                in the extractor output.</p>
+                <p>Second paragraph to ensure the extractor picks this up as the main content.</p>
             </article>
         </body>
         </html>
@@ -218,5 +271,37 @@ mod tests {
 
         // text_length must equal chars().count(), not bytes len()
         assert_eq!(result.text_length, result.text.chars().count());
+    }
+
+    #[test]
+    fn extract_readable_content_falls_back_to_body_when_no_article_exists() {
+        let html = br#"
+        <!DOCTYPE html>
+        <html>
+        <head><title>Body Fallback</title></head>
+        <body>
+            <div class="hero">Short heading</div>
+            <section>
+                <p>This body paragraph should still be extracted even without an article tag.</p>
+                <p>A second paragraph makes this the strongest content candidate on the page.</p>
+            </section>
+        </body>
+        </html>
+        "#;
+
+        let url = url::Url::parse("https://example.com/body").unwrap();
+        let result = extract_readable_content(html, &url).unwrap();
+
+        assert_eq!(result.title.as_deref(), Some("Body Fallback"));
+        assert!(
+            result
+                .text
+                .contains("This body paragraph should still be extracted")
+        );
+        assert!(
+            result
+                .text
+                .contains("A second paragraph makes this the strongest")
+        );
     }
 }
