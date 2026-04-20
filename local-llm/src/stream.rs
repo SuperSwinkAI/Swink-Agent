@@ -66,8 +66,7 @@ impl StreamFn for LocalStreamFn {
 
 // ─── ChannelThoughtParser (Gemma 4) ────────────────────────────────────────
 
-#[cfg(feature = "gemma4")]
-mod gemma4 {
+mod delimiter {
     pub(super) fn partial_prefix_at_end(haystack: &str, needle: &str) -> Option<usize> {
         if needle.len() <= 1 || haystack.is_empty() {
             return None;
@@ -96,9 +95,164 @@ mod gemma4 {
     }
 }
 
+mod think_tags {
+    use super::delimiter::partial_prefix_at_end;
+
+    const OPEN_DELIM: &str = "<think>";
+    const CLOSE_DELIM: &str = "</think>";
+
+    #[derive(Debug)]
+    pub(super) struct ThinkTagParser {
+        state: State,
+        buffer: String,
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum State {
+        Normal,
+        PartialOpen,
+        InThinking,
+        PartialClose,
+    }
+
+    impl ThinkTagParser {
+        pub const fn new() -> Self {
+            Self {
+                state: State::Normal,
+                buffer: String::new(),
+            }
+        }
+
+        pub fn process(&mut self, content: &str) -> (Option<String>, Option<String>) {
+            self.buffer.push_str(content);
+
+            let mut thinking_out: Option<String> = None;
+            let mut text_out: Option<String> = None;
+
+            loop {
+                match self.state {
+                    State::Normal => {
+                        if let Some(pos) = self.buffer.find(OPEN_DELIM) {
+                            let before = &self.buffer[..pos];
+                            if !before.is_empty() {
+                                append(&mut text_out, before);
+                            }
+                            let rest = self.buffer[pos + OPEN_DELIM.len()..].to_string();
+                            self.buffer = rest;
+                            self.state = State::InThinking;
+                            continue;
+                        }
+                        if let Some(partial_len) = partial_prefix_at_end(&self.buffer, OPEN_DELIM) {
+                            let flush_end = self.buffer.len() - partial_len;
+                            let flush = &self.buffer[..flush_end];
+                            if !flush.is_empty() {
+                                append(&mut text_out, flush);
+                            }
+                            let rest = self.buffer[flush_end..].to_string();
+                            self.buffer = rest;
+                            self.state = State::PartialOpen;
+                            break;
+                        }
+                        if !self.buffer.is_empty() {
+                            append(&mut text_out, &self.buffer.clone());
+                            self.buffer.clear();
+                        }
+                        break;
+                    }
+                    State::PartialOpen => {
+                        if self.buffer.len() >= OPEN_DELIM.len() {
+                            if self.buffer.starts_with(OPEN_DELIM) {
+                                let rest = self.buffer[OPEN_DELIM.len()..].to_string();
+                                self.buffer = rest;
+                                self.state = State::InThinking;
+                                continue;
+                            }
+                            self.state = State::Normal;
+                            continue;
+                        }
+                        if OPEN_DELIM.starts_with(&self.buffer) {
+                            break;
+                        }
+                        self.state = State::Normal;
+                    }
+                    State::InThinking => {
+                        if let Some(pos) = self.buffer.find(CLOSE_DELIM) {
+                            let thinking = &self.buffer[..pos];
+                            if !thinking.is_empty() {
+                                append(&mut thinking_out, thinking);
+                            }
+                            let rest = self.buffer[pos + CLOSE_DELIM.len()..].to_string();
+                            self.buffer = rest;
+                            self.state = State::Normal;
+                            continue;
+                        }
+                        if let Some(partial_len) = partial_prefix_at_end(&self.buffer, CLOSE_DELIM)
+                        {
+                            let flush_end = self.buffer.len() - partial_len;
+                            let flush = &self.buffer[..flush_end];
+                            if !flush.is_empty() {
+                                append(&mut thinking_out, flush);
+                            }
+                            let rest = self.buffer[flush_end..].to_string();
+                            self.buffer = rest;
+                            self.state = State::PartialClose;
+                            break;
+                        }
+                        if !self.buffer.is_empty() {
+                            append(&mut thinking_out, &self.buffer.clone());
+                            self.buffer.clear();
+                        }
+                        break;
+                    }
+                    State::PartialClose => {
+                        if self.buffer.len() >= CLOSE_DELIM.len() {
+                            if self.buffer.starts_with(CLOSE_DELIM) {
+                                let rest = self.buffer[CLOSE_DELIM.len()..].to_string();
+                                self.buffer = rest;
+                                self.state = State::Normal;
+                                continue;
+                            }
+                            self.state = State::InThinking;
+                            continue;
+                        }
+                        if CLOSE_DELIM.starts_with(&self.buffer) {
+                            break;
+                        }
+                        self.state = State::InThinking;
+                    }
+                }
+            }
+
+            (thinking_out, text_out)
+        }
+
+        pub fn finish(&mut self) -> (Option<String>, Option<String>) {
+            if self.buffer.is_empty() {
+                return (None, None);
+            }
+
+            let buffered = std::mem::take(&mut self.buffer);
+            let state = self.state;
+            self.state = State::Normal;
+
+            match state {
+                State::Normal | State::PartialOpen => (None, Some(buffered)),
+                State::InThinking | State::PartialClose => (Some(buffered), None),
+            }
+        }
+    }
+
+    fn append(target: &mut Option<String>, s: &str) {
+        match target {
+            Some(existing) => existing.push_str(s),
+            None => *target = Some(s.to_string()),
+        }
+    }
+}
+
 #[cfg(feature = "gemma4")]
 mod channel_thought {
-    use super::gemma4::partial_prefix_at_end;
+    use super::delimiter::partial_prefix_at_end;
 
     const OPEN_DELIM: &str = "<|channel>thought\n";
     const CLOSE_DELIM: &str = "<channel|>";
@@ -241,7 +395,7 @@ mod channel_thought {
 
 #[cfg(feature = "gemma4")]
 mod tool_call {
-    use super::gemma4::partial_prefix_at_end;
+    use super::delimiter::partial_prefix_at_end;
 
     const OPEN_DELIM: &str = "<|tool_call>call:";
     const CLOSE_DELIM: &str = "<tool_call|>";
@@ -421,6 +575,7 @@ struct StreamState {
     has_tool_calls: bool,
     finish_reason: FinishReason,
     saw_done: bool,
+    think_parser: think_tags::ThinkTagParser,
     #[cfg(feature = "gemma4")]
     channel_parser: Option<channel_thought::ChannelThoughtParser>,
     #[cfg(feature = "gemma4")]
@@ -440,6 +595,7 @@ impl StreamState {
             has_tool_calls: false,
             finish_reason: FinishReason::Stop,
             saw_done: false,
+            think_parser: think_tags::ThinkTagParser::new(),
             #[cfg(feature = "gemma4")]
             channel_parser: if is_gemma4 {
                 Some(channel_thought::ChannelThoughtParser::new())
@@ -459,17 +615,11 @@ impl StreamState {
         // Step 1: Extract thinking blocks.
         #[cfg(feature = "gemma4")]
         let (thinking_part, text_part) = self.channel_parser.as_mut().map_or_else(
-            || {
-                let (t, txt) = extract_thinking_delta(content);
-                (t, if txt.is_empty() { None } else { Some(txt) })
-            },
+            || self.think_parser.process(content),
             |parser| parser.process(content),
         );
         #[cfg(not(feature = "gemma4"))]
-        let (thinking_part, text_part) = {
-            let (t, txt) = extract_thinking_delta(content);
-            (t, if txt.is_empty() { None } else { Some(txt) })
-        };
+        let (thinking_part, text_part) = self.think_parser.process(content);
 
         if let Some(think) = thinking_part
             && !think.is_empty()
@@ -523,7 +673,27 @@ impl StreamState {
         }
     }
 
+    fn flush_pending_non_gemma_thinking(&mut self) {
+        let (thinking_part, text_part) = self.think_parser.finish();
+
+        if let Some(think) = thinking_part
+            && !think.is_empty()
+        {
+            self.events.extend(self.blocks.ensure_thinking_open());
+            self.events.extend(self.blocks.thinking_delta(think));
+        }
+
+        if let Some(text) = text_part
+            && !text.is_empty()
+        {
+            self.events.extend(self.blocks.close_thinking(None));
+            self.events.extend(self.blocks.ensure_text_open());
+            self.events.extend(self.blocks.text_delta(text));
+        }
+    }
+
     fn finalize(mut self) -> Vec<AssistantMessageEvent> {
+        self.flush_pending_non_gemma_thinking();
         self.events.extend(finalize_blocks(&mut self.blocks));
 
         let stop_reason = match self.finish_reason {
@@ -547,6 +717,7 @@ impl StreamState {
     }
 
     fn finalize_error(mut self, message: impl Into<String>) -> Vec<AssistantMessageEvent> {
+        self.flush_pending_non_gemma_thinking();
         self.events.extend(finalize_blocks(&mut self.blocks));
         self.events
             .push(AssistantMessageEvent::error(message.into()));
@@ -730,33 +901,6 @@ fn local_stream<'a>(
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-/// Extract `<think>...</think>` content from a streaming delta.
-fn extract_thinking_delta(content: &str) -> (Option<String>, String) {
-    let think_start = "<think>";
-    let think_end = "</think>";
-
-    if let Some(start_idx) = content.find(think_start) {
-        let search_start = start_idx + think_start.len();
-        if let Some(relative_end_idx) = content[search_start..].find(think_end) {
-            let end_idx = search_start + relative_end_idx;
-            let thinking = content[search_start..end_idx].trim().to_string();
-            let before = &content[..start_idx];
-            let after = &content[end_idx + think_end.len()..];
-            let text = format!("{before}{after}").trim().to_string();
-            return (
-                if thinking.is_empty() {
-                    None
-                } else {
-                    Some(thinking)
-                },
-                text,
-            );
-        }
-    }
-
-    (None, content.to_string())
-}
-
 // ─── Compile-time assertions ────────────────────────────────────────────────
 
 const _: () = {
@@ -766,61 +910,88 @@ const _: () = {
 
 #[cfg(test)]
 mod tests {
+    use super::delimiter::partial_prefix_at_end;
+    use super::think_tags::ThinkTagParser;
     use super::*;
 
     #[test]
-    fn extract_thinking_no_tags() {
-        let (thinking, text) = extract_thinking_delta("Hello, world!");
-        assert!(thinking.is_none());
-        assert_eq!(text, "Hello, world!");
-    }
-
-    #[test]
-    fn extract_thinking_with_tags() {
-        let input = "<think>I need to reason about this.</think>The answer is 42.";
-        let (thinking, text) = extract_thinking_delta(input);
+    fn think_tag_single_chunk() {
+        let mut parser = ThinkTagParser::new();
+        let (thinking, text) =
+            parser.process("<think>I need to reason about this.</think>The answer is 42.");
         assert_eq!(thinking.as_deref(), Some("I need to reason about this."));
-        assert_eq!(text, "The answer is 42.");
+        assert_eq!(text.as_deref(), Some("The answer is 42."));
     }
 
     #[test]
-    fn extract_thinking_empty_tags() {
-        let input = "<think></think>Just text.";
-        let (thinking, text) = extract_thinking_delta(input);
+    fn think_tag_no_tags() {
+        let mut parser = ThinkTagParser::new();
+        let (thinking, text) = parser.process("Hello, world!");
         assert!(thinking.is_none());
-        assert_eq!(text, "Just text.");
+        assert_eq!(text.as_deref(), Some("Hello, world!"));
     }
 
     #[test]
-    fn extract_thinking_with_content_before() {
-        let input = "Before <think>reasoning</think> after";
-        let (thinking, text) = extract_thinking_delta(input);
+    fn think_tag_empty_tags() {
+        let mut parser = ThinkTagParser::new();
+        let (thinking, text) = parser.process("<think></think>Just text.");
+        assert!(thinking.is_none());
+        assert_eq!(text.as_deref(), Some("Just text."));
+    }
+
+    #[test]
+    fn think_tag_with_content_before() {
+        let mut parser = ThinkTagParser::new();
+        let (thinking, text) = parser.process("Before <think>reasoning</think> after");
         assert_eq!(thinking.as_deref(), Some("reasoning"));
-        assert_eq!(text, "Before  after");
+        assert_eq!(text.as_deref(), Some("Before  after"));
     }
 
     #[test]
-    fn extract_thinking_unclosed_tag() {
-        let input = "<think>unclosed thinking";
-        let (thinking, text) = extract_thinking_delta(input);
-        assert!(thinking.is_none());
-        assert_eq!(text, "<think>unclosed thinking");
+    fn think_tag_cross_chunk_open_and_close() {
+        let mut parser = ThinkTagParser::new();
+        let (t1, txt1) = parser.process("<th");
+        assert!(t1.is_none());
+        assert!(txt1.is_none());
+
+        let (t2, txt2) = parser.process("ink>reason");
+        assert_eq!(t2.as_deref(), Some("reason"));
+        assert!(txt2.is_none());
+
+        let (t3, txt3) = parser.process("ing</th");
+        assert_eq!(t3.as_deref(), Some("ing"));
+        assert!(txt3.is_none());
+
+        let (t4, txt4) = parser.process("ink> after");
+        assert!(t4.is_none());
+        assert_eq!(txt4.as_deref(), Some(" after"));
     }
 
     #[test]
-    fn extract_thinking_ignores_closing_tag_before_opening_tag() {
-        let input = "</think> stray <think>later";
-        let (thinking, text) = extract_thinking_delta(input);
-        assert!(thinking.is_none());
-        assert_eq!(text, "</think> stray <think>later");
+    fn think_tag_cross_chunk_with_text_before_open() {
+        let mut parser = ThinkTagParser::new();
+        let (t1, txt1) = parser.process("Before <thi");
+        assert!(t1.is_none());
+        assert_eq!(txt1.as_deref(), Some("Before "));
+
+        let (t2, txt2) = parser.process("nk>reasoning</think> after");
+        assert_eq!(t2.as_deref(), Some("reasoning"));
+        assert_eq!(txt2.as_deref(), Some(" after"));
     }
 
     #[test]
-    fn extract_thinking_finds_closing_tag_after_opening_tag() {
-        let input = "</think> stray <think>later</think>";
-        let (thinking, text) = extract_thinking_delta(input);
-        assert_eq!(thinking.as_deref(), Some("later"));
-        assert_eq!(text, "</think> stray");
+    fn think_tag_partial_match_is_utf8_safe() {
+        let haystack = "alpha🙂<thi";
+        assert_eq!(partial_prefix_at_end(haystack, "<think>"), Some(4));
+
+        let mut parser = ThinkTagParser::new();
+        let (t1, txt1) = parser.process("alpha🙂<thi");
+        assert!(t1.is_none());
+        assert_eq!(txt1.as_deref(), Some("alpha🙂"));
+
+        let (t2, txt2) = parser.process("nk>reasoning</think>");
+        assert_eq!(t2.as_deref(), Some("reasoning"));
+        assert!(txt2.is_none());
     }
 
     #[test]
@@ -874,6 +1045,43 @@ mod tests {
                 .iter()
                 .any(|event| matches!(event, AssistantMessageEvent::Done { .. })),
             "terminal error path must not emit Done"
+        );
+    }
+
+    #[test]
+    fn finalize_flushes_pending_partial_open_as_text() {
+        let mut state = StreamState::new(false);
+        state.process_token("Before <thi");
+
+        let events = state.finalize();
+        let text_deltas: Vec<&str> = events
+            .iter()
+            .filter_map(|event| match event {
+                AssistantMessageEvent::TextDelta { delta, .. } => Some(delta.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(text_deltas, vec!["Before ", "<thi"]);
+    }
+
+    #[test]
+    fn finalize_flushes_unclosed_thinking_buffer() {
+        let mut state = StreamState::new(false);
+        state.process_token("<think>reasoning");
+
+        let events = state.finalize();
+        let thinking_deltas: Vec<&str> = events
+            .iter()
+            .filter_map(|event| match event {
+                AssistantMessageEvent::ThinkingDelta { delta, .. } => Some(delta.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(thinking_deltas, vec!["reasoning"]);
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, AssistantMessageEvent::ThinkingEnd { .. }))
         );
     }
 
@@ -965,7 +1173,7 @@ mod tests {
     #[cfg(feature = "gemma4")]
     mod gemma4_tests {
         use super::super::channel_thought::ChannelThoughtParser;
-        use super::super::gemma4::partial_prefix_at_end;
+        use super::super::delimiter::partial_prefix_at_end;
 
         #[test]
         fn channel_thought_single_chunk() {
