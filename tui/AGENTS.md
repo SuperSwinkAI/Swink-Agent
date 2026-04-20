@@ -23,6 +23,7 @@
 
 ## Lessons Learned
 
+- External editor tests must not hardcode Unix-only helpers like `true`. Use a temporary no-op script/batch file so `tui/src/editor.rs` passes on Windows and Unix while still exercising the empty-file cancellation path.
 - **Mouse capture vs. native selection** — `EnableMouseCapture` is required for the scroll wheel but blocks the terminal's own click-drag text selection. The TUI works around this with in-app selection: drag anchors/extends a `Selection` in conversation-inner cell coords, rendering applies `Modifier::REVERSED` after the `Paragraph` draws, and mouse-up / Ctrl+C copies via `arboard`. Terminal-native bypasses (Shift/Option/Fn drag) continue to work on terminals that support them (kitty, Alacritty, WezTerm, Ghostty, iTerm2 Option-drag, Terminal.app Fn-drag).
 - **Resume after agent construction** — `App::load_session()` syncs both transcript messages and `SessionState` into the live `Agent`, so `launch_with_session()` must call `set_agent()` before `resume_into()`. Loading earlier only updates TUI display state and leaves the agent's internal conversation/state unsynchronized.
 - **Approval mode is owned by `Agent`** — `App::approval_mode()` reads through to `agent.approval_mode()` and returns `Smart` before `set_agent` is called. Do not add an `App.approval_mode` field; doing so reintroduces the dual-write drift bug (#565). Configure the startup mode via `AgentOptions::with_approval_mode` before building the agent.

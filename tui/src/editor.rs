@@ -69,6 +69,58 @@ pub fn open_editor(editor_command: &str) -> io::Result<Option<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::{Path, PathBuf};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    struct TempNoopEditor {
+        path: PathBuf,
+    }
+
+    impl TempNoopEditor {
+        fn create() -> Self {
+            let unique = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system clock should be after unix epoch")
+                .as_nanos();
+            let mut path = std::env::temp_dir()
+                .join(format!("swink-editor-test-{unique}-{}", std::process::id()));
+
+            #[cfg(windows)]
+            {
+                path.set_extension("cmd");
+                std::fs::write(&path, "@echo off\r\nexit /b 0\r\n")
+                    .expect("should write noop cmd script");
+            }
+
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+
+                path.set_extension("sh");
+                std::fs::write(&path, "#!/bin/sh\nexit 0\n")
+                    .expect("should write noop shell script");
+
+                let mut permissions = std::fs::metadata(&path)
+                    .expect("noop script metadata")
+                    .permissions();
+                permissions.set_mode(0o755);
+                std::fs::set_permissions(&path, permissions)
+                    .expect("should mark noop script executable");
+            }
+
+            Self { path }
+        }
+
+        fn path(&self) -> &Path {
+            &self.path
+        }
+    }
+
+    impl Drop for TempNoopEditor {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.path);
+        }
+    }
 
     #[test]
     fn resolve_editor_with_config_override() {
@@ -90,9 +142,14 @@ mod tests {
     }
 
     #[test]
-    fn open_editor_with_true_command_returns_none() {
-        // `true` exits successfully but writes nothing to the file
-        let result = open_editor("true");
+    fn open_editor_with_noop_command_returns_none() {
+        let noop_editor = TempNoopEditor::create();
+        let result = open_editor(
+            noop_editor
+                .path()
+                .to_str()
+                .expect("temp script path should be valid unicode"),
+        );
         assert!(result.is_ok());
         assert!(result.unwrap().is_none()); // empty file = cancellation
     }
