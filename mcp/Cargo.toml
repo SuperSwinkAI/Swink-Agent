@@ -15,7 +15,7 @@ swink-agent = { path = "..", version = "0.8.0", default-features = false }
 rmcp = { version = "1.3", features = ["client", "client-side-sse", "transport-streamable-http-client", "transport-streamable-http-client-reqwest", "transport-child-process"] }
 reqwest = { workspace = true }
 futures.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["macros", "process", "rt", "sync", "time"] }
 tokio-util.workspace = true
 serde.workspace = true
 serde_json.workspace = true

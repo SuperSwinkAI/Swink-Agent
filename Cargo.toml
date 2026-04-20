@@ -12,7 +12,7 @@ repository = "https://github.com/SuperSwinkAI/Swink-Agent"
 [workspace.dependencies]
 serde = { version = "1", features = ["derive", "rc"] }
 serde_json = "1"
-tokio = { version = "1", features = ["full"] }
+tokio = "1"
 tokio-util = "0.7"
 tokio-stream = "0.1"
 futures = "0.3"
@@ -87,7 +87,7 @@ otel = ["dep:tracing-opentelemetry", "dep:opentelemetry", "dep:opentelemetry_sdk
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["fs", "io-util", "macros", "process", "rt", "rt-multi-thread", "sync", "time"] }
 tokio-util.workspace = true
 futures.workspace = true
 tokio-stream.workspace = true
