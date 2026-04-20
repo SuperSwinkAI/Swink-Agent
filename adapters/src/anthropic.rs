@@ -501,6 +501,19 @@ fn parse_sse_stream(
     )
 }
 
+fn malformed_event_parse_error(
+    state: &mut SseStreamState,
+    event_type: &str,
+    error: &serde_json::Error,
+) -> Vec<AssistantMessageEvent> {
+    error!(event_type, error = %error, "Anthropic SSE JSON parse error");
+    let mut events = crate::finalize::finalize_blocks(state);
+    events.push(AssistantMessageEvent::error(format!(
+        "Anthropic {event_type} JSON parse error: {error}",
+    )));
+    events
+}
+
 /// Process a single SSE event and return the resulting harness events.
 #[allow(clippy::too_many_lines)]
 fn process_sse_event(
@@ -514,192 +527,215 @@ fn process_sse_event(
     match event_type {
         "message_start" => {
             // Extract input token usage from message_start
-            if let Ok(parsed) = serde_json::from_str::<Value>(data) {
-                if let Some(input) = parsed
-                    .pointer("/message/usage/input_tokens")
-                    .and_then(Value::as_u64)
-                {
-                    state.usage.input = input;
+            let parsed = match serde_json::from_str::<Value>(data) {
+                Ok(parsed) => parsed,
+                Err(parse_error) => {
+                    *done = true;
+                    return malformed_event_parse_error(state, event_type, &parse_error);
                 }
-                if let Some(cache_read) = parsed
-                    .pointer("/message/usage/cache_read_input_tokens")
-                    .and_then(Value::as_u64)
-                {
-                    state.usage.cache_read = cache_read;
-                }
-                if let Some(cache_write) = parsed
-                    .pointer("/message/usage/cache_creation_input_tokens")
-                    .and_then(Value::as_u64)
-                {
-                    state.usage.cache_write = cache_write;
-                }
+            };
+            if let Some(input) = parsed
+                .pointer("/message/usage/input_tokens")
+                .and_then(Value::as_u64)
+            {
+                state.usage.input = input;
+            }
+            if let Some(cache_read) = parsed
+                .pointer("/message/usage/cache_read_input_tokens")
+                .and_then(Value::as_u64)
+            {
+                state.usage.cache_read = cache_read;
+            }
+            if let Some(cache_write) = parsed
+                .pointer("/message/usage/cache_creation_input_tokens")
+                .and_then(Value::as_u64)
+            {
+                state.usage.cache_write = cache_write;
             }
         }
 
         "content_block_start" => {
-            if let Ok(parsed) = serde_json::from_str::<Value>(data) {
-                let index = parsed["index"]
-                    .as_u64()
-                    .unwrap_or(0)
-                    .try_into()
-                    .unwrap_or(0);
-                let block_type = parsed
-                    .pointer("/content_block/type")
-                    .and_then(Value::as_str)
-                    .unwrap_or("");
+            let parsed = match serde_json::from_str::<Value>(data) {
+                Ok(parsed) => parsed,
+                Err(parse_error) => {
+                    *done = true;
+                    return malformed_event_parse_error(state, event_type, &parse_error);
+                }
+            };
+            let index = parsed["index"]
+                .as_u64()
+                .unwrap_or(0)
+                .try_into()
+                .unwrap_or(0);
+            let block_type = parsed
+                .pointer("/content_block/type")
+                .and_then(Value::as_str)
+                .unwrap_or("");
 
-                match block_type {
-                    "text" => {
-                        events.extend(state.blocks.ensure_text_open());
-                        // Always register the provider→harness index mapping so
-                        // subsequent content_block_delta events can route by
-                        // provider index.  ensure_text_open is idempotent, but
-                        // the provider may use a fresh index for the same block.
-                        if let Some(content_index) = state.blocks.text_index() {
-                            state
-                                .provider_blocks
-                                .insert(index, (BlockType::Text, content_index));
-                        }
-                    }
-                    "thinking" => {
-                        events.extend(state.blocks.ensure_thinking_open());
-                        if let Some(content_index) = state.blocks.thinking_index() {
-                            state
-                                .provider_blocks
-                                .insert(index, (BlockType::Thinking, content_index));
-                        }
-                    }
-                    "tool_use" => {
-                        let id = parsed
-                            .pointer("/content_block/id")
-                            .and_then(Value::as_str)
-                            .unwrap_or("")
-                            .to_string();
-                        let name = parsed
-                            .pointer("/content_block/name")
-                            .and_then(Value::as_str)
-                            .unwrap_or("")
-                            .to_string();
-                        let (content_index, start_ev) = state.blocks.open_tool_call(id, name);
+            match block_type {
+                "text" => {
+                    events.extend(state.blocks.ensure_text_open());
+                    // Always register the provider→harness index mapping so
+                    // subsequent content_block_delta events can route by
+                    // provider index.  ensure_text_open is idempotent, but
+                    // the provider may use a fresh index for the same block.
+                    if let Some(content_index) = state.blocks.text_index() {
                         state
                             .provider_blocks
-                            .insert(index, (BlockType::ToolUse, content_index));
-                        events.push(start_ev);
+                            .insert(index, (BlockType::Text, content_index));
+                    }
+                }
+                "thinking" => {
+                    events.extend(state.blocks.ensure_thinking_open());
+                    if let Some(content_index) = state.blocks.thinking_index() {
+                        state
+                            .provider_blocks
+                            .insert(index, (BlockType::Thinking, content_index));
+                    }
+                }
+                "tool_use" => {
+                    let id = parsed
+                        .pointer("/content_block/id")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string();
+                    let name = parsed
+                        .pointer("/content_block/name")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string();
+                    let (content_index, start_ev) = state.blocks.open_tool_call(id, name);
+                    state
+                        .provider_blocks
+                        .insert(index, (BlockType::ToolUse, content_index));
+                    events.push(start_ev);
+                }
+                _ => {}
+            }
+        }
+
+        "content_block_delta" => {
+            let parsed = match serde_json::from_str::<Value>(data) {
+                Ok(parsed) => parsed,
+                Err(parse_error) => {
+                    *done = true;
+                    return malformed_event_parse_error(state, event_type, &parse_error);
+                }
+            };
+            let index = parsed["index"]
+                .as_u64()
+                .unwrap_or(0)
+                .try_into()
+                .unwrap_or(0);
+            let delta_type = parsed
+                .pointer("/delta/type")
+                .and_then(Value::as_str)
+                .unwrap_or("");
+
+            if let Some(&(block_type, content_index)) = state.provider_blocks.get(&index) {
+                match delta_type {
+                    "text_delta" => {
+                        debug_assert!(
+                            matches!(block_type, BlockType::Text),
+                            "text_delta on non-text provider block"
+                        );
+                        if let Some(text) = parsed.pointer("/delta/text").and_then(Value::as_str) {
+                            // Use the provider-mapped content_index so the
+                            // event always carries the index registered at
+                            // content_block_start — matching pre-migration
+                            // behaviour exactly.
+                            events.push(AssistantMessageEvent::TextDelta {
+                                content_index,
+                                delta: text.to_string(),
+                            });
+                        }
+                    }
+                    "thinking_delta" => {
+                        debug_assert!(
+                            matches!(block_type, BlockType::Thinking),
+                            "thinking_delta on non-thinking provider block"
+                        );
+                        if let Some(thinking) =
+                            parsed.pointer("/delta/thinking").and_then(Value::as_str)
+                        {
+                            events.push(AssistantMessageEvent::ThinkingDelta {
+                                content_index,
+                                delta: thinking.to_string(),
+                            });
+                        }
+                    }
+                    "input_json_delta" => {
+                        if let Some(json) = parsed
+                            .pointer("/delta/partial_json")
+                            .and_then(Value::as_str)
+                        {
+                            events.push(BlockAccumulator::tool_call_delta(
+                                content_index,
+                                json.to_string(),
+                            ));
+                        }
                     }
                     _ => {}
                 }
             }
         }
 
-        "content_block_delta" => {
-            if let Ok(parsed) = serde_json::from_str::<Value>(data) {
-                let index = parsed["index"]
-                    .as_u64()
-                    .unwrap_or(0)
-                    .try_into()
-                    .unwrap_or(0);
-                let delta_type = parsed
-                    .pointer("/delta/type")
-                    .and_then(Value::as_str)
-                    .unwrap_or("");
-
-                if let Some(&(block_type, content_index)) = state.provider_blocks.get(&index) {
-                    match delta_type {
-                        "text_delta" => {
-                            debug_assert!(
-                                matches!(block_type, BlockType::Text),
-                                "text_delta on non-text provider block"
-                            );
-                            if let Some(text) =
-                                parsed.pointer("/delta/text").and_then(Value::as_str)
-                            {
-                                // Use the provider-mapped content_index so the
-                                // event always carries the index registered at
-                                // content_block_start — matching pre-migration
-                                // behaviour exactly.
-                                events.push(AssistantMessageEvent::TextDelta {
-                                    content_index,
-                                    delta: text.to_string(),
-                                });
-                            }
-                        }
-                        "thinking_delta" => {
-                            debug_assert!(
-                                matches!(block_type, BlockType::Thinking),
-                                "thinking_delta on non-thinking provider block"
-                            );
-                            if let Some(thinking) =
-                                parsed.pointer("/delta/thinking").and_then(Value::as_str)
-                            {
-                                events.push(AssistantMessageEvent::ThinkingDelta {
-                                    content_index,
-                                    delta: thinking.to_string(),
-                                });
-                            }
-                        }
-                        "input_json_delta" => {
-                            if let Some(json) = parsed
-                                .pointer("/delta/partial_json")
-                                .and_then(Value::as_str)
-                            {
-                                events.push(BlockAccumulator::tool_call_delta(
-                                    content_index,
-                                    json.to_string(),
-                                ));
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-            }
-        }
-
         "content_block_stop" => {
-            if let Ok(parsed) = serde_json::from_str::<Value>(data) {
-                let index = parsed["index"]
-                    .as_u64()
-                    .unwrap_or(0)
-                    .try_into()
-                    .unwrap_or(0);
+            let parsed = match serde_json::from_str::<Value>(data) {
+                Ok(parsed) => parsed,
+                Err(parse_error) => {
+                    *done = true;
+                    return malformed_event_parse_error(state, event_type, &parse_error);
+                }
+            };
+            let index = parsed["index"]
+                .as_u64()
+                .unwrap_or(0)
+                .try_into()
+                .unwrap_or(0);
 
-                if let Some((block_type, content_index)) = state.provider_blocks.remove(&index) {
-                    match block_type {
-                        BlockType::Text => {
-                            events.extend(state.blocks.close_text());
-                        }
-                        BlockType::Thinking => {
-                            let signature = parsed
-                                .pointer("/signature")
-                                .and_then(Value::as_str)
-                                .map(String::from);
-                            events.extend(state.blocks.close_thinking(signature));
-                        }
-                        BlockType::ToolUse => {
-                            events.extend(state.blocks.close_tool_call(content_index));
-                        }
+            if let Some((block_type, content_index)) = state.provider_blocks.remove(&index) {
+                match block_type {
+                    BlockType::Text => {
+                        events.extend(state.blocks.close_text());
+                    }
+                    BlockType::Thinking => {
+                        let signature = parsed
+                            .pointer("/signature")
+                            .and_then(Value::as_str)
+                            .map(String::from);
+                        events.extend(state.blocks.close_thinking(signature));
+                    }
+                    BlockType::ToolUse => {
+                        events.extend(state.blocks.close_tool_call(content_index));
                     }
                 }
             }
         }
 
         "message_delta" => {
-            if let Ok(parsed) = serde_json::from_str::<Value>(data) {
-                // Extract stop reason
-                if let Some(reason) = parsed.pointer("/delta/stop_reason").and_then(Value::as_str) {
-                    state.stop_reason = Some(match reason {
-                        "tool_use" => StopReason::ToolUse,
-                        "max_tokens" => StopReason::Length,
-                        _ => StopReason::Stop,
-                    });
+            let parsed = match serde_json::from_str::<Value>(data) {
+                Ok(parsed) => parsed,
+                Err(parse_error) => {
+                    *done = true;
+                    return malformed_event_parse_error(state, event_type, &parse_error);
                 }
+            };
+            // Extract stop reason
+            if let Some(reason) = parsed.pointer("/delta/stop_reason").and_then(Value::as_str) {
+                state.stop_reason = Some(match reason {
+                    "tool_use" => StopReason::ToolUse,
+                    "max_tokens" => StopReason::Length,
+                    _ => StopReason::Stop,
+                });
+            }
 
-                // Extract output token usage
-                if let Some(output) = parsed
-                    .pointer("/usage/output_tokens")
-                    .and_then(Value::as_u64)
-                {
-                    state.usage.output = output;
-                }
+            // Extract output token usage
+            if let Some(output) = parsed
+                .pointer("/usage/output_tokens")
+                .and_then(Value::as_u64)
+            {
+                state.usage.output = output;
             }
         }
 
@@ -722,9 +758,13 @@ fn process_sse_event(
 
         "error" => {
             *done = true;
+            let parsed = match serde_json::from_str::<Value>(data) {
+                Ok(parsed) => Some(parsed),
+                Err(parse_error) => {
+                    return malformed_event_parse_error(state, event_type, &parse_error);
+                }
+            };
             events.extend(crate::finalize::finalize_blocks(state));
-
-            let parsed = serde_json::from_str::<Value>(data).ok();
             let msg = parsed
                 .as_ref()
                 .and_then(|v| {
@@ -1162,6 +1202,83 @@ mod tests {
         assert!(matches!(
             events[0],
             AssistantMessageEvent::TextEnd { content_index: 0 }
+        ));
+    }
+
+    #[test]
+    fn malformed_message_start_is_terminal_protocol_error() {
+        let mut state = new_state();
+
+        let (events, done) = process("message_start", "{", &mut state);
+
+        assert!(done);
+        assert_eq!(events.len(), 1);
+        assert!(matches!(
+            &events[0],
+            AssistantMessageEvent::Error {
+                stop_reason: StopReason::Error,
+                error_kind: None,
+                error_message,
+                ..
+            } if error_message.contains("Anthropic message_start JSON parse error")
+        ));
+    }
+
+    #[test]
+    fn malformed_content_block_delta_finalizes_open_blocks_before_error() {
+        let mut state = new_state();
+
+        process(
+            "content_block_start",
+            r#"{"index":0,"content_block":{"type":"text","text":""}}"#,
+            &mut state,
+        );
+
+        let (events, done) = process("content_block_delta", "{", &mut state);
+
+        assert!(done);
+        assert_eq!(events.len(), 2);
+        assert!(matches!(
+            events[0],
+            AssistantMessageEvent::TextEnd { content_index: 0 }
+        ));
+        assert!(matches!(
+            &events[1],
+            AssistantMessageEvent::Error {
+                stop_reason: StopReason::Error,
+                error_kind: None,
+                error_message,
+                ..
+            } if error_message.contains("Anthropic content_block_delta JSON parse error")
+        ));
+    }
+
+    #[test]
+    fn malformed_error_event_is_non_retryable_parse_error() {
+        let mut state = new_state();
+
+        process(
+            "content_block_start",
+            r#"{"index":0,"content_block":{"type":"text","text":""}}"#,
+            &mut state,
+        );
+
+        let (events, done) = process("error", "{", &mut state);
+
+        assert!(done);
+        assert_eq!(events.len(), 2);
+        assert!(matches!(
+            events[0],
+            AssistantMessageEvent::TextEnd { content_index: 0 }
+        ));
+        assert!(matches!(
+            &events[1],
+            AssistantMessageEvent::Error {
+                stop_reason: StopReason::Error,
+                error_kind: None,
+                error_message,
+                ..
+            } if error_message.contains("Anthropic error JSON parse error")
         ));
     }
 
