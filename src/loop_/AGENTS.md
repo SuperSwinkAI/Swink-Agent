@@ -15,6 +15,7 @@
 - Cancellation has to be observed in preprocessing and before each execution group/tool dispatch, not just while collecting spawned handles. Otherwise approval waits can hang forever and later tools can still launch after the batch is already cancelled.
 - Overflow recovery cancellation must reuse a started-turn cancellation path. Calling the pre-turn helper after `TurnStart` has already been emitted duplicates `TurnStart` and breaks lifecycle ordering for the interrupted turn.
 - `handle_stream_error()` must not emit `MessageEnd` for context overflow. Overflow recovery owns the terminal message lifecycle, and unrecoverable overflow must still surface exactly one `MessageEnd`.
+- Dynamic system prompts are computed once per turn and must be carried into overflow retries. Recomputing during recovery can silently change prompt contracts within the same turn.
 - `LoopState.turn_index` must advance after every completed turn, not just tool-loop continuation. Text-only or other `BreakInner` turns still finish a turn before the outer loop polls follow-up messages.
 - First-turn `PreTurn` policies must receive the initial prompt batch in `PolicyContext::new_messages`; only `agent_loop_continue()` resumes with an empty initial batch.
 - Text-only turns cannot break the inner loop while `pending_messages` is non-empty. Post-turn or post-loop injections queued for the next turn must continue loop processing before follow-up polling or `AgentEnd`.
