@@ -11,7 +11,7 @@ categories = ["development-tools", "web-programming"]
 
 [features]
 default = ["duckduckgo"]
-duckduckgo = ["dep:scraper"]
+duckduckgo = []
 brave = []
 tavily = []
 all = ["duckduckgo", "brave", "tavily"]
@@ -29,8 +29,7 @@ thiserror.workspace = true
 regex.workspace = true
 url = "2"
 base64 = "0.22"
-readability = "0.3"
-scraper = { version = "0.25", optional = true }
+scraper = "0.25"
 
 [dev-dependencies]
 wiremock.workspace = true
