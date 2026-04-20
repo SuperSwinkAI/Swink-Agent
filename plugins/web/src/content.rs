@@ -293,7 +293,15 @@ mod tests {
         let result = extract_readable_content(html, &url).unwrap();
 
         assert_eq!(result.title.as_deref(), Some("Body Fallback"));
-        assert!(result.text.contains("This body paragraph should still be extracted"));
-        assert!(result.text.contains("A second paragraph makes this the strongest"));
+        assert!(
+            result
+                .text
+                .contains("This body paragraph should still be extracted")
+        );
+        assert!(
+            result
+                .text
+                .contains("A second paragraph makes this the strongest")
+        );
     }
 }
