@@ -356,6 +356,16 @@ impl crate::finalize::StreamFinalize for OaiSseStreamState {
     }
 }
 
+impl OaiSseStreamState {
+    fn emit_terminal_error(&mut self, event: AssistantMessageEvent) -> Vec<AssistantMessageEvent> {
+        let mut events = Vec::new();
+        flush_pending_oai_tool_calls(self, &mut events);
+        events.extend(crate::finalize::finalize_blocks(self));
+        events.push(event);
+        events
+    }
+}
+
 /// Process a single deserialized `OaiChunk`, updating state and emitting events.
 ///
 /// This is the shared chunk-processing logic used by both `OpenAI` and Azure
@@ -599,6 +609,24 @@ pub fn parse_oai_sse_stream(
         "operation cancelled",
         move |item, state| match item {
             None => {
+                if let Some(error) = state.terminal_error.take() {
+                    return SseAction::Done(state.emit_terminal_error(error));
+                }
+                if let Some(stop_reason) = state.stop_reason.take() {
+                    let usage = state.usage.take();
+                    return SseAction::Done(vec![AssistantMessageEvent::Done {
+                        stop_reason,
+                        usage: usage.unwrap_or_default(),
+                        cost: Cost::default(),
+                    }]);
+                }
+                SseAction::Done(
+                    state.emit_terminal_error(AssistantMessageEvent::error_network(format!(
+                        "{provider} stream ended unexpectedly"
+                    ))),
+                )
+            }
+            Some(SseLine::Done) => {
                 let mut events = Vec::new();
                 flush_pending_oai_tool_calls(state, &mut events);
                 events.extend(crate::finalize::finalize_blocks(state));
@@ -612,23 +640,9 @@ pub fn parse_oai_sse_stream(
                         cost: Cost::default(),
                     });
                 } else {
-                    events.push(AssistantMessageEvent::error_network(format!(
-                        "{provider} stream ended unexpectedly",
-                    )));
-                }
-                SseAction::Done(events)
-            }
-            Some(SseLine::Done) => {
-                let mut events = Vec::new();
-                flush_pending_oai_tool_calls(state, &mut events);
-                events.extend(crate::finalize::finalize_blocks(state));
-                if let Some(error) = state.terminal_error.take() {
-                    events.push(error);
-                } else {
-                    let stop_reason = state.stop_reason.take().unwrap_or(StopReason::Stop);
                     let usage = state.usage.take();
                     events.push(AssistantMessageEvent::Done {
-                        stop_reason,
+                        stop_reason: StopReason::Stop,
                         usage: usage.unwrap_or_default(),
                         cost: Cost::default(),
                     });
@@ -640,13 +654,11 @@ pub fn parse_oai_sse_stream(
                     Ok(c) => c,
                     Err(e) => {
                         error!(error = %e, "{provider} JSON parse error");
-                        let mut events = Vec::new();
-                        flush_pending_oai_tool_calls(state, &mut events);
-                        events.extend(crate::finalize::finalize_blocks(state));
-                        events.push(AssistantMessageEvent::error_network(format!(
-                            "{provider} JSON parse error: {e}",
-                        )));
-                        return SseAction::Done(events);
+                        return SseAction::Done(state.emit_terminal_error(
+                            AssistantMessageEvent::error(format!(
+                                "{provider} JSON parse error: {e}",
+                            )),
+                        ));
                     }
                 };
 
@@ -659,15 +671,9 @@ pub fn parse_oai_sse_stream(
                     SseAction::Continue(events)
                 }
             }
-            Some(SseLine::TransportError(message)) => {
-                let mut events = Vec::new();
-                flush_pending_oai_tool_calls(state, &mut events);
-                events.extend(crate::finalize::finalize_blocks(state));
-                events.push(AssistantMessageEvent::error_network(format!(
-                    "{provider} {message}",
-                )));
-                SseAction::Done(events)
-            }
+            Some(SseLine::TransportError(message)) => SseAction::Done(state.emit_terminal_error(
+                AssistantMessageEvent::error_network(format!("{provider} {message}",)),
+            )),
             Some(_) => SseAction::Skip,
         },
     )
@@ -951,5 +957,55 @@ mod tests {
         // Critical: the stringified arguments must be a valid JSON object, NOT
         // the literal "null" that `Value::Null.to_string()` would produce.
         assert_eq!(tool_calls[0].function.arguments, "{}");
+    }
+
+    #[test]
+    fn terminal_parse_error_flushes_pending_tool_call_before_generic_error() {
+        let mut state = OaiSseStreamState::default();
+        state.tool_calls.insert(
+            0,
+            OaiToolCallEntry {
+                id: "call_1".into(),
+                name: Some("read_file".into()),
+                arguments: r#"{"path":"foo.rs"}"#.into(),
+                content_index: None,
+            },
+        );
+
+        let events = state.emit_terminal_error(AssistantMessageEvent::error(
+            "OpenAI JSON parse error: bad payload",
+        ));
+        let delta_index = events
+            .iter()
+            .position(|event| matches!(event, AssistantMessageEvent::ToolCallDelta { .. }))
+            .expect("final tool delta");
+        let end_index = events
+            .iter()
+            .position(|event| matches!(event, AssistantMessageEvent::ToolCallEnd { .. }))
+            .expect("tool call end");
+        let error_index = events
+            .iter()
+            .position(|event| matches!(event, AssistantMessageEvent::Error { .. }))
+            .expect("terminal error");
+
+        assert!(
+            delta_index < end_index && end_index < error_index,
+            "pending tool-call state must flush before the terminal error: {events:?}"
+        );
+        match &events[error_index] {
+            AssistantMessageEvent::Error { error_kind, .. } => {
+                assert!(
+                    error_kind.is_none(),
+                    "JSON parse errors must be non-retryable protocol errors"
+                );
+            }
+            event => panic!("expected terminal error, got {event:?}"),
+        }
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, AssistantMessageEvent::Done { .. })),
+            "terminal error path must not emit Done"
+        );
     }
 }

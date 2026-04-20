@@ -633,9 +633,11 @@ fn parse_sse_stream(
                     }
                     Err(parse_error) => {
                         error!(error = %parse_error, "Google Gemini JSON parse error");
-                        events.extend(state.emit_terminal_network_error(
-                            format!("Google JSON parse error: {parse_error}"),
-                            false,
+                        events.extend(state.emit_terminal_error(
+                            AssistantMessageEvent::error(format!(
+                                "Google JSON parse error: {parse_error}",
+                            )),
+                            true,
                         ));
                         SseAction::Done(events)
                     }
@@ -774,9 +776,9 @@ fn map_finish_reason(finish_reason: &str, saw_tool_call: bool) -> StopReason {
 }
 
 impl GeminiStreamState {
-    fn emit_terminal_network_error(
+    fn emit_terminal_error(
         &mut self,
-        message: impl Into<String>,
+        event: AssistantMessageEvent,
         emit_final_tool_deltas: bool,
     ) -> Vec<AssistantMessageEvent> {
         let mut events = if emit_final_tool_deltas {
@@ -785,8 +787,19 @@ impl GeminiStreamState {
             Vec::new()
         };
         events.extend(crate::finalize::finalize_blocks(self));
-        events.push(AssistantMessageEvent::error_network(message.into()));
+        events.push(event);
         events
+    }
+
+    fn emit_terminal_network_error(
+        &mut self,
+        message: impl Into<String>,
+        emit_final_tool_deltas: bool,
+    ) -> Vec<AssistantMessageEvent> {
+        self.emit_terminal_error(
+            AssistantMessageEvent::error_network(message.into()),
+            emit_final_tool_deltas,
+        )
     }
 
     /// Emit a single [`AssistantMessageEvent::ToolCallDelta`] per buffered tool
@@ -870,7 +883,7 @@ mod tests {
     }
 
     #[test]
-    fn terminal_network_error_flushes_final_tool_delta_before_error() {
+    fn terminal_parse_error_flushes_final_tool_delta_before_generic_error() {
         let mut state = GeminiStreamState::default();
         let (content_index, _) = state
             .blocks
@@ -883,8 +896,10 @@ mod tests {
             },
         );
 
-        let events =
-            state.emit_terminal_network_error("Google JSON parse error: bad payload", true);
+        let events = state.emit_terminal_error(
+            AssistantMessageEvent::error("Google JSON parse error: bad payload"),
+            true,
+        );
         let delta_index = events
             .iter()
             .position(|event| matches!(event, AssistantMessageEvent::ToolCallDelta { .. }))
@@ -902,6 +917,15 @@ mod tests {
             delta_index < end_index && end_index < error_index,
             "pending tool-call state must flush before the terminal error: {events:?}"
         );
+        match &events[error_index] {
+            AssistantMessageEvent::Error { error_kind, .. } => {
+                assert!(
+                    error_kind.is_none(),
+                    "JSON parse errors must be non-retryable protocol errors"
+                );
+            }
+            event => panic!("expected terminal error, got {event:?}"),
+        }
         assert!(
             !events
                 .iter()
