@@ -365,6 +365,24 @@ impl OaiSseStreamState {
         events
     }
 
+    fn emit_done_from_done_sentinel(&mut self) -> Vec<AssistantMessageEvent> {
+        let mut events = Vec::new();
+        flush_pending_oai_tool_calls(self, &mut events);
+        events.extend(crate::finalize::finalize_blocks(self));
+        if let Some(error) = self.terminal_error.take() {
+            events.push(error);
+        } else {
+            let stop_reason = self.stop_reason.take().unwrap_or(StopReason::Stop);
+            let usage = self.usage.take().unwrap_or_default();
+            events.push(AssistantMessageEvent::Done {
+                stop_reason,
+                usage,
+                cost: Cost::default(),
+            });
+        }
+        events
+    }
+
     fn emit_terminal_done(&mut self, stop_reason: StopReason) -> Vec<AssistantMessageEvent> {
         let usage = self.usage.take().unwrap_or_default();
         let mut events = Vec::new();
@@ -634,29 +652,7 @@ pub fn parse_oai_sse_stream(
                     ))),
                 )
             }
-            Some(SseLine::Done) => {
-                let mut events = Vec::new();
-                flush_pending_oai_tool_calls(state, &mut events);
-                events.extend(crate::finalize::finalize_blocks(state));
-                if let Some(error) = state.terminal_error.take() {
-                    events.push(error);
-                } else if let Some(stop_reason) = state.stop_reason.take() {
-                    let usage = state.usage.take();
-                    events.push(AssistantMessageEvent::Done {
-                        stop_reason,
-                        usage: usage.unwrap_or_default(),
-                        cost: Cost::default(),
-                    });
-                } else {
-                    let usage = state.usage.take();
-                    events.push(AssistantMessageEvent::Done {
-                        stop_reason: StopReason::Stop,
-                        usage: usage.unwrap_or_default(),
-                        cost: Cost::default(),
-                    });
-                }
-                SseAction::Done(events)
-            }
+            Some(SseLine::Done) => SseAction::Done(state.emit_done_from_done_sentinel()),
             Some(SseLine::Data(data)) => {
                 let chunk: OaiChunk = match serde_json::from_str(&data) {
                     Ok(c) => c,
@@ -1054,5 +1050,45 @@ mod tests {
                 .any(|event| matches!(event, AssistantMessageEvent::Error { .. })),
             "stop_reason EOF path must terminate with Done, not Error"
         );
+    }
+
+    #[test]
+    fn done_sentinel_preserves_accumulated_stop_reason() {
+        let mut state = OaiSseStreamState::default();
+        state.stop_reason = Some(StopReason::ToolUse);
+        state.tool_calls.insert(
+            0,
+            OaiToolCallEntry {
+                id: "call_1".into(),
+                name: Some("read_file".into()),
+                arguments: r#"{"path":"foo.rs"}"#.into(),
+                content_index: None,
+            },
+        );
+
+        let events = state.emit_done_from_done_sentinel();
+        let delta_index = events
+            .iter()
+            .position(|event| matches!(event, AssistantMessageEvent::ToolCallDelta { .. }))
+            .expect("final tool delta");
+        let end_index = events
+            .iter()
+            .position(|event| matches!(event, AssistantMessageEvent::ToolCallEnd { .. }))
+            .expect("tool call end");
+        let done_index = events
+            .iter()
+            .position(|event| matches!(event, AssistantMessageEvent::Done { .. }))
+            .expect("done event");
+
+        assert!(
+            delta_index < end_index && end_index < done_index,
+            "pending tool-call state must flush before [DONE] completion: {events:?}"
+        );
+        match &events[done_index] {
+            AssistantMessageEvent::Done { stop_reason, .. } => {
+                assert_eq!(*stop_reason, StopReason::ToolUse);
+            }
+            event => panic!("expected done event, got {event:?}"),
+        }
     }
 }
