@@ -26,12 +26,14 @@ use super::{
 /// [`ModelFallback`](crate::fallback::ModelFallback) chain is configured, each
 /// fallback model is tried in order (with its own fresh retry budget) before
 /// the error is surfaced.
+#[allow(clippy::too_many_arguments)]
 pub async fn stream_with_retry(
     config: &Arc<AgentLoopConfig>,
     agent_context: &AgentContext,
     llm_messages: &[LlmMessage],
     system_prompt: &str,
     api_key: Option<String>,
+    emit_message_start: bool,
     cancellation_token: &CancellationToken,
     tx: &mpsc::Sender<AgentEvent>,
 ) -> StreamResult {
@@ -44,6 +46,7 @@ pub async fn stream_with_retry(
         llm_messages,
         system_prompt,
         api_key.clone(),
+        emit_message_start,
         cancellation_token,
         tx,
     )
@@ -99,6 +102,7 @@ pub async fn stream_with_retry(
             llm_messages,
             system_prompt,
             api_key.clone(),
+            emit_message_start,
             cancellation_token,
             tx,
         )
@@ -147,6 +151,7 @@ async fn stream_with_retry_single(
     llm_messages: &[LlmMessage],
     system_prompt: &str,
     api_key: Option<String>,
+    emit_message_start: bool,
     cancellation_token: &CancellationToken,
     tx: &mpsc::Sender<AgentEvent>,
 ) -> StreamResult {
@@ -186,7 +191,7 @@ async fn stream_with_retry_single(
         // Emit MessageStart once for the logical turn. Attempt-local deltas are
         // buffered until the terminal attempt so retries do not leak stale
         // partials or duplicate lifecycle starts.
-        if attempt == 1 && !emit(tx, AgentEvent::MessageStart).await {
+        if emit_message_start && attempt == 1 && !emit(tx, AgentEvent::MessageStart).await {
             return StreamResult::ChannelClosed;
         }
 

@@ -232,6 +232,11 @@ async fn emergency_overflow_recovery() {
     .await;
 
     assert!(has_event(&events, "AgentEnd"), "loop should complete");
+    assert_eq!(
+        count_events(&events, "MessageStart"),
+        1,
+        "overflow recovery must preserve a single logical MessageStart"
+    );
 
     // Verify async transformer was called with overflow=true during recovery.
     let af = async_flags.lock().unwrap().clone();
@@ -590,6 +595,11 @@ async fn cancellation_during_recovery_aborts() {
         count_events(&events, "TurnStart"),
         1,
         "cancellation during overflow recovery must not emit a duplicate TurnStart"
+    );
+    assert_eq!(
+        count_events(&events, "MessageStart"),
+        1,
+        "cancellation during overflow recovery must reuse the existing MessageStart"
     );
 
     // Should have a TurnEnd with Cancelled or Aborted reason.
