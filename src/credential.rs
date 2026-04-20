@@ -176,24 +176,21 @@ pub enum CredentialType {
 ///
 /// All variants include the credential key for diagnostics but NEVER include
 /// secret values (FR-016).
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug)]
 pub enum CredentialError {
     /// Credential not found in the store.
-    #[error("credential not found: {key}")]
     NotFound {
         /// The credential key that was looked up.
         key: String,
     },
 
     /// Credential has expired and cannot be refreshed.
-    #[error("credential expired: {key}")]
     Expired {
         /// The credential key that expired.
         key: String,
     },
 
     /// `OAuth2` token refresh failed.
-    #[error("credential refresh failed for {key}: {reason}")]
     RefreshFailed {
         /// The credential key whose refresh failed.
         key: String,
@@ -202,7 +199,6 @@ pub enum CredentialError {
     },
 
     /// Credential type doesn't match what the tool expects.
-    #[error("credential type mismatch for {key}: expected {expected:?}, got {actual:?}")]
     TypeMismatch {
         /// The credential key.
         key: String,
@@ -213,15 +209,46 @@ pub enum CredentialError {
     },
 
     /// Generic credential store error.
-    #[error("credential store error: {0}")]
     StoreError(Box<dyn std::error::Error + Send + Sync>),
 
     /// Credential resolution timed out.
-    #[error("credential resolution timed out for {key}")]
     Timeout {
         /// The credential key.
         key: String,
     },
+}
+
+impl std::fmt::Display for CredentialError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotFound { key } => write!(f, "credential not found: {key}"),
+            Self::Expired { key } => write!(f, "credential expired: {key}"),
+            Self::RefreshFailed { key, reason } => {
+                write!(f, "credential refresh failed for {key}: {reason}")
+            }
+            Self::TypeMismatch {
+                key,
+                expected,
+                actual,
+            } => write!(
+                f,
+                "credential type mismatch for {key}: expected {expected:?}, got {actual:?}"
+            ),
+            // Backend store failures may contain arbitrary vendor text, so the
+            // user-facing `Display` output stays generic.
+            Self::StoreError(_) => f.write_str("credential store error"),
+            Self::Timeout { key } => write!(f, "credential resolution timed out for {key}"),
+        }
+    }
+}
+
+impl std::error::Error for CredentialError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::StoreError(error) => Some(&**error),
+            _ => None,
+        }
+    }
 }
 
 impl Clone for CredentialError {
@@ -286,6 +313,7 @@ pub trait CredentialResolver: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::error::Error as _;
 
     // T023: Credential serde roundtrip
     #[test]
@@ -393,6 +421,21 @@ mod tests {
                 "Display of {err:?} should contain key name"
             );
         }
+    }
+
+    #[test]
+    fn credential_store_error_display_redacts_backend_details() {
+        let err = CredentialError::StoreError(Box::new(std::io::Error::other(
+            "backend exploded with token=secret-value",
+        )));
+
+        assert_eq!(err.to_string(), "credential store error");
+
+        let source = err.source().expect("store errors should retain the source");
+        assert!(
+            source.to_string().contains("token=secret-value"),
+            "store error source should keep the backend detail for internal diagnostics"
+        );
     }
 
     // T011: credential_type helper

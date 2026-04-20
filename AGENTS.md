@@ -222,6 +222,7 @@ gh pr comment <number> --body-file /tmp/comment.md
 ### Credential Management (`auth/`)
 
 - `DefaultCredentialResolver` can reuse a per-key `SingleFlightTokenSource`, but the credential store remains the source of truth. Clear the token source's cached value before resolving an expired key from the store, or a previously refreshed token can mask later external store updates.
+- `CredentialError::StoreError` must keep `Display` generic (`credential store error`) and only expose backend detail through the inner source error. Tool execution formats `CredentialError` directly for user-visible output, so backend store text cannot appear there.
 
 ### Atomic FS (`src/atomic_fs.rs`)
 
