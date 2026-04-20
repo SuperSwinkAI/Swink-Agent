@@ -231,7 +231,7 @@ impl FileArtifactStore {
                         if let Ok(relative) = path.strip_prefix(&session_dir)
                             && let Some(name) = relative.to_str()
                         {
-                            names.push(name.to_string());
+                            names.push(name.replace('\\', "/"));
                         }
                     }
                     // Also recurse into it (for nested artifact names like "tool/output")
@@ -241,6 +241,60 @@ impl FileArtifactStore {
         }
 
         Ok(names)
+    }
+
+    /// Remove only the direct files for one logical artifact directory.
+    ///
+    /// Child artifact names such as `foo/bar` live in nested directories under
+    /// `foo/`, so deleting `foo` must not recurse and wipe those children.
+    async fn delete_artifact_files(&self, dir: &Path) -> Result<(), ArtifactError> {
+        let mut entries = match tokio::fs::read_dir(dir).await {
+            Ok(entries) => entries,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(e) => return Err(storage_err(e)),
+        };
+
+        while let Some(entry) = entries.next_entry().await.map_err(storage_err)? {
+            let file_type = entry.file_type().await.map_err(storage_err)?;
+            if file_type.is_dir() {
+                continue;
+            }
+
+            match tokio::fs::remove_file(entry.path()).await {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(storage_err(e)),
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Remove now-empty artifact directories up to, but not including, the
+    /// session root. Stops once a parent still contains sibling artifacts.
+    async fn prune_empty_artifact_dirs(
+        &self,
+        session_id: &str,
+        name: &str,
+    ) -> Result<(), ArtifactError> {
+        let session_dir = self.resolve_session_dir(session_id)?;
+        let mut current = self.resolve_artifact_dir(session_id, name)?;
+
+        while current != session_dir {
+            match tokio::fs::remove_dir(&current).await {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) if e.kind() == std::io::ErrorKind::DirectoryNotEmpty => break,
+                Err(e) => return Err(storage_err(e)),
+            }
+
+            let Some(parent) = current.parent() else {
+                break;
+            };
+            current = parent.to_path_buf();
+        }
+
+        Ok(())
     }
 }
 
@@ -422,15 +476,10 @@ impl ArtifactStore for FileArtifactStore {
         let lock = self.artifact_lock(session_id, name).await;
         let _guard = lock.lock().await;
 
-        match tokio::fs::remove_dir_all(&dir).await {
-            Ok(()) => {
-                tracing::debug!(session_id, name, "artifact deleted");
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                tracing::debug!(session_id, name, "artifact already absent");
-            }
-            Err(e) => return Err(storage_err(e)),
-        }
+        self.delete_artifact_files(&dir).await?;
+        self.prune_empty_artifact_dirs(session_id, name).await?;
+
+        tracing::debug!(session_id, name, "artifact deleted");
         Ok(())
     }
 }
