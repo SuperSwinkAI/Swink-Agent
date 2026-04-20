@@ -34,7 +34,7 @@ __no_default_features_sentinel = []
 swink-agent = { path = "..", version = "0.8.0", default-features = false }
 swink-agent-auth = { path = "../auth", version = "0.8.0", optional = true }
 reqwest.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["macros"] }
 tokio-util.workspace = true
 futures.workspace = true
 serde.workspace = true

@@ -22,7 +22,7 @@ swink-agent = { path = "../..", version = "0.8.0", default-features = false, fea
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["fs", "io-util", "macros", "process", "rt", "sync", "time"] }
 tokio-util.workspace = true
 tracing.workspace = true
 thiserror.workspace = true

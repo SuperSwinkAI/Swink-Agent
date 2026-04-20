@@ -24,7 +24,7 @@ vulkan = ["llama-cpp-2/vulkan"]
 swink-agent = { path = "..", version = "0.8.0", default-features = false }
 llama-cpp-2 = "0.1"
 hf-hub = { version = "0.5", features = ["tokio"] }
-tokio.workspace = true
+tokio = { workspace = true, features = ["rt", "sync"] }
 tokio-util.workspace = true
 tokio-stream.workspace = true
 futures.workspace = true
