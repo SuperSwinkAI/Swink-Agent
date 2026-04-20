@@ -2,6 +2,8 @@
 
 mod common;
 
+use rmcp::model::Tool;
+use serde_json::json;
 use swink_agent_mcp::{McpManager, McpServerConfig, McpTransport};
 
 /// T019: Connect to two mock servers with prefixes, verify tools are prefixed
@@ -106,4 +108,46 @@ async fn same_tool_name_without_prefix_causes_collision() {
         err_msg.contains("server-a") || err_msg.contains("server-b"),
         "error should mention at least one server name, got: {err_msg}"
     );
+}
+
+#[test]
+fn sanitized_tool_name_collision_is_detected() {
+    let mut conn_a = swink_agent_mcp::McpConnection::disconnected(mock_config("server-a"));
+    conn_a.discovered_tools = vec![mock_tool("read.file")];
+
+    let mut conn_b = swink_agent_mcp::McpConnection::disconnected(mock_config("server-b"));
+    conn_b.discovered_tools = vec![mock_tool("read-file")];
+
+    let err = McpManager::from_connections(vec![conn_a, conn_b]).expect_err("collision expected");
+    let err_msg = err.to_string();
+    assert!(
+        err_msg.contains("read_file"),
+        "sanitized colliding name should be reported, got: {err_msg}"
+    );
+}
+
+fn mock_config(server_name: &str) -> McpServerConfig {
+    McpServerConfig {
+        name: server_name.to_string(),
+        transport: McpTransport::Stdio {
+            command: "mock".into(),
+            args: vec![],
+            env: Default::default(),
+        },
+        tool_prefix: None,
+        tool_filter: None,
+        requires_approval: false,
+    }
+}
+
+fn mock_tool(name: &str) -> Tool {
+    let schema = json!({
+        "type": "object",
+        "properties": {},
+    });
+    Tool::new(
+        name.to_owned(),
+        format!("Mock tool: {name}"),
+        schema.as_object().expect("object schema").clone(),
+    )
 }
