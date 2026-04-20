@@ -10,6 +10,7 @@ use tokio_util::sync::CancellationToken;
 
 use swink_agent::ResolvedCredential;
 use swink_agent::SessionState;
+use swink_agent::compose_provider_safe_tool_name;
 use swink_agent::{AgentTool, AgentToolResult, ToolFuture, ToolMetadata};
 
 use crate::connection::McpConnection;
@@ -39,7 +40,9 @@ pub struct McpTool {
 impl McpTool {
     /// Create a new MCP tool wrapper.
     ///
-    /// If `prefix` is provided, the tool name becomes `{prefix}_{original_name}`.
+    /// If `prefix` is provided, the tool name becomes a provider-safe
+    /// `{prefix}_{original_name}`. Otherwise the original name is sanitized and
+    /// bounded without adding a namespace.
     pub fn new(
         tool: &rmcp::model::Tool,
         prefix: Option<&str>,
@@ -48,7 +51,7 @@ impl McpTool {
         connection: Arc<McpConnection>,
     ) -> Self {
         let (original_name, description, input_schema) = convert::tool_definition(tool);
-        let name = prefix.map_or_else(|| original_name.clone(), |p| format!("{p}_{original_name}"));
+        let name = compose_provider_safe_tool_name(prefix, &original_name);
 
         Self {
             name,

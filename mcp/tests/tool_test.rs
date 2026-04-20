@@ -5,7 +5,10 @@ mod common;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use rmcp::model::Tool;
+use serde_json::json;
 use swink_agent::AgentTool;
+use swink_agent::{MAX_TOOL_NAME_LEN, TOOL_NAME_HASH_HEX_LEN};
 use swink_agent_mcp::McpTool;
 use swink_agent_mcp::convert;
 
@@ -65,6 +68,43 @@ async fn mcp_tool_applies_prefix() {
     assert_eq!(mcp_tool.name(), "fs_echo");
     assert!(mcp_tool.requires_approval());
     assert_eq!(mcp_tool.original_name(), "echo");
+}
+
+#[tokio::test]
+async fn mcp_tool_sanitizes_unsafe_name_without_prefix() {
+    let mock_connection = create_mock_connection();
+    let tool = mock_tool("read.file");
+
+    let mcp_tool = McpTool::new(&tool, None, "test-server", false, mock_connection);
+
+    assert_eq!(mcp_tool.name(), "read_file");
+    assert_eq!(mcp_tool.original_name(), "read.file");
+}
+
+#[tokio::test]
+async fn mcp_tool_truncates_long_prefixed_name_with_hash_suffix() {
+    let mock_connection = create_mock_connection();
+    let tool = mock_tool(&"b".repeat(80));
+
+    let mcp_tool = McpTool::new(
+        &tool,
+        Some(&"a".repeat(40)),
+        "test-server",
+        false,
+        mock_connection,
+    );
+
+    assert_eq!(mcp_tool.name().len(), MAX_TOOL_NAME_LEN);
+    assert_eq!(
+        mcp_tool
+            .name()
+            .rsplit_once('_')
+            .expect("hash suffix")
+            .1
+            .len(),
+        TOOL_NAME_HASH_HEX_LEN
+    );
+    assert_eq!(mcp_tool.original_name(), "b".repeat(80));
 }
 
 /// T012: Execute `McpTool`, verify call is forwarded to MCP server and result
@@ -134,4 +174,16 @@ fn create_mock_connection() -> Arc<swink_agent_mcp::McpConnection> {
     };
 
     Arc::new(swink_agent_mcp::McpConnection::disconnected(config))
+}
+
+fn mock_tool(name: &str) -> Tool {
+    let schema = json!({
+        "type": "object",
+        "properties": {},
+    });
+    Tool::new(
+        name.to_owned(),
+        format!("Mock tool: {name}"),
+        schema.as_object().expect("object schema").clone(),
+    )
 }

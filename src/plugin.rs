@@ -8,7 +8,7 @@
 //! [`PluginRegistry`] manages a collection of plugins with deduplication and priority
 //! ordering. [`NamespacedTool`] wraps a plugin-contributed tool, prefixing the plugin
 //! name so the composed identifier is unique and safe for every provider's tool-name
-//! grammar (see `sanitize_tool_name_component`).
+//! grammar (see `compose_provider_safe_tool_name`).
 
 use std::sync::Arc;
 
@@ -19,6 +19,9 @@ use tracing::warn;
 use crate::loop_::AgentEvent;
 use crate::policy::{PostLoopPolicy, PostTurnPolicy, PreDispatchPolicy, PreTurnPolicy};
 use crate::tool::{AgentTool, AgentToolResult, ToolFuture, ToolMetadata};
+use crate::tool_name::compose_provider_safe_tool_name;
+#[cfg(test)]
+use crate::tool_name::{MAX_TOOL_NAME_LEN, TOOL_NAME_HASH_HEX_LEN};
 
 // ─── Plugin Trait ──────────────────────────────────────────────────────────
 
@@ -152,42 +155,6 @@ impl Default for PluginRegistry {
 
 // ─── Tool name sanitization ────────────────────────────────────────────────
 
-/// Maximum length for a composed tool name (the tightest cap across providers:
-/// `OpenAI`, Bedrock, and Gemini all cap at 64; Anthropic allows 128).
-const MAX_TOOL_NAME_LEN: usize = 64;
-/// Hex characters preserved from the stable hash when truncation is required.
-const TOOL_NAME_HASH_HEX_LEN: usize = 16;
-
-/// Sanitize a single component (plugin name or inner tool name) to the common
-/// subset of characters accepted by every provider's tool-name grammar.
-///
-/// The strictest grammar is Bedrock's `^[a-zA-Z][a-zA-Z0-9_]*` (max 64). This
-/// is also a subset of what Anthropic (`^[a-zA-Z0-9_-]{1,128}$`), OpenAI-style
-/// providers (same pattern, cap 64), and Gemini accept, so names produced here
-/// round-trip safely across providers.
-///
-/// Rules:
-/// - Every character outside `[a-zA-Z0-9_]` is replaced with `_`.
-/// - The result is not truncated here; truncation happens on the composed name
-///   in [`NamespacedTool::new`] so both components survive when possible.
-/// - An empty input becomes `"_"` — callers should still prepend a letter
-///   prefix if the composed result needs to start with a letter.
-fn sanitize_tool_name_component(input: &str) -> String {
-    if input.is_empty() {
-        return "_".to_owned();
-    }
-    input
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '_' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect()
-}
-
 /// Compose a plugin-namespaced tool name that is safe across every provider.
 ///
 /// Joins `plugin_name` and `tool_name` with `_`, sanitizes each half, prepends
@@ -197,30 +164,7 @@ fn sanitize_tool_name_component(input: &str) -> String {
 /// hash suffix is appended so long names do not silently collapse onto the same
 /// dispatch key.
 fn compose_namespaced_name(plugin_name: &str, tool_name: &str) -> String {
-    let plugin = sanitize_tool_name_component(plugin_name);
-    let tool = sanitize_tool_name_component(tool_name);
-    let joined = format!("{plugin}_{tool}");
-    let with_leading_letter = match joined.chars().next() {
-        Some(c) if c.is_ascii_alphabetic() => joined,
-        _ => format!("t_{joined}"),
-    };
-    if with_leading_letter.len() <= MAX_TOOL_NAME_LEN {
-        with_leading_letter
-    } else {
-        let hash_suffix = stable_name_hash_hex(&with_leading_letter);
-        let prefix_len = MAX_TOOL_NAME_LEN - TOOL_NAME_HASH_HEX_LEN - 1;
-        let prefix: String = with_leading_letter.chars().take(prefix_len).collect();
-        format!("{prefix}_{hash_suffix}")
-    }
-}
-
-fn stable_name_hash_hex(input: &str) -> String {
-    let mut hash = 0xcbf2_9ce4_8422_2325_u64;
-    for byte in input.bytes() {
-        hash ^= u64::from(byte);
-        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
-    }
-    format!("{hash:0TOOL_NAME_HASH_HEX_LEN$x}")
+    compose_provider_safe_tool_name(Some(plugin_name), tool_name)
 }
 
 // ─── NamespacedTool ────────────────────────────────────────────────────────
@@ -231,7 +175,7 @@ fn stable_name_hash_hex(input: &str) -> String {
 /// the same name. The composed name format is `"{plugin_name}_{tool_name}"`,
 /// with each component sanitized so the result matches the strictest tool-name
 /// grammar across supported providers (Anthropic, `OpenAI`, Bedrock, Mistral,
-/// Gemini, Ollama, Azure). See `sanitize_tool_name_component`.
+/// Gemini, Ollama, Azure). See `compose_provider_safe_tool_name`.
 ///
 /// The original (unsanitized) plugin name is preserved in
 /// [`ToolMetadata::namespace`] for introspection.
