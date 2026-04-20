@@ -120,9 +120,14 @@ impl McpManager {
     /// Connect to all configured servers, discover tools.
     ///
     /// Servers that fail to connect are logged and skipped; the remaining
-    /// servers' tools are still available. Returns an error only if a tool
-    /// name collision is detected across servers.
+    /// servers' tools are still available. Repeated calls replace the prior
+    /// connection set instead of appending to it. Returns an error only if a
+    /// tool name collision is detected across servers.
     pub async fn connect_all(&mut self) -> Result<(), McpError> {
+        if !self.connections.is_empty() || !self.tools.is_empty() {
+            self.shutdown().await;
+        }
+
         let mut all_tools: Vec<(String, String, Arc<dyn AgentTool>)> = Vec::new();
 
         for config in self.configs.clone() {

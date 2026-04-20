@@ -110,6 +110,146 @@ async fn shutdown_disconnects_cloned_tool_handles() {
     );
 }
 
+/// Explicit shutdown should emit `McpServerDisconnected` with a shutdown reason.
+#[tokio::test]
+async fn explicit_shutdown_emits_disconnect_event() {
+    let (event_tx, mut event_rx) = unbounded_channel::<AgentEvent>();
+
+    let service =
+        common::spawn_mock_server_with_client(&common::MockServerConfig::new(vec![])).await;
+
+    let config = McpServerConfig {
+        name: "explicit-shutdown-server".into(),
+        transport: McpTransport::Stdio {
+            command: "mock".into(),
+            args: vec![],
+            env: HashMap::default(),
+        },
+        tool_prefix: None,
+        tool_filter: None,
+        requires_approval: false,
+    };
+
+    let conn = McpConnection::from_service(config, service, Some(event_tx))
+        .await
+        .expect("connection should succeed");
+
+    let _connect = event_rx.try_recv().expect("connect event");
+    let _discovery = event_rx.try_recv().expect("discovery event");
+
+    conn.shutdown().await;
+
+    let event = event_rx.try_recv().expect("disconnect event");
+    match event {
+        AgentEvent::McpServerDisconnected {
+            server_name,
+            reason,
+        } => {
+            assert_eq!(server_name, "explicit-shutdown-server");
+            assert_eq!(reason, "shutdown");
+        }
+        other => panic!("expected McpServerDisconnected, got: {other:?}"),
+    }
+}
+
+/// Repeated `connect_all()` calls should replace prior live connections rather
+/// than leaving the previous ones usable through retained tool handles.
+#[tokio::test]
+async fn repeated_connect_all_replaces_prior_live_connections() {
+    let session_manager = Arc::new(LocalSessionManager::default());
+    let shutdown = tokio_util::sync::CancellationToken::new();
+
+    let mock_cfg = common::MockServerConfig::new(vec![]);
+    let server = common::MockMcpServer::from_config(&mock_cfg);
+    let service = StreamableHttpService::new(
+        move || Ok(server.clone()),
+        Arc::clone(&session_manager),
+        StreamableHttpServerConfig::default()
+            .with_sse_keep_alive(None)
+            .with_cancellation_token(shutdown.child_token()),
+    );
+
+    let router = axum::Router::new().nest_service("/mcp", service);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("listener should bind");
+    let addr = listener
+        .local_addr()
+        .expect("listener should expose an addr");
+    let server_task = tokio::spawn({
+        let shutdown = shutdown.clone();
+        async move {
+            let _ = axum::serve(listener, router)
+                .with_graceful_shutdown(async move { shutdown.cancelled_owned().await })
+                .await;
+        }
+    });
+
+    let config = McpServerConfig {
+        name: "connect-all-reset-server".into(),
+        transport: McpTransport::Sse {
+            url: format!("http://{addr}/mcp"),
+            bearer_token: None,
+            bearer_auth: None,
+            headers: HashMap::new(),
+        },
+        tool_prefix: None,
+        tool_filter: None,
+        requires_approval: false,
+    };
+
+    let mut manager = McpManager::new(vec![config]);
+    manager
+        .connect_all()
+        .await
+        .expect("initial connect_all should succeed");
+
+    let stale_tool = manager
+        .tools()
+        .into_iter()
+        .next()
+        .expect("manager should expose a tool after first connect");
+
+    manager
+        .connect_all()
+        .await
+        .expect("repeated connect_all should succeed");
+
+    assert_eq!(
+        manager.tools().len(),
+        1,
+        "repeated connect_all should not duplicate discovered tools"
+    );
+
+    let cancel = tokio_util::sync::CancellationToken::new();
+    let state = Arc::new(std::sync::RwLock::new(SessionState::default()));
+    let result = stale_tool
+        .execute(
+            "call-after-reconnect",
+            serde_json::json!({"text": "hello"}),
+            cancel,
+            None,
+            state,
+            None,
+        )
+        .await;
+
+    assert!(
+        result.is_error,
+        "retained tool handles from the previous connect_all should be disconnected"
+    );
+
+    let text = ContentBlock::extract_text(&result.content);
+    assert!(
+        text.contains("disconnected") || text.contains("active session"),
+        "stale tool handle should fail with a disconnect-style error, got: {text}"
+    );
+
+    manager.shutdown().await;
+    shutdown.cancel();
+    let _ = server_task.await;
+}
+
 /// T042: Background monitor detects transport closure, updates status to
 /// Disconnected, and emits McpServerDisconnected on the event channel.
 ///
@@ -552,6 +692,11 @@ async fn tool_call_completed_event_reports_error_on_failure() {
 
     // Force the call to fail by shutting down the connection before invoking.
     conn.shutdown().await;
+    let shutdown_event = event_rx.try_recv().expect("shutdown disconnect event");
+    assert!(
+        matches!(shutdown_event, AgentEvent::McpServerDisconnected { .. }),
+        "shutdown should emit McpServerDisconnected, got: {shutdown_event:?}"
+    );
 
     let conn = Arc::new(conn);
     let tool = McpTool::new(

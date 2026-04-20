@@ -539,18 +539,29 @@ impl McpConnection {
     ///
     /// Aborts the monitor task (which drops the underlying `RunningService`).
     /// For stdio servers, rmcp's `ChildWithCleanup` terminates the subprocess
-    /// on drop. For SSE servers, the HTTP connection is closed.
+    /// on drop. For SSE servers, the HTTP connection is closed. Explicit
+    /// shutdown also emits `McpServerDisconnected` because the monitor only
+    /// reports transport-driven exits.
     pub async fn shutdown(&self) {
-        let monitor = {
+        let (monitor, should_emit_disconnect) = {
             let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+            let was_live = state.status == McpConnectionStatus::Connected
+                || state.peer.is_some()
+                || state.monitor.is_some();
             state.status = McpConnectionStatus::Disconnected;
             state.peer = None;
-            state.monitor.take()
+            (state.monitor.take(), was_live)
         };
 
         if let Some(monitor) = monitor {
             monitor.abort();
             let _ = monitor.await;
+        }
+
+        if should_emit_disconnect {
+            emit_event(self.event_tx.as_ref(), || {
+                crate::event::server_disconnected(&self.config.name, "shutdown")
+            });
         }
     }
 }
