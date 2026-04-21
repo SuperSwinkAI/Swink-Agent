@@ -6,7 +6,7 @@
 ## Technical Context Resolution
 
 No NEEDS CLARIFICATION items in the technical context. All decisions are
-pre-determined by the project requirements (MSRV 1.88, edition 2024) and
+pre-determined by the project requirements (MSRV latest stable, edition 2024) and
 the existing AGENTS.md conventions.
 
 ## Decisions
@@ -35,7 +35,7 @@ the existing AGENTS.md conventions.
 
 ### Toolchain Pinning
 
-- **Decision**: `rust-toolchain.toml` with `channel = "1.88"`.
+- **Decision**: `rust-toolchain.toml` with `channel = "stable"`.
 - **Rationale**: `rust-toolchain.toml` is the standard rustup mechanism for
   automatic toolchain selection. TOML format is preferred over the legacy
   `rust-toolchain` plain text file.

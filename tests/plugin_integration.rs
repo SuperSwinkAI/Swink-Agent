@@ -1,6 +1,6 @@
 #![cfg(all(feature = "plugins", feature = "testkit"))]
 
-//! Integration tests for plugin contribution merge in Agent::new().
+//! Integration tests for plugin contribution merge in `Agent::new()`.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -218,7 +218,7 @@ async fn plugin_stop_prevents_direct_policy_evaluation() {
         fired: Arc<AtomicBool>,
     }
     impl PreTurnPolicy for DirectPreTurnPolicy {
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             "direct-pre-turn"
         }
         fn evaluate(&self, _ctx: &PolicyContext<'_>) -> PolicyVerdict {
@@ -412,7 +412,7 @@ fn agent_plugin_nonexistent_returns_none() {
 
 // ─── Phase 7: User Story 5 — Initialization Callback ───────────────────
 
-/// A plugin that tracks on_init calls with ordering.
+/// A plugin that tracks `on_init` calls with ordering.
 struct InitPlugin {
     name: String,
     priority: i32,
@@ -433,7 +433,7 @@ impl InitPlugin {
         }
     }
 
-    fn with_priority(mut self, priority: i32) -> Self {
+    const fn with_priority(mut self, priority: i32) -> Self {
         self.priority = priority;
         self
     }
@@ -460,7 +460,7 @@ impl Plugin for InitPlugin {
     }
 }
 
-/// A plugin whose on_init panics, but still contributes a post-turn policy.
+/// A plugin whose `on_init` panics, but still contributes a post-turn policy.
 struct PanickingInitPlugin {
     name: String,
     fired: Arc<AtomicBool>,

@@ -1,6 +1,6 @@
 #![cfg(feature = "plugins")]
 
-//! Integration tests for PluginRegistry and NamespacedTool.
+//! Integration tests for `PluginRegistry` and `NamespacedTool`.
 
 use std::sync::Arc;
 

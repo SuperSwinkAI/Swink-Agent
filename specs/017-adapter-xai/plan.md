@@ -9,7 +9,7 @@ Implement the xAI (Grok) streaming chat adapter. The adapter code (`xai.rs`) alr
 
 ## Technical Context
 
-**Language/Version**: Rust 1.88 (edition 2024)
+**Language/Version**: Rust latest stable (edition 2024)
 **Primary Dependencies**: `swink-agent` (core), `swink-agent-adapters` (shared infra: `openai_compat`, `classify`, `sse`, `convert`, `base`)
 **Storage**: N/A (stateless adapter)
 **Testing**: `cargo test` — unit tests (mocked SSE) + live tests (`#[ignore]`, requires `XAI_API_KEY`)
@@ -34,7 +34,7 @@ Implement the xAI (Grok) streaming chat adapter. The adapter code (`xai.rs`) alr
 
 **Architectural Constraints**:
 - Crate count: unchanged (adapters crate absorbs this)
-- MSRV: 1.88 ✓
+- MSRV: latest stable ✓
 - No new dependencies required
 
 **Post-Phase 1 Re-check**: All gates still pass. No design decisions required normalization or new crates.

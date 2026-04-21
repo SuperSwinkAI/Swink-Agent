@@ -256,7 +256,7 @@ mod tests {
 
     // ─── Cross-adapter error classification ──────────────────────────────
 
-    /// Verify that all adapter-emitted error events carry a StreamErrorKind
+    /// Verify that all adapter-emitted error events carry a `StreamErrorKind`
     /// for the common error patterns (network, content filter, throttle).
     #[test]
     fn cross_adapter_unexpected_eof_is_network() {

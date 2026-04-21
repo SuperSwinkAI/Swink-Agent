@@ -9,7 +9,7 @@ Implement the Mistral chat completions adapter with request/response normalizati
 
 ## Technical Context
 
-**Language/Version**: Rust 1.88 (edition 2024)
+**Language/Version**: Rust latest stable (edition 2024)
 **Primary Dependencies**: `swink-agent` (core), `reqwest`, `futures`, `serde`/`serde_json`, `tokio`, `tokio-util`, `tracing`, `rand` (ID generation)
 **Storage**: N/A
 **Testing**: `cargo test`, `wiremock` (mock HTTP server), live test with `MISTRAL_API_KEY`
@@ -35,7 +35,7 @@ Implement the Mistral chat completions adapter with request/response normalizati
 | Constraint | Status | Notes |
 |---|---|---|
 | Crate count | ✅ Pass | No new crate — module in existing adapters crate |
-| MSRV 1.88 | ✅ Pass | No new language features required |
+| MSRV latest stable | ✅ Pass | No new language features required |
 | Concurrency model | ✅ Pass | Single async stream, no spawning |
 | Events outward-only | ✅ Pass | Adapter produces events, doesn't consume them |
 | No global mutable state | ✅ Pass | ID map is local to stream invocation |

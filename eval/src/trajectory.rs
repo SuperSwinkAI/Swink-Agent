@@ -396,7 +396,7 @@ mod tests {
         let c = make_collector(1.0, 100, 2);
         // 1 hour should be well within bounds for this test.
         let guard =
-            BudgetGuard::new(CancellationToken::new()).with_max_duration(Duration::from_secs(3600));
+            BudgetGuard::new(CancellationToken::new()).with_max_duration(Duration::from_hours(1));
         assert!(!c.exceeds_budget(&guard));
     }
 

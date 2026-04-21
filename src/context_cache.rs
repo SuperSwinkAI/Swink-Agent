@@ -136,7 +136,7 @@ mod tests {
     use super::*;
 
     fn test_config(intervals: usize) -> CacheConfig {
-        CacheConfig::new(Duration::from_secs(600), 4096, intervals)
+        CacheConfig::new(Duration::from_mins(10), 4096, intervals)
     }
 
     #[test]
@@ -147,7 +147,7 @@ mod tests {
         assert_eq!(
             hint,
             CacheHint::Write {
-                ttl: Duration::from_secs(600)
+                ttl: Duration::from_mins(10)
             }
         );
     }
@@ -173,7 +173,7 @@ mod tests {
         assert_eq!(
             hint,
             CacheHint::Write {
-                ttl: Duration::from_secs(600)
+                ttl: Duration::from_mins(10)
             }
         );
     }
@@ -189,7 +189,7 @@ mod tests {
         assert_eq!(
             hint,
             CacheHint::Write {
-                ttl: Duration::from_secs(600)
+                ttl: Duration::from_mins(10)
             }
         );
     }
@@ -208,14 +208,14 @@ mod tests {
     fn min_tokens_below_threshold_suppresses_hints() {
         // The CacheState itself doesn't enforce min_tokens — that check
         // happens in the turn pipeline. Verify the config carries it.
-        let config = CacheConfig::new(Duration::from_secs(300), 8192, 2);
+        let config = CacheConfig::new(Duration::from_mins(5), 8192, 2);
         assert_eq!(config.min_tokens, 8192);
     }
 
     #[test]
     fn serde_round_trip_write_hint() {
         let hint = CacheHint::Write {
-            ttl: Duration::from_secs(600),
+            ttl: Duration::from_mins(10),
         };
         let json = serde_json::to_string(&hint).unwrap();
         let back: CacheHint = serde_json::from_str(&json).unwrap();

@@ -9,7 +9,7 @@ Add Model Context Protocol (MCP) client support to Swink Agent, enabling agents 
 
 ## Technical Context
 
-**Language/Version**: Rust 1.88 (edition 2024)
+**Language/Version**: Rust latest stable (edition 2024)
 **Primary Dependencies**: `rmcp` (official MCP SDK — stdio, SSE, tool discovery, tool invocation), `swink-agent` (core types: `AgentTool`, `AgentToolResult`, `ContentBlock`, `AgentEvent`), `tokio` (async runtime, subprocess management), `serde`/`serde_json` (serialization), `thiserror` (errors), `tracing` (diagnostics)
 **Storage**: N/A (in-memory state only — connection handles and discovered tool lists)
 **Testing**: `cargo test --workspace` — mock MCP servers via `rmcp` test utilities or in-process stdio pipes
@@ -37,7 +37,7 @@ Add Model Context Protocol (MCP) client support to Swink Agent, enabling agents 
 | Constraint | Status | Notes |
 |------------|--------|-------|
 | Crate count (currently 11 members) | JUSTIFY | MCP is a distinct protocol concern with its own dependency (`rmcp`) that should not pollute core, adapters, or policies. No existing crate boundary can absorb this — it's not a provider adapter (adapters handle LLM streaming), not a policy, not memory/eval/TUI. |
-| MSRV 1.88 | PASS | `rmcp` supports current stable Rust. |
+| MSRV latest stable | PASS | `rmcp` supports current stable Rust. |
 | Concurrency model | PASS | MCP tool calls run concurrently via existing `tokio::spawn` tool dispatch. Connection management uses tokio tasks. |
 | Events outward-only | PASS | MCP emits `AgentEvent` variants. No re-entrant state mutation. |
 | No global mutable state | PASS | Connection state in `Arc<Mutex<>>` per server, owned by the MCP manager. |

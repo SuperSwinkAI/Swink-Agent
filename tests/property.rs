@@ -179,7 +179,7 @@ proptest! {
         let strategy = DefaultRetryStrategy {
             max_attempts: 10,
             base_delay: Duration::from_millis(base_ms),
-            max_delay: Duration::from_secs(3600),
+            max_delay: Duration::from_hours(1),
             multiplier,
             jitter: true,
         };
@@ -213,7 +213,7 @@ proptest! {
         let strategy = DefaultRetryStrategy {
             max_attempts: 10,
             base_delay: Duration::from_millis(base_ms),
-            max_delay: Duration::from_secs(3600),
+            max_delay: Duration::from_hours(1),
             multiplier,
             jitter: false,
         };

@@ -9,7 +9,7 @@ New workspace crate `swink-agent-policies` providing four application-level poli
 
 ## Technical Context
 
-**Language/Version**: Rust 1.88 (edition 2024)
+**Language/Version**: Rust latest stable (edition 2024)
 **Primary Dependencies**: `swink-agent` (core types — policy traits, message types, verdict enums), `regex` (pattern matching for injection/PII/content), `chrono` (timestamps for audit records), `serde`/`serde_json` (audit record serialization), `tracing` (error logging in audit sink)
 **Storage**: Local filesystem via JSONL (AuditLogger's `JsonlAuditSink` only)
 **Testing**: `cargo test --workspace` — unit tests in each module, integration test file in `policies/tests/`

@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Rust 1.88+ with edition 2024
+- Rust latest stable with edition 2024
 - Workspace built: `cargo build --workspace`
 - At least one provider credential configured (or Ollama running locally)
 

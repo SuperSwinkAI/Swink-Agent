@@ -968,12 +968,12 @@ mod tests {
         let stream_a = Arc::new(SimpleMockStreamFn::from_text("from-a"));
         let stream_b = Arc::new(SimpleMockStreamFn::from_text("from-b"));
 
-        let opts = AgentOptions::new_simple("system", model_a.clone(), stream_a.clone())
-            .with_available_models(vec![(model_b.clone(), stream_b.clone())]);
+        let opts = AgentOptions::new_simple("system", model_a, stream_a.clone())
+            .with_available_models(vec![(model_b, stream_b.clone())]);
         let mut agent = Agent::new(opts);
 
         assert!(
-            Arc::ptr_eq(&agent.stream_fn, &(stream_a.clone() as Arc<dyn StreamFn>)),
+            Arc::ptr_eq(&agent.stream_fn, &(stream_a as Arc<dyn StreamFn>)),
             "initial stream_fn should be stream_a"
         );
 
@@ -992,7 +992,7 @@ mod tests {
         assert_eq!(agent.state.model.provider, "provider-b");
         assert_eq!(agent.state.model.model_id, "model-b");
         assert!(
-            Arc::ptr_eq(&agent.stream_fn, &(stream_b.clone() as Arc<dyn StreamFn>)),
+            Arc::ptr_eq(&agent.stream_fn, &(stream_b as Arc<dyn StreamFn>)),
             "stream_fn should be rebound to stream_b after loop checkpoint restore"
         );
     }

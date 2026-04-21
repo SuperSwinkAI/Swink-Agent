@@ -59,15 +59,15 @@ impl AuthCapturingTool {
 }
 
 impl AgentTool for AuthCapturingTool {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "secure_echo"
     }
 
-    fn label(&self) -> &str {
+    fn label(&self) -> &'static str {
         "Secure Echo"
     }
 
-    fn description(&self) -> &str {
+    fn description(&self) -> &'static str {
         "Captures resolved credentials."
     }
 

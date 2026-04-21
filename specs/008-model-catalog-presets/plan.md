@@ -9,7 +9,7 @@ Provide a data-driven model and provider registry, preset-based connection confi
 
 ## Technical Context
 
-**Language/Version**: Rust 1.88, edition 2024
+**Language/Version**: Rust latest stable, edition 2024
 **Primary Dependencies**: `serde` (deserialization), `toml` (catalog parsing), `tokio` (async runtime), `tokio-util` (CancellationToken), `futures` (stream primitives)
 **Storage**: Embedded TOML file (`src/model_catalog.toml`) compiled into the binary via `include_str!`
 **Testing**: `cargo test --workspace`

@@ -11,7 +11,7 @@ All concerns live in the `swink-agent-adapters` crate (or core for types that fl
 
 ## Technical Context
 
-**Language/Version**: Rust 1.88 (edition 2024)
+**Language/Version**: Rust latest stable (edition 2024)
 **Primary Dependencies**: `swink-agent` (core), `reqwest`, `futures`, `bytes`, `serde_json`, `thiserror`, `tokio`
 **Storage**: N/A
 **Testing**: `cargo test --workspace`; unit tests per module, integration live tests (`#[ignore]`)

@@ -9,7 +9,7 @@ New `swink-agent-patterns` workspace crate at `patterns/` providing composable m
 
 ## Technical Context
 
-**Language/Version**: Rust 1.88 (edition 2024)  
+**Language/Version**: Rust latest stable (edition 2024)  
 **Primary Dependencies**: `swink-agent` (path = ".."), `tokio` (async runtime), `tokio-util` (CancellationToken), `serde`/`serde_json` (serialization), `regex` (exit conditions), `uuid` (PipelineId generation), `tracing` (diagnostics), `thiserror` (error types)  
 **Storage**: N/A (in-memory registries only)  
 **Testing**: `cargo test -p swink-agent-patterns`  
@@ -34,7 +34,7 @@ New `swink-agent-patterns` workspace crate at `patterns/` providing composable m
 
 **Architectural Constraints**:
 - **Crate count**: Currently 7 members → 8 with `patterns`. Justified: pipeline composition patterns don't fit in core (FR-001), adapters (provider-specific), policies (evaluation hooks), memory (persistence), eval (testing), TUI (frontend), or xtask (tooling). Patterns is a new concern boundary.
-- **MSRV**: 1.88, edition 2024.
+- **MSRV**: latest stable, edition 2024.
 - **Events**: Pipeline events use `Emission` via `AgentEvent::Custom` — no core enum modification needed.
 
 ## Project Structure

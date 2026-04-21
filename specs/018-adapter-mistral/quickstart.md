@@ -5,7 +5,7 @@
 
 ## Prerequisites
 
-- Rust 1.88+ (edition 2024)
+- Rust latest stable (edition 2024)
 - Mistral API key (from https://console.mistral.ai/)
 - `swink-agent-adapters` crate with `mistral` feature enabled
 

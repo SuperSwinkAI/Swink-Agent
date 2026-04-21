@@ -15,7 +15,7 @@ Extend the core tool system with composable pipeline hooks and convenience abstr
 
 ## Technical Context
 
-**Language/Version**: Rust 1.88, edition 2024
+**Language/Version**: Rust latest stable, edition 2024
 **Primary Dependencies**: `tokio`, `tokio-util` (CancellationToken), `serde_json`, `schemars`, `jsonschema`, `regex`; optional: `notify` (hot-reload), `syn`/`quote`/`proc-macro2` (macros crate)
 **Storage**: N/A
 **Testing**: `cargo test --workspace`, `cargo test -p swink-agent --no-default-features`

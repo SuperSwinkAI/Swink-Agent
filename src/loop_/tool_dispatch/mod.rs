@@ -1594,7 +1594,7 @@ mod tests {
         assert!(!saw_b_start.load(Ordering::SeqCst));
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].tool_call_id, "call_a");
-        assert_eq!(results[0].is_error, false);
+        assert!(!results[0].is_error);
         assert_eq!(results[1].tool_call_id, "call_b");
         assert!(results[1].is_error);
         assert!(matches!(

@@ -234,15 +234,15 @@ mod tests {
         struct MetadataAuthTool;
 
         impl AgentTool for MetadataAuthTool {
-            fn name(&self) -> &str {
+            fn name(&self) -> &'static str {
                 "auth_tool"
             }
 
-            fn label(&self) -> &str {
+            fn label(&self) -> &'static str {
                 "Auth Tool"
             }
 
-            fn description(&self) -> &str {
+            fn description(&self) -> &'static str {
                 "A tool with metadata and auth config."
             }
 

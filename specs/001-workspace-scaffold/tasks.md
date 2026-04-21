@@ -17,8 +17,8 @@
 
 **Purpose**: Create the root workspace configuration files that all crates depend on
 
-- [x] T001 Create root `Cargo.toml` with: (a) `[workspace]` defining 7 members (`.`, `adapters`, `memory`, `local-llm`, `eval`, `tui`, `xtask`); (b) `[workspace.dependencies]` centralizing all shared dependency versions (serde, serde_json, tokio, futures, thiserror, uuid, reqwest, jsonschema, schemars, rand, tracing, toml) plus internal crates (`swink-agent.path = "."`, etc.); (c) `[workspace.lints]` with `unsafe_code = "forbid"` and clippy all+pedantic+nursery as warnings with targeted allows (`module_name_repetitions`, `must_use_candidate`, `missing_errors_doc`, `missing_panics_doc`); (d) `[package]` for `swink-agent` core (version 0.1.0, edition 2024, rust-version 1.88); (e) `[features]` section with `default = ["builtin-tools"]`, `builtin-tools = []`, and `test-helpers = []` (disabled by default — gates shared test utilities for downstream crates); (f) dev and release `[profile]` sections (split-debuginfo dev, LTO release)
-- [x] T002 [P] Create `rust-toolchain.toml` pinning `channel = "1.88"`
+- [x] T001 Create root `Cargo.toml` with: (a) `[workspace]` defining 7 members (`.`, `adapters`, `memory`, `local-llm`, `eval`, `tui`, `xtask`); (b) `[workspace.dependencies]` centralizing all shared dependency versions (serde, serde_json, tokio, futures, thiserror, uuid, reqwest, jsonschema, schemars, rand, tracing, toml) plus internal crates (`swink-agent.path = "."`, etc.); (c) `[workspace.lints]` with `unsafe_code = "forbid"` and clippy all+pedantic+nursery as warnings with targeted allows (`module_name_repetitions`, `must_use_candidate`, `missing_errors_doc`, `missing_panics_doc`); (d) `[package]` for `swink-agent` core (version 0.1.0, edition 2024, rust-version latest stable); (e) `[features]` section with `default = ["builtin-tools"]`, `builtin-tools = []`, and `test-helpers = []` (disabled by default — gates shared test utilities for downstream crates); (f) dev and release `[profile]` sections (split-debuginfo dev, LTO release)
+- [x] T002 [P] Create `rust-toolchain.toml` pinning `channel = "stable"`
 - [x] T003 [P] Create `rustfmt.toml` with project formatting rules
 - [x] T004 [P] Create `.gitignore` excluding `target/`, `.env`, editor files, OS artifacts
 
@@ -95,7 +95,7 @@
 
 ### Verification
 
-- [x] T020 [US4] Verify `rust-toolchain.toml` causes `rustup` to select Rust 1.88 (check `rustc --version` output after entering the workspace)
+- [x] T020 [US4] Verify `rust-toolchain.toml` causes `rustup` to select Rust latest stable (check `rustc --version` output after entering the workspace)
 - [x] T021 [US4] Verify each crate individually builds: `cargo build -p swink-agent-adapters`, `cargo build -p swink-agent-memory`, `cargo build -p swink-agent-local-llm`, `cargo build -p swink-agent-eval`, `cargo build -p swink-agent-tui`, `cargo build -p xtask`
 
 **Checkpoint**: Toolchain consistency verified

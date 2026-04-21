@@ -4,7 +4,7 @@
 
 ## Prerequisites
 
-- Rust 1.88+ (edition 2024)
+- Rust latest stable (edition 2024)
 - Node.js 18+ and Playwright CLI (only for screenshot/extract features):
   ```bash
   npm install -g playwright

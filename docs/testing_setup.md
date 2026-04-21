@@ -4,12 +4,12 @@ Step-by-step guide to get the project running against live LLM APIs.
 
 ## 1. Install Rust
 
-Requires **Rust 1.88+** (edition 2024).
+Requires **Rust 1.95+** (edition 2024).
 
 ```bash
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 rustup update stable
-rustc --version   # should print 1.88.0 or later
+rustc --version   # should print 1.95.0 or later
 ```
 
 ## 2. Build the Workspace

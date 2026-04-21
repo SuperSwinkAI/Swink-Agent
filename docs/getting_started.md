@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- **Rust 1.88+** (edition 2024)
+- **Rust 1.95+** (edition 2024)
 - **LLVM/libclang** available for workspace-wide `cargo build/test/clippy` commands because `swink-agent-local-llm` builds `llama-cpp-sys-2` via `bindgen`
 - At least one LLM provider:
   - [Ollama](https://ollama.ai) running locally (no key required)

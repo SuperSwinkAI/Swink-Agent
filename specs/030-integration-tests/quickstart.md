@@ -4,7 +4,7 @@
 
 ## Prerequisites
 
-- Rust 1.88+ (edition 2024)
+- Rust latest stable (edition 2024)
 - All workspace crates build: `cargo build --workspace`
 - No external services, API keys, or network access required
 

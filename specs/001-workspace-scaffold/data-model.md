@@ -58,7 +58,7 @@ dependencies.
 | File | Purpose |
 |---|---|
 | `Cargo.toml` | Workspace definition, core crate package, shared deps, lint config, build profiles |
-| `rust-toolchain.toml` | Pins Rust 1.88 for automatic toolchain selection |
+| `rust-toolchain.toml` | Pins Rust latest stable for automatic toolchain selection |
 | `rustfmt.toml` | Formatter rules for consistent code style |
 | `.gitignore` | Excludes `target/`, `.env`, editor files, OS artifacts |
 

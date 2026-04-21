@@ -9,7 +9,7 @@ Session-attached versioned artifact storage for agent-produced outputs. Introduc
 
 ## Technical Context
 
-**Language/Version**: Rust 1.88 (edition 2024)
+**Language/Version**: Rust latest stable (edition 2024)
 **Primary Dependencies**: `serde`, `serde_json`, `tokio` (fs + sync), `chrono` (timestamps), `tracing` (diagnostics), `thiserror` (errors), `futures` (streaming trait), `schemars` (tool schemas) — all workspace deps
 **Storage**: Local filesystem (versioned files + JSON metadata sidecar); in-memory (`HashMap`) for testing
 **Testing**: `cargo test --workspace` — unit tests in each module, integration tests in `tests/`

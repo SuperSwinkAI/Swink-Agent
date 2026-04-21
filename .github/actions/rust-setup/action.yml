@@ -2,7 +2,7 @@ name: Rust Setup
 description: Install the requested Rust toolchain with clippy + rustfmt and the shared build cache.
 inputs:
   toolchain:
-    description: Rust toolchain to install (e.g. stable, 1.88)
+    description: Rust toolchain to install (e.g. stable, 1.95)
     required: false
     default: stable
   cache-key:

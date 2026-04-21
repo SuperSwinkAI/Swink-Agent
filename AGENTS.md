@@ -34,7 +34,7 @@ Pure-Rust library for LLM-powered agentic loops. Provider-agnostic core with plu
 
 | Pillar | Version | Role |
 |---|---|---|
-| Rust | 1.88 (edition 2024) | Language / MSRV |
+| Rust | 1.95 (edition 2024) | Language / MSRV |
 | tokio | 1 | Async runtime |
 | serde / serde_json | 1 | Serialization |
 | reqwest | 0.13 | HTTP client |
@@ -58,7 +58,7 @@ cargo run -p swink-agent-tui                      # launch TUI (.env auto-loaded
 
 Workspace-wide `build` / `test` / `clippy` commands compile `swink-agent-local-llm`, which currently pulls `llama-cpp-sys-2` and its `bindgen` build step. Install LLVM/libclang first and set `LIBCLANG_PATH` if your platform does not auto-discover the shared library (especially common on Windows).
 
-MSRV **1.88** (edition 2024). Common workspace deps are centralized in root `Cargo.toml`, with a few crate-specific dependencies declared locally where needed.
+MSRV **1.95** (edition 2024). Common workspace deps are centralized in root `Cargo.toml`, with a few crate-specific dependencies declared locally where needed.
 
 ## Branch Model
 

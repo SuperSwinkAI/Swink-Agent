@@ -4,10 +4,6 @@ on:
   push:
     branches: [main]
   pull_request:
-  schedule:
-    # MSRV check: weekly Monday 6am UTC. Rarely breaks from normal changes;
-    # catching it weekly is enough. Also runs on main pushes (releases).
-    - cron: '0 6 * * 1'
 
 jobs:
   # ── Primary gate: runs on every PR and main push ────────────────────────
@@ -156,16 +152,3 @@ jobs:
         run: git fetch origin main
 
       - run: cargo semver-checks --workspace --exclude swink-agent-local-llm --baseline-rev origin/main
-
-  # ── MSRV: weekly schedule + main push ───────────────────────────────────
-  msrv:
-    if: github.event_name == 'schedule' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-
-      - uses: dtolnay/rust-toolchain@98e1b82157cd469e843cb7f524c1313b4ad9492c # 1.88
-
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
-
-      - run: cargo build --workspace

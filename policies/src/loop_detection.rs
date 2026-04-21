@@ -355,7 +355,7 @@ mod tests {
 
         // Push 2 identical, then 1 different, then 2 identical again
         // Should not trigger because the different one breaks the streak
-        let same_msg = msg_with_tool_calls(&[("id1", "bash", same_args.clone())]);
+        let same_msg = msg_with_tool_calls(&[("id1", "bash", same_args)]);
         let same_res = vec![tool_result("id1", "same")];
         let diff_msg = msg_with_tool_calls(&[("id2", "bash", diff_args)]);
         let diff_res = vec![tool_result("id2", "different")];
@@ -374,7 +374,7 @@ mod tests {
         assert!(matches!(r, PolicyVerdict::Continue));
     }
 
-    /// Regression test for #276: identical tool calls with different tool_call_ids
+    /// Regression test for #276: identical tool calls with different `tool_call_ids`
     /// must still be detected as a loop.
     #[test]
     fn fresh_tool_call_ids_still_detected_as_loop() {
@@ -403,7 +403,7 @@ mod tests {
             PolicyVerdict::Continue
         ));
 
-        let msg3 = msg_with_tool_calls(&[("call_ghi", "bash", args.clone())]);
+        let msg3 = msg_with_tool_calls(&[("call_ghi", "bash", args)]);
         let res3 = vec![tool_result("call_ghi", "file1.txt")];
         let t3 = make_turn_ctx(&msg3, &res3);
         // Despite fresh IDs each time, the tool name + args are identical → loop detected

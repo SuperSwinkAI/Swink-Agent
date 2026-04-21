@@ -23,7 +23,7 @@ use swink_agent_adapters::OllamaStreamFn;
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
-const TIMEOUT: Duration = Duration::from_secs(60);
+const TIMEOUT: Duration = Duration::from_mins(1);
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 

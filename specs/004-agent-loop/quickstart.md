@@ -5,7 +5,7 @@
 ## Prerequisites
 
 - Features 001-003 complete (workspace, types, traits)
-- Rust 1.88 toolchain
+- Rust latest stable toolchain
 
 ## Build & Test
 

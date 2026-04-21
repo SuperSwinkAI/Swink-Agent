@@ -10,7 +10,7 @@ use swink_agent::AgentTool;
 use swink_agent::ToolApprovalRequest;
 use swink_agent_mcp::{McpConnection, McpServerConfig, McpTool, McpTransport};
 
-/// Helper to create a disconnected McpConnection for metadata-only tests.
+/// Helper to create a disconnected `McpConnection` for metadata-only tests.
 fn disconnected_connection(requires_approval: bool) -> (McpServerConfig, Arc<McpConnection>) {
     let config = McpServerConfig {
         name: "policy-test-server".into(),
@@ -27,7 +27,7 @@ fn disconnected_connection(requires_approval: bool) -> (McpServerConfig, Arc<Mcp
     (config, conn)
 }
 
-/// T027: McpTool with requires_approval=true returns true from trait method.
+/// T027: `McpTool` with `requires_approval=true` returns true from trait method.
 #[tokio::test]
 async fn mcp_tool_requires_approval_true_when_configured() {
     let config = common::MockServerConfig::new(vec![]);
@@ -44,7 +44,7 @@ async fn mcp_tool_requires_approval_true_when_configured() {
     );
 }
 
-/// T028: McpTool with requires_approval=false returns false.
+/// T028: `McpTool` with `requires_approval=false` returns false.
 #[tokio::test]
 async fn mcp_tool_requires_approval_false_when_configured() {
     let config = common::MockServerConfig::new(vec![]);
@@ -61,7 +61,7 @@ async fn mcp_tool_requires_approval_false_when_configured() {
     );
 }
 
-/// T029: approval_context returns the full params as context.
+/// T029: `approval_context` returns the full params as context.
 #[tokio::test]
 async fn mcp_tool_approval_context_returns_params_for_policy_inspection() {
     let config = common::MockServerConfig::new(vec![]);
@@ -122,7 +122,7 @@ async fn mcp_tool_approval_context_is_redacted_in_tool_approval_request_debug() 
     assert!(debug.contains("[REDACTED]"));
 }
 
-/// T026: approval_context is non-None — policies receive params for inspection.
+/// T026: `approval_context` is non-None — policies receive params for inspection.
 /// Verifies the contract that MCP tools always expose params to approval/policy gates.
 #[tokio::test]
 async fn mcp_tool_always_provides_approval_context() {
