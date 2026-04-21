@@ -6,11 +6,11 @@ rust-version.workspace = true
 description = "Evaluation framework for swink-agent: trajectory tracing, golden path verification, and cost governance"
 license.workspace = true
 repository.workspace = true
-readme = "../README.md"
+readme = "README.md"
 keywords = ["llm", "agent", "eval", "benchmark", "testing"]
 categories = ["development-tools", "development-tools::testing"]
 
-[package.metadata.docs_rs]
+[package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 

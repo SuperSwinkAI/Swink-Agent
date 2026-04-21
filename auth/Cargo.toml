@@ -8,7 +8,7 @@ license.workspace = true
 repository.workspace = true
 keywords = ["llm", "agent", "oauth2", "credentials", "auth"]
 categories = ["development-tools", "authentication"]
-readme = "../README.md"
+readme = "README.md"
 
 [dependencies]
 swink-agent = { path = "..", version = "0.8.0", default-features = false }

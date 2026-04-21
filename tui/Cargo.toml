@@ -6,7 +6,7 @@ rust-version.workspace = true
 description = "Interactive terminal UI for swink-agent"
 license.workspace = true
 repository.workspace = true
-readme = "../README.md"
+readme = "README.md"
 keywords = ["tui", "terminal", "llm", "agent", "chat"]
 categories = ["command-line-utilities", "development-tools"]
 

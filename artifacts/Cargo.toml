@@ -8,7 +8,7 @@ license.workspace = true
 repository.workspace = true
 keywords = ["llm", "agent", "artifacts", "storage", "versioned"]
 categories = ["development-tools", "filesystem"]
-readme = "../README.md"
+readme = "README.md"
 
 [dependencies]
 swink-agent = { path = "..", version = "0.8.0", default-features = false, features = ["artifact-store"] }

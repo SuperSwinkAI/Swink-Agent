@@ -8,7 +8,7 @@ license.workspace = true
 repository.workspace = true
 keywords = ["llm", "agent", "pipeline", "multi-agent", "orchestration"]
 categories = ["development-tools", "asynchronous"]
-readme = "../README.md"
+readme = "README.md"
 
 [features]
 default = ["pipelines"]

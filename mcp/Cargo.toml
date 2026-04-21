@@ -8,7 +8,7 @@ license.workspace = true
 repository.workspace = true
 keywords = ["llm", "agent", "mcp", "tools", "protocol"]
 categories = ["development-tools", "network-programming"]
-readme = "../README.md"
+readme = "README.md"
 
 [dependencies]
 swink-agent = { path = "..", version = "0.8.0", default-features = false }

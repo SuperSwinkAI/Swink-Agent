@@ -6,11 +6,11 @@ rust-version.workspace = true
 description = "Session persistence and memory management for swink-agent"
 license.workspace = true
 repository.workspace = true
-readme = "../README.md"
+readme = "README.md"
 keywords = ["llm", "agent", "memory", "session", "context"]
 categories = ["development-tools", "data-structures"]
 
-[package.metadata.docs_rs]
+[package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 

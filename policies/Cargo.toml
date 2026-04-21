@@ -8,7 +8,7 @@ license.workspace = true
 repository.workspace = true
 keywords = ["llm", "agent", "policy", "security", "audit"]
 categories = ["development-tools", "security"]
-readme = "../README.md"
+readme = "README.md"
 
 [features]
 default = ["all"]

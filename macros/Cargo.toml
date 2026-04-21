@@ -8,7 +8,7 @@ license.workspace = true
 repository.workspace = true
 keywords = ["llm", "agent", "macros", "proc-macro", "tools"]
 categories = ["development-tools", "development-tools::procedural-macro-helpers"]
-readme = "../README.md"
+readme = "README.md"
 
 [lib]
 proc-macro = true

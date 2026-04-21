@@ -6,11 +6,11 @@ rust-version.workspace = true
 description = "LLM provider adapters for swink-agent"
 license.workspace = true
 repository.workspace = true
-readme = "../README.md"
+readme = "README.md"
 keywords = ["llm", "anthropic", "openai", "adapter", "streaming"]
 categories = ["development-tools", "api-bindings", "asynchronous"]
 
-[package.metadata.docs_rs]
+[package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
