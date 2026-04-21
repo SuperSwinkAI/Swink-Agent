@@ -92,6 +92,7 @@ pub(super) async fn attempt_overflow_recovery(
         &llm_messages,
         system_prompt,
         api_key,
+        false,
         cancellation_token,
         tx,
     )

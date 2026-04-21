@@ -147,6 +147,7 @@ gh pr comment <number> --body-file /tmp/comment.md
 - `transform_context` is **synchronous** (not async).
 - `CONTEXT_OVERFLOW_SENTINEL` triggers overflow retry — loop control signal, not an error.
 - Tool dispatch order: PreDispatch policies → Approval → Schema validation → `execute()`.
+- Overflow recovery retries and started-turn cancellation must reuse the original message lifecycle; once a turn has emitted `MessageStart`, follow-on recovery/cancellation paths must suppress any second `MessageStart`.
 
 ### Policy Slots (`src/policy.rs`)
 
