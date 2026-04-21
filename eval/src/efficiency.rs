@@ -218,9 +218,9 @@ mod tests {
         let mut case = minimal_case();
         case.budget = Some(BudgetConstraints {
             max_cost: None,
-            max_tokens: None,
+            max_input: None,
+            max_output: None,
             max_turns: Some(2),
-            max_duration: None,
         });
         // 4 unique / 4 total → dup_ratio = 1.0
         // ideal = budget.max_turns = 2, actual = 4 → step_ratio = 2/4 = 0.5

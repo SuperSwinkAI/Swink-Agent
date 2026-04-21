@@ -4717,6 +4717,7 @@ dependencies = [
  "serde_yaml",
  "sha2 0.11.0",
  "swink-agent",
+ "swink-agent-policies",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",

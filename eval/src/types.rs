@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use swink_agent::{AssistantMessage, Cost, ModelSpec, StopReason, ToolResultMessage, Usage};
+use swink_agent_policies::{BudgetPolicy, MaxTurnsPolicy};
 
 use crate::score::{Score, Verdict};
 
@@ -104,15 +105,42 @@ pub struct BudgetConstraints {
     /// Maximum allowed cost in dollars.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_cost: Option<f64>,
-    /// Maximum allowed total tokens (input + output).
+    /// Maximum allowed input tokens.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_tokens: Option<u64>,
+    pub max_input: Option<u64>,
+    /// Maximum allowed output tokens.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_output: Option<u64>,
     /// Maximum allowed number of turns.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_turns: Option<usize>,
-    /// Maximum allowed wall-clock duration.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_duration: Option<Duration>,
+}
+
+impl BudgetConstraints {
+    /// Convert budget constraints into loop policies for agent construction.
+    #[must_use]
+    pub fn to_policies(&self) -> (Option<BudgetPolicy>, Option<MaxTurnsPolicy>) {
+        let budget_policy =
+            if self.max_cost.is_none() && self.max_input.is_none() && self.max_output.is_none() {
+                None
+            } else {
+                let mut policy = BudgetPolicy::new();
+                if let Some(max_cost) = self.max_cost {
+                    policy = policy.max_cost(max_cost);
+                }
+                if let Some(max_input) = self.max_input {
+                    policy = policy.max_input(max_input);
+                }
+                if let Some(max_output) = self.max_output {
+                    policy = policy.max_output(max_output);
+                }
+                Some(policy)
+            };
+
+        let max_turns_policy = self.max_turns.map(MaxTurnsPolicy::new);
+
+        (budget_policy, max_turns_policy)
+    }
 }
 
 // ─── Eval Case & Set ────────────────────────────────────────────────────────
@@ -219,4 +247,117 @@ pub struct EvalSummary {
     pub total_usage: Usage,
     /// Total wall-clock duration across all cases.
     pub total_duration: Duration,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use swink_agent::{Cost, PolicyContext, PolicyVerdict, PreTurnPolicy, SessionState, Usage};
+
+    fn make_ctx<'a>(turn_index: usize, usage: &'a Usage, cost: &'a Cost) -> PolicyContext<'a> {
+        let state = Box::leak(Box::new(SessionState::new()));
+        PolicyContext {
+            turn_index,
+            accumulated_usage: usage,
+            accumulated_cost: cost,
+            message_count: 0,
+            overflow_signal: false,
+            new_messages: &[],
+            state,
+        }
+    }
+
+    #[test]
+    fn budget_constraints_to_policies_none_when_unset() {
+        let constraints = BudgetConstraints {
+            max_cost: None,
+            max_input: None,
+            max_output: None,
+            max_turns: None,
+        };
+
+        let (budget_policy, max_turns_policy) = constraints.to_policies();
+
+        assert!(budget_policy.is_none());
+        assert!(max_turns_policy.is_none());
+    }
+
+    #[test]
+    fn budget_constraints_to_policies_builds_budget_only_for_cost() {
+        let constraints = BudgetConstraints {
+            max_cost: Some(1.0),
+            max_input: None,
+            max_output: None,
+            max_turns: None,
+        };
+
+        let (budget_policy, max_turns_policy) = constraints.to_policies();
+        let usage = Usage::default();
+        let cost = Cost {
+            total: 1.0,
+            ..Default::default()
+        };
+        let ctx = make_ctx(0, &usage, &cost);
+
+        assert!(matches!(
+            PreTurnPolicy::evaluate(&budget_policy.unwrap(), &ctx),
+            PolicyVerdict::Stop(_)
+        ));
+        assert!(max_turns_policy.is_none());
+    }
+
+    #[test]
+    fn budget_constraints_to_policies_builds_budget_only_for_input_output() {
+        let constraints = BudgetConstraints {
+            max_cost: None,
+            max_input: Some(10),
+            max_output: Some(20),
+            max_turns: None,
+        };
+
+        let (budget_policy, max_turns_policy) = constraints.to_policies();
+        let usage = Usage {
+            input: 10,
+            output: 20,
+            total: 30,
+            ..Default::default()
+        };
+        let cost = Cost::default();
+        let ctx = make_ctx(0, &usage, &cost);
+
+        assert!(matches!(
+            PreTurnPolicy::evaluate(&budget_policy.unwrap(), &ctx),
+            PolicyVerdict::Stop(_)
+        ));
+        assert!(max_turns_policy.is_none());
+    }
+
+    #[test]
+    fn budget_constraints_to_policies_builds_both_policies_when_needed() {
+        let constraints = BudgetConstraints {
+            max_cost: Some(2.0),
+            max_input: None,
+            max_output: None,
+            max_turns: Some(3),
+        };
+
+        let (budget_policy, max_turns_policy) = constraints.to_policies();
+        let usage = Usage::default();
+        let cost = Cost {
+            total: 2.0,
+            ..Default::default()
+        };
+        let budget_ctx = make_ctx(0, &usage, &cost);
+        let turn_cost = Cost::default();
+        let turn_ctx = make_ctx(3, &usage, &turn_cost);
+
+        assert!(matches!(
+            PreTurnPolicy::evaluate(&budget_policy.unwrap(), &budget_ctx),
+            PolicyVerdict::Stop(_)
+        ));
+        assert!(matches!(
+            PreTurnPolicy::evaluate(&max_turns_policy.unwrap(), &turn_ctx),
+            PolicyVerdict::Stop(_)
+        ));
+    }
 }

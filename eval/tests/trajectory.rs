@@ -9,8 +9,7 @@ use serde_json::json;
 use swink_agent::{
     AgentEvent, AssistantMessage, ContentBlock, Cost, ModelSpec, StopReason, TurnSnapshot, Usage,
 };
-use swink_agent_eval::{BudgetGuard, TrajectoryCollector};
-use tokio_util::sync::CancellationToken;
+use swink_agent_eval::TrajectoryCollector;
 
 /// Build a minimal `AssistantMessage` with optional text content and tool call blocks.
 fn assistant_msg(
@@ -281,71 +280,4 @@ async fn us1_text_only_response_captured() {
         invocation.final_response.as_deref(),
         Some("The answer is 42.")
     );
-}
-
-/// `BudgetGuard` cancels on cost breach, but invocation trace is still complete.
-#[tokio::test]
-async fn us1_budget_guard_cancels_on_breach() {
-    let cancel = CancellationToken::new();
-    let guard = BudgetGuard::new(cancel.clone()).with_max_cost(0.005);
-
-    let events = vec![
-        AgentEvent::AgentStart,
-        AgentEvent::BeforeLlmCall {
-            system_prompt: "test".to_string(),
-            messages: vec![],
-            model: ModelSpec::new("test", "test-model"),
-        },
-        AgentEvent::TurnStart,
-        AgentEvent::ToolExecutionStart {
-            id: "c1".to_string(),
-            name: "expensive_tool".to_string(),
-            arguments: json!({}),
-        },
-        AgentEvent::TurnEnd {
-            assistant_message: assistant_msg(
-                None,
-                &[("c1", "expensive_tool", json!({}))],
-                StopReason::ToolUse,
-            ),
-            tool_results: vec![tool_result("c1", "done")],
-            reason: swink_agent::TurnEndReason::ToolsExecuted,
-            snapshot: empty_snapshot(),
-        },
-        AgentEvent::AgentEnd {
-            messages: Arc::new(vec![]),
-        },
-    ];
-
-    let invocation =
-        TrajectoryCollector::collect_with_guard(stream::iter(events), Some(guard)).await;
-
-    // Token should be cancelled because cost (0.01) > max_cost (0.005)
-    assert!(cancel.is_cancelled());
-    // But invocation trace is still complete
-    assert_eq!(invocation.turns.len(), 1);
-    assert_eq!(invocation.turns[0].tool_calls.len(), 1);
-}
-
-/// `BudgetGuard::from_case` returns `None` when no budget constraints.
-#[tokio::test]
-async fn us1_budget_guard_from_case_none_without_constraints() {
-    use swink_agent_eval::EvalCase;
-
-    let case = EvalCase {
-        id: "test".to_string(),
-        name: "Test".to_string(),
-        description: None,
-        system_prompt: "test".to_string(),
-        user_messages: vec!["test".to_string()],
-        expected_trajectory: None,
-        expected_response: None,
-        budget: None,
-        evaluators: vec![],
-        metadata: serde_json::Value::Null,
-    };
-
-    let cancel = CancellationToken::new();
-    let guard = BudgetGuard::from_case(&case, cancel);
-    assert!(guard.is_none());
 }

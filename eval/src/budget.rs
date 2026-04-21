@@ -1,13 +1,13 @@
 //! Budget governance evaluator.
 //!
-//! Checks that an agent run stays within defined cost, token, turn,
-//! and duration constraints.
+//! Checks that an agent run stays within defined cost, token, and turn
+//! constraints.
 
 use crate::evaluator::Evaluator;
 use crate::score::Score;
 use crate::types::{EvalCase, EvalMetricResult, Invocation};
 
-/// Evaluator that checks cost, token, turn, and duration budgets.
+/// Evaluator that checks cost, token, and turn budgets.
 ///
 /// Returns `None` when the case has no `budget` constraints defined.
 pub struct BudgetEvaluator;
@@ -30,12 +30,21 @@ impl Evaluator for BudgetEvaluator {
             ));
         }
 
-        if let Some(max_tokens) = budget.max_tokens
-            && invocation.total_usage.total > max_tokens
+        if let Some(max_input) = budget.max_input
+            && invocation.total_usage.input > max_input
         {
             violations.push(format!(
-                "tokens {} exceeded max {}",
-                invocation.total_usage.total, max_tokens
+                "input tokens {} exceeded max {}",
+                invocation.total_usage.input, max_input
+            ));
+        }
+
+        if let Some(max_output) = budget.max_output
+            && invocation.total_usage.output > max_output
+        {
+            violations.push(format!(
+                "output tokens {} exceeded max {}",
+                invocation.total_usage.output, max_output
             ));
         }
 
@@ -46,15 +55,6 @@ impl Evaluator for BudgetEvaluator {
                 "turns {} exceeded max {}",
                 invocation.turns.len(),
                 max_turns
-            ));
-        }
-
-        if let Some(max_duration) = budget.max_duration
-            && invocation.total_duration > max_duration
-        {
-            violations.push(format!(
-                "duration {:?} exceeded max {:?}",
-                invocation.total_duration, max_duration
             ));
         }
 
