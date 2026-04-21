@@ -35,6 +35,16 @@ pub fn storage_err(e: impl Error + Send + Sync + 'static) -> ArtifactError {
     ArtifactError::Storage(Box::new(e))
 }
 
+fn missing_content_err(session_id: &str, name: &str, version: u32, path: &Path) -> ArtifactError {
+    storage_err(std::io::Error::new(
+        std::io::ErrorKind::InvalidData,
+        format!(
+            "artifact '{name}' in session '{session_id}' metadata references missing content for version {version}: {}",
+            path.display()
+        ),
+    ))
+}
+
 /// Canonicalize `root`, creating it first if it does not already exist.
 ///
 /// This returns an absolute, symlink-free path so later operations can prove
@@ -383,7 +393,12 @@ impl ArtifactStore for FileArtifactStore {
                     version = record.version,
                     "content file missing"
                 );
-                return Ok(None);
+                return Err(missing_content_err(
+                    session_id,
+                    name,
+                    record.version,
+                    &content_path,
+                ));
             }
             Err(e) => return Err(storage_err(e)),
         };
@@ -428,7 +443,12 @@ impl ArtifactStore for FileArtifactStore {
             Ok(bytes) => bytes,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 tracing::debug!(session_id, name, version, "content file missing");
-                return Ok(None);
+                return Err(missing_content_err(
+                    session_id,
+                    name,
+                    version,
+                    &content_path,
+                ));
             }
             Err(e) => return Err(storage_err(e)),
         };
@@ -487,6 +507,7 @@ impl ArtifactStore for FileArtifactStore {
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
+    use std::io::ErrorKind;
     use std::sync::Arc;
     use std::time::Duration;
 
@@ -494,7 +515,7 @@ mod tests {
     use tokio::time::sleep;
 
     use super::FileArtifactStore;
-    use swink_agent::{ArtifactData, ArtifactStore};
+    use swink_agent::{ArtifactData, ArtifactError, ArtifactStore};
 
     fn text_data(content: &str) -> ArtifactData {
         ArtifactData {
@@ -502,6 +523,21 @@ mod tests {
             content_type: "text/plain".to_string(),
             metadata: HashMap::new(),
         }
+    }
+
+    fn assert_invalid_data_storage_error(err: ArtifactError, expected_snippet: &str) {
+        let ArtifactError::Storage(source) = err else {
+            panic!("expected storage error, got {err:?}");
+        };
+        let io = source
+            .downcast_ref::<std::io::Error>()
+            .expect("storage error should wrap std::io::Error");
+        assert_eq!(io.kind(), ErrorKind::InvalidData);
+        assert!(
+            io.to_string().contains(expected_snippet),
+            "expected error message to contain '{expected_snippet}', got '{}'",
+            io
+        );
     }
 
     #[tokio::test]
@@ -546,5 +582,47 @@ mod tests {
                 .is_none(),
             "artifact should be deleted once the lock is released"
         );
+    }
+
+    #[tokio::test]
+    async fn load_returns_invalid_data_when_latest_content_file_is_missing() {
+        let tmpdir = tempfile::TempDir::new().expect("tempdir");
+        let store = FileArtifactStore::new(tmpdir.path());
+        store
+            .save("s1", "report.md", text_data("v1"))
+            .await
+            .expect("save should succeed");
+
+        let content_path = store.version_path("s1", "report.md", 1);
+        tokio::fs::remove_file(&content_path)
+            .await
+            .expect("content file should be removable");
+
+        let err = store
+            .load("s1", "report.md")
+            .await
+            .expect_err("missing content should be surfaced as corruption");
+        assert_invalid_data_storage_error(err, "metadata references missing content");
+    }
+
+    #[tokio::test]
+    async fn load_version_returns_invalid_data_when_content_file_is_missing() {
+        let tmpdir = tempfile::TempDir::new().expect("tempdir");
+        let store = FileArtifactStore::new(tmpdir.path());
+        store
+            .save("s1", "report.md", text_data("v1"))
+            .await
+            .expect("save should succeed");
+
+        let content_path = store.version_path("s1", "report.md", 1);
+        tokio::fs::remove_file(&content_path)
+            .await
+            .expect("content file should be removable");
+
+        let err = store
+            .load_version("s1", "report.md", 1)
+            .await
+            .expect_err("missing content should be surfaced as corruption");
+        assert_invalid_data_storage_error(err, "metadata references missing content");
     }
 }
