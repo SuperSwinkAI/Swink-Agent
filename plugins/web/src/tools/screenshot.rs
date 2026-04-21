@@ -10,6 +10,29 @@ use swink_agent::{AgentTool, AgentToolResult, ContentBlock, ImageSource, ToolFut
 
 use crate::playwright::{PlaywrightBridge, PlaywrightError, Viewport};
 
+enum OperationOutcome<T> {
+    Completed(T),
+    Cancelled,
+    TimedOut,
+}
+
+async fn await_with_cancellation<F, T>(
+    cancellation_token: &CancellationToken,
+    timeout: Duration,
+    future: F,
+) -> OperationOutcome<T>
+where
+    F: std::future::Future<Output = T>,
+{
+    tokio::select! {
+        result = tokio::time::timeout(timeout, future) => match result {
+            Ok(value) => OperationOutcome::Completed(value),
+            Err(_) => OperationOutcome::TimedOut,
+        },
+        () = cancellation_token.cancelled() => OperationOutcome::Cancelled,
+    }
+}
+
 /// Tool for taking screenshots of web pages.
 ///
 /// Lazily starts a Playwright bridge subprocess on first use and reuses it for
@@ -72,7 +95,7 @@ impl AgentTool for ScreenshotTool {
     ) -> ToolFuture<'_> {
         Box::pin(async move {
             if cancellation_token.is_cancelled() {
-                return AgentToolResult::error("cancelled");
+                return AgentToolResult::error("Request cancelled");
             }
 
             // Parse parameters.
@@ -93,9 +116,21 @@ impl AgentTool for ScreenshotTool {
             let viewport = Some(Viewport { width, height });
 
             // Acquire bridge lock and lazily start if needed.
-            let mut guard = self.bridge.lock().await;
+            let mut guard = tokio::select! {
+                guard = self.bridge.lock() => guard,
+                () = cancellation_token.cancelled() => {
+                    return AgentToolResult::error("Request cancelled");
+                }
+            };
             if guard.is_none() {
-                match PlaywrightBridge::start(self.playwright_path.as_deref()).await {
+                let bridge_start = tokio::select! {
+                    result = PlaywrightBridge::start(self.playwright_path.as_deref()) => result,
+                    () = cancellation_token.cancelled() => {
+                        return AgentToolResult::error("Request cancelled");
+                    }
+                };
+
+                match bridge_start {
                     Ok(b) => *guard = Some(b),
                     Err(PlaywrightError::NotInstalled) => {
                         return AgentToolResult::error(
@@ -109,14 +144,18 @@ impl AgentTool for ScreenshotTool {
                 }
             }
 
-            let bridge = guard.as_mut().expect("bridge initialized above");
+            let operation = {
+                let bridge = guard.as_mut().expect("bridge initialized above");
+                await_with_cancellation(
+                    &cancellation_token,
+                    self.timeout,
+                    bridge.screenshot(&url, viewport),
+                )
+                .await
+            };
 
-            // Apply tool-level timeout.
-            let result =
-                tokio::time::timeout(self.timeout, bridge.screenshot(&url, viewport)).await;
-
-            match result {
-                Ok(Ok(base64_data)) => AgentToolResult {
+            match operation {
+                OperationOutcome::Completed(Ok(base64_data)) => AgentToolResult {
                     content: vec![ContentBlock::Image {
                         source: ImageSource::Base64 {
                             media_type: "image/png".into(),
@@ -131,12 +170,23 @@ impl AgentTool for ScreenshotTool {
                     is_error: false,
                     transfer_signal: None,
                 },
-                Ok(Err(PlaywrightError::NotInstalled)) => AgentToolResult::error(
-                    "Playwright/Node.js not found. Install with:\n\
+                OperationOutcome::Completed(Err(PlaywrightError::NotInstalled)) => {
+                    AgentToolResult::error(
+                        "Playwright/Node.js not found. Install with:\n\
                      npm install -g playwright && npx playwright install chromium",
-                ),
-                Ok(Err(e)) => AgentToolResult::error(format!("Screenshot failed: {e}")),
-                Err(_) => {
+                    )
+                }
+                OperationOutcome::Completed(Err(e)) => {
+                    AgentToolResult::error(format!("Screenshot failed: {e}"))
+                }
+                OperationOutcome::Cancelled => {
+                    // Dropping the bridge avoids leaving an unread response on stdout after the
+                    // request was already written to the subprocess.
+                    *guard = None;
+                    AgentToolResult::error("Request cancelled")
+                }
+                OperationOutcome::TimedOut => {
+                    *guard = None;
                     AgentToolResult::error(format!("Screenshot timed out after {:?}", self.timeout))
                 }
             }
@@ -168,4 +218,38 @@ fn build_schema() -> Value {
         "required": ["url"],
         "additionalProperties": false
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::future::pending;
+    use std::time::Duration;
+
+    use tokio_util::sync::CancellationToken;
+
+    use super::{OperationOutcome, await_with_cancellation};
+
+    #[tokio::test]
+    async fn await_with_cancellation_returns_cancelled_before_completion() {
+        let cancellation_token = CancellationToken::new();
+        cancellation_token.cancel();
+
+        let outcome =
+            await_with_cancellation(&cancellation_token, Duration::from_secs(1), pending::<()>())
+                .await;
+
+        assert!(matches!(outcome, OperationOutcome::Cancelled));
+    }
+
+    #[tokio::test]
+    async fn await_with_cancellation_returns_timed_out_for_slow_operations() {
+        let outcome = await_with_cancellation(
+            &CancellationToken::new(),
+            Duration::from_millis(10),
+            tokio::time::sleep(Duration::from_millis(50)),
+        )
+        .await;
+
+        assert!(matches!(outcome, OperationOutcome::TimedOut));
+    }
 }
