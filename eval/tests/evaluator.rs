@@ -65,6 +65,18 @@ impl Evaluator for ReturnsNone {
     }
 }
 
+struct Panics;
+
+impl Evaluator for Panics {
+    fn name(&self) -> &'static str {
+        "panics"
+    }
+
+    fn evaluate(&self, _case: &EvalCase, _invocation: &Invocation) -> Option<EvalMetricResult> {
+        panic!("deliberate evaluator panic");
+    }
+}
+
 #[test]
 fn registry_with_defaults_has_four_evaluators() {
     let registry = EvaluatorRegistry::with_defaults();
@@ -113,6 +125,39 @@ fn evaluator_returning_none_excluded() {
     assert!(names.contains(&"always_pass"));
     assert!(names.contains(&"always_fail"));
     assert!(!names.contains(&"returns_none"));
+}
+
+#[test]
+fn panicking_evaluator_becomes_failure_and_other_evaluators_continue() {
+    let mut registry = EvaluatorRegistry::new();
+    registry.register(Panics);
+    registry.register(AlwaysPass);
+
+    let invocation = common::mock_invocation(&[], None, 0.0, 0);
+    let case = minimal_case();
+    let results = registry.evaluate(&case, &invocation);
+
+    assert_eq!(results.len(), 2);
+
+    let panic_metric = results
+        .iter()
+        .find(|result| result.evaluator_name == "panics")
+        .expect("panicking evaluator should produce a failure metric");
+    assert_eq!(panic_metric.score.verdict(), Score::fail().verdict());
+    assert!(
+        panic_metric
+            .details
+            .as_deref()
+            .is_some_and(|details| details.contains("deliberate evaluator panic")),
+        "panic metric should preserve the panic message"
+    );
+
+    assert!(
+        results
+            .iter()
+            .any(|result| result.evaluator_name == "always_pass"),
+        "later evaluators should still run after a panic"
+    );
 }
 
 #[test]
