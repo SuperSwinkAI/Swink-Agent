@@ -9,7 +9,7 @@ Implement the tool execution visibility layer and resource monitoring components
 
 ## Technical Context
 
-**Language/Version**: Rust 1.88 (edition 2024)
+**Language/Version**: Rust latest stable (edition 2024)
 **Primary Dependencies**: `ratatui` 0.30, `crossterm` 0.29 (event-stream), `syntect` 5 (syntax highlighting for code blocks), `swink-agent` (core types — `Agent`, `ToolApproval`, `ToolApprovalRequest`, event system)
 **Storage**: N/A (all state is in-memory per session)
 **Testing**: `cargo test -p swink-agent-tui`; unit tests for tool panel lifecycle, diff computation, format helpers, conversation scroll/collapse behavior; integration tests in `tui/tests/ac_tui.rs`

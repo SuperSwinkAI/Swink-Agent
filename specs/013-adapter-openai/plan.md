@@ -9,7 +9,7 @@ Implement `OpenAiStreamFn`, a `StreamFn` adapter for any OpenAI-compatible chat 
 
 ## Technical Context
 
-**Language/Version**: Rust 1.88 (edition 2024)
+**Language/Version**: Rust latest stable (edition 2024)
 **Primary Dependencies**: `swink-agent` (core), `reqwest`, `futures`, `bytes`, `serde`, `serde_json`, `tokio`, `tokio-util`, `tracing`, `uuid`
 **Storage**: N/A
 **Testing**: `cargo test -p swink-agent-adapters`; unit tests in module, live integration tests (`#[ignore]`)

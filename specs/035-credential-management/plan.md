@@ -9,7 +9,7 @@ Add pluggable credential management to the Swink Agent framework: tools declare 
 
 ## Technical Context
 
-**Language/Version**: Rust 1.88, edition 2024
+**Language/Version**: Rust latest stable, edition 2024
 **Primary Dependencies**: `swink-agent` (core types/traits), `reqwest` (OAuth2 refresh HTTP), `chrono` (expiry timestamps), `serde`/`serde_json` (credential serialization), `tokio` (async runtime), `futures` (Shared combinator for dedup), `thiserror` (error types), `tracing` (diagnostics)
 **Storage**: In-memory only (`Arc<RwLock<HashMap>>>`). No persistent storage built-in.
 **Testing**: `cargo test --workspace`, `wiremock` for mocking OAuth2 token endpoints

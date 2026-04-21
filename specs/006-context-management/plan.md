@@ -16,7 +16,7 @@ Existing implementation is in `src/context.rs`, `src/context_transformer.rs`, `s
 
 ## Technical Context
 
-**Language/Version**: Rust 1.88 (edition 2024)
+**Language/Version**: Rust latest stable (edition 2024)
 **Primary Dependencies**: tokio (async runtime), serde_json (Value for tool arguments/extensions), tracing
 **Storage**: N/A (in-memory `InMemoryVersionStore`; pluggable `ContextVersionStore` trait for persistence)
 **Testing**: `cargo test --workspace` -- unit tests inline in each source module

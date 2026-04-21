@@ -9,7 +9,7 @@ Implement the TUI command system (hash and slash commands), external editor inte
 
 ## Technical Context
 
-**Language/Version**: Rust 1.88 (edition 2024)
+**Language/Version**: Rust latest stable (edition 2024)
 **Primary Dependencies**: `ratatui` 0.30, `crossterm` 0.29 (event-stream), `arboard` (clipboard), `swink-agent` (core types), `swink-agent-memory` (`SessionStore`, `JsonlSessionStore`, `SessionMeta`)
 **Storage**: JSONL files via `swink-agent-memory` `JsonlSessionStore` (line 1 = `SessionMeta`, lines 2+ = `AgentMessage`)
 **Testing**: `cargo test -p swink-agent-tui`; unit tests for command parsing, editor resolution, session round-trip, clipboard abstraction

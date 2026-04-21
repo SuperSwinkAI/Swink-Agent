@@ -9,7 +9,7 @@ Evaluation orchestration pipeline within the `swink-agent-eval` crate. Provides 
 
 ## Technical Context
 
-**Language/Version**: Rust 1.88 (edition 2024)
+**Language/Version**: Rust latest stable (edition 2024)
 **Primary Dependencies**: `swink-agent` (core), `serde`/`serde_json`, `tokio`/`tokio-util`, `futures`, `sha2`, `regex`, `thiserror`, `tracing`, `uuid`; optional `serde_yaml` via `yaml` feature gate
 **Storage**: Local filesystem via JSON files (`FsEvalStore`); optional YAML input via feature gate
 **Testing**: `cargo test -p swink-agent-eval` + `tempfile`, `pretty_assertions`
@@ -34,7 +34,7 @@ Evaluation orchestration pipeline within the `swink-agent-eval` crate. Provides 
 
 **Architectural Constraints**:
 - Crate count: ✅ No new crate — uses existing `eval/` (7th workspace member)
-- MSRV: ✅ 1.88, edition 2024
+- MSRV: ✅ latest stable, edition 2024
 - Concurrency: ✅ Sequential case execution; `BudgetGuard` uses `CancellationToken` for abort
 - Events: ✅ `TrajectoryCollector` observes events outward-only via `AgentEvent` stream
 - No global mutable state: ✅ All shared state in `Arc`; no global mutables

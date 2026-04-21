@@ -16,11 +16,11 @@ use swink_agent_mcp::{
 use tokio::sync::mpsc::unbounded_channel;
 use tokio::sync::oneshot;
 
-/// T039: Drop McpManager cleans up without hang or panic.
+/// T039: Drop `McpManager` cleans up without hang or panic.
 ///
 /// Uses an in-process mock connection (no real subprocess), so we verify
 /// the Drop impl runs without issues. For real subprocess cleanup,
-/// rmcp's ChildWithCleanup handles SIGKILL on drop.
+/// rmcp's `ChildWithCleanup` handles SIGKILL on drop.
 #[tokio::test]
 async fn drop_manager_cleans_up_without_panic() {
     let conn = common::spawn_mock_connection("lifecycle-test", None, vec![]).await;
@@ -33,7 +33,7 @@ async fn drop_manager_cleans_up_without_panic() {
     drop(manager);
 }
 
-/// T040: call_tool on a disconnected McpConnection returns an error immediately.
+/// T040: `call_tool` on a disconnected `McpConnection` returns an error immediately.
 ///
 /// Verifies graceful degradation when MCP server is unavailable.
 #[tokio::test]
@@ -251,7 +251,7 @@ async fn repeated_connect_all_replaces_prior_live_connections() {
 }
 
 /// T042: Background monitor detects transport closure, updates status to
-/// Disconnected, and emits McpServerDisconnected on the event channel.
+/// Disconnected, and emits `McpServerDisconnected` on the event channel.
 ///
 /// We simulate a crash by properly cancelling the server's `RunningService`,
 /// which drops its side of the duplex transport and causes the client to see
@@ -510,7 +510,7 @@ async fn connected_event_emitted_after_handshake() {
     }
 }
 
-/// Issue #611: `McpToolsDiscovered` is emitted after the list_tools round trip
+/// Issue #611: `McpToolsDiscovered` is emitted after the `list_tools` round trip
 /// and carries the discovered tool count.
 #[tokio::test]
 async fn tools_discovered_event_emitted_after_discovery() {
@@ -736,10 +736,10 @@ async fn tool_call_completed_event_reports_error_on_failure() {
     }
 }
 
-/// T043: McpTool::execute() on a disconnected connection returns is_error=true.
+/// T043: `McpTool::execute()` on a disconnected connection returns `is_error=true`.
 ///
-/// Verifies that the execute() path handles disconnected connections by
-/// returning an error AgentToolResult, not panicking or hanging.
+/// Verifies that the `execute()` path handles disconnected connections by
+/// returning an error `AgentToolResult`, not panicking or hanging.
 #[tokio::test]
 async fn mcp_tool_execute_on_disconnected_returns_error_result() {
     let mock_cfg = common::MockServerConfig::new(vec![]);

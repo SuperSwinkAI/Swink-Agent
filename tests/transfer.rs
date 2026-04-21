@@ -108,11 +108,11 @@ impl MockCancellationIgnoringTool {
 }
 
 impl AgentTool for MockCancellationIgnoringTool {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "blocking_tool"
     }
 
-    fn label(&self) -> &str {
+    fn label(&self) -> &'static str {
         "blocking_tool"
     }
 
@@ -556,7 +556,7 @@ async fn transfer_to_nonexistent_agent_produces_error_and_loop_continues() {
 
 // ─── Transfer chain safety enforcement (issue #472) ────────────────────────
 
-/// Build an Agent with the transfer tool and a known agent_name for chain tracking.
+/// Build an Agent with the transfer tool and a known `agent_name` for chain tracking.
 fn make_named_transfer_agent(
     name: &str,
     stream_fn: Arc<MockStreamFn>,
@@ -565,7 +565,7 @@ fn make_named_transfer_agent(
     make_named_transfer_agent_with_chain(name, stream_fn, registry, None)
 }
 
-/// Build an Agent with a known agent_name and optional carried transfer chain.
+/// Build an Agent with a known `agent_name` and optional carried transfer chain.
 fn make_named_transfer_agent_with_chain(
     name: &str,
     stream_fn: Arc<MockStreamFn>,

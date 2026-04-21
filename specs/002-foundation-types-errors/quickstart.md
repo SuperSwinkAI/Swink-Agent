@@ -5,7 +5,7 @@
 ## Prerequisites
 
 - Feature 001 (workspace scaffold) complete
-- Rust 1.88 toolchain
+- Rust latest stable toolchain
 
 ## Build & Test
 

@@ -5,7 +5,7 @@
 ## Prerequisites
 
 - Rust toolchain (rustup installed — the project's `rust-toolchain.toml`
-  will auto-select Rust 1.88)
+  will auto-select Rust latest stable)
 - Git
 
 ## Build

@@ -39,8 +39,8 @@ body:
       description: |
         Run `rustc --version` and `cargo --version` and paste the output here.
       placeholder: |
-        rustc 1.88.0 (...)
-        cargo 1.88.0 (...)
+        rustc 1.95.0 (...)
+        cargo 1.95.0 (...)
         OS: macOS 15 / Ubuntu 24.04 / ...
     validations:
       required: true

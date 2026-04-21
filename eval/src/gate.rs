@@ -194,7 +194,7 @@ mod tests {
 
     #[test]
     fn duration_exceeded() {
-        let result = make_result(10, 0, 0.5, Duration::from_secs(60));
+        let result = make_result(10, 0, 0.5, Duration::from_mins(1));
         let config = GateConfig::new().with_max_duration(Duration::from_secs(30));
         let gate = check_gate(&result, &config);
         assert!(!gate.passed);

@@ -4,7 +4,7 @@
 
 ## Prerequisites
 
-- Rust 1.88+ (edition 2024)
+- Rust latest stable (edition 2024)
 - `swink-agent` and `swink-agent-memory` crates available as path dependencies
 - Terminal emulator with clipboard support (macOS pasteboard, Linux X11/Wayland, Windows)
 - An editor binary available (`$EDITOR`, `$VISUAL`, or `vi`)

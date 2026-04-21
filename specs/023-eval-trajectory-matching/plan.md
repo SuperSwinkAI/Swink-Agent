@@ -9,7 +9,7 @@ Implement the `swink-agent-eval` crate's trajectory collection, golden-path comp
 
 ## Technical Context
 
-**Language/Version**: Rust 1.88 (edition 2024)
+**Language/Version**: Rust latest stable (edition 2024)
 **Primary Dependencies**: `swink-agent` (core types: `AgentEvent`, `ContentBlock`, `AssistantMessage`, `Cost`, `Usage`, `ModelSpec`, `StopReason`), `serde`/`serde_json` (serialization), `tokio`/`tokio-util` (async runtime, `CancellationToken`), `futures` (stream combinators), `regex` (response pattern matching), `sha2` (audit hashes), `thiserror` (error types), `tracing` (diagnostics), `uuid` (IDs)
 **Storage**: N/A (in-memory types; `FsEvalStore` for optional JSON persistence — covered by spec 024)
 **Testing**: `cargo test -p swink-agent-eval` + integration tests in `eval/tests/`
@@ -32,7 +32,7 @@ Implement the `swink-agent-eval` crate's trajectory collection, golden-path comp
 | V. Provider Agnosticism | PASS | Consumes `AgentEvent` stream — no provider-specific types. |
 | VI. Safety & Correctness | PASS | `#[forbid(unsafe_code)]`, clippy pedantic/nursery enforced. Custom fn panics handled via `catch_unwind` (in response matcher — see gap below). |
 | Crate count | PASS | `eval` is one of the seven permitted workspace members. |
-| MSRV | PASS | 1.88, edition 2024. |
+| MSRV | PASS | latest stable, edition 2024. |
 
 **Gate result: ALL PASS** — no violations.
 

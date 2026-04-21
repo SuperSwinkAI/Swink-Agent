@@ -1,6 +1,6 @@
 //! Tool filter tests for MCP integration (T030-T034).
 //!
-//! Note: The mock server (MockMcpServer) only exposes a single hardcoded tool
+//! Note: The mock server (`MockMcpServer`) only exposes a single hardcoded tool
 //! named "echo" (via rmcp's `#[tool]` macro). All filter tests operate against
 //! this one tool. Tests for allow-listing 2-of-5 or denying 1-of-5 are
 //! semantically verified through allow/deny logic; in practice with the mock

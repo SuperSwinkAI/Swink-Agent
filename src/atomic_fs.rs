@@ -176,9 +176,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let target = dir.path().join("fail.txt");
 
-        let err = atomic_write(&target, |_w| {
-            Err(io::Error::new(io::ErrorKind::Other, "boom"))
-        });
+        let err = atomic_write(&target, |_w| Err(io::Error::other("boom")));
 
         assert!(err.is_err());
         // No file at target

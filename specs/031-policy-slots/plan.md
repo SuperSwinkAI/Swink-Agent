@@ -9,7 +9,7 @@ Replace five scattered single-purpose hook fields on `AgentLoopConfig` (budget_g
 
 ## Technical Context
 
-**Language/Version**: Rust 1.88 (edition 2024)
+**Language/Version**: Rust latest stable (edition 2024)
 **Primary Dependencies**: `tokio` (async runtime), `tokio-util` (CancellationToken), `serde_json` (Value for arguments), `tracing` (debug/warn logging), `std::panic::catch_unwind` (panic isolation)
 **Storage**: N/A (in-memory policy evaluation; CheckpointPolicy delegates to existing `CheckpointStore` trait)
 **Testing**: `cargo test --workspace` — unit tests in each source module, integration tests in `tests/`

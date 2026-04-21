@@ -132,8 +132,7 @@ async fn aborted_stop_emits_turn_end_reason_aborted() {
             assert_eq!(
                 *reason,
                 TurnEndReason::Aborted,
-                "aborted stop should produce TurnEndReason::Aborted, not {:?}",
-                reason
+                "aborted stop should produce TurnEndReason::Aborted, not {reason:?}"
             );
         }
         _ => unreachable!(),
@@ -168,8 +167,7 @@ async fn error_stop_still_emits_turn_end_reason_error() {
             assert_eq!(
                 *reason,
                 TurnEndReason::Error,
-                "error stop should produce TurnEndReason::Error, not {:?}",
-                reason
+                "error stop should produce TurnEndReason::Error, not {reason:?}"
             );
         }
         _ => unreachable!(),
@@ -204,8 +202,7 @@ async fn normal_stop_emits_turn_end_reason_complete() {
             assert_eq!(
                 *reason,
                 TurnEndReason::Complete,
-                "normal stop should produce TurnEndReason::Complete, not {:?}",
-                reason
+                "normal stop should produce TurnEndReason::Complete, not {reason:?}"
             );
         }
         _ => unreachable!(),

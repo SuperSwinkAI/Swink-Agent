@@ -15,7 +15,7 @@ pub struct RateLimitPolicy {
 }
 
 impl RateLimitPolicy {
-    const WINDOW: Duration = Duration::from_secs(60);
+    const WINDOW: Duration = Duration::from_mins(1);
 
     pub fn new(state: Arc<Mutex<VecDeque<Instant>>>, rate_limit_rpm: u32) -> Self {
         Self {
@@ -149,11 +149,11 @@ mod tests {
             .unwrap()
             .front()
             .copied()
-            .and_then(|timestamp| timestamp.checked_add(Duration::from_secs(120)))
+            .and_then(|timestamp| timestamp.checked_add(Duration::from_mins(2)))
             .expect("timestamp + 120s should remain representable");
         {
             let mut timestamps = rl_state.lock().unwrap();
-            RateLimitPolicy::prune_expired(&mut timestamps, now, Duration::from_secs(60));
+            RateLimitPolicy::prune_expired(&mut timestamps, now, Duration::from_mins(1));
         }
 
         let policy = RateLimitPolicy::new(rl_state, 5);

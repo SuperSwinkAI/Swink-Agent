@@ -9,7 +9,7 @@ Implement the `swink-agent-local-llm` workspace crate providing on-device LLM in
 
 ## Technical Context
 
-**Language/Version**: Rust 1.88 (edition 2024)
+**Language/Version**: Rust latest stable (edition 2024)
 **Primary Dependencies**: `llama-cpp-2` (Rust bindings for llama.cpp, GGUF inference engine), `hf-hub` (HuggingFace model download with ETag/SHA verification), `tokio`, `tokio-stream`, `futures`, `serde`/`serde_json`, `thiserror`, `tracing`, `uuid`
 **Storage**: Model weights cached in `~/.cache/huggingface/hub/` (managed by `hf-hub`)
 **Testing**: `cargo test -p swink-agent-local-llm`; live tests (`--ignored`) for real inference requiring ~2.1 GB download

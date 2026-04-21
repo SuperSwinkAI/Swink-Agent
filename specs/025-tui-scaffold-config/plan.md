@@ -9,7 +9,7 @@ Build the TUI binary crate (`swink-agent-tui`) from scratch: terminal lifecycle 
 
 ## Technical Context
 
-**Language/Version**: Rust 1.88, edition 2024
+**Language/Version**: Rust latest stable, edition 2024
 **Primary Dependencies**: ratatui 0.30 (terminal UI framework), crossterm 0.29 (terminal control, event-stream feature), tokio (async runtime), toml 0.8 (config parsing), dirs 6 (platform-native config/data dirs), keyring 3 (OS keychain), thiserror (error types), tracing + tracing-subscriber + tracing-appender (file-based logging)
 **Storage**: TOML config file at `dirs::config_dir()/swink-agent/tui.toml`; OS keychain for credentials (macOS Keychain, Windows Credential Manager, Linux secret-service)
 **Testing**: `cargo test -p swink-agent-tui`, integration tests in `tui/tests/`
@@ -33,7 +33,7 @@ Build the TUI binary crate (`swink-agent-tui`) from scratch: terminal lifecycle 
 
 **Architectural Constraints**:
 - Crate count: TUI is the 7th workspace member — allowed by constitution. No additional crate needed.
-- MSRV 1.88, edition 2024 — consistent with workspace.
+- MSRV latest stable, edition 2024 — consistent with workspace.
 - Concurrency: Event loop is single-threaded (`tokio::select!`). Agent operations run on separate tasks.
 
 ## Project Structure

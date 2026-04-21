@@ -34,7 +34,7 @@ If you spam the tracker with agent-generated issues or PRs, your GitHub account 
 
 ## Prerequisites
 
-- **Rust 1.88+** (MSRV). Install via [rustup](https://rustup.rs).
+- **Rust 1.95+** (MSRV). Install via [rustup](https://rustup.rs).
 - Add required toolchain components:
   ```bash
   rustup component add clippy rustfmt

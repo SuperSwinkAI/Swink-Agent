@@ -1163,7 +1163,7 @@ mod tests {
         );
 
         // message_stop triggers Done
-        let (events, done) = process("message_stop", r#"{}"#, &mut state);
+        let (events, done) = process("message_stop", r"{}", &mut state);
         assert!(done);
         assert_eq!(events.len(), 1);
         match &events[0] {
@@ -1294,7 +1294,7 @@ mod tests {
             &mut state,
         );
 
-        let (events, done) = process("message_stop", r#"{}"#, &mut state);
+        let (events, done) = process("message_stop", r"{}", &mut state);
         assert!(done);
         match &events[0] {
             AssistantMessageEvent::Done { stop_reason, .. } => {
@@ -1321,7 +1321,7 @@ mod tests {
         );
 
         // message_stop should finalize both open blocks
-        let (events, done) = process("message_stop", r#"{}"#, &mut state);
+        let (events, done) = process("message_stop", r"{}", &mut state);
         assert!(done);
         // TextEnd + ToolCallEnd + Done = 3 events
         assert_eq!(events.len(), 3);
@@ -1380,7 +1380,7 @@ mod tests {
             r#"{"delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":20}}"#,
             &mut state,
         );
-        let (events, done) = process("message_stop", r#"{}"#, &mut state);
+        let (events, done) = process("message_stop", r"{}", &mut state);
         assert!(done);
         assert_eq!(events.len(), 1);
         assert!(matches!(

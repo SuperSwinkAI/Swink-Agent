@@ -9,7 +9,7 @@ The Agent struct is the stateful public API wrapper over the agent loop. It owns
 
 ## Technical Context
 
-**Language/Version**: Rust 1.88 (edition 2024)
+**Language/Version**: Rust latest stable (edition 2024)
 **Primary Dependencies**: tokio, tokio-util (CancellationToken), futures (Stream), serde_json (Value), tracing
 **Storage**: N/A (in-memory state; optional CheckpointStore trait for persistence)
 **Testing**: `cargo test --workspace` — unit tests in `tests/agent.rs`, `tests/agent_structured.rs`, `tests/agent_steering.rs`, `tests/agent_continuation.rs`, `tests/handle.rs`

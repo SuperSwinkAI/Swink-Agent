@@ -14,7 +14,7 @@ use serde_json::json;
 use swink_agent_mcp::{McpManager, McpServerConfig, McpTransport};
 
 /// T019: Connect to two mock servers with prefixes, verify tools are prefixed
-/// correctly (prefix_toolname).
+/// correctly (`prefix_toolname`).
 #[tokio::test]
 async fn two_servers_with_prefixes_produce_prefixed_tools() {
     let conn_a = common::spawn_mock_connection("server-a", Some("db"), vec![]).await;

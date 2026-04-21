@@ -9,7 +9,7 @@ Add agent-level handoff primitives to the core crate: a `TransferToAgentTool` th
 
 ## Technical Context
 
-**Language/Version**: Rust 1.88 (edition 2024)  
+**Language/Version**: Rust latest stable (edition 2024)  
 **Primary Dependencies**: `swink-agent` core types (`AgentTool`, `AgentRegistry`, `StopReason`, `AgentToolResult`, `AgentResult`), `serde`/`serde_json` (serialization), `schemars` (tool schema), `tokio-util` (CancellationToken)  
 **Storage**: N/A (in-memory only)  
 **Testing**: `cargo test -p swink-agent`  
@@ -34,7 +34,7 @@ Add agent-level handoff primitives to the core crate: a `TransferToAgentTool` th
 
 **Architectural Constraints**:
 - **Crate count**: No new crates. Feature lives in core (`swink-agent`).
-- **MSRV**: 1.88, edition 2024.
+- **MSRV**: latest stable, edition 2024.
 - **StopReason**: `Transfer` is a unit variant (no data) to preserve `Copy`. Transfer data lives in `AgentResult.transfer_signal`.
 
 ## Project Structure

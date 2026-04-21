@@ -185,7 +185,7 @@ mod tests {
 
     #[test]
     fn extract_readable_content_simple_article() {
-        let html = br#"
+        let html = br"
         <!DOCTYPE html>
         <html>
         <head><title>Test Article</title></head>
@@ -199,7 +199,7 @@ mod tests {
             <footer>Footer content here</footer>
         </body>
         </html>
-        "#;
+        ";
 
         let url = url::Url::parse("https://example.com/article").unwrap();
         let result = extract_readable_content(html, &url).unwrap();
@@ -228,7 +228,7 @@ mod tests {
 
     #[test]
     fn extract_readable_content_empty_title_becomes_none() {
-        let html = br#"
+        let html = br"
         <!DOCTYPE html>
         <html>
         <head><title></title></head>
@@ -240,7 +240,7 @@ mod tests {
             </article>
         </body>
         </html>
-        "#;
+        ";
 
         let url = url::Url::parse("https://example.com/no-title").unwrap();
         let result = extract_readable_content(html, &url).unwrap();
@@ -252,7 +252,7 @@ mod tests {
     #[test]
     fn text_length_counts_chars_not_bytes() {
         // Multibyte characters: text_length should be char count, not byte count.
-        let html = br#"
+        let html = br"
         <!DOCTYPE html>
         <html>
         <head><title>Unicode</title></head>
@@ -264,7 +264,7 @@ mod tests {
             </article>
         </body>
         </html>
-        "#;
+        ";
 
         let url = url::Url::parse("https://example.com/unicode").unwrap();
         let result = extract_readable_content(html, &url).unwrap();

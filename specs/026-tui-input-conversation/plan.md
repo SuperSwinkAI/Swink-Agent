@@ -9,7 +9,7 @@ Implement the two primary interactive surfaces of the TUI: a multi-line input ed
 
 ## Technical Context
 
-**Language/Version**: Rust 1.88 (edition 2024)
+**Language/Version**: Rust latest stable (edition 2024)
 **Primary Dependencies**: `ratatui` 0.30, `crossterm` 0.29 (event-stream), `syntect` 5 (syntax highlighting), `swink-agent` (core types)
 **Storage**: N/A (input history is per-session, in-memory)
 **Testing**: `cargo test -p swink-agent-tui`; unit tests for input editor operations, conversation scroll behavior, markdown parsing, syntax highlighting fallback
