@@ -172,14 +172,14 @@
 
 **Independent Test**: Case with `expected_tool_intent: "read config for project-alpha"`; agent calls with `{"path": "./project-alpha/config.toml"}`. Semantic matcher accepts; deterministic matcher would reject.
 
-- [ ] T057 [US6] Create `eval/src/semantic_tool_parameter.rs`: `SemanticToolParameterEvaluator { judge: Arc<dyn JudgeClient>, timeout: Duration }`. For each actual tool call, if `case.expected_tool_intent.tool_name` is set and doesn't match, skip that call (not Pass, not Fail). Otherwise prompt the judge with `{intent, tool_name, arguments}`, wrapping the call in `tokio::time::timeout(self.timeout, ...)`. Returns `None` when `case.expected_tool_intent.is_none()` (FR-012). Constructors mirror `SemanticToolSelectionEvaluator`: `new(judge)` defaults timeout to 5 min; `with_timeout(Duration)` override. Same outer-timeout → `Score::fail()` contract (FR-010, FR-014).
-- [ ] T058 [P] [US6] Acceptance test in `eval/tests/semantic_tool_parameter.rs`: intent satisfied by non-literal arguments → Pass (AS-6.1).
-- [ ] T059 [P] [US6] Acceptance test: no `expected_tool_intent` → `None` (AS-6.2).
-- [ ] T060 [US6] Edge case test: inner judge timeout → `Score::fail()` with timeout context, no hang (AS-6.3). `MockJudge` returns `JudgeError::Timeout`.
-- [ ] T060a [US6] Edge case test: outer `tokio::time::timeout` elapses — mirror T054a for `SemanticToolParameterEvaluator` using a `SlowMockJudge` and `with_timeout(Duration::from_millis(50))`. Verify prompt completion + `Score::fail()` details.
-- [ ] T061 [US6] Acceptance test: tool-name filter set, agent calls a different tool → targeted tool not present in trajectory → evaluator returns `None` (not Pass, not Fail) (AS-6.4).
-- [ ] T062 [US6] Acceptance test: tool-name filter set, agent calls both the target and other tools → only target is judged.
-- [ ] T063 [US6] Verify `cargo test -p swink-agent-eval --test semantic_tool_parameter` passes.
+- [x] T057 [US6] Create `eval/src/semantic_tool_parameter.rs`: `SemanticToolParameterEvaluator { judge: Arc<dyn JudgeClient>, timeout: Duration }`. For each actual tool call, if `case.expected_tool_intent.tool_name` is set and doesn't match, skip that call (not Pass, not Fail). Otherwise prompt the judge with `{intent, tool_name, arguments}`, wrapping the call in `tokio::time::timeout(self.timeout, ...)`. Returns `None` when `case.expected_tool_intent.is_none()` (FR-012). Constructors mirror `SemanticToolSelectionEvaluator`: `new(judge)` defaults timeout to 5 min; `with_timeout(Duration)` override. Same outer-timeout → `Score::fail()` contract (FR-010, FR-014).
+- [x] T058 [P] [US6] Acceptance test in `eval/tests/semantic_tool_parameter.rs`: intent satisfied by non-literal arguments → Pass (AS-6.1).
+- [x] T059 [P] [US6] Acceptance test: no `expected_tool_intent` → `None` (AS-6.2).
+- [x] T060 [US6] Edge case test: inner judge timeout → `Score::fail()` with timeout context, no hang (AS-6.3). `MockJudge` returns `JudgeError::Timeout`.
+- [x] T060a [US6] Edge case test: outer `tokio::time::timeout` elapses — mirror T054a for `SemanticToolParameterEvaluator` using a `SlowMockJudge` and `with_timeout(Duration::from_millis(50))`. Verify prompt completion + `Score::fail()` details.
+- [x] T061 [US6] Acceptance test: tool-name filter set, agent calls a different tool → targeted tool not present in trajectory → evaluator returns `None` (not Pass, not Fail) (AS-6.4).
+- [x] T062 [US6] Acceptance test: tool-name filter set, agent calls both the target and other tools → only target is judged.
+- [x] T063 [US6] Verify `cargo test -p swink-agent-eval --test semantic_tool_parameter` passes.
 
 **Checkpoint**: US6 fully tested; FR-012 + FR-014 coverage verified.
 
