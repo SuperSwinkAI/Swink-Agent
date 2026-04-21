@@ -1,5 +1,5 @@
 # Spec-Driven Development Status
-<!-- spec-status: project=Swink-Agent commit=5d1294600ae18ad4b93ed54ac32e1bb2dbac5807 updated=2026-04-21T15:20:28Z -->
+<!-- spec-status: project=Swink-Agent commit=71ca06ff9839239960f8a2314c8865820967dce2 updated=2026-04-21T18:53:08Z -->
 
 | Feature                         | Specify | Plan | Tasks | Implement |
 |---------------------------------|---------|------|-------|-----------|
@@ -25,7 +25,7 @@
 | 020-adapter-proxy               | ✓     | ✓  | ✓   | ✓ Complete |
 | 021-memory-crate                | ✓     | ✓  | ✓   | ✓ Complete |
 | 022-local-llm-crate             | ✓     | ✓  | ✓   | ✓ Complete |
-| 023-eval-trajectory-matching    | ✓     | ✓  | ✓   | ✓ Complete |
+| 023-eval-trajectory-matching    | ✓     | ✓  | ✓   | ● 42/97 (43%) |
 | 024-eval-runner-governance      | ✓     | ✓  | ✓   | ✓ Complete |
 | 025-tui-scaffold-config         | ✓     | ✓  | ✓   | ✓ Complete |
 | 026-tui-input-conversation      | ✓     | ✓  | ✓   | ✓ Complete |
@@ -44,6 +44,7 @@
 | 039-multi-agent-patterns        | ✓     | ✓  | ✓   | ✓ Complete |
 | 040-agent-transfer-handoff      | ✓     | ✓  | ✓   | ✓ Complete |
 | 042-web-browse-plugin           | ✓     | ✓  | ✓   | ✓ Complete |
+| 043-evals-adv-features          | ✓     | -    | -     | -         |
 
 <!-- feature: 001-workspace-scaffold has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=false has_checklists=true tasks_total=24 tasks_completed=24 checklist_files=requirements.md -->
 <!-- feature: 002-foundation-types-errors has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=63 tasks_completed=63 checklist_files=requirements.md -->
@@ -67,7 +68,7 @@
 <!-- feature: 020-adapter-proxy has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=40 tasks_completed=40 checklist_files=requirements.md -->
 <!-- feature: 021-memory-crate has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=98 tasks_completed=98 checklist_files=requirements.md -->
 <!-- feature: 022-local-llm-crate has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=58 tasks_completed=58 checklist_files=requirements.md -->
-<!-- feature: 023-eval-trajectory-matching has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=40 tasks_completed=40 checklist_files=requirements.md -->
+<!-- feature: 023-eval-trajectory-matching has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=97 tasks_completed=42 checklist_files=requirements.md -->
 <!-- feature: 024-eval-runner-governance has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=69 tasks_completed=69 checklist_files=requirements.md -->
 <!-- feature: 025-tui-scaffold-config has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=56 tasks_completed=56 checklist_files=requirements.md -->
 <!-- feature: 026-tui-input-conversation has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=69 tasks_completed=69 checklist_files=requirements.md -->
@@ -86,3 +87,4 @@
 <!-- feature: 039-multi-agent-patterns has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=66 tasks_completed=66 checklist_files=requirements.md -->
 <!-- feature: 040-agent-transfer-handoff has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=49 tasks_completed=49 checklist_files=requirements.md -->
 <!-- feature: 042-web-browse-plugin has_spec=true has_plan=true has_tasks=true has_research=true has_data_model=true has_quickstart=true has_contracts=true has_checklists=true tasks_total=75 tasks_completed=75 checklist_files=requirements.md -->
+<!-- feature: 043-evals-adv-features has_spec=true has_plan=false has_tasks=false has_research=false has_data_model=false has_quickstart=false has_contracts=false has_checklists=true tasks_total=0 tasks_completed=0 checklist_files=requirements.md -->
