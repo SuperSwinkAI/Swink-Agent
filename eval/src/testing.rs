@@ -10,6 +10,7 @@
 #![forbid(unsafe_code)]
 
 use std::sync::Mutex;
+use std::time::Duration;
 
 use async_trait::async_trait;
 
@@ -175,6 +176,49 @@ impl JudgeClient for MockJudge {
             MockOutcome::Verdict(v) => Ok(v),
             MockOutcome::Error(e) => Err(e),
         }
+    }
+}
+
+/// A `JudgeClient` test double that sleeps before returning a passing verdict.
+///
+/// Intended for exercising the evaluator-side outer `tokio::time::timeout`
+/// (FR-010 / FR-014). Pair with
+/// [`SemanticToolSelectionEvaluator::with_timeout`](crate::SemanticToolSelectionEvaluator::with_timeout)
+/// or the equivalent on the tool-parameter evaluator to drive the outer
+/// deadline path.
+///
+/// ```rust,ignore
+/// use std::{sync::Arc, time::Duration};
+/// use swink_agent_eval::{SemanticToolSelectionEvaluator, testing::SlowMockJudge};
+///
+/// let judge = Arc::new(SlowMockJudge::new(Duration::from_secs(10)));
+/// let eval = SemanticToolSelectionEvaluator::new(judge)
+///     .with_timeout(Duration::from_millis(50));
+/// // `eval.evaluate(...)` will hit the outer timeout without hanging.
+/// ```
+pub struct SlowMockJudge {
+    sleep: Duration,
+}
+
+impl SlowMockJudge {
+    /// Build a slow judge that sleeps for the given duration before
+    /// returning a single passing verdict.
+    #[must_use]
+    pub const fn new(sleep: Duration) -> Self {
+        Self { sleep }
+    }
+}
+
+#[async_trait]
+impl JudgeClient for SlowMockJudge {
+    async fn judge(&self, _prompt: &str) -> Result<JudgeVerdict, JudgeError> {
+        tokio::time::sleep(self.sleep).await;
+        Ok(JudgeVerdict {
+            score: 1.0,
+            pass: true,
+            reason: Some("slow pass".into()),
+            label: None,
+        })
     }
 }
 

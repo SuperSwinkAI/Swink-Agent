@@ -87,37 +87,37 @@ impl EvaluatorRegistry {
         registry
     }
 
-    /// Create a registry wired with a judge client but no other defaults.
+    /// Create a registry wired with a judge client plus the Phase 9+
+    /// semantic evaluators that require a judge.
     ///
-    /// Equivalent to [`Self::new`] today, with the judge stored for
-    /// later-registered semantic evaluators (Phases 9–10). Phase 9
-    /// (`SemanticToolSelectionEvaluator`) and Phase 10
-    /// (`SemanticToolParameterEvaluator`) will wire themselves into this
-    /// constructor when they land. Until then the registry is empty but the
-    /// judge is retained — callers can still `register()` their own semantic
-    /// evaluators that consume the judge.
-    // TODO(#740,#741): register SemanticToolSelectionEvaluator /
-    // SemanticToolParameterEvaluator once Phases 9–10 land.
+    /// Registers [`SemanticToolSelectionEvaluator`](crate::SemanticToolSelectionEvaluator)
+    /// (Phase 9 / US5). The evaluator is inert on cases without the matching
+    /// criterion (returns `None`). Phase 10 will add
+    /// `SemanticToolParameterEvaluator` alongside it.
+    // TODO(#741): register SemanticToolParameterEvaluator once Phase 10 lands.
     #[must_use]
     pub fn with_judge(client: Arc<dyn JudgeClient>) -> Self {
-        Self {
+        let mut registry = Self {
             evaluators: Vec::new(),
-            judge: Some(client),
-        }
+            judge: Some(Arc::clone(&client)),
+        };
+        registry
+            .register(crate::semantic_tool_selection::SemanticToolSelectionEvaluator::new(client));
+        registry
     }
 
     /// Create a registry pre-loaded with the v1 defaults plus the v2 semantic
     /// evaluators that require a judge.
     ///
-    /// Today this is equivalent to [`Self::with_defaults`] with the judge
-    /// attached; the semantic evaluator registrations are deferred to
-    /// Phases 9–10 per the spec-023 rollout plan.
-    // TODO(#740,#741): register SemanticToolSelectionEvaluator /
-    // SemanticToolParameterEvaluator once Phases 9–10 land.
+    /// Combines [`Self::with_defaults`] with the Phase 9+ semantic evaluators
+    /// (see [`Self::with_judge`]).
+    // TODO(#741): register SemanticToolParameterEvaluator once Phase 10 lands.
     #[must_use]
     pub fn with_defaults_and_judge(client: Arc<dyn JudgeClient>) -> Self {
         let mut registry = Self::with_defaults();
-        registry.judge = Some(client);
+        registry.judge = Some(Arc::clone(&client));
+        registry
+            .register(crate::semantic_tool_selection::SemanticToolSelectionEvaluator::new(client));
         registry
     }
 
@@ -200,8 +200,36 @@ mod tests {
         let judge: Arc<dyn JudgeClient> = Arc::new(MockJudge::always_pass());
         let registry = EvaluatorRegistry::with_defaults_and_judge(judge);
         assert!(registry.judge().is_some());
-        // v1 defaults remain registered (trajectory, budget, response,
-        // efficiency = 4 evaluators today).
-        assert_eq!(registry.evaluators.len(), 4);
+        // v1 defaults (4) + Phase 9 semantic_tool_selection = 5 evaluators.
+        assert_eq!(registry.evaluators.len(), 5);
+        assert!(
+            registry
+                .evaluators
+                .iter()
+                .any(|e| e.name() == "semantic_tool_selection"),
+            "semantic_tool_selection should be registered"
+        );
+    }
+
+    #[test]
+    fn with_judge_registers_semantic_tool_selection() {
+        let judge: Arc<dyn JudgeClient> = Arc::new(MockJudge::always_pass());
+        let registry = EvaluatorRegistry::with_judge(judge);
+        assert!(registry.judge().is_some());
+        assert_eq!(registry.evaluators.len(), 1);
+        assert_eq!(registry.evaluators[0].name(), "semantic_tool_selection");
+    }
+
+    #[test]
+    fn with_defaults_does_not_register_semantic_tool_selection() {
+        let registry = EvaluatorRegistry::with_defaults();
+        assert!(registry.judge().is_none());
+        assert!(
+            registry
+                .evaluators
+                .iter()
+                .all(|e| e.name() != "semantic_tool_selection"),
+            "semantic_tool_selection must NOT be in with_defaults()"
+        );
     }
 }
