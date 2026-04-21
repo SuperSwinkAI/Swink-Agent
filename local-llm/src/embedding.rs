@@ -13,7 +13,7 @@ use tracing::{debug, error, info};
 use crate::error::LocalModelError;
 use crate::loader::{LazyLoader, LoaderBackend, LoaderState};
 use crate::preset::{ModelPreset, default_embedding_config};
-use crate::progress::ProgressCallbackFn;
+use crate::progress::{ProgressCallbackFn, resolve_model_path};
 use crate::runner::{LlamaRunner, RunnerConfig};
 
 // ─── EmbeddingConfig ────────────────────────────────────────────────────────
@@ -48,21 +48,17 @@ impl LoaderBackend for EmbeddingBackend {
 
     fn download(
         config: &EmbeddingConfig,
-        _progress_cb: Option<ProgressCallbackFn>,
+        progress_cb: Option<ProgressCallbackFn>,
     ) -> Pin<Box<dyn Future<Output = Result<Self::Artifact, LocalModelError>> + Send + '_>> {
         Box::pin(async move {
             info!(repo = %config.repo_id, "downloading embedding model");
 
-            let api = hf_hub::api::tokio::Api::new().map_err(|e| {
-                error!(error = %e, "HuggingFace API init failed");
-                LocalModelError::download(e)
-            })?;
-
-            let repo = api.model(config.repo_id.clone());
-            let model_path = repo.get(&config.filename).await.map_err(|e| {
-                error!(error = %e, "embedding model download failed");
-                LocalModelError::download(e)
-            })?;
+            let model_path = resolve_model_path(&config.repo_id, &config.filename, progress_cb)
+                .await
+                .map_err(|e| {
+                    error!(error = %e, "embedding model download failed");
+                    LocalModelError::download(e)
+                })?;
 
             debug!(path = %model_path.display(), "embedding model downloaded");
             Ok(model_path)

@@ -38,6 +38,7 @@ uuid.workspace = true
 swink-agent = { path = "..", default-features = false, features = ["testkit"] }
 tokio = { workspace = true, features = ["full", "test-util"] }
 pretty_assertions.workspace = true
+tempfile.workspace = true
 
 [lints.rust]
 unsafe_code = "forbid"
