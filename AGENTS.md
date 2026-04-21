@@ -148,6 +148,7 @@ gh pr comment <number> --body-file /tmp/comment.md
 - `CONTEXT_OVERFLOW_SENTINEL` triggers overflow retry — loop control signal, not an error.
 - Tool dispatch order: PreDispatch policies → Approval → Schema validation → `execute()`.
 - Overflow recovery retries and started-turn cancellation must reuse the original message lifecycle; once a turn has emitted `MessageStart`, follow-on recovery/cancellation paths must suppress any second `MessageStart`.
+- Post-turn assistant replacements must preserve the exact `ToolCall` block sequence, including the empty set; replacements may rewrite text/metadata, but they cannot add or remove tool-call intent after model output.
 
 ### Policy Slots (`src/policy.rs`)
 

@@ -1828,6 +1828,36 @@ impl PostTurnPolicy for ReplacingPostTurnPolicy {
     }
 }
 
+struct ToolInjectingPostTurnPolicy;
+
+impl PostTurnPolicy for ToolInjectingPostTurnPolicy {
+    fn name(&self) -> &'static str {
+        "tool-injecting-post-turn"
+    }
+
+    fn evaluate(&self, _ctx: &PolicyContext<'_>, turn: &TurnPolicyContext<'_>) -> PolicyVerdict {
+        let orig = turn.assistant_message;
+        let msg = AssistantMessage {
+            content: vec![ContentBlock::ToolCall {
+                id: "call_injected".to_string(),
+                name: "noop".to_string(),
+                arguments: json!({}),
+                partial_json: None,
+            }],
+            provider: orig.provider.clone(),
+            model_id: orig.model_id.clone(),
+            usage: orig.usage.clone(),
+            cost: orig.cost.clone(),
+            stop_reason: orig.stop_reason,
+            error_message: orig.error_message.clone(),
+            error_kind: orig.error_kind,
+            timestamp: orig.timestamp,
+            cache_hint: None,
+        };
+        PolicyVerdict::Inject(vec![AgentMessage::Llm(LlmMessage::Assistant(msg))])
+    }
+}
+
 /// Regression test for #313: post-turn Inject verdicts must replace the
 /// assistant message in `TurnEnd` and context BEFORE the event is emitted.
 #[tokio::test]
@@ -1986,6 +2016,61 @@ async fn post_turn_inject_cannot_drop_tool_calls_from_turn_history() {
                 if result.tool_call_id == "call_1"
         ),
         "tool call must remain paired with its tool result in final history"
+    );
+}
+
+#[tokio::test]
+async fn post_turn_inject_cannot_add_tool_calls_to_text_only_turn() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("Hello!")]));
+    let policy: Arc<dyn PostTurnPolicy> = Arc::new(ToolInjectingPostTurnPolicy);
+
+    let mut config = default_config(stream_fn);
+    config.post_turn_policies = vec![policy];
+
+    let events = collect_events(agent_loop(
+        vec![],
+        "system".to_string(),
+        config,
+        CancellationToken::new(),
+    ))
+    .await;
+
+    let turn_end = events.iter().find_map(|event| match event {
+        AgentEvent::TurnEnd {
+            assistant_message, ..
+        } => Some(assistant_message),
+        _ => None,
+    });
+    let assistant_message = turn_end.expect("should emit TurnEnd");
+    assert_eq!(
+        ContentBlock::extract_text(&assistant_message.content),
+        "Hello!",
+        "text-only turn replacement must keep the original assistant text"
+    );
+    assert!(
+        assistant_message
+            .content
+            .iter()
+            .all(|block| !matches!(block, ContentBlock::ToolCall { .. })),
+        "text-only turn replacement must not inject tool calls"
+    );
+
+    let agent_end_messages = events.iter().find_map(|event| match event {
+        AgentEvent::AgentEnd { messages } => Some(messages.clone()),
+        _ => None,
+    });
+    let messages = agent_end_messages.expect("should have AgentEnd");
+    let last_assistant = messages.iter().rev().find_map(|message| match message {
+        AgentMessage::Llm(LlmMessage::Assistant(assistant_message)) => Some(assistant_message),
+        _ => None,
+    });
+    let final_assistant = last_assistant.expect("final history should contain assistant");
+    assert!(
+        final_assistant
+            .content
+            .iter()
+            .all(|block| !matches!(block, ContentBlock::ToolCall { .. })),
+        "final history must not contain injected tool calls"
     );
 }
 

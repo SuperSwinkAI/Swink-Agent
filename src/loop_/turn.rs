@@ -773,7 +773,7 @@ fn run_post_turn_policy_check(
                             replaced = new_msg;
                         } else {
                             tracing::warn!(
-                                "ignoring post-turn assistant replacement that would drop tool calls"
+                                "ignoring post-turn assistant replacement that would change tool calls"
                             );
                         }
                     }
@@ -800,10 +800,6 @@ fn assistant_replacement_preserves_tool_calls(
         .filter(|block| matches!(block, ContentBlock::ToolCall { .. }))
         .cloned()
         .collect();
-
-    if original_tool_calls.is_empty() {
-        return true;
-    }
 
     let replacement_tool_calls: Vec<ContentBlock> = replacement
         .content
