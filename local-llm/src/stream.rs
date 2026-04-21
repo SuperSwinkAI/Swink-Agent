@@ -22,7 +22,7 @@ use swink_agent::{
 
 use crate::loader::LoaderState;
 use crate::model::LocalModel;
-use crate::runner::{FinishReason, TokenEvent};
+use crate::runner::{FinishReason, GenerateOptions, TokenEvent};
 
 // ─── LocalStreamFn ──────────────────────────────────────────────────────────
 
@@ -740,7 +740,7 @@ fn local_stream<'a>(
     local_model: &'a LocalModel,
     model: &'a ModelSpec,
     context: &'a AgentContext,
-    _options: &'a StreamOptions,
+    options: &'a StreamOptions,
     cancellation_token: CancellationToken,
 ) -> impl Stream<Item = AssistantMessageEvent> + Send + 'a {
     stream::once(async move {
@@ -856,7 +856,11 @@ fn local_stream<'a>(
 
         debug!(token_count = tokens.len(), "prompt tokenized");
 
-        let mut rx = runner.generate_stream(tokens, cancellation_token.clone());
+        let mut rx = runner.generate_stream(
+            tokens,
+            generation_options_from_stream_options(options),
+            cancellation_token.clone(),
+        );
 
         // Release the state guard before consuming the stream — the runner
         // Arc keeps the model alive independently.
@@ -900,6 +904,16 @@ fn local_stream<'a>(
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
+
+#[allow(clippy::cast_possible_truncation)]
+fn generation_options_from_stream_options(options: &StreamOptions) -> GenerateOptions {
+    GenerateOptions {
+        temperature: options.temperature.map(|value| value as f32),
+        max_tokens: options
+            .max_tokens
+            .map(|value| u32::try_from(value).unwrap_or(u32::MAX)),
+    }
+}
 
 // ─── Compile-time assertions ────────────────────────────────────────────────
 
@@ -1168,6 +1182,36 @@ mod tests {
             }
             other => panic!("expected Done terminal, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn stream_options_forward_generation_overrides() {
+        let options = StreamOptions {
+            temperature: Some(0.8),
+            max_tokens: Some(256),
+            ..StreamOptions::default()
+        };
+
+        assert_eq!(
+            generation_options_from_stream_options(&options),
+            GenerateOptions {
+                temperature: Some(0.8_f32),
+                max_tokens: Some(256),
+            }
+        );
+    }
+
+    #[test]
+    fn stream_options_max_tokens_saturates_to_u32() {
+        let options = StreamOptions {
+            max_tokens: Some(u64::MAX),
+            ..StreamOptions::default()
+        };
+
+        assert_eq!(
+            generation_options_from_stream_options(&options).max_tokens,
+            Some(u32::MAX)
+        );
     }
 
     #[cfg(feature = "gemma4")]

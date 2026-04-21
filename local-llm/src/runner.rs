@@ -41,6 +41,37 @@ impl Default for RunnerConfig {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct GenerateOptions {
+    pub temperature: Option<f32>,
+    pub max_tokens: Option<u32>,
+}
+
+impl GenerateOptions {
+    fn normalized_temperature(self) -> Option<f32> {
+        self.temperature.filter(|t| t.is_finite() && *t > 0.0)
+    }
+
+    fn effective_max_tokens(self, context_length: u32, prompt_len: usize) -> u32 {
+        let prompt_len = u32::try_from(prompt_len).unwrap_or(u32::MAX);
+        let available = context_length.saturating_sub(prompt_len);
+
+        self.max_tokens
+            .map_or(available, |limit| available.min(limit))
+    }
+}
+
+fn build_sampler(options: GenerateOptions) -> LlamaSampler {
+    options
+        .normalized_temperature()
+        .map_or_else(LlamaSampler::greedy, |temperature| {
+            LlamaSampler::chain(
+                [LlamaSampler::temp(temperature), LlamaSampler::dist(0)],
+                true,
+            )
+        })
+}
+
 // ─── Token Events ──────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone)]
@@ -142,6 +173,7 @@ impl LlamaRunner {
     pub fn generate_stream(
         &self,
         tokens: Vec<llama_cpp_2::token::LlamaToken>,
+        options: GenerateOptions,
         cancel: CancellationToken,
     ) -> mpsc::Receiver<TokenEvent> {
         let (tx, rx) = mpsc::channel(64);
@@ -151,7 +183,7 @@ impl LlamaRunner {
 
         std::thread::spawn(move || {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                run_inference(&backend, &model, &config, &tokens, &tx, &cancel)
+                run_inference(&backend, &model, &config, &tokens, options, &tx, &cancel)
             }));
             match result {
                 Ok(Ok(())) => {}
@@ -233,6 +265,7 @@ fn run_inference(
     model: &LlamaModel,
     config: &RunnerConfig,
     tokens: &[llama_cpp_2::token::LlamaToken],
+    options: GenerateOptions,
     tx: &mpsc::Sender<TokenEvent>,
     cancel: &CancellationToken,
 ) -> Result<(), LocalModelError> {
@@ -279,10 +312,10 @@ fn run_inference(
     debug!("prompt decoded, starting generation");
 
     // Generation loop: sample token, decode, repeat
-    let mut sampler = LlamaSampler::greedy();
+    let mut sampler = build_sampler(options);
     let mut completion_tokens: u32 = 0;
     let prompt_len_u32 = u32::try_from(prompt_len).unwrap_or(u32::MAX);
-    let max_tokens = config.context_length.saturating_sub(prompt_len_u32);
+    let max_tokens = options.effective_max_tokens(config.context_length, prompt_len);
     let mut n_cur = prompt_len;
     let mut finish_reason = if max_tokens == 0 {
         FinishReason::Length
@@ -368,3 +401,75 @@ const _: () = {
     const fn assert_send_sync<T: Send + Sync>() {}
     assert_send_sync::<LlamaRunner>();
 };
+
+#[cfg(test)]
+mod tests {
+    use super::GenerateOptions;
+
+    #[test]
+    fn effective_max_tokens_uses_context_budget_when_unset() {
+        let options = GenerateOptions::default();
+
+        assert_eq!(options.effective_max_tokens(128, 120), 8);
+    }
+
+    #[test]
+    fn effective_max_tokens_honors_request_limit() {
+        let options = GenerateOptions {
+            max_tokens: Some(4),
+            ..GenerateOptions::default()
+        };
+
+        assert_eq!(options.effective_max_tokens(128, 120), 4);
+    }
+
+    #[test]
+    fn effective_max_tokens_caps_request_limit_to_remaining_context() {
+        let options = GenerateOptions {
+            max_tokens: Some(64),
+            ..GenerateOptions::default()
+        };
+
+        assert_eq!(options.effective_max_tokens(128, 120), 8);
+    }
+
+    #[test]
+    fn normalized_temperature_ignores_non_positive_and_nan_values() {
+        assert_eq!(
+            GenerateOptions {
+                temperature: Some(0.0),
+                ..GenerateOptions::default()
+            }
+            .normalized_temperature(),
+            None
+        );
+        assert_eq!(
+            GenerateOptions {
+                temperature: Some(-0.5),
+                ..GenerateOptions::default()
+            }
+            .normalized_temperature(),
+            None
+        );
+        assert_eq!(
+            GenerateOptions {
+                temperature: Some(f32::NAN),
+                ..GenerateOptions::default()
+            }
+            .normalized_temperature(),
+            None
+        );
+    }
+
+    #[test]
+    fn normalized_temperature_preserves_positive_values() {
+        assert_eq!(
+            GenerateOptions {
+                temperature: Some(0.7),
+                ..GenerateOptions::default()
+            }
+            .normalized_temperature(),
+            Some(0.7)
+        );
+    }
+}
