@@ -89,6 +89,10 @@ pub fn case_with_trajectory(expected: Vec<ExpectedToolCall>) -> EvalCase {
         budget: None,
         evaluators: vec![],
         metadata: serde_json::Value::Null,
+        expected_environment_state: None,
+        expected_tool_intent: None,
+        semantic_tool_selection: false,
+        state_capture: None,
     }
 }
 
@@ -106,6 +110,10 @@ pub fn case_with_response(criteria: ResponseCriteria) -> EvalCase {
         budget: None,
         evaluators: vec![],
         metadata: serde_json::Value::Null,
+        expected_environment_state: None,
+        expected_tool_intent: None,
+        semantic_tool_selection: false,
+        state_capture: None,
     }
 }
 
@@ -172,6 +180,10 @@ pub fn case_with_budget(budget: BudgetConstraints) -> EvalCase {
         budget: Some(budget),
         evaluators: vec![],
         metadata: serde_json::Value::Null,
+        expected_environment_state: None,
+        expected_tool_intent: None,
+        semantic_tool_selection: false,
+        state_capture: None,
     }
 }
 
@@ -192,6 +204,10 @@ pub fn case_with_trajectory_and_response(
         budget: None,
         evaluators: vec![],
         metadata: serde_json::Value::Null,
+        expected_environment_state: None,
+        expected_tool_intent: None,
+        semantic_tool_selection: false,
+        state_capture: None,
     }
 }
 

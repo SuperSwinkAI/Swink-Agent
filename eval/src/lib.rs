@@ -21,11 +21,13 @@ mod efficiency;
 mod error;
 mod evaluator;
 mod gate;
+mod judge;
 mod match_;
 mod response;
 mod runner;
 mod score;
 mod store;
+pub mod testing;
 mod trajectory;
 mod types;
 #[cfg(feature = "yaml")]
@@ -39,15 +41,18 @@ pub use efficiency::EfficiencyEvaluator;
 pub use error::EvalError;
 pub use evaluator::{Evaluator, EvaluatorRegistry};
 pub use gate::{GateConfig, GateResult, check_gate};
+pub use judge::{JudgeClient, JudgeError, JudgeVerdict};
 pub use match_::{MatchMode, TrajectoryMatcher};
 pub use response::ResponseMatcher;
 pub use runner::{AgentFactory, EvalRunner};
 pub use score::{Score, Verdict};
 pub use store::{EvalStore, FsEvalStore};
+pub use testing::MockJudge;
 pub use trajectory::{BudgetGuard, TrajectoryCollector};
 pub use types::{
-    BudgetConstraints, EvalCase, EvalCaseResult, EvalMetricResult, EvalSet, EvalSetResult,
-    EvalSummary, ExpectedToolCall, Invocation, RecordedToolCall, ResponseCriteria, TurnRecord,
+    BudgetConstraints, EnvironmentState, EvalCase, EvalCaseResult, EvalMetricResult, EvalSet,
+    EvalSetResult, EvalSummary, ExpectedToolCall, Invocation, RecordedToolCall, ResponseCriteria,
+    StateCapture, ToolIntent, TurnRecord, validate_eval_case, validate_eval_set,
 };
 #[cfg(feature = "yaml")]
 pub use yaml::load_eval_set_yaml;

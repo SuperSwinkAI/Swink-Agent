@@ -95,7 +95,10 @@ fn us3_perfect_efficiency_score_1() {
         "expected 1.0, got {}",
         result.score.value
     );
-    assert_eq!(repeated.score.value, result.score.value);
+    assert!(
+        (repeated.score.value - result.score.value).abs() < f64::EPSILON,
+        "repeated evaluation must be deterministic",
+    );
     assert_eq!(repeated.score.verdict(), result.score.verdict());
     assert_eq!(repeated.details, result.details);
 }

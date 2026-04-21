@@ -4709,6 +4709,7 @@ dependencies = [
 name = "swink-agent-eval"
 version = "0.8.0"
 dependencies = [
+ "async-trait",
  "futures",
  "pretty_assertions",
  "regex",

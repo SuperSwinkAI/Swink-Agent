@@ -411,7 +411,11 @@ mod tests {
             expected_response: None,
             evaluators: vec![],
             budget,
-            metadata: Default::default(),
+            metadata: serde_json::Value::default(),
+            expected_environment_state: None,
+            expected_tool_intent: None,
+            semantic_tool_selection: false,
+            state_capture: None,
         }
     }
 
