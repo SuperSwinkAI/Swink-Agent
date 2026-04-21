@@ -19,6 +19,7 @@ testkit = ["swink-agent/testkit"]
 swink-agent = { path = "..", version = "0.8.0", default-features = false }
 tokio = { workspace = true, features = ["macros", "rt", "sync"] }
 tokio-util = { workspace = true }
+futures = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 regex.workspace = true

@@ -4802,6 +4802,7 @@ dependencies = [
 name = "swink-agent-patterns"
 version = "0.8.0"
 dependencies = [
+ "futures",
  "regex",
  "schemars",
  "serde",
