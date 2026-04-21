@@ -1698,6 +1698,58 @@ async fn follow_up_turn_after_no_tool_turn_advances_turn_index() {
 }
 
 #[tokio::test]
+async fn steering_turn_after_no_tool_turn_continues_inner_loop() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![
+        text_only_events("first response"),
+        text_only_events("second response"),
+    ]));
+
+    let steering_count = Arc::new(AtomicU32::new(0));
+    let steering_count_clone = Arc::clone(&steering_count);
+
+    let mut config = default_config(stream_fn);
+    config.message_provider = Some(Arc::new(MockMessageProvider::steering_only(move || {
+        let count = steering_count_clone.fetch_add(1, Ordering::SeqCst);
+        if count == 0 {
+            vec![AgentMessage::Llm(LlmMessage::User(UserMessage {
+                content: vec![ContentBlock::Text {
+                    text: "steering follow up".to_string(),
+                }],
+                timestamp: 0,
+                cache_hint: None,
+            }))]
+        } else {
+            vec![]
+        }
+    })));
+
+    let events = collect_events(agent_loop(
+        vec![],
+        "system".to_string(),
+        config,
+        CancellationToken::new(),
+    ))
+    .await;
+
+    assert_eq!(
+        count_events(&events, "TurnStart"),
+        2,
+        "text-only turns should poll steering before breaking the inner loop"
+    );
+
+    let snapshots: Vec<TurnSnapshot> = events
+        .iter()
+        .filter_map(|event| match event {
+            AgentEvent::TurnEnd { snapshot, .. } => Some(snapshot.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(snapshots.len(), 2, "steering should trigger a second turn");
+    assert_eq!(snapshots[0].turn_index, 0);
+    assert_eq!(snapshots[1].turn_index, 1);
+}
+
+#[tokio::test]
 async fn pre_turn_new_messages_include_initial_prompt_batch() {
     let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("ok")]));
     let observations = Arc::new(Mutex::new(Vec::new()));

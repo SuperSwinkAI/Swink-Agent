@@ -16,7 +16,7 @@ use crate::types::message_codec::clone_messages_for_send;
 use crate::types::{AgentMessage, AgentResult, ContentBlock, LlmMessage};
 use crate::util::now_timestamp;
 
-use super::queueing::QueueMessageProvider;
+use super::queueing::{QueueMessageProvider, drain_messages_from_queue};
 use super::{Agent, SharedRetryStrategy};
 
 // ─── LoopGuardStream ────────────────────────────────────────────────────────
@@ -255,7 +255,12 @@ impl Agent {
             .collect();
 
         let messages_for_loop = if is_continue {
-            std::mem::take(&mut self.state.messages)
+            let mut msgs = std::mem::take(&mut self.state.messages);
+            if matches!(msgs.last(), Some(AgentMessage::Llm(LlmMessage::Assistant(_)))) {
+                msgs.extend(drain_messages_from_queue(&self.steering_queue));
+                msgs.extend(drain_messages_from_queue(&self.follow_up_queue));
+            }
+            msgs
         } else {
             let mut msgs = std::mem::take(&mut self.state.messages);
             msgs.extend(input);

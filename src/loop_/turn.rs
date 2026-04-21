@@ -874,6 +874,14 @@ async fn handle_no_tool_calls(
         return emit_agent_end(state, tx).await;
     }
 
+    if let Some(ref provider) = config.message_provider {
+        let msgs = provider.poll_steering();
+        if !msgs.is_empty() {
+            state.pending_messages.extend(msgs);
+            sync_pending_message_snapshot(config, state);
+        }
+    }
+
     if state.pending_messages.is_empty() {
         TurnOutcome::BreakInner
     } else {
