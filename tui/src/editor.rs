@@ -82,8 +82,14 @@ mod tests {
                 .duration_since(UNIX_EPOCH)
                 .expect("system clock should be after unix epoch")
                 .as_nanos();
-            let mut path = std::env::temp_dir()
-                .join(format!("swink-editor-test-{unique}-{}", std::process::id()));
+            let test_bin_dir = std::env::current_dir()
+                .expect("current dir should resolve during tests")
+                .join("target")
+                .join("test-bin");
+            std::fs::create_dir_all(&test_bin_dir).expect("should create test-bin directory");
+
+            let mut path =
+                test_bin_dir.join(format!("swink-editor-test-{unique}-{}", std::process::id()));
 
             #[cfg(windows)]
             {

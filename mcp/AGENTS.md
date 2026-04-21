@@ -16,6 +16,7 @@
 ## Lessons Learned
 
 - `McpManager::shutdown()` must operate on shared connection-owned state, not `Arc::try_unwrap()`: exported `McpTool` handles keep `Arc<McpConnection>` clones alive, so deterministic disconnect has to clear the session/monitor even when callers still retain tool `Arc`s.
+- `McpManager::connect_all()` must stage successful connections locally until tool-collision checks pass. If discovery ends with `ToolNameCollision`, shut those staged connections down before returning so partial sessions are not left running.
 - Explicit `McpServerDisconnected` events for intentional teardown come from `McpConnection::shutdown()`, not the monitor task. Tests that shut a connection down with an event channel must drain that lifecycle event before asserting later tool-call events.
 - Tool discovery happens at `connect_all()` time. Tools added to a server after connection are not auto-refreshed; call `reconnect()` to rediscover.
 - SSE recovery is delegated to rmcp's streamable HTTP transport: transient stream drops and stale-session 404s are retried/re-initialized inside rmcp, so `McpConnection` should only flip to `Disconnected` after the underlying service fully exits.

@@ -2,7 +2,14 @@
 
 mod common;
 
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use axum::Router;
 use rmcp::model::Tool;
+use rmcp::transport::streamable_http_server::{
+    StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
+};
 use serde_json::json;
 use swink_agent_mcp::{McpManager, McpServerConfig, McpTransport};
 
@@ -150,4 +157,117 @@ fn mock_tool(name: &str) -> Tool {
         format!("Mock tool: {name}"),
         schema.as_object().expect("object schema").clone(),
     )
+}
+
+async fn spawn_mock_sse_server(
+    session_manager: Arc<LocalSessionManager>,
+) -> (
+    tokio_util::sync::CancellationToken,
+    tokio::task::JoinHandle<()>,
+    String,
+) {
+    let shutdown = tokio_util::sync::CancellationToken::new();
+    let mock_cfg = common::MockServerConfig::new(vec![]);
+    let server = common::MockMcpServer::from_config(&mock_cfg);
+    let service = StreamableHttpService::new(
+        move || Ok(server.clone()),
+        Arc::clone(&session_manager),
+        StreamableHttpServerConfig::default()
+            .with_sse_keep_alive(None)
+            .with_cancellation_token(shutdown.child_token()),
+    );
+
+    let router = Router::new().nest_service("/mcp", service);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("listener should bind");
+    let addr = listener
+        .local_addr()
+        .expect("listener should expose an address");
+    let task = tokio::spawn({
+        let shutdown = shutdown.clone();
+        async move {
+            let _ = axum::serve(listener, router)
+                .with_graceful_shutdown(async move { shutdown.cancelled_owned().await })
+                .await;
+        }
+    });
+
+    (shutdown, task, format!("http://{addr}/mcp"))
+}
+
+async fn wait_for_session_cleanup(session_manager: &Arc<LocalSessionManager>) {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        if session_manager.sessions.read().await.is_empty() {
+            break;
+        }
+
+        assert!(
+            Instant::now() < deadline,
+            "expected SSE sessions to be released after collision rollback"
+        );
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+}
+
+/// Issue #710: `connect_all` must release already-opened sessions when a later
+/// tool-name collision aborts discovery.
+#[tokio::test]
+async fn connect_all_collision_rolls_back_open_sessions() {
+    let session_manager_a = Arc::new(LocalSessionManager::default());
+    let session_manager_b = Arc::new(LocalSessionManager::default());
+
+    let (shutdown_a, server_a, url_a) = spawn_mock_sse_server(Arc::clone(&session_manager_a)).await;
+    let (shutdown_b, server_b, url_b) = spawn_mock_sse_server(Arc::clone(&session_manager_b)).await;
+
+    let mut manager = McpManager::new(vec![
+        McpServerConfig {
+            name: "collision-a".into(),
+            transport: McpTransport::Sse {
+                url: url_a,
+                bearer_token: None,
+                bearer_auth: None,
+                headers: Default::default(),
+            },
+            tool_prefix: None,
+            tool_filter: None,
+            requires_approval: false,
+        },
+        McpServerConfig {
+            name: "collision-b".into(),
+            transport: McpTransport::Sse {
+                url: url_b,
+                bearer_token: None,
+                bearer_auth: None,
+                headers: Default::default(),
+            },
+            tool_prefix: None,
+            tool_filter: None,
+            requires_approval: false,
+        },
+    ]);
+
+    let result = manager.connect_all().await;
+    assert!(result.is_err(), "same unprefixed tool names should collide");
+
+    let error_text = result
+        .expect_err("collision should return an error")
+        .to_string();
+    assert!(
+        error_text.contains("echo"),
+        "collision error should mention the duplicated tool, got: {error_text}"
+    );
+    assert!(
+        manager.tools().is_empty(),
+        "collision rollback must not retain partially discovered tools"
+    );
+
+    wait_for_session_cleanup(&session_manager_a).await;
+    wait_for_session_cleanup(&session_manager_b).await;
+
+    shutdown_a.cancel();
+    shutdown_b.cancel();
+    let _ = server_a.await;
+    let _ = server_b.await;
 }

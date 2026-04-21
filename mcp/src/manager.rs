@@ -129,6 +129,7 @@ impl McpManager {
         }
 
         let mut all_tools: Vec<(String, String, Arc<dyn AgentTool>)> = Vec::new();
+        let mut connections = Vec::new();
 
         for config in self.configs.clone() {
             match McpConnection::connect_with_resolver(
@@ -141,7 +142,7 @@ impl McpManager {
                 Ok(connection) => {
                     let conn = Arc::new(connection);
                     all_tools.extend(build_tools_for_connection(&conn));
-                    self.connections.push(conn);
+                    connections.push(conn);
                 }
                 Err(e) => {
                     warn!(
@@ -153,7 +154,18 @@ impl McpManager {
             }
         }
 
-        self.tools = detect_collisions_and_collect(all_tools)?;
+        let tools = match detect_collisions_and_collect(all_tools) {
+            Ok(tools) => tools,
+            Err(error) => {
+                for conn in connections {
+                    conn.shutdown().await;
+                }
+                return Err(error);
+            }
+        };
+
+        self.connections = connections;
+        self.tools = tools;
         Ok(())
     }
 
