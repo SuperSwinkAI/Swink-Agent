@@ -13,7 +13,7 @@ use tracing::{debug, error, info};
 use crate::error::LocalModelError;
 use crate::loader::{LazyLoader, LoaderBackend, LoaderState, PublicLoaderState};
 use crate::preset::{ModelPreset, default_chat_model_config};
-use crate::progress::ProgressCallbackFn;
+use crate::progress::{ProgressCallbackFn, resolve_model_path};
 use crate::runner::{LlamaRunner, RunnerConfig};
 
 // ─── ModelConfig ────────────────────────────────────────────────────────────
@@ -89,7 +89,7 @@ impl LoaderBackend for ChatBackend {
 
     fn download(
         config: &ModelConfig,
-        _progress_cb: Option<ProgressCallbackFn>,
+        progress_cb: Option<ProgressCallbackFn>,
     ) -> Pin<Box<dyn Future<Output = Result<Self::Artifact, LocalModelError>> + Send + '_>> {
         Box::pin(async move {
             info!(
@@ -98,18 +98,13 @@ impl LoaderBackend for ChatBackend {
                 "downloading local model"
             );
 
-            let api = hf_hub::api::tokio::Api::new().map_err(|e| {
-                let msg = format!("HuggingFace API init failed: {e}");
-                error!(%msg);
-                LocalModelError::download(e)
-            })?;
-
-            let repo = api.model(config.repo_id.clone());
-            let model_path = repo.get(&config.filename).await.map_err(|e| {
-                let msg = format!("model download failed: {e}");
-                error!(%msg);
-                LocalModelError::download(e)
-            })?;
+            let model_path = resolve_model_path(&config.repo_id, &config.filename, progress_cb)
+                .await
+                .map_err(|e| {
+                    let msg = format!("model download failed: {e}");
+                    error!(%msg);
+                    LocalModelError::download(e)
+                })?;
 
             debug!(path = %model_path.display(), "model downloaded");
             Ok(model_path)
