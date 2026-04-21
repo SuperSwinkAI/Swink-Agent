@@ -10,7 +10,7 @@ Implement the `swink-agent-eval` crate's trajectory collection, golden-path comp
 ## Technical Context
 
 **Language/Version**: Rust latest stable (edition 2024)
-**Primary Dependencies**: `swink-agent` (core types: `AgentEvent`, `ContentBlock`, `AssistantMessage`, `Cost`, `Usage`, `ModelSpec`, `StopReason`), `serde`/`serde_json` (serialization), `tokio`/`tokio-util` (async runtime, `CancellationToken`), `futures` (stream combinators), `regex` (response pattern matching), `sha2` (audit hashes), `thiserror` (error types), `tracing` (diagnostics), `uuid` (IDs)
+**Primary Dependencies**: `swink-agent` (core types: `AgentEvent`, `ContentBlock`, `AssistantMessage`, `Cost`, `Usage`, `ModelSpec`, `StopReason`, `PreTurnPolicy`, `AgentOptions::with_pre_turn_policy`), `swink-agent-policies` (v2: `BudgetPolicy`, `MaxTurnsPolicy` — replaces 023-v1 `BudgetGuard`), `serde`/`serde_json` (serialization), `tokio` (async runtime, `tokio::time::timeout` for semantic evaluator outer deadline), `futures` (stream combinators), `regex` (response pattern matching), `sha2` (audit hashes), `thiserror` (error types), `tracing` (diagnostics), `uuid` (IDs). *v1 also used `tokio-util::sync::CancellationToken` for `BudgetGuard`; Phase 13 migration removes this dependency from the eval crate.*
 **Storage**: N/A (in-memory types; `FsEvalStore` for optional JSON persistence — covered by spec 024)
 **Testing**: `cargo test -p swink-agent-eval` + integration tests in `eval/tests/`
 **Target Platform**: Any platform supporting `tokio` (Linux, macOS, Windows)
@@ -25,16 +25,16 @@ Implement the `swink-agent-eval` crate's trajectory collection, golden-path comp
 
 | Principle | Status | Notes |
 |---|---|---|
-| I. Library-First | PASS | `swink-agent-eval` is an independent crate. Depends only on `swink-agent` core types. No reverse dependencies. |
-| II. Test-Driven Development | PASS | Existing unit tests in each module. Integration tests in `eval/tests/`. Plan adds spec-driven acceptance tests. |
-| III. Efficiency & Performance | PASS | Linear-time algorithms. No unnecessary allocations. `HashSet` for dedup in efficiency scoring. |
-| IV. Leverage the Ecosystem | PASS | Uses `regex`, `sha2`, `serde_yaml` (optional). No hand-rolled alternatives. |
-| V. Provider Agnosticism | PASS | Consumes `AgentEvent` stream — no provider-specific types. |
-| VI. Safety & Correctness | PASS | `#[forbid(unsafe_code)]`, clippy pedantic/nursery enforced. Custom fn panics handled via `catch_unwind` (in response matcher — see gap below). |
-| Crate count | PASS | `eval` is one of the seven permitted workspace members. |
+| I. Library-First | PASS | `swink-agent-eval` is an independent crate. v1: depends only on `swink-agent` core types. v2: adds `swink-agent-policies` dependency (Phase 13) for `BudgetPolicy`/`MaxTurnsPolicy`. Both dependencies are workspace-internal library crates — no leaf-crate inversion. |
+| II. Test-Driven Development | PASS | v1 unit + integration tests in place. v2 adds spec-driven acceptance tests (Phases 9–11) per user story; Phase 13 migration rewrites existing BudgetGuard tests to target the agent-loop-level BudgetPolicy. |
+| III. Efficiency & Performance | PASS | Linear-time algorithms. No unnecessary allocations. `HashSet` for dedup in efficiency scoring. Semantic evaluators add `tokio::time::timeout` wrapping per judge call (O(1) overhead, no new allocation per call). |
+| IV. Leverage the Ecosystem | PASS | Uses `regex`, `sha2`, `serde_yaml` (optional), `tokio::time::timeout`. v2 reuses the existing `PreTurnPolicy` trait from core rather than introducing a parallel budget mechanism. No hand-rolled alternatives. |
+| V. Provider Agnosticism | PASS | Consumes `AgentEvent` stream — no provider-specific types. `JudgeClient` trait is deliberately provider-neutral; concrete impls live in spec 043. |
+| VI. Safety & Correctness | PASS | `#[forbid(unsafe_code)]`, clippy pedantic/nursery enforced. Custom fn panics handled via `catch_unwind` (FR-008, T003). v2 extends the same pattern to `StateCapture` callbacks (T069). Judge failures, inner timeouts, and outer `tokio::time::timeout` elapses all map to `Score::fail()` (FR-014). |
+| Crate count | PASS | `eval` is one of the permitted workspace members. Phase 13 adds a dependency on `swink-agent-policies` (already a workspace member from spec 032) — no new crates. |
 | MSRV | PASS | latest stable, edition 2024. |
 
-**Gate result: ALL PASS** — no violations.
+**Gate result: ALL PASS** — no violations. Re-verified 2026-04-21 for the v2 scope expansion (Judge trait + StateCapture hook + Phase 13 BudgetGuard → BudgetPolicy migration).
 
 ## Project Structure
 
@@ -57,35 +57,51 @@ specs/023-eval-trajectory-matching/
 eval/
 ├── Cargo.toml
 ├── src/
-│   ├── lib.rs            # Public API re-exports
-│   ├── types.rs          # RecordedToolCall, TurnRecord, Invocation, EvalCase, EvalSet, results
-│   ├── trajectory.rs     # TrajectoryCollector, BudgetGuard
-│   ├── match_.rs         # TrajectoryMatcher, MatchMode (Exact/InOrder/AnyOrder)
-│   ├── efficiency.rs     # EfficiencyEvaluator
-│   ├── response.rs       # ResponseMatcher, ResponseCriteria
-│   ├── evaluator.rs      # Evaluator trait, EvaluatorRegistry
-│   ├── score.rs          # Score, Verdict
-│   ├── error.rs          # EvalError
-│   ├── budget.rs         # BudgetEvaluator (spec 024, but tested here)
-│   ├── runner.rs         # EvalRunner, AgentFactory (spec 024)
-│   ├── store.rs          # EvalStore, FsEvalStore (spec 024)
-│   ├── audit.rs          # AuditedInvocation (spec 024)
-│   ├── gate.rs           # GateConfig, GateResult (spec 024)
-│   └── yaml.rs           # YAML loading (feature-gated, spec 024)
+│   ├── lib.rs                          # Public API re-exports (v1 + v2)
+│   ├── types.rs                        # RecordedToolCall, TurnRecord, Invocation, EvalCase, EvalSet, results
+│   │                                   #   v2: + EnvironmentState, ToolIntent; BudgetConstraints reshaped (Phase 13)
+│   ├── trajectory.rs                   # TrajectoryCollector
+│   │                                   #   v1 shipped BudgetGuard + collect_with_guard; both removed in Phase 13.
+│   ├── match_.rs                       # TrajectoryMatcher, MatchMode (Exact/InOrder/AnyOrder)
+│   ├── efficiency.rs                   # EfficiencyEvaluator
+│   ├── response.rs                     # ResponseMatcher, ResponseCriteria
+│   ├── evaluator.rs                    # Evaluator trait, EvaluatorRegistry
+│   │                                   #   v2: + with_judge(), with_defaults_and_judge()
+│   ├── score.rs                        # Score, Verdict
+│   ├── error.rs                        # EvalError (v2: + InvalidCase { reason })
+│   ├── budget.rs                       # BudgetEvaluator (spec 024, but tested here)
+│   ├── runner.rs                       # EvalRunner, AgentFactory (spec 024)
+│   │                                   #   Phase 13: drops BudgetGuard wiring; factory owns BudgetPolicy/MaxTurnsPolicy attach.
+│   ├── store.rs                        # EvalStore, FsEvalStore (spec 024)
+│   ├── audit.rs                        # AuditedInvocation (spec 024)
+│   ├── gate.rs                         # GateConfig, GateResult (spec 024)
+│   ├── yaml.rs                         # YAML loading (feature-gated, spec 024)
+│   │                                   #   v2: + case-load validation for expected_environment_state duplicates
+│   ├── judge.rs                        # NEW (v2 — T041): JudgeClient trait, JudgeVerdict, JudgeError
+│   ├── semantic_tool_selection.rs      # NEW (v2 — T049): SemanticToolSelectionEvaluator
+│   ├── semantic_tool_parameter.rs      # NEW (v2 — T057): SemanticToolParameterEvaluator
+│   ├── environment_state.rs            # NEW (v2 — T064): EnvironmentStateEvaluator
+│   └── testing.rs                      # NEW (v2 — T044): MockJudge + shared test doubles (public, not feature-gated — per QA audit memory)
 └── tests/
-    ├── common/mod.rs     # Shared test helpers
-    ├── match_.rs         # Trajectory matching integration tests
-    ├── efficiency.rs     # Efficiency scoring integration tests
-    ├── response.rs       # Response matching integration tests
-    ├── score.rs          # Score/Verdict integration tests
-    ├── budget.rs         # Budget evaluation integration tests
-    ├── store.rs          # FsEvalStore integration tests
-    ├── gate.rs           # Gate integration tests
-    ├── audit.rs          # Audit integration tests
-    └── yaml.rs           # YAML loading integration tests
+    ├── common/mod.rs                   # Shared test helpers
+    ├── trajectory.rs                   # US1 trajectory collection integration tests
+    ├── match_.rs                       # Trajectory matching integration tests
+    ├── efficiency.rs                   # Efficiency scoring integration tests
+    ├── response.rs                     # Response matching integration tests
+    ├── score.rs                        # Score/Verdict integration tests
+    ├── budget.rs                       # Budget evaluation integration tests
+    │                                   #   Phase 13: rewritten to target BudgetPolicy at agent-loop level, not BudgetGuard.
+    ├── store.rs                        # FsEvalStore integration tests
+    ├── gate.rs                         # Gate integration tests
+    ├── audit.rs                        # Audit integration tests
+    ├── yaml.rs                         # YAML loading integration tests
+    ├── semantic_tool_selection.rs      # NEW (v2): US5 acceptance + edge tests
+    ├── semantic_tool_parameter.rs      # NEW (v2): US6 acceptance + edge tests
+    ├── environment_state.rs            # NEW (v2): US7 acceptance + edge tests
+    └── registry_panic_isolation.rs     # NEW (v2 — T078): cross-cutting FR-014 / SC-008 verification
 ```
 
-**Structure Decision**: Single crate within the existing workspace. All 023-scoped code lives in `eval/src/` files: `trajectory.rs`, `match_.rs`, `efficiency.rs`, `response.rs`, `types.rs`, `score.rs`, `evaluator.rs`. Tests in `eval/tests/` and inline `#[cfg(test)]` modules.
+**Structure Decision**: Single crate within the existing workspace. v1 code (Phases 1–7) lives in `eval/src/` per the original files. v2 adds five new source modules (`judge.rs`, `semantic_tool_selection.rs`, `semantic_tool_parameter.rs`, `environment_state.rs`, `testing.rs`) and four new integration test files. Phase 13 migration removes `BudgetGuard` entirely from `trajectory.rs` — budget enforcement moves to the agent loop via `BudgetPolicy` (PreTurn slot) and `MaxTurnsPolicy` attached by the `AgentFactory`.
 
 ## Complexity Tracking
 

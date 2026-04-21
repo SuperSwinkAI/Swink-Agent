@@ -21,22 +21,38 @@ collector.observe(&event);  // call for each AgentEvent
 let invocation = collector.finish();
 ```
 
-## Collect with budget enforcement
+## Budget enforcement (Phase 13 — via BudgetPolicy on the agent)
+
+Budget caps are attached to the agent by the `AgentFactory`, not by the trajectory collector. `BudgetConstraints::to_policies()` converts an `EvalCase.budget` into the corresponding `BudgetPolicy` / `MaxTurnsPolicy` from `swink-agent-policies`:
 
 ```rust
-use swink_agent_eval::{BudgetGuard, TrajectoryCollector};
-use tokio_util::sync::CancellationToken;
+use swink_agent::AgentOptions;
+use swink_agent_eval::{AgentFactory, EvalCase, EvalError};
+use swink_agent_eval::TrajectoryCollector;
 
-let cancel = CancellationToken::new();
-let guard = BudgetGuard::new(cancel.clone())
-    .with_max_cost(1.0)       // $1 max
-    .with_max_tokens(10_000)   // 10k tokens max
-    .with_max_turns(5);        // 5 turns max
+struct MyFactory { /* model, tools, stream_fn, etc. */ }
 
-let invocation = TrajectoryCollector::collect_with_guard(stream, Some(guard)).await;
-// The agent run is cancelled if any threshold is exceeded,
-// but the invocation trace is always complete.
+impl AgentFactory for MyFactory {
+    fn create_agent(&self, case: &EvalCase) -> Result<(swink_agent::Agent, tokio_util::sync::CancellationToken), EvalError> {
+        let mut opts = AgentOptions::new_simple(/* ... */);
+
+        // Attach policies derived from the case's budget, if any.
+        if let Some(b) = case.budget.as_ref() {
+            let (budget, max_turns) = b.to_policies();
+            if let Some(p) = budget    { opts = opts.with_pre_turn_policy(p); }
+            if let Some(p) = max_turns { opts = opts.with_pre_turn_policy(p); }
+        }
+
+        let agent = swink_agent::Agent::new(opts)?;
+        Ok((agent, tokio_util::sync::CancellationToken::new()))
+    }
+}
+
+// Trajectory collection itself is policy-free:
+let invocation = TrajectoryCollector::collect_from_stream(stream).await;
 ```
+
+**Capability note**: `BudgetPolicy` fires at turn boundaries only. Mid-turn cancellation and wall-clock `max_duration` (previously on `BudgetGuard`) are not supported in 023. Callers needing either must compose their own cancellation outside this crate.
 
 ## Compare against a golden path
 
