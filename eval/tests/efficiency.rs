@@ -89,11 +89,15 @@ fn us3_perfect_efficiency_score_1() {
         max_duration: None,
     });
     let result = eval.evaluate(&case, &invocation).unwrap();
+    let repeated = eval.evaluate(&case, &invocation).unwrap();
     assert!(
         (result.score.value - 1.0).abs() < f64::EPSILON,
         "expected 1.0, got {}",
         result.score.value
     );
+    assert_eq!(repeated.score.value, result.score.value);
+    assert_eq!(repeated.score.verdict(), result.score.verdict());
+    assert_eq!(repeated.details, result.details);
 }
 
 /// AS-3.2: 50% duplicates + 2x expected turns → weighted penalty.
