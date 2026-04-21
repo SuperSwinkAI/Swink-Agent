@@ -1,7 +1,9 @@
 //! Evaluator trait and registry for composing multiple evaluation metrics.
 
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 
+use crate::score::Score;
 use crate::types::{EvalCase, EvalMetricResult, Invocation};
 
 /// Pluggable evaluator that scores an invocation against an eval case.
@@ -85,7 +87,19 @@ impl EvaluatorRegistry {
         self.evaluators
             .iter()
             .filter(|e| filter.is_empty() || filter.iter().any(|name| name == e.name()))
-            .filter_map(|e| e.evaluate(case, invocation))
+            .filter_map(
+                |e| match catch_unwind(AssertUnwindSafe(|| e.evaluate(case, invocation))) {
+                    Ok(result) => result,
+                    Err(payload) => Some(EvalMetricResult {
+                        evaluator_name: e.name().to_string(),
+                        score: Score::fail(),
+                        details: Some(format!(
+                            "evaluator panicked: {}",
+                            panic_payload_message(payload.as_ref())
+                        )),
+                    }),
+                },
+            )
             .collect()
     }
 }
@@ -94,4 +108,12 @@ impl Default for EvaluatorRegistry {
     fn default() -> Self {
         Self::new()
     }
+}
+
+fn panic_payload_message(payload: &(dyn std::any::Any + Send)) -> String {
+    payload
+        .downcast_ref::<&str>()
+        .map(|message| (*message).to_string())
+        .or_else(|| payload.downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "unknown panic".to_string())
 }

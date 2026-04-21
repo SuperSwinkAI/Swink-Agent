@@ -7,7 +7,10 @@ use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
 use swink_agent::{Agent, AgentOptions, ModelSpec, testing::SimpleMockStreamFn};
-use swink_agent_eval::{AgentFactory, EvalCase, EvalError, EvalRunner, EvalSet, Verdict};
+use swink_agent_eval::{
+    AgentFactory, EvalCase, EvalError, EvalMetricResult, EvalRunner, EvalSet, Evaluator,
+    EvaluatorRegistry, Invocation, Score, Verdict,
+};
 
 /// Factory that creates agents with a deterministic mock stream returning the
 /// given tokens as a text-only response.
@@ -40,6 +43,34 @@ struct FailingFactory;
 impl AgentFactory for FailingFactory {
     fn create_agent(&self, _case: &EvalCase) -> Result<(Agent, CancellationToken), EvalError> {
         Err(EvalError::invalid_case("factory forced failure"))
+    }
+}
+
+struct PanicEvaluator;
+
+impl Evaluator for PanicEvaluator {
+    fn name(&self) -> &'static str {
+        "panic_eval"
+    }
+
+    fn evaluate(&self, _case: &EvalCase, _invocation: &Invocation) -> Option<EvalMetricResult> {
+        panic!("runner evaluator panic");
+    }
+}
+
+struct PassingEvaluator;
+
+impl Evaluator for PassingEvaluator {
+    fn name(&self) -> &'static str {
+        "pass_eval"
+    }
+
+    fn evaluate(&self, _case: &EvalCase, _invocation: &Invocation) -> Option<EvalMetricResult> {
+        Some(EvalMetricResult {
+            evaluator_name: self.name().to_string(),
+            score: Score::pass(),
+            details: None,
+        })
     }
 }
 
@@ -167,4 +198,49 @@ async fn mixed_success_and_failure() {
     // A case with no expected trajectory/response and only efficiency evaluator
     // (which returns None for zero tool calls) should pass since no metrics fail.
     assert_eq!(result.summary.passed, 1);
+}
+
+#[tokio::test]
+async fn panicking_evaluator_records_failure_and_suite_continues() {
+    let factory = MockFactory::new(vec!["Hello"]);
+    let mut registry = EvaluatorRegistry::new();
+    registry.register(PanicEvaluator);
+    registry.register(PassingEvaluator);
+    let runner = EvalRunner::new(registry);
+    let eval_set = EvalSet {
+        id: "panic-safe".to_string(),
+        name: "Panic Safe Suite".to_string(),
+        description: None,
+        cases: vec![make_case("a"), make_case("b")],
+    };
+
+    let result = runner.run_set(&eval_set, &factory).await.unwrap();
+
+    assert_eq!(result.case_results.len(), 2);
+    assert_eq!(result.summary.total_cases, 2);
+    assert_eq!(result.summary.failed, 2);
+    assert_eq!(result.summary.passed, 0);
+
+    for case_result in &result.case_results {
+        let panic_metric = case_result
+            .metric_results
+            .iter()
+            .find(|metric| metric.evaluator_name == "panic_eval")
+            .expect("panic metric should be recorded");
+        assert_eq!(panic_metric.score.verdict(), Verdict::Fail);
+        assert!(
+            panic_metric
+                .details
+                .as_deref()
+                .is_some_and(|details| details.contains("runner evaluator panic")),
+            "panic metric should preserve the panic message"
+        );
+        assert!(
+            case_result
+                .metric_results
+                .iter()
+                .any(|metric| metric.evaluator_name == "pass_eval"),
+            "non-panicking evaluators should still run"
+        );
+    }
 }
