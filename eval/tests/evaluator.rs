@@ -82,7 +82,7 @@ impl Evaluator for Panics {
 }
 
 #[test]
-fn registry_with_defaults_has_four_evaluators() {
+fn registry_with_defaults_runs_applicable_evaluators_only() {
     let registry = EvaluatorRegistry::with_defaults();
     let invocation = common::mock_invocation(&["read", "write"], Some("hello"), 0.01, 500);
     let case = common::case_with_trajectory(vec![swink_agent_eval::ExpectedToolCall {
@@ -90,9 +90,10 @@ fn registry_with_defaults_has_four_evaluators() {
         arguments: None,
     }]);
     let results = registry.evaluate(&case, &invocation);
-    // with_defaults registers: trajectory, budget, response, efficiency
-    // trajectory applies (has expected_trajectory), efficiency applies (has tool calls)
-    // budget does not apply (no budget constraints), response does not apply (no expected_response)
+    // with_defaults registers: trajectory, budget, response, efficiency,
+    // environment_state. Only trajectory (has expected_trajectory) and
+    // efficiency (has tool calls) apply here. budget/response/environment_state
+    // gate on fields this case does not set.
     assert_eq!(
         results.len(),
         2,

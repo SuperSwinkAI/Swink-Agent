@@ -191,15 +191,15 @@
 
 **Independent Test**: Case with `expected_environment_state: [{name: "created_file", state: "out.md"}]` plus a capture callback that lists the working dir. Agent writes `out.md`. Evaluator returns Pass.
 
-- [ ] T064 [US7] Create `eval/src/environment_state.rs`: `EnvironmentStateEvaluator` (no fields). Calls `case.state_capture` (wrapped in `catch_unwind`), compares each expected named state to actual via full JSON equality. Returns `None` when callback absent or `expected_environment_state` absent (FR-013).
-- [ ] T065 [P] [US7] Acceptance test in `eval/tests/environment_state.rs`: all named states match → Pass with matched names in details (AS-7.1).
-- [ ] T066 [P] [US7] Acceptance test: missing expected name → Fail identifying missing name (AS-7.2).
-- [ ] T067 [P] [US7] Acceptance test: value mismatch → Fail with expected and actual JSON in details (AS-7.3).
-- [ ] T068 [US7] Acceptance test: case with `expected_environment_state` but no `state_capture` → `None`; eval set continues (AS-7.4).
-- [ ] T069 [US7] Edge case test: capture callback panics → `Score::fail()` with panic message in details, no propagation (AS-7.5). Use `panic::catch_unwind(AssertUnwindSafe(...))` per registry convention.
-- [ ] T070 [US7] Edge case test: captured snapshot contains extra names not in expected → ignored, evaluator still Pass (per edge case list).
-- [ ] T071 [US7] Wire `EnvironmentStateEvaluator` into `EvaluatorRegistry::with_defaults()` — this one is deterministic so it's safe to register unconditionally (returns `None` when callback absent).
-- [ ] T072 [US7] Verify `cargo test -p swink-agent-eval --test environment_state` passes.
+- [x] T064 [US7] Create `eval/src/environment_state.rs`: `EnvironmentStateEvaluator` (no fields). Calls `case.state_capture` (wrapped in `catch_unwind`), compares each expected named state to actual via full JSON equality. Returns `None` when callback absent or `expected_environment_state` absent (FR-013).
+- [x] T065 [P] [US7] Acceptance test in `eval/tests/environment_state.rs`: all named states match → Pass with matched names in details (AS-7.1).
+- [x] T066 [P] [US7] Acceptance test: missing expected name → Fail identifying missing name (AS-7.2).
+- [x] T067 [P] [US7] Acceptance test: value mismatch → Fail with expected and actual JSON in details (AS-7.3).
+- [x] T068 [US7] Acceptance test: case with `expected_environment_state` but no `state_capture` → `None`; eval set continues (AS-7.4).
+- [x] T069 [US7] Edge case test: capture callback panics → `Score::fail()` with panic message in details, no propagation (AS-7.5). Use `panic::catch_unwind(AssertUnwindSafe(...))` per registry convention.
+- [x] T070 [US7] Edge case test: captured snapshot contains extra names not in expected → ignored, evaluator still Pass (per edge case list).
+- [x] T071 [US7] Wire `EnvironmentStateEvaluator` into `EvaluatorRegistry::with_defaults()` — this one is deterministic so it's safe to register unconditionally (returns `None` when callback absent).
+- [x] T072 [US7] Verify `cargo test -p swink-agent-eval --test environment_state` passes.
 
 **Checkpoint**: US7 fully tested; FR-013 + FR-014 + FR-015 + SC-007 + SC-009 coverage verified.
 
