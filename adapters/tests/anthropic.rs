@@ -4,6 +4,7 @@
 mod common;
 
 use futures::StreamExt;
+use std::sync::{Arc, Mutex};
 use tokio_util::sync::CancellationToken;
 use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -20,9 +21,15 @@ fn test_model() -> ModelSpec {
 }
 
 async fn collect_events(stream_fn: &AnthropicStreamFn) -> Vec<AssistantMessageEvent> {
+    collect_events_with_options(stream_fn, StreamOptions::default()).await
+}
+
+async fn collect_events_with_options(
+    stream_fn: &AnthropicStreamFn,
+    options: StreamOptions,
+) -> Vec<AssistantMessageEvent> {
     let model = test_model();
     let context = test_context();
-    let options = StreamOptions::default();
     let token = CancellationToken::new();
     let stream = stream_fn.stream(&model, &context, &options, token);
     stream.collect::<Vec<_>>().await
@@ -900,5 +907,52 @@ async fn anthropic_empty_response_body() {
     assert!(
         err.contains("stream ended unexpectedly"),
         "expected 'stream ended unexpectedly', got: {err}"
+    );
+}
+
+#[tokio::test]
+async fn anthropic_on_raw_payload_observes_runtime_sse_lines() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(sse_response(&basic_text_sse()))
+        .mount(&server)
+        .await;
+
+    let observed = Arc::new(Mutex::new(Vec::<String>::new()));
+    let callback_lines = Arc::clone(&observed);
+    let options = StreamOptions {
+        on_raw_payload: Some(Arc::new(move |line| {
+            callback_lines
+                .lock()
+                .expect("callback buffer poisoned")
+                .push(line.to_owned());
+        })),
+        ..StreamOptions::default()
+    };
+
+    let sf = AnthropicStreamFn::new(server.uri(), "test-key");
+    let events = collect_events_with_options(&sf, options).await;
+    let observed = observed.lock().expect("callback buffer poisoned").clone();
+
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, AssistantMessageEvent::Done { .. })),
+        "expected runtime stream to complete successfully"
+    );
+    assert_eq!(
+        observed,
+        vec![
+            r#"{"type":"message_start","message":{"usage":{"input_tokens":25}}}"#.to_string(),
+            r#"{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#
+                .to_string(),
+            r#"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}}"#
+                .to_string(),
+            r#"{"type":"content_block_stop","index":0}"#.to_string(),
+            r#"{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":10}}"#
+                .to_string(),
+            r#"{"type":"message_stop"}"#.to_string(),
+        ]
     );
 }

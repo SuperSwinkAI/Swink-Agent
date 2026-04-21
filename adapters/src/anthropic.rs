@@ -22,7 +22,7 @@ use swink_agent::{
 use crate::base::AdapterBase;
 use crate::block_accumulator::BlockAccumulator;
 use crate::convert::extract_tool_schemas;
-use crate::sse::{SseAction, SseEvent, sse_paired_events};
+use crate::sse::{SseAction, SseEvent, sse_paired_events_with_callback};
 
 // ─── Request types ──────────────────────────────────────────────────────────
 
@@ -216,7 +216,8 @@ fn anthropic_stream<'a>(
             return stream::iter(crate::base::pre_stream_error(event)).left_stream();
         }
 
-        parse_sse_stream(response, cancellation_token).right_stream()
+        parse_sse_stream(response, cancellation_token, options.on_raw_payload.clone())
+            .right_stream()
     })
     .flatten()
 }
@@ -456,8 +457,9 @@ fn convert_messages(
 fn parse_sse_stream(
     response: reqwest::Response,
     cancellation_token: CancellationToken,
+    on_raw_payload: Option<swink_agent::OnRawPayload>,
 ) -> impl Stream<Item = AssistantMessageEvent> + Send {
-    let line_stream = sse_paired_events(response.bytes_stream());
+    let line_stream = sse_paired_events_with_callback(response.bytes_stream(), on_raw_payload);
 
     let state = SseStreamState {
         blocks: BlockAccumulator::default(),
