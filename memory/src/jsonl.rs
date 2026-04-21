@@ -80,6 +80,16 @@ fn interrupt_path(sessions_dir: &Path, id: &str) -> PathBuf {
     sessions_dir.join(format!("{id}.interrupt.json"))
 }
 
+fn with_session_lock<T>(
+    sessions_dir: &Path,
+    id: &str,
+    op: impl FnOnce(&Path, &Path) -> io::Result<T>,
+) -> io::Result<T> {
+    let session = session_path(sessions_dir, id);
+    let interrupt = interrupt_path(sessions_dir, id);
+    with_target_lock(&session, || op(&session, &interrupt))
+}
+
 fn not_found(id: &str) -> io::Error {
     io::Error::new(io::ErrorKind::NotFound, format!("session not found: {id}"))
 }
@@ -563,14 +573,14 @@ impl SessionStore for JsonlSessionStore {
 
     fn delete(&self, id: &str) -> io::Result<()> {
         validate_session_id(id)?;
-        let path = session_path(&self.sessions_dir, id);
-        std::fs::remove_file(path)?;
-        // Cascade-delete the interrupt file if it exists
-        let int_path = interrupt_path(&self.sessions_dir, id);
-        if int_path.exists() {
-            std::fs::remove_file(int_path)?;
-        }
-        Ok(())
+        with_session_lock(&self.sessions_dir, id, |path, int_path| {
+            std::fs::remove_file(path)?;
+            // Cascade-delete the interrupt file if it exists.
+            if int_path.exists() {
+                std::fs::remove_file(int_path)?;
+            }
+            Ok(())
+        })
     }
 
     fn save_state(&self, id: &str, state: &serde_json::Value) -> io::Result<()> {
@@ -610,13 +620,13 @@ impl SessionStore for JsonlSessionStore {
 
     fn save_interrupt(&self, id: &str, state: &InterruptState) -> io::Result<()> {
         validate_session_id(id)?;
-        let session = session_path(&self.sessions_dir, id);
-        if !session.exists() {
-            return Err(not_found(id));
-        }
-        let path = interrupt_path(&self.sessions_dir, id);
-        atomic_write(&path, |writer| {
-            serde_json::to_writer_pretty(&mut *writer, state).map_err(io::Error::other)
+        with_session_lock(&self.sessions_dir, id, |session, path| {
+            if !session.exists() {
+                return Err(not_found(id));
+            }
+            atomic_write(path, |writer| {
+                serde_json::to_writer_pretty(&mut *writer, state).map_err(io::Error::other)
+            })
         })
     }
 
@@ -641,11 +651,12 @@ impl SessionStore for JsonlSessionStore {
 
     fn clear_interrupt(&self, id: &str) -> io::Result<()> {
         validate_session_id(id)?;
-        let path = interrupt_path(&self.sessions_dir, id);
-        if path.exists() {
-            std::fs::remove_file(path)?;
-        }
-        Ok(())
+        with_session_lock(&self.sessions_dir, id, |_session, path| {
+            if path.exists() {
+                std::fs::remove_file(path)?;
+            }
+            Ok(())
+        })
     }
 
     fn load_with_options(
@@ -1583,6 +1594,63 @@ mod tests {
         let (loaded_meta, loaded_messages) = store.load("append-atomic", None).unwrap();
         assert_eq!(loaded_meta.sequence, 1);
         assert_eq!(loaded_messages.len(), 1);
+    }
+
+    #[test]
+    fn delete_waits_for_append_lock_and_does_not_allow_resurrection() {
+        use std::sync::Arc;
+        use std::sync::Barrier;
+        use std::thread;
+
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(JsonlSessionStore::new(dir.path().to_path_buf()).unwrap());
+        let meta = fresh_meta("delete-race");
+        store
+            .save("delete-race", &meta, &[user_msg("first", 1)])
+            .unwrap();
+
+        let path = session_path(dir.path(), "delete-race");
+        let append_ready = Arc::new(Barrier::new(2));
+        let allow_rewrite = Arc::new(Barrier::new(2));
+
+        let append_path = path.clone();
+        let append_ready_for_thread = Arc::clone(&append_ready);
+        let allow_rewrite_for_thread = Arc::clone(&allow_rewrite);
+        let append_handle = thread::spawn(move || {
+            append_records_with_rewrite(
+                &append_path,
+                "delete-race",
+                [SessionRecord::from_message(&user_msg("second", 2), "delete-race").unwrap()],
+                |path, meta, lines| {
+                    append_ready_for_thread.wait();
+                    allow_rewrite_for_thread.wait();
+                    rewrite_session_file_locked(path, meta, lines)
+                },
+            )
+        });
+
+        append_ready.wait();
+
+        let delete_store = Arc::clone(&store);
+        let delete_handle = thread::spawn(move || delete_store.delete("delete-race"));
+
+        // If delete bypassed the session lock, it could return before the
+        // append rewrites and the session would be recreated after delete.
+        allow_rewrite.wait();
+
+        append_handle
+            .join()
+            .unwrap()
+            .expect("append should finish cleanly");
+        delete_handle
+            .join()
+            .unwrap()
+            .expect("delete should wait for the append lock");
+
+        assert!(
+            !path.exists(),
+            "delete must not allow a concurrent append to resurrect the session"
+        );
     }
 
     #[test]
