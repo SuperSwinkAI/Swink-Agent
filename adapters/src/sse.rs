@@ -362,9 +362,21 @@ pub struct SseEvent {
 pub fn sse_paired_events(
     byte_stream: impl Stream<Item = Result<bytes::Bytes, reqwest::Error>> + Send + 'static,
 ) -> Pin<Box<dyn Stream<Item = SseEvent> + Send + 'static>> {
+    sse_paired_events_with_callback(byte_stream, None)
+}
+
+/// Like [`sse_paired_events`] but with an optional raw-payload callback.
+pub fn sse_paired_events_with_callback(
+    byte_stream: impl Stream<Item = Result<bytes::Bytes, reqwest::Error>> + Send + 'static,
+    on_raw_payload: Option<swink_agent::OnRawPayload>,
+) -> Pin<Box<dyn Stream<Item = SseEvent> + Send + 'static>> {
     Box::pin(stream::unfold(
-        (Box::pin(sse_lines(byte_stream)), Option::<String>::None),
-        |(mut stream, mut current_event)| async move {
+        (
+            Box::pin(sse_lines(byte_stream)),
+            Option::<String>::None,
+            on_raw_payload,
+        ),
+        |(mut stream, mut current_event, callback)| async move {
             loop {
                 match stream.next().await {
                     Some(SseLine::Empty | SseLine::Done) => {
@@ -376,7 +388,7 @@ pub fn sse_paired_events(
                                 event_type: SSE_TRANSPORT_ERROR_EVENT.to_string(),
                                 data: message,
                             },
-                            (stream, current_event),
+                            (stream, current_event, callback),
                         ));
                     }
                     Some(SseLine::Event(event_type)) => {
@@ -384,10 +396,18 @@ pub fn sse_paired_events(
                     }
                     Some(SseLine::Data(data)) => {
                         if !data.is_empty() {
+                            if let Some(cb) = &callback {
+                                let cb = AssertUnwindSafe(cb);
+                                let data = AssertUnwindSafe(&data);
+                                let _ = catch_unwind(|| (cb)(&data));
+                            }
                             let event_type = current_event
                                 .take()
                                 .unwrap_or_else(|| "unknown".to_string());
-                            return Some((SseEvent { event_type, data }, (stream, current_event)));
+                            return Some((
+                                SseEvent { event_type, data },
+                                (stream, current_event, callback),
+                            ));
                         }
                     }
                     None => return None,
@@ -838,6 +858,52 @@ mod tests {
 
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].event_type, "unknown");
+    }
+
+    #[tokio::test]
+    async fn paired_events_on_raw_payload_fires_for_each_line() {
+        use std::sync::{Arc, Mutex};
+
+        let captured = Arc::new(Mutex::new(Vec::<String>::new()));
+        let captured_clone = Arc::clone(&captured);
+        let callback: Arc<dyn Fn(&str) + Send + Sync> = Arc::new(move |data: &str| {
+            captured_clone.lock().unwrap().push(data.to_owned());
+        });
+
+        let chunks = vec![Ok(bytes::Bytes::from(
+            "event: one\ndata: first\n\nevent: two\ndata: second\n\n",
+        ))];
+        let byte_stream = futures::stream::iter(chunks);
+        let events: Vec<_> = super::sse_paired_events_with_callback(byte_stream, Some(callback))
+            .collect()
+            .await;
+
+        assert_eq!(events.len(), 2);
+        assert_eq!(
+            captured.lock().unwrap().clone(),
+            vec!["first".to_string(), "second".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn paired_events_on_raw_payload_panic_caught() {
+        use std::sync::Arc;
+
+        let callback: Arc<dyn Fn(&str) + Send + Sync> = Arc::new(|_data: &str| {
+            panic!("callback panic!");
+        });
+
+        let chunks = vec![Ok(bytes::Bytes::from(
+            "event: one\ndata: safe\n\nevent: two\ndata: still_safe\n\n",
+        ))];
+        let byte_stream = futures::stream::iter(chunks);
+        let events: Vec<_> = super::sse_paired_events_with_callback(byte_stream, Some(callback))
+            .collect()
+            .await;
+
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].data, "safe");
+        assert_eq!(events[1].data, "still_safe");
     }
 
     // ─── sse_adapter_stream tests ─────────────────────────────────────────
