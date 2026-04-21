@@ -114,7 +114,7 @@ impl LoaderBackend for ChatBackend {
     fn build(
         config: &ModelConfig,
         artifact: Self::Artifact,
-        _progress_cb: Option<ProgressCallbackFn>,
+        progress_cb: Option<ProgressCallbackFn>,
     ) -> Pin<Box<dyn Future<Output = Result<Self::Runner, LocalModelError>> + Send + '_>> {
         Box::pin(async move {
             let runner_config = RunnerConfig {
@@ -124,9 +124,10 @@ impl LoaderBackend for ChatBackend {
             };
 
             let model_path = artifact;
-            let build_result =
-                tokio::task::spawn_blocking(move || LlamaRunner::load(&model_path, runner_config))
-                    .await;
+            let build_result = tokio::task::spawn_blocking(move || {
+                LlamaRunner::load_with_progress(&model_path, runner_config, progress_cb.as_ref())
+            })
+            .await;
 
             match build_result {
                 Ok(Ok(runner)) => Ok(Arc::new(runner)),

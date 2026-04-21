@@ -6,6 +6,7 @@
 //! short-lived `std::thread`s for each inference or embedding request,
 //! communicating results back via channels.
 
+use std::path::Path;
 use std::sync::Arc;
 
 use llama_cpp_2::context::params::LlamaContextParams;
@@ -19,6 +20,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::debug;
 
 use crate::error::LocalModelError;
+use crate::progress::{ProgressCallbackFn, ProgressEvent};
 
 // ─── Configuration ─────────────────────────────────────────────────────────
 
@@ -72,6 +74,34 @@ fn build_sampler(options: GenerateOptions) -> LlamaSampler {
         })
 }
 
+fn notify_loading_progress(progress_cb: Option<&ProgressCallbackFn>, message: impl Into<String>) {
+    if let Some(callback) = progress_cb {
+        callback(ProgressEvent::LoadingProgress {
+            message: message.into(),
+        });
+    }
+}
+
+fn initialize_runner_parts<Backend, Model, InitBackend, LoadModel>(
+    model_path: &Path,
+    config: &RunnerConfig,
+    progress_cb: Option<&ProgressCallbackFn>,
+    init_backend: InitBackend,
+    load_model: LoadModel,
+) -> Result<(Backend, Model), LocalModelError>
+where
+    InitBackend: FnOnce() -> Result<Backend, LocalModelError>,
+    LoadModel: FnOnce(&Backend, &Path, &RunnerConfig) -> Result<Model, LocalModelError>,
+{
+    notify_loading_progress(progress_cb, "initializing llama backend");
+    let backend = init_backend()?;
+
+    notify_loading_progress(progress_cb, "loading GGUF model");
+    let model = load_model(&backend, model_path, config)?;
+
+    Ok((backend, model))
+}
+
 // ─── Token Events ──────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone)]
@@ -108,20 +138,30 @@ impl std::fmt::Debug for LlamaRunner {
 }
 
 impl LlamaRunner {
-    pub fn load(
-        model_path: impl AsRef<std::path::Path>,
+    pub(crate) fn load_with_progress(
+        model_path: impl AsRef<Path>,
         config: RunnerConfig,
+        progress_cb: Option<&ProgressCallbackFn>,
     ) -> Result<Self, LocalModelError> {
-        let backend = LlamaBackend::init().map_err(|e| {
-            LocalModelError::loading_message(format!("llama backend init failed: {e}"))
-        })?;
+        let model_path = model_path.as_ref();
+        let (backend, model) = initialize_runner_parts(
+            model_path,
+            &config,
+            progress_cb,
+            || {
+                LlamaBackend::init().map_err(|e| {
+                    LocalModelError::loading_message(format!("llama backend init failed: {e}"))
+                })
+            },
+            |backend, model_path, runner_config| {
+                let model_params =
+                    LlamaModelParams::default().with_n_gpu_layers(runner_config.gpu_layers);
 
-        let model_params = LlamaModelParams::default().with_n_gpu_layers(config.gpu_layers);
-
-        let model =
-            LlamaModel::load_from_file(&backend, model_path, &model_params).map_err(|e| {
-                LocalModelError::loading_message(format!("GGUF model load failed: {e}"))
-            })?;
+                LlamaModel::load_from_file(backend, model_path, &model_params).map_err(|e| {
+                    LocalModelError::loading_message(format!("GGUF model load failed: {e}"))
+                })
+            },
+        )?;
 
         debug!(
             vocab = model.n_vocab(),
@@ -404,7 +444,23 @@ const _: () = {
 
 #[cfg(test)]
 mod tests {
-    use super::GenerateOptions;
+    use std::path::Path;
+    use std::sync::{Arc, Mutex};
+
+    use super::{GenerateOptions, RunnerConfig, initialize_runner_parts};
+    use crate::error::LocalModelError;
+    use crate::progress::{ProgressCallbackFn, ProgressEvent};
+
+    fn loading_messages() -> (ProgressCallbackFn, Arc<Mutex<Vec<String>>>) {
+        let messages = Arc::new(Mutex::new(Vec::new()));
+        let messages_clone = Arc::clone(&messages);
+        let callback: ProgressCallbackFn = Arc::new(move |event| {
+            if let ProgressEvent::LoadingProgress { message } = event {
+                messages_clone.lock().unwrap().push(message);
+            }
+        });
+        (callback, messages)
+    }
 
     #[test]
     fn effective_max_tokens_uses_context_budget_when_unset() {
@@ -470,6 +526,56 @@ mod tests {
             }
             .normalized_temperature(),
             Some(0.7)
+        );
+    }
+
+    #[test]
+    fn initialize_runner_parts_emits_backend_and_model_loading_progress() {
+        let (callback, messages) = loading_messages();
+        let config = RunnerConfig::default();
+
+        let (backend, model) = initialize_runner_parts(
+            Path::new("synthetic.gguf"),
+            &config,
+            Some(&callback),
+            || Ok::<_, LocalModelError>("backend"),
+            |backend, model_path, runner_config| {
+                assert_eq!(*backend, "backend");
+                assert_eq!(model_path, Path::new("synthetic.gguf"));
+                assert_eq!(runner_config.context_length, config.context_length);
+                Ok::<_, LocalModelError>("model")
+            },
+        )
+        .unwrap();
+
+        assert_eq!(backend, "backend");
+        assert_eq!(model, "model");
+        assert_eq!(
+            *messages.lock().unwrap(),
+            vec![
+                "initializing llama backend".to_string(),
+                "loading GGUF model".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn initialize_runner_parts_stops_after_backend_init_failure() {
+        let (callback, messages) = loading_messages();
+
+        let err = initialize_runner_parts::<(), (), _, _>(
+            Path::new("synthetic.gguf"),
+            &RunnerConfig::default(),
+            Some(&callback),
+            || Err(LocalModelError::loading_message("backend init failed")),
+            |_, _, _| unreachable!("model load should not run"),
+        )
+        .unwrap_err();
+
+        assert!(err.to_string().contains("backend init failed"));
+        assert_eq!(
+            *messages.lock().unwrap(),
+            vec!["initializing llama backend".to_string()]
         );
     }
 }
