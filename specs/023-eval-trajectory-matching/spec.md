@@ -2,7 +2,7 @@
 
 **Feature Branch**: `023-eval-trajectory-matching`
 **Created**: 2026-03-20
-**Status**: Draft
+**Status**: Scope expanded 2026-04-21 — semantic matching & env-state assertions added (US5–US7, FR-010–FR-013)
 **Input**: Trajectory collection from agent event stream, golden-path comparison, efficiency scoring, response matching. TrajectoryCollector (AgentEvent to Invocation traces), TrajectoryMatcher (golden path comparison), EfficiencyEvaluator (duplicate ratio 0.6 weight + step ratio 0.4 weight), ResponseCriteria (exact, contains, regex, custom closure). References: HLD Evaluation Layer, EVAL.md (Trajectory & Process, Advanced Verification).
 
 ## Clarifications
@@ -16,7 +16,13 @@
 - Q: Should the spec efficiency formula align with the implementation's exact formula? → A: Yes — update FR-005 to match code.
 - Q: Is ResponseCriteria a single criterion per EvalCase or a composite? → A: Single criterion per case; composites use Custom closures.
 
-## User Scenarios & Testing *(mandatory)*
+### Session 2026-04-21 (Scope expansion — semantic matching & env-state)
+
+- Q: Should 023 add semantic tool-selection / parameter-intent matching and environment-state assertions? → A: Yes — both fit the "Trajectory & Matching" theme. The shared LLM-judge infrastructure (concrete model client implementations, prompt-template registry, retry/backoff policy, etc.) is forward-referenced from a forthcoming "Advanced Evals" spec.
+- Q: Where does the `JudgeClient` trait live? → A: Defined in `swink-agent-eval` (this crate) as a minimal async interface. Concrete implementations live in the Advanced Evals spec — 023 ships only the trait + the evaluators that consume it.
+- Q: How should semantic evaluators behave when no `JudgeClient` is configured or no semantic criterion is set on the case? → A: Return `None` (not applicable) — same convention as every other built-in evaluator. Eval runs remain usable without judge infra.
+- Q: How is environment state captured for assertion? → A: A `StateCapture` callback (`Arc<dyn Fn(&Invocation) -> Vec<EnvironmentState> + Send + Sync>`) is registered on the `EvalCase` (or supplied by the `AgentFactory`). Trajectory collection stays free of tool- or domain-specific logic.
+- Q: How are JudgeClient failures (network errors, malformed responses, timeouts) and state-capture-callback panics handled? → A: Same panic-isolation contract as the rest of the registry — convert to `Score::fail()` with diagnostic context; never propagate.
 
 ### User Story 1 - Capture Execution Traces from Agent Runs (Priority: P1)
 
@@ -87,6 +93,59 @@ An evaluator wants to verify that the agent's final response meets specific cont
 
 ---
 
+### User Story 5 - Score Tool Selection Semantically (Priority: P2)
+
+An evaluator wants to verify that the agent picked the *right tool* for a given step, beyond literal name equality. When multiple tools could plausibly solve the problem (e.g. `read_file` vs `fetch_document`), a semantic judge inspects the user goal, available tools, session history, and the chosen tool, and scores whether the selection was appropriate.
+
+**Why this priority**: Deterministic name-matching from US2 misses cases where a semantically equivalent tool is called. P2 because literal matching covers the majority of test cases and the semantic judge introduces an external LLM dependency.
+
+**Independent Test**: Provide a case where the golden path expects `read_file` but the agent calls `fetch_document`; deterministic matcher reports a miss, semantic matcher accepts it when the configured `JudgeClient` deems them equivalent.
+
+**Acceptance Scenarios**:
+
+1. **Given** a case with an injected `JudgeClient` and a tool-selection criterion, **When** the agent calls a semantically equivalent tool, **Then** the evaluator returns Pass with the judge's reason in details.
+2. **Given** a case with no `JudgeClient` configured, **When** the semantic tool-selection evaluator runs, **Then** it returns `None` (not applicable) — never panics, never hard-fails.
+3. **Given** a case with no semantic tool-selection criterion set, **When** the evaluator runs, **Then** it returns `None`.
+4. **Given** a malformed judge response (unparseable or schema violation), **When** the evaluator processes it, **Then** the evaluator returns `Score::fail()` with details of the parse error.
+5. **Given** a `JudgeClient` that returns a transport/network error, **When** the evaluator handles it, **Then** the evaluator returns `Score::fail()` with the error and the rest of the eval set continues.
+
+---
+
+### User Story 6 - Score Tool Parameters Semantically (Priority: P2)
+
+An evaluator wants to verify the agent invoked a tool with the *right intent* in its arguments — even when the exact JSON differs. A semantic judge compares an expected parameter-intent string (e.g. "read the config file for project alpha") against the actual arguments JSON.
+
+**Why this priority**: Exact JSON equality from US2 is brittle — equivalent paths, different key orderings, paraphrased prompts, or unrelated extra fields all fail. P2 for the same reasons as US5.
+
+**Independent Test**: Provide a case with `expected_tool_intent: "read config for project-alpha"`; the agent calls a tool with `{"path": "./project-alpha/config.toml"}`. Semantic matcher accepts; deterministic matcher (US2) would reject.
+
+**Acceptance Scenarios**:
+
+1. **Given** a case with `expected_tool_intent` and an injected `JudgeClient`, **When** the actual arguments satisfy the intent semantically, **Then** the evaluator returns Pass with judge reason in details.
+2. **Given** a case with no `expected_tool_intent` set, **When** the evaluator runs, **Then** it returns `None`.
+3. **Given** a `JudgeClient` that times out, **When** the evaluator handles the timeout, **Then** it returns `Score::fail()` with timeout context — no runaway hang, no panic.
+4. **Given** an `expected_tool_intent` paired with a specific `tool_name` filter, **When** the agent calls a different tool, **Then** the evaluator skips that call (not Pass, not Fail — only the targeted tool's params are scored).
+
+---
+
+### User Story 7 - Verify Environment-State Assertions (Priority: P2)
+
+An evaluator wants to assert that the agent's actions produced the expected side effects on the environment — files written, database rows updated, counters incremented. A `StateCapture` callback runs after the agent finishes; named environment states are compared deterministically against `expected_environment_state` on the case.
+
+**Why this priority**: Many agent tasks are defined by what they *do*, not what they *say*. Trajectory matching catches a subset of these cases; explicit state assertions catch the rest. P2 because the existing trajectory + response matchers already validate most behavior.
+
+**Independent Test**: Provide a case with `expected_environment_state: [{name: "created_file", state: "out.md"}]` plus a state-capture callback that lists the working directory. Run an agent that writes `out.md`. Evaluator returns Pass.
+
+**Acceptance Scenarios**:
+
+1. **Given** a case with `expected_environment_state` and a `StateCapture` callback, **When** the actual captured state equals expected for every named entry, **Then** the evaluator returns Pass with the matched state names in details.
+2. **Given** a named state in `expected_environment_state` that is missing from the captured snapshot, **When** evaluated, **Then** the evaluator returns Fail identifying the missing state by name.
+3. **Given** a named state whose captured value differs from the expected value, **When** evaluated, **Then** the evaluator returns Fail with both expected and actual values in details.
+4. **Given** a case with `expected_environment_state` set but no `StateCapture` callback registered, **When** the evaluator runs, **Then** it returns `None` (capture not configured) and the eval set continues.
+5. **Given** a `StateCapture` callback that panics, **When** the evaluator runs, **Then** it returns `Score::fail()` with the panic message in details — never propagates the panic.
+
+---
+
 ### Edge Cases
 
 - **Empty golden path (no expected steps)**: Behavior varies by match mode. Exact: returns 0.0 if actual has any steps (length mismatch), 0.0 if both empty (0/1 matched). InOrder/AnyOrder: returns pass (vacuous truth — all zero expected calls were found). This follows standard evaluation framework semantics.
@@ -97,6 +156,13 @@ An evaluator wants to verify that the agent's final response meets specific cont
 - **Concurrent tool executions completing out of order**: Captured in the order their `ToolExecutionStart` events arrive in the stream. The trajectory reflects event-stream ordering, not wall-clock completion order.
 - **Custom matching function panics**: Treated as a criterion failure with diagnostic context describing the panic. Does not propagate the panic to the caller.
 - **Partial matches (correct tool name, wrong input)**: When `ExpectedToolCall.arguments` is `None`, the step matches (name-only). When `arguments` is `Some` and doesn't match, the step is not matched — reported as missing (expected) and unexpected (actual).
+- **JudgeClient connection failure**: Semantic evaluators (US5, US6) return `Score::fail()` with network/transport error details. The case continues to other evaluators; the eval set continues to subsequent cases.
+- **JudgeClient malformed response**: Semantic evaluators return `Score::fail()` with the parse error and a snippet of the offending response (truncated to a safe length). No panic.
+- **JudgeClient timeout**: Semantic evaluators return `Score::fail()` with the timeout context. The evaluator does NOT block the runner — timeouts are bounded by the configured judge call deadline.
+- **State capture callback panics**: Caught via `catch_unwind`; `EnvironmentStateEvaluator` returns `Score::fail()` with the panic message in details.
+- **Multiple expected environment states with the same name**: Rejected at case load time as a validation error — no first-wins, no last-wins, no silent dedup.
+- **Captured environment state contains entries not declared in `expected_environment_state`**: Ignored. Only declared expected names are scored. Extras are not failures.
+- **Semantic evaluator runs against an empty trajectory**: Returns `None` — no tool calls means no semantic tool selection or parameter judgments to make.
 
 ## Requirements *(mandatory)*
 
@@ -111,6 +177,12 @@ An evaluator wants to verify that the agent's final response meets specific cont
 - **FR-007**: Each EvalCase has a single `ResponseCriteria` (one of: Exact, Contains, Regex, Custom). To combine multiple checks, use a Custom closure that internally evaluates multiple conditions and reports which sub-checks failed.
 - **FR-008**: The system MUST handle custom matching function failures (panics or errors) gracefully, treating them as criterion failures with diagnostic context.
 - **FR-009**: The system MUST capture failed tool invocations in the trajectory, not silently drop them.
+- **FR-010**: The system MUST expose a `JudgeClient` trait (single async method returning a structured `JudgeVerdict`) that semantic evaluators consume. Concrete `JudgeClient` implementations are out of scope for this spec and are provided by the forthcoming "Advanced Evals" spec.
+- **FR-011**: The system MUST support semantic tool-selection scoring — for each actual tool call, ask a configured `JudgeClient` whether the chosen tool was appropriate given the user goal, available tools, and session history. Returns `None` when no `JudgeClient` is configured or no semantic tool-selection criterion is set on the case.
+- **FR-012**: The system MUST support semantic tool-parameter scoring — for each actual tool call (optionally filtered to a specific tool name), compare an expected parameter-intent string against the actual JSON arguments via the `JudgeClient`. Returns `None` when the criterion is not set on the case.
+- **FR-013**: The system MUST support environment-state assertions — a `StateCapture` callback (registered on the `EvalCase`) produces a `Vec<EnvironmentState>` after the agent completes; an `EnvironmentStateEvaluator` compares each named state against `expected_environment_state` deterministically. Missing names are reported as failures; values are compared for JSON equality. Returns `None` when no capture callback is configured for the case.
+- **FR-014**: The system MUST handle `JudgeClient` failures (transport errors, malformed responses, deadline timeouts) and `StateCapture` callback panics by returning `Score::fail()` with diagnostic context — never propagating to the runner. This preserves the per-evaluator panic-isolation contract (FR-008).
+- **FR-015**: The system MUST validate `expected_environment_state` at case load time, rejecting duplicate state names with a clear error (no silent dedup, no first/last-wins).
 
 ### Key Entities
 
@@ -122,6 +194,14 @@ An evaluator wants to verify that the agent's final response meets specific cont
 - **EfficiencyEvaluator**: Scores a trajectory's efficiency based on duplicate invocation ratio (0.6 weight) and step count ratio (0.4 weight).
 - **ResponseCriteria**: A set of matching rules applied to the agent's final response, supporting exact, contains, regex, and custom matching strategies.
 - **BudgetGuard / BudgetPolicy**: Real-time budget enforcement during trajectory collection. Monitors cost, token usage, and turn count against thresholds; cancels the agent run via CancellationToken when any limit is exceeded while allowing the trajectory collector to drain the stream and capture a complete trace. **[Note: The standalone BudgetGuard struct is superseded by BudgetPolicy in the PreTurn policy slot per 031-policy-slots. The enforcement behavior and CancellationToken integration are preserved.]**
+- **JudgeClient** (trait): Minimal async interface for LLM-based judging consumed by semantic evaluators. Single method shape: `async fn judge(&self, prompt: &str) -> Result<JudgeVerdict, JudgeError>`. Concrete implementations (model providers, prompt templating, retry/backoff, batching) are out of scope for 023 and live in the Advanced Evals spec. `swink-agent-eval` exposes only the trait so 023's semantic evaluators compile and unit-test against test doubles.
+- **JudgeVerdict**: Structured output from a `JudgeClient`. Shape: `{ score: f64 in [0.0, 1.0], pass: bool, reason: Option<String>, label: Option<String> }`. Mirrors strands-evals' `EvaluationOutput` so future provider implementations can map cleanly.
+- **JudgeError**: Error type returned by `JudgeClient`. Variants: `Transport`, `Timeout`, `MalformedResponse`, `Other`. Semantic evaluators map any variant to `Score::fail()` with the variant in details (FR-014).
+- **SemanticToolSelectionEvaluator**: For each actual tool call in the invocation, asks a configured `JudgeClient` whether the chosen tool was appropriate given the user goal, available tools (from the agent's tool set), and session history up to that point. Returns `None` when no judge is configured or no semantic criterion is set. Returns Pass/Fail aggregated across all judged calls.
+- **SemanticToolParameterEvaluator**: For each actual tool call (optionally filtered to a target tool name), asks a configured `JudgeClient` whether the JSON arguments satisfy a declared `expected_tool_intent` string from the case. Returns `None` when no intent is set. Returns Pass/Fail with judge reasons in details.
+- **EnvironmentStateEvaluator**: Deterministic evaluator that compares a captured environment-state snapshot against `expected_environment_state` on the case. No LLM dependency. Returns Pass when every expected named state matches actual; Fail otherwise.
+- **EnvironmentState** (data): Named state entry — `{ name: String, state: serde_json::Value }`. Compared for full JSON equality (consistent with `ExpectedToolCall.arguments`).
+- **StateCapture** (callback): `Arc<dyn Fn(&Invocation) -> Vec<EnvironmentState> + Send + Sync>`. Registered on the `EvalCase` (or supplied by the `AgentFactory`). Invoked once after the agent completes; output populates the "actual" side for `EnvironmentStateEvaluator`. Panics are caught and surfaced as `Score::fail()` (FR-014).
 
 ## Success Criteria *(mandatory)*
 
@@ -132,6 +212,10 @@ An evaluator wants to verify that the agent's final response meets specific cont
 - **SC-003**: Efficiency scores are deterministic — the same trajectory and golden path always produce the same score.
 - **SC-004**: All four response matching strategies (exact, contains, regex, custom) correctly distinguish matching from non-matching responses.
 - **SC-005**: The efficiency formula produces 1.0 for a perfect trajectory and 0.0 for an empty trajectory.
+- **SC-006**: Semantic evaluators (US5, US6) with no configured `JudgeClient` or no semantic criterion set return `None` and never cause the case or set to fail.
+- **SC-007**: Environment-state assertions correctly identify all matching, missing, and value-mismatched named states for any pair of expected and captured snapshots.
+- **SC-008**: Every external call from US5–US7 evaluators (judge client request, state capture callback) is panic-isolated — a failure or panic in one evaluator never aborts the case, the registry, or the eval run.
+- **SC-009**: A duplicate name in `expected_environment_state` is rejected at case load with a clear validation error pointing to the offending name.
 
 ## Assumptions
 
@@ -140,3 +224,7 @@ An evaluator wants to verify that the agent's final response meets specific cont
 - The efficiency scoring weights (0.6 for duplicates, 0.4 for step count) are fixed in this specification; configurable weights are a future enhancement.
 - Response matching operates on the final assistant text response, not intermediate streaming tokens.
 - The trajectory collector is a passive observer — it does not modify the agent's behavior.
+- Concrete `JudgeClient` implementations (model providers, prompt templates, retry/backoff, caching) are out of scope for 023 and are delivered by the forthcoming "Advanced Evals" spec. 023 ships only the trait surface and the evaluators that depend on it.
+- Semantic evaluators (US5, US6) are tested in 023 against in-process `JudgeClient` test doubles (fakes returning canned `JudgeVerdict`s). Live LLM judging is exercised in the Advanced Evals spec.
+- Environment-state capture is application-specific. 023 defines the callback contract and the comparison evaluator; each consumer crate (or test) supplies its own capture closure.
+- `expected_tool_intent` strings are short natural-language descriptions, not structured schemas. The Advanced Evals spec may layer a richer intent DSL on top; 023 keeps the surface area minimal.
