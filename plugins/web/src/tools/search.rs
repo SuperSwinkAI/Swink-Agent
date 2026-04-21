@@ -78,7 +78,7 @@ impl AgentTool for SearchTool {
         &self,
         _tool_call_id: &str,
         params: Value,
-        _cancellation_token: CancellationToken,
+        cancellation_token: CancellationToken,
         _on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
         _state: Arc<std::sync::RwLock<swink_agent::SessionState>>,
         _credential: Option<swink_agent::ResolvedCredential>,
@@ -101,7 +101,14 @@ impl AgentTool for SearchTool {
                 return AgentToolResult::error("Missing required parameter: query");
             }
 
-            match provider.search(&query, max_results).await {
+            let search_result = tokio::select! {
+                result = provider.search(&query, max_results) => result,
+                () = cancellation_token.cancelled() => {
+                    return AgentToolResult::error("Request cancelled");
+                }
+            };
+
+            match search_result {
                 Ok(results) if results.is_empty() => {
                     AgentToolResult::text(format!("No results found for '{query}'."))
                 }
@@ -115,9 +122,11 @@ impl AgentTool for SearchTool {
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
+    use std::time::Duration;
 
     use serde_json::json;
     use swink_agent::{AgentTool, SessionState};
+    use tokio::time::timeout;
     use tokio_util::sync::CancellationToken;
 
     use super::SearchTool;
@@ -166,6 +175,28 @@ mod tests {
             >,
         > {
             Box::pin(async move { Err(SearchError::NetworkError("connection refused".into())) })
+        }
+    }
+
+    struct PendingProvider;
+
+    impl SearchProvider for PendingProvider {
+        fn name(&self) -> &str {
+            "pending"
+        }
+
+        fn search(
+            &self,
+            _query: &str,
+            _max_results: usize,
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<Output = Result<Vec<SearchResult>, SearchError>>
+                    + Send
+                    + '_,
+            >,
+        > {
+            Box::pin(std::future::pending())
         }
     }
 
@@ -245,5 +276,31 @@ mod tests {
             )
             .await;
         assert!(provider_failure.is_error);
+    }
+
+    #[tokio::test]
+    async fn execute_returns_cancelled_when_provider_request_is_interrupted() {
+        let tool = SearchTool::new(Arc::new(PendingProvider), 10);
+        let state = Arc::new(std::sync::RwLock::new(SessionState::default()));
+        let cancellation_token = CancellationToken::new();
+        cancellation_token.cancel();
+
+        let result = timeout(
+            Duration::from_millis(100),
+            tool.execute(
+                "call-4",
+                json!({"query": "cancel me"}),
+                cancellation_token,
+                None,
+                state,
+                None,
+            ),
+        )
+        .await
+        .expect("cancelled search should not hang");
+
+        assert!(result.is_error);
+        let text = format!("{:?}", result.content);
+        assert!(text.contains("Request cancelled"));
     }
 }
