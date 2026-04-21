@@ -91,6 +91,10 @@ fn returns_none_when_no_trajectory_expected() {
         budget: None,
         evaluators: vec![],
         metadata: serde_json::Value::Null,
+        expected_environment_state: None,
+        expected_tool_intent: None,
+        semantic_tool_selection: false,
+        state_capture: None,
     };
     let invocation = mock_invocation(&["read"], Some("hello"), 0.0, 0);
     assert!(matcher.evaluate(&case, &invocation).is_none());

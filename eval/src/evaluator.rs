@@ -3,6 +3,7 @@
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 
+use crate::judge::JudgeClient;
 use crate::score::Score;
 use crate::types::{EvalCase, EvalMetricResult, Invocation};
 
@@ -46,6 +47,14 @@ where
 /// filtered by the case's [`EvalCase::evaluators`] list.
 pub struct EvaluatorRegistry {
     evaluators: Vec<Arc<dyn Evaluator>>,
+    /// Judge client available to semantic evaluators.
+    ///
+    /// Stored here so Phase 9 (`SemanticToolSelectionEvaluator`) and Phase 10
+    /// (`SemanticToolParameterEvaluator`) can wire themselves into the
+    /// `with_judge` / `with_defaults_and_judge` constructors when they land.
+    /// Today the field is read only by downstream phases; semantic evaluators
+    /// that consume it are NOT yet implemented.
+    judge: Option<Arc<dyn JudgeClient>>,
 }
 
 impl EvaluatorRegistry {
@@ -54,6 +63,7 @@ impl EvaluatorRegistry {
     pub fn new() -> Self {
         Self {
             evaluators: Vec::new(),
+            judge: None,
         }
     }
 
@@ -69,7 +79,55 @@ impl EvaluatorRegistry {
         registry.register(crate::budget::BudgetEvaluator);
         registry.register(crate::response::ResponseMatcher);
         registry.register(crate::efficiency::EfficiencyEvaluator::new());
+        // TODO(#742): once `EnvironmentStateEvaluator` lands in Phase 11 it
+        // should be registered here unconditionally (deterministic — safe to
+        // default-register per contracts/public-api.md). It is inert when no
+        // `state_capture` or `expected_environment_state` is configured on
+        // the case.
         registry
+    }
+
+    /// Create a registry wired with a judge client but no other defaults.
+    ///
+    /// Equivalent to [`Self::new`] today, with the judge stored for
+    /// later-registered semantic evaluators (Phases 9–10). Phase 9
+    /// (`SemanticToolSelectionEvaluator`) and Phase 10
+    /// (`SemanticToolParameterEvaluator`) will wire themselves into this
+    /// constructor when they land. Until then the registry is empty but the
+    /// judge is retained — callers can still `register()` their own semantic
+    /// evaluators that consume the judge.
+    // TODO(#740,#741): register SemanticToolSelectionEvaluator /
+    // SemanticToolParameterEvaluator once Phases 9–10 land.
+    #[must_use]
+    pub fn with_judge(client: Arc<dyn JudgeClient>) -> Self {
+        Self {
+            evaluators: Vec::new(),
+            judge: Some(client),
+        }
+    }
+
+    /// Create a registry pre-loaded with the v1 defaults plus the v2 semantic
+    /// evaluators that require a judge.
+    ///
+    /// Today this is equivalent to [`Self::with_defaults`] with the judge
+    /// attached; the semantic evaluator registrations are deferred to
+    /// Phases 9–10 per the spec-023 rollout plan.
+    // TODO(#740,#741): register SemanticToolSelectionEvaluator /
+    // SemanticToolParameterEvaluator once Phases 9–10 land.
+    #[must_use]
+    pub fn with_defaults_and_judge(client: Arc<dyn JudgeClient>) -> Self {
+        let mut registry = Self::with_defaults();
+        registry.judge = Some(client);
+        registry
+    }
+
+    /// Borrow the registered [`JudgeClient`], if any.
+    ///
+    /// Exposed so Phases 9–10 can pass the judge into their evaluator
+    /// constructors at registration time.
+    #[must_use]
+    pub fn judge(&self) -> Option<&Arc<dyn JudgeClient>> {
+        self.judge.as_ref()
     }
 
     /// Register a new evaluator.
@@ -116,4 +174,34 @@ fn panic_payload_message(payload: &(dyn std::any::Any + Send)) -> String {
         .map(|message| (*message).to_string())
         .or_else(|| payload.downcast_ref::<String>().cloned())
         .unwrap_or_else(|| "unknown panic".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::testing::MockJudge;
+
+    #[test]
+    fn with_defaults_has_no_judge() {
+        let registry = EvaluatorRegistry::with_defaults();
+        assert!(registry.judge().is_none());
+    }
+
+    #[test]
+    fn with_judge_stores_client() {
+        let judge: Arc<dyn JudgeClient> = Arc::new(MockJudge::always_pass());
+        let registry = EvaluatorRegistry::with_judge(judge);
+        assert!(registry.judge().is_some());
+    }
+
+    #[test]
+    fn with_defaults_and_judge_has_defaults_plus_judge() {
+        let judge: Arc<dyn JudgeClient> = Arc::new(MockJudge::always_pass());
+        let registry = EvaluatorRegistry::with_defaults_and_judge(judge);
+        assert!(registry.judge().is_some());
+        // v1 defaults remain registered (trajectory, budget, response,
+        // efficiency = 4 evaluators today).
+        assert_eq!(registry.evaluators.len(), 4);
+    }
 }
