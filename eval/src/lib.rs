@@ -48,7 +48,7 @@ pub use runner::{AgentFactory, EvalRunner};
 pub use score::{Score, Verdict};
 pub use store::{EvalStore, FsEvalStore};
 pub use testing::MockJudge;
-pub use trajectory::{BudgetGuard, TrajectoryCollector};
+pub use trajectory::TrajectoryCollector;
 pub use types::{
     BudgetConstraints, EnvironmentState, EvalCase, EvalCaseResult, EvalMetricResult, EvalSet,
     EvalSetResult, EvalSummary, ExpectedToolCall, Invocation, RecordedToolCall, ResponseCriteria,

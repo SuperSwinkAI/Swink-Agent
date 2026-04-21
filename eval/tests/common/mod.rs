@@ -38,6 +38,7 @@ pub fn mock_invocation(
         provider: "test".to_string(),
         model_id: "test-model".to_string(),
         usage: Usage {
+            input: token_total,
             total: token_total,
             ..Default::default()
         },
@@ -61,6 +62,7 @@ pub fn mock_invocation(
             duration: Duration::from_millis(100),
         }],
         total_usage: Usage {
+            input: token_total,
             total: token_total,
             ..Default::default()
         },

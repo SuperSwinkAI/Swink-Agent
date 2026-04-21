@@ -48,7 +48,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## Architecture
 
-A run is three staged components: a `TrajectoryCollector` captures every `AgentEvent` emitted by the loop, `Evaluator` implementations score the trajectory against an `EvalCase`'s expectations, and `EvalStore` persists the result. The runner drives cases in parallel with a `BudgetGuard` that can short-circuit a case when it exceeds cost or turn ceilings. Matchers are independent building blocks — you can run trajectory, response, and budget checks alone or compose them via `EvaluatorRegistry`.
+A run is three staged components: a `TrajectoryCollector` captures every `AgentEvent` emitted by the loop, `Evaluator` implementations score the trajectory against an `EvalCase`'s expectations, and `EvalStore` persists the result. Budget enforcement is attached at agent construction time by converting `EvalCase.budget` into `BudgetPolicy` / `MaxTurnsPolicy` via `BudgetConstraints::to_policies()`. Matchers are independent building blocks — you can run trajectory, response, and budget checks alone or compose them via `EvaluatorRegistry`.
 
 No `unsafe` code (`#![forbid(unsafe_code)]`). Eval runs never mutate shared state outside the provided `EvalStore`.
 
