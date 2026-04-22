@@ -35,6 +35,21 @@ pub struct SetupWizard {
     selected: usize,
     should_quit: bool,
     should_continue: bool,
+    /// Most recent keychain write failure, shown inline with env-var fallback
+    /// guidance. Cleared when the user starts a new key entry or successfully
+    /// stores a credential.
+    last_error: Option<WizardError>,
+}
+
+/// Inline error surfaced in the wizard UI after a keychain write failure.
+#[derive(Debug, Clone)]
+struct WizardError {
+    /// Provider name (e.g. "Anthropic").
+    provider_name: &'static str,
+    /// Environment variable the user can set as a fallback.
+    env_var: &'static str,
+    /// Underlying keychain error message.
+    message: String,
 }
 
 impl Default for SetupWizard {
@@ -64,6 +79,7 @@ impl SetupWizard {
             selected: 0,
             should_quit: false,
             should_continue: false,
+            last_error: None,
         }
     }
 
@@ -230,6 +246,28 @@ impl SetupWizard {
             Style::default().add_modifier(Modifier::DIM),
         )));
 
+        // Surface any keychain write failure from the last KeyEntry submission,
+        // along with provider-specific ENV_VAR fallback guidance.
+        if let Some(err) = &self.last_error {
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                format!(
+                    "⚠ Could not save {} credential to keychain: {}",
+                    err.provider_name, err.message
+                ),
+                Style::default()
+                    .fg(Color::Red)
+                    .add_modifier(Modifier::BOLD),
+            )));
+            lines.push(Line::from(Span::styled(
+                format!(
+                    "  Fallback: set `{}=<your-key>` in your shell profile and restart.",
+                    err.env_var
+                ),
+                Style::default().fg(Color::Yellow),
+            )));
+        }
+
         let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });
         frame.render_widget(paragraph, inner);
     }
@@ -377,6 +415,8 @@ impl SetupWizard {
                     // "Continue" selected
                     self.step = WizardStep::Done;
                 } else if self.providers[self.selected].requires_key {
+                    // Clear any stale error when the user starts a new entry.
+                    self.last_error = None;
                     self.step = WizardStep::KeyEntry {
                         provider_index: self.selected,
                         input: String::new(),
@@ -396,6 +436,18 @@ impl SetupWizard {
     }
 
     fn handle_key_entry_key(&mut self, key: crossterm::event::KeyEvent) {
+        self.handle_key_entry_key_with(key, credentials::store_credential);
+    }
+
+    /// Core key-entry handler with an injectable credential-store function.
+    ///
+    /// The production path uses `credentials::store_credential`; tests can
+    /// substitute a stub that simulates a keychain write failure to verify
+    /// the inline error + env-var fallback guidance is surfaced.
+    fn handle_key_entry_key_with<F>(&mut self, key: crossterm::event::KeyEvent, store: F)
+    where
+        F: FnOnce(&str, &str) -> Result<(), String>,
+    {
         // Extract current key-entry state to work with
         let (provider_index, input, cursor) = match &mut self.step {
             WizardStep::KeyEntry {
@@ -412,15 +464,23 @@ impl SetupWizard {
             }
             (_, KeyCode::Enter) => {
                 if !input.is_empty() {
-                    let provider_key = self.providers[provider_index].key_name;
+                    let provider = &self.providers[provider_index];
+                    let provider_key = provider.key_name;
                     // Attempt to store the credential
-                    match credentials::store_credential(provider_key, input) {
+                    match store(provider_key, input) {
                         Ok(()) => {
                             self.configured[provider_index] = true;
+                            self.last_error = None;
                         }
-                        Err(_e) => {
-                            // On failure, still go back to the list; the checkbox
-                            // won't be checked so the user can retry.
+                        Err(e) => {
+                            // Surface the failure inline with env-var fallback
+                            // guidance. The checkbox stays unchecked so the
+                            // user can retry or fall back to the env var.
+                            self.last_error = Some(WizardError {
+                                provider_name: provider.name,
+                                env_var: provider.env_var,
+                                message: e,
+                            });
                         }
                     }
                 }
@@ -459,6 +519,7 @@ impl SetupWizard {
             selected: 0,
             should_quit: false,
             should_continue: false,
+            last_error: None,
         }
     }
 }
@@ -707,6 +768,107 @@ mod tests {
         let mut wizard = SetupWizard::new_for_test();
         wizard.handle_key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE));
         assert!(wizard.should_quit);
+    }
+
+    #[test]
+    fn keychain_failure_surfaces_inline_error_with_env_var_fallback() {
+        let mut wizard = SetupWizard::new_for_test();
+        // Pick the first provider that requires a key (OpenAI / Anthropic /
+        // proxy) so we have a deterministic env var to assert on.
+        let provider_index = wizard
+            .providers
+            .iter()
+            .position(|p| p.requires_key)
+            .expect("expected at least one provider requiring a key");
+        let expected_env_var = wizard.providers[provider_index].env_var;
+        let expected_name = wizard.providers[provider_index].name;
+
+        wizard.step = WizardStep::KeyEntry {
+            provider_index,
+            input: "secret-key".to_string(),
+            cursor: 10,
+        };
+
+        // Simulate a keychain write failure via the injectable store.
+        wizard.handle_key_entry_key_with(key(KeyCode::Enter), |_provider_key, _secret| {
+            Err("keyring store error: keychain unavailable".to_string())
+        });
+
+        // After the failure we return to the provider list…
+        assert!(matches!(wizard.step, WizardStep::ProviderList));
+        // …the provider is NOT marked configured…
+        assert!(!wizard.configured[provider_index]);
+        // …and the error is recorded with the provider-specific env-var fallback.
+        let err = wizard
+            .last_error
+            .as_ref()
+            .expect("keychain failure should populate last_error");
+        assert_eq!(err.provider_name, expected_name);
+        assert_eq!(err.env_var, expected_env_var);
+        assert!(
+            err.message.contains("keychain unavailable"),
+            "underlying keychain error should be preserved, got: {}",
+            err.message
+        );
+
+        // Render the provider list and assert the error + env-var guidance
+        // make it into the rendered text (the actual UI surface).
+        let backend = ratatui::backend::TestBackend::new(100, 30);
+        let mut terminal = ratatui::Terminal::new(backend).expect("test terminal");
+        terminal
+            .draw(|f| wizard.render_provider_list(f, f.area()))
+            .expect("render");
+        let buf = terminal.backend().buffer().clone();
+        let rendered: String = (0..buf.area.height)
+            .map(|y| {
+                let mut line = String::new();
+                for x in 0..buf.area.width {
+                    line.push_str(buf[(x, y)].symbol());
+                }
+                line.push('\n');
+                line
+            })
+            .collect();
+        assert!(
+            rendered.contains(expected_env_var),
+            "rendered wizard should include env-var fallback `{expected_env_var}`, got:\n{rendered}"
+        );
+        assert!(
+            rendered.contains("Fallback"),
+            "rendered wizard should include `Fallback:` guidance, got:\n{rendered}"
+        );
+        assert!(
+            rendered.contains("keychain"),
+            "rendered wizard should mention keychain failure, got:\n{rendered}"
+        );
+    }
+
+    #[test]
+    fn keychain_success_clears_last_error() {
+        let mut wizard = SetupWizard::new_for_test();
+        let provider_index = wizard
+            .providers
+            .iter()
+            .position(|p| p.requires_key)
+            .expect("expected provider requiring a key");
+
+        // Pre-populate an error from a prior failed attempt.
+        wizard.last_error = Some(WizardError {
+            provider_name: wizard.providers[provider_index].name,
+            env_var: wizard.providers[provider_index].env_var,
+            message: "stale".to_string(),
+        });
+
+        wizard.step = WizardStep::KeyEntry {
+            provider_index,
+            input: "new-secret".to_string(),
+            cursor: 10,
+        };
+
+        wizard.handle_key_entry_key_with(key(KeyCode::Enter), |_k, _v| Ok(()));
+
+        assert!(wizard.last_error.is_none());
+        assert!(wizard.configured[provider_index]);
     }
 
     #[test]

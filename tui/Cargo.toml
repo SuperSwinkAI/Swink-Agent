@@ -40,6 +40,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"
 dotenvy.workspace = true
 thiserror.workspace = true
+tempfile.workspace = true
 
 [features]
 default = ["cli"]
