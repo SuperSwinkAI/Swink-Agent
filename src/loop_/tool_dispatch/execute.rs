@@ -13,7 +13,8 @@ use crate::types::{AgentMessage, ToolResultMessage};
 use crate::util::now_timestamp;
 
 use super::shared::{
-    ToolUpdateRelay, emit_error_result, emit_tool_execution_start, forward_tool_updates,
+    TOOL_UPDATE_CHANNEL_CAPACITY, emit_error_result, emit_tool_execution_start,
+    forward_tool_updates,
 };
 use super::{AgentEvent, AgentLoopConfig, PreparedToolCall, ToolCallInfo, emit};
 
@@ -204,24 +205,38 @@ pub(super) async fn dispatch_single_tool(
                 match resolve_credential(&tool, &config_clone, &tool_call_id).await {
                     Err(cred_error) => (AgentToolResult::error(format!("{cred_error}")), true),
                     Ok(credential) => {
-                        let update_relay = Arc::new(ToolUpdateRelay::new());
+                        // Bounded channel prevents unbounded memory growth when
+                        // downstream event consumers lag behind high-frequency
+                        // partial-update producers. `on_update` is a sync
+                        // callback, so we cannot `.await` inside it — the
+                        // closure uses `try_send` and silently drops the
+                        // partial on Full. Partial updates are progressive
+                        // (each payload overrides its predecessor on the UI
+                        // side), so lossy delivery under sustained backpressure
+                        // is an acceptable trade-off vs. stalling the tool or
+                        // unbounded growth. The final `AgentToolResult` is
+                        // delivered via `ToolExecutionEnd`, independent of
+                        // this channel.
+                        let (update_tx, update_rx) =
+                            mpsc::channel::<AgentToolResult>(TOOL_UPDATE_CHANNEL_CAPACITY);
                         let updates_tx = tx_clone.clone();
                         let updates_tool_call_id = tool_call_id.clone();
                         let updates_tool_name = tool_name.clone();
-                        let relay_for_forwarder = Arc::clone(&update_relay);
                         let update_forwarder = tokio::spawn(async move {
                             forward_tool_updates(
                                 &updates_tool_call_id,
                                 &updates_tool_name,
-                                relay_for_forwarder,
+                                update_rx,
                                 &updates_tx,
                             )
                             .await;
                         });
                         let result = {
-                            let on_update_relay = Arc::clone(&update_relay);
                             let on_update = Box::new(move |partial: AgentToolResult| {
-                                on_update_relay.push(partial);
+                                // Drop on full: downstream backpressure is
+                                // signalled to the tool via loss of partial
+                                // progress, not a stall.
+                                let _ = update_tx.try_send(partial);
                             });
                             tool.execute(
                                 &tool_call_id,
@@ -233,7 +248,6 @@ pub(super) async fn dispatch_single_tool(
                             )
                             .await
                         };
-                        update_relay.close();
                         let _ = update_forwarder.await;
                         let is_error = result.is_error;
                         (result, is_error)
