@@ -255,9 +255,7 @@ impl SetupWizard {
                     "⚠ Could not save {} credential to keychain: {}",
                     err.provider_name, err.message
                 ),
-                Style::default()
-                    .fg(Color::Red)
-                    .add_modifier(Modifier::BOLD),
+                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
             )));
             lines.push(Line::from(Span::styled(
                 format!(
