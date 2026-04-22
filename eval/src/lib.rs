@@ -71,9 +71,10 @@ pub use store::{EvalStore, FsEvalStore};
 pub use testing::{MockJudge, PanickingMockJudge, SlowMockJudge};
 pub use trajectory::TrajectoryCollector;
 pub use types::{
-    BudgetConstraints, EnvironmentState, EvalCase, EvalCaseResult, EvalMetricResult, EvalSet,
-    EvalSetResult, EvalSummary, ExpectedToolCall, Invocation, RecordedToolCall, ResponseCriteria,
-    StateCapture, ToolIntent, TurnRecord, validate_eval_case, validate_eval_set,
+    BudgetConstraints, CASE_NAMESPACE, CaseFingerprint, EnvironmentState, EvalCase, EvalCaseResult,
+    EvalMetricResult, EvalSet, EvalSetResult, EvalSummary, ExpectedToolCall, Invocation,
+    RecordedToolCall, ResponseCriteria, StateCapture, ToolIntent, TurnRecord, validate_eval_case,
+    validate_eval_set,
 };
 #[cfg(feature = "yaml")]
 pub use yaml::load_eval_set_yaml;

@@ -1,12 +1,14 @@
 //! Data types for evaluation cases, invocations, and results.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use swink_agent::{AssistantMessage, Cost, ModelSpec, StopReason, ToolResultMessage, Usage};
 use swink_agent_policies::{BudgetPolicy, MaxTurnsPolicy};
+use uuid::Uuid;
 
 use crate::error::EvalError;
 use crate::score::{Score, Verdict};
@@ -139,6 +141,153 @@ pub struct ToolIntent {
 /// panic message (FR-014).
 pub type StateCapture = Arc<dyn Fn(&Invocation) -> Vec<EnvironmentState> + Send + Sync>;
 
+/// Stable namespace for deterministic case-derived session IDs.
+///
+/// Pinned to `Uuid::new_v5(&Uuid::NAMESPACE_OID, b"swink-agent-eval.case")`
+/// per spec 043 research R-014.
+pub const CASE_NAMESPACE: Uuid = Uuid::from_bytes([
+    37, 101, 28, 203, 118, 231, 87, 244, 147, 248, 152, 59, 222, 174, 80, 226,
+]);
+
+/// Canonical serializable projection of an [`EvalCase`] used for deterministic
+/// session IDs and future cache keys.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct CaseFingerprint {
+    pub id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub system_prompt: String,
+    pub user_messages: Vec<String>,
+    pub expected_trajectory: Option<Vec<ExpectedToolCallFingerprint>>,
+    pub expected_response: Option<ResponseCriteriaFingerprint>,
+    pub budget: Option<BudgetConstraintsFingerprint>,
+    pub evaluators: Vec<String>,
+    pub metadata: CanonicalJsonValue,
+    pub expected_environment_state: Option<Vec<EnvironmentStateFingerprint>>,
+    pub expected_tool_intent: Option<ToolIntentFingerprint>,
+    pub semantic_tool_selection: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ExpectedToolCallFingerprint {
+    pub tool_name: String,
+    pub arguments: Option<CanonicalJsonValue>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub enum ResponseCriteriaFingerprint {
+    Exact { expected: String },
+    Contains { substring: String },
+    Regex { pattern: String },
+    Custom,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct BudgetConstraintsFingerprint {
+    pub cost_limit_bits: Option<u64>,
+    pub input_limit: Option<u64>,
+    pub output_limit: Option<u64>,
+    pub turn_limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct EnvironmentStateFingerprint {
+    pub name: String,
+    pub state: CanonicalJsonValue,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ToolIntentFingerprint {
+    pub intent: String,
+    pub tool_name: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", content = "value", rename_all = "snake_case")]
+pub enum CanonicalJsonValue {
+    Null,
+    Bool(bool),
+    Number(String),
+    String(String),
+    Array(Vec<Self>),
+    Object(BTreeMap<String, Self>),
+}
+
+impl From<&serde_json::Value> for CanonicalJsonValue {
+    fn from(value: &serde_json::Value) -> Self {
+        match value {
+            serde_json::Value::Null => Self::Null,
+            serde_json::Value::Bool(value) => Self::Bool(*value),
+            serde_json::Value::Number(value) => Self::Number(value.to_string()),
+            serde_json::Value::String(value) => Self::String(value.clone()),
+            serde_json::Value::Array(values) => {
+                Self::Array(values.iter().map(Self::from).collect())
+            }
+            serde_json::Value::Object(values) => Self::Object(
+                values
+                    .iter()
+                    .map(|(key, value)| (key.clone(), Self::from(value)))
+                    .collect(),
+            ),
+        }
+    }
+}
+
+impl From<&ExpectedToolCall> for ExpectedToolCallFingerprint {
+    fn from(call: &ExpectedToolCall) -> Self {
+        Self {
+            tool_name: call.tool_name.clone(),
+            arguments: call.arguments.as_ref().map(CanonicalJsonValue::from),
+        }
+    }
+}
+
+impl From<&ResponseCriteria> for ResponseCriteriaFingerprint {
+    fn from(criteria: &ResponseCriteria) -> Self {
+        match criteria {
+            ResponseCriteria::Exact { expected } => Self::Exact {
+                expected: expected.clone(),
+            },
+            ResponseCriteria::Contains { substring } => Self::Contains {
+                substring: substring.clone(),
+            },
+            ResponseCriteria::Regex { pattern } => Self::Regex {
+                pattern: pattern.clone(),
+            },
+            ResponseCriteria::Custom(_) => Self::Custom,
+        }
+    }
+}
+
+impl From<&BudgetConstraints> for BudgetConstraintsFingerprint {
+    fn from(budget: &BudgetConstraints) -> Self {
+        Self {
+            cost_limit_bits: budget.max_cost.map(f64::to_bits),
+            input_limit: budget.max_input,
+            output_limit: budget.max_output,
+            turn_limit: budget.max_turns,
+        }
+    }
+}
+
+impl From<&EnvironmentState> for EnvironmentStateFingerprint {
+    fn from(state: &EnvironmentState) -> Self {
+        Self {
+            name: state.name.clone(),
+            state: CanonicalJsonValue::from(&state.state),
+        }
+    }
+}
+
+impl From<&ToolIntent> for ToolIntentFingerprint {
+    fn from(intent: &ToolIntent) -> Self {
+        Self {
+            intent: intent.intent.clone(),
+            tool_name: intent.tool_name.clone(),
+        }
+    }
+}
+
 /// Budget constraints for cost and latency governance.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BudgetConstraints {
@@ -258,6 +407,65 @@ impl std::fmt::Debug for EvalCase {
                 &self.state_capture.as_ref().map(|_| "<fn>"),
             )
             .finish()
+    }
+}
+
+impl From<&EvalCase> for CaseFingerprint {
+    fn from(case: &EvalCase) -> Self {
+        Self {
+            id: case.id.clone(),
+            name: case.name.clone(),
+            description: case.description.clone(),
+            system_prompt: case.system_prompt.clone(),
+            user_messages: case.user_messages.clone(),
+            expected_trajectory: case.expected_trajectory.as_ref().map(|calls| {
+                calls
+                    .iter()
+                    .map(ExpectedToolCallFingerprint::from)
+                    .collect()
+            }),
+            expected_response: case
+                .expected_response
+                .as_ref()
+                .map(ResponseCriteriaFingerprint::from),
+            budget: case.budget.as_ref().map(BudgetConstraintsFingerprint::from),
+            evaluators: case.evaluators.clone(),
+            metadata: CanonicalJsonValue::from(&case.metadata),
+            expected_environment_state: case.expected_environment_state.as_ref().map(|states| {
+                states
+                    .iter()
+                    .map(EnvironmentStateFingerprint::from)
+                    .collect()
+            }),
+            expected_tool_intent: case
+                .expected_tool_intent
+                .as_ref()
+                .map(ToolIntentFingerprint::from),
+            semantic_tool_selection: case.semantic_tool_selection,
+        }
+    }
+}
+
+impl EvalCase {
+    /// Canonical serializable projection used by deterministic ID and cache-key
+    /// derivation.
+    #[must_use]
+    pub fn content_fingerprint(&self) -> CaseFingerprint {
+        CaseFingerprint::from(self)
+    }
+
+    /// Deterministically derive the default session ID for this case.
+    ///
+    /// Programmatic-only closures such as `state_capture` and
+    /// `ResponseCriteria::Custom` bodies are never serialized directly.
+    /// Instead, this hashes a stable canonical fingerprint that preserves the
+    /// presence of custom criteria while avoiding pointer-address instability.
+    #[must_use]
+    pub fn default_session_id(&self) -> Uuid {
+        let canonical =
+            bincode::serialize(&self.content_fingerprint()).expect("case fingerprint serializes");
+        let digest = Sha256::digest(canonical);
+        Uuid::new_v5(&CASE_NAMESPACE, digest.as_slice())
     }
 }
 
@@ -496,6 +704,65 @@ mod validation_tests {
         );
         assert!(back.semantic_tool_selection);
         assert!(back.state_capture.is_none());
+    }
+
+    #[test]
+    fn case_namespace_matches_oid_derived_value() {
+        assert_eq!(
+            CASE_NAMESPACE,
+            Uuid::new_v5(&Uuid::NAMESPACE_OID, b"swink-agent-eval.case")
+        );
+    }
+
+    #[test]
+    fn default_session_id_is_deterministic_for_same_case() {
+        let mut case = base_case("stable");
+        case.metadata = serde_json::json!({
+            "beta": [2, {"y": true, "x": false}],
+            "alpha": {"nested_b": 2, "nested_a": 1}
+        });
+        case.expected_response = Some(ResponseCriteria::Contains {
+            substring: "ok".into(),
+        });
+        case.expected_trajectory = Some(vec![ExpectedToolCall {
+            tool_name: "read_file".into(),
+            arguments: Some(serde_json::json!({"path": "./project-alpha/config.toml"})),
+        }]);
+
+        let first = case.default_session_id();
+        let second = case.clone().default_session_id();
+        assert_eq!(first, second);
+    }
+
+    #[test]
+    fn default_session_id_is_stable_across_json_key_order() {
+        let mut left = base_case("ordered");
+        left.metadata = serde_json::json!({
+            "alpha": {"x": 1, "y": 2},
+            "beta": [3, 4]
+        });
+        left.expected_environment_state = Some(vec![EnvironmentState {
+            name: "workspace".into(),
+            state: serde_json::json!({"files": {"b": 2, "a": 1}}),
+        }]);
+
+        let mut right = left.clone();
+        right.metadata = serde_json::from_str(r#"{"beta":[3,4],"alpha":{"y":2,"x":1}}"#)
+            .expect("valid metadata json");
+        right.expected_environment_state = Some(vec![EnvironmentState {
+            name: "workspace".into(),
+            state: serde_json::from_str(r#"{"files":{"a":1,"b":2}}"#).expect("valid state json"),
+        }]);
+
+        assert_eq!(left.default_session_id(), right.default_session_id());
+    }
+
+    #[test]
+    fn default_session_id_changes_when_case_content_changes() {
+        let mut case = base_case("mutates");
+        let original = case.default_session_id();
+        case.user_messages.push("follow-up".into());
+        assert_ne!(original, case.default_session_id());
     }
 }
 
