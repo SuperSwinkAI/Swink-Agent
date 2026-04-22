@@ -23,6 +23,7 @@
 - `ProxyStreamFn` moved here from core. Import: `swink_agent_adapters::ProxyStreamFn`.
 - SSE-backed adapters should reuse `adapters/src/sse.rs` helpers; `ProxyStreamFn` follows that shared path.
 - `remote_presets` module feature-gates preset key sub-modules and `build_remote_connection` match arms per provider.
+- `build_remote_connection_with_credential` / `build_connection_from_preset` are the additive escape hatches for embedders that resolve secrets outside process env; Bedrock remains the exception and must still skip API-key validation on that path.
 
 ## Protocols
 

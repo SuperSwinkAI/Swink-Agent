@@ -140,8 +140,22 @@ pub fn build_remote_connection(
     )
 }
 
+/// Builds a [`ModelConnection`] for a preset key using an explicitly provided
+/// credential instead of reading it from the process environment.
+///
+/// This is useful for embedders that manage secrets in an external store and
+/// want to avoid process-global environment mutation.
+pub fn build_remote_connection_with_credential(
+    key: RemotePresetKey,
+    api_key: Option<String>,
+    base_url: Option<&str>,
+) -> Result<ModelConnection, RemoteModelConnectionError> {
+    let preset = required_catalog_preset(key)?;
+    build_connection_from_preset(&preset, api_key, base_url)
+}
+
 #[allow(unreachable_code, unused_variables)]
-fn build_connection_from_preset(
+pub fn build_connection_from_preset(
     preset: &CatalogPreset,
     api_key: Option<String>,
     base_url: Option<&str>,
@@ -515,6 +529,52 @@ mod tests {
                 preset: "OpenAI GPT-5.4".to_string(),
                 env_var: "OPENAI_API_KEY".to_string(),
             }
+        );
+    }
+
+    #[cfg(feature = "anthropic")]
+    #[test]
+    fn explicit_credential_builds_remote_connection_without_env_lookup() {
+        let key = RemotePresetKey::new("anthropic", "sonnet_46");
+        let connection =
+            build_remote_connection_with_credential(key, Some("test-key".to_string()), None)
+                .unwrap();
+        assert_eq!(connection.model_spec().provider, "anthropic");
+        assert_eq!(connection.model_spec().model_id, "claude-sonnet-4-6");
+    }
+
+    #[cfg(feature = "anthropic")]
+    #[test]
+    fn explicit_credential_reports_missing_key() {
+        let key = RemotePresetKey::new("anthropic", "sonnet_46");
+        let err = match build_remote_connection_with_credential(key, None, None) {
+            Ok(_) => panic!("expected missing credential error"),
+            Err(err) => err,
+        };
+        assert_eq!(
+            err,
+            RemoteModelConnectionError::MissingCredential {
+                preset: "Anthropic Sonnet 4.6".to_string(),
+                env_var: "ANTHROPIC_API_KEY".to_string(),
+            }
+        );
+    }
+
+    #[cfg(feature = "bedrock")]
+    #[test]
+    fn bedrock_explicit_credential_path_does_not_require_api_key() {
+        let key = RemotePresetKey::new("bedrock", "anthropic_claude_sonnet_45");
+        let err = match build_remote_connection_with_credential(key, None, None) {
+            Ok(_) => panic!("expected missing region or AWS credentials"),
+            Err(err) => err,
+        };
+        assert!(
+            matches!(
+                err,
+                RemoteModelConnectionError::MissingRegion { .. }
+                    | RemoteModelConnectionError::MissingAwsCredentials { .. }
+            ),
+            "bedrock should skip API-key validation, got {err:?}",
         );
     }
 

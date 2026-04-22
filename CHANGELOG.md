@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `swink-agent-adapters` now exposes explicit-credential remote preset builders so embedders can construct remote connections from secret stores without mutating process-global environment variables (#791).
+
 ## [0.8.0] - 2026-04-19
 
 ### Added
