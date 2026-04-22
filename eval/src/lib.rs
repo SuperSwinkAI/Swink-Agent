@@ -67,7 +67,7 @@ pub use score::{Score, Verdict};
 pub use semantic_tool_parameter::SemanticToolParameterEvaluator;
 pub use semantic_tool_selection::SemanticToolSelectionEvaluator;
 pub use store::{EvalStore, FsEvalStore};
-pub use testing::{MockJudge, SlowMockJudge};
+pub use testing::{MockJudge, PanickingMockJudge, SlowMockJudge};
 pub use trajectory::TrajectoryCollector;
 pub use types::{
     BudgetConstraints, EnvironmentState, EvalCase, EvalCaseResult, EvalMetricResult, EvalSet,
