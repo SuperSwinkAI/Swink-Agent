@@ -205,7 +205,25 @@ pub fn oai_send_and_parse<'a>(
     classify_error: impl Fn(u16, &str) -> Option<AssistantMessageEvent> + Send + 'a,
 ) -> impl Stream<Item = AssistantMessageEvent> + Send + 'a {
     stream::once(async move {
-        let response = match request.send().await {
+        // Race the HTTP send against the cancellation token so that aborts
+        // are honored promptly — without this select! cancellation blocks
+        // behind network latency, violating the stream contract's
+        // prompt-cancellation requirement (see `src/stream.rs`).
+        let send_fut = request.send();
+        let send_result = tokio::select! {
+            biased;
+            () = cancellation_token.cancelled() => {
+                return stream::iter(vec![
+                    AssistantMessageEvent::Start,
+                    crate::base::aborted_event(format!(
+                        "{provider} request cancelled before send"
+                    )),
+                ])
+                .left_stream();
+            }
+            res = send_fut => res,
+        };
+        let response = match send_result {
             Ok(resp) => resp,
             Err(e) => {
                 return stream::iter(vec![

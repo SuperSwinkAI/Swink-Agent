@@ -192,9 +192,25 @@ fn anthropic_stream<'a>(
     cancellation_token: CancellationToken,
 ) -> impl Stream<Item = AssistantMessageEvent> + Send + 'a {
     stream::once(async move {
-        let response = match send_request(anthropic, model, context, options).await {
-            Ok(resp) => resp,
-            Err(event) => return stream::iter(crate::base::pre_stream_error(event)).left_stream(),
+        // Honor cancellation before the HTTP send completes. Without this
+        // select! the cancellation token only takes effect after the request
+        // returns (or its network timeout fires), violating the stream
+        // contract's prompt-cancellation requirement (see `src/stream.rs`).
+        let send_fut = send_request(anthropic, model, context, options);
+        let response = tokio::select! {
+            biased;
+            () = cancellation_token.cancelled() => {
+                return stream::iter(crate::base::pre_stream_aborted(
+                    "Anthropic request cancelled before send",
+                ))
+                .left_stream();
+            }
+            res = send_fut => match res {
+                Ok(resp) => resp,
+                Err(event) => {
+                    return stream::iter(crate::base::pre_stream_error(event)).left_stream();
+                }
+            },
         };
 
         let status = response.status();

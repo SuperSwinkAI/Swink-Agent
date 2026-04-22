@@ -573,7 +573,22 @@ fn local_stream<'a>(
     cancellation_token: CancellationToken,
 ) -> impl Stream<Item = AssistantMessageEvent> + Send + 'a {
     stream::once(async move {
-        if let Err(e) = local_model.ensure_ready().await {
+        // Race model readiness against cancellation. Without this, download /
+        // load latency (potentially minutes for cold models) delays honoring
+        // cancellation and violates the stream contract's prompt-cancellation
+        // requirement (see `src/stream.rs`).
+        let ready_fut = local_model.ensure_ready();
+        let ensure_result = tokio::select! {
+            biased;
+            () = cancellation_token.cancelled() => {
+                return stream::iter(vec![
+                    AssistantMessageEvent::Start,
+                    cancelled_event("local inference cancelled before model init"),
+                ]);
+            }
+            res = ready_fut => res,
+        };
+        if let Err(e) = ensure_result {
             return stream::iter(vec![
                 AssistantMessageEvent::Start,
                 AssistantMessageEvent::error(format!("local model not ready: {e}")),
@@ -582,7 +597,7 @@ fn local_stream<'a>(
         if cancellation_token.is_cancelled() {
             return stream::iter(vec![
                 AssistantMessageEvent::Start,
-                AssistantMessageEvent::error("local inference cancelled"),
+                cancelled_event("local inference cancelled"),
             ]);
         }
 
@@ -608,14 +623,27 @@ fn local_stream<'a>(
             "sending local inference request (streaming)"
         );
 
-        let state_guard = match local_model.runner().await {
-            Ok(guard) => guard,
-            Err(e) => {
+        // Race the runner lock acquisition against cancellation so that
+        // aborts are honored even when another caller currently holds the
+        // model.
+        let runner_fut = local_model.runner();
+        let state_guard = tokio::select! {
+            biased;
+            () = cancellation_token.cancelled() => {
                 return stream::iter(vec![
                     AssistantMessageEvent::Start,
-                    AssistantMessageEvent::error(format!("model runner unavailable: {e}")),
+                    cancelled_event("local inference cancelled before runner acquisition"),
                 ]);
             }
+            res = runner_fut => match res {
+                Ok(guard) => guard,
+                Err(e) => {
+                    return stream::iter(vec![
+                        AssistantMessageEvent::Start,
+                        AssistantMessageEvent::error(format!("model runner unavailable: {e}")),
+                    ]);
+                }
+            },
         };
         let LoaderState::Ready { runner } = &*state_guard else {
             return stream::iter(vec![
@@ -931,6 +959,59 @@ mod tests {
             }
             other => panic!("expected Done terminal, got {other:?}"),
         }
+    }
+
+    // Regression for #726: a token cancelled BEFORE the stream is polled
+    // must resolve promptly with an Aborted terminal, not hang behind
+    // model init / download latency. The `ensure_ready()` call would
+    // otherwise block trying to hit HuggingFace for a nonexistent repo.
+    #[tokio::test]
+    async fn honors_cancellation_before_model_init() {
+        use std::sync::Arc;
+
+        use swink_agent::{AgentContext, ModelSpec, StreamFn};
+
+        let config = crate::model::ModelConfig {
+            repo_id: "nonexistent-org/nonexistent-repo-for-726-regression".to_string(),
+            filename: "nonexistent.gguf".to_string(),
+            gpu_layers: 0,
+            context_length: 1024,
+            chat_template: None,
+        };
+        let local = Arc::new(crate::model::LocalModel::new(config));
+        let sf = LocalStreamFn::new(local);
+
+        let model = ModelSpec::new("local", "test-model");
+        let context = AgentContext {
+            system_prompt: "test".into(),
+            messages: Vec::new(),
+            tools: Vec::new(),
+        };
+        let options = StreamOptions::default();
+        let token = CancellationToken::new();
+        token.cancel();
+
+        let stream = sf.stream(&model, &context, &options, token);
+        let events = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            stream.collect::<Vec<_>>(),
+        )
+        .await
+        .expect("stream must resolve promptly on pre-init cancellation");
+
+        let has_aborted = events.iter().any(|e| {
+            matches!(
+                e,
+                AssistantMessageEvent::Error {
+                    stop_reason: StopReason::Aborted,
+                    ..
+                }
+            )
+        });
+        assert!(
+            has_aborted,
+            "expected Aborted terminal on pre-init cancellation, got: {events:?}"
+        );
     }
 
     #[cfg(feature = "gemma4")]

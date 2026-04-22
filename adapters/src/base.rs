@@ -66,6 +66,31 @@ pub const fn pre_stream_error(
     [swink_agent::AssistantMessageEvent::Start, event]
 }
 
+/// Build a terminal `Error` event carrying the `Aborted` stop reason.
+///
+/// Used by adapters when cancellation is observed before any stream content
+/// has been emitted (e.g., before the HTTP send completes). The matching
+/// semantic vocabulary is [`swink_agent::StopReason::Aborted`] — a plain
+/// `AssistantMessageEvent::error(..)` masks intentional aborts as runtime
+/// failures to the core loop.
+#[must_use]
+pub fn aborted_event(message: impl Into<String>) -> swink_agent::AssistantMessageEvent {
+    swink_agent::AssistantMessageEvent::Error {
+        stop_reason: swink_agent::StopReason::Aborted,
+        error_message: message.into(),
+        usage: None,
+        error_kind: None,
+    }
+}
+
+/// Build the two-event pre-stream sequence for a cancellation observed
+/// before any content is emitted: `Start` followed by an
+/// [`aborted_event`].
+#[must_use]
+pub fn pre_stream_aborted(message: impl Into<String>) -> [swink_agent::AssistantMessageEvent; 2] {
+    pre_stream_error(aborted_event(message))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -98,5 +123,36 @@ mod tests {
                 swink_agent::AssistantMessageEvent::Error { .. }
             ]
         ));
+    }
+
+    #[test]
+    fn aborted_event_uses_aborted_stop_reason() {
+        let ev = aborted_event("cancelled");
+        match ev {
+            swink_agent::AssistantMessageEvent::Error {
+                stop_reason,
+                error_message,
+                usage,
+                error_kind,
+            } => {
+                assert_eq!(stop_reason, swink_agent::StopReason::Aborted);
+                assert_eq!(error_message, "cancelled");
+                assert!(usage.is_none());
+                assert!(error_kind.is_none());
+            }
+            other => panic!("expected Error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn pre_stream_aborted_emits_start_then_aborted() {
+        let events = pre_stream_aborted("cancelled");
+        assert!(matches!(events[0], swink_agent::AssistantMessageEvent::Start));
+        match &events[1] {
+            swink_agent::AssistantMessageEvent::Error { stop_reason, .. } => {
+                assert_eq!(*stop_reason, swink_agent::StopReason::Aborted);
+            }
+            other => panic!("expected Error, got {other:?}"),
+        }
     }
 }

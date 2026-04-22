@@ -484,6 +484,41 @@ async fn openai_malformed_json() {
 }
 
 #[tokio::test]
+async fn openai_honors_cancellation_before_request_send() {
+    // Regression for #726: a token cancelled BEFORE the stream is polled
+    // must resolve promptly with an Aborted terminal, not hang behind
+    // network latency. We point the adapter at a non-routable address
+    // (TEST-NET-1 RFC 5737) so that if cancellation is NOT honored, the
+    // `request.send()` call would stall until a TCP connect timeout.
+    let sf = OpenAiStreamFn::new("http://192.0.2.1:1", "test-key");
+    let model = test_model();
+    let context = test_context();
+    let options = StreamOptions::default();
+    let token = CancellationToken::new();
+    token.cancel();
+
+    let stream = sf.stream(&model, &context, &options, token);
+
+    let events = tokio::time::timeout(std::time::Duration::from_secs(2), stream.collect::<Vec<_>>())
+        .await
+        .expect("stream must resolve promptly on pre-send cancellation");
+
+    let has_aborted = events.iter().any(|e| {
+        matches!(
+            e,
+            AssistantMessageEvent::Error {
+                stop_reason: StopReason::Aborted,
+                ..
+            }
+        )
+    });
+    assert!(
+        has_aborted,
+        "expected Aborted terminal on pre-send cancellation, got: {events:?}"
+    );
+}
+
+#[tokio::test]
 async fn openai_cancellation() {
     let body = [
         r#"data: {"choices":[{"delta":{"content":"hello"},"index":0}]}"#,
