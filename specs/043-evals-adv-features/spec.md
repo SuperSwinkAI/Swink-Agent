@@ -5,6 +5,21 @@
 **Status**: Draft
 **Input**: User description: "Build the Advanced Evals layer of `swink-agent-eval` — concrete LLM-as-judge infrastructure, runner upgrades, simulation, generation, observability ingestion, and reporting. Consumes the trait surface introduced by 023-eval-trajectory-matching (`JudgeClient`, `JudgeVerdict`, `JudgeError`, `EnvironmentState`, `StateCapture`, semantic evaluator stubs) and delivers production-ready providers and 17+ LLM-judge evaluators. Explicit gap-closing against strands-agents/evals, langchain-ai/openevals, and google/adk-python AgentEvaluator."
 
+## Clarifications
+
+### Session 2026-04-21
+
+- Q: Are `HallucinationEvaluator / FaithfulnessEvaluator` and `HarmfulnessEvaluator / ToxicityEvaluator` one evaluator each (dual name or alias) or two distinct evaluators per pair? → A: Two separate evaluators per pair with distinct prompts/rubrics (faithfulness is RAG-grounded, hallucination is general; toxicity is tighter than harmfulness).
+- Q: How do `num_runs > 1` and the task-result cache (`EvaluationDataStore`) interact? → A: Cache returns a single cached invocation for all N runs; `num_runs` measures judge variance only, not agent variance. Agent non-determinism is out of scope for this spec's variance diagnostic.
+- Q: Which legacy eval-file schemas does the legacy-format converter cover? → A: None. No backwards-compatibility or cross-tool migration is in scope for this spec. FR-044 and the legacy-migration portion of US9 are removed. Broader principle: this workspace does not maintain compatibility with external eval tooling unless adopting a specific open standard; point migrations can be added in a future spec if a standard emerges or demand justifies it.
+- Q: What are the semantics of the `swink-eval` CLI `report` and `gate` subcommands? → A: `report <result.json> --format <console|json|md|html>` re-renders a persisted `EvalSetResult` with the chosen reporter and performs no re-execution. `gate <result.json>` evaluates `GateConfig` against a persisted result and returns 0 on pass / non-zero on fail with no stdout output. Both operate on artifacts produced by a prior `run`.
+- Q: What are the default resource limits for `SandboxedExecutionEvaluator`? → A: 120 s wall-clock, 60 s CPU, 1 GiB RSS, 256 file descriptors, no network. Matches typical CI runner budgets; permissive enough for `cargo check`/`cargo build` on non-trivial snippets. All limits are configurable per-evaluator via a `SandboxLimits` struct.
+- Q: Which aggregator applies when an evaluator does not override it? → A: `average` (arithmetic mean of sub-scores). Matches `num_runs` averaging semantics and preserves gradient signal that all-pass/any-pass would collapse. Binary evaluators (e.g., safety pass/fail) opt into `all-pass` explicitly.
+- Q: How is `EvalCase.session_id`'s auto-UUID generated? → A: Deterministic UUID v5 derived from a hash of the case content. Stable across re-runs and machines, aligns with the content-hash cache key (FR-038), and enables reliable OTel trace correlation (FR-035).
+- Q: Should the rich interactive console reporter be always-on, feature-gated, or dropped? → A: Dropped. Terminal/console output is plain-text line-oriented only (no color-coded collapsible tables, no interactivity). Any "rich" presentation layer is routed to the `html-report` feature; `RichConsoleReporter` is removed from this spec's surface.
+- Q: What is the default judge model? → A: No default. Every `JudgeRegistry` construction requires an explicit model identifier; the constructor refuses to build without one. Reason: models change often and a pinned default would silently rot; a floating alias would invalidate historical score comparisons. Explicit-model-at-construction is the durable choice across releases.
+- Q: How are multimodal attachments encoded on `EvalCase.attachments`? → A: An `Attachment` enum with three first-class variants — `Path(PathBuf)` relative to the eval-set root, `Base64(mime, bytes)` for self-contained export, and `Url(String)` for remote resources. Consumers select per-attachment. URL resolution MUST surface SSRF/reachability errors as structured `AttachmentError` rather than runtime panics, and judge-client payload construction MUST materialize all three variants uniformly before dispatch.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Score Agent Runs with Production LLM Judges (Priority: P1)
@@ -135,7 +150,7 @@ An operator running evals on a schedule wants to correlate eval regressions with
 
 ### User Story 8 - Produce CI- and Human-Friendly Reports (Priority: P2)
 
-A developer running evals locally sees an interactive collapsible report with color-coded pass/fail, inline judge reasons, and per-case expansion. The same eval, run in CI, emits a machine-readable JSON artifact plus a Markdown summary suitable for a PR comment. Optional HTML and LangSmith exporters serve teams with those needs.
+A developer running evals locally sees a plain-text line-oriented summary in the terminal with per-case verdicts and per-evaluator scores. The same eval, run in CI, emits a machine-readable JSON artifact plus a Markdown summary suitable for a PR comment. Teams that want a collapsible, interactive presentation layer opt into the `html-report` feature, which produces a single self-contained HTML file. An optional LangSmith exporter serves teams already on that platform.
 
 **Why this priority**: Raw `EvalSetResult` JSON is inadequate for both the dev loop (too dense) and for PR reviews (too machine-readable). Purpose-built reporters per context are low-effort and high-impact. P2 because the core result structure from 024 is already usable; reporters are presentation polish.
 
@@ -143,28 +158,26 @@ A developer running evals locally sees an interactive collapsible report with co
 
 **Acceptance Scenarios**:
 
-1. **Given** a completed `EvalSetResult`, **When** `RichConsoleReporter` renders it to a terminal, **Then** cases are displayed in a collapsible table with color-coded pass/fail, and per-case expand shows per-evaluator scores and reasons.
+1. **Given** a completed `EvalSetResult`, **When** `ConsoleReporter` renders it to stdout, **Then** output is plain-text line-oriented — one line per case with its verdict, followed by indented per-evaluator score and reason lines — with no ANSI color, no cursor control, and no interactivity.
 2. **Given** the same result, **When** `JsonReporter` emits an artifact, **Then** the JSON is self-contained, includes all case and metric detail, and validates against a published schema.
 3. **Given** the same result, **When** `MarkdownReporter` emits a summary, **Then** the output is a valid Markdown table suitable for inline rendering in PR comments, with no terminal-only ANSI codes.
-4. **Given** the `html-report` feature enabled, **When** `HtmlReporter` runs, **Then** it produces a single self-contained HTML file with no external asset dependencies.
+4. **Given** the `html-report` feature enabled, **When** `HtmlReporter` runs, **Then** it produces a single self-contained HTML file with no external asset dependencies — this is the only reporter that provides collapsible/interactive presentation.
 5. **Given** the `langsmith` feature enabled and a LangSmith API token, **When** the LangSmith exporter runs, **Then** the `EvalSetResult` is pushed as a run to LangSmith with each evaluator's score attached as feedback under its configured key.
 
 ---
 
-### User Story 9 - Migrate Legacy Formats and Integrate with Existing CI (Priority: P3)
+### User Story 9 - Integrate Eval Runs with CI and a Local CLI (Priority: P3)
 
-A developer adopting `swink-agent-eval` already has `.test.json` files from an earlier framework. They point the loader at a directory, legacy schemas auto-migrate, and a shipped GitHub Actions workflow template wires PR-time and nightly eval runs into CI. A CLI entry point (`swink-eval run <set>`) provides local invocation without Rust-code integration.
+A developer adopting `swink-agent-eval` wants CI scaffolding and a thin command-line entry point. A shipped GitHub Actions workflow template wires PR-time and nightly eval runs into CI, and a CLI entry point (`swink-eval run <set>`) provides local invocation without Rust-code integration.
 
 **Why this priority**: Developer-experience scaffolding is important but not functionally blocking — teams can hand-write the integration points. P3 captures the polish that makes adoption friction-free.
 
-**Independent Test**: Can be fully tested by loading a directory of legacy `.test.json` files via the legacy-format converter, asserting the resulting `EvalSet` is well-formed, then running the CLI against it and verifying identical output to the in-process API.
+**Independent Test**: Can be fully tested by invoking the `swink-eval` CLI against an `EvalSet` on disk and verifying identical output (reporter content, gate-derived exit code) to the equivalent in-process API call.
 
 **Acceptance Scenarios**:
 
-1. **Given** a directory containing legacy `.test.json` files, **When** the legacy-format converter walks the directory, **Then** each file is migrated into a valid `EvalCase` and aggregated into an `EvalSet` named for the directory.
-2. **Given** a legacy file with fields not present in the current schema, **When** migration runs, **Then** unknown fields are surfaced through a `metadata` map rather than silently dropped.
-3. **Given** the shipped GitHub Actions workflow templates copied into a consumer's repo, **When** a PR is opened, **Then** the PR-time workflow runs a declared eval set, posts the Markdown report as a PR comment, and sets the workflow status based on the gate.
-4. **Given** the `swink-eval` CLI is invoked with `run --set path/to/set.json`, **When** it completes, **Then** stdout contains the configured reporter's output and the exit code reflects the gate result (0 pass, non-zero fail).
+1. **Given** the shipped GitHub Actions workflow templates copied into a consumer's repo, **When** a PR is opened, **Then** the PR-time workflow runs a declared eval set, posts the Markdown report as a PR comment, and sets the workflow status based on the gate.
+2. **Given** the `swink-eval` CLI is invoked with `run --set path/to/set.json`, **When** it completes, **Then** stdout contains the configured reporter's output and the exit code reflects the gate result (0 pass, non-zero fail).
 
 ---
 
@@ -193,11 +206,11 @@ A developer adopting `swink-agent-eval` already has `.test.json` files from an e
 **Judge infrastructure (scope item 1)**
 
 - **FR-001**: The system MUST provide concrete `JudgeClient` implementations for every workspace adapter (anthropic, openai, bedrock, gemini, mistral, azure, xai, ollama, proxy), each gated behind an opt-in feature flag such that the default build of `swink-agent-eval` depends on no provider.
-- **FR-002**: The system MUST provide a default judge model configurable per-evaluator and per-registry, selectable without changing any prompt template.
+- **FR-002**: The system MUST require an explicit judge model identifier at `JudgeRegistry` construction (no built-in default; the constructor MUST refuse to build without one). The model is overridable per-evaluator. Switching the model MUST NOT require changing any prompt template — only the model rendering it.
 - **FR-003**: Every `JudgeClient` MUST expose an async-first interface and a synchronous convenience wrapper suitable for blocking contexts.
 - **FR-004**: Every `JudgeClient` MUST support throttling-aware retry with exponential backoff, with up to 6 attempts and a maximum backoff delay of 4 minutes, honoring cancellation cooperatively.
-- **FR-005**: Every `JudgeClient` MUST support request batching with a configurable batch size (default 1, bounded upper limit) that coalesces multiple judge calls into a single provider request where the provider supports it.
-- **FR-006**: The system MUST provide an in-memory prompt+model cache keyed by the hash of the prompt content and model identifier, bounded by a configurable entry count, and an optional disk-backed cache for cross-run reuse.
+- **FR-005**: Every `JudgeClient` MUST support request batching with a configurable batch size (default 1, bounded to `[1, 128]`) that coalesces multiple judge calls into a single provider request where the provider supports it. Providers without native batching MUST fall back to sequential dispatch transparently.
+- **FR-006**: The system MUST provide an in-memory prompt+model cache keyed by the hash of the prompt content and model identifier, bounded by a configurable entry count (default 1024), and an optional disk-backed cache for cross-run reuse.
 
 **Prompt-template registry (scope item 2)**
 
@@ -209,26 +222,26 @@ A developer adopting `swink-agent-eval` already has `.test.json` files from an e
 
 **LLM judge evaluator family (scope item 3)**
 
-- **FR-012**: The system MUST provide quality-family evaluators: HelpfulnessEvaluator (7-level), CorrectnessEvaluator (with optional reference output), ConcisenessEvaluator (3-level), CoherenceEvaluator (5-level), ResponseRelevanceEvaluator, HallucinationEvaluator / FaithfulnessEvaluator, PlanAdherenceEvaluator, LazinessEvaluator, and GoalSuccessRateEvaluator (consumes `expected_assertion`).
-- **FR-013**: The system MUST provide safety-family evaluators: HarmfulnessEvaluator / ToxicityEvaluator (binary), FairnessEvaluator, PIILeakageEvaluator, PromptInjectionEvaluator, and CodeInjectionEvaluator.
+- **FR-012**: The system MUST provide quality-family evaluators: HelpfulnessEvaluator (7-level), CorrectnessEvaluator (with optional reference output), ConcisenessEvaluator (3-level), CoherenceEvaluator (5-level), ResponseRelevanceEvaluator, HallucinationEvaluator (general, against model knowledge), FaithfulnessEvaluator (RAG-grounded, against retrieved context), PlanAdherenceEvaluator, LazinessEvaluator, and GoalSuccessRateEvaluator (consumes `expected_assertion`). `HallucinationEvaluator` and `FaithfulnessEvaluator` are distinct evaluators with distinct prompt templates and rubrics — not aliases.
+- **FR-013**: The system MUST provide safety-family evaluators: HarmfulnessEvaluator (broad-spectrum harmful content, binary), ToxicityEvaluator (tighter rubric targeting hate/harassment/slurs, binary), FairnessEvaluator, PIILeakageEvaluator, PromptInjectionEvaluator, and CodeInjectionEvaluator. `HarmfulnessEvaluator` and `ToxicityEvaluator` are distinct evaluators with distinct prompt templates and rubrics — not aliases.
 - **FR-014**: The system MUST provide RAG-family evaluators: RAGGroundednessEvaluator, RAGRetrievalRelevanceEvaluator, RAGHelpfulnessEvaluator, and EmbeddingSimilarityEvaluator (deterministic; takes an `Embedder` trait supplied by the consumer).
 - **FR-015**: The system MUST provide agent / trajectory-family evaluators: TrajectoryAccuracyEvaluator (with and without reference), TaskCompletionEvaluator, UserSatisfactionEvaluator, AgentToneEvaluator, KnowledgeRetentionEvaluator, LanguageDetectionEvaluator, PerceivedErrorEvaluator, and InteractionsEvaluator (multi-agent hand-off scoring).
 - **FR-016**: The system MUST provide structured-output evaluators: JsonMatchEvaluator with per-key aggregation strategies (Average, All, None) and per-key rubrics plus an `exclude_keys` filter, and JsonSchemaEvaluator (deterministic schema validation).
-- **FR-017**: The system MUST provide code-family evaluators: CargoCheckEvaluator, ClippyEvaluator, CodeExtractor (markdown-fence / LLM / regex strategies), CodeLlmJudgeEvaluator, and SandboxedExecutionEvaluator (Linux/macOS only; Windows MUST fail fast with a clear unsupported-platform error).
+- **FR-017**: The system MUST provide code-family evaluators: CargoCheckEvaluator, ClippyEvaluator, CodeExtractor (markdown-fence / LLM / regex strategies), CodeLlmJudgeEvaluator, and SandboxedExecutionEvaluator (Linux/macOS only; Windows MUST fail fast with a clear unsupported-platform error). `SandboxedExecutionEvaluator` MUST accept a `SandboxLimits` struct with configurable caps, defaulting to 120 s wall-clock, 60 s CPU, 1 GiB RSS, 256 file descriptors, and no network egress. Exceeding any limit MUST produce a structured `EvaluatorError::SandboxLimitExceeded` with the violated limit named, not a silent timeout.
 - **FR-018**: The system MUST provide simple-family evaluators: ExactMatchEvaluator and LevenshteinDistanceEvaluator.
 - **FR-019**: The system MUST provide image-safety multimodal evaluators behind a `multimodal` feature gate; audio multimodal evaluators are out of scope for this spec.
 - **FR-020**: Every new evaluator MUST return `None` when the case does not set the criterion the evaluator scores — same convention as 023's built-ins.
-- **FR-021**: Every new evaluator MUST be panic-isolated: panics in a judge call, a simulator step, a generator call, or a reporter renderer MUST be caught and converted to `Score::fail()` with diagnostic context, never propagating to abort the registry.
+- **FR-021**: Every new evaluator MUST be panic-isolated: panics in a judge call, a simulator step, a generator call, or a reporter renderer MUST be caught and converted to `Score::fail()` with diagnostic context, never propagating to abort the registry. Every evaluator MUST also clamp judge-returned scores to the closed interval `[0.0, 1.0]`; an out-of-range value MUST surface as a warning in `EvalMetricResult::details` (named `ScoreClamped { original, clamped }`) and MUST NOT cause the evaluator to crash.
 
 **Aggregators (scope item 4)**
 
 - **FR-022**: The system MUST expose an `Aggregator` trait for reducing multiple `EvalMetricResult` outputs from a single evaluator run into one composite score, with built-in implementations for average, all-pass, any-pass, and weighted reductions.
-- **FR-023**: Every evaluator MUST accept an optional custom aggregator override.
+- **FR-023**: Every evaluator MUST accept an optional custom aggregator override. When no override is supplied, the default aggregator is `average` (arithmetic mean of sub-scores). Binary-verdict evaluators (e.g., safety-family) MUST opt into `all-pass` explicitly in their constructor rather than relying on the default.
 
 **Multiturn simulation (scope item 5)**
 
 - **FR-024**: The system MUST provide an `ActorSimulator` that drives a simulated user across multiple turns via an LLM, configurable with a profile (traits, context, goal), an initial-greeting pool, a `max_turns` cap, and a goal-completion signal the simulated user can emit.
-- **FR-025**: The system MUST provide a `ToolSimulator` that generates schema-valid tool responses via an LLM when real tool infrastructure is unavailable, with a `StateRegistry` that buckets state by key, a bounded previous-call history per bucket (configurable size), and shared-state semantics within a bucket.
+- **FR-025**: The system MUST provide a `ToolSimulator` that generates schema-valid tool responses via an LLM when real tool infrastructure is unavailable, with a `StateRegistry` that buckets state by key, a bounded previous-call history per bucket (configurable size, default 32), and shared-state semantics within a bucket.
 - **FR-026**: The system MUST provide a `run_multiturn_simulation` orchestrator that drives agent ↔ actor (or agent ↔ agent) up to `max_turns` or goal-completion, returning a full `Invocation` scorable by any evaluator registered in the registry.
 
 **Experiment generation (scope item 6)**
@@ -248,32 +261,33 @@ A developer adopting `swink-agent-eval` already has `.test.json` files from an e
 
 **Runner upgrades (scope item 8)**
 
-- **FR-036**: The `EvalRunner` MUST support parallel case execution with a configurable parallelism bound. Parallelism of 1 MUST be behaviorally equivalent to the current sequential implementation.
-- **FR-037**: The `EvalRunner` MUST support repeating each case `num_runs` times (default 1) and averaging metric results, reporting per-run scores and a variance diagnostic.
-- **FR-038**: The system MUST provide an `EvaluationDataStore` trait and a local-filesystem implementation that caches agent invocations by case name. Cache keys MUST invalidate when case inputs change.
+- **FR-036**: The `EvalRunner` MUST support parallel case execution with a configurable parallelism bound (default 1 — sequential, matching the current behavior). Parallelism of 1 MUST be behaviorally equivalent to the current sequential implementation. Construction with `parallelism = 0` MUST be rejected (panic or builder error) as a misconfiguration signal.
+- **FR-037**: The `EvalRunner` MUST support repeating each case `num_runs` times (default 1) and averaging metric results, reporting per-run scores and a variance diagnostic. When an `EvaluationDataStore` serves a cached agent invocation for a case, all `num_runs` iterations MUST reuse that single invocation and re-run only the judge-side scoring; the variance diagnostic therefore captures judge non-determinism, not agent non-determinism. Measuring agent non-determinism is out of scope for this spec.
+- **FR-038**: The system MUST provide an `EvaluationDataStore` trait and a local-filesystem implementation that caches agent invocations by case name. Cache keys MUST be derived from a canonical content hash of the case input comprising exactly these fields, in this order: `case_id`, `system_prompt`, `user_messages`, `initial_session` (when an `initial_session_file` is active), tool-set hash (SHA-256 of the agent's tool names + schemas), and the agent's model identifier. Any change to any of these fields MUST invalidate the cache key. A single cached invocation is shared across all `num_runs` iterations for a given case.
 - **FR-039**: The `EvalRunner` MUST support an `initial_session_file` parameter that loads baseline session state before each case.
 - **FR-040**: Cancellation MUST propagate cooperatively through the runner to both in-flight agent calls and in-flight judge calls.
 
 **Reporting (scope item 9)**
 
-- **FR-041**: The system MUST provide reporters producing interactive console output, self-contained JSON artifacts, Markdown summaries, and — behind a feature gate — self-contained HTML reports.
+- **FR-041**: The system MUST provide reporters producing plain-text console output (line-oriented, no ANSI color, no cursor control, no interactivity), self-contained JSON artifacts, Markdown summaries, and — behind the `html-report` feature gate — a self-contained interactive HTML report. The HTML reporter is the only reporter that provides collapsible/interactive presentation; terminal output is intentionally plain-text only. No rich-console / TUI reporter ships.
 - **FR-042**: The system MUST provide a feature-gated LangSmith export adapter that pushes an `EvalSetResult` as a LangSmith run with per-evaluator feedback attached.
 
 **Case-model extensions (scope item 10)**
 
-- **FR-043**: The `EvalCase` struct MUST be extended with optional fields: `expected_assertion`, `expected_interactions`, `few_shot_examples`, `attachments`, and a per-case `session_id` populated by auto-UUID default.
-- **FR-044**: The system MUST provide a legacy-format converter that migrates older-schema eval files into the current `EvalSet` shape, preserving unknown fields in `metadata` rather than dropping them.
+- **FR-043**: The `EvalCase` struct MUST be extended with optional fields: `expected_assertion`, `expected_interactions`, `few_shot_examples`, `attachments`, and a per-case `session_id` populated by an auto-default UUID. The auto-default MUST be UUID v5 derived deterministically from a content hash of the case (same hash basis used by FR-038's cache key) so that session IDs remain stable across re-runs and machines. Consumers MAY supply an explicit `session_id` to override the default. `attachments` MUST be a `Vec<Attachment>` where `Attachment` is an enum with three first-class variants: `Path(PathBuf)` resolved relative to the eval-set root, `Base64 { mime: String, bytes: Vec<u8> }` for self-contained export, and `Url(String)` for remote resources. Materialization errors (unreachable path, decode failure, SSRF-guarded URL rejection) MUST surface as a structured `AttachmentError` — never a panic.
+
+<!-- FR-044 intentionally removed during clarification (Q3, 2026-04-21). No legacy-format converter is in scope. See the Clarifications section. -->
 
 **CI and DX scaffolding (scope item 11)**
 
-- **FR-045**: The system MUST ship GitHub Actions workflow templates covering PR-time eval runs, nightly eval runs, and report publication, plus a pre-commit configuration template.
-- **FR-046**: The system MUST provide a CLI entry point invocable against an eval-set file with the same output fidelity as the in-process API.
+- **FR-045**: The system MUST ship GitHub Actions workflow templates covering (a) PR-time eval runs that post the Markdown report as a PR comment and set workflow status from the gate; (b) nightly scheduled eval runs that upload the HTML report as a workflow artifact; (c) release-time eval runs triggered on tag push that attach the JSON `EvalSetResult` to the GitHub Release; and (d) a `.pre-commit-config.yaml` fragment that runs `swink-eval run` against a local eval set.
+- **FR-046**: The system MUST provide a `swink-eval` CLI with three subcommands: (a) `run --set <path>` executes an eval set with the same output fidelity as the in-process API, configured reporter on stdout, and exit code derived from the gate; (b) `report <result.json> --format <console|json|md|html>` re-renders a previously persisted `EvalSetResult` with the chosen reporter and performs no re-execution; (c) `gate <result.json>` evaluates a `GateConfig` against a persisted result and returns 0 on pass / non-zero on fail with no stdout output. `report` and `gate` operate exclusively on artifacts produced by a prior `run`.
 
 **Cross-cutting constraints**
 
 - **FR-047**: The default build of `swink-agent-eval` MUST NOT add any new mandatory dependencies beyond what spec 023 already requires. All new optional functionality MUST be reachable only behind explicit feature flags.
 - **FR-048**: Every public evaluator MUST expose both a blocking `evaluate` entrypoint and an `evaluate_async` entrypoint. The blocking wrapper MUST be correct inside and outside a Tokio runtime.
-- **FR-049**: No evaluator, simulator, generator, provider, mapper, or reporter MAY contain `unsafe` code. The entire workspace surface added by this spec MUST compile under `#![forbid(unsafe_code)]`.
+- **FR-049**: No evaluator, simulator, generator, provider, mapper, or reporter MAY contain `unsafe` code. The entire workspace surface added by this spec MUST compile under `#![forbid(unsafe_code)]` at every crate root. **Exception**: `SandboxedExecutionEvaluator`'s POSIX-rlimit FFI layer, scoped to a single `evaluators::code::sandbox::posix` submodule, MAY use `#![allow(unsafe_code)]` because rlimit enforcement requires direct `libc` calls (`setrlimit`, `unshare`, `prlimit`) that have no safe Rust equivalent. The exception is conditional on: (a) `cfg(target_family = "unix")` (the module is absent from Windows builds); (b) every `unsafe` block inside it carries a `// SAFETY:` comment explaining the invariant being upheld; (c) no other surface in either crate uses `unsafe`. The forbid attribute remains at both crate roots.
 - **FR-050**: The default test suite MUST NOT make live LLM calls; integration coverage MUST use `MockJudge` (from 023's testing module) or an HTTP test double. A dedicated `live-judges` feature MUST gate a smaller suite of live-provider canary tests.
 
 ## Success Criteria *(mandatory)*
@@ -283,7 +297,7 @@ A developer adopting `swink-agent-eval` already has `.test.json` files from an e
 - **SC-001**: A developer can run a multi-evaluator eval set against a real provider with a single feature-flag opt-in and no glue code beyond registry construction and a single `run_set` call. The happy-path integration is 10 lines of code or fewer.
 - **SC-002**: Running 20 cases with parallelism 4 against a fast provider completes in under 2× the wall-clock time of running a single case, and adding `num_runs=3` does not linearly inflate that — repeat runs of the same case amortize across the parallelism budget.
 - **SC-003**: Re-running an eval set after changing only a judge prompt (not the agent) reuses cached invocations and completes in a small fraction of the initial run's wall-clock time — no agent calls are made.
-- **SC-004**: Switching the default judge model (e.g., Claude → GPT) requires changing a single constructor argument and MUST NOT change any prompt template — only the model rendering it.
+- **SC-004**: Switching the judge model for a registry (e.g., Claude → GPT) requires changing a single constructor argument and MUST NOT change any prompt template — only the model rendering it. No built-in default model ships; the model is a required argument.
 - **SC-005**: Every judge evaluator records the prompt template version used in its result; bumping a prompt version is a deliberate opt-in change and never silent.
 - **SC-006**: Multiturn simulation runs a 5-turn dialogue between an `ActorSimulator` and an agent using only `ToolSimulator` (no real tool infrastructure), producing a complete `Invocation` scorable by any registered evaluator.
 - **SC-007**: `ExperimentGenerator` produces cases that pass syntactic validation 100% of the time; no malformed case ever reaches the eval runner.
@@ -301,6 +315,10 @@ A developer adopting `swink-agent-eval` already has `.test.json` files from an e
 - **JudgeCache**: In-memory LRU cache of prompt+model → verdict; optional disk-backed variant.
 
 **LLM-judge evaluators** — one type per entry in FR-012 through FR-019. Each implements the `Evaluator` trait from 023, returning `None` when its criterion is not set on the case and otherwise rendering its prompt, dispatching via its `JudgeClient`, and aggregating verdicts into an `EvalMetricResult`.
+
+**Code evaluators** (FR-017 entities):
+- **CodeExtractor**: Strategy object that lifts code from an assistant response. Supports three built-in strategies — markdown-fence, regex, and LLM-based — selectable per-instance.
+- **CodeLlmJudgeEvaluator**: Judge-backed evaluator that scores code quality via a prompt template, distinct from the deterministic `CargoCheckEvaluator`/`ClippyEvaluator` that shell out to cargo tooling.
 
 **Aggregator**: Trait and built-in implementations (average, all-pass, any-pass, weighted) for reducing multi-output evaluator scores.
 
@@ -336,20 +354,20 @@ A developer adopting `swink-agent-eval` already has `.test.json` files from an e
 **Reporting**
 
 - **EvaluationReport**: Aggregate type with structured per-case reasoning, metric breakdown, and failure narrative; input to every reporter.
-- **Reporter**: Trait implemented by `RichConsoleReporter`, `JsonReporter`, `MarkdownReporter`, `HtmlReporter`, and the `LangSmithExporter`.
+- **Reporter**: Trait implemented by `ConsoleReporter` (plain-text, always-on), `JsonReporter` (always-on), `MarkdownReporter` (always-on), `HtmlReporter` (behind `html-report`; the only interactive presentation layer), and the `LangSmithExporter` (behind `langsmith`).
 
-**Case-model extensions** on `EvalCase`: `expected_assertion` (goal-completion criteria), `expected_interactions` (multi-agent hand-off topology), `session_id` (auto-UUID), `few_shot_examples` (per-case judge examples), `attachments` (multimodal data refs).
+**Case-model extensions** on `EvalCase`: `expected_assertion` (goal-completion criteria), `expected_interactions` (multi-agent hand-off topology), `session_id` (deterministic UUID v5 from case content hash), `few_shot_examples` (per-case judge examples), `attachments` (multimodal data refs via an `Attachment` enum with `Path` / `Base64` / `Url` variants).
 
-**CLI**: A `swink-eval` binary exposing `run`, `report`, `gate`, and `migrate` subcommands against eval sets on disk.
+**CLI**: A `swink-eval` binary exposing `run`, `report`, and `gate` subcommands against eval sets on disk.
 
 ## Assumptions
 
 - 023's `JudgeClient`, `JudgeVerdict`, `JudgeError`, `EnvironmentState`, `StateCapture`, and semantic-evaluator stubs are frozen. This spec consumes them unchanged.
 - 024's `FsEvalStore`, `GateConfig`, and `AuditedInvocation` remain the persistence and CI-gate substrate; runner upgrades extend rather than replace them.
 - Provider-backed `JudgeClient` implementations live in a single `eval-judges` workspace crate with per-provider feature flags. Each feature re-exports a `<Provider>JudgeClient` type that wraps the corresponding adapter without polluting the adapter crates with eval-layer concerns. (Alternative: per-adapter sub-modules behind features inside `eval`; the chosen structure keeps adapter crates pure.)
-- The default judge model is Anthropic's current flagship Sonnet. Teams that want a different default swap it via one constructor call.
+- No built-in default judge model ships. Every `JudgeRegistry` requires an explicit model identifier at construction. This keeps the spec durable as provider model lineups evolve and prevents silent score drift from a floating default.
 - "No new mandatory dependencies" means the default build of `swink-agent-eval` adds no new transitive crates beyond what spec 023 already pulls in. New crates used by this spec (e.g. a retry crate, a string-similarity crate, terminal-rendering crates, an HTML templating crate) live under feature flags.
-- `SandboxedExecutionEvaluator` uses OS-level resource limits (process groups, rlimits) rather than container isolation. It is deliberately unsupported on Windows; teams on Windows can still run every other evaluator, and the CI matrix explicitly includes Linux and macOS targets only for this evaluator.
+- `SandboxedExecutionEvaluator` uses OS-level resource limits (process groups, rlimits) rather than container isolation. Default caps (120 s wall, 60 s CPU, 1 GiB RSS, 256 FDs, no network) are pinned in FR-017 and configurable via a `SandboxLimits` struct. It is deliberately unsupported on Windows; teams on Windows can still run every other evaluator, and the CI matrix explicitly includes Linux and macOS targets only for this evaluator.
 - `EmbeddingSimilarityEvaluator` ships with an `Embedder` trait and no default implementation; consumers supply their own embedder (e.g. local model or provider call) so we don't bundle a default embedding provider.
 - Audio multimodal evaluators are deferred to a later spec; only image-safety prompts ship in this spec's multimodal feature.
 - Prompt-template versioning follows a `_v0`, `_v1` suffix convention; a bumped version is an intentional semver-impacting change and the old version remains accessible until removed in a later release.
@@ -377,4 +395,4 @@ A developer adopting `swink-agent-eval` already has `.test.json` files from an e
 **External**:
 - `strands-agents/evals` (cloned at `~/Development/strands-evals`, ~11.5K LOC across 100 files) — primary source for `ActorSimulator`/`ToolSimulator` design, `ExperimentGenerator`/`TopicPlanner`, `TraceProvider`/`SessionMapper` architecture, multi-agent extractors, GenAI convention support, `EvaluationDataStore` caching pattern.
 - `langchain-ai/openevals` — primary source for the prompt registry shape; prebuilt prompt families across quality, safety, RAG, agent, multimodal, structured, and code; `JsonMatchEvaluator` with per-key rubrics; multiturn simulation orchestrator surface; sandboxed code-execution model (E2B → Rust tempdir analog); configurable output schemas, feedback-key naming, and use-reasoning flag.
-- `google/adk-python` `AgentEvaluator` — primary source for `num_runs` averaging, `EvalConfig`-threshold model, `.test.json` directory loading with recursive walk, `initial_session_file` persistent context, legacy schema migration, and tabular report style.
+- `google/adk-python` `AgentEvaluator` — primary source for `num_runs` averaging, `EvalConfig`-threshold model, `initial_session_file` persistent context, and tabular report style.
