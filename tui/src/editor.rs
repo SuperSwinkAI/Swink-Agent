@@ -48,7 +48,7 @@ fn default_spawn(editor_command: &str, path: &Path) -> io::Result<ExitStatus> {
 /// Core editor helper with an injectable spawn function so tests can
 /// observe the temp path (and verify it is randomized) without launching
 /// a real editor.
-pub(crate) fn open_editor_with<F>(editor_command: &str, spawn: F) -> io::Result<Option<String>>
+fn open_editor_with<F>(editor_command: &str, spawn: F) -> io::Result<Option<String>>
 where
     F: FnOnce(&str, &Path) -> io::Result<ExitStatus>,
 {
