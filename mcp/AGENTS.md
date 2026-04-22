@@ -22,6 +22,7 @@
 - SSE recovery is delegated to rmcp's streamable HTTP transport: transient stream drops and stale-session 404s are retried/re-initialized inside rmcp, so `McpConnection` should only flip to `Disconnected` after the underlying service fully exits.
 - rmcp stores SSE `auth_header` as a static string inside the transport config and reuses it for reconnect/re-init paths. Resolver-backed SSE auth that must survive token rotation therefore needs a custom `StreamableHttpClient` wrapper that resolves credentials per HTTP request instead of only at initial connect.
 - MCP tool registration names must go through the same provider-safe sanitizer/length cap as plugin tools. `McpTool` keeps the raw `original_name` for outbound MCP calls, while `McpManager` collision detection runs on the sanitized registration name exposed to providers.
+- Stdio MCP subprocesses must start from `Command::env_clear()` and then receive only configured `env` entries; inheriting the parent environment leaks unrelated secrets and tokens into child servers.
 
 ## Build & Test
 
