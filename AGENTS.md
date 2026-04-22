@@ -66,6 +66,10 @@ Two long-lived branches:
 - **`integration`** — default branch. All feature PRs target here. **New work always branches off `integration`.**
 - **`main`** — stable releases only. Every commit is a tagged crates.io publish.
 
+**All PRs target `integration` unless the reviewer explicitly requests `main`.** This applies to human-authored PRs, automated agent PRs, and subagent-created PRs alike. When scripting `gh pr create`, always pass `--base integration`. A PR targeting `main` without an explicit release request is a process error — retarget with `gh pr edit <N> --base integration` and rebase onto `integration` if needed.
+
+`main` can lag `integration` by several features. Branches forked off `main` may be missing helpers or API changes that exist on `integration` and will fail CI with `cannot find …` errors. Always branch from `integration`.
+
 Release flow: squash-merge `integration` → `main` + push version tag → crates.io publish triggered automatically.
 Hotfix flow: branch off `main` → fix → squash-merge to `main` + tag → cherry-pick to `integration`.
 
