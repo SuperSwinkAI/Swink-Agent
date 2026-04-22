@@ -133,3 +133,69 @@ for result in &results {
     );
 }
 ```
+
+## Worked semantic + environment example (US5 + US6 + US7)
+
+```rust
+use std::sync::Arc;
+
+use swink_agent_eval::{
+    EnvironmentState, EvalCase, EvaluatorRegistry, Invocation, MockJudge,
+    ResponseCriteria, Score, ToolIntent,
+};
+
+let registry = EvaluatorRegistry::with_defaults_and_judge(Arc::new(MockJudge::always_pass()));
+
+let case = EvalCase {
+    id: "project-alpha".into(),
+    name: "Semantic tool + response + env state".into(),
+    description: None,
+    system_prompt: "You are a careful assistant.".into(),
+    user_messages: vec!["Read the project-alpha config and summarize it.".into()],
+    expected_trajectory: None,
+    expected_response: Some(ResponseCriteria::Custom(Arc::new(|response: &str| {
+        if response.contains("project-alpha") && response.contains("config") {
+            Score::pass()
+        } else {
+            Score::fail()
+        }
+    }))),
+    budget: None,
+    evaluators: vec![],
+    metadata: serde_json::Value::Null,
+    expected_environment_state: Some(vec![EnvironmentState {
+        name: "config_path".into(),
+        state: serde_json::json!("./project-alpha/config.toml"),
+    }]),
+    expected_tool_intent: Some(ToolIntent {
+        intent: "read config for project-alpha".into(),
+        tool_name: Some("read_file".into()),
+    }),
+    semantic_tool_selection: true,
+    state_capture: Some(Arc::new(|invocation: &Invocation| {
+        invocation
+            .turns
+            .iter()
+            .flat_map(|turn| turn.tool_calls.iter())
+            .find(|call| call.name == "read_file")
+            .map(|call| {
+                vec![EnvironmentState {
+                    name: "config_path".into(),
+                    state: call.arguments["path"].clone(),
+                }]
+            })
+            .unwrap_or_default()
+    })),
+};
+
+let results = registry.evaluate(&case, &invocation);
+
+assert!(results.iter().any(|metric| metric.evaluator_name == "semantic_tool_selection"));
+assert!(results.iter().any(|metric| metric.evaluator_name == "semantic_tool_parameter"));
+assert!(results.iter().any(|metric| metric.evaluator_name == "environment_state"));
+assert!(results.iter().any(|metric| metric.evaluator_name == "response"));
+```
+
+`state_capture` and `ResponseCriteria::Custom` are programmatic only, so keep
+them in Rust rather than serialized eval-set fixtures. `MockJudge` lets the
+quickstart demonstrate semantic scoring without a live provider dependency.
