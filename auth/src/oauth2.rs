@@ -57,6 +57,42 @@ fn sanitize_refresh_reason(status: reqwest::StatusCode, body: &str) -> String {
     }
 }
 
+fn sanitize_token_endpoint(token_url: &str) -> String {
+    match reqwest::Url::parse(token_url) {
+        Ok(url) => {
+            let mut endpoint = format!("{}://", url.scheme());
+            endpoint.push_str(url.host_str().unwrap_or("<unknown-host>"));
+            if let Some(port) = url.port() {
+                endpoint.push(':');
+                endpoint.push_str(&port.to_string());
+            }
+            if url.path() == "/" {
+                endpoint.push('/');
+            } else {
+                endpoint.push_str("/<path>");
+            }
+            endpoint
+        }
+        Err(_) => "invalid-url".to_string(),
+    }
+}
+
+fn sanitize_transport_reason(error: &reqwest::Error) -> &'static str {
+    if error.is_timeout() {
+        "token refresh failed: transport timeout"
+    } else if error.is_connect() {
+        "token refresh failed: transport connect failure"
+    } else if error.is_request() {
+        "token refresh failed: transport request failure"
+    } else if error.is_body() {
+        "token refresh failed: transport body failure"
+    } else if error.is_decode() {
+        "token refresh failed: transport decode failure"
+    } else {
+        "token refresh failed: transport failure"
+    }
+}
+
 /// Perform an OAuth2 token refresh via the token endpoint.
 ///
 /// Sends a POST request with `grant_type=refresh_token` to the given
@@ -74,7 +110,10 @@ pub async fn refresh_token(
     client_id: &str,
     client_secret: Option<&str>,
 ) -> Result<TokenResponse, CredentialError> {
-    debug!(token_url, "refreshing OAuth2 token");
+    debug!(
+        token_endpoint = %sanitize_token_endpoint(token_url),
+        "refreshing OAuth2 token"
+    );
 
     let mut form = vec![
         ("grant_type", "refresh_token"),
@@ -92,7 +131,7 @@ pub async fn refresh_token(
         .await
         .map_err(|e| CredentialError::RefreshFailed {
             key: String::new(),
-            reason: format!("HTTP request failed: {e}"),
+            reason: sanitize_transport_reason(&e).to_string(),
         })?;
 
     if !response.status().is_success() {
@@ -113,7 +152,7 @@ pub async fn refresh_token(
         .await
         .map_err(|e| CredentialError::RefreshFailed {
             key: String::new(),
-            reason: format!("failed to parse token response: {e}"),
+            reason: sanitize_transport_reason(&e).to_string(),
         })
 }
 
@@ -239,6 +278,19 @@ mod tests {
         assert!(reason.contains("invalid_grant"));
     }
 
+    #[test]
+    fn sanitize_token_endpoint_redacts_query_and_path_details() {
+        let endpoint = sanitize_token_endpoint(
+            "https://user:pass@auth.example.com/token/refresh?client_secret=LEAK_SENTINEL_ABC123",
+        );
+
+        assert_eq!(endpoint, "https://auth.example.com/<path>");
+        assert!(!endpoint.contains("user"));
+        assert!(!endpoint.contains("pass"));
+        assert!(!endpoint.contains("refresh"));
+        assert!(!endpoint.contains("LEAK_SENTINEL_ABC123"));
+    }
+
     #[tokio::test]
     async fn refresh_token_debug_log_redacts_response_body() {
         let mock_server = MockServer::start().await;
@@ -250,6 +302,10 @@ mod tests {
             .respond_with(ResponseTemplate::new(401).set_body_string(body))
             .mount(&mock_server)
             .await;
+        let token_url = format!(
+            "{}/token?client_secret={LEAK_SENTINEL}&tenant=swink",
+            mock_server.uri()
+        );
 
         let logs = SharedLogBuffer::default();
         let subscriber = tracing_subscriber::fmt()
@@ -261,7 +317,7 @@ mod tests {
 
         let err = refresh_token(
             &reqwest::Client::new(),
-            &format!("{}/token", mock_server.uri()),
+            &token_url,
             "refresh-token",
             "client-id",
             Some("client-secret"),
@@ -279,12 +335,54 @@ mod tests {
             "debug log leaked response body: {log_output}"
         );
         assert!(
+            !log_output.contains("/token?"),
+            "debug log leaked raw token endpoint: {log_output}"
+        );
+        assert!(
+            log_output.contains("127.0.0.1")
+                && log_output.contains("<path>")
+                && !log_output.contains("client_secret"),
+            "debug log should include a sanitized endpoint classification: {log_output}"
+        );
+        assert!(
             log_output.contains("body_len"),
             "debug log should include body length metadata: {log_output}"
         );
         assert!(
             log_output.contains("response body redacted"),
             "debug log should state the body is redacted: {log_output}"
+        );
+    }
+
+    #[tokio::test]
+    async fn refresh_token_transport_failure_reason_is_sanitized() {
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_millis(200))
+            .build()
+            .unwrap();
+
+        let err = refresh_token(
+            &client,
+            "http://127.0.0.1:1/token?client_secret=LEAK_SENTINEL_ABC123",
+            "refresh-token",
+            "client-id",
+            Some("client-secret"),
+        )
+        .await
+        .unwrap_err();
+        let display = format!("{err}");
+
+        assert!(
+            !display.contains("LEAK_SENTINEL_ABC123"),
+            "transport error leaked endpoint query details: {display}"
+        );
+        assert!(
+            !display.contains("/token"),
+            "transport error leaked endpoint path details: {display}"
+        );
+        assert!(
+            display.contains("transport"),
+            "transport error should use a stable sanitized reason: {display}"
         );
     }
 }
