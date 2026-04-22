@@ -6,9 +6,13 @@ on:
   pull_request:
 
 jobs:
-  # ── Primary gate: runs on every PR and main push ────────────────────────
+  # ── Primary gate: matrix over ubuntu + macos, runs on every PR ──────────
   check:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
@@ -44,6 +48,26 @@ jobs:
         run: cargo doc --no-deps --workspace
         env:
           RUSTDOCFLAGS: "-D warnings"
+
+  # ── MSRV gate: build against the declared minimum supported Rust ────────
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Read MSRV from Cargo.toml
+        id: msrv
+        run: |
+          version=$(awk -F'"' '/^rust-version = / { print $2; exit }' Cargo.toml)
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          toolchain: ${{ steps.msrv.outputs.version }}
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+
+      - run: cargo check --workspace --all-targets
 
   # ── Feature matrix: consolidated from features + feature-smoke + all-features ─
   features:
@@ -97,16 +121,10 @@ jobs:
 
       - uses: EmbarkStudios/cargo-deny-action@91bf2b620e09e18d6eb78b92e7861937469acedb # v2
 
-  # ── Platform smoke: macOS + Windows on main push only ───────────────────
-  # PRs are validated on Ubuntu; cross-platform issues are caught on the
-  # post-merge main push. Saves ~10 min of runner time per PR.
+  # ── Windows smoke: still main-push-only (Windows runners are expensive) ─
   check-platform:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
@@ -133,12 +151,15 @@ jobs:
         env:
           RUSTDOCFLAGS: "-D warnings"
 
-  # ── Semver: only on main push (release boundary) ────────────────────────
+  # ── Semver: runs on every PR against integration or main ────────────────
+  # Baseline is the target branch so PRs against `integration` are checked
+  # against integration, not main.
   semver:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 0
 
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
 
@@ -148,7 +169,15 @@ jobs:
 
       - run: cargo binstall --no-confirm --force cargo-semver-checks
 
-      - name: Fetch main branch for baseline
-        run: git fetch origin main
+      - name: Pick baseline ref
+        id: baseline
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "ref=origin/${{ github.base_ref }}" >> "$GITHUB_OUTPUT"
+            git fetch origin "${{ github.base_ref }}"
+          else
+            echo "ref=origin/main" >> "$GITHUB_OUTPUT"
+            git fetch origin main
+          fi
 
-      - run: cargo semver-checks --workspace --exclude swink-agent-local-llm --baseline-rev origin/main
+      - run: cargo semver-checks --workspace --exclude swink-agent-local-llm --baseline-rev "${{ steps.baseline.outputs.ref }}"

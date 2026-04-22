@@ -17,8 +17,8 @@
 
 mod audit;
 mod budget;
-mod environment_state;
 mod efficiency;
+mod environment_state;
 mod error;
 mod evaluator;
 mod gate;
@@ -38,8 +38,8 @@ mod yaml;
 
 pub use audit::AuditedInvocation;
 pub use budget::BudgetEvaluator;
-pub use environment_state::EnvironmentStateEvaluator;
 pub use efficiency::EfficiencyEvaluator;
+pub use environment_state::EnvironmentStateEvaluator;
 pub use error::EvalError;
 pub use evaluator::{Evaluator, EvaluatorRegistry};
 pub use gate::{GateConfig, GateResult, check_gate};
@@ -49,8 +49,8 @@ pub use response::ResponseMatcher;
 pub use runner::{AgentFactory, EvalRunner};
 pub use score::{Score, Verdict};
 pub use store::{EvalStore, FsEvalStore};
-pub use trajectory::TrajectoryCollector;
 pub use testing::MockJudge;
+pub use trajectory::TrajectoryCollector;
 pub use types::{
     BudgetConstraints, EnvironmentState, EvalCase, EvalCaseResult, EvalMetricResult, EvalSet,
     EvalSetResult, EvalSummary, ExpectedToolCall, Invocation, RecordedToolCall, ResponseCriteria,
