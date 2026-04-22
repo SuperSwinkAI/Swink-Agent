@@ -86,41 +86,95 @@ impl Evaluator for SemanticToolSelectionEvaluator {
         let goal = goal_from_case(case);
         let tool_menu = available_tool_menu(invocation);
 
-        // Judge each call. The Evaluator trait is sync, but we are invoked
-        // from an async context (EvalRunner::run_case). Use
-        // `tokio::task::block_in_place` + the current `Handle` to drive the
-        // async judge calls without spinning up a nested runtime.
-        let outcomes: Vec<CallOutcome> = tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(async {
-                let mut results = Vec::with_capacity(calls.len());
-                let mut history = String::new();
-                for (turn_index, call) in &calls {
-                    let prompt = build_prompt(&goal, &tool_menu, &history, *turn_index, call);
-                    let outcome = match timeout(self.timeout, self.judge.judge(&prompt)).await {
-                        Ok(Ok(verdict)) => CallOutcome::Verdict {
-                            tool: call.name.clone(),
-                            verdict,
-                        },
-                        Ok(Err(err)) => CallOutcome::JudgeError {
-                            tool: call.name.clone(),
-                            error: err,
-                        },
-                        Err(_elapsed) => CallOutcome::OuterTimeout {
-                            tool: call.name.clone(),
-                            limit: self.timeout,
-                        },
-                    };
-                    // Append this call to the running history view so later
-                    // judgements have full context.
-                    append_history(&mut history, *turn_index, call);
-                    results.push(outcome);
-                }
-                results
-            })
+        // Judge each call. The Evaluator trait is sync; the async judge is
+        // driven through whichever runtime context the caller provides:
+        //
+        // - Inside a multi-thread Tokio runtime (e.g. `#[tokio::main]`
+        //   or `flavor = "multi_thread"`): use `block_in_place` + the
+        //   ambient `Handle::block_on` so the active runtime keeps
+        //   scheduling other tasks while this evaluator waits.
+        // - Outside a Tokio runtime (or inside a current-thread flavor
+        //   where `block_in_place` is unsupported): build an ephemeral
+        //   current-thread runtime and `block_on` it.
+        //
+        // This keeps the evaluator usable from plain `#[test]` functions
+        // and other sync callers without panicking on
+        // `Handle::current()`.
+        let outcomes: Vec<CallOutcome> = drive_judge_calls(|| async {
+            let mut results = Vec::with_capacity(calls.len());
+            let mut history = String::new();
+            for (turn_index, call) in &calls {
+                let prompt = build_prompt(&goal, &tool_menu, &history, *turn_index, call);
+                let outcome = match timeout(self.timeout, self.judge.judge(&prompt)).await {
+                    Ok(Ok(verdict)) => CallOutcome::Verdict {
+                        tool: call.name.clone(),
+                        verdict,
+                    },
+                    Ok(Err(err)) => CallOutcome::JudgeError {
+                        tool: call.name.clone(),
+                        error: err,
+                    },
+                    Err(_elapsed) => CallOutcome::OuterTimeout {
+                        tool: call.name.clone(),
+                        limit: self.timeout,
+                    },
+                };
+                // Append this call to the running history view so later
+                // judgements have full context.
+                append_history(&mut history, *turn_index, call);
+                results.push(outcome);
+            }
+            results
         });
 
         Some(aggregate(&outcomes))
     }
+}
+
+/// Drive an async workload to completion from the sync `Evaluator::evaluate`
+/// entry point, regardless of the caller's Tokio runtime state.
+///
+/// Tokio's `Handle::current()` panics when no runtime is active — the
+/// pattern an earlier revision of this evaluator used. This helper picks
+/// the right strategy at call time:
+///
+/// * Multi-thread runtime active → `block_in_place` + the ambient
+///   `Handle::block_on` so the host runtime keeps scheduling other tasks
+///   while we wait on the judge.
+/// * No runtime → build an ephemeral current-thread runtime and
+///   `block_on` it. Keeps the evaluator usable from plain `#[test]`
+///   functions and other sync callers.
+///
+/// ## Known limitation
+///
+/// Running the evaluator from *inside* a single-threaded Tokio runtime
+/// (e.g. `#[tokio::test(flavor = "current_thread")]` or a manually built
+/// `new_current_thread` runtime) will panic with "Cannot start a runtime
+/// from within a runtime". This is an inherent Tokio constraint, not a
+/// bug in this helper — see
+/// <https://docs.rs/tokio/latest/tokio/task/fn.block_in_place.html>. Use
+/// a multi-thread runtime or call from plain sync context.
+fn drive_judge_calls<F, Fut, T>(make_future: F) -> T
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = T>,
+{
+    use tokio::runtime::{Handle, RuntimeFlavor};
+
+    if let Ok(handle) = Handle::try_current()
+        && handle.runtime_flavor() == RuntimeFlavor::MultiThread
+    {
+        return tokio::task::block_in_place(|| handle.block_on(make_future()));
+    }
+
+    // No runtime active — build a short-lived one. `.expect` here is
+    // unreachable in practice: runtime construction fails only on OS-level
+    // resource exhaustion, at which point the evaluator cannot function.
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("build current-thread runtime for judge calls");
+    rt.block_on(make_future())
 }
 
 /// Per-call outcome combining judge success, judge error, or outer timeout.

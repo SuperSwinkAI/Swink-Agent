@@ -1,8 +1,10 @@
 //! Parallel pipeline execution.
 
+use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 use std::time::Instant;
 
+use futures::FutureExt;
 use swink_agent::{AgentMessage, ContentBlock, LlmMessage, Usage, UserMessage, now_timestamp};
 use tokio_util::sync::CancellationToken;
 
@@ -18,6 +20,22 @@ struct BranchResult {
     response: String,
     duration: std::time::Duration,
     usage: Usage,
+}
+
+fn missing_branch_result_error(step_index: usize, agent_name: String) -> PipelineError {
+    PipelineError::StepFailed {
+        step_index,
+        agent_name,
+        source: "parallel branch exited without producing a result".into(),
+    }
+}
+
+fn branch_panic_error(step_index: usize, agent_name: String) -> PipelineError {
+    PipelineError::StepFailed {
+        step_index,
+        agent_name,
+        source: "parallel branch panicked".into(),
+    }
 }
 
 /// Execute branches in parallel and merge results according to the merge strategy.
@@ -51,81 +69,77 @@ pub(crate) async fn run_parallel(
         let token = child_token.clone();
         let id = id.clone();
         let handler = event_handler.clone();
+        let panic_agent_name = branch_name.clone();
 
         tokio::spawn(async move {
-            if token.is_cancelled() {
-                let _ = tx.send(Err(PipelineError::Cancelled)).await;
-                return;
-            }
-
-            // Emit step-started event.
-            if let Some(ref h) = handler {
-                h(PipelineEvent::StepStarted {
-                    pipeline_id: id.clone(),
-                    step_index: index,
-                    agent_name: branch_name.clone(),
-                });
-            }
-
-            let step_start = Instant::now();
-
-            let mut agent = match factory.create(&branch_name) {
-                Ok(a) => a,
-                Err(e) => {
-                    let _ = tx.send(Err(e)).await;
-                    return;
+            let branch_outcome = AssertUnwindSafe(async {
+                if token.is_cancelled() {
+                    return Err(PipelineError::Cancelled);
                 }
-            };
 
-            let messages = vec![AgentMessage::Llm(LlmMessage::User(UserMessage {
-                content: vec![ContentBlock::Text { text: input }],
-                timestamp: now_timestamp(),
-                cache_hint: None,
-            }))];
-
-            let result = tokio::select! {
-                _ = token.cancelled() => {
-                    let _ = tx.send(Err(PipelineError::Cancelled)).await;
-                    return;
+                // Emit step-started event.
+                if let Some(ref h) = handler {
+                    h(PipelineEvent::StepStarted {
+                        pipeline_id: id.clone(),
+                        step_index: index,
+                        agent_name: branch_name.clone(),
+                    });
                 }
-                res = agent.prompt_async(messages) => res,
-            };
 
-            let duration = step_start.elapsed();
+                let step_start = Instant::now();
 
-            match result {
-                Ok(agent_result) => {
-                    let response = agent_result.assistant_text();
-                    let usage = agent_result.usage.clone();
+                let mut agent = factory.create(&branch_name)?;
 
-                    // Emit step-completed event.
-                    if let Some(ref h) = handler {
-                        h(PipelineEvent::StepCompleted {
-                            pipeline_id: id,
+                let messages = vec![AgentMessage::Llm(LlmMessage::User(UserMessage {
+                    content: vec![ContentBlock::Text { text: input }],
+                    timestamp: now_timestamp(),
+                    cache_hint: None,
+                }))];
+
+                let result = tokio::select! {
+                    _ = token.cancelled() => Err(PipelineError::Cancelled),
+                    res = agent.prompt_async(messages) => {
+                        res.map_err(|e| PipelineError::StepFailed {
                             step_index: index,
                             agent_name: branch_name.clone(),
-                            duration,
-                            usage: usage.clone(),
-                        });
-                    }
-
-                    let _ = tx
-                        .send(Ok(BranchResult {
-                            index,
-                            agent_name: branch_name,
-                            response,
-                            duration,
-                            usage,
-                        }))
-                        .await;
-                }
-                Err(e) => {
-                    let _ = tx
-                        .send(Err(PipelineError::StepFailed {
-                            step_index: index,
-                            agent_name: branch_name,
                             source: Box::new(e),
-                        }))
+                        })
+                    }
+                }?;
+
+                let duration = step_start.elapsed();
+                let response = result.assistant_text();
+                let usage = result.usage.clone();
+
+                // Emit step-completed event.
+                if let Some(ref h) = handler {
+                    h(PipelineEvent::StepCompleted {
+                        pipeline_id: id,
+                        step_index: index,
+                        agent_name: branch_name.clone(),
+                        duration,
+                        usage: usage.clone(),
+                    });
+                }
+
+                Ok(BranchResult {
+                    index,
+                    agent_name: branch_name,
+                    response,
+                    duration,
+                    usage,
+                })
+            })
+            .catch_unwind()
+            .await;
+
+            match branch_outcome {
+                Ok(result) => {
+                    let _ = tx.send(result).await;
+                }
+                Err(_) => {
+                    let _ = tx
+                        .send(Err(branch_panic_error(index, panic_agent_name)))
                         .await;
                 }
             }
@@ -178,8 +192,16 @@ async fn merge_concat(
     let mut responses = Vec::with_capacity(branch_count);
     let mut total_usage = Usage::default();
 
-    for slot in results {
-        let branch = slot.expect("all branches should have completed");
+    for (index, slot) in results.into_iter().enumerate() {
+        let branch = match slot {
+            Some(branch) => branch,
+            None => {
+                return Err(missing_branch_result_error(
+                    index,
+                    format!("parallel-branch-{index}"),
+                ));
+            }
+        };
         total_usage.merge(&branch.usage);
         responses.push(branch.response.clone());
         steps.push(StepResult {
@@ -346,8 +368,16 @@ async fn merge_custom(
     let mut steps = Vec::with_capacity(branch_count);
     let mut total_usage = Usage::default();
 
-    for slot in results {
-        let branch = slot.expect("all branches should have completed");
+    for (index, slot) in results.into_iter().enumerate() {
+        let branch = match slot {
+            Some(branch) => branch,
+            None => {
+                return Err(missing_branch_result_error(
+                    index,
+                    format!("parallel-branch-{index}"),
+                ));
+            }
+        };
         formatted_parts.push(format!("[{}]: {}", branch.agent_name, branch.response));
         total_usage += branch.usage.clone();
         steps.push(StepResult {
@@ -402,11 +432,13 @@ async fn merge_custom(
 #[cfg(all(test, feature = "testkit"))]
 mod tests {
     use std::sync::Arc;
+    use std::time::Instant;
 
+    use tokio::sync::mpsc;
     use tokio_util::sync::CancellationToken;
 
     use swink_agent::testing::{MockStreamFn, default_convert, default_model, text_only_events};
-    use swink_agent::{Agent, AgentOptions};
+    use swink_agent::{Agent, AgentOptions, Usage};
 
     use super::super::executor::SimpleAgentFactory;
     use super::super::types::{MergeStrategy, PipelineId};
@@ -632,5 +664,59 @@ mod tests {
         assert_eq!(result.final_response, "only-one");
         assert_eq!(result.steps.len(), 1);
         assert_eq!(result.steps[0].agent_name, "solo");
+    }
+
+    #[tokio::test]
+    async fn concat_returns_typed_error_when_branch_result_is_missing() {
+        let (tx, mut rx) = mpsc::channel(2);
+        tx.send(Ok(super::BranchResult {
+            index: 0,
+            agent_name: "agent-a".to_owned(),
+            response: "alpha".to_owned(),
+            duration: std::time::Duration::default(),
+            usage: Usage::default(),
+        }))
+        .await
+        .unwrap();
+        drop(tx);
+
+        let result = super::merge_concat(
+            &mut rx,
+            2,
+            " | ".to_owned(),
+            PipelineId::new("test-missing-branch"),
+            Instant::now(),
+        )
+        .await;
+
+        assert!(matches!(
+            result,
+            Err(super::PipelineError::StepFailed { step_index: 1, .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn concat_converts_panicking_branch_into_typed_error() {
+        let mut factory = SimpleAgentFactory::new();
+        factory.register("agent-a", || panic!("builder panic"));
+
+        let result = super::run_parallel(
+            &(Arc::new(factory) as Arc<dyn super::super::executor::AgentFactory>),
+            &None,
+            PipelineId::new("test-branch-panic"),
+            "test".to_owned(),
+            vec!["agent-a".into()],
+            MergeStrategy::Concat {
+                separator: "\n".to_owned(),
+            },
+            "hello".to_owned(),
+            CancellationToken::new(),
+        )
+        .await;
+
+        assert!(matches!(
+            result,
+            Err(super::PipelineError::StepFailed { step_index: 0, agent_name, .. }) if agent_name == "agent-a"
+        ));
     }
 }

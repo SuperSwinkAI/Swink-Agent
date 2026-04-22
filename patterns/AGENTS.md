@@ -13,6 +13,7 @@
 - `ExitCondition` — regex or custom predicate that terminates a loop-style pipeline step.
 - `MergeStrategy` — controls how parallel step outputs are combined.
 - `AgentFactory` / `SimpleAgentFactory` — sync factory trait for producing `Agent` instances per pipeline run.
+- `parallel.rs` must convert branch panics and silent branch exits into typed `PipelineError::StepFailed` values; merge helpers must never `expect(...)` missing branch results.
 
 ## Build & Test
 
