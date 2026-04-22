@@ -84,14 +84,17 @@ async fn my_new_acceptance_test() {
         text_only_events("hello"),
     ]));
 
-    let agent = Agent::new(
+    // Current API: build AgentOptions, then construct Agent::new(options).
+    let options = AgentOptions::new(
+        "test prompt",
         default_model(),
         stream,
         default_convert,
-        AgentOptions::default(),
     );
+    let mut agent = Agent::new(options);
 
-    let response = agent.message(user_msg("hi")).await.unwrap();
+    // Drive the agent with `prompt_async` (async) or `prompt_sync` (blocking).
+    let response = agent.prompt_async(vec![user_msg("hi")]).await.unwrap();
     // assert on response...
 }
 ```

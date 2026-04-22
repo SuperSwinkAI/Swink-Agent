@@ -236,7 +236,7 @@ gh pr comment <number> --body-file /tmp/comment.md
 
 **Root crate (`swink-agent`):**
 - `builtin-tools` (default-enabled) — gates `BashTool`, `ReadFileTool`, `WriteFileTool`.
-- `testkit` — gates the `testing` module. Not default-enabled; consumers add `features = ["testkit"]` in dev-dependencies. Integration tests in `/tests/` are gated with `#![cfg(feature = "testkit")]`.
+- `testkit` — gates the `testing` module. Not default-enabled; consumers add `features = ["testkit"]` in dev-dependencies. Most integration tests in `/tests/` are gated with `#![cfg(feature = "testkit")]`, but gating is mixed: some files are gated on other features (e.g. `#![cfg(feature = "builtin-tools")]` in `tests/tools.rs`, `#![cfg(feature = "plugins")]` in `tests/plugin_registry.rs`, `#![cfg(feature = "tiktoken")]` in `tests/tiktoken_counter.rs`), several files have no file-level gate and instead use inner `#[cfg(feature = "…")]` attributes (e.g. `tests/schema.rs`, `tests/public_api.rs`, `tests/no_default_features.rs`), and a few files (e.g. `tests/error.rs`, `tests/types.rs`, `tests/retry.rs`, `tests/stream.rs`, `tests/property.rs`) are ungated and always compile. Sub-crate tests follow their own gating (e.g. `adapters/tests/*` gate on provider features like `openai`, `gemini`, `ollama`, `proxy`, `azure`, `mistral`, `bedrock`, `xai`; `local-llm/tests/*` gate on `gemma4` / `metal` / `cuda`; `tui/tests/ac_tui.rs` gates only the credentials smoke test on `cli`).
 - `plugins` — gates `plugin` module. Not default-enabled. `MockPlugin` in `testing.rs` also gated behind this feature.
 - Root crate cannot re-export adapters/local-llm/TUI (cyclic dependency). Consumers depend on sub-crates directly.
 

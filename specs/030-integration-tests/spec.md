@@ -133,7 +133,7 @@ A library consumer needs confidence that TUI components render correctly with ag
 - **FR-002**: The test suite MUST include a mock tool component with configurable behavior: success results, error results, configurable latency, and failure modes.
 - **FR-003**: The test suite MUST include an event collector that subscribes to agent events and stores them for assertion.
 - **FR-004**: Shared test helpers MUST be organized in a common module reusable across all test files.
-- **FR-005**: The test suite MUST include at least one test for each PRD acceptance criterion (AC 1 through AC 30).
+- **FR-005**: The test suite MUST include at least one test per PRD acceptance criterion (AC 1 through AC 30). AC 1–25 are covered by behavior-level integration tests in `tests/ac_*.rs`. AC 26–30 are covered by public-state wiring integration tests in `tui/tests/ac_tui.rs`; the matching color/rendering/routing behavior is covered by unit tests inside the TUI crate (see FR-017–FR-020).
 - **FR-006**: All tests MUST run without external services, network access, or API keys.
 - **FR-007**: Tests MUST verify the agent lifecycle event sequence: turn start, content streaming, turn end.
 - **FR-008**: Tests MUST verify tool schema validation rejects malformed arguments.
@@ -145,10 +145,10 @@ A library consumer needs confidence that TUI components render correctly with ag
 - **FR-014**: Tests MUST verify the abort mechanism stops a running turn.
 - **FR-015**: Tests MUST verify structured output schema enforcement.
 - **FR-016**: Tests MUST verify proxy stream event reconstruction.
-- **FR-017**: Tests MUST verify TUI component rendering with correct role-based styling.
-- **FR-018**: Tests MUST verify inline diff rendering with correct color coding.
-- **FR-019**: Tests MUST verify the context gauge color thresholds.
-- **FR-020**: Tests MUST verify plan mode restricts write tools and approval modes classify tools correctly.
+- **FR-017**: Integration tests MUST exercise the TUI's public state wiring for role-based message styling (enum distinctness, `DisplayMessage.role` round-trip, `plan_mode` flag). Actual border-color rendering is covered by `theme::tests` and `conversation` unit tests inside the TUI crate.
+- **FR-018**: Integration tests MUST verify `DisplayMessage.diff_data` storage round-trips via the public field. Actual inline diff color coding (`diff_add_color`, `diff_remove_color`, `diff_context_color`) is covered by `ui::diff::tests` unit tests inside the TUI crate.
+- **FR-019**: Integration tests MUST verify the context gauge's public state fields (`context_budget`, `context_tokens_used`) and reproduce the threshold math (`<60` green, `<85` yellow, `>=85` red). Actual gauge rendering is covered by `status_bar::render` and `theme` unit tests inside the TUI crate.
+- **FR-020**: Integration tests MUST verify the public state driving plan mode and approval classification: `operating_mode` defaults and variant distinctness, `approval_mode()` default of `Smart`, and `session_trusted_tools` membership semantics. Actual plan-mode tool filtering and `handle_approval_request` routing are covered by `app/tests.rs` unit tests inside the TUI crate.
 
 ### Key Entities
 
@@ -162,7 +162,7 @@ A library consumer needs confidence that TUI components render correctly with ag
 
 ### Measurable Outcomes
 
-- **SC-001**: Every PRD acceptance criterion (AC 1-30) has at least one passing integration test.
+- **SC-001**: Every PRD acceptance criterion (AC 1-30) has at least one passing integration test. AC 1–25 are asserted behaviorally; AC 26–30 are asserted at the public-state-wiring level, with their rendering/routing behavior covered by in-crate unit tests.
 - **SC-002**: The entire integration test suite passes with zero external dependencies (no network, no API keys).
 - **SC-003**: All tests run to completion within the CI timeout (each individual test completes in under 10 seconds).
 - **SC-004**: The mock stream, mock tool, and event collector are reusable — at least 80% of tests share common helper infrastructure.
