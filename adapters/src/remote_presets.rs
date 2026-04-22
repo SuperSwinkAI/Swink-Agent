@@ -578,6 +578,60 @@ mod tests {
         );
     }
 
+    // Explicit-but-empty credential must be rejected the same way `None` is.
+    // `Some("")` and `Some("   ")` can sneak past a naive `is_some()` check,
+    // so pin the contract: trimmed-empty explicit keys error as MissingCredential.
+    #[cfg(feature = "anthropic")]
+    #[test]
+    fn build_with_credential_rejects_explicit_empty_string() {
+        let key = RemotePresetKey::new("anthropic", "sonnet_46");
+        for candidate in [String::new(), "   ".to_string(), "\t\n".to_string()] {
+            let err = match build_remote_connection_with_credential(key, Some(candidate), None) {
+                Ok(_) => panic!("empty/whitespace explicit credential must error"),
+                Err(err) => err,
+            };
+            assert!(
+                matches!(err, RemoteModelConnectionError::MissingCredential { .. }),
+                "expected MissingCredential, got {err:?}"
+            );
+        }
+    }
+
+    // Unknown preset must short-circuit with UnknownPreset before any credential
+    // or env-var work happens — protects callers from misleading MissingCredential
+    // errors when the real problem is a bad preset key.
+    #[test]
+    fn build_with_credential_rejects_unknown_preset() {
+        let key = RemotePresetKey::new("anthropic", "nonexistent_preset_xyz");
+        let err =
+            match build_remote_connection_with_credential(key, Some("irrelevant".into()), None) {
+                Ok(_) => panic!("unknown preset must error"),
+                Err(err) => err,
+            };
+        assert_eq!(
+            err,
+            RemoteModelConnectionError::UnknownPreset {
+                provider_key: "anthropic",
+                preset_id: "nonexistent_preset_xyz",
+            }
+        );
+    }
+
+    // Bedrock uses SigV4, not a bearer token — `Some("")` must still route
+    // through the bedrock branch (which reads AWS env) and never return
+    // MissingCredential. Complements the `None` test above.
+    #[cfg(feature = "bedrock")]
+    #[test]
+    fn bedrock_ignores_explicit_empty_api_key() {
+        let key = RemotePresetKey::new("bedrock", "anthropic_claude_sonnet_45");
+        if let Err(err) = build_remote_connection_with_credential(key, Some(String::new()), None) {
+            assert!(
+                !matches!(err, RemoteModelConnectionError::MissingCredential { .. }),
+                "bedrock must not surface MissingCredential when api_key is Some(\"\"); got {err:?}"
+            );
+        }
+    }
+
     #[test]
     fn build_remote_connection_for_model_rejects_unknown() {
         let result = build_remote_connection_for_model("nonexistent-xyz");
