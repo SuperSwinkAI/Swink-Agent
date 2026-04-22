@@ -33,8 +33,10 @@ pub struct SetupWizard {
     providers: Vec<ProviderInfo>,
     configured: Vec<bool>,
     selected: usize,
+    save_error: Option<String>,
     should_quit: bool,
     should_continue: bool,
+    store_credential_fn: fn(&str, &str) -> Result<(), String>,
 }
 
 impl Default for SetupWizard {
@@ -62,8 +64,10 @@ impl SetupWizard {
             providers,
             configured,
             selected: 0,
+            save_error: None,
             should_quit: false,
             should_continue: false,
+            store_credential_fn: credentials::store_credential,
         }
     }
 
@@ -289,9 +293,23 @@ impl SetupWizard {
 
         let help = vec![
             Line::from(""),
+            Line::from(format!(
+                "If secure storage is unavailable, set {} in your shell instead.",
+                provider.env_var
+            )),
+            Line::from(Span::styled(
+                format!("Current session fallback: ${}", provider.env_var),
+                Style::default().add_modifier(Modifier::DIM),
+            )),
+            Line::from(""),
+            Line::from(self.save_error.as_deref().unwrap_or("")),
             Line::from(Span::styled(
                 "Enter to save, Esc to go back",
-                Style::default().add_modifier(Modifier::DIM),
+                if self.save_error.is_some() {
+                    Style::default().fg(Color::Yellow)
+                } else {
+                    Style::default().add_modifier(Modifier::DIM)
+                },
             )),
         ];
         let help_widget = Paragraph::new(help);
@@ -377,6 +395,7 @@ impl SetupWizard {
                     // "Continue" selected
                     self.step = WizardStep::Done;
                 } else if self.providers[self.selected].requires_key {
+                    self.save_error = None;
                     self.step = WizardStep::KeyEntry {
                         provider_index: self.selected,
                         input: String::new(),
@@ -408,31 +427,41 @@ impl SetupWizard {
 
         match (key.modifiers, key.code) {
             (_, KeyCode::Esc) => {
+                self.save_error = None;
                 self.step = WizardStep::ProviderList;
             }
             (_, KeyCode::Enter) => {
-                if !input.is_empty() {
-                    let provider_key = self.providers[provider_index].key_name;
+                if input.is_empty() {
+                    self.save_error = None;
+                    self.step = WizardStep::ProviderList;
+                } else {
+                    let provider = &self.providers[provider_index];
+                    let provider_key = provider.key_name;
                     // Attempt to store the credential
-                    match credentials::store_credential(provider_key, input) {
+                    match (self.store_credential_fn)(provider_key, input) {
                         Ok(()) => {
                             self.configured[provider_index] = true;
+                            self.save_error = None;
+                            self.step = WizardStep::ProviderList;
                         }
-                        Err(_e) => {
-                            // On failure, still go back to the list; the checkbox
-                            // won't be checked so the user can retry.
+                        Err(error) => {
+                            self.save_error = Some(format!(
+                                "Secure storage failed: {error}. Set {} and retry later.",
+                                provider.env_var
+                            ));
                         }
                     }
                 }
-                self.step = WizardStep::ProviderList;
             }
             (_, KeyCode::Backspace) if !input.is_empty() && *cursor > 0 => {
                 input.remove(*cursor - 1);
                 *cursor -= 1;
+                self.save_error = None;
             }
             (KeyModifiers::NONE | KeyModifiers::SHIFT, KeyCode::Char(c)) => {
                 input.insert(*cursor, c);
                 *cursor += 1;
+                self.save_error = None;
             }
             _ => {}
         }
@@ -457,8 +486,10 @@ impl SetupWizard {
             providers,
             configured,
             selected: 0,
+            save_error: None,
             should_quit: false,
             should_continue: false,
+            store_credential_fn: credentials::store_credential,
         }
     }
 }
@@ -471,6 +502,10 @@ mod tests {
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    fn failing_store_credential(_: &str, _: &str) -> Result<(), String> {
+        Err("keychain unavailable".to_string())
     }
 
     #[test]
@@ -637,6 +672,39 @@ mod tests {
         wizard.handle_key(key(KeyCode::Esc));
 
         assert!(matches!(wizard.step, WizardStep::ProviderList));
+    }
+
+    #[test]
+    fn failed_key_storage_keeps_user_on_entry_screen_with_env_fallback() {
+        let mut wizard = SetupWizard::new_for_test();
+        let provider_index = wizard
+            .providers
+            .iter()
+            .position(|provider| provider.key_name == "openai")
+            .expect("openai provider should exist");
+        wizard.store_credential_fn = failing_store_credential;
+        wizard.step = WizardStep::KeyEntry {
+            provider_index,
+            input: "sk-test".to_string(),
+            cursor: 7,
+        };
+
+        wizard.handle_key(key(KeyCode::Enter));
+
+        match &wizard.step {
+            WizardStep::KeyEntry { input, cursor, .. } => {
+                assert_eq!(input, "sk-test");
+                assert_eq!(*cursor, 7);
+            }
+            _ => panic!("should remain in KeyEntry after a store failure"),
+        }
+        assert!(!wizard.configured[provider_index]);
+        let save_error = wizard
+            .save_error
+            .as_deref()
+            .expect("save error should be recorded");
+        assert!(save_error.contains("keychain unavailable"));
+        assert!(save_error.contains("OPENAI_API_KEY"));
     }
 
     #[test]

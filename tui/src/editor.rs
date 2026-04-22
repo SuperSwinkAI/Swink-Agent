@@ -7,6 +7,8 @@
 use std::io;
 use std::process::Command;
 
+use tempfile::NamedTempFile;
+
 /// Resolve the editor command from environment or fallback.
 ///
 /// Priority: config override > `$EDITOR` > `$VISUAL` > `vi`.
@@ -30,33 +32,20 @@ pub fn resolve_editor(config_override: Option<&str>) -> String {
 /// Returns `Ok(None)` if the editor exited successfully but the file is empty (cancellation).
 /// Returns `Err` if the editor could not be launched or exited with a non-zero status.
 pub fn open_editor(editor_command: &str) -> io::Result<Option<String>> {
-    let temp_dir = std::env::temp_dir();
-    let temp_path = temp_dir.join(format!("swink-prompt-{}.md", std::process::id()));
-
-    // Create empty temp file
-    std::fs::write(&temp_path, "")?;
+    let temp_path = create_temp_prompt_path()?;
 
     // Launch the editor
-    let status = Command::new(editor_command).arg(&temp_path).status();
-
-    let status = match status {
-        Ok(s) => s,
-        Err(e) => {
-            let _ = std::fs::remove_file(&temp_path);
-            return Err(e);
-        }
-    };
+    let status = Command::new(editor_command).arg(&temp_path).status()?;
 
     if !status.success() {
-        let _ = std::fs::remove_file(&temp_path);
         return Err(io::Error::other(format!(
             "Editor exited with status: {status}"
         )));
     }
 
-    // Read and clean up
+    // Read the file before dropping the temp path so the randomized file is
+    // still available to the spawned editor across platforms.
     let content = std::fs::read_to_string(&temp_path).unwrap_or_default();
-    let _ = std::fs::remove_file(&temp_path);
 
     let trimmed = content.trim();
     if trimmed.is_empty() {
@@ -64,6 +53,10 @@ pub fn open_editor(editor_command: &str) -> io::Result<Option<String>> {
     } else {
         Ok(Some(trimmed.to_string()))
     }
+}
+
+fn create_temp_prompt_path() -> io::Result<tempfile::TempPath> {
+    Ok(NamedTempFile::new()?.into_temp_path())
 }
 
 #[cfg(test)]
@@ -158,5 +151,15 @@ mod tests {
         );
         assert!(result.is_ok());
         assert!(result.unwrap().is_none()); // empty file = cancellation
+    }
+
+    #[test]
+    fn create_temp_prompt_path_uses_unique_randomized_names() {
+        let first = create_temp_prompt_path().expect("first temp path should be created");
+        let second = create_temp_prompt_path().expect("second temp path should be created");
+
+        assert_ne!(first.as_os_str(), second.as_os_str());
+        assert!(first.exists());
+        assert!(second.exists());
     }
 }

@@ -33,4 +33,6 @@
 - **Smart approval mode auto-approves trusted tools only** — untrusted tools still prompt even if they are read-only.
 - **Panic hook restores terminal** — without it, a panic leaves terminal in raw mode.
 - **Credentials** — env var checked first, then keychain. Env always wins.
+- **Wizard credential failures stay inline** — when keychain writes fail, keep the user on the key-entry screen and show the provider-specific environment-variable fallback instead of silently returning to the provider list.
+- **External editor temp files must be randomized** — use `tempfile` for prompt composition paths; predictable names in shared temp directories are a local collision/tampering risk.
 - **Session restore must validate before mutating UI state** — `App::load_session()` should first load transcript + session-state snapshot into locals, then apply them to `self` only after both succeed. If `store.load_state()` / `SessionState::restore_from_snapshot()` use `?` inside the mutation path, corrupted state snapshots bypass the normal warning branch and can partially apply a failed load.
