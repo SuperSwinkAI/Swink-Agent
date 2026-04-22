@@ -222,6 +222,57 @@ impl JudgeClient for SlowMockJudge {
     }
 }
 
+/// A `JudgeClient` test double whose [`JudgeClient::judge`] implementation
+/// always panics.
+///
+/// Exists to exercise the registry-level `catch_unwind` path (FR-014 / SC-008)
+/// for the cross-cutting panic-isolation integration test in
+/// `eval/tests/registry_panic_isolation.rs`. Pair with
+/// [`crate::EvaluatorRegistry::with_defaults_and_judge`] to verify that a
+/// panicking judge degrades every semantic evaluator to `Score::fail()` without
+/// propagating the panic out of the runner.
+///
+/// ```rust,ignore
+/// use std::sync::Arc;
+/// use swink_agent_eval::{JudgeClient, PanickingMockJudge};
+///
+/// let judge: Arc<dyn JudgeClient> = Arc::new(PanickingMockJudge::new());
+/// // `judge.judge("any prompt").await` panics with "judge panic".
+/// ```
+pub struct PanickingMockJudge {
+    message: &'static str,
+}
+
+impl PanickingMockJudge {
+    /// Build a panicking judge that panics with the default "judge panic"
+    /// message on every call.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            message: "judge panic",
+        }
+    }
+
+    /// Build a panicking judge that panics with a custom static message.
+    #[must_use]
+    pub const fn with_message(message: &'static str) -> Self {
+        Self { message }
+    }
+}
+
+impl Default for PanickingMockJudge {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl JudgeClient for PanickingMockJudge {
+    async fn judge(&self, _prompt: &str) -> Result<JudgeVerdict, JudgeError> {
+        panic!("{}", self.message);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

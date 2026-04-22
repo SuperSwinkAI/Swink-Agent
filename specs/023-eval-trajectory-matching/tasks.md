@@ -209,12 +209,12 @@
 
 **Purpose**: Full regression pass, docs, and cross-cutting panic-isolation verification for the expanded scope.
 
-- [ ] T073 Run full `cargo test -p swink-agent-eval` — verify v1 and v2 tests all pass.
-- [ ] T074 Run `cargo clippy -p swink-agent-eval -- -D warnings` — verify zero warnings after all v2 changes.
-- [ ] T075 Run `cargo test --workspace` — verify no regressions in other crates.
-- [ ] T076 Update `eval/src/judge.rs` module rustdoc with a pointer to the forthcoming Advanced Evals spec as the home of concrete `JudgeClient` implementations.
-- [ ] T077 Update `specs/023-eval-trajectory-matching/quickstart.md` with a worked US5 + US6 + US7 example using `MockJudge` and an inline `state_capture` closure.
-- [ ] T078 Cross-cutting panic-isolation check: add an integration test `eval/tests/registry_panic_isolation.rs`. Construct `EvaluatorRegistry::with_defaults_and_judge(PanickingMockJudge)` — a `MockJudge` whose `judge()` panics on call. Build a single `EvalCase` with: `semantic_tool_selection = true`, `expected_tool_intent = Some(...)`, `expected_response = Some(ResponseCriteria::Custom(panicking_closure))`, `state_capture = Some(panicking_closure)`, `expected_environment_state = Some(vec![...])`. Run via `EvalRunner` against a minimal factory. Assert: (a) the run returns `Ok(EvalCaseResult)`, (b) `metric_results` contains `Score::fail()` entries for the panicking response closure, the semantic tool-selection evaluator, the semantic tool-parameter evaluator, and the env-state evaluator (four fails total), (c) no propagated panic escapes the runner, (d) `verdict == Verdict::Fail`. Covers FR-014 + SC-008.
+- [x] T073 Run full `cargo test -p swink-agent-eval` — verify v1 and v2 tests all pass.
+- [x] T074 Run `cargo clippy -p swink-agent-eval -- -D warnings` — verify zero warnings after all v2 changes.
+- [x] T075 Run `cargo test --workspace` — verify no regressions in other crates.
+- [x] T076 Update `eval/src/judge.rs` module rustdoc with a pointer to the forthcoming Advanced Evals spec as the home of concrete `JudgeClient` implementations.
+- [x] T077 Update `specs/023-eval-trajectory-matching/quickstart.md` with a worked US5 + US6 + US7 example using `MockJudge` and an inline `state_capture` closure.
+- [x] T078 Cross-cutting panic-isolation check: add an integration test `eval/tests/registry_panic_isolation.rs`. Construct `EvaluatorRegistry::with_defaults_and_judge(PanickingMockJudge)` — a `MockJudge` whose `judge()` panics on call. Build a single `EvalCase` with: `semantic_tool_selection = true`, `expected_tool_intent = Some(...)`, `expected_response = Some(ResponseCriteria::Custom(panicking_closure))`, `state_capture = Some(panicking_closure)`, `expected_environment_state = Some(vec![...])`. Run via `EvalRunner` against a minimal factory. Assert: (a) the run returns `Ok(EvalCaseResult)`, (b) `metric_results` contains `Score::fail()` entries for the panicking response closure, the semantic tool-selection evaluator, the semantic tool-parameter evaluator, and the env-state evaluator (four fails total), (c) no propagated panic escapes the runner, (d) `verdict == Verdict::Fail`. Covers FR-014 + SC-008.
 - [x] T079 Update `specs/023-eval-trajectory-matching/data-model.md` with the new entities (JudgeClient, JudgeVerdict, JudgeError, EnvironmentState, ToolIntent, StateCapture, and the three new evaluators). **[Completed in the 2026-04-21 spec-kit analysis cycle — data-model.md now contains the v2 entity section.]**
 
 ---

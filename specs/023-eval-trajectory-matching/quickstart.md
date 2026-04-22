@@ -134,68 +134,117 @@ for result in &results {
 }
 ```
 
-## Worked semantic + environment example (US5 + US6 + US7)
+## v2 example: combined semantic + env-state evaluation (US5 + US6 + US7)
 
-```rust
+Spec 023's v2 surface introduces three new evaluators that layer onto the v1
+defaults:
+
+- **`SemanticToolSelectionEvaluator`** (US5) — LLM-as-judge verdict on whether
+  each chosen tool was appropriate for the user goal.
+- **`SemanticToolParameterEvaluator`** (US6) — LLM-as-judge verdict on whether
+  tool-call arguments satisfy a declared natural-language intent.
+- **`EnvironmentStateEvaluator`** (US7) — deterministic comparison of a
+  captured environment snapshot against expected named states.
+
+The example below wires all three into a single `EvalCase`, plugs in a
+[`MockJudge`](https://docs.rs/swink-agent-eval) so it runs without a real
+provider, and evaluates a hand-built `Invocation` via the registry. This
+mirrors `eval/tests/registry_panic_isolation.rs` and is a good starting
+template for authoring v2 cases.
+
+```rust,ignore
 use std::sync::Arc;
 
 use swink_agent_eval::{
-    EnvironmentState, EvalCase, EvaluatorRegistry, Invocation, MockJudge,
-    ResponseCriteria, Score, ToolIntent,
+    EnvironmentState, EvalCase, EvaluatorRegistry, ExpectedToolCall,
+    JudgeClient, JudgeVerdict, MockJudge, ResponseCriteria, Score,
+    ToolIntent,
 };
 
-let registry = EvaluatorRegistry::with_defaults_and_judge(Arc::new(MockJudge::always_pass()));
+// 1. Build a MockJudge that always returns Pass. Plug your provider-backed
+//    JudgeClient here in production (spec 043 ships concrete impls).
+let judge: Arc<dyn JudgeClient> = Arc::new(MockJudge::with_verdicts(vec![
+    JudgeVerdict {
+        score: 1.0,
+        pass: true,
+        reason: Some("fetch_document reads the file the user asked for".into()),
+        label: Some("equivalent".into()),
+    },
+    JudgeVerdict {
+        score: 1.0,
+        pass: true,
+        reason: Some("arguments resolve to ./project-alpha/config.toml".into()),
+        label: Some("satisfies-intent".into()),
+    },
+]));
 
+// 2. Define a case that opts in to all three v2 evaluators.
 let case = EvalCase {
-    id: "project-alpha".into(),
-    name: "Semantic tool + response + env state".into(),
-    description: None,
-    system_prompt: "You are a careful assistant.".into(),
-    user_messages: vec!["Read the project-alpha config and summarize it.".into()],
-    expected_trajectory: None,
-    expected_response: Some(ResponseCriteria::Custom(Arc::new(|response: &str| {
-        if response.contains("project-alpha") && response.contains("config") {
-            Score::pass()
-        } else {
-            Score::fail()
-        }
-    }))),
+    id: "v2-combined".into(),
+    name: "US5 + US6 + US7 worked example".into(),
+    description: Some("Semantic tool-selection + semantic tool-parameter + env-state.".into()),
+    system_prompt: "You are a helpful assistant.".into(),
+    user_messages: vec!["Read the config for project-alpha and summarise it.".into()],
+    expected_trajectory: Some(vec![ExpectedToolCall {
+        tool_name: "read_file".into(),
+        arguments: None,
+    }]),
+    expected_response: Some(ResponseCriteria::Contains {
+        substring: "project-alpha".into(),
+    }),
     budget: None,
     evaluators: vec![],
     metadata: serde_json::Value::Null,
+    // US7: declare the env-state we expect after the run.
     expected_environment_state: Some(vec![EnvironmentState {
-        name: "config_path".into(),
-        state: serde_json::json!("./project-alpha/config.toml"),
+        name: "created_file".into(),
+        state: serde_json::json!("./project-alpha/summary.md"),
     }]),
+    // US6: intent is judged against whichever tool the agent actually called.
     expected_tool_intent: Some(ToolIntent {
-        intent: "read config for project-alpha".into(),
-        tool_name: Some("read_file".into()),
+        intent: "read project-alpha config".into(),
+        tool_name: None,
     }),
+    // US5: opt in to semantic tool-selection scoring.
     semantic_tool_selection: true,
-    state_capture: Some(Arc::new(|invocation: &Invocation| {
-        invocation
-            .turns
-            .iter()
-            .flat_map(|turn| turn.tool_calls.iter())
-            .find(|call| call.name == "read_file")
-            .map(|call| {
-                vec![EnvironmentState {
-                    name: "config_path".into(),
-                    state: call.arguments["path"].clone(),
-                }]
-            })
-            .unwrap_or_default()
+    // US7: supply the capture closure that produces the actual env-state.
+    //     Runs after the agent completes; panics are caught and surfaced as
+    //     Score::fail() per FR-014.
+    state_capture: Some(Arc::new(|_invocation| {
+        vec![EnvironmentState {
+            name: "created_file".into(),
+            state: serde_json::json!("./project-alpha/summary.md"),
+        }]
     })),
 };
 
-let results = registry.evaluate(&case, &invocation);
+// 3. Build a registry with v1 defaults + the v2 semantic evaluators.
+let registry = EvaluatorRegistry::with_defaults_and_judge(judge);
 
-assert!(results.iter().any(|metric| metric.evaluator_name == "semantic_tool_selection"));
-assert!(results.iter().any(|metric| metric.evaluator_name == "semantic_tool_parameter"));
-assert!(results.iter().any(|metric| metric.evaluator_name == "environment_state"));
-assert!(results.iter().any(|metric| metric.evaluator_name == "response"));
+// 4. In real usage you'd obtain the `invocation` from EvalRunner::run_case.
+//    For illustration we assume it's already on hand (see earlier sections).
+let results: Vec<_> = registry.evaluate(&case, &invocation);
+
+// 5. Each v2 evaluator contributes one EvalMetricResult. The shape is:
+//      EvalMetricResult {
+//          evaluator_name: "semantic_tool_selection" | "semantic_tool_parameter"
+//                        | "environment_state" | "response" | "trajectory" | ...,
+//          score: Score { value: 0.0..=1.0, threshold: 0.5 },
+//          details: Some(human-readable justification),
+//      }
+//
+//    Overall case verdict is Pass iff every result passes — the runner
+//    surfaces this as `EvalCaseResult { metric_results, verdict, .. }`.
+for r in &results {
+    println!("{}: {:.2}  {}", r.evaluator_name, r.score.value,
+        r.details.as_deref().unwrap_or(""));
+}
 ```
 
-`state_capture` and `ResponseCriteria::Custom` are programmatic only, so keep
-them in Rust rather than serialized eval-set fixtures. `MockJudge` lets the
-quickstart demonstrate semantic scoring without a live provider dependency.
+**Panic isolation.** Every evaluator in the registry is wrapped in
+`std::panic::catch_unwind`. If the `state_capture` closure, a `Custom`
+response matcher, or a `JudgeClient::judge` call panics, the offending
+evaluator degrades to `Score::fail()` with the panic message captured in
+`details` — the runner continues and returns a complete `EvalCaseResult`
+(FR-014 / SC-008). See `eval/tests/registry_panic_isolation.rs` for the
+cross-cutting integration test that verifies this contract end-to-end.

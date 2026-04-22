@@ -82,7 +82,7 @@ fn missing_expected_name_fails() {
         .evaluate(&case, &mock_invocation_with_response(&[], "done"))
         .expect("evaluator should apply");
 
-    assert_eq!(result.score.value, Score::fail().value);
+    assert!((result.score.value - Score::fail().value).abs() < f64::EPSILON);
     let details = result.details.expect("details should be present");
     assert!(
         details.contains("missing expected environment state `created_file`"),
@@ -108,7 +108,7 @@ fn mismatched_value_fails_with_expected_and_actual() {
         .evaluate(&case, &mock_invocation_with_response(&[], "done"))
         .expect("evaluator should apply");
 
-    assert_eq!(result.score.value, Score::fail().value);
+    assert!((result.score.value - Score::fail().value).abs() < f64::EPSILON);
     let details = result.details.expect("details should be present");
     assert!(details.contains("row_count"), "details: {details}");
     assert!(details.contains("expected 3"), "details: {details}");
@@ -145,7 +145,7 @@ fn state_capture_panic_becomes_failure() {
         .evaluate(&case, &mock_invocation_with_response(&[], "done"))
         .expect("evaluator should apply");
 
-    assert_eq!(result.score.value, Score::fail().value);
+    assert!((result.score.value - Score::fail().value).abs() < f64::EPSILON);
     let details = result.details.expect("details should be present");
     assert!(
         details.contains("state capture panicked"),

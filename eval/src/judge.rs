@@ -2,11 +2,20 @@
 //!
 //! `JudgeClient` is an async trait consumed by the semantic evaluators
 //! (`SemanticToolSelectionEvaluator`, `SemanticToolParameterEvaluator`).
-//! Concrete provider-backed implementations are intentionally out of scope for
-//! spec 023. They are defined by spec 043 (`043-evals-adv-features`) and live
-//! in the companion `swink-agent-eval-judges` crate, while this crate exposes
-//! only the trait shape, shared error types, and test doubles such as
-//! [`crate::MockJudge`].
+//!
+//! # Scope: trait + test doubles only
+//!
+//! Spec 023 ships **only** the trait shape, the [`JudgeVerdict`] /
+//! [`JudgeError`] types, and a pair of test doubles
+//! ([`crate::MockJudge`], [`crate::SlowMockJudge`]). Concrete provider-backed
+//! [`JudgeClient`] implementations — Anthropic, `OpenAI`, Gemini, Azure, local
+//! models, prompt-template registries, retry / backoff, batching, caching —
+//! are explicitly out of scope and will ship in spec 043
+//! (`specs/043-evals-adv-features`) in the companion
+//! `swink-agent-eval-judges` crate. Until then, downstream consumers wire up
+//! their own [`JudgeClient`] impl (often a thin wrapper around an existing
+//! `swink-agent` provider handle) and pass it to
+//! [`crate::EvaluatorRegistry::with_defaults_and_judge`].
 //!
 //! # Non-hang guarantee
 //!
