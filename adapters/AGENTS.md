@@ -52,6 +52,7 @@
 - In `src/ollama.rs`, the NDJSON parser must buffer raw bytes until it has a full newline-delimited record. Decoding each transport chunk independently with `from_utf8_lossy` corrupts split multibyte UTF-8.
 - In `src/ollama.rs` and `src/proxy.rs`, deterministic parse/protocol faults (malformed NDJSON/SSE JSON, proxy terminal-frame violations, unexpected `done` EOF) must use `AssistantMessageEvent::error(...)`, not `error_network(...)`; only transport failures stay retryable.
 - In `src/openai_compat.rs`, buffer tool-call arguments and delay `ToolCallStart` until a non-empty `function.name` is known; some providers stream arguments before the name.
+- In `src/openai_compat.rs`, terminal drain paths must treat any still-pending tool call without a non-empty `function.name` as a protocol error. Never synthesize a `ToolCallStart` with an empty name during `[DONE]`/EOF flush.
 - In `src/oai_transport.rs` and `src/anthropic.rs`, pre-stream cancellation must race the initial HTTP send via `tokio::select!`; checking the token only after `request.send().await` lets prompt cancellation hang behind network latency or server accept delays.
 - Runtime SSE adapters must thread `StreamOptions.on_raw_payload` into the callback-aware shared parser (`sse_data_lines_with_callback` for data-only streams, `sse_paired_events_with_callback` for event/data streams). The callback-free helpers silently disable payload observers.
 - In `src/proxy.rs`, treat transport `data: [DONE]` as a protocol error unless the proxy has already emitted a typed `done` or `error` JSON event.

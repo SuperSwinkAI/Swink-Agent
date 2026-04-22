@@ -359,7 +359,7 @@ impl crate::finalize::StreamFinalize for OaiSseStreamState {
 impl OaiSseStreamState {
     fn emit_terminal_error(&mut self, event: AssistantMessageEvent) -> Vec<AssistantMessageEvent> {
         let mut events = Vec::new();
-        flush_pending_oai_tool_calls(self, &mut events);
+        let _ = flush_pending_oai_tool_calls(self, &mut events, "OpenAI-compatible");
         events.extend(crate::finalize::finalize_blocks(self));
         events.push(event);
         events
@@ -367,7 +367,11 @@ impl OaiSseStreamState {
 
     fn emit_done_from_done_sentinel(&mut self) -> Vec<AssistantMessageEvent> {
         let mut events = Vec::new();
-        flush_pending_oai_tool_calls(self, &mut events);
+        if let Some(error) = flush_pending_oai_tool_calls(self, &mut events, "OpenAI-compatible") {
+            events.extend(crate::finalize::finalize_blocks(self));
+            events.push(error);
+            return events;
+        }
         events.extend(crate::finalize::finalize_blocks(self));
         if let Some(error) = self.terminal_error.take() {
             events.push(error);
@@ -386,7 +390,11 @@ impl OaiSseStreamState {
     fn emit_terminal_done(&mut self, stop_reason: StopReason) -> Vec<AssistantMessageEvent> {
         let usage = self.usage.take().unwrap_or_default();
         let mut events = Vec::new();
-        flush_pending_oai_tool_calls(self, &mut events);
+        if let Some(error) = flush_pending_oai_tool_calls(self, &mut events, "OpenAI-compatible") {
+            events.extend(crate::finalize::finalize_blocks(self));
+            events.push(error);
+            return events;
+        }
         events.extend(crate::finalize::finalize_blocks(self));
         events.push(AssistantMessageEvent::Done {
             stop_reason,
@@ -457,7 +465,7 @@ pub fn process_oai_chunk(
 
         if let Some(reason) = &choice.finish_reason {
             if reason == "content_filter" {
-                flush_pending_oai_tool_calls(state, events);
+                let _ = flush_pending_oai_tool_calls(state, events, provider);
                 events.extend(crate::finalize::finalize_blocks(state));
                 state.terminal_error = Some(AssistantMessageEvent::error_content_filtered(
                     format!("{provider} response stopped by content filter"),
@@ -466,7 +474,7 @@ pub fn process_oai_chunk(
             }
 
             if provider == "Mistral" && reason == "error" {
-                flush_pending_oai_tool_calls(state, events);
+                let _ = flush_pending_oai_tool_calls(state, events, provider);
                 events.extend(crate::finalize::finalize_blocks(state));
                 state.terminal_error = Some(AssistantMessageEvent::Error {
                     stop_reason: StopReason::Error,
@@ -483,7 +491,11 @@ pub fn process_oai_chunk(
                 _ => StopReason::Stop,
             };
 
-            flush_pending_oai_tool_calls(state, events);
+            if let Some(error) = flush_pending_oai_tool_calls(state, events, provider) {
+                events.extend(crate::finalize::finalize_blocks(state));
+                state.terminal_error = Some(error);
+                return;
+            }
             events.extend(crate::finalize::finalize_blocks(state));
             state.stop_reason = Some(stop_reason);
         }
@@ -579,7 +591,8 @@ fn process_oai_tool_call_delta(
 fn flush_pending_oai_tool_calls(
     state: &mut OaiSseStreamState,
     events: &mut Vec<AssistantMessageEvent>,
-) {
+    provider: &str,
+) -> Option<AssistantMessageEvent> {
     let mut pending_indices: Vec<_> = state
         .tool_calls
         .iter()
@@ -588,16 +601,25 @@ fn flush_pending_oai_tool_calls(
     pending_indices.sort_unstable();
 
     for tc_index in pending_indices {
-        let (id, name, arguments) = {
+        let pending_entry = {
             let entry = state
                 .tool_calls
                 .get(&tc_index)
                 .expect("pending entry should exist");
             (
                 entry.id.clone(),
-                entry.name.clone().unwrap_or_default(),
+                entry.name.clone().filter(|name| !name.is_empty()),
                 entry.arguments.clone(),
             )
+        };
+        let (id, name, arguments) = match pending_entry {
+            (id, Some(name), arguments) => (id, name, arguments),
+            (id, None, _) => {
+                state.tool_calls.clear();
+                return Some(AssistantMessageEvent::error(format!(
+                    "{provider} stream ended with incomplete tool call {id}: missing function name",
+                )));
+            }
         };
 
         let (content_index, start_ev) = state.blocks.open_tool_call(id, name);
@@ -616,6 +638,8 @@ fn flush_pending_oai_tool_calls(
             .expect("pending entry should still exist");
         entry.content_index = Some(content_index);
     }
+
+    None
 }
 
 /// Parse an OpenAI-compatible SSE streaming response into `AssistantMessageEvent`
@@ -1089,6 +1113,50 @@ mod tests {
                 assert_eq!(*stop_reason, StopReason::ToolUse);
             }
             event => panic!("expected done event, got {event:?}"),
+        }
+    }
+
+    #[test]
+    fn done_sentinel_reports_protocol_error_for_pending_tool_call_without_name() {
+        let mut state = OaiSseStreamState::default();
+        state.stop_reason = Some(StopReason::ToolUse);
+        state.tool_calls.insert(
+            0,
+            OaiToolCallEntry {
+                id: "call_1".into(),
+                name: None,
+                arguments: r#"{"path":"foo.rs"}"#.into(),
+                content_index: None,
+            },
+        );
+
+        let events = state.emit_done_from_done_sentinel();
+
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, AssistantMessageEvent::ToolCallStart { .. })),
+            "terminal drain must not synthesize nameless ToolCallStart events: {events:?}"
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, AssistantMessageEvent::Done { .. })),
+            "nameless terminal tool calls must fail the stream instead of completing normally: {events:?}"
+        );
+        match events.last() {
+            Some(AssistantMessageEvent::Error {
+                error_message,
+                error_kind,
+                ..
+            }) => {
+                assert!(error_kind.is_none(), "protocol errors must not be retryable");
+                assert!(
+                    error_message.contains("missing function name"),
+                    "error should explain the terminal protocol fault: {error_message}"
+                );
+            }
+            other => panic!("expected terminal protocol error, got {other:?}"),
         }
     }
 }
