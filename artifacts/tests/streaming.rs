@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::io::ErrorKind;
 
 use bytes::Bytes;
 use futures::StreamExt;
@@ -9,7 +10,9 @@ use swink_agent_artifacts::FileArtifactStore;
 
 /// Create a deterministic byte pattern of the given size.
 fn pattern_bytes(size: usize) -> Vec<u8> {
-    (0..size).map(|i| (i % 256) as u8).collect()
+    (0..size)
+        .map(|i| u8::try_from(i % 256).expect("value is bounded to a byte"))
+        .collect()
 }
 
 /// Collect a streaming load result into a `Vec<u8>`.
@@ -21,6 +24,20 @@ async fn collect_stream(
         .collect()
         .await;
     chunks.into_iter().flat_map(|b| b.to_vec()).collect()
+}
+
+fn assert_invalid_data_storage_error(err: ArtifactError, expected_snippet: &str) {
+    let ArtifactError::Storage(source) = err else {
+        panic!("expected storage error, got {err:?}");
+    };
+    let io = source
+        .downcast_ref::<std::io::Error>()
+        .expect("storage error should wrap std::io::Error");
+    assert_eq!(io.kind(), ErrorKind::InvalidData);
+    assert!(
+        io.to_string().contains(expected_snippet),
+        "expected error message to contain '{expected_snippet}', got '{io}'"
+    );
 }
 
 // T061: streaming_save_round_trip
@@ -198,6 +215,71 @@ async fn non_streaming_api_still_works() {
         .unwrap();
     let bytes_v1 = collect_stream(loaded_v1).await;
     assert_eq!(bytes_v1, content);
+}
+
+#[tokio::test]
+async fn streaming_load_returns_invalid_data_when_latest_content_file_is_missing() {
+    let tmpdir = tempfile::TempDir::new().unwrap();
+    let store = FileArtifactStore::new(tmpdir.path());
+
+    let input_stream = Box::pin(stream::iter(vec![Ok(Bytes::from_static(b"v1"))]));
+    store
+        .save_stream(
+            "sess-missing-latest",
+            "report.md",
+            "text/plain".to_string(),
+            HashMap::new(),
+            input_stream,
+        )
+        .await
+        .expect("save_stream should succeed");
+
+    let content_path = tmpdir
+        .path()
+        .join("sess-missing-latest")
+        .join("report.md")
+        .join("v1.bin");
+    tokio::fs::remove_file(&content_path)
+        .await
+        .expect("content file should be removable");
+
+    let err = store
+        .load_stream("sess-missing-latest", "report.md", None)
+        .await
+        .err()
+        .expect("missing content should be surfaced as corruption");
+    assert_invalid_data_storage_error(err, "metadata references missing content");
+}
+
+#[tokio::test]
+async fn streaming_load_returns_invalid_data_for_orphaned_explicit_version_file() {
+    let tmpdir = tempfile::TempDir::new().unwrap();
+    let store = FileArtifactStore::new(tmpdir.path());
+
+    store
+        .save(
+            "sess-orphan",
+            "report.md",
+            ArtifactData {
+                content: b"v1".to_vec(),
+                content_type: "text/plain".to_string(),
+                metadata: HashMap::new(),
+            },
+        )
+        .await
+        .expect("save should succeed");
+
+    let artifact_dir = tmpdir.path().join("sess-orphan").join("report.md");
+    tokio::fs::write(artifact_dir.join("v2.bin"), b"orphan")
+        .await
+        .expect("orphaned content file should be creatable");
+
+    let err = store
+        .load_stream("sess-orphan", "report.md", Some(2))
+        .await
+        .err()
+        .expect("orphaned content should be surfaced as corruption");
+    assert_invalid_data_storage_error(err, "without metadata membership");
 }
 
 // T065: streaming_save_error_does_not_publish_partial_version

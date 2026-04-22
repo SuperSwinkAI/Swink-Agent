@@ -9,7 +9,9 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader, BufWriter};
 
 use swink_agent::{ArtifactByteStream, ArtifactError, ArtifactVersion, StreamingArtifactStore};
 
-use crate::fs_store::{FileArtifactStore, VersionRecord, storage_err};
+use crate::fs_store::{
+    FileArtifactStore, VersionRecord, missing_content_err, orphan_content_err, storage_err,
+};
 
 /// 64 KiB chunk size for buffered streaming I/O.
 const CHUNK_SIZE: usize = 64 * 1024;
@@ -142,22 +144,36 @@ impl StreamingArtifactStore for FileArtifactStore {
         version: Option<u32>,
     ) -> Result<Option<ArtifactByteStream>, ArtifactError> {
         self.resolve_artifact_dir(session_id, name)?;
+        let meta = self.read_meta(session_id, name).await?;
 
-        // Resolve the target version number.
-        let target_version = if let Some(v) = version {
-            v
+        let target_record = if let Some(version) = version {
+            if let Some(record) = meta.versions.iter().find(|record| record.version == version) {
+                record
+            } else {
+                let content_path = self.version_path(session_id, name, version);
+                if tokio::fs::try_exists(&content_path).await.map_err(storage_err)? {
+                    return Err(orphan_content_err(session_id, name, version, &content_path));
+                }
+                return Ok(None);
+            }
         } else {
-            let meta = self.read_meta(session_id, name).await?;
             match meta.versions.last() {
-                Some(entry) => entry.version,
+                Some(entry) => entry,
                 None => return Ok(None),
             }
         };
 
-        let file_path = self.version_path(session_id, name, target_version);
+        let file_path = self.version_path(session_id, name, target_record.version);
         let file = match tokio::fs::File::open(&file_path).await {
             Ok(f) => f,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                return Err(missing_content_err(
+                    session_id,
+                    name,
+                    target_record.version,
+                    &file_path,
+                ));
+            }
             Err(e) => return Err(storage_err(e)),
         };
 

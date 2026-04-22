@@ -35,11 +35,33 @@ pub fn storage_err(e: impl Error + Send + Sync + 'static) -> ArtifactError {
     ArtifactError::Storage(Box::new(e))
 }
 
-fn missing_content_err(session_id: &str, name: &str, version: u32, path: &Path) -> ArtifactError {
+#[allow(clippy::redundant_pub_crate)]
+pub(crate) fn missing_content_err(
+    session_id: &str,
+    name: &str,
+    version: u32,
+    path: &Path,
+) -> ArtifactError {
     storage_err(std::io::Error::new(
         std::io::ErrorKind::InvalidData,
         format!(
             "artifact '{name}' in session '{session_id}' metadata references missing content for version {version}: {}",
+            path.display()
+        ),
+    ))
+}
+
+#[allow(clippy::redundant_pub_crate)]
+pub(crate) fn orphan_content_err(
+    session_id: &str,
+    name: &str,
+    version: u32,
+    path: &Path,
+) -> ArtifactError {
+    storage_err(std::io::Error::new(
+        std::io::ErrorKind::InvalidData,
+        format!(
+            "artifact '{name}' in session '{session_id}' has content for version {version} without metadata membership: {}",
             path.display()
         ),
     ))
@@ -535,8 +557,7 @@ mod tests {
         assert_eq!(io.kind(), ErrorKind::InvalidData);
         assert!(
             io.to_string().contains(expected_snippet),
-            "expected error message to contain '{expected_snippet}', got '{}'",
-            io
+            "expected error message to contain '{expected_snippet}', got '{io}'"
         );
     }
 
