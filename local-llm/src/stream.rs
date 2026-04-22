@@ -719,17 +719,28 @@ impl StreamState {
     fn finalize_error(mut self, message: impl Into<String>) -> Vec<AssistantMessageEvent> {
         self.flush_pending_non_gemma_thinking();
         self.events.extend(finalize_blocks(&mut self.blocks));
-        self.events
-            .push(AssistantMessageEvent::error(message.into()));
+        self.events.push(AssistantMessageEvent::error(message.into()));
         self.events
     }
 
-    fn finalize_cancelled(self) -> Vec<AssistantMessageEvent> {
-        self.finalize_error("local inference cancelled")
+    fn finalize_cancelled(mut self) -> Vec<AssistantMessageEvent> {
+        self.flush_pending_non_gemma_thinking();
+        self.events.extend(finalize_blocks(&mut self.blocks));
+        self.events.push(cancelled_event("local inference cancelled"));
+        self.events
     }
 
     fn finalize_eof_without_done(self) -> Vec<AssistantMessageEvent> {
         self.finalize_error("local inference stream ended before completion")
+    }
+}
+
+fn cancelled_event(message: impl Into<String>) -> AssistantMessageEvent {
+    AssistantMessageEvent::Error {
+        stop_reason: StopReason::Aborted,
+        error_message: message.into(),
+        usage: None,
+        error_kind: None,
     }
 }
 
@@ -753,7 +764,7 @@ fn local_stream<'a>(
         if cancellation_token.is_cancelled() {
             return stream::iter(vec![
                 AssistantMessageEvent::Start,
-                AssistantMessageEvent::error("local inference cancelled"),
+                cancelled_event("local inference cancelled"),
             ]);
         }
 
@@ -1017,7 +1028,12 @@ mod tests {
         let events = state.finalize_cancelled();
         let terminal = events.last().expect("at least one event");
         match terminal {
-            AssistantMessageEvent::Error { error_message, .. } => {
+            AssistantMessageEvent::Error {
+                stop_reason,
+                error_message,
+                ..
+            } => {
+                assert_eq!(*stop_reason, StopReason::Aborted);
                 assert!(
                     error_message.contains("cancelled"),
                     "expected cancellation message, got: {error_message}"
@@ -1030,6 +1046,26 @@ mod tests {
                 .iter()
                 .any(|e| matches!(e, AssistantMessageEvent::TextEnd { .. }))
         );
+    }
+
+    #[test]
+    fn cancelled_event_uses_aborted_stop_reason() {
+        let event = cancelled_event("local inference cancelled");
+
+        match event {
+            AssistantMessageEvent::Error {
+                stop_reason,
+                error_message,
+                usage,
+                error_kind,
+            } => {
+                assert_eq!(stop_reason, StopReason::Aborted);
+                assert_eq!(error_message, "local inference cancelled");
+                assert!(usage.is_none());
+                assert!(error_kind.is_none());
+            }
+            other => panic!("expected Error terminal, got {other:?}"),
+        }
     }
 
     #[test]

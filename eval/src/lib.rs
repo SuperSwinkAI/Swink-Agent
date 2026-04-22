@@ -17,6 +17,7 @@
 
 mod audit;
 mod budget;
+mod environment_state;
 mod efficiency;
 mod error;
 mod evaluator;
@@ -38,6 +39,7 @@ mod yaml;
 
 pub use audit::AuditedInvocation;
 pub use budget::BudgetEvaluator;
+pub use environment_state::EnvironmentStateEvaluator;
 pub use efficiency::EfficiencyEvaluator;
 pub use error::EvalError;
 pub use evaluator::{Evaluator, EvaluatorRegistry};
