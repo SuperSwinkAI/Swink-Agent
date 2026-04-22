@@ -90,7 +90,7 @@ cargo test -p swink-agent-adapters -- --ignored      # requires API keys in .env
 
 ## Pull Request Process
 
-1. Open a PR against `main` with a clear title and description.
+1. Open a PR against `integration` with a clear title and description.
 2. Describe *what* changed and *why* — not just what the diff shows.
 3. Reference related issues with `Closes #<issue>` or `Related to #<issue>`.
 4. All CI checks must pass before merge.
