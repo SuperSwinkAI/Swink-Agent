@@ -192,9 +192,19 @@ fn anthropic_stream<'a>(
     cancellation_token: CancellationToken,
 ) -> impl Stream<Item = AssistantMessageEvent> + Send + 'a {
     stream::once(async move {
-        let response = match send_request(anthropic, model, context, options).await {
+        let response = match tokio::select! {
+            () = cancellation_token.cancelled() => {
+                return stream::iter(Vec::from(crate::base::pre_stream_error(
+                    crate::base::cancelled_error("operation cancelled"),
+                )))
+                .left_stream();
+            }
+            response = send_request(anthropic, model, context, options) => response
+        } {
             Ok(resp) => resp,
-            Err(event) => return stream::iter(crate::base::pre_stream_error(event)).left_stream(),
+            Err(event) => {
+                return stream::iter(Vec::from(crate::base::pre_stream_error(event))).left_stream();
+            }
         };
 
         let status = response.status();
@@ -213,7 +223,7 @@ fn anthropic_stream<'a>(
                     (504, crate::classify::HttpErrorKind::Network),
                 ],
             );
-            return stream::iter(crate::base::pre_stream_error(event)).left_stream();
+            return stream::iter(Vec::from(crate::base::pre_stream_error(event))).left_stream();
         }
 
         parse_sse_stream(response, cancellation_token, options.on_raw_payload.clone())
