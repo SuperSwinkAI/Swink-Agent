@@ -121,6 +121,31 @@ pub async fn run_single_turn(
     );
     let _turn_guard = turn_span.enter();
 
+    // ii-a. Publish the previously-recorded cached prefix length into the
+    // sliding-window transformer so compaction protects the cache boundary.
+    // This must happen BEFORE `run_context_transformers` so the compaction
+    // pass sees the right anchor.
+    if config.cache_config.is_some()
+        && let Some(ref transformer) = config.transform_context
+    {
+        let prior_prefix = {
+            let cache_state = config
+                .cache_state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            cache_state.cached_prefix_len
+        };
+        // Clamp to the current message count so compaction never treats a
+        // stale oversized prefix as the anchor.
+        let clamped = prior_prefix.min(state.context_messages.len());
+        if let Some(sw) = transformer
+            .as_any()
+            .downcast_ref::<crate::context_transformer::SlidingWindowTransformer>()
+        {
+            sw.publish_cached_prefix(clamped);
+        }
+    }
+
     // ii. Run context transformers (async first, then sync)
     run_context_transformers(
         config,
@@ -131,7 +156,16 @@ pub async fn run_single_turn(
     .await;
     state.overflow_signal = false;
 
-    // ii-c. Annotate context messages with cache hints if caching is configured
+    // ii-c. Annotate context messages with cache hints if caching is configured.
+    //
+    // The cached prefix is the count of leading messages whose content is
+    // stable enough to be cached on the provider side. We treat the entire
+    // current `context_messages` (post-compaction, pre-stream) as the
+    // cacheable prefix on a `Write` turn: any new assistant reply or
+    // subsequent user message appended later this turn or on the next turn
+    // naturally falls outside the prefix. On a `Read` turn we reuse the
+    // previously-recorded boundary, clamped to the current context length so
+    // compaction-induced shrinkage never produces an out-of-bounds prefix.
     if let Some(ref cache_config) = config.cache_config {
         // Scope the MutexGuard so it's dropped before any await.
         let cache_event = {
@@ -140,7 +174,18 @@ pub async fn run_single_turn(
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             let hint = cache_state.advance_turn(cache_config);
-            let prefix_len = cache_state.cached_prefix_len;
+            let current_len = state.context_messages.len();
+            let prior_prefix = cache_state.cached_prefix_len.min(current_len);
+
+            // Compute the effective prefix for this turn based on the hint.
+            // On `Write` we refresh the cache boundary to cover the whole
+            // current context (every leading message is a candidate for the
+            // new cache). On `Read` we reuse the boundary from the last
+            // `Write`, clamped to today's context.
+            let prefix_len = match hint {
+                crate::context_cache::CacheHint::Write { .. } => current_len,
+                crate::context_cache::CacheHint::Read => prior_prefix,
+            };
 
             // Estimate prefix tokens and check min_tokens threshold
             let prefix_tokens: usize = state
@@ -150,7 +195,7 @@ pub async fn run_single_turn(
                 .map(crate::context::estimate_tokens)
                 .sum();
 
-            if prefix_tokens >= cache_config.min_tokens {
+            if prefix_tokens >= cache_config.min_tokens && prefix_len > 0 {
                 // Annotate cacheable prefix messages with the hint
                 for msg in state.context_messages.iter_mut().take(prefix_len) {
                     msg.set_cache_hint(hint.clone());
@@ -163,6 +208,12 @@ pub async fn run_single_turn(
                 drop(cache_state);
                 Some((hint, prefix_tokens))
             } else {
+                // Threshold not met: clear any stale hints and leave the
+                // recorded prefix alone on `Read`; on `Write` we reset so the
+                // next eligible turn starts fresh.
+                for msg in &mut state.context_messages {
+                    msg.clear_cache_hint();
+                }
                 drop(cache_state);
                 None
             }
