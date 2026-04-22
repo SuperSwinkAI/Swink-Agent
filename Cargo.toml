@@ -54,7 +54,7 @@ regex = "1"
 aws-smithy-eventstream = "0.60"
 aws-smithy-types = "1"
 aws-credential-types = "1.2.14"
-aws-sigv4 = { version = "1.4.2", default-features = false, features = ["sign-http", "http1"] }
+aws-sigv4 = { version = "1.4.3", default-features = false, features = ["sign-http", "http1"] }
 aws-smithy-runtime-api = { version = "1.11.6", features = ["client"] }
 
 [workspace.lints.rust]
