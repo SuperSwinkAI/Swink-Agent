@@ -222,7 +222,6 @@ impl JudgeClient for SlowMockJudge {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

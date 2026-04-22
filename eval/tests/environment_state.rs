@@ -147,7 +147,10 @@ fn state_capture_panic_becomes_failure() {
 
     assert_eq!(result.score.value, Score::fail().value);
     let details = result.details.expect("details should be present");
-    assert!(details.contains("state capture panicked"), "details: {details}");
+    assert!(
+        details.contains("state capture panicked"),
+        "details: {details}"
+    );
     assert!(details.contains("capture exploded"), "details: {details}");
 }
 

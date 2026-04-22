@@ -17,8 +17,8 @@
 
 mod audit;
 mod budget;
-mod environment_state;
 mod efficiency;
+mod environment_state;
 mod error;
 mod evaluator;
 mod gate;
@@ -39,8 +39,8 @@ mod yaml;
 
 pub use audit::AuditedInvocation;
 pub use budget::BudgetEvaluator;
-pub use environment_state::EnvironmentStateEvaluator;
 pub use efficiency::EfficiencyEvaluator;
+pub use environment_state::EnvironmentStateEvaluator;
 pub use error::EvalError;
 pub use evaluator::{Evaluator, EvaluatorRegistry};
 pub use gate::{GateConfig, GateResult, check_gate};

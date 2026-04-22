@@ -719,14 +719,16 @@ impl StreamState {
     fn finalize_error(mut self, message: impl Into<String>) -> Vec<AssistantMessageEvent> {
         self.flush_pending_non_gemma_thinking();
         self.events.extend(finalize_blocks(&mut self.blocks));
-        self.events.push(AssistantMessageEvent::error(message.into()));
+        self.events
+            .push(AssistantMessageEvent::error(message.into()));
         self.events
     }
 
     fn finalize_cancelled(mut self) -> Vec<AssistantMessageEvent> {
         self.flush_pending_non_gemma_thinking();
         self.events.extend(finalize_blocks(&mut self.blocks));
-        self.events.push(cancelled_event("local inference cancelled"));
+        self.events
+            .push(cancelled_event("local inference cancelled"));
         self.events
     }
 
