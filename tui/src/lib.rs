@@ -277,7 +277,10 @@ mod tests {
 
         let approval_task = tokio::spawn(async move { callback(approval_request()).await });
 
-        let (_, responder) = rx.recv().await.expect("approval request should be forwarded");
+        let (_, responder) = rx
+            .recv()
+            .await
+            .expect("approval request should be forwarded");
         drop(responder);
 
         assert_eq!(approval_task.await.unwrap(), ToolApproval::Rejected);

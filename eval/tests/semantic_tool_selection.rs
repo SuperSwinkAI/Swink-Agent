@@ -252,4 +252,3 @@ fn evaluates_from_plain_sync_context_without_panic() {
         .expect("must produce a metric without an ambient runtime");
     assert_eq!(result.score.verdict(), Verdict::Pass);
 }
-
