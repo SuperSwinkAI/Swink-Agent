@@ -239,7 +239,7 @@ gh pr comment <number> --body-file /tmp/comment.md
 
 **Root crate (`swink-agent`):**
 - `builtin-tools` (default-enabled) — gates `BashTool`, `ReadFileTool`, `WriteFileTool`.
-- `testkit` — gates the `testing` module. Not default-enabled; consumers add `features = ["testkit"]` in dev-dependencies. Integration tests in `/tests/` are gated with `#![cfg(feature = "testkit")]`.
+- `testkit` — gates the `testing` module. Not default-enabled; consumers add `features = ["testkit"]` in dev-dependencies. The root crate's `/tests/` suite is gated with `#![cfg(feature = "testkit")]`, but workspace integration coverage is mixed because crate-local tests such as `tui/tests/` still run under their own default feature sets.
 - `plugins` — gates `plugin` module. Not default-enabled. `MockPlugin` in `testing.rs` also gated behind this feature.
 - Root crate cannot re-export adapters/local-llm/TUI (cyclic dependency). Consumers depend on sub-crates directly.
 
