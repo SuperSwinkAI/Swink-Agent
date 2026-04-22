@@ -152,15 +152,15 @@
 
 **Independent Test**: Case where golden path expects `read_file` but agent calls `fetch_document`; deterministic matcher reports miss, semantic matcher with a `MockJudge` returning Pass accepts it.
 
-- [ ] T049 [US5] Create `eval/src/semantic_tool_selection.rs`: `SemanticToolSelectionEvaluator { judge: Arc<dyn JudgeClient>, timeout: Duration }`, implements `Evaluator`, iterates `invocation.turns[*].tool_calls`, builds prompt with goal/tools/history/chosen tool, wraps each `judge.judge(prompt)` in `tokio::time::timeout(self.timeout, ...)`, aggregates verdicts into a single `Score`. Returns `None` when `!case.semantic_tool_selection` (FR-011). Constructors: `new(judge)` sets `timeout = Duration::from_secs(300)` (5 min default); `with_timeout(Duration)` builder for override. Outer timeout elapse → `Score::fail()` with `details = "judge call exceeded {timeout:?}"` (FR-010, FR-014).
-- [ ] T050 [P] [US5] Acceptance test in `eval/tests/semantic_tool_selection.rs`: semantically equivalent tool accepted (AS-5.1) — `MockJudge` returns Pass, evaluator returns Pass with reason in details.
-- [ ] T051 [P] [US5] Acceptance test: no judge configured → `None` (AS-5.2) — use `EvaluatorRegistry::with_defaults()` (no judge) and verify semantic evaluator never appears in results.
-- [ ] T052 [P] [US5] Acceptance test: case with `semantic_tool_selection: false` → `None` (AS-5.3).
-- [ ] T053 [US5] Edge case test: malformed judge response → `Score::fail()` with parse error in details (AS-5.4). `MockJudge` returns `JudgeError::MalformedResponse`.
-- [ ] T054 [US5] Edge case test: transport error → `Score::fail()`, registry continues to subsequent evaluators and cases (AS-5.5). Verify via two-case eval set where case 1's judge fails and case 2 still runs.
-- [ ] T054a [US5] Edge case test: outer `tokio::time::timeout` elapses — use a `SlowMockJudge` that sleeps longer than the evaluator's configured timeout; construct `SemanticToolSelectionEvaluator::new(judge).with_timeout(Duration::from_millis(50))`; verify `Score::fail()` with timeout context in details, and that the test completes promptly (no hang). Covers FR-010 outer-deadline guarantee.
-- [ ] T055 [US5] Edge case test: empty trajectory (zero tool calls) → `None` (consistent with other evaluators — see edge case list).
-- [ ] T056 [US5] Verify `cargo test -p swink-agent-eval --test semantic_tool_selection` passes.
+- [x] T049 [US5] Create `eval/src/semantic_tool_selection.rs`: `SemanticToolSelectionEvaluator { judge: Arc<dyn JudgeClient>, timeout: Duration }`, implements `Evaluator`, iterates `invocation.turns[*].tool_calls`, builds prompt with goal/tools/history/chosen tool, wraps each `judge.judge(prompt)` in `tokio::time::timeout(self.timeout, ...)`, aggregates verdicts into a single `Score`. Returns `None` when `!case.semantic_tool_selection` (FR-011). Constructors: `new(judge)` sets `timeout = Duration::from_secs(300)` (5 min default); `with_timeout(Duration)` builder for override. Outer timeout elapse → `Score::fail()` with `details = "judge call exceeded {timeout:?}"` (FR-010, FR-014).
+- [x] T050 [P] [US5] Acceptance test in `eval/tests/semantic_tool_selection.rs`: semantically equivalent tool accepted (AS-5.1) — `MockJudge` returns Pass, evaluator returns Pass with reason in details.
+- [x] T051 [P] [US5] Acceptance test: no judge configured → `None` (AS-5.2) — use `EvaluatorRegistry::with_defaults()` (no judge) and verify semantic evaluator never appears in results.
+- [x] T052 [P] [US5] Acceptance test: case with `semantic_tool_selection: false` → `None` (AS-5.3).
+- [x] T053 [US5] Edge case test: malformed judge response → `Score::fail()` with parse error in details (AS-5.4). `MockJudge` returns `JudgeError::MalformedResponse`.
+- [x] T054 [US5] Edge case test: transport error → `Score::fail()`, registry continues to subsequent evaluators and cases (AS-5.5). Verify via two-case eval set where case 1's judge fails and case 2 still runs.
+- [x] T054a [US5] Edge case test: outer `tokio::time::timeout` elapses — use a `SlowMockJudge` that sleeps longer than the evaluator's configured timeout; construct `SemanticToolSelectionEvaluator::new(judge).with_timeout(Duration::from_millis(50))`; verify `Score::fail()` with timeout context in details, and that the test completes promptly (no hang). Covers FR-010 outer-deadline guarantee.
+- [x] T055 [US5] Edge case test: empty trajectory (zero tool calls) → `None` (consistent with other evaluators — see edge case list).
+- [x] T056 [US5] Verify `cargo test -p swink-agent-eval --test semantic_tool_selection` passes.
 
 **Checkpoint**: US5 fully tested against all acceptance scenarios and edge cases; FR-011 + FR-014 coverage verified.
 

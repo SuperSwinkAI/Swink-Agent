@@ -267,7 +267,7 @@ A developer adopting `swink-agent-eval` already has `.test.json` files from an e
 **CI and DX scaffolding (scope item 11)**
 
 - **FR-045**: The system MUST ship GitHub Actions workflow templates covering PR-time eval runs, nightly eval runs, and report publication, plus a pre-commit configuration template.
-- **FR-046**: The system MUST provide a CLI entry point invokable against an eval-set file with the same output fidelity as the in-process API.
+- **FR-046**: The system MUST provide a CLI entry point invocable against an eval-set file with the same output fidelity as the in-process API.
 
 **Cross-cutting constraints**
 

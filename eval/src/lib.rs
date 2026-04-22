@@ -27,6 +27,7 @@ mod match_;
 mod response;
 mod runner;
 mod score;
+mod semantic_tool_selection;
 mod store;
 pub mod testing;
 mod trajectory;
@@ -48,8 +49,9 @@ pub use match_::{MatchMode, TrajectoryMatcher};
 pub use response::ResponseMatcher;
 pub use runner::{AgentFactory, EvalRunner};
 pub use score::{Score, Verdict};
+pub use semantic_tool_selection::SemanticToolSelectionEvaluator;
 pub use store::{EvalStore, FsEvalStore};
-pub use testing::MockJudge;
+pub use testing::{MockJudge, SlowMockJudge};
 pub use trajectory::TrajectoryCollector;
 pub use types::{
     BudgetConstraints, EnvironmentState, EvalCase, EvalCaseResult, EvalMetricResult, EvalSet,
