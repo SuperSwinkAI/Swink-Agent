@@ -272,3 +272,30 @@ async fn filter_with_partial_match_judges_only_target() {
         "details should not reference filtered-out tools, got: {details}"
     );
 }
+
+// ── Runtime-agnostic invocation ────────────────────────────────────────────
+//
+// Regression for PR #764 review feedback (mirrored here for US6): the sync
+// `Evaluator::evaluate` must not assume an ambient Tokio runtime. Calling
+// from a plain `#[test]` must build its own runtime.
+
+#[test]
+fn evaluates_from_plain_sync_context_without_panic() {
+    let verdict = JudgeVerdict {
+        score: 1.0,
+        pass: true,
+        reason: Some("intent satisfied".into()),
+        label: None,
+    };
+    let judge: Arc<dyn JudgeClient> = Arc::new(MockJudge::with_verdicts(vec![verdict]));
+    let evaluator = SemanticToolParameterEvaluator::new(judge);
+    let case = case_with_intent("sync-ctx", "read config for project-alpha", None);
+    let invocation = mock_invocation(&["read_file"], Some("ok"), 0.0, 0);
+
+    // No #[tokio::test] attribute — this runs on the raw test thread with
+    // no ambient runtime.
+    let result = evaluator
+        .evaluate(&case, &invocation)
+        .expect("must produce a metric without an ambient runtime");
+    assert_eq!(result.score.verdict(), Verdict::Pass);
+}
