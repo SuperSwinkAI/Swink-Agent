@@ -757,6 +757,12 @@ fn local_stream<'a>(
     cancellation_token: CancellationToken,
 ) -> impl Stream<Item = AssistantMessageEvent> + Send + 'a {
     stream::once(async move {
+        if cancellation_token.is_cancelled() {
+            return stream::iter(vec![
+                AssistantMessageEvent::Start,
+                cancelled_event("local inference cancelled"),
+            ]);
+        }
         if let Err(e) = local_model.ensure_ready().await {
             return stream::iter(vec![
                 AssistantMessageEvent::Start,
@@ -1067,6 +1073,40 @@ mod tests {
                 assert!(error_kind.is_none());
             }
             other => panic!("expected Error terminal, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn pre_cancelled_stream_short_circuits_before_model_ready() {
+        let local_model = Arc::new(LocalModel::from_preset(crate::ModelPreset::SmolLM3_3B));
+        let stream_fn = LocalStreamFn::new(local_model);
+        let model = ModelSpec::new("local", "SmolLM3-3B-Q4_K_M");
+        let context = AgentContext {
+            system_prompt: String::new(),
+            messages: vec![],
+            tools: vec![],
+        };
+        let options = StreamOptions::default();
+        let token = CancellationToken::new();
+        token.cancel();
+
+        let events: Vec<_> = stream_fn.stream(&model, &context, &options, token).collect().await;
+
+        assert_eq!(events.len(), 2, "expected start + terminal abort: {events:?}");
+        assert!(matches!(events[0], AssistantMessageEvent::Start));
+        match &events[1] {
+            AssistantMessageEvent::Error {
+                stop_reason,
+                error_message,
+                ..
+            } => {
+                assert_eq!(*stop_reason, StopReason::Aborted);
+                assert!(
+                    error_message.contains("cancelled"),
+                    "unexpected cancellation message: {error_message}"
+                );
+            }
+            other => panic!("expected cancellation terminal event, got {other:?}"),
         }
     }
 
