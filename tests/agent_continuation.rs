@@ -383,7 +383,8 @@ async fn agent_end_subscriber_retaining_messages_does_not_lose_history() {
         "continued steering should be recorded once without duplicating prior history"
     );
     assert_eq!(
-        agent.state()
+        agent
+            .state()
             .messages
             .iter()
             .filter(|message| matches!(
