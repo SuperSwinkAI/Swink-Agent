@@ -79,11 +79,7 @@ impl EvaluatorRegistry {
         registry.register(crate::budget::BudgetEvaluator);
         registry.register(crate::response::ResponseMatcher);
         registry.register(crate::efficiency::EfficiencyEvaluator::new());
-        // TODO(#742): once `EnvironmentStateEvaluator` lands in Phase 11 it
-        // should be registered here unconditionally (deterministic — safe to
-        // default-register per contracts/public-api.md). It is inert when no
-        // `state_capture` or `expected_environment_state` is configured on
-        // the case.
+        registry.register(crate::environment_state::EnvironmentStateEvaluator);
         registry
     }
 
@@ -200,8 +196,6 @@ mod tests {
         let judge: Arc<dyn JudgeClient> = Arc::new(MockJudge::always_pass());
         let registry = EvaluatorRegistry::with_defaults_and_judge(judge);
         assert!(registry.judge().is_some());
-        // v1 defaults remain registered (trajectory, budget, response,
-        // efficiency = 4 evaluators today).
-        assert_eq!(registry.evaluators.len(), 4);
+        assert_eq!(registry.evaluators.len(), 5);
     }
 }

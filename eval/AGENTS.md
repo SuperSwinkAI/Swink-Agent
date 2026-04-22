@@ -21,3 +21,4 @@
 - `FsEvalStore` set/result persistence must go through `swink_agent::atomic_fs` helpers rather than direct `fs::write`, so interrupted rewrites never leave partial JSON or clobber the last good file.
 - `BudgetConstraints` no longer enforce limits inside `TrajectoryCollector`. Convert them with `to_policies()` and attach the returned `BudgetPolicy` / `MaxTurnsPolicy` in `AgentFactory`; `TrajectoryCollector` only drains the event stream.
 - `EvaluatorRegistry::evaluate()` is the panic-isolation boundary for eval scoring. Wrap each evaluator call in `catch_unwind(AssertUnwindSafe(...))`, record a failing metric for the panicking evaluator, and keep running the remaining evaluators/cases.
+- `EnvironmentStateEvaluator` is safe to register in `EvaluatorRegistry::with_defaults()`: it remains inert unless both `expected_environment_state` and `state_capture` are present, and any capture panic must be converted into `Score::fail()` rather than escaping.
