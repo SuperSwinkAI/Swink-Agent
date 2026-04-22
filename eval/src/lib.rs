@@ -52,6 +52,7 @@ mod yaml;
 
 // ─── Public API ─────────────────────────────────────────────────────────────
 
+pub use aggregator::{Aggregator, AllPass, AnyPass, Average, Weighted};
 pub use audit::AuditedInvocation;
 pub use budget::BudgetEvaluator;
 pub use efficiency::EfficiencyEvaluator;
