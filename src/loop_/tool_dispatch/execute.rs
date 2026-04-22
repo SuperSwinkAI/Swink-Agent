@@ -12,7 +12,9 @@ use crate::tool_execution_policy::{ToolCallSummary, ToolExecutionPolicy};
 use crate::types::{AgentMessage, ToolResultMessage};
 use crate::util::now_timestamp;
 
-use super::shared::{emit_error_result, emit_tool_execution_start, forward_tool_updates};
+use super::shared::{
+    ToolUpdateRelay, emit_error_result, emit_tool_execution_start, forward_tool_updates,
+};
 use super::{AgentEvent, AgentLoopConfig, PreparedToolCall, ToolCallInfo, emit};
 
 // ─── Dispatch result ────────────────────────────────────────────────────────
@@ -202,22 +204,24 @@ pub(super) async fn dispatch_single_tool(
                 match resolve_credential(&tool, &config_clone, &tool_call_id).await {
                     Err(cred_error) => (AgentToolResult::error(format!("{cred_error}")), true),
                     Ok(credential) => {
-                        let (update_tx, update_rx) = mpsc::unbounded_channel();
+                        let update_relay = Arc::new(ToolUpdateRelay::new());
                         let updates_tx = tx_clone.clone();
                         let updates_tool_call_id = tool_call_id.clone();
                         let updates_tool_name = tool_name.clone();
+                        let relay_for_forwarder = Arc::clone(&update_relay);
                         let update_forwarder = tokio::spawn(async move {
                             forward_tool_updates(
                                 &updates_tool_call_id,
                                 &updates_tool_name,
-                                update_rx,
+                                relay_for_forwarder,
                                 &updates_tx,
                             )
                             .await;
                         });
                         let result = {
+                            let on_update_relay = Arc::clone(&update_relay);
                             let on_update = Box::new(move |partial: AgentToolResult| {
-                                let _ = update_tx.send(partial);
+                                on_update_relay.push(partial);
                             });
                             tool.execute(
                                 &tool_call_id,
@@ -229,6 +233,7 @@ pub(super) async fn dispatch_single_tool(
                             )
                             .await
                         };
+                        update_relay.close();
                         let _ = update_forwarder.await;
                         let is_error = result.is_error;
                         (result, is_error)

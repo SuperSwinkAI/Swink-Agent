@@ -1,6 +1,7 @@
 # Loop Lessons
 
 - `ToolExecutionUpdate` must include the originating tool call `id` and `name`, and partial tool updates must flow through an awaited relay instead of `try_send`; otherwise concurrent tool progress becomes unattributed and can be silently dropped under channel backpressure.
+- Per-tool update relays must stay bounded. Once the buffered queue fills, coalesce overflow to the latest pending partial update instead of letting a synchronous `on_update` callback grow memory without bound.
 - Post-turn assistant replacements must preserve the original `ToolCall` blocks. A text-only replacement on a tool turn breaks the core invariant that assistant tool calls stay paired with the committed `ToolResult` messages that follow.
 - `TurnPolicyContext.context_messages` must always be a committed turn snapshot. Text-only turns need the assistant message committed before post-turn policies run, and transfer turns must also execute post-turn policies before honoring transfer termination.
 - Async tool approval futures need the same `AssertUnwindSafe(...).catch_unwind()` isolation as the sync approval-context hook. A panic after the approval future is polled must turn into `ToolApprovalResolved { approved: false }` plus an error tool result, not an unwound dispatch task.

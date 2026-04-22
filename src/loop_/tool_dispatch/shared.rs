@@ -1,15 +1,96 @@
 //! Shared helpers used across pre-process, execute, and collect phases.
 
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
 
-use tokio::sync::mpsc;
+use tokio::sync::{Notify, mpsc};
 
 use crate::tool::AgentToolResult;
 use crate::types::ToolResultMessage;
 use crate::util::now_timestamp;
 
 use super::{AgentEvent, ToolCallInfo, emit};
+
+pub(super) const TOOL_UPDATE_BUFFER_CAPACITY: usize = 16;
+
+#[derive(Default)]
+struct ToolUpdateRelayState {
+    pending: VecDeque<AgentToolResult>,
+    latest_overflow: Option<AgentToolResult>,
+    closed: bool,
+}
+
+pub(super) struct ToolUpdateRelay {
+    state: std::sync::Mutex<ToolUpdateRelayState>,
+    notify: Notify,
+}
+
+impl ToolUpdateRelay {
+    pub(super) fn new() -> Self {
+        Self {
+            state: std::sync::Mutex::new(ToolUpdateRelayState::default()),
+            notify: Notify::new(),
+        }
+    }
+
+    pub(super) fn push(&self, partial: AgentToolResult) {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if state.closed {
+            return;
+        }
+
+        if state.pending.len() < TOOL_UPDATE_BUFFER_CAPACITY {
+            state.pending.push_back(partial);
+        } else {
+            // Once the buffer is full, retain only the latest overflow update so
+            // tools cannot grow memory without bound while downstream observers
+            // are backpressured.
+            state.latest_overflow = Some(partial);
+        }
+        drop(state);
+        self.notify.notify_one();
+    }
+
+    pub(super) fn close(&self) {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.closed = true;
+        drop(state);
+        self.notify.notify_waiters();
+    }
+
+    async fn recv(&self) -> Option<AgentToolResult> {
+        loop {
+            let notified = self.notify.notified();
+            let next = {
+                let mut state = self
+                    .state
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                state.pending.pop_front().map_or_else(
+                    || {
+                        state.latest_overflow.take().map_or_else(
+                            || if state.closed { Some(None) } else { None },
+                            |partial| Some(Some(partial)),
+                        )
+                    },
+                    |partial| Some(Some(partial)),
+                )
+            };
+
+            if let Some(partial) = next {
+                return partial;
+            }
+
+            notified.await;
+        }
+    }
+}
 
 /// Build an error `ToolResultMessage` and emit `ToolExecutionEnd`.
 pub(super) async fn emit_error_result(
@@ -69,11 +150,11 @@ pub(super) fn panic_payload_message(panic_value: &(dyn std::any::Any + Send)) ->
         .unwrap_or_else(|| "unknown panic payload".to_string())
 }
 
-/// Forward partial tool updates from the unbounded channel to the event stream.
+/// Forward partial tool updates from the bounded relay to the event stream.
 pub(super) async fn forward_tool_updates(
     tool_call_id: &str,
     tool_name: &str,
-    mut updates: mpsc::UnboundedReceiver<AgentToolResult>,
+    updates: Arc<ToolUpdateRelay>,
     tx: &mpsc::Sender<AgentEvent>,
 ) {
     while let Some(partial) = updates.recv().await {
@@ -117,5 +198,33 @@ pub(super) async fn emit_batch_stop_results(
             "policy stopped tool batch before dispatch: {reason}"
         ));
         emit_error_result(&tc.name, &tc.id, error_result, idx, results, tx).await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::ContentBlock;
+
+    #[tokio::test]
+    async fn tool_update_relay_coalesces_latest_overflow_update() {
+        let relay = ToolUpdateRelay::new();
+        for idx in 0..(TOOL_UPDATE_BUFFER_CAPACITY + 8) {
+            relay.push(AgentToolResult::text(format!("partial-{idx}")));
+        }
+        relay.close();
+
+        let mut drained = Vec::new();
+        while let Some(update) = relay.recv().await {
+            drained.push(ContentBlock::extract_text(&update.content));
+        }
+
+        assert_eq!(drained.len(), TOOL_UPDATE_BUFFER_CAPACITY + 1);
+        assert_eq!(drained.first().map(String::as_str), Some("partial-0"));
+        assert_eq!(
+            drained.last().map(String::as_str),
+            Some("partial-23"),
+            "the relay should preserve the latest overflow update"
+        );
     }
 }
