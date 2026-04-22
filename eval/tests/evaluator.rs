@@ -3,7 +3,7 @@
 mod common;
 
 use swink_agent_eval::{
-    EvalCase, EvalMetricResult, Evaluator, EvaluatorRegistry, Invocation, Score,
+    EvalCase, EvalError, EvalMetricResult, Evaluator, EvaluatorRegistry, Invocation, Score,
 };
 
 fn minimal_case() -> EvalCase {
@@ -209,4 +209,24 @@ fn closure_evaluator_works() {
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].evaluator_name, "my_closure");
     assert!((results[0].score.value - 0.75).abs() < f64::EPSILON);
+}
+
+#[test]
+fn duplicate_names_return_structured_error_from_add() {
+    let mut registry = EvaluatorRegistry::new();
+    registry
+        .add(AlwaysPass)
+        .expect("first registration should succeed");
+
+    let err = registry
+        .add((
+            "always_pass",
+            |_case: &EvalCase, _inv: &Invocation| -> Option<EvalMetricResult> { None },
+        ))
+        .expect_err("duplicate evaluator names must be rejected");
+
+    match err {
+        EvalError::DuplicateEvaluator { name } => assert_eq!(name, "always_pass"),
+        other => panic!("expected DuplicateEvaluator, got {other:?}"),
+    }
 }

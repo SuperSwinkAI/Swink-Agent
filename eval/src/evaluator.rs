@@ -3,6 +3,7 @@
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 
+use crate::error::EvalError;
 use crate::judge::JudgeClient;
 use crate::score::Score;
 use crate::types::{EvalCase, EvalMetricResult, Invocation};
@@ -135,9 +136,29 @@ impl EvaluatorRegistry {
         self.judge.as_ref()
     }
 
-    /// Register a new evaluator.
-    pub fn register(&mut self, evaluator: impl Evaluator + 'static) {
+    /// Register a new evaluator, rejecting duplicate names.
+    pub fn add(&mut self, evaluator: impl Evaluator + 'static) -> Result<(), EvalError> {
+        let name = evaluator.name();
+        if self
+            .evaluators
+            .iter()
+            .any(|registered| registered.name() == name)
+        {
+            return Err(EvalError::duplicate_evaluator(name));
+        }
+
         self.evaluators.push(Arc::new(evaluator));
+        Ok(())
+    }
+
+    /// Register a new evaluator.
+    ///
+    /// Panics if an evaluator with the same [`Evaluator::name`] is already
+    /// present in the registry. Use [`Self::add`] to surface the collision as
+    /// [`EvalError::DuplicateEvaluator`].
+    pub fn register(&mut self, evaluator: impl Evaluator + 'static) {
+        self.add(evaluator)
+            .expect("evaluator names must be unique within a registry");
     }
 
     /// Run all applicable evaluators for a case.
@@ -253,5 +274,22 @@ mod tests {
                 .all(|e| e.name() != "semantic_tool_parameter"),
             "semantic_tool_parameter must NOT be in with_defaults()"
         );
+    }
+
+    #[test]
+    fn add_rejects_duplicate_evaluator_names() {
+        let mut registry = EvaluatorRegistry::new();
+        registry
+            .add(crate::match_::TrajectoryMatcher::in_order())
+            .expect("first registration should succeed");
+
+        let err = registry
+            .add(crate::match_::TrajectoryMatcher::in_order())
+            .expect_err("duplicate evaluator names must be rejected");
+
+        match err {
+            EvalError::DuplicateEvaluator { name } => assert_eq!(name, "trajectory"),
+            other => panic!("expected DuplicateEvaluator, got {other:?}"),
+        }
     }
 }
