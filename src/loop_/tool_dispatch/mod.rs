@@ -1260,6 +1260,91 @@ mod tests {
         );
     }
 
+    /// Regression test for #770: per-tool partial-update buffering must be
+    /// bounded so a tool that emits updates faster than downstream drains
+    /// them cannot grow the queue without limit.
+    ///
+    /// The tool emits `CAP + OVERFLOW` updates in a tight synchronous loop,
+    /// which starves the forwarder task on the current-thread runtime. Under
+    /// the old unbounded channel all updates would buffer; under the bounded
+    /// channel excess updates are dropped by `try_send` and the observed count
+    /// is capped at the buffer size.
+    #[tokio::test]
+    async fn partial_update_channel_is_bounded_under_backpressure() {
+        use super::shared::TOOL_UPDATE_CHANNEL_CAPACITY;
+
+        const OVERFLOW: usize = 64;
+        let update_count = TOOL_UPDATE_CHANNEL_CAPACITY + OVERFLOW;
+
+        let tool = Arc::new(BurstUpdatingTool { update_count });
+        let config = test_loop_config_with_options(
+            vec![],
+            vec![tool as Arc<dyn crate::tool::AgentTool>],
+            None,
+            ApprovalMode::Bypassed,
+            ToolExecutionPolicy::Concurrent,
+        );
+        let tool_calls = vec![ToolCallInfo {
+            id: "call_overflow".to_string(),
+            name: "burst_tool".to_string(),
+            arguments: json!({}),
+            is_incomplete: false,
+        }];
+        let cancellation_token = CancellationToken::new();
+        let (tx, mut rx) = mpsc::channel(TOOL_UPDATE_CHANNEL_CAPACITY * 4);
+        let collected = StdArc::new(StdSyncMutex::new(Vec::new()));
+        let collected_clone = StdArc::clone(&collected);
+        let receiver = tokio::spawn(async move {
+            while let Some(event) = rx.recv().await {
+                collected_clone.lock().unwrap().push(event);
+            }
+        });
+
+        let outcome = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            execute_tools_concurrently(&config, &tool_calls, &cancellation_token, &tx),
+        )
+        .await
+        .expect("bounded update channel must never stall the tool");
+        drop(tx);
+        receiver.await.unwrap();
+
+        let ToolExecOutcome::Completed { results, .. } = outcome else {
+            panic!("expected completed outcome");
+        };
+        assert_eq!(results.len(), 1, "terminal result still arrives");
+        assert!(!results[0].is_error, "tool ran to completion");
+
+        let events = collected.lock().unwrap();
+        let updates: Vec<_> = events
+            .iter()
+            .filter_map(|event| match event {
+                AgentEvent::ToolExecutionUpdate { partial, .. } => {
+                    Some(ContentBlock::extract_text(&partial.content))
+                }
+                _ => None,
+            })
+            .collect();
+
+        assert!(
+            updates.len() <= TOOL_UPDATE_CHANNEL_CAPACITY,
+            "observed {} updates but buffer capacity is {}",
+            updates.len(),
+            TOOL_UPDATE_CHANNEL_CAPACITY,
+        );
+        assert!(
+            updates.len() < update_count,
+            "at least some of the {OVERFLOW} overflow updates must be dropped \
+             (observed {}, emitted {update_count})",
+            updates.len(),
+        );
+        assert_eq!(
+            updates.first().map(String::as_str),
+            Some("partial-0"),
+            "earliest updates land before the buffer fills"
+        );
+    }
+
     #[tokio::test]
     async fn steering_interrupt_preserves_worker_polled_messages() {
         let fast_tool =
