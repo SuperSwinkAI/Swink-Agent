@@ -205,7 +205,6 @@ mod tests {
         let judge: Arc<dyn JudgeClient> = Arc::new(MockJudge::always_pass());
         let registry = EvaluatorRegistry::with_defaults_and_judge(judge);
         assert!(registry.judge().is_some());
-        // defaults (5: trajectory, budget, response, efficiency,
         // environment_state) + Phase 9 semantic_tool_selection
         // + Phase 10 semantic_tool_parameter = 7 evaluators.
         assert_eq!(registry.evaluators.len(), 7);
