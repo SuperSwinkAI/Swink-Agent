@@ -224,3 +224,32 @@ async fn empty_trajectory_returns_none() {
     let invocation = mock_invocation(&[], None, 0.0, 0);
     assert!(evaluator.evaluate(&case, &invocation).is_none());
 }
+
+// ── Runtime-agnostic invocation ────────────────────────────────────────────
+//
+// Regression for PR #764 review feedback: `Evaluator::evaluate` is sync, and
+// an earlier version called `tokio::runtime::Handle::current()` which
+// panics outside an active Tokio runtime. The evaluator must now build its
+// own ephemeral runtime when called from a plain sync context.
+
+#[test]
+fn evaluates_from_plain_sync_context_without_panic() {
+    let verdict = JudgeVerdict {
+        score: 1.0,
+        pass: true,
+        reason: Some("ok".into()),
+        label: None,
+    };
+    let judge: Arc<dyn JudgeClient> = Arc::new(MockJudge::with_verdicts(vec![verdict]));
+    let evaluator = SemanticToolSelectionEvaluator::new(judge);
+    let case = case_with_semantic_flag("sync-ctx", "do the thing", true);
+    let invocation = mock_invocation(&["fetch_document"], Some("ok"), 0.0, 0);
+
+    // No #[tokio::test] attribute — this runs on the raw test thread with
+    // no ambient runtime.
+    let result = evaluator
+        .evaluate(&case, &invocation)
+        .expect("must produce a metric without an ambient runtime");
+    assert_eq!(result.score.verdict(), Verdict::Pass);
+}
+
