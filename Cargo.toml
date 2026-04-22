@@ -40,7 +40,7 @@ clap = { version = "4", features = ["derive"] }
 libc = "0.2"
 sha2 = "0.11"
 hmac = "0.13"
-toml = "0.9"
+toml = "1.1"
 chrono = { version = "0.4", features = ["serde"] }
 proptest = { version = "1", default-features = false, features = ["std"] }
 rstest = "0.26"
