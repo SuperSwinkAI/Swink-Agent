@@ -15,22 +15,36 @@
 //! println!("Passed: {}/{}", result.summary.passed, result.summary.total_cases);
 //! ```
 
+pub mod aggregator;
 mod audit;
 mod budget;
+pub mod cache;
 mod efficiency;
 mod environment_state;
 mod error;
 mod evaluator;
+pub mod evaluators;
 mod gate;
+#[cfg(feature = "generation")]
+pub mod generation;
 mod judge;
 mod match_;
+#[cfg(feature = "judge-core")]
+pub mod prompt;
+pub mod report;
 mod response;
 mod runner;
 mod score;
 mod semantic_tool_parameter;
 mod semantic_tool_selection;
+#[cfg(feature = "simulation")]
+pub mod simulation;
 mod store;
+#[cfg(feature = "telemetry")]
+pub mod telemetry;
 pub mod testing;
+#[cfg(feature = "trace-ingest")]
+pub mod trace;
 mod trajectory;
 mod types;
 #[cfg(feature = "yaml")]
