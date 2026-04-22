@@ -57,6 +57,37 @@ aws-credential-types = "1.2.14"
 aws-sigv4 = { version = "1.4.2", default-features = false, features = ["sign-http", "http1"] }
 aws-smithy-runtime-api = { version = "1.11.6", features = ["client"] }
 
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+
+# Pedantic/nursery overrides — noisy, stylistic, or churn on toolchain bumps.
+# Keep this list tight; every allow is a signal lost.
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+redundant_pub_crate = "allow"
+# Churn-prone nursery/pedantic lints that fire broadly on toolchain bumps
+# without reliable correctness signal. Adding each here once, at the
+# workspace level, so a new rust release can't silently break CI again.
+missing_const_for_fn = "allow"
+duration_suboptimal_units = "allow"
+cast_possible_truncation = "allow"
+items_after_statements = "allow"
+manual_let_else = "allow"
+option_if_let_else = "allow"
+significant_drop_tightening = "allow"
+doc_markdown = "allow"
+redundant_closure_for_method_calls = "allow"
+trivially_copy_pass_by_ref = "allow"
+format_push_string = "allow"
+unnecessary_literal_bound = "allow"
+
 [package]
 name = "swink-agent"
 version.workspace = true
@@ -138,18 +169,5 @@ opentelemetry_sdk = { workspace = true, features = ["testing", "rt-tokio"] }
 tracing-opentelemetry = "0.32"
 tracing-subscriber = { version = "0.3", features = ["registry"] }
 
-[lints.rust]
-unsafe_code = "forbid"
-
-
-[lints.clippy]
-all = { level = "warn", priority = -1 }
-pedantic = { level = "warn", priority = -1 }
-nursery = { level = "warn", priority = -1 }
-
-# Pedantic overrides — too noisy or stylistic
-module_name_repetitions = "allow"
-must_use_candidate = "allow"
-missing_errors_doc = "allow"
-missing_panics_doc = "allow"
-redundant_pub_crate = "allow"
+[lints]
+workspace = true
