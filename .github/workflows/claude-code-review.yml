@@ -1,14 +1,13 @@
 name: Claude Code Review
 
+# Disabled for now — the workflow's app-token exchange requires the workflow
+# file on the PR branch to exactly match the default branch, which is brittle
+# and produces a required-check failure on every PR. Re-enable by restoring
+# the `pull_request:` trigger below.
 on:
-  pull_request:
-    types: [opened, synchronize, ready_for_review, reopened]
-    # Optional: Only run on specific file changes
-    # paths:
-    #   - "src/**/*.ts"
-    #   - "src/**/*.tsx"
-    #   - "src/**/*.js"
-    #   - "src/**/*.jsx"
+  workflow_dispatch:
+  # pull_request:
+  #   types: [opened, synchronize, ready_for_review, reopened]
 
 jobs:
   claude-review:
