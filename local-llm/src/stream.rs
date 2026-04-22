@@ -1090,9 +1090,16 @@ mod tests {
         let token = CancellationToken::new();
         token.cancel();
 
-        let events: Vec<_> = stream_fn.stream(&model, &context, &options, token).collect().await;
+        let events: Vec<_> = stream_fn
+            .stream(&model, &context, &options, token)
+            .collect()
+            .await;
 
-        assert_eq!(events.len(), 2, "expected start + terminal abort: {events:?}");
+        assert_eq!(
+            events.len(),
+            2,
+            "expected start + terminal abort: {events:?}"
+        );
         assert!(matches!(events[0], AssistantMessageEvent::Start));
         match &events[1] {
             AssistantMessageEvent::Error {

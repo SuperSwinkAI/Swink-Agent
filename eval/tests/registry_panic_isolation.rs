@@ -15,8 +15,8 @@ use swink_agent::{
     testing::{MockStreamFn, MockTool, text_only_events, tool_call_events},
 };
 use swink_agent_eval::{
-    AgentFactory, EnvironmentState, EvalCase, EvalError, EvalRunner, EvaluatorRegistry, JudgeClient,
-    JudgeError, JudgeVerdict, ResponseCriteria, Score, ToolIntent, Verdict,
+    AgentFactory, EnvironmentState, EvalCase, EvalError, EvalRunner, EvaluatorRegistry,
+    JudgeClient, JudgeError, JudgeVerdict, ResponseCriteria, Score, ToolIntent, Verdict,
 };
 
 struct PanicFactory {

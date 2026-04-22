@@ -1150,7 +1150,10 @@ mod tests {
                 error_kind,
                 ..
             }) => {
-                assert!(error_kind.is_none(), "protocol errors must not be retryable");
+                assert!(
+                    error_kind.is_none(),
+                    "protocol errors must not be retryable"
+                );
                 assert!(
                     error_message.contains("missing function name"),
                     "error should explain the terminal protocol fault: {error_message}"

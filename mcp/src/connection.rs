@@ -780,10 +780,7 @@ mod tests {
             .expect("current process should expose at least one inherited env var");
         let configured_key = "SWINK_MCP_STDIO_ONLY";
         let configured_value = "configured-value";
-        let env = HashMap::from([(
-            configured_key.to_string(),
-            configured_value.to_string(),
-        )]);
+        let env = HashMap::from([(configured_key.to_string(), configured_value.to_string())]);
 
         let (command, args) = env_probe_command();
         let mut cmd = build_stdio_command(&command, &args, &env);
@@ -804,7 +801,9 @@ mod tests {
             "configured env var should be present in child env: {stdout}"
         );
         assert!(
-            !stdout.lines().any(|line| line.starts_with(&inherited_prefix)),
+            !stdout
+                .lines()
+                .any(|line| line.starts_with(&inherited_prefix)),
             "inherited env var should be absent after env_clear(): {stdout}"
         );
     }

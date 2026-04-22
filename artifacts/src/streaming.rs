@@ -147,11 +147,18 @@ impl StreamingArtifactStore for FileArtifactStore {
         let meta = self.read_meta(session_id, name).await?;
 
         let target_record = if let Some(version) = version {
-            if let Some(record) = meta.versions.iter().find(|record| record.version == version) {
+            if let Some(record) = meta
+                .versions
+                .iter()
+                .find(|record| record.version == version)
+            {
                 record
             } else {
                 let content_path = self.version_path(session_id, name, version);
-                if tokio::fs::try_exists(&content_path).await.map_err(storage_err)? {
+                if tokio::fs::try_exists(&content_path)
+                    .await
+                    .map_err(storage_err)?
+                {
                     return Err(orphan_content_err(session_id, name, version, &content_path));
                 }
                 return Ok(None);

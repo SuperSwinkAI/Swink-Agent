@@ -466,7 +466,10 @@ async fn anthropic_pre_send_cancellation_skips_http_request() {
     }));
 
     let received = server.received_requests().await.expect("request log");
-    assert!(received.is_empty(), "expected no HTTP request, got {received:?}");
+    assert!(
+        received.is_empty(),
+        "expected no HTTP request, got {received:?}"
+    );
 }
 
 #[tokio::test]
