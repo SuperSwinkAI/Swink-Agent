@@ -450,7 +450,9 @@ impl std::fmt::Debug for Agent {
 /// Sort plugins by priority and merge their policies, tools, and event
 /// observers into the `AgentOptions`. Plugin policies are prepended before
 /// directly-registered policies; plugin tools are appended after direct tools
-/// (namespaced with the plugin name); plugin event forwarders are prepended.
+/// (namespaced with the plugin name unless that final name collides with a
+/// directly-registered tool, in which case the direct tool keeps precedence);
+/// plugin event forwarders are prepended.
 #[cfg(feature = "plugins")]
 fn merge_plugin_contributions(mut options: AgentOptions) -> AgentOptions {
     // Sort plugins by priority descending (stable sort preserves insertion order for ties).
@@ -464,6 +466,11 @@ fn merge_plugin_contributions(mut options: AgentOptions) -> AgentOptions {
     let mut plugin_post_loop: Vec<Arc<dyn crate::policy::PostLoopPolicy>> = Vec::new();
     let mut plugin_tools: Vec<Arc<dyn AgentTool>> = Vec::new();
     let mut plugin_forwarders: Vec<crate::event_forwarder::EventForwarderFn> = Vec::new();
+    let direct_tool_names: HashSet<String> = options
+        .tools
+        .iter()
+        .map(|tool| tool.name().to_owned())
+        .collect();
 
     for plugin in &options.plugins {
         plugin_pre_turn.extend(plugin.pre_turn_policies());
@@ -471,13 +478,18 @@ fn merge_plugin_contributions(mut options: AgentOptions) -> AgentOptions {
         plugin_post_turn.extend(plugin.post_turn_policies());
         plugin_post_loop.extend(plugin.post_loop_policies());
 
-        // Wrap plugin tools in NamespacedTool.
         let plugin_name = plugin.name().to_owned();
         for tool in plugin.tools() {
-            plugin_tools.push(Arc::new(crate::plugin::NamespacedTool::new(
-                &plugin_name,
-                tool,
-            )));
+            let tool = Arc::new(crate::plugin::NamespacedTool::new(&plugin_name, tool));
+            if direct_tool_names.contains(tool.name()) {
+                tracing::warn!(
+                    plugin = %plugin_name,
+                    tool = tool.name(),
+                    "skipping plugin tool because a direct tool already owns the final name"
+                );
+                continue;
+            }
+            plugin_tools.push(tool);
         }
 
         // Wrap plugin's on_event as EventForwarderFn.
@@ -539,8 +551,7 @@ mod tests {
     use super::*;
 
     #[test]
-    #[should_panic(expected = "duplicate tool names are not allowed after composition")]
-    fn agent_new_rejects_duplicate_names_after_plugin_composition() {
+    fn agent_new_keeps_direct_tool_when_namespaced_plugin_tool_collides() {
         let stream_fn = Arc::new(SimpleMockStreamFn::from_text("ok"));
         let options = AgentOptions::new(
             "test",
@@ -553,6 +564,9 @@ mod tests {
         ])
         .with_plugin(Arc::new(MockPlugin::new("my-web").with_tools(&["search"])));
 
-        let _agent = Agent::new(options);
+        let agent = Agent::new(options);
+        assert_eq!(agent.state().tools.len(), 1);
+        assert_eq!(agent.state().tools[0].name(), "my_web_search");
+        assert_eq!(agent.state().tools[0].metadata(), None);
     }
 }

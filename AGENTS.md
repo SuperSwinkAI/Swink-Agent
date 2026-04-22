@@ -172,7 +172,7 @@ gh pr comment <number> --body-file /tmp/comment.md
 - `NamespacedTool` prefixes as `"{plugin_name}_{tool_name}"` (underscore, not dot — Anthropic/Bedrock/OpenAI reject dots) and sanitizes both components to the common subset `^[a-zA-Z][a-zA-Z0-9_]{0,63}$` accepted by every provider. Prevents tool name collisions across plugins and guarantees wire-level validity.
 - Long namespaced tool names must keep a deterministic hash suffix when truncated; raw prefix truncation can collapse distinct plugin/tool pairs onto the same wire name.
 - Contributions merged in `Agent::new()`: plugin policies **prepended** (priority-sorted), direct policies appended; plugin tools appended after direct tools.
-- `Agent::new()` and `Agent::set_tools()` must reject duplicate final tool names after composition instead of relying on dispatch's "keep first" fallback; schema export and lookup need the same unique wire-name set.
+- `Agent::new()` must still reject true duplicate final tool names, but plugin composition has one explicit exception from spec 037: if a namespaced plugin tool collides with a directly-registered tool name, the direct tool keeps precedence and the plugin tool is skipped with a warning.
 - `on_init(&self, &Agent)` dispatched in priority order, wrapped in `catch_unwind` — panicking `on_init` is logged and skipped, construction continues.
 - Entire module behind `#[cfg(feature = "plugins")]` — opt-in, not default-enabled, zero cost when disabled.
 
