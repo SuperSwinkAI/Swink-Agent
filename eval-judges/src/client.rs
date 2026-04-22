@@ -16,14 +16,14 @@ impl Default for RetryPolicy {
     fn default() -> Self {
         Self {
             max_attempts: 6,
-            max_delay: Duration::from_secs(240),
+            max_delay: Duration::from_mins(4),
         }
     }
 }
 
 /// Returns the retry policy that downstream clients should apply.
 #[must_use]
-pub fn build_retry(policy: RetryPolicy) -> RetryPolicy {
+pub const fn build_retry(policy: RetryPolicy) -> RetryPolicy {
     policy
 }
 
