@@ -139,7 +139,16 @@ pub async fn refresh_token(
         let body = response.text().await.unwrap_or_default();
         // Raw body stays in debug tracing only; never surfaced in the error
         // reason to avoid leaking token-endpoint payloads into tool output.
-        debug!(status = %status, body_len = body.len(), "OAuth2 token refresh failed; response body redacted");
+        // Include the sanitized endpoint here in addition to the initial
+        // "refreshing" event: the initial event can be dropped when the
+        // default subscriber isn't attached to reqwest's worker thread,
+        // but this one always fires on the test's thread after `.await`.
+        debug!(
+            token_endpoint = %sanitize_token_endpoint(token_url),
+            status = %status,
+            body_len = body.len(),
+            "OAuth2 token refresh failed; response body redacted"
+        );
         let reason = sanitize_refresh_reason(status, &body);
         return Err(CredentialError::RefreshFailed {
             key: String::new(),
