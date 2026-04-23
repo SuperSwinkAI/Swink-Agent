@@ -1,5 +1,5 @@
 //! Shared wiremock fixtures for `swink-agent-eval-judges`.
-#![allow(dead_code)]
+#![allow(dead_code, unused_imports)]
 
 use std::time::Duration;
 
@@ -66,4 +66,47 @@ pub fn rate_limited_response(retry_after_secs: u64) -> ResponseTemplate {
     ResponseTemplate::new(429)
         .insert_header("Retry-After", retry_after_secs.to_string())
         .set_body_string("rate limited")
+}
+
+/// Canonical verdict JSON string the judge templates are expected to
+/// emit inside each provider's response text block.
+#[must_use]
+pub fn happy_verdict_json() -> String {
+    r#"{"score": 0.9, "pass": true, "reason": "looks correct", "label": "equivalent"}"#
+        .to_string()
+}
+
+/// Build a 200 response in the Anthropic `/v1/messages` shape wrapping
+/// `verdict_text` in a single `text` content block.
+#[must_use]
+pub fn anthropic_success_body(verdict_text: &str) -> ResponseTemplate {
+    ResponseTemplate::new(200).set_body_json(serde_json::json!({
+        "id": "msg_01",
+        "type": "message",
+        "role": "assistant",
+        "content": [
+            { "type": "text", "text": verdict_text }
+        ],
+        "model": "claude-test",
+        "stop_reason": "end_turn"
+    }))
+}
+
+/// Build a 200 response in the OpenAI `/v1/chat/completions` shape with
+/// a single assistant choice carrying `verdict_text`.
+#[must_use]
+pub fn openai_success_body(verdict_text: &str) -> ResponseTemplate {
+    ResponseTemplate::new(200).set_body_json(serde_json::json!({
+        "id": "chatcmpl-test",
+        "object": "chat.completion",
+        "created": 0,
+        "model": "gpt-test",
+        "choices": [
+            {
+                "index": 0,
+                "finish_reason": "stop",
+                "message": { "role": "assistant", "content": verdict_text }
+            }
+        ]
+    }))
 }
