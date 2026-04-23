@@ -29,6 +29,7 @@ pub const fn meets_minimum_size(width: u16, height: u16) -> bool {
 }
 
 /// Render the complete UI into the given frame.
+#[allow(clippy::too_many_lines)]
 pub fn render(frame: &mut Frame, app: &mut App) {
     let area = frame.area();
     if !meets_minimum_size(area.width, area.height) {

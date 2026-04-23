@@ -220,7 +220,7 @@ where
 {
     match tokio::spawn(action).await {
         Ok(result) => result,
-        Err(join_error) => Some(panic_metric(location, join_error_message(join_error))),
+        Err(join_error) => Some(panic_metric(location, &join_error_message(join_error))),
     }
 }
 
@@ -232,7 +232,7 @@ where
         Ok(result) => result,
         Err(payload) => Some(panic_metric(
             location,
-            panic_payload_message(payload.as_ref()),
+            &panic_payload_message(payload.as_ref()),
         )),
     }
 }
@@ -248,7 +248,7 @@ fn join_error_message(join_error: tokio::task::JoinError) -> String {
     }
 }
 
-fn panic_metric(location: &str, message: String) -> EvalMetricResult {
+fn panic_metric(location: &str, message: &str) -> EvalMetricResult {
     EvalMetricResult {
         evaluator_name: location.to_string(),
         score: Score::fail(),
