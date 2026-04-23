@@ -257,13 +257,13 @@
 
 *Depends on US1 (needs `JudgeClient`).*
 
-- [ ] T108 [P] [US4] Write tests in `eval/tests/simulation_test.rs`: 5-turn dialogue, goal-completion signal fires at turn 3, `max_turns` reached without goal triggers graceful termination
-- [ ] T109 [US4] Implement `ActorProfile` struct + `ActorSimulator` (profile, judge, greeting pool, turn cap, goal-completion signal) in `eval/src/simulation/actor.rs`
-- [ ] T110 [US4] Implement `StateRegistry` + `StateBucket` with bounded FIFO history (configurable `history_cap`, default 32) in `eval/src/simulation/tool.rs`
-- [ ] T111 [US4] Implement `ToolSimulator` that generates schema-valid responses (via `jsonschema` validation) and records calls in its bucket in `eval/src/simulation/tool.rs`; schema-invalid response surfaces `SimulationError::SchemaValidation`, never silent
-- [ ] T112 [US4] Implement `run_multiturn_simulation(agent, actor, tool_sim, max_turns, cancel)` orchestrator in `eval/src/simulation/orchestrator.rs`; produces full `Invocation`; honors cancellation cooperatively
-- [ ] T113 [P] [US4] Write tests in `eval/tests/simulation_state_test.rs`: shared-state semantics within a bucket across two tools, FIFO eviction at history cap, bucket separation across `state_key`
-- [ ] T114 [US4] Integration test in `eval/tests/us4_end_to_end_test.rs`: simulated conversation scored by `GoalSuccessRateEvaluator` produces identical metrics to an equivalent real `Invocation` (transparency to scoring layer, per US4 scenario 5)
+- [x] T108 [P] [US4] Write tests in `eval/tests/simulation_test.rs`: 5-turn dialogue, goal-completion signal fires at turn 3, `max_turns` reached without goal triggers graceful termination
+- [x] T109 [US4] Implement `ActorProfile` struct + `ActorSimulator` (profile, judge, greeting pool, turn cap, goal-completion signal) in `eval/src/simulation/actor.rs`
+- [x] T110 [US4] Implement `StateRegistry` + `StateBucket` with bounded FIFO history (configurable `history_cap`, default 32) in `eval/src/simulation/tool.rs`
+- [x] T111 [US4] Implement `ToolSimulator` that generates schema-valid responses (via `jsonschema` validation) and records calls in its bucket in `eval/src/simulation/tool.rs`; schema-invalid response surfaces `SimulationError::SchemaValidation`, never silent
+- [x] T112 [US4] Implement `run_multiturn_simulation(agent, actor, tool_sim, max_turns, cancel)` orchestrator in `eval/src/simulation/orchestrator.rs`; produces full `Invocation`; honors cancellation cooperatively
+- [x] T113 [P] [US4] Write tests in `eval/tests/simulation_state_test.rs`: shared-state semantics within a bucket across two tools, FIFO eviction at history cap, bucket separation across `state_key`
+- [x] T114 [US4] Integration test in `eval/tests/us4_end_to_end_test.rs`: simulated conversation scored by `GoalSuccessRateEvaluator` produces identical metrics to an equivalent real `Invocation` (transparency to scoring layer, per US4 scenario 5)
 
 **Checkpoint**: Simulation fully integrated; scorable end-to-end.
 
@@ -277,10 +277,10 @@
 
 *Depends on US1.*
 
-- [ ] T115 [P] [US5] Write tests in `eval/tests/generation_test.rs`: 20 cases / 5 topics distribution, tools-scoped trajectories reference only provided tools, every emitted case passes `EvalCase::validate()`, retries on malformed responses before skipping a slot
-- [ ] T116 [US5] Implement `TopicPlanner` in `eval/src/generation/topic.rs` producing `Vec<TopicSlot>` with even distribution
-- [ ] T117 [US5] Implement `ExperimentGenerator` + `GenerationRequest` struct in `eval/src/generation/experiment.rs`; retries up to bounded cap on malformed JSON; every emitted case validated before returning
-- [ ] T118 [US5] Integration test in `eval/tests/us5_end_to_end_test.rs`: generated `EvalSet` loaded into `EvalRunner` executes successfully; tools-scoped trajectories respected when `agent_tools` provided
+- [x] T115 [P] [US5] Write tests in `eval/tests/generation_test.rs`: 20 cases / 5 topics distribution, tools-scoped trajectories reference only provided tools, every emitted case passes `EvalCase::validate()`, retries on malformed responses before skipping a slot
+- [x] T116 [US5] Implement `TopicPlanner` in `eval/src/generation/topic.rs` producing `Vec<TopicSlot>` with even distribution
+- [x] T117 [US5] Implement `ExperimentGenerator` + `GenerationRequest` struct in `eval/src/generation/experiment.rs`; retries up to bounded cap on malformed JSON; every emitted case validated before returning
+- [x] T118 [US5] Integration test in `eval/tests/us5_end_to_end_test.rs`: generated `EvalSet` loaded into `EvalRunner` executes successfully; tools-scoped trajectories respected when `agent_tools` provided
 
 **Checkpoint**: Auto-generation integrated; generator ↔ runner round-trip validated.
 
