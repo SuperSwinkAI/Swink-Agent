@@ -192,8 +192,19 @@ impl NamespacedTool {
     pub fn new(plugin_name: impl Into<String>, inner: Arc<dyn AgentTool>) -> Self {
         let plugin_name = plugin_name.into();
         let prefixed_name = compose_namespaced_name(&plugin_name, inner.name());
+        Self::with_name(plugin_name, inner, prefixed_name)
+    }
+
+    /// Create a new namespaced tool wrapper with an explicit provider-safe
+    /// final name.
+    pub fn with_name(
+        plugin_name: impl Into<String>,
+        inner: Arc<dyn AgentTool>,
+        prefixed_name: impl Into<String>,
+    ) -> Self {
+        let plugin_name = plugin_name.into();
         Self {
-            prefixed_name,
+            prefixed_name: prefixed_name.into(),
             plugin_name,
             inner,
         }

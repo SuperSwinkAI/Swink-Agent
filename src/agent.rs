@@ -43,6 +43,8 @@ use crate::message_provider::MessageProvider;
 use crate::retry::RetryStrategy;
 use crate::stream::{StreamFn, StreamOptions};
 use crate::tool::{AgentTool, ApprovalMode};
+#[cfg(feature = "plugins")]
+use crate::tool_name::disambiguate_provider_safe_tool_name;
 use crate::types::{AgentMessage, LlmMessage, ModelSpec};
 
 // Re-export so `lib.rs` can still do `pub use agent::{AgentOptions, SubscriptionId, ...}`.
@@ -466,6 +468,7 @@ fn merge_plugin_contributions(mut options: AgentOptions) -> AgentOptions {
     let mut plugin_post_loop: Vec<Arc<dyn crate::policy::PostLoopPolicy>> = Vec::new();
     let mut plugin_tools: Vec<Arc<dyn AgentTool>> = Vec::new();
     let mut plugin_forwarders: Vec<crate::event_forwarder::EventForwarderFn> = Vec::new();
+    let mut plugin_tool_names: HashSet<String> = HashSet::new();
     let direct_tool_names: HashSet<String> = options
         .tools
         .iter()
@@ -480,7 +483,12 @@ fn merge_plugin_contributions(mut options: AgentOptions) -> AgentOptions {
 
         let plugin_name = plugin.name().to_owned();
         for tool in plugin.tools() {
-            let tool = Arc::new(crate::plugin::NamespacedTool::new(&plugin_name, tool));
+            let inner_tool = Arc::clone(&tool);
+            let raw_tool_name = inner_tool.name().to_owned();
+            let mut tool = Arc::new(crate::plugin::NamespacedTool::new(
+                &plugin_name,
+                Arc::clone(&inner_tool),
+            ));
             if direct_tool_names.contains(tool.name()) {
                 tracing::warn!(
                     plugin = %plugin_name,
@@ -489,6 +497,24 @@ fn merge_plugin_contributions(mut options: AgentOptions) -> AgentOptions {
                 );
                 continue;
             }
+            if plugin_tool_names.contains(tool.name()) {
+                let raw_identity = format!("{plugin_name}\0{raw_tool_name}");
+                let disambiguated_name =
+                    disambiguate_provider_safe_tool_name(tool.name(), &raw_identity);
+                tracing::warn!(
+                    plugin = %plugin_name,
+                    original_tool = %raw_tool_name,
+                    original_name = tool.name(),
+                    disambiguated_name = %disambiguated_name,
+                    "disambiguating plugin tool after provider-safe sanitization collision"
+                );
+                tool = Arc::new(crate::plugin::NamespacedTool::with_name(
+                    &plugin_name,
+                    inner_tool,
+                    disambiguated_name,
+                ));
+            }
+            plugin_tool_names.insert(tool.name().to_owned());
             plugin_tools.push(tool);
         }
 
@@ -568,5 +594,26 @@ mod tests {
         assert_eq!(agent.state().tools.len(), 1);
         assert_eq!(agent.state().tools[0].name(), "my_web_search");
         assert_eq!(agent.state().tools[0].metadata(), None);
+    }
+
+    #[test]
+    fn agent_new_disambiguates_plugin_tool_collisions_after_sanitization() {
+        let stream_fn = Arc::new(SimpleMockStreamFn::from_text("ok"));
+        let options = AgentOptions::new(
+            "test",
+            crate::testing::default_model(),
+            stream_fn,
+            crate::testing::default_convert,
+        )
+        .with_plugin(Arc::new(MockPlugin::new("my-web").with_tools(&["search"])))
+        .with_plugin(Arc::new(MockPlugin::new("my.web").with_tools(&["search"])));
+
+        let agent = Agent::new(options);
+        let tool_names: Vec<&str> = agent.state().tools.iter().map(|tool| tool.name()).collect();
+
+        assert_eq!(tool_names.len(), 2);
+        assert_eq!(tool_names[0], "my_web_search");
+        assert_ne!(tool_names[0], tool_names[1]);
+        assert!(tool_names[1].starts_with("my_web_search_"));
     }
 }

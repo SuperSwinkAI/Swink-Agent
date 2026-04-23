@@ -175,6 +175,7 @@ gh pr comment <number> --body-file /tmp/comment.md
 - `list()` returns plugins sorted by priority descending; insertion order preserved for ties.
 - `NamespacedTool` prefixes as `"{plugin_name}_{tool_name}"` (underscore, not dot — Anthropic/Bedrock/OpenAI reject dots) and sanitizes both components to the common subset `^[a-zA-Z][a-zA-Z0-9_]{0,63}$` accepted by every provider. Prevents tool name collisions across plugins and guarantees wire-level validity.
 - Long namespaced tool names must keep a deterministic hash suffix when truncated; raw prefix truncation can collapse distinct plugin/tool pairs onto the same wire name.
+- Post-sanitization plugin/plugin collisions must also be disambiguated deterministically from the raw `plugin_name` + tool identity; only direct-tool collisions keep the spec-037 skip behavior.
 - Contributions merged in `Agent::new()`: plugin policies **prepended** (priority-sorted), direct policies appended; plugin tools appended after direct tools.
 - `Agent::new()` must still reject true duplicate final tool names, but plugin composition has one explicit exception from spec 037: if a namespaced plugin tool collides with a directly-registered tool name, the direct tool keeps precedence and the plugin tool is skipped with a warning.
 - `on_init(&self, &Agent)` dispatched in priority order, wrapped in `catch_unwind` — panicking `on_init` is logged and skipped, construction continues.

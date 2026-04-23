@@ -38,6 +38,20 @@ pub fn compose_provider_safe_tool_name(namespace: Option<&str>, tool_name: &str)
     }
 }
 
+/// Derive a deterministic provider-safe fallback name for a colliding tool.
+///
+/// `base_name` must already satisfy the provider-safe grammar. The returned
+/// name preserves that grammar while appending a stable hash derived from the
+/// raw pre-sanitized identity so distinct inputs that collapse onto the same
+/// sanitized wire name can still coexist.
+#[must_use]
+pub fn disambiguate_provider_safe_tool_name(base_name: &str, raw_identity: &str) -> String {
+    let hash_suffix = stable_name_hash_hex(raw_identity);
+    let prefix_len = MAX_TOOL_NAME_LEN - TOOL_NAME_HASH_HEX_LEN - 1;
+    let prefix: String = base_name.chars().take(prefix_len).collect();
+    format!("{prefix}_{hash_suffix}")
+}
+
 fn sanitize_tool_name_component(input: &str) -> String {
     if input.is_empty() {
         return "_".to_owned();
@@ -125,6 +139,27 @@ mod tests {
         assert_ne!(first, second);
         assert_eq!(first.len(), MAX_TOOL_NAME_LEN);
         assert_eq!(second.len(), MAX_TOOL_NAME_LEN);
+    }
+
+    #[test]
+    fn disambiguated_provider_safe_name_preserves_grammar_and_length() {
+        let base = compose_provider_safe_tool_name(Some("my-web"), "search");
+        let disambiguated =
+            disambiguate_provider_safe_tool_name(&base, "my-web\0search\0my.web\0search");
+
+        assert_eq!(disambiguated.len(), MAX_TOOL_NAME_LEN);
+        assert!(disambiguated.starts_with("my_web_search"));
+        assert!(
+            disambiguated
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_alphabetic())
+        );
+        assert!(
+            disambiguated
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_')
+        );
     }
 
     #[test]
