@@ -15,8 +15,8 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-swink-agent = { path = "..", version = "0.8.0", default-features = false }
-swink-agent-policies = { path = "../policies", version = "0.8.0", default-features = false, features = ["budget", "max-turns"] }
+swink-agent = { path = "..", version = "0.8.1", default-features = false }
+swink-agent-policies = { path = "../policies", version = "0.8.1", default-features = false, features = ["budget", "max-turns"] }
 serde.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true, features = ["macros", "time"] }

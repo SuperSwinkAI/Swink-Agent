@@ -1078,8 +1078,10 @@ mod tests {
 
     #[test]
     fn done_sentinel_preserves_accumulated_stop_reason() {
-        let mut state = OaiSseStreamState::default();
-        state.stop_reason = Some(StopReason::ToolUse);
+        let mut state = OaiSseStreamState {
+            stop_reason: Some(StopReason::ToolUse),
+            ..Default::default()
+        };
         state.tool_calls.insert(
             0,
             OaiToolCallEntry {
@@ -1118,8 +1120,10 @@ mod tests {
 
     #[test]
     fn done_sentinel_reports_protocol_error_for_pending_tool_call_without_name() {
-        let mut state = OaiSseStreamState::default();
-        state.stop_reason = Some(StopReason::ToolUse);
+        let mut state = OaiSseStreamState {
+            stop_reason: Some(StopReason::ToolUse),
+            ..Default::default()
+        };
         state.tool_calls.insert(
             0,
             OaiToolCallEntry {

@@ -730,7 +730,7 @@ mod validation_tests {
         }]);
 
         let first = case.default_session_id();
-        let second = case.clone().default_session_id();
+        let second = case.default_session_id();
         assert_eq!(first, second);
     }
 

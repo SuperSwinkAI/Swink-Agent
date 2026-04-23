@@ -11,7 +11,7 @@ categories = ["development-tools", "authentication"]
 readme = "README.md"
 
 [dependencies]
-swink-agent = { path = "..", version = "0.8.0", default-features = false }
+swink-agent = { path = "..", version = "0.8.1", default-features = false }
 reqwest.workspace = true
 chrono.workspace = true
 serde.workspace = true

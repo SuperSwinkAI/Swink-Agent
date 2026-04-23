@@ -109,7 +109,7 @@ impl PostTurnPolicy for ContentSanitizerPolicy {
 #[cfg(test)]
 mod tests {
     use swink_agent::{
-        AssistantMessage, ContentBlock, Cost, ModelSpec, PolicyContext, StopReason,
+        AssistantMessage, ContentBlock, Cost, ModelSpec, PolicyContext, StopReason, ThinkingLevel,
         ToolResultMessage, TurnPolicyContext, Usage,
     };
 
@@ -172,7 +172,7 @@ mod tests {
         ModelSpec {
             provider: "test".to_string(),
             model_id: "test-model".to_string(),
-            thinking_level: Default::default(),
+            thinking_level: ThinkingLevel::default(),
             thinking_budgets: None,
             provider_config: None,
             capabilities: None,

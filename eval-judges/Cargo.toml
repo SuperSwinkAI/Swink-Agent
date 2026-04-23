@@ -39,8 +39,8 @@ proxy = ["dep:swink-agent-adapters", "swink-agent-eval/judge-core"]
 live-judges = []
 
 [dependencies]
-swink-agent-eval = { path = "../eval", version = "0.8.0", default-features = false }
-swink-agent-adapters = { path = "../adapters", version = "0.8.0", default-features = false, optional = true }
+swink-agent-eval = { path = "../eval", version = "0.8.1", default-features = false }
+swink-agent-adapters = { path = "../adapters", version = "0.8.1", default-features = false, optional = true }
 async-trait = "0.1"
 backon.workspace = true
 serde.workspace = true

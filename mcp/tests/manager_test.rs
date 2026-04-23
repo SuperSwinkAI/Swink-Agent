@@ -2,6 +2,7 @@
 
 mod common;
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -53,7 +54,7 @@ async fn partial_failure_still_discovers_tools_from_healthy_servers() {
             transport: McpTransport::Stdio {
                 command: "/tmp/definitely-not-a-real-mcp-server-xyz-12345".into(),
                 args: vec![],
-                env: Default::default(),
+                env: HashMap::default(),
             },
             tool_prefix: Some("broken".into()),
             tool_filter: None,
@@ -139,7 +140,7 @@ fn mock_config(server_name: &str) -> McpServerConfig {
         transport: McpTransport::Stdio {
             command: "mock".into(),
             args: vec![],
-            env: Default::default(),
+            env: HashMap::default(),
         },
         tool_prefix: None,
         tool_filter: None,
@@ -228,7 +229,7 @@ async fn connect_all_collision_rolls_back_open_sessions() {
                 url: url_a,
                 bearer_token: None,
                 bearer_auth: None,
-                headers: Default::default(),
+                headers: HashMap::default(),
             },
             tool_prefix: None,
             tool_filter: None,
@@ -240,7 +241,7 @@ async fn connect_all_collision_rolls_back_open_sessions() {
                 url: url_b,
                 bearer_token: None,
                 bearer_auth: None,
-                headers: Default::default(),
+                headers: HashMap::default(),
             },
             tool_prefix: None,
             tool_filter: None,
