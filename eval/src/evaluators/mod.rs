@@ -10,6 +10,7 @@
 
 #![cfg(feature = "judge-core")]
 
+use std::path::Path;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
@@ -18,7 +19,26 @@ use crate::aggregator::{Aggregator, Average};
 use crate::judge::{JudgeError, JudgeRegistry, JudgeVerdict};
 use crate::prompt::{JudgePromptTemplate, PromptContext, PromptError};
 use crate::score::Score;
-use crate::types::EvalMetricResult;
+use crate::types::{AttachmentError, EvalMetricResult, MaterializedAttachment};
+use crate::url_filter::UrlFilter;
+
+// ─── US1d (deterministic) ───────────────────────────────────────────────────
+//
+// The module list below is owned by the US1d (deterministic / code / sandbox /
+// multimodal) slice of spec 043. Keep additions inside this block so the US1c
+// (judge-family) slice can land independent module declarations above without
+// a mechanical merge conflict.
+
+#[cfg(feature = "evaluator-simple")]
+pub mod simple;
+#[cfg(feature = "evaluator-structured")]
+pub mod structured;
+
+#[cfg(feature = "evaluator-code")]
+pub mod code;
+
+#[cfg(feature = "multimodal")]
+pub mod multimodal;
 
 // ─── Judge-family evaluator submodules (T057–T070) ──────────────────────────
 //
@@ -239,6 +259,44 @@ pub enum DispatchError {
     /// Judge call failed.
     #[error("judge: {0}")]
     Judge(#[from] JudgeError),
+    /// Attachment materialization failed.
+    #[error("attachment: {0}")]
+    Attachment(#[from] AttachmentError),
+}
+
+/// Structured errors surfaced by concrete evaluators in this module tree (T080–T082).
+///
+/// Evaluators fold these into [`EvalMetricResult`] via `Score::fail()` with the
+/// error message copied into `details`; the type exists primarily so callers
+/// (tests, reporters) can reason about the failure mode programmatically.
+#[derive(Debug, thiserror::Error)]
+pub enum EvaluatorError {
+    /// The current platform cannot run this evaluator (e.g. Windows sandbox).
+    #[error("evaluator unsupported on this platform: {reason}")]
+    UnsupportedPlatform {
+        /// Free-form explanation of the missing platform capability.
+        reason: String,
+    },
+    /// A sandbox resource-limit cap was exceeded at evaluation time (T081).
+    #[error("sandbox limit exceeded: {limit}")]
+    SandboxLimitExceeded {
+        /// Name of the exceeded limit (`wall_clock`, `cpu`, `memory`, `fds`, `network`).
+        limit: String,
+    },
+    /// The evaluator could not carry out a deterministic operation.
+    #[error("evaluator execution error: {reason}")]
+    Execution {
+        /// Human-readable explanation of the failure.
+        reason: String,
+    },
+}
+
+impl EvaluatorError {
+    /// Convenience: render the error as the `details` string paired with `Score::fail()`.
+    #[must_use]
+    pub fn into_metric_details(self) -> String {
+        self.to_string()
+    }
 }
 
 /// Outcome of a [`dispatch_judge`] call (T056).
@@ -305,6 +363,60 @@ pub async fn dispatch_judge(
         details,
         verdict,
     })
+}
+
+/// Drive an async future to completion from the sync `Evaluator::evaluate`
+/// entry point, regardless of the caller's Tokio runtime state.
+///
+/// Multi-thread runtime active → `block_in_place` + the ambient
+/// `Handle::block_on` so the host runtime keeps scheduling other tasks.
+/// Otherwise → build an ephemeral current-thread runtime and `block_on` it.
+///
+/// ## Known limitation
+/// Running from *inside* a single-threaded Tokio runtime will panic with
+/// "Cannot start a runtime from within a runtime". This is an inherent
+/// Tokio constraint — use a multi-thread runtime or call from sync context.
+pub fn block_on<F, T>(future: F) -> T
+where
+    F: std::future::Future<Output = T>,
+{
+    use tokio::runtime::{Handle, RuntimeFlavor};
+
+    if let Ok(handle) = Handle::try_current()
+        && handle.runtime_flavor() == RuntimeFlavor::MultiThread
+    {
+        return tokio::task::block_in_place(|| handle.block_on(future));
+    }
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("build ephemeral current-thread runtime");
+    rt.block_on(future)
+}
+
+/// Materialize every attachment on the case through the shared attachment
+/// pipeline (T086).
+///
+/// This is the narrow wiring point for FR-019: any judge-backed evaluator can
+/// call [`materialize_case_attachments`] to get a `Vec<MaterializedAttachment>`
+/// without re-implementing path resolution, base64 handling, or SSRF-filtered
+/// URL fetching. The helper lives next to [`dispatch_judge`] so every caller
+/// sees the same wiring.
+///
+/// Returns an empty vector when the case has no attachments; the
+/// [`PromptContext`] passed downstream remains cheap to clone.
+pub async fn materialize_case_attachments(
+    case: &crate::types::EvalCase,
+    eval_set_root: &Path,
+    filter: &dyn UrlFilter,
+) -> Result<Vec<MaterializedAttachment>, AttachmentError> {
+    let mut out = Vec::with_capacity(case.attachments.len());
+    for attachment in &case.attachments {
+        let materialized = attachment.materialize(eval_set_root, filter).await?;
+        out.push(materialized);
+    }
+    Ok(out)
 }
 
 /// Convenience: finalize a [`DispatchOutcome`] (plus optional judge reason)

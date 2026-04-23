@@ -65,12 +65,24 @@ pub use efficiency::EfficiencyEvaluator;
 pub use environment_state::EnvironmentStateEvaluator;
 pub use error::EvalError;
 pub use evaluator::{Evaluator, EvaluatorRegistry};
+#[cfg(feature = "evaluator-code")]
+pub use evaluators::code::llm_judge::CodeLlmJudgeEvaluator;
+#[cfg(feature = "evaluator-code")]
+pub use evaluators::code::{
+    CargoCheckEvaluator, ClippyEvaluator, CodeExtractor, CodeExtractorStrategy,
+};
+#[cfg(feature = "multimodal")]
+pub use evaluators::multimodal::ImageSafetyEvaluator;
+#[cfg(feature = "evaluator-simple")]
+pub use evaluators::simple::{ExactMatchEvaluator, LevenshteinDistanceEvaluator};
+#[cfg(feature = "evaluator-structured")]
+pub use evaluators::structured::{JsonMatchEvaluator, JsonSchemaEvaluator, KeyStrategy};
 #[cfg(feature = "judge-core")]
 pub use evaluators::{
-    Detail, DetailBuffer, DispatchError, DispatchOutcome, JudgeEvaluatorConfig, dispatch_judge,
-    drive_judge_call, evaluate_with_builtin, finish_metric_result,
+    Detail, DetailBuffer, DispatchError, DispatchOutcome, EvaluatorError, JudgeEvaluatorConfig,
+    dispatch_judge, drive_judge_call, evaluate_with_builtin, finish_metric_result,
+    materialize_case_attachments,
 };
-
 #[cfg(feature = "evaluator-quality")]
 pub use evaluators::quality::{
     CoherenceEvaluator, ConcisenessEvaluator, CorrectnessEvaluator, FaithfulnessEvaluator,

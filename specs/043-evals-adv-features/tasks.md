@@ -160,21 +160,21 @@
 
 ### Structured family (feature `evaluator-structured`)
 
-- [ ] T071 [P] [US1] Write tests in `eval/tests/evaluators_structured_test.rs` covering: per-key rubric application, `exclude_keys` filter, malformed JSON → `JudgeError::MalformedResponse`, schema validation happy + unhappy path
-- [ ] T072 [P] [US1] Implement `JsonMatchEvaluator` + `KeyStrategy` enum (Average/All/None/Rubric) in `eval/src/evaluators/structured.rs`
-- [ ] T073 [P] [US1] Implement `JsonSchemaEvaluator` (deterministic; compiles schema via `jsonschema` crate; no judge call) in `eval/src/evaluators/structured.rs`
+- [x] T071 [P] [US1] Write tests in `eval/tests/evaluators_structured_test.rs` covering: per-key rubric application, `exclude_keys` filter, malformed JSON → `JudgeError::MalformedResponse`, schema validation happy + unhappy path
+- [x] T072 [P] [US1] Implement `JsonMatchEvaluator` + `KeyStrategy` enum (Average/All/None/Rubric) in `eval/src/evaluators/structured.rs`
+- [x] T073 [P] [US1] Implement `JsonSchemaEvaluator` (deterministic; compiles schema via `jsonschema` crate; no judge call) in `eval/src/evaluators/structured.rs`
 
 ### Simple family (feature `evaluator-simple`)
 
-- [ ] T074 [P] [US1] Write tests in `eval/tests/evaluators_simple_test.rs` covering: exact-match case-sensitivity & trim toggle, Levenshtein normalized similarity threshold
-- [ ] T075 [P] [US1] Implement `ExactMatchEvaluator` + `LevenshteinDistanceEvaluator` in `eval/src/evaluators/simple.rs`
+- [x] T074 [P] [US1] Write tests in `eval/tests/evaluators_simple_test.rs` covering: exact-match case-sensitivity & trim toggle, Levenshtein normalized similarity threshold
+- [x] T075 [P] [US1] Implement `ExactMatchEvaluator` + `LevenshteinDistanceEvaluator` in `eval/src/evaluators/simple.rs`
 
 ### Code family (feature `evaluator-code`; sandbox behind `evaluator-sandbox`)
 
-- [ ] T076 [P] [US1] Write tests in `eval/tests/evaluators_code_test.rs` covering: cargo-check happy path, clippy warning surface, `CodeExtractor` strategies (markdown-fence, regex, LLM)
-- [ ] T077 [P] [US1] Implement `CargoCheckEvaluator` + `ClippyEvaluator` in `eval/src/evaluators/code/cargo_check.rs` and `eval/src/evaluators/code/clippy.rs` — deterministic, shell out to cargo in a tempdir
-- [ ] T078 [P] [US1] Implement `CodeExtractor` + `CodeExtractorStrategy` enum in `eval/src/evaluators/code/extractor.rs`
-- [ ] T079 [P] [US1] Implement `CodeLlmJudgeEvaluator` in `eval/src/evaluators/code/llm_judge.rs` using the `code_llm_judge_v0` template
+- [x] T076 [P] [US1] Write tests in `eval/tests/evaluators_code_test.rs` covering: cargo-check happy path, clippy warning surface, `CodeExtractor` strategies (markdown-fence, regex, LLM)
+- [x] T077 [P] [US1] Implement `CargoCheckEvaluator` + `ClippyEvaluator` in `eval/src/evaluators/code/cargo_check.rs` and `eval/src/evaluators/code/clippy.rs` — deterministic, shell out to cargo in a tempdir
+- [x] T078 [P] [US1] Implement `CodeExtractor` + `CodeExtractorStrategy` enum in `eval/src/evaluators/code/extractor.rs`
+- [x] T079 [P] [US1] Implement `CodeLlmJudgeEvaluator` in `eval/src/evaluators/code/llm_judge.rs` using the `code_llm_judge_v0` template
 - [ ] T080 [US1] Implement `SandboxLimits` struct + `Default` impl (120 s wall / 60 s CPU / 1 GiB RSS / 256 FDs / no network) in `eval/src/evaluators/code/sandbox.rs`
 - [ ] T081 [US1] Implement `SandboxedExecutionEvaluator` Unix path: `cfg(target_family = "unix")` module with `#![allow(unsafe_code)]` exception + safe `posix` submodule using `libc::setrlimit`/`libc::unshare`/`libc::prlimit` wrapped with `// SAFETY:` invariants; spawns child in tempdir; enforces all five limits; produces `EvaluatorError::SandboxLimitExceeded { limit }` when a bound is hit — per research.md §R-006
 - [ ] T082 [US1] Implement `SandboxedExecutionEvaluator` Windows stub: `cfg(target_family = "windows")` produces `EvaluatorError::UnsupportedPlatform` at evaluation time, never panics
@@ -182,9 +182,9 @@
 
 ### Multimodal family (feature `multimodal`)
 
-- [ ] T084 [P] [US1] Write tests in `eval/tests/evaluators_multimodal_test.rs` covering: image-safety evaluator happy + deny path, attachment materialization integration
-- [ ] T085 [P] [US1] Implement `ImageSafetyEvaluator` in `eval/src/evaluators/multimodal.rs` consuming `Attachment::Path`/`Base64`/`Url` via materialization pipeline
-- [ ] T086 [US1] Wire attachment materialization into the shared `dispatch_judge` helper so any evaluator can reference attachments
+- [x] T084 [P] [US1] Write tests in `eval/tests/evaluators_multimodal_test.rs` covering: image-safety evaluator happy + deny path, attachment materialization integration
+- [x] T085 [P] [US1] Implement `ImageSafetyEvaluator` in `eval/src/evaluators/multimodal.rs` consuming `Attachment::Path`/`Base64`/`Url` via materialization pipeline
+- [x] T086 [US1] Wire attachment materialization into the shared `dispatch_judge` helper so any evaluator can reference attachments
 
 ### Registry wiring
 
