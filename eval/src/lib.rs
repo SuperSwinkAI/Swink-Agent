@@ -68,7 +68,19 @@ pub use evaluator::{Evaluator, EvaluatorRegistry};
 #[cfg(feature = "judge-core")]
 pub use evaluators::{
     Detail, DetailBuffer, DispatchError, DispatchOutcome, JudgeEvaluatorConfig, dispatch_judge,
-    finish_metric_result,
+    drive_judge_call, evaluate_with_builtin, finish_metric_result,
+};
+
+#[cfg(feature = "evaluator-quality")]
+pub use evaluators::quality::{
+    CoherenceEvaluator, ConcisenessEvaluator, CorrectnessEvaluator, FaithfulnessEvaluator,
+    GoalSuccessRateEvaluator, HallucinationEvaluator, HelpfulnessEvaluator, LazinessEvaluator,
+    PlanAdherenceEvaluator, ResponseRelevanceEvaluator, assertion_implies_goal_completion,
+};
+#[cfg(feature = "evaluator-safety")]
+pub use evaluators::safety::{
+    CodeInjectionEvaluator, FairnessEvaluator, HarmfulnessEvaluator, PIIClass, PIILeakageEvaluator,
+    PromptInjectionEvaluator, ToxicityEvaluator,
 };
 pub use gate::{GateConfig, GateResult, check_gate};
 pub use judge::{
@@ -90,6 +102,8 @@ pub use score::{Score, Verdict};
 pub use semantic_tool_parameter::SemanticToolParameterEvaluator;
 pub use semantic_tool_selection::SemanticToolSelectionEvaluator;
 pub use store::{EvalStore, FsEvalStore};
+#[cfg(feature = "telemetry")]
+pub use telemetry::{EvalsTelemetry, EvalsTelemetryBuilder};
 pub use testing::{MockJudge, PanickingMockJudge, SlowMockJudge};
 pub use trajectory::TrajectoryCollector;
 pub use types::{

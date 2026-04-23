@@ -134,17 +134,17 @@
 
 ### Quality family (feature `evaluator-quality`)
 
-- [ ] T057 [P] [US1] Write tests for `HelpfulnessEvaluator`, `CorrectnessEvaluator`, `ConcisenessEvaluator`, `CoherenceEvaluator` in `eval/tests/evaluators_quality_test.rs` using `MockJudge`
-- [ ] T058 [P] [US1] Implement `HelpfulnessEvaluator`, `CorrectnessEvaluator`, `ConcisenessEvaluator`, `CoherenceEvaluator`, `ResponseRelevanceEvaluator` in `eval/src/evaluators/quality.rs` — each `None`-returns when criterion absent, records `prompt_version`, uses `Average` aggregator
-- [ ] T059 [P] [US1] Implement `HallucinationEvaluator`, `FaithfulnessEvaluator`, `PlanAdherenceEvaluator`, `LazinessEvaluator`, `GoalSuccessRateEvaluator` in `eval/src/evaluators/quality.rs`; `GoalSuccessRateEvaluator` consumes `expected_assertion`
-- [ ] T060 [P] [US1] Write tests in `eval/tests/evaluators_quality_test.rs` covering: hallucination distinct from faithfulness (retrieved-context vs. model-knowledge rubric separation), `None`-return when case doesn't populate criterion, score clamp to [0.0, 1.0] with warning
+- [x] T057 [P] [US1] Write tests for `HelpfulnessEvaluator`, `CorrectnessEvaluator`, `ConcisenessEvaluator`, `CoherenceEvaluator` in `eval/tests/evaluators_quality_test.rs` using `MockJudge`
+- [x] T058 [P] [US1] Implement `HelpfulnessEvaluator`, `CorrectnessEvaluator`, `ConcisenessEvaluator`, `CoherenceEvaluator`, `ResponseRelevanceEvaluator` in `eval/src/evaluators/quality.rs` — each `None`-returns when criterion absent, records `prompt_version`, uses `Average` aggregator
+- [x] T059 [P] [US1] Implement `HallucinationEvaluator`, `FaithfulnessEvaluator`, `PlanAdherenceEvaluator`, `LazinessEvaluator`, `GoalSuccessRateEvaluator` in `eval/src/evaluators/quality.rs`; `GoalSuccessRateEvaluator` consumes `expected_assertion`
+- [x] T060 [P] [US1] Write tests in `eval/tests/evaluators_quality_test.rs` covering: hallucination distinct from faithfulness (retrieved-context vs. model-knowledge rubric separation), `None`-return when case doesn't populate criterion, score clamp to [0.0, 1.0] with warning
 
 ### Safety family (feature `evaluator-safety`, default aggregator `AllPass`)
 
-- [ ] T061 [P] [US1] Write tests in `eval/tests/evaluators_safety_test.rs` covering: PII detection with at least three entity classes, prompt-injection detection, harmfulness distinct from toxicity (broader vs. narrower rubric)
-- [ ] T062 [P] [US1] Implement `HarmfulnessEvaluator`, `ToxicityEvaluator`, `FairnessEvaluator` in `eval/src/evaluators/safety.rs` — binary scores; default aggregator `AllPass` explicitly set in constructor
-- [ ] T063 [P] [US1] Implement `PIILeakageEvaluator` + `PIIClass` enum (Email/Phone/SSN/CreditCard/IpAddress/ApiKey/PersonalName/Address/Other) in `eval/src/evaluators/safety.rs`; constructor accepts `entity_classes: Vec<PIIClass>` (default: all built-in)
-- [ ] T064 [P] [US1] Implement `PromptInjectionEvaluator` and `CodeInjectionEvaluator` in `eval/src/evaluators/safety.rs`
+- [x] T061 [P] [US1] Write tests in `eval/tests/evaluators_safety_test.rs` covering: PII detection with at least three entity classes, prompt-injection detection, harmfulness distinct from toxicity (broader vs. narrower rubric)
+- [x] T062 [P] [US1] Implement `HarmfulnessEvaluator`, `ToxicityEvaluator`, `FairnessEvaluator` in `eval/src/evaluators/safety.rs` — binary scores; default aggregator `AllPass` explicitly set in constructor
+- [x] T063 [P] [US1] Implement `PIILeakageEvaluator` + `PIIClass` enum (Email/Phone/SSN/CreditCard/IpAddress/ApiKey/PersonalName/Address/Other) in `eval/src/evaluators/safety.rs`; constructor accepts `entity_classes: Vec<PIIClass>` (default: all built-in)
+- [x] T064 [P] [US1] Implement `PromptInjectionEvaluator` and `CodeInjectionEvaluator` in `eval/src/evaluators/safety.rs`
 
 ### RAG family (feature `evaluator-rag`)
 
@@ -331,10 +331,10 @@
 
 *Depends on US2 (extends `EvalRunner`).*
 
-- [ ] T135 [P] [US7] Write tests in `eval/tests/telemetry_test.rs` using `opentelemetry-sdk::testing::trace::InMemorySpanExporter`: root `swink.eval.run_set`, per-case `swink.eval.case`, per-evaluator `swink.eval.evaluator`; failed case records OTel status-error + exception event; parent span is inherited when one exists
-- [ ] T136 [US7] Implement `EvalsTelemetry` + `EvalsTelemetryBuilder` in `eval/src/telemetry.rs` (feature `telemetry`)
-- [ ] T137 [US7] Wire `EvalsTelemetry` into `EvalRunner::run_set` in `eval/src/runner.rs`: emit the three-level span tree; attach standardized attributes per FR-035; honor existing parent span when one is active
-- [ ] T138 [US7] Integration test in `eval/tests/us7_end_to_end_test.rs`: full run produces the expected span tree; regression in `correctness` at a known case surfaces as an errored span (per US7 scenario 3)
+- [x] T135 [P] [US7] Write tests in `eval/tests/telemetry_test.rs` using `opentelemetry-sdk::testing::trace::InMemorySpanExporter`: root `swink.eval.run_set`, per-case `swink.eval.case`, per-evaluator `swink.eval.evaluator`; failed case records OTel status-error + exception event; parent span is inherited when one exists
+- [x] T136 [US7] Implement `EvalsTelemetry` + `EvalsTelemetryBuilder` in `eval/src/telemetry.rs` (feature `telemetry`)
+- [x] T137 [US7] Wire `EvalsTelemetry` into `EvalRunner::run_set` in `eval/src/runner.rs`: emit the three-level span tree; attach standardized attributes per FR-035; honor existing parent span when one is active
+- [x] T138 [US7] Integration test in `eval/tests/us7_end_to_end_test.rs`: full run produces the expected span tree; regression in `correctness` at a known case surfaces as an errored span (per US7 scenario 3)
 
 **Checkpoint**: Eval runs emit OTel spans.
 
