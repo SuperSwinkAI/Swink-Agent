@@ -145,6 +145,52 @@ pub struct ToolIntent {
 /// panic message (FR-014).
 pub type StateCapture = Arc<dyn Fn(&Invocation) -> Vec<EnvironmentState> + Send + Sync>;
 
+/// Judge-evaluated assertion expected to hold after an agent invocation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Assertion {
+    /// Natural-language assertion description.
+    pub description: String,
+    /// Machine-readable assertion category.
+    pub kind: AssertionKind,
+}
+
+/// Assertion categories used by judge-backed evaluators.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AssertionKind {
+    /// The user's goal was completed.
+    GoalCompleted,
+    /// The user appears satisfied with the outcome.
+    UserSatisfied,
+    /// A named tool must be invoked.
+    ToolInvoked(String),
+    /// Free-form predicate evaluated by a judge-backed evaluator.
+    Custom { predicate: String },
+}
+
+/// Expected interaction between agents, tools, or hand-off participants.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InteractionExpectation {
+    /// Source participant or component.
+    pub from: String,
+    /// Target participant or component.
+    pub to: String,
+    /// Expected interaction description.
+    pub description: String,
+}
+
+/// Example shown to a judge prompt before the case being evaluated.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FewShotExample {
+    /// Example input.
+    pub input: String,
+    /// Expected output or verdict.
+    pub expected: String,
+    /// Optional reasoning to include with the example.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<String>,
+}
+
 /// Multimodal attachment reference attached to an evaluation case.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -288,6 +334,7 @@ async fn materialize_checked_url(parsed: Url) -> Result<MaterializedAttachment, 
 }
 
 #[cfg(not(feature = "multimodal"))]
+#[allow(clippy::unused_async)]
 async fn materialize_checked_url(parsed: Url) -> Result<MaterializedAttachment, AttachmentError> {
     Err(AttachmentError::FetchFailed {
         url: parsed.as_str().to_string(),

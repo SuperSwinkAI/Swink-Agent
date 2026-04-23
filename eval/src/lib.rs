@@ -63,6 +63,11 @@ pub use evaluator::{Evaluator, EvaluatorRegistry};
 pub use gate::{GateConfig, GateResult, check_gate};
 pub use judge::{JudgeClient, JudgeError, JudgeVerdict};
 pub use match_::{MatchMode, TrajectoryMatcher};
+#[cfg(feature = "judge-core")]
+pub use prompt::{
+    JudgePromptTemplate, MinijinjaTemplate, PromptContext, PromptError, PromptFamily,
+    PromptTemplateRegistry,
+};
 pub use response::ResponseMatcher;
 pub use runner::{AgentFactory, EvalRunner};
 pub use score::{Score, Verdict};
@@ -72,10 +77,11 @@ pub use store::{EvalStore, FsEvalStore};
 pub use testing::{MockJudge, PanickingMockJudge, SlowMockJudge};
 pub use trajectory::TrajectoryCollector;
 pub use types::{
-    Attachment, AttachmentError, BudgetConstraints, CASE_NAMESPACE, CaseFingerprint,
-    EnvironmentState, EvalCase, EvalCaseResult, EvalMetricResult, EvalSet, EvalSetResult,
-    EvalSummary, ExpectedToolCall, Invocation, MaterializedAttachment, RecordedToolCall,
-    ResponseCriteria, StateCapture, ToolIntent, TurnRecord, validate_eval_case, validate_eval_set,
+    Assertion, AssertionKind, Attachment, AttachmentError, BudgetConstraints, CASE_NAMESPACE,
+    CaseFingerprint, EnvironmentState, EvalCase, EvalCaseResult, EvalMetricResult, EvalSet,
+    EvalSetResult, EvalSummary, ExpectedToolCall, FewShotExample, InteractionExpectation,
+    Invocation, MaterializedAttachment, RecordedToolCall, ResponseCriteria, StateCapture,
+    ToolIntent, TurnRecord, validate_eval_case, validate_eval_set,
 };
 pub use url_filter::{DefaultUrlFilter, UrlFilter};
 #[cfg(feature = "yaml")]
