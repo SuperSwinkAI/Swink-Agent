@@ -1,5 +1,7 @@
 //! Prompt templates and rendering infrastructure for judge-backed evaluators.
 
+pub mod templates;
+
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
@@ -8,6 +10,49 @@ use serde::Serialize;
 use thiserror::Error;
 
 use crate::types::{EvalCase, FewShotExample, Invocation};
+
+/// Stable list of every built-in template version registered by [`PromptTemplateRegistry::builtin`].
+///
+/// Exposed so downstream tests (and users) can assert the built-in surface
+/// without hard-coding the list in multiple places (T054).
+pub const BUILTIN_TEMPLATE_VERSIONS: &[&str] = &[
+    // Quality family (T049)
+    "helpfulness_v0",
+    "correctness_v0",
+    "conciseness_v0",
+    "coherence_v0",
+    "response_relevance_v0",
+    "hallucination_v0",
+    "faithfulness_v0",
+    "plan_adherence_v0",
+    "laziness_v0",
+    "goal_success_rate_v0",
+    // Safety family (T050)
+    "harmfulness_v0",
+    "toxicity_v0",
+    "fairness_v0",
+    "pii_leakage_v0",
+    "prompt_injection_v0",
+    "code_injection_v0",
+    // RAG family (T051)
+    "rag_groundedness_v0",
+    "rag_retrieval_relevance_v0",
+    "rag_helpfulness_v0",
+    // Agent family (T052)
+    "trajectory_accuracy_v0",
+    "trajectory_accuracy_with_ref_v0",
+    "task_completion_v0",
+    "user_satisfaction_v0",
+    "agent_tone_v0",
+    "knowledge_retention_v0",
+    "language_detection_v0",
+    "perceived_error_v0",
+    "interactions_v0",
+    // Code family (T053)
+    "code_llm_judge_v0",
+    // Multimodal family (T053)
+    "image_safety_v0",
+];
 
 /// Versioned prompt template consumed by judge-backed evaluators.
 pub trait JudgePromptTemplate: Send + Sync {
@@ -86,9 +131,47 @@ pub struct PromptTemplateRegistry {
 }
 
 impl PromptTemplateRegistry {
-    /// Built-in templates registered by later evaluator-family phases.
+    /// Registry seeded with every built-in template authored under
+    /// `prompt::templates::{quality,safety,rag,agent,code,multimodal}` (T054).
+    ///
+    /// Built-in sources are validated at development time; any registration
+    /// failure here is a programming error and surfaces as a panic rather
+    /// than being silently swallowed.
     pub fn builtin() -> Self {
-        Self::default()
+        let mut registry = Self::default();
+        for family in [
+            templates::quality::builtins,
+            templates::safety::builtins,
+            templates::rag::builtins,
+            templates::agent::builtins,
+            templates::code::builtins,
+            templates::multimodal::builtins,
+        ] {
+            let entries = family().expect("built-in prompt template failed to compile");
+            for template in entries {
+                registry
+                    .register(template)
+                    .expect("duplicate built-in prompt template version");
+            }
+        }
+        registry
+    }
+
+    /// Iterate over every registered template version identifier.
+    pub fn versions(&self) -> impl Iterator<Item = &str> {
+        self.templates.keys().map(String::as_str)
+    }
+
+    /// Current number of registered templates.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.templates.len()
+    }
+
+    /// Whether the registry currently holds zero templates.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.templates.is_empty()
     }
 
     /// Look up a template by version identifier.

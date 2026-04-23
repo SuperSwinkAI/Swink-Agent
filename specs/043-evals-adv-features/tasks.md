@@ -105,9 +105,9 @@
 
 ### Judge clients in `eval-judges`
 
-- [ ] T037 [P] [US1] Write `eval-judges/tests/anthropic_test.rs` covering: `wiremock`-backed happy path, rate-limit 429 absorbed by retry, exhausted retries surface `JudgeError::RateLimitExhausted`, malformed response → `JudgeError::MalformedResponse`, cancellation propagation
-- [ ] T038 [P] [US1] Implement `AnthropicJudgeClient` + `BlockingAnthropicJudgeClient` in `eval-judges/src/anthropic.rs` — wraps `AnthropicAdapter`, exposes retry policy, batch size, async + blocking interfaces
-- [ ] T039 [P] [US1] Implement `OpenAIJudgeClient` + blocking wrapper in `eval-judges/src/openai.rs` with matching test file `eval-judges/tests/openai_test.rs`
+- [x] T037 [P] [US1] Write `eval-judges/tests/anthropic_test.rs` covering: `wiremock`-backed happy path, rate-limit 429 absorbed by retry, exhausted retries surface `JudgeError::RateLimitExhausted`, malformed response → `JudgeError::MalformedResponse`, cancellation propagation
+- [x] T038 [P] [US1] Implement `AnthropicJudgeClient` + `BlockingAnthropicJudgeClient` in `eval-judges/src/anthropic.rs` — wraps `AnthropicAdapter`, exposes retry policy, batch size, async + blocking interfaces
+- [x] T039 [P] [US1] Implement `OpenAIJudgeClient` + blocking wrapper in `eval-judges/src/openai.rs` with matching test file `eval-judges/tests/openai_test.rs`
 - [ ] T040 [P] [US1] Implement `BedrockJudgeClient` + blocking wrapper in `eval-judges/src/bedrock.rs` with test file `eval-judges/tests/bedrock_test.rs`
 - [ ] T041 [P] [US1] Implement `GeminiJudgeClient` + blocking wrapper in `eval-judges/src/gemini.rs` with test file `eval-judges/tests/gemini_test.rs`
 - [ ] T042 [P] [US1] Implement `MistralJudgeClient` + blocking wrapper in `eval-judges/src/mistral.rs` with test file `eval-judges/tests/mistral_test.rs`
@@ -115,22 +115,22 @@
 - [ ] T044 [P] [US1] Implement `XaiJudgeClient` + blocking wrapper in `eval-judges/src/xai.rs` with test file `eval-judges/tests/xai_test.rs`
 - [ ] T045 [P] [US1] Implement `OllamaJudgeClient` + blocking wrapper in `eval-judges/src/ollama.rs` with test file `eval-judges/tests/ollama_test.rs`
 - [ ] T046 [P] [US1] Implement `ProxyJudgeClient` + blocking wrapper in `eval-judges/src/proxy.rs` with test file `eval-judges/tests/proxy_test.rs`
-- [ ] T047 [US1] Implement shared `backon`-based retry + cancellation wiring in `eval-judges/src/client.rs` (6 attempts / 4 min max / jitter / `CancellationToken`-aware) used by every provider
-- [ ] T048 [US1] Implement request-batching wrapper in `eval-judges/src/client.rs` with configurable batch size ∈ [1, 128]; providers that don't support native batching fall through to sequential dispatch
+- [x] T047 [US1] Implement shared `backon`-based retry + cancellation wiring in `eval-judges/src/client.rs` (6 attempts / 4 min max / jitter / `CancellationToken`-aware) used by every provider
+- [x] T048 [US1] Implement request-batching wrapper in `eval-judges/src/client.rs` with configurable batch size ∈ [1, 128]; providers that don't support native batching fall through to sequential dispatch
 
 ### Prompt templates (built-in _v0, feature `judge-core`)
 
-- [ ] T049 [P] [US1] Author quality-family prompt templates (`helpfulness_v0`, `correctness_v0`, `conciseness_v0`, `coherence_v0`, `response_relevance_v0`, `hallucination_v0`, `faithfulness_v0`, `plan_adherence_v0`, `laziness_v0`, `goal_success_rate_v0`) in `eval/src/prompt/templates/quality.rs` with minijinja source strings; faithfulness and hallucination have distinct, non-overlapping rubrics per Q1 clarification
-- [ ] T050 [P] [US1] Author safety-family prompt templates (`harmfulness_v0`, `toxicity_v0`, `fairness_v0`, `pii_leakage_v0`, `prompt_injection_v0`, `code_injection_v0`) in `eval/src/prompt/templates/safety.rs`; harmfulness and toxicity have distinct rubrics per Q1 clarification (toxicity narrower: hate/harassment/slurs)
-- [ ] T051 [P] [US1] Author RAG-family prompt templates (`rag_groundedness_v0`, `rag_retrieval_relevance_v0`, `rag_helpfulness_v0`) in `eval/src/prompt/templates/rag.rs`
-- [ ] T052 [P] [US1] Author agent-family prompt templates (`trajectory_accuracy_v0`, `trajectory_accuracy_with_ref_v0`, `task_completion_v0`, `user_satisfaction_v0`, `agent_tone_v0`, `knowledge_retention_v0`, `language_detection_v0`, `perceived_error_v0`, `interactions_v0`) in `eval/src/prompt/templates/agent.rs`
-- [ ] T053 [P] [US1] Author code + multimodal prompt templates (`code_llm_judge_v0`, `image_safety_v0`) in `eval/src/prompt/templates/code.rs` and `eval/src/prompt/templates/multimodal.rs`
-- [ ] T054 [US1] Register all built-in templates in `PromptTemplateRegistry::builtin()` in `eval/src/prompt/mod.rs`; add a test asserting every expected version identifier is present
+- [x] T049 [P] [US1] Author quality-family prompt templates (`helpfulness_v0`, `correctness_v0`, `conciseness_v0`, `coherence_v0`, `response_relevance_v0`, `hallucination_v0`, `faithfulness_v0`, `plan_adherence_v0`, `laziness_v0`, `goal_success_rate_v0`) in `eval/src/prompt/templates/quality.rs` with minijinja source strings; faithfulness and hallucination have distinct, non-overlapping rubrics per Q1 clarification
+- [x] T050 [P] [US1] Author safety-family prompt templates (`harmfulness_v0`, `toxicity_v0`, `fairness_v0`, `pii_leakage_v0`, `prompt_injection_v0`, `code_injection_v0`) in `eval/src/prompt/templates/safety.rs`; harmfulness and toxicity have distinct rubrics per Q1 clarification (toxicity narrower: hate/harassment/slurs)
+- [x] T051 [P] [US1] Author RAG-family prompt templates (`rag_groundedness_v0`, `rag_retrieval_relevance_v0`, `rag_helpfulness_v0`) in `eval/src/prompt/templates/rag.rs`
+- [x] T052 [P] [US1] Author agent-family prompt templates (`trajectory_accuracy_v0`, `trajectory_accuracy_with_ref_v0`, `task_completion_v0`, `user_satisfaction_v0`, `agent_tone_v0`, `knowledge_retention_v0`, `language_detection_v0`, `perceived_error_v0`, `interactions_v0`) in `eval/src/prompt/templates/agent.rs`
+- [x] T053 [P] [US1] Author code + multimodal prompt templates (`code_llm_judge_v0`, `image_safety_v0`) in `eval/src/prompt/templates/code.rs` and `eval/src/prompt/templates/multimodal.rs`
+- [x] T054 [US1] Register all built-in templates in `PromptTemplateRegistry::builtin()` in `eval/src/prompt/mod.rs`; add a test asserting every expected version identifier is present
 
 ### Shared evaluator config
 
-- [ ] T055 [US1] Implement `JudgeEvaluatorConfig` + `Default::default_with(judge_registry)` in `eval/src/evaluators/mod.rs`
-- [ ] T056 [US1] Implement shared `dispatch_judge()` helper in `eval/src/evaluators/mod.rs` that renders the config's (or builtin) prompt, dispatches via `JudgeRegistry`, records `prompt_version` in the resulting `EvalMetricResult::details`, clamps the returned score to `[0.0, 1.0]` and surfaces any out-of-range value as `details.push(Detail::ScoreClamped { original, clamped })` (per FR-021 extended requirement), and returns `None` when the case doesn't populate the evaluator's criterion fields (per FR-020)
+- [x] T055 [US1] Implement `JudgeEvaluatorConfig` + `Default::default_with(judge_registry)` in `eval/src/evaluators/mod.rs`
+- [x] T056 [US1] Implement shared `dispatch_judge()` helper in `eval/src/evaluators/mod.rs` that renders the config's (or builtin) prompt, dispatches via `JudgeRegistry`, records `prompt_version` in the resulting `EvalMetricResult::details`, clamps the returned score to `[0.0, 1.0]` and surfaces any out-of-range value as `details.push(Detail::ScoreClamped { original, clamped })` (per FR-021 extended requirement), and returns `None` when the case doesn't populate the evaluator's criterion fields (per FR-020)
 
 ### Quality family (feature `evaluator-quality`)
 
@@ -296,13 +296,13 @@
 
 ### Core trace surface (feature `trace-ingest`)
 
-- [ ] T119 [P] [US6] Write tests in `eval/tests/trace_ingest_test.rs`: `OtelInMemoryTraceProvider` round-trip (record + re-load), missing attribute → `MappingError::MissingAttribute`, partially-written session → `TraceProviderError::SessionInProgress`
-- [ ] T120 [US6] Implement `TraceProvider` trait + `TraceProviderError` + `RawSession` in `eval/src/trace/provider.rs`
-- [ ] T121 [US6] Implement `OtelInMemoryTraceProvider` wrapping `opentelemetry-sdk`'s `InMemorySpanExporter` in `eval/src/trace/provider.rs`
-- [ ] T122 [US6] Implement `SessionMapper` trait + `MappingError` in `eval/src/trace/mapper.rs`
-- [ ] T123 [P] [US6] Implement `OpenInferenceSessionMapper` in `eval/src/trace/mapper.rs`
-- [ ] T124 [P] [US6] Implement `LangChainSessionMapper` in `eval/src/trace/mapper.rs`
-- [ ] T125 [US6] Implement `OtelGenAiSessionMapper` + `GenAIConventionVersion` enum (V1_27, V1_30, Experimental) with per-version attribute-mapping tables in `eval/src/trace/mapper.rs`
+- [x] T119 [P] [US6] Write tests in `eval/tests/trace_ingest_test.rs`: `OtelInMemoryTraceProvider` round-trip (record + re-load), missing attribute → `MappingError::MissingAttribute`, partially-written session → `TraceProviderError::SessionInProgress`
+- [x] T120 [US6] Implement `TraceProvider` trait + `TraceProviderError` + `RawSession` in `eval/src/trace/provider.rs`
+- [x] T121 [US6] Implement `OtelInMemoryTraceProvider` wrapping `opentelemetry-sdk`'s `InMemorySpanExporter` in `eval/src/trace/provider.rs`
+- [x] T122 [US6] Implement `SessionMapper` trait + `MappingError` in `eval/src/trace/mapper.rs`
+- [x] T123 [P] [US6] Implement `OpenInferenceSessionMapper` in `eval/src/trace/mapper.rs`
+- [x] T124 [P] [US6] Implement `LangChainSessionMapper` in `eval/src/trace/mapper.rs`
+- [x] T125 [US6] Implement `OtelGenAiSessionMapper` + `GenAIConventionVersion` enum (V1_27, V1_30, Experimental) with per-version attribute-mapping tables in `eval/src/trace/mapper.rs`
 
 ### Per-backend providers
 
@@ -314,7 +314,7 @@
 
 ### Extractors
 
-- [ ] T131 [US6] Implement `EvaluationLevel` enum + `TraceExtractor` trait in `eval/src/trace/extractor.rs`
+- [x] T131 [US6] Implement `EvaluationLevel` enum + `TraceExtractor` trait in `eval/src/trace/extractor.rs`
 - [ ] T132 [P] [US6] Implement `SwarmExtractor` consuming spec-040 swarm result types in `eval/src/trace/extractor.rs`
 - [ ] T133 [P] [US6] Implement `GraphExtractor` consuming spec-039 graph result types in `eval/src/trace/extractor.rs`
 - [ ] T134 [US6] Integration test in `eval/tests/us6_end_to_end_test.rs`: record in-process run via in-memory exporter; re-load via `OtelInMemoryTraceProvider` + `OpenInferenceSessionMapper`; score with deterministic evaluators; assert bit-identical scores (per SC-008)
@@ -350,13 +350,13 @@
 
 ### Reporters
 
-- [ ] T139 [P] [US8] Write tests in `eval/tests/reporter_console_test.rs`: plain-text line-oriented output, one line per case verdict + indented evaluator score+reason, no ANSI, no cursor control, no interactivity (per Q8 clarification)
-- [ ] T140 [US8] Implement `Reporter` trait + `ReporterOutput` enum + `ReporterError` in `eval/src/report/mod.rs`
-- [ ] T141 [P] [US8] Implement `ConsoleReporter` in `eval/src/report/console.rs` (always-on, plain-text)
-- [ ] T142 [P] [US8] Write tests in `eval/tests/reporter_json_test.rs`: self-contained JSON; schema validation against `eval-result.schema.json`
-- [ ] T143 [P] [US8] Implement `JsonReporter` in `eval/src/report/json.rs` (always-on) + author `specs/043-evals-adv-features/contracts/eval-result.schema.json`
-- [ ] T144 [P] [US8] Write tests in `eval/tests/reporter_markdown_test.rs`: valid Markdown table; no ANSI; per-case and per-metric detail present
-- [ ] T145 [P] [US8] Implement `MarkdownReporter` in `eval/src/report/markdown.rs` (always-on, PR-comment-ready)
+- [x] T139 [P] [US8] Write tests in `eval/tests/reporter_console_test.rs`: plain-text line-oriented output, one line per case verdict + indented evaluator score+reason, no ANSI, no cursor control, no interactivity (per Q8 clarification)
+- [x] T140 [US8] Implement `Reporter` trait + `ReporterOutput` enum + `ReporterError` in `eval/src/report/mod.rs`
+- [x] T141 [P] [US8] Implement `ConsoleReporter` in `eval/src/report/console.rs` (always-on, plain-text)
+- [x] T142 [P] [US8] Write tests in `eval/tests/reporter_json_test.rs`: self-contained JSON; schema validation against `eval-result.schema.json`
+- [x] T143 [P] [US8] Implement `JsonReporter` in `eval/src/report/json.rs` (always-on) + author `specs/043-evals-adv-features/contracts/eval-result.schema.json`
+- [x] T144 [P] [US8] Write tests in `eval/tests/reporter_markdown_test.rs`: valid Markdown table; no ANSI; per-case and per-metric detail present
+- [x] T145 [P] [US8] Implement `MarkdownReporter` in `eval/src/report/markdown.rs` (always-on, PR-comment-ready)
 - [ ] T146 [P] [US8] Write tests in `eval/tests/reporter_html_test.rs`: single self-contained file; `<details>`/`<summary>` collapsibility; no external asset dependencies; bounded output size for thousand-case results
 - [ ] T147 [US8] Implement `HtmlReporter` in `eval/src/report/html.rs` using `askama` templates with inlined CSS/JS (feature `html-report`); embed template at compile time
 - [ ] T148 [P] [US8] Write tests in `eval/tests/reporter_langsmith_test.rs` (wiremock-backed): `EvalSetResult` pushed as run; per-evaluator feedback attached under configured `feedback_key`; partial push failure surfaces `LangSmithExportError::Push { pushed, failed, first_error }`
