@@ -350,13 +350,13 @@
 
 ### Reporters
 
-- [ ] T139 [P] [US8] Write tests in `eval/tests/reporter_console_test.rs`: plain-text line-oriented output, one line per case verdict + indented evaluator score+reason, no ANSI, no cursor control, no interactivity (per Q8 clarification)
-- [ ] T140 [US8] Implement `Reporter` trait + `ReporterOutput` enum + `ReporterError` in `eval/src/report/mod.rs`
-- [ ] T141 [P] [US8] Implement `ConsoleReporter` in `eval/src/report/console.rs` (always-on, plain-text)
-- [ ] T142 [P] [US8] Write tests in `eval/tests/reporter_json_test.rs`: self-contained JSON; schema validation against `eval-result.schema.json`
-- [ ] T143 [P] [US8] Implement `JsonReporter` in `eval/src/report/json.rs` (always-on) + author `specs/043-evals-adv-features/contracts/eval-result.schema.json`
-- [ ] T144 [P] [US8] Write tests in `eval/tests/reporter_markdown_test.rs`: valid Markdown table; no ANSI; per-case and per-metric detail present
-- [ ] T145 [P] [US8] Implement `MarkdownReporter` in `eval/src/report/markdown.rs` (always-on, PR-comment-ready)
+- [x] T139 [P] [US8] Write tests in `eval/tests/reporter_console_test.rs`: plain-text line-oriented output, one line per case verdict + indented evaluator score+reason, no ANSI, no cursor control, no interactivity (per Q8 clarification)
+- [x] T140 [US8] Implement `Reporter` trait + `ReporterOutput` enum + `ReporterError` in `eval/src/report/mod.rs`
+- [x] T141 [P] [US8] Implement `ConsoleReporter` in `eval/src/report/console.rs` (always-on, plain-text)
+- [x] T142 [P] [US8] Write tests in `eval/tests/reporter_json_test.rs`: self-contained JSON; schema validation against `eval-result.schema.json`
+- [x] T143 [P] [US8] Implement `JsonReporter` in `eval/src/report/json.rs` (always-on) + author `specs/043-evals-adv-features/contracts/eval-result.schema.json`
+- [x] T144 [P] [US8] Write tests in `eval/tests/reporter_markdown_test.rs`: valid Markdown table; no ANSI; per-case and per-metric detail present
+- [x] T145 [P] [US8] Implement `MarkdownReporter` in `eval/src/report/markdown.rs` (always-on, PR-comment-ready)
 - [ ] T146 [P] [US8] Write tests in `eval/tests/reporter_html_test.rs`: single self-contained file; `<details>`/`<summary>` collapsibility; no external asset dependencies; bounded output size for thousand-case results
 - [ ] T147 [US8] Implement `HtmlReporter` in `eval/src/report/html.rs` using `askama` templates with inlined CSS/JS (feature `html-report`); embed template at compile time
 - [ ] T148 [P] [US8] Write tests in `eval/tests/reporter_langsmith_test.rs` (wiremock-backed): `EvalSetResult` pushed as run; per-evaluator feedback attached under configured `feedback_key`; partial push failure surfaces `LangSmithExportError::Push { pushed, failed, first_error }`
