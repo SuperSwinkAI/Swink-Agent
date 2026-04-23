@@ -204,29 +204,29 @@
 
 ### Runner extensions
 
-- [ ] T090 [P] [US2] Write tests in `eval/tests/runner_parallelism_test.rs`: `with_parallelism(4)` causes up to 4 concurrent case executions; `parallelism=1` behaves exactly as sequential baseline (per FR-036); permits release after case completion
-- [ ] T091 [US2] Extend `EvalRunner` with `parallelism: usize` field and `with_parallelism(n)` builder (`panic` on `n == 0`); wire `tokio::sync::Semaphore` permit acquisition around per-case execution in `eval/src/runner.rs`
-- [ ] T092 [P] [US2] Write tests in `eval/tests/runner_num_runs_test.rs`: `num_runs=3` yields three per-evaluator samples per case, variance reported, cached invocation shared across all N runs (Q2 clarification)
-- [ ] T093 [US2] Extend `EvalRunner` with `num_runs: u32` field and `with_num_runs(n)` builder (`panic` on `n == 0`); loop judge dispatch N times per case using the same `Invocation`; compute `std_dev` into `RunnerMetricSample` in `eval/src/runner.rs`
-- [ ] T094 [P] [US2] Write tests in `eval/tests/cache_test.rs`: cache hit reuses `Invocation`, cache miss re-invokes agent, case-input change invalidates key, disk cache round-trip, single cached invocation served to all `num_runs` iterations
-- [ ] T095 [US2] Implement `EvaluationDataStore` trait + `StoreError` in `eval/src/cache.rs`
-- [ ] T096 [US2] Implement `LocalFileTaskResultStore` with disk layout `<root>/<eval_set_id>/<case_id>/<fingerprint_hex>.json` in `eval/src/cache.rs`
-- [ ] T097 [US2] Implement `CaseFingerprint` canonicalization (case_id, system_prompt, user_messages, initial_session, tool_set_hash, agent_model) and SHA-256 of bincode bytes producing `CacheKey` in `eval/src/cache.rs`; wire into `EvalRunner::run_set`
-- [ ] T098 [US2] Extend `EvalRunner` with `cache: Option<Arc<dyn EvaluationDataStore>>` + `with_cache(store)` builder in `eval/src/runner.rs`
+- [x] T090 [P] [US2] Write tests in `eval/tests/runner_parallelism_test.rs`: `with_parallelism(4)` causes up to 4 concurrent case executions; `parallelism=1` behaves exactly as sequential baseline (per FR-036); permits release after case completion
+- [x] T091 [US2] Extend `EvalRunner` with `parallelism: usize` field and `with_parallelism(n)` builder (`panic` on `n == 0`); wire `tokio::sync::Semaphore` permit acquisition around per-case execution in `eval/src/runner.rs`
+- [x] T092 [P] [US2] Write tests in `eval/tests/runner_num_runs_test.rs`: `num_runs=3` yields three per-evaluator samples per case, variance reported, cached invocation shared across all N runs (Q2 clarification)
+- [x] T093 [US2] Extend `EvalRunner` with `num_runs: u32` field and `with_num_runs(n)` builder (`panic` on `n == 0`); loop judge dispatch N times per case using the same `Invocation`; compute `std_dev` into `RunnerMetricSample` in `eval/src/runner.rs`
+- [x] T094 [P] [US2] Write tests in `eval/tests/cache_test.rs`: cache hit reuses `Invocation`, cache miss re-invokes agent, case-input change invalidates key, disk cache round-trip, single cached invocation served to all `num_runs` iterations
+- [x] T095 [US2] Implement `EvaluationDataStore` trait + `StoreError` in `eval/src/cache.rs`
+- [x] T096 [US2] Implement `LocalFileTaskResultStore` with disk layout `<root>/<eval_set_id>/<case_id>/<fingerprint_hex>.json` in `eval/src/cache.rs`
+- [x] T097 [US2] Implement `CaseFingerprint` canonicalization (case_id, system_prompt, user_messages, initial_session, tool_set_hash, agent_model) and SHA-256 of bincode bytes producing `CacheKey` in `eval/src/cache.rs`; wire into `EvalRunner::run_set`
+- [x] T098 [US2] Extend `EvalRunner` with `cache: Option<Arc<dyn EvaluationDataStore>>` + `with_cache(store)` builder in `eval/src/runner.rs`
 
 ### Cancellation
 
-- [ ] T099 [P] [US2] Write tests in `eval/tests/runner_cancel_test.rs`: cancellation mid-run returns partial result with cancellation indicator; in-flight agent and judge calls honor the token; completed cases keep their results
-- [ ] T100 [US2] Extend `EvalRunner` with `cancel: Option<CancellationToken>` + `with_cancellation(tok)` builder; propagate the token into agent calls and judge calls via `tokio::select!` at every await point in `eval/src/runner.rs`
+- [x] T099 [P] [US2] Write tests in `eval/tests/runner_cancel_test.rs`: cancellation mid-run returns partial result with cancellation indicator; in-flight agent and judge calls honor the token; completed cases keep their results
+- [x] T100 [US2] Extend `EvalRunner` with `cancel: Option<CancellationToken>` + `with_cancellation(tok)` builder; propagate the token into agent calls and judge calls via `tokio::select!` at every await point in `eval/src/runner.rs`
 
 ### Initial session
 
-- [ ] T101 [P] [US2] Write tests in `eval/tests/runner_initial_session_test.rs`: `initial_session_file` loaded; baseline session context present on each case start; missing file surfaces a clear error, not a panic
-- [ ] T102 [US2] Extend `EvalRunner` with `initial_session_file: Option<PathBuf>` + `with_initial_session_file(path)` builder; parse JSON per research.md §R-023 matching spec-034 `SessionState` serde shape in `eval/src/runner.rs`
+- [x] T101 [P] [US2] Write tests in `eval/tests/runner_initial_session_test.rs`: `initial_session_file` loaded; baseline session context present on each case start; missing file surfaces a clear error, not a panic
+- [x] T102 [US2] Extend `EvalRunner` with `initial_session_file: Option<PathBuf>` + `with_initial_session_file(path)` builder; parse JSON per research.md §R-023 matching spec-034 `SessionState` serde shape in `eval/src/runner.rs`
 
 ### US2 integration
 
-- [ ] T103 [US2] Integration test in `eval/tests/us2_end_to_end_test.rs`: 20-case suite / parallelism 4 / num_runs 3 / cache hit → second-run wall-clock is ≤ 20 % of first-run wall-clock with agent invocation count = 0, per SC-002/SC-003
+- [x] T103 [US2] Integration test in `eval/tests/us2_end_to_end_test.rs`: 20-case suite / parallelism 4 / num_runs 3 / cache hit → second-run wall-clock is ≤ 20 % of first-run wall-clock with agent invocation count = 0, per SC-002/SC-003
 
 **Checkpoint**: MVP step 2 complete — runner fast, repeatable, resumable.
 

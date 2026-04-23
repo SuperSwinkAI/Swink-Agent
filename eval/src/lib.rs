@@ -57,6 +57,10 @@ mod yaml;
 pub use aggregator::{Aggregator, AllPass, AnyPass, Average, Weighted};
 pub use audit::AuditedInvocation;
 pub use budget::BudgetEvaluator;
+pub use cache::{
+    CacheKey as TaskResultCacheKey, EvaluationDataStore, FingerprintContext,
+    LocalFileTaskResultStore, StoreError, canonicalize_fingerprint, tool_set_hash,
+};
 pub use efficiency::EfficiencyEvaluator;
 pub use environment_state::EnvironmentStateEvaluator;
 pub use error::EvalError;
@@ -81,7 +85,7 @@ pub use report::{
     ConsoleReporter, JsonReporter, MarkdownReporter, Reporter, ReporterError, ReporterOutput,
 };
 pub use response::ResponseMatcher;
-pub use runner::{AgentFactory, EvalRunner};
+pub use runner::{AgentFactory, EvalRunner, RunnerMetricSample};
 pub use score::{Score, Verdict};
 pub use semantic_tool_parameter::SemanticToolParameterEvaluator;
 pub use semantic_tool_selection::SemanticToolSelectionEvaluator;
