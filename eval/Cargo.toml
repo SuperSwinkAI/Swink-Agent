@@ -24,7 +24,7 @@ futures.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 tokio-util.workspace = true
-bincode = "1"
+bincode = "3"
 uuid = { workspace = true, features = ["v5"] }
 regex.workspace = true
 sha2.workspace = true
