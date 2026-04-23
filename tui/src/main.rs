@@ -11,6 +11,8 @@ use swink_agent::{
 use swink_agent_adapters::{
     AnthropicStreamFn, OllamaStreamFn, OpenAiStreamFn, ProxyStreamFn, remote_presets,
 };
+#[cfg(feature = "local")]
+use swink_agent_local_llm::default_local_connection;
 
 use swink_agent_tui::{
     TuiConfig, TuiError, credentials, launch, resolve_system_prompt, restore_terminal,
@@ -61,8 +63,9 @@ fn main() -> AppResult<()> {
 fn run(
     terminal: &mut ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io::Stdout>>,
 ) -> AppResult<()> {
-    // Run setup wizard on first launch if no API keys are configured
-    if !credentials::any_key_configured() {
+    // Skip the setup wizard when the `local` feature already provides a usable
+    // first-run path with no credentials.
+    if should_run_setup_wizard() {
         let mut wiz = wizard::SetupWizard::new();
         if !wiz.run(terminal)? {
             return Ok(()); // User chose to quit from wizard
@@ -87,7 +90,8 @@ fn run(
 /// 1. **Proxy** — `LLM_BASE_URL` set (custom SSE endpoint)
 /// 2. **`OpenAI`** — `OPENAI_API_KEY` env or keychain
 /// 3. **`Anthropic`** — `ANTHROPIC_API_KEY` env or keychain
-/// 4. **Ollama** — local Ollama instance (default fallback)
+/// 4. **Local** — bundled `swink-agent-local-llm` preset when built with `local`
+/// 5. **Ollama** — local Ollama instance (default fallback)
 ///
 /// Model IDs and base URLs are resolved from the shared model catalog.
 /// Provider-specific env var overrides (`OPENAI_MODEL`, `ANTHROPIC_MODEL`, etc.)
@@ -107,8 +111,19 @@ fn resolve_connections() -> ModelConnections {
     if let Some(conns) = try_catalog_provider("anthropic", "ANTHROPIC_MODEL") {
         return conns;
     }
+    if let Some(conns) = try_local() {
+        return conns;
+    }
 
     ollama_connections()
+}
+
+fn should_run_setup_wizard() -> bool {
+    should_run_setup_wizard_with(credentials::any_key_configured())
+}
+
+const fn should_run_setup_wizard_with(any_key_configured: bool) -> bool {
+    !any_key_configured && !cfg!(feature = "local")
 }
 
 /// Build connections for proxy mode (highest priority, not in catalog).
@@ -187,6 +202,18 @@ fn try_catalog_provider(provider_key: &str, model_env: &str) -> Option<ModelConn
     }
 
     Some(builder.build())
+}
+
+#[cfg(feature = "local")]
+fn try_local() -> Option<ModelConnections> {
+    default_local_connection()
+        .ok()
+        .map(|connection| ModelConnections::builder().primary(connection).build())
+}
+
+#[cfg(not(feature = "local"))]
+fn try_local() -> Option<ModelConnections> {
+    None
 }
 
 /// Construct the appropriate `StreamFn` for a provider.
@@ -284,5 +311,30 @@ mod tests {
         if std::env::var("LLM_BASE_URL").is_err() {
             assert!(try_proxy().is_none());
         }
+    }
+
+    #[cfg(not(feature = "local"))]
+    #[test]
+    fn setup_wizard_runs_when_no_keys_and_no_local_provider() {
+        assert!(should_run_setup_wizard_with(false));
+        assert!(!should_run_setup_wizard_with(true));
+    }
+
+    #[cfg(feature = "local")]
+    #[test]
+    fn setup_wizard_is_skipped_when_local_feature_is_enabled() {
+        assert!(!should_run_setup_wizard_with(false));
+        assert!(!should_run_setup_wizard_with(true));
+    }
+
+    #[cfg(feature = "local")]
+    #[test]
+    fn try_local_returns_local_connection_when_feature_enabled() {
+        let connections = try_local().expect("local feature should provide a default connection");
+        assert_eq!(connections.primary_model().provider, "local");
+        assert!(
+            !connections.primary_model().model_id.is_empty(),
+            "local connection should expose a catalog-backed model id"
+        );
     }
 }

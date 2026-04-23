@@ -84,6 +84,7 @@ swink-agent = { path = "..", default-features = false, features = ["testkit"] }
 tempfile.workspace = true
 tokio = { workspace = true, features = ["full", "test-util"] }
 pretty_assertions.workspace = true
+wiremock.workspace = true
 
 [lints]
 workspace = true

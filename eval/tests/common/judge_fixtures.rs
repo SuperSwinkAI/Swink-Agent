@@ -1,4 +1,4 @@
-//! Shared wiremock fixtures for `swink-agent-eval-judges`.
+//! Shared wiremock fixtures for judge-backed eval tests.
 #![allow(dead_code)]
 
 use std::time::Duration;
@@ -18,7 +18,7 @@ pub async fn mount_judge_response(server: &MockServer, response: ResponseTemplat
         .await;
 }
 
-/// Successful JSON verdict body shared across provider judge tests.
+/// Successful JSON verdict body shared across judge-backed tests.
 #[must_use]
 pub fn verdict_response(
     score: f64,

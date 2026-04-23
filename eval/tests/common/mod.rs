@@ -1,5 +1,7 @@
 //! Shared test helpers for eval integration tests.
 
+pub mod judge_fixtures;
+
 use std::time::Duration;
 
 use swink_agent::{AssistantMessage, Cost, ModelSpec, StopReason, Usage};

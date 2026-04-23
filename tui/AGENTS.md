@@ -23,6 +23,7 @@
 
 ## Lessons Learned
 
+- Treat the TUI `local` feature as a fully usable first-run provider: resolve `default_local_connection()` before Ollama fallback, and skip the setup wizard when local support is compiled in so no-key launches remain offline-capable.
 - External editor tests must not hardcode Unix-only helpers like `true`. Use a temporary no-op script/batch file so `tui/src/editor.rs` passes on Windows and Unix while still exercising the empty-file cancellation path.
 - External editor tests must not assume the system temp directory is executable. GitHub-hosted Linux runners can reject scripts launched from `/tmp`, so generated noop editor helpers should live under the repo checkout (for example `target/test-bin/`) instead.
 - **Approval callback must fail closed** — `tui_approval_callback()` must return `ToolApproval::Rejected` when either forwarding to the approval mpsc channel fails or the oneshot responder drops. Approval plumbing outages are security failures; log a warning instead of silently auto-approving.
