@@ -127,7 +127,7 @@ A contributor working on a different machine checks out the repository and gets 
 
 ## Assumptions
 
-- The MSRV is 1.88 with Rust edition 2024, as defined by the project requirements.
+- The MSRV is latest stable with Rust edition 2024, as defined by the project requirements.
 - The xtask crate follows the standard Rust xtask convention and does not need to be published.
 - Zero-warnings policy is enforced via linter configuration, not just by convention.
 - The workspace uses centralized dependency management for shared dependency versions.

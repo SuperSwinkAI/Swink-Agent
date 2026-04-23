@@ -3,7 +3,7 @@
 [![CI](https://github.com/SuperSwinkAI/Swink-Agent/actions/workflows/ci.yml/badge.svg)](https://github.com/SuperSwinkAI/Swink-Agent/actions/workflows/ci.yml)
 [![Crates.io](https://img.shields.io/crates/v/swink-agent.svg)](https://crates.io/crates/swink-agent)
 [![Docs.rs](https://docs.rs/swink-agent/badge.svg)](https://docs.rs/swink-agent)
-[![MSRV](https://img.shields.io/badge/rustc-1.88+-blue.svg)](https://blog.rust-lang.org/2025/06/05/Rust-1.88.0/)
+[![MSRV](https://img.shields.io/badge/rustc-1.95+-blue.svg)](https://blog.rust-lang.org/2026/04/16/Rust-1.95.0/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 A pure-Rust library for building LLM-powered agentic loops. Provider-agnostic core with pluggable streaming, concurrent tool execution, and lifecycle events.

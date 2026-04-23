@@ -20,8 +20,8 @@ use tokio_util::sync::CancellationToken;
 use swink_agent::testing::SimpleMockStreamFn;
 use swink_agent::{
     Agent, AgentMessage, AgentOptions, AgentRegistry, AgentTool, AgentToolResult, ContentBlock,
-    DefaultRetryStrategy, LlmMessage, ModelSpec, StopReason, ToolExecutionPolicy, TransferChain,
-    TransferToAgentTool,
+    DefaultRetryStrategy, LlmMessage, ModelSpec, RetryStrategy, StopReason, ToolExecutionPolicy,
+    TransferChain, TransferToAgentTool,
 };
 
 use common::{
@@ -42,7 +42,7 @@ fn dummy_agent() -> Agent {
 }
 
 /// Build a fast retry strategy (no jitter, minimal delay).
-fn fast_retry() -> Box<DefaultRetryStrategy> {
+fn fast_retry() -> Box<dyn RetryStrategy> {
     Box::new(
         DefaultRetryStrategy::default()
             .with_jitter(false)
@@ -108,11 +108,11 @@ impl MockCancellationIgnoringTool {
 }
 
 impl AgentTool for MockCancellationIgnoringTool {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "blocking_tool"
     }
 
-    fn label(&self) -> &str {
+    fn label(&self) -> &'static str {
         "blocking_tool"
     }
 
@@ -426,7 +426,7 @@ async fn transfer_cancels_same_group_siblings() {
     let blocking_result = result
         .messages
         .iter()
-        .filter_map(|msg| match msg {
+        .find_map(|msg| match msg {
             AgentMessage::Llm(LlmMessage::ToolResult(tool_result))
                 if tool_result.tool_call_id == "tc_blocking" =>
             {
@@ -434,7 +434,6 @@ async fn transfer_cancels_same_group_siblings() {
             }
             _ => None,
         })
-        .next()
         .expect("blocking tool result should be present");
     assert!(
         blocking_result.contains("transfer initiated"),
@@ -556,7 +555,7 @@ async fn transfer_to_nonexistent_agent_produces_error_and_loop_continues() {
 
 // ─── Transfer chain safety enforcement (issue #472) ────────────────────────
 
-/// Build an Agent with the transfer tool and a known agent_name for chain tracking.
+/// Build an Agent with the transfer tool and a known `agent_name` for chain tracking.
 fn make_named_transfer_agent(
     name: &str,
     stream_fn: Arc<MockStreamFn>,
@@ -565,7 +564,7 @@ fn make_named_transfer_agent(
     make_named_transfer_agent_with_chain(name, stream_fn, registry, None)
 }
 
-/// Build an Agent with a known agent_name and optional carried transfer chain.
+/// Build an Agent with a known `agent_name` and optional carried transfer chain.
 fn make_named_transfer_agent_with_chain(
     name: &str,
     stream_fn: Arc<MockStreamFn>,

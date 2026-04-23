@@ -675,10 +675,14 @@ mod tests {
         let outcome =
             execute_tools_concurrently(&config, &tool_calls, &cancellation_token, &tx).await;
 
-        let ToolExecOutcome::Completed { results, .. } = outcome else {
-            panic!("expected completed outcome");
+        let ToolExecOutcome::Stopped {
+            results, reason, ..
+        } = outcome
+        else {
+            panic!("expected stopped outcome");
         };
         assert_eq!(results.len(), 2, "each tool call should receive a result");
+        assert_eq!(reason, "blocked by policy");
         assert_eq!(
             results
                 .iter()
@@ -741,14 +745,18 @@ mod tests {
         let outcome =
             execute_tools_concurrently(&config, &tool_calls, &cancellation_token, &tx).await;
 
-        let ToolExecOutcome::Completed { results, .. } = outcome else {
-            panic!("expected completed outcome");
+        let ToolExecOutcome::Stopped {
+            results, reason, ..
+        } = outcome
+        else {
+            panic!("expected stopped outcome");
         };
         assert_eq!(
             results.len(),
             2,
             "a later stop must still return one result per tool call"
         );
+        assert_eq!(reason, "blocked after an earlier tool was prepared");
         assert_eq!(
             results
                 .iter()
@@ -830,9 +838,13 @@ mod tests {
         let outcome =
             execute_tools_concurrently(&config, &tool_calls, &cancellation_token, &tx).await;
 
-        let ToolExecOutcome::Completed { results, .. } = outcome else {
-            panic!("expected completed outcome");
+        let ToolExecOutcome::Stopped {
+            results, reason, ..
+        } = outcome
+        else {
+            panic!("expected stopped outcome");
         };
+        assert_eq!(reason, "blocked after an earlier tool was prepared");
         assert_eq!(approval_calls.load(Ordering::SeqCst), 0);
         assert_eq!(tool_one_ref.execution_count(), 0);
         assert_eq!(tool_two_ref.execution_count(), 0);
@@ -1184,8 +1196,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tool_execution_updates_include_identity_and_survive_backpressure() {
-        let tool = Arc::new(BurstUpdatingTool { update_count: 32 });
+    async fn tool_execution_updates_include_identity() {
+        let tool = Arc::new(BurstUpdatingTool { update_count: 4 });
         let config = test_loop_config_with_options(
             vec![],
             vec![tool as Arc<dyn crate::tool::AgentTool>],
@@ -1200,7 +1212,7 @@ mod tests {
             is_incomplete: false,
         }];
         let cancellation_token = CancellationToken::new();
-        let (tx, mut rx) = mpsc::channel(1);
+        let (tx, mut rx) = mpsc::channel(8);
         let collected = StdArc::new(StdSyncMutex::new(Vec::new()));
         let collected_clone = StdArc::clone(&collected);
         let receiver = tokio::spawn(async move {
@@ -1231,7 +1243,7 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert_eq!(updates.len(), 32, "partial updates should not be dropped");
+        assert_eq!(updates.len(), 4, "partial updates should be forwarded");
         assert!(
             updates
                 .iter()
@@ -1244,7 +1256,92 @@ mod tests {
         );
         assert_eq!(
             updates.last().map(|(_, _, text)| text.as_str()),
-            Some("partial-31")
+            Some("partial-3")
+        );
+    }
+
+    /// Regression test for #770: per-tool partial-update buffering must be
+    /// bounded so a tool that emits updates faster than downstream drains
+    /// them cannot grow the queue without limit.
+    ///
+    /// The tool emits `CAP + OVERFLOW` updates in a tight synchronous loop,
+    /// which starves the forwarder task on the current-thread runtime. Under
+    /// the old unbounded channel all updates would buffer; under the bounded
+    /// channel excess updates are dropped by `try_send` and the observed count
+    /// is capped at the buffer size.
+    #[tokio::test]
+    async fn partial_update_channel_is_bounded_under_backpressure() {
+        use super::shared::TOOL_UPDATE_CHANNEL_CAPACITY;
+
+        const OVERFLOW: usize = 64;
+        let update_count = TOOL_UPDATE_CHANNEL_CAPACITY + OVERFLOW;
+
+        let tool = Arc::new(BurstUpdatingTool { update_count });
+        let config = test_loop_config_with_options(
+            vec![],
+            vec![tool as Arc<dyn crate::tool::AgentTool>],
+            None,
+            ApprovalMode::Bypassed,
+            ToolExecutionPolicy::Concurrent,
+        );
+        let tool_calls = vec![ToolCallInfo {
+            id: "call_overflow".to_string(),
+            name: "burst_tool".to_string(),
+            arguments: json!({}),
+            is_incomplete: false,
+        }];
+        let cancellation_token = CancellationToken::new();
+        let (tx, mut rx) = mpsc::channel(TOOL_UPDATE_CHANNEL_CAPACITY * 4);
+        let collected = StdArc::new(StdSyncMutex::new(Vec::new()));
+        let collected_clone = StdArc::clone(&collected);
+        let receiver = tokio::spawn(async move {
+            while let Some(event) = rx.recv().await {
+                collected_clone.lock().unwrap().push(event);
+            }
+        });
+
+        let outcome = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            execute_tools_concurrently(&config, &tool_calls, &cancellation_token, &tx),
+        )
+        .await
+        .expect("bounded update channel must never stall the tool");
+        drop(tx);
+        receiver.await.unwrap();
+
+        let ToolExecOutcome::Completed { results, .. } = outcome else {
+            panic!("expected completed outcome");
+        };
+        assert_eq!(results.len(), 1, "terminal result still arrives");
+        assert!(!results[0].is_error, "tool ran to completion");
+
+        let events = collected.lock().unwrap();
+        let updates: Vec<_> = events
+            .iter()
+            .filter_map(|event| match event {
+                AgentEvent::ToolExecutionUpdate { partial, .. } => {
+                    Some(ContentBlock::extract_text(&partial.content))
+                }
+                _ => None,
+            })
+            .collect();
+
+        assert!(
+            updates.len() <= TOOL_UPDATE_CHANNEL_CAPACITY,
+            "observed {} updates but buffer capacity is {}",
+            updates.len(),
+            TOOL_UPDATE_CHANNEL_CAPACITY,
+        );
+        assert!(
+            updates.len() < update_count,
+            "at least some of the {OVERFLOW} overflow updates must be dropped \
+             (observed {}, emitted {update_count})",
+            updates.len(),
+        );
+        assert_eq!(
+            updates.first().map(String::as_str),
+            Some("partial-0"),
+            "earliest updates land before the buffer fills"
         );
     }
 
@@ -1582,7 +1679,7 @@ mod tests {
         assert!(!saw_b_start.load(Ordering::SeqCst));
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].tool_call_id, "call_a");
-        assert_eq!(results[0].is_error, false);
+        assert!(!results[0].is_error);
         assert_eq!(results[1].tool_call_id, "call_b");
         assert!(results[1].is_error);
         assert!(matches!(

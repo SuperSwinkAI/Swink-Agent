@@ -4,6 +4,7 @@
 //! both transformation and compaction reporting.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::context::{CompactionReport, TokenCounter, compact_sliding_window_with};
 use crate::types::AgentMessage;
@@ -20,7 +21,27 @@ pub trait ContextTransformer: Send + Sync {
         messages: &mut Vec<AgentMessage>,
         overflow: bool,
     ) -> Option<CompactionReport>;
+
+    /// Downcast support so the turn pipeline can inject the cached-prefix
+    /// boundary into a built-in [`SlidingWindowTransformer`] each turn.
+    ///
+    /// The default impl returns a sentinel that downcasts to no concrete type
+    /// the turn pipeline inspects, leaving custom transformers opaque and
+    /// unaffected by the cache pipeline. Custom transformers that wish to
+    /// participate in cache-protected compaction can override this to expose
+    /// their concrete type.
+    fn as_any(&self) -> &dyn std::any::Any {
+        static SENTINEL: NoDowncast = NoDowncast;
+        &SENTINEL
+    }
 }
+
+/// Sentinel type returned by the default [`ContextTransformer::as_any`] impl.
+///
+/// Downcasts against this type always fail to match the concrete transformers
+/// the turn pipeline cares about, which is the intended behavior for types
+/// that don't opt in to the downcast hook.
+struct NoDowncast;
 
 /// Blanket impl for existing closures (backward compat).
 impl<F: Fn(&mut Vec<AgentMessage>, bool) + Send + Sync> ContextTransformer for F {
@@ -53,14 +74,24 @@ impl<F: Fn(&mut Vec<AgentMessage>, bool) + Send + Sync> ContextTransformer for F
 ///
 /// Accepts an optional [`TokenCounter`] for pluggable token estimation.
 /// When none is provided, the default `chars / 4` heuristic is used.
+///
+/// Supports runtime updates of `cached_prefix_len` via interior mutability so
+/// the turn pipeline can propagate the cache boundary into each compaction pass
+/// without needing `&mut` access to the transformer (which is shared behind
+/// `Arc<dyn ContextTransformer>`).
 pub struct SlidingWindowTransformer {
     normal_budget: usize,
     overflow_budget: usize,
     anchor: usize,
     token_counter: Option<Arc<dyn TokenCounter>>,
-    /// When caching is active, protects this many messages from compaction.
-    /// The effective anchor becomes `max(anchor, cached_prefix_len)`.
+    /// Builder-set cached prefix length. When caching is active, protects
+    /// this many leading messages from compaction unless `published_prefix`
+    /// overrides it.
     cached_prefix_len: usize,
+    /// Runtime-published cached prefix length, set by the turn pipeline
+    /// through interior mutability. Zero means "no runtime publish yet";
+    /// otherwise it takes precedence over `cached_prefix_len`.
+    published_prefix: AtomicUsize,
 }
 
 impl SlidingWindowTransformer {
@@ -72,13 +103,14 @@ impl SlidingWindowTransformer {
     /// * `overflow_budget` - Smaller token budget used when overflow is signaled.
     /// * `anchor` - Number of messages at the start to always preserve.
     #[must_use]
-    pub fn new(normal_budget: usize, overflow_budget: usize, anchor: usize) -> Self {
+    pub const fn new(normal_budget: usize, overflow_budget: usize, anchor: usize) -> Self {
         Self {
             normal_budget,
             overflow_budget,
             anchor,
             token_counter: None,
             cached_prefix_len: 0,
+            published_prefix: AtomicUsize::new(0),
         }
     }
 
@@ -97,9 +129,33 @@ impl SlidingWindowTransformer {
         self
     }
 
-    /// Update the cached prefix length (for runtime updates from the turn pipeline).
+    /// Set the cached prefix length on a uniquely-owned transformer.
+    ///
+    /// Use [`Self::publish_cached_prefix`] when the transformer is shared
+    /// behind an `Arc` at runtime.
     pub const fn set_cached_prefix_len(&mut self, len: usize) {
         self.cached_prefix_len = len;
+    }
+
+    /// Publish a new cached prefix length through interior mutability.
+    ///
+    /// Used by the turn pipeline to update the boundary before each
+    /// compaction pass without taking `&mut` on the shared `Arc<dyn ...>`.
+    /// A non-zero value takes precedence over the builder-set field.
+    pub fn publish_cached_prefix(&self, len: usize) {
+        self.published_prefix.store(len, Ordering::Relaxed);
+    }
+
+    /// Read the current effective cached prefix length — the runtime
+    /// publish if set, otherwise the builder-set value.
+    #[must_use]
+    pub fn cached_prefix_len(&self) -> usize {
+        let published = self.published_prefix.load(Ordering::Relaxed);
+        if published > 0 {
+            published
+        } else {
+            self.cached_prefix_len
+        }
     }
 }
 
@@ -115,12 +171,17 @@ impl ContextTransformer for SlidingWindowTransformer {
             self.normal_budget
         };
 
-        let effective_anchor = self.anchor.max(self.cached_prefix_len);
+        let cached_prefix = self.cached_prefix_len();
+        let effective_anchor = self.anchor.max(cached_prefix);
         let counter_ref = self.token_counter.as_deref();
         let mut report =
             compact_sliding_window_with(messages, budget, effective_anchor, counter_ref)?;
         report.overflow = overflow;
         Some(report)
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 

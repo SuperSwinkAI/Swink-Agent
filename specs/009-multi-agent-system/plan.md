@@ -9,7 +9,7 @@ A multi-agent system for composing, coordinating, and supervising multiple agent
 
 ## Technical Context
 
-**Language/Version**: Rust 1.88 (edition 2024)
+**Language/Version**: Rust latest stable (edition 2024)
 **Primary Dependencies**: tokio (spawn, mpsc, oneshot, select!), tokio-util (CancellationToken), serde_json (Value), tracing (info, warn)
 **Storage**: N/A (in-memory state only)
 **Testing**: `cargo test --workspace` — unit tests in source modules (`orchestrator.rs`), integration tests in `tests/`

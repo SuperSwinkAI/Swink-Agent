@@ -215,7 +215,7 @@ mod tests {
             .with_max_redirects(3)
             .with_max_search_results(25)
             .with_sanitizer_enabled(false)
-            .with_request_timeout(Duration::from_secs(60))
+            .with_request_timeout(Duration::from_mins(1))
             .with_screenshot_timeout(Duration::from_secs(30))
             .with_domain_allowlist(vec!["example.com".into()])
             .with_domain_denylist(vec!["evil.com".into()])
@@ -235,7 +235,7 @@ mod tests {
         assert_eq!(config.max_redirects, 3);
         assert_eq!(config.max_search_results, 25);
         assert!(!config.sanitizer_enabled);
-        assert_eq!(config.request_timeout, Duration::from_secs(60));
+        assert_eq!(config.request_timeout, Duration::from_mins(1));
         assert_eq!(config.screenshot_timeout, Duration::from_secs(30));
         assert_eq!(config.domain_allowlist, vec!["example.com"]);
         assert_eq!(config.domain_denylist, vec!["evil.com"]);

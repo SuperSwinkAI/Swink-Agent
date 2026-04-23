@@ -35,6 +35,38 @@ pub fn storage_err(e: impl Error + Send + Sync + 'static) -> ArtifactError {
     ArtifactError::Storage(Box::new(e))
 }
 
+#[allow(clippy::redundant_pub_crate)]
+pub(crate) fn missing_content_err(
+    session_id: &str,
+    name: &str,
+    version: u32,
+    path: &Path,
+) -> ArtifactError {
+    storage_err(std::io::Error::new(
+        std::io::ErrorKind::InvalidData,
+        format!(
+            "artifact '{name}' in session '{session_id}' metadata references missing content for version {version}: {}",
+            path.display()
+        ),
+    ))
+}
+
+#[allow(clippy::redundant_pub_crate)]
+pub(crate) fn orphan_content_err(
+    session_id: &str,
+    name: &str,
+    version: u32,
+    path: &Path,
+) -> ArtifactError {
+    storage_err(std::io::Error::new(
+        std::io::ErrorKind::InvalidData,
+        format!(
+            "artifact '{name}' in session '{session_id}' has content for version {version} without metadata membership: {}",
+            path.display()
+        ),
+    ))
+}
+
 /// Canonicalize `root`, creating it first if it does not already exist.
 ///
 /// This returns an absolute, symlink-free path so later operations can prove
@@ -231,7 +263,7 @@ impl FileArtifactStore {
                         if let Ok(relative) = path.strip_prefix(&session_dir)
                             && let Some(name) = relative.to_str()
                         {
-                            names.push(name.to_string());
+                            names.push(name.replace('\\', "/"));
                         }
                     }
                     // Also recurse into it (for nested artifact names like "tool/output")
@@ -241,6 +273,60 @@ impl FileArtifactStore {
         }
 
         Ok(names)
+    }
+
+    /// Remove only the direct files for one logical artifact directory.
+    ///
+    /// Child artifact names such as `foo/bar` live in nested directories under
+    /// `foo/`, so deleting `foo` must not recurse and wipe those children.
+    async fn delete_artifact_files(&self, dir: &Path) -> Result<(), ArtifactError> {
+        let mut entries = match tokio::fs::read_dir(dir).await {
+            Ok(entries) => entries,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(e) => return Err(storage_err(e)),
+        };
+
+        while let Some(entry) = entries.next_entry().await.map_err(storage_err)? {
+            let file_type = entry.file_type().await.map_err(storage_err)?;
+            if file_type.is_dir() {
+                continue;
+            }
+
+            match tokio::fs::remove_file(entry.path()).await {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(storage_err(e)),
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Remove now-empty artifact directories up to, but not including, the
+    /// session root. Stops once a parent still contains sibling artifacts.
+    async fn prune_empty_artifact_dirs(
+        &self,
+        session_id: &str,
+        name: &str,
+    ) -> Result<(), ArtifactError> {
+        let session_dir = self.resolve_session_dir(session_id)?;
+        let mut current = self.resolve_artifact_dir(session_id, name)?;
+
+        while current != session_dir {
+            match tokio::fs::remove_dir(&current).await {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) if e.kind() == std::io::ErrorKind::DirectoryNotEmpty => break,
+                Err(e) => return Err(storage_err(e)),
+            }
+
+            let Some(parent) = current.parent() else {
+                break;
+            };
+            current = parent.to_path_buf();
+        }
+
+        Ok(())
     }
 }
 
@@ -329,7 +415,12 @@ impl ArtifactStore for FileArtifactStore {
                     version = record.version,
                     "content file missing"
                 );
-                return Ok(None);
+                return Err(missing_content_err(
+                    session_id,
+                    name,
+                    record.version,
+                    &content_path,
+                ));
             }
             Err(e) => return Err(storage_err(e)),
         };
@@ -374,7 +465,12 @@ impl ArtifactStore for FileArtifactStore {
             Ok(bytes) => bytes,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 tracing::debug!(session_id, name, version, "content file missing");
-                return Ok(None);
+                return Err(missing_content_err(
+                    session_id,
+                    name,
+                    version,
+                    &content_path,
+                ));
             }
             Err(e) => return Err(storage_err(e)),
         };
@@ -419,15 +515,135 @@ impl ArtifactStore for FileArtifactStore {
 
     async fn delete(&self, session_id: &str, name: &str) -> Result<(), ArtifactError> {
         let dir = self.resolve_artifact_dir(session_id, name)?;
-        match tokio::fs::remove_dir_all(&dir).await {
-            Ok(()) => {
-                tracing::debug!(session_id, name, "artifact deleted");
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                tracing::debug!(session_id, name, "artifact already absent");
-            }
-            Err(e) => return Err(storage_err(e)),
-        }
+        let lock = self.artifact_lock(session_id, name).await;
+        let _guard = lock.lock().await;
+
+        self.delete_artifact_files(&dir).await?;
+        self.prune_empty_artifact_dirs(session_id, name).await?;
+
+        tracing::debug!(session_id, name, "artifact deleted");
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+    use std::io::ErrorKind;
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    use tokio::sync::oneshot;
+    use tokio::time::sleep;
+
+    use super::FileArtifactStore;
+    use swink_agent::{ArtifactData, ArtifactError, ArtifactStore};
+
+    fn text_data(content: &str) -> ArtifactData {
+        ArtifactData {
+            content: content.as_bytes().to_vec(),
+            content_type: "text/plain".to_string(),
+            metadata: HashMap::new(),
+        }
+    }
+
+    fn assert_invalid_data_storage_error(err: ArtifactError, expected_snippet: &str) {
+        let ArtifactError::Storage(source) = err else {
+            panic!("expected storage error, got {err:?}");
+        };
+        let io = source
+            .downcast_ref::<std::io::Error>()
+            .expect("storage error should wrap std::io::Error");
+        assert_eq!(io.kind(), ErrorKind::InvalidData);
+        assert!(
+            io.to_string().contains(expected_snippet),
+            "expected error message to contain '{expected_snippet}', got '{io}'"
+        );
+    }
+
+    #[tokio::test]
+    async fn delete_waits_for_in_flight_artifact_lock() {
+        let tmpdir = tempfile::TempDir::new().expect("tempdir");
+        let store = Arc::new(FileArtifactStore::new(tmpdir.path()));
+        store
+            .save("s1", "report.md", text_data("v1"))
+            .await
+            .expect("initial save");
+
+        let lock = store.artifact_lock("s1", "report.md").await;
+        let guard = lock.lock().await;
+
+        let (started_tx, started_rx) = oneshot::channel();
+        let delete_store = Arc::clone(&store);
+        let delete_task = tokio::spawn(async move {
+            started_tx.send(()).expect("notify delete start");
+            delete_store.delete("s1", "report.md").await
+        });
+
+        started_rx.await.expect("delete task started");
+        sleep(Duration::from_millis(50)).await;
+        let delete_finished = delete_task.is_finished();
+        assert!(
+            !delete_finished,
+            "delete should wait for the per-artifact lock before removing files"
+        );
+
+        drop(guard);
+
+        delete_task
+            .await
+            .expect("delete task join")
+            .expect("delete should succeed after lock release");
+
+        assert!(
+            store
+                .load("s1", "report.md")
+                .await
+                .expect("load after delete")
+                .is_none(),
+            "artifact should be deleted once the lock is released"
+        );
+    }
+
+    #[tokio::test]
+    async fn load_returns_invalid_data_when_latest_content_file_is_missing() {
+        let tmpdir = tempfile::TempDir::new().expect("tempdir");
+        let store = FileArtifactStore::new(tmpdir.path());
+        store
+            .save("s1", "report.md", text_data("v1"))
+            .await
+            .expect("save should succeed");
+
+        let content_path = store.version_path("s1", "report.md", 1);
+        tokio::fs::remove_file(&content_path)
+            .await
+            .expect("content file should be removable");
+
+        let err = store
+            .load("s1", "report.md")
+            .await
+            .expect_err("missing content should be surfaced as corruption");
+        assert_invalid_data_storage_error(err, "metadata references missing content");
+    }
+
+    #[tokio::test]
+    async fn load_version_returns_invalid_data_when_content_file_is_missing() {
+        let tmpdir = tempfile::TempDir::new().expect("tempdir");
+        let store = FileArtifactStore::new(tmpdir.path());
+        store
+            .save("s1", "report.md", text_data("v1"))
+            .await
+            .expect("save should succeed");
+
+        let content_path = store.version_path("s1", "report.md", 1);
+        tokio::fs::remove_file(&content_path)
+            .await
+            .expect("content file should be removable");
+
+        let err = store
+            .load_version("s1", "report.md", 1)
+            .await
+            .expect_err("missing content should be surfaced as corruption");
+        assert_invalid_data_storage_error(err, "metadata references missing content");
     }
 }

@@ -14,7 +14,7 @@ via `AgentLoopConfig` and `AgentContext`. It returns an async stream of
 
 ## Technical Context
 
-**Language/Version**: Rust 1.88 (edition 2024)
+**Language/Version**: Rust latest stable (edition 2024)
 **Primary Dependencies**: tokio (spawn, select!), tokio-util (CancellationToken), futures (Stream), serde_json (tool args)
 **Storage**: N/A (stateless loop)
 **Testing**: `cargo test --workspace` with mock StreamFn and mock tools

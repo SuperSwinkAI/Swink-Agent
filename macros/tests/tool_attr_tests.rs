@@ -66,7 +66,11 @@ fn tool_attr_schema_no_params() {
     let schema = PingTool.parameters_schema();
     assert_eq!(schema["type"], "object");
     // No required fields.
-    assert!(schema["required"].as_array().map_or(true, |a| a.is_empty()));
+    assert!(
+        schema["required"]
+            .as_array()
+            .is_none_or(std::vec::Vec::is_empty)
+    );
 }
 
 // ── CancellationToken not leaked into schema ─────────────────────────────────

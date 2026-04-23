@@ -485,7 +485,7 @@ mod tests {
         let strategy = config.to_retry_strategy();
         assert_eq!(strategy.max_attempts, 4);
         assert_eq!(strategy.base_delay, Duration::from_millis(500));
-        assert_eq!(strategy.max_delay, Duration::from_millis(30_000));
+        assert_eq!(strategy.max_delay, Duration::from_secs(30));
         assert!((strategy.multiplier - 1.5).abs() < f64::EPSILON);
         assert!(strategy.jitter);
 
@@ -722,7 +722,7 @@ mod tests {
             cache_intervals: 5,
         };
         let cc = data.to_cache_config();
-        assert_eq!(cc.ttl, Duration::from_millis(120_000));
+        assert_eq!(cc.ttl, Duration::from_mins(2));
         assert_eq!(cc.min_tokens, 2048);
         assert_eq!(cc.cache_intervals, 5);
 
@@ -745,7 +745,7 @@ mod tests {
         );
         opts.plan_mode_addendum = Some("custom addendum".into());
         opts.cache_config = Some(crate::context_cache::CacheConfig::new(
-            Duration::from_secs(300),
+            Duration::from_mins(5),
             1024,
             4,
         ));

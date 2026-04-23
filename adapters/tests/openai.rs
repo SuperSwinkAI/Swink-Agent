@@ -529,6 +529,44 @@ async fn openai_cancellation() {
 }
 
 #[tokio::test]
+async fn openai_pre_send_cancellation_skips_http_request() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(sse_response(""))
+        .expect(0)
+        .mount(&server)
+        .await;
+
+    let sf = OpenAiStreamFn::new(server.uri(), "test-key");
+    let model = test_model();
+    let context = test_context();
+    let options = StreamOptions::default();
+    let token = CancellationToken::new();
+    token.cancel();
+
+    let events: Vec<_> = sf.stream(&model, &context, &options, token).collect().await;
+
+    assert!(matches!(events.first(), Some(AssistantMessageEvent::Start)));
+    assert!(events.iter().any(|event| {
+        matches!(
+            event,
+            AssistantMessageEvent::Error {
+                stop_reason: StopReason::Aborted,
+                error_message,
+                ..
+            } if error_message.contains("cancelled")
+        )
+    }));
+
+    let received = server.received_requests().await.expect("request log");
+    assert!(
+        received.is_empty(),
+        "expected no HTTP request, got {received:?}"
+    );
+}
+
+#[tokio::test]
 async fn openai_bearer_token_sent() {
     let body = [
         r#"data: {"choices":[{"delta":{"content":"hi"},"index":0}]}"#,

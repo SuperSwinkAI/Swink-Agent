@@ -687,7 +687,7 @@ mod tests {
     #[test]
     fn terminal_error_after_start_is_not_prefixed() {
         let error = AssistantMessageEvent::error_network("boom");
-        let (event, started, pending, done) = prepare_stream_event(error.clone(), true);
+        let (event, started, pending, done) = prepare_stream_event(error, true);
 
         assert!(matches!(event, AssistantMessageEvent::Error { .. }));
         assert!(started);

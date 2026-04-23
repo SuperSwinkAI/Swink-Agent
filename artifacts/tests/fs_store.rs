@@ -153,7 +153,7 @@ async fn fs_concurrent_saves_no_corruption() {
 
     // All 10 versions should exist with distinct version numbers
     let mut version_nums: Vec<u32> = versions.iter().map(|v| v.version).collect();
-    version_nums.sort();
+    version_nums.sort_unstable();
     assert_eq!(version_nums, (1..=10).collect::<Vec<u32>>());
 
     // All 10 versions should be loadable

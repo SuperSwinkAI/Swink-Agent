@@ -695,7 +695,7 @@ fn retry_strategy_jitter_bounded() {
 
     let strategy = DefaultRetryStrategy::default()
         .with_base_delay(Duration::from_secs(1))
-        .with_max_delay(Duration::from_secs(60))
+        .with_max_delay(Duration::from_mins(1))
         .with_multiplier(2.0)
         .with_jitter(true);
 

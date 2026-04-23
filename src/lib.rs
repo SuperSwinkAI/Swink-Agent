@@ -64,6 +64,7 @@ pub(crate) mod tool;
 mod tool_execution_policy;
 pub(crate) mod tool_filter;
 mod tool_middleware;
+mod tool_name;
 pub(crate) mod tools;
 pub(crate) mod transfer;
 pub(crate) mod types;
@@ -153,6 +154,7 @@ pub use tool_execution_policy::{
 };
 pub use tool_filter::{ToolFilter, ToolPattern};
 pub use tool_middleware::ToolMiddleware;
+pub use tool_name::{MAX_TOOL_NAME_LEN, TOOL_NAME_HASH_HEX_LEN, compose_provider_safe_tool_name};
 #[cfg(feature = "builtin-tools")]
 pub use tools::{BashTool, EditFileTool, ReadFileTool, WriteFileTool, builtin_tools};
 #[cfg(feature = "artifact-tools")]

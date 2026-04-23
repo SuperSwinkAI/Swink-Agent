@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use swink_agent::{AgentEvent, AgentTool};
+use swink_agent::{AgentEvent, AgentTool, CredentialResolver};
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::warn;
 
@@ -55,6 +55,7 @@ pub struct McpManager {
     connections: Vec<Arc<McpConnection>>,
     tools: Vec<Arc<dyn AgentTool>>,
     event_tx: Option<UnboundedSender<AgentEvent>>,
+    credential_resolver: Option<Arc<dyn CredentialResolver>>,
 }
 
 impl McpManager {
@@ -68,6 +69,7 @@ impl McpManager {
             connections: Vec::new(),
             tools: Vec::new(),
             event_tx: None,
+            credential_resolver: None,
         }
     }
 
@@ -79,6 +81,13 @@ impl McpManager {
     #[must_use]
     pub fn with_event_tx(mut self, tx: UnboundedSender<AgentEvent>) -> Self {
         self.event_tx = Some(tx);
+        self
+    }
+
+    /// Wire up a credential resolver for SSE bearer auth.
+    #[must_use]
+    pub fn with_credential_resolver(mut self, resolver: Arc<dyn CredentialResolver>) -> Self {
+        self.credential_resolver = Some(resolver);
         self
     }
 
@@ -104,23 +113,36 @@ impl McpManager {
             connections: arc_connections,
             tools,
             event_tx: None,
+            credential_resolver: None,
         })
     }
 
     /// Connect to all configured servers, discover tools.
     ///
     /// Servers that fail to connect are logged and skipped; the remaining
-    /// servers' tools are still available. Returns an error only if a tool
-    /// name collision is detected across servers.
+    /// servers' tools are still available. Repeated calls replace the prior
+    /// connection set instead of appending to it. Returns an error only if a
+    /// tool name collision is detected across servers.
     pub async fn connect_all(&mut self) -> Result<(), McpError> {
+        if !self.connections.is_empty() || !self.tools.is_empty() {
+            self.shutdown().await;
+        }
+
         let mut all_tools: Vec<(String, String, Arc<dyn AgentTool>)> = Vec::new();
+        let mut connections = Vec::new();
 
         for config in self.configs.clone() {
-            match McpConnection::connect(config.clone(), self.event_tx.clone()).await {
+            match McpConnection::connect_with_resolver(
+                config.clone(),
+                self.credential_resolver.clone(),
+                self.event_tx.clone(),
+            )
+            .await
+            {
                 Ok(connection) => {
                     let conn = Arc::new(connection);
                     all_tools.extend(build_tools_for_connection(&conn));
-                    self.connections.push(conn);
+                    connections.push(conn);
                 }
                 Err(e) => {
                     warn!(
@@ -132,7 +154,18 @@ impl McpManager {
             }
         }
 
-        self.tools = detect_collisions_and_collect(all_tools)?;
+        let tools = match detect_collisions_and_collect(all_tools) {
+            Ok(tools) => tools,
+            Err(error) => {
+                for conn in connections {
+                    conn.shutdown().await;
+                }
+                return Err(error);
+            }
+        };
+
+        self.connections = connections;
+        self.tools = tools;
         Ok(())
     }
 
@@ -167,6 +200,7 @@ impl std::fmt::Debug for McpManager {
             .field("connections", &self.connections.len())
             .field("tools", &self.tools.len())
             .field("event_tx", &self.event_tx.is_some())
+            .field("credential_resolver", &self.credential_resolver.is_some())
             .finish()
     }
 }

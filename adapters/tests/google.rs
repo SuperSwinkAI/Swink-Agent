@@ -850,7 +850,6 @@ async fn gemini_non_prefix_arg_rewrite_produces_correct_json() {
 
     let stream_fn = GeminiStreamFn::new(server.uri(), "test-key", ApiVersion::V1beta);
     let events = collect_events(&stream_fn).await;
-
     let arguments: String = events
         .iter()
         .filter_map(|event| match event {
@@ -878,7 +877,7 @@ async fn gemini_null_arg_rewrite_clears_buffered_args() {
     let body = [
         r#"data: {"candidates":[{"content":{"parts":[{"functionCall":{"id":"c1","name":"do_stuff","args":{"city":"Paris"}}}]}}]}"#,
         "",
-        r#"data: {"candidates":[{"content":{"parts":[{"functionCall":{"id":"c1","name":"do_stuff","args":null}]}}]}"#,
+        r#"data: {"candidates":[{"content":{"parts":[{"functionCall":{"id":"c1","name":"do_stuff","args":null}}]}}]}"#,
         "",
         r#"data: {"candidates":[{"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":5,"candidatesTokenCount":5,"totalTokenCount":10}}"#,
         "",

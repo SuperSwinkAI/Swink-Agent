@@ -11,6 +11,16 @@ use crate::util::now_timestamp;
 
 use super::{AgentEvent, ToolCallInfo, emit};
 
+/// Bound on the per-tool partial-update buffer between the sync `on_update`
+/// callback and the async forwarder task.
+///
+/// Partial updates are progressive by nature: downstream only needs the latest
+/// state to render progress, so we treat the channel as lossy under sustained
+/// backpressure (see `execute::dispatch_single_tool`). A value of 128 is large
+/// enough to absorb normal bursts (typical tools emit a handful of updates)
+/// without allowing unbounded memory growth when downstream lags.
+pub(super) const TOOL_UPDATE_CHANNEL_CAPACITY: usize = 128;
+
 /// Build an error `ToolResultMessage` and emit `ToolExecutionEnd`.
 pub(super) async fn emit_error_result(
     tool_name: &str,
@@ -69,11 +79,11 @@ pub(super) fn panic_payload_message(panic_value: &(dyn std::any::Any + Send)) ->
         .unwrap_or_else(|| "unknown panic payload".to_string())
 }
 
-/// Forward partial tool updates from the unbounded channel to the event stream.
+/// Forward partial tool updates from the bounded channel to the event stream.
 pub(super) async fn forward_tool_updates(
     tool_call_id: &str,
     tool_name: &str,
-    mut updates: mpsc::UnboundedReceiver<AgentToolResult>,
+    mut updates: mpsc::Receiver<AgentToolResult>,
     tx: &mpsc::Sender<AgentEvent>,
 ) {
     while let Some(partial) = updates.recv().await {

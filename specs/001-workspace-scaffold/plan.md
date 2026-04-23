@@ -14,7 +14,7 @@ points.
 
 ## Technical Context
 
-**Language/Version**: Rust 1.88 (edition 2024)
+**Language/Version**: Rust latest stable (edition 2024)
 **Primary Dependencies**: serde, serde_json, tokio, futures, thiserror, uuid, reqwest, jsonschema, schemars, rand, tracing, toml (all centralized in workspace `[workspace.dependencies]`)
 **Storage**: N/A (scaffold only)
 **Testing**: `cargo test --workspace`, `cargo clippy --workspace -- -D warnings`
@@ -56,7 +56,7 @@ specs/001-workspace-scaffold/
 
 ```text
 Cargo.toml                  # Workspace root + core crate [package]
-rust-toolchain.toml         # Pins Rust 1.88
+rust-toolchain.toml         # Pins Rust latest stable
 rustfmt.toml                # Formatter configuration
 src/
 └── lib.rs                  # Core crate: #[forbid(unsafe_code)], public re-exports

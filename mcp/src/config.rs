@@ -3,6 +3,16 @@
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
+use swink_agent::CredentialType;
+
+/// Resolver-backed bearer auth for SSE MCP transports.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SseBearerAuth {
+    /// Credential store key resolved before establishing the connection.
+    pub credential_key: String,
+    /// Expected resolved credential type for this bearer header.
+    pub credential_type: CredentialType,
+}
 
 /// Transport type for MCP server communication.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -19,6 +29,8 @@ pub enum McpTransport {
     Sse {
         url: String,
         bearer_token: Option<String>,
+        #[serde(default)]
+        bearer_auth: Option<SseBearerAuth>,
         #[serde(default)]
         headers: HashMap<String, String>,
     },

@@ -4,7 +4,7 @@
 
 ## Prerequisites
 
-- Rust 1.88+ (edition 2024)
+- Rust latest stable (edition 2024)
 - xAI API key (set `XAI_API_KEY` env var or pass directly)
 
 ## Add Dependency

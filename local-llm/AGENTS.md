@@ -17,6 +17,7 @@
 ## Lessons Learned
 
 - **SmolLM3 `<think>` tags** — parsed via simple string matching (not regex) and routed to `ThinkingStart/Delta/End` events.
+- **Non-Gemma `<think>` parsing is stateful across chunks** — `local-llm/src/stream.rs` now tracks split `<think>` / `</think>` delimiters across token boundaries and flushes any buffered partial delimiter fragments on terminal paths so streamed thinking/text content is not dropped at chunk boundaries.
 - **Context capped at 8192 tokens** (NoPE architecture). Override via `LOCAL_CONTEXT_LENGTH` env var.
 - **llama-cpp-2 version pin** — API is actively evolving; pin to specific minor version.
 - **SmolLM3 is fully supported** — `llama-cpp-2` (llama.cpp) natively supports the SmolLM3 GGUF architecture. No fail-fast rejection needed.
@@ -34,6 +35,12 @@
 - **Gemma 4 tool calls** — `ToolCallParser` in `stream.rs` handles cross-chunk `<|tool_call>call:{name}{args}<tool_call|>` format. IDs are generated as UUIDs. `Gemma4LocalConverter` wraps tool results as `<|tool_result>{tool_call_id}\n{text}<tool_result|>`.
 - **Gemma 4 partial delimiter matching must be UTF-8 safe** — when scanning for split `<|channel>thought\n` and `<tool_call|>` delimiters, only slice `&str` values at character boundaries. Reuse the shared suffix helper in `stream.rs`; raw byte-offset suffix slicing can panic on multibyte output.
 - **Local stream finish reasons must survive finalization** — `runner.rs` must propagate whether generation ended naturally or because it exhausted `max_tokens`, and `stream.rs` must preserve `Length` ahead of synthesized `ToolUse` so the core loop can recover incomplete tool-call JSON.
+- **Per-request stream overrides belong in `GenerateOptions`, not `RunnerConfig`** — the loaded `LlamaRunner` is shared across requests, so `StreamOptions.max_tokens` / `temperature` must be translated into per-inference generation options at call time instead of mutating model-level defaults.
+- **`TokenEvent::Error` is a terminal-finalization path** — `stream.rs` must drain open text/thinking/tool-call blocks before emitting the terminal `Error`, matching the cancellation/EOF paths and the core stream contract.
+- **Cancellation terminals are semantic, not generic** — `stream.rs` must emit `StopReason::Aborted` for both pre-start cancellation and in-stream cancellation finalization. A plain `AssistantMessageEvent::error(...)` masks intentional aborts as runtime failures to the core loop.
+- **Pre-cancel must win before model readiness** — `local_stream()` must check `CancellationToken` before calling `ensure_ready()`, otherwise an already-aborted run can still kick off heavyweight local model download/load work before reporting the abort.
+- **`hf-hub` progress handlers are clone-per-chunk** — download byte progress must aggregate through shared state; per-clone counters misreport resumed bytes and parallel chunk updates.
+- **Loading progress needs runner-level substeps** — `loader.rs` only knows the coarse Loading phase. To surface meaningful `LoadingProgress` updates, `model.rs` / `embedding.rs` must pass the shared callback into `LlamaRunner::load_with_progress()`, which emits backend-init and GGUF-load messages from inside the blocking runner setup.
 - **Two converter types** — `LocalConverter` (SmolLM3) and `Gemma4LocalConverter` (Gemma 4) both implement `MessageConverter`. `convert_context_messages` dispatches based on `config.is_gemma4()`.
 - **LazyLoader waiters must treat `Unloaded` as terminal for the current attempt** — `wait_until_ready()` now returns on `Unloaded`/`Failed` as well as `Ready`, and `ensure_ready()` re-checks loader state after every wakeup so an `unload()` during another caller's load does not strand waiters forever.
 - Workspace-wide `cargo build` / `test` / `clippy` now compile `llama-cpp-sys-2` through this crate, so contributors need LLVM/libclang installed and Windows contributors commonly need `LIBCLANG_PATH` pointed at the LLVM `bin` directory.

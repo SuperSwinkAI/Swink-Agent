@@ -4,7 +4,8 @@ mod common;
 
 use std::collections::HashMap;
 
-use swink_agent_mcp::{McpServerConfig, McpTransport, ToolFilter};
+use swink_agent::CredentialType;
+use swink_agent_mcp::{McpServerConfig, McpTransport, SseBearerAuth, ToolFilter};
 
 #[test]
 fn server_config_construction() {
@@ -32,6 +33,7 @@ fn sse_transport_construction() {
         transport: McpTransport::Sse {
             url: "http://localhost:8080/sse".into(),
             bearer_token: Some("secret".into()),
+            bearer_auth: None,
             headers: HashMap::from([("x-api-key".into(), "abc123".into())]),
         },
         tool_prefix: None,
@@ -63,10 +65,15 @@ fn sse_transport_deserialization_defaults_headers() {
         McpTransport::Sse {
             url,
             bearer_token,
+            bearer_auth,
             headers,
         } => {
             assert_eq!(url, "http://localhost:8080/sse");
             assert_eq!(bearer_token.as_deref(), Some("secret"));
+            assert!(
+                bearer_auth.is_none(),
+                "legacy configs should default bearer auth"
+            );
             assert!(headers.is_empty(), "legacy configs should default headers");
         }
         other @ McpTransport::Stdio { .. } => panic!("expected SSE transport, got {other:?}"),
@@ -153,6 +160,10 @@ fn sse_config_serialization_roundtrip_preserves_headers() {
         transport: McpTransport::Sse {
             url: "https://example.com/mcp".into(),
             bearer_token: Some("secret".into()),
+            bearer_auth: Some(SseBearerAuth {
+                credential_key: "mcp-sse".into(),
+                credential_type: CredentialType::OAuth2,
+            }),
             headers: HashMap::from([
                 ("x-api-key".into(), "key-123".into()),
                 ("x-trace-id".into(), "trace-abc".into()),
@@ -170,10 +181,18 @@ fn sse_config_serialization_roundtrip_preserves_headers() {
         McpTransport::Sse {
             url,
             bearer_token,
+            bearer_auth,
             headers,
         } => {
             assert_eq!(url, "https://example.com/mcp");
             assert_eq!(bearer_token.as_deref(), Some("secret"));
+            assert_eq!(
+                bearer_auth,
+                Some(SseBearerAuth {
+                    credential_key: "mcp-sse".into(),
+                    credential_type: CredentialType::OAuth2,
+                })
+            );
             assert_eq!(
                 headers.get("x-api-key").map(String::as_str),
                 Some("key-123")

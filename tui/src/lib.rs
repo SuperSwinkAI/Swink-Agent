@@ -47,6 +47,7 @@ use ratatui::{Terminal, backend::CrosstermBackend};
 use std::io;
 use std::pin::Pin;
 use tokio::sync::{mpsc, oneshot};
+use tracing::warn;
 
 use swink_agent::{Agent, ToolApproval, ToolApprovalRequest, selective_approve};
 
@@ -115,9 +116,13 @@ pub fn tui_approval_callback(approval_tx: &ApprovalSender) -> ApprovalCallbackFn
         Box::pin(async move {
             let (resp_tx, resp_rx) = oneshot::channel();
             if tx.send((request, resp_tx)).await.is_err() {
-                return ToolApproval::Approved;
+                warn!("approval channel unavailable; rejecting tool call");
+                return ToolApproval::Rejected;
             }
-            resp_rx.await.unwrap_or(ToolApproval::Approved)
+            resp_rx.await.unwrap_or_else(|_| {
+                warn!("approval responder dropped; rejecting tool call");
+                ToolApproval::Rejected
+            })
         }) as Pin<Box<dyn std::future::Future<Output = ToolApproval> + Send>>
     })
 }
@@ -179,6 +184,17 @@ pub async fn launch_with_session(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::sync::mpsc;
+
+    fn approval_request() -> ToolApprovalRequest {
+        ToolApprovalRequest {
+            tool_call_id: "call_1".into(),
+            tool_name: "write_file".into(),
+            arguments: serde_json::json!({"path": "secret.txt"}),
+            requires_approval: true,
+            context: None,
+        }
+    }
 
     #[test]
     fn explicit_param_wins_over_config() {
@@ -241,5 +257,32 @@ mod tests {
     #[test]
     fn default_system_prompt_is_not_empty() {
         assert!(!DEFAULT_SYSTEM_PROMPT.is_empty());
+    }
+
+    #[tokio::test]
+    async fn approval_callback_rejects_when_channel_send_fails() {
+        let (tx, rx) = mpsc::channel(1);
+        drop(rx);
+
+        let callback = tui_approval_callback(&tx);
+        let approval = callback(approval_request()).await;
+
+        assert_eq!(approval, ToolApproval::Rejected);
+    }
+
+    #[tokio::test]
+    async fn approval_callback_rejects_when_responder_drops() {
+        let (tx, mut rx) = mpsc::channel(1);
+        let callback = tui_approval_callback(&tx);
+
+        let approval_task = tokio::spawn(async move { callback(approval_request()).await });
+
+        let (_, responder) = rx
+            .recv()
+            .await
+            .expect("approval request should be forwarded");
+        drop(responder);
+
+        assert_eq!(approval_task.await.unwrap(), ToolApproval::Rejected);
     }
 }

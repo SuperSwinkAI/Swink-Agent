@@ -8,7 +8,7 @@ license.workspace = true
 repository.workspace = true
 keywords = ["llm", "agent", "pipeline", "multi-agent", "orchestration"]
 categories = ["development-tools", "asynchronous"]
-readme = "../README.md"
+readme = "README.md"
 
 [features]
 default = ["pipelines"]
@@ -16,9 +16,10 @@ pipelines = []
 testkit = ["swink-agent/testkit"]
 
 [dependencies]
-swink-agent = { path = "..", version = "0.8.0", default-features = false }
-tokio = { workspace = true }
+swink-agent = { path = "..", version = "0.8.1", default-features = false }
+tokio = { workspace = true, features = ["macros", "rt", "sync"] }
 tokio-util = { workspace = true }
+futures = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 regex.workspace = true

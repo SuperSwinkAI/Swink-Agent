@@ -9,7 +9,7 @@ A new workspace crate (`swink-agent-plugin-web`) at `plugins/web/` that implemen
 
 ## Technical Context
 
-**Language/Version**: Rust 1.88 (edition 2024)
+**Language/Version**: Rust latest stable (edition 2024)
 **Primary Dependencies**: `swink-agent` (core — Plugin, AgentTool, policy traits, ContentBlock, AgentEvent), `reqwest` 0.13 (HTTP + redirects), `readability` 0.3 (content extraction), `scraper` 0.23 (HTML parsing / CSS selectors for DuckDuckGo Lite endpoint), `serde`/`serde_json` (serialization), `tokio` (async runtime, subprocess management), `base64` (screenshot encoding), `url` (URL parsing/validation), `regex` (injection pattern matching), `tracing` (diagnostics)
 **Storage**: N/A (in-memory state only — rate limiter counter, Playwright subprocess handle)
 **Testing**: `cargo test -p swink-agent-plugin-web` + integration tests with mock HTTP server (`wiremock` or similar)

@@ -8,7 +8,7 @@ license.workspace = true
 repository.workspace = true
 keywords = ["llm", "agent", "policy", "security", "audit"]
 categories = ["development-tools", "security"]
-readme = "../README.md"
+readme = "README.md"
 
 [features]
 default = ["all"]
@@ -26,12 +26,12 @@ content-filter = ["regex"]
 audit = ["chrono", "serde", "serde_json", "unicode-truncate"]
 
 [dependencies]
-swink-agent = { path = "..", version = "0.8.0", default-features = false }
+swink-agent = { path = "..", version = "0.8.1", default-features = false }
 regex = { workspace = true, optional = true }
 chrono = { workspace = true, optional = true }
 serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
-tokio = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true, features = ["rt"] }
 tracing = { workspace = true }
 unicode-truncate = { version = "2", optional = true }
 
@@ -47,14 +47,5 @@ tokio-util = { workspace = true }
 name = "with_policies"
 required-features = ["budget", "max-turns", "deny-list", "loop-detection"]
 
-[lints.rust]
-unsafe_code = "forbid"
-
-[lints.clippy]
-all = { level = "warn", priority = -1 }
-pedantic = { level = "warn", priority = -1 }
-nursery = { level = "warn", priority = -1 }
-module_name_repetitions = "allow"
-must_use_candidate = "allow"
-missing_errors_doc = "allow"
-missing_panics_doc = "allow"
+[lints]
+workspace = true

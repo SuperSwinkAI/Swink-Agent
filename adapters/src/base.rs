@@ -66,6 +66,17 @@ pub const fn pre_stream_error(
     [swink_agent::AssistantMessageEvent::Start, event]
 }
 
+/// Build a standard non-retryable cancellation terminal for pre-stream exits.
+#[must_use]
+pub fn cancelled_error(message: impl Into<String>) -> swink_agent::AssistantMessageEvent {
+    swink_agent::AssistantMessageEvent::Error {
+        stop_reason: swink_agent::StopReason::Aborted,
+        error_message: message.into(),
+        usage: None,
+        error_kind: None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -97,6 +108,18 @@ mod tests {
                 swink_agent::AssistantMessageEvent::Start,
                 swink_agent::AssistantMessageEvent::Error { .. }
             ]
+        ));
+    }
+
+    #[test]
+    fn cancelled_error_uses_aborted_stop_reason() {
+        let event = cancelled_error("cancelled");
+        assert!(matches!(
+            event,
+            swink_agent::AssistantMessageEvent::Error {
+                stop_reason: swink_agent::StopReason::Aborted,
+                ..
+            }
         ));
     }
 }

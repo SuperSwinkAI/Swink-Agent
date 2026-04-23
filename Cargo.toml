@@ -1,18 +1,18 @@
 [workspace]
-members = [".", "adapters", "artifacts", "auth", "eval", "local-llm", "macros", "mcp", "memory", "patterns", "plugins/web", "policies", "tui", "xtask"]
+members = [".", "adapters", "artifacts", "auth", "eval", "eval-judges", "local-llm", "macros", "mcp", "memory", "patterns", "plugins/web", "policies", "tui", "xtask"]
 resolver = "2"
 
 [workspace.package]
-version = "0.8.0"
+version = "0.8.1"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.95"
 license = "MIT"
 repository = "https://github.com/SuperSwinkAI/Swink-Agent"
 
 [workspace.dependencies]
 serde = { version = "1", features = ["derive", "rc"] }
 serde_json = "1"
-tokio = { version = "1", features = ["full"] }
+tokio = "1"
 tokio-util = "0.7"
 tokio-stream = "0.1"
 futures = "0.3"
@@ -28,6 +28,16 @@ criterion = { version = "0.8", features = ["html_reports"] }
 tempfile = "3"
 wiremock = "0.6"
 serde_yaml = "0.9"
+minijinja = "2"
+backon = "1"
+strsim = "0.11.1"
+jsonschema = "0.30"
+opentelemetry = "0.31"
+opentelemetry_sdk = "0.31"
+opentelemetry-otlp = "0.31"
+askama = "0.13"
+clap = { version = "4", features = ["derive"] }
+libc = "0.2"
 sha2 = "0.11"
 hmac = "0.13"
 toml = "0.9"
@@ -46,6 +56,37 @@ aws-smithy-types = "1"
 aws-credential-types = "1.2.14"
 aws-sigv4 = { version = "1.4.2", default-features = false, features = ["sign-http", "http1"] }
 aws-smithy-runtime-api = { version = "1.11.6", features = ["client"] }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+
+# Pedantic/nursery overrides — noisy, stylistic, or churn on toolchain bumps.
+# Keep this list tight; every allow is a signal lost.
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+redundant_pub_crate = "allow"
+# Churn-prone nursery/pedantic lints that fire broadly on toolchain bumps
+# without reliable correctness signal. Adding each here once, at the
+# workspace level, so a new rust release can't silently break CI again.
+missing_const_for_fn = "allow"
+duration_suboptimal_units = "allow"
+cast_possible_truncation = "allow"
+items_after_statements = "allow"
+manual_let_else = "allow"
+option_if_let_else = "allow"
+significant_drop_tightening = "allow"
+doc_markdown = "allow"
+redundant_closure_for_method_calls = "allow"
+trivially_copy_pass_by_ref = "allow"
+format_push_string = "allow"
+unnecessary_literal_bound = "allow"
 
 [package]
 name = "swink-agent"
@@ -67,7 +108,7 @@ split-debuginfo = "unpacked"
 lto = "thin"
 codegen-units = 1
 
-[package.metadata.docs_rs]
+[package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
@@ -87,11 +128,11 @@ otel = ["dep:tracing-opentelemetry", "dep:opentelemetry", "dep:opentelemetry_sdk
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["fs", "io-util", "macros", "process", "rt", "rt-multi-thread", "sync", "time"] }
 tokio-util.workspace = true
 futures.workspace = true
 tokio-stream.workspace = true
-jsonschema = "0.28"
+jsonschema.workspace = true
 schemars.workspace = true
 regex.workspace = true
 uuid.workspace = true
@@ -104,9 +145,9 @@ chrono.workspace = true
 tiktoken-rs = { version = "0.6", optional = true }
 notify = { version = "7", optional = true }
 tracing-opentelemetry = { version = "0.32", optional = true }
-opentelemetry = { version = "0.31", optional = true }
-opentelemetry_sdk = { version = "0.31", features = ["rt-tokio"], optional = true }
-opentelemetry-otlp = { version = "0.31", features = ["grpc-tonic"], optional = true }
+opentelemetry = { workspace = true, optional = true }
+opentelemetry_sdk = { workspace = true, features = ["rt-tokio"], optional = true }
+opentelemetry-otlp = { workspace = true, features = ["grpc-tonic"], optional = true }
 tracing-subscriber = { version = "0.3", features = ["registry"], optional = true }
 
 [[bench]]
@@ -123,23 +164,10 @@ tokio = { workspace = true, features = ["full", "test-util"] }
 wiremock.workspace = true
 proptest.workspace = true
 insta.workspace = true
-opentelemetry = "0.31"
-opentelemetry_sdk = { version = "0.31", features = ["testing", "rt-tokio"] }
+opentelemetry.workspace = true
+opentelemetry_sdk = { workspace = true, features = ["testing", "rt-tokio"] }
 tracing-opentelemetry = "0.32"
 tracing-subscriber = { version = "0.3", features = ["registry"] }
 
-[lints.rust]
-unsafe_code = "forbid"
-
-
-[lints.clippy]
-all = { level = "warn", priority = -1 }
-pedantic = { level = "warn", priority = -1 }
-nursery = { level = "warn", priority = -1 }
-
-# Pedantic overrides — too noisy or stylistic
-module_name_repetitions = "allow"
-must_use_candidate = "allow"
-missing_errors_doc = "allow"
-missing_panics_doc = "allow"
-redundant_pub_crate = "allow"
+[lints]
+workspace = true

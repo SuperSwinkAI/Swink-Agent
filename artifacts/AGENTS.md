@@ -11,6 +11,10 @@
 - `validate_artifact_name` enforces name constraints shared by both backends.
 - `FileArtifactStore` layout: versioned files + JSON metadata sidecar per artifact.
 - Streaming reads available via the `streaming` module.
+- If `meta.json` references a version whose `vN.bin` content file is missing, treat that as store corruption (`InvalidData` storage error), not as an absent artifact/version.
+- `FileArtifactStore::delete` must remove only the exact artifact's direct files, then prune empty parent directories. Recursive directory deletion breaks exact-name semantics for slash-containing artifact IDs like `foo` and `foo/bar`.
+- `FileArtifactStore::discover_artifacts` must normalize filesystem separators back to `/` before returning artifact names; Windows paths otherwise fail `validate_artifact_name` for nested IDs.
+- All filesystem mutations for one artifact key must share `artifact_lock(session_id, name)`. `delete` needs the same lock path as `save` and `save_stream` or concurrent writers can race directory removal.
 
 ## Build & Test
 

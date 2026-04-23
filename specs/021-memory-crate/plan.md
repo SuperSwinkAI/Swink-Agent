@@ -9,7 +9,7 @@ Implement the `swink-agent-memory` workspace crate providing session persistence
 
 ## Technical Context
 
-**Language/Version**: Rust 1.88 (edition 2024)
+**Language/Version**: Rust latest stable (edition 2024)
 **Primary Dependencies**: `serde`, `serde_json`, `tokio` (fs), `chrono` (timestamps), `tracing` (warning on corrupted lines)
 **Storage**: Local filesystem via JSONL files (one file per session)
 **Testing**: `cargo test -p swink-agent-memory`; integration tests with real filesystem I/O preferred over mocks

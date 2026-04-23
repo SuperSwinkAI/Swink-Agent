@@ -4,7 +4,7 @@
 
 ## Prerequisites
 
-- Rust 1.88+ with edition 2024
+- Rust latest stable with edition 2024
 - `swink-agent-eval` crate in workspace
 
 ## Add Dependency

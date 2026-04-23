@@ -446,7 +446,7 @@ async fn approval_request_carries_requires_approval_field() {
 struct RewriteArgsPolicy;
 
 impl PreDispatchPolicy for RewriteArgsPolicy {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "rewrite-args"
     }
 
@@ -471,7 +471,7 @@ async fn approval_sees_post_rewrite_arguments() {
     let options = make_agent(responses, vec![tool])
         .with_pre_dispatch_policy(RewriteArgsPolicy)
         .with_approve_tool(move |req: ToolApprovalRequest| {
-            *cap.lock().unwrap() = Some(req.arguments.clone());
+            *cap.lock().unwrap() = Some(req.arguments);
             Box::pin(async { ToolApproval::Approved })
         })
         .with_approval_mode(ApprovalMode::Enabled);
@@ -497,7 +497,7 @@ async fn approval_sees_post_rewrite_arguments() {
     );
 }
 
-/// Test 15: Smart mode skips approval callback for read-only tools (requires_approval == false).
+/// Test 15: Smart mode skips approval callback for read-only tools (`requires_approval` == false).
 /// Regression test for #270.
 #[tokio::test]
 async fn smart_mode_skips_callback_for_readonly_tools() {
@@ -585,7 +585,7 @@ async fn enabled_mode_routes_readonly_tools_through_callback() {
     );
 }
 
-/// Test 18: ToolApprovalRequested event carries rewritten arguments.
+/// Test 18: `ToolApprovalRequested` event carries rewritten arguments.
 #[tokio::test]
 async fn approval_event_carries_rewritten_arguments() {
     let tool = Arc::new(MockTool::new("test_tool"));

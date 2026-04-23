@@ -121,6 +121,31 @@ pub async fn run_single_turn(
     );
     let _turn_guard = turn_span.enter();
 
+    // ii-a. Publish the previously-recorded cached prefix length into the
+    // sliding-window transformer so compaction protects the cache boundary.
+    // This must happen BEFORE `run_context_transformers` so the compaction
+    // pass sees the right anchor.
+    if config.cache_config.is_some()
+        && let Some(ref transformer) = config.transform_context
+    {
+        let prior_prefix = {
+            let cache_state = config
+                .cache_state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            cache_state.cached_prefix_len
+        };
+        // Clamp to the current message count so compaction never treats a
+        // stale oversized prefix as the anchor.
+        let clamped = prior_prefix.min(state.context_messages.len());
+        if let Some(sw) = transformer
+            .as_any()
+            .downcast_ref::<crate::context_transformer::SlidingWindowTransformer>()
+        {
+            sw.publish_cached_prefix(clamped);
+        }
+    }
+
     // ii. Run context transformers (async first, then sync)
     run_context_transformers(
         config,
@@ -131,7 +156,16 @@ pub async fn run_single_turn(
     .await;
     state.overflow_signal = false;
 
-    // ii-c. Annotate context messages with cache hints if caching is configured
+    // ii-c. Annotate context messages with cache hints if caching is configured.
+    //
+    // The cached prefix is the count of leading messages whose content is
+    // stable enough to be cached on the provider side. We treat the entire
+    // current `context_messages` (post-compaction, pre-stream) as the
+    // cacheable prefix on a `Write` turn: any new assistant reply or
+    // subsequent user message appended later this turn or on the next turn
+    // naturally falls outside the prefix. On a `Read` turn we reuse the
+    // previously-recorded boundary, clamped to the current context length so
+    // compaction-induced shrinkage never produces an out-of-bounds prefix.
     if let Some(ref cache_config) = config.cache_config {
         // Scope the MutexGuard so it's dropped before any await.
         let cache_event = {
@@ -140,7 +174,18 @@ pub async fn run_single_turn(
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             let hint = cache_state.advance_turn(cache_config);
-            let prefix_len = cache_state.cached_prefix_len;
+            let current_len = state.context_messages.len();
+            let prior_prefix = cache_state.cached_prefix_len.min(current_len);
+
+            // Compute the effective prefix for this turn based on the hint.
+            // On `Write` we refresh the cache boundary to cover the whole
+            // current context (every leading message is a candidate for the
+            // new cache). On `Read` we reuse the boundary from the last
+            // `Write`, clamped to today's context.
+            let prefix_len = match hint {
+                crate::context_cache::CacheHint::Write { .. } => current_len,
+                crate::context_cache::CacheHint::Read => prior_prefix,
+            };
 
             // Estimate prefix tokens and check min_tokens threshold
             let prefix_tokens: usize = state
@@ -150,7 +195,7 @@ pub async fn run_single_turn(
                 .map(crate::context::estimate_tokens)
                 .sum();
 
-            if prefix_tokens >= cache_config.min_tokens {
+            if prefix_tokens >= cache_config.min_tokens && prefix_len > 0 {
                 // Annotate cacheable prefix messages with the hint
                 for msg in state.context_messages.iter_mut().take(prefix_len) {
                     msg.set_cache_hint(hint.clone());
@@ -163,6 +208,12 @@ pub async fn run_single_turn(
                 drop(cache_state);
                 Some((hint, prefix_tokens))
             } else {
+                // Threshold not met: clear any stale hints and leave the
+                // recorded prefix alone on `Read`; on `Write` we reset so the
+                // next eligible turn starts fresh.
+                for msg in &mut state.context_messages {
+                    msg.clear_cache_hint();
+                }
                 drop(cache_state);
                 None
             }
@@ -182,33 +233,14 @@ pub async fn run_single_turn(
     }
 
     // ii-d. Inject dynamic system prompt as a user-role message (non-cacheable)
-    let dynamic_prompt_injected = config
-        .dynamic_system_prompt
-        .as_ref()
-        .and_then(|dynamic_fn| {
-            let dynamic_text = dynamic_fn();
-            if dynamic_text.is_empty() {
-                None
-            } else {
-                Some(LlmMessage::User(crate::types::UserMessage {
-                    content: vec![ContentBlock::Text { text: dynamic_text }],
-                    timestamp: crate::util::now_timestamp(),
-                    cache_hint: None,
-                }))
-            }
-        });
+    let dynamic_prompt_injected = build_dynamic_system_prompt_message(config);
 
     // iii. Apply convert_to_llm to filter messages for the provider
-    let mut llm_messages: Vec<LlmMessage> = state
-        .context_messages
-        .iter()
-        .filter_map(|m| (config.convert_to_llm)(m))
-        .collect();
-
-    // Insert dynamic prompt as the first message (after system prompt, before history)
-    if let Some(dynamic_msg) = dynamic_prompt_injected {
-        llm_messages.insert(0, dynamic_msg);
-    }
+    let llm_messages = build_llm_messages(
+        config,
+        &state.context_messages,
+        dynamic_prompt_injected.as_ref(),
+    );
 
     // iv. Resolve a per-call API key if configured
     let api_key = if let Some(ref get_key) = config.get_api_key {
@@ -249,6 +281,7 @@ pub async fn run_single_turn(
         &llm_messages,
         system_prompt,
         api_key.clone(),
+        true,
         cancellation_token,
         tx,
     )
@@ -262,6 +295,7 @@ pub async fn run_single_turn(
             state,
             system_prompt,
             &agent_context,
+            dynamic_prompt_injected.as_ref(),
             api_key,
             cancellation_token,
             tx,
@@ -339,6 +373,43 @@ pub async fn run_single_turn(
         tx,
     )
     .await
+}
+
+pub(super) fn build_dynamic_system_prompt_message(
+    config: &Arc<AgentLoopConfig>,
+) -> Option<LlmMessage> {
+    config
+        .dynamic_system_prompt
+        .as_ref()
+        .and_then(|dynamic_fn| {
+            let dynamic_text = dynamic_fn();
+            if dynamic_text.is_empty() {
+                None
+            } else {
+                Some(LlmMessage::User(crate::types::UserMessage {
+                    content: vec![ContentBlock::Text { text: dynamic_text }],
+                    timestamp: now_timestamp(),
+                    cache_hint: None,
+                }))
+            }
+        })
+}
+
+pub(super) fn build_llm_messages(
+    config: &AgentLoopConfig,
+    context_messages: &[AgentMessage],
+    dynamic_prompt_injected: Option<&LlmMessage>,
+) -> Vec<LlmMessage> {
+    let mut llm_messages: Vec<LlmMessage> = context_messages
+        .iter()
+        .filter_map(|message| (config.convert_to_llm)(message))
+        .collect();
+
+    if let Some(dynamic_prompt) = dynamic_prompt_injected {
+        llm_messages.insert(0, dynamic_prompt.clone());
+    }
+
+    llm_messages
 }
 
 // ─── Context transformer runner ─────────────────────────────────────────
@@ -540,6 +611,7 @@ async fn emit_cancellation_for_turn(
     state: &mut LoopState,
     tx: &mpsc::Sender<AgentEvent>,
     emit_turn_start: bool,
+    emit_message_start: bool,
 ) -> TurnOutcome {
     let abort_msg = build_abort_message(&config.model);
     let msg_for_event = abort_msg.clone();
@@ -549,7 +621,7 @@ async fn emit_cancellation_for_turn(
     if emit_turn_start && !emit(tx, AgentEvent::TurnStart).await {
         return TurnOutcome::Return;
     }
-    if !emit(tx, AgentEvent::MessageStart).await {
+    if emit_message_start && !emit(tx, AgentEvent::MessageStart).await {
         return TurnOutcome::Return;
     }
     if !emit(
@@ -580,7 +652,7 @@ pub(super) async fn handle_cancellation(
     state: &mut LoopState,
     tx: &mpsc::Sender<AgentEvent>,
 ) -> TurnOutcome {
-    emit_cancellation_for_turn(config, state, tx, true).await
+    emit_cancellation_for_turn(config, state, tx, true, true).await
 }
 
 /// Emit cancellation events for a turn that already emitted `TurnStart`.
@@ -589,7 +661,7 @@ pub(super) async fn handle_started_turn_cancellation(
     state: &mut LoopState,
     tx: &mpsc::Sender<AgentEvent>,
 ) -> TurnOutcome {
-    emit_cancellation_for_turn(config, state, tx, false).await
+    emit_cancellation_for_turn(config, state, tx, false, false).await
 }
 
 /// Process the `StreamResult`, returning the assistant message on success,
@@ -752,7 +824,7 @@ fn run_post_turn_policy_check(
                             replaced = new_msg;
                         } else {
                             tracing::warn!(
-                                "ignoring post-turn assistant replacement that would drop tool calls"
+                                "ignoring post-turn assistant replacement that would change tool calls"
                             );
                         }
                     }
@@ -779,10 +851,6 @@ fn assistant_replacement_preserves_tool_calls(
         .filter(|block| matches!(block, ContentBlock::ToolCall { .. }))
         .cloned()
         .collect();
-
-    if original_tool_calls.is_empty() {
-        return true;
-    }
 
     let replacement_tool_calls: Vec<ContentBlock> = replacement
         .content
@@ -857,6 +925,14 @@ async fn handle_no_tool_calls(
         return emit_agent_end(state, tx).await;
     }
 
+    if let Some(ref provider) = config.message_provider {
+        let msgs = provider.poll_steering();
+        if !msgs.is_empty() {
+            state.pending_messages.extend(msgs);
+            sync_pending_message_snapshot(config, state);
+        }
+    }
+
     if state.pending_messages.is_empty() {
         TurnOutcome::BreakInner
     } else {
@@ -906,6 +982,7 @@ async fn handle_tool_calls(
     let mut steering_interrupted = false;
     let mut collected_tool_metrics: Vec<crate::metrics::ToolExecMetrics> = Vec::new();
     let mut detected_transfer_signal: Option<crate::transfer::TransferSignal> = None;
+    let mut dispatch_stop_reason: Option<String> = None;
 
     if !tool_call_data.is_empty() {
         let exec_results =
@@ -921,6 +998,18 @@ async fn handle_tool_calls(
                 tool_results.extend(results);
                 collected_tool_metrics = tool_metrics;
                 detected_transfer_signal = transfer_signal;
+                state.pending_messages.extend(injected_messages);
+                sync_pending_message_snapshot(config, state);
+            }
+            ToolExecOutcome::Stopped {
+                results,
+                tool_metrics,
+                reason,
+                injected_messages,
+            } => {
+                tool_results.extend(results);
+                collected_tool_metrics = tool_metrics;
+                dispatch_stop_reason = Some(reason);
                 state.pending_messages.extend(injected_messages);
                 sync_pending_message_snapshot(config, state);
             }
@@ -1134,6 +1223,11 @@ async fn handle_tool_calls(
     .await
     {
         return TurnOutcome::Return;
+    }
+
+    if let Some(reason) = dispatch_stop_reason {
+        tracing::info!("tool dispatch stopped agent: {reason}");
+        return emit_agent_end(state, tx).await;
     }
 
     if let Some(reason) = policy_stop {

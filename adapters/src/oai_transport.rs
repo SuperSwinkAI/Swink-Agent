@@ -205,7 +205,15 @@ pub fn oai_send_and_parse<'a>(
     classify_error: impl Fn(u16, &str) -> Option<AssistantMessageEvent> + Send + 'a,
 ) -> impl Stream<Item = AssistantMessageEvent> + Send + 'a {
     stream::once(async move {
-        let response = match request.send().await {
+        let response = match tokio::select! {
+            () = cancellation_token.cancelled() => {
+                return stream::iter(Vec::from(crate::base::pre_stream_error(
+                    crate::base::cancelled_error("operation cancelled"),
+                )))
+                .left_stream();
+            }
+            response = request.send() => response
+        } {
             Ok(resp) => resp,
             Err(e) => {
                 return stream::iter(vec![

@@ -379,7 +379,24 @@ async fn agent_end_subscriber_retaining_messages_does_not_lose_history() {
 
     assert_eq!(
         agent.state().messages.len(),
-        3,
-        "state should not duplicate history across prompt + continue"
+        4,
+        "continued steering should be recorded once without duplicating prior history"
+    );
+    assert_eq!(
+        agent
+            .state()
+            .messages
+            .iter()
+            .filter(|message| matches!(
+                message,
+                AgentMessage::Llm(LlmMessage::User(UserMessage { content, .. }))
+                if content.iter().any(|block| matches!(
+                    block,
+                    ContentBlock::Text { text } if text == "follow-up"
+                ))
+            ))
+            .count(),
+        1,
+        "queued steering should be committed exactly once during continue"
     );
 }

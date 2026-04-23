@@ -34,7 +34,7 @@ Pure-Rust library for LLM-powered agentic loops. Provider-agnostic core with plu
 
 | Pillar | Version | Role |
 |---|---|---|
-| Rust | 1.88 (edition 2024) | Language / MSRV |
+| Rust | 1.95 (edition 2024) | Language / MSRV |
 | tokio | 1 | Async runtime |
 | serde / serde_json | 1 | Serialization |
 | reqwest | 0.13 | HTTP client |
@@ -58,13 +58,17 @@ cargo run -p swink-agent-tui                      # launch TUI (.env auto-loaded
 
 Workspace-wide `build` / `test` / `clippy` commands compile `swink-agent-local-llm`, which currently pulls `llama-cpp-sys-2` and its `bindgen` build step. Install LLVM/libclang first and set `LIBCLANG_PATH` if your platform does not auto-discover the shared library (especially common on Windows).
 
-MSRV **1.88** (edition 2024). Common workspace deps are centralized in root `Cargo.toml`, with a few crate-specific dependencies declared locally where needed.
+MSRV **1.95** (edition 2024). Common workspace deps are centralized in root `Cargo.toml`, with a few crate-specific dependencies declared locally where needed.
 
 ## Branch Model
 
 Two long-lived branches:
 - **`integration`** — default branch. All feature PRs target here. **New work always branches off `integration`.**
 - **`main`** — stable releases only. Every commit is a tagged crates.io publish.
+
+**All PRs target `integration` unless the reviewer explicitly requests `main`.** This applies to human-authored PRs, automated agent PRs, and subagent-created PRs alike. When scripting `gh pr create`, always pass `--base integration`. A PR targeting `main` without an explicit release request is a process error — retarget with `gh pr edit <N> --base integration` and rebase onto `integration` if needed.
+
+`main` can lag `integration` by several features. Branches forked off `main` may be missing helpers or API changes that exist on `integration` and will fail CI with `cannot find …` errors. Always branch from `integration`.
 
 Release flow: squash-merge `integration` → `main` + push version tag → crates.io publish triggered automatically.
 Hotfix flow: branch off `main` → fix → squash-merge to `main` + tag → cherry-pick to `integration`.
@@ -147,6 +151,8 @@ gh pr comment <number> --body-file /tmp/comment.md
 - `transform_context` is **synchronous** (not async).
 - `CONTEXT_OVERFLOW_SENTINEL` triggers overflow retry — loop control signal, not an error.
 - Tool dispatch order: PreDispatch policies → Approval → Schema validation → `execute()`.
+- Overflow recovery retries and started-turn cancellation must reuse the original message lifecycle; once a turn has emitted `MessageStart`, follow-on recovery/cancellation paths must suppress any second `MessageStart`.
+- Post-turn assistant replacements must preserve the exact `ToolCall` block sequence, including the empty set; replacements may rewrite text/metadata, but they cannot add or remove tool-call intent after model output.
 
 ### Policy Slots (`src/policy.rs`)
 
@@ -170,7 +176,7 @@ gh pr comment <number> --body-file /tmp/comment.md
 - `NamespacedTool` prefixes as `"{plugin_name}_{tool_name}"` (underscore, not dot — Anthropic/Bedrock/OpenAI reject dots) and sanitizes both components to the common subset `^[a-zA-Z][a-zA-Z0-9_]{0,63}$` accepted by every provider. Prevents tool name collisions across plugins and guarantees wire-level validity.
 - Long namespaced tool names must keep a deterministic hash suffix when truncated; raw prefix truncation can collapse distinct plugin/tool pairs onto the same wire name.
 - Contributions merged in `Agent::new()`: plugin policies **prepended** (priority-sorted), direct policies appended; plugin tools appended after direct tools.
-- `Agent::new()` and `Agent::set_tools()` must reject duplicate final tool names after composition instead of relying on dispatch's "keep first" fallback; schema export and lookup need the same unique wire-name set.
+- `Agent::new()` must still reject true duplicate final tool names, but plugin composition has one explicit exception from spec 037: if a namespaced plugin tool collides with a directly-registered tool name, the direct tool keeps precedence and the plugin tool is skipped with a warning.
 - `on_init(&self, &Agent)` dispatched in priority order, wrapped in `catch_unwind` — panicking `on_init` is logged and skipped, construction continues.
 - Entire module behind `#[cfg(feature = "plugins")]` — opt-in, not default-enabled, zero cost when disabled.
 
@@ -222,6 +228,7 @@ gh pr comment <number> --body-file /tmp/comment.md
 ### Credential Management (`auth/`)
 
 - `DefaultCredentialResolver` can reuse a per-key `SingleFlightTokenSource`, but the credential store remains the source of truth. Clear the token source's cached value before resolving an expired key from the store, or a previously refreshed token can mask later external store updates.
+- `CredentialError::StoreError` must keep `Display` generic (`credential store error`) and only expose backend detail through the inner source error. Tool execution formats `CredentialError` directly for user-visible output, so backend store text cannot appear there.
 
 ### Atomic FS (`src/atomic_fs.rs`)
 
@@ -236,7 +243,7 @@ gh pr comment <number> --body-file /tmp/comment.md
 
 **Root crate (`swink-agent`):**
 - `builtin-tools` (default-enabled) — gates `BashTool`, `ReadFileTool`, `WriteFileTool`.
-- `testkit` — gates the `testing` module. Not default-enabled; consumers add `features = ["testkit"]` in dev-dependencies. Integration tests in `/tests/` are gated with `#![cfg(feature = "testkit")]`.
+- `testkit` — gates the `testing` module. Not default-enabled; consumers add `features = ["testkit"]` in dev-dependencies. The root crate's `/tests/` suite is gated with `#![cfg(feature = "testkit")]`, but workspace integration coverage is mixed because crate-local tests such as `tui/tests/` still run under their own default feature sets.
 - `plugins` — gates `plugin` module. Not default-enabled. `MockPlugin` in `testing.rs` also gated behind this feature.
 - Root crate cannot re-export adapters/local-llm/TUI (cyclic dependency). Consumers depend on sub-crates directly.
 

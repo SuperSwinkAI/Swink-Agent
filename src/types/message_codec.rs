@@ -89,8 +89,9 @@ pub fn serialize_messages(messages: &[AgentMessage], kind: &str) -> SerializedMe
                     custom_messages.push(envelope);
                 } else {
                     tracing::warn!(
-                        "skipping non-serializable CustomMessage in {kind}: {:?}",
-                        custom
+                        kind,
+                        type_name = custom.type_name().unwrap_or("<unknown>"),
+                        "skipping non-serializable CustomMessage"
                     );
                 }
             }
@@ -268,10 +269,14 @@ pub fn clone_messages_for_send(messages: &[AgentMessage]) -> Vec<AgentMessage> {
 
 #[cfg(test)]
 mod tests {
+    use std::io::{self, Write};
+    use std::sync::{Arc, Mutex};
+
     use super::*;
     use crate::types::{
         AssistantMessage, ContentBlock, Cost, CustomMessage, StopReason, Usage, UserMessage,
     };
+    use tracing_subscriber::fmt::MakeWriter;
 
     // ── Test helpers ────────────────────────────────────────────────────────
 
@@ -281,6 +286,54 @@ mod tests {
     impl CustomMessage for NonSerializableCustom {
         fn as_any(&self) -> &dyn std::any::Any {
             self
+        }
+    }
+
+    const LEAK_SENTINEL: &str = "LEAK_SENTINEL_717";
+
+    #[derive(Debug)]
+    struct NamedNonSerializableCustom {
+        _secret: String,
+    }
+
+    impl CustomMessage for NamedNonSerializableCustom {
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+
+        fn type_name(&self) -> Option<&str> {
+            Some("named_non_serializable")
+        }
+    }
+
+    #[derive(Clone, Default)]
+    struct SharedLogBuffer(Arc<Mutex<Vec<u8>>>);
+
+    impl SharedLogBuffer {
+        fn contents(&self) -> String {
+            let bytes = self.0.lock().unwrap().clone();
+            String::from_utf8(bytes).unwrap()
+        }
+    }
+
+    struct SharedLogWriter(Arc<Mutex<Vec<u8>>>);
+
+    impl Write for SharedLogWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> MakeWriter<'a> for SharedLogBuffer {
+        type Writer = SharedLogWriter;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            SharedLogWriter(Arc::clone(&self.0))
         }
     }
 
@@ -384,6 +437,38 @@ mod tests {
         assert_eq!(result.llm_messages.len(), 2);
         assert!(result.custom_messages.is_empty());
         assert_eq!(result.message_order.len(), 2);
+    }
+
+    #[test]
+    fn serialize_warning_redacts_non_serializable_custom_debug_payload() {
+        let messages = vec![AgentMessage::Custom(Box::new(NamedNonSerializableCustom {
+            _secret: LEAK_SENTINEL.to_string(),
+        }))];
+
+        let logs = SharedLogBuffer::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::WARN)
+            .without_time()
+            .with_writer(logs.clone())
+            .finish();
+        let _guard = tracing::subscriber::set_default(subscriber);
+
+        let result = serialize_messages(&messages, "checkpoint");
+        let log_output = logs.contents();
+
+        assert!(result.custom_messages.is_empty());
+        assert!(
+            !log_output.contains(LEAK_SENTINEL),
+            "warning log leaked debug payload: {log_output}"
+        );
+        assert!(
+            log_output.contains("named_non_serializable"),
+            "warning log should include custom type name: {log_output}"
+        );
+        assert!(
+            log_output.contains("checkpoint"),
+            "warning log should include serialization context: {log_output}"
+        );
     }
 
     #[test]

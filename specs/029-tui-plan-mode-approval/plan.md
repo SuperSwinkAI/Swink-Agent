@@ -9,7 +9,7 @@ Add an approval-gated plan mode exit and a trust follow-up prompt to the TUI. Mo
 
 ## Technical Context
 
-**Language/Version**: Rust 1.88 (edition 2024)
+**Language/Version**: Rust latest stable (edition 2024)
 **Primary Dependencies**: `swink-agent` (core), `ratatui` 0.30, `crossterm` 0.29, `tokio`, `tokio-util`
 **Storage**: N/A (all state is in-memory per session)
 **Testing**: `cargo test --workspace` + `cargo clippy --workspace -- -D warnings`
@@ -32,7 +32,7 @@ Add an approval-gated plan mode exit and a trust follow-up prompt to the TUI. Mo
 | V. Provider Agnosticism | PASS | No provider-specific code. |
 | VI. Safety & Correctness | PASS | No unsafe. All new state is `Option`-wrapped with clear lifecycle. |
 | Crate count | PASS | No new crates (7 workspace members unchanged). |
-| MSRV | PASS | 1.88, edition 2024. |
+| MSRV | PASS | latest stable, edition 2024. |
 | Concurrency | PASS | No new concurrency. Plan approval is synchronous UI state. |
 | Events outward-only | PASS | No new event types. |
 | No global mutable state | PASS | All state on `App` struct. |

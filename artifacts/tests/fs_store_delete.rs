@@ -74,3 +74,41 @@ async fn fs_delete_nonexistent_succeeds() {
     let (data, _) = store.load("s1", "keep.txt").await.unwrap().unwrap();
     assert_eq!(data.content, b"hello");
 }
+
+// T073: fs_delete_exact_name_preserves_nested_children
+#[tokio::test]
+async fn fs_delete_exact_name_preserves_nested_children() {
+    let tmpdir = tempfile::TempDir::new().unwrap();
+    let store = FileArtifactStore::new(tmpdir.path());
+
+    store.save("s1", "foo", text_data("parent")).await.unwrap();
+    store
+        .save("s1", "foo/bar", text_data("child"))
+        .await
+        .unwrap();
+
+    store.delete("s1", "foo").await.unwrap();
+
+    assert!(
+        store.load("s1", "foo").await.unwrap().is_none(),
+        "deleting the exact parent artifact should remove that logical name"
+    );
+
+    let (child, version) = store.load("s1", "foo/bar").await.unwrap().unwrap();
+    assert_eq!(version.name, "foo/bar");
+    assert_eq!(child.content, b"child");
+
+    let names = store
+        .list("s1")
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|meta| meta.name)
+        .collect::<Vec<_>>();
+    assert_eq!(names, vec!["foo/bar".to_string()]);
+
+    assert!(
+        tmpdir.path().join("s1").join("foo").join("bar").exists(),
+        "child artifact directory must survive parent-name deletion"
+    );
+}

@@ -16,7 +16,7 @@ aggregation methods.
 
 ## Technical Context
 
-**Language/Version**: Rust 1.88 (edition 2024)
+**Language/Version**: Rust latest stable (edition 2024)
 **Primary Dependencies**: serde, serde_json, thiserror, uuid, schemars (all workspace deps)
 **Storage**: N/A (in-memory types only)
 **Testing**: `cargo test --workspace`

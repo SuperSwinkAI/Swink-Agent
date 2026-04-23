@@ -3,7 +3,7 @@
 mod common;
 
 use swink_agent_eval::{
-    EvalCase, EvalMetricResult, Evaluator, EvaluatorRegistry, Invocation, Score,
+    EvalCase, EvalError, EvalMetricResult, Evaluator, EvaluatorRegistry, Invocation, Score,
 };
 
 fn minimal_case() -> EvalCase {
@@ -18,6 +18,10 @@ fn minimal_case() -> EvalCase {
         budget: None,
         evaluators: vec![],
         metadata: serde_json::Value::Null,
+        expected_environment_state: None,
+        expected_tool_intent: None,
+        semantic_tool_selection: false,
+        state_capture: None,
     }
 }
 
@@ -62,6 +66,18 @@ impl Evaluator for ReturnsNone {
 
     fn evaluate(&self, _case: &EvalCase, _invocation: &Invocation) -> Option<EvalMetricResult> {
         None
+    }
+}
+
+struct Panics;
+
+impl Evaluator for Panics {
+    fn name(&self) -> &'static str {
+        "panics"
+    }
+
+    fn evaluate(&self, _case: &EvalCase, _invocation: &Invocation) -> Option<EvalMetricResult> {
+        panic!("deliberate evaluator panic");
     }
 }
 
@@ -116,6 +132,39 @@ fn evaluator_returning_none_excluded() {
 }
 
 #[test]
+fn panicking_evaluator_becomes_failure_and_other_evaluators_continue() {
+    let mut registry = EvaluatorRegistry::new();
+    registry.register(Panics);
+    registry.register(AlwaysPass);
+
+    let invocation = common::mock_invocation(&[], None, 0.0, 0);
+    let case = minimal_case();
+    let results = registry.evaluate(&case, &invocation);
+
+    assert_eq!(results.len(), 2);
+
+    let panic_metric = results
+        .iter()
+        .find(|result| result.evaluator_name == "panics")
+        .expect("panicking evaluator should produce a failure metric");
+    assert_eq!(panic_metric.score.verdict(), Score::fail().verdict());
+    assert!(
+        panic_metric
+            .details
+            .as_deref()
+            .is_some_and(|details| details.contains("deliberate evaluator panic")),
+        "panic metric should preserve the panic message"
+    );
+
+    assert!(
+        results
+            .iter()
+            .any(|result| result.evaluator_name == "always_pass"),
+        "later evaluators should still run after a panic"
+    );
+}
+
+#[test]
 fn case_evaluator_filter_restricts_which_run() {
     let mut registry = EvaluatorRegistry::new();
     registry.register(AlwaysPass);
@@ -160,4 +209,24 @@ fn closure_evaluator_works() {
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].evaluator_name, "my_closure");
     assert!((results[0].score.value - 0.75).abs() < f64::EPSILON);
+}
+
+#[test]
+fn duplicate_names_return_structured_error_from_add() {
+    let mut registry = EvaluatorRegistry::new();
+    registry
+        .add(AlwaysPass)
+        .expect("first registration should succeed");
+
+    let err = registry
+        .add((
+            "always_pass",
+            |_case: &EvalCase, _inv: &Invocation| -> Option<EvalMetricResult> { None },
+        ))
+        .expect_err("duplicate evaluator names must be rejected");
+
+    match err {
+        EvalError::DuplicateEvaluator { name } => assert_eq!(name, "always_pass"),
+        other => panic!("expected DuplicateEvaluator, got {other:?}"),
+    }
 }

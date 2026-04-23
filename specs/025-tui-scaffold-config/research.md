@@ -64,7 +64,7 @@
 ## R8: Non-Interactive Terminal Detection
 
 **Decision**: Check `std::io::stdout().is_terminal()` at program start
-**Rationale**: `IsTerminal` is stable since Rust 1.70 (well within MSRV 1.88). If stdout is not a terminal (piped, redirected, `script` command), the TUI cannot function — attempting to enter alternate screen or enable raw mode would produce garbage output or errors. Detecting early and printing a clear error to stderr provides a good user experience.
+**Rationale**: `IsTerminal` is stable since Rust 1.70 (well within MSRV latest stable). If stdout is not a terminal (piped, redirected, `script` command), the TUI cannot function — attempting to enter alternate screen or enable raw mode would produce garbage output or errors. Detecting early and printing a clear error to stderr provides a good user experience.
 **Alternatives considered**:
 - Let crossterm fail: Produces cryptic errors. Poor UX.
 - `atty` crate: External dependency for something now in std. Unnecessary.

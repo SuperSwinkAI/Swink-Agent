@@ -64,7 +64,8 @@ fn encode(msg: &AgentMessage, session_id: &str) -> Option<(MessageKind, String)>
             let Some(envelope) = serialize_custom_message(custom.as_ref()) else {
                 tracing::warn!(
                     session_id,
-                    "skipping non-serializable CustomMessage: {custom:?}"
+                    type_name = custom.type_name().unwrap_or("<unknown>"),
+                    "skipping non-serializable CustomMessage"
                 );
                 return None;
             };
@@ -113,7 +114,8 @@ pub fn encode_jsonl_message_line(msg: &AgentMessage, session_id: &str) -> Option
             let Some(envelope) = serialize_custom_message(custom.as_ref()) else {
                 tracing::warn!(
                     session_id,
-                    "skipping non-serializable CustomMessage: {custom:?}"
+                    type_name = custom.type_name().unwrap_or("<unknown>"),
+                    "skipping non-serializable CustomMessage"
                 );
                 return None;
             };
@@ -191,8 +193,60 @@ fn decode_session_entry(kind: &str, data: &str) -> io::Result<Option<SessionEntr
 
 #[cfg(test)]
 mod tests {
+    use std::io::{self, Write};
+    use std::sync::{Arc, Mutex};
+
     use super::*;
-    use swink_agent::{ContentBlock, LlmMessage, UserMessage};
+    use swink_agent::{ContentBlock, CustomMessage, LlmMessage, UserMessage};
+    use tracing_subscriber::fmt::MakeWriter;
+
+    const LEAK_SENTINEL: &str = "LEAK_SENTINEL_717";
+
+    #[derive(Debug)]
+    struct NamedNonSerializableCustom {
+        _secret: String,
+    }
+
+    impl CustomMessage for NamedNonSerializableCustom {
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+
+        fn type_name(&self) -> Option<&str> {
+            Some("named_non_serializable")
+        }
+    }
+
+    #[derive(Clone, Default)]
+    struct SharedLogBuffer(Arc<Mutex<Vec<u8>>>);
+
+    impl SharedLogBuffer {
+        fn contents(&self) -> String {
+            let bytes = self.0.lock().unwrap().clone();
+            String::from_utf8(bytes).unwrap()
+        }
+    }
+
+    struct SharedLogWriter(Arc<Mutex<Vec<u8>>>);
+
+    impl Write for SharedLogWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> MakeWriter<'a> for SharedLogBuffer {
+        type Writer = SharedLogWriter;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            SharedLogWriter(Arc::clone(&self.0))
+        }
+    }
 
     fn user_msg() -> AgentMessage {
         AgentMessage::Llm(LlmMessage::User(UserMessage {
@@ -307,5 +361,37 @@ mod tests {
             .expect("entry preserved");
 
         assert!(matches!(decoded, SessionEntry::Custom { .. }));
+    }
+
+    #[test]
+    fn encode_warning_redacts_non_serializable_custom_debug_payload() {
+        let msg = AgentMessage::Custom(Box::new(NamedNonSerializableCustom {
+            _secret: LEAK_SENTINEL.to_string(),
+        }));
+
+        let logs = SharedLogBuffer::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::WARN)
+            .without_time()
+            .with_writer(logs.clone())
+            .finish();
+        let _guard = tracing::subscriber::set_default(subscriber);
+
+        let encoded = encode(&msg, "session-123");
+        let log_output = logs.contents();
+
+        assert!(encoded.is_none());
+        assert!(
+            !log_output.contains(LEAK_SENTINEL),
+            "warning log leaked debug payload: {log_output}"
+        );
+        assert!(
+            log_output.contains("named_non_serializable"),
+            "warning log should include custom type name: {log_output}"
+        );
+        assert!(
+            log_output.contains("session-123"),
+            "warning log should include session context: {log_output}"
+        );
     }
 }

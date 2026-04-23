@@ -1,0 +1,57 @@
+[package]
+name = "swink-agent-eval-judges"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Judge client implementations for swink-agent-eval"
+license.workspace = true
+repository.workspace = true
+readme = "../README.md"
+keywords = ["llm", "eval", "judge", "adapter", "testing"]
+categories = ["development-tools", "api-bindings", "asynchronous"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[features]
+default = []
+all-judges = [
+    "anthropic",
+    "openai",
+    "bedrock",
+    "gemini",
+    "mistral",
+    "azure",
+    "xai",
+    "ollama",
+    "proxy",
+]
+anthropic = ["dep:swink-agent-adapters", "swink-agent-eval/judge-core"]
+openai = ["dep:swink-agent-adapters", "swink-agent-eval/judge-core"]
+bedrock = ["dep:swink-agent-adapters", "swink-agent-eval/judge-core"]
+gemini = ["dep:swink-agent-adapters", "swink-agent-eval/judge-core"]
+mistral = ["dep:swink-agent-adapters", "swink-agent-eval/judge-core"]
+azure = ["dep:swink-agent-adapters", "swink-agent-eval/judge-core"]
+xai = ["dep:swink-agent-adapters", "swink-agent-eval/judge-core"]
+ollama = ["dep:swink-agent-adapters", "swink-agent-eval/judge-core"]
+proxy = ["dep:swink-agent-adapters", "swink-agent-eval/judge-core"]
+live-judges = []
+
+[dependencies]
+swink-agent-eval = { path = "../eval", version = "0.8.1", default-features = false }
+swink-agent-adapters = { path = "../adapters", version = "0.8.1", default-features = false, optional = true }
+async-trait = "0.1"
+backon.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+wiremock.workspace = true
+
+[lints]
+workspace = true

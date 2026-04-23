@@ -9,7 +9,7 @@ use swink_agent::{
 struct PanickingMutatingPolicy;
 
 impl PreDispatchPolicy for PanickingMutatingPolicy {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "panicking_mutator"
     }
 
@@ -27,7 +27,7 @@ struct RejectIfKeyPresentPolicy {
 }
 
 impl PreDispatchPolicy for RejectIfKeyPresentPolicy {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "reject_if_key_present"
     }
 

@@ -9,14 +9,14 @@ Add granular Cargo feature flags across two workspace crates (adapters, local-ll
 
 ## Technical Context
 
-**Language/Version**: Rust 1.88 (edition 2024)
+**Language/Version**: Rust latest stable (edition 2024)
 **Primary Dependencies**: Workspace deps centralized in root Cargo.toml. Key deps for this feature: `llama-cpp-2` (backend features), `eventsource-stream` 0.2 (proxy-only), `sha2` (bedrock-only).
 **Storage**: N/A
 **Testing**: `cargo test --workspace` + `cargo build` with various feature combinations
 **Target Platform**: Cross-platform (macOS/Metal, Windows+Linux/CUDA, all/CPU)
 **Project Type**: Library (Rust workspace)
 **Performance Goals**: N/A (compile-time only change)
-**Constraints**: Must not break existing public API. `#[forbid(unsafe_code)]` on all crate roots. MSRV 1.88.
+**Constraints**: Must not break existing public API. `#[forbid(unsafe_code)]` on all crate roots. MSRV latest stable.
 **Scale/Scope**: 2 crates modified (adapters, local-llm). ~9 new feature flags on adapters, ~6 on local-llm. Root crate unchanged (cyclic dependency prevents root → adapters optional dep).
 
 ## Constitution Check
@@ -35,7 +35,7 @@ Add granular Cargo feature flags across two workspace crates (adapters, local-ll
 | Constraint | Status | Notes |
 |------------|--------|-------|
 | Crate count (8 members) | **PASS** | No new crates. Modifying existing crates only. (Constitution says 7 — stale; policies crate added in 032.) |
-| MSRV 1.88 | **PASS** | Feature flags are stable Rust. `dep:` syntax available since 1.60. |
+| MSRV latest stable | **PASS** | Feature flags are stable Rust. `dep:` syntax available since 1.60. |
 | No global mutable state | **PASS** | No runtime state changes. |
 
 **Post-Phase 1 re-check**: All gates still pass. Root crate is unchanged — consumers depend on sub-crates directly for adapter/backend selection.

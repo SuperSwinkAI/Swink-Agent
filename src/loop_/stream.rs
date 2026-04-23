@@ -26,12 +26,14 @@ use super::{
 /// [`ModelFallback`](crate::fallback::ModelFallback) chain is configured, each
 /// fallback model is tried in order (with its own fresh retry budget) before
 /// the error is surfaced.
+#[allow(clippy::too_many_arguments)]
 pub async fn stream_with_retry(
     config: &Arc<AgentLoopConfig>,
     agent_context: &AgentContext,
     llm_messages: &[LlmMessage],
     system_prompt: &str,
     api_key: Option<String>,
+    emit_message_start: bool,
     cancellation_token: &CancellationToken,
     tx: &mpsc::Sender<AgentEvent>,
 ) -> StreamResult {
@@ -44,6 +46,7 @@ pub async fn stream_with_retry(
         llm_messages,
         system_prompt,
         api_key.clone(),
+        emit_message_start,
         cancellation_token,
         tx,
     )
@@ -99,6 +102,7 @@ pub async fn stream_with_retry(
             llm_messages,
             system_prompt,
             api_key.clone(),
+            emit_message_start,
             cancellation_token,
             tx,
         )
@@ -147,6 +151,7 @@ async fn stream_with_retry_single(
     llm_messages: &[LlmMessage],
     system_prompt: &str,
     api_key: Option<String>,
+    emit_message_start: bool,
     cancellation_token: &CancellationToken,
     tx: &mpsc::Sender<AgentEvent>,
 ) -> StreamResult {
@@ -183,24 +188,39 @@ async fn stream_with_retry_single(
         let mut stream_options = config.stream_options.clone();
         stream_options.api_key = api_key.clone();
 
-        // Emit MessageStart
-        if !emit(tx, AgentEvent::MessageStart).await {
+        // Emit MessageStart once for the logical turn. Attempt-local deltas are
+        // buffered until the terminal attempt so retries do not leak stale
+        // partials or duplicate lifecycle starts.
+        if emit_message_start && attempt == 1 && !emit(tx, AgentEvent::MessageStart).await {
             return StreamResult::ChannelClosed;
         }
 
-        // Stream from the provider and collect events + emit deltas
+        // Stream from the provider and collect attempt-local events. Deltas are
+        // only replayed once a terminal attempt is known.
         let attempt_result = stream_single_attempt(
             model,
             stream_fn,
             &call_context,
             &stream_options,
             cancellation_token,
-            tx,
         )
         .await;
 
         let (events, had_error) = match attempt_result {
-            StreamAttemptResult::EarlyExit(result) => return result,
+            StreamAttemptResult::EarlyExit { result, events } => {
+                if let Some(exit) = emit_attempt_deltas(&events, tx).await {
+                    return exit;
+                }
+
+                if matches!(result, StreamResult::Aborted) {
+                    let abort_msg = build_abort_message(model);
+                    if !emit(tx, AgentEvent::MessageEnd { message: abort_msg }).await {
+                        return StreamResult::ChannelClosed;
+                    }
+                }
+
+                return result;
+            }
             StreamAttemptResult::Collected { events, error } => (events, error),
         };
 
@@ -209,28 +229,34 @@ async fn stream_with_retry_single(
             let retry_result = handle_stream_error(
                 model,
                 config,
-                &stop_reason,
+                stop_reason,
                 &error_message,
                 error_kind,
                 attempt,
-                tx,
-            )
-            .await;
+            );
             match retry_result {
                 StreamErrorAction::ContextOverflow => return StreamResult::ContextOverflow,
                 StreamErrorAction::Retry(delay) => {
                     tokio::time::sleep(delay).await;
                     continue;
                 }
-                StreamErrorAction::FatalError(msg) => {
+                StreamErrorAction::FatalError { result, message } => {
+                    if let Some(exit) = emit_attempt_deltas(&events, tx).await {
+                        return exit;
+                    }
+                    if !emit(tx, AgentEvent::MessageEnd { message }).await {
+                        return StreamResult::ChannelClosed;
+                    }
                     llm_span.record("otel.status_code", "ERROR");
-                    return msg;
+                    return result;
                 }
-                StreamErrorAction::ChannelClosed => return StreamResult::ChannelClosed,
             }
         }
 
         // Success: accumulate and emit
+        if let Some(exit) = emit_attempt_deltas(&events, tx).await {
+            return exit;
+        }
         let result = finalize_stream_message(model, events, tx).await;
         if let StreamResult::Message(ref msg) = result {
             llm_span.record("agent.tokens.input", msg.usage.input);
@@ -248,8 +274,10 @@ async fn stream_with_retry_single(
 enum StreamErrorAction {
     ContextOverflow,
     Retry(std::time::Duration),
-    FatalError(StreamResult),
-    ChannelClosed,
+    FatalError {
+        result: StreamResult,
+        message: AssistantMessage,
+    },
 }
 
 /// Result of streaming a single attempt from the provider.
@@ -265,10 +293,13 @@ enum StreamAttemptResult {
         )>,
     },
     /// Early exit due to cancellation or channel close.
-    EarlyExit(StreamResult),
+    EarlyExit {
+        result: StreamResult,
+        events: Vec<AssistantMessageEvent>,
+    },
 }
 
-/// Stream a single attempt from the provider, emitting delta events.
+/// Stream a single attempt from the provider.
 /// Collects all events and captures any error info for the caller.
 async fn stream_single_attempt(
     model: &ModelSpec,
@@ -276,7 +307,6 @@ async fn stream_single_attempt(
     call_context: &AgentContext,
     stream_options: &StreamOptions,
     cancellation_token: &CancellationToken,
-    tx: &mpsc::Sender<AgentEvent>,
 ) -> StreamAttemptResult {
     // Apply capability overrides (e.g. disable thinking for models that
     // don't support it) before handing the spec to the provider.
@@ -299,13 +329,10 @@ async fn stream_single_attempt(
 
     while let Some(event) = stream.next().await {
         if cancellation_token.is_cancelled() {
-            let abort_msg = build_abort_message(model);
-            let _ = emit(tx, AgentEvent::MessageEnd { message: abort_msg }).await;
-            return StreamAttemptResult::EarlyExit(StreamResult::Aborted);
-        }
-
-        if let Some(early_exit) = emit_delta_event(&event, tx).await {
-            return StreamAttemptResult::EarlyExit(early_exit);
+            return StreamAttemptResult::EarlyExit {
+                result: StreamResult::Aborted,
+                events,
+            };
         }
 
         if let AssistantMessageEvent::Error {
@@ -330,6 +357,19 @@ async fn stream_single_attempt(
         events,
         error: had_error,
     }
+}
+
+/// Replay deltas from the terminal attempt only.
+async fn emit_attempt_deltas(
+    events: &[AssistantMessageEvent],
+    tx: &mpsc::Sender<AgentEvent>,
+) -> Option<StreamResult> {
+    for event in events {
+        if let Some(early_exit) = emit_delta_event(event, tx).await {
+            return Some(early_exit);
+        }
+    }
+    None
 }
 
 /// Emit a delta event for a single stream event. Returns `Some(StreamResult)`
@@ -372,16 +412,15 @@ async fn emit_delta_event(
 }
 
 /// Handle a stream error: classify it, check retryability, return action.
-async fn handle_stream_error(
+fn handle_stream_error(
     model: &ModelSpec,
     config: &Arc<AgentLoopConfig>,
-    stop_reason: &StopReason,
+    stop_reason: StopReason,
     error_message: &str,
     error_kind: Option<crate::stream::StreamErrorKind>,
     attempt: u32,
-    tx: &mpsc::Sender<AgentEvent>,
 ) -> StreamErrorAction {
-    let harness_error = classify_stream_error(error_message, *stop_reason, error_kind);
+    let harness_error = classify_stream_error(error_message, stop_reason, error_kind);
 
     // Context window overflow — signal and retry
     if matches!(harness_error, AgentError::ContextWindowOverflow { .. }) {
@@ -417,10 +456,10 @@ async fn handle_stream_error(
     // TurnEndReason::Aborted instead of TurnEndReason::Error (#438).
     if matches!(harness_error, AgentError::Aborted) {
         let abort_msg = build_abort_message(model);
-        if !emit(tx, AgentEvent::MessageEnd { message: abort_msg }).await {
-            return StreamErrorAction::ChannelClosed;
-        }
-        return StreamErrorAction::FatalError(StreamResult::Aborted);
+        return StreamErrorAction::FatalError {
+            result: StreamResult::Aborted,
+            message: abort_msg,
+        };
     }
 
     // Check if retryable — RetryStrategy is the sole decision point
@@ -433,17 +472,10 @@ async fn handle_stream_error(
     // Non-retryable error
     error!(error = %harness_error, "non-retryable stream error");
     let error_msg = build_error_message(model, &harness_error);
-    if !emit(
-        tx,
-        AgentEvent::MessageEnd {
-            message: error_msg.clone(),
-        },
-    )
-    .await
-    {
-        return StreamErrorAction::ChannelClosed;
+    StreamErrorAction::FatalError {
+        result: StreamResult::Message(error_msg.clone()),
+        message: error_msg,
     }
-    StreamErrorAction::FatalError(StreamResult::Message(error_msg))
 }
 
 /// Return a model spec with capability-based overrides applied.

@@ -233,7 +233,7 @@ mod tests {
         Mock::given(method("GET"))
             .and(path("/article"))
             .respond_with(ResponseTemplate::new(200).set_body_raw(
-                r#"<!DOCTYPE html>
+                r"<!DOCTYPE html>
                         <html>
                         <head><title>Fetch Test</title></head>
                         <body>
@@ -242,7 +242,7 @@ mod tests {
                                 <p>It should survive readability extraction.</p>
                             </article>
                         </body>
-                        </html>"#,
+                        </html>",
                 "text/html; charset=utf-8",
             ))
             .mount(&server)

@@ -14,7 +14,7 @@ AssistantMessageDelta).
 
 ## Technical Context
 
-**Language/Version**: Rust 1.88 (edition 2024)
+**Language/Version**: Rust latest stable (edition 2024)
 **Primary Dependencies**: serde_json (tool args), jsonschema (validation), tokio (async), tokio-util (CancellationToken), futures (Stream), rand (jitter)
 **Storage**: N/A (traits and types only)
 **Testing**: `cargo test --workspace` with mock implementations, proptest for retry delay properties

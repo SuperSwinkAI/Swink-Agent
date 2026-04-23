@@ -1,6 +1,6 @@
 #![cfg(all(feature = "plugins", feature = "testkit"))]
 
-//! Integration tests for plugin contribution merge in Agent::new().
+//! Integration tests for plugin contribution merge in `Agent::new()`.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -218,7 +218,7 @@ async fn plugin_stop_prevents_direct_policy_evaluation() {
         fired: Arc<AtomicBool>,
     }
     impl PreTurnPolicy for DirectPreTurnPolicy {
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             "direct-pre-turn"
         }
         fn evaluate(&self, _ctx: &PolicyContext<'_>) -> PolicyVerdict {
@@ -412,7 +412,7 @@ fn agent_plugin_nonexistent_returns_none() {
 
 // ─── Phase 7: User Story 5 — Initialization Callback ───────────────────
 
-/// A plugin that tracks on_init calls with ordering.
+/// A plugin that tracks `on_init` calls with ordering.
 struct InitPlugin {
     name: String,
     priority: i32,
@@ -433,7 +433,7 @@ impl InitPlugin {
         }
     }
 
-    fn with_priority(mut self, priority: i32) -> Self {
+    const fn with_priority(mut self, priority: i32) -> Self {
         self.priority = priority;
         self
     }
@@ -460,7 +460,7 @@ impl Plugin for InitPlugin {
     }
 }
 
-/// A plugin whose on_init panics, but still contributes a post-turn policy.
+/// A plugin whose `on_init` panics, but still contributes a post-turn policy.
 struct PanickingInitPlugin {
     name: String,
     fired: Arc<AtomicBool>,
@@ -682,14 +682,16 @@ fn two_plugins_same_tool_names_distinct_namespaces() {
     );
 }
 
-// ─── T037: Duplicate composed tool names are rejected ───────────────────
+// ─── T037: Direct tools keep precedence when a plugin tool's composed name collides ───────
 
 #[test]
-fn duplicate_composed_tool_names_are_rejected() {
+fn direct_tool_wins_when_composed_plugin_tool_name_collides() {
     use swink_agent::AgentTool;
 
     // Create a direct tool named "myns_fetch" and a plugin named "myns" contributing "fetch".
-    // Both resolve to the same public name, so construction must fail fast.
+    // Both resolve to the same public name. Per `fix(agent): keep direct tools on plugin
+    // name collisions`, the direct tool wins and the plugin tool is silently skipped
+    // instead of panicking.
     let direct_tool: Arc<dyn AgentTool> =
         Arc::new(swink_agent::testing::MockTool::new("myns_fetch"));
     let plugin: Arc<dyn Plugin> = Arc::new(MockPlugin::new("myns").with_tools(&["fetch"]));
@@ -699,25 +701,13 @@ fn duplicate_composed_tool_names_are_rejected() {
         .with_tools(vec![direct_tool])
         .with_plugin(plugin);
 
-    let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let _agent = Agent::new(options);
-    }))
-    .expect_err("duplicate composed tool names should be rejected");
-
-    let panic_message = panic
-        .downcast_ref::<String>()
-        .cloned()
-        .or_else(|| {
-            panic
-                .downcast_ref::<&str>()
-                .map(|message| (*message).to_owned())
-        })
-        .expect("panic should carry a message");
-    assert!(
-        panic_message
-            .contains("duplicate tool names are not allowed after composition: myns_fetch"),
-        "unexpected panic message: {panic_message}"
-    );
+    let agent = Agent::new(options);
+    let tools = &agent.state().tools;
+    assert_eq!(tools.len(), 1, "only the direct tool should remain");
+    assert_eq!(tools[0].name(), "myns_fetch");
+    // Direct MockTool has no metadata; NamespacedTool would carry Some(..). Confirm it's
+    // the direct one.
+    assert_eq!(tools[0].metadata(), None);
 }
 
 // ─── T038: Verify tool merge order — direct first, then plugin ──────────

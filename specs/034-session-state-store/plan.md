@@ -9,7 +9,7 @@ Add a session-attached key-value state store (`SessionState`) with typed get/set
 
 ## Technical Context
 
-**Language/Version**: Rust 1.88 (edition 2024)
+**Language/Version**: Rust latest stable (edition 2024)
 **Primary Dependencies**: serde, serde_json, tokio, std::sync::RwLock (no new external deps)
 **Storage**: JSONL via swink-agent-memory crate (extends existing SessionStore)
 **Testing**: cargo test --workspace

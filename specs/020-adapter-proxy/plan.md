@@ -11,7 +11,7 @@ No delta reconstruction or partial_message diffing is needed: the proxy protocol
 
 ## Technical Context
 
-**Language/Version**: Rust 1.88 (edition 2024)
+**Language/Version**: Rust latest stable (edition 2024)
 **Primary Dependencies**: `swink-agent` (core), `reqwest`, `futures`, `serde`/`serde_json`, `eventsource-stream`, `tokio`, `tokio-util`
 **Storage**: N/A
 **Testing**: `cargo test -p swink-agent-adapters`; unit tests for SSE event parsing, error classification, and stream lifecycle

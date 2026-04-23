@@ -15,7 +15,7 @@ Cross-cutting infrastructure for agent loop governance, observability, and resum
 
 ## Technical Context
 
-**Language/Version**: Rust 1.88 (edition 2024)
+**Language/Version**: Rust latest stable (edition 2024)
 **Primary Dependencies**: tokio (async runtime), tokio-util (CancellationToken), futures (Stream, StreamExt), serde / serde_json (serialization), tracing (diagnostics), tracing-opentelemetry + opentelemetry + opentelemetry-otlp (optional, `otel` feature)
 **Storage**: N/A (in-memory by default; `CheckpointStore` trait abstracts persistence)
 **Testing**: `cargo test --workspace` — unit tests in each source module, integration tests in `tests/`

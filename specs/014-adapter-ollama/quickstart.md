@@ -4,7 +4,7 @@
 
 ## Prerequisites
 
-- Rust 1.88+ (edition 2024)
+- Rust latest stable (edition 2024)
 - `swink-agent` core crate available as a path dependency
 - Ollama installed and running (`ollama serve` or the Ollama desktop app)
 - A model pulled locally (e.g. `ollama pull llama3.2`)

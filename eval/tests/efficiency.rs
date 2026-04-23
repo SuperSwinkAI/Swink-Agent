@@ -17,9 +17,9 @@ fn all_unique_passes() {
     ]]);
     let case = case_with_budget(BudgetConstraints {
         max_cost: None,
-        max_tokens: None,
+        max_input: None,
+        max_output: None,
         max_turns: None,
-        max_duration: None,
     });
     let result = eval.evaluate(&case, &invocation).unwrap();
     assert_eq!(result.score.verdict(), Verdict::Pass);
@@ -41,9 +41,9 @@ fn duplicates_reduce_score() {
     ]);
     let case = case_with_budget(BudgetConstraints {
         max_cost: None,
-        max_tokens: None,
+        max_input: None,
+        max_output: None,
         max_turns: None,
-        max_duration: None,
     });
     let result = eval.evaluate(&case, &invocation).unwrap();
     // 1 unique / 4 total → dup_ratio = 0.25
@@ -60,9 +60,9 @@ fn in_default_registry() {
     let invocation = mock_invocation_multi_turn(&[&[("read", serde_json::json!({}))]]);
     let case = case_with_budget(BudgetConstraints {
         max_cost: None,
-        max_tokens: None,
+        max_input: None,
+        max_output: None,
         max_turns: None,
-        max_duration: None,
     });
     let results = registry.evaluate(&case, &invocation);
     let names: Vec<_> = results.iter().map(|r| r.evaluator_name.as_str()).collect();
@@ -84,16 +84,23 @@ fn us3_perfect_efficiency_score_1() {
     ]]);
     let case = case_with_budget(BudgetConstraints {
         max_cost: None,
-        max_tokens: None,
+        max_input: None,
+        max_output: None,
         max_turns: Some(1),
-        max_duration: None,
     });
     let result = eval.evaluate(&case, &invocation).unwrap();
+    let repeated = eval.evaluate(&case, &invocation).unwrap();
     assert!(
         (result.score.value - 1.0).abs() < f64::EPSILON,
         "expected 1.0, got {}",
         result.score.value
     );
+    assert!(
+        (repeated.score.value - result.score.value).abs() < f64::EPSILON,
+        "repeated evaluation must be deterministic",
+    );
+    assert_eq!(repeated.score.verdict(), result.score.verdict());
+    assert_eq!(repeated.details, result.details);
 }
 
 /// AS-3.2: 50% duplicates + 2x expected turns → weighted penalty.
@@ -107,9 +114,9 @@ fn us3_half_duplicates_double_turns() {
     ]);
     let case = case_with_budget(BudgetConstraints {
         max_cost: None,
-        max_tokens: None,
+        max_input: None,
+        max_output: None,
         max_turns: Some(1), // ideal = 1, actual = 2
-        max_duration: None,
     });
     let result = eval.evaluate(&case, &invocation).unwrap();
     // 0.6 * 0.5 + 0.4 * (1/2) = 0.3 + 0.2 = 0.5
@@ -127,9 +134,9 @@ fn us3_empty_trajectory_returns_none() {
     let invocation = mock_invocation_multi_turn(&[&[]]);
     let case = case_with_budget(BudgetConstraints {
         max_cost: None,
-        max_tokens: None,
+        max_input: None,
+        max_output: None,
         max_turns: None,
-        max_duration: None,
     });
     assert!(eval.evaluate(&case, &invocation).is_none());
 }
@@ -140,9 +147,9 @@ fn us3_more_efficient_scores_higher() {
     let eval = EfficiencyEvaluator::new();
     let case = case_with_budget(BudgetConstraints {
         max_cost: None,
-        max_tokens: None,
+        max_input: None,
+        max_output: None,
         max_turns: Some(1),
-        max_duration: None,
     });
 
     // Efficient: 1 turn, 2 unique calls
@@ -181,9 +188,9 @@ fn us3_ideal_turns_from_budget() {
     // With budget max_turns = 2
     let case = case_with_budget(BudgetConstraints {
         max_cost: None,
-        max_tokens: None,
+        max_input: None,
+        max_output: None,
         max_turns: Some(2),
-        max_duration: None,
     });
     let result = eval.evaluate(&case, &invocation).unwrap();
     // 4 unique / 4 total → dup_ratio = 1.0

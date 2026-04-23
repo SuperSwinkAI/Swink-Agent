@@ -7,21 +7,27 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
+use std::time::Duration;
 
+use futures::stream::BoxStream;
 use reqwest::header::{HeaderName, HeaderValue};
 use rmcp::model::{CallToolRequestParams, CallToolResult, ClientInfo, Implementation};
 use rmcp::service::{Peer, QuitReason, RoleClient, RunningService, ServiceExt};
 use rmcp::transport::TokioChildProcess;
 use rmcp::transport::streamable_http_client::{
-    StreamableHttpClientTransport, StreamableHttpClientTransportConfig,
+    StreamableHttpClient, StreamableHttpClientTransport, StreamableHttpClientTransportConfig,
+    StreamableHttpError, StreamableHttpPostResponse,
 };
 use serde_json::Value;
-use swink_agent::AgentEvent;
+use sse_stream::{Error as SseError, Sse};
+use swink_agent::{
+    AgentEvent, CredentialError, CredentialResolver, CredentialType, ResolvedCredential,
+};
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::task::JoinHandle;
 use tracing::{info, warn};
 
-use crate::config::{McpServerConfig, McpTransport};
+use crate::config::{McpServerConfig, McpTransport, SseBearerAuth};
 use crate::error::McpError;
 
 /// Status of an MCP server connection.
@@ -37,6 +43,125 @@ struct McpConnectionState {
     status: McpConnectionStatus,
     peer: Option<Peer<RoleClient>>,
     monitor: Option<JoinHandle<()>>,
+}
+
+#[derive(Debug, thiserror::Error)]
+enum SseBearerResolutionError {
+    #[error("credential resolution timed out for {key}")]
+    Timeout { key: String },
+    #[error(transparent)]
+    Credential(#[from] CredentialError),
+    #[error("credential type mismatch for {key}: expected {expected:?}, got {actual:?}")]
+    TypeMismatch {
+        key: String,
+        expected: CredentialType,
+        actual: CredentialType,
+    },
+}
+
+#[derive(Debug, thiserror::Error)]
+enum ResolverBackedSseHttpClientError {
+    #[error(transparent)]
+    Credential(#[from] SseBearerResolutionError),
+    #[error(transparent)]
+    Http(#[from] reqwest::Error),
+}
+
+#[derive(Clone)]
+struct ResolverBackedSseHttpClient {
+    inner: reqwest::Client,
+    bearer_auth: SseBearerAuth,
+    credential_resolver: Arc<dyn CredentialResolver>,
+}
+
+impl ResolverBackedSseHttpClient {
+    fn new(bearer_auth: SseBearerAuth, credential_resolver: Arc<dyn CredentialResolver>) -> Self {
+        Self {
+            inner: reqwest::Client::default(),
+            bearer_auth,
+            credential_resolver,
+        }
+    }
+
+    async fn resolve_bearer_token(&self) -> Result<String, ResolverBackedSseHttpClientError> {
+        resolve_sse_bearer_secret(&self.bearer_auth, self.credential_resolver.as_ref())
+            .await
+            .map_err(ResolverBackedSseHttpClientError::from)
+    }
+}
+
+impl StreamableHttpClient for ResolverBackedSseHttpClient {
+    type Error = ResolverBackedSseHttpClientError;
+
+    async fn post_message(
+        &self,
+        uri: Arc<str>,
+        message: rmcp::model::ClientJsonRpcMessage,
+        session_id: Option<Arc<str>>,
+        _auth_header: Option<String>,
+        custom_headers: HashMap<HeaderName, HeaderValue>,
+    ) -> Result<StreamableHttpPostResponse, StreamableHttpError<Self::Error>> {
+        let bearer_token = self
+            .resolve_bearer_token()
+            .await
+            .map_err(StreamableHttpError::Client)?;
+        <reqwest::Client as StreamableHttpClient>::post_message(
+            &self.inner,
+            uri,
+            message,
+            session_id,
+            Some(bearer_token),
+            custom_headers,
+        )
+        .await
+        .map_err(map_reqwest_streamable_http_error)
+    }
+
+    async fn delete_session(
+        &self,
+        uri: Arc<str>,
+        session_id: Arc<str>,
+        _auth_header: Option<String>,
+        custom_headers: HashMap<HeaderName, HeaderValue>,
+    ) -> Result<(), StreamableHttpError<Self::Error>> {
+        let bearer_token = self
+            .resolve_bearer_token()
+            .await
+            .map_err(StreamableHttpError::Client)?;
+        <reqwest::Client as StreamableHttpClient>::delete_session(
+            &self.inner,
+            uri,
+            session_id,
+            Some(bearer_token),
+            custom_headers,
+        )
+        .await
+        .map_err(map_reqwest_streamable_http_error)
+    }
+
+    async fn get_stream(
+        &self,
+        uri: Arc<str>,
+        session_id: Arc<str>,
+        last_event_id: Option<String>,
+        _auth_header: Option<String>,
+        custom_headers: HashMap<HeaderName, HeaderValue>,
+    ) -> Result<BoxStream<'static, Result<Sse, SseError>>, StreamableHttpError<Self::Error>> {
+        let bearer_token = self
+            .resolve_bearer_token()
+            .await
+            .map_err(StreamableHttpError::Client)?;
+        <reqwest::Client as StreamableHttpClient>::get_stream(
+            &self.inner,
+            uri,
+            session_id,
+            last_event_id,
+            Some(bearer_token),
+            custom_headers,
+        )
+        .await
+        .map_err(map_reqwest_streamable_http_error)
+    }
 }
 
 /// A connection to a single MCP server.
@@ -176,6 +301,16 @@ impl McpConnection {
         config: McpServerConfig,
         event_tx: Option<UnboundedSender<AgentEvent>>,
     ) -> Result<Self, McpError> {
+        Self::connect_with_resolver(config, None, event_tx).await
+    }
+
+    /// Connect to an MCP server using the configured transport and optional
+    /// credential resolver for SSE bearer auth.
+    pub async fn connect_with_resolver(
+        config: McpServerConfig,
+        credential_resolver: Option<Arc<dyn CredentialResolver>>,
+        event_tx: Option<UnboundedSender<AgentEvent>>,
+    ) -> Result<Self, McpError> {
         let service = match &config.transport {
             McpTransport::Stdio { command, args, env } => {
                 Self::connect_stdio(command, args, env, &config.name).await?
@@ -183,8 +318,31 @@ impl McpConnection {
             McpTransport::Sse {
                 url,
                 bearer_token,
+                bearer_auth,
                 headers,
-            } => Self::connect_sse(url, bearer_token.as_deref(), headers, &config.name).await?,
+            } => match bearer_auth.as_ref() {
+                Some(bearer_auth) => {
+                    let credential_resolver =
+                        credential_resolver.clone().ok_or_else(|| McpError::ConnectionFailed {
+                            server: config.name.clone(),
+                            reason: format!(
+                                "SSE bearer auth for credential `{}` requires a credential resolver",
+                                bearer_auth.credential_key
+                            ),
+                        })?;
+                    Self::connect_sse_with_resolver(
+                        url,
+                        bearer_auth,
+                        credential_resolver,
+                        headers,
+                        &config.name,
+                    )
+                    .await?
+                }
+                None => {
+                    Self::connect_sse(url, bearer_token.as_deref(), headers, &config.name).await?
+                }
+            },
         };
 
         // Handshake succeeded, transport is live.
@@ -241,11 +399,7 @@ impl McpConnection {
         env: &std::collections::HashMap<String, String>,
         server_name: &str,
     ) -> Result<RunningService<RoleClient, ClientInfo>, McpError> {
-        let mut cmd = tokio::process::Command::new(command);
-        cmd.args(args);
-        for (key, value) in env {
-            cmd.env(key, value);
-        }
+        let cmd = build_stdio_command(command, args, env);
 
         let transport = TokioChildProcess::new(cmd).map_err(|e| McpError::SpawnFailed {
             server: server_name.to_string(),
@@ -282,6 +436,39 @@ impl McpConnection {
         }
 
         let transport = StreamableHttpClientTransport::from_config(config);
+
+        client_info()
+            .serve(transport)
+            .await
+            .map_err(|e| McpError::ConnectionFailed {
+                server: server_name.to_string(),
+                reason: format!("HTTP streaming handshake failed: {e}"),
+            })
+    }
+
+    /// Connect to a remote MCP server via HTTP streaming transport, resolving
+    /// bearer auth on every HTTP request so rmcp reconnect/reinit paths can
+    /// pick up rotated credentials.
+    async fn connect_sse_with_resolver(
+        url: &str,
+        bearer_auth: &SseBearerAuth,
+        credential_resolver: Arc<dyn CredentialResolver>,
+        headers: &HashMap<String, String>,
+        server_name: &str,
+    ) -> Result<RunningService<RoleClient, ClientInfo>, McpError> {
+        resolve_sse_bearer_secret(bearer_auth, credential_resolver.as_ref())
+            .await
+            .map_err(|error| sse_bearer_resolution_error(error, server_name))?;
+
+        let mut config = StreamableHttpClientTransportConfig::with_uri(url);
+        if !headers.is_empty() {
+            config = config.custom_headers(parse_custom_headers(headers, server_name)?);
+        }
+
+        let transport = StreamableHttpClientTransport::with_client(
+            ResolverBackedSseHttpClient::new(bearer_auth.clone(), credential_resolver),
+            config,
+        );
 
         client_info()
             .serve(transport)
@@ -348,19 +535,147 @@ impl McpConnection {
     ///
     /// Aborts the monitor task (which drops the underlying `RunningService`).
     /// For stdio servers, rmcp's `ChildWithCleanup` terminates the subprocess
-    /// on drop. For SSE servers, the HTTP connection is closed.
+    /// on drop. For SSE servers, the HTTP connection is closed. Explicit
+    /// shutdown also emits `McpServerDisconnected` because the monitor only
+    /// reports transport-driven exits.
     pub async fn shutdown(&self) {
-        let monitor = {
+        let (monitor, should_emit_disconnect) = {
             let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+            let was_live = state.status == McpConnectionStatus::Connected
+                || state.peer.is_some()
+                || state.monitor.is_some();
             state.status = McpConnectionStatus::Disconnected;
             state.peer = None;
-            state.monitor.take()
+            (state.monitor.take(), was_live)
         };
 
         if let Some(monitor) = monitor {
             monitor.abort();
             let _ = monitor.await;
         }
+
+        if should_emit_disconnect {
+            emit_event(self.event_tx.as_ref(), || {
+                crate::event::server_disconnected(&self.config.name, "shutdown")
+            });
+        }
+    }
+}
+
+fn build_stdio_command(
+    command: &str,
+    args: &[String],
+    env: &HashMap<String, String>,
+) -> tokio::process::Command {
+    let mut cmd = tokio::process::Command::new(command);
+    cmd.args(args);
+    cmd.env_clear();
+    for (key, value) in env {
+        cmd.env(key, value);
+    }
+    cmd
+}
+
+async fn resolve_sse_bearer_secret(
+    bearer_auth: &SseBearerAuth,
+    credential_resolver: &dyn CredentialResolver,
+) -> Result<String, SseBearerResolutionError> {
+    let resolve_future = credential_resolver.resolve(&bearer_auth.credential_key);
+    let credential = tokio::time::timeout(Duration::from_secs(30), resolve_future)
+        .await
+        .map_err(|_| SseBearerResolutionError::Timeout {
+            key: bearer_auth.credential_key.clone(),
+        })??;
+
+    let actual_type = resolved_credential_type(&credential);
+    if actual_type != bearer_auth.credential_type {
+        return Err(SseBearerResolutionError::TypeMismatch {
+            key: bearer_auth.credential_key.clone(),
+            expected: bearer_auth.credential_type,
+            actual: actual_type,
+        });
+    }
+
+    Ok(resolved_credential_secret(&credential).to_string())
+}
+
+fn sse_bearer_resolution_error(error: SseBearerResolutionError, server_name: &str) -> McpError {
+    let reason = match error {
+        SseBearerResolutionError::Timeout { key } => {
+            format!("timed out resolving SSE credential `{key}`")
+        }
+        SseBearerResolutionError::Credential(error) => {
+            format!("failed to resolve SSE credential: {error}")
+        }
+        SseBearerResolutionError::TypeMismatch {
+            key,
+            expected,
+            actual,
+        } => {
+            format!(
+                "SSE credential type mismatch for `{key}`: expected {expected:?}, got {actual:?}"
+            )
+        }
+    };
+
+    McpError::ConnectionFailed {
+        server: server_name.to_string(),
+        reason,
+    }
+}
+
+fn map_reqwest_streamable_http_error(
+    error: StreamableHttpError<reqwest::Error>,
+) -> StreamableHttpError<ResolverBackedSseHttpClientError> {
+    match error {
+        StreamableHttpError::Sse(error) => StreamableHttpError::Sse(error),
+        StreamableHttpError::Io(error) => StreamableHttpError::Io(error),
+        StreamableHttpError::Client(error) => {
+            StreamableHttpError::Client(ResolverBackedSseHttpClientError::Http(error))
+        }
+        StreamableHttpError::UnexpectedEndOfStream => StreamableHttpError::UnexpectedEndOfStream,
+        StreamableHttpError::UnexpectedServerResponse(error) => {
+            StreamableHttpError::UnexpectedServerResponse(error)
+        }
+        StreamableHttpError::UnexpectedContentType(content_type) => {
+            StreamableHttpError::UnexpectedContentType(content_type)
+        }
+        StreamableHttpError::ServerDoesNotSupportSse => {
+            StreamableHttpError::ServerDoesNotSupportSse
+        }
+        StreamableHttpError::ServerDoesNotSupportDeleteSession => {
+            StreamableHttpError::ServerDoesNotSupportDeleteSession
+        }
+        StreamableHttpError::TokioJoinError(error) => StreamableHttpError::TokioJoinError(error),
+        StreamableHttpError::Deserialize(error) => StreamableHttpError::Deserialize(error),
+        StreamableHttpError::TransportChannelClosed => StreamableHttpError::TransportChannelClosed,
+        StreamableHttpError::AuthRequired(error) => StreamableHttpError::AuthRequired(error),
+        StreamableHttpError::InsufficientScope(error) => {
+            StreamableHttpError::InsufficientScope(error)
+        }
+        StreamableHttpError::ReservedHeaderConflict(header) => {
+            StreamableHttpError::ReservedHeaderConflict(header)
+        }
+        StreamableHttpError::SessionExpired => StreamableHttpError::SessionExpired,
+        other => StreamableHttpError::UnexpectedServerResponse(
+            format!("unexpected streamable HTTP error: {other:?}").into(),
+        ),
+    }
+}
+
+const fn resolved_credential_type(credential: &ResolvedCredential) -> CredentialType {
+    match credential {
+        ResolvedCredential::ApiKey(_) => CredentialType::ApiKey,
+        ResolvedCredential::Bearer(_) => CredentialType::Bearer,
+        ResolvedCredential::OAuth2AccessToken(_) => CredentialType::OAuth2,
+    }
+}
+
+fn resolved_credential_secret(credential: &ResolvedCredential) -> &str {
+    match credential {
+        ResolvedCredential::ApiKey(secret)
+        | ResolvedCredential::Bearer(secret)
+        | ResolvedCredential::OAuth2AccessToken(secret) => secret,
     }
 }
 
@@ -448,4 +763,67 @@ fn spawn_monitor(
         }
         // Cancelled by shutdown() or other future variants; no event needed.
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+    use std::process::Stdio;
+
+    use super::build_stdio_command;
+
+    #[tokio::test]
+    async fn stdio_command_clears_inherited_environment_before_applying_configured_values() {
+        let inherited_key = std::env::vars()
+            .map(|(key, _)| key)
+            .find(|key| key != "COMSPEC" && !key.starts_with('='))
+            .expect("current process should expose at least one inherited env var");
+        let configured_key = "SWINK_MCP_STDIO_ONLY";
+        let configured_value = "configured-value";
+        let env = HashMap::from([(configured_key.to_string(), configured_value.to_string())]);
+
+        let (command, args) = env_probe_command();
+        let mut cmd = build_stdio_command(&command, &args, &env);
+        cmd.stdout(Stdio::piped());
+
+        let output = cmd.output().await.expect("spawn env probe");
+        assert!(
+            output.status.success(),
+            "env probe should exit successfully: {output:?}"
+        );
+
+        let stdout = String::from_utf8(output.stdout).expect("env probe output should be UTF-8");
+        let configured_line = format!("{configured_key}={configured_value}");
+        let inherited_prefix = format!("{inherited_key}=");
+
+        assert!(
+            stdout.lines().any(|line| line == configured_line),
+            "configured env var should be present in child env: {stdout}"
+        );
+        assert!(
+            !stdout
+                .lines()
+                .any(|line| line.starts_with(&inherited_prefix)),
+            "inherited env var should be absent after env_clear(): {stdout}"
+        );
+    }
+
+    #[cfg(windows)]
+    fn env_probe_command() -> (String, Vec<String>) {
+        let command =
+            std::env::var("COMSPEC").unwrap_or_else(|_| "C:\\Windows\\System32\\cmd.exe".into());
+        (command, vec!["/d".into(), "/c".into(), "set".into()])
+    }
+
+    #[cfg(not(windows))]
+    fn env_probe_command() -> (String, Vec<String>) {
+        use std::path::Path;
+
+        let command = if Path::new("/usr/bin/env").exists() {
+            "/usr/bin/env".to_string()
+        } else {
+            "/bin/env".to_string()
+        };
+        (command, Vec::new())
+    }
 }

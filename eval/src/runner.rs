@@ -13,7 +13,7 @@ use swink_agent::{
 use crate::error::EvalError;
 use crate::evaluator::EvaluatorRegistry;
 use crate::score::{Score, Verdict};
-use crate::trajectory::{BudgetGuard, TrajectoryCollector};
+use crate::trajectory::TrajectoryCollector;
 use crate::types::{
     EvalCase, EvalCaseResult, EvalMetricResult, EvalSet, EvalSetResult, EvalSummary, Invocation,
     TurnRecord,
@@ -25,6 +25,11 @@ use crate::types::{
 /// model selection, tools, and system prompt.
 pub trait AgentFactory: Send + Sync {
     /// Create an agent and cancellation token for the given eval case.
+    ///
+    /// Implementers that honor `case.budget` must translate those constraints
+    /// via [`BudgetConstraints::to_policies`](crate::BudgetConstraints::to_policies)
+    /// and attach the resulting policies with
+    /// [`AgentOptions::with_pre_turn_policy`](swink_agent::AgentOptions::with_pre_turn_policy).
     fn create_agent(&self, case: &EvalCase) -> Result<(Agent, CancellationToken), EvalError>;
 }
 
@@ -54,7 +59,7 @@ impl EvalRunner {
     ) -> Result<EvalCaseResult, EvalError> {
         info!(case_id = %case.id, case_name = %case.name, "running eval case");
 
-        let (mut agent, cancel) = factory.create_agent(case)?;
+        let (mut agent, _cancel) = factory.create_agent(case)?;
 
         // Build user messages from the case.
         let messages: Vec<_> = case
@@ -69,10 +74,10 @@ impl EvalRunner {
             })
             .collect();
 
-        // Run the agent and collect the trajectory with budget guarding.
+        // Run the agent and collect the trajectory. Budget enforcement is
+        // attached by the factory via agent loop policies.
         let stream = agent.prompt_stream(messages)?;
-        let guard = BudgetGuard::from_case(case, cancel);
-        let invocation = TrajectoryCollector::collect_with_guard(stream, guard).await;
+        let invocation = TrajectoryCollector::collect_from_stream(stream).await;
 
         // Score.
         let metric_results = self.registry.evaluate(case, &invocation);

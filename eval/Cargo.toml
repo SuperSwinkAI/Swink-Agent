@@ -6,30 +6,78 @@ rust-version.workspace = true
 description = "Evaluation framework for swink-agent: trajectory tracing, golden path verification, and cost governance"
 license.workspace = true
 repository.workspace = true
-readme = "../README.md"
+readme = "README.md"
 keywords = ["llm", "agent", "eval", "benchmark", "testing"]
 categories = ["development-tools", "development-tools::testing"]
 
-[package.metadata.docs_rs]
+[package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-swink-agent = { path = "..", version = "0.8.0", default-features = false }
+swink-agent = { path = "..", version = "0.8.1", default-features = false }
+swink-agent-policies = { path = "../policies", version = "0.8.1", default-features = false, features = ["budget", "max-turns"] }
 serde.workspace = true
 serde_json.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["macros", "time"] }
 futures.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 tokio-util.workspace = true
-uuid.workspace = true
+bincode = "1"
+uuid = { workspace = true, features = ["v5"] }
 regex.workspace = true
 sha2.workspace = true
+async-trait = "0.1"
+minijinja = { workspace = true, optional = true }
+backon = { workspace = true, optional = true }
+strsim = { workspace = true, optional = true }
+jsonschema = { workspace = true, optional = true }
+reqwest = { workspace = true, optional = true }
+url = "2"
+opentelemetry = { workspace = true, optional = true }
+opentelemetry_sdk = { workspace = true, optional = true }
+opentelemetry-otlp = { workspace = true, optional = true }
+askama = { workspace = true, optional = true }
+clap = { workspace = true, optional = true }
+libc = { workspace = true, optional = true }
 serde_yaml = { workspace = true, optional = true }
 
 [features]
+default = []
 yaml = ["serde_yaml"]
+judge-core = ["dep:minijinja", "dep:backon"]
+evaluator-quality = ["judge-core"]
+evaluator-safety = ["judge-core"]
+evaluator-rag = ["judge-core"]
+evaluator-agent = ["judge-core"]
+evaluator-structured = ["dep:jsonschema"]
+evaluator-simple = ["dep:strsim"]
+evaluator-code = []
+evaluator-sandbox = ["evaluator-code", "dep:libc"]
+multimodal = ["judge-core", "dep:reqwest"]
+all-evaluators = [
+    "evaluator-quality",
+    "evaluator-safety",
+    "evaluator-rag",
+    "evaluator-agent",
+    "evaluator-structured",
+    "evaluator-simple",
+    "evaluator-code",
+    "evaluator-sandbox",
+    "multimodal",
+]
+simulation = ["judge-core"]
+generation = ["judge-core"]
+trace-ingest = ["dep:opentelemetry_sdk"]
+trace-otlp = ["trace-ingest", "dep:opentelemetry-otlp"]
+trace-langfuse = ["trace-ingest", "dep:reqwest"]
+trace-opensearch = ["trace-ingest", "dep:reqwest"]
+trace-cloudwatch = ["trace-ingest"]
+telemetry = ["dep:opentelemetry", "dep:opentelemetry_sdk"]
+html-report = ["dep:askama"]
+langsmith = ["dep:reqwest"]
+cli = ["dep:clap"]
 
 [dev-dependencies]
 swink-agent = { path = "..", default-features = false, features = ["testkit"] }
@@ -37,14 +85,5 @@ tempfile.workspace = true
 tokio = { workspace = true, features = ["full", "test-util"] }
 pretty_assertions.workspace = true
 
-[lints.rust]
-unsafe_code = "forbid"
-
-[lints.clippy]
-all = { level = "warn", priority = -1 }
-pedantic = { level = "warn", priority = -1 }
-nursery = { level = "warn", priority = -1 }
-module_name_repetitions = "allow"
-must_use_candidate = "allow"
-missing_errors_doc = "allow"
-missing_panics_doc = "allow"
+[lints]
+workspace = true

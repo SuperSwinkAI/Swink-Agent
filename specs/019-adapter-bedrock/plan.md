@@ -9,7 +9,7 @@ Implement the AWS Bedrock streaming adapter using the ConverseStream API with AW
 
 ## Technical Context
 
-**Language/Version**: Rust 1.88 (edition 2024)
+**Language/Version**: Rust latest stable (edition 2024)
 **Primary Dependencies**: `swink-agent` (core), `swink-agent-adapters` (shared infra), `sha2`/`hmac` (SigV4 signing), `chrono` (timestamps), `aws-smithy-eventstream` (NEW — event-stream frame decoding), `aws-smithy-types` (NEW — event-stream types)
 **Storage**: N/A (stateless adapter)
 **Testing**: `cargo test` — unit tests (event-stream parsing, SigV4 signing) + live tests (`#[ignore]`, requires AWS credentials)
@@ -34,7 +34,7 @@ Implement the AWS Bedrock streaming adapter using the ConverseStream API with AW
 
 **Architectural Constraints**:
 - Crate count: unchanged (adapters crate absorbs this)
-- MSRV: 1.88 ✓
+- MSRV: latest stable ✓
 - Two new workspace deps: `aws-smithy-eventstream`, `aws-smithy-types` (gated behind `bedrock` feature)
 
 **Post-Phase 1 Re-check**: All gates still pass. New deps are justified by Constitution IV (Leverage the Ecosystem).

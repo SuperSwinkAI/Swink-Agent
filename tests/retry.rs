@@ -124,7 +124,7 @@ fn jitter_range_within_expected_bounds() {
     let strategy = DefaultRetryStrategy::default()
         .with_base_delay(Duration::from_secs(10))
         .with_multiplier(2.0)
-        .with_max_delay(Duration::from_secs(60))
+        .with_max_delay(Duration::from_mins(1))
         .with_jitter(true);
 
     // Attempt 2 without jitter would be 10 * 2^1 = 20s

@@ -23,6 +23,9 @@
 
 ## Lessons Learned
 
+- External editor tests must not hardcode Unix-only helpers like `true`. Use a temporary no-op script/batch file so `tui/src/editor.rs` passes on Windows and Unix while still exercising the empty-file cancellation path.
+- External editor tests must not assume the system temp directory is executable. GitHub-hosted Linux runners can reject scripts launched from `/tmp`, so generated noop editor helpers should live under the repo checkout (for example `target/test-bin/`) instead.
+- **Approval callback must fail closed** — `tui_approval_callback()` must return `ToolApproval::Rejected` when either forwarding to the approval mpsc channel fails or the oneshot responder drops. Approval plumbing outages are security failures; log a warning instead of silently auto-approving.
 - **Mouse capture vs. native selection** — `EnableMouseCapture` is required for the scroll wheel but blocks the terminal's own click-drag text selection. The TUI works around this with in-app selection: drag anchors/extends a `Selection` in conversation-inner cell coords, rendering applies `Modifier::REVERSED` after the `Paragraph` draws, and mouse-up / Ctrl+C copies via `arboard`. Terminal-native bypasses (Shift/Option/Fn drag) continue to work on terminals that support them (kitty, Alacritty, WezTerm, Ghostty, iTerm2 Option-drag, Terminal.app Fn-drag).
 - **Resume after agent construction** — `App::load_session()` syncs both transcript messages and `SessionState` into the live `Agent`, so `launch_with_session()` must call `set_agent()` before `resume_into()`. Loading earlier only updates TUI display state and leaves the agent's internal conversation/state unsynchronized.
 - **Approval mode is owned by `Agent`** — `App::approval_mode()` reads through to `agent.approval_mode()` and returns `Smart` before `set_agent` is called. Do not add an `App.approval_mode` field; doing so reintroduces the dual-write drift bug (#565). Configure the startup mode via `AgentOptions::with_approval_mode` before building the agent.
@@ -30,4 +33,6 @@
 - **Smart approval mode auto-approves trusted tools only** — untrusted tools still prompt even if they are read-only.
 - **Panic hook restores terminal** — without it, a panic leaves terminal in raw mode.
 - **Credentials** — env var checked first, then keychain. Env always wins.
+- **Wizard credential failures stay inline** — when keychain writes fail, keep the user on the key-entry screen and show the provider-specific environment-variable fallback instead of silently returning to the provider list.
+- **External editor temp files must be randomized** — use `tempfile` for prompt composition paths; predictable names in shared temp directories are a local collision/tampering risk.
 - **Session restore must validate before mutating UI state** — `App::load_session()` should first load transcript + session-state snapshot into locals, then apply them to `self` only after both succeed. If `store.load_state()` / `SessionState::restore_from_snapshot()` use `?` inside the mutation path, corrupted state snapshots bypass the normal warning branch and can partially apply a failed load.

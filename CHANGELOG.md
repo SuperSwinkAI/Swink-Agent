@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-04-22
+
+### Added
+- `swink-agent-adapters::build_remote_connection_with_credential` and public `build_connection_from_preset` — explicit-credential remote-connection builders for embedders that manage secrets in keychains/Vault and cannot mutate `std::env` (#791, #792).
+- `swink-agent-eval` semantic trajectory matching (spec 023): `SemanticToolSelectionEvaluator`, `SemanticToolParameterEvaluator`, `EnvironmentStateEvaluator`, and a `JudgeClient` trait with pluggable providers. Each evaluator wraps judge calls in a configurable `tokio::time::timeout` (5 min default, `with_timeout` override) so evals own their own non-hang guarantee. Includes `MockJudge` in `swink-agent-eval::testing`.
+- `swink-agent-eval` foundational score aggregators (#747) and deterministic case-session IDs — enables downstream experiment tooling.
+- `swink-agent-eval-judges` crate scaffold (spec 043 Phase 1) — advanced evals framework foundation.
+- `swink-agent-eval` default URL filter — a built-in `url_filter` module for trajectory/content scoring.
+- Panic isolation across eval scorers (#731, #767) — a panicking scorer no longer tears down the evaluator run.
+- `FnTool::with_execute_async` alias for untyped async builder discoverability (#663).
+- Built-in `TiktokenCounter` for token counting without external dependencies (#662).
+- TUI click-drag text selection and copy in chat view (#605, #606).
+- Resolver-backed SSE MCP auth bootstrap (#679).
+- `ApprovalMode` and `ToolMiddleware` exports from the prelude (#659, #660).
+
+### Changed
+- `BudgetGuard` ported to the `BudgetPolicy` loop-policy interface (spec 023 Phase 13) — budget constraints now compose through the same slot vectors as other policies.
+- MCP tool registration names are now sanitized for provider compatibility (#702).
+- Composed plugin tool names use hash-tail truncation to prevent long-name collisions; `Agent::new()` and `Agent::set_tools()` fail fast on duplicate final names (#674).
+- Agent loop `PreTurn` now exposes the initial prompt batch as the first-turn `new_messages` slice; post-turn policy-injected messages processed before follow-up polling or `AgentEnd` (#676).
+
+### Fixed
+- **Streams and cancellation**: honor cooperative cancellation in web tools (#734); short-circuit pre-cancelled local-LLM streams; emit aborted stop reason on local-LLM cancel; honor pre-send stream cancellation in adapters; preserve single `MessageStart` across overflow recovery (#721); bound per-tool update channel (#770, #777); bound tool-update buffering.
+- **MCP**: clear stdio child environments; fix reconnect and shutdown lifecycle (#701); emit connect/discovery/call lifecycle events (#625); roll back MCP collisions (#723); refresh SSE resolver auth on recovery (#680).
+- **Adapters**: reject nameless terminal tool calls; hard-fail malformed Anthropic SSE events (#720); stop retrying parse and protocol faults (#629); gate Azure auth dependency (#631); sanitize incomplete `tool_use` arguments before dispatch (#621); normalize parse error classification for OAI/Gemini (#703).
+- **Auth and secrets**: sanitize OAuth2 refresh diagnostics; include sanitized endpoint in OAuth2 refresh-failure debug log; redact OAuth2 refresh error bodies (#626); sanitize credential store tool errors (#706); redact `#key` secrets from TUI input history (#628).
+- **Artifacts**: enforce streaming metadata integrity; treat missing content as corruption; serialize delete mutations (#682); make delete exact-name-safe for nested IDs (#705); validate `session_id` and enforce canonical artifact root (#622).
+- **Memory**: require explicit atomic `save_full` (#683); serialize JsonlSessionStore delete locking (#724); take `Checkpoint` by value in `save_checkpoint` (#661).
+- **Loop**: enforce two-pass `PreDispatch` before approval (#627); stop loop on pre-dispatch Stop (#699); emit single terminal event on overflow failure (#644); drain steering after text-only turns; block post-turn tool-call injection; preserve one retry message lifecycle (#677); preserve dynamic prompt during overflow retry (#700).
+- **Patterns**: isolate parallel branch failures.
+- **Eval**: reject duplicate evaluator registrations; restore cache-prefix tracking.
+- **TUI**: harden setup wizard and editor temp files; fail closed on approval channel errors.
+- **CI**: unbreak integration clippy + deny on rust 1.95; repair malformed YAML in bench/approve-contributor workflows; replace unsupported expression functions in approve-contributor.
+- **Telemetry**: redact custom message warning logs.
+
+### Internal
+- Centralized workspace clippy config (`[workspace.lints]`).
+- Pinned toolchain to Rust 1.95 stable (#737).
+- Dependabot cadence changed from weekly to daily for cargo updates.
+- Dependency bumps: `rmcp` 1.3.0 → 1.5.0 (#787), `scraper` 0.25.0 → 0.26.0 (#786), `notify` 7.0.0 → 8.2.0 (#790).
+
 ## [0.8.0] - 2026-04-19
 
 ### Added

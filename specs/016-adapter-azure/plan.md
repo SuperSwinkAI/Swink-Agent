@@ -9,7 +9,7 @@ Extend the existing Azure adapter stub (`adapters/src/azure.rs`) from basic API-
 
 ## Technical Context
 
-**Language/Version**: Rust 1.88, edition 2024
+**Language/Version**: Rust latest stable, edition 2024
 **Primary Dependencies**: `reqwest` (HTTP + token acquisition), `tokio` (async runtime), `serde`/`serde_json` (serialization), `tracing` (diagnostics), `swink-agent` (core types). All workspace deps.
 **Storage**: N/A (in-memory token cache only)
 **Testing**: `cargo test --workspace`, wiremock for mock HTTP, live tests with `#[ignore]`
@@ -34,7 +34,7 @@ Extend the existing Azure adapter stub (`adapters/src/azure.rs`) from basic API-
 
 **Architectural Constraints**:
 - Crate count: No new crate (extends adapters crate) — PASS
-- MSRV 1.88: PASS
+- MSRV latest stable: PASS
 - Concurrency: Token refresh is async, doesn't block streams — PASS
 - Events outward-only: No mutation via events — PASS
 - No global mutable state: Token cache uses `Arc<RwLock>` — PASS

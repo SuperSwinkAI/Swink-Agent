@@ -9,7 +9,7 @@ Build a comprehensive integration test suite exercising the full Agent → loop 
 
 ## Technical Context
 
-**Language/Version**: Rust 1.88, edition 2024
+**Language/Version**: Rust latest stable, edition 2024
 **Primary Dependencies**: `swink-agent` (core), `swink-agent-adapters` (proxy), `swink-agent-tui` (headless rendering), `tokio` (async runtime), `serde_json` (mock data), `futures` (stream combinators)
 **Storage**: N/A — all state is in-memory mocks
 **Testing**: `cargo test --workspace` — workspace-level integration tests in `tests/` directory

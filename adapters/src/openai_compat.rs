@@ -356,6 +356,55 @@ impl crate::finalize::StreamFinalize for OaiSseStreamState {
     }
 }
 
+impl OaiSseStreamState {
+    fn emit_terminal_error(&mut self, event: AssistantMessageEvent) -> Vec<AssistantMessageEvent> {
+        let mut events = Vec::new();
+        let _ = flush_pending_oai_tool_calls(self, &mut events, "OpenAI-compatible");
+        events.extend(crate::finalize::finalize_blocks(self));
+        events.push(event);
+        events
+    }
+
+    fn emit_done_from_done_sentinel(&mut self) -> Vec<AssistantMessageEvent> {
+        let mut events = Vec::new();
+        if let Some(error) = flush_pending_oai_tool_calls(self, &mut events, "OpenAI-compatible") {
+            events.extend(crate::finalize::finalize_blocks(self));
+            events.push(error);
+            return events;
+        }
+        events.extend(crate::finalize::finalize_blocks(self));
+        if let Some(error) = self.terminal_error.take() {
+            events.push(error);
+        } else {
+            let stop_reason = self.stop_reason.take().unwrap_or(StopReason::Stop);
+            let usage = self.usage.take().unwrap_or_default();
+            events.push(AssistantMessageEvent::Done {
+                stop_reason,
+                usage,
+                cost: Cost::default(),
+            });
+        }
+        events
+    }
+
+    fn emit_terminal_done(&mut self, stop_reason: StopReason) -> Vec<AssistantMessageEvent> {
+        let usage = self.usage.take().unwrap_or_default();
+        let mut events = Vec::new();
+        if let Some(error) = flush_pending_oai_tool_calls(self, &mut events, "OpenAI-compatible") {
+            events.extend(crate::finalize::finalize_blocks(self));
+            events.push(error);
+            return events;
+        }
+        events.extend(crate::finalize::finalize_blocks(self));
+        events.push(AssistantMessageEvent::Done {
+            stop_reason,
+            usage,
+            cost: Cost::default(),
+        });
+        events
+    }
+}
+
 /// Process a single deserialized `OaiChunk`, updating state and emitting events.
 ///
 /// This is the shared chunk-processing logic used by both `OpenAI` and Azure
@@ -416,7 +465,7 @@ pub fn process_oai_chunk(
 
         if let Some(reason) = &choice.finish_reason {
             if reason == "content_filter" {
-                flush_pending_oai_tool_calls(state, events);
+                let _ = flush_pending_oai_tool_calls(state, events, provider);
                 events.extend(crate::finalize::finalize_blocks(state));
                 state.terminal_error = Some(AssistantMessageEvent::error_content_filtered(
                     format!("{provider} response stopped by content filter"),
@@ -425,7 +474,7 @@ pub fn process_oai_chunk(
             }
 
             if provider == "Mistral" && reason == "error" {
-                flush_pending_oai_tool_calls(state, events);
+                let _ = flush_pending_oai_tool_calls(state, events, provider);
                 events.extend(crate::finalize::finalize_blocks(state));
                 state.terminal_error = Some(AssistantMessageEvent::Error {
                     stop_reason: StopReason::Error,
@@ -442,7 +491,11 @@ pub fn process_oai_chunk(
                 _ => StopReason::Stop,
             };
 
-            flush_pending_oai_tool_calls(state, events);
+            if let Some(error) = flush_pending_oai_tool_calls(state, events, provider) {
+                events.extend(crate::finalize::finalize_blocks(state));
+                state.terminal_error = Some(error);
+                return;
+            }
             events.extend(crate::finalize::finalize_blocks(state));
             state.stop_reason = Some(stop_reason);
         }
@@ -538,7 +591,8 @@ fn process_oai_tool_call_delta(
 fn flush_pending_oai_tool_calls(
     state: &mut OaiSseStreamState,
     events: &mut Vec<AssistantMessageEvent>,
-) {
+    provider: &str,
+) -> Option<AssistantMessageEvent> {
     let mut pending_indices: Vec<_> = state
         .tool_calls
         .iter()
@@ -547,16 +601,25 @@ fn flush_pending_oai_tool_calls(
     pending_indices.sort_unstable();
 
     for tc_index in pending_indices {
-        let (id, name, arguments) = {
+        let pending_entry = {
             let entry = state
                 .tool_calls
                 .get(&tc_index)
                 .expect("pending entry should exist");
             (
                 entry.id.clone(),
-                entry.name.clone().unwrap_or_default(),
+                entry.name.clone().filter(|name| !name.is_empty()),
                 entry.arguments.clone(),
             )
+        };
+        let (id, name, arguments) = match pending_entry {
+            (id, Some(name), arguments) => (id, name, arguments),
+            (id, None, _) => {
+                state.tool_calls.clear();
+                return Some(AssistantMessageEvent::error(format!(
+                    "{provider} stream ended with incomplete tool call {id}: missing function name",
+                )));
+            }
         };
 
         let (content_index, start_ev) = state.blocks.open_tool_call(id, name);
@@ -575,6 +638,8 @@ fn flush_pending_oai_tool_calls(
             .expect("pending entry should still exist");
         entry.content_index = Some(content_index);
     }
+
+    None
 }
 
 /// Parse an OpenAI-compatible SSE streaming response into `AssistantMessageEvent`
@@ -599,54 +664,29 @@ pub fn parse_oai_sse_stream(
         "operation cancelled",
         move |item, state| match item {
             None => {
-                let mut events = Vec::new();
-                flush_pending_oai_tool_calls(state, &mut events);
-                events.extend(crate::finalize::finalize_blocks(state));
                 if let Some(error) = state.terminal_error.take() {
-                    events.push(error);
-                } else if let Some(stop_reason) = state.stop_reason.take() {
-                    let usage = state.usage.take();
-                    events.push(AssistantMessageEvent::Done {
-                        stop_reason,
-                        usage: usage.unwrap_or_default(),
-                        cost: Cost::default(),
-                    });
-                } else {
-                    events.push(AssistantMessageEvent::error_network(format!(
-                        "{provider} stream ended unexpectedly",
-                    )));
+                    return SseAction::Done(state.emit_terminal_error(error));
                 }
-                SseAction::Done(events)
-            }
-            Some(SseLine::Done) => {
-                let mut events = Vec::new();
-                flush_pending_oai_tool_calls(state, &mut events);
-                events.extend(crate::finalize::finalize_blocks(state));
-                if let Some(error) = state.terminal_error.take() {
-                    events.push(error);
-                } else {
-                    let stop_reason = state.stop_reason.take().unwrap_or(StopReason::Stop);
-                    let usage = state.usage.take();
-                    events.push(AssistantMessageEvent::Done {
-                        stop_reason,
-                        usage: usage.unwrap_or_default(),
-                        cost: Cost::default(),
-                    });
+                if let Some(stop_reason) = state.stop_reason.take() {
+                    return SseAction::Done(state.emit_terminal_done(stop_reason));
                 }
-                SseAction::Done(events)
+                SseAction::Done(
+                    state.emit_terminal_error(AssistantMessageEvent::error_network(format!(
+                        "{provider} stream ended unexpectedly"
+                    ))),
+                )
             }
+            Some(SseLine::Done) => SseAction::Done(state.emit_done_from_done_sentinel()),
             Some(SseLine::Data(data)) => {
                 let chunk: OaiChunk = match serde_json::from_str(&data) {
                     Ok(c) => c,
                     Err(e) => {
                         error!(error = %e, "{provider} JSON parse error");
-                        let mut events = Vec::new();
-                        flush_pending_oai_tool_calls(state, &mut events);
-                        events.extend(crate::finalize::finalize_blocks(state));
-                        events.push(AssistantMessageEvent::error_network(format!(
-                            "{provider} JSON parse error: {e}",
-                        )));
-                        return SseAction::Done(events);
+                        return SseAction::Done(state.emit_terminal_error(
+                            AssistantMessageEvent::error(format!(
+                                "{provider} JSON parse error: {e}",
+                            )),
+                        ));
                     }
                 };
 
@@ -659,15 +699,9 @@ pub fn parse_oai_sse_stream(
                     SseAction::Continue(events)
                 }
             }
-            Some(SseLine::TransportError(message)) => {
-                let mut events = Vec::new();
-                flush_pending_oai_tool_calls(state, &mut events);
-                events.extend(crate::finalize::finalize_blocks(state));
-                events.push(AssistantMessageEvent::error_network(format!(
-                    "{provider} {message}",
-                )));
-                SseAction::Done(events)
-            }
+            Some(SseLine::TransportError(message)) => SseAction::Done(state.emit_terminal_error(
+                AssistantMessageEvent::error_network(format!("{provider} {message}")),
+            )),
             Some(_) => SseAction::Skip,
         },
     )
@@ -951,5 +985,185 @@ mod tests {
         // Critical: the stringified arguments must be a valid JSON object, NOT
         // the literal "null" that `Value::Null.to_string()` would produce.
         assert_eq!(tool_calls[0].function.arguments, "{}");
+    }
+
+    #[test]
+    fn terminal_parse_error_flushes_pending_tool_call_before_generic_error() {
+        let mut state = OaiSseStreamState::default();
+        state.tool_calls.insert(
+            0,
+            OaiToolCallEntry {
+                id: "call_1".into(),
+                name: Some("read_file".into()),
+                arguments: r#"{"path":"foo.rs"}"#.into(),
+                content_index: None,
+            },
+        );
+
+        let events = state.emit_terminal_error(AssistantMessageEvent::error(
+            "OpenAI JSON parse error: bad payload",
+        ));
+        let delta_index = events
+            .iter()
+            .position(|event| matches!(event, AssistantMessageEvent::ToolCallDelta { .. }))
+            .expect("final tool delta");
+        let end_index = events
+            .iter()
+            .position(|event| matches!(event, AssistantMessageEvent::ToolCallEnd { .. }))
+            .expect("tool call end");
+        let error_index = events
+            .iter()
+            .position(|event| matches!(event, AssistantMessageEvent::Error { .. }))
+            .expect("terminal error");
+
+        assert!(
+            delta_index < end_index && end_index < error_index,
+            "pending tool-call state must flush before the terminal error: {events:?}"
+        );
+        match &events[error_index] {
+            AssistantMessageEvent::Error { error_kind, .. } => {
+                assert!(
+                    error_kind.is_none(),
+                    "JSON parse errors must be non-retryable protocol errors"
+                );
+            }
+            event => panic!("expected terminal error, got {event:?}"),
+        }
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, AssistantMessageEvent::Done { .. })),
+            "terminal error path must not emit Done"
+        );
+    }
+
+    #[test]
+    fn unexpected_eof_stop_reason_flushes_pending_tool_call_before_done() {
+        let mut state = OaiSseStreamState::default();
+        state.tool_calls.insert(
+            0,
+            OaiToolCallEntry {
+                id: "call_1".into(),
+                name: Some("read_file".into()),
+                arguments: r#"{"path":"foo.rs"}"#.into(),
+                content_index: None,
+            },
+        );
+
+        let events = state.emit_terminal_done(StopReason::ToolUse);
+        let delta_index = events
+            .iter()
+            .position(|event| matches!(event, AssistantMessageEvent::ToolCallDelta { .. }))
+            .expect("final tool delta");
+        let end_index = events
+            .iter()
+            .position(|event| matches!(event, AssistantMessageEvent::ToolCallEnd { .. }))
+            .expect("tool call end");
+        let done_index = events
+            .iter()
+            .position(|event| matches!(event, AssistantMessageEvent::Done { .. }))
+            .expect("done event");
+
+        assert!(
+            delta_index < end_index && end_index < done_index,
+            "pending tool-call state must flush before Done on unexpected EOF: {events:?}"
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, AssistantMessageEvent::Error { .. })),
+            "stop_reason EOF path must terminate with Done, not Error"
+        );
+    }
+
+    #[test]
+    fn done_sentinel_preserves_accumulated_stop_reason() {
+        let mut state = OaiSseStreamState {
+            stop_reason: Some(StopReason::ToolUse),
+            ..Default::default()
+        };
+        state.tool_calls.insert(
+            0,
+            OaiToolCallEntry {
+                id: "call_1".into(),
+                name: Some("read_file".into()),
+                arguments: r#"{"path":"foo.rs"}"#.into(),
+                content_index: None,
+            },
+        );
+
+        let events = state.emit_done_from_done_sentinel();
+        let delta_index = events
+            .iter()
+            .position(|event| matches!(event, AssistantMessageEvent::ToolCallDelta { .. }))
+            .expect("final tool delta");
+        let end_index = events
+            .iter()
+            .position(|event| matches!(event, AssistantMessageEvent::ToolCallEnd { .. }))
+            .expect("tool call end");
+        let done_index = events
+            .iter()
+            .position(|event| matches!(event, AssistantMessageEvent::Done { .. }))
+            .expect("done event");
+
+        assert!(
+            delta_index < end_index && end_index < done_index,
+            "pending tool-call state must flush before [DONE] completion: {events:?}"
+        );
+        match &events[done_index] {
+            AssistantMessageEvent::Done { stop_reason, .. } => {
+                assert_eq!(*stop_reason, StopReason::ToolUse);
+            }
+            event => panic!("expected done event, got {event:?}"),
+        }
+    }
+
+    #[test]
+    fn done_sentinel_reports_protocol_error_for_pending_tool_call_without_name() {
+        let mut state = OaiSseStreamState {
+            stop_reason: Some(StopReason::ToolUse),
+            ..Default::default()
+        };
+        state.tool_calls.insert(
+            0,
+            OaiToolCallEntry {
+                id: "call_1".into(),
+                name: None,
+                arguments: r#"{"path":"foo.rs"}"#.into(),
+                content_index: None,
+            },
+        );
+
+        let events = state.emit_done_from_done_sentinel();
+
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, AssistantMessageEvent::ToolCallStart { .. })),
+            "terminal drain must not synthesize nameless ToolCallStart events: {events:?}"
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, AssistantMessageEvent::Done { .. })),
+            "nameless terminal tool calls must fail the stream instead of completing normally: {events:?}"
+        );
+        match events.last() {
+            Some(AssistantMessageEvent::Error {
+                error_message,
+                error_kind,
+                ..
+            }) => {
+                assert!(
+                    error_kind.is_none(),
+                    "protocol errors must not be retryable"
+                );
+                assert!(
+                    error_message.contains("missing function name"),
+                    "error should explain the terminal protocol fault: {error_message}"
+                );
+            }
+            other => panic!("expected terminal protocol error, got {other:?}"),
+        }
     }
 }

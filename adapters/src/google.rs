@@ -581,19 +581,18 @@ fn parse_sse_stream(
                 if state.terminated {
                     return SseAction::Done(Vec::new());
                 }
+                if state.stop_reason.is_none() {
+                    return SseAction::Done(
+                        state.emit_terminal_network_error("Google stream ended unexpectedly", true),
+                    );
+                }
                 let mut events = state.emit_final_tool_deltas();
                 events.extend(crate::finalize::finalize_blocks(state));
-                if state.stop_reason.is_none() {
-                    events.push(AssistantMessageEvent::error_network(
-                        "Google stream ended unexpectedly",
-                    ));
-                } else {
-                    events.push(AssistantMessageEvent::Done {
-                        stop_reason: state.stop_reason.unwrap_or(StopReason::Stop),
-                        usage: state.usage.clone(),
-                        cost: Cost::default(),
-                    });
-                }
+                events.push(AssistantMessageEvent::Done {
+                    stop_reason: state.stop_reason.unwrap_or(StopReason::Stop),
+                    usage: state.usage.clone(),
+                    cost: Cost::default(),
+                });
                 SseAction::Done(events)
             }
             Some(SseLine::Done) => {
@@ -634,21 +633,19 @@ fn parse_sse_stream(
                     }
                     Err(parse_error) => {
                         error!(error = %parse_error, "Google Gemini JSON parse error");
-                        events.push(AssistantMessageEvent::error_network(format!(
-                            "Google JSON parse error: {parse_error}",
-                        )));
+                        events.extend(state.emit_terminal_error(
+                            AssistantMessageEvent::error(format!(
+                                "Google JSON parse error: {parse_error}",
+                            )),
+                            true,
+                        ));
                         SseAction::Done(events)
                     }
                 }
             }
-            Some(SseLine::TransportError(message)) => {
-                let mut events = state.emit_final_tool_deltas();
-                events.extend(crate::finalize::finalize_blocks(state));
-                events.push(AssistantMessageEvent::error_network(format!(
-                    "Google {message}",
-                )));
-                SseAction::Done(events)
-            }
+            Some(SseLine::TransportError(message)) => SseAction::Done(
+                state.emit_terminal_network_error(format!("Google {message}"), true),
+            ),
             Some(_) => SseAction::Skip,
         },
     )
@@ -779,6 +776,32 @@ fn map_finish_reason(finish_reason: &str, saw_tool_call: bool) -> StopReason {
 }
 
 impl GeminiStreamState {
+    fn emit_terminal_error(
+        &mut self,
+        event: AssistantMessageEvent,
+        emit_final_tool_deltas: bool,
+    ) -> Vec<AssistantMessageEvent> {
+        let mut events = if emit_final_tool_deltas {
+            self.emit_final_tool_deltas()
+        } else {
+            Vec::new()
+        };
+        events.extend(crate::finalize::finalize_blocks(self));
+        events.push(event);
+        events
+    }
+
+    fn emit_terminal_network_error(
+        &mut self,
+        message: impl Into<String>,
+        emit_final_tool_deltas: bool,
+    ) -> Vec<AssistantMessageEvent> {
+        self.emit_terminal_error(
+            AssistantMessageEvent::error_network(message.into()),
+            emit_final_tool_deltas,
+        )
+    }
+
     /// Emit a single [`AssistantMessageEvent::ToolCallDelta`] per buffered tool
     /// call carrying the complete final arguments snapshot.  Must be called
     /// **before** [`finalize_blocks`](crate::finalize::finalize_blocks) (which
@@ -857,5 +880,57 @@ mod tests {
             "functionCall.args must be a JSON object, got {args:?}"
         );
         assert_eq!(args.as_object().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn terminal_parse_error_flushes_final_tool_delta_before_generic_error() {
+        let mut state = GeminiStreamState::default();
+        let (content_index, _) = state
+            .blocks
+            .open_tool_call("call_1".into(), "read_file".into());
+        state.tool_calls.insert(
+            0,
+            GeminiToolCallState {
+                content_index,
+                arguments: r#"{"path":"foo.rs"}"#.into(),
+            },
+        );
+
+        let events = state.emit_terminal_error(
+            AssistantMessageEvent::error("Google JSON parse error: bad payload"),
+            true,
+        );
+        let delta_index = events
+            .iter()
+            .position(|event| matches!(event, AssistantMessageEvent::ToolCallDelta { .. }))
+            .expect("final tool delta");
+        let end_index = events
+            .iter()
+            .position(|event| matches!(event, AssistantMessageEvent::ToolCallEnd { .. }))
+            .expect("tool call end");
+        let error_index = events
+            .iter()
+            .position(|event| matches!(event, AssistantMessageEvent::Error { .. }))
+            .expect("terminal error");
+
+        assert!(
+            delta_index < end_index && end_index < error_index,
+            "pending tool-call state must flush before the terminal error: {events:?}"
+        );
+        match &events[error_index] {
+            AssistantMessageEvent::Error { error_kind, .. } => {
+                assert!(
+                    error_kind.is_none(),
+                    "JSON parse errors must be non-retryable protocol errors"
+                );
+            }
+            event => panic!("expected terminal error, got {event:?}"),
+        }
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, AssistantMessageEvent::Done { .. })),
+            "terminal error path must not emit Done"
+        );
     }
 }

@@ -2,8 +2,6 @@
 
 mod common;
 
-use std::time::Instant;
-
 use swink_agent::{AgentMessage, LlmMessage};
 use swink_agent_memory::{JsonlSessionStore, SessionStore};
 
@@ -18,8 +16,6 @@ fn sequential_append_500_messages() {
     let seed = vec![user_message("seed message")];
     store.save("stress_500", &meta, &seed).unwrap();
 
-    let start = Instant::now();
-
     for i in 0..500 {
         let msg = if i % 2 == 0 {
             user_message(&format!("user message {i}"))
@@ -28,8 +24,6 @@ fn sequential_append_500_messages() {
         };
         store.append("stress_500", &[msg]).unwrap();
     }
-
-    let elapsed = start.elapsed();
 
     let (_, loaded) = store.load("stress_500", None).unwrap();
     assert_eq!(loaded.len(), 501); // 1 seed + 500 appended
@@ -53,13 +47,6 @@ fn sequential_append_500_messages() {
         _ => panic!("expected assistant message"),
     };
     assert_eq!(last_text, "assistant message 499");
-
-    // Guard against catastrophic regression — 10s is generous even though
-    // append now rewrites through an atomic temp file for crash safety.
-    assert!(
-        elapsed.as_secs() < 10,
-        "sequential append took {elapsed:?}, expected < 10s (possible O(n^2) regression)"
-    );
 }
 
 #[test]
@@ -129,23 +116,72 @@ fn append_remains_correct_after_title_change() {
 }
 
 #[test]
-fn append_200_messages_completes_in_reasonable_time() {
+fn append_200_messages_preserves_all_messages() {
     let tmp = tempfile::tempdir().unwrap();
     let store = JsonlSessionStore::new(tmp.path().to_path_buf()).unwrap();
 
     let meta = sample_meta("perf_guard", "Performance guard");
     store.save("perf_guard", &meta, &[]).unwrap();
 
-    let start = Instant::now();
     for i in 0..200 {
         store
             .append("perf_guard", &[user_message(&format!("msg {i}"))])
             .unwrap();
     }
-    let elapsed = start.elapsed();
 
     let (_, loaded) = store.load("perf_guard", None).unwrap();
     assert_eq!(loaded.len(), 200);
+}
+
+#[test]
+#[ignore = "perf-only guard; wall-clock thresholds are host-dependent"]
+fn sequential_append_500_messages_perf_guard() {
+    use std::time::Instant;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let store = JsonlSessionStore::new(tmp.path().to_path_buf()).unwrap();
+
+    let meta = sample_meta("stress_500_perf", "Stress test");
+    let seed = vec![user_message("seed message")];
+    store.save("stress_500_perf", &meta, &seed).unwrap();
+
+    let start = Instant::now();
+
+    for i in 0..500 {
+        let msg = if i % 2 == 0 {
+            user_message(&format!("user message {i}"))
+        } else {
+            assistant_message(&format!("assistant message {i}"))
+        };
+        store.append("stress_500_perf", &[msg]).unwrap();
+    }
+
+    let elapsed = start.elapsed();
+
+    assert!(
+        elapsed.as_secs() < 10,
+        "sequential append took {elapsed:?}, expected < 10s (possible O(n^2) regression)"
+    );
+}
+
+#[test]
+#[ignore = "perf-only guard; wall-clock thresholds are host-dependent"]
+fn append_200_messages_perf_guard() {
+    use std::time::Instant;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let store = JsonlSessionStore::new(tmp.path().to_path_buf()).unwrap();
+
+    let meta = sample_meta("perf_guard_timing", "Performance guard");
+    store.save("perf_guard_timing", &meta, &[]).unwrap();
+
+    let start = Instant::now();
+    for i in 0..200 {
+        store
+            .append("perf_guard_timing", &[user_message(&format!("msg {i}"))])
+            .unwrap();
+    }
+    let elapsed = start.elapsed();
 
     assert!(
         elapsed.as_secs() < 10,

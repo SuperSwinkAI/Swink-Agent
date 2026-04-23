@@ -23,6 +23,7 @@
 - `ProxyStreamFn` moved here from core. Import: `swink_agent_adapters::ProxyStreamFn`.
 - SSE-backed adapters should reuse `adapters/src/sse.rs` helpers; `ProxyStreamFn` follows that shared path.
 - `remote_presets` module feature-gates preset key sub-modules and `build_remote_connection` match arms per provider.
+- `build_remote_connection_with_credential` / `build_connection_from_preset` are the additive escape hatches for embedders that resolve secrets outside process env; Bedrock remains the exception and must still skip API-key validation on that path.
 
 ## Protocols
 
@@ -46,10 +47,15 @@
 - Any failure before the provider yields its first streaming payload must still emit `[Start, Error]`. Returning only a terminal `Error` makes `accumulate_message()` fail with `no Start event found`.
 - `finish_reason == "content_filter"` must be routed through `OaiSseStreamState.terminal_error`; emitting an inline error and then consuming a later `[DONE]` produces a duplicate terminal event that `accumulate_message` rejects.
 - In `src/google.rs`, `function_call.args` chunks are full snapshots, not deltas. Always overwrite the buffered args, including `null`, or a later empty snapshot can leave stale JSON from an earlier chunk.
+- In `src/google.rs`, terminal error exits must flush buffered tool-call snapshots and finalize open blocks before emitting `Error`; otherwise `accumulate_message()` can observe dangling block state on parse/transport failures.
+- In `src/openai_compat.rs` and `src/google.rs`, malformed streamed JSON is a protocol fault, not a retryable transport failure. Drain any buffered tool-call state, finalize open blocks, and emit `AssistantMessageEvent::error(...)`; reserve `error_network(...)` for unexpected EOF and transport/server failures.
+- In `src/anthropic.rs`, malformed JSON for known SSE events (`message_start`, `content_block_*`, `message_delta`, `error`) must terminate the stream as a non-retryable protocol error after `finalize_blocks(state)`; silently skipping `if let Ok(...)` decode failures corrupts block lifecycle and hides provider faults.
 - In `src/ollama.rs`, the NDJSON parser must buffer raw bytes until it has a full newline-delimited record. Decoding each transport chunk independently with `from_utf8_lossy` corrupts split multibyte UTF-8.
 - In `src/ollama.rs` and `src/proxy.rs`, deterministic parse/protocol faults (malformed NDJSON/SSE JSON, proxy terminal-frame violations, unexpected `done` EOF) must use `AssistantMessageEvent::error(...)`, not `error_network(...)`; only transport failures stay retryable.
 - In `src/openai_compat.rs`, buffer tool-call arguments and delay `ToolCallStart` until a non-empty `function.name` is known; some providers stream arguments before the name.
-- Runtime SSE adapters must thread `StreamOptions.on_raw_payload` into the callback-aware shared parser (`sse_data_lines_with_callback`). The callback-free helper silently disables payload observers.
+- In `src/openai_compat.rs`, terminal drain paths must treat any still-pending tool call without a non-empty `function.name` as a protocol error. Never synthesize a `ToolCallStart` with an empty name during `[DONE]`/EOF flush.
+- In `src/oai_transport.rs` and `src/anthropic.rs`, pre-stream cancellation must race the initial HTTP send via `tokio::select!`; checking the token only after `request.send().await` lets prompt cancellation hang behind network latency or server accept delays.
+- Runtime SSE adapters must thread `StreamOptions.on_raw_payload` into the callback-aware shared parser (`sse_data_lines_with_callback` for data-only streams, `sse_paired_events_with_callback` for event/data streams). The callback-free helpers silently disable payload observers.
 - In `src/proxy.rs`, treat transport `data: [DONE]` as a protocol error unless the proxy has already emitted a typed `done` or `error` JSON event.
 - In `src/oai_transport.rs`, gate `OaiAdapterShell` helper methods to the provider features that actually call them. Azure-only builds reuse the request/parse pipeline but not the Bearer-auth convenience helpers, and otherwise `cargo clippy --no-default-features --features azure -D warnings` trips dead-code failures.
 

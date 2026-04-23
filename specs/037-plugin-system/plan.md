@@ -9,7 +9,7 @@ Add a named plugin abstraction that bundles policies, tools, and event observers
 
 ## Technical Context
 
-**Language/Version**: Rust 1.88, edition 2024  
+**Language/Version**: Rust latest stable, edition 2024  
 **Primary Dependencies**: `swink-agent` core types (policy traits, AgentTool, AgentEvent), `tracing` (diagnostics)  
 **Storage**: N/A (in-memory registry only)  
 **Testing**: `cargo test -p swink-agent`  

@@ -26,6 +26,10 @@ pub enum EvalError {
     #[error("invalid eval case: {reason}")]
     InvalidCase { reason: String },
 
+    /// An evaluator name was registered more than once in the same registry.
+    #[error("duplicate evaluator registration: {name}")]
+    DuplicateEvaluator { name: String },
+
     /// A filesystem-facing identifier is invalid.
     #[error("invalid {kind} identifier: {id}")]
     InvalidIdentifier { kind: &'static str, id: String },
@@ -64,6 +68,11 @@ impl EvalError {
         Self::InvalidCase {
             reason: reason.into(),
         }
+    }
+
+    /// Convenience constructor for [`EvalError::DuplicateEvaluator`].
+    pub fn duplicate_evaluator(name: impl Into<String>) -> Self {
+        Self::DuplicateEvaluator { name: name.into() }
     }
 
     /// Convenience constructor for [`EvalError::InvalidIdentifier`].

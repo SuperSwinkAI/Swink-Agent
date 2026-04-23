@@ -15,8 +15,8 @@ use crate::types::{AgentMessage, LlmMessage, StopReason};
 
 use super::stream::stream_with_retry;
 use super::turn::{
-    build_snapshot, emit_turn_end_and_agent_end, handle_started_turn_cancellation,
-    run_context_transformers,
+    build_llm_messages, build_snapshot, emit_turn_end_and_agent_end,
+    handle_started_turn_cancellation, run_context_transformers,
 };
 use super::{
     AgentEvent, AgentLoopConfig, LoopState, StreamResult, TurnEndReason, TurnOutcome,
@@ -43,6 +43,7 @@ pub(super) async fn attempt_overflow_recovery(
     state: &mut LoopState,
     system_prompt: &str,
     agent_context: &crate::types::AgentContext,
+    dynamic_prompt_injected: Option<&LlmMessage>,
     api_key: Option<String>,
     cancellation_token: &CancellationToken,
     tx: &mpsc::Sender<AgentEvent>,
@@ -82,11 +83,7 @@ pub(super) async fn attempt_overflow_recovery(
     }
 
     // Re-run convert-to-LLM pipeline with compacted context.
-    let llm_messages: Vec<LlmMessage> = state
-        .context_messages
-        .iter()
-        .filter_map(|m| (config.convert_to_llm)(m))
-        .collect();
+    let llm_messages = build_llm_messages(config, &state.context_messages, dynamic_prompt_injected);
 
     // Retry the stream call with compacted context.
     let retry_result = stream_with_retry(
@@ -95,6 +92,7 @@ pub(super) async fn attempt_overflow_recovery(
         &llm_messages,
         system_prompt,
         api_key,
+        false,
         cancellation_token,
         tx,
     )

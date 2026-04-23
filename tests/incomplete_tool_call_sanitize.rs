@@ -1,5 +1,5 @@
 //! Regression tests for issue #619: provider adapters forward incomplete
-//! tool_use arguments after `StopReason::Length` truncation, causing API 400
+//! `tool_use` arguments after `StopReason::Length` truncation, causing API 400
 //! on the next turn.
 //!
 //! The loop-level scrub (`sanitize_incomplete_tool_calls`) runs before the
@@ -31,11 +31,11 @@ use swink_agent::{
 struct EchoTool;
 
 impl AgentTool for EchoTool {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "echo"
     }
 
-    fn label(&self) -> &str {
+    fn label(&self) -> &'static str {
         "echo"
     }
 

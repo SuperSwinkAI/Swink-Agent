@@ -4,7 +4,7 @@
 
 ## Prerequisites
 
-- Rust 1.88+ (edition 2024)
+- Rust latest stable (edition 2024)
 - `swink-agent` core crate available as a path dependency
 - Google Gemini API key (set `GEMINI_API_KEY` environment variable for live tests)
 

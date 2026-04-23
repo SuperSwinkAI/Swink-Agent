@@ -4,22 +4,26 @@
 
 ## Prerequisites
 
-- Rust 1.88+ (edition 2024)
+- Rust latest stable (edition 2024)
 - All workspace crates build: `cargo build --workspace`
 - No external services, API keys, or network access required
 
 ## Running the Tests
 
-### Full workspace test suite (includes integration tests)
+### Full workspace test suite
+
+The root crate's `tests/` integration suite is gated behind the `testkit`
+feature. Use this command when you want the full workspace plus the core
+integration tests:
 
 ```bash
-cargo test --workspace
+cargo test --workspace --features testkit
 ```
 
 ### Run the core-crate integration tests
 
 ```bash
-cargo test -p swink-agent --test ac_lifecycle --test ac_tools --test ac_context --test ac_resilience --test ac_structured
+cargo test -p swink-agent --features testkit --test ac_lifecycle --test ac_tools --test ac_context --test ac_resilience --test ac_structured
 ```
 
 ### Run the TUI integration tests
@@ -60,7 +64,7 @@ tests/
 └── ac_structured.rs     # AC 23-25: Structured output, proxy reconstruction
 
 tui/tests/
-├── ac_tui.rs            # AC 26-30: TUI rendering and interaction
+├── ac_tui.rs            # Public TUI wiring/state coverage for AC 26-30
 └── public_api.rs        # TUI public API integration coverage
 ```
 
@@ -84,26 +88,28 @@ async fn my_new_acceptance_test() {
         text_only_events("hello"),
     ]));
 
-    let agent = Agent::new(
+    let mut agent = Agent::new(AgentOptions::new(
+        "test prompt",
         default_model(),
         stream,
         default_convert,
-        AgentOptions::default(),
-    );
+    ));
 
-    let response = agent.message(user_msg("hi")).await.unwrap();
+    let response = agent.prompt_async(vec![user_msg("hi")]).await.unwrap();
     // assert on response...
 }
 ```
 
 ## Verifying Coverage
 
-Each AC maps to a test function documented in `data-model.md` (Acceptance Criterion Mapping table). To verify all 30 ACs are covered:
+Each AC maps to an automated check documented in `data-model.md` (Acceptance Criterion Mapping table). For the TUI story, `tui/tests/ac_tui.rs` covers the public integration surface and crate-local unit tests cover private renderer details.
+
+To verify the documented commands still run:
 
 ```bash
-cargo test --workspace 2>&1 | grep -c "test .* ok"
+cargo test --workspace --features testkit
 ```
 
 ## CI Integration
 
-Tests run as part of the standard `cargo test --workspace` command. No special CI configuration is needed. All tests are hermetic (no network, no filesystem side effects, no API keys).
+Core integration tests require `--features testkit`; crate-local integration tests such as `tui/tests/ac_tui.rs` run with their own crate defaults. All documented tests are hermetic (no network, no filesystem side effects, no API keys).
