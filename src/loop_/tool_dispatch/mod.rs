@@ -262,6 +262,7 @@ pub async fn execute_tools_concurrently(
             &steering_detected,
             &transfer_detected,
             &batch_token,
+            tx,
         )
         .await;
 

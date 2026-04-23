@@ -1544,6 +1544,42 @@ async fn panicking_tool_produces_error_result() {
 
     assert!(has_event(&events, "AgentEnd"), "loop should complete");
 
+    let panic_starts = events
+        .iter()
+        .filter(|event| {
+            matches!(
+                event,
+                AgentEvent::ToolExecutionStart { id, .. } if id == "tc_panic"
+            )
+        })
+        .count();
+    let panic_ends: Vec<&AgentToolResult> = events
+        .iter()
+        .filter_map(|event| match event {
+            AgentEvent::ToolExecutionEnd {
+                id,
+                result,
+                is_error,
+                ..
+            } if id == "tc_panic" && *is_error => Some(result),
+            _ => None,
+        })
+        .collect();
+
+    assert_eq!(
+        panic_starts, 1,
+        "panicking tool should still emit exactly one start event"
+    );
+    assert_eq!(
+        panic_ends.len(),
+        1,
+        "panicking tool should emit a terminal error event"
+    );
+    assert!(
+        ContentBlock::extract_text(&panic_ends[0].content).contains("deliberate test panic"),
+        "terminal event should carry the panic payload"
+    );
+
     // The panicked tool should produce a TurnEnd with an error tool result.
     let panic_tool_results: Vec<&ToolResultMessage> = events
         .iter()

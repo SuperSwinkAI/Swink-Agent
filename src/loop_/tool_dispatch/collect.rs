@@ -4,11 +4,14 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use futures::stream::{FuturesUnordered, StreamExt};
+use tokio::sync::mpsc;
 use tracing::error;
 
+use crate::tool::AgentToolResult;
 use crate::types::{AgentMessage, ContentBlock, ToolResultMessage};
 use crate::util::now_timestamp;
 
+use super::shared::{emit_error_result, panic_payload_message};
 use super::{AgentLoopConfig, ToolCallInfo, ToolExecOutcome};
 
 // ─── Group outcome ──────────────────────────────────────────────────────────
@@ -35,6 +38,7 @@ pub(super) async fn collect_group_results(
     steering_detected: &Arc<std::sync::atomic::AtomicBool>,
     transfer_detected: &Arc<std::sync::atomic::AtomicBool>,
     batch_token: &tokio_util::sync::CancellationToken,
+    tx: &mpsc::Sender<super::AgentEvent>,
 ) -> GroupOutcome {
     let abort_handles: Vec<_> = handles
         .iter()
@@ -67,11 +71,7 @@ pub(super) async fn collect_group_results(
         if let Err(join_error) = join_result {
             let panic_message = if join_error.is_panic() {
                 let panic_value = join_error.into_panic();
-                panic_value
-                    .downcast_ref::<&str>()
-                    .map(|s| (*s).to_string())
-                    .or_else(|| panic_value.downcast_ref::<String>().cloned())
-                    .unwrap_or_else(|| "unknown panic payload".to_string())
+                panic_payload_message(panic_value.as_ref())
             } else {
                 format!("{join_error}")
             };
@@ -83,17 +83,15 @@ pub(super) async fn collect_group_results(
                 "tool execution panicked: {panic_message}"
             );
 
-            let panic_result = ToolResultMessage {
-                tool_call_id: tc.id.clone(),
-                content: vec![ContentBlock::Text {
-                    text: format!("tool execution panicked: {panic_message}"),
-                }],
-                is_error: true,
-                timestamp: now_timestamp(),
-                details: serde_json::Value::Null,
-                cache_hint: None,
-            };
-            results.lock().await.push((idx, panic_result));
+            emit_error_result(
+                &tc.name,
+                &tc.id,
+                AgentToolResult::error(format!("tool execution panicked: {panic_message}")),
+                idx,
+                results,
+                tx,
+            )
+            .await;
             continue;
         }
 
