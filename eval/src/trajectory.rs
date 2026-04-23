@@ -145,10 +145,9 @@ impl TrajectoryCollector {
 
     /// Append a synthesized tool result to the turn at `index`, if present.
     ///
-    /// Used by the multi-turn simulation orchestrator when a [`ToolSimulator`]
-    /// provides a deterministic tool response for a recorded tool call.
-    ///
-    /// [`ToolSimulator`]: crate::simulation::ToolSimulator
+    /// Used by the multi-turn simulation orchestrator when a `ToolSimulator`
+    /// (see `crate::simulation`, feature-gated on `simulation`) provides a
+    /// deterministic tool response for a recorded tool call.
     pub fn append_tool_result(&mut self, index: usize, result: swink_agent::ToolResultMessage) {
         if let Some(turn) = self.turns.get_mut(index) {
             turn.tool_results.push(result);
