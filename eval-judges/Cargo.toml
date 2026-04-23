@@ -9,6 +9,11 @@ repository.workspace = true
 readme = "../README.md"
 keywords = ["llm", "eval", "judge", "adapter", "testing"]
 categories = ["development-tools", "api-bindings", "asynchronous"]
+# Spec 043 in-progress — the crate layout shifts between phases (stubs in
+# T008 → real impls in T038–T046 → public surface in T054). Keep unpublished
+# until Phase 12 workspace bump (T180) so semver-checks doesn't gate on
+# intermediate breaking shape changes.
+publish = false
 
 [package.metadata.docs.rs]
 all-features = true
@@ -27,8 +32,8 @@ all-judges = [
     "ollama",
     "proxy",
 ]
-anthropic = ["dep:swink-agent-adapters", "swink-agent-eval/judge-core"]
-openai = ["dep:swink-agent-adapters", "swink-agent-eval/judge-core"]
+anthropic = ["dep:swink-agent-adapters", "swink-agent-eval/judge-core", "dep:reqwest"]
+openai = ["dep:swink-agent-adapters", "swink-agent-eval/judge-core", "dep:reqwest"]
 bedrock = ["dep:swink-agent-adapters", "swink-agent-eval/judge-core"]
 gemini = ["dep:swink-agent-adapters", "swink-agent-eval/judge-core"]
 mistral = ["dep:swink-agent-adapters", "swink-agent-eval/judge-core"]
@@ -42,7 +47,8 @@ live-judges = []
 swink-agent-eval = { path = "../eval", version = "0.8.1", default-features = false }
 swink-agent-adapters = { path = "../adapters", version = "0.8.1", default-features = false, optional = true }
 async-trait = "0.1"
-backon.workspace = true
+backon = { workspace = true, features = ["tokio-sleep"] }
+reqwest = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
@@ -51,6 +57,8 @@ tokio-util.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+swink-agent-eval = { path = "../eval", default-features = false, features = ["judge-core"] }
+tokio = { workspace = true, features = ["full", "test-util"] }
 wiremock.workspace = true
 
 [lints]

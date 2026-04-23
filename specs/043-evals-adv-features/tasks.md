@@ -105,9 +105,9 @@
 
 ### Judge clients in `eval-judges`
 
-- [ ] T037 [P] [US1] Write `eval-judges/tests/anthropic_test.rs` covering: `wiremock`-backed happy path, rate-limit 429 absorbed by retry, exhausted retries surface `JudgeError::RateLimitExhausted`, malformed response → `JudgeError::MalformedResponse`, cancellation propagation
-- [ ] T038 [P] [US1] Implement `AnthropicJudgeClient` + `BlockingAnthropicJudgeClient` in `eval-judges/src/anthropic.rs` — wraps `AnthropicAdapter`, exposes retry policy, batch size, async + blocking interfaces
-- [ ] T039 [P] [US1] Implement `OpenAIJudgeClient` + blocking wrapper in `eval-judges/src/openai.rs` with matching test file `eval-judges/tests/openai_test.rs`
+- [x] T037 [P] [US1] Write `eval-judges/tests/anthropic_test.rs` covering: `wiremock`-backed happy path, rate-limit 429 absorbed by retry, exhausted retries surface `JudgeError::RateLimitExhausted`, malformed response → `JudgeError::MalformedResponse`, cancellation propagation
+- [x] T038 [P] [US1] Implement `AnthropicJudgeClient` + `BlockingAnthropicJudgeClient` in `eval-judges/src/anthropic.rs` — wraps `AnthropicAdapter`, exposes retry policy, batch size, async + blocking interfaces
+- [x] T039 [P] [US1] Implement `OpenAIJudgeClient` + blocking wrapper in `eval-judges/src/openai.rs` with matching test file `eval-judges/tests/openai_test.rs`
 - [ ] T040 [P] [US1] Implement `BedrockJudgeClient` + blocking wrapper in `eval-judges/src/bedrock.rs` with test file `eval-judges/tests/bedrock_test.rs`
 - [ ] T041 [P] [US1] Implement `GeminiJudgeClient` + blocking wrapper in `eval-judges/src/gemini.rs` with test file `eval-judges/tests/gemini_test.rs`
 - [ ] T042 [P] [US1] Implement `MistralJudgeClient` + blocking wrapper in `eval-judges/src/mistral.rs` with test file `eval-judges/tests/mistral_test.rs`
@@ -115,8 +115,8 @@
 - [ ] T044 [P] [US1] Implement `XaiJudgeClient` + blocking wrapper in `eval-judges/src/xai.rs` with test file `eval-judges/tests/xai_test.rs`
 - [ ] T045 [P] [US1] Implement `OllamaJudgeClient` + blocking wrapper in `eval-judges/src/ollama.rs` with test file `eval-judges/tests/ollama_test.rs`
 - [ ] T046 [P] [US1] Implement `ProxyJudgeClient` + blocking wrapper in `eval-judges/src/proxy.rs` with test file `eval-judges/tests/proxy_test.rs`
-- [ ] T047 [US1] Implement shared `backon`-based retry + cancellation wiring in `eval-judges/src/client.rs` (6 attempts / 4 min max / jitter / `CancellationToken`-aware) used by every provider
-- [ ] T048 [US1] Implement request-batching wrapper in `eval-judges/src/client.rs` with configurable batch size ∈ [1, 128]; providers that don't support native batching fall through to sequential dispatch
+- [x] T047 [US1] Implement shared `backon`-based retry + cancellation wiring in `eval-judges/src/client.rs` (6 attempts / 4 min max / jitter / `CancellationToken`-aware) used by every provider
+- [x] T048 [US1] Implement request-batching wrapper in `eval-judges/src/client.rs` with configurable batch size ∈ [1, 128]; providers that don't support native batching fall through to sequential dispatch
 
 ### Prompt templates (built-in _v0, feature `judge-core`)
 
