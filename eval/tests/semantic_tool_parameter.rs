@@ -33,6 +33,7 @@ fn case_with_intent(id: &str, intent: &str, tool_name: Option<&str>) -> EvalCase
         budget: None,
         evaluators: vec![],
         metadata: serde_json::Value::Null,
+        attachments: vec![],
         expected_environment_state: None,
         expected_tool_intent: Some(ToolIntent {
             intent: intent.to_string(),
@@ -56,6 +57,7 @@ fn case_without_intent(id: &str) -> EvalCase {
         budget: None,
         evaluators: vec![],
         metadata: serde_json::Value::Null,
+        attachments: vec![],
         expected_environment_state: None,
         expected_tool_intent: None,
         semantic_tool_selection: false,

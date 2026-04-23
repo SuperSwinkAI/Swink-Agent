@@ -111,6 +111,7 @@ mod tests {
             budget: None,
             evaluators: vec![],
             metadata: serde_json::Value::Null,
+            attachments: vec![],
             expected_environment_state: Some(vec![EnvironmentState {
                 name: "created_file".into(),
                 state: serde_json::json!("out.md"),

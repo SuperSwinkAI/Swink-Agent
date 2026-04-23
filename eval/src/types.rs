@@ -1,6 +1,7 @@
 //! Data types for evaluation cases, invocations, and results.
 
 use std::collections::{BTreeMap, HashSet};
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -8,10 +9,13 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use swink_agent::{AssistantMessage, Cost, ModelSpec, StopReason, ToolResultMessage, Usage};
 use swink_agent_policies::{BudgetPolicy, MaxTurnsPolicy};
+use thiserror::Error;
+use url::Url;
 use uuid::Uuid;
 
 use crate::error::EvalError;
 use crate::score::{Score, Verdict};
+use crate::url_filter::UrlFilter;
 
 // ─── Recorded Data ──────────────────────────────────────────────────────────
 
@@ -141,6 +145,200 @@ pub struct ToolIntent {
 /// panic message (FR-014).
 pub type StateCapture = Arc<dyn Fn(&Invocation) -> Vec<EnvironmentState> + Send + Sync>;
 
+/// Multimodal attachment reference attached to an evaluation case.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Attachment {
+    /// File path resolved relative to the eval-set root at materialization time.
+    Path(PathBuf),
+    /// Self-contained bytes with an explicit MIME type.
+    Base64 { mime: String, bytes: Vec<u8> },
+    /// Remote HTTPS resource guarded by a [`UrlFilter`].
+    Url(String),
+}
+
+/// Bytes ready for judge-client payload construction.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MaterializedAttachment {
+    pub mime: String,
+    pub bytes: Vec<u8>,
+}
+
+/// Structured attachment materialization errors.
+#[derive(Debug, Error)]
+pub enum AttachmentError {
+    #[error("attachment path not found: {0}")]
+    PathNotFound(PathBuf),
+    #[error("attachment decode failed: {0}")]
+    DecodeError(String),
+    #[error("attachment URL blocked: {url}: {reason}")]
+    UrlBlocked { url: String, reason: String },
+    #[error("attachment fetch failed: {url}: status {status}")]
+    FetchFailed { url: String, status: u16 },
+    #[error("unsupported attachment MIME type: {mime}")]
+    UnsupportedMime { mime: String },
+}
+
+impl Attachment {
+    /// Materialize an attachment into bytes suitable for judge dispatch.
+    ///
+    /// URL fetching is available when the `multimodal` feature is enabled.
+    pub async fn materialize(
+        &self,
+        eval_set_root: &Path,
+        filter: &dyn UrlFilter,
+    ) -> Result<MaterializedAttachment, AttachmentError> {
+        match self {
+            Self::Path(path) => materialize_path(eval_set_root, path).await,
+            Self::Base64 { mime, bytes } => {
+                validate_attachment_mime(mime)?;
+                Ok(MaterializedAttachment {
+                    mime: normalize_mime(mime),
+                    bytes: bytes.clone(),
+                })
+            }
+            Self::Url(url) => materialize_url(url, filter).await,
+        }
+    }
+}
+
+async fn materialize_path(
+    eval_set_root: &Path,
+    path: &Path,
+) -> Result<MaterializedAttachment, AttachmentError> {
+    if path.is_absolute()
+        || path
+            .components()
+            .any(|component| component == Component::ParentDir)
+    {
+        return Err(AttachmentError::PathNotFound(path.to_path_buf()));
+    }
+
+    let full_path = eval_set_root.join(path);
+    let bytes = tokio::fs::read(&full_path)
+        .await
+        .map_err(|_| AttachmentError::PathNotFound(path.to_path_buf()))?;
+    let mime = mime_from_path(path)?;
+
+    Ok(MaterializedAttachment { mime, bytes })
+}
+
+async fn materialize_url(
+    url: &str,
+    filter: &dyn UrlFilter,
+) -> Result<MaterializedAttachment, AttachmentError> {
+    let parsed = Url::parse(url).map_err(|err| AttachmentError::UrlBlocked {
+        url: url.to_string(),
+        reason: err.to_string(),
+    })?;
+
+    if parsed.scheme() != "https" {
+        return Err(AttachmentError::UrlBlocked {
+            url: url.to_string(),
+            reason: "only https URLs are supported".to_string(),
+        });
+    }
+
+    if !filter.allows(&parsed) {
+        return Err(AttachmentError::UrlBlocked {
+            url: url.to_string(),
+            reason: "blocked by URL filter".to_string(),
+        });
+    }
+
+    materialize_checked_url(parsed).await
+}
+
+#[cfg(feature = "multimodal")]
+async fn materialize_checked_url(parsed: Url) -> Result<MaterializedAttachment, AttachmentError> {
+    let url = parsed.as_str().to_string();
+    let response = reqwest::get(parsed)
+        .await
+        .map_err(|_| AttachmentError::FetchFailed {
+            url: url.clone(),
+            status: 0,
+        })?;
+    let status = response.status();
+    if !status.is_success() {
+        return Err(AttachmentError::FetchFailed {
+            url,
+            status: status.as_u16(),
+        });
+    }
+
+    let content_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .map(normalize_mime);
+    let mime = match content_type {
+        Some(mime) => {
+            validate_attachment_mime(&mime)?;
+            mime
+        }
+        None => mime_from_url_path(&url)?,
+    };
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|_| AttachmentError::FetchFailed { url, status: 0 })?
+        .to_vec();
+
+    Ok(MaterializedAttachment { mime, bytes })
+}
+
+#[cfg(not(feature = "multimodal"))]
+async fn materialize_checked_url(parsed: Url) -> Result<MaterializedAttachment, AttachmentError> {
+    Err(AttachmentError::FetchFailed {
+        url: parsed.as_str().to_string(),
+        status: 0,
+    })
+}
+
+fn mime_from_path(path: &Path) -> Result<String, AttachmentError> {
+    let extension = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let mime = match extension.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        _ => {
+            return Err(AttachmentError::UnsupportedMime {
+                mime: "application/octet-stream".to_string(),
+            });
+        }
+    };
+    Ok(mime.to_string())
+}
+
+#[cfg(feature = "multimodal")]
+fn mime_from_url_path(url: &str) -> Result<String, AttachmentError> {
+    let parsed = Url::parse(url).map_err(|_| AttachmentError::UnsupportedMime {
+        mime: "application/octet-stream".to_string(),
+    })?;
+    mime_from_path(Path::new(parsed.path()))
+}
+
+fn normalize_mime(mime: &str) -> String {
+    mime.split(';')
+        .next()
+        .unwrap_or(mime)
+        .trim()
+        .to_ascii_lowercase()
+}
+
+fn validate_attachment_mime(mime: &str) -> Result<(), AttachmentError> {
+    let mime = normalize_mime(mime);
+    match mime.as_str() {
+        "image/png" | "image/jpeg" | "image/gif" | "image/webp" => Ok(()),
+        _ => Err(AttachmentError::UnsupportedMime { mime }),
+    }
+}
+
 /// Stable namespace for deterministic case-derived session IDs.
 ///
 /// Pinned to `Uuid::new_v5(&Uuid::NAMESPACE_OID, b"swink-agent-eval.case")`
@@ -163,6 +361,7 @@ pub struct CaseFingerprint {
     pub budget: Option<BudgetConstraintsFingerprint>,
     pub evaluators: Vec<String>,
     pub metadata: CanonicalJsonValue,
+    pub attachments: Vec<AttachmentFingerprint>,
     pub expected_environment_state: Option<Vec<EnvironmentStateFingerprint>>,
     pub expected_tool_intent: Option<ToolIntentFingerprint>,
     pub semantic_tool_selection: bool,
@@ -200,6 +399,13 @@ pub struct EnvironmentStateFingerprint {
 pub struct ToolIntentFingerprint {
     pub intent: String,
     pub tool_name: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub enum AttachmentFingerprint {
+    Path(String),
+    Base64 { mime: String, sha256: String },
+    Url(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -288,6 +494,32 @@ impl From<&ToolIntent> for ToolIntentFingerprint {
     }
 }
 
+impl From<&Attachment> for AttachmentFingerprint {
+    fn from(attachment: &Attachment) -> Self {
+        match attachment {
+            Attachment::Path(path) => Self::Path(path.to_string_lossy().replace('\\', "/")),
+            Attachment::Base64 { mime, bytes } => {
+                let digest = Sha256::digest(bytes);
+                Self::Base64 {
+                    mime: normalize_mime(mime),
+                    sha256: hex_lower(&digest),
+                }
+            }
+            Attachment::Url(url) => Self::Url(url.clone()),
+        }
+    }
+}
+
+fn hex_lower(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        out.push(HEX[(byte >> 4) as usize] as char);
+        out.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    out
+}
+
 /// Budget constraints for cost and latency governance.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BudgetConstraints {
@@ -365,6 +597,9 @@ pub struct EvalCase {
     /// Arbitrary metadata for user-defined extensions and filtering.
     #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
     pub metadata: serde_json::Value,
+    /// Multimodal data references consumed by multimodal evaluators.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<Attachment>,
     /// Expected environment-state snapshots keyed by name (FR-013).
     ///
     /// Compared against the output of `state_capture` via full JSON equality.
@@ -396,6 +631,7 @@ impl std::fmt::Debug for EvalCase {
             .field("budget", &self.budget)
             .field("evaluators", &self.evaluators)
             .field("metadata", &self.metadata)
+            .field("attachments", &self.attachments)
             .field(
                 "expected_environment_state",
                 &self.expected_environment_state,
@@ -431,6 +667,11 @@ impl From<&EvalCase> for CaseFingerprint {
             budget: case.budget.as_ref().map(BudgetConstraintsFingerprint::from),
             evaluators: case.evaluators.clone(),
             metadata: CanonicalJsonValue::from(&case.metadata),
+            attachments: case
+                .attachments
+                .iter()
+                .map(AttachmentFingerprint::from)
+                .collect(),
             expected_environment_state: case.expected_environment_state.as_ref().map(|states| {
                 states
                     .iter()
@@ -597,6 +838,7 @@ mod validation_tests {
             budget: None,
             evaluators: vec![],
             metadata: serde_json::Value::Null,
+            attachments: vec![],
             expected_environment_state: None,
             expected_tool_intent: None,
             semantic_tool_selection: false,
@@ -703,6 +945,7 @@ mod validation_tests {
             "read config"
         );
         assert!(back.semantic_tool_selection);
+        assert!(back.attachments.is_empty());
         assert!(back.state_capture.is_none());
     }
 

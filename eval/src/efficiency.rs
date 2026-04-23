@@ -166,6 +166,7 @@ mod tests {
             budget: None,
             evaluators: vec![],
             metadata: serde_json::Value::Null,
+            attachments: vec![],
             expected_environment_state: None,
             expected_tool_intent: None,
             semantic_tool_selection: false,

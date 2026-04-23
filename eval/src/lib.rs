@@ -72,10 +72,10 @@ pub use store::{EvalStore, FsEvalStore};
 pub use testing::{MockJudge, PanickingMockJudge, SlowMockJudge};
 pub use trajectory::TrajectoryCollector;
 pub use types::{
-    BudgetConstraints, CASE_NAMESPACE, CaseFingerprint, EnvironmentState, EvalCase, EvalCaseResult,
-    EvalMetricResult, EvalSet, EvalSetResult, EvalSummary, ExpectedToolCall, Invocation,
-    RecordedToolCall, ResponseCriteria, StateCapture, ToolIntent, TurnRecord, validate_eval_case,
-    validate_eval_set,
+    Attachment, AttachmentError, BudgetConstraints, CASE_NAMESPACE, CaseFingerprint,
+    EnvironmentState, EvalCase, EvalCaseResult, EvalMetricResult, EvalSet, EvalSetResult,
+    EvalSummary, ExpectedToolCall, Invocation, MaterializedAttachment, RecordedToolCall,
+    ResponseCriteria, StateCapture, ToolIntent, TurnRecord, validate_eval_case, validate_eval_set,
 };
 pub use url_filter::{DefaultUrlFilter, UrlFilter};
 #[cfg(feature = "yaml")]
