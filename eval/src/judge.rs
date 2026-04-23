@@ -32,6 +32,8 @@
 
 use async_trait::async_trait;
 
+pub use crate::url_filter::{DefaultUrlFilter, UrlFilter};
+
 /// LLM-as-judge client used by semantic evaluators.
 ///
 /// The trait exposes a single async method that accepts a rendered prompt and

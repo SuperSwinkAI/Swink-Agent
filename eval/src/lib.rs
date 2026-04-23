@@ -27,7 +27,7 @@ pub mod evaluators;
 mod gate;
 #[cfg(feature = "generation")]
 pub mod generation;
-mod judge;
+pub mod judge;
 mod match_;
 #[cfg(feature = "judge-core")]
 pub mod prompt;
@@ -47,6 +47,7 @@ pub mod testing;
 pub mod trace;
 mod trajectory;
 mod types;
+mod url_filter;
 #[cfg(feature = "yaml")]
 mod yaml;
 
@@ -76,5 +77,6 @@ pub use types::{
     RecordedToolCall, ResponseCriteria, StateCapture, ToolIntent, TurnRecord, validate_eval_case,
     validate_eval_set,
 };
+pub use url_filter::{DefaultUrlFilter, UrlFilter};
 #[cfg(feature = "yaml")]
 pub use yaml::load_eval_set_yaml;

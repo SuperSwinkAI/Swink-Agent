@@ -34,6 +34,7 @@ backon = { workspace = true, optional = true }
 strsim = { workspace = true, optional = true }
 jsonschema = { workspace = true, optional = true }
 reqwest = { workspace = true, optional = true }
+url = "2"
 opentelemetry = { workspace = true, optional = true }
 opentelemetry_sdk = { workspace = true, optional = true }
 opentelemetry-otlp = { workspace = true, optional = true }
