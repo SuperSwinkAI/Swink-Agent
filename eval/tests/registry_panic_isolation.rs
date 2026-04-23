@@ -72,10 +72,14 @@ fn panic_case() -> EvalCase {
         expected_response: Some(ResponseCriteria::Custom(Arc::new(|_: &str| -> Score {
             panic!("panicking response closure");
         }))),
+        expected_assertion: None,
+        expected_interactions: None,
+        few_shot_examples: vec![],
         budget: None,
         evaluators: vec![],
         metadata: serde_json::Value::Null,
         attachments: vec![],
+        session_id: None,
         expected_environment_state: Some(vec![EnvironmentState {
             name: "created_file".into(),
             state: serde_json::json!("out.md"),

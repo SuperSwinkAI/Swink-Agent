@@ -5,7 +5,7 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use sha2::{Digest, Sha256};
 use swink_agent::{AssistantMessage, Cost, ModelSpec, StopReason, ToolResultMessage, Usage};
 use swink_agent_policies::{BudgetPolicy, MaxTurnsPolicy};
@@ -405,6 +405,9 @@ pub struct CaseFingerprint {
     pub user_messages: Vec<String>,
     pub expected_trajectory: Option<Vec<ExpectedToolCallFingerprint>>,
     pub expected_response: Option<ResponseCriteriaFingerprint>,
+    pub expected_assertion: Option<Assertion>,
+    pub expected_interactions: Option<Vec<InteractionExpectation>>,
+    pub few_shot_examples: Vec<FewShotExample>,
     pub budget: Option<BudgetConstraintsFingerprint>,
     pub evaluators: Vec<String>,
     pub metadata: CanonicalJsonValue,
@@ -635,6 +638,15 @@ pub struct EvalCase {
     /// Expected final response criteria.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_response: Option<ResponseCriteria>,
+    /// Judge-evaluated assertion expected to hold after the run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_assertion: Option<Assertion>,
+    /// Expected interactions or hand-offs within the run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_interactions: Option<Vec<InteractionExpectation>>,
+    /// Prompt examples injected ahead of judge-backed evaluations.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub few_shot_examples: Vec<FewShotExample>,
     /// Cost/budget governance constraints.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub budget: Option<BudgetConstraints>,
@@ -647,6 +659,15 @@ pub struct EvalCase {
     /// Multimodal data references consumed by multimodal evaluators.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attachments: Vec<Attachment>,
+    /// Stable case/session identifier. When absent, callers may derive one
+    /// deterministically via [`Self::default_session_id`].
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "serialize_optional_uuid",
+        deserialize_with = "deserialize_optional_uuid"
+    )]
+    pub session_id: Option<Uuid>,
     /// Expected environment-state snapshots keyed by name (FR-013).
     ///
     /// Compared against the output of `state_capture` via full JSON equality.
@@ -675,10 +696,14 @@ impl std::fmt::Debug for EvalCase {
             .field("user_messages", &self.user_messages)
             .field("expected_trajectory", &self.expected_trajectory)
             .field("expected_response", &self.expected_response)
+            .field("expected_assertion", &self.expected_assertion)
+            .field("expected_interactions", &self.expected_interactions)
+            .field("few_shot_examples", &self.few_shot_examples)
             .field("budget", &self.budget)
             .field("evaluators", &self.evaluators)
             .field("metadata", &self.metadata)
             .field("attachments", &self.attachments)
+            .field("session_id", &self.session_id)
             .field(
                 "expected_environment_state",
                 &self.expected_environment_state,
@@ -711,6 +736,9 @@ impl From<&EvalCase> for CaseFingerprint {
                 .expected_response
                 .as_ref()
                 .map(ResponseCriteriaFingerprint::from),
+            expected_assertion: case.expected_assertion.clone(),
+            expected_interactions: case.expected_interactions.clone(),
+            few_shot_examples: case.few_shot_examples.clone(),
             budget: case.budget.as_ref().map(BudgetConstraintsFingerprint::from),
             evaluators: case.evaluators.clone(),
             metadata: CanonicalJsonValue::from(&case.metadata),
@@ -754,6 +782,87 @@ impl EvalCase {
             bincode::serialize(&self.content_fingerprint()).expect("case fingerprint serializes");
         let digest = Sha256::digest(canonical);
         Uuid::new_v5(&CASE_NAMESPACE, digest.as_slice())
+    }
+
+    /// Validate this case's static configuration.
+    pub fn validate(&self) -> Result<(), EvalError> {
+        if let Some(assertion) = &self.expected_assertion {
+            validate_non_empty_field(
+                &self.id,
+                "expected_assertion.description",
+                &assertion.description,
+            )?;
+            match &assertion.kind {
+                AssertionKind::GoalCompleted | AssertionKind::UserSatisfied => {}
+                AssertionKind::ToolInvoked(tool_name) => {
+                    validate_non_empty_field(
+                        &self.id,
+                        "expected_assertion.kind.tool_name",
+                        tool_name,
+                    )?;
+                }
+                AssertionKind::Custom { predicate } => {
+                    validate_non_empty_field(
+                        &self.id,
+                        "expected_assertion.kind.predicate",
+                        predicate,
+                    )?;
+                }
+            }
+        }
+
+        if let Some(interactions) = &self.expected_interactions {
+            for (index, interaction) in interactions.iter().enumerate() {
+                let field_prefix = format!("expected_interactions[{index}]");
+                validate_non_empty_field(
+                    &self.id,
+                    &format!("{field_prefix}.from"),
+                    &interaction.from,
+                )?;
+                validate_non_empty_field(&self.id, &format!("{field_prefix}.to"), &interaction.to)?;
+                validate_non_empty_field(
+                    &self.id,
+                    &format!("{field_prefix}.description"),
+                    &interaction.description,
+                )?;
+            }
+        }
+
+        for (index, example) in self.few_shot_examples.iter().enumerate() {
+            let field_prefix = format!("few_shot_examples[{index}]");
+            validate_non_empty_field(&self.id, &format!("{field_prefix}.input"), &example.input)?;
+            validate_non_empty_field(
+                &self.id,
+                &format!("{field_prefix}.expected"),
+                &example.expected,
+            )?;
+            if let Some(reasoning) = &example.reasoning {
+                validate_non_empty_field(
+                    &self.id,
+                    &format!("{field_prefix}.reasoning"),
+                    reasoning,
+                )?;
+            }
+        }
+
+        for (index, attachment) in self.attachments.iter().enumerate() {
+            validate_attachment_declaration(&self.id, index, attachment)?;
+        }
+
+        if let Some(states) = &self.expected_environment_state {
+            let mut seen: HashSet<&str> = HashSet::with_capacity(states.len());
+            for state in states {
+                if !seen.insert(state.name.as_str()) {
+                    return Err(EvalError::invalid_case(format!(
+                        "case `{case_id}`: duplicate expected_environment_state name `{name}`",
+                        case_id = self.id,
+                        name = state.name,
+                    )));
+                }
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -846,27 +955,97 @@ pub struct EvalSummary {
 /// This check is shared by [`validate_eval_set`] and the YAML loader so
 /// programmatic constructors get the same guarantees as on-disk configs.
 pub fn validate_eval_case(case: &EvalCase) -> Result<(), EvalError> {
-    if let Some(states) = &case.expected_environment_state {
-        let mut seen: HashSet<&str> = HashSet::with_capacity(states.len());
-        for state in states {
-            if !seen.insert(state.name.as_str()) {
-                return Err(EvalError::invalid_case(format!(
-                    "case `{case_id}`: duplicate expected_environment_state name `{name}`",
-                    case_id = case.id,
-                    name = state.name,
-                )));
-            }
-        }
-    }
-    Ok(())
+    case.validate()
 }
 
 /// Validate an entire [`EvalSet`], short-circuiting on the first invalid case.
 pub fn validate_eval_set(set: &EvalSet) -> Result<(), EvalError> {
+    let mut seen_case_ids: HashSet<&str> = HashSet::with_capacity(set.cases.len());
     for case in &set.cases {
-        validate_eval_case(case)?;
+        if !seen_case_ids.insert(case.id.as_str()) {
+            return Err(EvalError::invalid_case(format!(
+                "eval set `{set_id}`: duplicate case id `{case_id}`",
+                set_id = set.id,
+                case_id = case.id,
+            )));
+        }
+        case.validate()?;
     }
     Ok(())
+}
+
+fn validate_non_empty_field(case_id: &str, field: &str, value: &str) -> Result<(), EvalError> {
+    if value.trim().is_empty() {
+        return Err(EvalError::invalid_case(format!(
+            "case `{case_id}`: `{field}` must not be blank"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_attachment_declaration(
+    case_id: &str,
+    index: usize,
+    attachment: &Attachment,
+) -> Result<(), EvalError> {
+    match attachment {
+        Attachment::Path(path) => {
+            if path.as_os_str().is_empty()
+                || path.is_absolute()
+                || path
+                    .components()
+                    .any(|component| component == Component::ParentDir)
+            {
+                return Err(EvalError::invalid_case(format!(
+                    "case `{case_id}`: attachments[{index}] path must stay relative to the eval-set root"
+                )));
+            }
+        }
+        Attachment::Base64 { mime, .. } => {
+            validate_attachment_mime(mime).map_err(|err| {
+                EvalError::invalid_case(format!(
+                    "case `{case_id}`: attachments[{index}] invalid MIME: {err}"
+                ))
+            })?;
+        }
+        Attachment::Url(url) => {
+            let parsed = Url::parse(url).map_err(|err| {
+                EvalError::invalid_case(format!(
+                    "case `{case_id}`: attachments[{index}] invalid URL: {err}"
+                ))
+            })?;
+            if parsed.scheme() != "https" {
+                return Err(EvalError::invalid_case(format!(
+                    "case `{case_id}`: attachments[{index}] URL must use https"
+                )));
+            }
+        }
+    }
+
+    Ok(())
+}
+
+#[allow(clippy::ref_option)]
+fn serialize_optional_uuid<S>(value: &Option<Uuid>, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    match value {
+        Some(uuid) => serializer.serialize_some(&uuid.to_string()),
+        None => serializer.serialize_none(),
+    }
+}
+
+fn deserialize_optional_uuid<'de, D>(deserializer: D) -> Result<Option<Uuid>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Option::<String>::deserialize(deserializer)?;
+    value
+        .map(|value| {
+            Uuid::parse_str(&value).map_err(|err| serde::de::Error::custom(err.to_string()))
+        })
+        .transpose()
 }
 
 #[cfg(test)]
@@ -882,10 +1061,14 @@ mod validation_tests {
             user_messages: vec!["hi".to_string()],
             expected_trajectory: None,
             expected_response: None,
+            expected_assertion: None,
+            expected_interactions: None,
+            few_shot_examples: vec![],
             budget: None,
             evaluators: vec![],
             metadata: serde_json::Value::Null,
             attachments: vec![],
+            session_id: None,
             expected_environment_state: None,
             expected_tool_intent: None,
             semantic_tool_selection: false,
@@ -983,6 +1166,21 @@ mod validation_tests {
             intent: "read config".into(),
             tool_name: Some("read_file".into()),
         });
+        case.expected_assertion = Some(Assertion {
+            description: "goal completed".into(),
+            kind: AssertionKind::GoalCompleted,
+        });
+        case.expected_interactions = Some(vec![InteractionExpectation {
+            from: "planner".into(),
+            to: "worker".into(),
+            description: "delegates the task".into(),
+        }]);
+        case.few_shot_examples = vec![FewShotExample {
+            input: "hello".into(),
+            expected: "world".into(),
+            reasoning: Some("example".into()),
+        }];
+        case.session_id = Some(Uuid::nil());
         case.semantic_tool_selection = true;
         let yaml_like = serde_json::to_string(&case).unwrap();
         let back: EvalCase = serde_json::from_str(&yaml_like).unwrap();
@@ -991,6 +1189,13 @@ mod validation_tests {
             back.expected_tool_intent.as_ref().unwrap().intent,
             "read config"
         );
+        assert_eq!(
+            back.expected_assertion.as_ref().unwrap().description,
+            "goal completed"
+        );
+        assert_eq!(back.expected_interactions.as_ref().unwrap().len(), 1);
+        assert_eq!(back.few_shot_examples.len(), 1);
+        assert_eq!(back.session_id, Some(Uuid::nil()));
         assert!(back.semantic_tool_selection);
         assert!(back.attachments.is_empty());
         assert!(back.state_capture.is_none());
