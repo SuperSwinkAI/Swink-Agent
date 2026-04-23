@@ -20,6 +20,19 @@ use crate::prompt::{JudgePromptTemplate, PromptContext, PromptError};
 use crate::score::Score;
 use crate::types::EvalMetricResult;
 
+// ─── Judge-family evaluator submodules (T057–T070) ──────────────────────────
+//
+// Each family file re-exports concrete evaluators gated behind its own cargo
+// feature flag so consumers only pay for the families they opt into.
+//
+// Quality and Safety families land in US1c; RAG and Agent families are
+// deferred to a US1c follow-up PR to keep the US1c diff reviewable.
+
+#[cfg(feature = "evaluator-quality")]
+pub mod quality;
+#[cfg(feature = "evaluator-safety")]
+pub mod safety;
+
 /// Per-instance configuration shared by every judge-backed evaluator (T055).
 ///
 /// A `None` template means "use the evaluator's built-in `_v0` template".
@@ -312,6 +325,68 @@ pub fn finish_metric_result(
         evaluator_name: evaluator_name.into(),
         score: outcome.score,
         details: buffer.into_details_string(),
+    }
+}
+
+/// Drive an async workload to completion from the sync [`crate::Evaluator::evaluate`]
+/// entry point, regardless of the caller's Tokio runtime state.
+///
+/// Mirrors the pattern documented on
+/// [`crate::SemanticToolSelectionEvaluator`] (spec 023): when a multi-thread
+/// Tokio runtime is active we use `block_in_place` + the ambient
+/// `Handle::block_on`; otherwise we build an ephemeral current-thread runtime.
+/// Calling this from inside a single-threaded runtime will panic — an
+/// inherent Tokio constraint, not a bug.
+pub fn drive_judge_call<F, Fut, T>(make_future: F) -> T
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = T>,
+{
+    use tokio::runtime::{Handle, RuntimeFlavor};
+
+    if let Ok(handle) = Handle::try_current()
+        && handle.runtime_flavor() == RuntimeFlavor::MultiThread
+    {
+        return tokio::task::block_in_place(|| handle.block_on(make_future()));
+    }
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("build current-thread runtime for judge calls");
+    rt.block_on(make_future())
+}
+
+/// Sync helper for judge-backed evaluators.
+///
+/// Locates the built-in template by version, dispatches via
+/// [`dispatch_judge`], and finalises the [`EvalMetricResult`] via
+/// [`finish_metric_result`]. Dispatch errors map to `Score::fail()` with the
+/// error captured in `details` (FR-014 / FR-021).
+///
+/// Concrete evaluators are responsible for deciding whether their criterion
+/// is set before calling this helper (FR-020). The helper itself never
+/// returns `None`; once invoked, it always produces a metric result.
+#[must_use]
+pub fn evaluate_with_builtin(
+    evaluator_name: &'static str,
+    template_version: &'static str,
+    config: &JudgeEvaluatorConfig,
+    context: PromptContext,
+) -> EvalMetricResult {
+    let builtin = crate::prompt::PromptTemplateRegistry::builtin()
+        .get(template_version)
+        .unwrap_or_else(|| panic!("built-in template {template_version} is missing"));
+
+    let dispatch = drive_judge_call(|| async { dispatch_judge(config, builtin, &context).await });
+
+    match dispatch {
+        Ok(outcome) => finish_metric_result(evaluator_name.to_string(), outcome),
+        Err(err) => EvalMetricResult {
+            evaluator_name: evaluator_name.to_string(),
+            score: Score::fail(),
+            details: Some(format!("{evaluator_name}: dispatch error — {err}")),
+        },
     }
 }
 
