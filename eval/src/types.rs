@@ -778,8 +778,8 @@ impl EvalCase {
     /// presence of custom criteria while avoiding pointer-address instability.
     #[must_use]
     pub fn default_session_id(&self) -> Uuid {
-        let canonical = serde_json::to_vec(&self.content_fingerprint())
-            .expect("case fingerprint serializes");
+        let canonical =
+            serde_json::to_vec(&self.content_fingerprint()).expect("case fingerprint serializes");
         let digest = Sha256::digest(canonical);
         Uuid::new_v5(&CASE_NAMESPACE, digest.as_slice())
     }
