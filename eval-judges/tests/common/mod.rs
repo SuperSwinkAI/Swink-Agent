@@ -72,8 +72,7 @@ pub fn rate_limited_response(retry_after_secs: u64) -> ResponseTemplate {
 /// emit inside each provider's response text block.
 #[must_use]
 pub fn happy_verdict_json() -> String {
-    r#"{"score": 0.9, "pass": true, "reason": "looks correct", "label": "equivalent"}"#
-        .to_string()
+    r#"{"score": 0.9, "pass": true, "reason": "looks correct", "label": "equivalent"}"#.to_string()
 }
 
 /// Build a 200 response in the Anthropic `/v1/messages` shape wrapping

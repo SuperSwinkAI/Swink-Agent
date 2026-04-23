@@ -4822,7 +4822,6 @@ dependencies = [
  "askama",
  "async-trait",
  "backon",
- "bincode",
  "clap",
  "futures",
  "jsonschema",
@@ -4857,6 +4856,7 @@ version = "0.8.1"
 dependencies = [
  "async-trait",
  "backon",
+ "reqwest 0.13.2",
  "serde",
  "serde_json",
  "swink-agent-adapters",

@@ -218,8 +218,7 @@ impl BlockingAnthropicJudgeClient {
     pub fn judge(&self, prompt: &str) -> Result<JudgeVerdict, JudgeError> {
         let client = self.inner.clone();
         let prompt = prompt.to_string();
-        tokio::runtime::Handle::current()
-            .block_on(async move { client.judge(&prompt).await })
+        tokio::runtime::Handle::current().block_on(async move { client.judge(&prompt).await })
     }
 
     /// Borrow the underlying async client for mixed sync/async call sites.
@@ -262,7 +261,11 @@ enum AnthropicResponseBlock {
 fn classify_http_error(status: StatusCode, body: &str) -> JudgeError {
     // 429 and 5xx are retryable per R-002.
     if status == StatusCode::TOO_MANY_REQUESTS || status.is_server_error() {
-        JudgeError::Transport(format!("anthropic http {}: {}", status.as_u16(), truncate(body)))
+        JudgeError::Transport(format!(
+            "anthropic http {}: {}",
+            status.as_u16(),
+            truncate(body)
+        ))
     } else {
         JudgeError::Other(format!(
             "anthropic http {}: {}",
@@ -296,7 +299,9 @@ fn extract_verdict(resp: &AnthropicResponse) -> Result<JudgeVerdict, JudgeError>
             AnthropicResponseBlock::Text { text } => Some(text.as_str()),
             AnthropicResponseBlock::Other => None,
         })
-        .ok_or_else(|| JudgeError::MalformedResponse("no text block in anthropic response".into()))?;
+        .ok_or_else(|| {
+            JudgeError::MalformedResponse("no text block in anthropic response".into())
+        })?;
 
     parse_verdict_text(text)
 }

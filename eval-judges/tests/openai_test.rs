@@ -33,7 +33,7 @@ async fn openai_happy_path() {
         .mount(&server)
         .await;
 
-    let client = OpenAiJudgeClient::new(&server.uri(), "test-key", "gpt-test")
+    let client = OpenAiJudgeClient::new(server.uri(), "test-key", "gpt-test")
         .with_retry_policy(test_policy(6));
 
     let verdict = client.judge("grade this").await.expect("verdict");
@@ -73,10 +73,13 @@ async fn openai_rate_limit_absorbed_by_retry() {
         .mount(&server)
         .await;
 
-    let client = OpenAiJudgeClient::new(&server.uri(), "test-key", "gpt-test")
+    let client = OpenAiJudgeClient::new(server.uri(), "test-key", "gpt-test")
         .with_retry_policy(test_policy(6));
 
-    let verdict = client.judge("grade this").await.expect("verdict after retry");
+    let verdict = client
+        .judge("grade this")
+        .await
+        .expect("verdict after retry");
     assert!(verdict.pass);
     assert_eq!(count.load(Ordering::SeqCst), 2);
 }
@@ -92,7 +95,7 @@ async fn openai_exhausted_retries_surface_transport() {
         .mount(&server)
         .await;
 
-    let client = OpenAiJudgeClient::new(&server.uri(), "test-key", "gpt-test")
+    let client = OpenAiJudgeClient::new(server.uri(), "test-key", "gpt-test")
         .with_retry_policy(test_policy(3));
 
     let err = client
@@ -116,7 +119,7 @@ async fn openai_malformed_response_is_terminal() {
         .mount(&server)
         .await;
 
-    let client = OpenAiJudgeClient::new(&server.uri(), "test-key", "gpt-test")
+    let client = OpenAiJudgeClient::new(server.uri(), "test-key", "gpt-test")
         .with_retry_policy(test_policy(6));
 
     let err = client
@@ -133,7 +136,7 @@ async fn openai_cancellation_token_short_circuits() {
     let cancel = CancellationToken::new();
     cancel.cancel();
 
-    let client = OpenAiJudgeClient::new(&server.uri(), "test-key", "gpt-test")
+    let client = OpenAiJudgeClient::new(server.uri(), "test-key", "gpt-test")
         .with_retry_policy(test_policy(6))
         .with_cancellation(cancel);
 
@@ -146,7 +149,10 @@ async fn openai_cancellation_token_short_circuits() {
         other => panic!("expected cancellation, got {other:?}"),
     }
 
-    assert_eq!(server.received_requests().await.unwrap_or_default().len(), 0);
+    assert_eq!(
+        server.received_requests().await.unwrap_or_default().len(),
+        0
+    );
 }
 
 #[tokio::test]
@@ -159,7 +165,7 @@ async fn openai_blocking_wrapper_delegates_to_async() {
         .mount(&server)
         .await;
 
-    let client = OpenAiJudgeClient::new(&server.uri(), "test-key", "gpt-test")
+    let client = OpenAiJudgeClient::new(server.uri(), "test-key", "gpt-test")
         .with_retry_policy(test_policy(3));
     let blocking = swink_agent_eval_judges::BlockingOpenAiJudgeClient::new(client);
 

@@ -39,6 +39,7 @@ pub struct OpenAiJudgeClient {
 }
 
 /// Alias for spec-doc callers that use `OpenAI` capitalization.
+#[allow(dead_code)]
 pub type OpenAIJudgeClient = OpenAiJudgeClient;
 
 struct Inner {
@@ -159,9 +160,10 @@ impl OpenAiJudgeClient {
             return Err(classify_http_error(status, &text));
         }
 
-        let parsed: OpenAiResponse = resp.json().await.map_err(|e| {
-            JudgeError::MalformedResponse(format!("openai body parse failed: {e}"))
-        })?;
+        let parsed: OpenAiResponse = resp
+            .json()
+            .await
+            .map_err(|e| JudgeError::MalformedResponse(format!("openai body parse failed: {e}")))?;
 
         extract_verdict(&parsed)
     }
@@ -199,8 +201,7 @@ impl BlockingOpenAiJudgeClient {
     pub fn judge(&self, prompt: &str) -> Result<JudgeVerdict, JudgeError> {
         let client = self.inner.clone();
         let prompt = prompt.to_string();
-        tokio::runtime::Handle::current()
-            .block_on(async move { client.judge(&prompt).await })
+        tokio::runtime::Handle::current().block_on(async move { client.judge(&prompt).await })
     }
 
     /// Borrow the underlying async client for mixed sync/async call sites.
@@ -243,9 +244,17 @@ struct OpenAiChoiceMessage {
 
 fn classify_http_error(status: StatusCode, body: &str) -> JudgeError {
     if status == StatusCode::TOO_MANY_REQUESTS || status.is_server_error() {
-        JudgeError::Transport(format!("openai http {}: {}", status.as_u16(), truncate(body)))
+        JudgeError::Transport(format!(
+            "openai http {}: {}",
+            status.as_u16(),
+            truncate(body)
+        ))
     } else {
-        JudgeError::Other(format!("openai http {}: {}", status.as_u16(), truncate(body)))
+        JudgeError::Other(format!(
+            "openai http {}: {}",
+            status.as_u16(),
+            truncate(body)
+        ))
     }
 }
 

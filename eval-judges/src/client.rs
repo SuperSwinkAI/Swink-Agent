@@ -88,10 +88,10 @@ where
     }
 }
 
-/// Classifier: return `true` for [`JudgeError`] variants that a judge client
-/// should retry. Transport errors are assumed transient (the provider layer
-/// tags 429 / 5xx as [`JudgeError::Transport`]); every other variant is
-/// terminal.
+/// Classifier: return `true` for [`JudgeError`] variants that a judge client should retry.
+///
+/// Transport errors are assumed transient (the provider layer tags 429 / 5xx
+/// as [`JudgeError::Transport`]); every other variant is terminal.
 #[must_use]
 pub fn is_retryable(err: &JudgeError) -> bool {
     matches!(err, JudgeError::Transport(_))
@@ -147,10 +147,7 @@ impl BatchedJudgeClient {
     /// the wrapper preserves input order and returns one `Result<_, _>` per
     /// prompt (never short-circuits on the first error) so callers can
     /// decide per-case remediation.
-    pub async fn judge_batch(
-        &self,
-        prompts: &[String],
-    ) -> Vec<Result<JudgeVerdict, JudgeError>> {
+    pub async fn judge_batch(&self, prompts: &[String]) -> Vec<Result<JudgeVerdict, JudgeError>> {
         let mut out = Vec::with_capacity(prompts.len());
         for chunk in prompts.chunks(self.batch_size) {
             for prompt in chunk {
@@ -196,10 +193,11 @@ pub const fn fast_test_policy() -> RetryPolicy {
     RetryPolicy::new(3, Duration::from_millis(50), false)
 }
 
-/// Parse a judge verdict out of an arbitrary text blob. Supports bare
-/// JSON objects or the same object wrapped in a fenced code block. Each
-/// judge client extracts the provider's text content and funnels it
-/// through this helper so the verdict schema stays identical across
+/// Parse a judge verdict out of an arbitrary text blob.
+///
+/// Supports bare JSON objects or the same object wrapped in a fenced code
+/// block. Each judge client extracts the provider's text content and funnels
+/// it through this helper so the verdict schema stays identical across
 /// providers.
 pub fn parse_verdict_text(text: &str) -> Result<JudgeVerdict, JudgeError> {
     let cleaned = strip_code_fence(text.trim());
@@ -408,6 +406,9 @@ mod tests {
         .await;
 
         assert!(matches!(result, Err(JudgeError::Transport(_))));
-        assert_eq!(attempts.load(Ordering::SeqCst), policy.max_attempts as usize);
+        assert_eq!(
+            attempts.load(Ordering::SeqCst),
+            policy.max_attempts as usize
+        );
     }
 }
