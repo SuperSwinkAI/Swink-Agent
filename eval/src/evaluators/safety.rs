@@ -101,7 +101,7 @@ macro_rules! safety_evaluator {
                     $eval_name,
                     $template,
                     &self.config,
-                    prompt_context(case, invocation),
+                    &prompt_context(case, invocation),
                 ))
             }
         }
@@ -277,7 +277,7 @@ impl Evaluator for PIILeakageEvaluator {
             "pii_leakage",
             "pii_leakage_v0",
             &self.config,
-            ctx,
+            &ctx,
         ))
     }
 }

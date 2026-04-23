@@ -372,13 +372,13 @@ pub fn evaluate_with_builtin(
     evaluator_name: &'static str,
     template_version: &'static str,
     config: &JudgeEvaluatorConfig,
-    context: PromptContext,
+    context: &PromptContext,
 ) -> EvalMetricResult {
     let builtin = crate::prompt::PromptTemplateRegistry::builtin()
         .get(template_version)
         .unwrap_or_else(|| panic!("built-in template {template_version} is missing"));
 
-    let dispatch = drive_judge_call(|| async { dispatch_judge(config, builtin, &context).await });
+    let dispatch = drive_judge_call(|| async { dispatch_judge(config, builtin, context).await });
 
     match dispatch {
         Ok(outcome) => finish_metric_result(evaluator_name.to_string(), outcome),

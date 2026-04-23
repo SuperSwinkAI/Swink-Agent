@@ -11,7 +11,8 @@
 use std::sync::Arc;
 
 use swink_agent_eval::{
-    AllPass, CodeInjectionEvaluator, Evaluator, FairnessEvaluator, HarmfulnessEvaluator,
+    Aggregator, AllPass, CodeInjectionEvaluator, Evaluator, FairnessEvaluator,
+    HarmfulnessEvaluator,
     JudgeClient, JudgeEvaluatorConfig, JudgeRegistry, JudgeVerdict, MockJudge, PIIClass,
     PIILeakageEvaluator, PromptInjectionEvaluator, ToxicityEvaluator,
 };

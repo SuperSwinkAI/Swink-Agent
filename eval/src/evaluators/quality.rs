@@ -84,7 +84,7 @@ macro_rules! simple_quality_evaluator {
                     $eval_name,
                     $template,
                     &self.config,
-                    prompt_context(case, invocation),
+                    &prompt_context(case, invocation),
                 ))
             }
         }
@@ -161,8 +161,9 @@ simple_quality_evaluator! {
 }
 
 simple_quality_evaluator! {
-    /// Faithfulness to RETRIEVED context (prompt: `faithfulness_v0`). Distinct
-    /// rubric from [`HallucinationEvaluator`]; requires `few_shot_examples`
+    /// Faithfulness to RETRIEVED context (prompt: `faithfulness_v0`).
+    ///
+    /// Distinct rubric from [`HallucinationEvaluator`]; requires `few_shot_examples`
     /// on the case (the spec's canonical retrieved-context surface).
     FaithfulnessEvaluator,
     "faithfulness",
@@ -229,7 +230,7 @@ impl Evaluator for GoalSuccessRateEvaluator {
             "goal_success_rate",
             "goal_success_rate_v0",
             &self.config,
-            prompt_context(case, invocation),
+            &prompt_context(case, invocation),
         ))
     }
 }
@@ -242,6 +243,6 @@ impl Evaluator for GoalSuccessRateEvaluator {
 pub fn assertion_implies_goal_completion(case: &EvalCase) -> bool {
     matches!(
         case.expected_assertion.as_ref().map(|a| &a.kind),
-        Some(AssertionKind::GoalCompleted) | Some(AssertionKind::Custom { .. })
+        Some(AssertionKind::GoalCompleted | AssertionKind::Custom { .. })
     )
 }
