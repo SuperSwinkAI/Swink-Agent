@@ -102,6 +102,8 @@ pub use score::{Score, Verdict};
 pub use semantic_tool_parameter::SemanticToolParameterEvaluator;
 pub use semantic_tool_selection::SemanticToolSelectionEvaluator;
 pub use store::{EvalStore, FsEvalStore};
+#[cfg(feature = "telemetry")]
+pub use telemetry::{EvalsTelemetry, EvalsTelemetryBuilder};
 pub use testing::{MockJudge, PanickingMockJudge, SlowMockJudge};
 pub use trajectory::TrajectoryCollector;
 pub use types::{

@@ -170,17 +170,43 @@ impl EvaluatorRegistry {
     /// in that list are run. Otherwise, all registered evaluators are run.
     #[must_use]
     pub fn evaluate(&self, case: &EvalCase, invocation: &Invocation) -> Vec<EvalMetricResult> {
+        self.evaluate_instrumented(case, invocation, |_name, run| run())
+    }
+
+    /// Variant of [`Self::evaluate`] that lets the caller wrap each
+    /// evaluator invocation — e.g. in an OTel span (spec 043 US7 / FR-035).
+    ///
+    /// `wrap` is invoked once per applicable evaluator with its name and a
+    /// closure that, when called, runs the evaluator under the existing
+    /// panic-isolation guard. `wrap` may return `None` to drop the metric.
+    ///
+    /// The shape is deliberately synchronous to match the existing
+    /// [`Self::evaluate`] surface and keep the observer bridge simple.
+    pub fn evaluate_instrumented<F>(
+        &self,
+        case: &EvalCase,
+        invocation: &Invocation,
+        mut wrap: F,
+    ) -> Vec<EvalMetricResult>
+    where
+        F: FnMut(&str, &mut dyn FnMut() -> Option<EvalMetricResult>) -> Option<EvalMetricResult>,
+    {
         let filter = &case.evaluators;
         self.evaluators
             .iter()
             .filter(|e| filter.is_empty() || filter.iter().any(|name| name == e.name()))
             .filter_map(|e| {
+                let name = e.name();
                 let evaluator = Arc::clone(e);
-                let case = case.clone();
-                let invocation = invocation.clone();
-                isolate_panic(evaluator.name(), move || {
-                    evaluator.evaluate(&case, &invocation)
-                })
+                let mut runner = move || {
+                    let evaluator = Arc::clone(&evaluator);
+                    let case = case.clone();
+                    let invocation = invocation.clone();
+                    isolate_panic(evaluator.name(), move || {
+                        evaluator.evaluate(&case, &invocation)
+                    })
+                };
+                wrap(name, &mut runner)
             })
             .collect()
     }

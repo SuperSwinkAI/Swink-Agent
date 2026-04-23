@@ -23,6 +23,8 @@ use crate::cache::{CacheKey, EvaluationDataStore, FingerprintContext};
 use crate::error::EvalError;
 use crate::evaluator::EvaluatorRegistry;
 use crate::score::{Score, Verdict};
+#[cfg(feature = "telemetry")]
+use crate::telemetry::{CaseSpan, EvalsTelemetry, RunSetSpan, RunSetSpanRef};
 use crate::trajectory::TrajectoryCollector;
 use crate::types::{
     EvalCase, EvalCaseResult, EvalMetricResult, EvalSet, EvalSetResult, EvalSummary, Invocation,
@@ -98,6 +100,8 @@ pub struct EvalRunner {
     cancel: Option<CancellationToken>,
     initial_session_file: Option<PathBuf>,
     agent_invocations: Arc<AtomicUsize>,
+    #[cfg(feature = "telemetry")]
+    telemetry: Option<Arc<EvalsTelemetry>>,
 }
 
 impl EvalRunner {
@@ -112,6 +116,8 @@ impl EvalRunner {
             cancel: None,
             initial_session_file: None,
             agent_invocations: Arc::new(AtomicUsize::new(0)),
+            #[cfg(feature = "telemetry")]
+            telemetry: None,
         }
     }
 
@@ -169,6 +175,16 @@ impl EvalRunner {
         self
     }
 
+    /// Attach an [`EvalsTelemetry`] (spec 043 US7 / FR-035). When present,
+    /// [`Self::run_set`] emits the three-level span tree
+    /// `swink.eval.run_set` → `swink.eval.case` → `swink.eval.evaluator`.
+    #[cfg(feature = "telemetry")]
+    #[must_use]
+    pub fn with_telemetry(mut self, telemetry: Arc<EvalsTelemetry>) -> Self {
+        self.telemetry = Some(telemetry);
+        self
+    }
+
     /// Number of times an agent was actually invoked (cache miss count).
     #[must_use]
     pub fn agent_invocation_count(&self) -> usize {
@@ -220,6 +236,13 @@ impl EvalRunner {
             cache = self.cache.is_some(), "running eval set"
         );
 
+        // ─── FR-035: root span for the whole run_set ──────────────────
+        #[cfg(feature = "telemetry")]
+        let run_set_span: Option<RunSetSpan> = self
+            .telemetry
+            .as_ref()
+            .map(|t| t.start_run_set_span(eval_set));
+
         let initial_session = self.load_initial_session()?;
         let initial_session_json = initial_session
             .as_ref()
@@ -245,6 +268,13 @@ impl EvalRunner {
             let initial_session_value = initial_session_json.clone();
             let agent_invocations = Arc::clone(&self.agent_invocations);
             let eval_set_id = eval_set_id.clone();
+            #[cfg(feature = "telemetry")]
+            let telemetry = self.telemetry.clone();
+            #[cfg(feature = "telemetry")]
+            let run_set_context = run_set_span.as_ref().map(|s| RunSetSpanRef {
+                context: s.context().clone(),
+                set_id: eval_set_id.clone(),
+            });
 
             futures_vec.push(async move {
                 if let Some(tok) = &cancel
@@ -262,6 +292,15 @@ impl EvalRunner {
                     drop(permit);
                     return (index, cancelled_case_result(case));
                 }
+
+                #[cfg(feature = "telemetry")]
+                let case_span: Option<CaseSpan> = match (&telemetry, &run_set_context) {
+                    (Some(t), Some(parent)) => Some(t.start_case_span_raw(parent, case)),
+                    _ => None,
+                };
+                #[cfg(feature = "telemetry")]
+                let case_start = std::time::Instant::now();
+
                 let result = execute_case(
                     case,
                     factory,
@@ -272,9 +311,19 @@ impl EvalRunner {
                     cancel.as_ref(),
                     initial_session_value.as_ref(),
                     &agent_invocations,
+                    #[cfg(feature = "telemetry")]
+                    telemetry.as_deref(),
+                    #[cfg(feature = "telemetry")]
+                    case_span.as_ref(),
                 )
                 .await
                 .unwrap_or_else(|e| error_case_result(case, &e));
+
+                #[cfg(feature = "telemetry")]
+                if let Some(span) = case_span {
+                    span.end(&result, case_start.elapsed());
+                }
+
                 drop(permit);
                 (index, result)
             });
@@ -319,6 +368,12 @@ impl EvalRunner {
             failed = summary.failed, total = summary.total_cases,
             "eval set complete"
         );
+
+        #[cfg(feature = "telemetry")]
+        if let Some(span) = run_set_span {
+            span.end(summary.passed, summary.failed);
+        }
+
         Ok(EvalSetResult {
             eval_set_id: eval_set.id.clone(),
             case_results,
@@ -358,6 +413,8 @@ async fn execute_case(
     cancel: Option<&CancellationToken>,
     initial_session_json: Option<&serde_json::Value>,
     agent_invocations: &AtomicUsize,
+    #[cfg(feature = "telemetry")] telemetry: Option<&EvalsTelemetry>,
+    #[cfg(feature = "telemetry")] case_span: Option<&CaseSpan>,
 ) -> Result<EvalCaseResult, EvalError> {
     info!(case_id = %case.id, case_name = %case.name, "running eval case");
 
@@ -393,7 +450,17 @@ async fn execute_case(
         inv
     };
 
-    let metric_results = dispatch_evaluators(registry, case, &invocation, num_runs, cancel);
+    let metric_results = dispatch_evaluators(
+        registry,
+        case,
+        &invocation,
+        num_runs,
+        cancel,
+        #[cfg(feature = "telemetry")]
+        telemetry,
+        #[cfg(feature = "telemetry")]
+        case_span,
+    );
     let verdict = if metric_results.iter().all(|r| r.score.verdict().is_pass()) {
         Verdict::Pass
     } else {
@@ -443,16 +510,27 @@ async fn invoke_agent_impl(
     Ok(invocation)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn dispatch_evaluators(
     registry: &EvaluatorRegistry,
     case: &EvalCase,
     invocation: &Invocation,
     num_runs: u32,
     cancel: Option<&CancellationToken>,
+    #[cfg(feature = "telemetry")] telemetry: Option<&EvalsTelemetry>,
+    #[cfg(feature = "telemetry")] case_span: Option<&CaseSpan>,
 ) -> Vec<EvalMetricResult> {
     debug_assert!(num_runs > 0);
     if num_runs == 1 {
-        return registry.evaluate(case, invocation);
+        return run_registry_once(
+            registry,
+            case,
+            invocation,
+            #[cfg(feature = "telemetry")]
+            telemetry,
+            #[cfg(feature = "telemetry")]
+            case_span,
+        );
     }
 
     let mut per_evaluator: std::collections::BTreeMap<String, Vec<EvalMetricResult>> =
@@ -463,7 +541,23 @@ fn dispatch_evaluators(
         {
             break;
         }
-        for metric in registry.evaluate(case, invocation) {
+        // Only the first num_runs iteration gets its evaluator spans emitted
+        // so the span tree stays proportional to evaluator count; per-run
+        // scores are still aggregated on the synthesised mean span below.
+        #[cfg(feature = "telemetry")]
+        let iteration_telemetry = if run_idx == 0 { telemetry } else { None };
+        #[cfg(feature = "telemetry")]
+        let iteration_case_span = if run_idx == 0 { case_span } else { None };
+        let iteration = run_registry_once(
+            registry,
+            case,
+            invocation,
+            #[cfg(feature = "telemetry")]
+            iteration_telemetry,
+            #[cfg(feature = "telemetry")]
+            iteration_case_span,
+        );
+        for metric in iteration {
             per_evaluator
                 .entry(metric.evaluator_name.clone())
                 .or_default()
@@ -495,6 +589,31 @@ fn dispatch_evaluators(
             }
         })
         .collect()
+}
+
+/// Invoke every applicable evaluator once. When `telemetry` + `case_span`
+/// are supplied, each evaluator call is wrapped in a `swink.eval.evaluator`
+/// span (FR-035) that inherits the case span as parent.
+fn run_registry_once(
+    registry: &EvaluatorRegistry,
+    case: &EvalCase,
+    invocation: &Invocation,
+    #[cfg(feature = "telemetry")] telemetry: Option<&EvalsTelemetry>,
+    #[cfg(feature = "telemetry")] case_span: Option<&CaseSpan>,
+) -> Vec<EvalMetricResult> {
+    #[cfg(feature = "telemetry")]
+    if let (Some(t), Some(parent)) = (telemetry, case_span) {
+        return registry.evaluate_instrumented(case, invocation, |name, run| {
+            let span = t.start_evaluator_span(parent, name);
+            let outcome = run();
+            match outcome.as_ref() {
+                Some(metric) => span.end(metric),
+                None => span.end_inapplicable(name),
+            }
+            outcome
+        });
+    }
+    registry.evaluate(case, invocation)
 }
 
 fn cancelled_case_result(case: &EvalCase) -> EvalCaseResult {

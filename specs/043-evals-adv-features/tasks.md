@@ -331,10 +331,10 @@
 
 *Depends on US2 (extends `EvalRunner`).*
 
-- [ ] T135 [P] [US7] Write tests in `eval/tests/telemetry_test.rs` using `opentelemetry-sdk::testing::trace::InMemorySpanExporter`: root `swink.eval.run_set`, per-case `swink.eval.case`, per-evaluator `swink.eval.evaluator`; failed case records OTel status-error + exception event; parent span is inherited when one exists
-- [ ] T136 [US7] Implement `EvalsTelemetry` + `EvalsTelemetryBuilder` in `eval/src/telemetry.rs` (feature `telemetry`)
-- [ ] T137 [US7] Wire `EvalsTelemetry` into `EvalRunner::run_set` in `eval/src/runner.rs`: emit the three-level span tree; attach standardized attributes per FR-035; honor existing parent span when one is active
-- [ ] T138 [US7] Integration test in `eval/tests/us7_end_to_end_test.rs`: full run produces the expected span tree; regression in `correctness` at a known case surfaces as an errored span (per US7 scenario 3)
+- [x] T135 [P] [US7] Write tests in `eval/tests/telemetry_test.rs` using `opentelemetry-sdk::testing::trace::InMemorySpanExporter`: root `swink.eval.run_set`, per-case `swink.eval.case`, per-evaluator `swink.eval.evaluator`; failed case records OTel status-error + exception event; parent span is inherited when one exists
+- [x] T136 [US7] Implement `EvalsTelemetry` + `EvalsTelemetryBuilder` in `eval/src/telemetry.rs` (feature `telemetry`)
+- [x] T137 [US7] Wire `EvalsTelemetry` into `EvalRunner::run_set` in `eval/src/runner.rs`: emit the three-level span tree; attach standardized attributes per FR-035; honor existing parent span when one is active
+- [x] T138 [US7] Integration test in `eval/tests/us7_end_to_end_test.rs`: full run produces the expected span tree; regression in `correctness` at a known case surfaces as an errored span (per US7 scenario 3)
 
 **Checkpoint**: Eval runs emit OTel spans.
 
