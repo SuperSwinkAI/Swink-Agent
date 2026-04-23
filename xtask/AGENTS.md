@@ -6,7 +6,7 @@
 
 ## Commands
 
-- `verify-catalog [--provider <key>] [--github]` — hits each provider's live API to confirm every model ID in `src/model_catalog.toml` resolves. `--github` writes a Markdown summary to `$GITHUB_STEP_SUMMARY` for CI annotations.
+- `verify-catalog [--provider <key>] [--github] [--allow-skipped]` — hits each provider's live API to confirm every model ID in `src/model_catalog.toml` resolves. `--github` writes a Markdown summary to `$GITHUB_STEP_SUMMARY` for CI annotations. Skipped providers make the command fail unless `--allow-skipped` is set.
 
 ## Key Facts
 

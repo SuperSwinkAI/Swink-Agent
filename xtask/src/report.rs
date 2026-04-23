@@ -50,6 +50,11 @@ pub fn print_table(rows: &[VerifyRow]) {
             row.task.provider_key, row.task.preset_id, row.task.model_id,
         );
     }
+    let counts = ResultCounts::from_rows(rows);
+    println!(
+        "\nSummary: {} passed, {} failed, {} skipped, {} network errors",
+        counts.passed, counts.failed, counts.skipped, counts.network_errors
+    );
 }
 
 fn result_label(result: &PresetResult) -> String {
@@ -69,6 +74,13 @@ pub fn write_github_summary(rows: &[VerifyRow]) -> std::io::Result<()> {
         return Ok(());
     };
     let mut md = String::from("## Catalog Verification\n\n");
+    let counts = ResultCounts::from_rows(rows);
+    writeln!(
+        md,
+        "**Summary:** {} passed, {} failed, {} skipped, {} network errors\n",
+        counts.passed, counts.failed, counts.skipped, counts.network_errors
+    )
+    .map_err(std::io::Error::other)?;
     md.push_str("| Provider | Preset | Model ID | Result |\n");
     md.push_str("|---|---|---|---|\n");
     for row in rows {
@@ -84,4 +96,31 @@ pub fn write_github_summary(rows: &[VerifyRow]) -> std::io::Result<()> {
         .open(&summary_path)?;
     file.write_all(md.as_bytes())?;
     Ok(())
+}
+
+struct ResultCounts {
+    passed: usize,
+    failed: usize,
+    skipped: usize,
+    network_errors: usize,
+}
+
+impl ResultCounts {
+    fn from_rows(rows: &[VerifyRow]) -> Self {
+        let mut counts = Self {
+            passed: 0,
+            failed: 0,
+            skipped: 0,
+            network_errors: 0,
+        };
+        for row in rows {
+            match row.result {
+                PresetResult::Pass => counts.passed += 1,
+                PresetResult::Fail { .. } => counts.failed += 1,
+                PresetResult::Skipped { .. } => counts.skipped += 1,
+                PresetResult::NetworkError { .. } => counts.network_errors += 1,
+            }
+        }
+        counts
+    }
 }
