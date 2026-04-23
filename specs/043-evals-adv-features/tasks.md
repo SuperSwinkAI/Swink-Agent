@@ -296,13 +296,13 @@
 
 ### Core trace surface (feature `trace-ingest`)
 
-- [ ] T119 [P] [US6] Write tests in `eval/tests/trace_ingest_test.rs`: `OtelInMemoryTraceProvider` round-trip (record + re-load), missing attribute → `MappingError::MissingAttribute`, partially-written session → `TraceProviderError::SessionInProgress`
-- [ ] T120 [US6] Implement `TraceProvider` trait + `TraceProviderError` + `RawSession` in `eval/src/trace/provider.rs`
-- [ ] T121 [US6] Implement `OtelInMemoryTraceProvider` wrapping `opentelemetry-sdk`'s `InMemorySpanExporter` in `eval/src/trace/provider.rs`
-- [ ] T122 [US6] Implement `SessionMapper` trait + `MappingError` in `eval/src/trace/mapper.rs`
-- [ ] T123 [P] [US6] Implement `OpenInferenceSessionMapper` in `eval/src/trace/mapper.rs`
-- [ ] T124 [P] [US6] Implement `LangChainSessionMapper` in `eval/src/trace/mapper.rs`
-- [ ] T125 [US6] Implement `OtelGenAiSessionMapper` + `GenAIConventionVersion` enum (V1_27, V1_30, Experimental) with per-version attribute-mapping tables in `eval/src/trace/mapper.rs`
+- [x] T119 [P] [US6] Write tests in `eval/tests/trace_ingest_test.rs`: `OtelInMemoryTraceProvider` round-trip (record + re-load), missing attribute → `MappingError::MissingAttribute`, partially-written session → `TraceProviderError::SessionInProgress`
+- [x] T120 [US6] Implement `TraceProvider` trait + `TraceProviderError` + `RawSession` in `eval/src/trace/provider.rs`
+- [x] T121 [US6] Implement `OtelInMemoryTraceProvider` wrapping `opentelemetry-sdk`'s `InMemorySpanExporter` in `eval/src/trace/provider.rs`
+- [x] T122 [US6] Implement `SessionMapper` trait + `MappingError` in `eval/src/trace/mapper.rs`
+- [x] T123 [P] [US6] Implement `OpenInferenceSessionMapper` in `eval/src/trace/mapper.rs`
+- [x] T124 [P] [US6] Implement `LangChainSessionMapper` in `eval/src/trace/mapper.rs`
+- [x] T125 [US6] Implement `OtelGenAiSessionMapper` + `GenAIConventionVersion` enum (V1_27, V1_30, Experimental) with per-version attribute-mapping tables in `eval/src/trace/mapper.rs`
 
 ### Per-backend providers
 
@@ -314,7 +314,7 @@
 
 ### Extractors
 
-- [ ] T131 [US6] Implement `EvaluationLevel` enum + `TraceExtractor` trait in `eval/src/trace/extractor.rs`
+- [x] T131 [US6] Implement `EvaluationLevel` enum + `TraceExtractor` trait in `eval/src/trace/extractor.rs`
 - [ ] T132 [P] [US6] Implement `SwarmExtractor` consuming spec-040 swarm result types in `eval/src/trace/extractor.rs`
 - [ ] T133 [P] [US6] Implement `GraphExtractor` consuming spec-039 graph result types in `eval/src/trace/extractor.rs`
 - [ ] T134 [US6] Integration test in `eval/tests/us6_end_to_end_test.rs`: record in-process run via in-memory exporter; re-load via `OtelInMemoryTraceProvider` + `OpenInferenceSessionMapper`; score with deterministic evaluators; assert bit-identical scores (per SC-008)
