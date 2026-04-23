@@ -147,8 +147,12 @@ mod tests {
         let disambiguated =
             disambiguate_provider_safe_tool_name(&base, "my-web\0search\0my.web\0search");
 
-        assert_eq!(disambiguated.len(), MAX_TOOL_NAME_LEN);
+        assert!(disambiguated.len() <= MAX_TOOL_NAME_LEN);
         assert!(disambiguated.starts_with("my_web_search"));
+        assert!(disambiguated.ends_with(&format!(
+            "_{}",
+            stable_name_hash_hex("my-web\0search\0my.web\0search")
+        )));
         assert!(
             disambiguated
                 .chars()

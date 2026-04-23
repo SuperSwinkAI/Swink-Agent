@@ -5,6 +5,7 @@ use ratatui::layout::Rect;
 use tempfile::tempdir;
 
 use swink_agent::testing::ScriptedStreamFn;
+use swink_agent::{ModelSpec, ThinkingLevel};
 
 use crate::config::TuiConfig;
 use crate::session::{JsonlSessionStore, SessionMeta, SessionStore};
@@ -517,6 +518,66 @@ async fn hash_help_toggles_panel() {
     app.submit_input();
 
     assert!(app.help_panel.visible);
+}
+
+#[tokio::test]
+async fn slash_thinking_updates_agent_model_and_display_flag() {
+    let stream_fn = Arc::new(ScriptedStreamFn::new(vec![]));
+    let agent = make_test_agent(stream_fn);
+    let mut app = App::new(TuiConfig::default());
+    app.set_agent(agent);
+
+    type_input(&mut app, "/thinking medium");
+    app.submit_input();
+
+    assert_eq!(
+        app.agent.as_ref().unwrap().state().model.thinking_level,
+        ThinkingLevel::Medium
+    );
+    assert!(app.config.show_thinking);
+    assert!(
+        app.messages
+            .last()
+            .is_some_and(|msg| msg.content.contains("Medium"))
+    );
+
+    type_input(&mut app, "/thinking off");
+    app.submit_input();
+
+    assert_eq!(
+        app.agent.as_ref().unwrap().state().model.thinking_level,
+        ThinkingLevel::Off
+    );
+    assert!(!app.config.show_thinking);
+}
+
+#[tokio::test]
+async fn slash_thinking_updates_pending_model_before_next_send() {
+    let primary_model = ModelSpec::new("anthropic", "primary-model");
+    let extra_model = ModelSpec::new("openai", "extra-model");
+    let primary_stream = Arc::new(ScriptedStreamFn::new(vec![]));
+    let extra_stream = Arc::new(ScriptedStreamFn::new(vec![]));
+
+    let agent = make_test_agent_with_models(
+        primary_model,
+        primary_stream,
+        vec![(extra_model.clone(), extra_stream)],
+    );
+    let mut app = App::new(TuiConfig::default());
+    app.set_agent(agent);
+    app.cycle_model();
+
+    type_input(&mut app, "/thinking high");
+    app.submit_input();
+
+    assert_eq!(
+        app.pending_model.as_ref().map(|model| model.thinking_level),
+        Some(ThinkingLevel::High)
+    );
+    assert_eq!(
+        app.available_models[app.model_index].thinking_level,
+        ThinkingLevel::High
+    );
 }
 
 /// Helper: type a literal string into the input editor.
