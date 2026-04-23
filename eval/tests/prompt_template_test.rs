@@ -6,8 +6,8 @@ use std::time::Duration;
 
 use swink_agent::{Cost, ModelSpec, StopReason, Usage};
 use swink_agent_eval::{
-    EvalCase, FewShotExample, Invocation, JudgePromptTemplate, MinijinjaTemplate, PromptContext,
-    PromptError, PromptFamily, PromptTemplateRegistry,
+    BUILTIN_TEMPLATE_VERSIONS, EvalCase, FewShotExample, Invocation, JudgePromptTemplate,
+    MinijinjaTemplate, PromptContext, PromptError, PromptFamily, PromptTemplateRegistry,
 };
 
 fn base_case() -> EvalCase {
@@ -92,6 +92,44 @@ fn minijinja_template_supports_custom_namespace() {
     let ctx = context().with_custom(custom);
 
     assert_eq!(template.render(&ctx).unwrap(), "Topic=refunds");
+}
+
+#[test]
+fn builtin_registry_contains_every_expected_version() {
+    // T054: PromptTemplateRegistry::builtin() must register every built-in
+    // template version advertised in BUILTIN_TEMPLATE_VERSIONS.
+    let registry = PromptTemplateRegistry::builtin();
+
+    for version in BUILTIN_TEMPLATE_VERSIONS {
+        assert!(
+            registry.get(version).is_some(),
+            "expected built-in template `{version}` to be registered"
+        );
+    }
+    assert_eq!(registry.len(), BUILTIN_TEMPLATE_VERSIONS.len());
+}
+
+#[test]
+fn builtin_registry_contains_quality_family_versions() {
+    // Spot-check the quality family members with distinct faithfulness vs.
+    // hallucination rubrics (spec 043 Q1 clarification).
+    let registry = PromptTemplateRegistry::builtin();
+    assert!(registry.get("faithfulness_v0").is_some());
+    assert!(registry.get("hallucination_v0").is_some());
+    let faithfulness = registry.get("faithfulness_v0").unwrap();
+    let hallucination = registry.get("hallucination_v0").unwrap();
+    assert_eq!(faithfulness.family(), PromptFamily::Quality);
+    assert_eq!(hallucination.family(), PromptFamily::Quality);
+}
+
+#[test]
+fn builtin_registry_contains_safety_family_versions() {
+    // Spot-check harmfulness vs toxicity distinction.
+    let registry = PromptTemplateRegistry::builtin();
+    let harmfulness = registry.get("harmfulness_v0").unwrap();
+    let toxicity = registry.get("toxicity_v0").unwrap();
+    assert_eq!(harmfulness.family(), PromptFamily::Safety);
+    assert_eq!(toxicity.family(), PromptFamily::Safety);
 }
 
 #[test]
