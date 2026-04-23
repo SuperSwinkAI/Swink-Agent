@@ -35,7 +35,7 @@ jsonschema = "0.30"
 opentelemetry = "0.31"
 opentelemetry_sdk = "0.31"
 opentelemetry-otlp = "0.31"
-askama = "0.13"
+askama = "0.15"
 clap = { version = "4", features = ["derive"] }
 libc = "0.2"
 sha2 = "0.11"
