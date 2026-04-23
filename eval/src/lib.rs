@@ -73,16 +73,6 @@ pub use evaluators::code::{
 };
 #[cfg(feature = "multimodal")]
 pub use evaluators::multimodal::ImageSafetyEvaluator;
-#[cfg(feature = "evaluator-simple")]
-pub use evaluators::simple::{ExactMatchEvaluator, LevenshteinDistanceEvaluator};
-#[cfg(feature = "evaluator-structured")]
-pub use evaluators::structured::{JsonMatchEvaluator, JsonSchemaEvaluator, KeyStrategy};
-#[cfg(feature = "judge-core")]
-pub use evaluators::{
-    Detail, DetailBuffer, DispatchError, DispatchOutcome, EvaluatorError, JudgeEvaluatorConfig,
-    dispatch_judge, drive_judge_call, evaluate_with_builtin, finish_metric_result,
-    materialize_case_attachments,
-};
 #[cfg(feature = "evaluator-quality")]
 pub use evaluators::quality::{
     CoherenceEvaluator, ConcisenessEvaluator, CorrectnessEvaluator, FaithfulnessEvaluator,
@@ -93,6 +83,16 @@ pub use evaluators::quality::{
 pub use evaluators::safety::{
     CodeInjectionEvaluator, FairnessEvaluator, HarmfulnessEvaluator, PIIClass, PIILeakageEvaluator,
     PromptInjectionEvaluator, ToxicityEvaluator,
+};
+#[cfg(feature = "evaluator-simple")]
+pub use evaluators::simple::{ExactMatchEvaluator, LevenshteinDistanceEvaluator};
+#[cfg(feature = "evaluator-structured")]
+pub use evaluators::structured::{JsonMatchEvaluator, JsonSchemaEvaluator, KeyStrategy};
+#[cfg(feature = "judge-core")]
+pub use evaluators::{
+    Detail, DetailBuffer, DispatchError, DispatchOutcome, EvaluatorError, JudgeEvaluatorConfig,
+    dispatch_judge, drive_judge_call, evaluate_with_builtin, finish_metric_result,
+    materialize_case_attachments,
 };
 pub use gate::{GateConfig, GateResult, check_gate};
 pub use judge::{
@@ -105,6 +105,8 @@ pub use prompt::{
     BUILTIN_TEMPLATE_VERSIONS, JudgePromptTemplate, MinijinjaTemplate, PromptContext, PromptError,
     PromptFamily, PromptTemplateRegistry,
 };
+#[cfg(feature = "html-report")]
+pub use report::HtmlReporter;
 pub use report::{
     ConsoleReporter, JsonReporter, MarkdownReporter, Reporter, ReporterError, ReporterOutput,
 };
