@@ -133,6 +133,7 @@ impl ConversationView {
         frame: &mut Frame,
         area: Rect,
         messages: &[DisplayMessage],
+        show_thinking: bool,
         focused: bool,
         blink_on: bool,
         selected_tool_block: Option<usize>,
@@ -208,7 +209,8 @@ impl ConversationView {
             all_lines.push(Line::from(header_spans));
 
             // Thinking section (dimmed, not collapsible)
-            if let Some(thinking) = &msg.thinking
+            if show_thinking
+                && let Some(thinking) = &msg.thinking
                 && !thinking.is_empty()
             {
                 let thinking_style = Style::default()

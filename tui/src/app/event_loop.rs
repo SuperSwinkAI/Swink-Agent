@@ -495,7 +495,8 @@ impl App {
                 return;
             }
             CommandResult::SetThinking(level) => {
-                self.push_system_message(format!("Thinking level set to: {level}"));
+                self.set_thinking_level(level);
+                self.push_system_message(format!("Thinking level set to: {level:?}"));
                 return;
             }
             CommandResult::SetSystemPrompt(prompt) => {

@@ -127,6 +127,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         frame,
         conv_area,
         &app.messages,
+        app.config.show_thinking,
         app.focus == Focus::Conversation,
         app.blink_on,
         app.selected_tool_block,

@@ -3,6 +3,8 @@
 //! Hash commands (`#help`, `#clear`, etc.) are TUI-internal.
 //! Slash commands (`/quit`, `/thinking`, etc.) affect agent configuration.
 
+use swink_agent::ThinkingLevel;
+
 /// Result of parsing and executing a command.
 #[derive(Debug)]
 pub enum CommandResult {
@@ -13,7 +15,7 @@ pub enum CommandResult {
     /// Command requests clearing conversation.
     Clear,
     /// Command requests thinking level change.
-    SetThinking(String),
+    SetThinking(ThinkingLevel),
     /// Command requests system prompt change.
     SetSystemPrompt(String),
     /// Command requests agent reset.
@@ -177,9 +179,18 @@ fn execute_slash_command(cmd: &str) -> CommandResult {
         "quit" | "q" => CommandResult::Quit,
         "thinking" => {
             if args.is_empty() {
-                CommandResult::Feedback("Usage: /thinking <off|low|medium|high>".to_string())
+                CommandResult::Feedback(
+                    "Usage: /thinking <off|minimal|low|medium|high|extra-high>".to_string(),
+                )
             } else {
-                CommandResult::SetThinking(args.to_string())
+                parse_thinking_level(args).map_or_else(
+                    || {
+                        CommandResult::Feedback(
+                            "Usage: /thinking <off|minimal|low|medium|high|extra-high>".to_string(),
+                        )
+                    },
+                    CommandResult::SetThinking,
+                )
             }
         }
         "system" => {
@@ -195,6 +206,18 @@ fn execute_slash_command(cmd: &str) -> CommandResult {
         _ => CommandResult::Feedback(format!(
             "Unknown command: /{name}\nType #help for available commands."
         )),
+    }
+}
+
+fn parse_thinking_level(level: &str) -> Option<ThinkingLevel> {
+    match level {
+        "off" => Some(ThinkingLevel::Off),
+        "minimal" => Some(ThinkingLevel::Minimal),
+        "low" => Some(ThinkingLevel::Low),
+        "medium" => Some(ThinkingLevel::Medium),
+        "high" => Some(ThinkingLevel::High),
+        "extra-high" => Some(ThinkingLevel::ExtraHigh),
+        _ => None,
     }
 }
 
@@ -395,7 +418,7 @@ mod tests {
     #[test]
     fn slash_thinking_with_arg() {
         match execute_command("/thinking high") {
-            CommandResult::SetThinking(level) => assert_eq!(level, "high"),
+            CommandResult::SetThinking(level) => assert_eq!(level, ThinkingLevel::High),
             other => panic!("expected SetThinking, got {other:?}"),
         }
     }
@@ -404,6 +427,17 @@ mod tests {
     fn slash_thinking_without_arg_returns_usage() {
         match execute_command("/thinking") {
             CommandResult::Feedback(msg) => assert!(msg.contains("Usage")),
+            other => panic!("expected Feedback, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn slash_thinking_invalid_arg_returns_usage() {
+        match execute_command("/thinking maximum") {
+            CommandResult::Feedback(msg) => {
+                assert!(msg.contains("Usage"));
+                assert!(msg.contains("extra-high"));
+            }
             other => panic!("expected Feedback, got {other:?}"),
         }
     }

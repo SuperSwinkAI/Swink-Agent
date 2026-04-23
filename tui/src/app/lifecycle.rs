@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 use ratatui::layout::Rect;
 use tokio::sync::{mpsc, oneshot};
 
-use swink_agent::{Agent, ApprovalMode, ToolApproval, ToolApprovalRequest};
+use swink_agent::{Agent, ApprovalMode, ThinkingLevel, ToolApproval, ToolApprovalRequest};
 
 use crate::config::TuiConfig;
 use crate::session::JsonlSessionStore;
@@ -276,6 +276,20 @@ impl App {
         let next = self.available_models[self.model_index].clone();
         self.model_name.clone_from(&next.model_id);
         self.pending_model = Some(next);
+    }
+
+    /// Update the current thinking level for the active and next-turn model.
+    pub(super) fn set_thinking_level(&mut self, level: ThinkingLevel) {
+        if let Some(agent) = &mut self.agent {
+            agent.set_thinking_level(level);
+        }
+        if let Some(model) = self.available_models.get_mut(self.model_index) {
+            model.thinking_level = level;
+        }
+        if let Some(model) = &mut self.pending_model {
+            model.thinking_level = level;
+        }
+        self.config.show_thinking = level != ThinkingLevel::Off;
     }
 
     /// Actual visible height of the current conversation viewport.
