@@ -102,7 +102,11 @@ mod tests {
             arguments: serde_json::Value::Null,
         };
         assert_eq!(
-            ExtractedInput::Tool { turn_index: 0, call }.level(),
+            ExtractedInput::Tool {
+                turn_index: 0,
+                call
+            }
+            .level(),
             EvaluationLevel::Tool
         );
         assert_eq!(

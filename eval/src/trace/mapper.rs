@@ -19,9 +19,7 @@ use std::time::Duration;
 
 use opentelemetry::Value;
 use opentelemetry_sdk::trace::SpanData;
-use swink_agent::{
-    AssistantMessage, ContentBlock, Cost, ModelSpec, StopReason, Usage,
-};
+use swink_agent::{AssistantMessage, ContentBlock, Cost, ModelSpec, StopReason, Usage};
 use thiserror::Error;
 
 use crate::trace::provider::RawSession;
@@ -74,7 +72,11 @@ pub trait SessionMapper: Send + Sync {
 
 // ─── Shared helpers ─────────────────────────────────────────────────────────
 
-fn spans_of<'a>(raw: &'a RawSession) -> Result<&'a [SpanData], MappingError> {
+// `RawSession` is `#[non_exhaustive]`; keeping a `Result` return type lets
+// future backend-specific variants surface `UnsupportedShape` without
+// reshaping every caller.
+#[allow(clippy::unnecessary_wraps)]
+fn spans_of(raw: &RawSession) -> Result<&[SpanData], MappingError> {
     match raw {
         RawSession::OtelSpans { spans, .. } => Ok(spans),
     }
@@ -82,7 +84,7 @@ fn spans_of<'a>(raw: &'a RawSession) -> Result<&'a [SpanData], MappingError> {
 
 /// Find the first span carrying attribute `key` and return the attribute
 /// value as a borrowed string slice.
-fn first_string_attr<'a>(spans: &'a [SpanData], key: &str) -> Option<String> {
+fn first_string_attr(spans: &[SpanData], key: &str) -> Option<String> {
     for span in spans {
         for kv in &span.attributes {
             if kv.key.as_str() == key {
@@ -99,26 +101,27 @@ fn sum_u64_attr(spans: &[SpanData], key: &str) -> Result<u64, MappingError> {
     for span in spans {
         for kv in &span.attributes {
             if kv.key.as_str() == key {
-                let parsed = match &kv.value {
-                    Value::I64(v) => {
-                        u64::try_from(*v).map_err(|_| MappingError::InvalidAttribute {
-                            name: key.to_string(),
-                            reason: format!("negative token count: {v}"),
-                        })?
-                    }
-                    Value::String(s) => s.as_str().parse::<u64>().map_err(|e| {
-                        MappingError::InvalidAttribute {
-                            name: key.to_string(),
-                            reason: format!("not u64: {e}"),
+                let parsed =
+                    match &kv.value {
+                        Value::I64(v) => {
+                            u64::try_from(*v).map_err(|_| MappingError::InvalidAttribute {
+                                name: key.to_string(),
+                                reason: format!("negative token count: {v}"),
+                            })?
                         }
-                    })?,
-                    other => {
-                        return Err(MappingError::InvalidAttribute {
-                            name: key.to_string(),
-                            reason: format!("expected integer, got {other:?}"),
-                        });
-                    }
-                };
+                        Value::String(s) => s.as_str().parse::<u64>().map_err(|e| {
+                            MappingError::InvalidAttribute {
+                                name: key.to_string(),
+                                reason: format!("not u64: {e}"),
+                            }
+                        })?,
+                        other => {
+                            return Err(MappingError::InvalidAttribute {
+                                name: key.to_string(),
+                                reason: format!("expected integer, got {other:?}"),
+                            });
+                        }
+                    };
                 sum = sum.saturating_add(parsed);
             }
         }
@@ -137,8 +140,7 @@ fn current_ts() -> u64 {
     use std::time::{SystemTime, UNIX_EPOCH};
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
-        .unwrap_or(0)
+        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
 }
 
 /// Build a minimal `AssistantMessage` from a provider/model pair and optional
@@ -285,12 +287,11 @@ impl SessionMapper for OpenInferenceSessionMapper {
                 name: Self::PROVIDER_KEY.to_string(),
             }
         })?;
-        let model =
-            first_string_attr(spans, Self::MODEL_KEY).ok_or_else(|| {
-                MappingError::MissingAttribute {
-                    name: Self::MODEL_KEY.to_string(),
-                }
-            })?;
+        let model = first_string_attr(spans, Self::MODEL_KEY).ok_or_else(|| {
+            MappingError::MissingAttribute {
+                name: Self::MODEL_KEY.to_string(),
+            }
+        })?;
 
         let input = sum_u64_attr(spans, Self::INPUT_TOKENS_KEY)?;
         let output = sum_u64_attr(spans, Self::OUTPUT_TOKENS_KEY)?;
@@ -310,7 +311,9 @@ impl SessionMapper for OpenInferenceSessionMapper {
             Some(Self::TOOL_ID_KEY),
         );
 
-        Ok(build_invocation(spans, provider, model, usage, response, tool_calls))
+        Ok(build_invocation(
+            spans, provider, model, usage, response, tool_calls,
+        ))
     }
 }
 
@@ -347,12 +350,11 @@ impl SessionMapper for LangChainSessionMapper {
                 name: Self::PROVIDER_KEY.to_string(),
             }
         })?;
-        let model =
-            first_string_attr(spans, Self::MODEL_KEY).ok_or_else(|| {
-                MappingError::MissingAttribute {
-                    name: Self::MODEL_KEY.to_string(),
-                }
-            })?;
+        let model = first_string_attr(spans, Self::MODEL_KEY).ok_or_else(|| {
+            MappingError::MissingAttribute {
+                name: Self::MODEL_KEY.to_string(),
+            }
+        })?;
 
         let input = sum_u64_attr(spans, Self::INPUT_TOKENS_KEY)?;
         let output = sum_u64_attr(spans, Self::OUTPUT_TOKENS_KEY)?;
@@ -372,7 +374,9 @@ impl SessionMapper for LangChainSessionMapper {
             Some(Self::TOOL_ID_KEY),
         );
 
-        Ok(build_invocation(spans, provider, model, usage, response, tool_calls))
+        Ok(build_invocation(
+            spans, provider, model, usage, response, tool_calls,
+        ))
     }
 }
 
@@ -484,11 +488,10 @@ impl SessionMapper for OtelGenAiSessionMapper {
         let spans = spans_of(raw)?;
         let tbl = &self.table;
 
-        let provider = first_string_attr(spans, tbl.system).ok_or_else(|| {
-            MappingError::MissingAttribute {
+        let provider =
+            first_string_attr(spans, tbl.system).ok_or_else(|| MappingError::MissingAttribute {
                 name: tbl.system.to_string(),
-            }
-        })?;
+            })?;
         let model = first_string_attr(spans, tbl.response_model)
             .or_else(|| first_string_attr(spans, tbl.request_model))
             .ok_or_else(|| MappingError::MissingAttribute {
@@ -546,7 +549,9 @@ impl SessionMapper for OtelGenAiSessionMapper {
             }
         }
 
-        Ok(build_invocation(spans, provider, model, usage, response, tool_calls))
+        Ok(build_invocation(
+            spans, provider, model, usage, response, tool_calls,
+        ))
     }
 }
 
@@ -555,7 +560,9 @@ impl SessionMapper for OtelGenAiSessionMapper {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use opentelemetry::trace::{SpanContext, SpanId, SpanKind, Status, TraceFlags, TraceId, TraceState};
+    use opentelemetry::trace::{
+        SpanContext, SpanId, SpanKind, Status, TraceFlags, TraceId, TraceState,
+    };
     use opentelemetry::{InstrumentationScope, KeyValue};
     use opentelemetry_sdk::trace::{SpanEvents, SpanLinks};
     use std::borrow::Cow;
@@ -565,8 +572,8 @@ mod tests {
         let start = SystemTime::now();
         SpanData {
             span_context: SpanContext::new(
-                TraceId::from_u128(7),
-                SpanId::from_u64(7),
+                TraceId::from(7_u128),
+                SpanId::from(7_u64),
                 TraceFlags::default(),
                 false,
                 TraceState::default(),

@@ -20,6 +20,4 @@ pub use mapper::{
     GenAIAttributeTable, GenAIConventionVersion, LangChainSessionMapper, MappingError,
     OpenInferenceSessionMapper, OtelGenAiSessionMapper, SessionMapper,
 };
-pub use provider::{
-    OtelInMemoryTraceProvider, RawSession, TraceProvider, TraceProviderError,
-};
+pub use provider::{OtelInMemoryTraceProvider, RawSession, TraceProvider, TraceProviderError};

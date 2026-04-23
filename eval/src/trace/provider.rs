@@ -97,10 +97,7 @@ pub trait TraceProvider: Send + Sync {
     /// Implementations MUST fail with [`TraceProviderError::SessionInProgress`]
     /// rather than silently returning a partial trace — evaluators treat the
     /// returned `RawSession` as terminal.
-    async fn fetch_session(
-        &self,
-        session_id: &str,
-    ) -> Result<RawSession, TraceProviderError>;
+    async fn fetch_session(&self, session_id: &str) -> Result<RawSession, TraceProviderError>;
 }
 
 // ─── OtelInMemoryTraceProvider ──────────────────────────────────────────────
@@ -166,24 +163,20 @@ impl OtelInMemoryTraceProvider {
 
 #[async_trait]
 impl TraceProvider for OtelInMemoryTraceProvider {
-    async fn fetch_session(
-        &self,
-        session_id: &str,
-    ) -> Result<RawSession, TraceProviderError> {
-        let all = self
-            .exporter
-            .get_finished_spans()
-            .map_err(|err| TraceProviderError::BackendFailure {
+    async fn fetch_session(&self, session_id: &str) -> Result<RawSession, TraceProviderError> {
+        let all = self.exporter.get_finished_spans().map_err(|err| {
+            TraceProviderError::BackendFailure {
                 reason: format!("in-memory exporter lock: {err}"),
-            })?;
+            }
+        })?;
 
         let key = self.session_attribute.as_ref();
         let matching: Vec<SpanData> = all
             .into_iter()
             .filter(|span| {
-                span.attributes.iter().any(|kv| {
-                    kv.key.as_str() == key && kv.value.as_str().as_ref() == session_id
-                })
+                span.attributes
+                    .iter()
+                    .any(|kv| kv.key.as_str() == key && kv.value.as_str().as_ref() == session_id)
             })
             .collect();
 
@@ -216,7 +209,9 @@ impl TraceProvider for OtelInMemoryTraceProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use opentelemetry::trace::{SpanContext, SpanId, SpanKind, Status, TraceFlags, TraceId, TraceState};
+    use opentelemetry::trace::{
+        SpanContext, SpanId, SpanKind, Status, TraceFlags, TraceId, TraceState,
+    };
     use opentelemetry::{InstrumentationScope, KeyValue};
     use opentelemetry_sdk::trace::{SpanEvents, SpanLinks};
     use std::borrow::Cow;
@@ -231,8 +226,8 @@ mod tests {
         };
         SpanData {
             span_context: SpanContext::new(
-                TraceId::from_u128(1),
-                SpanId::from_u64(1),
+                TraceId::from(1_u128),
+                SpanId::from(1_u64),
                 TraceFlags::default(),
                 false,
                 TraceState::default(),
@@ -290,17 +285,13 @@ mod tests {
     #[tokio::test]
     async fn fetch_session_uses_configured_attribute_key() {
         let exporter = InMemorySpanExporter::default();
-        let provider = OtelInMemoryTraceProvider::new(exporter.clone())
-            .with_session_attribute("custom.sid");
+        let provider =
+            OtelInMemoryTraceProvider::new(exporter.clone()).with_session_attribute("custom.sid");
         assert_eq!(provider.session_attribute(), "custom.sid");
 
         // Writing into the exporter directly simulates a recorded session.
         use opentelemetry_sdk::trace::SpanExporter;
-        let span = make_span(
-            "root",
-            vec![KeyValue::new("custom.sid", "S1")],
-            true,
-        );
+        let span = make_span("root", vec![KeyValue::new("custom.sid", "S1")], true);
         exporter.export(vec![span]).await.unwrap();
 
         let raw = provider.fetch_session("S1").await.unwrap();

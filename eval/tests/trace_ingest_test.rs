@@ -10,7 +10,9 @@
 use std::borrow::Cow;
 use std::time::{Duration, SystemTime};
 
-use opentelemetry::trace::{SpanContext, SpanId, SpanKind, Status, TraceFlags, TraceId, TraceState};
+use opentelemetry::trace::{
+    SpanContext, SpanId, SpanKind, Status, TraceFlags, TraceId, TraceState,
+};
 use opentelemetry::{InstrumentationScope, KeyValue};
 use opentelemetry_sdk::trace::{
     InMemorySpanExporter, SpanData, SpanEvents, SpanExporter, SpanLinks,
@@ -35,13 +37,13 @@ fn span_with(
     };
     SpanData {
         span_context: SpanContext::new(
-            TraceId::from_u128(42),
-            SpanId::from_u64(span_id),
+            TraceId::from(42_u128),
+            SpanId::from(span_id),
             TraceFlags::default(),
             false,
             TraceState::default(),
         ),
-        parent_span_id: parent.map(SpanId::from_u64).unwrap_or(SpanId::INVALID),
+        parent_span_id: parent.map_or(SpanId::INVALID, SpanId::from),
         parent_span_is_remote: false,
         span_kind: SpanKind::Internal,
         name: Cow::Owned(name.to_string()),
@@ -149,7 +151,10 @@ async fn partial_session_surfaces_as_session_in_progress() {
         .await
         .expect_err("session still in progress");
     match err {
-        TraceProviderError::SessionInProgress { session_id, open_spans } => {
+        TraceProviderError::SessionInProgress {
+            session_id,
+            open_spans,
+        } => {
             assert_eq!(session_id, "sess-3");
             assert!(open_spans >= 1, "at least one open span reported");
         }
