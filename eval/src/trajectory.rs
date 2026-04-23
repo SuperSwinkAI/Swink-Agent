@@ -133,6 +133,27 @@ impl TrajectoryCollector {
         }
     }
 
+    /// Number of completed turns observed so far.
+    ///
+    /// Used by the multi-turn simulation orchestrator to attach simulated tool
+    /// results to the most recently completed turn without waiting for
+    /// [`Self::finish`].
+    #[must_use]
+    pub fn turns_len_hint(&self) -> usize {
+        self.turns.len()
+    }
+
+    /// Append a synthesized tool result to the turn at `index`, if present.
+    ///
+    /// Used by the multi-turn simulation orchestrator when a `ToolSimulator`
+    /// (see `crate::simulation`, feature-gated on `simulation`) provides a
+    /// deterministic tool response for a recorded tool call.
+    pub fn append_tool_result(&mut self, index: usize, result: swink_agent::ToolResultMessage) {
+        if let Some(turn) = self.turns.get_mut(index) {
+            turn.tool_results.push(result);
+        }
+    }
+
     /// Convenience: collect from an entire event stream.
     pub async fn collect_from_stream(stream: impl Stream<Item = AgentEvent>) -> Invocation {
         let mut collector = Self::new();
