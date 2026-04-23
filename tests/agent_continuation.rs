@@ -15,8 +15,8 @@ use tokio_util::sync::CancellationToken;
 
 use swink_agent::{
     Agent, AgentError, AgentEvent, AgentMessage, AgentOptions, AssistantMessageEvent, ContentBlock,
-    Cost, DefaultRetryStrategy, LlmMessage, ModelSpec, StopReason, StreamFn, StreamOptions,
-    ToolResultMessage, Usage, UserMessage,
+    Cost, DefaultRetryStrategy, LlmMessage, ModelSpec, PolicyContext, PolicyVerdict, PreTurnPolicy,
+    StopReason, StreamFn, StreamOptions, ToolResultMessage, Usage, UserMessage,
 };
 
 // ─── Helpers ─────────────────────────────────────────────────────────────
@@ -35,6 +35,37 @@ fn make_agent(stream_fn: Arc<dyn StreamFn>) -> Agent {
                 .with_base_delay(Duration::from_millis(1)),
         )),
     )
+}
+
+struct ContinueBatchRecorder {
+    observations: Arc<Mutex<Vec<Vec<String>>>>,
+}
+
+impl PreTurnPolicy for ContinueBatchRecorder {
+    fn name(&self) -> &'static str {
+        "continue-batch-recorder"
+    }
+
+    fn evaluate(&self, ctx: &PolicyContext<'_>) -> PolicyVerdict {
+        let batch = ctx
+            .new_messages
+            .iter()
+            .filter_map(|message| match message {
+                AgentMessage::Llm(LlmMessage::User(user)) => {
+                    Some(ContentBlock::extract_text(&user.content))
+                }
+                AgentMessage::Llm(LlmMessage::Assistant(assistant)) => {
+                    Some(ContentBlock::extract_text(&assistant.content))
+                }
+                AgentMessage::Llm(LlmMessage::ToolResult(result)) => {
+                    Some(ContentBlock::extract_text(&result.content))
+                }
+                AgentMessage::Custom(_) => None,
+            })
+            .collect();
+        self.observations.lock().unwrap().push(batch);
+        PolicyVerdict::Continue
+    }
 }
 
 // ─── 4.17: continue_async with empty messages returns NoMessages ─────────
@@ -85,6 +116,47 @@ async fn multi_turn_across_separate_prompts() {
     assert!(
         !agent.state().messages.is_empty(),
         "state should have messages after second prompt"
+    );
+}
+
+#[tokio::test]
+async fn continue_pre_turn_policies_receive_resumed_pending_batch() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![
+        text_only_events("first response"),
+        text_only_events("continued response"),
+    ]));
+    let observations = Arc::new(Mutex::new(Vec::new()));
+    let mut agent = Agent::new(
+        AgentOptions::new(
+            "test system prompt",
+            default_model(),
+            stream_fn,
+            default_convert,
+        )
+        .with_retry_strategy(Box::new(
+            DefaultRetryStrategy::default()
+                .with_jitter(false)
+                .with_base_delay(Duration::from_millis(1)),
+        ))
+        .with_pre_turn_policy(ContinueBatchRecorder {
+            observations: Arc::clone(&observations),
+        }),
+    );
+
+    let result = agent.prompt_async(vec![user_msg("hello")]).await.unwrap();
+    assert_eq!(result.stop_reason, StopReason::Stop);
+
+    agent.steer(user_msg("follow-up"));
+    let continue_result = agent.continue_async().await.unwrap();
+    assert_eq!(continue_result.stop_reason, StopReason::Stop);
+
+    let recorded = observations.lock().unwrap().clone();
+    assert_eq!(recorded.len(), 2, "policy should run once per turn");
+    assert_eq!(recorded[0], vec!["hello".to_string()]);
+    assert_eq!(
+        recorded[1],
+        vec!["follow-up".to_string()],
+        "continue should expose drained pending messages as first-turn new_messages"
     );
 }
 
