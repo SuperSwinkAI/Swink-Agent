@@ -1,7 +1,10 @@
 //! Evaluator trait and registry for composing multiple evaluation metrics.
 
+use std::future::Future;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
+
+use tokio::runtime::{Handle, RuntimeFlavor};
 
 use crate::error::EvalError;
 use crate::judge::JudgeClient;
@@ -171,19 +174,14 @@ impl EvaluatorRegistry {
         self.evaluators
             .iter()
             .filter(|e| filter.is_empty() || filter.iter().any(|name| name == e.name()))
-            .filter_map(
-                |e| match catch_unwind(AssertUnwindSafe(|| e.evaluate(case, invocation))) {
-                    Ok(result) => result,
-                    Err(payload) => Some(EvalMetricResult {
-                        evaluator_name: e.name().to_string(),
-                        score: Score::fail(),
-                        details: Some(format!(
-                            "evaluator panicked: {}",
-                            panic_payload_message(payload.as_ref())
-                        )),
-                    }),
-                },
-            )
+            .filter_map(|e| {
+                let evaluator = Arc::clone(e);
+                let case = case.clone();
+                let invocation = invocation.clone();
+                isolate_panic(evaluator.name(), move || {
+                    evaluator.evaluate(&case, &invocation)
+                })
+            })
             .collect()
     }
 }
@@ -200,6 +198,62 @@ fn panic_payload_message(payload: &(dyn std::any::Any + Send)) -> String {
         .map(|message| (*message).to_string())
         .or_else(|| payload.downcast_ref::<String>().cloned())
         .unwrap_or_else(|| "unknown panic".to_string())
+}
+
+pub(crate) fn isolate_panic<F>(location: &str, action: F) -> Option<EvalMetricResult>
+where
+    F: FnOnce() -> Option<EvalMetricResult> + Send + 'static,
+{
+    match Handle::try_current() {
+        Ok(handle) if handle.runtime_flavor() == RuntimeFlavor::MultiThread => {
+            tokio::task::block_in_place(|| {
+                handle.block_on(isolate_panic_async(location, async move { action() }))
+            })
+        }
+        _ => isolate_panic_inline(location, action),
+    }
+}
+
+async fn isolate_panic_async<Fut>(location: &str, action: Fut) -> Option<EvalMetricResult>
+where
+    Fut: Future<Output = Option<EvalMetricResult>> + Send + 'static,
+{
+    match tokio::spawn(action).await {
+        Ok(result) => result,
+        Err(join_error) => Some(panic_metric(location, join_error_message(join_error))),
+    }
+}
+
+fn isolate_panic_inline<F>(location: &str, action: F) -> Option<EvalMetricResult>
+where
+    F: FnOnce() -> Option<EvalMetricResult>,
+{
+    match catch_unwind(AssertUnwindSafe(action)) {
+        Ok(result) => result,
+        Err(payload) => Some(panic_metric(
+            location,
+            panic_payload_message(payload.as_ref()),
+        )),
+    }
+}
+
+fn join_error_message(join_error: tokio::task::JoinError) -> String {
+    if join_error.is_panic() {
+        let payload = join_error.into_panic();
+        panic_payload_message(payload.as_ref())
+    } else if join_error.is_cancelled() {
+        "panic isolation task cancelled".to_string()
+    } else {
+        "unknown join error".to_string()
+    }
+}
+
+fn panic_metric(location: &str, message: String) -> EvalMetricResult {
+    EvalMetricResult {
+        evaluator_name: location.to_string(),
+        score: Score::fail(),
+        details: Some(format!("evaluator panicked in {location}: {message}")),
+    }
 }
 
 #[cfg(test)]
@@ -291,5 +345,23 @@ mod tests {
             EvalError::DuplicateEvaluator { name } => assert_eq!(name, "trajectory"),
             other => panic!("expected DuplicateEvaluator, got {other:?}"),
         }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn isolate_panic_uses_tokio_runtime_when_available() {
+        let result = isolate_panic("panics", || -> Option<EvalMetricResult> {
+            panic!("deliberate runtime panic");
+        })
+        .expect("panic isolation should emit a failure metric");
+
+        assert_eq!(result.evaluator_name, "panics");
+        assert_eq!(result.score.verdict(), Score::fail().verdict());
+        assert!(
+            result
+                .details
+                .as_deref()
+                .is_some_and(|details| details.contains("deliberate runtime panic")),
+            "panic metric should preserve the runtime panic message"
+        );
     }
 }
