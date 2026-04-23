@@ -71,6 +71,9 @@ pub use prompt::{
     JudgePromptTemplate, MinijinjaTemplate, PromptContext, PromptError, PromptFamily,
     PromptTemplateRegistry,
 };
+pub use report::{
+    ConsoleReporter, JsonReporter, MarkdownReporter, Reporter, ReporterError, ReporterOutput,
+};
 pub use response::ResponseMatcher;
 pub use runner::{AgentFactory, EvalRunner};
 pub use score::{Score, Verdict};
