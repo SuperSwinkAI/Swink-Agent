@@ -13,7 +13,6 @@ use tempfile::TempDir;
 use crate::evaluator::Evaluator;
 use crate::evaluators::code::extractor::CodeExtractor;
 use crate::evaluators::code::harness::{CargoHarness, CargoOutcome};
-use crate::score::Score;
 use crate::types::{EvalCase, EvalMetricResult, Invocation};
 
 /// Deterministic `cargo check` evaluator (FR-017).

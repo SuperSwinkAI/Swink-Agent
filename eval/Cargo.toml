@@ -34,6 +34,7 @@ strsim = { workspace = true, optional = true }
 jsonschema = { workspace = true, optional = true }
 reqwest = { workspace = true, optional = true }
 url = "2"
+tempfile.workspace = true
 opentelemetry = { workspace = true, optional = true }
 opentelemetry_sdk = { workspace = true, optional = true }
 opentelemetry-otlp = { workspace = true, optional = true }
@@ -80,7 +81,6 @@ cli = ["dep:clap"]
 
 [dev-dependencies]
 swink-agent = { path = "..", default-features = false, features = ["testkit"] }
-tempfile.workspace = true
 tokio = { workspace = true, features = ["full", "test-util"] }
 pretty_assertions.workspace = true
 wiremock.workspace = true

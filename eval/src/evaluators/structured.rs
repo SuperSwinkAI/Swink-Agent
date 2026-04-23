@@ -16,8 +16,11 @@ use crate::evaluator::Evaluator;
 use crate::score::Score;
 use crate::types::{EvalCase, EvalMetricResult, Invocation};
 
+type RubricScorer =
+    dyn Fn(&str, &serde_json::Value, Option<&serde_json::Value>) -> f64 + Send + Sync;
+
 /// Per-key aggregation strategy for [`JsonMatchEvaluator`].
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum KeyStrategy {
     /// Average per-key scores (1.0 per matching key, 0.0 otherwise).
     Average,
@@ -32,9 +35,7 @@ pub enum KeyStrategy {
         ///
         /// Takes `(key, expected, actual)` and returns a score in `[0.0, 1.0]`.
         /// The closure is called only for keys present in the expected value.
-        scorer: std::sync::Arc<
-            dyn Fn(&str, &serde_json::Value, Option<&serde_json::Value>) -> f64 + Send + Sync,
-        >,
+        scorer: std::sync::Arc<RubricScorer>,
     },
 }
 
@@ -100,20 +101,19 @@ impl JsonMatchEvaluator {
     }
 
     fn compare(&self, actual: &serde_json::Value) -> (f64, String) {
-        let expected_obj = match self.expected.as_object() {
-            Some(obj) => obj,
-            None => {
-                // Scalar / array comparison falls back to full equality.
-                let eq = self.expected == *actual;
-                return (
-                    if eq { 1.0 } else { 0.0 },
-                    if eq {
-                        "match".into()
-                    } else {
-                        "mismatch".into()
-                    },
-                );
-            }
+        let expected_obj = if let Some(obj) = self.expected.as_object() {
+            obj
+        } else {
+            // Scalar / array comparison falls back to full equality.
+            let eq = self.expected == *actual;
+            return (
+                if eq { 1.0 } else { 0.0 },
+                if eq {
+                    "match".into()
+                } else {
+                    "mismatch".into()
+                },
+            );
         };
         let actual_obj = actual.as_object();
 

@@ -108,10 +108,10 @@ fn extract_markdown_fence(response: &str, required_language: Option<&str>) -> Op
             continue;
         };
         let tag = rest.trim();
-        if let Some(expected) = required_language {
-            if !tag.eq_ignore_ascii_case(expected) {
-                continue;
-            }
+        if let Some(expected) = required_language
+            && !tag.eq_ignore_ascii_case(expected)
+        {
+            continue;
         }
         let mut body = String::new();
         for inner in lines.by_ref() {

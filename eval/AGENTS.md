@@ -17,6 +17,7 @@
 
 ## Lessons Learned
 
+- Code-family evaluators execute from the crate's runtime library surface, not just tests, so helper crates they invoke at evaluation time (for example `tempfile` for `CargoCheckEvaluator` / `ClippyEvaluator`) must live in `[dependencies]`, not only `[dev-dependencies]`.
 - `FsEvalStore` must validate eval set IDs before any path join. Reject empty IDs, `.`/`..`, NUL, and both `/` and `\` separators even on non-Windows hosts so logical identifiers cannot escape `sets/` or `results/` when tests or artifacts move across platforms.
 - `FsEvalStore` set/result persistence must go through `swink_agent::atomic_fs` helpers rather than direct `fs::write`, so interrupted rewrites never leave partial JSON or clobber the last good file.
 - `BudgetConstraints` no longer enforce limits inside `TrajectoryCollector`. Convert them with `to_policies()` and attach the returned `BudgetPolicy` / `MaxTurnsPolicy` in `AgentFactory`; `TrajectoryCollector` only drains the event stream.
