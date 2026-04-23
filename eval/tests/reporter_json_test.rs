@@ -17,9 +17,8 @@ use swink_agent_eval::{
 use common::mock_invocation;
 
 /// Embed the schema at compile time so the test suite is hermetic.
-const SCHEMA_JSON: &str = include_str!(
-    "../../specs/043-evals-adv-features/contracts/eval-result.schema.json"
-);
+const SCHEMA_JSON: &str =
+    include_str!("../../specs/043-evals-adv-features/contracts/eval-result.schema.json");
 
 fn sample_result() -> EvalSetResult {
     let case = EvalCaseResult {

@@ -37,8 +37,7 @@ pub use markdown::MarkdownReporter;
 /// Consumers that want to validate a reporter's JSON output against the
 /// published schema can `include_str!` this file; the `JsonReporter`
 /// regression tests do exactly that.
-pub const JSON_SCHEMA_PATH: &str =
-    "specs/043-evals-adv-features/contracts/eval-result.schema.json";
+pub const JSON_SCHEMA_PATH: &str = "specs/043-evals-adv-features/contracts/eval-result.schema.json";
 
 /// Renders an [`EvalSetResult`] into a concrete output surface.
 ///

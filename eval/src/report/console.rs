@@ -98,8 +98,7 @@ fn write_metric_line(out: &mut String, metric: &EvalMetricResult) -> Result<(), 
         // Single-line only; strip embedded newlines so terminal output stays
         // strictly line-oriented per Q8.
         let sanitized = details.replace(['\n', '\r'], " ");
-        write!(out, "  reason: {sanitized}")
-            .map_err(|e| ReporterError::Format(e.to_string()))?;
+        write!(out, "  reason: {sanitized}").map_err(|e| ReporterError::Format(e.to_string()))?;
     }
     writeln!(out).map_err(|e| ReporterError::Format(e.to_string()))?;
     Ok(())

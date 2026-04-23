@@ -107,9 +107,7 @@ fn markdown_cases_table_carries_per_case_detail() {
 #[test]
 fn markdown_metrics_table_carries_per_metric_detail() {
     let out = render(&sample_result());
-    assert!(
-        out.contains("| Case | Evaluator | Score | Threshold | Verdict | Reason |")
-    );
+    assert!(out.contains("| Case | Evaluator | Score | Threshold | Verdict | Reason |"));
     assert!(
         out.contains("| `case_alpha` | `helpfulness` | 0.82 | 0.50 | PASS | looks good |"),
         "\n{out}"
@@ -154,11 +152,16 @@ fn markdown_every_table_row_has_matching_pipe_count() {
         blocks.push(current);
     }
     assert!(!blocks.is_empty(), "no table rows rendered");
+    // Count cell-boundary pipes only — escaped `\|` within a cell does not
+    // delimit a new cell in GFM.
+    fn cell_boundary_pipes(line: &str) -> usize {
+        line.replace("\\|", "")
+            .chars()
+            .filter(|c| *c == '|')
+            .count()
+    }
     for block in blocks {
-        let counts: Vec<usize> = block
-            .iter()
-            .map(|l| l.chars().filter(|c| *c == '|').count())
-            .collect();
+        let counts: Vec<usize> = block.iter().map(|l| cell_boundary_pipes(l)).collect();
         let first = counts[0];
         assert!(first >= 2, "row has fewer than 2 pipes: {:?}", block[0]);
         for (i, c) in counts.iter().enumerate() {
@@ -201,5 +204,8 @@ fn markdown_omits_metrics_section_when_no_metrics() {
     };
     let out = render(&result);
     assert!(out.contains("## Cases"));
-    assert!(!out.contains("## Metrics"), "metrics section leaked:\n{out}");
+    assert!(
+        !out.contains("## Metrics"),
+        "metrics section leaked:\n{out}"
+    );
 }

@@ -12,7 +12,7 @@
 
 use std::fmt::Write as _;
 
-use crate::{EvalCaseResult, EvalMetricResult, EvalSetResult, Verdict};
+use crate::{EvalMetricResult, EvalSetResult, Verdict};
 
 use super::{Reporter, ReporterError, ReporterOutput};
 

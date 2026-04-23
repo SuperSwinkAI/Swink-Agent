@@ -76,9 +76,9 @@ fn render_console(result: &EvalSetResult) -> String {
 #[test]
 fn console_output_header_and_line_count() {
     let out = render_console(&sample_result());
-    // One line header, one per case, one per metric (3 total), one summary = 6
+    // 1 header + 2 cases + 3 metrics + 1 summary = 7
     let lines: Vec<&str> = out.lines().collect();
-    assert_eq!(lines.len(), 6, "unexpected line count:\n{out}");
+    assert_eq!(lines.len(), 7, "unexpected line count:\n{out}");
     assert!(
         lines[0].starts_with("Eval set: demo-set"),
         "header: {}",
