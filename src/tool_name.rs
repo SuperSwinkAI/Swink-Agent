@@ -44,6 +44,7 @@ pub fn compose_provider_safe_tool_name(namespace: Option<&str>, tool_name: &str)
 /// name preserves that grammar while appending a stable hash derived from the
 /// raw pre-sanitized identity so distinct inputs that collapse onto the same
 /// sanitized wire name can still coexist.
+#[cfg(feature = "plugins")]
 #[must_use]
 pub fn disambiguate_provider_safe_tool_name(base_name: &str, raw_identity: &str) -> String {
     let hash_suffix = stable_name_hash_hex(raw_identity);
@@ -141,6 +142,7 @@ mod tests {
         assert_eq!(second.len(), MAX_TOOL_NAME_LEN);
     }
 
+    #[cfg(feature = "plugins")]
     #[test]
     fn disambiguated_provider_safe_name_preserves_grammar_and_length() {
         let base = compose_provider_safe_tool_name(Some("my-web"), "search");
