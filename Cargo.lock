@@ -4822,7 +4822,6 @@ dependencies = [
  "askama",
  "async-trait",
  "backon",
- "bincode",
  "clap",
  "futures",
  "jsonschema",

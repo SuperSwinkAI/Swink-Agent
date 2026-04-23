@@ -44,7 +44,9 @@ impl StreamFn for DelayingStream {
         let delay = self.delay;
         let in_flight = Arc::clone(&self.in_flight);
         let peak = Arc::clone(&self.peak);
-        let inner_stream = self.inner.stream(model, context, options, cancellation_token);
+        let inner_stream = self
+            .inner
+            .stream(model, context, options, cancellation_token);
         let prelude = futures::stream::once(async move {
             let n = in_flight.fetch_add(1, Ordering::SeqCst) + 1;
             peak.fetch_max(n, Ordering::SeqCst);
@@ -106,7 +108,11 @@ async fn parallelism_one_is_sequential_baseline() {
         .run_set(&eval_set(&["a", "b", "c"]), &factory)
         .await
         .unwrap();
-    assert_eq!(peak.load(Ordering::SeqCst), 1, "parallelism=1 must be sequential");
+    assert_eq!(
+        peak.load(Ordering::SeqCst),
+        1,
+        "parallelism=1 must be sequential"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -115,11 +121,17 @@ async fn parallelism_four_bounded_by_permit_count() {
     let peak = Arc::clone(&factory.peak);
     let _ = EvalRunner::with_defaults()
         .with_parallelism(4)
-        .run_set(&eval_set(&["a", "b", "c", "d", "e", "f", "g", "h"]), &factory)
+        .run_set(
+            &eval_set(&["a", "b", "c", "d", "e", "f", "g", "h"]),
+            &factory,
+        )
         .await
         .unwrap();
     let observed = peak.load(Ordering::SeqCst);
-    assert!(observed <= 4, "parallelism=4 must never exceed bound (saw {observed})");
+    assert!(
+        observed <= 4,
+        "parallelism=4 must never exceed bound (saw {observed})"
+    );
 }
 
 #[test]

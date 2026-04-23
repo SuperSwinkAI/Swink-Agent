@@ -8,8 +8,8 @@ use tokio_util::sync::CancellationToken;
 
 use swink_agent::{Agent, AgentOptions, ModelSpec, testing::SimpleMockStreamFn};
 use swink_agent_eval::{
-    AgentFactory, EvalCase, EvalError, EvalRunner, EvalSet, EvaluationDataStore,
-    EvaluatorRegistry, FingerprintContext, LocalFileTaskResultStore, TaskResultCacheKey,
+    AgentFactory, EvalCase, EvalError, EvalRunner, EvalSet, EvaluationDataStore, EvaluatorRegistry,
+    FingerprintContext, LocalFileTaskResultStore, TaskResultCacheKey,
 };
 
 mod common;
@@ -84,8 +84,14 @@ async fn changing_user_messages_invalidates_cache() {
 
     let factory = CountingFactory::new();
     let runner = EvalRunner::new(EvaluatorRegistry::new()).with_cache(Arc::clone(&store));
-    let _ = runner.run_set(&set_with(vec![common::make_case("c1")]), &factory).await.unwrap();
-    let _ = runner.run_set(&set_with(vec![case_v2]), &factory).await.unwrap();
+    let _ = runner
+        .run_set(&set_with(vec![common::make_case("c1")]), &factory)
+        .await
+        .unwrap();
+    let _ = runner
+        .run_set(&set_with(vec![case_v2]), &factory)
+        .await
+        .unwrap();
     assert_eq!(factory.invocations.load(Ordering::SeqCst), 2);
 }
 

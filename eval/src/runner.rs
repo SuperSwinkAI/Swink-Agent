@@ -67,6 +67,7 @@ pub struct RunnerMetricSample {
 
 impl RunnerMetricSample {
     fn from_samples(evaluator_name: String, scores: Vec<f64>) -> Self {
+        #[allow(clippy::cast_precision_loss)]
         let n = scores.len() as f64;
         let mean = if scores.is_empty() {
             0.0
@@ -207,6 +208,7 @@ impl EvalRunner {
     }
 
     /// Run an entire eval set and return aggregated results.
+    #[allow(clippy::too_many_lines)]
     pub async fn run_set(
         &self,
         eval_set: &EvalSet,
@@ -378,23 +380,20 @@ async fn execute_case(
         None => None,
     };
 
-    let invocation = match cached {
-        Some(inv) => {
-            debug!(case_id = %case.id, "cache hit");
-            inv
+    let invocation = if let Some(inv) = cached {
+        debug!(case_id = %case.id, "cache hit");
+        inv
+    } else {
+        let inv = invoke_agent_impl(case, factory, cancel, agent_invocations).await?;
+        if let Some(store) = cache
+            && let Err(err) = store.put(eval_set_id, &case.id, &cache_key, &inv)
+        {
+            warn!(case_id = %case.id, error = %err, "cache write failed");
         }
-        None => {
-            let inv = invoke_agent_impl(case, factory, cancel, agent_invocations).await?;
-            if let Some(store) = cache
-                && let Err(err) = store.put(eval_set_id, &case.id, &cache_key, &inv)
-            {
-                warn!(case_id = %case.id, error = %err, "cache write failed");
-            }
-            inv
-        }
+        inv
     };
 
-    let metric_results = dispatch_evaluators(registry, case, &invocation, num_runs, cancel).await;
+    let metric_results = dispatch_evaluators(registry, case, &invocation, num_runs, cancel);
     let verdict = if metric_results.iter().all(|r| r.score.verdict().is_pass()) {
         Verdict::Pass
     } else {
@@ -432,7 +431,8 @@ async fn invoke_agent_impl(
         tokio::select! {
             biased;
             () = tok.cancelled() => {
-                drop(stream);
+                // select! drops the losing branch's future, which drops the
+                // stream and cancels any in-flight request to the agent.
                 return Ok(cancellation_placeholder_invocation());
             }
             inv = TrajectoryCollector::collect_from_stream(stream) => inv,
@@ -443,7 +443,7 @@ async fn invoke_agent_impl(
     Ok(invocation)
 }
 
-async fn dispatch_evaluators(
+fn dispatch_evaluators(
     registry: &EvaluatorRegistry,
     case: &EvalCase,
     invocation: &Invocation,
@@ -476,10 +476,7 @@ async fn dispatch_evaluators(
         .into_iter()
         .map(|(name, samples)| {
             let scores: Vec<f64> = samples.iter().map(|m| m.score.value).collect();
-            let threshold = samples
-                .first()
-                .map(|m| m.score.threshold)
-                .unwrap_or(0.5);
+            let threshold = samples.first().map_or(0.5, |m| m.score.threshold);
             let sample = RunnerMetricSample::from_samples(name.clone(), scores);
             let mut detail_lines = vec![format!(
                 "num_runs={} mean={:.4} std_dev={:.4}",

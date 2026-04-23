@@ -13,8 +13,8 @@ use tokio_util::sync::CancellationToken;
 
 use swink_agent::{Agent, AgentOptions, ModelSpec, testing::SimpleMockStreamFn};
 use swink_agent_eval::{
-    AgentFactory, EvalCase, EvalError, EvalRunner, EvalSet, EvaluationDataStore,
-    EvaluatorRegistry, LocalFileTaskResultStore,
+    AgentFactory, EvalCase, EvalError, EvalRunner, EvalSet, EvaluationDataStore, EvaluatorRegistry,
+    LocalFileTaskResultStore,
 };
 
 mod common;

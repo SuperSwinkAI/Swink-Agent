@@ -52,7 +52,10 @@ async fn valid_session_file_is_surfaced_to_factory() {
     let path = dir.path().join("initial_session.json");
     fs::write(
         &path,
-        serde_json::to_vec(&serde_json::json!({"greeting": "hello world"})).unwrap(),
+        serde_json::to_vec(&serde_json::json!({
+            "data": {"greeting": "hello world"}
+        }))
+        .unwrap(),
     )
     .unwrap();
 
@@ -64,7 +67,11 @@ async fn valid_session_file_is_surfaced_to_factory() {
         .await
         .unwrap();
 
-    let seen = observed.lock().unwrap().clone().expect("factory should see initial session");
+    let seen = observed
+        .lock()
+        .unwrap()
+        .clone()
+        .expect("factory should see initial session");
     let greeting: Option<String> = seen.get("greeting");
     assert_eq!(greeting.as_deref(), Some("hello world"));
 }

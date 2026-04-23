@@ -1,8 +1,8 @@
 //! US2 / T092: `EvalRunner::with_num_runs` variance-recording tests.
 
 use std::collections::VecDeque;
-use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 
 use tokio_util::sync::CancellationToken;
 
