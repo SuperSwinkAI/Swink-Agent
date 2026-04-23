@@ -159,6 +159,49 @@ fn judge_cache_evicts_least_recently_used_entry() {
     assert_eq!(cache.get(&third), Some(verdict(0.3, true, "third")));
 }
 
+#[test]
+fn judge_cache_persists_entries_to_disk() {
+    let tempdir = tempfile::tempdir().expect("temp dir");
+    let key = CacheKey::for_prompt("judge", "persisted");
+    let expected = verdict(0.8, true, "persisted");
+
+    {
+        let mut cache =
+            JudgeCache::with_disk_path(4, tempdir.path()).expect("disk cache should open");
+        assert_eq!(cache.disk_path(), Some(tempdir.path()));
+        cache.put(key, expected.clone());
+        cache.flush_to_disk().expect("flush succeeds");
+    }
+
+    let mut restored =
+        JudgeCache::with_disk_path(4, tempdir.path()).expect("disk cache should reopen");
+    assert_eq!(restored.get(&key), Some(expected));
+}
+
+#[test]
+fn judge_cache_disk_flush_removes_evicted_entries() {
+    let tempdir = tempfile::tempdir().expect("temp dir");
+    let first = CacheKey::for_prompt("judge", "first");
+    let second = CacheKey::for_prompt("judge", "second");
+
+    {
+        let mut cache =
+            JudgeCache::with_disk_path(1, tempdir.path()).expect("disk cache should open");
+        cache.put(first, verdict(0.1, false, "first"));
+        cache.flush_to_disk().expect("first flush succeeds");
+        cache.put(second, verdict(0.9, true, "second"));
+        cache.flush_to_disk().expect("second flush succeeds");
+    }
+
+    let mut restored =
+        JudgeCache::with_disk_path(4, tempdir.path()).expect("disk cache should reopen");
+    assert!(
+        restored.get(&first).is_none(),
+        "evicted entry stays removed"
+    );
+    assert_eq!(restored.get(&second), Some(verdict(0.9, true, "second")));
+}
+
 fn verdict(score: f64, pass: bool, reason: &str) -> JudgeVerdict {
     JudgeVerdict {
         score,

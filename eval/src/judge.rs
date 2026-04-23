@@ -32,10 +32,14 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::fmt;
+use std::fs;
+use std::io;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 pub use crate::url_filter::{DefaultUrlFilter, UrlFilter};
@@ -98,6 +102,10 @@ impl CacheKey {
     pub const fn as_bytes(&self) -> &[u8; 32] {
         &self.0
     }
+
+    fn to_hex(self) -> String {
+        hex_lower(self.as_bytes())
+    }
 }
 
 impl fmt::Debug for CacheKey {
@@ -118,6 +126,8 @@ pub struct JudgeCache {
     capacity: usize,
     entries: HashMap<CacheKey, JudgeVerdict>,
     recency: VecDeque<CacheKey>,
+    disk_path: Option<PathBuf>,
+    dirty: bool,
 }
 
 impl JudgeCache {
@@ -137,7 +147,50 @@ impl JudgeCache {
             capacity: capacity.max(1),
             entries: HashMap::new(),
             recency: VecDeque::new(),
+            disk_path: None,
+            dirty: false,
         }
+    }
+
+    /// Construct a disk-backed cache, warm-loading any persisted entries.
+    ///
+    /// Entries are stored as one JSON file per [`CacheKey`] and flushed on
+    /// [`Self::flush_to_disk`] or drop. Invalid cache files are ignored so a
+    /// corrupt optional cache never prevents evaluation startup.
+    pub fn with_disk_path(capacity: usize, path: impl Into<PathBuf>) -> io::Result<Self> {
+        let disk_path = path.into();
+        fs::create_dir_all(&disk_path)?;
+
+        let mut cache = Self {
+            capacity: capacity.max(1),
+            entries: HashMap::new(),
+            recency: VecDeque::new(),
+            disk_path: Some(disk_path.clone()),
+            dirty: false,
+        };
+
+        let mut files = fs::read_dir(&disk_path)?
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("json"))
+            .collect::<Vec<_>>();
+        files.sort();
+
+        for path in files {
+            let Some(key) = cache_key_from_path(&path) else {
+                continue;
+            };
+            let Ok(bytes) = fs::read(&path) else {
+                continue;
+            };
+            let Ok(verdict) = serde_json::from_slice::<JudgeVerdict>(&bytes) else {
+                continue;
+            };
+            cache.put_loaded(key, verdict);
+        }
+
+        cache.dirty = false;
+        Ok(cache)
     }
 
     /// Number of verdicts currently cached.
@@ -158,6 +211,12 @@ impl JudgeCache {
         self.capacity
     }
 
+    /// Return the configured disk cache directory, when disk-backed.
+    #[must_use]
+    pub fn disk_path(&self) -> Option<&Path> {
+        self.disk_path.as_deref()
+    }
+
     /// Retrieve a cached verdict and mark it most recently used.
     pub fn get(&mut self, key: &CacheKey) -> Option<JudgeVerdict> {
         let verdict = self.entries.get(key).cloned();
@@ -169,6 +228,47 @@ impl JudgeCache {
 
     /// Insert or replace a cached verdict.
     pub fn put(&mut self, key: CacheKey, verdict: JudgeVerdict) {
+        let replacing = self.entries.insert(key, verdict).is_some();
+        self.touch(key);
+        self.dirty = true;
+
+        if !replacing {
+            self.evict_over_capacity();
+        }
+    }
+
+    /// Flush current entries to disk, removing stale persisted entries.
+    pub fn flush_to_disk(&mut self) -> io::Result<()> {
+        let Some(path) = self.disk_path.as_ref() else {
+            self.dirty = false;
+            return Ok(());
+        };
+
+        fs::create_dir_all(path)?;
+        for entry in fs::read_dir(path)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+                continue;
+            }
+            let remove =
+                cache_key_from_path(&path).is_some_and(|key| !self.entries.contains_key(&key));
+            if remove {
+                fs::remove_file(path)?;
+            }
+        }
+
+        for (key, verdict) in &self.entries {
+            let path = path.join(format!("{}.json", key.to_hex()));
+            let bytes = serde_json::to_vec(verdict).map_err(io::Error::other)?;
+            fs::write(path, bytes)?;
+        }
+
+        self.dirty = false;
+        Ok(())
+    }
+
+    fn put_loaded(&mut self, key: CacheKey, verdict: JudgeVerdict) {
         let replacing = self.entries.insert(key, verdict).is_some();
         self.touch(key);
 
@@ -199,6 +299,14 @@ impl Default for JudgeCache {
     }
 }
 
+impl Drop for JudgeCache {
+    fn drop(&mut self) {
+        if self.dirty {
+            let _ = self.flush_to_disk();
+        }
+    }
+}
+
 fn update_with_len_prefixed_bytes(hasher: &mut Sha256, bytes: &[u8]) {
     hasher.update(bytes.len().to_le_bytes());
     hasher.update(bytes);
@@ -212,6 +320,36 @@ fn hex_lower(bytes: &[u8]) -> String {
         out.push(HEX[(byte & 0x0f) as usize] as char);
     }
     out
+}
+
+fn cache_key_from_path(path: &Path) -> Option<CacheKey> {
+    let stem = path.file_stem()?.to_str()?;
+    cache_key_from_hex(stem)
+}
+
+fn cache_key_from_hex(hex: &str) -> Option<CacheKey> {
+    if hex.len() != 64 {
+        return None;
+    }
+
+    let mut bytes = [0_u8; 32];
+    let raw = hex.as_bytes();
+    for (idx, byte) in bytes.iter_mut().enumerate() {
+        let high = hex_nibble(raw[idx * 2])?;
+        let low = hex_nibble(raw[idx * 2 + 1])?;
+        *byte = (high << 4) | low;
+    }
+
+    Some(CacheKey(bytes))
+}
+
+fn hex_nibble(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
 }
 
 impl RetryPolicy {
@@ -390,7 +528,7 @@ pub enum JudgeRegistryError {
 ///
 /// Mirrors `strands-evals::EvaluationOutput` so future provider bindings can
 /// map cleanly without provider-specific types leaking into this crate.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct JudgeVerdict {
     /// Numeric score in `[0.0, 1.0]`. Callers SHOULD clamp before constructing.
     pub score: f64,
