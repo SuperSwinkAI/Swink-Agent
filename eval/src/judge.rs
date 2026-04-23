@@ -30,10 +30,13 @@
 
 #![forbid(unsafe_code)]
 
+use std::collections::{HashMap, VecDeque};
+use std::fmt;
 use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
+use sha2::{Digest, Sha256};
 
 pub use crate::url_filter::{DefaultUrlFilter, UrlFilter};
 
@@ -42,6 +45,9 @@ pub const MAX_RETRY_ATTEMPTS: u32 = 16;
 
 /// Maximum supported judge batch size.
 pub const MAX_BATCH_SIZE: usize = 128;
+
+/// Default number of judge verdicts retained in memory.
+pub const DEFAULT_JUDGE_CACHE_CAPACITY: usize = 1024;
 
 /// LLM-as-judge client used by semantic evaluators.
 ///
@@ -68,6 +74,144 @@ pub struct RetryPolicy {
     pub max_delay: Duration,
     /// Whether retry jitter is enabled.
     pub jitter: bool,
+}
+
+/// Stable cache key for a judge prompt/model pair.
+///
+/// The digest is SHA-256 over the model identifier and rendered prompt, with
+/// length prefixes to avoid accidental concatenation ambiguity.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct CacheKey([u8; 32]);
+
+impl CacheKey {
+    /// Derive a cache key from the explicit judge model identifier and prompt.
+    #[must_use]
+    pub fn for_prompt(model_id: &str, prompt: &str) -> Self {
+        let mut hasher = Sha256::new();
+        update_with_len_prefixed_bytes(&mut hasher, model_id.as_bytes());
+        update_with_len_prefixed_bytes(&mut hasher, prompt.as_bytes());
+        Self(hasher.finalize().into())
+    }
+
+    /// Borrow the raw SHA-256 digest bytes.
+    #[must_use]
+    pub const fn as_bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+}
+
+impl fmt::Debug for CacheKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("CacheKey")
+            .field(&hex_lower(self.as_bytes()))
+            .finish()
+    }
+}
+
+/// In-memory LRU cache for judge verdicts.
+///
+/// This cache stores structured judge verdicts by [`CacheKey`]. It is small and
+/// synchronous by design; callers that share it across tasks should wrap it in
+/// their preferred synchronization primitive.
+#[derive(Debug)]
+pub struct JudgeCache {
+    capacity: usize,
+    entries: HashMap<CacheKey, JudgeVerdict>,
+    recency: VecDeque<CacheKey>,
+}
+
+impl JudgeCache {
+    /// Construct an empty cache with the default capacity.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::with_capacity(DEFAULT_JUDGE_CACHE_CAPACITY)
+    }
+
+    /// Construct an empty cache with a bounded capacity.
+    ///
+    /// A requested capacity of `0` is promoted to `1` so inserts remain useful
+    /// and eviction semantics stay well-defined.
+    #[must_use]
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            capacity: capacity.max(1),
+            entries: HashMap::new(),
+            recency: VecDeque::new(),
+        }
+    }
+
+    /// Number of verdicts currently cached.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Whether the cache currently stores no verdicts.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// Maximum number of verdicts retained.
+    #[must_use]
+    pub const fn capacity(&self) -> usize {
+        self.capacity
+    }
+
+    /// Retrieve a cached verdict and mark it most recently used.
+    pub fn get(&mut self, key: &CacheKey) -> Option<JudgeVerdict> {
+        let verdict = self.entries.get(key).cloned();
+        if verdict.is_some() {
+            self.touch(*key);
+        }
+        verdict
+    }
+
+    /// Insert or replace a cached verdict.
+    pub fn put(&mut self, key: CacheKey, verdict: JudgeVerdict) {
+        let replacing = self.entries.insert(key, verdict).is_some();
+        self.touch(key);
+
+        if !replacing {
+            self.evict_over_capacity();
+        }
+    }
+
+    fn touch(&mut self, key: CacheKey) {
+        self.recency.retain(|candidate| candidate != &key);
+        self.recency.push_back(key);
+    }
+
+    fn evict_over_capacity(&mut self) {
+        while self.entries.len() > self.capacity {
+            if let Some(oldest) = self.recency.pop_front() {
+                self.entries.remove(&oldest);
+            } else {
+                break;
+            }
+        }
+    }
+}
+
+impl Default for JudgeCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+fn update_with_len_prefixed_bytes(hasher: &mut Sha256, bytes: &[u8]) {
+    hasher.update(bytes.len().to_le_bytes());
+    hasher.update(bytes);
+}
+
+fn hex_lower(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        out.push(HEX[(byte >> 4) as usize] as char);
+        out.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    out
 }
 
 impl RetryPolicy {
@@ -246,7 +390,7 @@ pub enum JudgeRegistryError {
 ///
 /// Mirrors `strands-evals::EvaluationOutput` so future provider bindings can
 /// map cleanly without provider-specific types leaking into this crate.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct JudgeVerdict {
     /// Numeric score in `[0.0, 1.0]`. Callers SHOULD clamp before constructing.
     pub score: f64,

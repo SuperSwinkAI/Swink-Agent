@@ -1,7 +1,10 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use swink_agent_eval::{JudgeRegistry, JudgeRegistryError, MockJudge, RetryPolicy, UrlFilter};
+use swink_agent_eval::{
+    CacheKey, DEFAULT_JUDGE_CACHE_CAPACITY, JudgeCache, JudgeRegistry, JudgeRegistryError,
+    JudgeVerdict, MockJudge, RetryPolicy, UrlFilter,
+};
 use url::Url;
 
 #[test]
@@ -91,4 +94,76 @@ fn registry_accepts_custom_url_filter() {
 
     let url = Url::parse("http://127.0.0.1/fixture.png").expect("valid url");
     assert!(registry.url_filter().allows(&url));
+}
+
+#[test]
+fn judge_cache_defaults_to_spec_capacity() {
+    let cache = JudgeCache::new();
+
+    assert_eq!(cache.capacity(), DEFAULT_JUDGE_CACHE_CAPACITY);
+    assert!(cache.is_empty());
+}
+
+#[test]
+fn cache_key_depends_on_model_and_prompt() {
+    let base = CacheKey::for_prompt("judge-a", "score this response");
+
+    assert_eq!(base, CacheKey::for_prompt("judge-a", "score this response"));
+    assert_ne!(base, CacheKey::for_prompt("judge-b", "score this response"));
+    assert_ne!(
+        base,
+        CacheKey::for_prompt("judge-a", "score another response")
+    );
+}
+
+#[test]
+fn judge_cache_get_put_round_trip() {
+    let mut cache = JudgeCache::with_capacity(2);
+    let key = CacheKey::for_prompt("judge", "prompt");
+    let verdict = verdict(0.75, true, "ok");
+
+    cache.put(key, verdict.clone());
+
+    assert_eq!(cache.len(), 1);
+    assert_eq!(cache.get(&key), Some(verdict));
+}
+
+#[test]
+fn judge_cache_replaces_existing_entry_without_growing() {
+    let mut cache = JudgeCache::with_capacity(2);
+    let key = CacheKey::for_prompt("judge", "prompt");
+
+    cache.put(key, verdict(0.25, false, "first"));
+    cache.put(key, verdict(0.9, true, "second"));
+
+    assert_eq!(cache.len(), 1);
+    assert_eq!(cache.get(&key), Some(verdict(0.9, true, "second")));
+}
+
+#[test]
+fn judge_cache_evicts_least_recently_used_entry() {
+    let mut cache = JudgeCache::with_capacity(2);
+    let first = CacheKey::for_prompt("judge", "first");
+    let second = CacheKey::for_prompt("judge", "second");
+    let third = CacheKey::for_prompt("judge", "third");
+
+    cache.put(first, verdict(0.1, false, "first"));
+    cache.put(second, verdict(0.2, false, "second"));
+    assert!(cache.get(&first).is_some(), "first becomes most recent");
+
+    cache.put(third, verdict(0.3, true, "third"));
+
+    assert_eq!(cache.len(), 2);
+    assert!(cache.get(&second).is_none(), "second should be evicted");
+    assert_eq!(cache.get(&first), Some(verdict(0.1, false, "first")));
+    assert_eq!(cache.get(&third), Some(verdict(0.3, true, "third")));
+}
+
+fn verdict(score: f64, pass: bool, reason: &str) -> JudgeVerdict {
+    JudgeVerdict {
+        score,
+        pass,
+        reason: Some(reason.to_string()),
+        label: None,
+    }
 }
