@@ -1,5 +1,9 @@
 #![forbid(unsafe_code)]
 
+use std::future::Future;
+
+use tokio_util::sync::CancellationToken;
+
 /// Shared base for remote HTTP/SSE stream adapters.
 ///
 /// Bundles the three fields that every reqwest-based adapter carries:
@@ -77,6 +81,28 @@ pub fn cancelled_error(message: impl Into<String>) -> swink_agent::AssistantMess
     }
 }
 
+/// Race a pre-stream async operation against cancellation.
+///
+/// Adapters should use this around the initial HTTP send so cancellation can
+/// short-circuit before any provider bytes arrive.
+pub async fn race_pre_stream_cancellation<T, F>(
+    cancellation_token: &CancellationToken,
+    cancelled_message: &'static str,
+    operation: F,
+) -> Result<T, swink_agent::AssistantMessageEvent>
+where
+    F: Future<Output = Result<T, swink_agent::AssistantMessageEvent>>,
+{
+    if cancellation_token.is_cancelled() {
+        return Err(cancelled_error(cancelled_message));
+    }
+
+    tokio::select! {
+        () = cancellation_token.cancelled() => Err(cancelled_error(cancelled_message)),
+        result = operation => result,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -120,6 +146,23 @@ mod tests {
                 stop_reason: swink_agent::StopReason::Aborted,
                 ..
             }
+        ));
+    }
+
+    #[tokio::test]
+    async fn race_pre_stream_cancellation_short_circuits() {
+        let token = CancellationToken::new();
+        token.cancel();
+
+        let result =
+            race_pre_stream_cancellation(&token, "cancelled", async { Ok::<_, _>("ok") }).await;
+
+        assert!(matches!(
+            result,
+            Err(swink_agent::AssistantMessageEvent::Error {
+                stop_reason: swink_agent::StopReason::Aborted,
+                ..
+            })
         ));
     }
 }

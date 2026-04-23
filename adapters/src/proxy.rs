@@ -188,7 +188,13 @@ fn proxy_stream<'a>(
     cancellation_token: CancellationToken,
 ) -> impl Stream<Item = AssistantMessageEvent> + Send + 'a {
     stream::once(async move {
-        let response = match send_request(proxy, model, context, options).await {
+        let response = match crate::base::race_pre_stream_cancellation(
+            &cancellation_token,
+            "operation cancelled",
+            send_request(proxy, model, context, options),
+        )
+        .await
+        {
             Ok(resp) => resp,
             Err(event) => return stream::iter(crate::base::pre_stream_error(event)).left_stream(),
         };
@@ -818,5 +824,43 @@ mod tests {
         assert!(result.is_err());
         let err = result.err().unwrap();
         assert!(err.contains("network error"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn pre_cancelled_stream_aborts_before_request_send() {
+        use futures::StreamExt as _;
+
+        let proxy = ProxyStreamFn::new("http://127.0.0.1:1", "token");
+        let model = ModelSpec::new("test-provider", "test-model");
+        let context = AgentContext {
+            system_prompt: "test".to_string(),
+            messages: vec![],
+            tools: vec![],
+        };
+        let options = StreamOptions::default();
+        let token = CancellationToken::new();
+        token.cancel();
+
+        let events: Vec<_> = proxy
+            .stream(&model, &context, &options, token)
+            .collect()
+            .await;
+
+        assert_eq!(events.len(), 2, "expected Start + Error: {events:?}");
+        assert!(matches!(events[0], AssistantMessageEvent::Start));
+        match &events[1] {
+            AssistantMessageEvent::Error {
+                stop_reason,
+                error_message,
+                ..
+            } => {
+                assert_eq!(*stop_reason, StopReason::Aborted);
+                assert!(
+                    error_message.contains("cancelled"),
+                    "unexpected cancellation message: {error_message}"
+                );
+            }
+            other => panic!("expected aborted terminal event, got {other:?}"),
+        }
     }
 }
