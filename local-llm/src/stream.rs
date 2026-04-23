@@ -746,6 +746,23 @@ fn cancelled_event(message: impl Into<String>) -> AssistantMessageEvent {
     }
 }
 
+async fn race_pre_stream_cancellation<T, F>(
+    cancellation_token: &CancellationToken,
+    operation: F,
+) -> Result<T, AssistantMessageEvent>
+where
+    F: std::future::Future<Output = Result<T, AssistantMessageEvent>>,
+{
+    if cancellation_token.is_cancelled() {
+        return Err(cancelled_event("local inference cancelled"));
+    }
+
+    tokio::select! {
+        () = cancellation_token.cancelled() => Err(cancelled_event("local inference cancelled")),
+        result = operation => result,
+    }
+}
+
 // ─── Stream implementation ──────────────────────────────────────────────────
 
 #[allow(clippy::too_many_lines)]
@@ -757,22 +774,17 @@ fn local_stream<'a>(
     cancellation_token: CancellationToken,
 ) -> impl Stream<Item = AssistantMessageEvent> + Send + 'a {
     stream::once(async move {
-        if cancellation_token.is_cancelled() {
+        if let Err(event) = race_pre_stream_cancellation(&cancellation_token, async {
+            local_model
+                .ensure_ready()
+                .await
+                .map_err(|e| AssistantMessageEvent::error(format!("local model not ready: {e}")))
+        })
+        .await
+        {
             return stream::iter(vec![
                 AssistantMessageEvent::Start,
-                cancelled_event("local inference cancelled"),
-            ]);
-        }
-        if let Err(e) = local_model.ensure_ready().await {
-            return stream::iter(vec![
-                AssistantMessageEvent::Start,
-                AssistantMessageEvent::error(format!("local model not ready: {e}")),
-            ]);
-        }
-        if cancellation_token.is_cancelled() {
-            return stream::iter(vec![
-                AssistantMessageEvent::Start,
-                cancelled_event("local inference cancelled"),
+                event,
             ]);
         }
 
@@ -1074,6 +1086,52 @@ mod tests {
             }
             other => panic!("expected Error terminal, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn race_pre_stream_cancellation_short_circuits() {
+        let token = CancellationToken::new();
+        token.cancel();
+
+        let result =
+            race_pre_stream_cancellation(&token, async { Ok::<_, AssistantMessageEvent>("ok") })
+                .await;
+
+        assert!(matches!(
+            result,
+            Err(AssistantMessageEvent::Error {
+                stop_reason: StopReason::Aborted,
+                ..
+            })
+        ));
+    }
+
+    #[tokio::test]
+    async fn race_pre_stream_cancellation_aborts_in_flight_readiness() {
+        let token = CancellationToken::new();
+        let cancel_token = token.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            cancel_token.cancel();
+        });
+
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            race_pre_stream_cancellation(&token, async {
+                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                Ok::<_, AssistantMessageEvent>("ready")
+            }),
+        )
+        .await
+        .expect("cancellation should resolve promptly");
+
+        assert!(matches!(
+            result,
+            Err(AssistantMessageEvent::Error {
+                stop_reason: StopReason::Aborted,
+                ..
+            })
+        ));
     }
 
     #[tokio::test]
