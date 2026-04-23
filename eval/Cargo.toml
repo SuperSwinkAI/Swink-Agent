@@ -41,6 +41,7 @@ askama = { workspace = true, optional = true }
 clap = { workspace = true, optional = true }
 libc = { workspace = true, optional = true }
 serde_yaml = { workspace = true, optional = true }
+tempfile = { workspace = true, optional = true }
 
 [features]
 default = []
@@ -50,9 +51,9 @@ evaluator-quality = ["judge-core"]
 evaluator-safety = ["judge-core"]
 evaluator-rag = ["judge-core"]
 evaluator-agent = ["judge-core"]
-evaluator-structured = ["dep:jsonschema"]
-evaluator-simple = ["dep:strsim"]
-evaluator-code = []
+evaluator-structured = ["judge-core", "dep:jsonschema"]
+evaluator-simple = ["judge-core", "dep:strsim"]
+evaluator-code = ["judge-core", "dep:tempfile"]
 evaluator-sandbox = ["evaluator-code", "dep:libc"]
 multimodal = ["judge-core", "dep:reqwest"]
 all-evaluators = [
