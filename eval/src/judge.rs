@@ -1,4 +1,4 @@
-//! LLM-as-judge client trait for semantic evaluators.
+//! LLM-as-judge client trait and registry for semantic evaluators.
 //!
 //! `JudgeClient` is an async trait consumed by the semantic evaluators
 //! (`SemanticToolSelectionEvaluator`, `SemanticToolParameterEvaluator`).
@@ -30,9 +30,18 @@
 
 #![forbid(unsafe_code)]
 
+use std::sync::Arc;
+use std::time::Duration;
+
 use async_trait::async_trait;
 
 pub use crate::url_filter::{DefaultUrlFilter, UrlFilter};
+
+/// Maximum retry attempts allowed for judge dispatch.
+pub const MAX_RETRY_ATTEMPTS: u32 = 16;
+
+/// Maximum supported judge batch size.
+pub const MAX_BATCH_SIZE: usize = 128;
 
 /// LLM-as-judge client used by semantic evaluators.
 ///
@@ -48,6 +57,189 @@ pub trait JudgeClient: Send + Sync {
     /// them via [`JudgeError::Timeout`]. Evaluators additionally wrap each
     /// call in an outer `tokio::time::timeout`.
     async fn judge(&self, prompt: &str) -> Result<JudgeVerdict, JudgeError>;
+}
+
+/// Retry configuration shared by judge-backed evaluators.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RetryPolicy {
+    /// Maximum number of attempts for one judge request.
+    pub max_attempts: u32,
+    /// Maximum backoff delay between attempts.
+    pub max_delay: Duration,
+    /// Whether retry jitter is enabled.
+    pub jitter: bool,
+}
+
+impl RetryPolicy {
+    /// Create a retry policy with explicit values.
+    #[must_use]
+    pub const fn new(max_attempts: u32, max_delay: Duration, jitter: bool) -> Self {
+        Self {
+            max_attempts,
+            max_delay,
+            jitter,
+        }
+    }
+}
+
+impl Default for RetryPolicy {
+    fn default() -> Self {
+        Self {
+            max_attempts: 6,
+            max_delay: Duration::from_secs(240),
+            jitter: true,
+        }
+    }
+}
+
+/// Configuration binding a judge client to a required model identifier.
+///
+/// This registry intentionally does not provide a default model. Provider model
+/// lineups change over time, so callers must make model identity explicit at
+/// construction to preserve score comparability.
+pub struct JudgeRegistry {
+    client: Arc<dyn JudgeClient>,
+    model_id: String,
+    retry_policy: RetryPolicy,
+    batch_size: usize,
+    url_filter: Arc<dyn UrlFilter>,
+}
+
+impl std::fmt::Debug for JudgeRegistry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("JudgeRegistry")
+            .field("model_id", &self.model_id)
+            .field("retry_policy", &self.retry_policy)
+            .field("batch_size", &self.batch_size)
+            .finish_non_exhaustive()
+    }
+}
+
+impl JudgeRegistry {
+    /// Start building a judge registry for an explicit model identifier.
+    #[must_use]
+    pub fn builder(
+        client: Arc<dyn JudgeClient>,
+        model_id: impl Into<String>,
+    ) -> JudgeRegistryBuilder {
+        JudgeRegistryBuilder {
+            client,
+            model_id: model_id.into(),
+            retry_policy: RetryPolicy::default(),
+            batch_size: 1,
+            url_filter: Arc::new(DefaultUrlFilter),
+        }
+    }
+
+    /// Borrow the configured judge client.
+    #[must_use]
+    pub fn client(&self) -> &Arc<dyn JudgeClient> {
+        &self.client
+    }
+
+    /// Return the explicit judge model identifier.
+    #[must_use]
+    pub fn model_id(&self) -> &str {
+        &self.model_id
+    }
+
+    /// Return the retry policy used by judge-backed evaluators.
+    #[must_use]
+    pub const fn retry_policy(&self) -> &RetryPolicy {
+        &self.retry_policy
+    }
+
+    /// Return the bounded batch size for judge dispatch.
+    #[must_use]
+    pub const fn batch_size(&self) -> usize {
+        self.batch_size
+    }
+
+    /// Borrow the URL filter used when materializing judge attachments.
+    #[must_use]
+    pub fn url_filter(&self) -> &Arc<dyn UrlFilter> {
+        &self.url_filter
+    }
+}
+
+/// Builder for [`JudgeRegistry`].
+pub struct JudgeRegistryBuilder {
+    client: Arc<dyn JudgeClient>,
+    model_id: String,
+    retry_policy: RetryPolicy,
+    batch_size: usize,
+    url_filter: Arc<dyn UrlFilter>,
+}
+
+impl JudgeRegistryBuilder {
+    /// Override retry behavior.
+    #[must_use]
+    pub fn with_retry_policy(mut self, retry_policy: RetryPolicy) -> Self {
+        self.retry_policy = retry_policy;
+        self
+    }
+
+    /// Override the bounded judge batch size.
+    #[must_use]
+    pub fn with_batch_size(mut self, batch_size: usize) -> Self {
+        self.batch_size = batch_size;
+        self
+    }
+
+    /// Override the URL filter used by attachment materialization.
+    #[must_use]
+    pub fn with_url_filter(mut self, url_filter: Arc<dyn UrlFilter>) -> Self {
+        self.url_filter = url_filter;
+        self
+    }
+
+    /// Validate and construct the registry.
+    pub fn build(self) -> Result<JudgeRegistry, JudgeRegistryError> {
+        let model_id = self.model_id.trim().to_string();
+        if model_id.is_empty() {
+            return Err(JudgeRegistryError::MissingModelId);
+        }
+        if !(1..=MAX_BATCH_SIZE).contains(&self.batch_size) {
+            return Err(JudgeRegistryError::InvalidBatchSize {
+                batch_size: self.batch_size,
+            });
+        }
+        if self.retry_policy.max_attempts > MAX_RETRY_ATTEMPTS {
+            return Err(JudgeRegistryError::InvalidRetryPolicy {
+                reason: format!(
+                    "max_attempts must be <= {MAX_RETRY_ATTEMPTS}, got {}",
+                    self.retry_policy.max_attempts
+                ),
+            });
+        }
+        if self.retry_policy.max_attempts == 0 {
+            return Err(JudgeRegistryError::InvalidRetryPolicy {
+                reason: "max_attempts must be greater than 0".to_string(),
+            });
+        }
+
+        Ok(JudgeRegistry {
+            client: self.client,
+            model_id,
+            retry_policy: self.retry_policy,
+            batch_size: self.batch_size,
+            url_filter: self.url_filter,
+        })
+    }
+}
+
+/// Errors returned while constructing a [`JudgeRegistry`].
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+pub enum JudgeRegistryError {
+    /// No explicit model identifier was provided.
+    #[error("judge registry requires an explicit model_id")]
+    MissingModelId,
+    /// Batch size was outside the supported `[1, 128]` range.
+    #[error("judge batch_size must be in 1..={MAX_BATCH_SIZE}, got {batch_size}")]
+    InvalidBatchSize { batch_size: usize },
+    /// Retry policy is outside the supported bounds.
+    #[error("invalid judge retry policy: {reason}")]
+    InvalidRetryPolicy { reason: String },
 }
 
 /// Structured verdict returned by a [`JudgeClient`].

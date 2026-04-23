@@ -61,7 +61,10 @@ pub use environment_state::EnvironmentStateEvaluator;
 pub use error::EvalError;
 pub use evaluator::{Evaluator, EvaluatorRegistry};
 pub use gate::{GateConfig, GateResult, check_gate};
-pub use judge::{JudgeClient, JudgeError, JudgeVerdict};
+pub use judge::{
+    JudgeClient, JudgeError, JudgeRegistry, JudgeRegistryBuilder, JudgeRegistryError, JudgeVerdict,
+    RetryPolicy,
+};
 pub use match_::{MatchMode, TrajectoryMatcher};
 #[cfg(feature = "judge-core")]
 pub use prompt::{
