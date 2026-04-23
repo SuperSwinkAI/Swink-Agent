@@ -68,7 +68,7 @@ all-evaluators = [
 ]
 simulation = ["judge-core"]
 generation = ["judge-core"]
-trace-ingest = ["dep:opentelemetry_sdk"]
+trace-ingest = ["dep:opentelemetry", "dep:opentelemetry_sdk", "opentelemetry_sdk/testing"]
 trace-otlp = ["trace-ingest", "dep:opentelemetry-otlp"]
 trace-langfuse = ["trace-ingest", "dep:reqwest"]
 trace-opensearch = ["trace-ingest", "dep:reqwest"]
