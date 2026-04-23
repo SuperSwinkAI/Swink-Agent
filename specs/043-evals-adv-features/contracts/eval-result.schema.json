@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spec.swink-agent.dev/043/eval-result.schema.json",
+  "title": "EvalSetResult",
+  "description": "Self-contained wire format emitted by swink_agent_eval::report::JsonReporter. Version 043.",
+  "type": "object",
+  "required": ["schema_version", "eval_set", "cases", "summary", "timestamp"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "043",
+      "description": "Stable schema identifier matching JsonReporter::SCHEMA_VERSION."
+    },
+    "eval_set": {
+      "type": "object",
+      "required": ["id", "case_count"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string" },
+        "case_count": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "cases": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/case" }
+    },
+    "summary": { "$ref": "#/$defs/summary" },
+    "timestamp": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Unix timestamp (seconds) of the eval run."
+    }
+  },
+  "$defs": {
+    "verdict": {
+      "type": "string",
+      "enum": ["pass", "fail"]
+    },
+    "case": {
+      "type": "object",
+      "required": ["case_id", "verdict", "duration_ms", "metrics"],
+      "additionalProperties": false,
+      "properties": {
+        "case_id": { "type": "string" },
+        "verdict": { "$ref": "#/$defs/verdict" },
+        "duration_ms": { "type": "integer", "minimum": 0 },
+        "metrics": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/metric" }
+        }
+      }
+    },
+    "metric": {
+      "type": "object",
+      "required": ["evaluator", "score", "threshold", "verdict"],
+      "additionalProperties": false,
+      "properties": {
+        "evaluator": { "type": "string" },
+        "score": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+        "threshold": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+        "verdict": { "$ref": "#/$defs/verdict" },
+        "reason": { "type": "string" }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "required": [
+        "total_cases",
+        "passed",
+        "failed",
+        "total_cost",
+        "total_input_tokens",
+        "total_output_tokens",
+        "total_duration_ms"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "total_cases": { "type": "integer", "minimum": 0 },
+        "passed": { "type": "integer", "minimum": 0 },
+        "failed": { "type": "integer", "minimum": 0 },
+        "total_cost": { "type": "number", "minimum": 0.0 },
+        "total_input_tokens": { "type": "integer", "minimum": 0 },
+        "total_output_tokens": { "type": "integer", "minimum": 0 },
+        "total_duration_ms": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}

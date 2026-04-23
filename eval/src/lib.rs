@@ -23,6 +23,7 @@ mod efficiency;
 mod environment_state;
 mod error;
 mod evaluator;
+#[cfg(feature = "judge-core")]
 pub mod evaluators;
 mod gate;
 #[cfg(feature = "generation")]
@@ -60,6 +61,11 @@ pub use efficiency::EfficiencyEvaluator;
 pub use environment_state::EnvironmentStateEvaluator;
 pub use error::EvalError;
 pub use evaluator::{Evaluator, EvaluatorRegistry};
+#[cfg(feature = "judge-core")]
+pub use evaluators::{
+    Detail, DetailBuffer, DispatchError, DispatchOutcome, JudgeEvaluatorConfig, dispatch_judge,
+    finish_metric_result,
+};
 pub use gate::{GateConfig, GateResult, check_gate};
 pub use judge::{
     CacheKey, DEFAULT_JUDGE_CACHE_CAPACITY, JudgeCache, JudgeClient, JudgeError, JudgeRegistry,
@@ -68,8 +74,11 @@ pub use judge::{
 pub use match_::{MatchMode, TrajectoryMatcher};
 #[cfg(feature = "judge-core")]
 pub use prompt::{
-    JudgePromptTemplate, MinijinjaTemplate, PromptContext, PromptError, PromptFamily,
-    PromptTemplateRegistry,
+    BUILTIN_TEMPLATE_VERSIONS, JudgePromptTemplate, MinijinjaTemplate, PromptContext, PromptError,
+    PromptFamily, PromptTemplateRegistry,
+};
+pub use report::{
+    ConsoleReporter, JsonReporter, MarkdownReporter, Reporter, ReporterError, ReporterOutput,
 };
 pub use response::ResponseMatcher;
 pub use runner::{AgentFactory, EvalRunner};

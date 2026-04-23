@@ -84,6 +84,7 @@ tempfile.workspace = true
 tokio = { workspace = true, features = ["full", "test-util"] }
 pretty_assertions.workspace = true
 wiremock.workspace = true
+jsonschema.workspace = true
 
 [lints]
 workspace = true
