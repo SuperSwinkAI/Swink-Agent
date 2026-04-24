@@ -29,12 +29,16 @@ pub mod console;
 #[cfg(feature = "html-report")]
 pub mod html;
 pub mod json;
+#[cfg(feature = "langsmith")]
+pub mod langsmith;
 pub mod markdown;
 
 pub use console::ConsoleReporter;
 #[cfg(feature = "html-report")]
 pub use html::HtmlReporter;
 pub use json::{JsonReporter, SCHEMA_VERSION};
+#[cfg(feature = "langsmith")]
+pub use langsmith::{LangSmithExportError, LangSmithExporter};
 pub use markdown::MarkdownReporter;
 
 /// Stable JSON schema path shipped alongside spec 043.

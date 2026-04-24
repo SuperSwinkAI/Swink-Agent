@@ -242,6 +242,8 @@ pub enum Detail {
     ScoreClamped { original: f64, clamped: f64 },
     /// The prompt template version used for this dispatch.
     PromptVersion { version: String },
+    /// Feedback key consumed by downstream exporters such as LangSmith.
+    FeedbackKey { key: String },
     /// Human-readable note carried verbatim.
     Note { text: String },
 }
@@ -401,6 +403,9 @@ pub async fn dispatch_judge(
     details.push(Detail::PromptVersion {
         version: prompt_version,
     });
+    if let Some(feedback_key) = config.feedback_key.clone() {
+        details.push(Detail::FeedbackKey { key: feedback_key });
+    }
 
     let raw = verdict.score;
     let clamped = raw.clamp(0.0, 1.0);
@@ -801,5 +806,25 @@ mod tests {
         assert_eq!(config.system_prompt.as_deref(), Some("sys"));
         assert!(!config.use_reasoning);
         assert_eq!(config.feedback_key.as_deref(), Some("fb"));
+    }
+
+    #[tokio::test]
+    async fn dispatch_records_feedback_key_when_configured() {
+        let (registry, _) = make_registry(0.8);
+        let config = JudgeEvaluatorConfig::default_with(registry).with_feedback_key("quality.score");
+        let template = make_template();
+        let case = make_case();
+        let invocation = make_invocation();
+        let ctx = make_context(&case, &invocation);
+
+        let outcome = dispatch_judge(&config, template, &ctx).await.unwrap();
+
+        assert!(
+            outcome
+                .details
+                .entries()
+                .iter()
+                .any(|d| matches!(d, Detail::FeedbackKey { key } if key == "quality.score"))
+        );
     }
 }
