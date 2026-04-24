@@ -14,6 +14,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 
 use crate::aggregator::{Aggregator, Average};
 use crate::judge::{JudgeError, JudgeRegistry, JudgeVerdict};
@@ -119,9 +120,15 @@ impl JudgeEvaluatorConfig {
 
     /// Override the prompt template.
     #[must_use]
-    pub fn with_template(mut self, template: Arc<dyn JudgePromptTemplate>) -> Self {
+    pub fn with_prompt(mut self, template: Arc<dyn JudgePromptTemplate>) -> Self {
         self.template = Some(template);
         self
+    }
+
+    /// Backward-compatible alias for [`Self::with_prompt`].
+    #[must_use]
+    pub fn with_template(self, template: Arc<dyn JudgePromptTemplate>) -> Self {
+        self.with_prompt(template)
     }
 
     /// Attach few-shot examples.
@@ -171,6 +178,51 @@ impl JudgeEvaluatorConfig {
     pub fn effective_aggregator(&self) -> Arc<dyn Aggregator> {
         self.aggregator.clone().unwrap_or_else(|| Arc::new(Average))
     }
+}
+
+/// Build the merged prompt context shared by every judge-backed evaluator.
+///
+/// The shared config can override the case's system prompt, prepend evaluator-
+/// level few-shot examples, and expose additional per-dispatch metadata through
+/// the `custom.*` namespace for custom templates.
+#[must_use]
+pub fn build_prompt_context(
+    config: &JudgeEvaluatorConfig,
+    case: &crate::types::EvalCase,
+    invocation: &crate::types::Invocation,
+) -> PromptContext {
+    let mut case = case.clone();
+    if let Some(system_prompt) = &config.system_prompt {
+        case.system_prompt.clone_from(system_prompt);
+    }
+    let case_few_shot_examples = case.few_shot_examples.clone();
+
+    let mut ctx = PromptContext::new(Arc::new(case), Arc::new(invocation.clone()));
+
+    let mut few_shot_examples =
+        Vec::with_capacity(config.few_shot_examples.len() + case_few_shot_examples.len());
+    few_shot_examples.extend(config.few_shot_examples.iter().cloned());
+    few_shot_examples.extend(case_few_shot_examples);
+    if !few_shot_examples.is_empty() {
+        ctx = ctx.with_few_shot_examples(few_shot_examples);
+    }
+
+    let mut custom = Map::new();
+    custom.insert("use_reasoning".into(), Value::Bool(config.use_reasoning));
+    if let Some(system_prompt) = &config.system_prompt {
+        custom.insert("system_prompt".into(), Value::String(system_prompt.clone()));
+    }
+    if let Some(output_schema) = &config.output_schema {
+        custom.insert("output_schema".into(), output_schema.clone());
+    }
+    if let Some(feedback_key) = &config.feedback_key {
+        custom.insert("feedback_key".into(), Value::String(feedback_key.clone()));
+    }
+    if !custom.is_empty() {
+        ctx = ctx.with_custom(custom.into_iter().collect());
+    }
+
+    ctx
 }
 
 /// Structured detail record attached to [`EvalMetricResult::details`] (T056).

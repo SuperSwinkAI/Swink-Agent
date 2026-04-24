@@ -108,7 +108,7 @@ impl PromptContext {
     /// Add custom template variables under the `custom` namespace.
     #[must_use]
     pub fn with_custom(mut self, custom: HashMap<String, serde_json::Value>) -> Self {
-        self.custom = custom;
+        self.custom.extend(custom);
         self
     }
 }

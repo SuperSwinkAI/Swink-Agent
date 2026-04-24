@@ -21,18 +21,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::aggregator::AllPass;
 use crate::evaluator::Evaluator;
-use crate::prompt::PromptContext;
 use crate::types::{EvalCase, EvalMetricResult, Invocation};
 
-use super::{JudgeEvaluatorConfig, evaluate_with_builtin};
-
-fn prompt_context(case: &EvalCase, invocation: &Invocation) -> PromptContext {
-    let mut ctx = PromptContext::new(Arc::new(case.clone()), Arc::new(invocation.clone()));
-    if !case.few_shot_examples.is_empty() {
-        ctx = ctx.with_few_shot_examples(case.few_shot_examples.clone());
-    }
-    ctx
-}
+use super::{JudgeEvaluatorConfig, build_prompt_context, evaluate_with_builtin};
 
 fn has_final_response(_case: &EvalCase, invocation: &Invocation) -> bool {
     invocation
@@ -75,6 +66,49 @@ macro_rules! safety_evaluator {
                 }
             }
 
+            /// Override the prompt template used by this evaluator.
+            #[must_use]
+            pub fn with_prompt(mut self, template: Arc<dyn crate::prompt::JudgePromptTemplate>) -> Self {
+                self.config = self.config.with_prompt(template);
+                self
+            }
+
+            /// Attach evaluator-level few-shot examples that render before any
+            /// case-level examples.
+            #[must_use]
+            pub fn with_few_shot(mut self, examples: Vec<crate::types::FewShotExample>) -> Self {
+                self.config = self.config.with_few_shot(examples);
+                self
+            }
+
+            /// Override the system prompt visible to the template render.
+            #[must_use]
+            pub fn with_system_prompt(mut self, prompt: impl Into<String>) -> Self {
+                self.config = self.config.with_system_prompt(prompt);
+                self
+            }
+
+            /// Attach an output schema for custom prompt templates.
+            #[must_use]
+            pub fn with_output_schema(mut self, schema: serde_json::Value) -> Self {
+                self.config = self.config.with_output_schema(schema);
+                self
+            }
+
+            /// Toggle judge reasoning capture.
+            #[must_use]
+            pub fn with_use_reasoning(mut self, flag: bool) -> Self {
+                self.config = self.config.with_use_reasoning(flag);
+                self
+            }
+
+            /// Override the feedback key used by downstream exporters.
+            #[must_use]
+            pub fn with_feedback_key(mut self, key: impl Into<String>) -> Self {
+                self.config = self.config.with_feedback_key(key);
+                self
+            }
+
             /// Borrow the underlying config.
             #[must_use]
             pub const fn config(&self) -> &JudgeEvaluatorConfig {
@@ -101,7 +135,7 @@ macro_rules! safety_evaluator {
                     $eval_name,
                     $template,
                     &self.config,
-                    &prompt_context(case, invocation),
+                    &build_prompt_context(&self.config, case, invocation),
                 ))
             }
         }
@@ -236,6 +270,49 @@ impl PIILeakageEvaluator {
         }
     }
 
+    /// Override the prompt template used by this evaluator.
+    #[must_use]
+    pub fn with_prompt(mut self, template: Arc<dyn crate::prompt::JudgePromptTemplate>) -> Self {
+        self.config = self.config.with_prompt(template);
+        self
+    }
+
+    /// Attach evaluator-level few-shot examples that render before any
+    /// case-level examples.
+    #[must_use]
+    pub fn with_few_shot(mut self, examples: Vec<crate::types::FewShotExample>) -> Self {
+        self.config = self.config.with_few_shot(examples);
+        self
+    }
+
+    /// Override the system prompt visible to the template render.
+    #[must_use]
+    pub fn with_system_prompt(mut self, prompt: impl Into<String>) -> Self {
+        self.config = self.config.with_system_prompt(prompt);
+        self
+    }
+
+    /// Attach an output schema for custom prompt templates.
+    #[must_use]
+    pub fn with_output_schema(mut self, schema: serde_json::Value) -> Self {
+        self.config = self.config.with_output_schema(schema);
+        self
+    }
+
+    /// Toggle judge reasoning capture.
+    #[must_use]
+    pub fn with_use_reasoning(mut self, flag: bool) -> Self {
+        self.config = self.config.with_use_reasoning(flag);
+        self
+    }
+
+    /// Override the feedback key used by downstream exporters.
+    #[must_use]
+    pub fn with_feedback_key(mut self, key: impl Into<String>) -> Self {
+        self.config = self.config.with_feedback_key(key);
+        self
+    }
+
     /// Borrow the configured class list.
     #[must_use]
     pub fn entity_classes(&self) -> &[PIIClass] {
@@ -262,7 +339,7 @@ impl Evaluator for PIILeakageEvaluator {
         // Render the active class list into the prompt's custom namespace so
         // the `pii_leakage_v0` template can surface it if consumers override
         // the rubric. Built-in template ignores the custom field today.
-        let mut ctx = prompt_context(case, invocation);
+        let mut ctx = build_prompt_context(&self.config, case, invocation);
         let classes: Vec<serde_json::Value> = self
             .entity_classes
             .iter()

@@ -28,15 +28,9 @@
 use std::sync::Arc;
 
 use crate::evaluator::Evaluator;
-use crate::prompt::PromptContext;
 use crate::types::{EvalCase, EvalMetricResult, Invocation};
 
-use super::{JudgeEvaluatorConfig, evaluate_with_builtin};
-
-/// Build the [`PromptContext`] shared by every agent-family evaluator.
-fn prompt_context(case: &EvalCase, invocation: &Invocation) -> PromptContext {
-    PromptContext::new(Arc::new(case.clone()), Arc::new(invocation.clone()))
-}
+use super::{JudgeEvaluatorConfig, build_prompt_context, evaluate_with_builtin};
 
 fn has_final_response(invocation: &Invocation) -> bool {
     invocation
@@ -68,6 +62,49 @@ macro_rules! agent_evaluator {
                 Self { config }
             }
 
+            /// Override the prompt template used by this evaluator.
+            #[must_use]
+            pub fn with_prompt(mut self, template: Arc<dyn crate::prompt::JudgePromptTemplate>) -> Self {
+                self.config = self.config.with_prompt(template);
+                self
+            }
+
+            /// Attach evaluator-level few-shot examples that render before any
+            /// case-level examples.
+            #[must_use]
+            pub fn with_few_shot(mut self, examples: Vec<crate::types::FewShotExample>) -> Self {
+                self.config = self.config.with_few_shot(examples);
+                self
+            }
+
+            /// Override the system prompt visible to the template render.
+            #[must_use]
+            pub fn with_system_prompt(mut self, prompt: impl Into<String>) -> Self {
+                self.config = self.config.with_system_prompt(prompt);
+                self
+            }
+
+            /// Attach an output schema for custom prompt templates.
+            #[must_use]
+            pub fn with_output_schema(mut self, schema: serde_json::Value) -> Self {
+                self.config = self.config.with_output_schema(schema);
+                self
+            }
+
+            /// Toggle judge reasoning capture.
+            #[must_use]
+            pub fn with_use_reasoning(mut self, flag: bool) -> Self {
+                self.config = self.config.with_use_reasoning(flag);
+                self
+            }
+
+            /// Override the feedback key used by downstream exporters.
+            #[must_use]
+            pub fn with_feedback_key(mut self, key: impl Into<String>) -> Self {
+                self.config = self.config.with_feedback_key(key);
+                self
+            }
+
             /// Borrow the underlying config (e.g., to inspect the judge
             /// registry or feedback key).
             #[must_use]
@@ -96,7 +133,7 @@ macro_rules! agent_evaluator {
                     $eval_name,
                     $template,
                     &self.config,
-                    &prompt_context(case, invocation),
+                    &build_prompt_context(&self.config, case, invocation),
                 ))
             }
         }
