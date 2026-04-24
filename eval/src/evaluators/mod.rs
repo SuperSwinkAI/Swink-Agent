@@ -50,6 +50,8 @@ pub mod multimodal;
 
 #[cfg(feature = "evaluator-quality")]
 pub mod quality;
+#[cfg(feature = "evaluator-rag")]
+pub mod rag;
 #[cfg(feature = "evaluator-safety")]
 pub mod safety;
 

@@ -91,6 +91,11 @@ pub use evaluators::quality::{
     GoalSuccessRateEvaluator, HallucinationEvaluator, HelpfulnessEvaluator, LazinessEvaluator,
     PlanAdherenceEvaluator, ResponseRelevanceEvaluator, assertion_implies_goal_completion,
 };
+#[cfg(feature = "evaluator-rag")]
+pub use evaluators::rag::{
+    DEFAULT_EMBEDDING_SIMILARITY_THRESHOLD, Embedder, EmbedderError, EmbeddingSimilarityEvaluator,
+    RAGGroundednessEvaluator, RAGHelpfulnessEvaluator, RAGRetrievalRelevanceEvaluator,
+};
 #[cfg(feature = "evaluator-safety")]
 pub use evaluators::safety::{
     CodeInjectionEvaluator, FairnessEvaluator, HarmfulnessEvaluator, PIIClass, PIILeakageEvaluator,
