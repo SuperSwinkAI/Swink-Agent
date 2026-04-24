@@ -48,6 +48,8 @@ pub mod multimodal;
 // Quality and Safety families land in US1c; RAG and Agent families are
 // deferred to a US1c follow-up PR to keep the US1c diff reviewable.
 
+#[cfg(feature = "evaluator-agent")]
+pub mod agent;
 #[cfg(feature = "evaluator-quality")]
 pub mod quality;
 #[cfg(feature = "evaluator-rag")]
