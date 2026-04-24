@@ -12,12 +12,20 @@
 //!   trait.
 
 pub mod extractor;
+#[cfg(feature = "trace-langfuse")]
+pub mod langfuse;
 pub mod mapper;
+#[cfg(feature = "trace-otlp")]
+pub mod otlp;
 pub mod provider;
 
 pub use extractor::{EvaluationLevel, ExtractedInput, TraceExtractor};
+#[cfg(feature = "trace-langfuse")]
+pub use langfuse::LangfuseTraceProvider;
 pub use mapper::{
     GenAIAttributeTable, GenAIConventionVersion, LangChainSessionMapper, MappingError,
     OpenInferenceSessionMapper, OtelGenAiSessionMapper, SessionMapper,
 };
+#[cfg(feature = "trace-otlp")]
+pub use otlp::OtlpHttpTraceProvider;
 pub use provider::{OtelInMemoryTraceProvider, RawSession, TraceProvider, TraceProviderError};

@@ -136,6 +136,10 @@ pub use store::{EvalStore, FsEvalStore};
 #[cfg(feature = "telemetry")]
 pub use telemetry::{EvalsTelemetry, EvalsTelemetryBuilder};
 pub use testing::{MockJudge, PanickingMockJudge, SlowMockJudge};
+#[cfg(feature = "trace-langfuse")]
+pub use trace::LangfuseTraceProvider;
+#[cfg(feature = "trace-otlp")]
+pub use trace::OtlpHttpTraceProvider;
 pub use trajectory::TrajectoryCollector;
 pub use types::{
     Assertion, AssertionKind, Attachment, AttachmentError, BudgetConstraints, CASE_NAMESPACE,
