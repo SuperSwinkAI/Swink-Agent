@@ -86,5 +86,33 @@ pretty_assertions.workspace = true
 wiremock.workspace = true
 jsonschema.workspace = true
 
-[lints]
-workspace = true
+# FR-049 carve-out: the `evaluators::code::sandbox::posix` submodule needs
+# `#![allow(unsafe_code)]` for POSIX rlimit FFI. `forbid` cannot be relaxed
+# by a nested `allow`, so we mirror the workspace lints here but relax
+# `unsafe_code` from `forbid` to `deny` — still a hard compile error for any
+# stray `unsafe` outside the single authorised submodule. Every other crate
+# in the workspace continues to inherit `forbid` via `lints.workspace = true`.
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+redundant_pub_crate = "allow"
+missing_const_for_fn = "allow"
+duration_suboptimal_units = "allow"
+cast_possible_truncation = "allow"
+items_after_statements = "allow"
+manual_let_else = "allow"
+option_if_let_else = "allow"
+significant_drop_tightening = "allow"
+doc_markdown = "allow"
+redundant_closure_for_method_calls = "allow"
+trivially_copy_pass_by_ref = "allow"
+format_push_string = "allow"
+unnecessary_literal_bound = "allow"

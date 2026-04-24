@@ -109,3 +109,21 @@ pub fn openai_success_body(verdict_text: &str) -> ResponseTemplate {
         ]
     }))
 }
+
+/// Build a 200 response in the Gemini `:generateContent` shape with a
+/// single candidate/content/parts chain carrying `verdict_text`.
+#[must_use]
+pub fn gemini_success_body(verdict_text: &str) -> ResponseTemplate {
+    ResponseTemplate::new(200).set_body_json(serde_json::json!({
+        "candidates": [
+            {
+                "content": {
+                    "role": "model",
+                    "parts": [ { "text": verdict_text } ]
+                },
+                "finishReason": "STOP",
+                "index": 0
+            }
+        ]
+    }))
+}
