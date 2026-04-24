@@ -117,6 +117,8 @@ pub use prompt::{
     BUILTIN_TEMPLATE_VERSIONS, JudgePromptTemplate, MinijinjaTemplate, PromptContext, PromptError,
     PromptFamily, PromptTemplateRegistry,
 };
+#[cfg(feature = "html-report")]
+pub use report::HtmlReporter;
 pub use report::{
     ConsoleReporter, JsonReporter, MarkdownReporter, Reporter, ReporterError, ReporterOutput,
 };

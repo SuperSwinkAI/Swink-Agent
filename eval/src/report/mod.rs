@@ -9,9 +9,10 @@
 //! * [`JsonReporter`] — self-contained JSON matching
 //!   `specs/043-evals-adv-features/contracts/eval-result.schema.json`.
 //! * [`MarkdownReporter`] — PR-comment-ready Markdown table.
+//! * [`HtmlReporter`] — self-contained HTML artifact using native
+//!   `<details>` / `<summary>` disclosure (behind `html-report`).
 //!
-//! HTML and LangSmith exporters (behind their respective feature flags) follow
-//! in later tasks.
+//! LangSmith export (behind `langsmith`) follows in a later task.
 //!
 //! All reporters are deterministic: given the same `EvalSetResult` they
 //! produce byte-identical output.
@@ -25,10 +26,14 @@ use thiserror::Error;
 use crate::EvalSetResult;
 
 pub mod console;
+#[cfg(feature = "html-report")]
+pub mod html;
 pub mod json;
 pub mod markdown;
 
 pub use console::ConsoleReporter;
+#[cfg(feature = "html-report")]
+pub use html::HtmlReporter;
 pub use json::{JsonReporter, SCHEMA_VERSION};
 pub use markdown::MarkdownReporter;
 
