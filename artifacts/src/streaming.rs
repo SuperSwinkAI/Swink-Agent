@@ -124,7 +124,10 @@ impl StreamingArtifactStore for FileArtifactStore {
             content_type,
         };
         meta.versions.push(record);
-        self.write_meta(session_id, name, &meta).await?;
+        if let Err(error) = self.write_meta(session_id, name, &meta).await {
+            Self::rollback_version_file(&content_path).await;
+            return Err(error);
+        }
 
         tracing::info!(
             session_id,

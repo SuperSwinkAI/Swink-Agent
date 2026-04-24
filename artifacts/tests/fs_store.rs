@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::io::ErrorKind;
 use std::sync::Arc;
 
 use swink_agent::{ArtifactData, ArtifactStore};
@@ -10,6 +11,16 @@ fn text_data(content: &str) -> ArtifactData {
         content_type: "text/plain".to_string(),
         metadata: HashMap::new(),
     }
+}
+
+fn assert_storage_error_kind(err: swink_agent::ArtifactError, expected_kind: ErrorKind) {
+    let swink_agent::ArtifactError::Storage(source) = err else {
+        panic!("expected storage error, got {err:?}");
+    };
+    let io = source
+        .downcast_ref::<std::io::Error>()
+        .expect("storage error should wrap std::io::Error");
+    assert_eq!(io.kind(), expected_kind);
 }
 
 // T035: fs_save_and_load_round_trip
@@ -187,4 +198,39 @@ async fn fs_empty_session_returns_empty() {
     // Load version on fresh store returns None
     let result = store.load_version("s1", "missing.txt", 1).await.unwrap();
     assert!(result.is_none());
+}
+
+#[tokio::test]
+async fn fs_save_rolls_back_new_content_when_metadata_write_fails() {
+    let tmpdir = tempfile::TempDir::new().unwrap();
+    let store = FileArtifactStore::new(tmpdir.path());
+
+    store
+        .save("s1", "report.md", text_data("v1"))
+        .await
+        .expect("initial save should succeed");
+
+    let artifact_dir = tmpdir.path().join("s1").join("report.md");
+    let meta_path = artifact_dir.join("meta.json");
+    tokio::fs::remove_file(&meta_path)
+        .await
+        .expect("meta.json should be removable");
+    tokio::fs::create_dir(&meta_path)
+        .await
+        .expect("directory replacement should succeed");
+
+    let err = store
+        .save("s1", "report.md", text_data("v2"))
+        .await
+        .expect_err("save should fail when meta.json cannot be replaced");
+    assert_storage_error_kind(err, ErrorKind::PermissionDenied);
+
+    assert!(
+        !artifact_dir.join("v2.bin").exists(),
+        "new content file should be rolled back on metadata write failure"
+    );
+    assert!(
+        artifact_dir.join("v1.bin").exists(),
+        "previous committed content must remain intact"
+    );
 }

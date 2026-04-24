@@ -40,6 +40,16 @@ fn assert_invalid_data_storage_error(err: ArtifactError, expected_snippet: &str)
     );
 }
 
+fn assert_storage_error_kind(err: ArtifactError, expected_kind: ErrorKind) {
+    let ArtifactError::Storage(source) = err else {
+        panic!("expected storage error, got {err:?}");
+    };
+    let io = source
+        .downcast_ref::<std::io::Error>()
+        .expect("storage error should wrap std::io::Error");
+    assert_eq!(io.kind(), expected_kind);
+}
+
 // T061: streaming_save_round_trip
 // Stream 10MB in 64KB chunks, load via load_stream, verify content matches byte-for-byte.
 #[tokio::test]
@@ -215,6 +225,55 @@ async fn non_streaming_api_still_works() {
         .unwrap();
     let bytes_v1 = collect_stream(loaded_v1).await;
     assert_eq!(bytes_v1, content);
+}
+
+#[tokio::test]
+async fn streaming_save_rolls_back_new_content_when_metadata_write_fails() {
+    let tmpdir = tempfile::TempDir::new().unwrap();
+    let store = FileArtifactStore::new(tmpdir.path());
+
+    let initial_stream = Box::pin(stream::iter(vec![Ok(Bytes::from_static(b"v1"))]));
+    store
+        .save_stream(
+            "sess-rollback",
+            "report.md",
+            "text/plain".to_string(),
+            HashMap::new(),
+            initial_stream,
+        )
+        .await
+        .expect("initial save_stream should succeed");
+
+    let artifact_dir = tmpdir.path().join("sess-rollback").join("report.md");
+    let meta_path = artifact_dir.join("meta.json");
+    tokio::fs::remove_file(&meta_path)
+        .await
+        .expect("meta.json should be removable");
+    tokio::fs::create_dir(&meta_path)
+        .await
+        .expect("directory replacement should succeed");
+
+    let next_stream = Box::pin(stream::iter(vec![Ok(Bytes::from_static(b"v2"))]));
+    let err = store
+        .save_stream(
+            "sess-rollback",
+            "report.md",
+            "text/plain".to_string(),
+            HashMap::new(),
+            next_stream,
+        )
+        .await
+        .expect_err("save_stream should fail when meta.json cannot be replaced");
+    assert_storage_error_kind(err, ErrorKind::PermissionDenied);
+
+    assert!(
+        !artifact_dir.join("v2.bin").exists(),
+        "new streamed content file should be rolled back on metadata write failure"
+    );
+    assert!(
+        artifact_dir.join("v1.bin").exists(),
+        "previous committed content must remain intact"
+    );
 }
 
 #[tokio::test]

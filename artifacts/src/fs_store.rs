@@ -328,6 +328,20 @@ impl FileArtifactStore {
 
         Ok(())
     }
+
+    pub(crate) async fn rollback_version_file(path: &Path) {
+        match tokio::fs::remove_file(path).await {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                tracing::warn!(
+                    path = %path.display(),
+                    %error,
+                    "failed to roll back artifact content after metadata write failure"
+                );
+            }
+        }
+    }
 }
 
 impl ArtifactStore for FileArtifactStore {
@@ -380,7 +394,10 @@ impl ArtifactStore for FileArtifactStore {
             content_type: data.content_type,
         };
         meta.versions.push(record);
-        self.write_meta(session_id, name, &meta).await?;
+        if let Err(error) = self.write_meta(session_id, name, &meta).await {
+            Self::rollback_version_file(&content_path).await;
+            return Err(error);
+        }
 
         tracing::info!(
             session_id,
