@@ -306,8 +306,8 @@
 
 ### Per-backend providers
 
-- [ ] T126 [P] [US6] Implement `OtlpHttpTraceProvider` (feature `trace-otlp`) in `eval/src/trace/otlp.rs` with `reqwest`-based OTLP-HTTP pull and test in `eval/tests/trace_otlp_test.rs` (wiremock-backed)
-- [ ] T127 [P] [US6] Implement `LangfuseTraceProvider` (feature `trace-langfuse`) in `eval/src/trace/langfuse.rs` with test in `eval/tests/trace_langfuse_test.rs`
+- [x] T126 [P] [US6] Implement `OtlpHttpTraceProvider` (feature `trace-otlp`) in `eval/src/trace/otlp.rs` with `reqwest`-based OTLP-HTTP pull and test in `eval/tests/trace_otlp_test.rs` (wiremock-backed)
+- [x] T127 [P] [US6] Implement `LangfuseTraceProvider` (feature `trace-langfuse`) in `eval/src/trace/langfuse.rs` with test in `eval/tests/trace_langfuse_test.rs`
 - [ ] T128 [P] [US6] Implement `OpenSearchTraceProvider` (feature `trace-opensearch`) in `eval/src/trace/opensearch.rs` with test
 - [ ] T129 [P] [US6] Implement `CloudWatchTraceProvider` (feature `trace-cloudwatch`) in `eval/src/trace/cloudwatch.rs` with test
 - [ ] T130 [US6] Feature-gate error: disabled-feature access to a backend provider produces a clear compile-time or construction-time error (spec US6 scenario 4); add a doc-test covering this
