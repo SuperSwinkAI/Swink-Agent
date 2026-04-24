@@ -56,6 +56,26 @@ async fn aborted_preprocess_outcome(
     .await
 }
 
+async fn stopped_preprocess_outcome(
+    tool_calls: &[ToolCallInfo],
+    reason: String,
+    results: &Arc<tokio::sync::Mutex<Vec<(usize, crate::types::ToolResultMessage)>>>,
+    tool_timings: &Arc<tokio::sync::Mutex<Vec<crate::metrics::ToolExecMetrics>>>,
+    injected_messages: Vec<AgentMessage>,
+    tx: &mpsc::Sender<AgentEvent>,
+) -> ToolExecOutcome {
+    emit_batch_stop_results(tool_calls, &reason, results, tx).await;
+    let all_results = std::mem::take(&mut *results.lock().await);
+    let ordered = order_results_by_tool_calls(tool_calls, &all_results);
+    let collected_timings = std::mem::take(&mut *tool_timings.lock().await);
+    ToolExecOutcome::Stopped {
+        results: ordered,
+        tool_metrics: collected_timings,
+        reason,
+        injected_messages,
+    }
+}
+
 /// Result of checking the approval gate for a single tool call.
 enum ApprovalOutcome {
     Approved,
@@ -142,16 +162,15 @@ pub(super) async fn preprocess_tool_calls(
     }
 
     if let Some(reason) = batch_stop_reason {
-        emit_batch_stop_results(tool_calls, &reason, results, tx).await;
-        let all_results = std::mem::take(&mut *results.lock().await);
-        let ordered = order_results_by_tool_calls(tool_calls, &all_results);
-        let collected_timings = std::mem::take(&mut *tool_timings.lock().await);
-        return Err(ToolExecOutcome::Stopped {
-            results: ordered,
-            tool_metrics: collected_timings,
+        return Err(stopped_preprocess_outcome(
+            tool_calls,
             reason,
+            results,
+            tool_timings,
             injected_messages,
-        });
+            tx,
+        )
+        .await);
     }
 
     // A later `Stop` must abort the entire batch before any approval side
@@ -220,6 +239,44 @@ pub(super) async fn preprocess_tool_calls(
                     ApprovalOutcome::Approved => {}
                     ApprovalOutcome::ApprovedWith(new_params) => {
                         effective_arguments = new_params;
+                        let mut dispatch_ctx = ToolDispatchContext {
+                            tool_name: &tc.name,
+                            tool_call_id: &tc.id,
+                            arguments: &mut effective_arguments,
+                            execution_root: None,
+                            state: &state_snapshot,
+                        };
+                        match run_pre_dispatch_policies(
+                            &config.pre_dispatch_policies,
+                            &mut dispatch_ctx,
+                        ) {
+                            PreDispatchVerdict::Continue => {}
+                            PreDispatchVerdict::Inject(msgs) => {
+                                injected_messages.extend(msgs);
+                            }
+                            PreDispatchVerdict::Skip(error_text) => {
+                                let error_result = AgentToolResult {
+                                    content: vec![ContentBlock::Text { text: error_text }],
+                                    details: serde_json::Value::Null,
+                                    is_error: true,
+                                    transfer_signal: None,
+                                };
+                                emit_error_result(&tc.name, &tc.id, error_result, idx, results, tx)
+                                    .await;
+                                continue;
+                            }
+                            PreDispatchVerdict::Stop(reason) => {
+                                return Err(stopped_preprocess_outcome(
+                                    tool_calls,
+                                    reason,
+                                    results,
+                                    tool_timings,
+                                    injected_messages,
+                                    tx,
+                                )
+                                .await);
+                            }
+                        }
                     }
                     ApprovalOutcome::Rejected => continue,
                     ApprovalOutcome::Cancelled => {
