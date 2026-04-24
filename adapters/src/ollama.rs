@@ -409,7 +409,9 @@ fn parse_ndjson_stream(
                             // Stream ended without done=true
                             done = true;
                             let mut events = crate::finalize::finalize_blocks(&mut state);
-                            events.push(AssistantMessageEvent::error("Ollama stream ended unexpectedly"));
+                            events.push(AssistantMessageEvent::error_network(
+                                "Ollama stream ended unexpectedly",
+                            ));
                             Some((events, (lines, token, state, done, false)))
                         }
                         Some(Err(err)) => {

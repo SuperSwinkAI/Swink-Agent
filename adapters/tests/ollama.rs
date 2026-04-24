@@ -564,8 +564,8 @@ async fn ollama_repeated_same_name_tool_calls_both_dispatched() {
     assert!(deltas.iter().any(|d| d.contains("\"pwd\"")));
 }
 
-/// 14. Stream ends without a done chunk — should produce an error about
-/// unexpected stream end.
+/// 14. Stream ends without a done chunk — should produce a retryable network
+/// error about unexpected stream end.
 #[tokio::test]
 async fn ollama_unexpected_stream_end() {
     let server = MockServer::start().await;
@@ -597,8 +597,9 @@ async fn ollama_unexpected_stream_end() {
                 "expected error about 'stream ended unexpectedly', got: {error_message}"
             );
             assert_eq!(
-                *error_kind, None,
-                "unexpected Ollama EOF should not be marked retryable network error"
+                *error_kind,
+                Some(swink_agent::StreamErrorKind::Network),
+                "unexpected Ollama EOF should be marked retryable network error"
             );
         }
         other => panic!("expected Error event, got {other:?}"),
