@@ -102,20 +102,11 @@ pub fn execute_command(input: &str) -> CommandResult {
 #[must_use]
 pub fn is_sensitive_input(input: &str) -> bool {
     input.lines().any(|line| {
-        let Some(rest) = line.trim_start().strip_prefix('#') else {
-            return false;
-        };
-        let Some(after_key) = rest.trim_start().strip_prefix("key") else {
-            return false;
-        };
-        // Require whitespace after `key` so `#keys` is NOT flagged.
-        let Some(args) = after_key.strip_prefix(|c: char| c.is_whitespace()) else {
-            return false;
-        };
-        // Must contain both a provider and a key.
-        args.trim()
-            .split_once(char::is_whitespace)
-            .is_some_and(|(_, key)| !key.trim().is_empty())
+        line.trim_start()
+            .strip_prefix('#')
+            .and_then(hash_key_args)
+            .and_then(parse_key_provider_and_value)
+            .is_some()
     })
 }
 
@@ -138,12 +129,11 @@ fn execute_hash_command(cmd: &str) -> CommandResult {
                 CommandResult::LoadSession(id.to_string())
             }
         }
-        _ if cmd.starts_with("key ") => {
-            let rest = cmd.strip_prefix("key ").unwrap_or("").trim();
-            if let Some((provider, key)) = rest.split_once(' ') {
+        _ if let Some(args) = hash_key_args(cmd) => {
+            if let Some((provider, key)) = parse_key_provider_and_value(args) {
                 CommandResult::StoreKey {
-                    provider: provider.trim().to_string(),
-                    key: key.trim().to_string(),
+                    provider: provider.to_string(),
+                    key: key.to_string(),
                 }
             } else {
                 CommandResult::Feedback("Usage: #key <provider> <api-key>".to_string())
@@ -168,6 +158,33 @@ fn execute_hash_command(cmd: &str) -> CommandResult {
         _ => CommandResult::Feedback(format!(
             "Unknown command: #{cmd}\nType #help for available commands."
         )),
+    }
+}
+
+fn hash_key_args(cmd: &str) -> Option<&str> {
+    if cmd.contains(['\r', '\n']) {
+        return None;
+    }
+
+    let cmd = cmd.trim();
+    let after_key = cmd.strip_prefix("key")?;
+    if after_key.is_empty() {
+        return Some("");
+    }
+
+    after_key.strip_prefix(|c: char| c.is_ascii_whitespace())
+}
+
+fn parse_key_provider_and_value(args: &str) -> Option<(&str, &str)> {
+    let args = args.trim_matches(|c: char| c.is_ascii_whitespace());
+    let split = args.find(|c: char| c.is_ascii_whitespace())?;
+    let provider = &args[..split];
+    let key = args[split..].trim_matches(|c: char| c.is_ascii_whitespace());
+
+    if provider.is_empty() || key.is_empty() {
+        None
+    } else {
+        Some((provider, key))
     }
 }
 
@@ -333,6 +350,17 @@ mod tests {
         match execute_command("#key openai") {
             CommandResult::Feedback(msg) => assert!(msg.contains("Usage")),
             other => panic!("expected Feedback with usage, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn hash_key_accepts_ascii_whitespace_separators() {
+        match execute_command("#key\topenai\t sk-abc123") {
+            CommandResult::StoreKey { provider, key } => {
+                assert_eq!(provider, "openai");
+                assert_eq!(key, "sk-abc123");
+            }
+            other => panic!("expected StoreKey, got {other:?}"),
         }
     }
 
@@ -521,6 +549,11 @@ mod tests {
     #[test]
     fn hash_key_with_leading_whitespace_is_sensitive() {
         assert!(is_sensitive_input("   #key anthropic sk-ant-xyz   "));
+    }
+
+    #[test]
+    fn hash_key_with_ascii_whitespace_is_sensitive() {
+        assert!(is_sensitive_input("#key\tanthropic\t sk-ant-xyz"));
     }
 
     #[test]

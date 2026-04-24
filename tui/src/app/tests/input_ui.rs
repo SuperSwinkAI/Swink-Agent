@@ -561,7 +561,7 @@ async fn slash_thinking_updates_pending_model_before_next_send() {
     let agent = make_test_agent_with_models(
         primary_model,
         primary_stream,
-        vec![(extra_model.clone(), extra_stream)],
+        vec![(extra_model, extra_stream)],
     );
     let mut app = App::new(TuiConfig::default());
     app.set_agent(agent);
@@ -638,6 +638,38 @@ async fn multiline_hash_key_submission_is_fully_redacted() {
         app.input.lines(),
         &[String::new()],
         "multi-line sensitive entry must be fully absent from history"
+    );
+}
+
+/// Regression: secret-bearing submissions that do not parse as a single
+/// `#key <provider> <api-key>` command must fail closed instead of being echoed
+/// into the transcript or forwarded as plain user text.
+#[tokio::test]
+async fn malformed_sensitive_submission_is_blocked_without_user_echo() {
+    let mut app = App::new(TuiConfig::default());
+
+    type_input(&mut app, "preamble");
+    app.input.insert_newline();
+    type_input(&mut app, "#key\topenai\t sk-leak-sentinel-block");
+    app.input.insert_newline();
+    type_input(&mut app, "epilogue");
+
+    app.submit_input();
+
+    assert!(
+        !app.messages.iter().any(|message| {
+            message.role == MessageRole::User && message.content.contains("sk-leak-sentinel-block")
+        }),
+        "malformed sensitive input must not be echoed as a user message"
+    );
+    assert!(
+        app.messages.iter().any(|message| {
+            message.role == MessageRole::System
+                && message
+                    .content
+                    .contains("Blocked secret-bearing input that did not parse")
+        }),
+        "malformed sensitive input should produce a blocking system message"
     );
 }
 

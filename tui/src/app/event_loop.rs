@@ -469,7 +469,24 @@ impl App {
             return;
         };
 
-        match commands::execute_command(&text) {
+        let command = commands::execute_command(&text);
+
+        if sensitive {
+            match command {
+                CommandResult::StoreKey { provider, key } => {
+                    self.store_key(&provider, &key);
+                }
+                _ => {
+                    self.push_system_message(
+                        "Blocked secret-bearing input that did not parse as `#key <provider> <api-key>`."
+                            .to_string(),
+                    );
+                }
+            }
+            return;
+        }
+
+        match command {
             CommandResult::NotACommand => {}
             CommandResult::Quit => {
                 self.should_quit = true;
