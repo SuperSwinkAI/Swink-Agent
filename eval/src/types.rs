@@ -278,68 +278,127 @@ async fn materialize_url(
         reason: err.to_string(),
     })?;
 
-    if parsed.scheme() != "https" {
-        return Err(AttachmentError::UrlBlocked {
-            url: url.to_string(),
-            reason: "only https URLs are supported".to_string(),
-        });
-    }
+    validate_remote_url(&parsed, filter)?;
 
-    if !filter.allows(&parsed) {
-        return Err(AttachmentError::UrlBlocked {
-            url: url.to_string(),
-            reason: "blocked by URL filter".to_string(),
-        });
-    }
-
-    materialize_checked_url(parsed).await
+    materialize_checked_url(parsed, filter).await
 }
 
 #[cfg(feature = "multimodal")]
-async fn materialize_checked_url(parsed: Url) -> Result<MaterializedAttachment, AttachmentError> {
-    let url = parsed.as_str().to_string();
-    let response = reqwest::get(parsed)
-        .await
+async fn materialize_checked_url(
+    parsed: Url,
+    filter: &dyn UrlFilter,
+) -> Result<MaterializedAttachment, AttachmentError> {
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
         .map_err(|_| AttachmentError::FetchFailed {
-            url: url.clone(),
+            url: parsed.as_str().to_string(),
             status: 0,
         })?;
-    let status = response.status();
-    if !status.is_success() {
-        return Err(AttachmentError::FetchFailed {
-            url,
-            status: status.as_u16(),
-        });
+    let mut current = parsed;
+
+    for _ in 0..10 {
+        let url = current.as_str().to_string();
+        let response = client
+            .get(current.clone())
+            .send()
+            .await
+            .map_err(|_| AttachmentError::FetchFailed {
+                url: url.clone(),
+                status: 0,
+            })?;
+        let status = response.status();
+
+        if status.is_redirection() {
+            let location = response
+                .headers()
+                .get(reqwest::header::LOCATION)
+                .and_then(|value| value.to_str().ok())
+                .ok_or_else(|| AttachmentError::FetchFailed {
+                    url: url.clone(),
+                    status: status.as_u16(),
+                })?;
+            current = resolve_redirect_target(&current, location, filter)?;
+            continue;
+        }
+
+        if !status.is_success() {
+            return Err(AttachmentError::FetchFailed {
+                url,
+                status: status.as_u16(),
+            });
+        }
+
+        let content_type = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .map(normalize_mime);
+        let mime = match content_type {
+            Some(mime) => {
+                validate_attachment_mime(&mime)?;
+                mime
+            }
+            None => mime_from_url_path(&url)?,
+        };
+        let bytes = response
+            .bytes()
+            .await
+            .map_err(|_| AttachmentError::FetchFailed { url, status: 0 })?
+            .to_vec();
+
+        return Ok(MaterializedAttachment { mime, bytes });
     }
 
-    let content_type = response
-        .headers()
-        .get(reqwest::header::CONTENT_TYPE)
-        .and_then(|value| value.to_str().ok())
-        .map(normalize_mime);
-    let mime = match content_type {
-        Some(mime) => {
-            validate_attachment_mime(&mime)?;
-            mime
-        }
-        None => mime_from_url_path(&url)?,
-    };
-    let bytes = response
-        .bytes()
-        .await
-        .map_err(|_| AttachmentError::FetchFailed { url, status: 0 })?
-        .to_vec();
-
-    Ok(MaterializedAttachment { mime, bytes })
+    Err(AttachmentError::FetchFailed {
+        url: current.as_str().to_string(),
+        status: 0,
+    })
 }
 
 #[cfg(not(feature = "multimodal"))]
 #[allow(clippy::unused_async)]
-async fn materialize_checked_url(parsed: Url) -> Result<MaterializedAttachment, AttachmentError> {
+async fn materialize_checked_url(
+    parsed: Url,
+    _filter: &dyn UrlFilter,
+) -> Result<MaterializedAttachment, AttachmentError> {
     Err(AttachmentError::FetchFailed {
         url: parsed.as_str().to_string(),
         status: 0,
     })
+}
+
+fn validate_remote_url(url: &Url, filter: &dyn UrlFilter) -> Result<(), AttachmentError> {
+    if url.scheme() != "https" {
+        return Err(AttachmentError::UrlBlocked {
+            url: url.as_str().to_string(),
+            reason: "only https URLs are supported".to_string(),
+        });
+    }
+
+    if !filter.allows(url) {
+        return Err(AttachmentError::UrlBlocked {
+            url: url.as_str().to_string(),
+            reason: "blocked by URL filter".to_string(),
+        });
+    }
+
+    Ok(())
+}
+
+fn resolve_redirect_target(
+    current: &Url,
+    location: &str,
+    filter: &dyn UrlFilter,
+) -> Result<Url, AttachmentError> {
+    let redirected = current
+        .join(location)
+        .map_err(|err| AttachmentError::UrlBlocked {
+            url: current.as_str().to_string(),
+            reason: format!("invalid redirect target: {err}"),
+        })?;
+    validate_remote_url(&redirected, filter)?;
+    Ok(redirected)
 }
 
 fn mime_from_path(path: &Path) -> Result<String, AttachmentError> {
@@ -1371,5 +1430,61 @@ mod budget_policy_tests {
             PreTurnPolicy::evaluate(&max_turns_policy.unwrap(), &turn_ctx),
             PolicyVerdict::Stop(_)
         ));
+    }
+}
+
+#[cfg(test)]
+mod attachment_url_tests {
+    use super::*;
+
+    struct AllowListedFilter;
+
+    impl UrlFilter for AllowListedFilter {
+        fn allows(&self, url: &Url) -> bool {
+            matches!(url.host_str(), Some("assets.example.com" | "cdn.example.com"))
+        }
+    }
+
+    #[test]
+    fn resolve_redirect_target_revalidates_each_hop_against_filter() {
+        let current = Url::parse("https://assets.example.com/image.png").unwrap();
+        let err = resolve_redirect_target(
+            &current,
+            "https://169.254.169.254/latest/meta-data",
+            &AllowListedFilter,
+        )
+        .expect_err("redirect target should be revalidated");
+
+        match err {
+            AttachmentError::UrlBlocked { url, reason } => {
+                assert_eq!(url, "https://169.254.169.254/latest/meta-data");
+                assert!(reason.contains("blocked by URL filter"));
+            }
+            other => panic!("expected UrlBlocked, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn resolve_redirect_target_rejects_http_downgrades() {
+        let current = Url::parse("https://assets.example.com/image.png").unwrap();
+        let err = resolve_redirect_target(&current, "http://cdn.example.com/image.png", &AllowListedFilter)
+            .expect_err("http redirect should be rejected");
+
+        match err {
+            AttachmentError::UrlBlocked { url, reason } => {
+                assert_eq!(url, "http://cdn.example.com/image.png");
+                assert!(reason.contains("only https URLs are supported"));
+            }
+            other => panic!("expected UrlBlocked, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn resolve_redirect_target_allows_relative_https_redirects_when_filter_passes() {
+        let current = Url::parse("https://assets.example.com/path/start.png").unwrap();
+        let redirected =
+            resolve_redirect_target(&current, "../final.webp", &AllowListedFilter).unwrap();
+
+        assert_eq!(redirected.as_str(), "https://assets.example.com/final.webp");
     }
 }
