@@ -386,6 +386,7 @@ fn validate_remote_url(url: &Url, filter: &dyn UrlFilter) -> Result<(), Attachme
     Ok(())
 }
 
+#[cfg(feature = "multimodal")]
 fn resolve_redirect_target(
     current: &Url,
     location: &str,
@@ -1433,7 +1434,7 @@ mod budget_policy_tests {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "multimodal"))]
 mod attachment_url_tests {
     use super::*;
 
