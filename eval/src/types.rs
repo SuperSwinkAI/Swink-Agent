@@ -299,14 +299,15 @@ async fn materialize_checked_url(
 
     for _ in 0..10 {
         let url = current.as_str().to_string();
-        let response = client
-            .get(current.clone())
-            .send()
-            .await
-            .map_err(|_| AttachmentError::FetchFailed {
-                url: url.clone(),
-                status: 0,
-            })?;
+        let response =
+            client
+                .get(current.clone())
+                .send()
+                .await
+                .map_err(|_| AttachmentError::FetchFailed {
+                    url: url.clone(),
+                    status: 0,
+                })?;
         let status = response.status();
 
         if status.is_redirection() {
@@ -1442,7 +1443,10 @@ mod attachment_url_tests {
 
     impl UrlFilter for AllowListedFilter {
         fn allows(&self, url: &Url) -> bool {
-            matches!(url.host_str(), Some("assets.example.com" | "cdn.example.com"))
+            matches!(
+                url.host_str(),
+                Some("assets.example.com" | "cdn.example.com")
+            )
         }
     }
 
@@ -1468,8 +1472,12 @@ mod attachment_url_tests {
     #[test]
     fn resolve_redirect_target_rejects_http_downgrades() {
         let current = Url::parse("https://assets.example.com/image.png").unwrap();
-        let err = resolve_redirect_target(&current, "http://cdn.example.com/image.png", &AllowListedFilter)
-            .expect_err("http redirect should be rejected");
+        let err = resolve_redirect_target(
+            &current,
+            "http://cdn.example.com/image.png",
+            &AllowListedFilter,
+        )
+        .expect_err("http redirect should be rejected");
 
         match err {
             AttachmentError::UrlBlocked { url, reason } => {

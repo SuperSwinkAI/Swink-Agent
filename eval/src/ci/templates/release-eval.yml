@@ -1,0 +1,58 @@
+name: Release Eval
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+
+jobs:
+  release-eval:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_NET_RETRY: 3
+      RUSTFLAGS: "-D warnings"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Full history so we can diff against the previous release tag.
+          fetch-depth: 0
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-eval
+
+      - name: Install swink-eval
+        run: |
+          cargo install --path eval \
+            --features "cli,yaml,html-report,langsmith" --locked
+
+      - name: Run release acceptance suite
+        run: |
+          swink-eval run \
+            --set eval-sets/release.yaml \
+            --out target/release-eval.json \
+            --parallelism 4 \
+            --reporter md > target/release-summary.md
+
+      - name: Gate release thresholds (blocking)
+        run: |
+          swink-eval gate \
+            --result target/release-eval.json \
+            --gate-config .github/eval/release-gate.json
+
+      - name: Attach eval summary to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            target/release-eval.json
+            target/release-summary.md
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

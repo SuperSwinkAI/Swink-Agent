@@ -1,0 +1,66 @@
+name: Nightly Eval
+
+on:
+  schedule:
+    - cron: "0 4 * * *"  # 04:00 UTC daily
+  workflow_dispatch:
+
+jobs:
+  nightly-eval:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_NET_RETRY: 3
+      RUSTFLAGS: "-D warnings"
+      # Live judge secrets populated only on scheduled runs.
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      OPENAI_API_KEY:    ${{ secrets.OPENAI_API_KEY }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: nightly-eval
+
+      - name: Install swink-eval with live judges
+        run: |
+          cargo install --path eval \
+            --features "cli,yaml,html-report,langsmith" --locked
+          cargo install --path eval-judges \
+            --features "live-judges" --locked || true
+
+      - name: Run nightly suite
+        run: |
+          swink-eval run \
+            --set eval-sets/nightly.yaml \
+            --out target/nightly-eval.json \
+            --parallelism 8 \
+            --reporter json > target/nightly-eval.stdout.json
+
+      - name: Render HTML dashboard
+        run: |
+          swink-eval report \
+            --result target/nightly-eval.json \
+            --format html > target/nightly-dashboard.html
+
+      - name: Gate nightly thresholds
+        continue-on-error: true
+        run: |
+          swink-eval gate \
+            --result target/nightly-eval.json \
+            --gate-config .github/eval/nightly-gate.json
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-eval
+          path: |
+            target/nightly-eval.json
+            target/nightly-dashboard.html

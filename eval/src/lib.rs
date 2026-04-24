@@ -26,6 +26,8 @@ pub mod aggregator;
 mod audit;
 mod budget;
 pub mod cache;
+#[cfg(feature = "cli")]
+pub mod ci;
 mod efficiency;
 mod environment_state;
 mod error;
@@ -113,9 +115,9 @@ pub use evaluators::simple::{ExactMatchEvaluator, LevenshteinDistanceEvaluator};
 pub use evaluators::structured::{JsonMatchEvaluator, JsonSchemaEvaluator, KeyStrategy};
 #[cfg(feature = "judge-core")]
 pub use evaluators::{
-    Detail, DetailBuffer, DispatchError, DispatchOutcome, EvaluatorError, JudgeEvaluatorConfig,
-    dispatch_judge, drive_judge_call, evaluate_with_builtin, finish_metric_result,
-    materialize_case_attachments,
+    Detail, DetailBuffer, DispatchError, DispatchOutcome, EvaluatorError, JudgeEvaluatorBuilder,
+    JudgeEvaluatorConfig, dispatch_judge, drive_judge_call, evaluate_with_builtin,
+    finish_metric_result, materialize_case_attachments,
 };
 pub use gate::{GateConfig, GateResult, check_gate};
 pub use judge::{
@@ -130,11 +132,11 @@ pub use prompt::{
 };
 #[cfg(feature = "html-report")]
 pub use report::HtmlReporter;
-#[cfg(feature = "langsmith")]
-pub use report::{LangSmithExportError, LangSmithExporter};
 pub use report::{
     ConsoleReporter, JsonReporter, MarkdownReporter, Reporter, ReporterError, ReporterOutput,
 };
+#[cfg(feature = "langsmith")]
+pub use report::{LangSmithExportError, LangSmithExporter};
 pub use response::ResponseMatcher;
 pub use runner::{AgentFactory, EvalRunner, RunnerMetricSample};
 pub use score::{Score, Verdict};

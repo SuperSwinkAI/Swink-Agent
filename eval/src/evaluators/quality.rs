@@ -97,6 +97,12 @@ macro_rules! simple_quality_evaluator {
             }
         }
 
+        impl $crate::evaluators::JudgeEvaluatorBuilder for $name {
+            fn judge_config_mut(&mut self) -> &mut JudgeEvaluatorConfig {
+                &mut self.config
+            }
+        }
+
         impl Evaluator for $name {
             fn name(&self) -> &'static str {
                 $eval_name
@@ -284,6 +290,12 @@ impl GoalSuccessRateEvaluator {
     #[must_use]
     pub const fn config(&self) -> &JudgeEvaluatorConfig {
         &self.config
+    }
+}
+
+impl crate::evaluators::JudgeEvaluatorBuilder for GoalSuccessRateEvaluator {
+    fn judge_config_mut(&mut self) -> &mut JudgeEvaluatorConfig {
+        &mut self.config
     }
 }
 

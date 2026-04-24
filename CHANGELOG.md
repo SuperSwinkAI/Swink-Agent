@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - TBD
+
+### Added — spec 043 (evals: advanced features)
+
+- **`swink-agent-eval-judges` crate** — nine per-provider `JudgeClient` implementations (Anthropic, OpenAI, Bedrock, Gemini, Mistral, Azure, xAI, Ollama, Proxy) plus `Blocking<Provider>JudgeClient` sync wrappers, behind the `all-judges` umbrella feature.
+- **Prompt-template registry** (`judge-core` feature) — `JudgePromptTemplate`, `MinijinjaTemplate`, `PromptTemplateRegistry`, built-in `*_v0` templates; duplicate-version registration rejected.
+- **24 evaluators across seven families** — Quality (10), Safety (7), RAG (3 + `Embedder`), Agent (9), Simple (2), Structured (2), Code (4) plus Multimodal (`ImageSafetyEvaluator`). Shared `JudgeEvaluatorConfig` + `JudgeEvaluatorBuilder` trait expose `.with_prompt()`, `.with_few_shot()`, `.with_system_prompt()`, `.with_output_schema()`, `.with_use_reasoning()`, `.with_feedback_key()`, `.with_aggregator()` on every judge-backed evaluator.
+- **`EvalRunner` upgrades** — parallelism, `num_runs`, disk-backed judge cache, cancellation, initial-session hydration.
+- **Multi-turn simulation + experiment generation** — `ActorSimulator`, `ToolSimulator`, `ExperimentGenerator`, `TopicPlanner` behind `simulation` / `generation` features.
+- **Trace ingestion** (`trace-ingest`) — `OtelInMemoryTraceProvider`, `OpenInferenceSessionMapper`, `LangChainSessionMapper`, `OtelGenAiSessionMapper`, `SwarmExtractor`, `GraphExtractor`, `ToolLevelExtractor`. Optional backends: `OtlpHttpTraceProvider` (`trace-otlp`), `LangfuseTraceProvider` (`trace-langfuse`), `OpenSearchTraceProvider` (`trace-opensearch`), `CloudWatchTraceProvider` (`trace-cloudwatch`, takes a caller-supplied `CloudWatchLogsFetcher`).
+- **`EvalsTelemetry`** — OTel span emission inside the runner (`telemetry` feature).
+- **Reporters** — `ConsoleReporter`, `JsonReporter` (schema-stable via `SCHEMA_VERSION`), `MarkdownReporter`, `HtmlReporter` (`html-report` feature, self-contained artifact), `LangSmithExporter` (`langsmith` feature, pushes runs + feedback with partial-failure reporting).
+- **`swink-eval` CLI binary** (`cli` feature) — `run`/`report`/`gate` subcommands with stable exit codes (0/1/2/3). Bundled GitHub Actions templates (`pr-eval.yml`, `nightly-eval.yml`, `release-eval.yml`, `pre-commit-hook.yml`) surfaced as `include_str!` constants via the new `ci` module.
+- **SC-008 deterministic replay** — `OpenInferenceSessionMapper` round-trips scores bit-identically between in-process and reloaded OTel sessions.
+
+### Changed — spec 043
+
+- **`EvalCase`** extended with `expected_assertion`, `expected_interactions`, `few_shot_examples`, `attachments`, `session_id`, `metadata` (serde backwards-compatible — new fields default on deserialize).
+- **`EvaluatorRegistry::add`** now rejects duplicate evaluator names with `EvalError::DuplicateEvaluator`; `register` panics on collision for ergonomic setup.
+- **Judge scores** are clamped to `[0.0, 1.0]` with a structured `Detail::ScoreClamped { original, clamped }` recorded in `EvalMetricResult::details` when the raw verdict is out of range (FR-021).
+- **`GateConfig`** now derives `Serialize`/`Deserialize` so the `swink-eval gate` subcommand can load thresholds from JSON.
+
+### Breaking changes — spec 043
+
+- `EvalCase` no longer has a default judge model id — `JudgeRegistry::builder(client, model_id)` now requires `model_id` as the second positional arg (FR-007 clarification Q9).
+- FR-044 legacy-result converter was deliberately **not** shipped. The converter was a no-op shim for a shape that never reached a public release; downstream users already consume `EvalCaseResult` / `EvalSetResult` directly.
+
 ## [0.8.1] - 2026-04-22
 
 ### Added

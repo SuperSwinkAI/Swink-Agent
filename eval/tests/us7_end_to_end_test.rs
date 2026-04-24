@@ -238,13 +238,9 @@ async fn us7_regression_on_known_case_surfaces_as_errored_span() {
     );
 
     // Passing cases remain Ok.
-    let passing_cases: Vec<&&SpanData> = cases
+    let passing_count = cases
         .iter()
         .filter(|s| matches!(s.status, Status::Ok))
-        .collect();
-    assert_eq!(
-        passing_cases.len(),
-        2,
-        "non-regressed cases stay at Status::Ok"
-    );
+        .count();
+    assert_eq!(passing_count, 2, "non-regressed cases stay at Status::Ok");
 }

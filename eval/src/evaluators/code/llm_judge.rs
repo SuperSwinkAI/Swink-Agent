@@ -92,6 +92,12 @@ impl CodeLlmJudgeEvaluator {
     }
 }
 
+impl crate::evaluators::JudgeEvaluatorBuilder for CodeLlmJudgeEvaluator {
+    fn judge_config_mut(&mut self) -> &mut JudgeEvaluatorConfig {
+        &mut self.config
+    }
+}
+
 impl Evaluator for CodeLlmJudgeEvaluator {
     fn name(&self) -> &'static str {
         self.name

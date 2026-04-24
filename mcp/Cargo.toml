@@ -11,7 +11,7 @@ categories = ["development-tools", "network-programming"]
 readme = "README.md"
 
 [dependencies]
-swink-agent = { path = "..", version = "0.8.1", default-features = false }
+swink-agent = { path = "..", version = "0.9.0", default-features = false }
 rmcp = { version = "1.5", features = ["client", "client-side-sse", "transport-streamable-http-client", "transport-streamable-http-client-reqwest", "transport-child-process"] }
 reqwest = { workspace = true }
 futures.workspace = true

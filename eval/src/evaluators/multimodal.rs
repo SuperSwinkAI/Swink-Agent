@@ -106,6 +106,12 @@ impl ImageSafetyEvaluator {
     }
 }
 
+impl crate::evaluators::JudgeEvaluatorBuilder for ImageSafetyEvaluator {
+    fn judge_config_mut(&mut self) -> &mut JudgeEvaluatorConfig {
+        &mut self.config
+    }
+}
+
 impl Evaluator for ImageSafetyEvaluator {
     fn name(&self) -> &'static str {
         self.name

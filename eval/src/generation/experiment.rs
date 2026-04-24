@@ -42,6 +42,7 @@ impl ToolDef {
 }
 
 /// Request sent to [`ExperimentGenerator::generate`].
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone, Default)]
 pub struct GenerationRequest {
     pub context: String,
@@ -185,11 +186,11 @@ impl ExperimentGenerator {
                     continue;
                 }
             };
-            if self.validate {
-                if let Err(err) = case.validate() {
-                    last_error = format!("validation error: {err}");
-                    continue;
-                }
+            if self.validate
+                && let Err(err) = case.validate()
+            {
+                last_error = format!("validation error: {err}");
+                continue;
             }
             return Ok(case);
         }

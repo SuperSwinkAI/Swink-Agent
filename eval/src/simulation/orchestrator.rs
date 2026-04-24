@@ -56,6 +56,7 @@ impl From<ToolSimulationError> for SimulationError {
 }
 
 /// Orchestrate a multi-turn dialogue between `agent` and `actor`.
+#[allow(clippy::too_many_lines)]
 pub async fn run_multiturn_simulation(
     agent: &mut Agent,
     actor: &ActorSimulator,
@@ -127,7 +128,7 @@ pub async fn run_multiturn_simulation(
         // Optionally attach simulated tool results to the most recent turn.
         if let (Some(sim), false) = (tool_sim, pending_tool_calls.is_empty()) {
             let last_idx = collector.turns_len_hint().checked_sub(1);
-            for call in pending_tool_calls.drain(..) {
+            for call in std::mem::take(&mut pending_tool_calls) {
                 let value = sim
                     .invoke(&call.name, &call.arguments, &call.id)
                     .await

@@ -73,7 +73,6 @@ impl LangSmithExporter {
                         first_error: err.to_string(),
                     })?;
             }
-
         }
 
         Ok(ReporterOutput::Remote {
@@ -136,9 +135,16 @@ impl LangSmithExporter {
             .await
             .map_err(|err| LangSmithExportError::Network(err.to_string()))?;
 
-        ensure_success(response).await?.json::<CreatedRun>().await.map_err(|err| {
-            LangSmithExportError::Network(format!("failed to decode LangSmith run response: {err}"))
-        }).map(|run| run.id)
+        ensure_success(response)
+            .await?
+            .json::<CreatedRun>()
+            .await
+            .map_err(|err| {
+                LangSmithExportError::Network(format!(
+                    "failed to decode LangSmith run response: {err}"
+                ))
+            })
+            .map(|run| run.id)
     }
 
     async fn create_feedback(
@@ -172,7 +178,9 @@ impl LangSmithExporter {
 impl Reporter for LangSmithExporter {
     fn render(&self, result: &EvalSetResult) -> Result<ReporterOutput, ReporterError> {
         self.export(result).map_err(|err| match err {
-            LangSmithExportError::Auth => ReporterError::Network("langsmith authentication failed".into()),
+            LangSmithExportError::Auth => {
+                ReporterError::Network("langsmith authentication failed".into())
+            }
             LangSmithExportError::Network(message) => ReporterError::Network(message),
             LangSmithExportError::Push {
                 pushed,
@@ -223,7 +231,11 @@ impl MetricDetails {
         let mut parsed = Self::default();
         let mut raw_lines = Vec::new();
 
-        for line in details.lines().map(str::trim).filter(|line| !line.is_empty()) {
+        for line in details
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+        {
             let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
                 raw_lines.push(line.to_string());
                 continue;

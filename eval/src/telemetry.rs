@@ -40,8 +40,12 @@ use std::borrow::Cow;
 use std::time::Duration;
 
 use opentelemetry::global::BoxedTracer;
+// `Span` is used for its `end()` / `set_attribute` / etc. trait methods on
+// `BoxedSpan`; clippy can't see the indirect usage.
+#[allow(unused_imports)]
+use opentelemetry::trace::Span;
 use opentelemetry::trace::{
-    Span, SpanBuilder, SpanKind, Status, TraceContextExt, Tracer, TracerProvider,
+    SpanBuilder, SpanKind, Status, TraceContextExt, Tracer, TracerProvider,
 };
 use opentelemetry::{Context, KeyValue, global};
 
@@ -128,7 +132,10 @@ impl EvalsTelemetry {
             .with_attributes(vec![
                 KeyValue::new(ATTR_SET_ID, eval_set.id.clone()),
                 KeyValue::new(ATTR_SET_NAME, eval_set.name.clone()),
-                KeyValue::new(ATTR_CASE_COUNT, eval_set.cases.len() as i64),
+                KeyValue::new(
+                    ATTR_CASE_COUNT,
+                    i64::try_from(eval_set.cases.len()).unwrap_or(i64::MAX),
+                ),
             ]);
         let span = self.tracer.build_with_context(builder, &parent);
         let cx = parent.with_span(span);
@@ -184,6 +191,7 @@ impl EvalsTelemetry {
 /// RAII-style handle for the root `swink.eval.run_set` span.
 pub(crate) struct RunSetSpan {
     context: Context,
+    #[allow(dead_code)] // stashed for future per-span correlation logging
     set_id: String,
 }
 
@@ -206,8 +214,14 @@ impl RunSetSpan {
     /// Record aggregate counters and end the span.
     pub(crate) fn end(self, passed: usize, failed: usize) {
         let span = self.context.span();
-        span.set_attribute(KeyValue::new(ATTR_PASSED, passed as i64));
-        span.set_attribute(KeyValue::new(ATTR_FAILED, failed as i64));
+        span.set_attribute(KeyValue::new(
+            ATTR_PASSED,
+            i64::try_from(passed).unwrap_or(i64::MAX),
+        ));
+        span.set_attribute(KeyValue::new(
+            ATTR_FAILED,
+            i64::try_from(failed).unwrap_or(i64::MAX),
+        ));
         if failed > 0 {
             span.set_status(Status::error(format!("{failed} case(s) failed")));
         } else {
@@ -244,7 +258,9 @@ impl CaseSpan {
             duration.as_millis().min(i64::MAX as u128) as i64,
         ));
 
-        if !result.verdict.is_pass() {
+        if result.verdict.is_pass() {
+            span.set_status(Status::Ok);
+        } else {
             let failing: Vec<String> = result
                 .metric_results
                 .iter()
@@ -271,8 +287,6 @@ impl CaseSpan {
                 ],
             );
             span.set_status(Status::error(message));
-        } else {
-            span.set_status(Status::Ok);
         }
         span.end();
     }
@@ -296,7 +310,9 @@ impl EvaluatorSpan {
         if let Some(detail) = &metric.details {
             span.set_attribute(KeyValue::new("swink.eval.details", detail.clone()));
         }
-        if !verdict.is_pass() {
+        if verdict.is_pass() {
+            span.set_status(Status::Ok);
+        } else {
             let message = metric
                 .details
                 .clone()
@@ -309,8 +325,6 @@ impl EvaluatorSpan {
                 ],
             );
             span.set_status(Status::error(message));
-        } else {
-            span.set_status(Status::Ok);
         }
         span.end();
     }

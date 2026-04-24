@@ -17,7 +17,8 @@ A pure-Rust library for building LLM-powered agentic loops. Provider-agnostic co
 | `swink-agent-policies` | lib | 10 feature-gated policy implementations (budget, sandbox, PII, audit, etc.) |
 | `swink-agent-memory` | lib | Session persistence, summarization compaction |
 | `swink-agent-local-llm` | lib | On-device inference — SmolLM3-3B (default), Gemma 4 (opt-in `gemma4` feature), EmbeddingGemma-300M (embeddings) |
-| `swink-agent-eval` | lib | Evaluation harness — efficiency scoring, budget guards, gate checks, audit trails |
+| `swink-agent-eval` | lib + bin | Evaluation harness — efficiency scoring, budget guards, gate checks, audit trails, plus 24 judge-backed/deterministic evaluators, multi-turn simulation, trace ingestion (OTLP / Langfuse / OpenSearch / CloudWatch), Console/JSON/Markdown/HTML/LangSmith reporters, and the `swink-eval` CLI (`cli` feature) |
+| `swink-agent-eval-judges` | lib | Per-provider `JudgeClient` implementations (Anthropic, OpenAI, Bedrock, Gemini, Mistral, Azure, xAI, Ollama, Proxy) with `Blocking<Provider>JudgeClient` sync wrappers behind feature flags |
 | `swink-agent-artifacts` | lib | Versioned artifact storage (filesystem + in-memory backends) |
 | `swink-agent-auth` | lib | OAuth2 credential management and refresh |
 | `swink-agent-mcp` | lib | Model Context Protocol integration (stdio/SSE) |

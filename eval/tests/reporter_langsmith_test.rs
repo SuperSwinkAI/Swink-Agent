@@ -129,7 +129,10 @@ fn langsmith_export_posts_runs_and_feedback() {
     let output = exporter.export(&sample_result()).expect("export succeeds");
 
     match output {
-        ReporterOutput::Remote { backend, identifier } => {
+        ReporterOutput::Remote {
+            backend,
+            identifier,
+        } => {
             assert_eq!(backend, "langsmith");
             assert_eq!(identifier, "demo-set");
         }
@@ -147,8 +150,7 @@ fn langsmith_export_surfaces_partial_feedback_failure() {
         Mock::given(method("POST"))
             .and(path("/api/v1/runs"))
             .respond_with(
-                ResponseTemplate::new(200)
-                    .set_body_raw(r#"{"id":"run-ok"}"#, "application/json"),
+                ResponseTemplate::new(200).set_body_raw(r#"{"id":"run-ok"}"#, "application/json"),
             )
             .expect(2)
             .mount(&server)

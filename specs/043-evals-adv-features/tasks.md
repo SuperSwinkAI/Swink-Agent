@@ -27,17 +27,17 @@
 
 **Purpose**: Create the new `eval-judges` crate, wire workspace, declare feature flags and new deps. No logic yet.
 
-- [ ] T001 Create `eval-judges/` directory with `src/` and `tests/common/` subdirectories
-- [ ] T002 Create `eval-judges/Cargo.toml`: package `swink-agent-eval-judges`, workspace inheritance for version/edition/rust-version/license/repository, `#![forbid(unsafe_code)]`, dependencies (`swink-agent-eval` path dep, `async-trait`, `tokio`, `backon`, `tracing`, `thiserror`, `serde`, `serde_json`), optional per-provider adapter deps (`swink-agent-adapters-anthropic`, `-openai`, `-bedrock`, `-gemini`, `-mistral`, `-azure`, `-xai`, `-ollama`, `-proxy`), feature flags (`anthropic`, `openai`, `bedrock`, `gemini`, `mistral`, `azure`, `xai`, `ollama`, `proxy`, `all-judges`, `live-judges`) each enabling its adapter dep plus `swink-agent-eval/judge-core`
-- [ ] T003 Add `"eval-judges"` to `[workspace] members` in root `Cargo.toml`
-- [ ] T004 Add new workspace-level dependencies per research.md §R-025 to root `Cargo.toml` `[workspace.dependencies]`: `minijinja` 2, `backon` 1, `strsim` 0.12, `jsonschema` 0.30, `opentelemetry` 0.31, `opentelemetry-sdk` 0.31, `opentelemetry-otlp` 0.31, `askama` 0.13, `clap` 4, `libc` 0.2
-- [ ] T005 Update `eval/Cargo.toml`: add optional deps (`minijinja`, `backon`, `strsim`, `jsonschema`, `opentelemetry`, `opentelemetry-sdk`, `opentelemetry-otlp`, `opentelemetry-stdout`, `askama`, `clap`, `libc`, `reqwest`, `bincode`, `lru`), declare all 22 features from plan.md §Project Structure §Structure Decision (4) — each feature gates only the crates it needs
-- [ ] T006 Create `eval-judges/src/lib.rs` with `#![forbid(unsafe_code)]`, module declarations (`client`, and one `cfg`-gated module per provider), public re-exports of each `<Provider>JudgeClient` and its `Blocking<Provider>JudgeClient` wrapper behind their feature flags
-- [ ] T007 Create `eval-judges/src/client.rs` stub with `BlockingExt` helper + `build_retry(policy: &RetryPolicy) -> ExponentialBuilder` used by every provider impl
-- [ ] T008 Create stub files (empty `pub struct` + empty `impl JudgeClient`) for each provider in `eval-judges/src/`: `anthropic.rs`, `openai.rs`, `bedrock.rs`, `gemini.rs`, `mistral.rs`, `azure.rs`, `xai.rs`, `ollama.rs`, `proxy.rs` — one per feature, each with `#[cfg(feature = "<name>")]`
-- [ ] T009 Extend `eval/src/lib.rs` module declarations: add `prompt`, `judge`, `aggregator`, `evaluators`, `simulation`, `generation`, `trace`, `telemetry`, `cache`, `report` modules, each gated appropriately
-- [ ] T010 Verify `cargo build --workspace --no-default-features` succeeds (default build, no new surfaces active; FR-047 baseline validated)
-- [ ] T011 Verify `cargo build -p swink-agent-eval --features all-evaluators,simulation,generation,trace-ingest,telemetry,html-report,langsmith,cli --no-default-features` compiles (all-features dry-run)
+- [x] T001 Create `eval-judges/` directory with `src/` and `tests/common/` subdirectories
+- [x] T002 Create `eval-judges/Cargo.toml`: package `swink-agent-eval-judges`, workspace inheritance for version/edition/rust-version/license/repository, `#![forbid(unsafe_code)]`, dependencies (`swink-agent-eval` path dep, `async-trait`, `tokio`, `backon`, `tracing`, `thiserror`, `serde`, `serde_json`), optional per-provider adapter deps (`swink-agent-adapters-anthropic`, `-openai`, `-bedrock`, `-gemini`, `-mistral`, `-azure`, `-xai`, `-ollama`, `-proxy`), feature flags (`anthropic`, `openai`, `bedrock`, `gemini`, `mistral`, `azure`, `xai`, `ollama`, `proxy`, `all-judges`, `live-judges`) each enabling its adapter dep plus `swink-agent-eval/judge-core`
+- [x] T003 Add `"eval-judges"` to `[workspace] members` in root `Cargo.toml`
+- [x] T004 Add new workspace-level dependencies per research.md §R-025 to root `Cargo.toml` `[workspace.dependencies]`: `minijinja` 2, `backon` 1, `strsim` 0.12, `jsonschema` 0.30, `opentelemetry` 0.31, `opentelemetry-sdk` 0.31, `opentelemetry-otlp` 0.31, `askama` 0.13, `clap` 4, `libc` 0.2
+- [x] T005 Update `eval/Cargo.toml`: add optional deps (`minijinja`, `backon`, `strsim`, `jsonschema`, `opentelemetry`, `opentelemetry-sdk`, `opentelemetry-otlp`, `opentelemetry-stdout`, `askama`, `clap`, `libc`, `reqwest`, `bincode`, `lru`), declare all 22 features from plan.md §Project Structure §Structure Decision (4) — each feature gates only the crates it needs
+- [x] T006 Create `eval-judges/src/lib.rs` with `#![forbid(unsafe_code)]`, module declarations (`client`, and one `cfg`-gated module per provider), public re-exports of each `<Provider>JudgeClient` and its `Blocking<Provider>JudgeClient` wrapper behind their feature flags
+- [x] T007 Create `eval-judges/src/client.rs` stub with `BlockingExt` helper + `build_retry(policy: &RetryPolicy) -> ExponentialBuilder` used by every provider impl
+- [x] T008 Create stub files (empty `pub struct` + empty `impl JudgeClient`) for each provider in `eval-judges/src/`: `anthropic.rs`, `openai.rs`, `bedrock.rs`, `gemini.rs`, `mistral.rs`, `azure.rs`, `xai.rs`, `ollama.rs`, `proxy.rs` — one per feature, each with `#[cfg(feature = "<name>")]`
+- [x] T009 Extend `eval/src/lib.rs` module declarations: add `prompt`, `judge`, `aggregator`, `evaluators`, `simulation`, `generation`, `trace`, `telemetry`, `cache`, `report` modules, each gated appropriately
+- [x] T010 Verify `cargo build --workspace --no-default-features` succeeds (default build, no new surfaces active; FR-047 baseline validated)
+- [x] T011 Verify `cargo build -p swink-agent-eval --features all-evaluators,simulation,generation,trace-ingest,telemetry,html-report,langsmith,cli --no-default-features` compiles (all-features dry-run)
 
 **Checkpoint**: Both crates compile with and without features. Nothing implemented yet — only scaffolding.
 
@@ -49,49 +49,49 @@
 
 ### Shared types
 
-- [ ] T012 Implement `Attachment` enum + `MaterializedAttachment` struct + `AttachmentError` enum in `eval/src/types.rs` per data-model.md §10
-- [ ] T013 [P] Implement `UrlFilter` trait + `DefaultUrlFilter` (RFC 1918, loopback, link-local, metadata endpoint denials; HTTPS-required by default) in `eval/src/url_filter.rs` — always-on top-level module (not under `judge/`) so attachment materialization works without `judge-core`; re-export from `swink_agent_eval::judge` for ergonomic access when `judge-core` is enabled, per research.md §R-011
-- [ ] T014 [P] Implement `Assertion` + `AssertionKind` + `InteractionExpectation` + `FewShotExample` structs in `eval/src/types.rs` per data-model.md §10
-- [ ] T015 Extend `EvalCase` in `eval/src/types.rs` with new optional fields (`expected_assertion`, `expected_interactions`, `few_shot_examples`, `attachments`, `session_id`, `metadata`), preserving serde backwards-compatibility
-- [ ] T016 Implement `CaseFingerprint` struct + `CASE_NAMESPACE: Uuid` constant (pinned project-specific namespace, derived once from `Uuid::new_v5(&Uuid::NAMESPACE_OID, b"swink-agent-eval.case")` and hard-coded as 16 bytes) + `default_session_id()` method on `EvalCase` producing deterministic UUID v5 from SHA-256 of canonical bincode bytes, per research.md §R-014; include a unit test verifying `CASE_NAMESPACE == Uuid::new_v5(&Uuid::NAMESPACE_OID, b"swink-agent-eval.case")`
-- [ ] T017 Implement `Attachment::materialize(&Path, &dyn UrlFilter) -> Result<MaterializedAttachment, AttachmentError>` handling all three variants (Path read, Base64 decode, Url fetch with filter + HTTPS requirement) in `eval/src/types.rs`
-- [ ] T018 [P] Write tests in `eval/tests/attachment_test.rs` covering: `Path` resolution relative to eval-set root, `Base64` round-trip, `Url` blocked by default filter (10.0.0.1, 127.0.0.1, 169.254.169.254), `Url` allowed with custom filter, unsupported MIME, missing path
+- [x] T012 Implement `Attachment` enum + `MaterializedAttachment` struct + `AttachmentError` enum in `eval/src/types.rs` per data-model.md §10
+- [x] T013 [P] Implement `UrlFilter` trait + `DefaultUrlFilter` (RFC 1918, loopback, link-local, metadata endpoint denials; HTTPS-required by default) in `eval/src/url_filter.rs` — always-on top-level module (not under `judge/`) so attachment materialization works without `judge-core`; re-export from `swink_agent_eval::judge` for ergonomic access when `judge-core` is enabled, per research.md §R-011
+- [x] T014 [P] Implement `Assertion` + `AssertionKind` + `InteractionExpectation` + `FewShotExample` structs in `eval/src/types.rs` per data-model.md §10
+- [x] T015 Extend `EvalCase` in `eval/src/types.rs` with new optional fields (`expected_assertion`, `expected_interactions`, `few_shot_examples`, `attachments`, `session_id`, `metadata`), preserving serde backwards-compatibility
+- [x] T016 Implement `CaseFingerprint` struct + `CASE_NAMESPACE: Uuid` constant (pinned project-specific namespace, derived once from `Uuid::new_v5(&Uuid::NAMESPACE_OID, b"swink-agent-eval.case")` and hard-coded as 16 bytes) + `default_session_id()` method on `EvalCase` producing deterministic UUID v5 from SHA-256 of canonical bincode bytes, per research.md §R-014; include a unit test verifying `CASE_NAMESPACE == Uuid::new_v5(&Uuid::NAMESPACE_OID, b"swink-agent-eval.case")`
+- [x] T017 Implement `Attachment::materialize(&Path, &dyn UrlFilter) -> Result<MaterializedAttachment, AttachmentError>` handling all three variants (Path read, Base64 decode, Url fetch with filter + HTTPS requirement) in `eval/src/types.rs`
+- [x] T018 [P] Write tests in `eval/tests/attachment_test.rs` covering: `Path` resolution relative to eval-set root, `Base64` round-trip, `Url` blocked by default filter (10.0.0.1, 127.0.0.1, 169.254.169.254), `Url` allowed with custom filter, unsupported MIME, missing path
 
 ### Aggregators
 
-- [ ] T019 [P] Implement `Aggregator` trait in `eval/src/aggregator/mod.rs`
-- [ ] T020 [P] Implement `Average`, `AllPass`, `AnyPass`, `Weighted` aggregators in `eval/src/aggregator/mod.rs`
-- [ ] T021 [P] Write tests in `eval/tests/aggregator_test.rs` for each aggregator on happy path, empty input, single-sample, partial failures, and weighted-mismatch error
+- [x] T019 [P] Implement `Aggregator` trait in `eval/src/aggregator/mod.rs`
+- [x] T020 [P] Implement `Average`, `AllPass`, `AnyPass`, `Weighted` aggregators in `eval/src/aggregator/mod.rs`
+- [x] T021 [P] Write tests in `eval/tests/aggregator_test.rs` for each aggregator on happy path, empty input, single-sample, partial failures, and weighted-mismatch error
 
 ### Prompt templating
 
-- [ ] T022 Implement `JudgePromptTemplate` trait + `PromptFamily` enum + `PromptContext` struct + `PromptError` enum in `eval/src/prompt/mod.rs` per data-model.md §1 (feature `judge-core`)
-- [ ] T023 Implement `PromptTemplateRegistry` with `builtin()`, `get()`, `register()` methods rejecting duplicate versions in `eval/src/prompt/mod.rs`
-- [ ] T024 Implement `MinijinjaTemplate` struct wrapping `minijinja::Environment` that validates named variables at construction time and returns `PromptError::MissingVariable` when a case lacks a referenced variable, in `eval/src/prompt/minijinja_template.rs`
-- [ ] T025 [P] Write tests in `eval/tests/prompt_template_test.rs`: missing variable → deterministic error, valid render, version identifier preserved, duplicate version registration rejected, few-shot example injection order
+- [x] T022 Implement `JudgePromptTemplate` trait + `PromptFamily` enum + `PromptContext` struct + `PromptError` enum in `eval/src/prompt/mod.rs` per data-model.md §1 (feature `judge-core`)
+- [x] T023 Implement `PromptTemplateRegistry` with `builtin()`, `get()`, `register()` methods rejecting duplicate versions in `eval/src/prompt/mod.rs`
+- [x] T024 Implement `MinijinjaTemplate` struct wrapping `minijinja::Environment` that validates named variables at construction time and returns `PromptError::MissingVariable` when a case lacks a referenced variable, in `eval/src/prompt/minijinja_template.rs`
+- [x] T025 [P] Write tests in `eval/tests/prompt_template_test.rs`: missing variable → deterministic error, valid render, version identifier preserved, duplicate version registration rejected, few-shot example injection order
 
 ### Judge infrastructure
 
-- [ ] T026 Implement `RetryPolicy` struct + `Default` impl (6 attempts / 4 min / jitter true) in `eval/src/judge/mod.rs`
-- [ ] T027 Implement `JudgeCache` + `CacheKey` with in-memory LRU (capacity 1024 default), SHA-256 prompt+model key, put/get/evict in `eval/src/judge/cache.rs`
-- [ ] T028 Implement disk-backed `JudgeCache` variant (`with_disk(path)` constructor; JSON files per key; warm-load on construction; flush on `Drop`) in `eval/src/judge/cache.rs`
-- [ ] T029 Implement `JudgeRegistry` + `JudgeRegistryBuilder` + `JudgeRegistryError` in `eval/src/judge/mod.rs` — constructor requires explicit `model_id` (Q9 clarification); validates `batch_size ∈ [1,128]` and `max_attempts ≤ 16`
-- [ ] T030 [P] Write tests in `eval/tests/judge_registry_test.rs`: `model_id` empty rejected, `batch_size=0` rejected, `batch_size=129` rejected, default retry policy values, cache get/put/evict on LRU bound
+- [x] T026 Implement `RetryPolicy` struct + `Default` impl (6 attempts / 4 min / jitter true) in `eval/src/judge/mod.rs`
+- [x] T027 Implement `JudgeCache` + `CacheKey` with in-memory LRU (capacity 1024 default), SHA-256 prompt+model key, put/get/evict in `eval/src/judge/cache.rs`
+- [x] T028 Implement disk-backed `JudgeCache` variant (`with_disk(path)` constructor; JSON files per key; warm-load on construction; flush on `Drop`) in `eval/src/judge/cache.rs`
+- [x] T029 Implement `JudgeRegistry` + `JudgeRegistryBuilder` + `JudgeRegistryError` in `eval/src/judge/mod.rs` — constructor requires explicit `model_id` (Q9 clarification); validates `batch_size ∈ [1,128]` and `max_attempts ≤ 16`
+- [x] T030 [P] Write tests in `eval/tests/judge_registry_test.rs`: `model_id` empty rejected, `batch_size=0` rejected, `batch_size=129` rejected, default retry policy values, cache get/put/evict on LRU bound
 
 ### EvalCase extensions
 
-- [ ] T031 Extend `EvalCase::validate()` in `eval/src/types.rs` to check new fields (`case_id` uniqueness within set, attachment format, assertion kind legality)
-- [ ] T032 [P] Write tests in `eval/tests/eval_case_test.rs` for the extended validators and deterministic-session-id property (same case bytes → same UUID across re-runs)
+- [x] T031 Extend `EvalCase::validate()` in `eval/src/types.rs` to check new fields (`case_id` uniqueness within set, attachment format, assertion kind legality)
+- [x] T032 [P] Write tests in `eval/tests/eval_case_test.rs` for the extended validators and deterministic-session-id property (same case bytes → same UUID across re-runs)
 
 ### Panic isolation helpers
 
-- [ ] T033 Implement `isolate_panic` wrapper in `eval/src/evaluator.rs` that wraps any async evaluator/simulator/generator/reporter call in `tokio::spawn(..).await` and converts `JoinError::is_panic()` to `Score::fail()` with `PanicDetail { location, message }`, per research.md §R-021
-- [ ] T034 Extend `EvaluatorRegistry` in `eval/src/evaluator.rs` to route every evaluator call through `isolate_panic`; ensure existing 023/024 tests still pass
+- [x] T033 Implement `isolate_panic` wrapper in `eval/src/evaluator.rs` that wraps any async evaluator/simulator/generator/reporter call in `tokio::spawn(..).await` and converts `JoinError::is_panic()` to `Score::fail()` with `PanicDetail { location, message }`, per research.md §R-021
+- [x] T034 Extend `EvaluatorRegistry` in `eval/src/evaluator.rs` to route every evaluator call through `isolate_panic`; ensure existing 023/024 tests still pass
 
 ### Test scaffolding
 
-- [ ] T035 Create `eval/tests/common/judge_fixtures.rs` with `wiremock`-based provider fixtures reusable across all judge client and evaluator tests
-- [ ] T036 Create `eval-judges/tests/common/mod.rs` with shared `wiremock` fixtures for each provider's expected request/response shape
+- [x] T035 Create `eval/tests/common/judge_fixtures.rs` with `wiremock`-based provider fixtures reusable across all judge client and evaluator tests
+- [x] T036 Create `eval-judges/tests/common/mod.rs` with shared `wiremock` fixtures for each provider's expected request/response shape
 
 **Checkpoint**: Foundation complete. Shared types, prompt registry, judge infrastructure, cache, panic isolation, and test fixtures ready. User-story phases can begin.
 
@@ -111,10 +111,10 @@
 - [x] T040 [P] [US1] Implement `BedrockJudgeClient` + blocking wrapper in `eval-judges/src/bedrock.rs` with test file `eval-judges/tests/bedrock_test.rs`
 - [x] T041 [P] [US1] Implement `GeminiJudgeClient` + blocking wrapper in `eval-judges/src/gemini.rs` with test file `eval-judges/tests/gemini_test.rs`
 - [x] T042 [P] [US1] Implement `MistralJudgeClient` + blocking wrapper in `eval-judges/src/mistral.rs` with test file `eval-judges/tests/mistral_test.rs`
-- [ ] T043 [P] [US1] Implement `AzureJudgeClient` + blocking wrapper in `eval-judges/src/azure.rs` with test file `eval-judges/tests/azure_test.rs`
-- [ ] T044 [P] [US1] Implement `XaiJudgeClient` + blocking wrapper in `eval-judges/src/xai.rs` with test file `eval-judges/tests/xai_test.rs`
-- [ ] T045 [P] [US1] Implement `OllamaJudgeClient` + blocking wrapper in `eval-judges/src/ollama.rs` with test file `eval-judges/tests/ollama_test.rs`
-- [ ] T046 [P] [US1] Implement `ProxyJudgeClient` + blocking wrapper in `eval-judges/src/proxy.rs` with test file `eval-judges/tests/proxy_test.rs`
+- [x] T043 [P] [US1] Implement `AzureJudgeClient` + blocking wrapper in `eval-judges/src/azure.rs` with test file `eval-judges/tests/azure_test.rs`
+- [x] T044 [P] [US1] Implement `XaiJudgeClient` + blocking wrapper in `eval-judges/src/xai.rs` with test file `eval-judges/tests/xai_test.rs`
+- [x] T045 [P] [US1] Implement `OllamaJudgeClient` + blocking wrapper in `eval-judges/src/ollama.rs` with test file `eval-judges/tests/ollama_test.rs`
+- [x] T046 [P] [US1] Implement `ProxyJudgeClient` + blocking wrapper in `eval-judges/src/proxy.rs` with test file `eval-judges/tests/proxy_test.rs`
 - [x] T047 [US1] Implement shared `backon`-based retry + cancellation wiring in `eval-judges/src/client.rs` (6 attempts / 4 min max / jitter / `CancellationToken`-aware) used by every provider
 - [x] T048 [US1] Implement request-batching wrapper in `eval-judges/src/client.rs` with configurable batch size ∈ [1, 128]; providers that don't support native batching fall through to sequential dispatch
 
@@ -154,9 +154,9 @@
 
 ### Agent family (feature `evaluator-agent`)
 
-- [ ] T068 [P] [US1] Write tests in `eval/tests/evaluators_agent_test.rs` covering: trajectory accuracy with and without reference, task-completion consumes `expected_assertion`, interactions consumes `expected_interactions`, language-detection returns detected code in details
-- [ ] T069 [P] [US1] Implement `TrajectoryAccuracyEvaluator`, `TrajectoryAccuracyWithRefEvaluator`, `TaskCompletionEvaluator`, `UserSatisfactionEvaluator` in `eval/src/evaluators/agent.rs`
-- [ ] T070 [P] [US1] Implement `AgentToneEvaluator`, `KnowledgeRetentionEvaluator`, `LanguageDetectionEvaluator`, `PerceivedErrorEvaluator`, `InteractionsEvaluator` in `eval/src/evaluators/agent.rs`
+- [x] T068 [P] [US1] Write tests in `eval/tests/evaluators_agent_test.rs` covering: trajectory accuracy with and without reference, task-completion consumes `expected_assertion`, interactions consumes `expected_interactions`, language-detection returns detected code in details
+- [x] T069 [P] [US1] Implement `TrajectoryAccuracyEvaluator`, `TrajectoryAccuracyWithRefEvaluator`, `TaskCompletionEvaluator`, `UserSatisfactionEvaluator` in `eval/src/evaluators/agent.rs`
+- [x] T070 [P] [US1] Implement `AgentToneEvaluator`, `KnowledgeRetentionEvaluator`, `LanguageDetectionEvaluator`, `PerceivedErrorEvaluator`, `InteractionsEvaluator` in `eval/src/evaluators/agent.rs`
 
 ### Structured family (feature `evaluator-structured`)
 
@@ -188,9 +188,9 @@
 
 ### Registry wiring
 
-- [ ] T087 [US1] Update `EvaluatorRegistry::add` to validate evaluator-name uniqueness within a registry (spec edge case) and surface `EvalError::DuplicateEvaluator` on collision
-- [ ] T088 [US1] Update `eval/src/lib.rs` to re-export every US1 surface behind the correct feature gates
-- [ ] T089 [US1] Integration test in `eval/tests/us1_end_to_end_test.rs`: registry with one evaluator per family, `wiremock`-backed judge returning canned verdicts, assert per-evaluator score + reason + prompt_version recorded, non-applicable evaluators return no entry
+- [x] T087 [US1] Update `EvaluatorRegistry::add` to validate evaluator-name uniqueness within a registry (spec edge case) and surface `EvalError::DuplicateEvaluator` on collision
+- [x] T088 [US1] Update `eval/src/lib.rs` to re-export every US1 surface behind the correct feature gates
+- [x] T089 [US1] Integration test in `eval/tests/us1_end_to_end_test.rs`: registry with one evaluator per family, `wiremock`-backed judge returning canned verdicts, assert per-evaluator score + reason + prompt_version recorded, non-applicable evaluators return no entry
 
 **Checkpoint**: MVP step 1 complete — real judges + 24 evaluators + all 9 provider clients working end-to-end.
 
@@ -238,10 +238,10 @@
 
 **Independent Test**: Override built-in `CorrectnessEvaluator`'s prompt with a custom template and few-shot example; verify rendered prompt reflects overrides and result records the custom prompt version.
 
-- [ ] T104 [P] [US3] Write tests in `eval/tests/us3_custom_prompt_test.rs`: `.with_prompt(custom_template)` replaces built-in at evaluation time; few-shot examples inject at declared positions; bumped `_v0` → `_v1` is explicit opt-in (old version remains accessible); variable missing at construction → deterministic error
-- [ ] T105 [US3] Extend every judge-backed evaluator's builder with `.with_prompt(Arc<dyn JudgePromptTemplate>)`, `.with_few_shot(Vec<FewShotExample>)`, `.with_system_prompt(String)`, `.with_output_schema(JsonSchema)`, `.with_use_reasoning(bool)`, `.with_feedback_key(String)` — all route through the shared `JudgeEvaluatorConfig`
-- [ ] T106 [US3] Ensure `prompt_version` is recorded in every `EvalMetricResult::details` for every judge-backed evaluator (reused from T056 but re-verified here)
-- [ ] T107 [US3] Add a versioning smoke test: registry contains `correctness_v0` (built-in) + `correctness_v1` (custom); two cases use each; results distinguish them per-metric
+- [x] T104 [P] [US3] Write tests in `eval/tests/us3_custom_prompt_test.rs`: `.with_prompt(custom_template)` replaces built-in at evaluation time; few-shot examples inject at declared positions; bumped `_v0` → `_v1` is explicit opt-in (old version remains accessible); variable missing at construction → deterministic error
+- [x] T105 [US3] Extend every judge-backed evaluator's builder with `.with_prompt(Arc<dyn JudgePromptTemplate>)`, `.with_few_shot(Vec<FewShotExample>)`, `.with_system_prompt(String)`, `.with_output_schema(JsonSchema)`, `.with_use_reasoning(bool)`, `.with_feedback_key(String)` — all route through the shared `JudgeEvaluatorConfig`
+- [x] T106 [US3] Ensure `prompt_version` is recorded in every `EvalMetricResult::details` for every judge-backed evaluator (reused from T056 but re-verified here)
+- [x] T107 [US3] Add a versioning smoke test: registry contains `correctness_v0` (built-in) + `correctness_v1` (custom); two cases use each; results distinguish them per-metric
 
 **Checkpoint**: MVP step 3 complete — prompts are configuration; version discipline enforced.
 
@@ -308,16 +308,16 @@
 
 - [x] T126 [P] [US6] Implement `OtlpHttpTraceProvider` (feature `trace-otlp`) in `eval/src/trace/otlp.rs` with `reqwest`-based OTLP-HTTP pull and test in `eval/tests/trace_otlp_test.rs` (wiremock-backed)
 - [x] T127 [P] [US6] Implement `LangfuseTraceProvider` (feature `trace-langfuse`) in `eval/src/trace/langfuse.rs` with test in `eval/tests/trace_langfuse_test.rs`
-- [ ] T128 [P] [US6] Implement `OpenSearchTraceProvider` (feature `trace-opensearch`) in `eval/src/trace/opensearch.rs` with test
-- [ ] T129 [P] [US6] Implement `CloudWatchTraceProvider` (feature `trace-cloudwatch`) in `eval/src/trace/cloudwatch.rs` with test
-- [ ] T130 [US6] Feature-gate error: disabled-feature access to a backend provider produces a clear compile-time or construction-time error (spec US6 scenario 4); add a doc-test covering this
+- [x] T128 [P] [US6] Implement `OpenSearchTraceProvider` (feature `trace-opensearch`) in `eval/src/trace/opensearch.rs` with test
+- [x] T129 [P] [US6] Implement `CloudWatchTraceProvider` (feature `trace-cloudwatch`) in `eval/src/trace/cloudwatch.rs` with test
+- [x] T130 [US6] Feature-gate error: disabled-feature access to a backend provider produces a clear compile-time or construction-time error (spec US6 scenario 4); add a doc-test covering this
 
 ### Extractors
 
 - [x] T131 [US6] Implement `EvaluationLevel` enum + `TraceExtractor` trait in `eval/src/trace/extractor.rs`
-- [ ] T132 [P] [US6] Implement `SwarmExtractor` consuming spec-040 swarm result types in `eval/src/trace/extractor.rs`
-- [ ] T133 [P] [US6] Implement `GraphExtractor` consuming spec-039 graph result types in `eval/src/trace/extractor.rs`
-- [ ] T134 [US6] Integration test in `eval/tests/us6_end_to_end_test.rs`: record in-process run via in-memory exporter; re-load via `OtelInMemoryTraceProvider` + `OpenInferenceSessionMapper`; score with deterministic evaluators; assert bit-identical scores (per SC-008)
+- [x] T132 [P] [US6] Implement `SwarmExtractor` consuming spec-040 swarm result types in `eval/src/trace/extractor.rs`
+- [x] T133 [P] [US6] Implement `GraphExtractor` consuming spec-039 graph result types in `eval/src/trace/extractor.rs`
+- [x] T134 [US6] Integration test in `eval/tests/us6_end_to_end_test.rs`: record in-process run via in-memory exporter; re-load via `OtelInMemoryTraceProvider` + `OpenInferenceSessionMapper`; score with deterministic evaluators; assert bit-identical scores (per SC-008)
 
 **Checkpoint**: Trace ingestion working across all four backends plus in-memory.
 
@@ -357,14 +357,14 @@
 - [x] T143 [P] [US8] Implement `JsonReporter` in `eval/src/report/json.rs` (always-on) + author `specs/043-evals-adv-features/contracts/eval-result.schema.json`
 - [x] T144 [P] [US8] Write tests in `eval/tests/reporter_markdown_test.rs`: valid Markdown table; no ANSI; per-case and per-metric detail present
 - [x] T145 [P] [US8] Implement `MarkdownReporter` in `eval/src/report/markdown.rs` (always-on, PR-comment-ready)
-- [ ] T146 [P] [US8] Write tests in `eval/tests/reporter_html_test.rs`: single self-contained file; `<details>`/`<summary>` collapsibility; no external asset dependencies; bounded output size for thousand-case results
-- [ ] T147 [US8] Implement `HtmlReporter` in `eval/src/report/html.rs` using `askama` templates with inlined CSS/JS (feature `html-report`); embed template at compile time
-- [ ] T148 [P] [US8] Write tests in `eval/tests/reporter_langsmith_test.rs` (wiremock-backed): `EvalSetResult` pushed as run; per-evaluator feedback attached under configured `feedback_key`; partial push failure surfaces `LangSmithExportError::Push { pushed, failed, first_error }`
-- [ ] T149 [US8] Implement `LangSmithExporter` + `LangSmithExportError` in `eval/src/report/langsmith.rs` (feature `langsmith`) with `reqwest`-based POST to `/runs` and `/feedback` per research.md §R-015
+- [x] T146 [P] [US8] Write tests in `eval/tests/reporter_html_test.rs`: single self-contained file; `<details>`/`<summary>` collapsibility; no external asset dependencies; bounded output size for thousand-case results
+- [x] T147 [US8] Implement `HtmlReporter` in `eval/src/report/html.rs` using `askama` templates with inlined CSS/JS (feature `html-report`); embed template at compile time
+- [x] T148 [P] [US8] Write tests in `eval/tests/reporter_langsmith_test.rs` (wiremock-backed): `EvalSetResult` pushed as run; per-evaluator feedback attached under configured `feedback_key`; partial push failure surfaces `LangSmithExportError::Push { pushed, failed, first_error }`
+- [x] T149 [US8] Implement `LangSmithExporter` + `LangSmithExportError` in `eval/src/report/langsmith.rs` (feature `langsmith`) with `reqwest`-based POST to `/runs` and `/feedback` per research.md §R-015
 
 ### Report integration
 
-- [ ] T150 [US8] Integration test in `eval/tests/us8_end_to_end_test.rs`: same `EvalSetResult` through each reporter; HTML output validates as well-formed HTML5; JSON output validates against schema; Markdown output validates as CommonMark
+- [x] T150 [US8] Integration test in `eval/tests/us8_end_to_end_test.rs`: same `EvalSetResult` through each reporter; HTML output validates as well-formed HTML5; JSON output validates against schema; Markdown output validates as CommonMark
 
 **Checkpoint**: All reporters functional; JSON schema published.
 
@@ -380,23 +380,23 @@
 
 ### CLI binary
 
-- [ ] T151 [P] [US9] Write tests in `eval/tests/cli_test.rs` (using `assert_cmd` or equivalent spawning the binary): `run --set` produces matching output to in-process API; `report` re-renders without re-execution; `gate` returns 0/non-zero; missing file returns exit 2
-- [ ] T152 [US9] Scaffold `eval/src/bin/swink_eval.rs` with `clap` derive-parser: `run { --set, --out, --parallelism, --reporter }`, `report { --result, --format }`, `gate { --result, --gate-config }` (feature `cli`)
-- [ ] T153 [US9] Implement `run` subcommand: load `EvalSet`, construct `EvalRunner`, execute, render chosen reporter to stdout, write optional JSON artifact, exit with code derived from `GateConfig`
-- [ ] T154 [US9] Implement `report` subcommand: load persisted `EvalSetResult`, render through chosen reporter, write to stdout (no re-execution)
-- [ ] T155 [US9] Implement `gate` subcommand: load persisted `EvalSetResult`, load `GateConfig`, evaluate, return 0/1/2/3 per contracts/public-api.md; no stdout output
+- [x] T151 [P] [US9] Write tests in `eval/tests/cli_test.rs` (using `assert_cmd` or equivalent spawning the binary): `run --set` produces matching output to in-process API; `report` re-renders without re-execution; `gate` returns 0/non-zero; missing file returns exit 2
+- [x] T152 [US9] Scaffold `eval/src/bin/swink_eval.rs` with `clap` derive-parser: `run { --set, --out, --parallelism, --reporter }`, `report { --result, --format }`, `gate { --result, --gate-config }` (feature `cli`)
+- [x] T153 [US9] Implement `run` subcommand: load `EvalSet`, construct `EvalRunner`, execute, render chosen reporter to stdout, write optional JSON artifact, exit with code derived from `GateConfig`
+- [x] T154 [US9] Implement `report` subcommand: load persisted `EvalSetResult`, render through chosen reporter, write to stdout (no re-execution)
+- [x] T155 [US9] Implement `gate` subcommand: load persisted `EvalSetResult`, load `GateConfig`, evaluate, return 0/1/2/3 per contracts/public-api.md; no stdout output
 
 ### CI templates
 
-- [ ] T156 [P] [US9] Author `eval/src/ci/templates/pr-eval.yml` per research.md §R-018
-- [ ] T157 [P] [US9] Author `eval/src/ci/templates/nightly-eval.yml`
-- [ ] T158 [P] [US9] Author `eval/src/ci/templates/release-eval.yml`
-- [ ] T159 [P] [US9] Author `eval/src/ci/templates/pre-commit-hook.yml`
-- [ ] T160 [US9] Add `include_str!`-based compile-time references for all four templates so they're validated by `cargo build`
+- [x] T156 [P] [US9] Author `eval/src/ci/templates/pr-eval.yml` per research.md §R-018
+- [x] T157 [P] [US9] Author `eval/src/ci/templates/nightly-eval.yml`
+- [x] T158 [P] [US9] Author `eval/src/ci/templates/release-eval.yml`
+- [x] T159 [P] [US9] Author `eval/src/ci/templates/pre-commit-hook.yml`
+- [x] T160 [US9] Add `include_str!`-based compile-time references for all four templates so they're validated by `cargo build`
 
 ### US9 integration
 
-- [ ] T161 [US9] Integration test in `eval/tests/us9_end_to_end_test.rs`: install binary into a tempdir, invoke `run → report → gate` pipeline against a fixture `EvalSet`; verify stable exit codes and identical outputs to the in-process API
+- [x] T161 [US9] Integration test in `eval/tests/us9_end_to_end_test.rs`: install binary into a tempdir, invoke `run → report → gate` pipeline against a fixture `EvalSet`; verify stable exit codes and identical outputs to the in-process API
 
 **Checkpoint**: CLI shipping, CI templates authored.
 
@@ -408,38 +408,38 @@
 
 ### Feature-matrix verification
 
-- [ ] T162 Verify `cargo build -p swink-agent-eval --no-default-features` succeeds; confirm default build pulls no new transitive deps beyond 023 baseline (SC-009)
-- [ ] T163 Verify `cargo build -p swink-agent-eval --features all-evaluators,simulation,generation,trace-ingest,trace-otlp,trace-langfuse,trace-opensearch,trace-cloudwatch,telemetry,html-report,langsmith,cli` succeeds
-- [ ] T164 Verify `cargo build -p swink-agent-eval-judges --features all-judges` succeeds
-- [ ] T165 Run `cargo test --workspace` and confirm zero live LLM calls (FR-050); add a repo-level test asserting no test sets `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / etc. without feature `live-judges`
+- [x] T162 Verify `cargo build -p swink-agent-eval --no-default-features` succeeds; confirm default build pulls no new transitive deps beyond 023 baseline (SC-009)
+- [x] T163 Verify `cargo build -p swink-agent-eval --features all-evaluators,simulation,generation,trace-ingest,trace-otlp,trace-langfuse,trace-opensearch,trace-cloudwatch,telemetry,html-report,langsmith,cli` succeeds
+- [x] T164 Verify `cargo build -p swink-agent-eval-judges --features all-judges` succeeds
+- [x] T165 Run `cargo test --workspace` and confirm zero live LLM calls (FR-050); add a repo-level test asserting no test sets `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / etc. without feature `live-judges`
 
 ### Panic-isolation and cancellation sweep
 
-- [ ] T166 Review every evaluator, simulator, generator, reporter for panic-isolation coverage (FR-021); add missing `isolate_panic` wrappers; add a dedicated test in `eval/tests/score_clamp_test.rs` asserting that a judge returning `1.3` produces a clamped `1.0` with `ScoreClamped { original: 1.3, clamped: 1.0 }` in details (spec Edge Cases + FR-021 extension)
-- [ ] T167 Review every await point in runner / simulation / generation for `CancellationToken` responsiveness (FR-040); no task should hang after cancellation
+- [x] T166 Review every evaluator, simulator, generator, reporter for panic-isolation coverage (FR-021); add missing `isolate_panic` wrappers; add a dedicated test in `eval/tests/score_clamp_test.rs` asserting that a judge returning `1.3` produces a clamped `1.0` with `ScoreClamped { original: 1.3, clamped: 1.0 }` in details (spec Edge Cases + FR-021 extension)
+- [x] T167 Review every await point in runner / simulation / generation for `CancellationToken` responsiveness (FR-040); no task should hang after cancellation
 
 ### Docs and metadata
 
-- [ ] T168 Update `eval/README.md` with feature-flag matrix and usage recipes from quickstart.md
-- [ ] T169 Create `eval-judges/README.md` documenting each provider feature and credentials
-- [ ] T170 Update `docs/HLD.md` with new crate count (14 → 15), new architectural surface (eval-judges, prompt registry, simulation, generation, trace ingestion, telemetry, reporters, CLI)
-- [ ] T171 Update root `README.md` feature matrix to include the eval advanced-features surface
-- [ ] T172 Update `CHANGELOG.md` with 043 scope, breaking-change notes (EvalCase extended; no default judge model; FR-044 removed — legacy converter never shipped)
+- [x] T168 Update `eval/README.md` with feature-flag matrix and usage recipes from quickstart.md
+- [x] T169 Create `eval-judges/README.md` documenting each provider feature and credentials
+- [x] T170 Update `docs/HLD.md` with new crate count (14 → 15), new architectural surface (eval-judges, prompt registry, simulation, generation, trace ingestion, telemetry, reporters, CLI)
+- [x] T171 Update root `README.md` feature matrix to include the eval advanced-features surface
+- [x] T172 Update `CHANGELOG.md` with 043 scope, breaking-change notes (EvalCase extended; no default judge model; FR-044 removed — legacy converter never shipped)
 
 ### Success-criteria validation
 
-- [ ] T173 Add a benchmark test asserting SC-002: 20-case / parallelism-4 suite completes in under 2× single-case wall-clock against a `wiremock`-backed "fast provider"
-- [ ] T174 Add a benchmark test asserting SC-003: prompt-only re-run reuses cached invocations, agent invocation count = 0
-- [ ] T175 Add a property test asserting SC-004: swapping judge model requires exactly one constructor-arg change; every existing evaluator continues to work against the new model
-- [ ] T176 Add a deterministic-replay test asserting SC-008: OTel-traced run re-loaded via `OtelInMemoryTraceProvider` scores bit-identical to in-process run for deterministic evaluators
-- [ ] T177 Add a regression test asserting SC-009: `cargo tree -p swink-agent-eval --no-default-features` produces an identical transitive dep graph to the 023 baseline
+- [x] T173 Add a benchmark test asserting SC-002: 20-case / parallelism-4 suite completes in under 2× single-case wall-clock against a `wiremock`-backed "fast provider"
+- [x] T174 Add a benchmark test asserting SC-003: prompt-only re-run reuses cached invocations, agent invocation count = 0
+- [x] T175 Add a property test asserting SC-004: swapping judge model requires exactly one constructor-arg change; every existing evaluator continues to work against the new model
+- [x] T176 Add a deterministic-replay test asserting SC-008: OTel-traced run re-loaded via `OtelInMemoryTraceProvider` scores bit-identical to in-process run for deterministic evaluators
+- [x] T177 Add a regression test asserting SC-009: `cargo tree -p swink-agent-eval --no-default-features` produces an identical transitive dep graph to the 023 baseline
 
 ### Release hygiene
 
-- [ ] T178 Run `cargo clippy --workspace --all-targets --all-features -- -D warnings` and resolve any new lints
-- [ ] T179 Run `cargo fmt --all --check`
-- [ ] T180 Bump `workspace.package.version` to `0.9.0` in root `Cargo.toml` (minor bump — new features additive, no removed items)
-- [ ] T181 Verify Dependabot / `cargo deny check` for the new deps (`minijinja`, `backon`, `strsim`, `jsonschema`, `opentelemetry`, `askama`, `clap`, `libc`, `opentelemetry-otlp`)
+- [x] T178 Run `cargo clippy --workspace --all-targets --all-features -- -D warnings` and resolve any new lints
+- [x] T179 Run `cargo fmt --all --check`
+- [x] T180 Bump `workspace.package.version` to `0.9.0` in root `Cargo.toml` (minor bump — new features additive, no removed items)
+- [x] T181 Verify Dependabot / `cargo deny check` for the new deps (`minijinja`, `backon`, `strsim`, `jsonschema`, `opentelemetry`, `askama`, `clap`, `libc`, `opentelemetry-otlp`)
 
 ---
 

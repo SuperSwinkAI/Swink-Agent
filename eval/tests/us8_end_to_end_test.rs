@@ -109,7 +109,10 @@ fn reporters_render_the_same_eval_result_across_all_formats() {
         "correctness",
         "task_completion",
     ] {
-        assert!(console.contains(needle), "console missing {needle}:\n{console}");
+        assert!(
+            console.contains(needle),
+            "console missing {needle}:\n{console}"
+        );
         assert!(
             markdown.contains(needle),
             "markdown missing {needle}:\n{markdown}"
@@ -135,7 +138,10 @@ fn reporters_render_the_same_eval_result_across_all_formats() {
     assert!(errors.is_empty(), "schema validation failed: {errors:#?}");
 
     assert_eq!(json_doc["eval_set"]["id"], "support-evals");
-    assert_eq!(json_doc["cases"][0]["metrics"][0]["evaluator"], "helpfulness");
+    assert_eq!(
+        json_doc["cases"][0]["metrics"][0]["evaluator"],
+        "helpfulness"
+    );
     assert_eq!(
         json_doc["cases"][1]["metrics"][0]["evaluator"],
         "task_completion"

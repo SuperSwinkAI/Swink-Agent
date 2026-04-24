@@ -225,6 +225,98 @@ pub fn build_prompt_context(
     ctx
 }
 
+/// Fluent builder surface exposed on every judge-backed evaluator (T105).
+///
+/// Complements the per-evaluator inherent `with_prompt` / `with_few_shot`
+/// methods: implementors own a [`JudgeEvaluatorConfig`] and return `&mut`
+/// access via [`Self::judge_config_mut`]. Default method implementations
+/// route each customisation knob through the shared config so downstream
+/// users can write generic code that customises any judge-backed evaluator:
+///
+/// ```rust,ignore
+/// use std::sync::Arc;
+/// use swink_agent_eval::{
+///     CorrectnessEvaluator, JudgeEvaluatorBuilder, JudgeEvaluatorConfig,
+///     JudgePromptTemplate,
+/// };
+///
+/// fn customise<E: JudgeEvaluatorBuilder>(eval: E, t: Arc<dyn JudgePromptTemplate>) -> E {
+///     eval.with_prompt(t).with_use_reasoning(false)
+/// }
+/// ```
+///
+/// The inherent methods on each evaluator struct shadow these defaults for
+/// callers who don't need the generic trait surface — both paths route
+/// through the same [`JudgeEvaluatorConfig`].
+pub trait JudgeEvaluatorBuilder: Sized {
+    /// Borrow the evaluator's underlying [`JudgeEvaluatorConfig`] for
+    /// mutation by the default builder methods.
+    fn judge_config_mut(&mut self) -> &mut JudgeEvaluatorConfig;
+
+    /// Override the built-in prompt template.
+    #[must_use]
+    fn with_prompt(mut self, template: Arc<dyn JudgePromptTemplate>) -> Self {
+        self.judge_config_mut().template = Some(template);
+        self
+    }
+
+    /// Attach few-shot examples.
+    #[must_use]
+    fn with_few_shot(mut self, examples: Vec<crate::types::FewShotExample>) -> Self {
+        self.judge_config_mut().few_shot_examples = examples;
+        self
+    }
+
+    /// Override the system prompt applied ahead of the rendered prompt.
+    #[must_use]
+    fn with_system_prompt(mut self, prompt: impl Into<String>) -> Self {
+        self.judge_config_mut().system_prompt = Some(prompt.into());
+        self
+    }
+
+    /// Override the output-schema identifier used by structured-output
+    /// evaluators.
+    #[must_use]
+    fn with_output_schema(mut self, schema: serde_json::Value) -> Self {
+        self.judge_config_mut().output_schema = Some(schema);
+        self
+    }
+
+    /// Toggle the `use_reasoning` flag.
+    #[must_use]
+    fn with_use_reasoning(mut self, flag: bool) -> Self {
+        self.judge_config_mut().use_reasoning = flag;
+        self
+    }
+
+    /// Override the feedback key forwarded to telemetry / reporter backends.
+    #[must_use]
+    fn with_feedback_key(mut self, key: impl Into<String>) -> Self {
+        self.judge_config_mut().feedback_key = Some(key.into());
+        self
+    }
+
+    /// Override the aggregator applied to per-sample judge scores.
+    #[must_use]
+    fn with_aggregator(mut self, aggregator: Arc<dyn Aggregator>) -> Self {
+        self.judge_config_mut().aggregator = Some(aggregator);
+        self
+    }
+}
+
+/// Convenience macro that implements [`JudgeEvaluatorBuilder`] for a struct
+/// holding a `config: JudgeEvaluatorConfig` field.
+#[macro_export]
+macro_rules! impl_judge_evaluator_builder {
+    ($ty:ty) => {
+        impl $crate::evaluators::JudgeEvaluatorBuilder for $ty {
+            fn judge_config_mut(&mut self) -> &mut $crate::evaluators::JudgeEvaluatorConfig {
+                &mut self.config
+            }
+        }
+    };
+}
+
 /// Structured detail record attached to [`EvalMetricResult::details`] (T056).
 ///
 /// The existing `details: Option<String>` field retains its historical shape;
@@ -396,6 +488,10 @@ pub async fn dispatch_judge(
     let template = config.template.clone().unwrap_or(builtin_template);
     let prompt_version = template.version().to_string();
 
+    // Per `build_prompt_context` the incoming `context` already has every
+    // config-level customisation merged in (system prompt override,
+    // config-level few-shot examples prepended to case-level ones, and the
+    // `custom.*` namespace populated). Render verbatim.
     let rendered = template.render(context)?;
     let verdict = config.judge_registry.client().judge(&rendered).await?;
 
@@ -811,7 +907,8 @@ mod tests {
     #[tokio::test]
     async fn dispatch_records_feedback_key_when_configured() {
         let (registry, _) = make_registry(0.8);
-        let config = JudgeEvaluatorConfig::default_with(registry).with_feedback_key("quality.score");
+        let config =
+            JudgeEvaluatorConfig::default_with(registry).with_feedback_key("quality.score");
         let template = make_template();
         let case = make_case();
         let invocation = make_invocation();

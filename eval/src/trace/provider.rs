@@ -57,6 +57,24 @@ impl RawSession {
 #[non_exhaustive]
 #[derive(Debug, Error)]
 pub enum TraceProviderError {
+    /// A trace provider for a backend whose cargo feature is disabled
+    /// was requested at runtime (spec 043 US6 scenario 4 / T130).
+    ///
+    /// Compile-time access to `OpenSearchTraceProvider` /
+    /// `CloudWatchTraceProvider` / `OtlpHttpTraceProvider` /
+    /// `LangfuseTraceProvider` is already prevented by cargo features
+    /// (each type is `#[cfg(feature = "…")]`). This variant covers the
+    /// runtime configuration path — a builder that reads a backend name
+    /// from a YAML config and has to refuse a name whose feature flag
+    /// was not compiled in.
+    #[error("trace backend `{backend}` is not available — enable the `{feature}` cargo feature")]
+    FeatureDisabled {
+        /// Name of the requested backend (e.g. `"opensearch"`).
+        backend: String,
+        /// Cargo feature the caller must enable.
+        feature: String,
+    },
+
     /// The requested session id is unknown to this backend.
     #[error("trace session `{session_id}` not found")]
     SessionNotFound {

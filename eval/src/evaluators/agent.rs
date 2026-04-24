@@ -113,6 +113,12 @@ macro_rules! agent_evaluator {
             }
         }
 
+        impl $crate::evaluators::JudgeEvaluatorBuilder for $name {
+            fn judge_config_mut(&mut self) -> &mut JudgeEvaluatorConfig {
+                &mut self.config
+            }
+        }
+
         impl Evaluator for $name {
             fn name(&self) -> &'static str {
                 $eval_name

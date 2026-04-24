@@ -1,0 +1,56 @@
+name: PR Eval
+
+on:
+  pull_request:
+    branches: [main, integration]
+
+jobs:
+  pr-eval:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_NET_RETRY: 3
+      RUSTFLAGS: "-D warnings"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: pr-eval
+
+      - name: Install swink-eval
+        run: cargo install --path eval --features "cli,yaml" --locked
+
+      - name: Run eval suite
+        run: |
+          swink-eval run \
+            --set eval-sets/pr.yaml \
+            --out target/eval-result.json \
+            --parallelism 4 \
+            --reporter md | tee eval-summary.md
+
+      - name: Gate results
+        run: |
+          swink-eval gate \
+            --result target/eval-result.json \
+            --gate-config .github/eval/pr-gate.json
+
+      - name: Upload result artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-result
+          path: target/eval-result.json
+
+      - name: Post PR comment
+        if: always() && github.event_name == 'pull_request'
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: pr-eval-summary
+          path: eval-summary.md

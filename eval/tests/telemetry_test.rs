@@ -279,9 +279,9 @@ async fn run_set_inherits_active_parent_span() {
     let factory = StubFactory::new("ok");
 
     // Attach the parent context for the duration of `run_set`.
-    let _guard = parent_cx.attach();
+    let guard = parent_cx.attach();
     let result = runner.run_set(&set, &factory).await.unwrap();
-    drop(_guard);
+    drop(guard);
     assert!(result.case_results[0].verdict.is_pass());
 
     provider.force_flush().expect("flush");
