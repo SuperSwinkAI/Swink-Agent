@@ -35,7 +35,9 @@ pub use mistral::{BlockingMistralJudgeClient, MistralJudgeClient};
 #[cfg(feature = "ollama")]
 pub use ollama::{BlockingOllamaJudgeClient, OllamaJudgeClient};
 #[cfg(feature = "openai")]
-pub use openai::{BlockingOpenAiJudgeClient, OpenAiJudgeClient};
+pub use openai::{
+    BlockingOpenAIJudgeClient, BlockingOpenAiJudgeClient, OpenAIJudgeClient, OpenAiJudgeClient,
+};
 #[cfg(feature = "proxy")]
 pub use proxy::{BlockingProxyJudgeClient, ProxyJudgeClient};
 #[cfg(feature = "xai")]

@@ -190,6 +190,10 @@ pub struct BlockingOpenAiJudgeClient {
     inner: OpenAiJudgeClient,
 }
 
+/// Alias for spec-doc callers that use `OpenAI` capitalization.
+#[allow(dead_code)]
+pub type BlockingOpenAIJudgeClient = BlockingOpenAiJudgeClient;
+
 impl BlockingOpenAiJudgeClient {
     /// Wrap an existing [`OpenAiJudgeClient`].
     #[must_use]
