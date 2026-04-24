@@ -40,14 +40,18 @@ fn assert_invalid_data_storage_error(err: ArtifactError, expected_snippet: &str)
     );
 }
 
-fn assert_storage_error_kind(err: ArtifactError, expected_kind: ErrorKind) {
+fn assert_storage_error_kind(err: ArtifactError, expected_kinds: &[ErrorKind]) {
     let ArtifactError::Storage(source) = err else {
         panic!("expected storage error, got {err:?}");
     };
     let io = source
         .downcast_ref::<std::io::Error>()
         .expect("storage error should wrap std::io::Error");
-    assert_eq!(io.kind(), expected_kind);
+    assert!(
+        expected_kinds.contains(&io.kind()),
+        "expected one of {expected_kinds:?}, got {:?}",
+        io.kind()
+    );
 }
 
 // T061: streaming_save_round_trip
@@ -264,7 +268,10 @@ async fn streaming_save_rolls_back_new_content_when_metadata_write_fails() {
         )
         .await
         .expect_err("save_stream should fail when meta.json cannot be replaced");
-    assert_storage_error_kind(err, ErrorKind::PermissionDenied);
+    // Linux surfaces the failure as PermissionDenied; macOS (and other BSD
+    // family kernels) surface it as IsADirectory. Both shapes are acceptable
+    // — the contract is that the save errors, not the specific errno.
+    assert_storage_error_kind(err, &[ErrorKind::PermissionDenied, ErrorKind::IsADirectory]);
 
     assert!(
         !artifact_dir.join("v2.bin").exists(),
