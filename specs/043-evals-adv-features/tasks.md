@@ -148,9 +148,9 @@
 
 ### RAG family (feature `evaluator-rag`)
 
-- [ ] T065 [P] [US1] Write tests in `eval/tests/evaluators_rag_test.rs` covering: groundedness-against-retrieved-context, retrieval-relevance, embedding-similarity with a `StubEmbedder` test double
-- [ ] T066 [P] [US1] Implement `RAGGroundednessEvaluator`, `RAGRetrievalRelevanceEvaluator`, `RAGHelpfulnessEvaluator` in `eval/src/evaluators/rag.rs`
-- [ ] T067 [P] [US1] Implement `Embedder` trait + `EmbedderError` enum + `EmbeddingSimilarityEvaluator` (deterministic cosine similarity with configurable threshold, default 0.8) in `eval/src/evaluators/rag.rs`
+- [x] T065 [P] [US1] Write tests in `eval/tests/evaluators_rag_test.rs` covering: groundedness-against-retrieved-context, retrieval-relevance, embedding-similarity with a `StubEmbedder` test double
+- [x] T066 [P] [US1] Implement `RAGGroundednessEvaluator`, `RAGRetrievalRelevanceEvaluator`, `RAGHelpfulnessEvaluator` in `eval/src/evaluators/rag.rs`
+- [x] T067 [P] [US1] Implement `Embedder` trait + `EmbedderError` enum + `EmbeddingSimilarityEvaluator` (deterministic cosine similarity with configurable threshold, default 0.8) in `eval/src/evaluators/rag.rs`
 
 ### Agent family (feature `evaluator-agent`)
 
