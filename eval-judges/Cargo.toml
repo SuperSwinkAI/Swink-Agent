@@ -6,7 +6,7 @@ rust-version.workspace = true
 description = "Judge client implementations for swink-agent-eval"
 license.workspace = true
 repository.workspace = true
-readme = "../README.md"
+readme = "README.md"
 keywords = ["llm", "eval", "judge", "adapter", "testing"]
 categories = ["development-tools", "api-bindings", "asynchronous"]
 # Spec 043 in-progress — the crate layout shifts between phases (stubs in
