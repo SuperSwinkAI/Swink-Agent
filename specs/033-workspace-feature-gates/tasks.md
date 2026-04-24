@@ -142,11 +142,7 @@ T007 [US3]: local-llm/Cargo.toml backend features
 
 # After both complete:
 T002 [US1]: adapters/src/lib.rs cfg guards  (needs T001)
-<<<<<<< HEAD
 T002a [US1]: adapters/src/lib.rs doc comments (needs T002)
-=======
-T002a [US1]: adapters/src/lib.rs compile_error! fallbacks (needs T002)
->>>>>>> origin/main
 # T007 has no lib.rs changes
 
 # Root forwarding (T011-T013) was infeasible — cyclic dependency.
@@ -174,11 +170,7 @@ T002a [US1]: adapters/src/lib.rs compile_error! fallbacks (needs T002)
 
 1. T001 → T002 → T002a → T003-T006 (adapters complete)
 2. T007 → T008-T010 (local-llm complete)
-<<<<<<< HEAD
 3. T014-T018 (verification — root forwarding N/A)
-=======
-3. T011 → T012 → T013 → T014-T018 (root forwarding complete)
->>>>>>> origin/main
 4. T019-T020b, T021-T022 (polish)
 
 ---
