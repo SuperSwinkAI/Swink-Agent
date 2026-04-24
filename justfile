@@ -41,6 +41,10 @@ bench:
 tui:
     cargo run -p swink-agent-tui
 
+# Run publish-surface packaging checks for every publishable workspace crate
+package-preflight:
+    cargo publish --workspace --dry-run --locked --allow-dirty
+
 # Run the canonical local validation gate required before opening a PR
 validate:
     cargo fmt --all --check
@@ -49,6 +53,7 @@ validate:
     cargo build --workspace
     cargo test --workspace --features testkit
     cargo test -p swink-agent --no-default-features
+    just package-preflight
 
 # Backward-compatible alias for the canonical local validation gate
 check: validate

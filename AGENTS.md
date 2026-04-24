@@ -58,6 +58,8 @@ cargo run -p swink-agent-tui                      # launch TUI (.env auto-loaded
 
 Workspace-wide `build` / `test` / `clippy` commands compile `swink-agent-local-llm`, which currently pulls `llama-cpp-sys-2` and its `bindgen` build step. Install LLVM/libclang first and set `LIBCLANG_PATH` if your platform does not auto-discover the shared library (especially common on Windows).
 
+Local packaging preflight for this workspace should use `cargo publish --workspace --dry-run --locked --allow-dirty`, not the clean-tree form. Contributors normally validate from a dirty working tree, and omitting `--allow-dirty` causes false failures before Cargo reaches the actual publish-surface checks.
+
 MSRV **1.95** (edition 2024). Common workspace deps are centralized in root `Cargo.toml`, with a few crate-specific dependencies declared locally where needed.
 
 ## Branch Model

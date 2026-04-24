@@ -33,6 +33,7 @@ cargo test --workspace
 cargo build --workspace
 cargo test --workspace --features testkit
 cargo test -p swink-agent --no-default-features
+cargo publish --workspace --dry-run --locked --allow-dirty
 ```
 
 `just validate` and `just check` run this exact command set.
