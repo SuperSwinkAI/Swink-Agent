@@ -72,6 +72,12 @@ pub use efficiency::EfficiencyEvaluator;
 pub use environment_state::EnvironmentStateEvaluator;
 pub use error::EvalError;
 pub use evaluator::{Evaluator, EvaluatorRegistry};
+#[cfg(feature = "evaluator-agent")]
+pub use evaluators::agent::{
+    AgentToneEvaluator, InteractionsEvaluator, KnowledgeRetentionEvaluator,
+    LanguageDetectionEvaluator, PerceivedErrorEvaluator, TaskCompletionEvaluator,
+    TrajectoryAccuracyEvaluator, TrajectoryAccuracyWithRefEvaluator, UserSatisfactionEvaluator,
+};
 #[cfg(feature = "evaluator-code")]
 pub use evaluators::code::llm_judge::CodeLlmJudgeEvaluator;
 #[cfg(feature = "evaluator-code")]
