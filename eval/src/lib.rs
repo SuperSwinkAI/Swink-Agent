@@ -1,4 +1,11 @@
-#![forbid(unsafe_code)]
+// Crate-wide unsafe policy: deny by default. Every new surface added by spec
+// 043 MUST compile under this ceiling. Per FR-049, the single authorized
+// carve-out is `evaluators::code::sandbox::posix` (Unix-only, rlimit FFI),
+// which relaxes to `#![allow(unsafe_code)]` at module scope with per-block
+// `// SAFETY:` annotations. `deny` is used instead of `forbid` because
+// `forbid` cannot be relaxed by a nested `allow` — the practical effect is
+// identical: any unsafe outside the carve-out is a hard compile error.
+#![deny(unsafe_code)]
 //! Evaluation framework for swink-agent.
 //!
 //! Provides trajectory tracing, golden path verification, response matching,
@@ -71,18 +78,13 @@ pub use evaluators::code::llm_judge::CodeLlmJudgeEvaluator;
 pub use evaluators::code::{
     CargoCheckEvaluator, ClippyEvaluator, CodeExtractor, CodeExtractorStrategy,
 };
+#[cfg(feature = "evaluator-sandbox")]
+pub use evaluators::code::{
+    SandboxLimits, SandboxOutcome, SandboxRunner, SandboxedExecutionEvaluator, ShellRunner,
+    run_sandboxed,
+};
 #[cfg(feature = "multimodal")]
 pub use evaluators::multimodal::ImageSafetyEvaluator;
-#[cfg(feature = "evaluator-simple")]
-pub use evaluators::simple::{ExactMatchEvaluator, LevenshteinDistanceEvaluator};
-#[cfg(feature = "evaluator-structured")]
-pub use evaluators::structured::{JsonMatchEvaluator, JsonSchemaEvaluator, KeyStrategy};
-#[cfg(feature = "judge-core")]
-pub use evaluators::{
-    Detail, DetailBuffer, DispatchError, DispatchOutcome, EvaluatorError, JudgeEvaluatorConfig,
-    dispatch_judge, drive_judge_call, evaluate_with_builtin, finish_metric_result,
-    materialize_case_attachments,
-};
 #[cfg(feature = "evaluator-quality")]
 pub use evaluators::quality::{
     CoherenceEvaluator, ConcisenessEvaluator, CorrectnessEvaluator, FaithfulnessEvaluator,
@@ -93,6 +95,16 @@ pub use evaluators::quality::{
 pub use evaluators::safety::{
     CodeInjectionEvaluator, FairnessEvaluator, HarmfulnessEvaluator, PIIClass, PIILeakageEvaluator,
     PromptInjectionEvaluator, ToxicityEvaluator,
+};
+#[cfg(feature = "evaluator-simple")]
+pub use evaluators::simple::{ExactMatchEvaluator, LevenshteinDistanceEvaluator};
+#[cfg(feature = "evaluator-structured")]
+pub use evaluators::structured::{JsonMatchEvaluator, JsonSchemaEvaluator, KeyStrategy};
+#[cfg(feature = "judge-core")]
+pub use evaluators::{
+    Detail, DetailBuffer, DispatchError, DispatchOutcome, EvaluatorError, JudgeEvaluatorConfig,
+    dispatch_judge, drive_judge_call, evaluate_with_builtin, finish_metric_result,
+    materialize_case_attachments,
 };
 pub use gate::{GateConfig, GateResult, check_gate};
 pub use judge::{
