@@ -381,7 +381,7 @@ fn find_record_line_mut<'a>(
 
 /// Validate a session ID, rejecting unsafe filesystem characters.
 ///
-/// Rejects IDs containing `/`, `\`, `..`, or null bytes.
+/// Rejects IDs containing `/`, `\`, `..`, `:`, or ASCII control characters.
 fn validate_session_id(id: &str) -> io::Result<()> {
     if id.is_empty() {
         return Err(io::Error::new(
@@ -389,7 +389,11 @@ fn validate_session_id(id: &str) -> io::Result<()> {
             "session ID must not be empty",
         ));
     }
-    if id.contains('/') || id.contains('\\') || id.contains("..") || id.contains('\0') {
+    if id.contains('/')
+        || id.contains('\\')
+        || id.contains("..")
+        || id.chars().any(|c| c == ':' || c.is_ascii_control())
+    {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             format!("session ID contains unsafe characters: {id:?}"),
@@ -960,8 +964,14 @@ mod tests {
     }
 
     #[test]
-    fn validate_session_id_rejects_null() {
-        let err = validate_session_id("foo\0bar").unwrap_err();
+    fn validate_session_id_rejects_colon() {
+        let err = validate_session_id("C:drive").unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn validate_session_id_rejects_control_chars() {
+        let err = validate_session_id("foo\nbar").unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
     }
 
