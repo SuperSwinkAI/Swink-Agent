@@ -108,9 +108,9 @@
 - [x] T037 [P] [US1] Write `eval-judges/tests/anthropic_test.rs` covering: `wiremock`-backed happy path, rate-limit 429 absorbed by retry, exhausted retries surface `JudgeError::RateLimitExhausted`, malformed response → `JudgeError::MalformedResponse`, cancellation propagation
 - [x] T038 [P] [US1] Implement `AnthropicJudgeClient` + `BlockingAnthropicJudgeClient` in `eval-judges/src/anthropic.rs` — wraps `AnthropicAdapter`, exposes retry policy, batch size, async + blocking interfaces
 - [x] T039 [P] [US1] Implement `OpenAIJudgeClient` + blocking wrapper in `eval-judges/src/openai.rs` with matching test file `eval-judges/tests/openai_test.rs`
-- [ ] T040 [P] [US1] Implement `BedrockJudgeClient` + blocking wrapper in `eval-judges/src/bedrock.rs` with test file `eval-judges/tests/bedrock_test.rs`
-- [ ] T041 [P] [US1] Implement `GeminiJudgeClient` + blocking wrapper in `eval-judges/src/gemini.rs` with test file `eval-judges/tests/gemini_test.rs`
-- [ ] T042 [P] [US1] Implement `MistralJudgeClient` + blocking wrapper in `eval-judges/src/mistral.rs` with test file `eval-judges/tests/mistral_test.rs`
+- [x] T040 [P] [US1] Implement `BedrockJudgeClient` + blocking wrapper in `eval-judges/src/bedrock.rs` with test file `eval-judges/tests/bedrock_test.rs`
+- [x] T041 [P] [US1] Implement `GeminiJudgeClient` + blocking wrapper in `eval-judges/src/gemini.rs` with test file `eval-judges/tests/gemini_test.rs`
+- [x] T042 [P] [US1] Implement `MistralJudgeClient` + blocking wrapper in `eval-judges/src/mistral.rs` with test file `eval-judges/tests/mistral_test.rs`
 - [ ] T043 [P] [US1] Implement `AzureJudgeClient` + blocking wrapper in `eval-judges/src/azure.rs` with test file `eval-judges/tests/azure_test.rs`
 - [ ] T044 [P] [US1] Implement `XaiJudgeClient` + blocking wrapper in `eval-judges/src/xai.rs` with test file `eval-judges/tests/xai_test.rs`
 - [ ] T045 [P] [US1] Implement `OllamaJudgeClient` + blocking wrapper in `eval-judges/src/ollama.rs` with test file `eval-judges/tests/ollama_test.rs`
@@ -175,10 +175,10 @@
 - [x] T077 [P] [US1] Implement `CargoCheckEvaluator` + `ClippyEvaluator` in `eval/src/evaluators/code/cargo_check.rs` and `eval/src/evaluators/code/clippy.rs` — deterministic, shell out to cargo in a tempdir
 - [x] T078 [P] [US1] Implement `CodeExtractor` + `CodeExtractorStrategy` enum in `eval/src/evaluators/code/extractor.rs`
 - [x] T079 [P] [US1] Implement `CodeLlmJudgeEvaluator` in `eval/src/evaluators/code/llm_judge.rs` using the `code_llm_judge_v0` template
-- [ ] T080 [US1] Implement `SandboxLimits` struct + `Default` impl (120 s wall / 60 s CPU / 1 GiB RSS / 256 FDs / no network) in `eval/src/evaluators/code/sandbox.rs`
-- [ ] T081 [US1] Implement `SandboxedExecutionEvaluator` Unix path: `cfg(target_family = "unix")` module with `#![allow(unsafe_code)]` exception + safe `posix` submodule using `libc::setrlimit`/`libc::unshare`/`libc::prlimit` wrapped with `// SAFETY:` invariants; spawns child in tempdir; enforces all five limits; produces `EvaluatorError::SandboxLimitExceeded { limit }` when a bound is hit — per research.md §R-006
-- [ ] T082 [US1] Implement `SandboxedExecutionEvaluator` Windows stub: `cfg(target_family = "windows")` produces `EvaluatorError::UnsupportedPlatform` at evaluation time, never panics
-- [ ] T083 [P] [US1] Write tests in `eval/tests/evaluators_sandbox_test.rs` (Unix only via `cfg`): each limit enforced, wall-clock timeout cancels child, FD bomb caught, memory bomb caught, network egress blocked
+- [x] T080 [US1] Implement `SandboxLimits` struct + `Default` impl (120 s wall / 60 s CPU / 1 GiB RSS / 256 FDs / no network) in `eval/src/evaluators/code/sandbox.rs`
+- [x] T081 [US1] Implement `SandboxedExecutionEvaluator` Unix path: `cfg(target_family = "unix")` module with `#![allow(unsafe_code)]` exception + safe `posix` submodule using `libc::setrlimit`/`libc::unshare`/`libc::prlimit` wrapped with `// SAFETY:` invariants; spawns child in tempdir; enforces all five limits; produces `EvaluatorError::SandboxLimitExceeded { limit }` when a bound is hit — per research.md §R-006
+- [x] T082 [US1] Implement `SandboxedExecutionEvaluator` Windows stub: `cfg(target_family = "windows")` produces `EvaluatorError::UnsupportedPlatform` at evaluation time, never panics
+- [x] T083 [P] [US1] Write tests in `eval/tests/evaluators_sandbox_test.rs` (Unix only via `cfg`): each limit enforced, wall-clock timeout cancels child, FD bomb caught, memory bomb caught, network egress blocked
 
 ### Multimodal family (feature `multimodal`)
 
