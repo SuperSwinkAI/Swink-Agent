@@ -264,6 +264,33 @@ async fn emit_approval_resolved(
     .await
 }
 
+async fn reject_approval_panic(
+    tc: &ToolCallInfo,
+    idx: usize,
+    panic_message: &str,
+    results: &Arc<tokio::sync::Mutex<Vec<(usize, crate::types::ToolResultMessage)>>>,
+    tx: &mpsc::Sender<AgentEvent>,
+) -> ApprovalOutcome {
+    if !emit_approval_resolved(tx, tc, false).await {
+        return ApprovalOutcome::ChannelClosed;
+    }
+
+    emit_error_result(
+        &tc.name,
+        &tc.id,
+        AgentToolResult::error(format!(
+            "Tool call '{}' was rejected because the approval callback panicked: \
+             {panic_message}",
+            tc.name
+        )),
+        idx,
+        results,
+        tx,
+    )
+    .await;
+    ApprovalOutcome::Rejected
+}
+
 // ─── Approval helper ────────────────────────────────────────────────────────
 
 /// Run the approval gate for a single tool call.
@@ -327,6 +354,19 @@ async fn check_approval(
         requires_approval,
         context: approval_context,
     };
+    let approval_future =
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| approve_fn(request))) {
+            Ok(future) => future,
+            Err(panic_value) => {
+                let panic_message = panic_payload_message(panic_value.as_ref());
+                error!(
+                    tool_call_id = %tc.id,
+                    tool_name = %tc.name,
+                    "approval callback panicked before returning a future: {panic_message}"
+                );
+                return reject_approval_panic(tc, idx, &panic_message, results, tx).await;
+            }
+        };
     let decision = match tokio::select! {
         biased;
         () = cancellation_token.cancelled() => {
@@ -336,7 +376,7 @@ async fn check_approval(
 
             return ApprovalOutcome::Cancelled;
         }
-        decision = std::panic::AssertUnwindSafe(approve_fn(request)).catch_unwind() => decision
+        decision = std::panic::AssertUnwindSafe(approval_future).catch_unwind() => decision
     } {
         Ok(decision) => decision,
         Err(panic_value) => {
@@ -346,25 +386,7 @@ async fn check_approval(
                 tool_name = %tc.name,
                 "approval callback panicked: {panic_message}"
             );
-
-            if !emit_approval_resolved(tx, tc, false).await {
-                return ApprovalOutcome::ChannelClosed;
-            }
-
-            emit_error_result(
-                &tc.name,
-                &tc.id,
-                AgentToolResult::error(format!(
-                    "Tool call '{}' was rejected because the approval callback panicked: \
-                     {panic_message}",
-                    tc.name
-                )),
-                idx,
-                results,
-                tx,
-            )
-            .await;
-            return ApprovalOutcome::Rejected;
+            return reject_approval_panic(tc, idx, &panic_message, results, tx).await;
         }
     };
     let approved = !matches!(decision, ToolApproval::Rejected);

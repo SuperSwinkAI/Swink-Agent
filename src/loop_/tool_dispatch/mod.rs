@@ -974,6 +974,63 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn synchronous_approval_panic_rejects_without_dispatch() {
+        let tool = Arc::new(MockTool::new("delete_file").with_requires_approval(true));
+        let approve_tool: Box<crate::agent_options::ApproveToolFn> =
+            Box::new(|_request| panic!("sync approval panic"));
+        let config = test_loop_config_with_options(
+            vec![],
+            vec![tool.clone() as Arc<dyn crate::tool::AgentTool>],
+            Some(approve_tool),
+            ApprovalMode::Enabled,
+            ToolExecutionPolicy::Concurrent,
+        );
+        let tool_calls = vec![ToolCallInfo {
+            id: "call_sync_panic".to_string(),
+            name: "delete_file".to_string(),
+            arguments: json!({ "path": "danger.txt" }),
+            is_incomplete: false,
+        }];
+        let cancellation_token = CancellationToken::new();
+        let (tx, mut rx) = mpsc::channel(8);
+
+        let outcome =
+            execute_tools_concurrently(&config, &tool_calls, &cancellation_token, &tx).await;
+
+        let ToolExecOutcome::Completed { results, .. } = outcome else {
+            panic!("expected completed outcome");
+        };
+        assert_eq!(results.len(), 1);
+        assert!(results[0].is_error);
+        assert_eq!(tool.execution_count(), 0);
+        assert!(matches!(
+            results[0].content.as_slice(),
+            [ContentBlock::Text { text }] if text.contains("approval callback panicked")
+        ));
+
+        let events = drain_events(&mut rx);
+        let start_count = events
+            .iter()
+            .filter(|event| matches!(event, AgentEvent::ToolExecutionStart { .. }))
+            .count();
+        assert_eq!(
+            start_count, 0,
+            "synchronous approval panic must not look started"
+        );
+        assert!(matches!(
+            events.as_slice(),
+            [
+                AgentEvent::ToolApprovalRequested { .. },
+                AgentEvent::ToolApprovalResolved {
+                    approved: false,
+                    ..
+                },
+                AgentEvent::ToolExecutionEnd { .. }
+            ]
+        ));
+    }
+
+    #[tokio::test]
     async fn tool_execution_start_uses_approved_arguments() {
         let tool = Arc::new(MockTool::new("write_file"));
         let approve_tool: Box<crate::agent_options::ApproveToolFn> = Box::new(|_request| {
