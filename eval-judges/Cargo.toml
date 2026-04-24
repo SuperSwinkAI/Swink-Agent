@@ -39,8 +39,8 @@ gemini = ["dep:swink-agent-adapters", "swink-agent-eval/judge-core", "dep:reqwes
 mistral = ["dep:swink-agent-adapters", "swink-agent-eval/judge-core", "dep:reqwest"]
 azure = ["dep:swink-agent-adapters", "swink-agent-eval/judge-core", "dep:reqwest"]
 xai = ["dep:swink-agent-adapters", "swink-agent-eval/judge-core", "dep:reqwest"]
-ollama = ["dep:swink-agent-adapters", "swink-agent-eval/judge-core"]
-proxy = ["dep:swink-agent-adapters", "swink-agent-eval/judge-core"]
+ollama = ["dep:swink-agent-adapters", "swink-agent-eval/judge-core", "dep:reqwest"]
+proxy = ["dep:swink-agent-adapters", "swink-agent-eval/judge-core", "dep:reqwest"]
 live-judges = []
 
 [dependencies]
