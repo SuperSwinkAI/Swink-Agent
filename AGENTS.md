@@ -210,6 +210,7 @@ gh pr comment <number> --body-file /tmp/comment.md
 
 - Sliding window: anchor (first N) + tail (recent), middle removed to fit budget.
 - Tool-result pairs preserved together even if it exceeds budget. Correctness > token count.
+- Anchor-side compaction must also preserve tool parity: if the preserved anchor ends on an assistant tool-call message, any immediately following matching tool-result messages must stay with it even when they would otherwise fall into the dropped middle slice.
 - Token estimation: chars/4 heuristic. CustomMessage = 100 tokens flat.
 - `TiktokenCounter` is feature-gated behind `tiktoken`; it keeps `CustomMessage` at the same flat 100-token estimate because those messages never reach provider tokenizers.
 
