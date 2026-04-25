@@ -2,7 +2,9 @@
 
 use std::io;
 
-use swink_agent::{AgentMessage, ContentBlock, LlmMessage, SessionState, StopReason};
+use swink_agent::{
+    AgentMessage, ContentBlock, LlmMessage, SessionState, StopReason, ToolResultMessage,
+};
 use swink_agent_memory::now_utc;
 use tracing::{info, warn};
 
@@ -13,6 +15,31 @@ use crate::ui::conversation::ConversationView;
 use super::state::{App, DisplayMessage, MessageRole};
 
 impl App {
+    fn restored_tool_result_message(tool_result: &ToolResultMessage) -> Option<DisplayMessage> {
+        let content = ContentBlock::extract_text(&tool_result.content);
+        if content.is_empty() {
+            return None;
+        }
+
+        let role = if tool_result.is_error {
+            MessageRole::Error
+        } else {
+            MessageRole::ToolResult
+        };
+        let summary = content
+            .lines()
+            .next()
+            .unwrap_or("")
+            .chars()
+            .take(60)
+            .collect::<String>();
+        let mut message = DisplayMessage::new(role, content);
+        message.collapsed = true;
+        message.summary = summary;
+        message.diff_data = crate::ui::diff::DiffData::from_details(&tool_result.details);
+        Some(message)
+    }
+
     /// Persist the current session. Returns an error if the save failed so that
     /// callers can surface it to the user instead of silently dropping failures.
     pub(super) fn auto_save_session(&mut self) -> io::Result<()> {
@@ -134,21 +161,8 @@ impl App {
                             display_messages.push(message);
                         }
                         AgentMessage::Llm(LlmMessage::ToolResult(tool_result)) => {
-                            let content = ContentBlock::extract_text(&tool_result.content);
-                            if !content.is_empty() {
-                                let summary = content
-                                    .lines()
-                                    .next()
-                                    .unwrap_or("")
-                                    .chars()
-                                    .take(60)
-                                    .collect::<String>();
-                                let mut dm = DisplayMessage::new(MessageRole::ToolResult, content);
-                                dm.collapsed = true;
-                                dm.summary = summary;
-                                dm.diff_data =
-                                    crate::ui::diff::DiffData::from_details(&tool_result.details);
-                                display_messages.push(dm);
+                            if let Some(message) = Self::restored_tool_result_message(tool_result) {
+                                display_messages.push(message);
                             }
                         }
                         AgentMessage::Custom(_) => {
