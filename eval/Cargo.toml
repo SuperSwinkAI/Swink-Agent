@@ -32,7 +32,6 @@ tokio-util.workspace = true
 uuid = { workspace = true, features = ["v5"] }
 regex.workspace = true
 sha2.workspace = true
-async-trait = "0.1"
 minijinja = { workspace = true, optional = true }
 backon = { workspace = true, optional = true }
 strsim = { workspace = true, optional = true }

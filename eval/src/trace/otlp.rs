@@ -31,7 +31,6 @@ use std::borrow::Cow;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use async_trait::async_trait;
 use opentelemetry::trace::{
     SpanContext, SpanId, SpanKind, Status, TraceFlags, TraceId, TraceState,
 };
@@ -160,83 +159,82 @@ impl Clone for Inner {
     }
 }
 
-#[async_trait]
 impl TraceProvider for OtlpHttpTraceProvider {
-    async fn fetch_session(&self, session_id: &str) -> Result<RawSession, TraceProviderError> {
-        // Build the request URL with one querystring parameter. We
-        // sidestep `reqwest::RequestBuilder::query` here because it
-        // requires the `query` feature on the `reqwest` dep, which the
-        // workspace currently does not enable; `form_urlencoded` is
-        // already in-tree via the `url` crate.
-        let encoded: String = url::form_urlencoded::Serializer::new(String::new())
-            .append_pair(&self.inner.session_query_param, session_id)
-            .finish();
-        let full_url = format!("{}{}?{}", self.inner.base_url, self.inner.path, encoded);
+    fn fetch_session<'a>(
+        &'a self,
+        session_id: &'a str,
+    ) -> crate::trace::provider::TraceProviderFuture<'a> {
+        Box::pin(async move {
+            let encoded: String = url::form_urlencoded::Serializer::new(String::new())
+                .append_pair(&self.inner.session_query_param, session_id)
+                .finish();
+            let full_url = format!("{}{}?{}", self.inner.base_url, self.inner.path, encoded);
 
-        let mut req = self.inner.http.get(&full_url);
-        if let Some(token) = &self.inner.bearer_token {
-            req = req.bearer_auth(token);
-        }
+            let mut req = self.inner.http.get(&full_url);
+            if let Some(token) = &self.inner.bearer_token {
+                req = req.bearer_auth(token);
+            }
 
-        let resp = req
-            .send()
-            .await
-            .map_err(|err| TraceProviderError::BackendFailure {
-                reason: format!("otlp GET {full_url}: {err}"),
-            })?;
-
-        let status = resp.status();
-        if status == reqwest::StatusCode::NOT_FOUND {
-            return Err(TraceProviderError::SessionNotFound {
-                session_id: session_id.to_string(),
-            });
-        }
-        if !status.is_success() {
-            let body = resp.text().await.unwrap_or_default();
-            return Err(TraceProviderError::BackendFailure {
-                reason: format!("otlp http {}: {}", status.as_u16(), truncate(&body)),
-            });
-        }
-
-        let body: OtlpTraceResponse =
-            resp.json()
+            let resp = req
+                .send()
                 .await
                 .map_err(|err| TraceProviderError::BackendFailure {
-                    reason: format!("otlp body parse: {err}"),
+                    reason: format!("otlp GET {full_url}: {err}"),
                 })?;
 
-        let all_spans = body.into_span_data();
+            let status = resp.status();
+            if status == reqwest::StatusCode::NOT_FOUND {
+                return Err(TraceProviderError::SessionNotFound {
+                    session_id: session_id.to_string(),
+                });
+            }
+            if !status.is_success() {
+                let body = resp.text().await.unwrap_or_default();
+                return Err(TraceProviderError::BackendFailure {
+                    reason: format!("otlp http {}: {}", status.as_u16(), truncate(&body)),
+                });
+            }
 
-        let key = self.inner.session_attribute.as_str();
-        let matching: Vec<SpanData> = all_spans
-            .into_iter()
-            .filter(|span| {
-                span.attributes
-                    .iter()
-                    .any(|kv| kv.key.as_str() == key && kv.value.as_str().as_ref() == session_id)
+            let body: OtlpTraceResponse =
+                resp.json()
+                    .await
+                    .map_err(|err| TraceProviderError::BackendFailure {
+                        reason: format!("otlp body parse: {err}"),
+                    })?;
+
+            let all_spans = body.into_span_data();
+
+            let key = self.inner.session_attribute.as_str();
+            let matching: Vec<SpanData> = all_spans
+                .into_iter()
+                .filter(|span| {
+                    span.attributes.iter().any(|kv| {
+                        kv.key.as_str() == key && kv.value.as_str().as_ref() == session_id
+                    })
+                })
+                .collect();
+
+            if matching.is_empty() {
+                return Err(TraceProviderError::SessionNotFound {
+                    session_id: session_id.to_string(),
+                });
+            }
+
+            let open = matching
+                .iter()
+                .filter(|s| s.end_time <= s.start_time)
+                .count();
+            if open > 0 {
+                return Err(TraceProviderError::SessionInProgress {
+                    session_id: session_id.to_string(),
+                    open_spans: open,
+                });
+            }
+
+            Ok(RawSession::OtelSpans {
+                session_id: session_id.to_string(),
+                spans: matching,
             })
-            .collect();
-
-        if matching.is_empty() {
-            return Err(TraceProviderError::SessionNotFound {
-                session_id: session_id.to_string(),
-            });
-        }
-
-        let open = matching
-            .iter()
-            .filter(|s| s.end_time <= s.start_time)
-            .count();
-        if open > 0 {
-            return Err(TraceProviderError::SessionInProgress {
-                session_id: session_id.to_string(),
-                open_spans: open,
-            });
-        }
-
-        Ok(RawSession::OtelSpans {
-            session_id: session_id.to_string(),
-            spans: matching,
         })
     }
 }

@@ -13,7 +13,6 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use async_trait::async_trait;
 use tempfile::tempdir;
 
 use swink_agent::{Cost, ModelSpec, StopReason, Usage};
@@ -45,15 +44,16 @@ const TINY_PNG: &[u8] = &[
     0x42, 0x60, 0x82,
 ];
 
-#[async_trait]
 impl JudgeClient for CapturingJudge {
-    async fn judge(&self, prompt: &str) -> Result<JudgeVerdict, JudgeError> {
-        self.prompts.lock().unwrap().push(prompt.to_string());
-        Ok(JudgeVerdict {
-            score: 0.8,
-            pass: true,
-            reason: Some("captured".into()),
-            label: None,
+    fn judge<'a>(&'a self, prompt: &'a str) -> swink_agent_eval::JudgeFuture<'a> {
+        Box::pin(async move {
+            self.prompts.lock().unwrap().push(prompt.to_string());
+            Ok(JudgeVerdict {
+                score: 0.8,
+                pass: true,
+                reason: Some("captured".into()),
+                label: None,
+            })
         })
     }
 }

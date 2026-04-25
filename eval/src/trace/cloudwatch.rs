@@ -23,7 +23,6 @@ use std::borrow::Cow;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use async_trait::async_trait;
 use opentelemetry::trace::{
     SpanContext, SpanId, SpanKind, Status, TraceFlags, TraceId, TraceState,
 };
@@ -48,17 +47,21 @@ const DEFAULT_SESSION_ATTRIBUTE: &str = "session.id";
 /// [`TraceProviderError::BackendFailure`]; empty results SHOULD return
 /// [`TraceProviderError::SessionNotFound`] directly or an empty vector
 /// (the provider converts empty to `SessionNotFound`).
-#[async_trait]
 pub trait CloudWatchLogsFetcher: Send + Sync {
     /// Fetch the raw JSON documents for `session_id`.
     ///
     /// The documents themselves are not yet OTel spans — the provider
     /// parses them into [`SpanData`].
-    async fn fetch_events(
-        &self,
-        session_id: &str,
-    ) -> Result<Vec<serde_json::Value>, TraceProviderError>;
+    fn fetch_events<'a>(&'a self, session_id: &'a str) -> CloudWatchFetchFuture<'a>;
 }
+
+type CloudWatchFetchFuture<'a> = std::pin::Pin<
+    Box<
+        dyn std::future::Future<Output = Result<Vec<serde_json::Value>, TraceProviderError>>
+            + Send
+            + 'a,
+    >,
+>;
 
 /// Trace provider backed by a caller-supplied [`CloudWatchLogsFetcher`].
 ///
@@ -103,42 +106,46 @@ impl CloudWatchTraceProvider {
     }
 }
 
-#[async_trait]
 impl TraceProvider for CloudWatchTraceProvider {
-    async fn fetch_session(&self, session_id: &str) -> Result<RawSession, TraceProviderError> {
-        let events = self.fetcher.fetch_events(session_id).await?;
-        if events.is_empty() {
-            return Err(TraceProviderError::SessionNotFound {
+    fn fetch_session<'a>(
+        &'a self,
+        session_id: &'a str,
+    ) -> crate::trace::provider::TraceProviderFuture<'a> {
+        Box::pin(async move {
+            let events = self.fetcher.fetch_events(session_id).await?;
+            if events.is_empty() {
+                return Err(TraceProviderError::SessionNotFound {
+                    session_id: session_id.to_string(),
+                });
+            }
+
+            let mut docs: Vec<SourceDoc> = Vec::with_capacity(events.len());
+            for value in events {
+                let doc: SourceDoc = serde_json::from_value(value).map_err(|err| {
+                    TraceProviderError::BackendFailure {
+                        reason: format!("cloudwatch event parse: {err}"),
+                    }
+                })?;
+                docs.push(doc);
+            }
+
+            let open = docs.iter().filter(|d| d.end_time.is_none()).count();
+            if open > 0 {
+                return Err(TraceProviderError::SessionInProgress {
+                    session_id: session_id.to_string(),
+                    open_spans: open,
+                });
+            }
+
+            let spans = docs
+                .into_iter()
+                .map(|d| doc_to_span_data(d, session_id, &self.session_attribute))
+                .collect();
+
+            Ok(RawSession::OtelSpans {
                 session_id: session_id.to_string(),
-            });
-        }
-
-        let mut docs: Vec<SourceDoc> = Vec::with_capacity(events.len());
-        for value in events {
-            let doc: SourceDoc = serde_json::from_value(value).map_err(|err| {
-                TraceProviderError::BackendFailure {
-                    reason: format!("cloudwatch event parse: {err}"),
-                }
-            })?;
-            docs.push(doc);
-        }
-
-        let open = docs.iter().filter(|d| d.end_time.is_none()).count();
-        if open > 0 {
-            return Err(TraceProviderError::SessionInProgress {
-                session_id: session_id.to_string(),
-                open_spans: open,
-            });
-        }
-
-        let spans = docs
-            .into_iter()
-            .map(|d| doc_to_span_data(d, session_id, &self.session_attribute))
-            .collect();
-
-        Ok(RawSession::OtelSpans {
-            session_id: session_id.to_string(),
-            spans,
+                spans,
+            })
         })
     }
 }
@@ -362,13 +369,9 @@ mod tests {
 
     struct StaticFetcher(Vec<serde_json::Value>);
 
-    #[async_trait]
     impl CloudWatchLogsFetcher for StaticFetcher {
-        async fn fetch_events(
-            &self,
-            _session_id: &str,
-        ) -> Result<Vec<serde_json::Value>, TraceProviderError> {
-            Ok(self.0.clone())
+        fn fetch_events<'a>(&'a self, _session_id: &'a str) -> CloudWatchFetchFuture<'a> {
+            Box::pin(async move { Ok(self.0.clone()) })
         }
     }
 

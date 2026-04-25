@@ -247,22 +247,22 @@ fn strip_code_fence(text: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use async_trait::async_trait;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     struct CountingJudge {
         calls: AtomicUsize,
     }
 
-    #[async_trait]
     impl JudgeClient for CountingJudge {
-        async fn judge(&self, _prompt: &str) -> Result<JudgeVerdict, JudgeError> {
-            self.calls.fetch_add(1, Ordering::SeqCst);
-            Ok(JudgeVerdict {
-                score: 1.0,
-                pass: true,
-                reason: None,
-                label: None,
+        fn judge<'a>(&'a self, _prompt: &'a str) -> swink_agent_eval::JudgeFuture<'a> {
+            Box::pin(async move {
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                Ok(JudgeVerdict {
+                    score: 1.0,
+                    pass: true,
+                    reason: None,
+                    label: None,
+                })
             })
         }
     }

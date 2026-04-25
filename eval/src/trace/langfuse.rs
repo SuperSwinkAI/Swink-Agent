@@ -23,7 +23,6 @@ use std::borrow::Cow;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use async_trait::async_trait;
 use opentelemetry::trace::{
     SpanContext, SpanId, SpanKind, Status, TraceFlags, TraceId, TraceState,
 };
@@ -107,65 +106,68 @@ impl Clone for Inner {
     }
 }
 
-#[async_trait]
 impl TraceProvider for LangfuseTraceProvider {
-    async fn fetch_session(&self, session_id: &str) -> Result<RawSession, TraceProviderError> {
-        let url = format!("{}/api/public/traces/{}", self.inner.base_url, session_id);
-        let resp = self
-            .inner
-            .http
-            .get(&url)
-            .basic_auth(&self.inner.public_key, Some(&self.inner.secret_key))
-            .send()
-            .await
-            .map_err(|err| TraceProviderError::BackendFailure {
-                reason: format!("langfuse GET {url}: {err}"),
-            })?;
-
-        let status = resp.status();
-        if status == reqwest::StatusCode::NOT_FOUND {
-            return Err(TraceProviderError::SessionNotFound {
-                session_id: session_id.to_string(),
-            });
-        }
-        if !status.is_success() {
-            let body = resp.text().await.unwrap_or_default();
-            return Err(TraceProviderError::BackendFailure {
-                reason: format!("langfuse http {}: {}", status.as_u16(), truncate(&body)),
-            });
-        }
-
-        let trace: LangfuseTrace =
-            resp.json()
+    fn fetch_session<'a>(
+        &'a self,
+        session_id: &'a str,
+    ) -> crate::trace::provider::TraceProviderFuture<'a> {
+        Box::pin(async move {
+            let url = format!("{}/api/public/traces/{}", self.inner.base_url, session_id);
+            let resp = self
+                .inner
+                .http
+                .get(&url)
+                .basic_auth(&self.inner.public_key, Some(&self.inner.secret_key))
+                .send()
                 .await
                 .map_err(|err| TraceProviderError::BackendFailure {
-                    reason: format!("langfuse body parse: {err}"),
+                    reason: format!("langfuse GET {url}: {err}"),
                 })?;
 
-        let observations = trace.observations.unwrap_or_default();
-        if observations.is_empty() {
-            return Err(TraceProviderError::SessionNotFound {
+            let status = resp.status();
+            if status == reqwest::StatusCode::NOT_FOUND {
+                return Err(TraceProviderError::SessionNotFound {
+                    session_id: session_id.to_string(),
+                });
+            }
+            if !status.is_success() {
+                let body = resp.text().await.unwrap_or_default();
+                return Err(TraceProviderError::BackendFailure {
+                    reason: format!("langfuse http {}: {}", status.as_u16(), truncate(&body)),
+                });
+            }
+
+            let trace: LangfuseTrace =
+                resp.json()
+                    .await
+                    .map_err(|err| TraceProviderError::BackendFailure {
+                        reason: format!("langfuse body parse: {err}"),
+                    })?;
+
+            let observations = trace.observations.unwrap_or_default();
+            if observations.is_empty() {
+                return Err(TraceProviderError::SessionNotFound {
+                    session_id: session_id.to_string(),
+                });
+            }
+
+            let open: usize = observations.iter().filter(|o| o.end_time.is_none()).count();
+            if open > 0 {
+                return Err(TraceProviderError::SessionInProgress {
+                    session_id: session_id.to_string(),
+                    open_spans: open,
+                });
+            }
+
+            let spans = observations
+                .into_iter()
+                .map(|o| observation_to_span_data(o, session_id, trace.name.as_deref()))
+                .collect();
+
+            Ok(RawSession::OtelSpans {
                 session_id: session_id.to_string(),
-            });
-        }
-
-        // A Langfuse observation without `end_time` is still in progress.
-        let open: usize = observations.iter().filter(|o| o.end_time.is_none()).count();
-        if open > 0 {
-            return Err(TraceProviderError::SessionInProgress {
-                session_id: session_id.to_string(),
-                open_spans: open,
-            });
-        }
-
-        let spans = observations
-            .into_iter()
-            .map(|o| observation_to_span_data(o, session_id, trace.name.as_deref()))
-            .collect();
-
-        Ok(RawSession::OtelSpans {
-            session_id: session_id.to_string(),
-            spans,
+                spans,
+            })
         })
     }
 }

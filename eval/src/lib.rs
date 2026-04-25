@@ -121,8 +121,8 @@ pub use evaluators::{
 };
 pub use gate::{GateConfig, GateResult, check_gate};
 pub use judge::{
-    CacheKey, DEFAULT_JUDGE_CACHE_CAPACITY, JudgeCache, JudgeClient, JudgeError, JudgeRegistry,
-    JudgeRegistryBuilder, JudgeRegistryError, JudgeVerdict, RetryPolicy,
+    CacheKey, DEFAULT_JUDGE_CACHE_CAPACITY, JudgeCache, JudgeClient, JudgeError, JudgeFuture,
+    JudgeRegistry, JudgeRegistryBuilder, JudgeRegistryError, JudgeVerdict, RetryPolicy,
 };
 pub use match_::{MatchMode, TrajectoryMatcher};
 #[cfg(feature = "judge-core")]

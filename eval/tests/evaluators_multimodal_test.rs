@@ -5,7 +5,6 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use async_trait::async_trait;
 use swink_agent::{Cost, ModelSpec, StopReason, Usage};
 use swink_agent_eval::{
     Attachment, DefaultUrlFilter, EvalCase, Evaluator, ImageSafetyEvaluator, Invocation,
@@ -20,15 +19,16 @@ struct FixedVerdict {
     last_prompt: Mutex<Option<String>>,
 }
 
-#[async_trait]
 impl JudgeClient for FixedVerdict {
-    async fn judge(&self, prompt: &str) -> Result<JudgeVerdict, JudgeError> {
-        *self.last_prompt.lock().unwrap() = Some(prompt.to_string());
-        Ok(JudgeVerdict {
-            score: self.score,
-            pass: self.pass,
-            reason: self.reason.clone(),
-            label: None,
+    fn judge<'a>(&'a self, prompt: &'a str) -> swink_agent_eval::JudgeFuture<'a> {
+        Box::pin(async move {
+            *self.last_prompt.lock().unwrap() = Some(prompt.to_string());
+            Ok(JudgeVerdict {
+                score: self.score,
+                pass: self.pass,
+                reason: self.reason.clone(),
+                label: None,
+            })
         })
     }
 }

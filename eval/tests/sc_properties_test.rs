@@ -7,7 +7,7 @@
 //!   `cargo tree -p swink-agent-eval --no-default-features` produces a
 //!   dep graph with none of the opt-in heavyweight crates
 //!   (`reqwest`, `jsonschema`, `askama`, `clap`, `opentelemetry*`,
-//!   `minijinja`, `backon`, `strsim`). If this test regresses the
+//!   `minijinja`, `backon`, `strsim`, `async-trait`). If this test regresses the
 //!   default build has started pulling in a gated transitive.
 
 #![cfg(all(feature = "judge-core", feature = "evaluator-quality"))]
@@ -185,6 +185,7 @@ fn sc_009_default_build_has_no_new_transitive_deps() {
         "minijinja ",
         "backon ",
         "strsim ",
+        "async-trait ",
     ];
     for name in FORBIDDEN {
         assert!(

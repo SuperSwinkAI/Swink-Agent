@@ -33,12 +33,13 @@
 use std::collections::{HashMap, VecDeque};
 use std::fmt;
 use std::fs;
+use std::future::Future;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
-use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -59,15 +60,18 @@ pub const DEFAULT_JUDGE_CACHE_CAPACITY: usize = 1024;
 /// returns a structured [`JudgeVerdict`]. Concrete implementations (model
 /// providers, prompt templating, retry / backoff, batching) are explicitly out
 /// of scope for spec 023.
-#[async_trait]
 pub trait JudgeClient: Send + Sync {
     /// Judge the given prompt and return a structured verdict.
     ///
     /// Implementations MAY enforce their own inner deadlines and surface
     /// them via [`JudgeError::Timeout`]. Evaluators additionally wrap each
     /// call in an outer `tokio::time::timeout`.
-    async fn judge(&self, prompt: &str) -> Result<JudgeVerdict, JudgeError>;
+    fn judge<'a>(&'a self, prompt: &'a str) -> JudgeFuture<'a>;
 }
+
+/// Object-safe future returned by [`JudgeClient::judge`].
+pub type JudgeFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<JudgeVerdict, JudgeError>> + Send + 'a>>;
 
 /// Retry configuration shared by judge-backed evaluators.
 #[derive(Debug, Clone, PartialEq, Eq)]
