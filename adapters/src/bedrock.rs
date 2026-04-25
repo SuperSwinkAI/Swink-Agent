@@ -641,7 +641,7 @@ fn process_smithy_message(
         Err(error_text) => {
             warn!(event_type = %et, "Bedrock event deserialization failed for known event type");
             let mut events = finalize::finalize_blocks(state);
-            events.push(AssistantMessageEvent::error_network(error_text));
+            events.push(AssistantMessageEvent::error(error_text));
             prefix_pre_start_terminal_error(events, &mut state.started)
         }
     })
@@ -1843,8 +1843,11 @@ mod tests {
         assert!(matches!(events[0], AssistantMessageEvent::Start));
         assert!(matches!(
             &events[1],
-            AssistantMessageEvent::Error { error_message, .. }
-                if error_message.contains("Bedrock metadata parse error")
+            AssistantMessageEvent::Error {
+                error_message,
+                error_kind: None,
+                ..
+            } if error_message.contains("Bedrock metadata parse error")
         ));
     }
 
