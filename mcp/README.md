@@ -36,11 +36,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             command: "npx".into(),
             args: vec!["-y".into(), "@modelcontextprotocol/server-filesystem".into()],
             env: Default::default(),
-        },
-        tool_prefix: Some("fs".into()),
-        tool_filter: None,
-        requires_approval: true,
-    }];
+    },
+    tool_prefix: Some("fs".into()),
+    tool_filter: None,
+    requires_approval: true,
+    connect_timeout_ms: Some(5_000),
+    discovery_timeout_ms: Some(5_000),
+}];
 
     let mut mcp = McpManager::new(configs);
     mcp.connect_all().await?;

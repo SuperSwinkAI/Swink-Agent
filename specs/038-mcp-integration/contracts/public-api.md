@@ -32,6 +32,8 @@ pub struct McpServerConfig {
     pub tool_prefix: Option<String>,
     pub tool_filter: Option<ToolFilter>,
     pub requires_approval: bool,  // default: true
+    pub connect_timeout_ms: Option<u64>,
+    pub discovery_timeout_ms: Option<u64>,
 }
 ```
 
@@ -106,6 +108,8 @@ let configs = vec![
         tool_prefix: Some("fs".into()),
         tool_filter: None,
         requires_approval: true,
+        connect_timeout_ms: Some(5_000),
+        discovery_timeout_ms: Some(5_000),
     },
 ];
 

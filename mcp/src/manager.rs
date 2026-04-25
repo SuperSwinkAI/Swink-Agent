@@ -39,6 +39,8 @@ use crate::tool::McpTool;
 ///         tool_prefix: Some("fs".into()),
 ///         tool_filter: None,
 ///         requires_approval: true,
+///         connect_timeout_ms: None,
+///         discovery_timeout_ms: None,
 ///     },
 /// ];
 ///

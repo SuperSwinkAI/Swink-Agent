@@ -25,6 +25,8 @@ fn stub_config(name: &str, filter: Option<ToolFilter>) -> McpServerConfig {
         tool_prefix: None,
         tool_filter: filter,
         requires_approval: false,
+        connect_timeout_ms: None,
+        discovery_timeout_ms: None,
     }
 }
 

@@ -1,6 +1,7 @@
 //! Configuration types for MCP server connections.
 
 use std::collections::HashMap;
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use swink_agent::CredentialType;
@@ -79,8 +80,24 @@ pub struct McpServerConfig {
     /// Whether tools from this server require user approval before execution.
     #[serde(default = "default_requires_approval")]
     pub requires_approval: bool,
+    /// Optional timeout for the initial transport handshake.
+    #[serde(default)]
+    pub connect_timeout_ms: Option<u64>,
+    /// Optional timeout for the initial tool discovery request.
+    #[serde(default)]
+    pub discovery_timeout_ms: Option<u64>,
 }
 
 const fn default_requires_approval() -> bool {
     true
+}
+
+impl McpServerConfig {
+    pub(crate) fn connect_timeout(&self) -> Option<Duration> {
+        self.connect_timeout_ms.map(Duration::from_millis)
+    }
+
+    pub(crate) fn discovery_timeout(&self) -> Option<Duration> {
+        self.discovery_timeout_ms.map(Duration::from_millis)
+    }
 }

@@ -171,6 +171,8 @@ fn create_mock_connection() -> Arc<swink_agent_mcp::McpConnection> {
         tool_prefix: None,
         tool_filter: None,
         requires_approval: false,
+        connect_timeout_ms: None,
+        discovery_timeout_ms: None,
     };
 
     Arc::new(swink_agent_mcp::McpConnection::disconnected(config))

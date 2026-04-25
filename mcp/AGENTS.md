@@ -7,7 +7,7 @@
 ## Key Facts
 
 - `McpManager` — owns all server connections; call `connect_all()` then `tools()` to get `Vec<Arc<McpTool>>`.
-- `McpServerConfig` — name, transport, optional `tool_prefix`, optional `ToolFilter`, `requires_approval` flag.
+- `McpServerConfig` — name, transport, optional `tool_prefix`, optional `ToolFilter`, `requires_approval` flag, and optional per-server `connect_timeout_ms` / `discovery_timeout_ms` bootstrap bounds.
 - `McpTransport` — `Stdio { command, args, env }`, SSE, or streamable HTTP (via `rmcp` features).
 - `McpTool` — wraps a discovered MCP tool as `AgentTool`. Registered names use provider-safe `"{prefix}_{tool_name}"` composition when `tool_prefix` is set; dispatch still uses the original server-advertised tool name.
 - `McpConnection` tracks per-server state and exposes `status()` for health checks.
@@ -23,6 +23,7 @@
 - rmcp stores SSE `auth_header` as a static string inside the transport config and reuses it for reconnect/re-init paths. Resolver-backed SSE auth that must survive token rotation therefore needs a custom `StreamableHttpClient` wrapper that resolves credentials per HTTP request instead of only at initial connect.
 - MCP tool registration names must go through the same provider-safe sanitizer/length cap as plugin tools. `McpTool` keeps the raw `original_name` for outbound MCP calls, while `McpManager` collision detection runs on the sanitized registration name exposed to providers.
 - Stdio MCP subprocesses must start from `Command::env_clear()` and then receive only configured `env` entries; inheriting the parent environment leaks unrelated secrets and tokens into child servers.
+- Per-server MCP bootstrap bounds belong on `McpServerConfig`, and the timeout enforcement has to distinguish transport handshake from `list_all_tools()` discovery so `connect_all()` can skip one hung server without blocking later configs.
 
 ## Build & Test
 

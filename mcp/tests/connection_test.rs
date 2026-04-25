@@ -5,7 +5,7 @@ mod common;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use axum::Router;
 use axum::extract::{Request, State};
@@ -173,6 +173,29 @@ async fn capture_headers(
     StatusCode::INTERNAL_SERVER_ERROR
 }
 
+#[cfg(windows)]
+fn sleep_command(seconds: u64) -> (String, Vec<String>) {
+    let command = std::env::var("SystemRoot").map_or_else(
+        |_| "C:\\Windows\\System32\\choice.exe".into(),
+        |root| format!("{root}\\System32\\choice.exe"),
+    );
+    (
+        command,
+        vec![
+            "/T".into(),
+            seconds.to_string(),
+            "/D".into(),
+            "Y".into(),
+            "/N".into(),
+        ],
+    )
+}
+
+#[cfg(not(windows))]
+fn sleep_command(seconds: u64) -> (String, Vec<String>) {
+    ("sh".into(), vec!["-c".into(), format!("sleep {seconds}")])
+}
+
 /// T010: Connect to mock stdio MCP server, verify connection succeeds
 /// and tools are discovered.
 ///
@@ -218,6 +241,8 @@ async fn connect_to_nonexistent_server_returns_spawn_failed() {
         tool_prefix: None,
         tool_filter: None,
         requires_approval: false,
+        connect_timeout_ms: None,
+        discovery_timeout_ms: None,
     };
 
     let result = McpConnection::connect(config, None).await;
@@ -231,6 +256,39 @@ async fn connect_to_nonexistent_server_returns_spawn_failed() {
     assert!(
         err_msg.contains("nonexistent"),
         "error should mention server name, got: {err_msg}"
+    );
+}
+
+#[tokio::test]
+async fn connect_timeout_returns_connection_failed() {
+    let (command, args) = sleep_command(5);
+    let config = McpServerConfig {
+        name: "sleepy-stdio".into(),
+        transport: McpTransport::Stdio {
+            command,
+            args,
+            env: HashMap::default(),
+        },
+        tool_prefix: None,
+        tool_filter: None,
+        requires_approval: false,
+        connect_timeout_ms: Some(50),
+        discovery_timeout_ms: None,
+    };
+
+    let start = Instant::now();
+    let result = McpConnection::connect(config, None).await;
+    let elapsed = start.elapsed();
+
+    let error = result.expect_err("sleeping server should time out");
+    let message = error.to_string();
+    assert!(
+        message.contains("timed out"),
+        "timeout error should mention timeout, got: {message}"
+    );
+    assert!(
+        elapsed < Duration::from_secs(2),
+        "connect timeout should fail quickly, elapsed: {elapsed:?}"
     );
 }
 
@@ -278,6 +336,8 @@ async fn connect_sse_to_unreachable_url_returns_error() {
         tool_prefix: None,
         tool_filter: None,
         requires_approval: false,
+        connect_timeout_ms: None,
+        discovery_timeout_ms: None,
     };
 
     let result = McpConnection::connect(config, None).await;
@@ -318,6 +378,8 @@ async fn connect_sse_sends_bearer_and_custom_headers() {
         tool_prefix: None,
         tool_filter: None,
         requires_approval: false,
+        connect_timeout_ms: None,
+        discovery_timeout_ms: None,
     };
 
     let result = McpConnection::connect(config, None).await;
@@ -376,6 +438,8 @@ async fn connect_sse_uses_resolved_bearer_auth_over_static_token() {
         tool_prefix: None,
         tool_filter: None,
         requires_approval: false,
+        connect_timeout_ms: None,
+        discovery_timeout_ms: None,
     };
 
     let resolver = Arc::new(StaticCredentialResolver::new(
@@ -419,6 +483,8 @@ async fn connect_sse_with_resolver_auth_requires_resolver() {
         tool_prefix: None,
         tool_filter: None,
         requires_approval: false,
+        connect_timeout_ms: None,
+        discovery_timeout_ms: None,
     };
 
     let result = McpConnection::connect(config, None).await;
@@ -487,6 +553,8 @@ async fn sse_resolver_auth_refreshes_during_session_recovery() {
         tool_prefix: None,
         tool_filter: None,
         requires_approval: false,
+        connect_timeout_ms: None,
+        discovery_timeout_ms: None,
     };
 
     let conn = McpConnection::connect_with_resolver(config, Some(resolver.clone()), None)

@@ -22,6 +22,8 @@ fn disconnected_connection(requires_approval: bool) -> (McpServerConfig, Arc<Mcp
         tool_prefix: None,
         tool_filter: None,
         requires_approval,
+        connect_timeout_ms: None,
+        discovery_timeout_ms: None,
     };
     let conn = Arc::new(McpConnection::disconnected(config.clone()));
     (config, conn)

@@ -48,6 +48,8 @@ async fn call_tool_on_disconnected_connection_returns_error() {
         tool_prefix: None,
         tool_filter: None,
         requires_approval: false,
+        connect_timeout_ms: None,
+        discovery_timeout_ms: None,
     };
     let conn = McpConnection::disconnected(config);
 
@@ -128,6 +130,8 @@ async fn explicit_shutdown_emits_disconnect_event() {
         tool_prefix: None,
         tool_filter: None,
         requires_approval: false,
+        connect_timeout_ms: None,
+        discovery_timeout_ms: None,
     };
 
     let conn = McpConnection::from_service(config, service, Some(event_tx))
@@ -196,6 +200,8 @@ async fn repeated_connect_all_replaces_prior_live_connections() {
         tool_prefix: None,
         tool_filter: None,
         requires_approval: false,
+        connect_timeout_ms: None,
+        discovery_timeout_ms: None,
     };
 
     let mut manager = McpManager::new(vec![config]);
@@ -292,6 +298,8 @@ async fn monitor_detects_transport_close_and_emits_event() {
         tool_prefix: None,
         tool_filter: None,
         requires_approval: false,
+        connect_timeout_ms: None,
+        discovery_timeout_ms: None,
     };
 
     let conn = McpConnection::from_service(config, service, Some(event_tx))
@@ -418,6 +426,8 @@ async fn sse_session_expiry_recovers_without_wrapper_disconnect() {
             tool_prefix: None,
             tool_filter: None,
             requires_approval: false,
+            connect_timeout_ms: None,
+            discovery_timeout_ms: None,
         },
         Some(event_tx),
     )
@@ -495,6 +505,8 @@ async fn connected_event_emitted_after_handshake() {
         tool_prefix: None,
         tool_filter: None,
         requires_approval: false,
+        connect_timeout_ms: None,
+        discovery_timeout_ms: None,
     };
 
     let _conn = McpConnection::from_service(config, service, Some(event_tx))
@@ -529,6 +541,8 @@ async fn tools_discovered_event_emitted_after_discovery() {
         tool_prefix: None,
         tool_filter: None,
         requires_approval: false,
+        connect_timeout_ms: None,
+        discovery_timeout_ms: None,
     };
 
     let conn = McpConnection::from_service(config, service, Some(event_tx))
@@ -581,6 +595,8 @@ async fn tool_call_events_bracket_successful_call() {
         tool_prefix: None,
         tool_filter: None,
         requires_approval: false,
+        connect_timeout_ms: None,
+        discovery_timeout_ms: None,
     };
 
     let conn = McpConnection::from_service(config, service, Some(event_tx))
@@ -673,6 +689,8 @@ async fn tool_call_completed_event_reports_error_on_failure() {
         tool_prefix: None,
         tool_filter: None,
         requires_approval: false,
+        connect_timeout_ms: None,
+        discovery_timeout_ms: None,
     };
 
     let conn = McpConnection::from_service(config, service, Some(event_tx))
@@ -757,6 +775,8 @@ async fn mcp_tool_execute_on_disconnected_returns_error_result() {
         tool_prefix: None,
         tool_filter: None,
         requires_approval: false,
+        connect_timeout_ms: None,
+        discovery_timeout_ms: None,
     };
     let conn = Arc::new(McpConnection::disconnected(config));
     let tool = McpTool::new(echo_def, None, "disconnected-server", false, conn);

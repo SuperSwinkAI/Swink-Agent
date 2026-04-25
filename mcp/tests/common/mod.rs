@@ -202,6 +202,8 @@ pub async fn spawn_mock_connection(
         tool_prefix: tool_prefix.map(String::from),
         tool_filter: None,
         requires_approval: false,
+        connect_timeout_ms: None,
+        discovery_timeout_ms: None,
     };
 
     swink_agent_mcp::McpConnection::from_service(mcp_config, service, None)
