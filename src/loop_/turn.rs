@@ -325,7 +325,7 @@ pub async fn run_single_turn(
         assistant_message.stop_reason,
         StopReason::Error | StopReason::Aborted
     ) {
-        return handle_error_stop(assistant_message, state, tx).await;
+        return handle_error_stop(assistant_message, state, config, system_prompt, tx).await;
     }
 
     // viii. Extract tool calls from assistant message content. `extract_tool_calls`
@@ -705,13 +705,16 @@ async fn handle_stream_result(
 
 /// Handle an error or aborted stop reason: emit `TurnEnd` + `AgentEnd` and return.
 async fn handle_error_stop(
-    mut assistant_message: AssistantMessage,
+    assistant_message: AssistantMessage,
     state: &mut LoopState,
+    config: &Arc<AgentLoopConfig>,
+    system_prompt: &str,
     tx: &mpsc::Sender<AgentEvent>,
 ) -> TurnOutcome {
     // Issue #619: scrub any incomplete tool-use blocks before we persist the
     // message into `context_messages` — even on terminal error paths a resumed
     // session (e.g. continuation) could replay this history to an adapter.
+    let mut assistant_message = assistant_message;
     crate::stream::sanitize_incomplete_tool_calls(&mut assistant_message);
 
     let is_abort = assistant_message.stop_reason == StopReason::Aborted;
@@ -729,9 +732,14 @@ async fn handle_error_stop(
     }
     let msg_for_event = assistant_message.clone();
     let stop = assistant_message.stop_reason;
+    let assistant_ctx_index = state.context_messages.len();
     state
         .context_messages
         .push(AgentMessage::Llm(LlmMessage::Assistant(assistant_message)));
+    let (msg_for_event, policy_stop) =
+        run_post_turn_policy_check(&msg_for_event, &[], state, config, system_prompt);
+    state.context_messages[assistant_ctx_index] =
+        AgentMessage::Llm(LlmMessage::Assistant(msg_for_event.clone()));
     let snapshot = build_snapshot(state, stop, None);
     let reason = if is_abort {
         TurnEndReason::Aborted
@@ -739,6 +747,9 @@ async fn handle_error_stop(
         TurnEndReason::Error
     };
     // CRITICAL: On error/abort, exit immediately — no follow-up polling
+    if let Some(reason) = policy_stop {
+        tracing::info!("post-turn policy stopped agent: {reason}");
+    }
     emit_turn_end_and_agent_end(msg_for_event, vec![], reason, snapshot, state, tx).await
 }
 
