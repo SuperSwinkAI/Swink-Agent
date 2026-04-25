@@ -48,7 +48,17 @@ async fn main() {
 
 async fn run_verify_catalog(provider: Option<&str>, github: bool, allow_skipped: bool) {
     let write_summary = github || std::env::var("GITHUB_STEP_SUMMARY").is_ok();
-    let tasks = catalog::build_verify_tasks(provider);
+    let tasks = match catalog::build_verify_tasks(provider) {
+        Ok(tasks) => tasks,
+        Err(error) => {
+            eprintln!(
+                "unknown provider filter '{}'; valid provider keys: {}",
+                error.provider_key,
+                error.valid_provider_keys.join(", ")
+            );
+            std::process::exit(invalid_provider_exit_code());
+        }
+    };
     let rows = verifier::verify_all(tasks).await;
     report::print_table(&rows);
     if write_summary && let Err(e) = report::write_github_summary(&rows) {
@@ -58,6 +68,10 @@ async fn run_verify_catalog(provider: Option<&str>, github: bool, allow_skipped:
     if exit_code != 0 {
         std::process::exit(exit_code);
     }
+}
+
+fn invalid_provider_exit_code() -> i32 {
+    4
 }
 
 fn verify_catalog_exit_code(rows: &[verifier::VerifyRow], allow_skipped: bool) -> i32 {
@@ -141,5 +155,10 @@ mod tests {
         ];
 
         assert_eq!(super::verify_catalog_exit_code(&rows, false), 2);
+    }
+
+    #[test]
+    fn unknown_provider_filter_exits_with_dedicated_code() {
+        assert_eq!(super::invalid_provider_exit_code(), 4);
     }
 }
