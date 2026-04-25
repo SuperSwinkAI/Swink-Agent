@@ -180,6 +180,7 @@ gh pr comment <number> --body-file /tmp/comment.md
 - Post-sanitization plugin/plugin collisions must also be disambiguated deterministically from the raw `plugin_name` + tool identity; only direct-tool collisions keep the spec-037 skip behavior.
 - Contributions merged in `Agent::new()`: plugin policies **prepended** (priority-sorted), direct policies appended; plugin tools appended after direct tools.
 - `Agent::new()` must still reject true duplicate final tool names, but plugin composition has one explicit exception from spec 037: if a namespaced plugin tool collides with a directly-registered tool name, the direct tool keeps precedence and the plugin tool is skipped with a warning.
+- After plugin/plugin disambiguation, `Agent::new()` must re-check the renamed tool against direct tools before insertion; otherwise a sanitized plugin collision can still resolve onto a direct tool name and violate spec-037 precedence.
 - `on_init(&self, &Agent)` dispatched in priority order, wrapped in `catch_unwind` — panicking `on_init` is logged and skipped, construction continues.
 - Entire module behind `#[cfg(feature = "plugins")]` — opt-in, not default-enabled, zero cost when disabled.
 

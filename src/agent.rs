@@ -513,6 +513,14 @@ fn merge_plugin_contributions(mut options: AgentOptions) -> AgentOptions {
                     inner_tool,
                     disambiguated_name,
                 ));
+                if direct_tool_names.contains(tool.name()) {
+                    tracing::warn!(
+                        plugin = %plugin_name,
+                        tool = tool.name(),
+                        "skipping plugin tool because a direct tool already owns the disambiguated final name"
+                    );
+                    continue;
+                }
             }
             plugin_tool_names.insert(tool.name().to_owned());
             plugin_tools.push(tool);
@@ -615,5 +623,31 @@ mod tests {
         assert_eq!(tool_names[0], "my_web_search");
         assert_ne!(tool_names[0], tool_names[1]);
         assert!(tool_names[1].starts_with("my_web_search_"));
+    }
+
+    #[test]
+    fn agent_new_skips_disambiguated_plugin_tool_when_direct_tool_owns_final_name() {
+        let stream_fn = Arc::new(SimpleMockStreamFn::from_text("ok"));
+        let disambiguated_name =
+            disambiguate_provider_safe_tool_name("my_web_search", "my.web\0search");
+        let options = AgentOptions::new(
+            "test",
+            crate::testing::default_model(),
+            stream_fn,
+            crate::testing::default_convert,
+        )
+        .with_tools(vec![
+            Arc::new(MockTool::new(&disambiguated_name)) as Arc<dyn AgentTool>
+        ])
+        .with_plugin(Arc::new(MockPlugin::new("my-web").with_tools(&["search"])))
+        .with_plugin(Arc::new(MockPlugin::new("my.web").with_tools(&["search"])));
+
+        let agent = Agent::new(options);
+        let tool_names: Vec<&str> = agent.state().tools.iter().map(|tool| tool.name()).collect();
+
+        assert_eq!(
+            tool_names,
+            vec![disambiguated_name.as_str(), "my_web_search"]
+        );
     }
 }
