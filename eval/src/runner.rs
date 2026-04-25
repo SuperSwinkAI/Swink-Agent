@@ -31,6 +31,14 @@ use crate::types::{
     TurnRecord,
 };
 
+struct FactoryCancellationGuard(CancellationToken);
+
+impl Drop for FactoryCancellationGuard {
+    fn drop(&mut self) {
+        self.0.cancel();
+    }
+}
+
 /// Factory that creates a configured [`Agent`] for each eval case.
 pub trait AgentFactory: Send + Sync {
     /// Create an agent and cancellation token for the given eval case.
@@ -481,7 +489,8 @@ async fn invoke_agent_impl(
     agent_invocations: &AtomicUsize,
 ) -> Result<Invocation, EvalError> {
     agent_invocations.fetch_add(1, Ordering::SeqCst);
-    let (mut agent, _factory_cancel) = factory.create_agent(case)?;
+    let (mut agent, factory_cancel) = factory.create_agent(case)?;
+    let _factory_cancel = FactoryCancellationGuard(factory_cancel);
     let messages: Vec<_> = case
         .user_messages
         .iter()

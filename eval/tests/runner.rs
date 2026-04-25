@@ -2,11 +2,14 @@
 
 mod common;
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use tokio_util::sync::CancellationToken;
 
-use swink_agent::{Agent, AgentOptions, ModelSpec, testing::SimpleMockStreamFn};
+use swink_agent::{
+    Agent, AgentMessage, AgentOptions, ContentBlock, LlmMessage, ModelSpec, UserMessage,
+    testing::SimpleMockStreamFn,
+};
 use swink_agent_eval::{
     AgentFactory, EvalCase, EvalError, EvalMetricResult, EvalRunner, EvalSet, Evaluator,
     EvaluatorRegistry, Invocation, Score, Verdict,
@@ -43,6 +46,88 @@ struct FailingFactory;
 impl AgentFactory for FailingFactory {
     fn create_agent(&self, _case: &EvalCase) -> Result<(Agent, CancellationToken), EvalError> {
         Err(EvalError::invalid_case("factory forced failure"))
+    }
+}
+
+struct TrackingFactory {
+    tokens: Vec<String>,
+    observed_cancel: Arc<Mutex<Option<CancellationToken>>>,
+}
+
+impl TrackingFactory {
+    fn new(tokens: Vec<&str>) -> Self {
+        Self {
+            tokens: tokens.into_iter().map(String::from).collect(),
+            observed_cancel: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    fn observed_cancel(&self) -> CancellationToken {
+        self.observed_cancel
+            .lock()
+            .expect("observed cancel lock should not poison")
+            .clone()
+            .expect("factory should record a cancellation token")
+    }
+}
+
+impl AgentFactory for TrackingFactory {
+    fn create_agent(&self, case: &EvalCase) -> Result<(Agent, CancellationToken), EvalError> {
+        let cancel = CancellationToken::new();
+        *self
+            .observed_cancel
+            .lock()
+            .expect("observed cancel lock should not poison") = Some(cancel.clone());
+        let stream_fn = Arc::new(SimpleMockStreamFn::new(self.tokens.clone()));
+        let model = ModelSpec::new("test", "test-model");
+        let options = AgentOptions::new_simple(&case.system_prompt, model, stream_fn);
+        let agent = Agent::new(options);
+        Ok((agent, cancel))
+    }
+}
+
+struct BusyFactory {
+    observed_cancel: Arc<Mutex<Option<CancellationToken>>>,
+}
+
+impl BusyFactory {
+    fn new() -> Self {
+        Self {
+            observed_cancel: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    fn observed_cancel(&self) -> CancellationToken {
+        self.observed_cancel
+            .lock()
+            .expect("observed cancel lock should not poison")
+            .clone()
+            .expect("factory should record a cancellation token")
+    }
+}
+
+impl AgentFactory for BusyFactory {
+    fn create_agent(&self, case: &EvalCase) -> Result<(Agent, CancellationToken), EvalError> {
+        let cancel = CancellationToken::new();
+        *self
+            .observed_cancel
+            .lock()
+            .expect("observed cancel lock should not poison") = Some(cancel.clone());
+        let stream_fn = Arc::new(SimpleMockStreamFn::new(vec!["busy".to_string()]));
+        let model = ModelSpec::new("test", "test-model");
+        let options = AgentOptions::new_simple(&case.system_prompt, model, stream_fn);
+        let mut agent = Agent::new(options);
+        let stream = agent
+            .prompt_stream(vec![AgentMessage::Llm(LlmMessage::User(UserMessage {
+                content: vec![ContentBlock::Text {
+                    text: "already running".to_string(),
+                }],
+                timestamp: swink_agent::now_timestamp(),
+                cache_hint: None,
+            }))])
+            .expect("precondition stream should start");
+        std::mem::forget(stream);
+        Ok((agent, cancel))
     }
 }
 
@@ -207,6 +292,35 @@ async fn mixed_success_and_failure() {
     // A case with no expected trajectory/response and only efficiency evaluator
     // (which returns None for zero tool calls) should pass since no metrics fail.
     assert_eq!(result.summary.passed, 1);
+}
+
+#[tokio::test]
+async fn run_case_cancels_factory_token_after_success() {
+    let factory = TrackingFactory::new(vec!["Hello"]);
+    let runner = EvalRunner::with_defaults();
+
+    let result = runner.run_case(&make_case("cancel-ok"), &factory).await;
+
+    assert!(result.is_ok(), "run_case should succeed");
+    assert!(
+        factory.observed_cancel().is_cancelled(),
+        "runner should cancel the factory token after a completed case"
+    );
+}
+
+#[tokio::test]
+async fn run_case_cancels_factory_token_when_prompt_stream_fails() {
+    let factory = BusyFactory::new();
+    let runner = EvalRunner::with_defaults();
+
+    runner
+        .run_case(&make_case("cancel-err"), &factory)
+        .await
+        .expect_err("busy agent should reject prompt_stream");
+    assert!(
+        factory.observed_cancel().is_cancelled(),
+        "runner should cancel the factory token on prompt_stream startup failure"
+    );
 }
 
 #[tokio::test]
