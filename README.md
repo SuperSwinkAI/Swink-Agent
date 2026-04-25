@@ -26,6 +26,19 @@ A pure-Rust library for building LLM-powered agentic loops. Provider-agnostic co
 | `swink-agent-plugin-web` | lib | Web browsing and search plugin |
 | `swink-agent-macros` | proc-macro | `#[derive(ToolSchema)]` and `#[tool]` proc macros |
 | `swink-agent-tui` | lib + bin | Interactive terminal UI with markdown, syntax highlighting, tool panel |
+| `xtask` | bin | Developer workflow tasks such as catalog and release validation |
+
+## Feature Matrix
+
+| Surface | Default | Opt-in features | Notes |
+|---|---|---|---|
+| `swink-agent` | `builtin-tools`, `transfer` | `artifact-store`, `artifact-tools`, `hot-reload`, `plugins`, `testkit`, `tiktoken`, `otel` | Core loop and tool/runtime surface stay provider-agnostic. |
+| `swink-agent-adapters` | Core remote adapters | Per-provider adapter features | Remote HTTP/SSE adapters are isolated from the core crate. |
+| `swink-agent-policies` | `all` | Individual policy features such as `budget`, `sandbox`, `audit`, `pii` | Reusable loop/app policies stay independently gateable. |
+| `swink-agent-local-llm` | SmolLM3 local runtime | Backend/model features such as `cuda`, `metal`, `vulkan`, `gemma4` | Requires LLVM/libclang because `llama-cpp-sys-2` runs `bindgen`. |
+| `swink-agent-eval` | Spec 023 deterministic evals | `judge-core`, `all-evaluators`, `simulation`, `generation`, `trace-ingest`, `trace-otlp`, `trace-langfuse`, `trace-opensearch`, `trace-cloudwatch`, `telemetry`, `html-report`, `langsmith`, `cli`, `multimodal`, `yaml` | Advanced evals remain mostly opt-in so no-default builds stay slim. |
+| `swink-agent-eval-judges` | Minimal shared client surface | Per-provider judge features plus `all-judges` | Provider credentials and transport details live in the separate judge-client crate. |
+| `swink-agent-tui` | Terminal UI with remote providers | `local`, `full` | `local` brings in on-device inference; `full` enables the broader optional surface. |
 
 ## Key Ideas
 
@@ -42,10 +55,14 @@ A pure-Rust library for building LLM-powered agentic loops. Provider-agnostic co
 ```bash
 cargo run -p swink-agent-tui     # launch the TUI (remote/Ollama defaults)
 cargo run -p swink-agent-tui --features local  # include bundled local-LLM support
+cargo run -p swink-agent-eval --features cli --bin swink-eval -- --help
 cargo test --workspace             # run all tests
+just validate                      # formatting, clippy, tests, package preflight
 ```
 
 Workspace-wide `cargo build/test/clippy` commands also compile `swink-agent-local-llm`. That crate currently depends on `llama-cpp-sys-2`, so contributor machines need LLVM/libclang available for `bindgen`; if auto-discovery fails, set `LIBCLANG_PATH` to the LLVM `bin` directory before running workspace checks.
+
+For the advanced evaluation surface, see [`eval/README.md`](eval/README.md) for evaluator/reporter usage and [`eval-judges/README.md`](eval-judges/README.md) for provider feature flags and credential setup.
 
 ## Hot-Reloaded Script Tools
 
