@@ -262,3 +262,44 @@ cases:
     assert_eq!(parsed.eval_set_id, "cli-run-e2e");
     assert_eq!(parsed.summary.total_cases, 1);
 }
+
+#[test]
+fn run_runtime_failures_surface_diagnostics_on_stderr() {
+    let dir = TempDir::new().unwrap();
+    let set_yaml = r#"
+id: cli-run-runtime-error
+name: CLI run runtime error
+cases:
+  - id: c1
+    name: Case 1
+    system_prompt: You are a test agent.
+    user_messages: ["hi"]
+"#;
+    let set_path = dir.path().join("set.yaml");
+    fs::write(&set_path, set_yaml).unwrap();
+
+    let out = Command::new(binary_path())
+        .args([
+            "run",
+            "--set",
+            set_path.to_str().unwrap(),
+            "--out",
+            dir.path().to_str().unwrap(),
+            "--parallelism",
+            "1",
+            "--reporter",
+            "console",
+        ])
+        .output()
+        .expect("spawn");
+    assert_eq!(
+        out.status.code(),
+        Some(3),
+        "writing --out to a directory should map to runtime-error exit 3"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("swink-eval run: writing --out"),
+        "runtime error details should be emitted to stderr; got: {stderr}"
+    );
+}
