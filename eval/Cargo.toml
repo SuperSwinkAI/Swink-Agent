@@ -90,6 +90,7 @@ tokio = { workspace = true, features = ["full", "test-util"] }
 pretty_assertions.workspace = true
 wiremock.workspace = true
 jsonschema.workspace = true
+serde_yaml.workspace = true
 
 # FR-049 carve-out: the `evaluators::code::sandbox::posix` submodule needs
 # `#![allow(unsafe_code)]` for POSIX rlimit FFI. `forbid` cannot be relaxed
