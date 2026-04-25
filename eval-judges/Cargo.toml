@@ -9,10 +9,8 @@ repository.workspace = true
 readme = "README.md"
 keywords = ["llm", "eval", "judge", "adapter", "testing"]
 categories = ["development-tools", "api-bindings", "asynchronous"]
-# Spec 043 in-progress — the crate layout shifts between phases (stubs in
-# T008 → real impls in T038–T046 → public surface in T054). Keep unpublished
-# until Phase 12 workspace bump (T180) so semver-checks doesn't gate on
-# intermediate breaking shape changes.
+# Spec 043 shipped the crate surface into the workspace at 0.9, but releases
+# still keep this package unpublished while the provider API settles.
 publish = false
 
 [package.metadata.docs.rs]

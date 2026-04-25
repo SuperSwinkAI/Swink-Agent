@@ -40,8 +40,8 @@ Every provider client uses the same shared retry builder from
 
 ```toml
 [dependencies]
-swink-agent-eval = { version = "0.8", features = ["judge-core"] }
-swink-agent-eval-judges = { version = "0.8", features = ["openai"] }
+swink-agent-eval = { version = "0.9", features = ["judge-core"] }
+swink-agent-eval-judges = { version = "0.9", features = ["openai"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 ```
 
