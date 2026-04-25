@@ -751,3 +751,20 @@ async fn editor_style_submission_queues_once_while_running() {
         "queued submission should be drained after MessageStart promotion"
     );
 }
+
+#[test]
+fn copy_code_extracts_all_fenced_blocks_from_last_assistant_message() {
+    let mut app = App::new(TuiConfig::default());
+    app.messages.push(make_assistant_message(
+        "Intro\n```rust\nlet first = 1;\n```\ntext\n```json\n{\"second\":2}\n```",
+    ));
+
+    let copied = app
+        .messages
+        .iter()
+        .rev()
+        .find(|message| message.role == MessageRole::Assistant)
+        .and_then(|message| super::super::render_helpers::extract_code_blocks(&message.content));
+
+    assert_eq!(copied, Some("let first = 1;\n\n{\"second\":2}".to_string()));
+}

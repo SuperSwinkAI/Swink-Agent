@@ -16,7 +16,7 @@ use crate::commands::{self, ApprovalModeArg, ClipboardContent, CommandResult};
 use crate::theme;
 use crate::ui;
 
-use super::render_helpers::extract_last_code_block;
+use super::render_helpers::extract_code_blocks;
 use super::state::{AgentStatus, App, DisplayMessage, Focus, MessageRole, OperatingMode};
 use super::{AppResult, MOUSE_SCROLL_STEP};
 
@@ -673,7 +673,7 @@ impl App {
                 .iter()
                 .rev()
                 .find(|message| message.role == MessageRole::Assistant)
-                .and_then(|message| extract_last_code_block(&message.content)),
+                .and_then(|message| extract_code_blocks(&message.content)),
         };
 
         let feedback = text.map_or_else(
