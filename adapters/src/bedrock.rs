@@ -449,7 +449,13 @@ impl BedrockStreamFn {
                             ));
                         }
 
-                        match self.send_converse_stream(model, context, options).await {
+                        match crate::base::race_pre_stream_cancellation(
+                            &cancellation_token,
+                            "Bedrock request cancelled",
+                            self.send_converse_stream(model, context, options),
+                        )
+                        .await
+                        {
                             Ok(response) => {
                                 let byte_stream = response.bytes_stream();
                                 Some((

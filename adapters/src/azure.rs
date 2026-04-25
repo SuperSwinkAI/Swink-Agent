@@ -231,7 +231,13 @@ fn azure_stream<'a>(
         );
 
         let request = prepare_oai_request(azure.shell.client(), &url, model, context, options);
-        let request = match azure.apply_auth(request, options).await {
+        let request = match crate::base::race_pre_stream_cancellation(
+            &cancellation_token,
+            "Azure request cancelled",
+            azure.apply_auth(request, options),
+        )
+        .await
+        {
             Ok(r) => r,
             Err(event) => return stream::iter(crate::base::pre_stream_error(event)).left_stream(),
         };

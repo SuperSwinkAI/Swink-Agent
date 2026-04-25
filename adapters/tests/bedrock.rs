@@ -383,3 +383,61 @@ async fn bedrock_stream_cancellation_is_aborted() {
         }
     )));
 }
+
+#[tokio::test]
+async fn bedrock_startup_cancellation_does_not_wait_for_send() {
+    let server = MockServer::start().await;
+    let slow_response = ResponseTemplate::new(200)
+        .insert_header("Content-Type", "application/vnd.amazon.eventstream")
+        .set_body_bytes(text_response_body("hello"))
+        .set_delay(std::time::Duration::from_secs(30));
+
+    Mock::given(method("POST"))
+        .and(path("/model/amazon.nova-pro-v1:0/converse-stream"))
+        .respond_with(slow_response)
+        .mount(&server)
+        .await;
+
+    let stream_fn = BedrockStreamFn::new_with_base_url(
+        server.uri(),
+        "us-east-1",
+        "AKIDEXAMPLE",
+        "secret",
+        None,
+    );
+    let token = CancellationToken::new();
+    let cancel_token = token.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        cancel_token.cancel();
+    });
+
+    let events = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        stream_fn
+            .stream(
+                &ModelSpec::new("bedrock", "amazon.nova-pro-v1:0"),
+                &AgentContext {
+                    system_prompt: String::new(),
+                    messages: Vec::new(),
+                    tools: Vec::new(),
+                },
+                &StreamOptions::default(),
+                token,
+            )
+            .collect::<Vec<_>>(),
+    )
+    .await
+    .expect("Bedrock cancellation should not wait for request startup");
+
+    assert!(matches!(events.first(), Some(AssistantMessageEvent::Start)));
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AssistantMessageEvent::Error {
+            stop_reason: StopReason::Aborted,
+            error_kind: None,
+            error_message,
+            ..
+        } if error_message.contains("Bedrock request cancelled")
+    )));
+}

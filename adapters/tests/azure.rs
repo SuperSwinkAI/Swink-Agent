@@ -1015,3 +1015,64 @@ async fn entra_id_token_endpoint_failure() {
         _ => unreachable!(),
     }
 }
+
+#[tokio::test]
+async fn entra_id_cancellation_during_token_refresh_is_promptly_aborted() {
+    let token_server = MockServer::start().await;
+    let api_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/token"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(token_response_body("slow-token", 3600))
+                .set_delay(Duration::from_secs(30)),
+        )
+        .expect(1)
+        .mount(&token_server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(sse_response(&simple_sse_body()))
+        .expect(0)
+        .mount(&api_server)
+        .await;
+
+    let token_url = format!("{}/token", token_server.uri());
+    let stream_fn = entra_stream_fn(&api_server, &token_url);
+    let token = CancellationToken::new();
+    let cancel_token = token.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        cancel_token.cancel();
+    });
+
+    let events = tokio::time::timeout(
+        Duration::from_secs(2),
+        stream_fn
+            .stream(
+                &test_model(),
+                &test_context(),
+                &StreamOptions::default(),
+                token,
+            )
+            .collect::<Vec<_>>(),
+    )
+    .await
+    .expect("Azure cancellation should not wait for token refresh");
+
+    assert!(
+        matches!(events.first(), Some(AssistantMessageEvent::Start)),
+        "pre-stream cancellation must start with Start: {events:?}"
+    );
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AssistantMessageEvent::Error {
+            stop_reason: StopReason::Aborted,
+            error_kind: None,
+            error_message,
+            ..
+        } if error_message.contains("Azure request cancelled")
+    )));
+}
