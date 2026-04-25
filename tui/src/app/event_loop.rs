@@ -85,11 +85,7 @@ impl App {
 
                 match result {
                     Ok(Some(content)) => {
-                        self.messages
-                            .push(DisplayMessage::new(MessageRole::User, content.clone()));
-                        self.trim_messages_to_recent_turns();
-                        self.conversation.auto_scroll = true;
-                        self.send_to_agent(content);
+                        self.submit_user_text(content);
                     }
                     Ok(None) => {
                         self.push_system_message(
@@ -453,6 +449,16 @@ impl App {
         }
     }
 
+    pub(super) fn submit_user_text(&mut self, text: String) {
+        if self.status != AgentStatus::Running {
+            self.messages
+                .push(DisplayMessage::new(MessageRole::User, text.clone()));
+            self.trim_messages_to_recent_turns();
+        }
+        self.conversation.auto_scroll = true;
+        self.send_to_agent(text);
+    }
+
     #[allow(clippy::too_many_lines)]
     pub(super) fn submit_input(&mut self) {
         // Classify the pending input BEFORE draining the editor so that
@@ -633,16 +639,7 @@ impl App {
             }
         }
 
-        // Only add to the visible conversation immediately when the agent is idle.
-        // Mid-stream submissions are held in `pending_steered` by `send_to_agent`
-        // and promoted into `messages` at AgentEnd, after the current response.
-        if self.status != AgentStatus::Running {
-            self.messages
-                .push(DisplayMessage::new(MessageRole::User, text.clone()));
-            self.trim_messages_to_recent_turns();
-        }
-        self.conversation.auto_scroll = true;
-        self.send_to_agent(text);
+        self.submit_user_text(text);
     }
 
     fn copy_to_clipboard(&mut self, content: ClipboardContent) {
