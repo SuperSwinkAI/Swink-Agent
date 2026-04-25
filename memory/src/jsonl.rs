@@ -151,6 +151,16 @@ fn read_meta_and_message_lines(path: &Path, id: &str) -> io::Result<(SessionMeta
     Ok((meta, remaining_lines))
 }
 
+fn extract_state_from_lines(lines: &[String], id: &str) -> io::Result<Option<serde_json::Value>> {
+    for line in lines {
+        if let Some(state) = parse_state_line(line, id)? {
+            return Ok(Some(state));
+        }
+    }
+
+    Ok(None)
+}
+
 fn read_meta_with_line_len(path: &Path, id: &str) -> io::Result<(SessionMeta, usize)> {
     let mut first_line = String::new();
     let file = open_session_file(path, id)?;
@@ -510,36 +520,24 @@ impl SessionStore for JsonlSessionStore {
         let path = session_path(&self.sessions_dir, id);
         let (meta, lines) = read_meta_and_message_lines(&path, id)?;
         let (meta, classified) = self.classify_and_migrate(meta, lines, id)?;
+        Ok((meta, classified_lines_to_messages(classified, registry, id)))
+    }
 
-        // Project post-migration classification into the `load()` return
-        // shape. Entries collapse to their Message contents (non-message
-        // entries are dropped, matching prior behavior), and custom-message
-        // wrappers pass through unchanged (requires a registry).
-        let mut messages = Vec::new();
-        for item in classified {
-            match item {
-                ClassifiedLine::Entry(entry) => {
-                    if let SessionEntry::Message(llm_msg) = *entry {
-                        messages.push(AgentMessage::Llm(llm_msg));
-                    }
-                }
-                ClassifiedLine::Custom(envelope) => {
-                    match custom_envelope_to_message(&envelope, registry) {
-                        Ok(Some(msg)) => messages.push(msg),
-                        Ok(None) => {}
-                        Err(error) => {
-                            tracing::warn!(
-                                error = %error,
-                                "skipping unrestorable custom message in session {id}"
-                            );
-                        }
-                    }
-                }
-                ClassifiedLine::State => {}
-            }
-        }
+    fn load_full(
+        &self,
+        id: &str,
+        registry: Option<&CustomMessageRegistry>,
+    ) -> io::Result<(SessionMeta, Vec<AgentMessage>, Option<serde_json::Value>)> {
+        validate_session_id(id)?;
 
-        Ok((meta, messages))
+        let path = session_path(&self.sessions_dir, id);
+        with_target_lock(&path, || {
+            let (meta, lines) = read_meta_and_message_lines(&path, id)?;
+            let state = extract_state_from_lines(&lines, id)?;
+            let (meta, classified) = self.classify_and_migrate(meta, lines, id)?;
+            let messages = classified_lines_to_messages(classified, registry, id);
+            Ok((meta, messages, state))
+        })
     }
 
     fn list(&self) -> io::Result<Vec<SessionMeta>> {
@@ -613,13 +611,7 @@ impl SessionStore for JsonlSessionStore {
         }
 
         let (_, lines) = read_meta_and_message_lines(&path, id)?;
-        for line in lines {
-            if let Some(state) = parse_state_line(&line, id)? {
-                return Ok(Some(state));
-            }
-        }
-
-        Ok(None)
+        extract_state_from_lines(&lines, id)
     }
 
     fn save_interrupt(&self, id: &str, state: &InterruptState) -> io::Result<()> {
@@ -930,6 +922,38 @@ fn custom_envelope_to_message(
 ) -> io::Result<Option<AgentMessage>> {
     let line = serde_json::to_string(envelope).map_err(io::Error::other)?;
     crate::codec::decode_jsonl_message_line(&line, registry)
+}
+
+fn classified_lines_to_messages(
+    classified: Vec<ClassifiedLine>,
+    registry: Option<&CustomMessageRegistry>,
+    id: &str,
+) -> Vec<AgentMessage> {
+    let mut messages = Vec::new();
+    for item in classified {
+        match item {
+            ClassifiedLine::Entry(entry) => {
+                if let SessionEntry::Message(llm_msg) = *entry {
+                    messages.push(AgentMessage::Llm(llm_msg));
+                }
+            }
+            ClassifiedLine::Custom(envelope) => {
+                match custom_envelope_to_message(&envelope, registry) {
+                    Ok(Some(msg)) => messages.push(msg),
+                    Ok(None) => {}
+                    Err(error) => {
+                        tracing::warn!(
+                            error = %error,
+                            "skipping unrestorable custom message in session {id}"
+                        );
+                    }
+                }
+            }
+            ClassifiedLine::State => {}
+        }
+    }
+
+    messages
 }
 
 #[cfg(test)]
@@ -1724,6 +1748,31 @@ mod tests {
         assert_eq!(
             store.load_state("save-full").unwrap(),
             Some(serde_json::json!({ "cursor": 9, "draft": "synced" }))
+        );
+    }
+
+    #[test]
+    fn load_full_returns_messages_and_state_from_one_snapshot() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = JsonlSessionStore::new(dir.path().to_path_buf()).unwrap();
+
+        let persisted_meta = store
+            .save_full(
+                "load-full",
+                &fresh_meta("load-full"),
+                &[user_msg("hello", 1), user_msg("again", 2)],
+                &serde_json::json!({ "cursor": 4, "draft": "stable" }),
+            )
+            .unwrap();
+
+        let (loaded_meta, loaded_messages, loaded_state) =
+            store.load_full("load-full", None).unwrap();
+
+        assert_eq!(loaded_meta.sequence, persisted_meta.sequence);
+        assert_eq!(loaded_messages.len(), 2);
+        assert_eq!(
+            loaded_state,
+            Some(serde_json::json!({ "cursor": 4, "draft": "stable" }))
         );
     }
 

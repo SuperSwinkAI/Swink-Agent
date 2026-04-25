@@ -90,8 +90,8 @@ impl App {
             .as_ref()
             .and_then(|a| a.custom_message_registry());
         let result: io::Result<_> = (|| {
-            let (meta, messages) = store.load(id, registry)?;
-            let restored_state = match store.load_state(id)? {
+            let (meta, messages, saved_state) = store.load_full(id, registry)?;
+            let restored_state = match saved_state {
                 Some(snapshot) => {
                     SessionState::restore_from_snapshot(snapshot).map_err(|error| {
                         io::Error::new(
