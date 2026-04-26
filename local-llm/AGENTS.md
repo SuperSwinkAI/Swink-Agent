@@ -43,6 +43,7 @@
 - **`hf-hub` progress handlers are clone-per-chunk** — download byte progress must aggregate through shared state; per-clone counters misreport resumed bytes and parallel chunk updates.
 - **Loading progress needs runner-level substeps** — `loader.rs` only knows the coarse Loading phase. To surface meaningful `LoadingProgress` updates, `model.rs` / `embedding.rs` must pass the shared callback into `LlamaRunner::load_with_progress()`, which emits backend-init and GGUF-load messages from inside the blocking runner setup.
 - **Two converter types** — `LocalConverter` (SmolLM3) and `Gemma4LocalConverter` (Gemma 4) both implement `MessageConverter`. `convert_context_messages` dispatches based on `config.is_gemma4()`.
+- **Assistant tool-call context must not flatten to text-only** — local conversion should preserve assistant `ToolCall` blocks with call id, tool name, and arguments so later tool results remain meaningful in the prompt history.
 - **LazyLoader waiters must treat `Unloaded` as terminal for the current attempt** — `wait_until_ready()` now returns on `Unloaded`/`Failed` as well as `Ready`, and `ensure_ready()` re-checks loader state after every wakeup so an `unload()` during another caller's load does not strand waiters forever.
 - Workspace-wide `cargo build` / `test` / `clippy` now compile `llama-cpp-sys-2` through this crate, so contributors need LLVM/libclang installed and Windows contributors commonly need `LIBCLANG_PATH` pointed at the LLVM `bin` directory.
 
