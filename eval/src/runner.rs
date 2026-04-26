@@ -218,17 +218,7 @@ impl EvalRunner {
         let invocation =
             invoke_agent_impl(case, factory, self.cancel.as_ref(), &self.agent_invocations).await?;
         let metric_results = self.registry.evaluate(case, &invocation);
-        let verdict = if metric_results.iter().all(|r| r.score.verdict().is_pass()) {
-            Verdict::Pass
-        } else {
-            Verdict::Fail
-        };
-        Ok(EvalCaseResult {
-            case_id: case.id.clone(),
-            invocation,
-            metric_results,
-            verdict,
-        })
+        Ok(scored_case_result(case, invocation, metric_results))
     }
 
     /// Run an entire eval set and return aggregated results.
@@ -469,17 +459,39 @@ async fn execute_case(
         #[cfg(feature = "telemetry")]
         case_span,
     );
+    Ok(scored_case_result(case, invocation, metric_results))
+}
+
+fn scored_case_result(
+    case: &EvalCase,
+    invocation: Invocation,
+    mut metric_results: Vec<EvalMetricResult>,
+) -> EvalCaseResult {
+    if metric_results.is_empty() {
+        metric_results.push(no_applicable_evaluators_metric());
+    }
     let verdict = if metric_results.iter().all(|r| r.score.verdict().is_pass()) {
         Verdict::Pass
     } else {
         Verdict::Fail
     };
-    Ok(EvalCaseResult {
+    EvalCaseResult {
         case_id: case.id.clone(),
         invocation,
         metric_results,
         verdict,
-    })
+    }
+}
+
+fn no_applicable_evaluators_metric() -> EvalMetricResult {
+    EvalMetricResult {
+        evaluator_name: "no_applicable_evaluators".to_string(),
+        score: Score::fail(),
+        details: Some(
+            "no evaluator produced a metric; configure an applicable evaluator or expected criteria"
+                .to_string(),
+        ),
+    }
 }
 
 async fn invoke_agent_impl(

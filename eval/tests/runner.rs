@@ -289,9 +289,34 @@ async fn mixed_success_and_failure() {
 
     let result = runner.run_set(&eval_set, &factory).await.unwrap();
     assert_eq!(result.case_results.len(), 1);
-    // A case with no expected trajectory/response and only efficiency evaluator
-    // (which returns None for zero tool calls) should pass since no metrics fail.
-    assert_eq!(result.summary.passed, 1);
+    // A case with no expected trajectory/response and only evaluators that do
+    // not apply must not pass vacuously.
+    assert_eq!(result.summary.passed, 0);
+    assert_eq!(result.summary.failed, 1);
+    assert_eq!(result.case_results[0].verdict, Verdict::Fail);
+    assert!(
+        result.case_results[0]
+            .metric_results
+            .iter()
+            .any(|metric| metric.evaluator_name == "no_applicable_evaluators")
+    );
+}
+
+#[tokio::test]
+async fn run_case_fails_when_no_evaluator_produces_metric() {
+    let factory = MockFactory::new(vec!["Hello"]);
+    let runner = EvalRunner::new(EvaluatorRegistry::new());
+
+    let result = runner
+        .run_case(&make_case("empty-metrics"), &factory)
+        .await
+        .unwrap();
+
+    assert_eq!(result.verdict, Verdict::Fail);
+    assert_eq!(result.metric_results.len(), 1);
+    let metric = &result.metric_results[0];
+    assert_eq!(metric.evaluator_name, "no_applicable_evaluators");
+    assert_eq!(metric.score.verdict(), Verdict::Fail);
 }
 
 #[tokio::test]

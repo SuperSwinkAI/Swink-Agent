@@ -23,20 +23,14 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
-use std::sync::Arc;
-use std::time::Duration;
 
 use clap::{Parser, Subcommand, ValueEnum};
-use swink_agent::testing::SimpleMockStreamFn;
-use swink_agent::{Agent, AgentOptions, ModelSpec};
 #[cfg(feature = "html-report")]
 use swink_agent_eval::HtmlReporter;
 use swink_agent_eval::{
-    AgentFactory, ConsoleReporter, EvalCase, EvalError, EvalRunner, EvalSet, EvalSetResult,
-    EvaluatorRegistry, GateConfig, JsonReporter, MarkdownReporter, Reporter, ReporterOutput,
-    check_gate,
+    ConsoleReporter, EvalError, EvalSet, EvalSetResult, GateConfig, JsonReporter, MarkdownReporter,
+    Reporter, ReporterOutput, check_gate,
 };
-use tokio_util::sync::CancellationToken;
 
 const EXIT_OK: u8 = 0;
 const EXIT_GATE_FAILED: u8 = 1;
@@ -134,7 +128,7 @@ fn main() -> ExitCode {
                 out,
                 parallelism,
                 reporter,
-            } => run_subcommand(&set, out.as_deref(), parallelism, reporter).await,
+            } => run_subcommand(&set, out.as_deref(), parallelism, reporter),
             Command::Report { result, format } => report_subcommand(&result, format).await,
             Command::Gate {
                 result,
@@ -145,12 +139,7 @@ fn main() -> ExitCode {
     ExitCode::from(code)
 }
 
-async fn run_subcommand(
-    set_path: &Path,
-    out: Option<&Path>,
-    parallelism: usize,
-    reporter: Format,
-) -> u8 {
+fn run_subcommand(set_path: &Path, out: Option<&Path>, parallelism: usize, reporter: Format) -> u8 {
     let set = match load_eval_set(set_path) {
         Ok(s) => s,
         Err(err) => {
@@ -161,36 +150,12 @@ async fn run_subcommand(
             return EXIT_CONFIG;
         }
     };
-
-    let runner = EvalRunner::new(EvaluatorRegistry::new()).with_parallelism(parallelism.max(1));
-    let factory = NullFactory;
-    let result = match runner.run_set(&set, &factory).await {
-        Ok(r) => r,
-        Err(err) => {
-            eprintln!("swink-eval run: execution failure: {err}");
-            return EXIT_RUNTIME;
-        }
-    };
-
-    if let Some(path) = out {
-        // Persist the raw in-memory `EvalSetResult` (not the JsonReporter
-        // wire doc) so `report --result` and `gate --result` can round-trip.
-        // JsonReporter's schema is for human / external consumers and is
-        // the stdout shape when `--reporter json` is used.
-        let bytes = match serde_json::to_vec_pretty(&result) {
-            Ok(b) => b,
-            Err(err) => {
-                eprintln!("swink-eval run: encoding --out: {err}");
-                return EXIT_RUNTIME;
-            }
-        };
-        if let Err(err) = fs::write(path, bytes) {
-            eprintln!("swink-eval run: writing --out `{}`: {err}", path.display());
-            return EXIT_RUNTIME;
-        }
-    }
-
-    emit_report(&result, reporter)
+    let _ = (&set, out, parallelism, reporter);
+    eprintln!(
+        "swink-eval run: real agent and evaluator configuration is required; \
+         this binary does not provide a default null execution path"
+    );
+    EXIT_CONFIG
 }
 
 #[allow(clippy::unused_async)]
@@ -315,39 +280,3 @@ fn load_gate_config(path: &Path) -> Result<GateConfig, String> {
     let bytes = fs::read(path).map_err(|e| e.to_string())?;
     serde_json::from_slice::<GateConfig>(&bytes).map_err(|e| e.to_string())
 }
-
-// ─── Null AgentFactory ──────────────────────────────────────────────────────
-//
-// The CLI is generic — it does not know how to construct real agents
-// because each consumer has different model, tool, and policy wiring.
-// The `run` subcommand therefore wires a no-op factory: every case gets
-// an `Agent` powered by a canned mock stream that emits a single `"ok"`
-// token. This is useful for smoke-testing eval sets + reporter output
-// without a real LLM call; consumers with real agents should either
-// fork the binary or call `EvalRunner` directly from their own code.
-
-struct NullFactory;
-
-impl AgentFactory for NullFactory {
-    fn create_agent(&self, case: &EvalCase) -> Result<(Agent, CancellationToken), EvalError> {
-        let options = AgentOptions::new_simple(
-            &case.system_prompt,
-            ModelSpec::new("null", "null-model"),
-            Arc::new(SimpleMockStreamFn::new(vec!["ok".to_string()])),
-        );
-        Ok((Agent::new(options), CancellationToken::new()))
-    }
-
-    fn agent_model(&self, _case: &EvalCase) -> Option<String> {
-        Some("null/null-model".into())
-    }
-
-    fn tool_set_hash(&self, _case: &EvalCase) -> Option<String> {
-        Some("no-tools".into())
-    }
-}
-
-// Keep `Duration` in scope for `std` compat even though all explicit uses
-// live inside `check_gate` / reporters.
-#[allow(dead_code)]
-const _: Option<Duration> = None;

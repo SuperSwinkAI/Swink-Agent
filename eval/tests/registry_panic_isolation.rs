@@ -15,7 +15,7 @@ use swink_agent::{
 };
 use swink_agent_eval::{
     AgentFactory, EnvironmentState, EvalCase, EvalError, EvalRunner, EvaluatorRegistry,
-    JudgeClient, JudgeError, JudgeVerdict, ResponseCriteria, Score, ToolIntent, Verdict,
+    JudgeClient, ResponseCriteria, Score, ToolIntent, Verdict,
 };
 
 struct PanicFactory {
