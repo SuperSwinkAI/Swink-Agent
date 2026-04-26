@@ -18,6 +18,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 gemma4 = []
 metal = ["llama-cpp-2/metal"]
 cuda = ["llama-cpp-2/cuda"]
+cudnn = ["cuda"]
 vulkan = ["llama-cpp-2/vulkan"]
 
 [dependencies]

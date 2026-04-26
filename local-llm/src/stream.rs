@@ -380,6 +380,21 @@ mod channel_thought {
 
             (thinking_out, text_out)
         }
+
+        pub fn finish(&mut self) -> (Option<String>, Option<String>) {
+            if self.buffer.is_empty() {
+                return (None, None);
+            }
+
+            let buffered = std::mem::take(&mut self.buffer);
+            let state = self.state;
+            self.state = State::Normal;
+
+            match state {
+                State::Normal | State::PartialOpen => (None, Some(buffered)),
+                State::InThinking | State::PartialClose => (Some(buffered), None),
+            }
+        }
     }
 
     fn append(target: &mut Option<String>, s: &str) {
@@ -402,6 +417,12 @@ mod tool_call {
     pub(super) struct ParsedToolCall {
         pub name: String,
         pub args: String,
+    }
+
+    #[derive(Debug, PartialEq, Eq)]
+    pub(super) enum ToolCallFinish {
+        Text(String),
+        PartialToolCall { name: String, args: String },
     }
 
     #[derive(Debug)]
@@ -553,6 +574,51 @@ mod tool_call {
             }
 
             (calls, text_out)
+        }
+
+        pub fn finish(&mut self, preserve_partial_tool_call: bool) -> Option<ToolCallFinish> {
+            if self.buffer.is_empty() && self.name_buf.is_empty() && self.args_buf.is_empty() {
+                self.state = State::Normal;
+                return None;
+            }
+
+            if preserve_partial_tool_call
+                && matches!(self.state, State::InArgs | State::PartialClose)
+                && !self.name_buf.trim().is_empty()
+            {
+                let result = ToolCallFinish::PartialToolCall {
+                    name: self.name_buf.trim().to_string(),
+                    args: self.args_buf.clone(),
+                };
+                self.reset();
+                return Some(result);
+            }
+
+            let mut text = String::new();
+            match self.state {
+                State::Normal | State::PartialOpen => text.push_str(&self.buffer),
+                State::InName => {
+                    text.push_str(OPEN_DELIM);
+                    text.push_str(&self.name_buf);
+                    text.push_str(&self.buffer);
+                }
+                State::InArgs | State::PartialClose => {
+                    text.push_str(OPEN_DELIM);
+                    text.push_str(&self.name_buf);
+                    text.push_str(&self.args_buf);
+                    text.push_str(&self.buffer);
+                }
+            }
+
+            self.reset();
+            (!text.is_empty()).then_some(ToolCallFinish::Text(text))
+        }
+
+        fn reset(&mut self) {
+            self.buffer.clear();
+            self.name_buf.clear();
+            self.args_buf.clear();
+            self.state = State::Normal;
         }
     }
 
@@ -931,15 +997,27 @@ impl StreamState {
         }
     }
 
-    fn flush_pending_non_gemma_thinking(&mut self) {
-        let (thinking_part, text_part) = self.think_parser.finish();
+    fn flush_pending_parsers(&mut self, preserve_partial_tool_call: bool) {
+        #[cfg(not(feature = "gemma4"))]
+        let _ = preserve_partial_tool_call;
 
-        if let Some(think) = thinking_part
-            && !think.is_empty()
-        {
-            self.events.extend(self.blocks.ensure_thinking_open());
-            self.events.extend(self.blocks.thinking_delta(think));
+        #[cfg(feature = "gemma4")]
+        if let Some(parser) = self.channel_parser.as_mut() {
+            let (thinking_part, text_part) = parser.finish();
+            self.emit_thinking(thinking_part);
+
+            if let Some(text) = text_part
+                && !text.is_empty()
+            {
+                self.process_gemma_tool_call_text(&text);
+            }
+
+            self.flush_pending_gemma_tool_call(preserve_partial_tool_call);
+            return;
         }
+
+        let (thinking_part, text_part) = self.think_parser.finish();
+        self.emit_thinking(thinking_part);
 
         if let Some(text) = text_part
             && !text.is_empty()
@@ -950,6 +1028,40 @@ impl StreamState {
 
         let pending_tool_text = self.default_tool_call_parser.finish();
         self.emit_text(pending_tool_text);
+    }
+
+    fn emit_thinking(&mut self, thinking_part: Option<String>) {
+        if let Some(think) = thinking_part
+            && !think.is_empty()
+        {
+            self.events.extend(self.blocks.ensure_thinking_open());
+            self.events.extend(self.blocks.thinking_delta(think));
+        }
+    }
+
+    #[cfg(feature = "gemma4")]
+    fn process_gemma_tool_call_text(&mut self, text: &str) {
+        if let Some(parser) = self.tool_call_parser.as_mut() {
+            let (calls, remaining) = parser.process(text);
+            for call in calls {
+                self.emit_tool_call(call.name, call.args);
+            }
+            self.emit_text(remaining);
+        }
+    }
+
+    #[cfg(feature = "gemma4")]
+    fn flush_pending_gemma_tool_call(&mut self, preserve_partial_tool_call: bool) {
+        if let Some(parser) = self.tool_call_parser.as_mut()
+            && let Some(finished) = parser.finish(preserve_partial_tool_call)
+        {
+            match finished {
+                tool_call::ToolCallFinish::Text(text) => self.emit_text(Some(text)),
+                tool_call::ToolCallFinish::PartialToolCall { name, args } => {
+                    self.emit_tool_call(name, args);
+                }
+            }
+        }
     }
 
     fn emit_text(&mut self, text: Option<String>) {
@@ -963,7 +1075,8 @@ impl StreamState {
     }
 
     fn finalize(mut self) -> Vec<AssistantMessageEvent> {
-        self.flush_pending_non_gemma_thinking();
+        let preserve_partial_tool_call = self.finish_reason == FinishReason::Length;
+        self.flush_pending_parsers(preserve_partial_tool_call);
         self.events.extend(finalize_blocks(&mut self.blocks));
 
         let stop_reason = match self.finish_reason {
@@ -987,7 +1100,7 @@ impl StreamState {
     }
 
     fn finalize_error(mut self, message: impl Into<String>) -> Vec<AssistantMessageEvent> {
-        self.flush_pending_non_gemma_thinking();
+        self.flush_pending_parsers(false);
         self.events.extend(finalize_blocks(&mut self.blocks));
         self.events
             .push(AssistantMessageEvent::error(message.into()));
@@ -995,7 +1108,7 @@ impl StreamState {
     }
 
     fn finalize_cancelled(mut self) -> Vec<AssistantMessageEvent> {
-        self.flush_pending_non_gemma_thinking();
+        self.flush_pending_parsers(false);
         self.events.extend(finalize_blocks(&mut self.blocks));
         self.events
             .push(cancelled_event("local inference cancelled"));
@@ -1737,6 +1850,7 @@ mod tests {
     mod gemma4_tests {
         use super::super::channel_thought::ChannelThoughtParser;
         use super::super::delimiter::partial_prefix_at_end;
+        use super::*;
 
         #[test]
         fn channel_thought_single_chunk() {
@@ -1768,6 +1882,18 @@ mod tests {
             let (t2, txt2) = parser.process("nel|>after text");
             assert!(t2.is_none());
             assert_eq!(txt2.as_deref(), Some("after text"));
+        }
+
+        #[test]
+        fn channel_thought_finish_flushes_unclosed_thinking() {
+            let mut parser = ChannelThoughtParser::new();
+            let (thinking, text) = parser.process("<|channel>thought\nreasoning<chan");
+            assert_eq!(thinking.as_deref(), Some("reasoning"));
+            assert!(text.is_none());
+
+            let (thinking, text) = parser.finish();
+            assert_eq!(thinking.as_deref(), Some("<chan"));
+            assert!(text.is_none());
         }
 
         #[test]
@@ -1851,10 +1977,45 @@ mod tests {
         }
 
         #[test]
+        fn tool_call_finish_flushes_incomplete_call_as_text_by_default() {
+            use super::super::tool_call::{ToolCallFinish, ToolCallParser};
+
+            let mut parser = ToolCallParser::new();
+            let (calls, text) = parser.process(r#"<|tool_call>call:read_file{"path""#);
+            assert!(calls.is_empty());
+            assert!(text.is_none());
+
+            match parser.finish(false) {
+                Some(ToolCallFinish::Text(text)) => {
+                    assert_eq!(text, r#"<|tool_call>call:read_file{"path""#);
+                }
+                other => panic!("expected text flush, got {other:?}"),
+            }
+        }
+
+        #[test]
+        fn tool_call_finish_preserves_length_truncated_call() {
+            use super::super::tool_call::{ToolCallFinish, ToolCallParser};
+
+            let mut parser = ToolCallParser::new();
+            let (calls, text) = parser.process(r#"<|tool_call>call:read_file{"path""#);
+            assert!(calls.is_empty());
+            assert!(text.is_none());
+
+            match parser.finish(true) {
+                Some(ToolCallFinish::PartialToolCall { name, args }) => {
+                    assert_eq!(name, "read_file");
+                    assert_eq!(args, r#"{"path""#);
+                }
+                other => panic!("expected partial tool call, got {other:?}"),
+            }
+        }
+
+        #[test]
         fn tool_call_partial_match_is_utf8_safe() {
             use super::super::tool_call::ToolCallParser;
 
-            let haystack = r#"prefix🙂<tool_cal"#;
+            let haystack = r"prefix🙂<tool_cal";
             assert_eq!(partial_prefix_at_end(haystack, "<tool_call|>"), Some(9));
 
             let mut parser = ToolCallParser::new();
@@ -1893,7 +2054,76 @@ reasoning<channel|><|tool_call>call:read_file{"path":"foo.rs"}<tool_call|>"#;
             let (calls, remaining) = tool_parser.process(&text);
             assert_eq!(calls.len(), 1);
             assert_eq!(calls[0].name, "read_file");
-            assert!(remaining.filter(|s| !s.is_empty()).is_none());
+            assert!(remaining.as_ref().is_none_or(|s| s.is_empty()));
+        }
+
+        #[test]
+        fn gemma_finalize_flushes_unclosed_thinking() {
+            let mut state = StreamState::new(true);
+            state.process_token("<|channel>thought\nreasoning<chan");
+
+            let events = state.finalize();
+            let thinking_deltas: Vec<&str> = events
+                .iter()
+                .filter_map(|event| match event {
+                    AssistantMessageEvent::ThinkingDelta { delta, .. } => Some(delta.as_str()),
+                    _ => None,
+                })
+                .collect();
+
+            assert_eq!(thinking_deltas, vec!["reasoning", "<chan"]);
+            assert!(
+                events
+                    .iter()
+                    .any(|event| matches!(event, AssistantMessageEvent::ThinkingEnd { .. }))
+            );
+        }
+
+        #[test]
+        fn gemma_finalize_flushes_incomplete_tool_call_as_text_on_stop() {
+            let mut state = StreamState::new(true);
+            state.process_token(r#"<|tool_call>call:read_file{"path""#);
+
+            let events = state.finalize();
+            let text_deltas: Vec<&str> = events
+                .iter()
+                .filter_map(|event| match event {
+                    AssistantMessageEvent::TextDelta { delta, .. } => Some(delta.as_str()),
+                    _ => None,
+                })
+                .collect();
+
+            assert_eq!(text_deltas, vec![r#"<|tool_call>call:read_file{"path""#]);
+            assert!(
+                !events
+                    .iter()
+                    .any(|event| matches!(event, AssistantMessageEvent::ToolCallStart { .. }))
+            );
+        }
+
+        #[test]
+        fn gemma_finalize_preserves_length_truncated_tool_call() {
+            let mut state = StreamState::new(true);
+            state.finish_reason = FinishReason::Length;
+            state.process_token(r#"<|tool_call>call:read_file{"path""#);
+
+            let events = state.finalize();
+
+            assert!(events.iter().any(|event| matches!(
+                event,
+                AssistantMessageEvent::ToolCallStart { name, .. } if name == "read_file"
+            )));
+            assert!(events.iter().any(|event| matches!(
+                event,
+                AssistantMessageEvent::ToolCallDelta { delta, .. } if delta == r#"{"path""#
+            )));
+            assert!(matches!(
+                events.last(),
+                Some(AssistantMessageEvent::Done {
+                    stop_reason: StopReason::Length,
+                    ..
+                })
+            ));
         }
 
         #[test]
