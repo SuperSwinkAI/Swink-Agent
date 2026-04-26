@@ -544,10 +544,12 @@ fn dispatch_evaluators(
 
     let mut per_evaluator: std::collections::BTreeMap<String, Vec<EvalMetricResult>> =
         std::collections::BTreeMap::new();
+    let mut cancelled = false;
     for run_idx in 0..num_runs {
         if let Some(tok) = cancel
             && tok.is_cancelled()
         {
+            cancelled = true;
             break;
         }
         // Only the first num_runs iteration gets its evaluator spans emitted
@@ -575,7 +577,7 @@ fn dispatch_evaluators(
         debug!(case_id = %case.id, run = run_idx + 1, "num_runs sample recorded");
     }
 
-    per_evaluator
+    let mut aggregated: Vec<EvalMetricResult> = per_evaluator
         .into_iter()
         .map(|(name, samples)| {
             let scores: Vec<f64> = samples.iter().map(|m| m.score.value).collect();
@@ -597,7 +599,15 @@ fn dispatch_evaluators(
                 details: Some(detail_lines.join(" :: ")),
             }
         })
-        .collect()
+        .collect();
+
+    if cancelled {
+        aggregated.push(cancelled_metric_result(
+            "runner cancellation observed during multi-run evaluator dispatch",
+        ));
+    }
+
+    aggregated
 }
 
 /// Invoke every applicable evaluator once. When `telemetry` + `case_span`
@@ -629,12 +639,18 @@ fn cancelled_case_result(case: &EvalCase) -> EvalCaseResult {
     EvalCaseResult {
         case_id: case.id.clone(),
         invocation: error_invocation(None),
-        metric_results: vec![EvalMetricResult {
-            evaluator_name: "cancelled".to_string(),
-            score: Score::fail(),
-            details: Some("runner cancellation observed before case completion".into()),
-        }],
+        metric_results: vec![cancelled_metric_result(
+            "runner cancellation observed before case completion",
+        )],
         verdict: Verdict::Fail,
+    }
+}
+
+fn cancelled_metric_result(details: &str) -> EvalMetricResult {
+    EvalMetricResult {
+        evaluator_name: "cancelled".to_string(),
+        score: Score::fail(),
+        details: Some(details.to_string()),
     }
 }
 
