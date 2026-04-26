@@ -7,3 +7,4 @@
 - `src/policy/rate_limiter.rs` must treat `Instant::checked_sub()` underflow as a no-prune tick instead of unwrapping. Short-uptime hosts can otherwise panic in the live rate-limit path.
 - `src/tools/screenshot.rs` must drop the shared `PlaywrightBridge` after a screenshot request is cancelled or times out. Once the JSON request is written, abandoning the response read can leave a stale line on stdout that corrupts the next bridge exchange.
 - `src/tools/extract.rs` follows the same Playwright bridge lifecycle rule as screenshots: enforce the configured timeout and drop the shared bridge on in-flight cancellation or timeout after the request may have been written.
+- Web content sanitization must happen before text-producing tools return `AgentToolResult::text`; the post-turn sanitizer policy is only an audit backstop because post-turn messages are already committed to context.
