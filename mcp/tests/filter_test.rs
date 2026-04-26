@@ -1,16 +1,20 @@
 //! Tool filter tests for MCP integration (T030-T034).
 //!
-//! Note: The mock server (`MockMcpServer`) only exposes a single hardcoded tool
-//! named "echo" (via rmcp's `#[tool]` macro). All filter tests operate against
-//! this one tool. Tests for allow-listing 2-of-5 or denying 1-of-5 are
-//! semantically verified through allow/deny logic; in practice with the mock
-//! the pool is always size 1.
-
 mod common;
 
 use std::collections::HashMap;
 
 use swink_agent_mcp::{McpConnection, McpManager, McpServerConfig, McpTransport, ToolFilter};
+
+fn five_tool_config() -> common::MockServerConfig {
+    common::MockServerConfig::new(vec![
+        common::MockToolDef::simple("echo", "echo"),
+        common::MockToolDef::simple("tool_a", "tool_a"),
+        common::MockToolDef::simple("tool_b", "tool_b"),
+        common::MockToolDef::simple("tool_c", "tool_c"),
+        common::MockToolDef::simple("tool_d", "tool_d"),
+    ])
+}
 
 /// Build a minimal `McpServerConfig` placeholder (transport is unused — we call
 /// `McpConnection::from_service` directly with a pre-connected service).
@@ -30,20 +34,16 @@ fn stub_config(name: &str, filter: Option<ToolFilter>) -> McpServerConfig {
     }
 }
 
-/// T030: Allow-list containing "echo" — the matching tool is registered.
-///
-/// Spec says: "mock server with 5 tools, allow-list of 2, verify only 2 tools returned".
-/// With the in-process mock only providing "echo", we verify that an allow-list
-/// containing "echo" retains it (1 tool present → 1 tool returned).
+/// T030: mock server with 5 tools, allow-list of 2, verify only 2 tools returned.
 #[tokio::test]
 async fn filter_allow_list_includes_only_matching_tools() {
-    let mock_cfg = common::MockServerConfig::new(vec![]);
+    let mock_cfg = five_tool_config();
     let service = common::spawn_mock_server_with_client(&mock_cfg).await;
 
     let config = stub_config(
         "allow-test",
         Some(ToolFilter {
-            allow: Some(vec!["echo".into()]),
+            allow: Some(vec!["tool_a".into(), "tool_b".into()]),
             deny: None,
         }),
     );
@@ -56,28 +56,21 @@ async fn filter_allow_list_includes_only_matching_tools() {
         McpManager::from_connections(vec![conn]).expect("manager creation should succeed");
     let tools = manager.tools();
 
-    assert_eq!(
-        tools.len(),
-        1,
-        "allow-list ['echo'] should retain the echo tool"
-    );
-    assert_eq!(tools[0].name(), "echo");
+    let names: Vec<_> = tools.iter().map(|tool| tool.name().to_string()).collect();
+    assert_eq!(names, vec!["tool_a".to_string(), "tool_b".to_string()]);
 }
 
-/// T031: Deny-list of ["echo"] — echo is excluded, 0 tools registered.
-///
-/// Spec says: "mock server with 5 tools, deny-list of 1, verify 4 tools returned".
-/// With the mock only providing "echo", denying it removes all tools → 0 tools.
+/// T031: mock server with 5 tools, deny-list of 1, verify 4 tools returned.
 #[tokio::test]
 async fn filter_deny_list_excludes_matching_tools() {
-    let mock_cfg = common::MockServerConfig::new(vec![]);
+    let mock_cfg = five_tool_config();
     let service = common::spawn_mock_server_with_client(&mock_cfg).await;
 
     let config = stub_config(
         "deny-test",
         Some(ToolFilter {
             allow: None,
-            deny: Some(vec!["echo".into()]),
+            deny: Some(vec!["tool_c".into()]),
         }),
     );
 
@@ -89,27 +82,22 @@ async fn filter_deny_list_excludes_matching_tools() {
         McpManager::from_connections(vec![conn]).expect("manager creation should succeed");
     let tools = manager.tools();
 
-    assert_eq!(
-        tools.len(),
-        0,
-        "deny-list ['echo'] should exclude the only tool, yielding 0 tools"
-    );
+    let names: Vec<_> = tools.iter().map(|tool| tool.name().to_string()).collect();
+    assert_eq!(names.len(), 4);
+    assert!(!names.contains(&"tool_c".to_string()));
 }
 
-/// T032: Allow applied first, then deny. Allow ["echo"], deny ["echo"] → 0 tools.
-///
-/// Spec says: "mock server with both allow and deny lists, verify allow applied first
-/// then deny". Here allow keeps "echo" then deny removes it → net 0 tools.
+/// T032: allow applied first, then deny on a 5-tool server.
 #[tokio::test]
 async fn filter_allow_then_deny_applied_in_order() {
-    let mock_cfg = common::MockServerConfig::new(vec![]);
+    let mock_cfg = five_tool_config();
     let service = common::spawn_mock_server_with_client(&mock_cfg).await;
 
     let config = stub_config(
         "combined-filter-test",
         Some(ToolFilter {
-            allow: Some(vec!["echo".into()]),
-            deny: Some(vec!["echo".into()]),
+            allow: Some(vec!["tool_a".into(), "tool_b".into(), "tool_c".into()]),
+            deny: Some(vec!["tool_c".into()]),
         }),
     );
 
@@ -121,20 +109,14 @@ async fn filter_allow_then_deny_applied_in_order() {
         McpManager::from_connections(vec![conn]).expect("manager creation should succeed");
     let tools = manager.tools();
 
-    assert_eq!(
-        tools.len(),
-        0,
-        "allow=['echo'] then deny=['echo'] should result in 0 tools (deny removes what allow kept)"
-    );
+    let names: Vec<_> = tools.iter().map(|tool| tool.name().to_string()).collect();
+    assert_eq!(names, vec!["tool_a".to_string(), "tool_b".to_string()]);
 }
 
 /// T034: End-to-end with no filter — all discovered tools are returned.
-///
-/// Verifies the baseline: when `tool_filter` is `None`, `McpManager` exposes
-/// every tool the server advertises. The mock server advertises "echo".
 #[tokio::test]
 async fn no_filter_returns_all_tools() {
-    let mock_cfg = common::MockServerConfig::new(vec![]);
+    let mock_cfg = five_tool_config();
     let service = common::spawn_mock_server_with_client(&mock_cfg).await;
 
     let config = stub_config("no-filter-test", None);
@@ -147,13 +129,16 @@ async fn no_filter_returns_all_tools() {
         McpManager::from_connections(vec![conn]).expect("manager creation should succeed");
     let tools = manager.tools();
 
-    assert!(
-        !tools.is_empty(),
-        "no filter should return all discovered tools (at least 'echo')"
-    );
     let names: Vec<_> = tools.iter().map(|t| t.name().to_string()).collect();
     assert!(
-        names.contains(&"echo".to_string()),
-        "should contain echo tool, got: {names:?}"
+        names
+            == vec![
+                "echo".to_string(),
+                "tool_a".to_string(),
+                "tool_b".to_string(),
+                "tool_c".to_string(),
+                "tool_d".to_string(),
+            ],
+        "no filter should return the full configured tool set, got: {names:?}"
     );
 }

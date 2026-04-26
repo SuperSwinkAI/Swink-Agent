@@ -213,17 +213,11 @@ async fn connect_discovers_tools_via_in_process_server() {
 
     // Verify tool discovery works via the rmcp peer API.
     let tools = client.peer().list_all_tools().await.unwrap();
-    // The mock server always exposes the "echo" tool via the tool macro.
-    assert!(
-        !tools.is_empty(),
-        "should discover at least the echo tool from mock server"
-    );
-
-    // Verify tool names contain "echo" (the tool we defined on `MockMcpServer`).
     let tool_names: Vec<String> = tools.iter().map(|t| t.name.to_string()).collect();
-    assert!(
-        tool_names.contains(&"echo".to_string()),
-        "should discover the echo tool, got: {tool_names:?}"
+    assert_eq!(
+        tool_names,
+        vec!["read_file".to_string(), "search_files".to_string()],
+        "tool discovery should reflect the configured mock tool set"
     );
 }
 
