@@ -15,6 +15,7 @@ use tracing::debug;
 use swink_agent::{AgentContext, AssistantMessageEvent, ModelSpec, StreamFn, StreamOptions};
 use swink_agent_auth::{ExpiringValue, SingleFlightTokenSource};
 
+use crate::classify::{HttpErrorKind, classify_with_overrides};
 use crate::oai_transport::{OaiAdapterShell, oai_send_and_parse, prepare_oai_request};
 
 /// Authentication method for Azure `OpenAI` deployments.
@@ -54,10 +55,18 @@ struct TokenResponse {
     expires_in: u64,
 }
 
+#[derive(Clone)]
+enum TokenAcquireError {
+    Auth(String),
+    Throttled(String),
+    Network(String),
+    Other(String),
+}
+
 pub struct AzureStreamFn {
     shell: OaiAdapterShell,
     auth: AzureAuth,
-    token_source: SingleFlightTokenSource<String>,
+    token_source: SingleFlightTokenSource<String, TokenAcquireError>,
     /// Override token endpoint URL (for testing). `None` = use Microsoft default.
     token_endpoint_override: Option<String>,
 }
@@ -98,7 +107,7 @@ impl AzureStreamFn {
         token_url: String,
         client_id: String,
         client_secret: String,
-    ) -> Result<ExpiringValue<String>, String> {
+    ) -> Result<ExpiringValue<String>, TokenAcquireError> {
         let params = [
             ("grant_type", "client_credentials".to_string()),
             ("client_id", client_id),
@@ -114,17 +123,32 @@ impl AzureStreamFn {
             .form(&params)
             .send()
             .await
-            .map_err(|e| format!("token request failed: {e}"))?;
+            .map_err(|e| TokenAcquireError::Network(format!("token request failed: {e}")))?;
 
         if !resp.status().is_success() {
+            let status = resp.status().as_u16();
             let body = resp.text().await.unwrap_or_default();
-            return Err(format!("token endpoint returned error: {body}"));
+            return Err(
+                match classify_with_overrides(status, &[(400, HttpErrorKind::Auth)]) {
+                    Some(HttpErrorKind::Auth) => TokenAcquireError::Auth(format!(
+                        "token endpoint auth error (HTTP {status}): {body}"
+                    )),
+                    Some(HttpErrorKind::Throttled) => TokenAcquireError::Throttled(format!(
+                        "token endpoint rate limit (HTTP {status}): {body}"
+                    )),
+                    Some(HttpErrorKind::Network) => TokenAcquireError::Network(format!(
+                        "token endpoint server error (HTTP {status}): {body}"
+                    )),
+                    None => TokenAcquireError::Other(format!(
+                        "token endpoint returned error (HTTP {status}): {body}"
+                    )),
+                },
+            );
         }
 
-        let token_resp: TokenResponse = resp
-            .json()
-            .await
-            .map_err(|e| format!("failed to parse token response: {e}"))?;
+        let token_resp: TokenResponse = resp.json().await.map_err(|e| {
+            TokenAcquireError::Other(format!("failed to parse token response: {e}"))
+        })?;
 
         Ok(ExpiringValue::new(
             token_resp.access_token,
@@ -138,7 +162,7 @@ impl AzureStreamFn {
         tenant_id: &str,
         client_id: &str,
         client_secret: &str,
-    ) -> Result<String, String> {
+    ) -> Result<String, TokenAcquireError> {
         let client = self.shell.client().clone();
         let token_url = self.token_url(tenant_id);
         let client_id = client_id.to_string();
@@ -178,8 +202,23 @@ impl AzureStreamFn {
                 let token = self
                     .get_or_refresh_token(tenant_id, client_id, client_secret)
                     .await
-                    .map_err(|e| {
-                        AssistantMessageEvent::error_network(format!("Azure token error: {e}"))
+                    .map_err(|e| match e {
+                        TokenAcquireError::Auth(message) => AssistantMessageEvent::error_auth(
+                            format!("Azure token error: {message}"),
+                        ),
+                        TokenAcquireError::Throttled(message) => {
+                            AssistantMessageEvent::error_throttled(format!(
+                                "Azure token error: {message}"
+                            ))
+                        }
+                        TokenAcquireError::Network(message) => {
+                            AssistantMessageEvent::error_network(format!(
+                                "Azure token error: {message}"
+                            ))
+                        }
+                        TokenAcquireError::Other(message) => {
+                            AssistantMessageEvent::error(format!("Azure token error: {message}"))
+                        }
                     })?;
                 Ok(request.header("Authorization", format!("Bearer {token}")))
             }
