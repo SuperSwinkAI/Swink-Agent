@@ -325,6 +325,16 @@ fn append_records_in_place(
     meta_line_len: usize,
     record_lines: &[String],
 ) -> io::Result<bool> {
+    append_records_in_place_with_hook(path, meta, meta_line_len, record_lines, |_| Ok(()))
+}
+
+fn append_records_in_place_with_hook(
+    path: &Path,
+    meta: &SessionMeta,
+    meta_line_len: usize,
+    record_lines: &[String],
+    after_meta_patch: impl FnOnce(&mut std::fs::File) -> io::Result<()>,
+) -> io::Result<bool> {
     let meta_line = serde_json::to_string(meta).map_err(io::Error::other)?;
     if meta_line.len() + 1 > meta_line_len {
         return Ok(false);
@@ -334,13 +344,16 @@ fn append_records_in_place(
         .read(true)
         .write(true)
         .open(path)?;
+    write_meta_line_in_place(&mut file, &meta_line, meta_line_len)?;
+    file.flush()?;
+    after_meta_patch(&mut file)?;
+
     file.seek(SeekFrom::End(0))?;
     for line in record_lines {
         if !line.is_empty() {
             writeln!(file, "{line}")?;
         }
     }
-    write_meta_line_in_place(&mut file, &meta_line, meta_line_len)?;
     file.flush()?;
     Ok(true)
 }
@@ -1707,6 +1720,55 @@ mod tests {
         let (loaded_meta, loaded_messages) = store.load("append-in-place", None).unwrap();
         assert_eq!(loaded_meta.sequence, 2);
         assert_eq!(loaded_messages.len(), 2);
+    }
+
+    #[test]
+    fn append_failure_after_metadata_patch_rejects_stale_save_without_new_records() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = JsonlSessionStore::new(dir.path().to_path_buf()).unwrap();
+
+        let meta = fresh_meta("append-meta-first");
+        store
+            .save("append-meta-first", &meta, &[user_msg("first", 1)])
+            .unwrap();
+
+        let path = session_path(dir.path(), "append-meta-first");
+        let (mut append_meta, meta_line_len) =
+            read_meta_with_line_len(&path, "append-meta-first").unwrap();
+        append_meta.updated_at = now_utc();
+        append_meta.sequence += 1;
+        let second_line = SessionRecord::from_message(&user_msg("second", 2), "append-meta-first")
+            .unwrap()
+            .to_json_line()
+            .unwrap();
+
+        let err = append_records_in_place_with_hook(
+            &path,
+            &append_meta,
+            meta_line_len,
+            &[second_line],
+            |_| Err(io::Error::other("simulated record write failure")),
+        )
+        .unwrap_err();
+        assert_eq!(err.to_string(), "simulated record write failure");
+
+        let (loaded_meta, loaded_messages) = store.load("append-meta-first", None).unwrap();
+        assert_eq!(
+            loaded_meta.sequence, 2,
+            "metadata sequence must be visible before any appended records"
+        );
+        assert_eq!(
+            loaded_messages.len(),
+            1,
+            "failed append must not expose uncommitted record lines"
+        );
+
+        let mut stale = meta;
+        stale.sequence = 1;
+        let err = store
+            .save("append-meta-first", &stale, &[user_msg("stale", 3)])
+            .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
     }
 
     #[test]
