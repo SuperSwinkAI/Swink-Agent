@@ -453,7 +453,7 @@ async fn handle_stream_event_preserves_custom_messages() {
         .iter()
         .find_map(|m| match m {
             AgentMessage::Custom(cm) => cm.as_any().downcast_ref::<CloneableCustomMsg>(),
-            _ => None,
+            AgentMessage::Llm(_) => None,
         })
         .expect("should find CloneableCustomMsg in rebuilt state");
 
