@@ -88,7 +88,7 @@
 - [x] T023 [P] [US3] Add acceptance test: empty trajectory (zero tool calls) → evaluator returns `None` (spec AS-3.3)
 - [x] T024 [US3] Add acceptance test: compare two trajectories for same task → more efficient one scores higher (spec AS-3.4)
 - [x] T025 [US3] Add edge case test: efficiency with `budget.max_turns` set — verify `ideal_turns` uses budget value, not `unique_call_count` in `eval/tests/efficiency.rs`
-- [ ] T025a [US3] Add determinism assertion (SC-003): in `eval/tests/efficiency.rs`, call `EfficiencyEvaluator::evaluate()` twice on the same `(case, invocation)` pair, assert `EvalMetricResult` is equal (same `score.value`, same `details`). One-line addition to an existing test is fine.
+- [x] T025a [US3] Add determinism assertion (SC-003): in `eval/tests/efficiency.rs`, call `EfficiencyEvaluator::evaluate()` twice on the same `(case, invocation)` pair, assert `EvalMetricResult` is equal (same `score.value`, same `details`). One-line addition to an existing test is fine.
 - [x] T026 [US3] Verify all US3 tests pass with `cargo test -p swink-agent-eval --test efficiency`
 
 **Checkpoint**: Efficiency scoring verified against exact formula with all weight combinations.
