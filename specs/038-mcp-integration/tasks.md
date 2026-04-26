@@ -96,7 +96,7 @@
 
 ### Tests for User Story 3
 
-- [x] T026 [P] [US3] Write test in mcp/tests/policy_test.rs: register McpTool on agent with approval function, verify approval gate fires before MCP tool execution
+- [x] T026 [P] [US3] Write end-to-end test in mcp/tests/policy_test.rs: register McpTool on a real Agent with approval function, verify approval gate fires before MCP tool execution
 - [x] T027 [P] [US3] Write test in mcp/tests/policy_test.rs: register McpTool that requires_approval=true, verify requires_approval() returns true on the AgentTool trait
 
 ### Implementation for User Story 3
@@ -116,9 +116,9 @@
 
 ### Tests for User Story 4
 
-- [x] T030 [P] [US4] Write test in mcp/tests/filter_test.rs: mock server with 5 tools, allow-list of 2, verify only 2 tools returned
-- [x] T031 [P] [US4] Write test in mcp/tests/filter_test.rs: mock server with 5 tools, deny-list of 1, verify 4 tools returned
-- [x] T032 [P] [US4] Write test in mcp/tests/filter_test.rs: mock server with both allow and deny lists, verify allow applied first then deny
+- [x] T030 [P] [US4] Write test in mcp/tests/filter_test.rs: mock server with 5 real advertised tools, allow-list of 2, verify only 2 tools returned
+- [x] T031 [P] [US4] Write test in mcp/tests/filter_test.rs: mock server with 5 real advertised tools, deny-list of 1, verify 4 tools returned
+- [x] T032 [P] [US4] Write test in mcp/tests/filter_test.rs: mock server with 5 real advertised tools and both allow/deny lists, verify allow applied first then deny
 
 ### Implementation for User Story 4
 

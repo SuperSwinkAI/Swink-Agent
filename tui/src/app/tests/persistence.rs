@@ -178,6 +178,56 @@ async fn load_session_restores_assistant_thinking_blocks() {
 }
 
 #[tokio::test]
+async fn load_session_restores_tool_result_error_role() {
+    let tempdir = tempdir().unwrap();
+    let store = JsonlSessionStore::new(tempdir.path().to_path_buf()).unwrap();
+
+    let tool_error = swink_agent::AgentMessage::Llm(swink_agent::LlmMessage::ToolResult(
+        swink_agent::ToolResultMessage {
+            tool_call_id: "call_1".to_string(),
+            content: vec![swink_agent::ContentBlock::Text {
+                text: "permission denied".to_string(),
+            }],
+            is_error: true,
+            timestamp: 0,
+            details: serde_json::Value::Null,
+            cache_hint: None,
+        },
+    ));
+
+    let messages = vec![make_user_agent_message("hello"), tool_error];
+
+    let session_id = "tool-error-session";
+    let now = swink_agent_memory::now_utc();
+    let meta = SessionMeta {
+        id: session_id.to_string(),
+        title: "mock-model".to_string(),
+        created_at: now,
+        updated_at: now,
+        version: 1,
+        sequence: 0,
+    };
+    store.save(session_id, &meta, &messages).unwrap();
+
+    let stream_fn = Arc::new(ScriptedStreamFn::new(vec![]));
+    let agent = make_test_agent(stream_fn);
+    let mut app = App::new(TuiConfig::default());
+    app.session_store = Some(store);
+    app.set_agent(agent);
+
+    app.load_session(session_id).unwrap();
+
+    let restored = app
+        .messages
+        .iter()
+        .find(|message| message.content == "permission denied")
+        .expect("tool result should be restored");
+    assert_eq!(restored.role, MessageRole::Error);
+    assert_eq!(restored.summary, "permission denied");
+    assert!(restored.collapsed);
+}
+
+#[tokio::test]
 async fn auto_save_persists_session_state_snapshot() {
     let tempdir = tempdir().unwrap();
     let store = JsonlSessionStore::new(tempdir.path().to_path_buf()).unwrap();

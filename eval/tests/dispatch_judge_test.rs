@@ -6,7 +6,6 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Duration;
 
-use async_trait::async_trait;
 use swink_agent::{Cost, ModelSpec, StopReason, Usage};
 use swink_agent_eval::{
     Detail, EvalCase, Invocation, JudgeClient, JudgeError, JudgeEvaluatorConfig,
@@ -20,15 +19,16 @@ struct CannedJudge {
     prompts: Mutex<Vec<String>>,
 }
 
-#[async_trait]
 impl JudgeClient for CannedJudge {
-    async fn judge(&self, prompt: &str) -> Result<JudgeVerdict, JudgeError> {
-        self.prompts.lock().unwrap().push(prompt.to_string());
-        Ok(JudgeVerdict {
-            score: self.score,
-            pass: (0.5..=1.0).contains(&self.score),
-            reason: self.reason.clone(),
-            label: None,
+    fn judge<'a>(&'a self, prompt: &'a str) -> swink_agent_eval::JudgeFuture<'a> {
+        Box::pin(async move {
+            self.prompts.lock().unwrap().push(prompt.to_string());
+            Ok(JudgeVerdict {
+                score: self.score,
+                pass: (0.5..=1.0).contains(&self.score),
+                reason: self.reason.clone(),
+                label: None,
+            })
         })
     }
 }

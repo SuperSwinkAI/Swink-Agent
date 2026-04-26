@@ -12,6 +12,7 @@
 - `FileArtifactStore` layout: versioned files + JSON metadata sidecar per artifact.
 - Streaming reads available via the `streaming` module.
 - If `meta.json` references a version whose `vN.bin` content file is missing, treat that as store corruption (`InvalidData` storage error), not as an absent artifact/version.
+- If a `vN.bin` file exists without `meta.json` membership, treat that as store corruption before loading or allocating the next saved version; silently returning `None` or overwriting the orphan loses recovery evidence.
 - `save` and `save_stream` must remove the just-written `vN.bin` if the follow-on `meta.json` write fails; leaving that orphaned content behind violates metadata-as-source-of-truth recovery semantics.
 - `FileArtifactStore::delete` must remove only the exact artifact's direct files, then prune empty parent directories. Recursive directory deletion breaks exact-name semantics for slash-containing artifact IDs like `foo` and `foo/bar`.
 - `FileArtifactStore::discover_artifacts` must normalize filesystem separators back to `/` before returning artifact names; Windows paths otherwise fail `validate_artifact_name` for nested IDs.

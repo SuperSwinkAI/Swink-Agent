@@ -15,6 +15,14 @@ fn pattern_bytes(size: usize) -> Vec<u8> {
         .collect()
 }
 
+fn text_data(content: &str) -> ArtifactData {
+    ArtifactData {
+        content: content.as_bytes().to_vec(),
+        content_type: "text/plain".to_string(),
+        metadata: HashMap::new(),
+    }
+}
+
 /// Collect a streaming load result into a `Vec<u8>`.
 async fn collect_stream(
     stream: std::pin::Pin<Box<dyn futures::Stream<Item = Result<Bytes, ArtifactError>> + Send>>,
@@ -346,6 +354,43 @@ async fn streaming_load_returns_invalid_data_for_orphaned_explicit_version_file(
         .err()
         .expect("orphaned content should be surfaced as corruption");
     assert_invalid_data_storage_error(err, "without metadata membership");
+}
+
+#[tokio::test]
+async fn streaming_save_refuses_to_overwrite_orphaned_next_version_file() {
+    let tmpdir = tempfile::TempDir::new().unwrap();
+    let store = FileArtifactStore::new(tmpdir.path());
+
+    store
+        .save("sess-stream-orphan-save", "report.md", text_data("v1"))
+        .await
+        .expect("initial save should succeed");
+
+    let artifact_dir = tmpdir
+        .path()
+        .join("sess-stream-orphan-save")
+        .join("report.md");
+    let orphan_path = artifact_dir.join("v2.bin");
+    tokio::fs::write(&orphan_path, b"orphan")
+        .await
+        .expect("orphaned content file should be creatable");
+
+    let err = store
+        .save_stream(
+            "sess-stream-orphan-save",
+            "report.md",
+            "text/plain".to_string(),
+            HashMap::new(),
+            Box::pin(stream::iter(vec![Ok(Bytes::from_static(b"v2"))])),
+        )
+        .await
+        .expect_err("save_stream should fail instead of overwriting orphaned content");
+    assert_invalid_data_storage_error(err, "without metadata membership");
+
+    let orphan = tokio::fs::read(&orphan_path)
+        .await
+        .expect("orphaned content should remain for diagnosis");
+    assert_eq!(orphan, b"orphan");
 }
 
 // T065: streaming_save_error_does_not_publish_partial_version

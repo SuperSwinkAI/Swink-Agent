@@ -1,5 +1,11 @@
 use swink_agent::{AuthMode, ProviderCatalog, ProviderKind, model_catalog};
 
+#[derive(Debug, PartialEq, Eq)]
+pub struct UnknownProviderFilter {
+    pub provider_key: String,
+    pub valid_provider_keys: Vec<String>,
+}
+
 pub struct VerifyTask {
     pub provider_key: String,
     pub preset_id: String,
@@ -16,8 +22,28 @@ pub enum ProviderEndpoint {
     Skipped { reason: &'static str },
 }
 
-pub fn build_verify_tasks(provider_filter: Option<&str>) -> Vec<VerifyTask> {
+pub fn build_verify_tasks(
+    provider_filter: Option<&str>,
+) -> Result<Vec<VerifyTask>, UnknownProviderFilter> {
     let catalog = model_catalog();
+    let valid_provider_keys: Vec<String> = catalog
+        .providers
+        .iter()
+        .map(|provider| provider.key.clone())
+        .collect();
+
+    if let Some(filter) = provider_filter
+        && !catalog
+            .providers
+            .iter()
+            .any(|provider| provider.key == filter)
+    {
+        return Err(UnknownProviderFilter {
+            provider_key: filter.to_owned(),
+            valid_provider_keys,
+        });
+    }
+
     let mut tasks = Vec::new();
     for provider in &catalog.providers {
         if provider_filter.is_some_and(|f| f != provider.key) {
@@ -34,7 +60,7 @@ pub fn build_verify_tasks(provider_filter: Option<&str>) -> Vec<VerifyTask> {
             });
         }
     }
-    tasks
+    Ok(tasks)
 }
 
 fn resolve_endpoint(provider: &ProviderCatalog) -> ProviderEndpoint {
@@ -73,5 +99,41 @@ fn resolve_endpoint(provider: &ProviderCatalog) -> ProviderEndpoint {
         "anthropic" => ProviderEndpoint::Anthropic { base_url, api_key },
         "google" => ProviderEndpoint::Google { base_url, api_key },
         _ => ProviderEndpoint::OpenAiCompat { base_url, api_key },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn unknown_provider_filter_reports_valid_keys() {
+        let result = super::build_verify_tasks(Some("does-not-exist"));
+        let Err(error) = result else {
+            panic!("unknown provider should fail");
+        };
+
+        assert_eq!(error.provider_key, "does-not-exist");
+        assert!(
+            error
+                .valid_provider_keys
+                .iter()
+                .any(|key| key == "anthropic"),
+            "expected anthropic in valid key list"
+        );
+        assert!(
+            error.valid_provider_keys.iter().any(|key| key == "openai"),
+            "expected openai in valid key list"
+        );
+    }
+
+    #[test]
+    fn known_provider_filter_builds_tasks() {
+        let tasks = super::build_verify_tasks(Some("anthropic"))
+            .expect("known provider should build tasks");
+
+        assert!(
+            !tasks.is_empty(),
+            "expected anthropic provider to produce verification tasks"
+        );
+        assert!(tasks.iter().all(|task| task.provider_key == "anthropic"));
     }
 }

@@ -4,9 +4,14 @@ use std::collections::VecDeque;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
+use futures::Stream;
+use futures::stream;
 use tokio_util::sync::CancellationToken;
 
-use swink_agent::{Agent, AgentOptions, ModelSpec, testing::SimpleMockStreamFn};
+use swink_agent::{
+    Agent, AgentContext, AgentOptions, AssistantMessageEvent, ModelSpec, StreamFn, StreamOptions,
+    testing::SimpleMockStreamFn,
+};
 use swink_agent_eval::{
     AgentFactory, EvalCase, EvalError, EvalMetricResult, EvalRunner, EvalSet, Evaluator,
     EvaluatorRegistry, Invocation, Score,
@@ -61,6 +66,40 @@ impl AgentFactory for CountingFactory {
             &case.system_prompt,
             ModelSpec::new("test", "test-model"),
             Arc::new(SimpleMockStreamFn::new(vec!["ok".to_string()])),
+        );
+        Ok((Agent::new(options), CancellationToken::new()))
+    }
+}
+
+struct CancelsRunnerStreamFn {
+    runner_cancel: CancellationToken,
+}
+
+impl StreamFn for CancelsRunnerStreamFn {
+    fn stream<'a>(
+        &'a self,
+        _model: &'a ModelSpec,
+        _context: &'a AgentContext,
+        _options: &'a StreamOptions,
+        _cancellation_token: CancellationToken,
+    ) -> std::pin::Pin<Box<dyn Stream<Item = AssistantMessageEvent> + Send + 'a>> {
+        self.runner_cancel.cancel();
+        Box::pin(stream::pending())
+    }
+}
+
+struct CancellingFactory {
+    runner_cancel: CancellationToken,
+}
+
+impl AgentFactory for CancellingFactory {
+    fn create_agent(&self, case: &EvalCase) -> Result<(Agent, CancellationToken), EvalError> {
+        let options = AgentOptions::new_simple(
+            &case.system_prompt,
+            ModelSpec::new("test", "test-model"),
+            Arc::new(CancelsRunnerStreamFn {
+                runner_cancel: self.runner_cancel.clone(),
+            }),
         );
         Ok((Agent::new(options), CancellationToken::new()))
     }
@@ -123,4 +162,39 @@ async fn num_runs_reuses_single_invocation() {
     let _ = runner.run_set(&single_case_set(), &factory).await.unwrap();
     assert_eq!(calls.load(Ordering::SeqCst), 1);
     assert_eq!(runner.agent_invocation_count(), 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cancelled_num_runs_dispatch_records_failure_metric() {
+    let cancel = CancellationToken::new();
+    let result = EvalRunner::with_defaults()
+        .with_num_runs(3)
+        .with_cancellation(cancel.clone())
+        .run_set(
+            &single_case_set(),
+            &CancellingFactory {
+                runner_cancel: cancel,
+            },
+        )
+        .await
+        .unwrap();
+
+    let case_result = &result.case_results[0];
+    assert_eq!(case_result.verdict, swink_agent_eval::Verdict::Fail);
+    let cancelled_metric = case_result
+        .metric_results
+        .iter()
+        .find(|metric| metric.evaluator_name == "cancelled")
+        .expect("cancellation during num_runs dispatch should record a metric");
+    assert_eq!(
+        cancelled_metric.score.verdict(),
+        swink_agent_eval::Verdict::Fail
+    );
+    assert!(
+        cancelled_metric
+            .details
+            .as_deref()
+            .is_some_and(|details| details.contains("multi-run evaluator dispatch")),
+        "unexpected cancellation details: {cancelled_metric:?}"
+    );
 }

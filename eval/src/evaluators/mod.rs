@@ -665,7 +665,6 @@ mod tests {
     use crate::judge::{JudgeClient, JudgeRegistry};
     use crate::prompt::{MinijinjaTemplate, PromptContext, PromptFamily};
     use crate::types::{EvalCase, Invocation};
-    use async_trait::async_trait;
     use std::sync::Arc;
     use std::sync::Mutex;
     use std::time::Duration;
@@ -678,15 +677,16 @@ mod tests {
         last_prompt: Mutex<Option<String>>,
     }
 
-    #[async_trait]
     impl JudgeClient for FixedJudge {
-        async fn judge(&self, prompt: &str) -> Result<JudgeVerdict, JudgeError> {
-            *self.last_prompt.lock().unwrap() = Some(prompt.to_string());
-            Ok(JudgeVerdict {
-                score: self.score,
-                pass: (0.5..=1.0).contains(&self.score),
-                reason: self.reason.clone(),
-                label: None,
+        fn judge<'a>(&'a self, prompt: &'a str) -> crate::judge::JudgeFuture<'a> {
+            Box::pin(async move {
+                *self.last_prompt.lock().unwrap() = Some(prompt.to_string());
+                Ok(JudgeVerdict {
+                    score: self.score,
+                    pass: (0.5..=1.0).contains(&self.score),
+                    reason: self.reason.clone(),
+                    label: None,
+                })
             })
         }
     }

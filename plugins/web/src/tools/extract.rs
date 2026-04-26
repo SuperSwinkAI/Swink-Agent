@@ -4,9 +4,17 @@ use std::time::Duration;
 
 use serde_json::Value;
 use swink_agent::{AgentTool, AgentToolResult, ToolFuture};
+use tokio::sync::Mutex;
 use tracing::warn;
 
 use crate::playwright::{ExtractionPreset, PlaywrightBridge, PlaywrightError};
+use crate::tools::{OperationOutcome, await_with_cancellation};
+
+struct ExtractRequest {
+    url: String,
+    selector: Option<String>,
+    preset: Option<ExtractionPreset>,
+}
 
 /// Tool for extracting structured content from web pages.
 ///
@@ -14,9 +22,9 @@ use crate::playwright::{ExtractionPreset, PlaywrightBridge, PlaywrightError};
 /// execution, then extracts elements matching a CSS selector or a built-in preset
 /// (links, headings, tables).
 pub struct ExtractTool {
-    bridge: Arc<tokio::sync::Mutex<Option<PlaywrightBridge>>>,
+    bridge: Arc<Mutex<Option<PlaywrightBridge>>>,
     playwright_path: Option<PathBuf>,
-    _timeout: Duration,
+    timeout: Duration,
     schema: Value,
 }
 
@@ -50,7 +58,7 @@ impl ExtractTool {
         Self {
             bridge,
             playwright_path,
-            _timeout: timeout,
+            timeout,
             schema,
         }
     }
@@ -84,39 +92,31 @@ impl AgentTool for ExtractTool {
         _credential: Option<swink_agent::ResolvedCredential>,
     ) -> ToolFuture<'_> {
         Box::pin(async move {
-            // Extract URL from params.
-            let url = match params.get("url").and_then(Value::as_str) {
-                Some(u) => u,
-                None => return AgentToolResult::error("Missing required parameter: url"),
-            };
-
-            // Extract optional selector.
-            let selector = params.get("selector").and_then(Value::as_str);
-
-            // Extract and map optional preset.
-            let preset = match params.get("preset").and_then(Value::as_str) {
-                Some("links") => Some(ExtractionPreset::Links),
-                Some("headings") => Some(ExtractionPreset::Headings),
-                Some("tables") => Some(ExtractionPreset::Tables),
-                Some(other) => {
-                    return AgentToolResult::error(format!(
-                        "Unknown preset '{other}'. Valid values: links, headings, tables."
-                    ));
-                }
-                None => None,
-            };
-
-            // Validate mutual exclusivity.
-            if selector.is_some() && preset.is_some() {
-                return AgentToolResult::error(
-                    "Parameters 'selector' and 'preset' are mutually exclusive. Provide one or neither.",
-                );
+            if cancellation_token.is_cancelled() {
+                return AgentToolResult::error("Request cancelled");
             }
 
+            let request = match parse_extract_params(&params) {
+                Ok(request) => request,
+                Err(error) => return AgentToolResult::error(error),
+            };
+
             // Lazily start the bridge if not already running.
-            let mut guard = self.bridge.lock().await;
+            let mut guard = tokio::select! {
+                guard = self.bridge.lock() => guard,
+                () = cancellation_token.cancelled() => {
+                    return AgentToolResult::error("Request cancelled");
+                }
+            };
             if guard.is_none() {
-                match PlaywrightBridge::start(self.playwright_path.as_deref()).await {
+                let bridge_start = tokio::select! {
+                    result = PlaywrightBridge::start(self.playwright_path.as_deref()) => result,
+                    () = cancellation_token.cancelled() => {
+                        return AgentToolResult::error("Request cancelled");
+                    }
+                };
+
+                match bridge_start {
                     Ok(b) => *guard = Some(b),
                     Err(PlaywrightError::NotInstalled) => {
                         return AgentToolResult::error(
@@ -132,18 +132,18 @@ impl AgentTool for ExtractTool {
                 }
             }
 
-            let bridge = guard.as_mut().expect("bridge was just initialized");
-
-            // Call the bridge extract method.
-            let result = tokio::select! {
-                result = bridge.extract(url, selector, preset) => result,
-                () = cancellation_token.cancelled() => {
-                    return AgentToolResult::error("Request cancelled");
-                }
+            let operation = {
+                let bridge = guard.as_mut().expect("bridge initialized above");
+                await_with_cancellation(
+                    &cancellation_token,
+                    self.timeout,
+                    bridge.extract(&request.url, request.selector.as_deref(), request.preset),
+                )
+                .await
             };
 
-            match result {
-                Ok(elements) => {
+            match operation {
+                OperationOutcome::Completed(Ok(elements)) => {
                     if elements.is_empty() {
                         return AgentToolResult::text(
                             "No elements found matching the given criteria.",
@@ -160,12 +160,62 @@ impl AgentTool for ExtractTool {
                         }
                     }
                 }
-                Err(PlaywrightError::NotInstalled) => AgentToolResult::error(
-                    "Playwright/Node.js not found. Install with:\n\
+                OperationOutcome::Completed(Err(PlaywrightError::NotInstalled)) => {
+                    AgentToolResult::error(
+                        "Playwright/Node.js not found. Install with:\n\
                      npm install -g playwright && npx playwright install chromium",
-                ),
-                Err(e) => AgentToolResult::error(format!("Extraction failed: {e}")),
+                    )
+                }
+                OperationOutcome::Completed(Err(e)) => {
+                    AgentToolResult::error(format!("Extraction failed: {e}"))
+                }
+                OperationOutcome::Cancelled => {
+                    *guard = None;
+                    AgentToolResult::error("Request cancelled")
+                }
+                OperationOutcome::TimedOut => {
+                    *guard = None;
+                    AgentToolResult::error(format!("Extraction timed out after {:?}", self.timeout))
+                }
             }
         })
     }
+}
+
+fn parse_extract_params(params: &Value) -> Result<ExtractRequest, String> {
+    let url = params
+        .get("url")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "Missing required parameter: url".to_owned())?
+        .to_owned();
+
+    let selector = params
+        .get("selector")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+
+    let preset = match params.get("preset").and_then(Value::as_str) {
+        Some("links") => Some(ExtractionPreset::Links),
+        Some("headings") => Some(ExtractionPreset::Headings),
+        Some("tables") => Some(ExtractionPreset::Tables),
+        Some(other) => {
+            return Err(format!(
+                "Unknown preset '{other}'. Valid values: links, headings, tables."
+            ));
+        }
+        None => None,
+    };
+
+    if selector.is_some() && preset.is_some() {
+        return Err(
+            "Parameters 'selector' and 'preset' are mutually exclusive. Provide one or neither."
+                .to_owned(),
+        );
+    }
+
+    Ok(ExtractRequest {
+        url,
+        selector,
+        preset,
+    })
 }

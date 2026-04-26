@@ -3,8 +3,6 @@
 # Swink Agent — development task runner
 # Usage: just <recipe>    (run `just --list` for all recipes)
 
-set dotenv-load
-
 # Run full workspace tests with nextest
 test:
     cargo nextest run --workspace
@@ -37,15 +35,17 @@ doc:
 bench:
     cargo bench --workspace
 
-# Launch the TUI (.env auto-loaded via dotenv-load)
+# Launch the TUI (.env auto-loaded by the TUI process)
 tui:
     cargo run -p swink-agent-tui
 
 # Run publish-surface packaging checks for every publishable workspace crate
+# Intentionally does not load .env; packaging should not inherit provider secrets.
 package-preflight:
     cargo publish --workspace --dry-run --locked --allow-dirty
 
 # Run the canonical local validation gate required before opening a PR
+# Intentionally does not load .env; validation should not inherit provider secrets.
 validate:
     cargo fmt --all --check
     cargo clippy --workspace -- -D warnings

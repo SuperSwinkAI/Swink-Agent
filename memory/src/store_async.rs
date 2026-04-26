@@ -145,6 +145,18 @@ impl<S: crate::store::SessionStore + 'static> BlockingSessionStore<S> {
         spawn_store_call(move || inner.load(&id, registry.as_deref()))
     }
 
+    /// Load a session transcript plus its state snapshot asynchronously from
+    /// one backend-defined read boundary.
+    pub fn load_full(
+        &self,
+        id: &str,
+    ) -> SessionStoreFuture<'_, (SessionMeta, Vec<AgentMessage>, Option<serde_json::Value>)> {
+        let inner = Arc::clone(&self.inner);
+        let id = id.to_string();
+        let registry = self.registry.clone();
+        spawn_store_call(move || inner.load_full(&id, registry.as_deref()))
+    }
+
     /// List all saved sessions asynchronously.
     pub fn list(&self) -> SessionStoreFuture<'_, Vec<SessionMeta>> {
         let inner = Arc::clone(&self.inner);
@@ -312,6 +324,36 @@ mod tests {
         assert_eq!(loaded_messages.len(), 1);
         let state = async_store.load_state("full_async").await.unwrap();
         assert_eq!(state, Some(serde_json::json!({"scroll": 7})));
+    }
+
+    #[tokio::test]
+    async fn blocking_adapter_bridges_load_full() {
+        let dir = tempfile::tempdir().unwrap();
+        let jsonl_store = JsonlSessionStore::new(dir.path().to_path_buf()).unwrap();
+        let async_store = BlockingSessionStore::new(jsonl_store);
+
+        async_store
+            .save_full(
+                "full_async_load",
+                &test_meta("full_async_load"),
+                &[AgentMessage::Llm(swink_agent::LlmMessage::User(
+                    swink_agent::UserMessage {
+                        content: vec![swink_agent::ContentBlock::Text {
+                            text: "hello".to_string(),
+                        }],
+                        timestamp: 1,
+                        cache_hint: None,
+                    },
+                ))],
+                &serde_json::json!({"scroll": 11}),
+            )
+            .await
+            .unwrap();
+
+        let (meta, messages, state) = async_store.load_full("full_async_load").await.unwrap();
+        assert_eq!(meta.id, "full_async_load");
+        assert_eq!(messages.len(), 1);
+        assert_eq!(state, Some(serde_json::json!({"scroll": 11})));
     }
 
     // ── Helper for custom-message regression tests ──────────────────────

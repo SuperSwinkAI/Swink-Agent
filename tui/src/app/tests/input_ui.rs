@@ -5,7 +5,7 @@ use ratatui::layout::Rect;
 use tempfile::tempdir;
 
 use swink_agent::testing::ScriptedStreamFn;
-use swink_agent::{ModelSpec, ThinkingLevel};
+use swink_agent::{AgentEvent, ModelSpec, ThinkingLevel};
 
 use crate::config::TuiConfig;
 use crate::session::{JsonlSessionStore, SessionMeta, SessionStore};
@@ -706,4 +706,65 @@ async fn plain_text_submission_is_recallable_via_history() {
         &["hello world".to_string()],
         "plain text should remain recallable via history"
     );
+}
+
+#[tokio::test]
+async fn editor_style_submission_queues_once_while_running() {
+    let stream_fn = Arc::new(ScriptedStreamFn::new(vec![]));
+    let agent = make_test_agent(stream_fn);
+
+    let mut app = App::new(TuiConfig::default());
+    app.set_agent(agent);
+    app.status = AgentStatus::Running;
+
+    app.submit_user_text("queued from editor".to_string());
+
+    assert!(
+        !app.messages
+            .iter()
+            .any(|message| message.role == MessageRole::User
+                && message.content == "queued from editor"),
+        "running submission should stay queued until MessageStart promotion"
+    );
+    assert_eq!(app.pending_steered, vec!["queued from editor".to_string()]);
+
+    app.handle_agent_event(AgentEvent::MessageStart);
+
+    assert_eq!(
+        app.messages
+            .iter()
+            .filter(|message| {
+                message.role == MessageRole::User && message.content == "queued from editor"
+            })
+            .count(),
+        1,
+        "queued submission should be promoted into the transcript exactly once"
+    );
+    assert!(
+        app.messages
+            .last()
+            .is_some_and(|message| message.role == MessageRole::Assistant && message.is_streaming),
+        "assistant streaming placeholder should still be added after promotion"
+    );
+    assert!(
+        app.pending_steered.is_empty(),
+        "queued submission should be drained after MessageStart promotion"
+    );
+}
+
+#[test]
+fn copy_code_extracts_all_fenced_blocks_from_last_assistant_message() {
+    let mut app = App::new(TuiConfig::default());
+    app.messages.push(make_assistant_message(
+        "Intro\n```rust\nlet first = 1;\n```\ntext\n```json\n{\"second\":2}\n```",
+    ));
+
+    let copied = app
+        .messages
+        .iter()
+        .rev()
+        .find(|message| message.role == MessageRole::Assistant)
+        .and_then(|message| super::super::render_helpers::extract_code_blocks(&message.content));
+
+    assert_eq!(copied, Some("let first = 1;\n\n{\"second\":2}".to_string()));
 }

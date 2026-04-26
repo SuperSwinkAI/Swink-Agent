@@ -19,11 +19,15 @@ fn server_config_construction() {
         tool_prefix: Some("test".into()),
         tool_filter: None,
         requires_approval: true,
+        connect_timeout_ms: Some(1_500),
+        discovery_timeout_ms: Some(2_500),
     };
 
     assert_eq!(config.name, "test-server");
     assert!(config.requires_approval);
     assert_eq!(config.tool_prefix.as_deref(), Some("test"));
+    assert_eq!(config.connect_timeout_ms, Some(1_500));
+    assert_eq!(config.discovery_timeout_ms, Some(2_500));
 }
 
 #[test]
@@ -39,6 +43,8 @@ fn sse_transport_construction() {
         tool_prefix: None,
         tool_filter: None,
         requires_approval: false,
+        connect_timeout_ms: None,
+        discovery_timeout_ms: None,
     };
 
     assert_eq!(config.name, "remote");
@@ -56,10 +62,14 @@ fn sse_transport_deserialization_defaults_headers() {
         },
         "tool_prefix": null,
         "tool_filter": null,
-        "requires_approval": false
+        "requires_approval": false,
+        "connect_timeout_ms": 250,
+        "discovery_timeout_ms": 500
     }"#;
 
     let config: McpServerConfig = serde_json::from_str(json).expect("deserialize");
+    assert_eq!(config.connect_timeout_ms, Some(250));
+    assert_eq!(config.discovery_timeout_ms, Some(500));
 
     match config.transport {
         McpTransport::Sse {
@@ -143,6 +153,8 @@ fn config_serialization_roundtrip() {
             deny: None,
         }),
         requires_approval: true,
+        connect_timeout_ms: Some(750),
+        discovery_timeout_ms: Some(1_250),
     };
 
     let json = serde_json::to_string(&config).expect("serialize");
@@ -151,6 +163,8 @@ fn config_serialization_roundtrip() {
     assert_eq!(roundtrip.name, config.name);
     assert_eq!(roundtrip.tool_prefix, config.tool_prefix);
     assert!(roundtrip.requires_approval);
+    assert_eq!(roundtrip.connect_timeout_ms, Some(750));
+    assert_eq!(roundtrip.discovery_timeout_ms, Some(1_250));
 }
 
 #[test]
@@ -172,6 +186,8 @@ fn sse_config_serialization_roundtrip_preserves_headers() {
         tool_prefix: Some("remote".into()),
         tool_filter: None,
         requires_approval: false,
+        connect_timeout_ms: Some(1_000),
+        discovery_timeout_ms: Some(2_000),
     };
 
     let json = serde_json::to_string(&config).expect("serialize");
@@ -204,4 +220,6 @@ fn sse_config_serialization_roundtrip_preserves_headers() {
         }
         other @ McpTransport::Stdio { .. } => panic!("expected SSE transport, got {other:?}"),
     }
+    assert_eq!(roundtrip.connect_timeout_ms, Some(1_000));
+    assert_eq!(roundtrip.discovery_timeout_ms, Some(2_000));
 }

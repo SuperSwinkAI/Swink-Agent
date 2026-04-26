@@ -169,7 +169,7 @@ fn hash_key_args(cmd: &str) -> Option<&str> {
     let cmd = cmd.trim();
     let after_key = cmd.strip_prefix("key")?;
     if after_key.is_empty() {
-        return Some("");
+        return None;
     }
 
     after_key.strip_prefix(|c: char| c.is_ascii_whitespace())
@@ -567,6 +567,12 @@ mod tests {
         // No key present yet; treat as non-secret so the usage hint is
         // recallable via history.
         assert!(!is_sensitive_input("#key openai"));
+    }
+
+    #[test]
+    fn hash_key_args_rejects_bare_key_command() {
+        assert_eq!(hash_key_args("key"), None);
+        assert_eq!(hash_key_args(" key "), None);
     }
 
     #[test]

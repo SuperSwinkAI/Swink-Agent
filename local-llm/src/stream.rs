@@ -11,7 +11,6 @@ use futures::stream::{self, Stream, StreamExt as _};
 use llama_cpp_2::model::LlamaChatMessage;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, warn};
-#[cfg(feature = "gemma4")]
 use uuid::Uuid;
 
 use swink_agent::stream_assembly::{BlockAccumulator, finalize_blocks};
@@ -565,6 +564,256 @@ mod tool_call {
     }
 }
 
+// ─── Default ToolCallParser ────────────────────────────────────────────────
+
+mod default_tool_call {
+    use super::delimiter::partial_prefix_at_end;
+
+    const OPEN_DELIM: &str = "call:";
+
+    pub(super) struct ParsedToolCall {
+        pub name: String,
+        pub args: String,
+    }
+
+    #[derive(Debug)]
+    pub(super) struct ToolCallParser {
+        state: State,
+        buffer: String,
+        name_buf: String,
+        args_buf: String,
+        json_depth: usize,
+        in_string: bool,
+        escape: bool,
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum State {
+        Normal,
+        PartialOpen,
+        InName,
+        InArgs,
+    }
+
+    impl ToolCallParser {
+        pub const fn new() -> Self {
+            Self {
+                state: State::Normal,
+                buffer: String::new(),
+                name_buf: String::new(),
+                args_buf: String::new(),
+                json_depth: 0,
+                in_string: false,
+                escape: false,
+            }
+        }
+
+        #[allow(clippy::too_many_lines)]
+        pub fn process(&mut self, content: &str) -> (Vec<ParsedToolCall>, Option<String>) {
+            self.buffer.push_str(content);
+
+            let mut calls = Vec::new();
+            let mut text_out = None;
+
+            loop {
+                match self.state {
+                    State::Normal => {
+                        if let Some(pos) = self.buffer.find(OPEN_DELIM) {
+                            let before = &self.buffer[..pos];
+                            if !before.is_empty() {
+                                append(&mut text_out, before);
+                            }
+                            self.buffer = self.buffer[pos + OPEN_DELIM.len()..].to_string();
+                            self.name_buf.clear();
+                            self.args_buf.clear();
+                            self.reset_json_state();
+                            self.state = State::InName;
+                            continue;
+                        }
+                        if let Some(partial_len) = partial_prefix_at_end(&self.buffer, OPEN_DELIM) {
+                            let flush_end = self.buffer.len() - partial_len;
+                            let flush = &self.buffer[..flush_end];
+                            if !flush.is_empty() {
+                                append(&mut text_out, flush);
+                            }
+                            self.buffer = self.buffer[flush_end..].to_string();
+                            self.state = State::PartialOpen;
+                            break;
+                        }
+                        if !self.buffer.is_empty() {
+                            append(&mut text_out, &self.buffer.clone());
+                            self.buffer.clear();
+                        }
+                        break;
+                    }
+                    State::PartialOpen => {
+                        if self.buffer.len() >= OPEN_DELIM.len() {
+                            if self.buffer.starts_with(OPEN_DELIM) {
+                                self.buffer = self.buffer[OPEN_DELIM.len()..].to_string();
+                                self.name_buf.clear();
+                                self.args_buf.clear();
+                                self.reset_json_state();
+                                self.state = State::InName;
+                                continue;
+                            }
+                            self.state = State::Normal;
+                            continue;
+                        }
+                        if OPEN_DELIM.starts_with(&self.buffer) {
+                            break;
+                        }
+                        self.state = State::Normal;
+                    }
+                    State::InName => {
+                        if let Some(pos) = self.buffer.find('{') {
+                            let candidate = &self.buffer[..pos];
+                            if !candidate.chars().all(is_tool_name_char) {
+                                self.flush_invalid_call(&mut text_out);
+                                self.state = State::Normal;
+                                continue;
+                            }
+                            self.name_buf.push_str(candidate);
+                            if self.name_buf.is_empty() {
+                                self.flush_invalid_call(&mut text_out);
+                                self.state = State::Normal;
+                                continue;
+                            }
+                            self.buffer = self.buffer[pos..].to_string();
+                            self.state = State::InArgs;
+                            continue;
+                        }
+
+                        let valid_prefix_len = self
+                            .buffer
+                            .char_indices()
+                            .find_map(|(idx, ch)| (!is_tool_name_char(ch)).then_some(idx))
+                            .unwrap_or(self.buffer.len());
+                        if valid_prefix_len < self.buffer.len() {
+                            self.name_buf.push_str(&self.buffer[..valid_prefix_len]);
+                            self.flush_invalid_call(&mut text_out);
+                            self.buffer = self.buffer[valid_prefix_len..].to_string();
+                            self.state = State::Normal;
+                            continue;
+                        }
+
+                        self.name_buf.push_str(&self.buffer);
+                        self.buffer.clear();
+                        break;
+                    }
+                    State::InArgs => {
+                        if let Some(end_idx) = self.consume_args_buffer() {
+                            calls.push(ParsedToolCall {
+                                name: self.name_buf.trim().to_string(),
+                                args: self.args_buf.clone(),
+                            });
+                            self.buffer = self.buffer[end_idx..].to_string();
+                            self.name_buf.clear();
+                            self.args_buf.clear();
+                            self.reset_json_state();
+                            self.state = State::Normal;
+                            continue;
+                        }
+                        self.buffer.clear();
+                        break;
+                    }
+                }
+            }
+
+            (calls, text_out)
+        }
+
+        pub fn finish(&mut self) -> Option<String> {
+            if self.buffer.is_empty() && self.name_buf.is_empty() && self.args_buf.is_empty() {
+                self.state = State::Normal;
+                return None;
+            }
+
+            let mut text = String::new();
+            match self.state {
+                State::Normal | State::PartialOpen => text.push_str(&self.buffer),
+                State::InName => {
+                    text.push_str(OPEN_DELIM);
+                    text.push_str(&self.name_buf);
+                    text.push_str(&self.buffer);
+                }
+                State::InArgs => {
+                    text.push_str(OPEN_DELIM);
+                    text.push_str(&self.name_buf);
+                    text.push_str(&self.args_buf);
+                    text.push_str(&self.buffer);
+                }
+            }
+
+            self.buffer.clear();
+            self.name_buf.clear();
+            self.args_buf.clear();
+            self.reset_json_state();
+            self.state = State::Normal;
+
+            (!text.is_empty()).then_some(text)
+        }
+
+        fn consume_args_buffer(&mut self) -> Option<usize> {
+            for (idx, ch) in self.buffer.char_indices() {
+                self.args_buf.push(ch);
+
+                if self.escape {
+                    self.escape = false;
+                    continue;
+                }
+
+                if self.in_string {
+                    match ch {
+                        '\\' => self.escape = true,
+                        '"' => self.in_string = false,
+                        _ => {}
+                    }
+                    continue;
+                }
+
+                match ch {
+                    '"' => self.in_string = true,
+                    '{' => self.json_depth += 1,
+                    '}' => {
+                        self.json_depth = self.json_depth.saturating_sub(1);
+                        if self.json_depth == 0 {
+                            return Some(idx + ch.len_utf8());
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
+            None
+        }
+
+        fn flush_invalid_call(&mut self, text_out: &mut Option<String>) {
+            append(text_out, OPEN_DELIM);
+            append(text_out, &self.name_buf);
+            self.name_buf.clear();
+            self.args_buf.clear();
+            self.reset_json_state();
+        }
+
+        fn reset_json_state(&mut self) {
+            self.json_depth = 0;
+            self.in_string = false;
+            self.escape = false;
+        }
+    }
+
+    fn is_tool_name_char(ch: char) -> bool {
+        ch.is_ascii_alphanumeric() || ch == '_' || ch == '-'
+    }
+
+    fn append(target: &mut Option<String>, s: &str) {
+        match target {
+            Some(existing) => existing.push_str(s),
+            None => *target = Some(s.to_string()),
+        }
+    }
+}
+
 // ─── Streaming state ────────────────────────────────────────────────────────
 
 struct StreamState {
@@ -576,6 +825,7 @@ struct StreamState {
     finish_reason: FinishReason,
     saw_done: bool,
     think_parser: think_tags::ThinkTagParser,
+    default_tool_call_parser: default_tool_call::ToolCallParser,
     #[cfg(feature = "gemma4")]
     channel_parser: Option<channel_thought::ChannelThoughtParser>,
     #[cfg(feature = "gemma4")]
@@ -596,6 +846,7 @@ impl StreamState {
             finish_reason: FinishReason::Stop,
             saw_done: false,
             think_parser: think_tags::ThinkTagParser::new(),
+            default_tool_call_parser: default_tool_call::ToolCallParser::new(),
             #[cfg(feature = "gemma4")]
             channel_parser: if is_gemma4 {
                 Some(channel_thought::ChannelThoughtParser::new())
@@ -628,23 +879,25 @@ impl StreamState {
             self.events.extend(self.blocks.thinking_delta(think));
         }
 
-        // Step 2: Pass text through Gemma 4 tool call parser or emit directly.
+        // Step 2: Pass text through the model-family tool call parser.
         #[cfg(feature = "gemma4")]
         let final_text = if let Some(text) = text_part {
             if let Some(parser) = self.tool_call_parser.as_mut() {
                 let (calls, remaining) = parser.process(&text);
                 for call in calls {
-                    self.emit_gemma4_tool_call(call);
+                    self.emit_tool_call(call.name, call.args);
                 }
                 remaining
             } else {
-                Some(text)
+                self.process_default_tool_call_text(&text)
             }
         } else {
             None
         };
         #[cfg(not(feature = "gemma4"))]
-        let final_text = text_part;
+        let final_text = text_part
+            .as_deref()
+            .and_then(|text| self.process_default_tool_call_text(text));
 
         if let Some(text) = final_text
             && !text.is_empty()
@@ -655,21 +908,26 @@ impl StreamState {
         }
     }
 
-    #[cfg(feature = "gemma4")]
-    fn emit_gemma4_tool_call(&mut self, call: tool_call::ParsedToolCall) {
+    fn process_default_tool_call_text(&mut self, text: &str) -> Option<String> {
+        let (calls, remaining) = self.default_tool_call_parser.process(text);
+        for call in calls {
+            self.emit_tool_call(call.name, call.args);
+        }
+        remaining
+    }
+
+    fn emit_tool_call(&mut self, name: String, args: String) {
         self.events.extend(self.blocks.close_text());
         self.events.extend(self.blocks.close_thinking(None));
 
         let id = Uuid::new_v4().to_string();
         self.has_tool_calls = true;
-        let (tc_content_index, start_ev) = self.blocks.open_tool_call(id.clone(), call.name);
+        let (tc_content_index, start_ev) = self.blocks.open_tool_call(id, name);
         self.events.push(start_ev);
 
-        if !call.args.is_empty() {
-            self.events.push(BlockAccumulator::tool_call_delta(
-                tc_content_index,
-                call.args,
-            ));
+        if !args.is_empty() {
+            self.events
+                .push(BlockAccumulator::tool_call_delta(tc_content_index, args));
         }
     }
 
@@ -684,6 +942,18 @@ impl StreamState {
         }
 
         if let Some(text) = text_part
+            && !text.is_empty()
+        {
+            let final_text = self.process_default_tool_call_text(&text);
+            self.emit_text(final_text);
+        }
+
+        let pending_tool_text = self.default_tool_call_parser.finish();
+        self.emit_text(pending_tool_text);
+    }
+
+    fn emit_text(&mut self, text: Option<String>) {
+        if let Some(text) = text
             && !text.is_empty()
         {
             self.events.extend(self.blocks.close_thinking(None));
@@ -1037,6 +1307,112 @@ mod tests {
         let (t2, txt2) = parser.process("nk>reasoning</think>");
         assert_eq!(t2.as_deref(), Some("reasoning"));
         assert!(txt2.is_none());
+    }
+
+    #[test]
+    fn default_tool_call_single_chunk() {
+        let mut parser = default_tool_call::ToolCallParser::new();
+        let (calls, text) = parser.process(r#"call:read_file{"path":"foo.rs"}"#);
+
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "read_file");
+        assert_eq!(calls[0].args, r#"{"path":"foo.rs"}"#);
+        assert!(text.is_none());
+        assert!(parser.finish().is_none());
+    }
+
+    #[test]
+    fn default_tool_call_cross_chunk() {
+        let mut parser = default_tool_call::ToolCallParser::new();
+        let (calls1, text1) = parser.process(r"call:read_");
+        assert!(calls1.is_empty());
+        assert!(text1.is_none());
+
+        let (calls2, text2) = parser.process(r#"file{"path":"foo.rs"} trailing"#);
+        assert_eq!(calls2.len(), 1);
+        assert_eq!(calls2[0].name, "read_file");
+        assert_eq!(calls2[0].args, r#"{"path":"foo.rs"}"#);
+        assert_eq!(text2.as_deref(), Some(" trailing"));
+    }
+
+    #[test]
+    fn default_tool_call_handles_nested_json_and_strings() {
+        let mut parser = default_tool_call::ToolCallParser::new();
+        let (calls, text) =
+            parser.process(r#"prefix call:write_file{"text":"{\"k\":1}","meta":{"n":1}}"#);
+
+        assert_eq!(text.as_deref(), Some("prefix "));
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "write_file");
+        assert_eq!(calls[0].args, r#"{"text":"{\"k\":1}","meta":{"n":1}}"#);
+    }
+
+    #[test]
+    fn default_tool_call_invalid_shape_remains_text() {
+        let mut parser = default_tool_call::ToolCallParser::new();
+        let (calls, text) = parser.process("please call: read_file next");
+
+        assert!(calls.is_empty());
+        assert_eq!(text.as_deref(), Some("please call: read_file next"));
+        assert!(parser.finish().is_none());
+    }
+
+    #[test]
+    fn default_tool_call_incomplete_flushes_as_text_on_finalize() {
+        let mut state = StreamState::new(false);
+        state.process_token("Before call:read_file{\"path\"");
+
+        let events = state.finalize();
+        let text_deltas: Vec<&str> = events
+            .iter()
+            .filter_map(|event| match event {
+                AssistantMessageEvent::TextDelta { delta, .. } => Some(delta.as_str()),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(text_deltas, vec!["Before ", "call:read_file{\"path\""]);
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, AssistantMessageEvent::ToolCallStart { .. }))
+        );
+    }
+
+    #[test]
+    fn non_gemma_stream_state_emits_tool_call_events() {
+        let mut state = StreamState::new(false);
+        state.process_token(r#"I'll inspect that. call:read_file{"path":"foo.rs"}"#);
+
+        let events = state.finalize();
+
+        assert!(
+            events.iter().any(|event| matches!(
+                event,
+                AssistantMessageEvent::ToolCallStart { name, .. } if name == "read_file"
+            )),
+            "expected tool call start in events: {events:?}"
+        );
+        assert!(
+            events.iter().any(|event| matches!(
+                event,
+                AssistantMessageEvent::ToolCallDelta { delta, .. } if delta == r#"{"path":"foo.rs"}"#
+            )),
+            "expected tool call delta in events: {events:?}"
+        );
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, AssistantMessageEvent::ToolCallEnd { .. })),
+            "expected tool call end in events: {events:?}"
+        );
+        assert!(matches!(
+            events.last(),
+            Some(AssistantMessageEvent::Done {
+                stop_reason: StopReason::ToolUse,
+                ..
+            })
+        ));
     }
 
     #[test]

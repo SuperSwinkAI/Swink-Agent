@@ -5,7 +5,7 @@
 
 #![allow(dead_code, clippy::unused_self, clippy::missing_const_for_fn)]
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use rmcp::handler::server::router::tool::ToolRouter;
@@ -22,6 +22,21 @@ pub struct EchoInput {
     /// The text to echo back.
     pub text: String,
 }
+
+/// Empty input payload for no-arg mock tools.
+#[derive(Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct EmptyInput {}
+
+const DEFAULT_TOOL_NAME: &str = "echo";
+const KNOWN_TOOL_NAMES: &[&str] = &[
+    "echo",
+    "search_files",
+    "read_file",
+    "tool_a",
+    "tool_b",
+    "tool_c",
+    "tool_d",
+];
 
 /// Configuration for a single mock tool.
 #[derive(Debug, Clone)]
@@ -119,6 +134,22 @@ pub struct MockMcpServer {
 
 impl MockMcpServer {
     pub fn from_config(config: &MockServerConfig) -> Self {
+        let enabled_tools = if config.tools.is_empty() {
+            vec![DEFAULT_TOOL_NAME.to_string()]
+        } else {
+            config.tools.iter().map(|tool| tool.name.clone()).collect()
+        };
+        let enabled_tool_set: HashSet<_> = enabled_tools.iter().cloned().collect();
+        let unknown_tools: Vec<_> = enabled_tool_set
+            .iter()
+            .filter(|name| !KNOWN_TOOL_NAMES.contains(&name.as_str()))
+            .cloned()
+            .collect();
+        assert!(
+            unknown_tools.is_empty(),
+            "unknown mock MCP tools requested: {unknown_tools:?}; supported tools: {KNOWN_TOOL_NAMES:?}"
+        );
+
         let mut results = HashMap::new();
         for tool_def in &config.tools {
             results.insert(
@@ -126,10 +157,22 @@ impl MockMcpServer {
                 (tool_def.result_text.clone(), tool_def.is_error),
             );
         }
+        let mut tool_router = Self::tool_router();
+        for tool_name in KNOWN_TOOL_NAMES {
+            if !enabled_tool_set.contains(*tool_name) {
+                tool_router.remove_route(tool_name);
+            }
+        }
         Self {
             results: Arc::new(results),
-            tool_router: Self::tool_router(),
+            tool_router,
         }
+    }
+
+    fn text_result(&self, tool_name: &str, default: impl Into<String>) -> String {
+        self.results
+            .get(tool_name)
+            .map_or_else(|| default.into(), |(result, _)| result.clone())
     }
 }
 
@@ -138,7 +181,37 @@ impl MockMcpServer {
     /// A generic echo tool for testing — returns whatever text it receives.
     #[tool(description = "Echo the input back")]
     async fn echo(&self, Parameters(input): Parameters<EchoInput>) -> String {
-        input.text
+        self.text_result("echo", input.text)
+    }
+
+    #[tool(description = "Mock search_files tool")]
+    async fn search_files(&self, Parameters(_input): Parameters<EmptyInput>) -> String {
+        self.text_result("search_files", "found: main.rs")
+    }
+
+    #[tool(description = "Mock read_file tool")]
+    async fn read_file(&self, Parameters(_input): Parameters<EmptyInput>) -> String {
+        self.text_result("read_file", "contents of file")
+    }
+
+    #[tool(description = "Mock tool A")]
+    async fn tool_a(&self, Parameters(_input): Parameters<EmptyInput>) -> String {
+        self.text_result("tool_a", "tool_a")
+    }
+
+    #[tool(description = "Mock tool B")]
+    async fn tool_b(&self, Parameters(_input): Parameters<EmptyInput>) -> String {
+        self.text_result("tool_b", "tool_b")
+    }
+
+    #[tool(description = "Mock tool C")]
+    async fn tool_c(&self, Parameters(_input): Parameters<EmptyInput>) -> String {
+        self.text_result("tool_c", "tool_c")
+    }
+
+    #[tool(description = "Mock tool D")]
+    async fn tool_d(&self, Parameters(_input): Parameters<EmptyInput>) -> String {
+        self.text_result("tool_d", "tool_d")
     }
 }
 
@@ -202,6 +275,8 @@ pub async fn spawn_mock_connection(
         tool_prefix: tool_prefix.map(String::from),
         tool_filter: None,
         requires_approval: false,
+        connect_timeout_ms: None,
+        discovery_timeout_ms: None,
     };
 
     swink_agent_mcp::McpConnection::from_service(mcp_config, service, None)

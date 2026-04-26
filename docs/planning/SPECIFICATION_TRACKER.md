@@ -7,7 +7,7 @@
 - Provider Roadmap: [PROVIDER_EXPANSION_ROADMAP.md](PROVIDER_EXPANSION_ROADMAP.md)
 - Eval Roadmap: [EVAL.md](EVAL.md)
 
-**Current Focus:** 42 specs total — 42/42 have plans, 42/42 have tasks, 38/42 complete. Phase 0–8 done (including memory crate 021, Azure/xAI adapters). Phase 3: 9/10 complete (019-bedrock at 56%). Phase 9: 1/5 complete (038-mcp done), 036 at 18%, 037 at 44%, 039/040 ready. Phase 10: 041 (Gemma4 local adapter) at 60%, 042 (web browse plugin) complete. Next: finish bedrock adapter (019), continue artifact service (036) and plugin system (037), begin multi-agent patterns (039) and transfer/handoff (040), finish Gemma4 local adapter (041).
+**Current Focus:** 42 specs total — 42/42 have plans, 42/42 have tasks, 39/42 complete. Phase 0–8 done (including memory crate 021, Azure/xAI adapters). Phase 3: 9/10 complete (019-bedrock at 56%). Phase 9: 2/5 complete (038-mcp and 039-patterns done), 036 at 18%, 037 at 44%, 040 ready. Phase 10: 041 (Gemma4 local adapter) at 60%, 042 (web browse plugin) complete. Next: finish bedrock adapter (019), continue artifact service (036) and plugin system (037), begin transfer/handoff (040), finish Gemma4 local adapter (041).
 
 > **Numbering System:** Spec numbers (001–040) are sequential identifiers that
 > never change. Phase numbers represent execution order and can be reassigned
@@ -313,7 +313,7 @@ credential management — cross-cutting infrastructure for production readiness.
 orchestration patterns, and agent-to-agent handoff — capabilities that make the
 agent framework composable and extensible for production use cases.
 
-**Status:** 5/5 specs planned, 5/5 have tasks, 1/5 complete, 5/5 specs defined
+**Status:** 5/5 specs planned, 5/5 have tasks, 2/5 complete, 5/5 specs defined
 
 ### Implementation Checklist
 
@@ -332,10 +332,10 @@ agent framework composable and extensible for production use cases.
   - Branch: `038-mcp-integration`
   - Status: Complete (48/49 tasks, merged to main — T042 deferred by design)
   - Depends on: 2.2
-- [ ] **9.4** Multi-Agent Patterns — Pipeline primitives (sequential, parallel, loop), merge strategies, pipeline registry
+- [x] **9.4** Multi-Agent Patterns — Pipeline primitives (sequential, parallel, loop), merge strategies, pipeline registry
   - Spec: `specs/039-multi-agent-patterns/spec.md`
   - Branch: `039-multi-agent-patterns`
-  - Status: Ready for implementation (0/66 tasks)
+  - Status: Complete (66/66 tasks, merged to integration)
   - Depends on: 2.4
 - [ ] **9.5** TransferToAgent Tool & Handoff Safety — Transfer tool, allowed-target validation, circular transfer detection, transfer events
   - Spec: `specs/040-agent-transfer-handoff/spec.md`
@@ -501,7 +501,7 @@ graph TD
     style AB fill:#eab308,color:#000,stroke:#ca8a04,stroke-width:2px
     style AC fill:#eab308,color:#000,stroke:#ca8a04,stroke-width:2px
     style AD fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
-    style AE fill:#fff,color:#000,stroke:#6b7280,stroke-width:2px
+    style AE fill:#22c55e,color:#000,stroke:#16a34a,stroke-width:2px
     style AF fill:#fff,color:#000,stroke:#6b7280,stroke-width:2px
 ```
 

@@ -12,9 +12,7 @@
 use std::sync::Mutex;
 use std::time::Duration;
 
-use async_trait::async_trait;
-
-use crate::judge::{JudgeClient, JudgeError, JudgeVerdict};
+use crate::judge::{JudgeClient, JudgeError, JudgeFuture, JudgeVerdict};
 
 /// Canned `JudgeClient` for tests.
 ///
@@ -160,22 +158,23 @@ impl MockJudge {
     }
 }
 
-#[async_trait]
 impl JudgeClient for MockJudge {
-    async fn judge(&self, _prompt: &str) -> Result<JudgeVerdict, JudgeError> {
-        let outcome = {
-            let mut guard = self.inner.lock().expect("MockJudge mutex poisoned");
-            guard.calls += 1;
-            if guard.outcomes.is_empty() {
-                guard.tail.clone_boxed()
-            } else {
-                guard.outcomes.remove(0)
+    fn judge<'a>(&'a self, _prompt: &'a str) -> JudgeFuture<'a> {
+        Box::pin(async move {
+            let outcome = {
+                let mut guard = self.inner.lock().expect("MockJudge mutex poisoned");
+                guard.calls += 1;
+                if guard.outcomes.is_empty() {
+                    guard.tail.clone_boxed()
+                } else {
+                    guard.outcomes.remove(0)
+                }
+            };
+            match outcome {
+                MockOutcome::Verdict(v) => Ok(v),
+                MockOutcome::Error(e) => Err(e),
             }
-        };
-        match outcome {
-            MockOutcome::Verdict(v) => Ok(v),
-            MockOutcome::Error(e) => Err(e),
-        }
+        })
     }
 }
 
@@ -209,15 +208,16 @@ impl SlowMockJudge {
     }
 }
 
-#[async_trait]
 impl JudgeClient for SlowMockJudge {
-    async fn judge(&self, _prompt: &str) -> Result<JudgeVerdict, JudgeError> {
-        tokio::time::sleep(self.sleep).await;
-        Ok(JudgeVerdict {
-            score: 1.0,
-            pass: true,
-            reason: Some("slow pass".into()),
-            label: None,
+    fn judge<'a>(&'a self, _prompt: &'a str) -> JudgeFuture<'a> {
+        Box::pin(async move {
+            tokio::time::sleep(self.sleep).await;
+            Ok(JudgeVerdict {
+                score: 1.0,
+                pass: true,
+                reason: Some("slow pass".into()),
+                label: None,
+            })
         })
     }
 }
@@ -266,10 +266,9 @@ impl Default for PanickingMockJudge {
     }
 }
 
-#[async_trait]
 impl JudgeClient for PanickingMockJudge {
-    async fn judge(&self, _prompt: &str) -> Result<JudgeVerdict, JudgeError> {
-        panic!("{}", self.message);
+    fn judge<'a>(&'a self, _prompt: &'a str) -> JudgeFuture<'a> {
+        Box::pin(async move { panic!("{}", self.message) })
     }
 }
 

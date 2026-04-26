@@ -10,9 +10,10 @@
 //! pipelines can round-trip instrumented runs without provisioning a real
 //! backend (R-005).
 
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 
-use async_trait::async_trait;
 use opentelemetry_sdk::trace::{InMemorySpanExporter, SpanData};
 use thiserror::Error;
 
@@ -108,15 +109,18 @@ pub enum TraceProviderError {
 ///
 /// Implementations SHOULD be cheap to clone (typically holding an `Arc` over
 /// their backend handle) so they can be shared across concurrent eval runs.
-#[async_trait]
 pub trait TraceProvider: Send + Sync {
     /// Fetch the complete session identified by `session_id`.
     ///
     /// Implementations MUST fail with [`TraceProviderError::SessionInProgress`]
     /// rather than silently returning a partial trace — evaluators treat the
     /// returned `RawSession` as terminal.
-    async fn fetch_session(&self, session_id: &str) -> Result<RawSession, TraceProviderError>;
+    fn fetch_session<'a>(&'a self, session_id: &'a str) -> TraceProviderFuture<'a>;
 }
+
+/// Object-safe future returned by [`TraceProvider::fetch_session`].
+pub type TraceProviderFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<RawSession, TraceProviderError>> + Send + 'a>>;
 
 // ─── OtelInMemoryTraceProvider ──────────────────────────────────────────────
 
@@ -179,45 +183,46 @@ impl OtelInMemoryTraceProvider {
     }
 }
 
-#[async_trait]
 impl TraceProvider for OtelInMemoryTraceProvider {
-    async fn fetch_session(&self, session_id: &str) -> Result<RawSession, TraceProviderError> {
-        let all = self.exporter.get_finished_spans().map_err(|err| {
-            TraceProviderError::BackendFailure {
-                reason: format!("in-memory exporter lock: {err}"),
+    fn fetch_session<'a>(&'a self, session_id: &'a str) -> TraceProviderFuture<'a> {
+        Box::pin(async move {
+            let all = self.exporter.get_finished_spans().map_err(|err| {
+                TraceProviderError::BackendFailure {
+                    reason: format!("in-memory exporter lock: {err}"),
+                }
+            })?;
+
+            let key = self.session_attribute.as_ref();
+            let matching: Vec<SpanData> = all
+                .into_iter()
+                .filter(|span| {
+                    span.attributes.iter().any(|kv| {
+                        kv.key.as_str() == key && kv.value.as_str().as_ref() == session_id
+                    })
+                })
+                .collect();
+
+            if matching.is_empty() {
+                return Err(TraceProviderError::SessionNotFound {
+                    session_id: session_id.to_string(),
+                });
             }
-        })?;
 
-        let key = self.session_attribute.as_ref();
-        let matching: Vec<SpanData> = all
-            .into_iter()
-            .filter(|span| {
-                span.attributes
-                    .iter()
-                    .any(|kv| kv.key.as_str() == key && kv.value.as_str().as_ref() == session_id)
+            let open_spans = matching
+                .iter()
+                .filter(|span| span.end_time <= span.start_time)
+                .count();
+            if open_spans > 0 {
+                return Err(TraceProviderError::SessionInProgress {
+                    session_id: session_id.to_string(),
+                    open_spans,
+                });
+            }
+
+            Ok(RawSession::OtelSpans {
+                session_id: session_id.to_string(),
+                spans: matching,
             })
-            .collect();
-
-        if matching.is_empty() {
-            return Err(TraceProviderError::SessionNotFound {
-                session_id: session_id.to_string(),
-            });
-        }
-
-        let open_spans = matching
-            .iter()
-            .filter(|span| span.end_time <= span.start_time)
-            .count();
-        if open_spans > 0 {
-            return Err(TraceProviderError::SessionInProgress {
-                session_id: session_id.to_string(),
-                open_spans,
-            });
-        }
-
-        Ok(RawSession::OtelSpans {
-            session_id: session_id.to_string(),
-            spans: matching,
         })
     }
 }

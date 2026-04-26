@@ -15,7 +15,6 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use async_trait::async_trait;
 use reqwest::{Client, StatusCode};
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
@@ -169,18 +168,18 @@ impl OpenAiJudgeClient {
     }
 }
 
-#[async_trait]
 impl JudgeClient for OpenAiJudgeClient {
-    async fn judge(&self, prompt: &str) -> Result<JudgeVerdict, JudgeError> {
-        let this = self;
-        let prompt = prompt;
-        retry_with_cancel(
-            &self.inner.retry_policy,
-            &self.inner.cancel,
-            is_retryable,
-            || async move { this.dispatch_once(prompt).await },
-        )
-        .await
+    fn judge<'a>(&'a self, prompt: &'a str) -> swink_agent_eval::JudgeFuture<'a> {
+        Box::pin(async move {
+            let this = self;
+            retry_with_cancel(
+                &self.inner.retry_policy,
+                &self.inner.cancel,
+                is_retryable,
+                || async move { this.dispatch_once(prompt).await },
+            )
+            .await
+        })
     }
 }
 

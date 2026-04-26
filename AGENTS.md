@@ -180,6 +180,7 @@ gh pr comment <number> --body-file /tmp/comment.md
 - Post-sanitization plugin/plugin collisions must also be disambiguated deterministically from the raw `plugin_name` + tool identity; only direct-tool collisions keep the spec-037 skip behavior.
 - Contributions merged in `Agent::new()`: plugin policies **prepended** (priority-sorted), direct policies appended; plugin tools appended after direct tools.
 - `Agent::new()` must still reject true duplicate final tool names, but plugin composition has one explicit exception from spec 037: if a namespaced plugin tool collides with a directly-registered tool name, the direct tool keeps precedence and the plugin tool is skipped with a warning.
+- After plugin/plugin disambiguation, `Agent::new()` must re-check the renamed tool against direct tools before insertion; otherwise a sanitized plugin collision can still resolve onto a direct tool name and violate spec-037 precedence.
 - `on_init(&self, &Agent)` dispatched in priority order, wrapped in `catch_unwind` — panicking `on_init` is logged and skipped, construction continues.
 - Entire module behind `#[cfg(feature = "plugins")]` — opt-in, not default-enabled, zero cost when disabled.
 
@@ -209,6 +210,7 @@ gh pr comment <number> --body-file /tmp/comment.md
 
 - Sliding window: anchor (first N) + tail (recent), middle removed to fit budget.
 - Tool-result pairs preserved together even if it exceeds budget. Correctness > token count.
+- Anchor-side compaction must also preserve tool parity: if the preserved anchor ends on an assistant tool-call message, any immediately following matching tool-result messages must stay with it even when they would otherwise fall into the dropped middle slice.
 - Token estimation: chars/4 heuristic. CustomMessage = 100 tokens flat.
 - `TiktokenCounter` is feature-gated behind `tiktoken`; it keeps `CustomMessage` at the same flat 100-token estimate because those messages never reach provider tokenizers.
 

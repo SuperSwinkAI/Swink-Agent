@@ -32,7 +32,6 @@ tokio-util.workspace = true
 uuid = { workspace = true, features = ["v5"] }
 regex.workspace = true
 sha2.workspace = true
-async-trait = "0.1"
 minijinja = { workspace = true, optional = true }
 backon = { workspace = true, optional = true }
 strsim = { workspace = true, optional = true }
@@ -90,6 +89,7 @@ tokio = { workspace = true, features = ["full", "test-util"] }
 pretty_assertions.workspace = true
 wiremock.workspace = true
 jsonschema.workspace = true
+serde_yaml.workspace = true
 
 # FR-049 carve-out: the `evaluators::code::sandbox::posix` submodule needs
 # `#![allow(unsafe_code)]` for POSIX rlimit FFI. `forbid` cannot be relaxed

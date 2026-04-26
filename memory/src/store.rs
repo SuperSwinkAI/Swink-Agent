@@ -61,6 +61,25 @@ pub trait SessionStore: Send + Sync {
         registry: Option<&CustomMessageRegistry>,
     ) -> io::Result<(SessionMeta, Vec<AgentMessage>)>;
 
+    /// Load a session transcript plus its state snapshot from one consistent
+    /// read boundary.
+    ///
+    /// Backends must implement this explicitly if they support atomic
+    /// transcript+state restore; the default returns
+    /// [`io::ErrorKind::Unsupported`] so callers do not silently mix
+    /// transcript and state revisions via separate reads.
+    fn load_full(
+        &self,
+        id: &str,
+        registry: Option<&CustomMessageRegistry>,
+    ) -> io::Result<(SessionMeta, Vec<AgentMessage>, Option<serde_json::Value>)> {
+        let _ = (id, registry);
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "SessionStore::load_full requires an explicit atomic backend implementation",
+        ))
+    }
+
     /// List all saved sessions, sorted by last updated (newest first).
     fn list(&self) -> io::Result<Vec<SessionMeta>>;
 
@@ -128,8 +147,10 @@ mod tests {
     use super::*;
 
     struct CountingStore {
-        save_calls: Arc<AtomicUsize>,
-        save_state_calls: Arc<AtomicUsize>,
+        saves: Arc<AtomicUsize>,
+        state_saves: Arc<AtomicUsize>,
+        loads: Arc<AtomicUsize>,
+        state_loads: Arc<AtomicUsize>,
     }
 
     impl SessionStore for CountingStore {
@@ -139,7 +160,7 @@ mod tests {
             _meta: &SessionMeta,
             _messages: &[AgentMessage],
         ) -> io::Result<()> {
-            self.save_calls.fetch_add(1, Ordering::Relaxed);
+            self.saves.fetch_add(1, Ordering::Relaxed);
             Ok(())
         }
 
@@ -152,6 +173,7 @@ mod tests {
             _id: &str,
             _registry: Option<&CustomMessageRegistry>,
         ) -> io::Result<(SessionMeta, Vec<AgentMessage>)> {
+            self.loads.fetch_add(1, Ordering::Relaxed);
             Ok((sample_meta(), Vec::new()))
         }
 
@@ -164,8 +186,13 @@ mod tests {
         }
 
         fn save_state(&self, _id: &str, _state: &serde_json::Value) -> io::Result<()> {
-            self.save_state_calls.fetch_add(1, Ordering::Relaxed);
+            self.state_saves.fetch_add(1, Ordering::Relaxed);
             Ok(())
+        }
+
+        fn load_state(&self, _id: &str) -> io::Result<Option<serde_json::Value>> {
+            self.state_loads.fetch_add(1, Ordering::Relaxed);
+            Ok(None)
         }
 
         fn load_with_options(
@@ -193,8 +220,10 @@ mod tests {
         let save_calls = Arc::new(AtomicUsize::new(0));
         let save_state_calls = Arc::new(AtomicUsize::new(0));
         let store = CountingStore {
-            save_calls: Arc::clone(&save_calls),
-            save_state_calls: Arc::clone(&save_state_calls),
+            saves: Arc::clone(&save_calls),
+            state_saves: Arc::clone(&save_state_calls),
+            loads: Arc::new(AtomicUsize::new(0)),
+            state_loads: Arc::new(AtomicUsize::new(0)),
         };
 
         let error = store
@@ -204,5 +233,23 @@ mod tests {
         assert_eq!(error.kind(), io::ErrorKind::Unsupported);
         assert_eq!(save_calls.load(Ordering::Relaxed), 0);
         assert_eq!(save_state_calls.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn default_load_full_rejects_non_atomic_fallback_without_reading() {
+        let load_calls = Arc::new(AtomicUsize::new(0));
+        let load_state_calls = Arc::new(AtomicUsize::new(0));
+        let store = CountingStore {
+            saves: Arc::new(AtomicUsize::new(0)),
+            state_saves: Arc::new(AtomicUsize::new(0)),
+            loads: Arc::clone(&load_calls),
+            state_loads: Arc::clone(&load_state_calls),
+        };
+
+        let error = store.load_full("session-1", None).unwrap_err();
+
+        assert_eq!(error.kind(), io::ErrorKind::Unsupported);
+        assert_eq!(load_calls.load(Ordering::Relaxed), 0);
+        assert_eq!(load_state_calls.load(Ordering::Relaxed), 0);
     }
 }

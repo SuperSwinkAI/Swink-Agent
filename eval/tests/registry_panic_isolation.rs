@@ -7,7 +7,6 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use async_trait::async_trait;
 use tokio_util::sync::CancellationToken;
 
 use swink_agent::{
@@ -16,7 +15,7 @@ use swink_agent::{
 };
 use swink_agent_eval::{
     AgentFactory, EnvironmentState, EvalCase, EvalError, EvalRunner, EvaluatorRegistry,
-    JudgeClient, JudgeError, JudgeVerdict, ResponseCriteria, Score, ToolIntent, Verdict,
+    JudgeClient, ResponseCriteria, Score, ToolIntent, Verdict,
 };
 
 struct PanicFactory {
@@ -54,10 +53,9 @@ impl AgentFactory for PanicFactory {
 
 struct PanickingJudge;
 
-#[async_trait]
 impl JudgeClient for PanickingJudge {
-    async fn judge(&self, _prompt: &str) -> Result<JudgeVerdict, JudgeError> {
-        panic!("panicking judge");
+    fn judge<'a>(&'a self, _prompt: &'a str) -> swink_agent_eval::JudgeFuture<'a> {
+        Box::pin(async move { panic!("panicking judge") })
     }
 }
 

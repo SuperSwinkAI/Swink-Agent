@@ -219,13 +219,11 @@ fn report_returns_two_when_result_missing() {
 }
 
 #[test]
-fn run_against_a_minimal_yaml_set_produces_json_artifact() {
+fn run_requires_real_execution_configuration() {
     let dir = TempDir::new().unwrap();
-    // Minimal eval set — the null factory in the CLI has no tools, no
-    // budget, and produces `final_response == "ok"` for every case.
     let set_yaml = r#"
-id: cli-run-e2e
-name: CLI run e2e
+id: cli-run-needs-config
+name: CLI run needs config
 cases:
   - id: c1
     name: Case 1
@@ -250,15 +248,44 @@ cases:
         ])
         .output()
         .expect("spawn");
+    assert_eq!(out.status.code(), Some(2));
     assert!(
-        out.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&out.stderr)
+        !out_path.exists(),
+        "run should not write a false-green artifact when no real execution configuration exists"
     );
-    let saved = fs::read(&out_path).expect("artifact written");
-    // --out persists the raw EvalSetResult so report/gate can round-trip it.
-    let parsed: EvalSetResult =
-        serde_json::from_slice(&saved).expect("artifact parses back into EvalSetResult");
-    assert_eq!(parsed.eval_set_id, "cli-run-e2e");
-    assert_eq!(parsed.summary.total_cases, 1);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("real agent and evaluator configuration is required"),
+        "configuration error details should be emitted to stderr; got: {stderr}"
+    );
+}
+
+#[test]
+fn run_loads_and_validates_eval_set_before_configuration_check() {
+    let dir = TempDir::new().unwrap();
+    let set_path = dir.path().join("set.yaml");
+    fs::write(&set_path, "not: [valid").unwrap();
+
+    let out = Command::new(binary_path())
+        .args([
+            "run",
+            "--set",
+            set_path.to_str().unwrap(),
+            "--parallelism",
+            "1",
+            "--reporter",
+            "console",
+        ])
+        .output()
+        .expect("spawn");
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "invalid eval set should map to config-error exit 2"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("swink-eval run: loading eval set"),
+        "load error details should be emitted to stderr; got: {stderr}"
+    );
 }

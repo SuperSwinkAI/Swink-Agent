@@ -66,8 +66,43 @@ pub async fn run_single_turn(
         return handle_cancellation(config, state, tx).await;
     }
 
-    // Pre-turn policies: check budget, turn caps, etc. before emitting TurnStart.
-    // A Stop verdict here breaks the inner loop without emitting TurnStart/TurnEnd.
+    // ii-a. Publish the previously-recorded cached prefix length into the
+    // sliding-window transformer so compaction protects the cache boundary.
+    // This must happen BEFORE `run_context_transformers` so the compaction
+    // pass sees the right anchor.
+    if config.cache_config.is_some()
+        && let Some(ref transformer) = config.transform_context
+    {
+        let prior_prefix = {
+            let cache_state = config
+                .cache_state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            cache_state.cached_prefix_len
+        };
+        // Clamp to the current message count so compaction never treats a
+        // stale oversized prefix as the anchor.
+        let clamped = prior_prefix.min(state.context_messages.len());
+        if let Some(sw) = transformer
+            .as_any()
+            .downcast_ref::<crate::context_transformer::SlidingWindowTransformer>()
+        {
+            sw.publish_cached_prefix(clamped);
+        }
+    }
+
+    // ii. Run context transformers (async first, then sync)
+    run_context_transformers(
+        config,
+        &mut state.context_messages,
+        state.overflow_signal,
+        tx,
+    )
+    .await;
+    state.overflow_signal = false;
+
+    // Pre-turn policies: check budget, turn caps, etc. against the transformed
+    // context that will be prepared for the provider call.
     {
         use crate::policy::{PolicyContext, PolicyVerdict, run_policies};
         use tracing::info;
@@ -79,6 +114,7 @@ pub async fn run_single_turn(
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             guard.clone()
         };
+        let new_messages_start = new_messages_start.min(state.context_messages.len());
         let policy_ctx = PolicyContext {
             turn_index: state.turn_index,
             accumulated_usage: &state.accumulated_usage,
@@ -120,41 +156,6 @@ pub async fn run_single_turn(
         agent.stop_reason = tracing::field::Empty,
     );
     let _turn_guard = turn_span.enter();
-
-    // ii-a. Publish the previously-recorded cached prefix length into the
-    // sliding-window transformer so compaction protects the cache boundary.
-    // This must happen BEFORE `run_context_transformers` so the compaction
-    // pass sees the right anchor.
-    if config.cache_config.is_some()
-        && let Some(ref transformer) = config.transform_context
-    {
-        let prior_prefix = {
-            let cache_state = config
-                .cache_state
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            cache_state.cached_prefix_len
-        };
-        // Clamp to the current message count so compaction never treats a
-        // stale oversized prefix as the anchor.
-        let clamped = prior_prefix.min(state.context_messages.len());
-        if let Some(sw) = transformer
-            .as_any()
-            .downcast_ref::<crate::context_transformer::SlidingWindowTransformer>()
-        {
-            sw.publish_cached_prefix(clamped);
-        }
-    }
-
-    // ii. Run context transformers (async first, then sync)
-    run_context_transformers(
-        config,
-        &mut state.context_messages,
-        state.overflow_signal,
-        tx,
-    )
-    .await;
-    state.overflow_signal = false;
 
     // ii-c. Annotate context messages with cache hints if caching is configured.
     //
@@ -325,7 +326,7 @@ pub async fn run_single_turn(
         assistant_message.stop_reason,
         StopReason::Error | StopReason::Aborted
     ) {
-        return handle_error_stop(assistant_message, state, tx).await;
+        return handle_error_stop(assistant_message, state, config, system_prompt, tx).await;
     }
 
     // viii. Extract tool calls from assistant message content. `extract_tool_calls`
@@ -705,13 +706,16 @@ async fn handle_stream_result(
 
 /// Handle an error or aborted stop reason: emit `TurnEnd` + `AgentEnd` and return.
 async fn handle_error_stop(
-    mut assistant_message: AssistantMessage,
+    assistant_message: AssistantMessage,
     state: &mut LoopState,
+    config: &Arc<AgentLoopConfig>,
+    system_prompt: &str,
     tx: &mpsc::Sender<AgentEvent>,
 ) -> TurnOutcome {
     // Issue #619: scrub any incomplete tool-use blocks before we persist the
     // message into `context_messages` — even on terminal error paths a resumed
     // session (e.g. continuation) could replay this history to an adapter.
+    let mut assistant_message = assistant_message;
     crate::stream::sanitize_incomplete_tool_calls(&mut assistant_message);
 
     let is_abort = assistant_message.stop_reason == StopReason::Aborted;
@@ -729,9 +733,14 @@ async fn handle_error_stop(
     }
     let msg_for_event = assistant_message.clone();
     let stop = assistant_message.stop_reason;
+    let assistant_ctx_index = state.context_messages.len();
     state
         .context_messages
         .push(AgentMessage::Llm(LlmMessage::Assistant(assistant_message)));
+    let (msg_for_event, policy_stop) =
+        run_post_turn_policy_check(&msg_for_event, &[], state, config, system_prompt);
+    state.context_messages[assistant_ctx_index] =
+        AgentMessage::Llm(LlmMessage::Assistant(msg_for_event.clone()));
     let snapshot = build_snapshot(state, stop, None);
     let reason = if is_abort {
         TurnEndReason::Aborted
@@ -739,6 +748,9 @@ async fn handle_error_stop(
         TurnEndReason::Error
     };
     // CRITICAL: On error/abort, exit immediately — no follow-up polling
+    if let Some(reason) = policy_stop {
+        tracing::info!("post-turn policy stopped agent: {reason}");
+    }
     emit_turn_end_and_agent_end(msg_for_event, vec![], reason, snapshot, state, tx).await
 }
 

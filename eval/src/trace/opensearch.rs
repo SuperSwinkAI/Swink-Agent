@@ -27,7 +27,6 @@ use std::borrow::Cow;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use async_trait::async_trait;
 use opentelemetry::trace::{
     SpanContext, SpanId, SpanKind, Status, TraceFlags, TraceId, TraceState,
 };
@@ -150,71 +149,75 @@ impl Clone for Inner {
     }
 }
 
-#[async_trait]
 impl TraceProvider for OpenSearchTraceProvider {
-    async fn fetch_session(&self, session_id: &str) -> Result<RawSession, TraceProviderError> {
-        let url = format!("{}/{}/_search", self.inner.base_url, self.inner.index);
-        let body = serde_json::json!({
-            "size": self.inner.hits_limit,
-            "query": {
-                "term": {
-                    format!("attributes.{}.keyword", self.inner.session_attribute): session_id,
+    fn fetch_session<'a>(
+        &'a self,
+        session_id: &'a str,
+    ) -> crate::trace::provider::TraceProviderFuture<'a> {
+        Box::pin(async move {
+            let url = format!("{}/{}/_search", self.inner.base_url, self.inner.index);
+            let body = serde_json::json!({
+                "size": self.inner.hits_limit,
+                "query": {
+                    "term": {
+                        format!("attributes.{}.keyword", self.inner.session_attribute): session_id,
+                    }
                 }
+            });
+            let mut req = self.inner.http.post(&url).json(&body);
+            if let Some(token) = &self.inner.bearer {
+                req = req.bearer_auth(token);
             }
-        });
-        let mut req = self.inner.http.post(&url).json(&body);
-        if let Some(token) = &self.inner.bearer {
-            req = req.bearer_auth(token);
-        }
-        let resp = req
-            .send()
-            .await
-            .map_err(|err| TraceProviderError::BackendFailure {
-                reason: format!("opensearch POST {url}: {err}"),
-            })?;
-
-        let status = resp.status();
-        if status == reqwest::StatusCode::NOT_FOUND {
-            return Err(TraceProviderError::SessionNotFound {
-                session_id: session_id.to_string(),
-            });
-        }
-        if !status.is_success() {
-            let body = resp.text().await.unwrap_or_default();
-            return Err(TraceProviderError::BackendFailure {
-                reason: format!("opensearch http {}: {}", status.as_u16(), truncate(&body)),
-            });
-        }
-
-        let body: SearchBody =
-            resp.json()
+            let resp = req
+                .send()
                 .await
                 .map_err(|err| TraceProviderError::BackendFailure {
-                    reason: format!("opensearch body parse: {err}"),
+                    reason: format!("opensearch POST {url}: {err}"),
                 })?;
-        let hits = body.hits.hits;
-        if hits.is_empty() {
-            return Err(TraceProviderError::SessionNotFound {
+
+            let status = resp.status();
+            if status == reqwest::StatusCode::NOT_FOUND {
+                return Err(TraceProviderError::SessionNotFound {
+                    session_id: session_id.to_string(),
+                });
+            }
+            if !status.is_success() {
+                let body = resp.text().await.unwrap_or_default();
+                return Err(TraceProviderError::BackendFailure {
+                    reason: format!("opensearch http {}: {}", status.as_u16(), truncate(&body)),
+                });
+            }
+
+            let body: SearchBody =
+                resp.json()
+                    .await
+                    .map_err(|err| TraceProviderError::BackendFailure {
+                        reason: format!("opensearch body parse: {err}"),
+                    })?;
+            let hits = body.hits.hits;
+            if hits.is_empty() {
+                return Err(TraceProviderError::SessionNotFound {
+                    session_id: session_id.to_string(),
+                });
+            }
+
+            let open: usize = hits.iter().filter(|h| h.source.end_time.is_none()).count();
+            if open > 0 {
+                return Err(TraceProviderError::SessionInProgress {
+                    session_id: session_id.to_string(),
+                    open_spans: open,
+                });
+            }
+
+            let spans = hits
+                .into_iter()
+                .map(|h| hit_to_span_data(h.source, session_id, &self.inner.session_attribute))
+                .collect();
+
+            Ok(RawSession::OtelSpans {
                 session_id: session_id.to_string(),
-            });
-        }
-
-        let open: usize = hits.iter().filter(|h| h.source.end_time.is_none()).count();
-        if open > 0 {
-            return Err(TraceProviderError::SessionInProgress {
-                session_id: session_id.to_string(),
-                open_spans: open,
-            });
-        }
-
-        let spans = hits
-            .into_iter()
-            .map(|h| hit_to_span_data(h.source, session_id, &self.inner.session_attribute))
-            .collect();
-
-        Ok(RawSession::OtelSpans {
-            session_id: session_id.to_string(),
-            spans,
+                spans,
+            })
         })
     }
 }

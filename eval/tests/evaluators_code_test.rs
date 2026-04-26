@@ -10,7 +10,6 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use async_trait::async_trait;
 use regex::Regex;
 use swink_agent::{Cost, ModelSpec, StopReason, Usage};
 use swink_agent_eval::{
@@ -84,14 +83,15 @@ async fn extractor_regex_uses_first_capture_group() {
 
 struct StaticJudge(Option<String>);
 
-#[async_trait]
 impl JudgeClient for StaticJudge {
-    async fn judge(&self, _prompt: &str) -> Result<JudgeVerdict, JudgeError> {
-        Ok(JudgeVerdict {
-            score: 1.0,
-            pass: true,
-            reason: self.0.clone(),
-            label: None,
+    fn judge<'a>(&'a self, _prompt: &'a str) -> swink_agent_eval::JudgeFuture<'a> {
+        Box::pin(async move {
+            Ok(JudgeVerdict {
+                score: 1.0,
+                pass: true,
+                reason: self.0.clone(),
+                label: None,
+            })
         })
     }
 }

@@ -31,6 +31,14 @@ use crate::types::{
     TurnRecord,
 };
 
+struct FactoryCancellationGuard(CancellationToken);
+
+impl Drop for FactoryCancellationGuard {
+    fn drop(&mut self) {
+        self.0.cancel();
+    }
+}
+
 /// Factory that creates a configured [`Agent`] for each eval case.
 pub trait AgentFactory: Send + Sync {
     /// Create an agent and cancellation token for the given eval case.
@@ -210,17 +218,7 @@ impl EvalRunner {
         let invocation =
             invoke_agent_impl(case, factory, self.cancel.as_ref(), &self.agent_invocations).await?;
         let metric_results = self.registry.evaluate(case, &invocation);
-        let verdict = if metric_results.iter().all(|r| r.score.verdict().is_pass()) {
-            Verdict::Pass
-        } else {
-            Verdict::Fail
-        };
-        Ok(EvalCaseResult {
-            case_id: case.id.clone(),
-            invocation,
-            metric_results,
-            verdict,
-        })
+        Ok(scored_case_result(case, invocation, metric_results))
     }
 
     /// Run an entire eval set and return aggregated results.
@@ -461,17 +459,39 @@ async fn execute_case(
         #[cfg(feature = "telemetry")]
         case_span,
     );
+    Ok(scored_case_result(case, invocation, metric_results))
+}
+
+fn scored_case_result(
+    case: &EvalCase,
+    invocation: Invocation,
+    mut metric_results: Vec<EvalMetricResult>,
+) -> EvalCaseResult {
+    if metric_results.is_empty() {
+        metric_results.push(no_applicable_evaluators_metric());
+    }
     let verdict = if metric_results.iter().all(|r| r.score.verdict().is_pass()) {
         Verdict::Pass
     } else {
         Verdict::Fail
     };
-    Ok(EvalCaseResult {
+    EvalCaseResult {
         case_id: case.id.clone(),
         invocation,
         metric_results,
         verdict,
-    })
+    }
+}
+
+fn no_applicable_evaluators_metric() -> EvalMetricResult {
+    EvalMetricResult {
+        evaluator_name: "no_applicable_evaluators".to_string(),
+        score: Score::fail(),
+        details: Some(
+            "no evaluator produced a metric; configure an applicable evaluator or expected criteria"
+                .to_string(),
+        ),
+    }
 }
 
 async fn invoke_agent_impl(
@@ -481,7 +501,8 @@ async fn invoke_agent_impl(
     agent_invocations: &AtomicUsize,
 ) -> Result<Invocation, EvalError> {
     agent_invocations.fetch_add(1, Ordering::SeqCst);
-    let (mut agent, _factory_cancel) = factory.create_agent(case)?;
+    let (mut agent, factory_cancel) = factory.create_agent(case)?;
+    let _factory_cancel = FactoryCancellationGuard(factory_cancel);
     let messages: Vec<_> = case
         .user_messages
         .iter()
@@ -535,10 +556,12 @@ fn dispatch_evaluators(
 
     let mut per_evaluator: std::collections::BTreeMap<String, Vec<EvalMetricResult>> =
         std::collections::BTreeMap::new();
+    let mut cancelled = false;
     for run_idx in 0..num_runs {
         if let Some(tok) = cancel
             && tok.is_cancelled()
         {
+            cancelled = true;
             break;
         }
         // Only the first num_runs iteration gets its evaluator spans emitted
@@ -566,7 +589,7 @@ fn dispatch_evaluators(
         debug!(case_id = %case.id, run = run_idx + 1, "num_runs sample recorded");
     }
 
-    per_evaluator
+    let mut aggregated: Vec<EvalMetricResult> = per_evaluator
         .into_iter()
         .map(|(name, samples)| {
             let scores: Vec<f64> = samples.iter().map(|m| m.score.value).collect();
@@ -588,7 +611,15 @@ fn dispatch_evaluators(
                 details: Some(detail_lines.join(" :: ")),
             }
         })
-        .collect()
+        .collect();
+
+    if cancelled {
+        aggregated.push(cancelled_metric_result(
+            "runner cancellation observed during multi-run evaluator dispatch",
+        ));
+    }
+
+    aggregated
 }
 
 /// Invoke every applicable evaluator once. When `telemetry` + `case_span`
@@ -620,12 +651,18 @@ fn cancelled_case_result(case: &EvalCase) -> EvalCaseResult {
     EvalCaseResult {
         case_id: case.id.clone(),
         invocation: error_invocation(None),
-        metric_results: vec![EvalMetricResult {
-            evaluator_name: "cancelled".to_string(),
-            score: Score::fail(),
-            details: Some("runner cancellation observed before case completion".into()),
-        }],
+        metric_results: vec![cancelled_metric_result(
+            "runner cancellation observed before case completion",
+        )],
         verdict: Verdict::Fail,
+    }
+}
+
+fn cancelled_metric_result(details: &str) -> EvalMetricResult {
+    EvalMetricResult {
+        evaluator_name: "cancelled".to_string(),
+        score: Score::fail(),
+        details: Some(details.to_string()),
     }
 }
 
