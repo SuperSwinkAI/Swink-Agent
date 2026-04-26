@@ -1,5 +1,6 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::error::Error;
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -65,6 +66,22 @@ pub(crate) fn orphan_content_err(
             path.display()
         ),
     ))
+}
+
+fn invalid_meta_err(session_id: &str, name: &str, reason: impl Into<String>) -> ArtifactError {
+    storage_err(std::io::Error::new(
+        std::io::ErrorKind::InvalidData,
+        format!(
+            "artifact '{name}' in session '{session_id}' has invalid metadata: {}",
+            reason.into()
+        ),
+    ))
+}
+
+fn parse_version_file_name(file_name: &OsStr) -> Option<u32> {
+    let name = file_name.to_str()?;
+    let version = name.strip_prefix('v')?.strip_suffix(".bin")?;
+    version.parse().ok()
 }
 
 /// Canonicalize `root`, creating it first if it does not already exist.
@@ -342,6 +359,67 @@ impl FileArtifactStore {
             }
         }
     }
+
+    async fn reject_orphan_content_files(
+        &self,
+        session_id: &str,
+        name: &str,
+        known_versions: &HashSet<u32>,
+    ) -> Result<(), ArtifactError> {
+        let artifact_dir = self.resolve_artifact_dir(session_id, name)?;
+        let mut entries = match tokio::fs::read_dir(&artifact_dir).await {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(storage_err(error)),
+        };
+
+        while let Some(entry) = entries.next_entry().await.map_err(storage_err)? {
+            let file_type = entry.file_type().await.map_err(storage_err)?;
+            if !file_type.is_file() {
+                continue;
+            }
+
+            let Some(version) = parse_version_file_name(&entry.file_name()) else {
+                continue;
+            };
+            if !known_versions.contains(&version) {
+                return Err(orphan_content_err(session_id, name, version, &entry.path()));
+            }
+        }
+
+        Ok(())
+    }
+
+    pub(crate) async fn next_version(
+        &self,
+        session_id: &str,
+        name: &str,
+        meta: &MetaFile,
+    ) -> Result<u32, ArtifactError> {
+        let mut expected = 1u32;
+        let mut known_versions = HashSet::with_capacity(meta.versions.len());
+        for record in &meta.versions {
+            if record.version != expected {
+                return Err(invalid_meta_err(
+                    session_id,
+                    name,
+                    format!(
+                        "expected version {expected} in sequence, found version {}",
+                        record.version
+                    ),
+                ));
+            }
+            known_versions.insert(record.version);
+            expected = expected.checked_add(1).ok_or_else(|| {
+                invalid_meta_err(session_id, name, "version sequence exceeds u32 range")
+            })?;
+        }
+
+        self.reject_orphan_content_files(session_id, name, &known_versions)
+            .await?;
+
+        Ok(expected)
+    }
 }
 
 impl ArtifactStore for FileArtifactStore {
@@ -361,8 +439,7 @@ impl ArtifactStore for FileArtifactStore {
         // Read or create meta
         let mut meta = self.read_meta(session_id, name).await?;
 
-        #[allow(clippy::cast_possible_truncation)]
-        let next_version = meta.versions.len() as u32 + 1;
+        let next_version = self.next_version(session_id, name, &meta).await?;
         let now = Utc::now();
 
         let record = VersionRecord {
@@ -473,6 +550,13 @@ impl ArtifactStore for FileArtifactStore {
         self.resolve_artifact_dir(session_id, name)?;
         let meta = self.read_meta(session_id, name).await?;
         let Some(record) = meta.versions.iter().find(|r| r.version == version) else {
+            let content_path = self.version_path(session_id, name, version);
+            if tokio::fs::try_exists(&content_path)
+                .await
+                .map_err(storage_err)?
+            {
+                return Err(orphan_content_err(session_id, name, version, &content_path));
+            }
             tracing::debug!(session_id, name, version, "version not found");
             return Ok(None);
         };
