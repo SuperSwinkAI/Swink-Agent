@@ -128,22 +128,20 @@ impl AzureStreamFn {
         if !resp.status().is_success() {
             let status = resp.status().as_u16();
             let body = resp.text().await.unwrap_or_default();
-            return Err(
-                match classify_with_overrides(status, &[(400, HttpErrorKind::Auth)]) {
-                    Some(HttpErrorKind::Auth) => TokenAcquireError::Auth(format!(
-                        "token endpoint auth error (HTTP {status}): {body}"
-                    )),
-                    Some(HttpErrorKind::Throttled) => TokenAcquireError::Throttled(format!(
-                        "token endpoint rate limit (HTTP {status}): {body}"
-                    )),
-                    Some(HttpErrorKind::Network) => TokenAcquireError::Network(format!(
-                        "token endpoint server error (HTTP {status}): {body}"
-                    )),
-                    None => TokenAcquireError::Other(format!(
-                        "token endpoint returned error (HTTP {status}): {body}"
-                    )),
-                },
-            );
+            return Err(match classify_token_endpoint_status(status) {
+                Some(HttpErrorKind::Auth) => TokenAcquireError::Auth(format!(
+                    "token endpoint auth error (HTTP {status}): {body}"
+                )),
+                Some(HttpErrorKind::Throttled) => TokenAcquireError::Throttled(format!(
+                    "token endpoint rate limit (HTTP {status}): {body}"
+                )),
+                Some(HttpErrorKind::Network) => TokenAcquireError::Network(format!(
+                    "token endpoint server error (HTTP {status}): {body}"
+                )),
+                None => TokenAcquireError::Other(format!(
+                    "token endpoint returned error (HTTP {status}): {body}"
+                )),
+            });
         }
 
         let token_resp: TokenResponse = resp.json().await.map_err(|e| {
@@ -223,6 +221,13 @@ impl AzureStreamFn {
                 Ok(request.header("Authorization", format!("Bearer {token}")))
             }
         }
+    }
+}
+
+fn classify_token_endpoint_status(status: u16) -> Option<HttpErrorKind> {
+    match status {
+        400..=499 if status != 408 && status != 429 => Some(HttpErrorKind::Auth),
+        _ => classify_with_overrides(status, &[]),
     }
 }
 
