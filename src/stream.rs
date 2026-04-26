@@ -455,7 +455,11 @@ pub fn accumulate_message(
                     return Err("duplicate terminal event".into());
                 }
             }
-            AssistantMessageEvent::Start => {}
+            AssistantMessageEvent::Start => {
+                if saw_terminal {
+                    return Err("Start event after terminal event".into());
+                }
+            }
         }
 
         match event {

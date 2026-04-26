@@ -644,3 +644,36 @@ fn error_then_done_rejected() {
     assert!(result.is_err());
     assert!(result.unwrap_err().contains("duplicate terminal"));
 }
+
+#[test]
+fn done_then_start_rejected() {
+    let events = vec![
+        AssistantMessageEvent::Start,
+        AssistantMessageEvent::Done {
+            stop_reason: StopReason::Stop,
+            usage: Usage::default(),
+            cost: Cost::default(),
+        },
+        AssistantMessageEvent::Start,
+    ];
+    let result = accumulate_message(events, "p", "m");
+    assert!(result.is_err());
+    assert!(result.unwrap_err().contains("after terminal"));
+}
+
+#[test]
+fn error_then_start_rejected() {
+    let events = vec![
+        AssistantMessageEvent::Start,
+        AssistantMessageEvent::Error {
+            stop_reason: StopReason::Error,
+            error_message: "error first".into(),
+            usage: None,
+            error_kind: None,
+        },
+        AssistantMessageEvent::Start,
+    ];
+    let result = accumulate_message(events, "p", "m");
+    assert!(result.is_err());
+    assert!(result.unwrap_err().contains("after terminal"));
+}
