@@ -1,6 +1,7 @@
 // Playwright bridge script — communicates with Rust via JSON lines on stdin/stdout.
 // Usage: node playwright_bridge.js
 
+const net = require('net');
 const readline = require('readline');
 
 let browser = null;
@@ -24,6 +25,99 @@ async function ensureBrowser() {
   return browser;
 }
 
+function hostMatches(list, host) {
+  const lowerHost = (host || '').toLowerCase();
+  return (list || []).some((entry) => lowerHost === String(entry).toLowerCase());
+}
+
+function isPrivateIpv4(host) {
+  const parts = host.split('.').map((part) => Number(part));
+  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) {
+    return false;
+  }
+
+  return (
+    parts[0] === 0 ||
+    parts[0] === 10 ||
+    parts[0] === 127 ||
+    (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) ||
+    (parts[0] === 192 && parts[1] === 168) ||
+    (parts[0] === 169 && parts[1] === 254)
+  );
+}
+
+function isPrivateIpv6(host) {
+  const lowerHost = host.toLowerCase();
+  return lowerHost === '::1' || lowerHost.startsWith('fc') || lowerHost.startsWith('fd');
+}
+
+function isBlockedPrivateHost(host) {
+  const lowerHost = host.toLowerCase();
+  if (lowerHost === 'localhost' || lowerHost.endsWith('.localhost')) {
+    return true;
+  }
+
+  const ipVersion = net.isIP(host);
+  if (ipVersion === 4) {
+    return isPrivateIpv4(host);
+  }
+  if (ipVersion === 6) {
+    return isPrivateIpv6(host);
+  }
+  return false;
+}
+
+function blockedByFilter(rawUrl, filter) {
+  if (!filter) {
+    return null;
+  }
+
+  let parsed;
+  try {
+    parsed = new URL(rawUrl);
+  } catch (err) {
+    return `Invalid URL '${rawUrl}': ${err.message}`;
+  }
+
+  const scheme = parsed.protocol.replace(':', '');
+  if (scheme !== 'http' && scheme !== 'https') {
+    return `URL scheme '${scheme}' is not allowed; only http and https are permitted`;
+  }
+
+  const host = parsed.hostname;
+  if ((filter.allowlist || []).length > 0 && !hostMatches(filter.allowlist, host)) {
+    return `Domain '${host}' is not on the allow list`;
+  }
+  if (hostMatches(filter.denylist, host)) {
+    return `Domain '${host}' is on the deny list`;
+  }
+  if (filter.blockPrivateIps && isBlockedPrivateHost(host)) {
+    return `Address ${host} is a private/internal host and is blocked`;
+  }
+
+  return null;
+}
+
+async function installNavigationFilter(page, filter) {
+  let blockedReason = null;
+  if (!filter) {
+    return () => blockedReason;
+  }
+
+  await page.route('**/*', async (route) => {
+    const reason = blockedByFilter(route.request().url(), filter);
+    if (reason) {
+      blockedReason = reason;
+      await route.abort('blockedbyclient');
+      return;
+    }
+
+    await route.continue();
+  });
+
+  return () => blockedReason;
+}
+
 async function handleScreenshot(req) {
   const b = await ensureBrowser();
   const context = await b.newContext(
@@ -32,13 +126,14 @@ async function handleScreenshot(req) {
       : {}
   );
   const page = await context.newPage();
+  const blockedReason = await installNavigationFilter(page, req.filter);
   try {
     await page.goto(req.url, { waitUntil: 'load', timeout: 30000 });
     const buf = await page.screenshot({ type: 'png', fullPage: false });
     const base64 = buf.toString('base64');
-    respond({ id: req.id, ok: true, data: base64 });
+    respond({ id: req.id, ok: true, data: { image: base64, finalUrl: page.url() } });
   } catch (err) {
-    respond({ id: req.id, ok: false, error: err.message });
+    respond({ id: req.id, ok: false, error: blockedReason() || err.message });
   } finally {
     await context.close();
   }
@@ -115,6 +210,7 @@ async function handleExtract(req) {
   const b = await ensureBrowser();
   const context = await b.newContext();
   const page = await context.newPage();
+  const blockedReason = await installNavigationFilter(page, req.filter);
   try {
     await page.goto(req.url, { waitUntil: 'load', timeout: 30000 });
 
@@ -168,9 +264,9 @@ async function handleExtract(req) {
       plan
     );
 
-    respond({ id: req.id, ok: true, data: elements });
+    respond({ id: req.id, ok: true, data: { elements, finalUrl: page.url() } });
   } catch (err) {
-    respond({ id: req.id, ok: false, error: err.message });
+    respond({ id: req.id, ok: false, error: blockedReason() || err.message });
   } finally {
     await context.close();
   }
@@ -238,7 +334,9 @@ if (require.main === module) {
 }
 
 module.exports = {
+  blockedByFilter,
   buildExtractionPlan,
   collectAttributes,
   extractElementData,
+  isBlockedPrivateHost,
 };

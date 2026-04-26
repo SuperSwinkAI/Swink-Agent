@@ -5,11 +5,13 @@ use std::time::Duration;
 use serde_json::Value;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
+use url::Url;
 
 use swink_agent::{AgentTool, AgentToolResult, ContentBlock, ImageSource, ToolFuture};
 
-use crate::playwright::{PlaywrightBridge, PlaywrightError, Viewport};
-use crate::tools::{OperationOutcome, await_with_cancellation};
+use crate::domain::DomainFilter;
+use crate::playwright::{PlaywrightBridge, PlaywrightError, ScreenshotOutput, Viewport};
+use crate::tools::{OperationOutcome, await_with_cancellation, validate_url_against_filter};
 
 /// Tool for taking screenshots of web pages.
 ///
@@ -20,6 +22,7 @@ pub struct ScreenshotTool {
     playwright_path: Option<PathBuf>,
     default_viewport: Viewport,
     timeout: Duration,
+    domain_filter: Option<DomainFilter>,
     schema: Value,
 }
 
@@ -39,8 +42,16 @@ impl ScreenshotTool {
             playwright_path,
             default_viewport,
             timeout,
+            domain_filter: None,
             schema: build_schema(),
         }
+    }
+
+    /// Re-validate initial and final browser navigation URLs inside the tool.
+    #[must_use]
+    pub fn with_domain_filter(mut self, filter: DomainFilter) -> Self {
+        self.domain_filter = Some(filter);
+        self
     }
 }
 
@@ -81,6 +92,15 @@ impl AgentTool for ScreenshotTool {
                 Some(u) => u.to_owned(),
                 None => return AgentToolResult::error("missing required parameter: url"),
             };
+            let parsed_url = match Url::parse(&url) {
+                Ok(url) => url,
+                Err(error) => return AgentToolResult::error(format!("Invalid URL: {error}")),
+            };
+            if let Err(error) =
+                validate_url_against_filter(self.domain_filter.as_ref(), &parsed_url, "Initial")
+            {
+                return AgentToolResult::error(error);
+            }
 
             let width = params
                 .get("width")
@@ -127,27 +147,19 @@ impl AgentTool for ScreenshotTool {
                 await_with_cancellation(
                     &cancellation_token,
                     self.timeout,
-                    bridge.screenshot(&url, viewport),
+                    bridge.screenshot(&url, viewport, self.domain_filter.as_ref()),
                 )
                 .await
             };
 
             match operation {
-                OperationOutcome::Completed(Ok(base64_data)) => AgentToolResult {
-                    content: vec![ContentBlock::Image {
-                        source: ImageSource::Base64 {
-                            media_type: "image/png".into(),
-                            data: base64_data,
-                        },
-                    }],
-                    details: serde_json::json!({
-                        "url": url,
-                        "width": width,
-                        "height": height,
-                    }),
-                    is_error: false,
-                    transfer_signal: None,
-                },
+                OperationOutcome::Completed(Ok(screenshot)) => build_screenshot_result(
+                    &url,
+                    width,
+                    height,
+                    screenshot,
+                    self.domain_filter.as_ref(),
+                ),
                 OperationOutcome::Completed(Err(PlaywrightError::NotInstalled)) => {
                     AgentToolResult::error(
                         "Playwright/Node.js not found. Install with:\n\
@@ -169,6 +181,42 @@ impl AgentTool for ScreenshotTool {
                 }
             }
         })
+    }
+}
+
+fn build_screenshot_result(
+    url: &str,
+    width: u32,
+    height: u32,
+    screenshot: ScreenshotOutput,
+    domain_filter: Option<&DomainFilter>,
+) -> AgentToolResult {
+    match Url::parse(&screenshot.final_url) {
+        Ok(final_url) => {
+            if let Err(error) = validate_url_against_filter(domain_filter, &final_url, "Final") {
+                return AgentToolResult::error(error);
+            }
+        }
+        Err(error) => {
+            return AgentToolResult::error(format!("Browser returned invalid final URL: {error}"));
+        }
+    }
+
+    AgentToolResult {
+        content: vec![ContentBlock::Image {
+            source: ImageSource::Base64 {
+                media_type: "image/png".into(),
+                data: screenshot.base64,
+            },
+        }],
+        details: serde_json::json!({
+            "url": url,
+            "final_url": screenshot.final_url,
+            "width": width,
+            "height": height,
+        }),
+        is_error: false,
+        transfer_signal: None,
     }
 }
 

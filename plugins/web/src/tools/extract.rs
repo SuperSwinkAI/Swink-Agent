@@ -6,10 +6,14 @@ use serde_json::Value;
 use swink_agent::{AgentTool, AgentToolResult, ToolFuture};
 use tokio::sync::Mutex;
 use tracing::warn;
+use url::Url;
 
-use crate::playwright::{ExtractionPreset, PlaywrightBridge, PlaywrightError};
+use crate::domain::DomainFilter;
+use crate::playwright::{ExtractOutput, ExtractionPreset, PlaywrightBridge, PlaywrightError};
 use crate::policy::ContentSanitizerPolicy;
-use crate::tools::{OperationOutcome, await_with_cancellation, sanitize_web_tool_text};
+use crate::tools::{
+    OperationOutcome, await_with_cancellation, sanitize_web_tool_text, validate_url_against_filter,
+};
 
 struct ExtractRequest {
     url: String,
@@ -26,6 +30,7 @@ pub struct ExtractTool {
     bridge: Arc<Mutex<Option<PlaywrightBridge>>>,
     playwright_path: Option<PathBuf>,
     timeout: Duration,
+    domain_filter: Option<DomainFilter>,
     sanitizer: Option<ContentSanitizerPolicy>,
     schema: Value,
 }
@@ -61,9 +66,17 @@ impl ExtractTool {
             bridge,
             playwright_path,
             timeout,
+            domain_filter: None,
             sanitizer: Some(ContentSanitizerPolicy::new()),
             schema,
         }
+    }
+
+    /// Re-validate initial and final browser navigation URLs inside the tool.
+    #[must_use]
+    pub fn with_domain_filter(mut self, filter: DomainFilter) -> Self {
+        self.domain_filter = Some(filter);
+        self
     }
 
     /// Enable or disable prompt-injection sanitization of extracted text.
@@ -110,6 +123,15 @@ impl AgentTool for ExtractTool {
                 Ok(request) => request,
                 Err(error) => return AgentToolResult::error(error),
             };
+            let parsed_url = match Url::parse(&request.url) {
+                Ok(url) => url,
+                Err(error) => return AgentToolResult::error(format!("Invalid URL: {error}")),
+            };
+            if let Err(error) =
+                validate_url_against_filter(self.domain_filter.as_ref(), &parsed_url, "Initial")
+            {
+                return AgentToolResult::error(error);
+            }
 
             // Lazily start the bridge if not already running.
             let mut guard = tokio::select! {
@@ -147,36 +169,22 @@ impl AgentTool for ExtractTool {
                 await_with_cancellation(
                     &cancellation_token,
                     self.timeout,
-                    bridge.extract(&request.url, request.selector.as_deref(), request.preset),
+                    bridge.extract(
+                        &request.url,
+                        request.selector.as_deref(),
+                        request.preset,
+                        self.domain_filter.as_ref(),
+                    ),
                 )
                 .await
             };
 
             match operation {
-                OperationOutcome::Completed(Ok(elements)) => {
-                    if elements.is_empty() {
-                        return AgentToolResult::text(
-                            "No elements found matching the given criteria.",
-                        );
-                    }
-
-                    match serde_json::to_string_pretty(&elements) {
-                        Ok(json) => {
-                            let json = sanitize_web_tool_text(
-                                "web_extract",
-                                json,
-                                self.sanitizer.as_ref(),
-                            );
-                            AgentToolResult::text(json)
-                        }
-                        Err(e) => {
-                            warn!("Failed to serialize extracted elements: {e}");
-                            AgentToolResult::error(format!(
-                                "Failed to serialize extraction results: {e}"
-                            ))
-                        }
-                    }
-                }
+                OperationOutcome::Completed(Ok(extraction)) => build_extract_result(
+                    extraction,
+                    self.domain_filter.as_ref(),
+                    self.sanitizer.as_ref(),
+                ),
                 OperationOutcome::Completed(Err(PlaywrightError::NotInstalled)) => {
                     AgentToolResult::error(
                         "Playwright/Node.js not found. Install with:\n\
@@ -196,6 +204,43 @@ impl AgentTool for ExtractTool {
                 }
             }
         })
+    }
+}
+
+fn build_extract_result(
+    extraction: ExtractOutput,
+    domain_filter: Option<&DomainFilter>,
+    sanitizer: Option<&ContentSanitizerPolicy>,
+) -> AgentToolResult {
+    let ExtractOutput {
+        elements,
+        final_url,
+    } = extraction;
+
+    match Url::parse(&final_url) {
+        Ok(final_url) => {
+            if let Err(error) = validate_url_against_filter(domain_filter, &final_url, "Final") {
+                return AgentToolResult::error(error);
+            }
+        }
+        Err(error) => {
+            return AgentToolResult::error(format!("Browser returned invalid final URL: {error}"));
+        }
+    }
+
+    if elements.is_empty() {
+        return AgentToolResult::text("No elements found matching the given criteria.");
+    }
+
+    match serde_json::to_string_pretty(&elements) {
+        Ok(json) => {
+            let json = sanitize_web_tool_text("web_extract", json, sanitizer);
+            AgentToolResult::text(json)
+        }
+        Err(e) => {
+            warn!("Failed to serialize extracted elements: {e}");
+            AgentToolResult::error(format!("Failed to serialize extraction results: {e}"))
+        }
     }
 }
 

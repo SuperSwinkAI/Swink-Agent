@@ -5,10 +5,12 @@ use serde_json::Value;
 use swink_agent::{AgentTool, AgentToolResult, ToolFuture};
 use tokio_util::sync::CancellationToken;
 use tracing::warn;
+use url::Url;
 
 use crate::content::{extract_readable_content, is_html_content_type, truncate_content};
+use crate::domain::DomainFilter;
 use crate::policy::ContentSanitizerPolicy;
-use crate::tools::sanitize_web_tool_text;
+use crate::tools::{sanitize_web_tool_text, validate_url_against_filter};
 
 /// Tool for fetching and reading web pages.
 ///
@@ -19,6 +21,8 @@ pub struct FetchTool {
     client: reqwest::Client,
     max_content_length: usize,
     request_timeout: Duration,
+    domain_filter: Option<DomainFilter>,
+    max_redirects: usize,
     sanitizer: Option<ContentSanitizerPolicy>,
     schema: Value,
 }
@@ -45,9 +49,19 @@ impl FetchTool {
             client,
             max_content_length,
             request_timeout,
+            domain_filter: None,
+            max_redirects: 10,
             sanitizer: Some(ContentSanitizerPolicy::new()),
             schema,
         }
+    }
+
+    /// Re-validate initial and redirect targets inside the tool.
+    #[must_use]
+    pub fn with_domain_filter(mut self, filter: DomainFilter, max_redirects: u32) -> Self {
+        self.domain_filter = Some(filter);
+        self.max_redirects = max_redirects as usize;
+        self
     }
 
     /// Enable or disable prompt-injection sanitization of fetched text.
@@ -87,6 +101,63 @@ impl FetchTool {
         }
 
         Ok(body)
+    }
+
+    async fn send_get_following_checked_redirects(
+        &self,
+        initial_url: Url,
+        cancellation_token: &CancellationToken,
+    ) -> Result<(reqwest::Response, Url), String> {
+        let mut current_url = initial_url;
+
+        for redirect_count in 0..=self.max_redirects {
+            let phase = if redirect_count == 0 {
+                "Initial"
+            } else {
+                "Redirect"
+            };
+            validate_url_against_filter(self.domain_filter.as_ref(), &current_url, phase)?;
+
+            let request = self
+                .client
+                .get(current_url.clone())
+                .timeout(self.request_timeout);
+
+            let response = tokio::select! {
+                result = request.send() => {
+                    match result {
+                        Ok(resp) => resp,
+                        Err(e) => return Err(format!("HTTP request failed: {e}")),
+                    }
+                }
+                () = cancellation_token.cancelled() => {
+                    return Err("Request cancelled".to_string());
+                }
+            };
+
+            if !response.status().is_redirection() {
+                return Ok((response, current_url));
+            }
+
+            let location = response
+                .headers()
+                .get(reqwest::header::LOCATION)
+                .and_then(|value| value.to_str().ok())
+                .ok_or_else(|| {
+                    format!(
+                        "Redirect response from {current_url} did not include a valid Location header"
+                    )
+                })?;
+
+            current_url = current_url
+                .join(location)
+                .map_err(|error| format!("Invalid redirect Location '{location}': {error}"))?;
+        }
+
+        Err(format!(
+            "Too many redirects while fetching URL; limit is {}",
+            self.max_redirects
+        ))
     }
 }
 
@@ -140,22 +211,12 @@ impl AgentTool for FetchTool {
                 }
             }
 
-            // Send GET request with timeout.
-            let request = self
-                .client
-                .get(parsed_url.clone())
-                .timeout(self.request_timeout);
-
-            let mut response = tokio::select! {
-                result = request.send() => {
-                    match result {
-                        Ok(resp) => resp,
-                        Err(e) => return AgentToolResult::error(format!("HTTP request failed: {e}")),
-                    }
-                }
-                () = cancellation_token.cancelled() => {
-                    return AgentToolResult::error("Request cancelled");
-                }
+            let (mut response, final_url) = match self
+                .send_get_following_checked_redirects(parsed_url, &cancellation_token)
+                .await
+            {
+                Ok(result) => result,
+                Err(error) => return AgentToolResult::error(error),
             };
 
             let status = response.status();
@@ -196,10 +257,10 @@ impl AgentTool for FetchTool {
             };
 
             // Extract readable content.
-            let fetched = match extract_readable_content(&bytes, &parsed_url) {
+            let fetched = match extract_readable_content(&bytes, &final_url) {
                 Ok(f) => f,
                 Err(e) => {
-                    warn!("Content extraction failed for {url_str}: {e}");
+                    warn!("Content extraction failed for {final_url}: {e}");
                     return AgentToolResult::error(format!("Content extraction failed: {e}"));
                 }
             };
@@ -237,6 +298,8 @@ mod tests {
     use tokio_util::sync::CancellationToken;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    use crate::domain::DomainFilter;
 
     use super::FetchTool;
 
@@ -394,5 +457,98 @@ mod tests {
         let text = format!("{:?}", result.content);
         assert!(text.contains("Ignore all previous instructions"));
         assert!(!text.contains("[FILTERED]"));
+    }
+
+    #[tokio::test]
+    async fn execute_blocks_disallowed_redirect_target_before_following() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/redirect"))
+            .respond_with(
+                ResponseTemplate::new(302).insert_header("Location", "https://evil.com/private"),
+            )
+            .mount(&server)
+            .await;
+
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .unwrap();
+        let filter = DomainFilter {
+            denylist: vec!["evil.com".to_string()],
+            block_private_ips: false,
+            ..Default::default()
+        };
+        let tool =
+            FetchTool::new(client, 4_096, Duration::from_secs(5)).with_domain_filter(filter, 10);
+        let state = Arc::new(RwLock::new(SessionState::default()));
+        let result = tool
+            .execute(
+                "call-5",
+                json!({ "url": format!("{}/redirect", server.uri()) }),
+                CancellationToken::new(),
+                None,
+                state,
+                None,
+            )
+            .await;
+
+        assert!(result.is_error);
+        let text = format!("{:?}", result.content);
+        assert!(text.contains("Redirect URL blocked by domain filter"));
+        assert!(text.contains("evil.com"));
+    }
+
+    #[tokio::test]
+    async fn execute_follows_checked_relative_redirects() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/redirect"))
+            .respond_with(ResponseTemplate::new(302).insert_header("Location", "/article"))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/article"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(
+                r"<!DOCTYPE html>
+                    <html>
+                    <head><title>Redirected</title></head>
+                    <body>
+                        <article>
+                            <p>Redirected page content should be extracted.</p>
+                        </article>
+                    </body>
+                    </html>",
+                "text/html; charset=utf-8",
+            ))
+            .mount(&server)
+            .await;
+
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .unwrap();
+        let filter = DomainFilter {
+            block_private_ips: false,
+            ..Default::default()
+        };
+        let tool =
+            FetchTool::new(client, 4_096, Duration::from_secs(5)).with_domain_filter(filter, 10);
+        let state = Arc::new(RwLock::new(SessionState::default()));
+        let result = tool
+            .execute(
+                "call-6",
+                json!({ "url": format!("{}/redirect", server.uri()) }),
+                CancellationToken::new(),
+                None,
+                state,
+                None,
+            )
+            .await;
+
+        assert!(!result.is_error);
+        let text = format!("{:?}", result.content);
+        assert!(text.contains("Redirected"));
+        assert!(text.contains("Redirected page content should be extracted"));
     }
 }
