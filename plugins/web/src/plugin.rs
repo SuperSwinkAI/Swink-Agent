@@ -152,11 +152,14 @@ impl Plugin for WebPlugin {
 
     fn tools(&self) -> Vec<Arc<dyn AgentTool>> {
         vec![
-            Arc::new(FetchTool::new(
-                self.http_client.clone(),
-                self.config.max_content_length,
-                self.config.request_timeout,
-            )),
+            Arc::new(
+                FetchTool::new(
+                    self.http_client.clone(),
+                    self.config.max_content_length,
+                    self.config.request_timeout,
+                )
+                .with_sanitizer_enabled(self.config.sanitizer_enabled),
+            ),
             Arc::new(SearchTool::new(
                 self.search_provider.clone(),
                 self.config.max_search_results,
@@ -170,11 +173,14 @@ impl Plugin for WebPlugin {
                 },
                 self.config.screenshot_timeout,
             )),
-            Arc::new(ExtractTool::new(
-                self.playwright_bridge.clone(),
-                self.config.playwright_path.clone(),
-                self.config.screenshot_timeout,
-            )),
+            Arc::new(
+                ExtractTool::new(
+                    self.playwright_bridge.clone(),
+                    self.config.playwright_path.clone(),
+                    self.config.screenshot_timeout,
+                )
+                .with_sanitizer_enabled(self.config.sanitizer_enabled),
+            ),
         ]
     }
 

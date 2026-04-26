@@ -8,7 +8,8 @@ use tokio::sync::Mutex;
 use tracing::warn;
 
 use crate::playwright::{ExtractionPreset, PlaywrightBridge, PlaywrightError};
-use crate::tools::{OperationOutcome, await_with_cancellation};
+use crate::policy::ContentSanitizerPolicy;
+use crate::tools::{OperationOutcome, await_with_cancellation, sanitize_web_tool_text};
 
 struct ExtractRequest {
     url: String,
@@ -25,6 +26,7 @@ pub struct ExtractTool {
     bridge: Arc<Mutex<Option<PlaywrightBridge>>>,
     playwright_path: Option<PathBuf>,
     timeout: Duration,
+    sanitizer: Option<ContentSanitizerPolicy>,
     schema: Value,
 }
 
@@ -59,8 +61,16 @@ impl ExtractTool {
             bridge,
             playwright_path,
             timeout,
+            sanitizer: Some(ContentSanitizerPolicy::new()),
             schema,
         }
+    }
+
+    /// Enable or disable prompt-injection sanitization of extracted text.
+    #[must_use]
+    pub fn with_sanitizer_enabled(mut self, enabled: bool) -> Self {
+        self.sanitizer = enabled.then(ContentSanitizerPolicy::new);
+        self
     }
 }
 
@@ -151,7 +161,14 @@ impl AgentTool for ExtractTool {
                     }
 
                     match serde_json::to_string_pretty(&elements) {
-                        Ok(json) => AgentToolResult::text(json),
+                        Ok(json) => {
+                            let json = sanitize_web_tool_text(
+                                "web_extract",
+                                json,
+                                self.sanitizer.as_ref(),
+                            );
+                            AgentToolResult::text(json)
+                        }
                         Err(e) => {
                             warn!("Failed to serialize extracted elements: {e}");
                             AgentToolResult::error(format!(
