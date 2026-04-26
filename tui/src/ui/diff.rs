@@ -47,6 +47,10 @@ pub fn render_diff_lines(diff: &DiffData, max_width: u16) -> Vec<Line<'static>> 
     let mut lines = Vec::new();
     let width = max_width as usize;
 
+    if width >= 160 && !diff.is_new_file {
+        return render_side_by_side_diff_lines(diff, width);
+    }
+
     // Header
     let header_style = Style::default()
         .fg(theme::border_focused_color())
@@ -132,6 +136,133 @@ pub fn render_diff_lines(diff: &DiffData, max_width: u16) -> Vec<Line<'static>> 
     }
 
     lines
+}
+
+/// Render a side-by-side diff for wide terminal layouts.
+fn render_side_by_side_diff_lines(diff: &DiffData, width: usize) -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
+    let header_style = Style::default()
+        .fg(theme::border_focused_color())
+        .add_modifier(Modifier::BOLD);
+    let old_width = width.saturating_sub(9) / 2;
+    let new_width = width.saturating_sub(9).saturating_sub(old_width);
+
+    let old_header = truncate_line(&format!("--- {}", diff.path), old_width);
+    let new_header = truncate_line(&format!("+++ {}", diff.path), new_width);
+    lines.push(side_by_side_line(
+        DiffCell {
+            prefix: "  ",
+            text: &old_header,
+            style: header_style,
+        },
+        DiffCell {
+            prefix: "  ",
+            text: &new_header,
+            style: header_style,
+        },
+        old_width,
+        new_width,
+    ));
+
+    let old_lines: Vec<&str> = diff.old_content.lines().collect();
+    let new_lines: Vec<&str> = diff.new_content.lines().collect();
+    let lcs = compute_lcs(&old_lines, &new_lines);
+    let mut old_idx = 0;
+    let mut new_idx = 0;
+    let mut lcs_idx = 0;
+
+    while old_idx < old_lines.len() || new_idx < new_lines.len() {
+        if lcs_idx < lcs.len() && old_idx == lcs[lcs_idx].0 && new_idx == lcs[lcs_idx].1 {
+            lines.push(side_by_side_line(
+                DiffCell {
+                    prefix: "  ",
+                    text: old_lines[old_idx],
+                    style: Style::default().add_modifier(Modifier::DIM),
+                },
+                DiffCell {
+                    prefix: "  ",
+                    text: new_lines[new_idx],
+                    style: Style::default().add_modifier(Modifier::DIM),
+                },
+                old_width,
+                new_width,
+            ));
+            old_idx += 1;
+            new_idx += 1;
+            lcs_idx += 1;
+        } else {
+            let next_old = if lcs_idx < lcs.len() {
+                lcs[lcs_idx].0
+            } else {
+                old_lines.len()
+            };
+            let next_new = if lcs_idx < lcs.len() {
+                lcs[lcs_idx].1
+            } else {
+                new_lines.len()
+            };
+
+            while old_idx < next_old || new_idx < next_new {
+                let old = (old_idx < next_old).then_some(old_lines[old_idx]);
+                let new = (new_idx < next_new).then_some(new_lines[new_idx]);
+                lines.push(side_by_side_line(
+                    DiffCell {
+                        prefix: old.map_or("  ", |_| "- "),
+                        text: old.unwrap_or(""),
+                        style: Style::default().fg(theme::diff_remove_color()),
+                    },
+                    DiffCell {
+                        prefix: new.map_or("  ", |_| "+ "),
+                        text: new.unwrap_or(""),
+                        style: Style::default().fg(theme::diff_add_color()),
+                    },
+                    old_width,
+                    new_width,
+                ));
+                if old.is_some() {
+                    old_idx += 1;
+                }
+                if new.is_some() {
+                    new_idx += 1;
+                }
+            }
+        }
+    }
+
+    if lines.len() > MAX_DIFF_LINES {
+        let truncated = lines.len() - MAX_DIFF_LINES;
+        lines.truncate(MAX_DIFF_LINES);
+        lines.push(Line::from(vec![Span::styled(
+            format!("  ... ({truncated} more lines)"),
+            Style::default().add_modifier(Modifier::DIM),
+        )]));
+    }
+
+    lines
+}
+
+fn side_by_side_line(
+    old: DiffCell<'_>,
+    new: DiffCell<'_>,
+    old_width: usize,
+    new_width: usize,
+) -> Line<'static> {
+    let old_display = truncate_line(old.text, old_width);
+    let new_display = truncate_line(new.text, new_width);
+    let old_cell = format!("{}{old_display:<old_width$}", old.prefix);
+    let new_cell = format!("{}{new_display}", new.prefix);
+    Line::from(vec![
+        Span::styled(old_cell, old.style),
+        Span::styled(" | ", Style::default().add_modifier(Modifier::DIM)),
+        Span::styled(new_cell, new.style),
+    ])
+}
+
+#[derive(Clone, Copy)]
+struct DiffCell<'a> {
+    prefix: &'a str,
+    text: &'a str,
+    style: Style,
 }
 
 /// Truncate a line to max characters.
@@ -248,6 +379,63 @@ mod tests {
             .any(|l| l.spans.iter().any(|s| s.style.fg == Some(Color::Green)));
         assert!(has_removed, "should have removed lines (red)");
         assert!(has_added, "should have added lines (green)");
+    }
+
+    #[test]
+    fn render_wide_modification_uses_side_by_side_layout() {
+        let diff = DiffData {
+            path: "/tmp/test.rs".to_string(),
+            is_new_file: false,
+            old_content: "line1\nold\nline3".to_string(),
+            new_content: "line1\nnew\nline3".to_string(),
+        };
+        let lines = render_diff_lines(&diff, 160);
+        let rendered = lines
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>();
+
+        assert!(
+            rendered.iter().all(|line| line.contains(" | ")),
+            "wide diffs should render every row in two columns: {rendered:?}"
+        );
+        assert!(
+            rendered
+                .iter()
+                .any(|line| line.contains("- old") && line.contains("+ new")),
+            "changed lines should be paired in the same side-by-side row: {rendered:?}"
+        );
+    }
+
+    #[test]
+    fn render_wide_new_file_keeps_unified_additions() {
+        let diff = DiffData {
+            path: "/tmp/test.rs".to_string(),
+            is_new_file: true,
+            old_content: String::new(),
+            new_content: "line1\nline2".to_string(),
+        };
+        let lines = render_diff_lines(&diff, 160);
+        let rendered = lines
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>();
+
+        assert!(
+            rendered.iter().all(|line| !line.contains(" | ")),
+            "new files should stay in the compact unified layout: {rendered:?}"
+        );
+        assert!(rendered.iter().any(|line| line.contains("+ line1")));
     }
 
     #[test]

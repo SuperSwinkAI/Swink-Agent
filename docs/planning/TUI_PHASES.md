@@ -229,7 +229,7 @@ UX polish, configuration, command system, inline diffs, external editor, plan mo
 
 ## Phase T5 — Planned Features
 
-**Status:** Not started. Plan mode, tiered approval, and per-tool session trust were implemented in Phase T4 (spec 029) and are no longer part of this phase.
+**Status:** Partially implemented. Plan mode, tiered approval, and per-tool session trust were implemented in Phase T4 (spec 029) and are no longer part of this phase.
 
 ### Scope
 
@@ -237,14 +237,14 @@ Remaining diff interaction features described in PRD §16 that are not yet imple
 
 ### Planned Deliverables
 
-- **Side-by-side diff layout** — when terminal width exceeds a threshold (e.g., 160 columns), switch from unified to side-by-side diff rendering
+- **Side-by-side diff layout** — when terminal width exceeds a threshold (160 columns), switch from unified to side-by-side diff rendering
 - **Per-hunk approve/reject** — each changed hunk in the inline diff view becomes an independent decision point. Approved hunks are applied; rejected hunks are reverted and communicated back to the agent as a tool result
 
 ### Acceptance Criteria
 
 | # | Criterion | Status |
 |---|---|---|
-| T5.1 | Side-by-side diff layout when terminal width exceeds threshold | Planned |
+| T5.1 | Side-by-side diff layout when terminal width exceeds threshold | ✅ |
 | T5.2 | Per-hunk approve/reject in inline diff view | Planned |
 
 ---
@@ -257,4 +257,4 @@ Remaining diff interaction features described in PRD §16 that are not yet imple
 | T2 — Input + Conversation | Text editor, message display, markdown, scrolling | ✅ Complete |
 | T3 — Streaming + Tools | Agent integration, streaming display, tool panel, syntax highlighting | ✅ Complete |
 | T4 — Polish | Config, commands, diffs, editor, plan mode, approval, collapse, context gauge | ✅ Complete |
-| T5 — Planned | Side-by-side diffs, per-hunk approve/reject | Not started |
+| T5 — Planned | Side-by-side diffs, per-hunk approve/reject | Partially implemented |
