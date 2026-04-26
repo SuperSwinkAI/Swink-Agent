@@ -66,8 +66,43 @@ pub async fn run_single_turn(
         return handle_cancellation(config, state, tx).await;
     }
 
-    // Pre-turn policies: check budget, turn caps, etc. before emitting TurnStart.
-    // A Stop verdict here breaks the inner loop without emitting TurnStart/TurnEnd.
+    // ii-a. Publish the previously-recorded cached prefix length into the
+    // sliding-window transformer so compaction protects the cache boundary.
+    // This must happen BEFORE `run_context_transformers` so the compaction
+    // pass sees the right anchor.
+    if config.cache_config.is_some()
+        && let Some(ref transformer) = config.transform_context
+    {
+        let prior_prefix = {
+            let cache_state = config
+                .cache_state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            cache_state.cached_prefix_len
+        };
+        // Clamp to the current message count so compaction never treats a
+        // stale oversized prefix as the anchor.
+        let clamped = prior_prefix.min(state.context_messages.len());
+        if let Some(sw) = transformer
+            .as_any()
+            .downcast_ref::<crate::context_transformer::SlidingWindowTransformer>()
+        {
+            sw.publish_cached_prefix(clamped);
+        }
+    }
+
+    // ii. Run context transformers (async first, then sync)
+    run_context_transformers(
+        config,
+        &mut state.context_messages,
+        state.overflow_signal,
+        tx,
+    )
+    .await;
+    state.overflow_signal = false;
+
+    // Pre-turn policies: check budget, turn caps, etc. against the transformed
+    // context that will be prepared for the provider call.
     {
         use crate::policy::{PolicyContext, PolicyVerdict, run_policies};
         use tracing::info;
@@ -79,6 +114,7 @@ pub async fn run_single_turn(
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             guard.clone()
         };
+        let new_messages_start = new_messages_start.min(state.context_messages.len());
         let policy_ctx = PolicyContext {
             turn_index: state.turn_index,
             accumulated_usage: &state.accumulated_usage,
@@ -120,41 +156,6 @@ pub async fn run_single_turn(
         agent.stop_reason = tracing::field::Empty,
     );
     let _turn_guard = turn_span.enter();
-
-    // ii-a. Publish the previously-recorded cached prefix length into the
-    // sliding-window transformer so compaction protects the cache boundary.
-    // This must happen BEFORE `run_context_transformers` so the compaction
-    // pass sees the right anchor.
-    if config.cache_config.is_some()
-        && let Some(ref transformer) = config.transform_context
-    {
-        let prior_prefix = {
-            let cache_state = config
-                .cache_state
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            cache_state.cached_prefix_len
-        };
-        // Clamp to the current message count so compaction never treats a
-        // stale oversized prefix as the anchor.
-        let clamped = prior_prefix.min(state.context_messages.len());
-        if let Some(sw) = transformer
-            .as_any()
-            .downcast_ref::<crate::context_transformer::SlidingWindowTransformer>()
-        {
-            sw.publish_cached_prefix(clamped);
-        }
-    }
-
-    // ii. Run context transformers (async first, then sync)
-    run_context_transformers(
-        config,
-        &mut state.context_messages,
-        state.overflow_signal,
-        tx,
-    )
-    .await;
-    state.overflow_signal = false;
 
     // ii-c. Annotate context messages with cache hints if caching is configured.
     //

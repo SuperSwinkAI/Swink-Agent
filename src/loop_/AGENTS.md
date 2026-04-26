@@ -23,6 +23,7 @@
 - Dynamic system prompts are computed once per turn and must be carried into overflow retries. Recomputing during recovery can silently change prompt contracts within the same turn.
 - `LoopState.turn_index` must advance after every completed turn, not just tool-loop continuation. Text-only or other `BreakInner` turns still finish a turn before the outer loop polls follow-up messages.
 - First-turn `PreTurn` policies must receive the initial prompt batch in `PolicyContext::new_messages`, and `agent_loop_continue()` must seed the same field with any steering/follow-up messages it drains into the resumed turn.
+- `PreTurn` policies run after async/sync context transformers and before provider preparation, so `PolicyContext::new_messages` must be sliced from the transformed context, not the raw pending batch.
 - Text-only turns cannot break the inner loop while `pending_messages` is non-empty. Post-turn or post-loop injections queued for the next turn must continue loop processing before follow-up polling or `AgentEnd`.
 - Text-only turns must poll steering after `TurnEnd` and before deciding `BreakInner`. Otherwise steering messages are delayed until outer-loop follow-up polling or agent shutdown, unlike the tool-call path.
 - Retry attempts share one logical assistant-message lifecycle. Emit `MessageStart` once per turn, buffer attempt-local deltas until the terminal attempt is known, and never leak failed-attempt partials into downstream `MessageUpdate` streams.

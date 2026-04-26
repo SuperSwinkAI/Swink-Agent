@@ -600,6 +600,47 @@ async fn transform_context_ordering() {
     assert!(counter.load(Ordering::SeqCst) > 0);
 }
 
+#[tokio::test]
+async fn pre_turn_policy_observes_transformed_context() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("ok")]));
+    let observations = Arc::new(Mutex::new(Vec::new()));
+
+    let mut config = default_config(stream_fn);
+    config.transform_context = Some(Arc::new(
+        move |msgs: &mut Vec<AgentMessage>, _overflow: bool| {
+            if let Some(AgentMessage::Llm(LlmMessage::User(user))) = msgs.first_mut() {
+                user.content = vec![ContentBlock::Text {
+                    text: "transformed prompt".to_string(),
+                }];
+            }
+        },
+    ));
+    config.pre_turn_policies = vec![Arc::new(RecordingPreTurnPolicy {
+        observations: Arc::clone(&observations),
+    })];
+
+    let events = collect_events(agent_loop(
+        vec![common::user_msg("original prompt")],
+        "system".to_string(),
+        config,
+        CancellationToken::new(),
+    ))
+    .await;
+
+    assert!(has_event(&events, "AgentEnd"));
+    let recorded = observations.lock().unwrap().clone();
+    assert_eq!(recorded.len(), 1, "pre-turn policy should run once");
+    assert_eq!(
+        recorded[0],
+        RecordedPreTurnBatch {
+            turn_index: 0,
+            message_count: 1,
+            new_messages: vec!["transformed prompt".to_string()],
+        },
+        "pre-turn policies must inspect the transformed context sent toward the provider"
+    );
+}
+
 // ─── 3.5: get_api_key ────────────────────────────────────────────────────
 
 #[tokio::test]
