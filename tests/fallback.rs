@@ -137,6 +137,39 @@ async fn fallback_triggers_on_retryable_error() {
         has_message_end,
         "expected successful MessageEnd from fallback model"
     );
+
+    let message_start_count = events
+        .iter()
+        .filter(|e| matches!(e, AgentEvent::MessageStart))
+        .count();
+    assert_eq!(
+        message_start_count, 1,
+        "fallback should stay within one assistant message lifecycle"
+    );
+
+    let message_end_count = events
+        .iter()
+        .filter(|e| matches!(e, AgentEvent::MessageEnd { .. }))
+        .count();
+    assert_eq!(
+        message_end_count, 1,
+        "primary fatal error should not emit MessageEnd when fallback succeeds"
+    );
+
+    let error_message_end_count = events
+        .iter()
+        .filter(|e| {
+            matches!(
+                e,
+                AgentEvent::MessageEnd { message }
+                    if message.stop_reason == StopReason::Error
+            )
+        })
+        .count();
+    assert_eq!(
+        error_message_end_count, 0,
+        "fallback success should suppress primary terminal error lifecycle"
+    );
 }
 
 #[tokio::test]
