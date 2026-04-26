@@ -6,7 +6,7 @@
 //! Concurrent writes to the same session may corrupt the file.
 //! Callers are expected to enforce single-writer access.
 
-use std::io::{self, BufRead, Write};
+use std::io::{self, BufRead, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 use swink_agent::atomic_fs::{atomic_write, atomic_write_unlocked, with_target_lock};
@@ -18,6 +18,8 @@ use crate::load_options::LoadOptions;
 use crate::meta::SessionMeta;
 use crate::store::SessionStore;
 use crate::time::{format_session_id, now_utc};
+
+const META_LINE_PADDING: usize = 64;
 
 #[derive(Debug, Clone)]
 enum SessionRecord {
@@ -182,8 +184,7 @@ fn rewrite_session_file_locked(
     lines: &[String],
 ) -> io::Result<()> {
     atomic_write_unlocked(path, |writer| {
-        serde_json::to_writer(&mut *writer, meta).map_err(io::Error::other)?;
-        writeln!(writer)?;
+        write_meta_line(writer, meta, META_LINE_PADDING)?;
 
         for line in lines {
             if !line.is_empty() {
@@ -269,8 +270,7 @@ fn write_messages_with_preserved_lines(
     preserved_lines: &[String],
 ) -> io::Result<()> {
     atomic_write_unlocked(path, |writer| {
-        serde_json::to_writer(&mut *writer, meta).map_err(io::Error::other)?;
-        writeln!(writer)?;
+        write_meta_line(writer, meta, META_LINE_PADDING)?;
 
         for msg in messages {
             if let Some(record) = SessionRecord::from_message(msg, id) {
@@ -285,6 +285,64 @@ fn write_messages_with_preserved_lines(
         }
         Ok(())
     })
+}
+
+fn write_meta_line(
+    writer: &mut impl Write,
+    meta: &SessionMeta,
+    padding: usize,
+) -> io::Result<usize> {
+    let line = serde_json::to_string(meta).map_err(io::Error::other)?;
+    writer.write_all(line.as_bytes())?;
+    for _ in 0..padding {
+        writer.write_all(b" ")?;
+    }
+    writeln!(writer)?;
+    Ok(line.len() + padding + 1)
+}
+
+fn write_meta_line_in_place(
+    file: &mut std::fs::File,
+    line: &str,
+    existing_line_len: usize,
+) -> io::Result<bool> {
+    if line.len() + 1 > existing_line_len {
+        return Ok(false);
+    }
+
+    file.seek(SeekFrom::Start(0))?;
+    file.write_all(line.as_bytes())?;
+    for _ in line.len()..existing_line_len - 1 {
+        file.write_all(b" ")?;
+    }
+    file.write_all(b"\n")?;
+    Ok(true)
+}
+
+fn append_records_in_place(
+    path: &Path,
+    meta: &SessionMeta,
+    meta_line_len: usize,
+    record_lines: &[String],
+) -> io::Result<bool> {
+    let meta_line = serde_json::to_string(meta).map_err(io::Error::other)?;
+    if meta_line.len() + 1 > meta_line_len {
+        return Ok(false);
+    }
+
+    let mut file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)?;
+    file.seek(SeekFrom::End(0))?;
+    for line in record_lines {
+        if !line.is_empty() {
+            writeln!(file, "{line}")?;
+        }
+    }
+    write_meta_line_in_place(&mut file, &meta_line, meta_line_len)?;
+    file.flush()?;
+    Ok(true)
 }
 
 fn upsert_state_line(
@@ -354,7 +412,7 @@ where
     F: FnOnce(&Path, &SessionMeta, &[String]) -> io::Result<()>,
 {
     with_target_lock(path, || {
-        let (mut meta, _) = read_meta_with_line_len(path, id)?;
+        let (mut meta, meta_line_len) = read_meta_with_line_len(path, id)?;
         meta.updated_at = now_utc();
         meta.sequence += 1;
 
@@ -362,6 +420,10 @@ where
             .into_iter()
             .map(|record| record.to_json_line())
             .collect::<io::Result<Vec<_>>>()?;
+
+        if append_records_in_place(path, &meta, meta_line_len, &record_lines)? {
+            return Ok(());
+        }
 
         let (_, mut existing_lines) = read_meta_and_message_lines(path, id)?;
         existing_lines.extend(record_lines);
@@ -1569,6 +1631,18 @@ mod tests {
         }
     }
 
+    fn rewrite_meta_without_padding(path: &Path, id: &str, update: impl FnOnce(&mut SessionMeta)) {
+        let (mut meta, lines) = read_meta_and_message_lines(path, id).unwrap();
+        update(&mut meta);
+
+        let mut contents = format!("{}\n", serde_json::to_string(&meta).unwrap());
+        for line in lines {
+            contents.push_str(&line);
+            contents.push('\n');
+        }
+        std::fs::write(path, contents).unwrap();
+    }
+
     #[test]
     fn append_advances_sequence_and_rejects_stale_save() {
         let dir = tempfile::tempdir().unwrap();
@@ -1598,16 +1672,60 @@ mod tests {
     }
 
     #[test]
-    fn append_rewrite_failure_preserves_existing_file() {
+    fn append_extends_file_without_rewriting_existing_records() {
         let dir = tempfile::tempdir().unwrap();
         let store = JsonlSessionStore::new(dir.path().to_path_buf()).unwrap();
 
-        let meta = fresh_meta("append-atomic");
+        let meta = fresh_meta("append-in-place");
         store
-            .save("append-atomic", &meta, &[user_msg("first", 1)])
+            .save("append-in-place", &meta, &[user_msg("first", 1)])
             .unwrap();
 
+        let path = session_path(dir.path(), "append-in-place");
+        let before = std::fs::read_to_string(&path).unwrap();
+        let before_lines = before.lines().collect::<Vec<_>>();
+        let before_meta_line_len = before_lines[0].len();
+        let before_message_line = before_lines[1].to_string();
+
+        store
+            .append("append-in-place", &[user_msg("second", 2)])
+            .unwrap();
+
+        let after = std::fs::read_to_string(&path).unwrap();
+        let after_lines = after.lines().collect::<Vec<_>>();
+        assert_eq!(
+            after_lines[0].len(),
+            before_meta_line_len,
+            "append should patch the reserved metadata line in place"
+        );
+        assert_eq!(
+            after_lines[1], before_message_line,
+            "append must leave existing record bytes untouched"
+        );
+        assert_eq!(after_lines.len(), 3);
+
+        let (loaded_meta, loaded_messages) = store.load("append-in-place", None).unwrap();
+        assert_eq!(loaded_meta.sequence, 2);
+        assert_eq!(loaded_messages.len(), 2);
+    }
+
+    #[test]
+    fn append_rewrite_failure_preserves_existing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut meta = fresh_meta("append-atomic");
+        meta.sequence = 9;
         let path = session_path(dir.path(), "append-atomic");
+        let first_line =
+            SessionRecord::from_message(&user_msg("first", 1), "append-atomic").unwrap();
+        std::fs::write(
+            &path,
+            format!(
+                "{}\n{}\n",
+                serde_json::to_string(&meta).unwrap(),
+                first_line.to_json_line().unwrap()
+            ),
+        )
+        .unwrap();
         let before = std::fs::read_to_string(&path).unwrap();
 
         let err = append_records_with_rewrite(
@@ -1625,8 +1743,9 @@ mod tests {
             "failed append rewrite must not modify the live session file"
         );
 
+        let store = JsonlSessionStore::new(dir.path().to_path_buf()).unwrap();
         let (loaded_meta, loaded_messages) = store.load("append-atomic", None).unwrap();
-        assert_eq!(loaded_meta.sequence, 1);
+        assert_eq!(loaded_meta.sequence, 9);
         assert_eq!(loaded_messages.len(), 1);
     }
 
@@ -1644,6 +1763,7 @@ mod tests {
             .unwrap();
 
         let path = session_path(dir.path(), "delete-race");
+        rewrite_meta_without_padding(&path, "delete-race", |meta| meta.sequence = 9);
         let append_ready = Arc::new(Barrier::new(2));
         let allow_rewrite = Arc::new(Barrier::new(2));
 
