@@ -293,6 +293,41 @@ mod tantivy_tests {
         );
     }
 
+    /// `rebuild_search_index` removes ghost hits for sessions deleted outside the store API.
+    #[test]
+    fn rebuild_search_index_clears_stale_docs() {
+        let (store, dir) = make_store();
+
+        save_session_with_text(
+            &store,
+            "ghost-session",
+            "Ghost Session",
+            &["ghostly apparition unique phrase"],
+        );
+
+        // Prime the index via an initial search.
+        let before = store
+            .search("ghostly", &SessionSearchOptions::default())
+            .expect("search before");
+        assert!(!before.is_empty(), "session should be findable before removal");
+
+        // Delete the session file directly — simulating out-of-band removal.
+        let session_file = dir.path().join("ghost-session.jsonl");
+        std::fs::remove_file(&session_file).expect("remove session file");
+
+        // Rebuild must produce replacement semantics — no ghost hits.
+        store.rebuild_search_index().expect("rebuild");
+
+        let after = store
+            .search("ghostly", &SessionSearchOptions::default())
+            .expect("search after rebuild");
+        assert!(
+            after.is_empty(),
+            "rebuild should have cleared ghost hits for the deleted session, got {} hit(s)",
+            after.len()
+        );
+    }
+
     /// `TantivyIndex::search` on an empty index returns an empty vec.
     #[test]
     fn tantivy_index_search_empty_returns_empty() {

@@ -137,6 +137,21 @@ impl TantivyIndex {
         Ok(())
     }
 
+    /// Delete every document in the index, leaving it empty.
+    ///
+    /// Used by `rebuild_search_index` to guarantee replacement semantics when
+    /// sessions have been removed outside the store API.
+    pub fn clear_all(&self) -> io::Result<()> {
+        let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let mut writer: tantivy::IndexWriter<TantivyDocument> = inner
+            .index
+            .writer(INDEXER_HEAP_BYTES)
+            .map_err(tantivy_to_io)?;
+        writer.delete_all_documents().map_err(tantivy_to_io)?;
+        writer.commit().map_err(tantivy_to_io)?;
+        Ok(())
+    }
+
     /// Remove all indexed documents for a session.
     pub fn delete_session(&self, session_id: &str) -> io::Result<()> {
         let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());

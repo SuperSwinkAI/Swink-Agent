@@ -556,6 +556,9 @@ impl JsonlSessionStore {
     #[cfg(feature = "search")]
     pub fn rebuild_search_index(&self) -> io::Result<()> {
         self.with_tantivy_index(|index| {
+            // Wipe all existing docs so sessions removed outside the store API
+            // don't produce ghost hits after the rebuild.
+            index.clear_all()?;
             for meta in self.list()? {
                 let (_, entries) = self.load_entries(&meta.id)?;
                 index.index_session(&meta, &entries)?;
