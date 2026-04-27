@@ -55,6 +55,8 @@ pub mod telemetry;
 pub mod testing;
 #[cfg(feature = "trace-ingest")]
 pub mod trace;
+#[cfg(feature = "training-export")]
+pub mod training;
 mod trajectory;
 mod types;
 mod url_filter;
@@ -150,6 +152,11 @@ pub use testing::{MockJudge, PanickingMockJudge, SlowMockJudge};
 pub use trace::LangfuseTraceProvider;
 #[cfg(feature = "trace-otlp")]
 pub use trace::OtlpHttpTraceProvider;
+#[cfg(feature = "training-export")]
+pub use training::{
+    ChatMlExporter, DpoExporter, ExportError, ExportOptions, ScoredTrace, ShareGptExporter,
+    TrainingExporter, TrainingFormat, TrainingReporter, export_traces,
+};
 pub use trajectory::TrajectoryCollector;
 pub use types::{
     Assertion, AssertionKind, Attachment, AttachmentError, BudgetConstraints, CASE_NAMESPACE,

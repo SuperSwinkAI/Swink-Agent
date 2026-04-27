@@ -52,6 +52,8 @@ pub use jsonl::JsonlSessionStore;
 pub use load_options::LoadOptions;
 pub use meta::SessionMeta;
 pub use migrate::SessionMigrator;
+#[cfg(feature = "search")]
+pub use search::index::TantivyIndex;
 pub use search::{SessionHit, SessionSearchOptions};
 pub use store::SessionStore;
 pub use store_async::{BlockingSessionStore, SessionStoreFuture};
