@@ -4867,6 +4867,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "swink-agent-evolve"
+version = "0.9.0"
+dependencies = [
+ "chrono",
+ "opentelemetry",
+ "pretty_assertions",
+ "rand 0.10.1",
+ "regex",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "swink-agent",
+ "swink-agent-eval",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
 name = "swink-agent-local-llm"
 version = "0.9.0"
 dependencies = [
