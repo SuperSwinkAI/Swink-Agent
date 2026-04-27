@@ -153,6 +153,7 @@ An evaluator wants to check whether agent runs stayed within acceptable resource
 ### Key Entities
 
 - **EvalRunner**: The orchestrator that executes an evaluation suite, applying evaluators to each case and producing aggregate results.
+- **TrainingReporter** (feature: `training-export`, spec 023 Phase 14): A [`Reporter`] implementation that converts an `EvalSetResult` into fine-tuning data (ChatML/SFT, DPO pairs, ShareGPT). Activated by composing it alongside other reporters. The export format and quality threshold are configured via `ExportOptions`. See `swink-agent-eval::training` for full documentation.
 - **EvalCase**: A single test case definition containing a prompt, expected behavior, and metadata. Loaded from a structured data file.
 - **Evaluator**: The abstraction for a scoring strategy. Receives a trajectory and produces a score. Custom implementations can be registered.
 - **EvaluatorRegistry**: A collection of evaluators applied to each case. Pre-populated with built-in defaults and extensible with custom evaluators.
