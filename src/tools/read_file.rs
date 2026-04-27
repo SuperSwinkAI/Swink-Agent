@@ -1,5 +1,7 @@
 //! Built-in tool for reading file contents.
 
+use std::path::{Path, PathBuf};
+
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::Value;
@@ -11,6 +13,7 @@ use crate::tool::{AgentTool, AgentToolResult, ToolFuture, validated_schema_for};
 /// Built-in tool that reads a file and returns its contents.
 pub struct ReadFileTool {
     schema: Value,
+    execution_root: Option<PathBuf>,
 }
 
 impl ReadFileTool {
@@ -19,7 +22,15 @@ impl ReadFileTool {
     pub fn new() -> Self {
         Self {
             schema: validated_schema_for::<Params>(),
+            execution_root: None,
         }
+    }
+
+    /// Set the working directory used to resolve relative file paths.
+    #[must_use]
+    pub fn with_execution_root(mut self, root: impl Into<PathBuf>) -> Self {
+        self.execution_root = Some(root.into());
+        self
     }
 }
 
@@ -54,6 +65,10 @@ impl AgentTool for ReadFileTool {
         &self.schema
     }
 
+    fn execution_root(&self) -> Option<&Path> {
+        self.execution_root.as_deref()
+    }
+
     fn execute(
         &self,
         _tool_call_id: &str,
@@ -73,7 +88,9 @@ impl AgentTool for ReadFileTool {
                 return AgentToolResult::error("cancelled");
             }
 
-            match read_limited_utf8_file(&parsed.path).await {
+            let path = resolve_path(&parsed.path, self.execution_root.as_deref());
+
+            match read_limited_utf8_file(&path).await {
                 Ok((mut content, truncated)) => {
                     if truncated {
                         truncate_utf8_to_boundary(&mut content, MAX_OUTPUT_BYTES);
@@ -81,14 +98,25 @@ impl AgentTool for ReadFileTool {
                     AgentToolResult::text(content)
                 }
                 Err(e) => {
-                    AgentToolResult::error(format!("failed to read file {}: {e}", parsed.path))
+                    AgentToolResult::error(format!("failed to read file {}: {e}", path.display()))
                 }
             }
         })
     }
 }
 
-async fn read_limited_utf8_file(path: &str) -> std::io::Result<(String, bool)> {
+fn resolve_path(path: &str, execution_root: Option<&Path>) -> PathBuf {
+    let path = Path::new(path);
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else if let Some(root) = execution_root {
+        root.join(path)
+    } else {
+        path.to_path_buf()
+    }
+}
+
+async fn read_limited_utf8_file(path: &Path) -> std::io::Result<(String, bool)> {
     use tokio::io::AsyncReadExt;
 
     let file = tokio::fs::File::open(path).await?;
@@ -152,5 +180,28 @@ mod tests {
         assert!(!result.is_error);
         assert!(text.contains("[truncated]"), "expected marker in: {text}");
         assert!(text.is_char_boundary(text.len()));
+    }
+
+    #[tokio::test]
+    async fn read_file_resolves_relative_path_against_execution_root() {
+        let temp = tempfile::tempdir().unwrap();
+        tokio::fs::write(temp.path().join("relative.txt"), "rooted")
+            .await
+            .unwrap();
+
+        let result = ReadFileTool::new()
+            .with_execution_root(temp.path())
+            .execute(
+                "call-1",
+                json!({ "path": "relative.txt" }),
+                CancellationToken::new(),
+                None,
+                Arc::new(RwLock::new(SessionState::new())),
+                None,
+            )
+            .await;
+
+        assert!(!result.is_error);
+        assert_eq!(result_text(&result), "rooted");
     }
 }

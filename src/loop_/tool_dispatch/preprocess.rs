@@ -129,11 +129,14 @@ pub(super) async fn preprocess_tool_calls(
 
         // ── PreDispatch policies ──
         let mut effective_arguments = tc.arguments.clone();
+        let execution_root = tool_map
+            .get(tc.name.as_str())
+            .and_then(|tool| tool.execution_root());
         let mut dispatch_ctx = ToolDispatchContext {
             tool_name: &tc.name,
             tool_call_id: &tc.id,
             arguments: &mut effective_arguments,
-            execution_root: None,
+            execution_root,
             state: &state_snapshot,
         };
         match run_pre_dispatch_policies(&config.pre_dispatch_policies, &mut dispatch_ctx) {
@@ -239,11 +242,14 @@ pub(super) async fn preprocess_tool_calls(
                     ApprovalOutcome::Approved => {}
                     ApprovalOutcome::ApprovedWith(new_params) => {
                         effective_arguments = new_params;
+                        let execution_root = tool_map
+                            .get(tc.name.as_str())
+                            .and_then(|tool| tool.execution_root());
                         let mut dispatch_ctx = ToolDispatchContext {
                             tool_name: &tc.name,
                             tool_call_id: &tc.id,
                             arguments: &mut effective_arguments,
-                            execution_root: None,
+                            execution_root,
                             state: &state_snapshot,
                         };
                         match run_pre_dispatch_policies(

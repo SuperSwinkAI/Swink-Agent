@@ -4,6 +4,7 @@
 mod common;
 
 use std::future::Future;
+use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -14,8 +15,8 @@ use tokio_util::sync::CancellationToken;
 
 use swink_agent::{
     Agent, AgentEvent, AgentMessage, AgentOptions, AgentTool, AgentToolResult, ApprovalMode,
-    AssistantMessageEvent, ContentBlock, Cost, LlmMessage, PreDispatchPolicy, PreDispatchVerdict,
-    StopReason, ToolApproval, ToolApprovalRequest, ToolDispatchContext, Usage,
+    AssistantMessageEvent, ContentBlock, Cost, FnTool, LlmMessage, PreDispatchPolicy,
+    PreDispatchVerdict, StopReason, ToolApproval, ToolApprovalRequest, ToolDispatchContext, Usage,
 };
 
 // ─── Helpers ─────────────────────────────────────────────────────────────
@@ -494,6 +495,59 @@ async fn approval_sees_post_rewrite_arguments() {
         args.get("original"),
         Some(&json!(true)),
         "original arguments should still be present"
+    );
+}
+
+struct RecordExecutionRootPolicy {
+    roots: Arc<Mutex<Vec<Option<PathBuf>>>>,
+}
+
+impl PreDispatchPolicy for RecordExecutionRootPolicy {
+    fn name(&self) -> &'static str {
+        "record_execution_root"
+    }
+
+    fn evaluate(&self, ctx: &mut ToolDispatchContext<'_>) -> PreDispatchVerdict {
+        self.roots
+            .lock()
+            .unwrap()
+            .push(ctx.execution_root.map(std::path::Path::to_path_buf));
+        PreDispatchVerdict::Continue
+    }
+}
+
+#[tokio::test]
+async fn pre_dispatch_receives_tool_execution_root_before_and_after_approval_rewrite() {
+    let root = tempfile::tempdir().unwrap();
+    let root_path = root.path().to_path_buf();
+    let seen_roots = Arc::new(Mutex::new(Vec::new()));
+
+    let tool = Arc::new(
+        FnTool::new("rooted_tool", "Rooted Tool", "records an execution root")
+            .with_requires_approval(true)
+            .with_execution_root(root.path())
+            .with_execute_simple(|_params, _cancel| async { AgentToolResult::text("ok") }),
+    );
+
+    let responses = tool_call_then_stop("tc1", "rooted_tool", r#"{"path":"relative.txt"}"#);
+    let options = make_agent(responses, vec![tool])
+        .with_pre_dispatch_policy(RecordExecutionRootPolicy {
+            roots: Arc::clone(&seen_roots),
+        })
+        .with_approve_tool(|_req| {
+            Box::pin(async { ToolApproval::ApprovedWith(json!({"path": "approved.txt"})) })
+        })
+        .with_approval_mode(ApprovalMode::Enabled);
+    let mut agent = Agent::new(options);
+
+    let result = agent.prompt_async(vec![user_msg("hello")]).await.unwrap();
+    assert!(result.error.is_none());
+
+    let roots = seen_roots.lock().unwrap();
+    assert_eq!(
+        *roots,
+        vec![Some(root_path.clone()), Some(root_path)],
+        "pre-dispatch must receive the tool execution root in both policy passes"
     );
 }
 

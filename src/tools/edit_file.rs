@@ -1,6 +1,7 @@
 //! Built-in tool for making surgical find-and-replace edits to a file.
 
 use std::ops::Range;
+use std::path::{Path, PathBuf};
 
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -17,6 +18,7 @@ use crate::types::ContentBlock;
 /// whitespace-normalised matching, and line-number-based disambiguation.
 pub struct EditFileTool {
     schema: Value,
+    execution_root: Option<PathBuf>,
 }
 
 impl EditFileTool {
@@ -25,7 +27,15 @@ impl EditFileTool {
     pub fn new() -> Self {
         Self {
             schema: validated_schema_for::<Params>(),
+            execution_root: None,
         }
+    }
+
+    /// Set the working directory used to resolve relative file paths.
+    #[must_use]
+    pub fn with_execution_root(mut self, root: impl Into<PathBuf>) -> Self {
+        self.execution_root = Some(root.into());
+        self
     }
 }
 
@@ -276,6 +286,10 @@ impl AgentTool for EditFileTool {
         true
     }
 
+    fn execution_root(&self) -> Option<&Path> {
+        self.execution_root.as_deref()
+    }
+
     fn execute(
         &self,
         _tool_call_id: &str,
@@ -295,19 +309,25 @@ impl AgentTool for EditFileTool {
                 return AgentToolResult::error("cancelled");
             }
 
-            let path = std::path::Path::new(&parsed.path);
+            let path = resolve_path(&parsed.path, self.execution_root.as_deref());
 
-            let raw_bytes = match tokio::fs::read(path).await {
+            let raw_bytes = match tokio::fs::read(&path).await {
                 Ok(b) => b,
                 Err(e) => {
-                    return AgentToolResult::error(format!("failed to read {}: {e}", parsed.path));
+                    return AgentToolResult::error(format!(
+                        "failed to read {}: {e}",
+                        path.display()
+                    ));
                 }
             };
 
             let original = match std::str::from_utf8(&raw_bytes) {
                 Ok(s) => s.to_owned(),
                 Err(_) => {
-                    return AgentToolResult::error(format!("{} is not valid UTF-8", parsed.path));
+                    return AgentToolResult::error(format!(
+                        "{} is not valid UTF-8",
+                        path.display()
+                    ));
                 }
             };
 
@@ -318,7 +338,7 @@ impl AgentTool for EditFileTool {
                     return AgentToolResult::error(format!(
                         "{} has changed since it was last read (hash mismatch); \
                          re-read the file before editing",
-                        parsed.path
+                        path.display()
                     ));
                 }
             }
@@ -342,8 +362,8 @@ impl AgentTool for EditFileTool {
                 return AgentToolResult::error("cancelled");
             }
 
-            if let Err(e) = atomic_write(path, &content).await {
-                return AgentToolResult::error(format!("failed to write {}: {e}", parsed.path));
+            if let Err(e) = atomic_write(&path, &content).await {
+                return AgentToolResult::error(format!("failed to write {}: {e}", path.display()));
             }
 
             let n = parsed.edits.len();
@@ -353,11 +373,11 @@ impl AgentTool for EditFileTool {
                         "Applied {} edit{} to {}",
                         n,
                         if n == 1 { "" } else { "s" },
-                        parsed.path
+                        path.display()
                     ),
                 }],
                 details: serde_json::json!({
-                    "path": parsed.path,
+                    "path": path,
                     "edits_applied": n,
                     "old_content": original,
                     "new_content": content,
@@ -366,6 +386,17 @@ impl AgentTool for EditFileTool {
                 transfer_signal: None,
             }
         })
+    }
+}
+
+fn resolve_path(path: &str, execution_root: Option<&Path>) -> PathBuf {
+    let path = Path::new(path);
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else if let Some(root) = execution_root {
+        root.join(path)
+    } else {
+        path.to_path_buf()
     }
 }
 

@@ -20,6 +20,7 @@
 //! ```
 
 use std::future::Future;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use serde::de::DeserializeOwned;
@@ -59,6 +60,7 @@ pub struct FnTool {
     description: String,
     schema: Value,
     requires_approval: bool,
+    execution_root: Option<PathBuf>,
     execute_fn: ExecuteFn,
     approval_context_fn: Option<ApprovalContextFn>,
 }
@@ -80,6 +82,7 @@ impl FnTool {
             description: description.into(),
             schema: permissive_object_schema(),
             requires_approval: false,
+            execution_root: None,
             execute_fn: Arc::new(|_, _, _, _| {
                 Box::pin(async { AgentToolResult::error("not implemented") })
             }),
@@ -106,6 +109,13 @@ impl FnTool {
     #[must_use]
     pub const fn with_requires_approval(mut self, requires: bool) -> Self {
         self.requires_approval = requires;
+        self
+    }
+
+    /// Set the working directory used to resolve this tool's relative paths.
+    #[must_use]
+    pub fn with_execution_root(mut self, root: impl Into<PathBuf>) -> Self {
+        self.execution_root = Some(root.into());
         self
     }
 
@@ -220,6 +230,10 @@ impl AgentTool for FnTool {
 
     fn requires_approval(&self) -> bool {
         self.requires_approval
+    }
+
+    fn execution_root(&self) -> Option<&Path> {
+        self.execution_root.as_deref()
     }
 
     fn approval_context(&self, params: &Value) -> Option<Value> {
@@ -375,6 +389,13 @@ mod tests {
     fn approval_flag_is_configurable() {
         let tool = sample_tool().with_requires_approval(true);
         assert!(tool.requires_approval());
+    }
+
+    #[test]
+    fn execution_root_is_configurable() {
+        let root = std::path::PathBuf::from("workspace");
+        let tool = sample_tool().with_execution_root(&root);
+        assert_eq!(tool.execution_root(), Some(root.as_path()));
     }
 
     #[tokio::test]

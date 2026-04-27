@@ -1,5 +1,6 @@
 //! Built-in tool for executing shell commands.
 
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use schemars::JsonSchema;
@@ -26,6 +27,7 @@ const DEFAULT_TIMEOUT_MS: u64 = 30_000;
 /// agents exposed to untrusted users.
 pub struct BashTool {
     schema: Value,
+    execution_root: Option<PathBuf>,
 }
 
 impl BashTool {
@@ -34,7 +36,15 @@ impl BashTool {
     pub fn new() -> Self {
         Self {
             schema: validated_schema_for::<Params>(),
+            execution_root: None,
         }
+    }
+
+    /// Set the working directory used when spawning shell commands.
+    #[must_use]
+    pub fn with_execution_root(mut self, root: impl Into<PathBuf>) -> Self {
+        self.execution_root = Some(root.into());
+        self
     }
 }
 
@@ -75,6 +85,10 @@ impl AgentTool for BashTool {
         true
     }
 
+    fn execution_root(&self) -> Option<&Path> {
+        self.execution_root.as_deref()
+    }
+
     fn execute(
         &self,
         _tool_call_id: &str,
@@ -96,7 +110,12 @@ impl AgentTool for BashTool {
 
             let timeout = Duration::from_millis(parsed.timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS));
 
-            let mut child = match shell_command(&parsed.command)
+            let mut command = shell_command(&parsed.command);
+            if let Some(root) = self.execution_root.as_deref() {
+                command.current_dir(root);
+            }
+
+            let mut child = match command
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped())
                 .spawn()

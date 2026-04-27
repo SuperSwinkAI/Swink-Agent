@@ -238,6 +238,10 @@ impl AgentTool for NamespacedTool {
         Some(meta)
     }
 
+    fn execution_root(&self) -> Option<&std::path::Path> {
+        self.inner.execution_root()
+    }
+
     fn approval_context(&self, params: &Value) -> Option<Value> {
         self.inner.approval_context(params)
     }

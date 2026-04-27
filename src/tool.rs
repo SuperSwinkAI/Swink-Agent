@@ -8,6 +8,7 @@
 use std::collections::HashMap;
 use std::fmt;
 use std::future::Future;
+use std::path::Path;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::{LazyLock, Mutex};
@@ -156,6 +157,15 @@ pub trait AgentTool: Send + Sync {
     ///
     /// Returns `None` by default for backward compatibility.
     fn metadata(&self) -> Option<ToolMetadata> {
+        None
+    }
+
+    /// Working directory used to resolve this tool's relative paths, when known.
+    ///
+    /// Tools that accept relative paths should return the same root they use
+    /// during execution so pre-dispatch policies can validate those paths
+    /// against the real execution context.
+    fn execution_root(&self) -> Option<&Path> {
         None
     }
 

@@ -270,6 +270,7 @@ flowchart TB
 | `.with_schema_for::<T>()` | Derive JSON Schema from a type implementing `schemars::JsonSchema`. Validated at construction (`debug_assert!`). |
 | `.with_schema(Value)` | Set a raw JSON Schema value. |
 | `.with_requires_approval(bool)` | Mark the tool as requiring user approval before execution. |
+| `.with_execution_root(path)` | Declare the working directory the tool uses to resolve relative paths, making it available to pre-dispatch policies. |
 | `.with_execute(closure)` | Full signature: `(tool_call_id, params, cancel, on_update) -> Future<AgentToolResult>`. |
 | `.with_execute_simple(closure)` | Simplified: `(params, cancel) -> Future<AgentToolResult>`. Ignores tool call ID and update callback. |
 | `.with_execute_async(closure)` | Explicit untyped async alias for `.with_execute_simple(closure)`. |
@@ -494,6 +495,11 @@ Set on `AgentLoopConfig` as `pre_dispatch_policies: Vec<Arc<dyn PreDispatchPolic
 **Re-exported as:** `swink_agent::ToolMetadata`
 
 `ToolMetadata` provides optional organizational metadata for tools — a namespace and version. Tools return it via the `metadata()` method on `AgentTool` (defaults to `None` for backward compatibility).
+
+Tools that resolve relative paths can also expose their actual working
+directory through `AgentTool::execution_root()`. The agent loop passes that
+value into `ToolDispatchContext.execution_root` for pre-dispatch policies,
+including the second policy pass after an approval rewrite.
 
 ### Fields
 
