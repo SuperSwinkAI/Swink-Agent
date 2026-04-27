@@ -1,9 +1,17 @@
 //! Cross-session search types and helpers.
+//!
+//! The `search` feature gate enables a tantivy-backed full-text index stored
+//! alongside the session JSONL files.  Without the feature the module still
+//! compiles and provides the public types; `JsonlSessionStore::search()` falls
+//! back to the linear scan already implemented in `jsonl.rs`.
 
 use chrono::{DateTime, Utc};
 use swink_agent::{ContentBlock, LlmMessage};
 
 use crate::entry::SessionEntry;
+
+#[cfg(feature = "search")]
+pub(crate) mod index;
 
 const DEFAULT_MAX_RESULTS: usize = 50;
 const SNIPPET_CONTEXT_BYTES: usize = 72;
@@ -44,6 +52,7 @@ pub struct SessionHit {
     pub snippet: String,
 }
 
+#[cfg(not(feature = "search"))]
 pub(crate) fn query_terms(query: &str) -> Vec<String> {
     query
         .split_whitespace()
@@ -53,6 +62,7 @@ pub(crate) fn query_terms(query: &str) -> Vec<String> {
         .collect()
 }
 
+#[cfg(not(feature = "search"))]
 pub(crate) fn entry_matches_time_range(
     entry: &SessionEntry,
     options: &SessionSearchOptions,
@@ -74,6 +84,7 @@ pub(crate) fn entry_matches_time_range(
     true
 }
 
+#[cfg(not(feature = "search"))]
 pub(crate) fn entry_matches_type(entry: &SessionEntry, options: &SessionSearchOptions) -> bool {
     options.entry_types.as_ref().is_none_or(|types| {
         types
@@ -82,6 +93,7 @@ pub(crate) fn entry_matches_type(entry: &SessionEntry, options: &SessionSearchOp
     })
 }
 
+#[cfg(not(feature = "search"))]
 pub(crate) fn search_entry(entry: &SessionEntry, terms: &[String]) -> Option<(usize, String)> {
     if terms.is_empty() {
         return None;
@@ -103,6 +115,12 @@ pub(crate) fn search_entry(entry: &SessionEntry, terms: &[String]) -> Option<(us
     }
 
     Some((score, snippet(&text, first_match.unwrap_or(0))))
+}
+
+/// Public-crate wrapper used by the tantivy index module.
+#[cfg(feature = "search")]
+pub(crate) fn searchable_text_pub(entry: &SessionEntry) -> String {
+    searchable_text(entry)
 }
 
 fn searchable_text(entry: &SessionEntry) -> String {
@@ -199,6 +217,12 @@ fn push_part(text: &mut String, part: &str) {
         text.push(' ');
     }
     text.push_str(part);
+}
+
+/// Public-crate wrapper used by the tantivy index module.
+#[cfg(feature = "search")]
+pub(crate) fn snippet_from_text(text: &str, match_idx: usize) -> String {
+    snippet(text, match_idx)
 }
 
 fn snippet(text: &str, match_idx: usize) -> String {

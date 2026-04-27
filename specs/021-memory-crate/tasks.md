@@ -303,7 +303,7 @@
 
 - [x] T096 [P] [US10] Unit test `search_scans_across_saved_sessions` in `memory/src/jsonl.rs`: save two sessions, search for terms in only one, verify the returned `SessionHit` has the matching session ID, title, snippet, and entry.
 - [x] T097 [P] [US10] Unit test `search_respects_session_type_time_and_limit_filters` in `memory/src/jsonl.rs`: save mixed entries across sessions, search with session ID, entry type, timestamp range, and max-result filters, verify only the expected hit remains.
-- [ ] T098 [P] [US10] Add tests for indexed search rebuild/update behavior once the `search` feature and Tantivy backend are introduced.
+- [x] T098 [P] [US10] Add tests for indexed search rebuild/update behavior once the `search` feature and Tantivy backend are introduced.
 
 ### Implementation for User Story 10
 
@@ -311,7 +311,7 @@
 - [x] T100 [US10] Add default `SessionStore::search()` empty-result method for backward-compatible store implementors.
 - [x] T101 [US10] Implement JSONL-backed linear cross-session search in `JsonlSessionStore`, including session ID, entry type, timestamp range, and max-result filters.
 - [x] T102 [US10] Add async `BlockingSessionStore::search()` bridge.
-- [ ] T103 [US10] Add a `search` feature with a Tantivy-backed index, lazy index build, save/update hooks, and explicit rebuild command/API.
+- [x] T103 [US10] Add a `search` feature with a Tantivy-backed index, lazy index build, save/update hooks, and explicit rebuild command/API.
 
 **Checkpoint**: Baseline cross-session search works without an index; indexed search remains future work.
 
