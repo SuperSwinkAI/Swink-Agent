@@ -633,11 +633,12 @@ fn process_smithy_message(
         let payload_str = std::str::from_utf8(message.payload()).unwrap_or("(binary)");
         warn!(exception_type = exc_type, "Bedrock exception frame");
         let error_event = classify_bedrock_exception(exc_type, payload_str);
+        let mut events = finalize::finalize_blocks(state);
+        events.push(error_event);
         if state.started {
-            return vec![error_event];
+            return events;
         }
-        state.started = true;
-        return vec![AssistantMessageEvent::Start, error_event];
+        return prefix_pre_start_terminal_error(events, &mut state.started);
     }
 
     // Handle normal event frames
@@ -686,6 +687,39 @@ fn classify_bedrock_exception(exc_type: &str, payload: &str) -> AssistantMessage
         // Unknown exception type — do not assume retryable.
         AssistantMessageEvent::error(format!("Bedrock exception ({exc_type}): {payload}"))
     }
+}
+
+fn parse_metadata_frame(
+    payload: &[u8],
+    state: &mut BedrockStreamState,
+) -> Result<Vec<AssistantMessageEvent>, String> {
+    let event: MetadataEvent = serde_json::from_slice(payload)
+        .map_err(|e| format!("Bedrock metadata parse error: {e}"))?;
+    let usage = Usage {
+        input: event.usage.input_tokens,
+        output: event.usage.output_tokens,
+        total: if event.usage.total_tokens == 0 {
+            event.usage.input_tokens + event.usage.output_tokens
+        } else {
+            event.usage.total_tokens
+        },
+        ..Usage::default()
+    };
+    let stop_reason = map_stop_reason(state.stop_reason.as_deref());
+    let mut events = finalize::finalize_blocks(state);
+    match stop_reason {
+        Ok(stop_reason) => {
+            events.push(AssistantMessageEvent::Done {
+                stop_reason,
+                usage,
+                cost: Cost::default(),
+            });
+        }
+        Err(error_event) => {
+            events.push(error_event);
+        }
+    }
+    Ok(events)
 }
 
 fn parse_event_frame(
@@ -760,29 +794,7 @@ fn parse_event_frame(
             state.stop_reason = Some(event.stop_reason);
             Ok(None)
         }
-        "metadata" => {
-            let event: MetadataEvent = serde_json::from_slice(payload)
-                .map_err(|e| format!("Bedrock metadata parse error: {e}"))?;
-            let usage = Usage {
-                input: event.usage.input_tokens,
-                output: event.usage.output_tokens,
-                total: if event.usage.total_tokens == 0 {
-                    event.usage.input_tokens + event.usage.output_tokens
-                } else {
-                    event.usage.total_tokens
-                },
-                ..Usage::default()
-            };
-            let stop_reason = map_stop_reason(state.stop_reason.as_deref());
-            match stop_reason {
-                Ok(stop_reason) => Ok(Some(vec![AssistantMessageEvent::Done {
-                    stop_reason,
-                    usage,
-                    cost: Cost::default(),
-                }])),
-                Err(error_event) => Ok(Some(vec![error_event])),
-            }
-        }
+        "metadata" => parse_metadata_frame(payload, state).map(Some),
         _ => {
             debug!(event_type, "unknown Bedrock event type, skipping");
             Ok(None)
@@ -1828,6 +1840,127 @@ mod tests {
             "should not prepend Start when already started"
         );
         assert!(matches!(events[0], AssistantMessageEvent::Error { .. }));
+    }
+
+    #[test]
+    fn exception_after_open_text_block_closes_block_before_error() {
+        let mut state = BedrockStreamState::new();
+
+        let msg = make_event_message("messageStart", br#"{"role":"assistant"}"#);
+        let _ = process_smithy_message(&msg, &mut state);
+        let msg = make_event_message(
+            "contentBlockStart",
+            br#"{"contentBlockIndex":0,"start":{"type":"text"}}"#,
+        );
+        let _ = process_smithy_message(&msg, &mut state);
+
+        let msg = make_exception_message(
+            "modelStreamErrorException",
+            br#"{"message":"Stream failed mid-text"}"#,
+        );
+        let events = process_smithy_message(&msg, &mut state);
+
+        assert!(matches!(
+            events.as_slice(),
+            [
+                AssistantMessageEvent::TextEnd { content_index: 0 },
+                AssistantMessageEvent::Error {
+                    error_kind: Some(swink_agent::StreamErrorKind::Network),
+                    ..
+                }
+            ]
+        ));
+    }
+
+    #[test]
+    fn exception_after_open_tool_block_closes_block_before_error() {
+        let mut state = BedrockStreamState::new();
+
+        let msg = make_event_message("messageStart", br#"{"role":"assistant"}"#);
+        let _ = process_smithy_message(&msg, &mut state);
+        let msg = make_event_message(
+            "contentBlockStart",
+            br#"{"contentBlockIndex":0,"start":{"type":"toolUse","toolUseId":"tc_1","name":"lookup"}}"#,
+        );
+        let _ = process_smithy_message(&msg, &mut state);
+
+        let msg = make_exception_message(
+            "modelTimeoutException",
+            br#"{"message":"Stream timed out mid-tool"}"#,
+        );
+        let events = process_smithy_message(&msg, &mut state);
+
+        assert!(matches!(
+            events.as_slice(),
+            [
+                AssistantMessageEvent::ToolCallEnd { content_index: 0 },
+                AssistantMessageEvent::Error {
+                    error_kind: Some(swink_agent::StreamErrorKind::Network),
+                    ..
+                }
+            ]
+        ));
+    }
+
+    #[test]
+    fn metadata_done_closes_open_blocks_before_terminal_event() {
+        let mut state = BedrockStreamState::new();
+
+        let msg = make_event_message("messageStart", br#"{"role":"assistant"}"#);
+        let _ = process_smithy_message(&msg, &mut state);
+        let msg = make_event_message(
+            "contentBlockStart",
+            br#"{"contentBlockIndex":0,"start":{"type":"text"}}"#,
+        );
+        let _ = process_smithy_message(&msg, &mut state);
+        let msg = make_event_message("messageStop", br#"{"stopReason":"end_turn"}"#);
+        let _ = process_smithy_message(&msg, &mut state);
+
+        let msg = make_event_message(
+            "metadata",
+            br#"{"usage":{"inputTokens":15,"outputTokens":25,"totalTokens":40}}"#,
+        );
+        let events = process_smithy_message(&msg, &mut state);
+
+        assert!(matches!(
+            events.as_slice(),
+            [
+                AssistantMessageEvent::TextEnd { content_index: 0 },
+                AssistantMessageEvent::Done {
+                    stop_reason: StopReason::Stop,
+                    ..
+                }
+            ]
+        ));
+    }
+
+    #[test]
+    fn metadata_error_closes_open_tool_block_before_terminal_event() {
+        let mut state = BedrockStreamState::new();
+
+        let msg = make_event_message("messageStart", br#"{"role":"assistant"}"#);
+        let _ = process_smithy_message(&msg, &mut state);
+        let msg = make_event_message(
+            "contentBlockStart",
+            br#"{"contentBlockIndex":0,"start":{"type":"toolUse","toolUseId":"tc_1","name":"lookup"}}"#,
+        );
+        let _ = process_smithy_message(&msg, &mut state);
+        let msg = make_event_message("messageStop", br#"{"stopReason":"guardrail_intervened"}"#);
+        let _ = process_smithy_message(&msg, &mut state);
+
+        let msg = make_event_message(
+            "metadata",
+            br#"{"usage":{"inputTokens":15,"outputTokens":0,"totalTokens":15}}"#,
+        );
+        let events = process_smithy_message(&msg, &mut state);
+
+        assert!(matches!(
+            events.as_slice(),
+            [
+                AssistantMessageEvent::ToolCallEnd { content_index: 0 },
+                AssistantMessageEvent::Error { .. }
+            ]
+        ));
     }
 
     #[test]
