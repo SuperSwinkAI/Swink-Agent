@@ -245,6 +245,51 @@
 
 ---
 
+## Phase 14: User Story 8 — Training-format Trace Export (Priority: P3)
+
+**Purpose**: Export `Invocation` traces as fine-tuning data for LLM training
+pipelines (SFT, DPO, RLHF). Extends the eval crate with a new
+`training-export` feature gate.
+
+**Scope**: `eval/src/training.rs` + `eval/tests/training_export.rs` + spec
+artifacts. CLI `--export-training` flag is out of scope (future work).
+
+- [x] T095 Add `training-export` feature to `eval/Cargo.toml` (no additional deps required — all serialization uses existing `serde_json`).
+- [x] T096 Create `eval/src/training.rs` (feature-gated) with:
+  - `TrainingFormat` enum: `ChatMlSft`, `DpoPairs`, `ShareGpt`
+  - `ExportOptions` struct: `format`, `quality_threshold: f32`, `include_metadata: bool`
+  - `ScoredTrace` struct: `invocation: Invocation`, `score: f64`, `case_id: String`
+  - `ScoredTrace::from_case_result(result: &EvalCaseResult) -> Self` (averages metric scores)
+  - `TrainingExporter` trait: `fn export(&self, traces: &[ScoredTrace], opts: &ExportOptions) -> Result<Vec<u8>, ExportError>`
+  - `ExportError` enum: `Serialization`, `NotImplemented`, `NothingToExport`
+- [x] T097 Implement `ChatMlExporter` (full): JSONL with ChatML role/content/tool_calls schema per OpenAI convention, quality threshold filtering, optional metadata record.
+- [x] T098 Implement `DpoExporter`: group by `case_id`, pair highest vs lowest scoring trace per case as chosen/rejected; emit `NothingToExport` when no case has ≥ 2 traces.
+- [x] T099 Implement `ShareGptExporter`: `conversations` array with `from: system/human/gpt` turns; optional metadata; quality threshold filtering.
+- [x] T100 Implement `TrainingReporter` implementing the existing `Reporter` trait: converts `EvalSetResult.case_results` → `Vec<ScoredTrace>`, calls `export_traces`, returns `ReporterOutput::Artifact`.
+- [x] T101 Add `training` module and public re-exports to `eval/src/lib.rs` (behind `#[cfg(feature = "training-export")]`).
+- [x] T102 Write integration tests in `eval/tests/training_export.rs` (feature-gated):
+  - `chatml_export_produces_valid_jsonl_with_correct_turn_structure`
+  - `chatml_export_includes_tool_calls_on_assistant_turns`
+  - `chatml_export_includes_metadata_when_requested`
+  - `chatml_export_omits_metadata_when_not_requested`
+  - `quality_threshold_filters_low_score_traces`
+  - `export_empty_when_all_traces_below_threshold`
+  - `export_empty_slice_returns_nothing_to_export`
+  - `dpo_pairs_created_from_high_and_low_score_on_same_case`
+  - `dpo_pairs_emits_nothing_for_single_trace_case`
+  - `dpo_pairs_uses_highest_and_lowest_score_traces`
+  - `sharegpt_export_produces_valid_jsonl_with_human_gpt_turns`
+  - `scored_trace_from_case_result_averages_metric_scores`
+  - `scored_trace_from_case_result_handles_no_metrics`
+  - `chatml_multiple_traces_produce_one_line_each`
+- [x] T103 Verify `cargo test -p swink-agent-eval --features training-export` passes (14 new tests).
+- [x] T104 Verify `cargo test -p swink-agent-eval` (no features) passes — zero regressions.
+- [x] T105 Verify `cargo clippy -p swink-agent-eval --features training-export -- -D warnings` is clean.
+
+**Checkpoint**: `TrainingExporter` trait + ChatML/SFT (full), DPO pairs, ShareGPT exporters delivered. `TrainingReporter` integrates with existing `Reporter` trait. Score-based quality gate via `ExportOptions.quality_threshold`. All feature-gated under `training-export`.
+
+---
+
 ## Dependencies & Execution Order
 
 ### Phase Dependencies

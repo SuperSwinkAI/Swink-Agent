@@ -82,6 +82,7 @@ telemetry = ["dep:opentelemetry", "dep:opentelemetry_sdk"]
 html-report = ["dep:askama"]
 langsmith = ["dep:reqwest"]
 cli = ["dep:clap", "swink-agent/testkit"]
+training-export = []
 
 [dev-dependencies]
 swink-agent = { path = "..", default-features = false, features = ["testkit"] }
