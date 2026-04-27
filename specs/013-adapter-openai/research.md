@@ -59,7 +59,7 @@
 - `"length"` -> `StopReason::Length`
 - `"stop"` | `"content_filter"` | any other value -> `StopReason::Stop`
 
-The finish reason is saved in `SseStreamState.stop_reason` when received (which may be in a chunk before `[DONE]`), and emitted with the `Done` event when `[DONE]` arrives or the stream ends.
+The finish reason is saved in `SseStreamState.stop_reason` when received (which may be in a chunk before `[DONE]`), and emitted with the `Done` event only when `[DONE]` arrives. Stream EOF before `[DONE]` is treated as a retryable network error because the provider never delivered the terminal sentinel.
 
 **Rationale**: The spec clarifies that unrecognized `finish_reason` values should default to `StopReason::Stop`. This wildcard approach is future-proof -- new finish reasons from OpenAI or alternative providers will not cause errors. The deferred emission (save on `finish_reason`, emit on `[DONE]`) handles the common OpenAI pattern where usage data arrives in a chunk after the `finish_reason` chunk.
 

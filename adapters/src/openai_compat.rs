@@ -386,23 +386,6 @@ impl OaiSseStreamState {
         }
         events
     }
-
-    fn emit_terminal_done(&mut self, stop_reason: StopReason) -> Vec<AssistantMessageEvent> {
-        let usage = self.usage.take().unwrap_or_default();
-        let mut events = Vec::new();
-        if let Some(error) = flush_pending_oai_tool_calls(self, &mut events, "OpenAI-compatible") {
-            events.extend(crate::finalize::finalize_blocks(self));
-            events.push(error);
-            return events;
-        }
-        events.extend(crate::finalize::finalize_blocks(self));
-        events.push(AssistantMessageEvent::Done {
-            stop_reason,
-            usage,
-            cost: Cost::default(),
-        });
-        events
-    }
 }
 
 /// Process a single deserialized `OaiChunk`, updating state and emitting events.
@@ -666,9 +649,6 @@ pub fn parse_oai_sse_stream(
             None => {
                 if let Some(error) = state.terminal_error.take() {
                     return SseAction::Done(state.emit_terminal_error(error));
-                }
-                if let Some(stop_reason) = state.stop_reason.take() {
-                    return SseAction::Done(state.emit_terminal_done(stop_reason));
                 }
                 SseAction::Done(
                     state.emit_terminal_error(AssistantMessageEvent::error_network(format!(
@@ -1038,7 +1018,7 @@ mod tests {
     }
 
     #[test]
-    fn unexpected_eof_stop_reason_flushes_pending_tool_call_before_done() {
+    fn unexpected_eof_flushes_pending_tool_call_before_network_error() {
         let mut state = OaiSseStreamState::default();
         state.tool_calls.insert(
             0,
@@ -1050,7 +1030,9 @@ mod tests {
             },
         );
 
-        let events = state.emit_terminal_done(StopReason::ToolUse);
+        let events = state.emit_terminal_error(AssistantMessageEvent::error_network(
+            "OpenAI-compatible stream ended unexpectedly",
+        ));
         let delta_index = events
             .iter()
             .position(|event| matches!(event, AssistantMessageEvent::ToolCallDelta { .. }))
@@ -1059,21 +1041,27 @@ mod tests {
             .iter()
             .position(|event| matches!(event, AssistantMessageEvent::ToolCallEnd { .. }))
             .expect("tool call end");
-        let done_index = events
+        let error_index = events
             .iter()
-            .position(|event| matches!(event, AssistantMessageEvent::Done { .. }))
-            .expect("done event");
+            .position(|event| matches!(event, AssistantMessageEvent::Error { .. }))
+            .expect("error event");
 
         assert!(
-            delta_index < end_index && end_index < done_index,
-            "pending tool-call state must flush before Done on unexpected EOF: {events:?}"
+            delta_index < end_index && end_index < error_index,
+            "pending tool-call state must flush before Error on unexpected EOF: {events:?}"
         );
         assert!(
             !events
                 .iter()
-                .any(|event| matches!(event, AssistantMessageEvent::Error { .. })),
-            "stop_reason EOF path must terminate with Done, not Error"
+                .any(|event| matches!(event, AssistantMessageEvent::Done { .. })),
+            "transport EOF without [DONE] must not complete normally"
         );
+        match &events[error_index] {
+            AssistantMessageEvent::Error { error_kind, .. } => {
+                assert_eq!(*error_kind, Some(StreamErrorKind::Network));
+            }
+            event => panic!("expected network error, got {event:?}"),
+        }
     }
 
     #[test]

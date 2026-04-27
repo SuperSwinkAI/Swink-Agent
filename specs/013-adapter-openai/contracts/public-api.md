@@ -65,8 +65,8 @@ impl StreamFn for OpenAiStreamFn {
 
 | Event | When | Key Fields |
 |-------|------|------------|
-| `Done` | `[DONE]` sentinel received, or stream ends with a valid `finish_reason` | `stop_reason`, `usage`, `cost` |
-| `Error` | HTTP error, JSON parse error, or unexpected stream end without `finish_reason` | `stop_reason`, `error_message` |
+| `Done` | `[DONE]` sentinel received | `stop_reason`, `usage`, `cost` |
+| `Error` | HTTP error, JSON parse error, or stream end before `[DONE]` | `stop_reason`, `error_message` |
 
 ---
 
