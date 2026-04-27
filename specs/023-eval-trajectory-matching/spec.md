@@ -148,6 +148,43 @@ An evaluator wants to assert that the agent's actions produced the expected side
 
 ---
 
+---
+
+### User Story 8 — Training-format Trace Export (Priority: P3)
+
+An evaluator wants to export collected execution traces as fine-tuning data for
+LLMs (SFT, DPO, RLHF). After running an eval suite the evaluator selects a
+format (ChatML/SFT, DPO pairs, ShareGPT), applies a quality threshold to filter
+low-score traces, and exports a JSONL file suitable for uploading to a
+fine-tuning pipeline. This closes the loop between evaluation and model
+improvement without requiring manual data wrangling.
+
+**Why this priority**: Useful for teams running RL/SFT fine-tuning on top of
+eval results, but not required for basic evaluation or deployment gating (P3).
+
+**Independent Test**: Run an eval suite, collect `EvalCaseResult` values,
+convert to `ScoredTrace` via `ScoredTrace::from_case_result`, export with
+`ChatMlExporter`, and assert the output is valid JSONL with the correct role
+structure.
+
+**Acceptance Scenarios**:
+
+1. **Given** a list of scored traces above the quality threshold, **When**
+   exported as ChatML/SFT, **Then** the output is valid JSONL with
+   system/user/assistant turns and tool_calls entries for turns that used tools.
+2. **Given** a list of scored traces with a quality threshold set, **When**
+   exported, **Then** only traces whose score ≥ threshold appear in the output.
+3. **Given** two scored traces for the same case (one high-score, one
+   low-score), **When** exported as DPO pairs, **Then** the output contains one
+   JSON object with `chosen` (high-score) and `rejected` (low-score) sides.
+4. **Given** all traces are below the quality threshold, **When** exported,
+   **Then** the exporter returns `ExportError::NothingToExport`.
+5. **Given** a list of scored traces, **When** exported as ShareGPT, **Then**
+   the output contains `conversations` arrays with `from: "human"` /
+   `from: "gpt"` turns.
+
+---
+
 ### Edge Cases
 
 - **Empty golden path (no expected steps)**: Behavior varies by match mode. Exact: returns 0.0 if actual has any steps (length mismatch), 0.0 if both empty (0/1 matched). InOrder/AnyOrder: returns pass (vacuous truth — all zero expected calls were found). This follows standard evaluation framework semantics.

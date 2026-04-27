@@ -16,7 +16,9 @@ use crate::entry::SessionEntry;
 use crate::interrupt::InterruptState;
 use crate::load_options::LoadOptions;
 use crate::meta::SessionMeta;
-use crate::search::{self, SessionHit, SessionSearchOptions};
+#[cfg(not(feature = "search"))]
+use crate::search;
+use crate::search::{SessionHit, SessionSearchOptions};
 use crate::store::SessionStore;
 use crate::time::{format_session_id, now_utc};
 
@@ -495,9 +497,26 @@ fn validate_session_id(id: &str) -> io::Result<()> {
 ///
 /// Concurrent writes to the same session may corrupt the file.
 /// Callers are expected to enforce single-writer access.
+///
+/// With the `search` feature enabled, a tantivy index is maintained in
+/// `<sessions_dir>/.search_index/` and used by
+/// [`SessionStore::search()`].  Without the feature, search falls back to a
+/// linear scan of all JSONL files.
 pub struct JsonlSessionStore {
     sessions_dir: PathBuf,
     migrators: Vec<Box<dyn crate::migrate::SessionMigrator>>,
+    /// Lazily-opened tantivy index.  Populated on first `search()` call (or
+    /// via `open_search_index()`).  Only present when the `search` feature is
+    /// enabled.
+    ///
+    /// Uses `Mutex<Option<...>>` rather than `OnceLock` because we need
+    /// fallible initialization (`OnceLock::get_or_try_init` is not stable).
+    #[cfg(feature = "search")]
+    tantivy_index: std::sync::Mutex<Option<crate::search::index::TantivyIndex>>,
+    /// Tracks whether the index has been initially populated from all JSONL
+    /// files on first search.
+    #[cfg(feature = "search")]
+    index_built: std::sync::Mutex<bool>,
 }
 
 impl JsonlSessionStore {
@@ -509,7 +528,65 @@ impl JsonlSessionStore {
         Ok(Self {
             sessions_dir,
             migrators: Vec::new(),
+            #[cfg(feature = "search")]
+            tantivy_index: std::sync::Mutex::new(None),
+            #[cfg(feature = "search")]
+            index_built: std::sync::Mutex::new(false),
         })
+    }
+
+    /// Open (or create) the tantivy search index eagerly.
+    ///
+    /// Normally the index is opened lazily on the first `search()` call.
+    /// Call this method if you want to detect index-creation errors at startup
+    /// rather than at search time.
+    ///
+    /// Only available with the `search` feature.
+    #[cfg(feature = "search")]
+    pub fn open_search_index(&self) -> io::Result<()> {
+        self.with_tantivy_index(|_| Ok(()))
+    }
+
+    /// Build (or rebuild) the tantivy index from all current JSONL files.
+    ///
+    /// Existing index data is replaced.  Use this after bulk-importing sessions
+    /// outside of the store API.
+    ///
+    /// Only available with the `search` feature.
+    #[cfg(feature = "search")]
+    pub fn rebuild_search_index(&self) -> io::Result<()> {
+        self.with_tantivy_index(|index| {
+            // Wipe all existing docs so sessions removed outside the store API
+            // don't produce ghost hits after the rebuild.
+            index.clear_all()?;
+            for meta in self.list()? {
+                let (_, entries) = self.load_entries(&meta.id)?;
+                index.index_session(&meta, &entries)?;
+            }
+            Ok(())
+        })
+    }
+
+    /// Obtain a snapshot clone of the tantivy index (creating it if needed),
+    /// then call `f` with it.
+    ///
+    /// Using a clone of `TantivyIndex` is safe because it is `Arc`-based
+    /// internally.
+    #[cfg(feature = "search")]
+    fn with_tantivy_index<T>(
+        &self,
+        f: impl FnOnce(&crate::search::index::TantivyIndex) -> io::Result<T>,
+    ) -> io::Result<T> {
+        let index_clone = {
+            let mut guard = self.tantivy_index.lock().unwrap_or_else(|e| e.into_inner());
+            if guard.is_none() {
+                *guard = Some(crate::search::index::TantivyIndex::open_or_create(
+                    &self.sessions_dir,
+                )?);
+            }
+            guard.as_ref().expect("just set").clone()
+        };
+        f(&index_clone)
     }
 
     /// Register session migrators for automatic schema upgrades on load.
@@ -673,7 +750,25 @@ impl SessionStore for JsonlSessionStore {
                 std::fs::remove_file(int_path)?;
             }
             Ok(())
-        })
+        })?;
+
+        // Remove from tantivy index (best-effort).
+        #[cfg(feature = "search")]
+        {
+            let id_owned = id.to_string();
+            let _ = self.with_tantivy_index(|index| {
+                if let Err(err) = index.delete_session(&id_owned) {
+                    tracing::warn!(
+                        session_id = %id_owned,
+                        error = %err,
+                        "failed to remove session from search index after delete"
+                    );
+                }
+                Ok(())
+            });
+        }
+
+        Ok(())
     }
 
     fn save_state(&self, id: &str, state: &serde_json::Value) -> io::Result<()> {
@@ -777,57 +872,105 @@ impl SessionStore for JsonlSessionStore {
     }
 
     fn search(&self, query: &str, options: &SessionSearchOptions) -> io::Result<Vec<SessionHit>> {
-        let terms = search::query_terms(query);
-        let limit = options.limit();
-        if terms.is_empty() || limit == 0 {
-            return Ok(Vec::new());
-        }
-
-        let session_ids = if let Some(ids) = &options.session_ids {
-            ids.iter()
-                .map(|id| {
-                    validate_session_id(id)?;
-                    Ok(id.clone())
-                })
-                .collect::<io::Result<Vec<_>>>()?
-        } else {
-            self.list()?
-                .into_iter()
-                .map(|meta| meta.id)
-                .collect::<Vec<_>>()
-        };
-
-        let mut hits = Vec::new();
-        for id in session_ids {
-            let (meta, entries) = self.load_entries(&id)?;
-            for entry in entries {
-                if !search::entry_matches_type(&entry, options)
-                    || !search::entry_matches_time_range(&entry, options)
-                {
-                    continue;
-                }
-                let Some((score, snippet)) = search::search_entry(&entry, &terms) else {
-                    continue;
-                };
-                hits.push(SessionHit {
-                    session_id: meta.id.clone(),
-                    session_title: meta.title.clone(),
-                    entry,
-                    score,
-                    snippet,
-                });
-            }
-        }
-
-        hits.sort_by(|left, right| {
-            right
-                .score
-                .cmp(&left.score)
-                .then_with(|| right.entry.timestamp().cmp(&left.entry.timestamp()))
-                .then_with(|| left.session_id.cmp(&right.session_id))
+        // When the `search` feature is enabled, delegate to the tantivy index.
+        // The index is built lazily on the first call and kept warm for
+        // subsequent calls.
+        #[cfg(feature = "search")]
+        return self.with_tantivy_index(|index| {
+            self.build_index_if_empty(index)?;
+            index.search(query, options)
         });
-        hits.truncate(limit);
-        Ok(hits)
+
+        // Fallback linear scan (no `search` feature).
+        #[cfg(not(feature = "search"))]
+        linear_search(self, query, options)
+    }
+}
+
+/// Linear (no-index) search implementation used when the `search` feature is
+/// not enabled.
+#[cfg(not(feature = "search"))]
+fn linear_search(
+    store: &JsonlSessionStore,
+    query: &str,
+    options: &SessionSearchOptions,
+) -> io::Result<Vec<SessionHit>> {
+    let terms = search::query_terms(query);
+    let limit = options.limit();
+    if terms.is_empty() || limit == 0 {
+        return Ok(Vec::new());
+    }
+
+    let session_ids = if let Some(ids) = &options.session_ids {
+        ids.iter()
+            .map(|id| {
+                validate_session_id(id)?;
+                Ok(id.clone())
+            })
+            .collect::<io::Result<Vec<_>>>()?
+    } else {
+        store
+            .list()?
+            .into_iter()
+            .map(|meta| meta.id)
+            .collect::<Vec<_>>()
+    };
+
+    let mut hits = Vec::new();
+    for id in session_ids {
+        let (meta, entries) = store.load_entries(&id)?;
+        for entry in entries {
+            if !search::entry_matches_type(&entry, options)
+                || !search::entry_matches_time_range(&entry, options)
+            {
+                continue;
+            }
+            let Some((score, snippet)) = search::search_entry(&entry, &terms) else {
+                continue;
+            };
+            hits.push(SessionHit {
+                session_id: meta.id.clone(),
+                session_title: meta.title.clone(),
+                entry,
+                score,
+                snippet,
+            });
+        }
+    }
+
+    hits.sort_by(|left, right| {
+        right
+            .score
+            .cmp(&left.score)
+            .then_with(|| right.entry.timestamp().cmp(&left.entry.timestamp()))
+            .then_with(|| left.session_id.cmp(&right.session_id))
+    });
+    hits.truncate(limit);
+    Ok(hits)
+}
+
+#[cfg(feature = "search")]
+impl JsonlSessionStore {
+    /// Index all sessions if the initial build has not yet been done.
+    ///
+    /// This provides lazy-build-on-first-search semantics: the first `search()`
+    /// call populates the index from all existing JSONL files; subsequent calls
+    /// find the index already populated.
+    fn build_index_if_empty(&self, index: &crate::search::index::TantivyIndex) -> io::Result<()> {
+        let already_built = {
+            let guard = self.index_built.lock().unwrap_or_else(|e| e.into_inner());
+            *guard
+        };
+        if already_built {
+            return Ok(());
+        }
+        // Populate from all current sessions.
+        for meta in self.list()? {
+            let (_, entries) = self.load_entries(&meta.id)?;
+            index.index_session(&meta, &entries)?;
+        }
+        *self.index_built.lock().unwrap_or_else(|e| e.into_inner()) = true;
+        Ok(())
     }
 }
 
@@ -835,6 +978,10 @@ impl JsonlSessionStore {
     /// Save a session with rich entry types.
     ///
     /// Lines 2+ are [`SessionEntry`] values serialized with an `entry_type` tag.
+    ///
+    /// When the `search` feature is enabled, the tantivy index is updated
+    /// after the file is written (best-effort — index errors are logged but
+    /// do not fail the save).
     pub fn save_entries(
         &self,
         id: &str,
@@ -843,7 +990,8 @@ impl JsonlSessionStore {
     ) -> io::Result<()> {
         validate_session_id(id)?;
         let path = session_path(&self.sessions_dir, id);
-        with_target_lock(&path, || {
+        #[allow(unused_variables)]
+        let write_meta = with_target_lock(&path, || {
             check_sequence_path(&path, id, meta.sequence)?;
 
             // Increment sequence for the write
@@ -867,8 +1015,28 @@ impl JsonlSessionStore {
                     }
                 }
                 Ok(())
-            })
-        })
+            })?;
+            Ok(write_meta)
+        })?;
+
+        // Update tantivy index (best-effort).
+        #[cfg(feature = "search")]
+        {
+            let entries_for_index: Vec<_> = entries.to_vec();
+            let meta_for_index = write_meta;
+            let _ = self.with_tantivy_index(|index| {
+                if let Err(err) = index.index_session(&meta_for_index, &entries_for_index) {
+                    tracing::warn!(
+                        session_id = %id,
+                        error = %err,
+                        "failed to update search index after save_entries"
+                    );
+                }
+                Ok(())
+            });
+        }
+
+        Ok(())
     }
 
     /// Load a session with rich entry types.

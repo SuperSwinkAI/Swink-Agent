@@ -48,6 +48,7 @@ cli = ["adapters"]
 adapters = ["dep:swink-agent-adapters"]
 full = ["local", "cli"]
 local = ["dep:swink-agent-local-llm"]
+remote = []
 
 [[example]]
 name = "custom_agent"
