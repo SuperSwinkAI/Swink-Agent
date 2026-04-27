@@ -143,7 +143,7 @@ impl<B: LoaderBackend> LazyLoader<B> {
             let notified = {
                 let state = self.inner.state.read().await;
                 match classify(&state) {
-                    StateClass::Ready | StateClass::Failed(_) | StateClass::Unloaded => return,
+                    StateClass::Ready | StateClass::Failed | StateClass::Unloaded => return,
                     StateClass::Waiting => self.inner.ready_notify.notified(),
                 }
             };
@@ -171,15 +171,12 @@ impl<B: LoaderBackend> LazyLoader<B> {
                 let state = self.inner.state.read().await;
                 match classify(&state) {
                     StateClass::Ready => return Ok(()),
-                    StateClass::Failed(error) => {
-                        return Err(LocalModelError::loading_message(error));
-                    }
                     StateClass::Waiting => {
                         drop(state);
                         self.wait_until_ready().await;
                         continue;
                     }
-                    StateClass::Unloaded => {}
+                    StateClass::Failed | StateClass::Unloaded => {}
                 }
             }
 
@@ -187,15 +184,12 @@ impl<B: LoaderBackend> LazyLoader<B> {
 
             match classify(&state) {
                 StateClass::Ready => return Ok(()),
-                StateClass::Failed(error) => {
-                    return Err(LocalModelError::loading_message(error));
-                }
                 StateClass::Waiting => {
                     drop(state);
                     self.wait_until_ready().await;
                     continue;
                 }
-                StateClass::Unloaded => {}
+                StateClass::Failed | StateClass::Unloaded => {}
             }
 
             // ── Phase 1: Download ──────────────────────────────────────────
@@ -304,7 +298,7 @@ pub enum PublicLoaderState {
 
 enum StateClass {
     Ready,
-    Failed(String),
+    Failed,
     Waiting,
     Unloaded,
 }
@@ -312,7 +306,7 @@ enum StateClass {
 fn classify<R>(state: &LoaderState<R>) -> StateClass {
     match state {
         LoaderState::Ready { .. } => StateClass::Ready,
-        LoaderState::Failed { error } => StateClass::Failed(error.clone()),
+        LoaderState::Failed { .. } => StateClass::Failed,
         LoaderState::Downloading | LoaderState::Loading => StateClass::Waiting,
         LoaderState::Unloaded => StateClass::Unloaded,
     }
@@ -369,6 +363,49 @@ mod tests {
         }
     }
 
+    #[derive(Debug)]
+    struct FlakyConfig {
+        download_attempts: Arc<AtomicUsize>,
+    }
+
+    struct FlakyBackend;
+
+    impl LoaderBackend for FlakyBackend {
+        type Config = FlakyConfig;
+        type Artifact = ();
+        type Runner = ();
+
+        fn download(
+            config: &Self::Config,
+            _progress_cb: Option<ProgressCallbackFn>,
+        ) -> Pin<Box<dyn Future<Output = Result<Self::Artifact, LocalModelError>> + Send + '_>>
+        {
+            let attempt = config.download_attempts.fetch_add(1, Ordering::SeqCst) + 1;
+            Box::pin(async move {
+                if attempt == 1 {
+                    Err(LocalModelError::download(io::Error::other(
+                        "synthetic transient failure",
+                    )))
+                } else {
+                    Ok(())
+                }
+            })
+        }
+
+        fn build(
+            _config: &Self::Config,
+            _artifact: Self::Artifact,
+            _progress_cb: Option<ProgressCallbackFn>,
+        ) -> Pin<Box<dyn Future<Output = Result<Self::Runner, LocalModelError>> + Send + '_>>
+        {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn label() -> &'static str {
+            "flaky test backend"
+        }
+    }
+
     #[test]
     fn loader_state_debug() {
         let states: Vec<LoaderState<()>> = vec![
@@ -412,7 +449,7 @@ mod tests {
         ));
         assert!(matches!(
             classify::<()>(&LoaderState::Failed { error: "e".into() }),
-            StateClass::Failed(_)
+            StateClass::Failed
         ));
     }
 
@@ -497,6 +534,36 @@ mod tests {
         assert!(matches!(
             &*loader.inner.state.read().await,
             LoaderState::Failed { .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn ensure_ready_retries_after_failed_state() {
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let loader = LazyLoader::<FlakyBackend>::new(FlakyConfig {
+            download_attempts: Arc::clone(&attempts),
+        });
+
+        let err = loader.ensure_ready().await.unwrap_err();
+        assert!(
+            err.to_string().contains("synthetic transient failure"),
+            "unexpected error: {err}"
+        );
+        assert_eq!(attempts.load(Ordering::SeqCst), 1);
+        assert!(matches!(
+            &*loader.inner.state.read().await,
+            LoaderState::Failed { .. }
+        ));
+
+        loader
+            .ensure_ready()
+            .await
+            .expect("failed state should retry and recover");
+
+        assert_eq!(attempts.load(Ordering::SeqCst), 2);
+        assert!(matches!(
+            &*loader.inner.state.read().await,
+            LoaderState::Ready { .. }
         ));
     }
 }
