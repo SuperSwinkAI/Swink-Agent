@@ -888,18 +888,7 @@ impl JsonlSessionStore {
             })
             .collect();
 
-        if !self.migrators.is_empty() {
-            crate::migrate::run_migrations(&mut meta, &mut entries, &self.migrators)?;
-        } else if meta.version > crate::migrate::CURRENT_VERSION {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!(
-                    "unsupported session version {} (current: {})",
-                    meta.version,
-                    crate::migrate::CURRENT_VERSION
-                ),
-            ));
-        }
+        crate::migrate::run_migrations(&mut meta, &mut entries, &self.migrators)?;
 
         let rebuilt = weave_migrated_entries(classified, entries, original_entry_count);
         Ok((meta, rebuilt))
@@ -2315,14 +2304,12 @@ mod tests {
         let id = "no-migrator";
         let path = session_path(dir.path(), id);
         let now = now_utc();
-        // A future version (> CURRENT_VERSION) triggers the unsupported-
-        // version error in both paths.
         let meta = SessionMeta {
             id: id.to_string(),
-            title: "future".to_string(),
+            title: "legacy".to_string(),
             created_at: now,
             updated_at: now,
-            version: crate::migrate::CURRENT_VERSION + 1,
+            version: 0,
             sequence: 0,
         };
         let contents = format!("{}\n", serde_json::to_string(&meta).unwrap());
@@ -2333,6 +2320,8 @@ mod tests {
         let entries_err = store.load_entries(id).unwrap_err();
         assert_eq!(load_err.kind(), io::ErrorKind::InvalidData);
         assert_eq!(entries_err.kind(), io::ErrorKind::InvalidData);
+        assert!(load_err.to_string().contains("no migrator found"));
+        assert!(entries_err.to_string().contains("no migrator found"));
     }
 
     #[test]
