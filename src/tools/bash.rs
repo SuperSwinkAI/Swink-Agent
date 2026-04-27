@@ -182,12 +182,15 @@ fn shell_command(command: &str) -> Command {
 
 async fn read_stream<R: tokio::io::AsyncRead + Unpin + Send + 'static>(pipe: Option<R>) -> Vec<u8> {
     use tokio::io::AsyncReadExt;
-    if let Some(p) = pipe {
+    if let Some(mut p) = pipe {
         let mut buf = Vec::with_capacity(MAX_OUTPUT_BYTES + 1);
-        let _ = p
+        let _ = (&mut p)
             .take((MAX_OUTPUT_BYTES + 1) as u64)
             .read_to_end(&mut buf)
             .await;
+        // Drain remaining bytes so the child process doesn't receive SIGPIPE
+        // when its output exceeds MAX_OUTPUT_BYTES.
+        let _ = tokio::io::copy(&mut p, &mut tokio::io::sink()).await;
         buf
     } else {
         Vec::new()
