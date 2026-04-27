@@ -2,6 +2,7 @@
 // Usage: node playwright_bridge.js
 
 const net = require('net');
+const dns = require('dns').promises;
 const readline = require('readline');
 
 let browser = null;
@@ -23,6 +24,14 @@ async function ensureBrowser() {
     browser = await resolveChromium().launch({ headless: true });
   }
   return browser;
+}
+
+function normalizeHost(host) {
+  const rawHost = String(host || '');
+  if (rawHost.startsWith('[') && rawHost.endsWith(']')) {
+    return rawHost.slice(1, -1);
+  }
+  return rawHost;
 }
 
 function hostMatches(list, host) {
@@ -52,22 +61,40 @@ function isPrivateIpv6(host) {
 }
 
 function isBlockedPrivateHost(host) {
-  const lowerHost = host.toLowerCase();
+  const normalizedHost = normalizeHost(host);
+  const lowerHost = normalizedHost.toLowerCase();
   if (lowerHost === 'localhost' || lowerHost.endsWith('.localhost')) {
     return true;
   }
 
-  const ipVersion = net.isIP(host);
+  const ipVersion = net.isIP(normalizedHost);
   if (ipVersion === 4) {
-    return isPrivateIpv4(host);
+    return isPrivateIpv4(normalizedHost);
   }
   if (ipVersion === 6) {
-    return isPrivateIpv6(host);
+    return isPrivateIpv6(normalizedHost);
   }
   return false;
 }
 
-function blockedByFilter(rawUrl, filter) {
+async function resolvesToBlockedPrivateAddress(host, lookup = dns.lookup) {
+  const normalizedHost = normalizeHost(host);
+  if (net.isIP(normalizedHost)) {
+    return isBlockedPrivateHost(normalizedHost) ? normalizedHost : null;
+  }
+
+  const addrs = await lookup(normalizedHost, { all: true, verbatim: true });
+  const results = Array.isArray(addrs) ? addrs : [addrs];
+  for (const result of results) {
+    const address = typeof result === 'string' ? result : result.address;
+    if (address && isBlockedPrivateHost(address)) {
+      return address;
+    }
+  }
+  return null;
+}
+
+async function blockedByFilter(rawUrl, filter, lookup = dns.lookup) {
   if (!filter) {
     return null;
   }
@@ -84,7 +111,7 @@ function blockedByFilter(rawUrl, filter) {
     return `URL scheme '${scheme}' is not allowed; only http and https are permitted`;
   }
 
-  const host = parsed.hostname;
+  const host = normalizeHost(parsed.hostname);
   if ((filter.allowlist || []).length > 0 && !hostMatches(filter.allowlist, host)) {
     return `Domain '${host}' is not on the allow list`;
   }
@@ -93,6 +120,16 @@ function blockedByFilter(rawUrl, filter) {
   }
   if (filter.blockPrivateIps && isBlockedPrivateHost(host)) {
     return `Address ${host} is a private/internal host and is blocked`;
+  }
+  if (filter.blockPrivateIps) {
+    try {
+      const blockedAddress = await resolvesToBlockedPrivateAddress(host, lookup);
+      if (blockedAddress) {
+        return `Address ${blockedAddress} is a private/internal host and is blocked`;
+      }
+    } catch (err) {
+      return `DNS resolution failed for '${host}': ${err.message}`;
+    }
   }
 
   return null;
@@ -105,7 +142,7 @@ async function installNavigationFilter(page, filter) {
   }
 
   await page.route('**/*', async (route) => {
-    const reason = blockedByFilter(route.request().url(), filter);
+    const reason = await blockedByFilter(route.request().url(), filter);
     if (reason) {
       blockedReason = reason;
       await route.abort('blockedbyclient');

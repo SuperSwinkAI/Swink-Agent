@@ -464,14 +464,43 @@ mod tests {
             r"
 const bridge = require({bridge_path});
 
+void (async () => {{
+async function resolvesTo(addresses) {{
+  return addresses.map((address) => {{
+    const family = address.includes(':') ? 6 : 4;
+    return {{ address, family }};
+  }});
+}}
+
 if (!bridge.isBlockedPrivateHost('127.0.0.1') || !bridge.isBlockedPrivateHost('localhost')) {{
   throw new Error('private host detection failed');
 }}
-if (bridge.blockedByFilter('https://evil.com/path', {{ allowlist: [], denylist: ['evil.com'], blockPrivateIps: true }}) === null) {{
+if (await bridge.blockedByFilter('https://evil.com/path', {{ allowlist: [], denylist: ['evil.com'], blockPrivateIps: true }}) === null) {{
   throw new Error('denylist filter failed');
 }}
-if (bridge.blockedByFilter('http://127.0.0.1/admin', {{ allowlist: [], denylist: [], blockPrivateIps: true }}) === null) {{
+if (await bridge.blockedByFilter('http://127.0.0.1/admin', {{ allowlist: [], denylist: [], blockPrivateIps: true }}) === null) {{
   throw new Error('private IP filter failed');
+}}
+if (await bridge.blockedByFilter(
+  'https://internal.example/admin',
+  {{ allowlist: [], denylist: [], blockPrivateIps: true }},
+  async () => resolvesTo(['10.0.0.5'])
+) === null) {{
+  throw new Error('resolved private subresource filter failed');
+}}
+if (await bridge.blockedByFilter(
+  'https://public.example/',
+  {{ allowlist: [], denylist: [], blockPrivateIps: true }},
+  async () => resolvesTo(['93.184.216.34'])
+) !== null) {{
+  throw new Error('public resolved address should not be blocked');
+}}
+if (!String(await bridge.blockedByFilter(
+  'https://unresolvable.example/',
+  {{ allowlist: [], denylist: [], blockPrivateIps: true }},
+  async () => {{ throw new Error('lookup failed'); }}
+)).includes('DNS resolution failed')) {{
+  throw new Error('DNS failures should fail closed');
 }}
 
 const linksPlan = bridge.buildExtractionPlan({{ preset: 'links' }});
@@ -547,6 +576,10 @@ const tableElement = bridge.extractElementData(
 if (tableElement.tag !== 'table' || !tableElement.text.includes('<tbody>')) {{
   throw new Error('unexpected table element: ' + JSON.stringify(tableElement));
 }}
+}})().catch((error) => {{
+  console.error(error.stack || error);
+  process.exit(1);
+}});
 ",
             bridge_path = serde_json::to_string(&bridge_path.display().to_string())
                 .expect("path should serialize"),
