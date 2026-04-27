@@ -59,7 +59,7 @@ pub fn agent_loop(
     cancellation_token: CancellationToken,
 ) -> Pin<Box<dyn Stream<Item = AgentEvent> + Send>> {
     let initial_new_messages_len = prompt_messages.len();
-    run_loop(
+    agent_loop_with_initial_new_messages_len(
         prompt_messages,
         initial_new_messages_len,
         system_prompt,
@@ -74,6 +74,22 @@ pub fn agent_loop(
 /// Returns a stream of `AgentEvent` values.
 #[must_use]
 pub fn agent_loop_continue(
+    messages: Vec<AgentMessage>,
+    initial_new_messages_len: usize,
+    system_prompt: String,
+    config: AgentLoopConfig,
+    cancellation_token: CancellationToken,
+) -> Pin<Box<dyn Stream<Item = AgentEvent> + Send>> {
+    agent_loop_with_initial_new_messages_len(
+        messages,
+        initial_new_messages_len,
+        system_prompt,
+        config,
+        cancellation_token,
+    )
+}
+
+pub(crate) fn agent_loop_with_initial_new_messages_len(
     messages: Vec<AgentMessage>,
     initial_new_messages_len: usize,
     system_prompt: String,

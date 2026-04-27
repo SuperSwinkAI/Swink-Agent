@@ -10,7 +10,9 @@ use tracing::{info, warn};
 
 use crate::agent_options::{ApproveToolFn, GetApiKeyFn};
 use crate::error::AgentError;
-use crate::loop_::{AgentEvent, AgentLoopConfig, agent_loop, agent_loop_continue};
+use crate::loop_::{
+    AgentEvent, AgentLoopConfig, agent_loop_continue, agent_loop_with_initial_new_messages_len,
+};
 use crate::message_provider::MessageProvider;
 use crate::types::message_codec::clone_messages_for_send;
 use crate::types::{AgentMessage, AgentResult, ContentBlock, LlmMessage};
@@ -284,7 +286,13 @@ impl Agent {
                 token,
             )
         } else {
-            agent_loop(messages_for_loop, system_prompt, config, token)
+            agent_loop_with_initial_new_messages_len(
+                messages_for_loop,
+                initial_new_messages_len,
+                system_prompt,
+                config,
+                token,
+            )
         };
 
         self.in_flight_llm_messages = Some(in_flight_llm_messages);
