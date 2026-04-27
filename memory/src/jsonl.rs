@@ -925,14 +925,14 @@ fn linear_search(
             {
                 continue;
             }
-            let Some((score, snippet)) = search::search_entry(&entry, &terms) else {
+            let Some((relevance, snippet)) = search::search_entry(&entry, &terms) else {
                 continue;
             };
             hits.push(SessionHit {
                 session_id: meta.id.clone(),
                 session_title: meta.title.clone(),
                 entry,
-                score,
+                score: relevance,
                 snippet,
             });
         }

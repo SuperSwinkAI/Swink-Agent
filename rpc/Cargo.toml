@@ -1,0 +1,53 @@
+[package]
+name = "swink-agent-rpc"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "JSON-RPC 2.0 agent service for swink-agent — expose an Agent over a Unix socket"
+license.workspace = true
+repository.workspace = true
+keywords = ["llm", "agent", "jsonrpc", "ipc", "unix-socket"]
+categories = ["development-tools", "network-programming", "command-line-utilities"]
+readme = "README.md"
+
+[lib]
+name = "swink_agent_rpc"
+path = "src/lib.rs"
+
+[[bin]]
+name = "swink-agentd"
+path = "src/bin/swink_agentd.rs"
+required-features = ["cli"]
+
+[features]
+default = ["client", "server"]
+client = []
+server = []
+cli = ["server", "dep:clap", "dep:swink-agent-adapters", "dep:dotenvy", "dep:tracing-subscriber"]
+
+[dependencies]
+swink-agent = { path = "..", version = "0.9.0" }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "io-util", "net", "signal", "time"] }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+futures.workspace = true
+tokio-stream.workspace = true
+clap = { workspace = true, optional = true }
+dotenvy = { workspace = true, optional = true }
+swink-agent-adapters = { path = "../adapters", version = "0.9.0", optional = true, features = ["anthropic", "openai"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
+
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.31", features = ["socket", "user"] }
+
+[dev-dependencies]
+swink-agent = { path = "..", default-features = false, features = ["testkit"] }
+swink-agent-adapters = { path = "../adapters" }
+tokio = { workspace = true, features = ["full", "test-util"] }
+tempfile.workspace = true
+pretty_assertions.workspace = true
+
+[lints]
+workspace = true

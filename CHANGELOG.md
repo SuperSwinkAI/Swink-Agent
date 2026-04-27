@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — spec 045 (JSON-RPC agent service)
+
+- **`swink-agent-rpc` crate** — new workspace crate exposing a `swink_agent::Agent` over a Unix-domain socket using JSON-RPC 2.0 / NDJSON.
+- **`AgentServer`** — Unix socket server with `0600` permissions, peer-credential check (Linux `SO_PEERCRED` / macOS `getpeereid`), single-session enforcement, and graceful Ctrl-C shutdown. Tool-approval round-trips via `tool.approve` JSON-RPC requests.
+- **`AgentClient`** — async client with `connect`, `prompt_text`, `with_approval_handler`, `cancel`, and `shutdown`. Streams `AgentEvent` values while driving a `prompt` request.
+- **`JsonRpcPeer` / `PeerSender`** — transport-agnostic JSON-RPC 2.0 peer over any async I/O pair. Reader and writer tasks run independently; `PeerSender` is `Clone` for use in callbacks.
+- **`swink-agentd` binary** — daemon binary (`cli` feature, unix-only) with `--listen`, `--force`, `--model`, and `--system-prompt` flags.
+- **Feature flags:** `client`, `server`, `cli` (default: `client + server`).
+
+### Removed
+
+- **`SocketTransport` stub** in `swink-agent-tui` — the `#[cfg(feature = "remote")]` stub that returned `TransportError::Unavailable` for all operations has been removed. Remote agent sessions are now provided by `swink-agent-rpc` + `swink-agentd`. The `remote` feature flag in `swink-agent-tui` has been removed. Closes #898.
+
 ## [0.9.0] - 2026-04-27
 
 ### Added — spec 044 (eval-driven self-improvement loop)

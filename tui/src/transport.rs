@@ -1,14 +1,12 @@
 //! Transport abstraction layer for the TUI.
 //!
 //! The [`TuiTransport`] trait decouples the TUI event loop from direct [`Agent`]
-//! access, enabling both in-process use and future remote JSON-RPC sessions.
+//! access.
 //!
 //! # Variants
 //!
 //! - [`InProcessTransport`] — wraps the existing in-process agent channel.
 //!   Default and zero-behavior-change replacement for direct agent access.
-//! - `SocketTransport` — connects to a remote JSON-RPC endpoint over a Unix
-//!   socket or named pipe. Available only when the `remote` feature is enabled.
 //!
 //! # Design
 //!
@@ -47,10 +45,6 @@ pub enum TransportError {
     #[error("failed to start agent stream: {0}")]
     StreamStart(String),
 
-    /// The requested transport is not available in this build.
-    #[error("transport not available (feature not enabled)")]
-    Unavailable,
-
     /// I/O error on the transport connection.
     #[error("transport I/O error: {0}")]
     Io(#[from] std::io::Error),
@@ -58,8 +52,8 @@ pub enum TransportError {
 
 /// Abstraction over message exchange between the TUI and the agent backend.
 ///
-/// Implementations forward user input to an agent (local or remote) and
-/// yield [`AgentEvent`] notifications back to the event loop.
+/// Implementations forward user input to an agent and yield [`AgentEvent`]
+/// notifications back to the event loop.
 pub trait TuiTransport: Send {
     /// Send user input to the agent. Returns once the input has been accepted
     /// by the underlying channel or connection.
@@ -179,47 +173,6 @@ impl TuiTransport for InProcessTransport {
     }
 }
 
-/// Remote transport connecting to a JSON-RPC endpoint over a Unix socket.
-///
-/// This type is only available when the `remote` feature gate is enabled.
-/// In the current build it is a stub that returns [`TransportError::Unavailable`]
-/// for all operations — a full implementation is a future milestone.
-#[cfg(feature = "remote")]
-pub struct SocketTransport {
-    /// Path to the Unix socket (or named pipe on Windows).
-    pub socket_path: std::path::PathBuf,
-}
-
-#[cfg(feature = "remote")]
-impl SocketTransport {
-    /// Construct a `SocketTransport` targeting the given socket path.
-    pub fn new(socket_path: impl Into<std::path::PathBuf>) -> Self {
-        Self {
-            socket_path: socket_path.into(),
-        }
-    }
-}
-
-#[cfg(feature = "remote")]
-impl TuiTransport for SocketTransport {
-    fn send(
-        &self,
-        _input: UserInput,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), TransportError>> + Send + '_>>
-    {
-        Box::pin(async move { Err(TransportError::Unavailable) })
-    }
-
-    fn recv(
-        &mut self,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<AgentEvent>> + Send + '_>> {
-        Box::pin(async move { None })
-    }
-
-    fn try_recv(&mut self) -> Option<AgentEvent> {
-        None
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -403,28 +356,5 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "remote")]
-    mod remote {
-        use super::*;
 
-        #[tokio::test]
-        async fn socket_transport_send_returns_unavailable() {
-            let transport = SocketTransport::new("/tmp/test.sock");
-            let result = transport.send(UserInput::new("hello")).await;
-            assert!(matches!(result, Err(TransportError::Unavailable)));
-        }
-
-        #[tokio::test]
-        async fn socket_transport_recv_returns_none() {
-            let mut transport = SocketTransport::new("/tmp/test.sock");
-            let event = transport.recv().await;
-            assert!(event.is_none());
-        }
-
-        #[test]
-        fn socket_transport_try_recv_returns_none() {
-            let mut transport = SocketTransport::new("/tmp/test.sock");
-            assert!(transport.try_recv().is_none());
-        }
-    }
 }

@@ -57,8 +57,6 @@ pub use config::TuiConfig;
 pub use error::TuiError;
 pub use session::JsonlSessionStore;
 pub use swink_agent::ApprovalMode;
-#[cfg(feature = "remote")]
-pub use transport::SocketTransport;
 pub use transport::{InProcessTransport, TransportError, TuiTransport, UserInput};
 pub use ui::conversation::ConversationView;
 pub use ui::input::InputEditor;

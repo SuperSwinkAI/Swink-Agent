@@ -2918,6 +2918,7 @@ dependencies = [
  "cfg-if",
  "cfg_aliases",
  "libc",
+ "memoffset",
 ]
 
 [[package]]
@@ -5210,6 +5211,27 @@ dependencies = [
  "tokio-util",
  "tracing",
  "unicode-truncate",
+]
+
+[[package]]
+name = "swink-agent-rpc"
+version = "0.9.0"
+dependencies = [
+ "clap",
+ "dotenvy",
+ "futures",
+ "nix 0.31.2",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "swink-agent",
+ "swink-agent-adapters",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-stream",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
