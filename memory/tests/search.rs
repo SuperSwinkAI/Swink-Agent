@@ -309,7 +309,10 @@ mod tantivy_tests {
         let before = store
             .search("ghostly", &SessionSearchOptions::default())
             .expect("search before");
-        assert!(!before.is_empty(), "session should be findable before removal");
+        assert!(
+            !before.is_empty(),
+            "session should be findable before removal"
+        );
 
         // Delete the session file directly — simulating out-of-band removal.
         let session_file = dir.path().join("ghost-session.jsonl");
