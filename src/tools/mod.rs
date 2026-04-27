@@ -22,6 +22,20 @@ pub use write_file::WriteFileTool;
 #[cfg(feature = "builtin-tools")]
 pub(crate) const MAX_OUTPUT_BYTES: usize = 100 * 1024;
 
+#[cfg(feature = "builtin-tools")]
+const TRUNCATED_MARKER: &str = "\n[truncated]";
+
+#[cfg(feature = "builtin-tools")]
+pub(crate) fn truncate_utf8_to_boundary(text: &mut String, max_bytes: usize) {
+    let mut end = max_bytes.min(text.len());
+    while end > 0 && !text.is_char_boundary(end) {
+        end -= 1;
+    }
+
+    text.truncate(end);
+    text.push_str(TRUNCATED_MARKER);
+}
+
 /// Returns all built-in tools (`BashTool`, `ReadFileTool`, `WriteFileTool`)
 /// wrapped in `Arc`, ready to pass to an [`Agent`](crate::Agent).
 #[cfg(feature = "builtin-tools")]

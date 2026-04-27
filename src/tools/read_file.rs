@@ -5,7 +5,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
-use super::MAX_OUTPUT_BYTES;
+use super::{MAX_OUTPUT_BYTES, truncate_utf8_to_boundary};
 use crate::tool::{AgentTool, AgentToolResult, ToolFuture, validated_schema_for};
 
 /// Built-in tool that reads a file and returns its contents.
@@ -73,11 +73,10 @@ impl AgentTool for ReadFileTool {
                 return AgentToolResult::error("cancelled");
             }
 
-            match tokio::fs::read_to_string(&parsed.path).await {
-                Ok(mut content) => {
-                    if content.len() > MAX_OUTPUT_BYTES {
-                        content.truncate(MAX_OUTPUT_BYTES);
-                        content.push_str("\n[truncated]");
+            match read_limited_utf8_file(&parsed.path).await {
+                Ok((mut content, truncated)) => {
+                    if truncated {
+                        truncate_utf8_to_boundary(&mut content, MAX_OUTPUT_BYTES);
                     }
                     AgentToolResult::text(content)
                 }
@@ -86,5 +85,72 @@ impl AgentTool for ReadFileTool {
                 }
             }
         })
+    }
+}
+
+async fn read_limited_utf8_file(path: &str) -> std::io::Result<(String, bool)> {
+    use tokio::io::AsyncReadExt;
+
+    let file = tokio::fs::File::open(path).await?;
+    let mut bytes = Vec::with_capacity(MAX_OUTPUT_BYTES + 1);
+    let mut reader = file.take((MAX_OUTPUT_BYTES + 1) as u64);
+    reader.read_to_end(&mut bytes).await?;
+
+    let truncated = bytes.len() > MAX_OUTPUT_BYTES;
+    match String::from_utf8(bytes) {
+        Ok(content) => Ok((content, truncated)),
+        Err(error) if truncated && error.utf8_error().error_len().is_none() => {
+            let valid_up_to = error.utf8_error().valid_up_to();
+            let bytes = error.into_bytes();
+            let content = String::from_utf8(bytes[..valid_up_to].to_vec())
+                .expect("valid UTF-8 prefix should decode");
+            Ok((content, truncated))
+        }
+        Err(error) => Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            error.utf8_error(),
+        )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, RwLock};
+
+    use serde_json::json;
+    use tokio_util::sync::CancellationToken;
+
+    use super::*;
+    use crate::SessionState;
+    use crate::types::ContentBlock;
+
+    fn result_text(result: &AgentToolResult) -> &str {
+        match result.content.first() {
+            Some(ContentBlock::Text { text }) => text.as_str(),
+            _ => panic!("expected text content"),
+        }
+    }
+
+    #[tokio::test]
+    async fn read_file_truncates_multibyte_content_on_char_boundary() {
+        let temp = tempfile::NamedTempFile::new().unwrap();
+        let content = "€".repeat((MAX_OUTPUT_BYTES / "€".len()) + 1);
+        tokio::fs::write(temp.path(), content).await.unwrap();
+
+        let result = ReadFileTool::new()
+            .execute(
+                "call-1",
+                json!({ "path": temp.path().to_str().unwrap() }),
+                CancellationToken::new(),
+                None,
+                Arc::new(RwLock::new(SessionState::new())),
+                None,
+            )
+            .await;
+
+        let text = result_text(&result);
+        assert!(!result.is_error);
+        assert!(text.contains("[truncated]"), "expected marker in: {text}");
+        assert!(text.is_char_boundary(text.len()));
     }
 }

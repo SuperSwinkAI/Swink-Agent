@@ -8,7 +8,7 @@ use serde_json::Value;
 use tokio::process::Command;
 use tokio_util::sync::CancellationToken;
 
-use super::MAX_OUTPUT_BYTES;
+use super::{MAX_OUTPUT_BYTES, truncate_utf8_to_boundary};
 use crate::tool::{AgentTool, AgentToolResult, ToolFuture, validated_schema_for};
 
 /// Default timeout in milliseconds.
@@ -163,9 +163,12 @@ fn shell_command(command: &str) -> Command {
 
 async fn read_stream<R: tokio::io::AsyncRead + Unpin + Send + 'static>(pipe: Option<R>) -> Vec<u8> {
     use tokio::io::AsyncReadExt;
-    if let Some(mut p) = pipe {
-        let mut buf = Vec::new();
-        let _ = p.read_to_end(&mut buf).await;
+    if let Some(p) = pipe {
+        let mut buf = Vec::with_capacity(MAX_OUTPUT_BYTES + 1);
+        let _ = p
+            .take((MAX_OUTPUT_BYTES + 1) as u64)
+            .read_to_end(&mut buf)
+            .await;
         buf
     } else {
         Vec::new()
@@ -185,12 +188,10 @@ fn format_output(exit_code: Option<i32>, stdout: &[u8], stderr: &[u8]) -> AgentT
         let stderr_budget = MAX_OUTPUT_BYTES.saturating_sub(stdout_budget);
 
         if stdout_text.len() > stdout_budget {
-            stdout_text.truncate(stdout_budget);
-            stdout_text.push_str("\n[truncated]");
+            truncate_utf8_to_boundary(&mut stdout_text, stdout_budget);
         }
         if stderr_text.len() > stderr_budget {
-            stderr_text.truncate(stderr_budget);
-            stderr_text.push_str("\n[truncated]");
+            truncate_utf8_to_boundary(&mut stderr_text, stderr_budget);
         }
     }
 
@@ -206,4 +207,44 @@ fn format_output(exit_code: Option<i32>, stdout: &[u8], stderr: &[u8]) -> AgentT
     }
 
     AgentToolResult::text(text)
+}
+
+#[cfg(test)]
+mod tests {
+    use tokio::io::AsyncWriteExt;
+
+    use super::*;
+    use crate::types::ContentBlock;
+
+    fn result_text(result: &AgentToolResult) -> &str {
+        match result.content.first() {
+            Some(ContentBlock::Text { text }) => text.as_str(),
+            _ => panic!("expected text content"),
+        }
+    }
+
+    #[test]
+    fn format_output_truncates_multibyte_stdout_on_char_boundary() {
+        let stdout = "€".repeat((MAX_OUTPUT_BYTES / "€".len()) + 1);
+
+        let result = format_output(Some(0), stdout.as_bytes(), &[]);
+        let text = result_text(&result);
+
+        assert!(text.contains("[truncated]"), "expected marker in: {text}");
+        assert!(text.is_char_boundary(text.len()));
+    }
+
+    #[tokio::test]
+    async fn read_stream_stops_after_output_budget_sentinel() {
+        let (reader, mut writer) = tokio::io::duplex(1024);
+        let writer_task = tokio::spawn(async move {
+            let bytes = vec![b'a'; MAX_OUTPUT_BYTES + 2];
+            let _ = writer.write_all(&bytes).await;
+        });
+
+        let output = read_stream(Some(reader)).await;
+        let _ = writer_task.await;
+
+        assert_eq!(output.len(), MAX_OUTPUT_BYTES + 1);
+    }
 }
