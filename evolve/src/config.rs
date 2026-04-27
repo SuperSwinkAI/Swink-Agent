@@ -1,10 +1,10 @@
+use crate::mutate::MutationStrategy;
+use regex::Regex;
 use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::Mutex;
-use regex::Regex;
 use swink_agent::{Cost, ToolSchema};
 use swink_agent_eval::EvalSet;
-use crate::mutate::MutationStrategy;
 
 /// A named region within a system prompt, identified by section header.
 #[derive(Debug, Clone, PartialEq)]
@@ -84,7 +84,11 @@ impl OptimizationTarget {
             tool_schemas: self
                 .tool_schemas
                 .iter()
-                .map(|t| ToolSchema { name: t.name.clone(), description: t.description.clone(), parameters: t.parameters.clone() })
+                .map(|t| ToolSchema {
+                    name: t.name.clone(),
+                    description: t.description.clone(),
+                    parameters: t.parameters.clone(),
+                })
                 .collect(),
             section_delimiter: new_delim,
         }
@@ -323,18 +327,36 @@ mod tests {
 
     #[test]
     fn budget_tracks_spending() {
-        let budget = CycleBudget::new(Cost { total: 1.0, ..Cost::default() });
-        budget.record(Cost { total: 0.3, ..Cost::default() });
-        budget.record(Cost { total: 0.3, ..Cost::default() });
+        let budget = CycleBudget::new(Cost {
+            total: 1.0,
+            ..Cost::default()
+        });
+        budget.record(Cost {
+            total: 0.3,
+            ..Cost::default()
+        });
+        budget.record(Cost {
+            total: 0.3,
+            ..Cost::default()
+        });
         assert!(!budget.is_exhausted());
-        budget.record(Cost { total: 0.5, ..Cost::default() });
+        budget.record(Cost {
+            total: 0.5,
+            ..Cost::default()
+        });
         assert!(budget.is_exhausted());
     }
 
     #[test]
     fn budget_exhausted_at_max() {
-        let budget = CycleBudget::new(Cost { total: 1.0, ..Cost::default() });
-        budget.record(Cost { total: 1.0, ..Cost::default() });
+        let budget = CycleBudget::new(Cost {
+            total: 1.0,
+            ..Cost::default()
+        });
+        budget.record(Cost {
+            total: 1.0,
+            ..Cost::default()
+        });
         assert!(budget.is_exhausted());
     }
 }

@@ -1,7 +1,7 @@
+use crate::mutate::{Candidate, MutationContext, MutationError, MutationStrategy, deduplicate};
 use rand::SeedableRng;
 use rand::seq::SliceRandom;
 use regex::Regex;
-use crate::mutate::{Candidate, MutationContext, MutationError, MutationStrategy, deduplicate};
 
 /// Pairs of (compiled pattern, replacement string).
 struct Template {
@@ -25,7 +25,10 @@ fn built_in_templates() -> Vec<Template> {
     ];
     raw.iter()
         .filter_map(|(find, replace)| {
-            Regex::new(find).ok().map(|p| Template { pattern: p, replacement: replace.to_string() })
+            Regex::new(find).ok().map(|p| Template {
+                pattern: p,
+                replacement: replace.to_string(),
+            })
         })
         .collect()
 }
@@ -37,12 +40,17 @@ pub struct TemplateBased {
 
 impl TemplateBased {
     pub fn new() -> Self {
-        Self { templates: built_in_templates() }
+        Self {
+            templates: built_in_templates(),
+        }
     }
 
     /// Add a user-provided regex template.
     pub fn with_template(mut self, find: &str, replace: &str) -> Result<Self, regex::Error> {
-        self.templates.push(Template { pattern: Regex::new(find)?, replacement: replace.to_string() });
+        self.templates.push(Template {
+            pattern: Regex::new(find)?,
+            replacement: replace.to_string(),
+        });
         Ok(self)
     }
 }
@@ -68,7 +76,10 @@ impl MutationStrategy for TemplateBased {
             .templates
             .iter()
             .filter_map(|t| {
-                let result = t.pattern.replace_all(target, t.replacement.as_str()).into_owned();
+                let result = t
+                    .pattern
+                    .replace_all(target, t.replacement.as_str())
+                    .into_owned();
                 if result == target {
                     None
                 } else {

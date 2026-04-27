@@ -1,10 +1,10 @@
-use std::collections::{HashMap, HashSet};
-use serde::{Deserialize, Serialize};
-use serde_json::Value as JsonValue;
-use swink_agent_eval::Verdict;
 use crate::diagnose::TargetComponent;
 use crate::evaluate::CandidateResult;
 use crate::mutate::Candidate;
+use serde::{Deserialize, Serialize};
+use serde_json::Value as JsonValue;
+use std::collections::{HashMap, HashSet};
+use swink_agent_eval::Verdict;
 
 /// The outcome of evaluating a single candidate against the acceptance criteria.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -51,7 +51,10 @@ pub struct AcceptanceGate {
 
 impl AcceptanceGate {
     pub fn new(threshold: f64) -> Self {
-        Self { threshold, case_metadata: HashMap::new() }
+        Self {
+            threshold,
+            case_metadata: HashMap::new(),
+        }
     }
 
     /// Inject per-case metadata (used to distinguish P1 from P2/P3 cases).
@@ -80,7 +83,11 @@ impl AcceptanceGate {
             let improvement = cr.aggregate_score - baseline.aggregate_score;
 
             if improvement <= 0.0 {
-                rejected.push((cr.candidate.clone(), cr.clone(), AcceptanceVerdict::NoImprovement));
+                rejected.push((
+                    cr.candidate.clone(),
+                    cr.clone(),
+                    AcceptanceVerdict::NoImprovement,
+                ));
                 continue;
             }
 
@@ -88,7 +95,10 @@ impl AcceptanceGate {
                 rejected.push((
                     cr.candidate.clone(),
                     cr.clone(),
-                    AcceptanceVerdict::BelowThreshold { improvement, threshold: self.threshold },
+                    AcceptanceVerdict::BelowThreshold {
+                        improvement,
+                        threshold: self.threshold,
+                    },
                 ));
                 continue;
             }
@@ -99,7 +109,10 @@ impl AcceptanceGate {
                 if !self.is_p1(&case_result.case_id) {
                     continue;
                 }
-                let was_passing = baseline_pass.get(case_result.case_id.as_str()).copied().unwrap_or(false);
+                let was_passing = baseline_pass
+                    .get(case_result.case_id.as_str())
+                    .copied()
+                    .unwrap_or(false);
                 let now_failing = case_result.verdict != Verdict::Pass;
                 if was_passing && now_failing {
                     regression_case_id = Some(case_result.case_id.clone());
@@ -120,9 +133,8 @@ impl AcceptanceGate {
         }
 
         // Among accepted: rank by improvement desc, apply per-component top-only rule.
-        tentatively_accepted.sort_by(|a, b| {
-            b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal)
-        });
+        tentatively_accepted
+            .sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
 
         let mut seen_components: HashSet<String> = HashSet::new();
         let mut applied = Vec::new();
@@ -137,12 +149,18 @@ impl AcceptanceGate {
             }
         }
 
-        AcceptanceResult { applied, accepted_not_applied, rejected }
+        AcceptanceResult {
+            applied,
+            accepted_not_applied,
+            rejected,
+        }
     }
 
     /// Returns `true` if the case should be treated as P1 (default when no metadata).
     fn is_p1(&self, case_id: &str) -> bool {
-        if let Some(priority) = self.case_metadata.get(case_id)
+        if let Some(priority) = self
+            .case_metadata
+            .get(case_id)
             .and_then(|meta| meta.get("priority"))
             .and_then(|v| v.as_str())
         {

@@ -3,13 +3,11 @@
 use std::sync::Arc;
 
 use swink_agent::{Agent, AgentOptions, ModelSpec, testing::SimpleMockStreamFn};
-use swink_agent_eval::{
-    AgentFactory, EvalCase, EvalError, EvalSet, ResponseCriteria, Score,
-};
+use swink_agent_eval::{AgentFactory, EvalCase, EvalError, EvalSet, ResponseCriteria, Score};
 use tokio_util::sync::CancellationToken;
 
-use swink_agent_evolve::{OptimizationConfig, OptimizationTarget};
 use swink_agent_evolve::runner::EvolutionRunner;
+use swink_agent_evolve::{OptimizationConfig, OptimizationTarget};
 
 struct EchoFactory;
 
@@ -51,7 +49,12 @@ fn case_with_custom_score(id: &str, score_value: f64) -> EvalCase {
 
 fn make_runner(cases: Vec<EvalCase>) -> EvolutionRunner {
     let target = OptimizationTarget::new("You are helpful.", vec![]);
-    let eval_set = EvalSet { id: "test".into(), name: "Test".into(), description: None, cases };
+    let eval_set = EvalSet {
+        id: "test".into(),
+        name: "Test".into(),
+        description: None,
+        cases,
+    };
     let config = OptimizationConfig::new(eval_set, "/tmp/evolve-baseline-test");
     EvolutionRunner::new(target, config, Arc::new(EchoFactory), None)
 }
@@ -122,6 +125,9 @@ async fn baseline_records_failures_with_details() {
         "failing case should produce metric results"
     );
     let metric = &case_result.metric_results[0];
-    assert!(metric.details.is_some(), "failure details should be propagated from evaluator");
+    assert!(
+        metric.details.is_some(),
+        "failure details should be propagated from evaluator"
+    );
     assert_eq!(metric.score.value, 0.0, "response mismatch should score 0");
 }

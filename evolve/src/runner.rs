@@ -1,7 +1,3 @@
-use std::sync::Arc;
-use thiserror::Error;
-use swink_agent::{Cost, ToolSchema};
-use swink_agent_eval::{AgentFactory, EvalError, EvalRunner, EvaluatorRegistry, JudgeClient};
 use crate::config::{OptimizationConfig, OptimizationTarget};
 use crate::diagnose::{Diagnoser, TargetComponent};
 use crate::evaluate::{CandidateResult, MutatingAgentFactory};
@@ -9,6 +5,10 @@ use crate::gate::{AcceptanceGate, AcceptanceResult};
 use crate::mutate::{Candidate, MutationContext, deduplicate};
 use crate::persist::CyclePersister;
 use crate::types::{BaselineSnapshot, CycleResult, CycleStatus};
+use std::sync::Arc;
+use swink_agent::{Cost, ToolSchema};
+use swink_agent_eval::{AgentFactory, EvalError, EvalRunner, EvaluatorRegistry, JudgeClient};
+use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum EvolveError {
@@ -44,7 +44,14 @@ impl EvolutionRunner {
             None => EvaluatorRegistry::with_defaults(),
         };
         let eval_runner = EvalRunner::new(registry).with_parallelism(parallelism);
-        Self { target, config, factory, judge, eval_runner, cycle_number: 0 }
+        Self {
+            target,
+            config,
+            factory,
+            judge,
+            eval_runner,
+            cycle_number: 0,
+        }
     }
 
     /// Override the internal `EvalRunner` (useful for testing with custom evaluators).
@@ -75,9 +82,12 @@ impl EvolutionRunner {
 
         // Check budget before starting.
         if self.config.budget.is_exhausted() {
-            return Ok(self.early_exit(cycle_number, CycleStatus::BudgetExhausted {
-                phase: "baseline".to_string(),
-            }));
+            return Ok(self.early_exit(
+                cycle_number,
+                CycleStatus::BudgetExhausted {
+                    phase: "baseline".to_string(),
+                },
+            ));
         }
 
         // Phase: baseline.
@@ -85,9 +95,13 @@ impl EvolutionRunner {
         self.config.budget.record(baseline.cost.clone());
 
         if self.config.budget.is_exhausted() {
-            return Ok(self.early_exit_with_baseline(cycle_number, baseline, CycleStatus::BudgetExhausted {
-                phase: "baseline".to_string(),
-            }));
+            return Ok(self.early_exit_with_baseline(
+                cycle_number,
+                baseline,
+                CycleStatus::BudgetExhausted {
+                    phase: "baseline".to_string(),
+                },
+            ));
         }
 
         // Phase: diagnose.
@@ -95,7 +109,17 @@ impl EvolutionRunner {
         let weak_points = diagnoser.diagnose(&baseline, &self.target);
 
         if weak_points.is_empty() {
-            return Ok(self.cycle_result(cycle_number, baseline, vec![], 0, AcceptanceResult::empty(), Cost::default(), CycleStatus::NoDiagnosis, None, vec![]));
+            return Ok(self.cycle_result(
+                cycle_number,
+                baseline,
+                vec![],
+                0,
+                AcceptanceResult::empty(),
+                Cost::default(),
+                CycleStatus::NoDiagnosis,
+                None,
+                vec![],
+            ));
         }
 
         // Phase: mutate (with panic isolation).
@@ -123,7 +147,8 @@ impl EvolutionRunner {
                     }
                     Err(payload) => {
                         let msg = panic_message(&payload);
-                        mutation_errors.push((strategy.name().to_string(), format!("Panic: {msg}")));
+                        mutation_errors
+                            .push((strategy.name().to_string(), format!("Panic: {msg}")));
                     }
                 }
             }
@@ -132,7 +157,17 @@ impl EvolutionRunner {
         }
 
         if all_candidates.is_empty() {
-            return Ok(self.cycle_result(cycle_number, baseline, weak_points, 0, AcceptanceResult::empty(), Cost::default(), CycleStatus::NoImprovements, None, mutation_errors));
+            return Ok(self.cycle_result(
+                cycle_number,
+                baseline,
+                weak_points,
+                0,
+                AcceptanceResult::empty(),
+                Cost::default(),
+                CycleStatus::NoImprovements,
+                None,
+                mutation_errors,
+            ));
         }
 
         // Phase: evaluate candidates.
@@ -148,7 +183,8 @@ impl EvolutionRunner {
                 Arc::clone(&self.factory),
                 override_prompt,
             ));
-            let set_result = self.eval_runner
+            let set_result = self
+                .eval_runner
                 .run_set(&self.config.eval_set, wrapped_factory.as_ref())
                 .await?;
             let aggregate = BaselineSnapshot::aggregate_from_results(&set_result.case_results);
@@ -178,7 +214,8 @@ impl EvolutionRunner {
 
         let total_cost = baseline.cost.clone() + eval_cost;
 
-        let status = if acceptance.applied.is_empty() && acceptance.accepted_not_applied.is_empty() {
+        let status = if acceptance.applied.is_empty() && acceptance.accepted_not_applied.is_empty()
+        {
             CycleStatus::NoImprovements
         } else {
             CycleStatus::Complete
@@ -213,7 +250,12 @@ impl EvolutionRunner {
 
             results.push(result);
 
-            if matches!(status, CycleStatus::NoDiagnosis | CycleStatus::NoImprovements | CycleStatus::BudgetExhausted { .. }) {
+            if matches!(
+                status,
+                CycleStatus::NoDiagnosis
+                    | CycleStatus::NoImprovements
+                    | CycleStatus::BudgetExhausted { .. }
+            ) {
                 break;
             }
         }
@@ -290,9 +332,11 @@ impl EvolutionRunner {
 fn target_component_value(target: &OptimizationTarget, component: &TargetComponent) -> String {
     match component {
         TargetComponent::FullPrompt => target.system_prompt().to_string(),
-        TargetComponent::PromptSection { index, .. } => {
-            target.sections().get(*index).map(|s| s.content.clone()).unwrap_or_default()
-        }
+        TargetComponent::PromptSection { index, .. } => target
+            .sections()
+            .get(*index)
+            .map(|s| s.content.clone())
+            .unwrap_or_default(),
         TargetComponent::ToolDescription { tool_name } => target
             .tool_schemas()
             .iter()
@@ -311,7 +355,10 @@ fn prompt_override(candidate: &Candidate) -> Option<String> {
     }
 }
 
-fn apply_candidate_to_target(target: &OptimizationTarget, candidate: &Candidate) -> OptimizationTarget {
+fn apply_candidate_to_target(
+    target: &OptimizationTarget,
+    candidate: &Candidate,
+) -> OptimizationTarget {
     match &candidate.component {
         TargetComponent::FullPrompt => target.with_system_prompt(&candidate.mutated_value),
         TargetComponent::PromptSection { index, .. } => {

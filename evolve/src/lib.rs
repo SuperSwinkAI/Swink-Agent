@@ -31,7 +31,7 @@ pub use evaluate::CandidateResult;
 pub use gate::{AcceptanceGate, AcceptanceResult, AcceptanceVerdict};
 
 // Core runner
-pub use runner::{EvolveError, EvolutionRunner};
+pub use runner::{EvolutionRunner, EvolveError};
 
 // Results
 pub use types::{BaselineSnapshot, CycleResult, CycleStatus};

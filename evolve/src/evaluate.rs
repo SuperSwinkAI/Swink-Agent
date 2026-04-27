@@ -1,9 +1,9 @@
+use crate::mutate::Candidate;
 use std::sync::Arc;
 use swink_agent::Cost;
+use swink_agent_eval::EvalCaseResult;
 use swink_agent_eval::{AgentFactory, EvalCase, EvalError};
 use tokio_util::sync::CancellationToken;
-use crate::mutate::Candidate;
-use swink_agent_eval::EvalCaseResult;
 
 /// Evaluation result for a single candidate mutation.
 #[derive(Debug, Clone)]
@@ -28,7 +28,10 @@ pub struct MutatingAgentFactory {
 
 impl MutatingAgentFactory {
     pub fn new(inner: Arc<dyn AgentFactory>, override_prompt: Option<String>) -> Self {
-        Self { inner, override_prompt }
+        Self {
+            inner,
+            override_prompt,
+        }
     }
 }
 
@@ -46,4 +49,3 @@ impl AgentFactory for MutatingAgentFactory {
         }
     }
 }
-

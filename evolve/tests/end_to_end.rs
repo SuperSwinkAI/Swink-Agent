@@ -6,11 +6,11 @@ use swink_agent::{Agent, AgentOptions, Cost, ModelSpec, testing::SimpleMockStrea
 use swink_agent_eval::{AgentFactory, EvalCase, EvalError, EvalSet, ResponseCriteria, Score};
 use tokio_util::sync::CancellationToken;
 
+use swink_agent_evolve::runner::EvolutionRunner;
 use swink_agent_evolve::{
     Candidate, CycleBudget, CycleStatus, MutationContext, MutationError, MutationStrategy,
     OptimizationConfig, OptimizationTarget,
 };
-use swink_agent_evolve::runner::EvolutionRunner;
 
 // ─── Factories ─────────────────────────────────────────────────────────────
 
@@ -44,8 +44,14 @@ impl AgentFactory for SystemPromptEchoFactory {
 struct PanickingStrategy;
 
 impl MutationStrategy for PanickingStrategy {
-    fn name(&self) -> &str { "panicking" }
-    fn mutate(&self, _target: &str, _context: &MutationContext) -> Result<Vec<Candidate>, MutationError> {
+    fn name(&self) -> &str {
+        "panicking"
+    }
+    fn mutate(
+        &self,
+        _target: &str,
+        _context: &MutationContext,
+    ) -> Result<Vec<Candidate>, MutationError> {
         panic!("intentional test panic")
     }
 }
@@ -55,8 +61,14 @@ impl MutationStrategy for PanickingStrategy {
 struct HelpfulToUsefulStrategy;
 
 impl MutationStrategy for HelpfulToUsefulStrategy {
-    fn name(&self) -> &str { "helpful_to_useful" }
-    fn mutate(&self, target: &str, context: &MutationContext) -> Result<Vec<Candidate>, MutationError> {
+    fn name(&self) -> &str {
+        "helpful_to_useful"
+    }
+    fn mutate(
+        &self,
+        target: &str,
+        context: &MutationContext,
+    ) -> Result<Vec<Candidate>, MutationError> {
         let mutated = target.replace("helpful", "useful");
         if mutated == target {
             return Ok(vec![]);
@@ -109,7 +121,11 @@ fn content_scored_case(id: &str) -> EvalCase {
         system_prompt: "You are a helpful assistant.".to_string(),
         user_messages: vec!["hello".to_string()],
         expected_response: Some(ResponseCriteria::Custom(Arc::new(|response: &str| Score {
-            value: if response.contains("useful") { 0.9 } else { 0.3 },
+            value: if response.contains("useful") {
+                0.9
+            } else {
+                0.3
+            },
             threshold: 0.5,
         }))),
         expected_trajectory: None,
@@ -129,7 +145,12 @@ fn content_scored_case(id: &str) -> EvalCase {
 }
 
 fn make_eval_set(cases: Vec<EvalCase>) -> EvalSet {
-    EvalSet { id: "e2e".into(), name: "E2E Test".into(), description: None, cases }
+    EvalSet {
+        id: "e2e".into(),
+        name: "E2E Test".into(),
+        description: None,
+        cases,
+    }
 }
 
 // ─── Tests ──────────────────────────────────────────────────────────────────
@@ -147,10 +168,19 @@ async fn run_cycle_executes_all_phases() {
     let result = runner.run_cycle().await.unwrap();
 
     assert_eq!(result.cycle_number, 1);
-    assert!(!result.weak_points.is_empty(), "low-scoring cases should produce weak points");
-    assert!(result.candidates_evaluated >= 1, "at least one candidate should be evaluated");
-    assert_eq!(result.status, CycleStatus::NoImprovements,
-        "EchoFactory always returns 0.3, so no improvement over baseline");
+    assert!(
+        !result.weak_points.is_empty(),
+        "low-scoring cases should produce weak points"
+    );
+    assert!(
+        result.candidates_evaluated >= 1,
+        "at least one candidate should be evaluated"
+    );
+    assert_eq!(
+        result.status,
+        CycleStatus::NoImprovements,
+        "EchoFactory always returns 0.3, so no improvement over baseline"
+    );
 }
 
 #[tokio::test]
@@ -165,7 +195,11 @@ async fn run_cycles_stops_on_no_improvement() {
 
     let results = runner.run_cycles(5).await.unwrap();
 
-    assert_eq!(results.len(), 1, "run_cycles should stop after the first NoImprovements cycle");
+    assert_eq!(
+        results.len(),
+        1,
+        "run_cycles should stop after the first NoImprovements cycle"
+    );
     assert_eq!(results[0].status, CycleStatus::NoImprovements);
 }
 
@@ -174,15 +208,18 @@ async fn budget_exhaustion_returns_partial_result() {
     let tmp = tempfile::tempdir().unwrap();
     let target = OptimizationTarget::new("You are a helpful assistant.", vec![]);
     let set = make_eval_set(vec![low_score_case("c1")]);
-    let config = OptimizationConfig::new(set, tmp.path())
-        .with_budget(CycleBudget::new(Cost { total: 0.0, ..Cost::default() }));
+    let config = OptimizationConfig::new(set, tmp.path()).with_budget(CycleBudget::new(Cost {
+        total: 0.0,
+        ..Cost::default()
+    }));
     let mut runner = EvolutionRunner::new(target, config, Arc::new(EchoFactory), None);
 
     let result = runner.run_cycle().await.unwrap();
 
     assert!(
         matches!(result.status, CycleStatus::BudgetExhausted { .. }),
-        "expected BudgetExhausted, got {:?}", result.status,
+        "expected BudgetExhausted, got {:?}",
+        result.status,
     );
     assert_eq!(result.candidates_evaluated, 0);
 }
@@ -197,15 +234,17 @@ async fn consecutive_cycles_chain_improvements() {
     let config = OptimizationConfig::new(set, tmp.path())
         .with_strategies(vec![Box::new(HelpfulToUsefulStrategy)])
         .with_acceptance_threshold(0.1);
-    let mut runner = EvolutionRunner::new(
-        target, config, Arc::new(SystemPromptEchoFactory), None,
-    );
+    let mut runner = EvolutionRunner::new(target, config, Arc::new(SystemPromptEchoFactory), None);
 
     let results = runner.run_cycles(5).await.unwrap();
 
     // Cycle 1: baseline 0.3, candidate (prompt has "useful") → 0.9; accepted.
     // Cycle 2: target now "…useful…"; HelpfulToUseful finds nothing → NoImprovements; stops.
-    assert_eq!(results.len(), 2, "expected exactly 2 cycles before convergence");
+    assert_eq!(
+        results.len(),
+        2,
+        "expected exactly 2 cycles before convergence"
+    );
     assert_eq!(results[0].status, CycleStatus::Complete);
     assert!(
         !results[0].acceptance.applied.is_empty(),
@@ -219,16 +258,22 @@ async fn panic_strategy_caught_and_recorded() {
     let tmp = tempfile::tempdir().unwrap();
     let target = OptimizationTarget::new("You are a helpful assistant.", vec![]);
     let set = make_eval_set(vec![low_score_case("c1")]);
-    let config = OptimizationConfig::new(set, tmp.path())
-        .with_strategies(vec![Box::new(PanickingStrategy)]);
+    let config =
+        OptimizationConfig::new(set, tmp.path()).with_strategies(vec![Box::new(PanickingStrategy)]);
     let mut runner = EvolutionRunner::new(target, config, Arc::new(EchoFactory), None);
 
     let result = runner.run_cycle().await.unwrap();
 
-    assert!(!result.mutation_errors.is_empty(), "panicking strategy should be recorded as error");
+    assert!(
+        !result.mutation_errors.is_empty(),
+        "panicking strategy should be recorded as error"
+    );
     let (strategy_name, msg) = &result.mutation_errors[0];
     assert_eq!(strategy_name, "panicking");
-    assert!(msg.starts_with("Panic:"), "error message should start with 'Panic:', got: {msg}");
+    assert!(
+        msg.starts_with("Panic:"),
+        "error message should start with 'Panic:', got: {msg}"
+    );
     assert_eq!(result.candidates_evaluated, 0);
     assert_eq!(result.status, CycleStatus::NoImprovements);
 }
@@ -245,14 +290,32 @@ async fn cycle_cost_matches_eval_costs() {
 
     let result = runner.run_cycle().await.unwrap();
 
-    let candidate_cost: f64 = result.acceptance.applied.iter().map(|(_, cr)| cr.cost.total)
-        .chain(result.acceptance.accepted_not_applied.iter().map(|(_, cr)| cr.cost.total))
-        .chain(result.acceptance.rejected.iter().map(|(_, cr, _)| cr.cost.total))
+    let candidate_cost: f64 = result
+        .acceptance
+        .applied
+        .iter()
+        .map(|(_, cr)| cr.cost.total)
+        .chain(
+            result
+                .acceptance
+                .accepted_not_applied
+                .iter()
+                .map(|(_, cr)| cr.cost.total),
+        )
+        .chain(
+            result
+                .acceptance
+                .rejected
+                .iter()
+                .map(|(_, cr, _)| cr.cost.total),
+        )
         .sum();
     let expected = result.baseline.cost.total + candidate_cost;
     assert!(
         (result.total_cost.total - expected).abs() < 1e-10,
         "total_cost ({}) must equal baseline ({}) + candidate costs ({})",
-        result.total_cost.total, result.baseline.cost.total, candidate_cost,
+        result.total_cost.total,
+        result.baseline.cost.total,
+        candidate_cost,
     );
 }

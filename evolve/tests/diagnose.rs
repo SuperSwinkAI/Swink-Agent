@@ -5,9 +5,7 @@ use std::time::Duration;
 use swink_agent::{Cost, ModelSpec, StopReason, Usage};
 use swink_agent_eval::{EvalCaseResult, EvalMetricResult, Invocation, Score, Verdict};
 
-use swink_agent_evolve::{
-    BaselineSnapshot, Diagnoser, OptimizationTarget, TargetComponent,
-};
+use swink_agent_evolve::{BaselineSnapshot, Diagnoser, OptimizationTarget, TargetComponent};
 
 fn make_invocation() -> Invocation {
     Invocation {
@@ -27,7 +25,11 @@ fn failing_metric(
     threshold: f64,
     details: Option<String>,
 ) -> EvalMetricResult {
-    EvalMetricResult { evaluator_name: evaluator_name.to_string(), score: Score { value, threshold }, details }
+    EvalMetricResult {
+        evaluator_name: evaluator_name.to_string(),
+        score: Score { value, threshold },
+        details,
+    }
 }
 
 fn passing_metric(evaluator_name: &str, value: f64, threshold: f64) -> EvalMetricResult {
@@ -71,7 +73,9 @@ fn diagnose_identifies_tool_failure() {
     assert_eq!(weak_points.len(), 1);
     assert_eq!(
         weak_points[0].component,
-        TargetComponent::ToolDescription { tool_name: "my_tool".to_string() }
+        TargetComponent::ToolDescription {
+            tool_name: "my_tool".to_string()
+        }
     );
     assert_eq!(weak_points[0].affected_cases.len(), 3);
 }
@@ -80,7 +84,12 @@ fn diagnose_identifies_tool_failure() {
 fn diagnose_identifies_prompt_failure() {
     let cases = vec![build_case_result(
         "c1",
-        vec![failing_metric("response", 0.0, 0.5, Some("mismatch".into()))],
+        vec![failing_metric(
+            "response",
+            0.0,
+            0.5,
+            Some("mismatch".into()),
+        )],
     )];
     let baseline = build_baseline(cases);
     let diagnoser = Diagnoser::new(5);
@@ -119,7 +128,10 @@ fn diagnose_ranks_by_severity() {
         build_case_result("c1", vec![failing_metric("response", 0.1, 0.5, None)]),
         build_case_result("c2", vec![failing_metric("response", 0.1, 0.5, None)]),
         build_case_result("c3", vec![failing_metric("response", 0.1, 0.5, None)]),
-        build_case_result("c4", vec![failing_metric("tool:other_tool", 0.0, 0.9, None)]),
+        build_case_result(
+            "c4",
+            vec![failing_metric("tool:other_tool", 0.0, 0.9, None)],
+        ),
     ];
     let baseline = build_baseline(cases);
     let diagnoser = Diagnoser::new(5);
@@ -132,7 +144,10 @@ fn diagnose_ranks_by_severity() {
         weak_points[0].component
     );
     assert!(
-        matches!(weak_points[1].component, TargetComponent::ToolDescription { .. }),
+        matches!(
+            weak_points[1].component,
+            TargetComponent::ToolDescription { .. }
+        ),
         "second should be ToolDescription, got {:?}",
         weak_points[1].component
     );

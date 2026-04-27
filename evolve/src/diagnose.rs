@@ -1,8 +1,8 @@
-use std::collections::HashMap;
-use serde::{Deserialize, Serialize};
-use swink_agent_eval::Score;
 use crate::config::OptimizationTarget;
 use crate::types::BaselineSnapshot;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use swink_agent_eval::Score;
 
 /// Identifies which part of an agent config is being targeted for mutation.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -43,7 +43,11 @@ impl Diagnoser {
     }
 
     /// Analyze a baseline snapshot and return ranked weak points, capped by `max_weak_points`.
-    pub fn diagnose(&self, baseline: &BaselineSnapshot, _target: &OptimizationTarget) -> Vec<WeakPoint> {
+    pub fn diagnose(
+        &self,
+        baseline: &BaselineSnapshot,
+        _target: &OptimizationTarget,
+    ) -> Vec<WeakPoint> {
         let mut groups: HashMap<String, (TargetComponent, Vec<CaseFailure>)> = HashMap::new();
 
         for case_result in &baseline.results {
@@ -59,7 +63,11 @@ impl Diagnoser {
                     score: metric.score,
                     details: metric.details.clone(),
                 };
-                groups.entry(key).or_insert_with(|| (component, Vec::new())).1.push(failure);
+                groups
+                    .entry(key)
+                    .or_insert_with(|| (component, Vec::new()))
+                    .1
+                    .push(failure);
             }
         }
 
@@ -73,12 +81,19 @@ impl Diagnoser {
                     .sum::<f64>()
                     / n;
                 let severity = n * mean_score_gap;
-                WeakPoint { component, affected_cases: failures, mean_score_gap, severity }
+                WeakPoint {
+                    component,
+                    affected_cases: failures,
+                    mean_score_gap,
+                    severity,
+                }
             })
             .collect();
 
         weak_points.sort_by(|a, b| {
-            b.severity.partial_cmp(&a.severity).unwrap_or(std::cmp::Ordering::Equal)
+            b.severity
+                .partial_cmp(&a.severity)
+                .unwrap_or(std::cmp::Ordering::Equal)
         });
         weak_points.truncate(self.max_weak_points);
         weak_points
@@ -86,10 +101,17 @@ impl Diagnoser {
 
     fn component_for_evaluator(evaluator_name: &str) -> TargetComponent {
         if let Some(tool_name) = evaluator_name.strip_prefix("tool:") {
-            return TargetComponent::ToolDescription { tool_name: tool_name.to_string() };
+            return TargetComponent::ToolDescription {
+                tool_name: tool_name.to_string(),
+            };
         }
-        if matches!(evaluator_name, "semantic_tool_selection" | "semantic_tool_parameter") {
-            return TargetComponent::ToolDescription { tool_name: evaluator_name.to_string() };
+        if matches!(
+            evaluator_name,
+            "semantic_tool_selection" | "semantic_tool_parameter"
+        ) {
+            return TargetComponent::ToolDescription {
+                tool_name: evaluator_name.to_string(),
+            };
         }
         TargetComponent::FullPrompt
     }

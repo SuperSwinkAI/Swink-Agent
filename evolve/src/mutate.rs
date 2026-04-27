@@ -1,9 +1,9 @@
+use crate::diagnose::TargetComponent;
+use crate::diagnose::WeakPoint;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use thiserror::Error;
 use swink_agent_eval::Invocation;
-use crate::diagnose::WeakPoint;
-use crate::diagnose::TargetComponent;
+use thiserror::Error;
 
 /// Context passed to each mutation strategy.
 #[derive(Debug, Clone)]
@@ -54,7 +54,13 @@ impl Candidate {
         let hash = Sha256::digest(mutated_value.as_bytes());
         let hash_bytes: &[u8] = hash.as_ref();
         let id: String = hash_bytes.iter().map(|b| format!("{:02x}", b)).collect();
-        Self { id, component, original_value, mutated_value, strategy }
+        Self {
+            id,
+            component,
+            original_value,
+            mutated_value,
+            strategy,
+        }
     }
 }
 
@@ -111,9 +117,24 @@ mod tests {
     fn deduplicate_removes_identity_and_duplicates() {
         let original = "original text";
         let candidates = vec![
-            Candidate::new(TargetComponent::FullPrompt, original.into(), "mutated".into(), "a".into()),
-            Candidate::new(TargetComponent::FullPrompt, original.into(), "mutated".into(), "b".into()),
-            Candidate::new(TargetComponent::FullPrompt, original.into(), original.into(), "c".into()),
+            Candidate::new(
+                TargetComponent::FullPrompt,
+                original.into(),
+                "mutated".into(),
+                "a".into(),
+            ),
+            Candidate::new(
+                TargetComponent::FullPrompt,
+                original.into(),
+                "mutated".into(),
+                "b".into(),
+            ),
+            Candidate::new(
+                TargetComponent::FullPrompt,
+                original.into(),
+                original.into(),
+                "c".into(),
+            ),
         ];
         let result = deduplicate(candidates, original);
         assert_eq!(result.len(), 1);

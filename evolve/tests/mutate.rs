@@ -5,7 +5,7 @@ use std::sync::Arc;
 use swink_agent_eval::{JudgeVerdict, MockJudge, Score};
 
 use swink_agent_evolve::{
-    Ablation, CaseFailure, Candidate, LlmGuided, MutationContext, MutationStrategy,
+    Ablation, Candidate, CaseFailure, LlmGuided, MutationContext, MutationStrategy,
     TargetComponent, TemplateBased, WeakPoint, deduplicate,
 };
 
@@ -15,7 +15,10 @@ fn make_context(max_candidates: usize) -> MutationContext {
         affected_cases: vec![CaseFailure {
             case_id: "c1".to_string(),
             evaluator_name: "response".to_string(),
-            score: Score { value: 0.2, threshold: 0.5 },
+            score: Score {
+                value: 0.2,
+                threshold: 0.5,
+            },
             details: None,
         }],
         mean_score_gap: 0.3,
@@ -36,9 +39,15 @@ fn template_based_produces_candidates() {
     let context = make_context(10);
     // "Must" → "Should" template fires on this text
     let candidates = strategy.mutate("You Must help users.", &context).unwrap();
-    assert!(!candidates.is_empty(), "TemplateBased should produce at least one candidate");
+    assert!(
+        !candidates.is_empty(),
+        "TemplateBased should produce at least one candidate"
+    );
     for c in &candidates {
-        assert_ne!(c.mutated_value, "You Must help users.", "candidate should differ from original");
+        assert_ne!(
+            c.mutated_value, "You Must help users.",
+            "candidate should differ from original"
+        );
     }
 }
 
@@ -56,7 +65,9 @@ fn ablation_produces_two_candidates() {
     );
     // One is the first-sentence simplification
     assert!(
-        candidates.iter().any(|c| c.mutated_value == "First sentence."),
+        candidates
+            .iter()
+            .any(|c| c.mutated_value == "First sentence."),
         "ablation should produce a first-sentence candidate"
     );
 }
@@ -111,7 +122,11 @@ fn candidates_deduplicated_by_hash() {
         "strategy_b".to_string(),
     );
     let deduped = deduplicate(vec![c1, c2], original);
-    assert_eq!(deduped.len(), 1, "duplicate mutated values should be reduced to one candidate");
+    assert_eq!(
+        deduped.len(),
+        1,
+        "duplicate mutated values should be reduced to one candidate"
+    );
 }
 
 #[test]
@@ -122,9 +137,17 @@ fn max_candidates_per_strategy_enforced() {
     let template = TemplateBased::new();
     let target = "You Must help users and you should utilize tools.";
     let candidates = template.mutate(target, &ctx).unwrap();
-    assert!(candidates.len() <= 1, "TemplateBased should respect max_candidates cap");
+    assert!(
+        candidates.len() <= 1,
+        "TemplateBased should respect max_candidates cap"
+    );
 
     let ablation = Ablation::new();
-    let candidates = ablation.mutate("First sentence. Second sentence.", &ctx).unwrap();
-    assert!(candidates.len() <= 1, "Ablation should respect max_candidates cap");
+    let candidates = ablation
+        .mutate("First sentence. Second sentence.", &ctx)
+        .unwrap();
+    assert!(
+        candidates.len() <= 1,
+        "Ablation should respect max_candidates cap"
+    );
 }

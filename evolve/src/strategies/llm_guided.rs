@@ -1,6 +1,6 @@
+use crate::mutate::{Candidate, MutationContext, MutationError, MutationStrategy};
 use std::sync::Arc;
 use swink_agent_eval::JudgeClient;
-use crate::mutate::{Candidate, MutationContext, MutationError, MutationStrategy};
 
 /// Mutation strategy that uses a `JudgeClient` to rewrite the target.
 ///
@@ -36,16 +36,13 @@ impl MutationStrategy for LlmGuided {
         let prompt = build_mutation_prompt(target, context);
 
         let verdict = tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current()
-                .block_on(self.judge.judge(&prompt))
+            tokio::runtime::Handle::current().block_on(self.judge.judge(&prompt))
         })
         .map_err(|e| MutationError::JudgeUnavailable(e.to_string()))?;
 
-        let rewrite = verdict
-            .reason
-            .ok_or_else(|| MutationError::InvalidResponse(
-                "judge returned no rewrite in reason field".to_string(),
-            ))?;
+        let rewrite = verdict.reason.ok_or_else(|| {
+            MutationError::InvalidResponse("judge returned no rewrite in reason field".to_string())
+        })?;
 
         Ok(vec![Candidate::new(
             component,

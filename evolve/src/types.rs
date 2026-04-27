@@ -1,9 +1,9 @@
-use std::path::PathBuf;
-use swink_agent::Cost;
-use swink_agent_eval::EvalCaseResult;
 use crate::config::OptimizationTarget;
 use crate::diagnose::WeakPoint;
 use crate::gate::AcceptanceResult;
+use std::path::PathBuf;
+use swink_agent::Cost;
+use swink_agent_eval::EvalCaseResult;
 
 /// Scored snapshot of the current agent config before any mutations.
 pub struct BaselineSnapshot {

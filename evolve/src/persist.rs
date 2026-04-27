@@ -1,10 +1,10 @@
-use std::path::{Path, PathBuf};
-use serde::{Deserialize, Serialize};
 use crate::diagnose::TargetComponent;
 use crate::evaluate::CandidateResult;
 use crate::gate::{AcceptanceResult, AcceptanceVerdict};
 use crate::mutate::Candidate;
 use crate::types::BaselineSnapshot;
+use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
 
 /// One line of the cycle JSONL manifest, covering a single evaluated candidate.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -28,7 +28,9 @@ pub struct CyclePersister {
 
 impl CyclePersister {
     pub fn new(output_root: impl Into<PathBuf>) -> Self {
-        Self { output_root: output_root.into() }
+        Self {
+            output_root: output_root.into(),
+        }
     }
 
     /// Persist a single cycle to `<output_root>/cycle-{N:04}-{timestamp}/`.
@@ -42,22 +44,48 @@ impl CyclePersister {
     ) -> std::io::Result<PathBuf> {
         let now = chrono::Utc::now();
         let ts = now.format("%Y-%m-%dT%H-%M-%SZ").to_string();
-        let dir = self.output_root.join(format!("cycle-{:04}-{}", cycle_number, ts));
+        let dir = self
+            .output_root
+            .join(format!("cycle-{:04}-{}", cycle_number, ts));
         std::fs::create_dir_all(&dir)?;
 
         let now_iso = now.format("%Y-%m-%dT%H:%M:%SZ").to_string();
         let mut entries: Vec<ManifestEntry> = Vec::new();
 
         for (candidate, result) in &acceptance_result.applied {
-            entries.push(build_entry(cycle_number, &now_iso, candidate, result, baseline, "Accepted", None));
+            entries.push(build_entry(
+                cycle_number,
+                &now_iso,
+                candidate,
+                result,
+                baseline,
+                "Accepted",
+                None,
+            ));
             write_config(&dir, candidate)?;
         }
         for (candidate, result) in &acceptance_result.accepted_not_applied {
-            entries.push(build_entry(cycle_number, &now_iso, candidate, result, baseline, "AcceptedNotApplied", None));
+            entries.push(build_entry(
+                cycle_number,
+                &now_iso,
+                candidate,
+                result,
+                baseline,
+                "AcceptedNotApplied",
+                None,
+            ));
         }
         for (candidate, result, verdict) in &acceptance_result.rejected {
             let reason = rejection_reason_string(verdict);
-            entries.push(build_entry(cycle_number, &now_iso, candidate, result, baseline, "Rejected", Some(reason)));
+            entries.push(build_entry(
+                cycle_number,
+                &now_iso,
+                candidate,
+                result,
+                baseline,
+                "Rejected",
+                Some(reason),
+            ));
         }
 
         let manifest: String = entries
@@ -72,7 +100,9 @@ impl CyclePersister {
     /// Load all cycle manifests under `output_root`, sorted by cycle number.
     pub fn load_history(output_root: impl Into<PathBuf>) -> Vec<(u32, Vec<ManifestEntry>)> {
         let root = output_root.into();
-        let Ok(read_dir) = std::fs::read_dir(&root) else { return Vec::new() };
+        let Ok(read_dir) = std::fs::read_dir(&root) else {
+            return Vec::new();
+        };
 
         let mut dirs: Vec<(u32, PathBuf)> = read_dir
             .filter_map(|e| e.ok())
@@ -153,7 +183,10 @@ fn component_str(c: &TargetComponent) -> String {
 
 fn rejection_reason_string(verdict: &AcceptanceVerdict) -> String {
     match verdict {
-        AcceptanceVerdict::BelowThreshold { improvement, threshold } => {
+        AcceptanceVerdict::BelowThreshold {
+            improvement,
+            threshold,
+        } => {
             format!("BelowThreshold(improvement={improvement:.4}, threshold={threshold:.4})")
         }
         AcceptanceVerdict::P1Regression { case_id } => format!("P1Regression(case_id={case_id})"),

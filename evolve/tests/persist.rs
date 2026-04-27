@@ -34,8 +34,15 @@ fn make_baseline(aggregate: f64) -> BaselineSnapshot {
     }
 }
 
-fn make_acceptance(accepted: Vec<(Candidate, CandidateResult)>, rejected: Vec<(Candidate, CandidateResult, AcceptanceVerdict)>) -> AcceptanceResult {
-    AcceptanceResult { applied: accepted, accepted_not_applied: vec![], rejected }
+fn make_acceptance(
+    accepted: Vec<(Candidate, CandidateResult)>,
+    rejected: Vec<(Candidate, CandidateResult, AcceptanceVerdict)>,
+) -> AcceptanceResult {
+    AcceptanceResult {
+        applied: accepted,
+        accepted_not_applied: vec![],
+        rejected,
+    }
 }
 
 #[test]
@@ -128,7 +135,10 @@ fn no_config_written_when_all_rejected() {
     let dir = persister.persist(1, &acceptance, &baseline).unwrap();
 
     // manifest.jsonl exists
-    assert!(dir.join("manifest.jsonl").exists(), "manifest.jsonl should exist");
+    assert!(
+        dir.join("manifest.jsonl").exists(),
+        "manifest.jsonl should exist"
+    );
     // system-prompt.md should NOT exist (no accepted candidates)
     assert!(
         !dir.join("system-prompt.md").exists(),

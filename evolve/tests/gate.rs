@@ -29,7 +29,10 @@ fn build_case_result(case_id: &str, score: f64, verdict: Verdict) -> EvalCaseRes
         invocation: make_invocation(),
         metric_results: vec![EvalMetricResult {
             evaluator_name: "response".to_string(),
-            score: Score { value: score, threshold: 0.5 },
+            score: Score {
+                value: score,
+                threshold: 0.5,
+            },
             details: None,
         }],
         verdict,
@@ -37,7 +40,10 @@ fn build_case_result(case_id: &str, score: f64, verdict: Verdict) -> EvalCaseRes
 }
 
 fn build_baseline(cases: Vec<(&str, f64, Verdict)>, aggregate: f64) -> BaselineSnapshot {
-    let results = cases.into_iter().map(|(id, s, v)| build_case_result(id, s, v)).collect();
+    let results = cases
+        .into_iter()
+        .map(|(id, s, v)| build_case_result(id, s, v))
+        .collect();
     BaselineSnapshot {
         target: OptimizationTarget::new("sys", vec![]),
         results,
@@ -47,7 +53,12 @@ fn build_baseline(cases: Vec<(&str, f64, Verdict)>, aggregate: f64) -> BaselineS
 }
 
 fn make_candidate(component: TargetComponent, mutated: &str) -> Candidate {
-    Candidate::new(component, "original".to_string(), mutated.to_string(), "test".to_string())
+    Candidate::new(
+        component,
+        "original".to_string(),
+        mutated.to_string(),
+        "test".to_string(),
+    )
 }
 
 fn build_candidate_result(
@@ -55,8 +66,16 @@ fn build_candidate_result(
     cases: Vec<(&str, f64, Verdict)>,
     aggregate: f64,
 ) -> CandidateResult {
-    let results = cases.into_iter().map(|(id, s, v)| build_case_result(id, s, v)).collect();
-    CandidateResult { candidate, results, aggregate_score: aggregate, cost: Cost::default() }
+    let results = cases
+        .into_iter()
+        .map(|(id, s, v)| build_case_result(id, s, v))
+        .collect();
+    CandidateResult {
+        candidate,
+        results,
+        aggregate_score: aggregate,
+        cost: Cost::default(),
+    }
 }
 
 // ─── Tests ──────────────────────────────────────────────────────────────────
@@ -65,7 +84,10 @@ fn build_candidate_result(
 fn candidate_above_threshold_accepted() {
     // Baseline aggregate = 0.6, candidate = 0.65 (improvement = 0.05 ≥ threshold 0.01)
     // No P1 regressions.
-    let baseline = build_baseline(vec![("c1", 0.9, Verdict::Pass), ("c2", 0.3, Verdict::Fail)], 0.6);
+    let baseline = build_baseline(
+        vec![("c1", 0.9, Verdict::Pass), ("c2", 0.3, Verdict::Fail)],
+        0.6,
+    );
     let cand = make_candidate(TargetComponent::FullPrompt, "v2");
     let cr = build_candidate_result(
         cand,
@@ -74,7 +96,11 @@ fn candidate_above_threshold_accepted() {
     );
     let gate = AcceptanceGate::new(0.01);
     let result = gate.evaluate(&baseline, &[cr]);
-    assert_eq!(result.applied.len(), 1, "candidate should be accepted (applied)");
+    assert_eq!(
+        result.applied.len(),
+        1,
+        "candidate should be accepted (applied)"
+    );
     assert!(result.accepted_not_applied.is_empty());
     assert!(result.rejected.is_empty());
 }
@@ -90,7 +116,10 @@ fn candidate_below_threshold_rejected() {
     assert!(result.applied.is_empty());
     assert_eq!(result.rejected.len(), 1);
     assert!(
-        matches!(result.rejected[0].2, AcceptanceVerdict::BelowThreshold { .. }),
+        matches!(
+            result.rejected[0].2,
+            AcceptanceVerdict::BelowThreshold { .. }
+        ),
         "expected BelowThreshold, got {:?}",
         result.rejected[0].2
     );
@@ -102,18 +131,29 @@ fn p1_regression_rejected() {
     // Candidate: c1 regresses (Pass→Fail), c2+c3 improve → aggregate goes up.
     // c1 has no metadata → default P1 → P1Regression should block acceptance.
     let baseline = build_baseline(
-        vec![("c1", 0.9, Verdict::Pass), ("c2", 0.3, Verdict::Fail), ("c3", 0.5, Verdict::Pass)],
+        vec![
+            ("c1", 0.9, Verdict::Pass),
+            ("c2", 0.3, Verdict::Fail),
+            ("c3", 0.5, Verdict::Pass),
+        ],
         0.567,
     );
     let cand = make_candidate(TargetComponent::FullPrompt, "v2");
     let cr = build_candidate_result(
         cand,
-        vec![("c1", 0.1, Verdict::Fail), ("c2", 1.0, Verdict::Pass), ("c3", 1.0, Verdict::Pass)],
+        vec![
+            ("c1", 0.1, Verdict::Fail),
+            ("c2", 1.0, Verdict::Pass),
+            ("c3", 1.0, Verdict::Pass),
+        ],
         0.7, // improvement = 0.133 ≥ 0.01, but c1 regresses
     );
     let gate = AcceptanceGate::new(0.01);
     let result = gate.evaluate(&baseline, &[cr]);
-    assert!(result.applied.is_empty(), "P1 regression should block acceptance");
+    assert!(
+        result.applied.is_empty(),
+        "P1 regression should block acceptance"
+    );
     assert_eq!(result.rejected.len(), 1);
     match &result.rejected[0].2 {
         AcceptanceVerdict::P1Regression { case_id } => assert_eq!(case_id, "c1"),
@@ -135,7 +175,10 @@ fn top_ranked_per_component() {
     assert_eq!(result.applied.len(), 1);
     assert_eq!(result.accepted_not_applied.len(), 1);
     assert!(result.rejected.is_empty());
-    assert_eq!(result.applied[0].0.mutated_value, "v2", "highest-improvement candidate applied first");
+    assert_eq!(
+        result.applied[0].0.mutated_value, "v2",
+        "highest-improvement candidate applied first"
+    );
     assert_eq!(result.accepted_not_applied[0].0.mutated_value, "v3");
 }
 
@@ -150,7 +193,10 @@ fn custom_threshold_enforced() {
     assert!(result.applied.is_empty());
     assert_eq!(result.rejected.len(), 1);
     assert!(
-        matches!(result.rejected[0].2, AcceptanceVerdict::BelowThreshold { .. }),
+        matches!(
+            result.rejected[0].2,
+            AcceptanceVerdict::BelowThreshold { .. }
+        ),
         "expected BelowThreshold for improvement below custom threshold"
     );
 }
@@ -160,13 +206,21 @@ fn p2_case_regression_allowed() {
     // c1 is explicitly P2; c2 and c3 improve; aggregate goes up.
     // c1 regresses (Pass→Fail) but since it's P2, gate should still accept.
     let baseline = build_baseline(
-        vec![("c1", 0.9, Verdict::Pass), ("c2", 0.3, Verdict::Fail), ("c3", 0.5, Verdict::Pass)],
+        vec![
+            ("c1", 0.9, Verdict::Pass),
+            ("c2", 0.3, Verdict::Fail),
+            ("c3", 0.5, Verdict::Pass),
+        ],
         0.567,
     );
     let cand = make_candidate(TargetComponent::FullPrompt, "v2");
     let cr = build_candidate_result(
         cand,
-        vec![("c1", 0.1, Verdict::Fail), ("c2", 1.0, Verdict::Pass), ("c3", 1.0, Verdict::Pass)],
+        vec![
+            ("c1", 0.1, Verdict::Fail),
+            ("c2", 1.0, Verdict::Pass),
+            ("c3", 1.0, Verdict::Pass),
+        ],
         0.7, // improvement = 0.133 ≥ 0.01
     );
     let mut meta = HashMap::new();
@@ -177,7 +231,11 @@ fn p2_case_regression_allowed() {
         result.applied.len(),
         1,
         "P2 regression should not block acceptance; got rejected: {:?}",
-        result.rejected.iter().map(|(_, _, v)| v).collect::<Vec<_>>()
+        result
+            .rejected
+            .iter()
+            .map(|(_, _, v)| v)
+            .collect::<Vec<_>>()
     );
     assert!(result.rejected.is_empty());
 }
