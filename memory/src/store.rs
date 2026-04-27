@@ -8,6 +8,7 @@ use crate::entry::SessionEntry;
 use crate::interrupt::InterruptState;
 use crate::load_options::LoadOptions;
 use crate::meta::SessionMeta;
+use crate::search::{SessionHit, SessionSearchOptions};
 
 /// Pluggable session persistence.
 ///
@@ -134,6 +135,15 @@ pub trait SessionStore: Send + Sync {
         id: &str,
         options: &LoadOptions,
     ) -> io::Result<(SessionMeta, Vec<SessionEntry>)>;
+
+    /// Search across persisted sessions.
+    ///
+    /// Backends that do not support search can rely on the default empty
+    /// result for backward compatibility.
+    fn search(&self, query: &str, options: &SessionSearchOptions) -> io::Result<Vec<SessionHit>> {
+        let _ = (query, options);
+        Ok(Vec::new())
+    }
 }
 
 #[cfg(test)]

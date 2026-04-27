@@ -1,7 +1,8 @@
 use swink_agent_memory::{
     BlockingSessionStore, CompactionResult, FileCheckpointStore, InterruptState, JsonlSessionStore,
-    LoadOptions, PendingToolCall, SessionEntry, SessionMeta, SessionMigrator, SessionStore,
-    SessionStoreFuture, SummarizingCompactor, format_session_id, now_utc,
+    LoadOptions, PendingToolCall, SessionEntry, SessionHit, SessionMeta, SessionMigrator,
+    SessionSearchOptions, SessionStore, SessionStoreFuture, SummarizingCompactor,
+    format_session_id, now_utc,
 };
 
 #[test]
@@ -14,6 +15,8 @@ fn memory_root_reexports_remain_consumable() {
     let _ = std::any::type_name::<InterruptState>();
     let _ = std::any::type_name::<PendingToolCall>();
     let _ = std::any::type_name::<LoadOptions>();
+    let _ = std::any::type_name::<SessionSearchOptions>();
+    let _ = std::any::type_name::<SessionHit>();
     let _ = std::any::type_name::<CompactionResult>();
     let _ = std::any::type_name::<SummarizingCompactor>();
     let _ = std::any::type_name::<dyn SessionMigrator>();

@@ -31,6 +31,7 @@ use crate::entry::SessionEntry;
 use crate::interrupt::InterruptState;
 use crate::load_options::LoadOptions;
 use crate::meta::SessionMeta;
+use crate::search::{SessionHit, SessionSearchOptions};
 
 /// A boxed future returned by [`BlockingSessionStore`] methods.
 pub type SessionStoreFuture<'a, T> = Pin<Box<dyn Future<Output = io::Result<T>> + Send + 'a>>;
@@ -217,6 +218,18 @@ impl<S: crate::store::SessionStore + 'static> BlockingSessionStore<S> {
         let id = id.to_string();
         let options = options.clone();
         spawn_store_call(move || inner.load_with_options(&id, &options))
+    }
+
+    /// Search persisted sessions asynchronously.
+    pub fn search(
+        &self,
+        query: &str,
+        options: &SessionSearchOptions,
+    ) -> SessionStoreFuture<'_, Vec<SessionHit>> {
+        let inner = Arc::clone(&self.inner);
+        let query = query.to_string();
+        let options = options.clone();
+        spawn_store_call(move || inner.search(&query, &options))
     }
 }
 

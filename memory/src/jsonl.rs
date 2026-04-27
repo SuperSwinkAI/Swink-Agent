@@ -16,6 +16,7 @@ use crate::entry::SessionEntry;
 use crate::interrupt::InterruptState;
 use crate::load_options::LoadOptions;
 use crate::meta::SessionMeta;
+use crate::search::{self, SessionHit, SessionSearchOptions};
 use crate::store::SessionStore;
 use crate::time::{format_session_id, now_utc};
 
@@ -773,6 +774,60 @@ impl SessionStore for JsonlSessionStore {
         }
 
         Ok((meta, entries))
+    }
+
+    fn search(&self, query: &str, options: &SessionSearchOptions) -> io::Result<Vec<SessionHit>> {
+        let terms = search::query_terms(query);
+        let limit = options.limit();
+        if terms.is_empty() || limit == 0 {
+            return Ok(Vec::new());
+        }
+
+        let session_ids = if let Some(ids) = &options.session_ids {
+            ids.iter()
+                .map(|id| {
+                    validate_session_id(id)?;
+                    Ok(id.clone())
+                })
+                .collect::<io::Result<Vec<_>>>()?
+        } else {
+            self.list()?
+                .into_iter()
+                .map(|meta| meta.id)
+                .collect::<Vec<_>>()
+        };
+
+        let mut hits = Vec::new();
+        for id in session_ids {
+            let (meta, entries) = self.load_entries(&id)?;
+            for entry in entries {
+                if !search::entry_matches_type(&entry, options)
+                    || !search::entry_matches_time_range(&entry, options)
+                {
+                    continue;
+                }
+                let Some((score, snippet)) = search::search_entry(&entry, &terms) else {
+                    continue;
+                };
+                hits.push(SessionHit {
+                    session_id: meta.id.clone(),
+                    session_title: meta.title.clone(),
+                    entry,
+                    score,
+                    snippet,
+                });
+            }
+        }
+
+        hits.sort_by(|left, right| {
+            right
+                .score
+                .cmp(&left.score)
+                .then_with(|| right.entry.timestamp().cmp(&left.entry.timestamp()))
+                .then_with(|| left.session_id.cmp(&right.session_id))
+        });
+        hits.truncate(limit);
+        Ok(hits)
     }
 }
 
@@ -1650,6 +1705,109 @@ mod tests {
             version: 1,
             sequence: 0,
         }
+    }
+
+    fn user_entry(text: &str, ts: u64) -> SessionEntry {
+        SessionEntry::Message(LlmMessage::User(swink_agent::UserMessage {
+            content: vec![swink_agent::ContentBlock::Text {
+                text: text.to_string(),
+            }],
+            timestamp: ts,
+            cache_hint: None,
+        }))
+    }
+
+    #[test]
+    fn search_scans_across_saved_sessions() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = JsonlSessionStore::new(dir.path().to_path_buf()).unwrap();
+
+        let mut meta_a = fresh_meta("search-a");
+        meta_a.title = "Auth notes".to_string();
+        store
+            .save(
+                "search-a",
+                &meta_a,
+                &[
+                    user_msg("We decided the auth middleware owns refresh tokens", 10),
+                    user_msg("Unrelated deployment note", 11),
+                ],
+            )
+            .unwrap();
+
+        let mut meta_b = fresh_meta("search-b");
+        meta_b.title = "Billing notes".to_string();
+        store
+            .save(
+                "search-b",
+                &meta_b,
+                &[user_msg("Billing retries use exponential backoff", 20)],
+            )
+            .unwrap();
+
+        let hits = store
+            .search("auth middleware", &SessionSearchOptions::default())
+            .unwrap();
+
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].session_id, "search-a");
+        assert_eq!(hits[0].session_title, "Auth notes");
+        assert!(hits[0].snippet.contains("auth middleware"));
+        assert!(matches!(hits[0].entry, SessionEntry::Message(_)));
+    }
+
+    #[test]
+    fn search_respects_session_type_time_and_limit_filters() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = JsonlSessionStore::new(dir.path().to_path_buf()).unwrap();
+
+        store
+            .save_entries(
+                "filtered-a",
+                &fresh_meta("filtered-a"),
+                &[
+                    user_entry("auth middleware message", 10),
+                    SessionEntry::Label {
+                        text: "auth middleware bookmark".to_string(),
+                        message_index: 0,
+                        timestamp: 20,
+                    },
+                    SessionEntry::Label {
+                        text: "auth middleware late bookmark".to_string(),
+                        message_index: 1,
+                        timestamp: 40,
+                    },
+                ],
+            )
+            .unwrap();
+        store
+            .save_entries(
+                "filtered-b",
+                &fresh_meta("filtered-b"),
+                &[SessionEntry::Label {
+                    text: "auth middleware other session".to_string(),
+                    message_index: 0,
+                    timestamp: 20,
+                }],
+            )
+            .unwrap();
+
+        let options = SessionSearchOptions {
+            session_ids: Some(vec!["filtered-a".to_string()]),
+            entry_types: Some(vec!["label".to_string()]),
+            start_time: Some(chrono::DateTime::from_timestamp(15, 0).unwrap().to_utc()),
+            end_time: Some(chrono::DateTime::from_timestamp(25, 0).unwrap().to_utc()),
+            max_results: Some(1),
+        };
+
+        let hits = store.search("auth middleware", &options).unwrap();
+
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].session_id, "filtered-a");
+        assert!(matches!(
+            hits[0].entry,
+            SessionEntry::Label { timestamp: 20, .. }
+        ));
     }
 
     fn rewrite_meta_without_padding(path: &Path, id: &str, update: impl FnOnce(&mut SessionMeta)) {

@@ -293,6 +293,30 @@
 
 ---
 
+## Phase 13: User Story 10 — Search Across Saved Sessions (Priority: P2) — N13
+
+**Goal**: Developers can search persisted sessions for prior decisions, notes, and rich entries without knowing the session ID.
+
+**Independent Test**: Save multiple sessions with distinct text, search for shared terms, and verify hits include metadata, snippets, filters, and limits.
+
+### Tests for User Story 10
+
+- [x] T096 [P] [US10] Unit test `search_scans_across_saved_sessions` in `memory/src/jsonl.rs`: save two sessions, search for terms in only one, verify the returned `SessionHit` has the matching session ID, title, snippet, and entry.
+- [x] T097 [P] [US10] Unit test `search_respects_session_type_time_and_limit_filters` in `memory/src/jsonl.rs`: save mixed entries across sessions, search with session ID, entry type, timestamp range, and max-result filters, verify only the expected hit remains.
+- [ ] T098 [P] [US10] Add tests for indexed search rebuild/update behavior once the `search` feature and Tantivy backend are introduced.
+
+### Implementation for User Story 10
+
+- [x] T099 [US10] Add `SessionSearchOptions` and `SessionHit` public types in `memory/src/search.rs` and re-export them from `memory/src/lib.rs`.
+- [x] T100 [US10] Add default `SessionStore::search()` empty-result method for backward-compatible store implementors.
+- [x] T101 [US10] Implement JSONL-backed linear cross-session search in `JsonlSessionStore`, including session ID, entry type, timestamp range, and max-result filters.
+- [x] T102 [US10] Add async `BlockingSessionStore::search()` bridge.
+- [ ] T103 [US10] Add a `search` feature with a Tantivy-backed index, lazy index build, save/update hooks, and explicit rebuild command/API.
+
+**Checkpoint**: Baseline cross-session search works without an index; indexed search remains future work.
+
+---
+
 ## Dependencies & Execution Order
 
 ### Phase Dependencies (new phases)
@@ -301,6 +325,7 @@
 - **US7 — Versioning (Phase 9)**: Depends on US1. Modifies `meta.rs` and `jsonl.rs`.
 - **US8 — Interrupt (Phase 10)**: Depends on US1. Adds new files. Independent of US6/US7.
 - **US9 — Filtered Loading (Phase 11)**: Depends on US6 (needs `SessionEntry` type). Adds new trait method.
+- **US10 — Search (Phase 13)**: Depends on US6/US9 (`SessionEntry` and filtering metadata). Indexed search depends on the baseline search API.
 - **Polish (Phase 12)**: Depends on all user stories being complete.
 
 ### Parallel Opportunities (new phases)
@@ -308,9 +333,10 @@
 - US6 and US7 both modify `jsonl.rs` — run sequentially (US6 first, then US7).
 - US8 (interrupt) touches separate files — can run in parallel with US6/US7.
 - US9 depends on US6 (`SessionEntry`) — must run after US6.
+- US10 baseline search can run after US9; indexed search should follow once the `search` feature is introduced.
 
 ### Notes
 
-- US6–US9 are new work — rich entries, versioning, interrupt persistence, filtered loading.
+- US6–US10 are new work — rich entries, versioning, interrupt persistence, filtered loading, and cross-session search.
 - All new features must be backward compatible with existing JSONL sessions (serde defaults).
 - Test tasks marked [P] within each phase can run in parallel (different test files/functions).

@@ -160,6 +160,23 @@ A developer loads only a subset of a session's entries — the last N entries, e
 
 ---
 
+### User Story 10 - Search Across Saved Sessions (Priority: P2) — N13
+
+A developer searches persisted conversations for prior decisions, corrections, and notes without knowing which session contains the relevant entry. Search returns matching session entries with the session ID, title, score, and a compact snippet so callers can show useful recall results.
+
+**Why this priority**: Cross-session recall makes saved sessions useful beyond exact restore flows and provides the retrieval surface needed by proactive memory features.
+
+**Independent Test**: Can be tested by saving multiple sessions, searching for terms that appear in one session, and verifying only matching entries are returned with snippets and metadata.
+
+**Acceptance Scenarios**:
+
+1. **Given** multiple saved sessions, **When** searching for terms that appear in one session, **Then** only entries containing all query terms are returned.
+2. **Given** search filters for session IDs, entry types, and a timestamp range, **When** search runs, **Then** hits outside those filters are excluded.
+3. **Given** a maximum result count, **When** more entries match than the limit, **Then** only the top-scoring limited result set is returned.
+4. **Given** a store implementation without search support, **When** `SessionStore::search()` is called, **Then** it returns an empty result set for backward compatibility.
+
+---
+
 ### Edge Cases
 
 - What happens when two processes attempt to save to the same session simultaneously — last-writer-wins; no file locking. Single-writer assumption is documented. Concurrent writes may corrupt the file.
@@ -200,6 +217,10 @@ A developer loads only a subset of a session's entries — the last N entries, e
 - **FR-019**: Session deletion MUST also delete any associated interrupt state file.
 - **FR-020**: The system MUST support filtered session loading via `LoadOptions` with `last_n_entries`, `after_timestamp`, and `entry_types` filter parameters.
 - **FR-021**: `LoadOptions` with all fields `None` MUST return the full session (backward compatible).
+- **FR-022**: The system MUST expose `SessionStore::search(query, options)` with a default empty-result implementation for backward compatibility.
+- **FR-023**: The JSONL store MUST support cross-session term search over persisted `SessionEntry` values.
+- **FR-024**: Search options MUST support session ID filters, entry type filters, timestamp range filters, and a maximum result count.
+- **FR-025**: Search hits MUST include session ID, session title, matched entry, score, and snippet.
 
 ### Key Entities
 
@@ -212,6 +233,8 @@ A developer loads only a subset of a session's entries — the last N entries, e
 - **PendingToolCall**: A tool call awaiting approval: tool call ID, name, arguments.
 - **SessionMigrator**: Trait for upgrading old session formats to the current version.
 - **LoadOptions**: Filter parameters for partial session loading.
+- **SessionSearchOptions**: Filter and limit parameters for cross-session search.
+- **SessionHit**: A search result containing matched session metadata, entry, score, and snippet.
 
 ## Success Criteria *(mandatory)*
 
@@ -227,6 +250,7 @@ A developer loads only a subset of a session's entries — the last N entries, e
 - **SC-008**: Interrupt state survives process restart — saved interrupt can be loaded in a new process with all pending tool calls and context intact.
 - **SC-009**: Filtered loading with `last_n_entries` returns exactly the requested number of entries (or fewer if the session is smaller).
 - **SC-010**: Optimistic concurrency check rejects saves with stale sequence numbers.
+- **SC-011**: Cross-session search returns matching persisted entries while respecting filters and result limits.
 
 ## Clarifications
 
