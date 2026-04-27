@@ -593,9 +593,11 @@ impl SessionStore for JsonlSessionStore {
         validate_session_id(id)?;
 
         let path = session_path(&self.sessions_dir, id);
-        let (meta, lines) = read_meta_and_message_lines(&path, id)?;
-        let (meta, classified) = self.classify_and_migrate(meta, lines, id)?;
-        Ok((meta, classified_lines_to_messages(classified, registry, id)))
+        with_target_lock(&path, || {
+            let (meta, lines) = read_meta_and_message_lines(&path, id)?;
+            let (meta, classified) = self.classify_and_migrate(meta, lines, id)?;
+            Ok((meta, classified_lines_to_messages(classified, registry, id)))
+        })
     }
 
     fn load_full(
@@ -626,12 +628,17 @@ impl SessionStore for JsonlSessionStore {
                 continue;
             }
 
-            let Ok(file) = std::fs::File::open(&path) else {
-                continue;
-            };
-            let reader = io::BufReader::new(file);
-            if let Some(Ok(first_line)) = reader.lines().next() {
-                match serde_json::from_str::<SessionMeta>(&first_line) {
+            let read_meta = with_target_lock(&path, || {
+                let file = std::fs::File::open(&path)?;
+                let reader = io::BufReader::new(file);
+                let Some(first_line) = reader.lines().next() else {
+                    return Ok(None);
+                };
+                first_line.map(Some)
+            });
+
+            match read_meta {
+                Ok(Some(first_line)) => match serde_json::from_str::<SessionMeta>(&first_line) {
                     Ok(meta) => sessions.push(meta),
                     Err(e) => {
                         tracing::warn!(
@@ -640,6 +647,14 @@ impl SessionStore for JsonlSessionStore {
                             "skipping session file with invalid metadata"
                         );
                     }
+                },
+                Ok(None) => {}
+                Err(error) => {
+                    tracing::warn!(
+                        path = %path.display(),
+                        error = %error,
+                        "skipping unreadable session file"
+                    );
                 }
             }
         }
@@ -685,8 +700,10 @@ impl SessionStore for JsonlSessionStore {
             return Ok(None);
         }
 
-        let (_, lines) = read_meta_and_message_lines(&path, id)?;
-        extract_state_from_lines(&lines, id)
+        with_target_lock(&path, || {
+            let (_, lines) = read_meta_and_message_lines(&path, id)?;
+            extract_state_from_lines(&lines, id)
+        })
     }
 
     fn save_interrupt(&self, id: &str, state: &InterruptState) -> io::Result<()> {
@@ -808,18 +825,20 @@ impl JsonlSessionStore {
         validate_session_id(id)?;
 
         let path = session_path(&self.sessions_dir, id);
-        let (meta, lines) = read_meta_and_message_lines(&path, id)?;
-        let (meta, classified) = self.classify_and_migrate(meta, lines, id)?;
+        with_target_lock(&path, || {
+            let (meta, lines) = read_meta_and_message_lines(&path, id)?;
+            let (meta, classified) = self.classify_and_migrate(meta, lines, id)?;
 
-        let entries = classified
-            .into_iter()
-            .filter_map(|item| match item {
-                ClassifiedLine::Entry(entry) => Some(*entry),
-                ClassifiedLine::Custom(_) | ClassifiedLine::State => None,
-            })
-            .collect();
+            let entries = classified
+                .into_iter()
+                .filter_map(|item| match item {
+                    ClassifiedLine::Entry(entry) => Some(*entry),
+                    ClassifiedLine::Custom(_) | ClassifiedLine::State => None,
+                })
+                .collect();
 
-        Ok((meta, entries))
+            Ok((meta, entries))
+        })
     }
 
     /// Parse every message line, classify each as a migrateable
@@ -1769,6 +1788,82 @@ mod tests {
             .save("append-meta-first", &stale, &[user_msg("stale", 3)])
             .unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
+    }
+
+    #[test]
+    fn load_waits_for_in_flight_append_metadata_patch() {
+        use std::sync::mpsc;
+        use std::thread;
+        use std::time::Duration;
+
+        let dir = tempfile::tempdir().unwrap();
+        let store = JsonlSessionStore::new(dir.path().to_path_buf()).unwrap();
+
+        let meta = fresh_meta("append-load-race");
+        store
+            .save("append-load-race", &meta, &[user_msg("first", 1)])
+            .unwrap();
+
+        let path = session_path(dir.path(), "append-load-race");
+        let (patched_tx, patched_rx) = mpsc::channel();
+        let (resume_tx, resume_rx) = mpsc::channel();
+
+        let append_path = path;
+        let append_handle = thread::spawn(move || {
+            with_target_lock(&append_path, || {
+                let (mut append_meta, meta_line_len) =
+                    read_meta_with_line_len(&append_path, "append-load-race")?;
+                append_meta.updated_at = now_utc();
+                append_meta.sequence += 1;
+                let second_line =
+                    SessionRecord::from_message(&user_msg("second", 2), "append-load-race")
+                        .unwrap()
+                        .to_json_line()?;
+
+                append_records_in_place_with_hook(
+                    &append_path,
+                    &append_meta,
+                    meta_line_len,
+                    &[second_line],
+                    |_| {
+                        patched_tx.send(()).unwrap();
+                        resume_rx.recv().unwrap();
+                        Ok(())
+                    },
+                )?;
+                Ok(())
+            })
+        });
+
+        patched_rx.recv().unwrap();
+
+        let load_store = JsonlSessionStore::new(dir.path().to_path_buf()).unwrap();
+        let (loaded_tx, loaded_rx) = mpsc::channel();
+        let load_handle = thread::spawn(move || {
+            loaded_tx
+                .send(load_store.load("append-load-race", None))
+                .unwrap();
+        });
+
+        assert!(
+            loaded_rx.recv_timeout(Duration::from_millis(100)).is_err(),
+            "load must wait for an append that has patched metadata but not records"
+        );
+
+        resume_tx.send(()).unwrap();
+        append_handle
+            .join()
+            .unwrap()
+            .expect("append should finish cleanly");
+
+        let (loaded_meta, loaded_messages) = loaded_rx.recv().unwrap().unwrap();
+        load_handle.join().unwrap();
+        assert_eq!(loaded_meta.sequence, 2);
+        assert_eq!(
+            loaded_messages.len(),
+            2,
+            "load must not expose bumped metadata without appended records"
+        );
     }
 
     #[test]
