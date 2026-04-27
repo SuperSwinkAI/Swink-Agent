@@ -7,7 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.9.0] - TBD
+## [0.9.0] - 2026-04-27
+
+### Added — spec 044 (eval-driven self-improvement loop)
+
+- **`swink-agent-evolve` crate** — new workspace crate implementing a closed-loop prompt and tool-schema optimization cycle: baseline evaluation → weak-point diagnosis → mutation → candidate evaluation → acceptance gating → versioned persistence.
+- **`EvolutionRunner`** — orchestrates full cycles via `baseline()` + `run_cycle()` / `run_cycles()`; panic-isolated so a crashing candidate never tears down the loop.
+- **`OptimizationTarget` / `OptimizationConfig` / `CycleBudget`** — declarative configuration of what to mutate (system prompt sections, tool descriptions) and how many cycles/candidates to allow.
+- **`Diagnoser`** — maps failing `EvalCase` results to `TargetComponent` weak points by evaluator name; `WeakPoint` carries a confidence score and sample of failing cases.
+- **`MutationStrategy` trait** — pluggable mutation interface; three built-in strategies: `Ablation` (remove/simplify prompt sections), `LlmGuided` (LLM-generated rewrites via optional judge), `TemplateBased` (pattern-based variations). `deduplicate()` collapses near-identical candidates before evaluation.
+- **`AcceptanceGate` / `AcceptanceVerdict`** — ranks candidates by composite score with P1-regression protection; `AcceptanceResult` carries the winning `Candidate` or a `NoCandidateImproved` verdict.
+- **`CyclePersister` / `ManifestEntry`** — saves winning candidates to versioned cycle directories with a JSONL manifest for audit and rollback.
+- **`otel` feature** — optional OpenTelemetry tracing for optimization cycles.
+
+### Added — spec 031 (memory nudge policy)
+
+- **`MemoryNudgePolicy`** in `swink-agent-policies` — `PostTurnPolicy` that scans assistant turns for four heuristic patterns (Correction, ExplicitSave, Decision, Preference) and emits `MemoryNudge` payloads when confidence exceeds the configured threshold.
+- **`NudgeSensitivity`** enum (Low / Medium / High) — controls per-category confidence cutoffs.
+- **`MemoryNudgeCategory` / `MemoryNudge`** — structured payload carrying category, summary, confidence, and turn number, ready for downstream memory-store writes.
+- Feature-gated: `memory-nudge` in `swink-agent-policies`.
+
+### Added — spec 025 (TUI transport abstraction)
+
+- **`TuiTransport` trait** in `swink-agent-tui` — abstracts message exchange between the TUI and the agent loop, enabling future remote/socket-backed sessions without changing the event loop.
+- **`InProcessTransport`** — zero-behavior-change extraction of the existing direct-channel path; all current users automatically use this impl.
+- **`SocketTransport` stub** — skeleton behind the `remote` feature gate for upcoming remote-session support.
+
+### Added — spec 021 (cross-session full-text search)
+
+- **`TantivyIndex`** in `swink-agent-memory` — tantivy-backed full-text index stored alongside session files at `<sessions_dir>/.search_index/`; lazy-built on first search, incrementally updated on `save_entries`, removed on `delete`.
+- **`JsonlSessionStore::search()`** — delegates to `TantivyIndex` when the `search` feature is active; falls back to the existing linear scan otherwise (zero regressions on the default build).
+- **`open_search_index()` / `rebuild_search_index()`** on `JsonlSessionStore` — explicit index lifecycle management.
+- Feature-gated: `search` in `swink-agent-memory`.
+
+### Added — spec 023 (RL-compatible training format export)
+
+- **`TrainingExporter` trait** in `swink-agent-eval` — export `Invocation` traces as fine-tuning data in three formats.
+- **ChatML/SFT exporter** — conversation-style JSONL with tool calls, suitable for standard SFT pipelines.
+- **DPO pair generator** — chosen/rejected pairs derived from high/low-scoring traces per `EvalCase`; score spread is configurable.
+- **ShareGPT exporter** — community-format conversation export.
+- **`TrainingReporter`** — integrates with the existing `Reporter` trait so training export slots into any `EvalRunner` pipeline.
+- **`ExportOptions`** — `quality_threshold` filter, format selector, output path.
+- Feature-gated: `training-export` in `swink-agent-eval`.
 
 ### Added — spec 043 (evals: advanced features)
 
@@ -32,6 +73,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Judge-backed eval setup no longer relies on a default model id — `JudgeRegistry::builder(client, model_id)` requires the explicit `model_id` positional arg so score histories stay pinned to the caller-selected model (FR-007 clarification Q9).
 - FR-044 legacy-result converter was deliberately **not** shipped. The converter was a no-op shim for a shape that never reached a public release; downstream users already consume `EvalCaseResult` / `EvalSetResult` directly.
+
+### Fixed
+
+- **Tools**: drain stdout/stderr pipe to EOF after hitting `MAX_OUTPUT_BYTES` so the child process receives no SIGPIPE (exit 141) on large output.
+- **Local LLM**: enforce stream context contracts (context window, cancellation, readiness race); retry model loads after failed state.
+- **Adapters**: bound error-body reads; treat OpenAI EOF-before-DONE as a network error; finalize Bedrock blocks before terminal frames; classify unexpected Ollama EOF as network error.
+- **Artifacts**: fix lock contention across store instances; populate pre-dispatch execution roots.
+- **Memory**: lock JSONL reads during append commits; fail closed on missing session migrations.
+- **TUI**: block session mutations while streaming; add wide side-by-side diff view.
+- **Loop**: run post-turn policies on overflow errors; preserve multi-tool results during context compaction; preserve prompt batch for pre-turn policies; reject stream starts after terminal events.
+- **Web**: harden private-address filtering; harden Playwright subresource filtering; harden redirect filtering.
+- **Auth**: redact credential debug output.
+- **xtask**: fail `verify-catalog` on unknown provider filters.
+- **CI**: add no-default local validation sentinels.
 
 ## [0.8.1] - 2026-04-22
 

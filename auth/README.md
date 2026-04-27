@@ -18,8 +18,8 @@ Credential management and OAuth2 token refresh for [`swink-agent`](https://crate
 
 ```toml
 [dependencies]
-swink-agent = "0.10.0"
-swink-agent-auth = "0.10.0"
+swink-agent = "0.9.0"
+swink-agent-auth = "0.9.0"
 tokio = { version = "1", features = ["full"] }
 ```
 

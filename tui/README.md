@@ -30,9 +30,9 @@ Or embed the TUI in your own crate:
 
 ```toml
 [dependencies]
-swink-agent = "0.10.0"
-swink-agent-adapters = { version = "0.10.0", features = ["anthropic", "openai"] }
-swink-agent-tui = "0.10.0"
+swink-agent = "0.9.0"
+swink-agent-adapters = { version = "0.9.0", features = ["anthropic", "openai"] }
+swink-agent-tui = "0.9.0"
 tokio = { version = "1", features = ["full"] }
 dotenvy = "0.15"
 ```

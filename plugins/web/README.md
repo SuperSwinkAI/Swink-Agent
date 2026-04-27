@@ -24,8 +24,8 @@ Web browsing plugin for [`swink-agent`](https://crates.io/crates/swink-agent) â€
 
 ```toml
 [dependencies]
-swink-agent = { version = "0.10.0", features = ["plugins"] }
-swink-agent-plugin-web = { version = "0.10.0", features = ["duckduckgo"] }
+swink-agent = { version = "0.9.0", features = ["plugins"] }
+swink-agent-plugin-web = { version = "0.9.0", features = ["duckduckgo"] }
 tokio = { version = "1", features = ["full"] }
 ```
 

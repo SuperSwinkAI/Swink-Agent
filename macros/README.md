@@ -18,8 +18,8 @@ Proc macros for [`swink-agent`](https://crates.io/crates/swink-agent) — turn a
 
 ```toml
 [dependencies]
-swink-agent = "0.10.0"
-swink-agent-macros = "0.10.0"
+swink-agent = "0.9.0"
+swink-agent-macros = "0.9.0"
 schemars = "1"
 serde = { version = "1", features = ["derive"] }
 ```

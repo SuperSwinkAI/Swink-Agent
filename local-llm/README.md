@@ -20,8 +20,8 @@ On-device LLM inference for [`swink-agent`](https://crates.io/crates/swink-agent
 
 ```toml
 [dependencies]
-swink-agent = "0.10.0"
-swink-agent-local-llm = { version = "0.10.0", features = ["metal"] }  # or "cuda", "vulkan", or none for CPU
+swink-agent = "0.9.0"
+swink-agent-local-llm = { version = "0.9.0", features = ["metal"] }  # or "cuda", "vulkan", or none for CPU
 tokio = { version = "1", features = ["full"] }
 ```
 
