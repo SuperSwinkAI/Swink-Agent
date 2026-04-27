@@ -1,3 +1,7 @@
 [alias]
 xtask = "run -p xtask --"
 adapters-no-default-features = "test -p swink-agent-adapters --no-default-features --features __no_default_features_sentinel --test no_default_features"
+local-llm-no-default-features = "test -p swink-agent-local-llm --no-default-features --test no_default_features"
+workspace-no-default-features = "build --workspace --no-default-features"
+eval-no-default-features = "build -p swink-agent-eval --no-default-features"
+eval-advanced-no-default-features = "build -p swink-agent-eval --features all-evaluators,simulation,generation,trace-ingest,telemetry,html-report,langsmith,cli --no-default-features"

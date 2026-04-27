@@ -17,6 +17,15 @@ test-testkit:
 test-no-features:
     {{cargo}} nextest run -p swink-agent --no-default-features
 
+# Run feature-gate sentinels and no-default build contracts
+no-default-sentinels:
+    {{cargo}} test -p swink-agent --no-default-features
+    {{cargo}} adapters-no-default-features
+    {{cargo}} local-llm-no-default-features
+    {{cargo}} workspace-no-default-features
+    {{cargo}} eval-no-default-features
+    {{cargo}} eval-advanced-no-default-features
+
 # Run clippy with zero-warnings policy
 lint:
     {{cargo}} clippy --workspace -- -D warnings
@@ -54,7 +63,7 @@ validate:
     {{cargo}} test --workspace
     {{cargo}} build --workspace
     {{cargo}} test --workspace --features testkit
-    {{cargo}} test -p swink-agent --no-default-features
+    just no-default-sentinels
     just package-preflight
 
 # Backward-compatible alias for the canonical local validation gate

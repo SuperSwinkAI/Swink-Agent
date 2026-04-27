@@ -77,12 +77,17 @@ cargo test --workspace                               # all workspace tests
 cargo build --workspace                              # full workspace build
 cargo test --workspace --features testkit            # testkit-enabled workspace tests
 cargo test -p swink-agent --no-default-features      # builtin-tools disabled coverage
+cargo adapters-no-default-features                   # adapter provider feature gates stay disabled
+cargo local-llm-no-default-features                  # local-LLM optional backends stay disabled
+cargo workspace-no-default-features                  # workspace no-default build contract
+cargo eval-no-default-features                       # eval default-free surface contract
+cargo eval-advanced-no-default-features              # eval advanced-feature no-default contract
 cargo publish --workspace --dry-run --locked --allow-dirty  # packaging / publish-surface preflight
 ```
 
 `just validate` and `just check` run the same canonical gate.
 
-All seven commands must pass. Do not edit `CHANGELOG.md` — entries are added by maintainers.
+All commands must pass. Do not edit `CHANGELOG.md` — entries are added by maintainers.
 
 Some tests hit live APIs and are `#[ignore]`. Run them with:
 ```bash
