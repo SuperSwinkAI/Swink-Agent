@@ -39,25 +39,106 @@ function hostMatches(list, host) {
   return (list || []).some((entry) => lowerHost === String(entry).toLowerCase());
 }
 
-function isPrivateIpv4(host) {
+function parseIpv4Bytes(host) {
   const parts = host.split('.').map((part) => Number(part));
   if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) {
-    return false;
+    return null;
   }
+  return parts;
+}
 
+function isPrivateIpv4Bytes(parts) {
   return (
     parts[0] === 0 ||
     parts[0] === 10 ||
     parts[0] === 127 ||
+    (parts[0] === 100 && parts[1] >= 64 && parts[1] <= 127) ||
     (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) ||
     (parts[0] === 192 && parts[1] === 168) ||
-    (parts[0] === 169 && parts[1] === 254)
+    (parts[0] === 169 && parts[1] === 254) ||
+    (parts[0] === 198 && parts[1] >= 18 && parts[1] <= 19) ||
+    (parts[0] === 192 && parts[1] === 0 && parts[2] === 2) ||
+    (parts[0] === 198 && parts[1] === 51 && parts[2] === 100) ||
+    (parts[0] === 203 && parts[1] === 0 && parts[2] === 113) ||
+    parts[0] >= 224
   );
 }
 
+function isPrivateIpv4(host) {
+  const parts = parseIpv4Bytes(host);
+  return parts !== null && isPrivateIpv4Bytes(parts);
+}
+
+function parseIpv6Segments(host) {
+  let input = host.toLowerCase().split('%')[0];
+
+  if (input.includes('.')) {
+    const lastColon = input.lastIndexOf(':');
+    if (lastColon === -1) {
+      return null;
+    }
+    const v4 = parseIpv4Bytes(input.slice(lastColon + 1));
+    if (v4 === null) {
+      return null;
+    }
+    input = `${input.slice(0, lastColon)}:${((v4[0] << 8) | v4[1]).toString(16)}:${((v4[2] << 8) | v4[3]).toString(16)}`;
+  }
+
+  const halves = input.split('::');
+  if (halves.length > 2) {
+    return null;
+  }
+
+  const left = halves[0] ? halves[0].split(':') : [];
+  const right = halves.length === 2 && halves[1] ? halves[1].split(':') : [];
+  const fill = halves.length === 2 ? 8 - left.length - right.length : 0;
+  if (fill < 0 || (halves.length === 1 && left.length !== 8)) {
+    return null;
+  }
+
+  const segments = [...left, ...Array(fill).fill('0'), ...right];
+  if (segments.length !== 8) {
+    return null;
+  }
+
+  return segments.map((segment) => {
+    if (!/^[0-9a-f]{1,4}$/.test(segment)) {
+      return null;
+    }
+    return Number.parseInt(segment, 16);
+  });
+}
+
 function isPrivateIpv6(host) {
-  const lowerHost = host.toLowerCase();
-  return lowerHost === '::1' || lowerHost.startsWith('fc') || lowerHost.startsWith('fd');
+  const segments = parseIpv6Segments(host);
+  if (segments === null || segments.some((segment) => segment === null)) {
+    return false;
+  }
+
+  const mappedV4 =
+    segments.slice(0, 5).every((segment) => segment === 0) && segments[5] === 0xffff;
+  const compatibleV4 =
+    segments.slice(0, 6).every((segment) => segment === 0) &&
+    (segments[6] !== 0 || segments[7] !== 0);
+  if (mappedV4 || compatibleV4) {
+    return isPrivateIpv4Bytes([
+      segments[6] >> 8,
+      segments[6] & 0xff,
+      segments[7] >> 8,
+      segments[7] & 0xff,
+    ]);
+  }
+
+  const unspecified = segments.every((segment) => segment === 0);
+  const loopback = segments.slice(0, 7).every((segment) => segment === 0) && segments[7] === 1;
+  return (
+    unspecified ||
+    loopback ||
+    (segments[0] & 0xfe00) === 0xfc00 ||
+    (segments[0] & 0xffc0) === 0xfe80 ||
+    (segments[0] & 0xff00) === 0xff00 ||
+    (segments[0] === 0x2001 && segments[1] === 0x0db8)
+  );
 }
 
 function isBlockedPrivateHost(host) {

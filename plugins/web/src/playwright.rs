@@ -456,9 +456,58 @@ mod tests {
     }
 
     #[test]
-    fn bridge_script_exports_data_only_extract_helpers() {
-        assert!(!BRIDGE_SCRIPT.contains("eval("));
+    fn bridge_script_blocks_special_use_hosts() {
+        let bridge_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/playwright_bridge.js");
+        let node_script = format!(
+            r"
+const bridge = require({bridge_path});
 
+for (const host of [
+  '0.0.0.0',
+  '100.64.0.1',
+  '198.18.0.1',
+  '192.0.2.1',
+  '224.0.0.1',
+  '::',
+  '::1',
+  'fc00::1',
+  'fd00::1',
+  'fe80::1',
+  'ff02::1',
+  '2001:db8::1',
+  '::ffff:10.0.0.1',
+  '::ffff:127.0.0.1',
+  '0:0:0:0:0:ffff:c0a8:0101',
+]) {{
+  if (!bridge.isBlockedPrivateHost(host)) {{
+    throw new Error('private host should be blocked: ' + host);
+  }}
+}}
+for (const host of ['93.184.216.34', '2606:4700:4700::1111', '::ffff:93.184.216.34']) {{
+  if (bridge.isBlockedPrivateHost(host)) {{
+    throw new Error('public host should not be blocked: ' + host);
+  }}
+}}
+",
+            bridge_path = serde_json::to_string(&bridge_path.display().to_string())
+                .expect("path should serialize"),
+        );
+
+        let output = StdCommand::new(resolve_node_path(None))
+            .arg("-e")
+            .arg(node_script)
+            .output()
+            .expect("node should run bridge host assertions");
+
+        assert!(
+            output.status.success(),
+            "node assertions failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    fn bridge_script_filters_requests_without_playwright() {
         let bridge_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/playwright_bridge.js");
         let node_script = format!(
             r"
@@ -502,6 +551,36 @@ if (!String(await bridge.blockedByFilter(
 )).includes('DNS resolution failed')) {{
   throw new Error('DNS failures should fail closed');
 }}
+}})().catch((error) => {{
+  console.error(error.stack || error);
+  process.exit(1);
+}});
+",
+            bridge_path = serde_json::to_string(&bridge_path.display().to_string())
+                .expect("path should serialize"),
+        );
+
+        let output = StdCommand::new(resolve_node_path(None))
+            .arg("-e")
+            .arg(node_script)
+            .output()
+            .expect("node should run bridge filter assertions");
+
+        assert!(
+            output.status.success(),
+            "node assertions failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    fn bridge_script_exports_data_only_extract_helpers() {
+        assert!(!BRIDGE_SCRIPT.contains("eval("));
+
+        let bridge_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/playwright_bridge.js");
+        let node_script = format!(
+            r"
+const bridge = require({bridge_path});
 
 const linksPlan = bridge.buildExtractionPlan({{ preset: 'links' }});
 if (linksPlan.selector !== 'a[href]' || linksPlan.preset !== 'links') {{
@@ -576,10 +655,6 @@ const tableElement = bridge.extractElementData(
 if (tableElement.tag !== 'table' || !tableElement.text.includes('<tbody>')) {{
   throw new Error('unexpected table element: ' + JSON.stringify(tableElement));
 }}
-}})().catch((error) => {{
-  console.error(error.stack || error);
-  process.exit(1);
-}});
 ",
             bridge_path = serde_json::to_string(&bridge_path.display().to_string())
                 .expect("path should serialize"),

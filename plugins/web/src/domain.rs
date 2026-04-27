@@ -90,8 +90,8 @@ fn is_private_ip(ip: &IpAddr) -> bool {
 
 fn is_private_ipv4(ip: &Ipv4Addr) -> bool {
     let octets = ip.octets();
-    // 0.0.0.0
-    if *ip == Ipv4Addr::UNSPECIFIED {
+    // 0.0.0.0/8 (current network)
+    if octets[0] == 0 {
         return true;
     }
     // 127.0.0.0/8 (loopback)
@@ -114,17 +114,55 @@ fn is_private_ipv4(ip: &Ipv4Addr) -> bool {
     if octets[0] == 169 && octets[1] == 254 {
         return true;
     }
+    // 100.64.0.0/10 (carrier-grade NAT)
+    if octets[0] == 100 && (64..=127).contains(&octets[1]) {
+        return true;
+    }
+    // 198.18.0.0/15 (benchmarking)
+    if octets[0] == 198 && (18..=19).contains(&octets[1]) {
+        return true;
+    }
+    // Documentation/test networks.
+    if (octets[0] == 192 && octets[1] == 0 && octets[2] == 2)
+        || (octets[0] == 198 && octets[1] == 51 && octets[2] == 100)
+        || (octets[0] == 203 && octets[1] == 0 && octets[2] == 113)
+    {
+        return true;
+    }
+    // 224.0.0.0/4 (multicast) and 240.0.0.0/4 (reserved).
+    if octets[0] >= 224 {
+        return true;
+    }
     false
 }
 
 fn is_private_ipv6(ip: &Ipv6Addr) -> bool {
+    if let Some(mapped) = ip.to_ipv4_mapped() {
+        return is_private_ipv4(&mapped);
+    }
+    // :: (unspecified)
+    if ip.is_unspecified() {
+        return true;
+    }
     // ::1 (loopback)
     if ip.is_loopback() {
         return true;
     }
-    // fc00::/7 (unique local addresses)
     let segments = ip.segments();
+    // fc00::/7 (unique local addresses)
     if segments[0] & 0xfe00 == 0xfc00 {
+        return true;
+    }
+    // fe80::/10 (link-local unicast)
+    if segments[0] & 0xffc0 == 0xfe80 {
+        return true;
+    }
+    // ff00::/8 (multicast)
+    if segments[0] & 0xff00 == 0xff00 {
+        return true;
+    }
+    // 2001:db8::/32 (documentation)
+    if segments[0] == 0x2001 && segments[1] == 0x0db8 {
         return true;
     }
     false
@@ -189,12 +227,48 @@ mod tests {
         };
 
         for url in [
+            "http://0.0.0.0/admin",
             "http://127.0.0.1/admin",
             "http://10.0.0.1/internal",
+            "http://100.64.0.1/cgnat",
             "http://172.16.0.1/secret",
             "http://192.168.1.1/router",
+            "http://198.18.0.1/benchmark",
+            "http://192.0.2.1/docs",
+            "http://224.0.0.1/multicast",
         ] {
             assert!(filter.is_allowed(&Url::parse(url).unwrap()).is_err());
+        }
+    }
+
+    #[test]
+    fn ipv6_non_routable_ranges_are_private() {
+        for ip in [
+            "::",
+            "::1",
+            "fc00::1",
+            "fd00::1",
+            "fe80::1",
+            "ff02::1",
+            "2001:db8::1",
+            "::ffff:0.0.0.0",
+            "::ffff:10.0.0.1",
+            "::ffff:127.0.0.1",
+            "::ffff:169.254.0.1",
+            "::ffff:172.16.0.1",
+            "::ffff:192.168.1.1",
+        ] {
+            assert!(
+                super::is_private_ip(&ip.parse().unwrap()),
+                "{ip} should be blocked"
+            );
+        }
+
+        for ip in ["2606:4700:4700::1111", "::ffff:93.184.216.34"] {
+            assert!(
+                !super::is_private_ip(&ip.parse().unwrap()),
+                "{ip} should be allowed"
+            );
         }
     }
 }
