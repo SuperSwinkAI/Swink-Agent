@@ -51,7 +51,6 @@ pub struct OpenSearchTraceProvider {
     inner: Arc<Inner>,
 }
 
-#[derive(Debug)]
 struct Inner {
     http: Client,
     base_url: String,
@@ -59,6 +58,18 @@ struct Inner {
     bearer: Option<String>,
     session_attribute: String,
     hits_limit: usize,
+}
+
+impl std::fmt::Debug for Inner {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Inner")
+            .field("base_url", &self.base_url)
+            .field("index", &self.index)
+            .field("bearer", &self.bearer.as_ref().map(|_| "[REDACTED]"))
+            .field("session_attribute", &self.session_attribute)
+            .field("hits_limit", &self.hits_limit)
+            .finish_non_exhaustive()
+    }
 }
 
 impl OpenSearchTraceProvider {
@@ -478,6 +489,22 @@ mod tests {
         let b = hash_to_span_id("span-1");
         assert_eq!(a, b);
         assert_ne!(hash_to_span_id("span-1"), hash_to_span_id("span-2"));
+    }
+
+    #[test]
+    fn opensearch_provider_debug_redacts_bearer_token() {
+        let provider = OpenSearchTraceProvider::new("https://search.example", "spans")
+            .expect("provider builds")
+            .with_bearer("os-secret-token");
+
+        let debug = format!("{provider:?}");
+
+        assert!(
+            !debug.contains("os-secret-token"),
+            "Debug leaks OpenSearch bearer"
+        );
+        assert!(debug.contains("[REDACTED]"));
+        assert!(debug.contains("spans"));
     }
 
     #[test]

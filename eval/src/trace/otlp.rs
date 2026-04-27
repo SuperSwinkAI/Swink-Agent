@@ -59,7 +59,6 @@ pub struct OtlpHttpTraceProvider {
     inner: Arc<Inner>,
 }
 
-#[derive(Debug)]
 struct Inner {
     http: Client,
     base_url: String,
@@ -67,6 +66,21 @@ struct Inner {
     session_attribute: String,
     session_query_param: String,
     bearer_token: Option<String>,
+}
+
+impl std::fmt::Debug for Inner {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Inner")
+            .field("base_url", &self.base_url)
+            .field("path", &self.path)
+            .field("session_attribute", &self.session_attribute)
+            .field("session_query_param", &self.session_query_param)
+            .field(
+                "bearer_token",
+                &self.bearer_token.as_ref().map(|_| "[REDACTED]"),
+            )
+            .finish_non_exhaustive()
+    }
 }
 
 impl OtlpHttpTraceProvider {
@@ -576,6 +590,22 @@ mod tests {
     }
 
     #[test]
+    fn otlp_provider_debug_redacts_bearer_token() {
+        let provider = OtlpHttpTraceProvider::new("https://otlp.example")
+            .expect("provider builds")
+            .with_bearer_token("otlp-secret-token");
+
+        let debug = format!("{provider:?}");
+
+        assert!(
+            !debug.contains("otlp-secret-token"),
+            "Debug leaks OTLP bearer"
+        );
+        assert!(debug.contains("[REDACTED]"));
+        assert!(debug.contains("https://otlp.example"));
+    }
+
+    #[test]
     fn decode_hex_rejects_oversize() {
         let r: Option<[u8; 8]> = decode_hex("0123456789abcdef00");
         assert!(r.is_none());
@@ -590,7 +620,7 @@ mod tests {
     #[test]
     fn nanos_to_systime_monotonic() {
         let a = nanos_to_systime(1_700_000_000_000_000_000);
-        let b = nanos_to_systime(1_700_000_000_000_000_001);
+        let b = nanos_to_systime(1_700_000_000_000_001_000);
         assert!(b > a);
     }
 }

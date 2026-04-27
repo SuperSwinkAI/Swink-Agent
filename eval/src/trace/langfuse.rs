@@ -47,12 +47,21 @@ pub struct LangfuseTraceProvider {
     inner: Arc<Inner>,
 }
 
-#[derive(Debug)]
 struct Inner {
     http: Client,
     base_url: String,
     public_key: String,
     secret_key: String,
+}
+
+impl std::fmt::Debug for Inner {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Inner")
+            .field("base_url", &self.base_url)
+            .field("public_key", &"[REDACTED]")
+            .field("secret_key", &"[REDACTED]")
+            .finish_non_exhaustive()
+    }
 }
 
 impl LangfuseTraceProvider {
@@ -497,6 +506,26 @@ mod tests {
         assert_eq!(a, b);
         let c = hash_to_span_id("obs-2");
         assert_ne!(a, c);
+    }
+
+    #[test]
+    fn langfuse_provider_debug_redacts_auth_keys() {
+        let provider =
+            LangfuseTraceProvider::new("https://langfuse.example", "pk-secret", "sk-secret")
+                .expect("provider builds");
+
+        let debug = format!("{provider:?}");
+
+        assert!(
+            !debug.contains("pk-secret"),
+            "Debug leaks Langfuse public key"
+        );
+        assert!(
+            !debug.contains("sk-secret"),
+            "Debug leaks Langfuse secret key"
+        );
+        assert!(debug.contains("[REDACTED]"));
+        assert!(debug.contains("https://langfuse.example"));
     }
 
     #[test]

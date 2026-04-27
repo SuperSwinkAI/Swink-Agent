@@ -3,6 +3,7 @@
 #![forbid(unsafe_code)]
 #![cfg(feature = "langsmith")]
 
+use std::fmt;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Deserialize;
@@ -17,10 +18,19 @@ use crate::{EvalCaseResult, EvalMetricResult, EvalSetResult, Verdict};
 const DEFAULT_ENDPOINT: &str = "https://api.smith.langchain.com/";
 
 /// LangSmith reporter that pushes eval cases as runs and metric scores as feedback.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct LangSmithExporter {
     api_token: String,
     endpoint: Url,
+}
+
+impl fmt::Debug for LangSmithExporter {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("LangSmithExporter")
+            .field("api_token", &"[REDACTED]")
+            .field("endpoint", &self.endpoint)
+            .finish()
+    }
 }
 
 impl LangSmithExporter {
@@ -408,6 +418,20 @@ mod tests {
         let parsed = MetricDetails::parse(Some(details));
         assert_eq!(parsed.feedback_key.as_deref(), Some("quality.correctness"));
         assert_eq!(parsed.comment.as_deref(), Some("judge note"));
+    }
+
+    #[test]
+    fn langsmith_exporter_debug_redacts_api_token() {
+        let exporter = LangSmithExporter::new("ls-secret-token");
+
+        let debug = format!("{exporter:?}");
+
+        assert!(
+            !debug.contains("ls-secret-token"),
+            "Debug leaks LangSmith token"
+        );
+        assert!(debug.contains("[REDACTED]"));
+        assert!(debug.contains("api.smith.langchain.com"));
     }
 
     #[test]
