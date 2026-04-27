@@ -580,6 +580,91 @@ async fn slash_thinking_updates_pending_model_before_next_send() {
     );
 }
 
+#[tokio::test]
+async fn running_clear_command_is_blocked_without_clearing_messages() {
+    let mut app = App::new(TuiConfig::default());
+    app.status = AgentStatus::Running;
+    app.messages.push(make_user_message("keep me"));
+
+    type_input(&mut app, "#clear");
+    app.submit_input();
+
+    assert!(
+        app.messages
+            .iter()
+            .any(|message| message.role == MessageRole::User && message.content == "keep me"),
+        "running #clear must not remove existing transcript messages"
+    );
+    assert!(
+        app.messages.iter().any(|message| {
+            message.role == MessageRole::System && message.content.contains("agent is running")
+        }),
+        "blocked command should tell the user why it was rejected"
+    );
+    assert_eq!(app.status, AgentStatus::Running);
+}
+
+#[tokio::test]
+async fn running_load_command_is_blocked_without_switching_sessions() {
+    let tempdir = tempdir().unwrap();
+    let store = JsonlSessionStore::new(tempdir.path().to_path_buf()).unwrap();
+    let now = swink_agent_memory::now_utc();
+    let meta = SessionMeta {
+        id: "saved-session".to_string(),
+        title: "saved-model".to_string(),
+        created_at: now,
+        updated_at: now,
+        version: 1,
+        sequence: 0,
+    };
+    store
+        .save("saved-session", &meta, &[make_user_agent_message("loaded")])
+        .unwrap();
+
+    let mut app =
+        App::new(TuiConfig::default()).with_session_store(store, "active-session".to_string());
+    app.status = AgentStatus::Running;
+    app.messages.push(make_user_message("active"));
+
+    type_input(&mut app, "#load saved-session");
+    app.submit_input();
+
+    assert_eq!(app.session_id, "active-session");
+    assert!(
+        app.messages
+            .iter()
+            .any(|message| message.role == MessageRole::User && message.content == "active"),
+        "running #load must not replace the active transcript"
+    );
+    assert!(
+        !app.messages
+            .iter()
+            .any(|message| message.role == MessageRole::User && message.content == "loaded"),
+        "running #load must not restore another session"
+    );
+}
+
+#[tokio::test]
+async fn running_reset_command_is_blocked_without_resetting_state() {
+    let mut app = App::new(TuiConfig::default());
+    app.status = AgentStatus::Running;
+    app.operating_mode = OperatingMode::Plan;
+    app.session_trusted_tools.insert("write_file".to_string());
+    app.messages.push(make_user_message("keep me"));
+
+    type_input(&mut app, "/reset");
+    app.submit_input();
+
+    assert_eq!(app.operating_mode, OperatingMode::Plan);
+    assert!(app.session_trusted_tools.contains("write_file"));
+    assert!(
+        app.messages
+            .iter()
+            .any(|message| message.role == MessageRole::User && message.content == "keep me"),
+        "running /reset must not clear current UI state"
+    );
+}
+
 /// Helper: type a literal string into the input editor.
 fn type_input(app: &mut App, s: &str) {
     for c in s.chars() {

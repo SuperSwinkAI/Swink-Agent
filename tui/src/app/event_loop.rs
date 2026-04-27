@@ -459,6 +459,17 @@ impl App {
         self.send_to_agent(text);
     }
 
+    fn command_mutates_session_during_stream(command: &CommandResult) -> bool {
+        matches!(
+            command,
+            CommandResult::Clear
+                | CommandResult::SetSystemPrompt(_)
+                | CommandResult::Reset
+                | CommandResult::SaveSession
+                | CommandResult::LoadSession(_)
+        )
+    }
+
     #[allow(clippy::too_many_lines)]
     pub(super) fn submit_input(&mut self) {
         // Classify the pending input BEFORE draining the editor so that
@@ -489,6 +500,16 @@ impl App {
                     );
                 }
             }
+            return;
+        }
+
+        if self.status == AgentStatus::Running
+            && Self::command_mutates_session_during_stream(&command)
+        {
+            self.push_system_message(
+                "Command blocked while the agent is running. Stop the active stream and try again."
+                    .to_string(),
+            );
             return;
         }
 
