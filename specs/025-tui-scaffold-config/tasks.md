@@ -174,6 +174,26 @@
 
 ---
 
+## Phase 10: User Story 7 — Transport Abstraction Layer (Priority: P2)
+
+**Goal**: Introduce `TuiTransport` trait decoupling TUI event loop from direct Agent access
+
+**Independent Test**: Construct `InProcessTransport` with mock agent, verify `send()` and `recv()` produce correct results. Inject mock transport into event loop tests.
+
+### Implementation for User Story 7
+
+- [X] T057 [US7] Create `tui/src/transport.rs` with `TuiTransport` trait: `async fn send(&self, input: UserInput) -> Result<(), TransportError>` and `async fn recv(&mut self) -> Option<AgentEvent>`, plus `UserInput` and `TransportError` types
+- [X] T058 [US7] Implement `InProcessTransport` struct in `tui/src/transport.rs` that wraps `mpsc::Sender<AgentEvent>` for receiving events (bridged from existing agent channels) and holds a reference to the agent send path
+- [X] T059 [US7] Add `SocketTransport` stub in `tui/src/transport.rs` behind `#[cfg(feature = "remote")]` feature gate (can use `unimplemented!()` or return `TransportError::Unavailable` for now)
+- [X] T060 [US7] Add `[features] remote = []` to `tui/Cargo.toml`
+- [X] T061 [US7] Register `transport` module in `tui/src/lib.rs` and re-export `TuiTransport`, `InProcessTransport`, `TransportError`, `UserInput` types
+- [X] T062 [US7] Add unit test: `InProcessTransport` send produces an agent event via mock agent
+- [X] T063 [US7] Add unit test: mock `TuiTransport` implementation verifies trait object usage
+
+**Checkpoint**: Transport trait compiles, InProcessTransport passes tests, SocketTransport stub compiles behind feature gate
+
+---
+
 ## Dependencies & Execution Order
 
 ### Phase Dependencies
