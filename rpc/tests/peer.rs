@@ -13,7 +13,10 @@ fn make_peer_pair() -> (JsonRpcPeer, JsonRpcPeer) {
 async fn notification_round_trip() {
     let (mut a, mut b) = make_peer_pair();
 
-    a.sender().notify("ping", &serde_json::json!({"seq": 1})).await.unwrap();
+    a.sender()
+        .notify("ping", &serde_json::json!({"seq": 1}))
+        .await
+        .unwrap();
     drop(a);
 
     let msg = b.recv_incoming().await.unwrap();
@@ -66,8 +69,10 @@ async fn error_response_surfaces_as_err() {
         }
     });
 
-    let result: Result<serde_json::Value, RpcError> =
-        a.sender().request("unknown", &serde_json::Value::Null).await;
+    let result: Result<serde_json::Value, RpcError> = a
+        .sender()
+        .request("unknown", &serde_json::Value::Null)
+        .await;
 
     let err = result.unwrap_err();
     assert_eq!(err.code, RpcError::METHOD_NOT_FOUND);
@@ -83,8 +88,10 @@ async fn pending_requests_fail_on_disconnect() {
     // Drop b immediately to simulate peer disconnect.
     drop(b);
 
-    let result: Result<serde_json::Value, RpcError> =
-        a.sender().request("anything", &serde_json::Value::Null).await;
+    let result: Result<serde_json::Value, RpcError> = a
+        .sender()
+        .request("anything", &serde_json::Value::Null)
+        .await;
 
     assert_eq!(result.unwrap_err().code, RpcError::DISCONNECTED);
 }
@@ -98,21 +105,32 @@ async fn concurrent_requests_correlate_correctly() {
         // Handle two requests, responding in reversed order.
         let msg1 = b.recv_incoming().await.unwrap();
         let msg2 = b.recv_incoming().await.unwrap();
-        if let (IncomingMessage::Request { id: id2, .. }, IncomingMessage::Request { id: id1, .. }) =
-            (msg2, msg1)
+        if let (
+            IncomingMessage::Request { id: id2, .. },
+            IncomingMessage::Request { id: id1, .. },
+        ) = (msg2, msg1)
         {
-            sender_b.respond_ok(id2, serde_json::json!("second")).unwrap();
-            sender_b.respond_ok(id1, serde_json::json!("first")).unwrap();
+            sender_b
+                .respond_ok(id2, serde_json::json!("second"))
+                .unwrap();
+            sender_b
+                .respond_ok(id1, serde_json::json!("first"))
+                .unwrap();
         }
     });
 
     let sender_a = a.sender();
     let f1 = tokio::spawn({
         let s = sender_a.clone();
-        async move { s.request::<_, serde_json::Value>("r1", &serde_json::Value::Null).await }
+        async move {
+            s.request::<_, serde_json::Value>("r1", &serde_json::Value::Null)
+                .await
+        }
     });
     let f2 = tokio::spawn(async move {
-        sender_a.request::<_, serde_json::Value>("r2", &serde_json::Value::Null).await
+        sender_a
+            .request::<_, serde_json::Value>("r2", &serde_json::Value::Null)
+            .await
     });
 
     let (r1, r2) = tokio::join!(f1, f2);
@@ -138,5 +156,8 @@ async fn oversize_line_closes_connection() {
 
     // After the oversized line the reader task exits, so recv returns None.
     let result = peer.recv_incoming().await;
-    assert!(result.is_none(), "connection should close after oversized line");
+    assert!(
+        result.is_none(),
+        "connection should close after oversized line"
+    );
 }

@@ -57,11 +57,19 @@ impl RpcError {
     pub const UNAVAILABLE: i64 = -32096;
 
     pub fn parse_error(msg: impl Into<String>) -> Self {
-        Self { code: Self::PARSE_ERROR, message: msg.into(), data: None }
+        Self {
+            code: Self::PARSE_ERROR,
+            message: msg.into(),
+            data: None,
+        }
     }
 
     pub fn invalid_request(msg: impl Into<String>) -> Self {
-        Self { code: Self::INVALID_REQUEST, message: msg.into(), data: None }
+        Self {
+            code: Self::INVALID_REQUEST,
+            message: msg.into(),
+            data: None,
+        }
     }
 
     pub fn method_not_found(method: &str) -> Self {
@@ -73,23 +81,43 @@ impl RpcError {
     }
 
     pub fn internal(msg: impl Into<String>) -> Self {
-        Self { code: Self::INTERNAL_ERROR, message: msg.into(), data: None }
+        Self {
+            code: Self::INTERNAL_ERROR,
+            message: msg.into(),
+            data: None,
+        }
     }
 
     pub fn protocol_mismatch(msg: impl Into<String>) -> Self {
-        Self { code: Self::PROTOCOL_MISMATCH, message: msg.into(), data: None }
+        Self {
+            code: Self::PROTOCOL_MISMATCH,
+            message: msg.into(),
+            data: None,
+        }
     }
 
     pub fn session_in_use() -> Self {
-        Self { code: Self::SESSION_IN_USE, message: "session in use".into(), data: None }
+        Self {
+            code: Self::SESSION_IN_USE,
+            message: "session in use".into(),
+            data: None,
+        }
     }
 
     pub fn disconnected() -> Self {
-        Self { code: Self::DISCONNECTED, message: "peer disconnected".into(), data: None }
+        Self {
+            code: Self::DISCONNECTED,
+            message: "peer disconnected".into(),
+            data: None,
+        }
     }
 
     pub fn unavailable(msg: impl Into<String>) -> Self {
-        Self { code: Self::UNAVAILABLE, message: msg.into(), data: None }
+        Self {
+            code: Self::UNAVAILABLE,
+            message: msg.into(),
+            data: None,
+        }
     }
 }
 

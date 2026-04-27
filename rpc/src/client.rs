@@ -6,7 +6,7 @@ use swink_agent::{AgentEvent, ToolApproval, ToolApprovalRequest};
 use tracing::{debug, warn};
 
 use crate::dto::{
-    InitializeParams, PromptParams, PromptResult, ToolApprovalDto, PROTOCOL_VERSION, method,
+    InitializeParams, PROTOCOL_VERSION, PromptParams, PromptResult, ToolApprovalDto, method,
 };
 use crate::jsonrpc::{IncomingMessage, JsonRpcPeer, RpcError};
 
@@ -58,18 +58,25 @@ impl AgentClient {
             }
             Some(other) => {
                 warn!("unexpected message during handshake: {other:?}");
-                return Err(RpcError::invalid_request("expected 'initialized' from server"));
+                return Err(RpcError::invalid_request(
+                    "expected 'initialized' from server",
+                ));
             }
             None => return Err(RpcError::disconnected()),
         }
 
-        Ok(Self { peer, approval_handler: None })
+        Ok(Self {
+            peer,
+            approval_handler: None,
+        })
     }
 
     /// Not available on this platform.
     #[cfg(not(unix))]
     pub async fn connect(_path: impl AsRef<Path>) -> Result<Self, RpcError> {
-        Err(RpcError::unavailable("Unix socket transport requires a Unix host"))
+        Err(RpcError::unavailable(
+            "Unix socket transport requires a Unix host",
+        ))
     }
 
     /// Set a synchronous handler called whenever the server requests tool approval.
@@ -89,13 +96,19 @@ impl AgentClient {
     /// # Errors
     ///
     /// Returns an error if the connection is lost or the server returns an error.
-    pub async fn prompt_text(&mut self, text: impl Into<String>) -> Result<Vec<AgentEvent>, RpcError> {
+    pub async fn prompt_text(
+        &mut self,
+        text: impl Into<String>,
+    ) -> Result<Vec<AgentEvent>, RpcError> {
         let events = self.run_turn(text.into()).await?;
         Ok(events)
     }
 
     async fn run_turn(&mut self, text: String) -> Result<Vec<AgentEvent>, RpcError> {
-        let params = PromptParams { text, session_id: None };
+        let params = PromptParams {
+            text,
+            session_id: None,
+        };
         let sender = self.peer.sender();
 
         // Start the prompt request in a background task so we can simultaneously
@@ -150,7 +163,9 @@ impl AgentClient {
         let Some(handler) = &self.approval_handler else {
             return ToolApproval::Approved;
         };
-        let Some(dto) = params.and_then(|v| serde_json::from_value::<crate::dto::ToolApprovalRequestDto>(v).ok()) else {
+        let Some(dto) = params
+            .and_then(|v| serde_json::from_value::<crate::dto::ToolApprovalRequestDto>(v).ok())
+        else {
             warn!("could not parse tool.approve params; auto-approving");
             return ToolApproval::Approved;
         };
@@ -170,7 +185,10 @@ impl AgentClient {
     ///
     /// Returns an error if the connection is lost.
     pub async fn cancel(&self) -> Result<(), RpcError> {
-        self.peer.sender().notify(method::CANCEL, &serde_json::Value::Null).await
+        self.peer
+            .sender()
+            .notify(method::CANCEL, &serde_json::Value::Null)
+            .await
     }
 
     /// Send a shutdown notification and close the connection.
@@ -179,6 +197,9 @@ impl AgentClient {
     ///
     /// Returns an error if the connection is lost before the notification is sent.
     pub async fn shutdown(self) -> Result<(), RpcError> {
-        self.peer.sender().notify(method::SHUTDOWN, &serde_json::Value::Null).await
+        self.peer
+            .sender()
+            .notify(method::SHUTDOWN, &serde_json::Value::Null)
+            .await
     }
 }

@@ -39,7 +39,10 @@ impl AgentServer {
                 ),
             ));
         }
-        Ok(Self { path, factory: Arc::new(factory) })
+        Ok(Self {
+            path,
+            factory: Arc::new(factory),
+        })
     }
 
     /// Bind to `path`, removing any existing socket file first.
@@ -53,7 +56,10 @@ impl AgentServer {
     ) -> Self {
         let path = path.as_ref().to_owned();
         let _ = std::fs::remove_file(&path);
-        Self { path, factory: Arc::new(factory) }
+        Self {
+            path,
+            factory: Arc::new(factory),
+        }
     }
 
     /// Start the accept loop, running until Ctrl-C.
@@ -146,7 +152,10 @@ async fn handle_connection(
     match peer_uid(&stream) {
         Ok(uid) if uid == effective_uid() => {}
         Ok(uid) => {
-            warn!("rejecting connection from uid {uid} (expected {})", effective_uid());
+            warn!(
+                "rejecting connection from uid {uid} (expected {})",
+                effective_uid()
+            );
             return;
         }
         Err(e) => {
@@ -186,13 +195,13 @@ async fn run_session(
     peer: &mut crate::jsonrpc::JsonRpcPeer,
     factory: &(dyn Fn() -> AgentOptions + Send + Sync),
 ) -> Result<(), crate::jsonrpc::RpcError> {
-    use tracing::{debug, info, warn};
     use crate::dto::{
-        InitializedParams, ServerInfo, ToolApprovalDto, ToolApprovalRequestDto,
-        PROTOCOL_VERSION, method,
+        InitializedParams, PROTOCOL_VERSION, ServerInfo, ToolApprovalDto, ToolApprovalRequestDto,
+        method,
     };
     use crate::jsonrpc::{IncomingMessage, RpcError};
     use swink_agent::{Agent, ToolApproval};
+    use tracing::{debug, info, warn};
 
     // Handshake: await `initialize` notification.
     match peer.recv_incoming().await {
@@ -250,21 +259,22 @@ async fn run_session(
             Some(IncomingMessage::Notification { method: m, .. }) if m == method::CANCEL => {
                 agent.abort();
             }
-            Some(IncomingMessage::Request { id, method: m, params }) if m == method::PROMPT => {
-                match run_prompt(peer, &mut agent, params).await {
-                    Ok(turn_id) => {
-                        peer.sender().respond_ok(
-                            id,
-                            crate::dto::PromptResult { turn_id },
-                        )?;
-                    }
-                    Err(e) => {
-                        peer.sender().respond_err(id, e)?;
-                    }
+            Some(IncomingMessage::Request {
+                id,
+                method: m,
+                params,
+            }) if m == method::PROMPT => match run_prompt(peer, &mut agent, params).await {
+                Ok(turn_id) => {
+                    peer.sender()
+                        .respond_ok(id, crate::dto::PromptResult { turn_id })?;
                 }
-            }
+                Err(e) => {
+                    peer.sender().respond_err(id, e)?;
+                }
+            },
             Some(IncomingMessage::Request { id, method: m, .. }) => {
-                peer.sender().respond_err(id, RpcError::method_not_found(&m))?;
+                peer.sender()
+                    .respond_err(id, RpcError::method_not_found(&m))?;
             }
             Some(IncomingMessage::Notification { method: m, .. }) => {
                 debug!("ignoring unknown notification: {m}");
@@ -281,17 +291,16 @@ async fn run_prompt(
     agent: &mut swink_agent::Agent,
     params: Option<serde_json::Value>,
 ) -> Result<String, crate::jsonrpc::RpcError> {
-    use futures::StreamExt as _;
-    use swink_agent::{AgentMessage, ContentBlock, LlmMessage, UserMessage, now_timestamp};
     use crate::dto::method;
     use crate::jsonrpc::{IncomingMessage, RpcError};
+    use futures::StreamExt as _;
+    use swink_agent::{AgentMessage, ContentBlock, LlmMessage, UserMessage, now_timestamp};
 
     let params: crate::dto::PromptParams = params
         .and_then(|v| serde_json::from_value(v).ok())
         .ok_or_else(|| RpcError::invalid_request("missing or invalid prompt params"))?;
 
-    static TURN_COUNTER: std::sync::atomic::AtomicU64 =
-        std::sync::atomic::AtomicU64::new(1);
+    static TURN_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
     let turn_id = TURN_COUNTER
         .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         .to_string();
@@ -352,24 +361,21 @@ fn effective_uid() -> u32 {
 #[cfg(all(unix, target_os = "linux"))]
 fn peer_uid(stream: &tokio::net::UnixStream) -> std::io::Result<u32> {
     // getsockopt<F: AsFd, O>(fd: &F, opt: O) — UnixStream: AsFd.
-    let cred =
-        nix::sys::socket::getsockopt(stream, nix::sys::socket::sockopt::PeerCredentials)
-            .map_err(|e| std::io::Error::other(e.to_string()))?;
+    let cred = nix::sys::socket::getsockopt(stream, nix::sys::socket::sockopt::PeerCredentials)
+        .map_err(|e| std::io::Error::other(e.to_string()))?;
     Ok(cred.uid())
 }
 
 #[cfg(all(unix, target_os = "macos"))]
 fn peer_uid(stream: &tokio::net::UnixStream) -> std::io::Result<u32> {
     // getpeereid<F: AsFd>(fd: F) — UnixStream: AsFd.
-    let (uid, _gid) = nix::unistd::getpeereid(stream)
-        .map_err(|e| std::io::Error::other(e.to_string()))?;
+    let (uid, _gid) =
+        nix::unistd::getpeereid(stream).map_err(|e| std::io::Error::other(e.to_string()))?;
     Ok(uid.as_raw())
 }
 
 #[cfg(all(unix, not(any(target_os = "linux", target_os = "macos"))))]
 fn peer_uid(_stream: &tokio::net::UnixStream) -> std::io::Result<u32> {
-    tracing::warn!(
-        "peer credential check not supported on this Unix variant; allowing connection"
-    );
+    tracing::warn!("peer credential check not supported on this Unix variant; allowing connection");
     Ok(effective_uid())
 }

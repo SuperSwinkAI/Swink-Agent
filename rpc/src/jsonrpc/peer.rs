@@ -10,7 +10,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, warn};
 
-use super::message::{RawMessage, RpcError, RequestId};
+use super::message::{RawMessage, RequestId, RpcError};
 
 /// Maximum byte length of a single NDJSON line (1 MiB).
 pub const MAX_LINE_BYTES: usize = 1024 * 1024;
@@ -232,12 +232,22 @@ async fn dispatch_line(
     };
 
     if raw.jsonrpc != "2.0" {
-        warn!("received message with unsupported jsonrpc version: {}", raw.jsonrpc);
+        warn!(
+            "received message with unsupported jsonrpc version: {}",
+            raw.jsonrpc
+        );
         return;
     }
 
     // Destructure to avoid borrow-after-move issues when routing params.
-    let RawMessage { id, method, params, result, error, .. } = raw;
+    let RawMessage {
+        id,
+        method,
+        params,
+        result,
+        error,
+        ..
+    } = raw;
 
     match (id, method) {
         (Some(id), None) => {

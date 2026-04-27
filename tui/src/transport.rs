@@ -173,7 +173,6 @@ impl TuiTransport for InProcessTransport {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -355,6 +354,4 @@ mod tests {
             "closed channel should return ChannelClosed error"
         );
     }
-
-
 }
