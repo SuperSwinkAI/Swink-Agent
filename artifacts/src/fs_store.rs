@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock, Weak};
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -140,11 +140,22 @@ fn ensure_within_root(root: &Path, candidate: &Path) -> Result<PathBuf, Artifact
 /// does not yet exist). Every operation validates `session_id` and verifies
 /// that the resolved target path remains under the canonical root, so a
 /// crafted `session_id` cannot escape the artifact root.
-type LockMap = HashMap<(String, String), Arc<Mutex<()>>>;
+#[derive(Hash, Eq, PartialEq)]
+struct ArtifactLockKey {
+    root: PathBuf,
+    session_id: String,
+    name: String,
+}
+
+type LockMap = HashMap<ArtifactLockKey, Weak<Mutex<()>>>;
+
+fn global_artifact_locks() -> &'static Mutex<LockMap> {
+    static LOCKS: OnceLock<Mutex<LockMap>> = OnceLock::new();
+    LOCKS.get_or_init(|| Mutex::new(HashMap::new()))
+}
 
 pub struct FileArtifactStore {
     root: PathBuf,
-    locks: Arc<Mutex<LockMap>>,
 }
 
 impl FileArtifactStore {
@@ -166,20 +177,26 @@ impl FileArtifactStore {
     pub fn try_new(root: impl Into<PathBuf>) -> Result<Self, ArtifactError> {
         let root = root.into();
         let canonical = canonicalize_root(&root).map_err(storage_err)?;
-        Ok(Self {
-            root: canonical,
-            locks: Arc::new(Mutex::new(HashMap::new())),
-        })
+        Ok(Self { root: canonical })
     }
 
     /// Get or create the per-artifact lock for a (session, name) pair.
     pub(crate) async fn artifact_lock(&self, session_id: &str, name: &str) -> Arc<Mutex<()>> {
-        let key = (session_id.to_string(), name.to_string());
-        let mut locks = self.locks.lock().await;
-        locks
-            .entry(key)
-            .or_insert_with(|| Arc::new(Mutex::new(())))
-            .clone()
+        let key = ArtifactLockKey {
+            root: self.root.clone(),
+            session_id: session_id.to_string(),
+            name: name.to_string(),
+        };
+        let mut locks = global_artifact_locks().lock().await;
+        if let Some(lock) = locks.get(&key).and_then(Weak::upgrade) {
+            return lock;
+        }
+
+        locks.retain(|_, lock| lock.strong_count() > 0);
+
+        let lock = Arc::new(Mutex::new(()));
+        locks.insert(key, Arc::downgrade(&lock));
+        lock
     }
 
     /// Path to the artifact directory: `{root}/{session_id}/{artifact_name}/`
@@ -703,6 +720,52 @@ mod tests {
                 .expect("load after delete")
                 .is_none(),
             "artifact should be deleted once the lock is released"
+        );
+    }
+
+    #[tokio::test]
+    async fn artifact_locks_are_shared_across_store_instances_for_same_root() {
+        let tmpdir = tempfile::TempDir::new().expect("tempdir");
+        let first_store = Arc::new(FileArtifactStore::new(tmpdir.path()));
+        let second_store = Arc::new(FileArtifactStore::new(tmpdir.path()));
+        first_store
+            .save("s1", "report.md", text_data("v1"))
+            .await
+            .expect("initial save");
+
+        let lock = first_store.artifact_lock("s1", "report.md").await;
+        let guard = lock.lock().await;
+
+        let (started_tx, started_rx) = oneshot::channel();
+        let delete_task = tokio::spawn({
+            let second_store = Arc::clone(&second_store);
+            async move {
+                started_tx.send(()).expect("notify delete start");
+                second_store.delete("s1", "report.md").await
+            }
+        });
+
+        started_rx.await.expect("delete task started");
+        sleep(Duration::from_millis(50)).await;
+        assert!(
+            !delete_task.is_finished(),
+            "a second store instance should wait on the root-wide artifact lock"
+        );
+
+        drop(guard);
+
+        delete_task
+            .await
+            .expect("delete task join")
+            .expect("delete should succeed after lock release");
+
+        assert!(
+            first_store
+                .load("s1", "report.md")
+                .await
+                .expect("load after delete")
+                .is_none(),
+            "artifact should be deleted once the cross-instance lock is released"
         );
     }
 
