@@ -329,6 +329,33 @@
 
 ---
 
+## Phase 14: User Story 7 - Memory Nudge Detection (Priority: P2)
+
+**Goal**: `MemoryNudgePolicy` detects save-worthy content in agent turns and emits structured nudge verdicts.
+Feature gate: `memory-nudge` in `swink-agent-policies`.
+
+**Independent Test**: Construct `MemoryNudgePolicy`, call `PostTurnPolicy::evaluate` with a turn containing each pattern category, verify Inject verdict with Extension content block.
+
+### Tests
+
+- [x] T094 [P] [US7] Write unit tests in `policies/src/memory_nudge.rs` `#[cfg(test)]`: `correction_phrase_triggers_correction_nudge`, `remember_this_triggers_explicit_save`, `we_decided_triggers_decision`, `i_prefer_triggers_preference`, `below_threshold_returns_continue`, `high_sensitivity_triggers_on_borderline`, `no_signal_returns_continue`
+
+### Implementation
+
+- [x] T095 [US7] Define `MemoryNudgeCategory` enum: `Correction`, `ExplicitSave`, `Decision`, `Preference` — with `Debug`, `Clone`, `PartialEq` derives in `policies/src/memory_nudge.rs`
+- [x] T096 [US7] Define `MemoryNudge` struct: `category: MemoryNudgeCategory`, `summary: String`, `confidence: f32`, `turn_number: usize` — with `Debug`, `Clone` derives
+- [x] T097 [US7] Define `NudgeSensitivity` enum: `Low`, `Medium`, `High` — with `Debug`, `Clone`, `Copy`, `PartialEq` derives; implement `threshold() -> f32` method
+- [x] T098 [US7] Define `MemoryNudgePolicy` struct: `sensitivity: NudgeSensitivity` with `new()` and `with_sensitivity()` builder methods
+- [x] T099 [US7] Implement heuristic detectors: `detect_correction()`, `detect_explicit_save()`, `detect_decision()`, `detect_preference()` — each returns `Option<f32>` confidence
+- [x] T100 [US7] Implement `PostTurnPolicy` for `MemoryNudgePolicy`: scan assistant message text for each category, collect matches above threshold, return Inject with Extension blocks or Continue
+- [x] T101 [US7] Add `memory-nudge` feature gate to `policies/Cargo.toml`: no extra deps (pure string matching, no regex dep for this policy)
+- [x] T102 [US7] Wire into `policies/src/lib.rs`: `#[cfg(feature = "memory-nudge")]` gate, re-export `MemoryNudgeCategory`, `MemoryNudge`, `NudgeSensitivity`, `MemoryNudgePolicy`
+- [x] T103 [US7] Add `memory-nudge` to `all` feature list in `policies/Cargo.toml`
+
+**Checkpoint**: MemoryNudgePolicy emits structured Inject verdicts. All unit tests pass. Feature-gated compilation verified.
+
+---
+
 ## Notes
 
 - [P] tasks = different files, no dependencies

@@ -64,6 +64,26 @@ An agent operator configures a content filter with keyword and regex blocklists 
 
 ---
 
+### User Story 5 - Memory Nudge Detection (Priority: P2)
+
+An agent operator wants to capture save-worthy knowledge that surfaces during agent turns without manually inspecting every message. They add a `MemoryNudgePolicy` to the `post_turn` slot. When heuristic detectors identify a correction, explicit save request, decision statement, or configuration preference, the policy returns `PolicyVerdict::Inject` carrying a `MemoryNudge` payload serialized as a `ContentBlock::Extension`. Upstream event subscribers or the caller's own sink can consume the injected extension block to persist the nugget to any store.
+
+**Why this priority**: Automated knowledge capture bridges the gap between "the agent runs" and "important context is retained." It is a passive, non-blocking policy that enriches observability without altering agent flow.
+
+**Independent Test**: Can be tested by configuring an agent with only the `MemoryNudgePolicy` in the `post_turn` slot and triggering turns that contain each of the four pattern categories — the returned verdict must be `Inject` with a `ContentBlock::Extension { type_name: "memory_nudge", ... }` whose JSON data deserializes to a valid `MemoryNudge`.
+
+**Acceptance Scenarios**:
+
+1. **Given** a `MemoryNudgePolicy` (Medium sensitivity) in post_turn, **When** the assistant message contains a correction phrase ("no, actually..." / "don't do X" / "use Y instead"), **Then** the verdict is Inject with `MemoryNudgeCategory::Correction` and confidence ≥ 0.5.
+2. **Given** a `MemoryNudgePolicy` in post_turn, **When** the assistant message contains an explicit save request ("remember this", "note that", "keep in mind"), **Then** the verdict is Inject with `MemoryNudgeCategory::ExplicitSave`.
+3. **Given** a `MemoryNudgePolicy` in post_turn, **When** the assistant message contains a decision statement ("we decided to", "the plan is"), **Then** the verdict is Inject with `MemoryNudgeCategory::Decision`.
+4. **Given** a `MemoryNudgePolicy` in post_turn, **When** the assistant message contains a preference declaration ("I prefer", "always use"), **Then** the verdict is Inject with `MemoryNudgeCategory::Preference`.
+5. **Given** a `MemoryNudgePolicy` with Low sensitivity, **When** a borderline match produces confidence below the Low threshold, **Then** the verdict is Continue.
+6. **Given** a `MemoryNudgePolicy` with High sensitivity, **When** the same borderline content produces confidence above the High threshold, **Then** the verdict is Inject.
+7. **Given** a `MemoryNudgePolicy` in post_turn, **When** the turn contains only ordinary text with no save-worthy signals, **Then** the verdict is Continue.
+
+---
+
 ### User Story 4 - Audit Logging for Observability (Priority: P2)
 
 An agent operator configures an audit logger so that every assistant turn is recorded to a JSONL file for observability, debugging, and compliance purposes. The operator can also implement a custom sink for their own storage backend.
@@ -105,7 +125,7 @@ An agent operator configures an audit logger so that every assistant turn is rec
 ### Functional Requirements
 
 - **FR-001**: The crate MUST be a new workspace member named `swink-agent-policies` that depends only on `swink-agent`'s public API (re-exported types from `lib.rs`) — no `pub(crate)` or internal module imports.
-- **FR-002**: Each policy MUST be independently feature-gated (`prompt-guard`, `pii`, `content-filter`, `audit`) with an `all` feature that enables everything, defaulting to `all`.
+- **FR-002**: Each policy MUST be independently feature-gated (`prompt-guard`, `pii`, `content-filter`, `audit`, `memory-nudge`) with an `all` feature that enables everything, defaulting to `all`.
 - **FR-003**: *(Prerequisite — completed in 031-policy-slots.)* `PolicyContext` in core includes `new_messages: &[AgentMessage]` containing only messages added since the last evaluation. For PreTurn, this is the pending batch. Already implemented and merged.
 - **FR-004**: `PromptInjectionGuard` MUST implement both `PreTurnPolicy` and `PostTurnPolicy` traits. In PreTurn, it filters `ctx.new_messages` for `AgentMessage::Llm(LlmMessage::User(...))` variants and scans their text content for injection patterns. In PostTurn, it scans text content from `TurnPolicyContext.tool_results`. Operators can register it in either or both slots.
 - **FR-005**: `PromptInjectionGuard` MUST ship with a default set of regex patterns covering common injection phrases (e.g., "ignore all previous instructions", "disregard your system prompt", "you are now a", role-reassignment attempts).
@@ -122,12 +142,19 @@ An agent operator configures an audit logger so that every assistant turn is rec
 - **FR-016**: `JsonlAuditSink` MUST handle write errors gracefully by logging via `tracing` and never panicking or returning a non-Continue verdict.
 - **FR-017**: All policies MUST be constructable via builder pattern (`new()` + `with_*()` chain) consistent with the project's style conventions.
 - **FR-018**: `lib.rs` MUST re-export all enabled policies and the `AuditSink` trait so consumers never reach into submodules.
+- **FR-019**: `MemoryNudgePolicy` MUST implement `PostTurnPolicy` and scan the assistant message text content for four heuristic categories: corrections, explicit save requests, decisions, and preferences.
+- **FR-020**: `MemoryNudgePolicy` MUST emit `PolicyVerdict::Inject` carrying a single `AgentMessage` whose content contains a `ContentBlock::Extension { type_name: "memory_nudge", data: <JSON MemoryNudge> }`.
+- **FR-021**: `MemoryNudge` payload MUST include: `category` (string name of `MemoryNudgeCategory`), `summary` (extracted text snippet, ≤ 200 chars), `confidence` (0.0–1.0 f32), `turn_number` (zero-based usize).
+- **FR-022**: `NudgeSensitivity` MUST define three threshold levels: Low (0.75), Medium (0.55), High (0.35). When a match's confidence is below the active threshold, the policy MUST return Continue.
+- **FR-023**: `MemoryNudgePolicy` MUST use pure string/substring pattern matching — no regex dependency — to keep compile time and binary size minimal.
 
 ### Key Entities
 
 - **Policy Pattern**: A regex pattern with optional metadata (name, category, enabled flag) used by `PromptInjectionGuard`, `PiiRedactor`, and `ContentFilter`.
 - **Audit Record**: A structured data type containing timestamp, turn index, content summary, tool call names, token usage, and cost for a single completed turn.
 - **Audit Sink**: A trait defining how audit records are persisted, with one built-in implementation (JSONL file writer).
+- **MemoryNudge**: A structured payload emitted when save-worthy content is detected — includes category, summary, confidence, and turn_number.
+- **NudgeSensitivity**: An enum controlling the confidence threshold below which nudges are suppressed — Low (0.75), Medium (0.55), High (0.35).
 
 ## Success Criteria *(mandatory)*
 
@@ -141,6 +168,8 @@ An agent operator configures an audit logger so that every assistant turn is rec
 - **SC-006**: All policies can be composed together in the same agent configuration (e.g., PromptInjectionGuard in pre_turn, PiiRedactor + ContentFilter + AuditLogger in post_turn) without interference.
 - **SC-007**: Each policy can be compiled independently via its feature gate — disabling unused policies adds zero code or dependencies to the binary.
 - **SC-008**: The crate serves as a reference example: each policy's source is self-contained and demonstrates how to implement the corresponding policy trait from scratch.
+- **SC-009**: `MemoryNudgePolicy` correctly identifies all four pattern categories (Correction, ExplicitSave, Decision, Preference) and returns Continue for ordinary text with no save-worthy signals.
+- **SC-010**: `MemoryNudgePolicy` sensitivity thresholds correctly suppress low-confidence matches at Low sensitivity and permit them at High sensitivity.
 
 ## Assumptions
 
