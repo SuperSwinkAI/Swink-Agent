@@ -19,6 +19,7 @@ use swink_agent::{
     Usage,
 };
 
+use crate::error::LocalModelError;
 use crate::loader::LoaderState;
 use crate::model::LocalModel;
 use crate::runner::{FinishReason, GenerateOptions, TokenEvent};
@@ -1165,10 +1166,7 @@ fn local_stream<'a>(
         })
         .await
         {
-            return stream::iter(vec![
-                AssistantMessageEvent::Start,
-                event,
-            ]);
+            return stream::iter(vec![AssistantMessageEvent::Start, event]);
         }
 
         #[cfg(feature = "gemma4")]
@@ -1217,43 +1215,30 @@ fn local_stream<'a>(
         #[cfg(not(feature = "gemma4"))]
         let use_manual_format = false;
 
-        let prompt = if use_manual_format {
-            #[cfg(feature = "gemma4")]
-            {
-                let p = crate::convert::format_gemma4_prompt(&local_messages);
-                debug!(prompt_len = p.len(), "gemma4 prompt formatted manually");
-                p
-            }
-            #[cfg(not(feature = "gemma4"))]
-            unreachable!()
-        } else {
-            let chat_messages: Vec<LlamaChatMessage> = local_messages
-                .into_iter()
-                .filter_map(|m| {
-                    match LlamaChatMessage::new(m.role.clone(), m.content) {
-                        Ok(msg) => Some(msg),
-                        Err(e) => {
-                            warn!(role = %m.role, error = %e, "failed to create chat message, skipping");
-                            None
-                        }
-                    }
-                })
-                .collect();
-
-            debug!(chat_message_count = chat_messages.len(), "built chat messages");
-
-            match runner.apply_chat_template(&chat_messages, true) {
-                Ok(p) => {
-                    debug!(prompt_len = p.len(), "chat template applied");
-                    p
-                }
+        let max_prompt_tokens = prompt_token_budget(local_model.config().context_length);
+        let local_messages =
+            match truncate_messages_to_context(local_messages, max_prompt_tokens, |messages| {
+                let prompt = build_prompt(runner, messages, use_manual_format)?;
+                runner.tokenize(&prompt).map(|tokens| tokens.len())
+            }) {
+                Ok(messages) => messages,
                 Err(e) => {
-                    error!(error = %e, "chat template application failed");
+                    error!(error = %e, "prompt truncation failed");
                     return stream::iter(vec![
                         AssistantMessageEvent::Start,
-                        AssistantMessageEvent::error(format!("chat template error: {e}")),
+                        AssistantMessageEvent::error(format!("prompt truncation error: {e}")),
                     ]);
                 }
+            };
+
+        let prompt = match build_prompt(runner, &local_messages, use_manual_format) {
+            Ok(prompt) => prompt,
+            Err(e) => {
+                error!(error = %e, "chat template application failed");
+                return stream::iter(vec![
+                    AssistantMessageEvent::Start,
+                    AssistantMessageEvent::error(format!("chat template error: {e}")),
+                ]);
             }
         };
 
@@ -1270,7 +1255,7 @@ fn local_stream<'a>(
 
         debug!(token_count = tokens.len(), "prompt tokenized");
 
-        let mut rx = runner.generate_stream(
+        let rx = runner.generate_stream(
             tokens,
             generation_options_from_stream_options(options),
             cancellation_token.clone(),
@@ -1280,41 +1265,134 @@ fn local_stream<'a>(
         // Arc keeps the model alive independently.
         drop(state_guard);
 
-        let mut state = StreamState::new(is_gemma4);
-        while let Some(event) = rx.recv().await {
-            if cancellation_token.is_cancelled() {
-                return stream::iter(state.finalize_cancelled());
-            }
-            match event {
-                TokenEvent::Token(text) => state.process_token(&text),
-                TokenEvent::Done {
-                    prompt_tokens,
-                    completion_tokens,
-                    finish_reason,
-                } => {
-                    state.prompt_tokens = prompt_tokens;
-                    state.completion_tokens = completion_tokens;
-                    state.finish_reason = finish_reason;
-                    state.saw_done = true;
-                    break;
-                }
-                TokenEvent::Error(msg) => {
-                    error!(error = %msg, "error during local streaming");
-                    return stream::iter(
-                        state.finalize_error(format!("local inference error: {msg}"))
-                    );
-                }
-            }
-        }
-
-        if state.saw_done {
-            stream::iter(state.finalize())
-        } else {
-            warn!("local stream ended without Done; emitting terminal error");
-            stream::iter(state.finalize_eof_without_done())
-        }
+        let events = drain_token_stream(rx, &cancellation_token, is_gemma4).await;
+        stream::iter(events)
     })
     .flatten()
+}
+
+// ─── Context truncation ─────────────────────────────────────────────────────
+
+fn build_prompt(
+    runner: &crate::runner::LlamaRunner,
+    messages: &[crate::convert::LocalMessage],
+    use_manual_format: bool,
+) -> Result<String, LocalModelError> {
+    #[cfg(feature = "gemma4")]
+    if use_manual_format {
+        let prompt = crate::convert::format_gemma4_prompt(messages);
+        debug!(
+            prompt_len = prompt.len(),
+            "gemma4 prompt formatted manually"
+        );
+        return Ok(prompt);
+    }
+    #[cfg(not(feature = "gemma4"))]
+    let _ = use_manual_format;
+
+    let chat_messages: Vec<LlamaChatMessage> = messages
+        .iter()
+        .filter_map(
+            |m| match LlamaChatMessage::new(m.role.clone(), m.content.clone()) {
+                Ok(msg) => Some(msg),
+                Err(e) => {
+                    warn!(role = %m.role, error = %e, "failed to create chat message, skipping");
+                    None
+                }
+            },
+        )
+        .collect();
+
+    debug!(
+        chat_message_count = chat_messages.len(),
+        "built chat messages"
+    );
+    let prompt = runner.apply_chat_template(&chat_messages, true)?;
+    debug!(prompt_len = prompt.len(), "chat template applied");
+    Ok(prompt)
+}
+
+fn prompt_token_budget(context_length: usize) -> usize {
+    if context_length <= 1 {
+        context_length
+    } else {
+        context_length - 1
+    }
+}
+
+fn truncate_messages_to_context<E>(
+    mut messages: Vec<crate::convert::LocalMessage>,
+    max_prompt_tokens: usize,
+    token_count: impl Fn(&[crate::convert::LocalMessage]) -> Result<usize, E>,
+) -> Result<Vec<crate::convert::LocalMessage>, E> {
+    loop {
+        if token_count(&messages)? <= max_prompt_tokens {
+            return Ok(messages);
+        }
+
+        let Some(drop_idx) = messages.iter().position(|m| m.role != "system") else {
+            return Ok(messages);
+        };
+
+        messages.remove(drop_idx);
+        drop_leading_tool_results(&mut messages);
+    }
+}
+
+fn drop_leading_tool_results(messages: &mut Vec<crate::convert::LocalMessage>) {
+    while let Some(idx) = messages.iter().position(|m| m.role != "system")
+        && messages[idx].role == "tool"
+    {
+        messages.remove(idx);
+    }
+}
+
+async fn drain_token_stream(
+    mut rx: tokio::sync::mpsc::Receiver<TokenEvent>,
+    cancellation_token: &CancellationToken,
+    is_gemma4: bool,
+) -> Vec<AssistantMessageEvent> {
+    let mut state = StreamState::new(is_gemma4);
+    loop {
+        let event = tokio::select! {
+            biased;
+            () = cancellation_token.cancelled() => {
+                drop(rx);
+                return state.finalize_cancelled();
+            }
+            event = rx.recv() => event,
+        };
+
+        let Some(event) = event else {
+            break;
+        };
+
+        match event {
+            TokenEvent::Token(text) => state.process_token(&text),
+            TokenEvent::Done {
+                prompt_tokens,
+                completion_tokens,
+                finish_reason,
+            } => {
+                state.prompt_tokens = prompt_tokens;
+                state.completion_tokens = completion_tokens;
+                state.finish_reason = finish_reason;
+                state.saw_done = true;
+                break;
+            }
+            TokenEvent::Error(msg) => {
+                error!(error = %msg, "error during local streaming");
+                return state.finalize_error(format!("local inference error: {msg}"));
+            }
+        }
+    }
+
+    if state.saw_done {
+        state.finalize()
+    } else {
+        warn!("local stream ended without Done; emitting terminal error");
+        state.finalize_eof_without_done()
+    }
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -1341,6 +1419,134 @@ mod tests {
     use super::delimiter::partial_prefix_at_end;
     use super::think_tags::ThinkTagParser;
     use super::*;
+
+    fn local_message(role: &str, content: &str) -> crate::convert::LocalMessage {
+        crate::convert::LocalMessage {
+            role: role.to_string(),
+            content: content.to_string(),
+        }
+    }
+
+    fn content_token_count(
+        messages: &[crate::convert::LocalMessage],
+    ) -> Result<usize, std::convert::Infallible> {
+        Ok(messages
+            .iter()
+            .map(|message| message.content.split_whitespace().count())
+            .sum())
+    }
+
+    #[test]
+    fn prompt_token_budget_reserves_generation_room() {
+        assert_eq!(prompt_token_budget(0), 0);
+        assert_eq!(prompt_token_budget(1), 1);
+        assert_eq!(prompt_token_budget(4), 3);
+    }
+
+    #[test]
+    fn context_truncation_keeps_messages_when_prompt_fits() {
+        let messages = vec![
+            local_message("system", "sys"),
+            local_message("user", "hello"),
+            local_message("assistant", "hi"),
+        ];
+
+        let truncated =
+            truncate_messages_to_context(messages.clone(), 8, content_token_count).unwrap();
+
+        assert_eq!(truncated, messages);
+    }
+
+    #[test]
+    fn context_truncation_drops_oldest_non_system_messages() {
+        let messages = vec![
+            local_message("system", "sys"),
+            local_message("user", "old user"),
+            local_message("assistant", "old assistant"),
+            local_message("user", "recent user"),
+        ];
+
+        let truncated = truncate_messages_to_context(messages, 3, content_token_count).unwrap();
+
+        assert_eq!(
+            truncated,
+            vec![
+                local_message("system", "sys"),
+                local_message("user", "recent user"),
+            ]
+        );
+    }
+
+    #[test]
+    fn context_truncation_removes_orphaned_leading_tool_results() {
+        let messages = vec![
+            local_message("system", "sys"),
+            local_message("user", "old user"),
+            local_message("assistant", "called tool"),
+            local_message("tool", "tool result"),
+            local_message("user", "recent"),
+        ];
+
+        let truncated = truncate_messages_to_context(messages, 2, content_token_count).unwrap();
+
+        assert_eq!(
+            truncated,
+            vec![
+                local_message("system", "sys"),
+                local_message("user", "recent"),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn token_stream_cancellation_wins_while_waiting_for_runner_event() {
+        let (_tx, rx) = tokio::sync::mpsc::channel(1);
+        let token = CancellationToken::new();
+        let cancel_token = token.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            cancel_token.cancel();
+        });
+
+        let events = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            drain_token_stream(rx, &token, false),
+        )
+        .await
+        .expect("cancellation should interrupt a quiet runner channel");
+
+        assert!(matches!(
+            events.last(),
+            Some(AssistantMessageEvent::Error {
+                stop_reason: StopReason::Aborted,
+                ..
+            })
+        ));
+    }
+
+    #[tokio::test]
+    async fn token_stream_cancellation_beats_ready_buffered_event() {
+        let (tx, rx) = tokio::sync::mpsc::channel(1);
+        tx.send(TokenEvent::Done {
+            prompt_tokens: 1,
+            completion_tokens: 0,
+            finish_reason: FinishReason::Stop,
+        })
+        .await
+        .unwrap();
+        let token = CancellationToken::new();
+        token.cancel();
+
+        let events = drain_token_stream(rx, &token, false).await;
+
+        assert!(matches!(
+            events.last(),
+            Some(AssistantMessageEvent::Error {
+                stop_reason: StopReason::Aborted,
+                ..
+            })
+        ));
+    }
 
     #[test]
     fn think_tag_single_chunk() {

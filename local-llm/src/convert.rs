@@ -15,6 +15,7 @@ use crate::model::ModelConfig;
 // ─── Intermediate message type ──────────────────────────────────────────────
 
 /// A role + content pair for building chat template input.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LocalMessage {
     pub role: String,
     pub content: String,
