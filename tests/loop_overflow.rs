@@ -21,7 +21,8 @@ use tokio_util::sync::CancellationToken;
 
 use swink_agent::{
     AgentContext, AgentEvent, AgentLoopConfig, AgentMessage, AssistantMessageEvent, ContentBlock,
-    DefaultRetryStrategy, LlmMessage, ModelSpec, StreamFn, StreamOptions, UserMessage, agent_loop,
+    DefaultRetryStrategy, LlmMessage, ModelSpec, PolicyContext, PolicyVerdict, PostTurnPolicy,
+    StreamFn, StreamOptions, TurnPolicyContext, UserMessage, agent_loop,
 };
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -101,6 +102,46 @@ fn count_events(events: &[AgentEvent], name: &str) -> usize {
         .iter()
         .filter(|e| common::event_variant_name(e) == name)
         .count()
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct RecordedPostTurnContext {
+    message_count: usize,
+    tool_result_count: usize,
+    stop_reason: swink_agent::StopReason,
+    last_message_kind: &'static str,
+}
+
+struct RecordingPostTurnPolicy {
+    observations: Arc<Mutex<Vec<RecordedPostTurnContext>>>,
+}
+
+impl PostTurnPolicy for RecordingPostTurnPolicy {
+    fn name(&self) -> &str {
+        "recording-post-turn"
+    }
+
+    fn evaluate(&self, _ctx: &PolicyContext<'_>, turn: &TurnPolicyContext<'_>) -> PolicyVerdict {
+        let last_message_kind = match turn.context_messages.last() {
+            Some(AgentMessage::Llm(LlmMessage::Assistant(_))) => "assistant",
+            Some(AgentMessage::Llm(LlmMessage::ToolResult(_))) => "tool_result",
+            Some(AgentMessage::Llm(LlmMessage::User(_))) => "user",
+            Some(AgentMessage::Custom(_)) => "custom",
+            None => "none",
+        };
+
+        self.observations
+            .lock()
+            .unwrap()
+            .push(RecordedPostTurnContext {
+                message_count: turn.context_messages.len(),
+                tool_result_count: turn.tool_results.len(),
+                stop_reason: turn.stop_reason,
+                last_message_kind,
+            });
+
+        PolicyVerdict::Continue
+    }
 }
 
 struct MockMessageCapturingStreamFn {
@@ -426,6 +467,51 @@ async fn no_transformer_overflow_surfaces_error() {
             )
         }),
         "should have TurnEnd with Error reason"
+    );
+}
+
+#[tokio::test]
+async fn unrecoverable_overflow_runs_post_turn_policies() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![overflow_error_events()]));
+    let observations = Arc::new(Mutex::new(Vec::new()));
+
+    let mut config = default_config(stream_fn as Arc<dyn StreamFn>);
+    config.post_turn_policies = vec![Arc::new(RecordingPostTurnPolicy {
+        observations: Arc::clone(&observations),
+    })];
+
+    let events = collect_events(agent_loop(
+        vec![],
+        "system".to_string(),
+        config,
+        CancellationToken::new(),
+    ))
+    .await;
+
+    assert!(events.iter().any(|e| {
+        matches!(
+            e,
+            AgentEvent::TurnEnd { reason, .. }
+                if *reason == swink_agent::TurnEndReason::Error
+        )
+    }));
+    assert_eq!(
+        count_events(&events, "MessageEnd"),
+        1,
+        "unrecoverable overflow should preserve its terminal MessageEnd"
+    );
+
+    let recorded = observations.lock().unwrap().clone();
+    assert_eq!(recorded.len(), 1, "post-turn policy should run once");
+    assert_eq!(
+        recorded[0],
+        RecordedPostTurnContext {
+            message_count: 1,
+            tool_result_count: 0,
+            stop_reason: swink_agent::StopReason::Error,
+            last_message_kind: "assistant",
+        },
+        "overflow terminal errors should expose the committed assistant snapshot"
     );
 }
 

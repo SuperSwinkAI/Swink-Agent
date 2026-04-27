@@ -787,7 +787,7 @@ fn extract_tool_calls(message: &AssistantMessage) -> Vec<ToolCallInfo> {
 /// `TurnEnd`. Non-assistant injected messages go to `pending_messages`.
 ///
 /// Returns `(final_assistant_message, Option<stop_reason>)`.
-fn run_post_turn_policy_check(
+pub(super) fn run_post_turn_policy_check(
     assistant_message: &AssistantMessage,
     tool_results: &[ToolResultMessage],
     state: &mut LoopState,
