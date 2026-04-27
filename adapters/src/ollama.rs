@@ -198,7 +198,18 @@ fn ollama_stream<'a>(
 
         if !response.status().is_success() {
             let code = response.status().as_u16();
-            let body = response.text().await.unwrap_or_default();
+            let body = match crate::base::read_error_body_or_cancelled(
+                response,
+                &cancellation_token,
+                "Ollama request cancelled",
+            )
+            .await
+            {
+                Ok(body) => body,
+                Err(event) => {
+                    return stream::iter(crate::base::pre_stream_error(event)).left_stream();
+                }
+            };
             warn!(status = code, "Ollama HTTP error");
             let event = crate::classify::error_event_from_status(code, &body, "Ollama");
             return stream::iter(crate::base::pre_stream_error(event)).left_stream();

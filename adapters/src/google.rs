@@ -292,7 +292,18 @@ fn gemini_stream<'a>(
         let status = response.status();
         if !status.is_success() {
             let code = status.as_u16();
-            let body = response.text().await.unwrap_or_default();
+            let body = match crate::base::read_error_body_or_cancelled(
+                response,
+                &cancellation_token,
+                "Google request cancelled",
+            )
+            .await
+            {
+                Ok(body) => body,
+                Err(event) => {
+                    return stream::iter(crate::base::pre_stream_error(event)).left_stream();
+                }
+            };
             warn!(status = code, "Google Gemini HTTP error");
             let event = crate::classify::error_event_from_status(code, &body, "Google");
             return stream::iter(crate::base::pre_stream_error(event)).left_stream();

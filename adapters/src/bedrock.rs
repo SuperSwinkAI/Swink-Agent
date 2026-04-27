@@ -371,6 +371,7 @@ impl BedrockStreamFn {
         model: &ModelSpec,
         context: &AgentContext,
         options: &StreamOptions,
+        cancellation_token: &CancellationToken,
     ) -> Result<reqwest::Response, AssistantMessageEvent> {
         let body = build_request(context, options);
         let body_json = serde_json::to_vec(&body).map_err(|e| {
@@ -402,7 +403,12 @@ impl BedrockStreamFn {
         let status = response.status();
         if !status.is_success() {
             let code = status.as_u16();
-            let body = response.text().await.unwrap_or_default();
+            let body = crate::base::read_error_body_or_cancelled(
+                response,
+                cancellation_token,
+                "Bedrock request cancelled",
+            )
+            .await?;
             warn!(status = code, "Bedrock HTTP error");
             return Err(crate::classify::error_event_from_status(
                 code, &body, "Bedrock",
@@ -452,7 +458,12 @@ impl BedrockStreamFn {
                         match crate::base::race_pre_stream_cancellation(
                             &cancellation_token,
                             "Bedrock request cancelled",
-                            self.send_converse_stream(model, context, options),
+                            self.send_converse_stream(
+                                model,
+                                context,
+                                options,
+                                &cancellation_token,
+                            ),
                         )
                         .await
                         {
