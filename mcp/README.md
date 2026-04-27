@@ -20,8 +20,8 @@ Model Context Protocol (MCP) integration for [`swink-agent`](https://crates.io/c
 
 ```toml
 [dependencies]
-swink-agent = "0.8"
-swink-agent-mcp = "0.8"
+swink-agent = "0.10.0"
+swink-agent-mcp = "0.10.0"
 tokio = { version = "1", features = ["full"] }
 ```
 

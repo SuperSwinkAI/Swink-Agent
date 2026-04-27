@@ -23,8 +23,8 @@ LLM provider adapters for [`swink-agent`](https://crates.io/crates/swink-agent) 
 
 ```toml
 [dependencies]
-swink-agent = "0.8"
-swink-agent-adapters = { version = "0.8", features = ["anthropic", "openai"] }
+swink-agent = "0.10.0"
+swink-agent-adapters = { version = "0.10.0", features = ["anthropic", "openai"] }
 tokio = { version = "1", features = ["full"] }
 ```
 
