@@ -5,7 +5,7 @@
 #[cfg(unix)]
 mod unix_main {
     use clap::Parser;
-    use swink_agent::AgentOptions;
+    use swink_agent::{AgentOptions, ModelConnections};
     use swink_agent_adapters::build_remote_connection_for_model;
     use swink_agent_rpc::AgentServer;
     use tracing_subscriber::EnvFilter;
@@ -43,8 +43,9 @@ mod unix_main {
         let system_prompt = cli.system_prompt.clone();
 
         let factory = move || -> AgentOptions {
-            let connections = build_remote_connection_for_model(&model)
+            let connection = build_remote_connection_for_model(&model)
                 .expect("failed to build model connection — check your API key env var");
+            let connections = ModelConnections::builder().primary(connection).build();
             AgentOptions::from_connections(&system_prompt, connections).with_default_tools()
         };
 
