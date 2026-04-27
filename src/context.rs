@@ -89,26 +89,35 @@ fn tool_result_id(message: &AgentMessage) -> Option<&str> {
     }
 }
 
-fn extend_anchor_for_tool_results(messages: &[AgentMessage], mut anchor_end: usize) -> usize {
+fn extend_anchor_for_tool_results(messages: &[AgentMessage], anchor_end: usize) -> usize {
     if anchor_end == 0 || anchor_end >= messages.len() {
         return anchor_end;
     }
 
-    let Some(call_ids) = tool_call_ids(&messages[anchor_end - 1]) else {
+    let mut assistant_idx = anchor_end - 1;
+    while is_tool_result(messages, assistant_idx) {
+        if assistant_idx == 0 {
+            return anchor_end;
+        }
+        assistant_idx -= 1;
+    }
+
+    let Some(call_ids) = tool_call_ids(&messages[assistant_idx]) else {
         return anchor_end;
     };
 
-    while anchor_end < messages.len() {
-        let Some(result_id) = tool_result_id(&messages[anchor_end]) else {
+    let mut group_end = assistant_idx + 1;
+    while group_end < messages.len() {
+        let Some(result_id) = tool_result_id(&messages[group_end]) else {
             break;
         };
         if !call_ids.contains(&result_id) {
             break;
         }
-        anchor_end += 1;
+        group_end += 1;
     }
 
-    anchor_end
+    anchor_end.max(group_end)
 }
 
 /// Result of a context transformation pass.
@@ -304,6 +313,29 @@ mod tests {
                 arguments: serde_json::json!({}),
                 partial_json: None,
             }],
+            provider: String::new(),
+            model_id: String::new(),
+            usage: Usage::default(),
+            cost: Cost::default(),
+            stop_reason: StopReason::ToolUse,
+            error_message: None,
+            error_kind: None,
+            timestamp: 0,
+            cache_hint: None,
+        }))
+    }
+
+    fn multi_tool_call_message(ids: &[&str]) -> AgentMessage {
+        AgentMessage::Llm(LlmMessage::Assistant(AssistantMessage {
+            content: ids
+                .iter()
+                .map(|id| ContentBlock::ToolCall {
+                    id: (*id).into(),
+                    name: "test".into(),
+                    arguments: serde_json::json!({}),
+                    partial_json: None,
+                })
+                .collect(),
             provider: String::new(),
             model_id: String::new(),
             usage: Usage::default(),
@@ -548,31 +580,35 @@ mod tests {
         let compact = sliding_window(250, 100, 2);
         let mut messages = vec![
             text_message(&body),
-            AgentMessage::Llm(LlmMessage::Assistant(AssistantMessage {
-                content: vec![
-                    ContentBlock::ToolCall {
-                        id: "tc1".into(),
-                        name: "test".into(),
-                        arguments: serde_json::json!({}),
-                        partial_json: None,
-                    },
-                    ContentBlock::ToolCall {
-                        id: "tc2".into(),
-                        name: "test".into(),
-                        arguments: serde_json::json!({}),
-                        partial_json: None,
-                    },
-                ],
-                provider: String::new(),
-                model_id: String::new(),
-                usage: Usage::default(),
-                cost: Cost::default(),
-                stop_reason: StopReason::ToolUse,
-                error_message: None,
-                error_kind: None,
-                timestamp: 0,
-                cache_hint: None,
-            })),
+            multi_tool_call_message(&["tc1", "tc2"]),
+            tool_result_message("tc1", &body),
+            tool_result_message("tc2", &body),
+            text_message(&body),
+        ];
+
+        compact(&mut messages, false);
+
+        let kept_results: Vec<&str> = messages
+            .iter()
+            .filter_map(|message| match message {
+                AgentMessage::Llm(LlmMessage::ToolResult(result)) => {
+                    Some(result.tool_call_id.as_str())
+                }
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(kept_results, vec!["tc1", "tc2"]);
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn anchor_boundary_inside_multi_tool_results_keeps_whole_group() {
+        let body = "x".repeat(400); // 100 tokens each
+        let compact = sliding_window(250, 100, 3);
+        let mut messages = vec![
+            text_message(&body),
+            multi_tool_call_message(&["tc1", "tc2"]),
             tool_result_message("tc1", &body),
             tool_result_message("tc2", &body),
             text_message(&body),
