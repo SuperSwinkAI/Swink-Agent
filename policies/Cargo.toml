@@ -13,7 +13,7 @@ readme = "README.md"
 [features]
 default = ["all"]
 full = ["all"]
-all = ["budget", "max-turns", "deny-list", "sandbox", "loop-detection", "checkpoint", "prompt-guard", "pii", "content-filter", "audit"]
+all = ["budget", "max-turns", "deny-list", "sandbox", "loop-detection", "checkpoint", "prompt-guard", "pii", "content-filter", "audit", "memory-nudge"]
 budget = []
 max-turns = []
 deny-list = []
@@ -24,6 +24,7 @@ prompt-guard = ["regex"]
 pii = ["regex"]
 content-filter = ["regex"]
 audit = ["chrono", "serde", "serde_json", "unicode-truncate"]
+memory-nudge = ["serde_json"]
 
 [dependencies]
 swink-agent = { path = "..", version = "0.9.0", default-features = false }

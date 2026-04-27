@@ -19,6 +19,7 @@
 //! - **`pii`**: `PiiRedactor` — redacts personally identifiable information from assistant responses
 //! - **`content-filter`**: `ContentFilter` — keyword/regex blocklist for assistant output
 //! - **`audit`**: `AuditLogger` — records every turn to a pluggable sink
+//! - **`memory-nudge`**: `MemoryNudgePolicy` — heuristic detection of save-worthy content in agent turns
 #[cfg(any(feature = "prompt-guard", feature = "pii", feature = "content-filter"))]
 mod patterns;
 
@@ -77,3 +78,8 @@ mod audit_logger;
 pub use audit_logger::{
     AuditCost, AuditLogger, AuditRecord, AuditSink, AuditUsage, JsonlAuditSink,
 };
+
+#[cfg(feature = "memory-nudge")]
+mod memory_nudge;
+#[cfg(feature = "memory-nudge")]
+pub use memory_nudge::{MemoryNudge, MemoryNudgeCategory, MemoryNudgePolicy, NudgeSensitivity};
