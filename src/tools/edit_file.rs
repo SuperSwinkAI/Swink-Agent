@@ -9,6 +9,7 @@ use serde_json::Value;
 use sha2::{Digest as _, Sha256};
 use tokio_util::sync::CancellationToken;
 
+use super::path::{resolve_existing_path, resolve_writable_path};
 use crate::tool::{AgentTool, AgentToolResult, ToolFuture, validated_schema_for};
 use crate::types::ContentBlock;
 
@@ -309,7 +310,11 @@ impl AgentTool for EditFileTool {
                 return AgentToolResult::error("cancelled");
             }
 
-            let path = resolve_path(&parsed.path, self.execution_root.as_deref());
+            let path =
+                match resolve_existing_path(&parsed.path, self.execution_root.as_deref()).await {
+                    Ok(path) => path,
+                    Err(error) => return AgentToolResult::error(error),
+                };
 
             let raw_bytes = match tokio::fs::read(&path).await {
                 Ok(b) => b,
@@ -362,6 +367,12 @@ impl AgentTool for EditFileTool {
                 return AgentToolResult::error("cancelled");
             }
 
+            let path =
+                match resolve_writable_path(&parsed.path, self.execution_root.as_deref()).await {
+                    Ok(path) => path,
+                    Err(error) => return AgentToolResult::error(error),
+                };
+
             if let Err(e) = atomic_write(&path, &content).await {
                 return AgentToolResult::error(format!("failed to write {}: {e}", path.display()));
             }
@@ -386,17 +397,6 @@ impl AgentTool for EditFileTool {
                 transfer_signal: None,
             }
         })
-    }
-}
-
-fn resolve_path(path: &str, execution_root: Option<&Path>) -> PathBuf {
-    let path = Path::new(path);
-    if path.is_absolute() {
-        path.to_path_buf()
-    } else if let Some(root) = execution_root {
-        root.join(path)
-    } else {
-        path.to_path_buf()
     }
 }
 
@@ -617,5 +617,45 @@ mod tests {
             _ => panic!("expected text block"),
         };
         assert!(text.contains("hash mismatch"), "got: {text}");
+    }
+
+    #[tokio::test]
+    async fn execute_rejects_relative_path_outside_execution_root() {
+        use std::sync::{Arc, RwLock};
+
+        use serde_json::json;
+
+        use crate::SessionState;
+        use crate::tool::AgentTool;
+
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("root");
+        tokio::fs::create_dir(&root).await.unwrap();
+        let outside = dir.path().join("outside.txt");
+        tokio::fs::write(&outside, "hello world\n").await.unwrap();
+
+        let result = EditFileTool::new()
+            .with_execution_root(&root)
+            .execute(
+                "id",
+                json!({
+                    "path": "../outside.txt",
+                    "edits": [{ "old_string": "world", "new_string": "Rust" }]
+                }),
+                CancellationToken::new(),
+                None,
+                Arc::new(RwLock::new(SessionState::default())),
+                None,
+            )
+            .await;
+
+        assert!(result.is_error);
+        let text = match &result.content[0] {
+            ContentBlock::Text { text } => text.clone(),
+            _ => panic!("expected text block"),
+        };
+        assert!(text.contains("escapes execution root"), "got: {text}");
+        let on_disk = tokio::fs::read_to_string(&outside).await.unwrap();
+        assert_eq!(on_disk, "hello world\n");
     }
 }
