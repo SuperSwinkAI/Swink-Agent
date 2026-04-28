@@ -28,7 +28,7 @@ dirs.workspace = true
 tracing.workspace = true
 chrono.workspace = true
 uuid.workspace = true
-tantivy = { version = "0.22", optional = true }
+tantivy = { version = "0.26", optional = true }
 
 [dev-dependencies]
 tempfile.workspace = true
