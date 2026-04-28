@@ -2,7 +2,7 @@
 
 ## Project
 
-Pure-Rust library for LLM-powered agentic loops. Provider-agnostic core with pluggable streaming, concurrent tool execution, and lifecycle events. Workspace crates: core (`swink-agent`), adapters, artifacts, auth, eval, eval-judges, local-llm, macros, MCP, memory, patterns, policies, TUI, web plugin, and xtask.
+Pure-Rust library for LLM-powered agentic loops. Provider-agnostic core with pluggable streaming, concurrent tool execution, and lifecycle events. Workspace crates: core (`swink-agent`), adapters, artifacts, auth, eval, eval-judges, evolve, local-llm, macros, MCP, memory, patterns, policies, RPC, TUI, web plugin, and xtask.
 
 ## Development Principles
 

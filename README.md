@@ -19,11 +19,13 @@ A pure-Rust library for building LLM-powered agentic loops. Provider-agnostic co
 | `swink-agent-local-llm` | lib | On-device inference — SmolLM3-3B (default), Gemma 4 (opt-in `gemma4` feature), EmbeddingGemma-300M (embeddings) |
 | `swink-agent-eval` | lib + bin | Evaluation harness — efficiency scoring, budget guards, gate checks, audit trails, plus 24 judge-backed/deterministic evaluators, multi-turn simulation, trace ingestion (OTLP / Langfuse / OpenSearch / CloudWatch), Console/JSON/Markdown/HTML/LangSmith reporters, and the `swink-eval` CLI (`cli` feature) |
 | `swink-agent-eval-judges` | lib | Per-provider `JudgeClient` implementations (Anthropic, OpenAI, Bedrock, Gemini, Mistral, Azure, xAI, Ollama, Proxy) with `Blocking<Provider>JudgeClient` sync wrappers behind feature flags |
+| `swink-agent-evolve` | lib | Eval-driven self-improvement loop for prompts and tool schemas (Spec 044) |
 | `swink-agent-artifacts` | lib | Versioned artifact storage (filesystem + in-memory backends) |
 | `swink-agent-auth` | lib | OAuth2 credential management and refresh |
 | `swink-agent-mcp` | lib | Model Context Protocol integration (stdio/SSE) |
 | `swink-agent-patterns` | lib | Multi-agent orchestration patterns (pipeline, parallel, loop) |
 | `swink-agent-plugin-web` | lib | Web browsing and search plugin |
+| `swink-agent-rpc` | lib + bin | JSON-RPC 2.0 agent service and `swink-agentd` daemon over Unix sockets (Spec 045) |
 | `swink-agent-macros` | proc-macro | `#[derive(ToolSchema)]` and `#[tool]` proc macros |
 | `swink-agent-tui` | lib + bin | Interactive terminal UI with markdown, syntax highlighting, tool panel |
 | `xtask` | bin | Developer workflow tasks such as catalog and release validation |
