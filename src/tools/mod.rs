@@ -5,6 +5,8 @@ mod bash;
 #[cfg(feature = "builtin-tools")]
 mod edit_file;
 #[cfg(feature = "builtin-tools")]
+mod path;
+#[cfg(feature = "builtin-tools")]
 mod read_file;
 #[cfg(feature = "builtin-tools")]
 mod write_file;
