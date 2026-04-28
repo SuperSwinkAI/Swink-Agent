@@ -643,11 +643,16 @@ pub fn evaluate_with_builtin(
     config: &JudgeEvaluatorConfig,
     context: &PromptContext,
 ) -> EvalMetricResult {
-    let builtin = crate::prompt::PromptTemplateRegistry::builtin()
-        .get(template_version)
-        .unwrap_or_else(|| panic!("built-in template {template_version} is missing"));
-
-    let dispatch = drive_judge_call(|| async { dispatch_judge(config, builtin, context).await });
+    let dispatch = match crate::prompt::PromptTemplateRegistry::builtin().get(template_version) {
+        Some(builtin) => {
+            drive_judge_call(|| async { dispatch_judge(config, builtin, context).await })
+        }
+        None => Err(DispatchError::Prompt(
+            crate::prompt::PromptError::MissingBuiltinTemplate {
+                version: template_version.to_string(),
+            },
+        )),
+    };
 
     match dispatch {
         Ok(outcome) => finish_metric_result(evaluator_name.to_string(), outcome),
@@ -890,6 +895,24 @@ mod tests {
     #[test]
     fn empty_detail_buffer_renders_none() {
         assert!(DetailBuffer::new().into_details_string().is_none());
+    }
+
+    #[test]
+    fn evaluate_with_builtin_missing_template_returns_failed_metric() {
+        let (registry, _) = make_registry(0.5);
+        let config = JudgeEvaluatorConfig::default_with(registry);
+        let case = make_case();
+        let invocation = make_invocation();
+        let ctx = make_context(&case, &invocation);
+
+        let result =
+            evaluate_with_builtin("missing-template-evaluator", "missing_v0", &config, &ctx);
+
+        assert_eq!(result.evaluator_name, "missing-template-evaluator");
+        assert!((result.score.value - 0.0).abs() < f64::EPSILON);
+        let details = result.details.expect("missing template is reported");
+        assert!(details.contains("dispatch error"));
+        assert!(details.contains("built-in template missing_v0 is missing"));
     }
 
     #[test]
