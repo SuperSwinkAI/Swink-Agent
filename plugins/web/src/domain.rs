@@ -1,4 +1,4 @@
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, ToSocketAddrs};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs};
 
 use thiserror::Error;
 use url::Url;
@@ -28,6 +28,12 @@ pub struct DomainFilter {
     pub block_private_ips: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ResolvedHost {
+    pub host: String,
+    pub addr: SocketAddr,
+}
+
 impl DomainFilter {
     /// Check whether the given URL is permitted by the filter.
     ///
@@ -39,6 +45,13 @@ impl DomainFilter {
     /// 5. If `block_private_ips` is enabled, DNS-resolved addresses are checked
     ///    against private/loopback/link-local ranges (SSRF protection).
     pub fn is_allowed(&self, url: &Url) -> Result<(), DomainFilterError> {
+        self.validate_and_resolve(url).map(|_| ())
+    }
+
+    pub(crate) fn validate_and_resolve(
+        &self,
+        url: &Url,
+    ) -> Result<Option<ResolvedHost>, DomainFilterError> {
         // 1. Scheme check.
         let scheme = url.scheme();
         if scheme != "http" && scheme != "https" {
@@ -64,7 +77,10 @@ impl DomainFilter {
 
         // 5. Private IP / SSRF check.
         if self.block_private_ips {
-            let addrs = format!("{host}:80")
+            let port = url.port_or_known_default().unwrap_or(80);
+            let is_ip_literal = matches!(url.host(), Some(url::Host::Ipv4(_) | url::Host::Ipv6(_)));
+            let mut first_public_addr = None;
+            let addrs = (host, port)
                 .to_socket_addrs()
                 .map_err(|e| DomainFilterError::DnsError(host.to_string(), e.to_string()))?;
 
@@ -72,10 +88,23 @@ impl DomainFilter {
                 if is_private_ip(&addr.ip()) {
                     return Err(DomainFilterError::PrivateIp(addr.ip().to_string()));
                 }
+                if first_public_addr.is_none() {
+                    first_public_addr = Some(addr);
+                }
+            }
+
+            if !is_ip_literal {
+                let addr = first_public_addr.ok_or_else(|| {
+                    DomainFilterError::DnsError(host.to_string(), "no addresses found".to_string())
+                })?;
+                return Ok(Some(ResolvedHost {
+                    host: host.to_string(),
+                    addr,
+                }));
             }
         }
 
-        Ok(())
+        Ok(None)
     }
 }
 

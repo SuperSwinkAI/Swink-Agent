@@ -8,9 +8,9 @@ use tracing::warn;
 use url::Url;
 
 use crate::content::{extract_readable_content, is_html_content_type, truncate_content};
-use crate::domain::DomainFilter;
+use crate::domain::{DomainFilter, ResolvedHost};
 use crate::policy::ContentSanitizerPolicy;
-use crate::tools::{sanitize_web_tool_text, validate_url_against_filter};
+use crate::tools::sanitize_web_tool_text;
 
 /// Tool for fetching and reading web pages.
 ///
@@ -28,9 +28,26 @@ pub struct FetchTool {
 }
 
 impl FetchTool {
-    /// Create a new `FetchTool` with the given HTTP client, content length limit,
-    /// and request timeout.
+    /// Create a new `FetchTool` with a no-redirect HTTP client, content length
+    /// limit, and request timeout.
+    ///
+    /// The `client` argument is retained for API compatibility but is not used:
+    /// fetch redirects must be observed and validated by this tool before any
+    /// follow-up request is sent.
     pub fn new(
+        _client: reqwest::Client,
+        max_content_length: usize,
+        request_timeout: Duration,
+    ) -> Self {
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(request_timeout)
+            .build()
+            .expect("building no-redirect fetch HTTP client should not fail");
+        Self::from_redirect_checked_client(client, max_content_length, request_timeout)
+    }
+
+    fn from_redirect_checked_client(
         client: reqwest::Client,
         max_content_length: usize,
         request_timeout: Duration,
@@ -116,10 +133,10 @@ impl FetchTool {
             } else {
                 "Redirect"
             };
-            validate_url_against_filter(self.domain_filter.as_ref(), &current_url, phase)?;
+            let resolved_host = self.validate_url_for_fetch(&current_url, phase)?;
+            let client = self.client_for_request(resolved_host)?;
 
-            let request = self
-                .client
+            let request = client
                 .get(current_url.clone())
                 .timeout(self.request_timeout);
 
@@ -158,6 +175,36 @@ impl FetchTool {
             "Too many redirects while fetching URL; limit is {}",
             self.max_redirects
         ))
+    }
+
+    fn validate_url_for_fetch(
+        &self,
+        url: &Url,
+        phase: &str,
+    ) -> Result<Option<ResolvedHost>, String> {
+        let Some(filter) = self.domain_filter.as_ref() else {
+            return Ok(None);
+        };
+
+        filter
+            .validate_and_resolve(url)
+            .map_err(|error| format!("{phase} URL blocked by domain filter: {error}"))
+    }
+
+    fn client_for_request(
+        &self,
+        resolved_host: Option<ResolvedHost>,
+    ) -> Result<reqwest::Client, String> {
+        let Some(resolved_host) = resolved_host else {
+            return Ok(self.client.clone());
+        };
+
+        reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(self.request_timeout)
+            .resolve(&resolved_host.host, resolved_host.addr)
+            .build()
+            .map_err(|error| format!("Failed to build pinned HTTP client: {error}"))
     }
 }
 
@@ -550,5 +597,60 @@ mod tests {
         let text = format!("{:?}", result.content);
         assert!(text.contains("Redirected"));
         assert!(text.contains("Redirected page content should be extracted"));
+    }
+
+    #[tokio::test]
+    async fn execute_does_not_use_redirect_policy_from_supplied_client() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/redirect"))
+            .respond_with(ResponseTemplate::new(302).insert_header("Location", "/private"))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/private"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(
+                r"<!DOCTYPE html>
+                    <html>
+                    <body>
+                        <article>
+                            <p>Redirect target should not be fetched automatically.</p>
+                        </article>
+                    </body>
+                    </html>",
+                "text/html; charset=utf-8",
+            ))
+            .mount(&server)
+            .await;
+
+        let redirecting_client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::limited(10))
+            .build()
+            .unwrap();
+        let filter = DomainFilter {
+            block_private_ips: false,
+            ..Default::default()
+        };
+        let tool = FetchTool::new(redirecting_client, 4_096, Duration::from_secs(5))
+            .with_domain_filter(filter, 0);
+        let state = Arc::new(RwLock::new(SessionState::default()));
+        let result = tool
+            .execute(
+                "call-7",
+                json!({ "url": format!("{}/redirect", server.uri()) }),
+                CancellationToken::new(),
+                None,
+                state,
+                None,
+            )
+            .await;
+
+        assert!(result.is_error);
+        let text = format!("{:?}", result.content);
+        assert!(text.contains("Too many redirects while fetching URL; limit is 0"));
+
+        let received = server.received_requests().await.unwrap();
+        assert_eq!(received.len(), 1);
+        assert_eq!(received[0].url.path(), "/redirect");
     }
 }
