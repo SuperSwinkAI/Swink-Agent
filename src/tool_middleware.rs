@@ -23,6 +23,7 @@
 //! # }
 //! ```
 
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -156,6 +157,10 @@ impl AgentTool for ToolMiddleware {
 
     fn metadata(&self) -> Option<crate::tool::ToolMetadata> {
         self.inner.metadata()
+    }
+
+    fn execution_root(&self) -> Option<&Path> {
+        self.inner.execution_root()
     }
 
     fn requires_approval(&self) -> bool {

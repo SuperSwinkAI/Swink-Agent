@@ -4,6 +4,7 @@
 //! resolves credentials from a pluggable [`CredentialStore`] and delivers the
 //! resolved secret to `execute()` as an [`Option<ResolvedCredential>`].
 
+use std::fmt;
 use std::future::Future;
 use std::pin::Pin;
 
@@ -176,7 +177,6 @@ pub enum CredentialType {
 ///
 /// All variants include the credential key for diagnostics but NEVER include
 /// secret values (FR-016).
-#[derive(Debug)]
 pub enum CredentialError {
     /// Credential not found in the store.
     NotFound {
@@ -216,6 +216,44 @@ pub enum CredentialError {
         /// The credential key.
         key: String,
     },
+}
+
+impl fmt::Debug for CredentialError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NotFound { key } => f
+                .debug_struct("CredentialError::NotFound")
+                .field("key", key)
+                .finish(),
+            Self::Expired { key } => f
+                .debug_struct("CredentialError::Expired")
+                .field("key", key)
+                .finish(),
+            Self::RefreshFailed { key, reason } => f
+                .debug_struct("CredentialError::RefreshFailed")
+                .field("key", key)
+                .field("reason", reason)
+                .finish(),
+            Self::TypeMismatch {
+                key,
+                expected,
+                actual,
+            } => f
+                .debug_struct("CredentialError::TypeMismatch")
+                .field("key", key)
+                .field("expected", expected)
+                .field("actual", actual)
+                .finish(),
+            Self::StoreError(_) => f
+                .debug_tuple("CredentialError::StoreError")
+                .field(&"[REDACTED]")
+                .finish(),
+            Self::Timeout { key } => f
+                .debug_struct("CredentialError::Timeout")
+                .field("key", key)
+                .finish(),
+        }
+    }
 }
 
 impl std::fmt::Display for CredentialError {
@@ -436,6 +474,21 @@ mod tests {
             source.to_string().contains("token=secret-value"),
             "store error source should keep the backend detail for internal diagnostics"
         );
+    }
+
+    #[test]
+    fn credential_store_error_debug_redacts_backend_details() {
+        let err = CredentialError::StoreError(Box::new(std::io::Error::other(
+            "backend exploded with token=secret-value",
+        )));
+
+        let debug = format!("{err:?}");
+
+        assert!(
+            !debug.contains("token=secret-value"),
+            "Debug leaks backend secret"
+        );
+        assert!(debug.contains("[REDACTED]"));
     }
 
     // T011: credential_type helper

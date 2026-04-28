@@ -568,7 +568,7 @@ mod tests {
             &RunnerConfig::default(),
             Some(&callback),
             || Err(LocalModelError::loading_message("backend init failed")),
-            |_, _, _| unreachable!("model load should not run"),
+            |(), _, _| unreachable!("model load should not run"),
         )
         .unwrap_err();
 

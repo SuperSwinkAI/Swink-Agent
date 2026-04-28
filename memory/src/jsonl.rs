@@ -6,7 +6,7 @@
 //! Concurrent writes to the same session may corrupt the file.
 //! Callers are expected to enforce single-writer access.
 
-use std::io::{self, BufRead, Write};
+use std::io::{self, BufRead, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 use swink_agent::atomic_fs::{atomic_write, atomic_write_unlocked, with_target_lock};
@@ -16,8 +16,13 @@ use crate::entry::SessionEntry;
 use crate::interrupt::InterruptState;
 use crate::load_options::LoadOptions;
 use crate::meta::SessionMeta;
+#[cfg(not(feature = "search"))]
+use crate::search;
+use crate::search::{SessionHit, SessionSearchOptions};
 use crate::store::SessionStore;
 use crate::time::{format_session_id, now_utc};
+
+const META_LINE_PADDING: usize = 64;
 
 #[derive(Debug, Clone)]
 enum SessionRecord {
@@ -151,6 +156,16 @@ fn read_meta_and_message_lines(path: &Path, id: &str) -> io::Result<(SessionMeta
     Ok((meta, remaining_lines))
 }
 
+fn extract_state_from_lines(lines: &[String], id: &str) -> io::Result<Option<serde_json::Value>> {
+    for line in lines {
+        if let Some(state) = parse_state_line(line, id)? {
+            return Ok(Some(state));
+        }
+    }
+
+    Ok(None)
+}
+
 fn read_meta_with_line_len(path: &Path, id: &str) -> io::Result<(SessionMeta, usize)> {
     let mut first_line = String::new();
     let file = open_session_file(path, id)?;
@@ -172,8 +187,7 @@ fn rewrite_session_file_locked(
     lines: &[String],
 ) -> io::Result<()> {
     atomic_write_unlocked(path, |writer| {
-        serde_json::to_writer(&mut *writer, meta).map_err(io::Error::other)?;
-        writeln!(writer)?;
+        write_meta_line(writer, meta, META_LINE_PADDING)?;
 
         for line in lines {
             if !line.is_empty() {
@@ -259,8 +273,7 @@ fn write_messages_with_preserved_lines(
     preserved_lines: &[String],
 ) -> io::Result<()> {
     atomic_write_unlocked(path, |writer| {
-        serde_json::to_writer(&mut *writer, meta).map_err(io::Error::other)?;
-        writeln!(writer)?;
+        write_meta_line(writer, meta, META_LINE_PADDING)?;
 
         for msg in messages {
             if let Some(record) = SessionRecord::from_message(msg, id) {
@@ -275,6 +288,77 @@ fn write_messages_with_preserved_lines(
         }
         Ok(())
     })
+}
+
+fn write_meta_line(
+    writer: &mut impl Write,
+    meta: &SessionMeta,
+    padding: usize,
+) -> io::Result<usize> {
+    let line = serde_json::to_string(meta).map_err(io::Error::other)?;
+    writer.write_all(line.as_bytes())?;
+    for _ in 0..padding {
+        writer.write_all(b" ")?;
+    }
+    writeln!(writer)?;
+    Ok(line.len() + padding + 1)
+}
+
+fn write_meta_line_in_place(
+    file: &mut std::fs::File,
+    line: &str,
+    existing_line_len: usize,
+) -> io::Result<bool> {
+    if line.len() + 1 > existing_line_len {
+        return Ok(false);
+    }
+
+    file.seek(SeekFrom::Start(0))?;
+    file.write_all(line.as_bytes())?;
+    for _ in line.len()..existing_line_len - 1 {
+        file.write_all(b" ")?;
+    }
+    file.write_all(b"\n")?;
+    Ok(true)
+}
+
+fn append_records_in_place(
+    path: &Path,
+    meta: &SessionMeta,
+    meta_line_len: usize,
+    record_lines: &[String],
+) -> io::Result<bool> {
+    append_records_in_place_with_hook(path, meta, meta_line_len, record_lines, |_| Ok(()))
+}
+
+fn append_records_in_place_with_hook(
+    path: &Path,
+    meta: &SessionMeta,
+    meta_line_len: usize,
+    record_lines: &[String],
+    after_meta_patch: impl FnOnce(&mut std::fs::File) -> io::Result<()>,
+) -> io::Result<bool> {
+    let meta_line = serde_json::to_string(meta).map_err(io::Error::other)?;
+    if meta_line.len() + 1 > meta_line_len {
+        return Ok(false);
+    }
+
+    let mut file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)?;
+    write_meta_line_in_place(&mut file, &meta_line, meta_line_len)?;
+    file.flush()?;
+    after_meta_patch(&mut file)?;
+
+    file.seek(SeekFrom::End(0))?;
+    for line in record_lines {
+        if !line.is_empty() {
+            writeln!(file, "{line}")?;
+        }
+    }
+    file.flush()?;
+    Ok(true)
 }
 
 fn upsert_state_line(
@@ -344,7 +428,7 @@ where
     F: FnOnce(&Path, &SessionMeta, &[String]) -> io::Result<()>,
 {
     with_target_lock(path, || {
-        let (mut meta, _) = read_meta_with_line_len(path, id)?;
+        let (mut meta, meta_line_len) = read_meta_with_line_len(path, id)?;
         meta.updated_at = now_utc();
         meta.sequence += 1;
 
@@ -352,6 +436,10 @@ where
             .into_iter()
             .map(|record| record.to_json_line())
             .collect::<io::Result<Vec<_>>>()?;
+
+        if append_records_in_place(path, &meta, meta_line_len, &record_lines)? {
+            return Ok(());
+        }
 
         let (_, mut existing_lines) = read_meta_and_message_lines(path, id)?;
         existing_lines.extend(record_lines);
@@ -381,7 +469,7 @@ fn find_record_line_mut<'a>(
 
 /// Validate a session ID, rejecting unsafe filesystem characters.
 ///
-/// Rejects IDs containing `/`, `\`, `..`, or null bytes.
+/// Rejects IDs containing `/`, `\`, `..`, `:`, or ASCII control characters.
 fn validate_session_id(id: &str) -> io::Result<()> {
     if id.is_empty() {
         return Err(io::Error::new(
@@ -389,7 +477,11 @@ fn validate_session_id(id: &str) -> io::Result<()> {
             "session ID must not be empty",
         ));
     }
-    if id.contains('/') || id.contains('\\') || id.contains("..") || id.contains('\0') {
+    if id.contains('/')
+        || id.contains('\\')
+        || id.contains("..")
+        || id.chars().any(|c| c == ':' || c.is_ascii_control())
+    {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             format!("session ID contains unsafe characters: {id:?}"),
@@ -405,9 +497,26 @@ fn validate_session_id(id: &str) -> io::Result<()> {
 ///
 /// Concurrent writes to the same session may corrupt the file.
 /// Callers are expected to enforce single-writer access.
+///
+/// With the `search` feature enabled, a tantivy index is maintained in
+/// `<sessions_dir>/.search_index/` and used by
+/// [`SessionStore::search()`].  Without the feature, search falls back to a
+/// linear scan of all JSONL files.
 pub struct JsonlSessionStore {
     sessions_dir: PathBuf,
     migrators: Vec<Box<dyn crate::migrate::SessionMigrator>>,
+    /// Lazily-opened tantivy index.  Populated on first `search()` call (or
+    /// via `open_search_index()`).  Only present when the `search` feature is
+    /// enabled.
+    ///
+    /// Uses `Mutex<Option<...>>` rather than `OnceLock` because we need
+    /// fallible initialization (`OnceLock::get_or_try_init` is not stable).
+    #[cfg(feature = "search")]
+    tantivy_index: std::sync::Mutex<Option<crate::search::index::TantivyIndex>>,
+    /// Tracks whether the index has been initially populated from all JSONL
+    /// files on first search.
+    #[cfg(feature = "search")]
+    index_built: std::sync::Mutex<bool>,
 }
 
 impl JsonlSessionStore {
@@ -419,7 +528,65 @@ impl JsonlSessionStore {
         Ok(Self {
             sessions_dir,
             migrators: Vec::new(),
+            #[cfg(feature = "search")]
+            tantivy_index: std::sync::Mutex::new(None),
+            #[cfg(feature = "search")]
+            index_built: std::sync::Mutex::new(false),
         })
+    }
+
+    /// Open (or create) the tantivy search index eagerly.
+    ///
+    /// Normally the index is opened lazily on the first `search()` call.
+    /// Call this method if you want to detect index-creation errors at startup
+    /// rather than at search time.
+    ///
+    /// Only available with the `search` feature.
+    #[cfg(feature = "search")]
+    pub fn open_search_index(&self) -> io::Result<()> {
+        self.with_tantivy_index(|_| Ok(()))
+    }
+
+    /// Build (or rebuild) the tantivy index from all current JSONL files.
+    ///
+    /// Existing index data is replaced.  Use this after bulk-importing sessions
+    /// outside of the store API.
+    ///
+    /// Only available with the `search` feature.
+    #[cfg(feature = "search")]
+    pub fn rebuild_search_index(&self) -> io::Result<()> {
+        self.with_tantivy_index(|index| {
+            // Wipe all existing docs so sessions removed outside the store API
+            // don't produce ghost hits after the rebuild.
+            index.clear_all()?;
+            for meta in self.list()? {
+                let (_, entries) = self.load_entries(&meta.id)?;
+                index.index_session(&meta, &entries)?;
+            }
+            Ok(())
+        })
+    }
+
+    /// Obtain a snapshot clone of the tantivy index (creating it if needed),
+    /// then call `f` with it.
+    ///
+    /// Using a clone of `TantivyIndex` is safe because it is `Arc`-based
+    /// internally.
+    #[cfg(feature = "search")]
+    fn with_tantivy_index<T>(
+        &self,
+        f: impl FnOnce(&crate::search::index::TantivyIndex) -> io::Result<T>,
+    ) -> io::Result<T> {
+        let index_clone = {
+            let mut guard = self.tantivy_index.lock().unwrap_or_else(|e| e.into_inner());
+            if guard.is_none() {
+                *guard = Some(crate::search::index::TantivyIndex::open_or_create(
+                    &self.sessions_dir,
+                )?);
+            }
+            guard.as_ref().expect("just set").clone()
+        };
+        f(&index_clone)
     }
 
     /// Register session migrators for automatic schema upgrades on load.
@@ -504,38 +671,28 @@ impl SessionStore for JsonlSessionStore {
         validate_session_id(id)?;
 
         let path = session_path(&self.sessions_dir, id);
-        let (meta, lines) = read_meta_and_message_lines(&path, id)?;
-        let (meta, classified) = self.classify_and_migrate(meta, lines, id)?;
+        with_target_lock(&path, || {
+            let (meta, lines) = read_meta_and_message_lines(&path, id)?;
+            let (meta, classified) = self.classify_and_migrate(meta, lines, id)?;
+            Ok((meta, classified_lines_to_messages(classified, registry, id)))
+        })
+    }
 
-        // Project post-migration classification into the `load()` return
-        // shape. Entries collapse to their Message contents (non-message
-        // entries are dropped, matching prior behavior), and custom-message
-        // wrappers pass through unchanged (requires a registry).
-        let mut messages = Vec::new();
-        for item in classified {
-            match item {
-                ClassifiedLine::Entry(entry) => {
-                    if let SessionEntry::Message(llm_msg) = *entry {
-                        messages.push(AgentMessage::Llm(llm_msg));
-                    }
-                }
-                ClassifiedLine::Custom(envelope) => {
-                    match custom_envelope_to_message(&envelope, registry) {
-                        Ok(Some(msg)) => messages.push(msg),
-                        Ok(None) => {}
-                        Err(error) => {
-                            tracing::warn!(
-                                error = %error,
-                                "skipping unrestorable custom message in session {id}"
-                            );
-                        }
-                    }
-                }
-                ClassifiedLine::State => {}
-            }
-        }
+    fn load_full(
+        &self,
+        id: &str,
+        registry: Option<&CustomMessageRegistry>,
+    ) -> io::Result<(SessionMeta, Vec<AgentMessage>, Option<serde_json::Value>)> {
+        validate_session_id(id)?;
 
-        Ok((meta, messages))
+        let path = session_path(&self.sessions_dir, id);
+        with_target_lock(&path, || {
+            let (meta, lines) = read_meta_and_message_lines(&path, id)?;
+            let state = extract_state_from_lines(&lines, id)?;
+            let (meta, classified) = self.classify_and_migrate(meta, lines, id)?;
+            let messages = classified_lines_to_messages(classified, registry, id);
+            Ok((meta, messages, state))
+        })
     }
 
     fn list(&self) -> io::Result<Vec<SessionMeta>> {
@@ -549,12 +706,17 @@ impl SessionStore for JsonlSessionStore {
                 continue;
             }
 
-            let Ok(file) = std::fs::File::open(&path) else {
-                continue;
-            };
-            let reader = io::BufReader::new(file);
-            if let Some(Ok(first_line)) = reader.lines().next() {
-                match serde_json::from_str::<SessionMeta>(&first_line) {
+            let read_meta = with_target_lock(&path, || {
+                let file = std::fs::File::open(&path)?;
+                let reader = io::BufReader::new(file);
+                let Some(first_line) = reader.lines().next() else {
+                    return Ok(None);
+                };
+                first_line.map(Some)
+            });
+
+            match read_meta {
+                Ok(Some(first_line)) => match serde_json::from_str::<SessionMeta>(&first_line) {
                     Ok(meta) => sessions.push(meta),
                     Err(e) => {
                         tracing::warn!(
@@ -563,6 +725,14 @@ impl SessionStore for JsonlSessionStore {
                             "skipping session file with invalid metadata"
                         );
                     }
+                },
+                Ok(None) => {}
+                Err(error) => {
+                    tracing::warn!(
+                        path = %path.display(),
+                        error = %error,
+                        "skipping unreadable session file"
+                    );
                 }
             }
         }
@@ -580,7 +750,25 @@ impl SessionStore for JsonlSessionStore {
                 std::fs::remove_file(int_path)?;
             }
             Ok(())
-        })
+        })?;
+
+        // Remove from tantivy index (best-effort).
+        #[cfg(feature = "search")]
+        {
+            let id_owned = id.to_string();
+            let _ = self.with_tantivy_index(|index| {
+                if let Err(err) = index.delete_session(&id_owned) {
+                    tracing::warn!(
+                        session_id = %id_owned,
+                        error = %err,
+                        "failed to remove session from search index after delete"
+                    );
+                }
+                Ok(())
+            });
+        }
+
+        Ok(())
     }
 
     fn save_state(&self, id: &str, state: &serde_json::Value) -> io::Result<()> {
@@ -608,14 +796,10 @@ impl SessionStore for JsonlSessionStore {
             return Ok(None);
         }
 
-        let (_, lines) = read_meta_and_message_lines(&path, id)?;
-        for line in lines {
-            if let Some(state) = parse_state_line(&line, id)? {
-                return Ok(Some(state));
-            }
-        }
-
-        Ok(None)
+        with_target_lock(&path, || {
+            let (_, lines) = read_meta_and_message_lines(&path, id)?;
+            extract_state_from_lines(&lines, id)
+        })
     }
 
     fn save_interrupt(&self, id: &str, state: &InterruptState) -> io::Result<()> {
@@ -686,12 +870,118 @@ impl SessionStore for JsonlSessionStore {
 
         Ok((meta, entries))
     }
+
+    fn search(&self, query: &str, options: &SessionSearchOptions) -> io::Result<Vec<SessionHit>> {
+        // When the `search` feature is enabled, delegate to the tantivy index.
+        // The index is built lazily on the first call and kept warm for
+        // subsequent calls.
+        #[cfg(feature = "search")]
+        return self.with_tantivy_index(|index| {
+            self.build_index_if_empty(index)?;
+            index.search(query, options)
+        });
+
+        // Fallback linear scan (no `search` feature).
+        #[cfg(not(feature = "search"))]
+        linear_search(self, query, options)
+    }
+}
+
+/// Linear (no-index) search implementation used when the `search` feature is
+/// not enabled.
+#[cfg(not(feature = "search"))]
+fn linear_search(
+    store: &JsonlSessionStore,
+    query: &str,
+    options: &SessionSearchOptions,
+) -> io::Result<Vec<SessionHit>> {
+    let terms = search::query_terms(query);
+    let limit = options.limit();
+    if terms.is_empty() || limit == 0 {
+        return Ok(Vec::new());
+    }
+
+    let session_ids = if let Some(ids) = &options.session_ids {
+        ids.iter()
+            .map(|id| {
+                validate_session_id(id)?;
+                Ok(id.clone())
+            })
+            .collect::<io::Result<Vec<_>>>()?
+    } else {
+        store
+            .list()?
+            .into_iter()
+            .map(|meta| meta.id)
+            .collect::<Vec<_>>()
+    };
+
+    let mut hits = Vec::new();
+    for id in session_ids {
+        let (meta, entries) = store.load_entries(&id)?;
+        for entry in entries {
+            if !search::entry_matches_type(&entry, options)
+                || !search::entry_matches_time_range(&entry, options)
+            {
+                continue;
+            }
+            let Some((relevance, snippet)) = search::search_entry(&entry, &terms) else {
+                continue;
+            };
+            hits.push(SessionHit {
+                session_id: meta.id.clone(),
+                session_title: meta.title.clone(),
+                entry,
+                score: relevance,
+                snippet,
+            });
+        }
+    }
+
+    hits.sort_by(|left, right| {
+        right
+            .score
+            .cmp(&left.score)
+            .then_with(|| right.entry.timestamp().cmp(&left.entry.timestamp()))
+            .then_with(|| left.session_id.cmp(&right.session_id))
+    });
+    hits.truncate(limit);
+    Ok(hits)
+}
+
+#[cfg(feature = "search")]
+impl JsonlSessionStore {
+    /// Index all sessions if the initial build has not yet been done.
+    ///
+    /// This provides lazy-build-on-first-search semantics: the first `search()`
+    /// call populates the index from all existing JSONL files; subsequent calls
+    /// find the index already populated.
+    fn build_index_if_empty(&self, index: &crate::search::index::TantivyIndex) -> io::Result<()> {
+        let already_built = {
+            let guard = self.index_built.lock().unwrap_or_else(|e| e.into_inner());
+            *guard
+        };
+        if already_built {
+            return Ok(());
+        }
+        // Populate from all current sessions.
+        for meta in self.list()? {
+            let (_, entries) = self.load_entries(&meta.id)?;
+            index.index_session(&meta, &entries)?;
+        }
+        *self.index_built.lock().unwrap_or_else(|e| e.into_inner()) = true;
+        Ok(())
+    }
 }
 
 impl JsonlSessionStore {
     /// Save a session with rich entry types.
     ///
     /// Lines 2+ are [`SessionEntry`] values serialized with an `entry_type` tag.
+    ///
+    /// When the `search` feature is enabled, the tantivy index is updated
+    /// after the file is written (best-effort — index errors are logged but
+    /// do not fail the save).
     pub fn save_entries(
         &self,
         id: &str,
@@ -700,7 +990,8 @@ impl JsonlSessionStore {
     ) -> io::Result<()> {
         validate_session_id(id)?;
         let path = session_path(&self.sessions_dir, id);
-        with_target_lock(&path, || {
+        #[allow(unused_variables)]
+        let write_meta = with_target_lock(&path, || {
             check_sequence_path(&path, id, meta.sequence)?;
 
             // Increment sequence for the write
@@ -724,8 +1015,28 @@ impl JsonlSessionStore {
                     }
                 }
                 Ok(())
-            })
-        })
+            })?;
+            Ok(write_meta)
+        })?;
+
+        // Update tantivy index (best-effort).
+        #[cfg(feature = "search")]
+        {
+            let entries_for_index: Vec<_> = entries.to_vec();
+            let meta_for_index = write_meta;
+            let _ = self.with_tantivy_index(|index| {
+                if let Err(err) = index.index_session(&meta_for_index, &entries_for_index) {
+                    tracing::warn!(
+                        session_id = %id,
+                        error = %err,
+                        "failed to update search index after save_entries"
+                    );
+                }
+                Ok(())
+            });
+        }
+
+        Ok(())
     }
 
     /// Load a session with rich entry types.
@@ -737,18 +1048,20 @@ impl JsonlSessionStore {
         validate_session_id(id)?;
 
         let path = session_path(&self.sessions_dir, id);
-        let (meta, lines) = read_meta_and_message_lines(&path, id)?;
-        let (meta, classified) = self.classify_and_migrate(meta, lines, id)?;
+        with_target_lock(&path, || {
+            let (meta, lines) = read_meta_and_message_lines(&path, id)?;
+            let (meta, classified) = self.classify_and_migrate(meta, lines, id)?;
 
-        let entries = classified
-            .into_iter()
-            .filter_map(|item| match item {
-                ClassifiedLine::Entry(entry) => Some(*entry),
-                ClassifiedLine::Custom(_) | ClassifiedLine::State => None,
-            })
-            .collect();
+            let entries = classified
+                .into_iter()
+                .filter_map(|item| match item {
+                    ClassifiedLine::Entry(entry) => Some(*entry),
+                    ClassifiedLine::Custom(_) | ClassifiedLine::State => None,
+                })
+                .collect();
 
-        Ok((meta, entries))
+            Ok((meta, entries))
+        })
     }
 
     /// Parse every message line, classify each as a migrateable
@@ -798,18 +1111,7 @@ impl JsonlSessionStore {
             })
             .collect();
 
-        if !self.migrators.is_empty() {
-            crate::migrate::run_migrations(&mut meta, &mut entries, &self.migrators)?;
-        } else if meta.version > crate::migrate::CURRENT_VERSION {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!(
-                    "unsupported session version {} (current: {})",
-                    meta.version,
-                    crate::migrate::CURRENT_VERSION
-                ),
-            ));
-        }
+        crate::migrate::run_migrations(&mut meta, &mut entries, &self.migrators)?;
 
         let rebuilt = weave_migrated_entries(classified, entries, original_entry_count);
         Ok((meta, rebuilt))
@@ -928,6 +1230,38 @@ fn custom_envelope_to_message(
     crate::codec::decode_jsonl_message_line(&line, registry)
 }
 
+fn classified_lines_to_messages(
+    classified: Vec<ClassifiedLine>,
+    registry: Option<&CustomMessageRegistry>,
+    id: &str,
+) -> Vec<AgentMessage> {
+    let mut messages = Vec::new();
+    for item in classified {
+        match item {
+            ClassifiedLine::Entry(entry) => {
+                if let SessionEntry::Message(llm_msg) = *entry {
+                    messages.push(AgentMessage::Llm(llm_msg));
+                }
+            }
+            ClassifiedLine::Custom(envelope) => {
+                match custom_envelope_to_message(&envelope, registry) {
+                    Ok(Some(msg)) => messages.push(msg),
+                    Ok(None) => {}
+                    Err(error) => {
+                        tracing::warn!(
+                            error = %error,
+                            "skipping unrestorable custom message in session {id}"
+                        );
+                    }
+                }
+            }
+            ClassifiedLine::State => {}
+        }
+    }
+
+    messages
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -960,8 +1294,14 @@ mod tests {
     }
 
     #[test]
-    fn validate_session_id_rejects_null() {
-        let err = validate_session_id("foo\0bar").unwrap_err();
+    fn validate_session_id_rejects_colon() {
+        let err = validate_session_id("C:drive").unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn validate_session_id_rejects_control_chars() {
+        let err = validate_session_id("foo\nbar").unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
     }
 
@@ -1535,6 +1875,121 @@ mod tests {
         }
     }
 
+    fn user_entry(text: &str, ts: u64) -> SessionEntry {
+        SessionEntry::Message(LlmMessage::User(swink_agent::UserMessage {
+            content: vec![swink_agent::ContentBlock::Text {
+                text: text.to_string(),
+            }],
+            timestamp: ts,
+            cache_hint: None,
+        }))
+    }
+
+    #[test]
+    fn search_scans_across_saved_sessions() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = JsonlSessionStore::new(dir.path().to_path_buf()).unwrap();
+
+        let mut meta_a = fresh_meta("search-a");
+        meta_a.title = "Auth notes".to_string();
+        store
+            .save(
+                "search-a",
+                &meta_a,
+                &[
+                    user_msg("We decided the auth middleware owns refresh tokens", 10),
+                    user_msg("Unrelated deployment note", 11),
+                ],
+            )
+            .unwrap();
+
+        let mut meta_b = fresh_meta("search-b");
+        meta_b.title = "Billing notes".to_string();
+        store
+            .save(
+                "search-b",
+                &meta_b,
+                &[user_msg("Billing retries use exponential backoff", 20)],
+            )
+            .unwrap();
+
+        let hits = store
+            .search("auth middleware", &SessionSearchOptions::default())
+            .unwrap();
+
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].session_id, "search-a");
+        assert_eq!(hits[0].session_title, "Auth notes");
+        assert!(hits[0].snippet.contains("auth middleware"));
+        assert!(matches!(hits[0].entry, SessionEntry::Message(_)));
+    }
+
+    #[test]
+    fn search_respects_session_type_time_and_limit_filters() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = JsonlSessionStore::new(dir.path().to_path_buf()).unwrap();
+
+        store
+            .save_entries(
+                "filtered-a",
+                &fresh_meta("filtered-a"),
+                &[
+                    user_entry("auth middleware message", 10),
+                    SessionEntry::Label {
+                        text: "auth middleware bookmark".to_string(),
+                        message_index: 0,
+                        timestamp: 20,
+                    },
+                    SessionEntry::Label {
+                        text: "auth middleware late bookmark".to_string(),
+                        message_index: 1,
+                        timestamp: 40,
+                    },
+                ],
+            )
+            .unwrap();
+        store
+            .save_entries(
+                "filtered-b",
+                &fresh_meta("filtered-b"),
+                &[SessionEntry::Label {
+                    text: "auth middleware other session".to_string(),
+                    message_index: 0,
+                    timestamp: 20,
+                }],
+            )
+            .unwrap();
+
+        let options = SessionSearchOptions {
+            session_ids: Some(vec!["filtered-a".to_string()]),
+            entry_types: Some(vec!["label".to_string()]),
+            start_time: Some(chrono::DateTime::from_timestamp(15, 0).unwrap().to_utc()),
+            end_time: Some(chrono::DateTime::from_timestamp(25, 0).unwrap().to_utc()),
+            max_results: Some(1),
+        };
+
+        let hits = store.search("auth middleware", &options).unwrap();
+
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].session_id, "filtered-a");
+        assert!(matches!(
+            hits[0].entry,
+            SessionEntry::Label { timestamp: 20, .. }
+        ));
+    }
+
+    fn rewrite_meta_without_padding(path: &Path, id: &str, update: impl FnOnce(&mut SessionMeta)) {
+        let (mut meta, lines) = read_meta_and_message_lines(path, id).unwrap();
+        update(&mut meta);
+
+        let mut contents = format!("{}\n", serde_json::to_string(&meta).unwrap());
+        for line in lines {
+            contents.push_str(&line);
+            contents.push('\n');
+        }
+        std::fs::write(path, contents).unwrap();
+    }
+
     #[test]
     fn append_advances_sequence_and_rejects_stale_save() {
         let dir = tempfile::tempdir().unwrap();
@@ -1564,16 +2019,185 @@ mod tests {
     }
 
     #[test]
-    fn append_rewrite_failure_preserves_existing_file() {
+    fn append_extends_file_without_rewriting_existing_records() {
         let dir = tempfile::tempdir().unwrap();
         let store = JsonlSessionStore::new(dir.path().to_path_buf()).unwrap();
 
-        let meta = fresh_meta("append-atomic");
+        let meta = fresh_meta("append-in-place");
         store
-            .save("append-atomic", &meta, &[user_msg("first", 1)])
+            .save("append-in-place", &meta, &[user_msg("first", 1)])
             .unwrap();
 
+        let path = session_path(dir.path(), "append-in-place");
+        let before = std::fs::read_to_string(&path).unwrap();
+        let before_lines = before.lines().collect::<Vec<_>>();
+        let before_meta_line_len = before_lines[0].len();
+        let before_message_line = before_lines[1].to_string();
+
+        store
+            .append("append-in-place", &[user_msg("second", 2)])
+            .unwrap();
+
+        let after = std::fs::read_to_string(&path).unwrap();
+        let after_lines = after.lines().collect::<Vec<_>>();
+        assert_eq!(
+            after_lines[0].len(),
+            before_meta_line_len,
+            "append should patch the reserved metadata line in place"
+        );
+        assert_eq!(
+            after_lines[1], before_message_line,
+            "append must leave existing record bytes untouched"
+        );
+        assert_eq!(after_lines.len(), 3);
+
+        let (loaded_meta, loaded_messages) = store.load("append-in-place", None).unwrap();
+        assert_eq!(loaded_meta.sequence, 2);
+        assert_eq!(loaded_messages.len(), 2);
+    }
+
+    #[test]
+    fn append_failure_after_metadata_patch_rejects_stale_save_without_new_records() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = JsonlSessionStore::new(dir.path().to_path_buf()).unwrap();
+
+        let meta = fresh_meta("append-meta-first");
+        store
+            .save("append-meta-first", &meta, &[user_msg("first", 1)])
+            .unwrap();
+
+        let path = session_path(dir.path(), "append-meta-first");
+        let (mut append_meta, meta_line_len) =
+            read_meta_with_line_len(&path, "append-meta-first").unwrap();
+        append_meta.updated_at = now_utc();
+        append_meta.sequence += 1;
+        let second_line = SessionRecord::from_message(&user_msg("second", 2), "append-meta-first")
+            .unwrap()
+            .to_json_line()
+            .unwrap();
+
+        let err = append_records_in_place_with_hook(
+            &path,
+            &append_meta,
+            meta_line_len,
+            &[second_line],
+            |_| Err(io::Error::other("simulated record write failure")),
+        )
+        .unwrap_err();
+        assert_eq!(err.to_string(), "simulated record write failure");
+
+        let (loaded_meta, loaded_messages) = store.load("append-meta-first", None).unwrap();
+        assert_eq!(
+            loaded_meta.sequence, 2,
+            "metadata sequence must be visible before any appended records"
+        );
+        assert_eq!(
+            loaded_messages.len(),
+            1,
+            "failed append must not expose uncommitted record lines"
+        );
+
+        let mut stale = meta;
+        stale.sequence = 1;
+        let err = store
+            .save("append-meta-first", &stale, &[user_msg("stale", 3)])
+            .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
+    }
+
+    #[test]
+    fn load_waits_for_in_flight_append_metadata_patch() {
+        use std::sync::mpsc;
+        use std::thread;
+        use std::time::Duration;
+
+        let dir = tempfile::tempdir().unwrap();
+        let store = JsonlSessionStore::new(dir.path().to_path_buf()).unwrap();
+
+        let meta = fresh_meta("append-load-race");
+        store
+            .save("append-load-race", &meta, &[user_msg("first", 1)])
+            .unwrap();
+
+        let path = session_path(dir.path(), "append-load-race");
+        let (patched_tx, patched_rx) = mpsc::channel();
+        let (resume_tx, resume_rx) = mpsc::channel();
+
+        let append_path = path;
+        let append_handle = thread::spawn(move || {
+            with_target_lock(&append_path, || {
+                let (mut append_meta, meta_line_len) =
+                    read_meta_with_line_len(&append_path, "append-load-race")?;
+                append_meta.updated_at = now_utc();
+                append_meta.sequence += 1;
+                let second_line =
+                    SessionRecord::from_message(&user_msg("second", 2), "append-load-race")
+                        .unwrap()
+                        .to_json_line()?;
+
+                append_records_in_place_with_hook(
+                    &append_path,
+                    &append_meta,
+                    meta_line_len,
+                    &[second_line],
+                    |_| {
+                        patched_tx.send(()).unwrap();
+                        resume_rx.recv().unwrap();
+                        Ok(())
+                    },
+                )?;
+                Ok(())
+            })
+        });
+
+        patched_rx.recv().unwrap();
+
+        let load_store = JsonlSessionStore::new(dir.path().to_path_buf()).unwrap();
+        let (loaded_tx, loaded_rx) = mpsc::channel();
+        let load_handle = thread::spawn(move || {
+            loaded_tx
+                .send(load_store.load("append-load-race", None))
+                .unwrap();
+        });
+
+        assert!(
+            loaded_rx.recv_timeout(Duration::from_millis(100)).is_err(),
+            "load must wait for an append that has patched metadata but not records"
+        );
+
+        resume_tx.send(()).unwrap();
+        append_handle
+            .join()
+            .unwrap()
+            .expect("append should finish cleanly");
+
+        let (loaded_meta, loaded_messages) = loaded_rx.recv().unwrap().unwrap();
+        load_handle.join().unwrap();
+        assert_eq!(loaded_meta.sequence, 2);
+        assert_eq!(
+            loaded_messages.len(),
+            2,
+            "load must not expose bumped metadata without appended records"
+        );
+    }
+
+    #[test]
+    fn append_rewrite_failure_preserves_existing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut meta = fresh_meta("append-atomic");
+        meta.sequence = 9;
         let path = session_path(dir.path(), "append-atomic");
+        let first_line =
+            SessionRecord::from_message(&user_msg("first", 1), "append-atomic").unwrap();
+        std::fs::write(
+            &path,
+            format!(
+                "{}\n{}\n",
+                serde_json::to_string(&meta).unwrap(),
+                first_line.to_json_line().unwrap()
+            ),
+        )
+        .unwrap();
         let before = std::fs::read_to_string(&path).unwrap();
 
         let err = append_records_with_rewrite(
@@ -1591,8 +2215,9 @@ mod tests {
             "failed append rewrite must not modify the live session file"
         );
 
+        let store = JsonlSessionStore::new(dir.path().to_path_buf()).unwrap();
         let (loaded_meta, loaded_messages) = store.load("append-atomic", None).unwrap();
-        assert_eq!(loaded_meta.sequence, 1);
+        assert_eq!(loaded_meta.sequence, 9);
         assert_eq!(loaded_messages.len(), 1);
     }
 
@@ -1610,6 +2235,7 @@ mod tests {
             .unwrap();
 
         let path = session_path(dir.path(), "delete-race");
+        rewrite_meta_without_padding(&path, "delete-race", |meta| meta.sequence = 9);
         let append_ready = Arc::new(Barrier::new(2));
         let allow_rewrite = Arc::new(Barrier::new(2));
 
@@ -1714,6 +2340,31 @@ mod tests {
         assert_eq!(
             store.load_state("save-full").unwrap(),
             Some(serde_json::json!({ "cursor": 9, "draft": "synced" }))
+        );
+    }
+
+    #[test]
+    fn load_full_returns_messages_and_state_from_one_snapshot() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = JsonlSessionStore::new(dir.path().to_path_buf()).unwrap();
+
+        let persisted_meta = store
+            .save_full(
+                "load-full",
+                &fresh_meta("load-full"),
+                &[user_msg("hello", 1), user_msg("again", 2)],
+                &serde_json::json!({ "cursor": 4, "draft": "stable" }),
+            )
+            .unwrap();
+
+        let (loaded_meta, loaded_messages, loaded_state) =
+            store.load_full("load-full", None).unwrap();
+
+        assert_eq!(loaded_meta.sequence, persisted_meta.sequence);
+        assert_eq!(loaded_messages.len(), 2);
+        assert_eq!(
+            loaded_state,
+            Some(serde_json::json!({ "cursor": 4, "draft": "stable" }))
         );
     }
 
@@ -1979,14 +2630,12 @@ mod tests {
         let id = "no-migrator";
         let path = session_path(dir.path(), id);
         let now = now_utc();
-        // A future version (> CURRENT_VERSION) triggers the unsupported-
-        // version error in both paths.
         let meta = SessionMeta {
             id: id.to_string(),
-            title: "future".to_string(),
+            title: "legacy".to_string(),
             created_at: now,
             updated_at: now,
-            version: crate::migrate::CURRENT_VERSION + 1,
+            version: 0,
             sequence: 0,
         };
         let contents = format!("{}\n", serde_json::to_string(&meta).unwrap());
@@ -1997,6 +2646,8 @@ mod tests {
         let entries_err = store.load_entries(id).unwrap_err();
         assert_eq!(load_err.kind(), io::ErrorKind::InvalidData);
         assert_eq!(entries_err.kind(), io::ErrorKind::InvalidData);
+        assert!(load_err.to_string().contains("no migrator found"));
+        assert!(entries_err.to_string().contains("no migrator found"));
     }
 
     #[test]

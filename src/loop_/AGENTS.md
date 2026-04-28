@@ -1,25 +1,30 @@
 # Loop Lessons
 
-- `ToolExecutionUpdate` must include the originating tool call `id` and `name`, and partial tool updates must flow through an awaited relay instead of `try_send`; otherwise concurrent tool progress becomes unattributed and can be silently dropped under channel backpressure.
-- Per-tool update relays must stay bounded. Once the buffered queue fills, coalesce overflow to the latest pending partial update instead of letting a synchronous `on_update` callback grow memory without bound.
-- Post-turn assistant replacements must preserve the original `ToolCall` blocks. A text-only replacement on a tool turn breaks the core invariant that assistant tool calls stay paired with the committed `ToolResult` messages that follow.
-- `TurnPolicyContext.context_messages` must always be a committed turn snapshot. Text-only turns need the assistant message committed before post-turn policies run, and transfer turns must also execute post-turn policies before honoring transfer termination.
-- Async tool approval futures need the same `AssertUnwindSafe(...).catch_unwind()` isolation as the sync approval-context hook. A panic after the approval future is polled must turn into `ToolApprovalResolved { approved: false }` plus an error tool result, not an unwound dispatch task.
-- Steering interrupts cannot rely on a second `poll_steering()` call to recover messages already drained by a worker task. If a worker polls steering to trip the interrupt flag, it must hand those drained messages into shared batch state so `ToolExecOutcome::SteeringInterrupt` preserves them for the next turn.
-- Parent cancellation must be observed while the batch collector waits on join handles. Child cancellation tokens do not unblock `JoinHandle::await` for cancellation-unaware tools, so the collector has to `select!` on `batch_token.cancelled()`, abort the remaining tasks, and return an aborted batch outcome immediately.
-- An aborted tool batch must terminate the current turn inline. Routing that outcome through `handle_cancellation()` emits a second synthetic `TurnStart` and drops the tool-call payload/results that belong to the interrupted turn.
-- `ToolExecutionStrategy::partition()` indices target the post-preprocessing `tool_calls` slice passed into the strategy, not the original LLM-emitted tool-call list. The dispatch layer must reject out-of-bounds, duplicate, or missing prepared indices with synthetic tool errors before any tool starts.
-- `PreDispatchVerdict::Stop` must synthesize one terminal error result for every unresolved tool call in the batch, including calls that already passed preprocessing before a later stop fires. Stop aborts dispatch, but it does not relax tool-result parity.
-- Pre-dispatch is batch-wide and two-pass. A later `PreDispatchVerdict::Stop` must prevent any earlier tool from emitting approval request/resolution side effects, so approval only starts after the entire batch clears pre-dispatch.
-- Pre-dispatch stop is terminal for the active turn. Routing a batch-level `PreDispatchVerdict::Stop` through the normal completed-tool path leaks a bogus follow-up LLM turn after the synthetic tool errors are emitted; map it to a turn-ending outcome instead.
-- Pre-dispatch snapshots `SessionState` once per tool batch and reuses that borrow for every `ToolDispatchContext`. Cloning the full state inside the per-tool loop quietly turns large sessions into avoidable hot-path overhead.
-- Cancellation has to be observed in preprocessing and before each execution group/tool dispatch, not just while collecting spawned handles. Otherwise approval waits can hang forever and later tools can still launch after the batch is already cancelled.
-- Overflow recovery cancellation must reuse a started-turn cancellation path. Calling the pre-turn helper after `TurnStart` has already been emitted duplicates `TurnStart` and breaks lifecycle ordering for the interrupted turn.
-- `handle_stream_error()` must not emit `MessageEnd` for context overflow. Overflow recovery owns the terminal message lifecycle, and unrecoverable overflow must still surface exactly one `MessageEnd`.
-- Dynamic system prompts are computed once per turn and must be carried into overflow retries. Recomputing during recovery can silently change prompt contracts within the same turn.
-- `LoopState.turn_index` must advance after every completed turn, not just tool-loop continuation. Text-only or other `BreakInner` turns still finish a turn before the outer loop polls follow-up messages.
-- First-turn `PreTurn` policies must receive the initial prompt batch in `PolicyContext::new_messages`; only `agent_loop_continue()` resumes with an empty initial batch.
-- Text-only turns cannot break the inner loop while `pending_messages` is non-empty. Post-turn or post-loop injections queued for the next turn must continue loop processing before follow-up polling or `AgentEnd`.
-- Text-only turns must poll steering after `TurnEnd` and before deciding `BreakInner`. Otherwise steering messages are delayed until outer-loop follow-up polling or agent shutdown, unlike the tool-call path.
-- Retry attempts share one logical assistant-message lifecycle. Emit `MessageStart` once per turn, buffer attempt-local deltas until the terminal attempt is known, and never leak failed-attempt partials into downstream `MessageUpdate` streams.
-- Cache-prefix tracking is a turn-to-turn invariant, not a per-stream local. `run_single_turn()` must publish the previously recorded prefix into `SlidingWindowTransformer` before compaction, then recompute and store the new prefix after compaction using the current hint (`Write` => whole current context, `Read` => prior prefix clamped to current length).
+## Structure
+- Nested outer/inner loop: outer = multi-turn follow-up, inner = single turn.
+- `overflow_signal` on `LoopState` (not `AgentContext`), resets after `transform_context`. `transform_context` is synchronous.
+- Tool dispatch order: PreDispatch policies → Approval → Schema validation → `execute()`.
+- `turn_index` advances after every completed turn (including text-only).
+
+## Tool Dispatch
+- Pre-dispatch is batch-wide and two-pass: approval starts only after entire batch clears. `PreDispatchVerdict::Stop` synthesizes terminal errors for all unresolved calls and is terminal for the turn.
+- `ApprovedWith(...)` rewrites re-enter pre-dispatch before enqueue.
+- `ToolExecutionStrategy::partition()` indices target post-preprocessing `tool_calls`, not original list.
+- Tool update events need call `id`/`name` via awaited relay (bounded, overflow coalesces). Post-turn replacements preserve original `ToolCall` blocks.
+- Pre-dispatch snapshots `SessionState` once per batch, not per tool.
+
+## Cancellation & Error
+- Check cancellation in preprocessing and before each dispatch, not just at handle collection. Parent cancellation observed during handle collection via `select!`.
+- Panicked tool task → synthesize error result + `ToolExecutionEnd`. Aborted batch terminates turn inline (no `handle_cancellation()`).
+- Overflow recovery reuses started-turn cancellation path. `handle_stream_error()` must not emit `MessageEnd` for overflow.
+- Provider-terminal `Error`/`Aborted` must commit assistant message and run post-turn policies.
+
+## Steering & Turn Lifecycle
+- Steering interrupt: if a worker drains steering, hand drained messages to shared batch state.
+- Text-only turns poll steering after `TurnEnd`. `pending_messages` must drain before `BreakInner`.
+- `TurnPolicyContext.context_messages` always a committed snapshot. `PreTurn` policies run after context transformers.
+- Dynamic system prompts computed once per turn, carried into overflow retries.
+- Retry attempts share one assistant-message lifecycle. Cache-prefix tracking is turn-to-turn.
+
+## Approval
+- Async approval needs `catch_unwind` on both callback invocation and future polling.

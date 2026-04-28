@@ -1,4 +1,11 @@
-#![forbid(unsafe_code)]
+// Crate-wide unsafe policy: deny by default. Every new surface added by spec
+// 043 MUST compile under this ceiling. Per FR-049, the single authorized
+// carve-out is `evaluators::code::sandbox::posix` (Unix-only, rlimit FFI),
+// which relaxes to `#![allow(unsafe_code)]` at module scope with per-block
+// `// SAFETY:` annotations. `deny` is used instead of `forbid` because
+// `forbid` cannot be relaxed by a nested `allow` — the practical effect is
+// identical: any unsafe outside the carve-out is a hard compile error.
+#![deny(unsafe_code)]
 //! Evaluation framework for swink-agent.
 //!
 //! Provides trajectory tracing, golden path verification, response matching,
@@ -19,10 +26,13 @@ pub mod aggregator;
 mod audit;
 mod budget;
 pub mod cache;
+#[cfg(feature = "cli")]
+pub mod ci;
 mod efficiency;
 mod environment_state;
 mod error;
 mod evaluator;
+#[cfg(feature = "judge-core")]
 pub mod evaluators;
 mod gate;
 #[cfg(feature = "generation")]
@@ -45,6 +55,8 @@ pub mod telemetry;
 pub mod testing;
 #[cfg(feature = "trace-ingest")]
 pub mod trace;
+#[cfg(feature = "training-export")]
+pub mod training;
 mod trajectory;
 mod types;
 mod url_filter;
@@ -56,26 +68,102 @@ mod yaml;
 pub use aggregator::{Aggregator, AllPass, AnyPass, Average, Weighted};
 pub use audit::AuditedInvocation;
 pub use budget::BudgetEvaluator;
+pub use cache::{
+    CacheKey as TaskResultCacheKey, EvaluationDataStore, FingerprintContext,
+    LocalFileTaskResultStore, StoreError, canonicalize_fingerprint, tool_set_hash,
+};
 pub use efficiency::EfficiencyEvaluator;
 pub use environment_state::EnvironmentStateEvaluator;
 pub use error::EvalError;
 pub use evaluator::{Evaluator, EvaluatorRegistry};
+#[cfg(feature = "evaluator-agent")]
+pub use evaluators::agent::{
+    AgentToneEvaluator, InteractionsEvaluator, KnowledgeRetentionEvaluator,
+    LanguageDetectionEvaluator, PerceivedErrorEvaluator, TaskCompletionEvaluator,
+    TrajectoryAccuracyEvaluator, TrajectoryAccuracyWithRefEvaluator, UserSatisfactionEvaluator,
+};
+#[cfg(feature = "evaluator-code")]
+pub use evaluators::code::llm_judge::CodeLlmJudgeEvaluator;
+#[cfg(feature = "evaluator-code")]
+pub use evaluators::code::{
+    CargoCheckEvaluator, ClippyEvaluator, CodeExtractor, CodeExtractorStrategy,
+};
+#[cfg(feature = "evaluator-sandbox")]
+pub use evaluators::code::{
+    SandboxLimits, SandboxOutcome, SandboxRunner, SandboxedExecutionEvaluator, ShellRunner,
+    run_sandboxed,
+};
+#[cfg(feature = "multimodal")]
+pub use evaluators::multimodal::ImageSafetyEvaluator;
+#[cfg(feature = "evaluator-quality")]
+pub use evaluators::quality::{
+    CoherenceEvaluator, ConcisenessEvaluator, CorrectnessEvaluator, FaithfulnessEvaluator,
+    GoalSuccessRateEvaluator, HallucinationEvaluator, HelpfulnessEvaluator, LazinessEvaluator,
+    PlanAdherenceEvaluator, ResponseRelevanceEvaluator, assertion_implies_goal_completion,
+};
+#[cfg(feature = "evaluator-rag")]
+pub use evaluators::rag::{
+    DEFAULT_EMBEDDING_SIMILARITY_THRESHOLD, Embedder, EmbedderError, EmbeddingSimilarityEvaluator,
+    RAGGroundednessEvaluator, RAGHelpfulnessEvaluator, RAGRetrievalRelevanceEvaluator,
+};
+#[cfg(feature = "evaluator-safety")]
+pub use evaluators::safety::{
+    CodeInjectionEvaluator, FairnessEvaluator, HarmfulnessEvaluator, PIIClass, PIILeakageEvaluator,
+    PromptInjectionEvaluator, ToxicityEvaluator,
+};
+#[cfg(feature = "evaluator-simple")]
+pub use evaluators::simple::{ExactMatchEvaluator, LevenshteinDistanceEvaluator};
+#[cfg(feature = "evaluator-structured")]
+pub use evaluators::structured::{JsonMatchEvaluator, JsonSchemaEvaluator, KeyStrategy};
+#[cfg(feature = "judge-core")]
+pub use evaluators::{
+    Detail, DetailBuffer, DispatchError, DispatchOutcome, EvaluatorError, JudgeEvaluatorBuilder,
+    JudgeEvaluatorConfig, dispatch_judge, drive_judge_call, evaluate_with_builtin,
+    finish_metric_result, materialize_case_attachments,
+};
 pub use gate::{GateConfig, GateResult, check_gate};
-pub use judge::{JudgeClient, JudgeError, JudgeVerdict};
+pub use judge::{
+    CacheKey, DEFAULT_JUDGE_CACHE_CAPACITY, JudgeCache, JudgeClient, JudgeError, JudgeFuture,
+    JudgeRegistry, JudgeRegistryBuilder, JudgeRegistryError, JudgeVerdict, RetryPolicy,
+};
 pub use match_::{MatchMode, TrajectoryMatcher};
+#[cfg(feature = "judge-core")]
+pub use prompt::{
+    BUILTIN_TEMPLATE_VERSIONS, JudgePromptTemplate, MinijinjaTemplate, PromptContext, PromptError,
+    PromptFamily, PromptTemplateRegistry,
+};
+#[cfg(feature = "html-report")]
+pub use report::HtmlReporter;
+pub use report::{
+    ConsoleReporter, JsonReporter, MarkdownReporter, Reporter, ReporterError, ReporterOutput,
+};
+#[cfg(feature = "langsmith")]
+pub use report::{LangSmithExportError, LangSmithExporter};
 pub use response::ResponseMatcher;
-pub use runner::{AgentFactory, EvalRunner};
+pub use runner::{AgentFactory, EvalRunner, RunnerMetricSample};
 pub use score::{Score, Verdict};
 pub use semantic_tool_parameter::SemanticToolParameterEvaluator;
 pub use semantic_tool_selection::SemanticToolSelectionEvaluator;
 pub use store::{EvalStore, FsEvalStore};
+#[cfg(feature = "telemetry")]
+pub use telemetry::{EvalsTelemetry, EvalsTelemetryBuilder};
 pub use testing::{MockJudge, PanickingMockJudge, SlowMockJudge};
+#[cfg(feature = "trace-langfuse")]
+pub use trace::LangfuseTraceProvider;
+#[cfg(feature = "trace-otlp")]
+pub use trace::OtlpHttpTraceProvider;
+#[cfg(feature = "training-export")]
+pub use training::{
+    ChatMlExporter, DpoExporter, ExportError, ExportOptions, ScoredTrace, ShareGptExporter,
+    TrainingExporter, TrainingFormat, TrainingReporter, export_traces,
+};
 pub use trajectory::TrajectoryCollector;
 pub use types::{
-    BudgetConstraints, CASE_NAMESPACE, CaseFingerprint, EnvironmentState, EvalCase, EvalCaseResult,
-    EvalMetricResult, EvalSet, EvalSetResult, EvalSummary, ExpectedToolCall, Invocation,
-    RecordedToolCall, ResponseCriteria, StateCapture, ToolIntent, TurnRecord, validate_eval_case,
-    validate_eval_set,
+    Assertion, AssertionKind, Attachment, AttachmentError, BudgetConstraints, CASE_NAMESPACE,
+    CaseFingerprint, EnvironmentState, EvalCase, EvalCaseResult, EvalMetricResult, EvalSet,
+    EvalSetResult, EvalSummary, ExpectedToolCall, FewShotExample, InteractionExpectation,
+    Invocation, MaterializedAttachment, RecordedToolCall, ResponseCriteria, StateCapture,
+    ToolIntent, TurnRecord, validate_eval_case, validate_eval_set,
 };
 pub use url_filter::{DefaultUrlFilter, UrlFilter};
 #[cfg(feature = "yaml")]

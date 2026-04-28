@@ -311,38 +311,20 @@ impl McpConnection {
         credential_resolver: Option<Arc<dyn CredentialResolver>>,
         event_tx: Option<UnboundedSender<AgentEvent>>,
     ) -> Result<Self, McpError> {
-        let service = match &config.transport {
-            McpTransport::Stdio { command, args, env } => {
-                Self::connect_stdio(command, args, env, &config.name).await?
-            }
-            McpTransport::Sse {
-                url,
-                bearer_token,
-                bearer_auth,
-                headers,
-            } => match bearer_auth.as_ref() {
-                Some(bearer_auth) => {
-                    let credential_resolver =
-                        credential_resolver.clone().ok_or_else(|| McpError::ConnectionFailed {
-                            server: config.name.clone(),
-                            reason: format!(
-                                "SSE bearer auth for credential `{}` requires a credential resolver",
-                                bearer_auth.credential_key
-                            ),
-                        })?;
-                    Self::connect_sse_with_resolver(
-                        url,
-                        bearer_auth,
-                        credential_resolver,
-                        headers,
-                        &config.name,
-                    )
-                    .await?
-                }
-                None => {
-                    Self::connect_sse(url, bearer_token.as_deref(), headers, &config.name).await?
-                }
-            },
+        let service = match config.connect_timeout() {
+            Some(timeout) => tokio::time::timeout(
+                timeout,
+                Self::connect_transport(&config, credential_resolver.clone()),
+            )
+            .await
+            .map_err(|_| McpError::ConnectionFailed {
+                server: config.name.clone(),
+                reason: format!(
+                    "connection handshake timed out after {} ms",
+                    timeout.as_millis()
+                ),
+            })??,
+            None => Self::connect_transport(&config, credential_resolver.clone()).await?,
         };
 
         // Handshake succeeded, transport is live.
@@ -353,13 +335,25 @@ impl McpConnection {
         let peer = service.peer().clone();
 
         // Discover tools from the server.
-        let discovered_tools =
-            peer.list_all_tools()
+        let discovered_tools = match config.discovery_timeout() {
+            Some(timeout) => tokio::time::timeout(timeout, peer.list_all_tools())
+                .await
+                .map_err(|_| McpError::ConnectionFailed {
+                    server: config.name.clone(),
+                    reason: format!("tool discovery timed out after {} ms", timeout.as_millis()),
+                })?
+                .map_err(|e| McpError::ConnectionFailed {
+                    server: config.name.clone(),
+                    reason: format!("tool discovery failed: {e}"),
+                })?,
+            None => peer
+                .list_all_tools()
                 .await
                 .map_err(|e| McpError::ConnectionFailed {
                     server: config.name.clone(),
                     reason: format!("tool discovery failed: {e}"),
-                })?;
+                })?,
+        };
 
         info!(
             server = %config.name,
@@ -444,6 +438,45 @@ impl McpConnection {
                 server: server_name.to_string(),
                 reason: format!("HTTP streaming handshake failed: {e}"),
             })
+    }
+
+    async fn connect_transport(
+        config: &McpServerConfig,
+        credential_resolver: Option<Arc<dyn CredentialResolver>>,
+    ) -> Result<RunningService<RoleClient, ClientInfo>, McpError> {
+        match &config.transport {
+            McpTransport::Stdio { command, args, env } => {
+                Self::connect_stdio(command, args, env, &config.name).await
+            }
+            McpTransport::Sse {
+                url,
+                bearer_token,
+                bearer_auth,
+                headers,
+            } => match bearer_auth.as_ref() {
+                Some(bearer_auth) => {
+                    let credential_resolver =
+                        credential_resolver.ok_or_else(|| McpError::ConnectionFailed {
+                            server: config.name.clone(),
+                            reason: format!(
+                                "SSE bearer auth for credential `{}` requires a credential resolver",
+                                bearer_auth.credential_key
+                            ),
+                        })?;
+                    Self::connect_sse_with_resolver(
+                        url,
+                        bearer_auth,
+                        credential_resolver,
+                        headers,
+                        &config.name,
+                    )
+                    .await
+                }
+                None => {
+                    Self::connect_sse(url, bearer_token.as_deref(), headers, &config.name).await
+                }
+            },
+        }
     }
 
     /// Connect to a remote MCP server via HTTP streaming transport, resolving

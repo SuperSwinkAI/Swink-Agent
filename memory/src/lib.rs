@@ -39,6 +39,7 @@ mod jsonl;
 mod load_options;
 mod meta;
 mod migrate;
+mod search;
 mod store;
 mod store_async;
 mod time;
@@ -51,6 +52,9 @@ pub use jsonl::JsonlSessionStore;
 pub use load_options::LoadOptions;
 pub use meta::SessionMeta;
 pub use migrate::SessionMigrator;
+#[cfg(feature = "search")]
+pub use search::index::TantivyIndex;
+pub use search::{SessionHit, SessionSearchOptions};
 pub use store::SessionStore;
 pub use store_async::{BlockingSessionStore, SessionStoreFuture};
 pub use time::{format_session_id, now_utc};

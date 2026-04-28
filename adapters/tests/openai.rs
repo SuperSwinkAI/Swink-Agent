@@ -935,6 +935,40 @@ async fn openai_missing_done_sentinel() {
 }
 
 #[tokio::test]
+async fn openai_eof_after_finish_reason_is_network_error() {
+    let body = [
+        r#"data: {"choices":[{"delta":{"content":"partial"},"index":0}]}"#,
+        "",
+        r#"data: {"choices":[{"delta":{},"finish_reason":"stop","index":0}],"usage":{"prompt_tokens":5,"completion_tokens":3}}"#,
+        "",
+        "",
+    ]
+    .join("\n");
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(sse_response(&body))
+        .mount(&server)
+        .await;
+
+    let sf = OpenAiStreamFn::new(server.uri(), "test-key");
+    let events = collect_events(&sf).await;
+
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, AssistantMessageEvent::Done { .. })),
+        "EOF before [DONE] must not synthesize Done: {events:?}"
+    );
+    let err = find_error_message(&events).expect("expected error event");
+    assert!(
+        err.contains("stream ended unexpectedly"),
+        "expected 'stream ended unexpectedly', got: {err}"
+    );
+}
+
+#[tokio::test]
 async fn openai_empty_response_body() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))

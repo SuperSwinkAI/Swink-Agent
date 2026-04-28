@@ -1,5 +1,6 @@
 //! Built-in tool for executing shell commands.
 
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use schemars::JsonSchema;
@@ -8,7 +9,7 @@ use serde_json::Value;
 use tokio::process::Command;
 use tokio_util::sync::CancellationToken;
 
-use super::MAX_OUTPUT_BYTES;
+use super::{MAX_OUTPUT_BYTES, truncate_utf8_to_boundary};
 use crate::tool::{AgentTool, AgentToolResult, ToolFuture, validated_schema_for};
 
 /// Default timeout in milliseconds.
@@ -26,6 +27,7 @@ const DEFAULT_TIMEOUT_MS: u64 = 30_000;
 /// agents exposed to untrusted users.
 pub struct BashTool {
     schema: Value,
+    execution_root: Option<PathBuf>,
 }
 
 impl BashTool {
@@ -34,7 +36,15 @@ impl BashTool {
     pub fn new() -> Self {
         Self {
             schema: validated_schema_for::<Params>(),
+            execution_root: None,
         }
+    }
+
+    /// Set the working directory used when spawning shell commands.
+    #[must_use]
+    pub fn with_execution_root(mut self, root: impl Into<PathBuf>) -> Self {
+        self.execution_root = Some(root.into());
+        self
     }
 }
 
@@ -75,6 +85,10 @@ impl AgentTool for BashTool {
         true
     }
 
+    fn execution_root(&self) -> Option<&Path> {
+        self.execution_root.as_deref()
+    }
+
     fn execute(
         &self,
         _tool_call_id: &str,
@@ -96,7 +110,12 @@ impl AgentTool for BashTool {
 
             let timeout = Duration::from_millis(parsed.timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS));
 
-            let mut child = match shell_command(&parsed.command)
+            let mut command = shell_command(&parsed.command);
+            if let Some(root) = self.execution_root.as_deref() {
+                command.current_dir(root);
+            }
+
+            let mut child = match command
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped())
                 .spawn()
@@ -164,8 +183,14 @@ fn shell_command(command: &str) -> Command {
 async fn read_stream<R: tokio::io::AsyncRead + Unpin + Send + 'static>(pipe: Option<R>) -> Vec<u8> {
     use tokio::io::AsyncReadExt;
     if let Some(mut p) = pipe {
-        let mut buf = Vec::new();
-        let _ = p.read_to_end(&mut buf).await;
+        let mut buf = Vec::with_capacity(MAX_OUTPUT_BYTES + 1);
+        let _ = (&mut p)
+            .take((MAX_OUTPUT_BYTES + 1) as u64)
+            .read_to_end(&mut buf)
+            .await;
+        // Drain remaining bytes so the child process doesn't receive SIGPIPE
+        // when its output exceeds MAX_OUTPUT_BYTES.
+        let _ = tokio::io::copy(&mut p, &mut tokio::io::sink()).await;
         buf
     } else {
         Vec::new()
@@ -185,12 +210,10 @@ fn format_output(exit_code: Option<i32>, stdout: &[u8], stderr: &[u8]) -> AgentT
         let stderr_budget = MAX_OUTPUT_BYTES.saturating_sub(stdout_budget);
 
         if stdout_text.len() > stdout_budget {
-            stdout_text.truncate(stdout_budget);
-            stdout_text.push_str("\n[truncated]");
+            truncate_utf8_to_boundary(&mut stdout_text, stdout_budget);
         }
         if stderr_text.len() > stderr_budget {
-            stderr_text.truncate(stderr_budget);
-            stderr_text.push_str("\n[truncated]");
+            truncate_utf8_to_boundary(&mut stderr_text, stderr_budget);
         }
     }
 
@@ -206,4 +229,44 @@ fn format_output(exit_code: Option<i32>, stdout: &[u8], stderr: &[u8]) -> AgentT
     }
 
     AgentToolResult::text(text)
+}
+
+#[cfg(test)]
+mod tests {
+    use tokio::io::AsyncWriteExt;
+
+    use super::*;
+    use crate::types::ContentBlock;
+
+    fn result_text(result: &AgentToolResult) -> &str {
+        match result.content.first() {
+            Some(ContentBlock::Text { text }) => text.as_str(),
+            _ => panic!("expected text content"),
+        }
+    }
+
+    #[test]
+    fn format_output_truncates_multibyte_stdout_on_char_boundary() {
+        let stdout = "€".repeat((MAX_OUTPUT_BYTES / "€".len()) + 1);
+
+        let result = format_output(Some(0), stdout.as_bytes(), &[]);
+        let text = result_text(&result);
+
+        assert!(text.contains("[truncated]"), "expected marker in: {text}");
+        assert!(text.is_char_boundary(text.len()));
+    }
+
+    #[tokio::test]
+    async fn read_stream_stops_after_output_budget_sentinel() {
+        let (reader, mut writer) = tokio::io::duplex(1024);
+        let writer_task = tokio::spawn(async move {
+            let bytes = vec![b'a'; MAX_OUTPUT_BYTES + 2];
+            let _ = writer.write_all(&bytes).await;
+        });
+
+        let output = read_stream(Some(reader)).await;
+        let _ = writer_task.await;
+
+        assert_eq!(output.len(), MAX_OUTPUT_BYTES + 1);
+    }
 }

@@ -20,8 +20,8 @@ Session persistence and context management for [`swink-agent`](https://crates.io
 
 ```toml
 [dependencies]
-swink-agent = "0.8"
-swink-agent-memory = "0.8"
+swink-agent = "0.9.0"
+swink-agent-memory = "0.9.0"
 tokio = { version = "1", features = ["full"] }
 ```
 

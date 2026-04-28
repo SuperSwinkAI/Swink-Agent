@@ -166,6 +166,28 @@ A library consumer implements their own policy by creating a struct that impleme
 - **SC-006**: The AgentLoopConfig has fewer top-level fields after migration (4 policy vecs replace 5+ individual option fields).
 - **SC-007**: All built-in policy implementations pass unit tests demonstrating correct verdict generation for their respective scenarios.
 
+---
+
+### User Story 7 - Memory Nudge Detection (Priority: P2)
+
+A library consumer wants to capture save-worthy knowledge that emerges during agent turns—user corrections, explicit save requests, decision statements, and configuration preferences—without polling every message manually. They add a `MemoryNudgePolicy` to the `post_turn` slot. When the policy detects a matching pattern in the turn's assistant message or new user messages, it returns `PolicyVerdict::Inject` carrying a structured `MemoryNudge` payload as a `ContentBlock::Extension` so that an upstream event subscriber or custom sink can persist it. The consumer configures sensitivity (Low/Medium/High) to tune how aggressively borderline content is flagged.
+
+**Why this priority**: Proactive knowledge capture reduces the burden on consumers to manually scan every turn. It fills a gap between "the agent runs" and "important information is retained" that no existing policy covers.
+
+**Independent Test**: Can be fully tested by constructing a `MemoryNudgePolicy` with a given sensitivity, passing `PostTurnPolicy::evaluate` a `TurnPolicyContext` whose `assistant_message` contains a correction, save-request, decision, or preference phrase, and asserting the returned verdict is `PolicyVerdict::Inject` containing a single `AgentMessage` with a `ContentBlock::Extension { type_name: "memory_nudge", ... }`.
+
+**Acceptance Scenarios**:
+
+1. **Given** a `MemoryNudgePolicy` (Medium sensitivity) in post_turn policies, **When** the assistant turn contains "no, actually you should use X instead", **Then** the policy returns Inject with a `MemoryNudge` of category `Correction` and confidence ≥ threshold.
+2. **Given** a `MemoryNudgePolicy` in post_turn policies, **When** the turn contains "remember this for later", **Then** the policy returns Inject with a `MemoryNudge` of category `ExplicitSave`.
+3. **Given** a `MemoryNudgePolicy` in post_turn policies, **When** the turn contains "we decided to use Postgres", **Then** the policy returns Inject with a `MemoryNudge` of category `Decision`.
+4. **Given** a `MemoryNudgePolicy` in post_turn policies, **When** the turn contains "I prefer dark mode", **Then** the policy returns Inject with a `MemoryNudge` of category `Preference`.
+5. **Given** a `MemoryNudgePolicy` with Low sensitivity, **When** a borderline match produces confidence below the Low threshold, **Then** the policy returns Continue (no nudge emitted).
+6. **Given** a `MemoryNudgePolicy` with High sensitivity, **When** the same borderline content produces confidence above the High threshold, **Then** the policy returns Inject.
+7. **Given** a `MemoryNudgePolicy` in post_turn policies, **When** the turn contains only ordinary assistant text with no save-worthy signals, **Then** the policy returns Continue.
+
+---
+
 ## Clarifications
 
 ### Session 2026-03-24

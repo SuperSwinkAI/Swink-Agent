@@ -7,7 +7,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use axum::Router;
-use rmcp::model::Tool;
+use rmcp::ServerHandler;
+use rmcp::model::{ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerInfo, Tool};
+use rmcp::service::{RequestContext, RoleServer};
 use rmcp::transport::streamable_http_server::{
     StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
 };
@@ -59,6 +61,8 @@ async fn partial_failure_still_discovers_tools_from_healthy_servers() {
             tool_prefix: Some("broken".into()),
             tool_filter: None,
             requires_approval: false,
+            connect_timeout_ms: None,
+            discovery_timeout_ms: None,
         },
     ];
 
@@ -145,6 +149,8 @@ fn mock_config(server_name: &str) -> McpServerConfig {
         tool_prefix: None,
         tool_filter: None,
         requires_approval: false,
+        connect_timeout_ms: None,
+        discovery_timeout_ms: None,
     }
 }
 
@@ -234,6 +240,8 @@ async fn connect_all_collision_rolls_back_open_sessions() {
             tool_prefix: None,
             tool_filter: None,
             requires_approval: false,
+            connect_timeout_ms: None,
+            discovery_timeout_ms: None,
         },
         McpServerConfig {
             name: "collision-b".into(),
@@ -246,6 +254,8 @@ async fn connect_all_collision_rolls_back_open_sessions() {
             tool_prefix: None,
             tool_filter: None,
             requires_approval: false,
+            connect_timeout_ms: None,
+            discovery_timeout_ms: None,
         },
     ]);
 
@@ -271,4 +281,123 @@ async fn connect_all_collision_rolls_back_open_sessions() {
     shutdown_b.cancel();
     let _ = server_a.await;
     let _ = server_b.await;
+}
+
+#[derive(Clone)]
+struct HangingDiscoveryServer;
+
+impl ServerHandler for HangingDiscoveryServer {
+    fn get_info(&self) -> ServerInfo {
+        let mut info = ServerInfo::default();
+        info.instructions = Some("Mock MCP server with hanging discovery".into());
+        info.capabilities = ServerCapabilities::builder().enable_tools().build();
+        info
+    }
+
+    async fn list_tools(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListToolsResult, rmcp::ErrorData> {
+        futures::future::pending::<()>().await;
+        unreachable!("pending future never resolves")
+    }
+}
+
+async fn spawn_hanging_discovery_server() -> (
+    tokio_util::sync::CancellationToken,
+    tokio::task::JoinHandle<()>,
+    String,
+) {
+    let shutdown = tokio_util::sync::CancellationToken::new();
+    let service = StreamableHttpService::new(
+        move || Ok(HangingDiscoveryServer),
+        Arc::new(LocalSessionManager::default()),
+        StreamableHttpServerConfig::default()
+            .with_sse_keep_alive(None)
+            .with_cancellation_token(shutdown.child_token()),
+    );
+
+    let router = Router::new().nest_service("/mcp", service);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("listener should bind");
+    let addr = listener
+        .local_addr()
+        .expect("listener should expose an address");
+    let task = tokio::spawn({
+        let shutdown = shutdown.clone();
+        async move {
+            let _ = axum::serve(listener, router)
+                .with_graceful_shutdown(async move { shutdown.cancelled_owned().await })
+                .await;
+        }
+    });
+
+    (shutdown, task, format!("http://{addr}/mcp"))
+}
+
+#[tokio::test]
+async fn discovery_timeout_skips_hung_server_and_keeps_healthy_tools() {
+    let (hanging_shutdown, hanging_task, hanging_url) = spawn_hanging_discovery_server().await;
+    let healthy_session_manager = Arc::new(LocalSessionManager::default());
+    let (healthy_shutdown, healthy_task, healthy_url) =
+        spawn_mock_sse_server(Arc::clone(&healthy_session_manager)).await;
+
+    let mut manager = McpManager::new(vec![
+        McpServerConfig {
+            name: "hung-discovery".into(),
+            transport: McpTransport::Sse {
+                url: hanging_url,
+                bearer_token: None,
+                bearer_auth: None,
+                headers: HashMap::default(),
+            },
+            tool_prefix: Some("hung".into()),
+            tool_filter: None,
+            requires_approval: false,
+            connect_timeout_ms: None,
+            discovery_timeout_ms: Some(50),
+        },
+        McpServerConfig {
+            name: "healthy".into(),
+            transport: McpTransport::Sse {
+                url: healthy_url,
+                bearer_token: None,
+                bearer_auth: None,
+                headers: HashMap::default(),
+            },
+            tool_prefix: Some("healthy".into()),
+            tool_filter: None,
+            requires_approval: false,
+            connect_timeout_ms: None,
+            discovery_timeout_ms: Some(500),
+        },
+    ]);
+
+    let start = Instant::now();
+    manager
+        .connect_all()
+        .await
+        .expect("healthy server should still connect");
+    let elapsed = start.elapsed();
+
+    let names: Vec<String> = manager
+        .tools()
+        .iter()
+        .map(|tool| tool.name().into())
+        .collect();
+    assert_eq!(names, vec!["healthy_echo".to_string()]);
+    assert!(
+        elapsed < Duration::from_secs(2),
+        "discovery timeout should keep bootstrap bounded, elapsed: {elapsed:?}"
+    );
+
+    manager.shutdown().await;
+    wait_for_session_cleanup(&healthy_session_manager).await;
+
+    hanging_shutdown.cancel();
+    healthy_shutdown.cancel();
+    let _ = hanging_task.await;
+    let _ = healthy_task.await;
 }

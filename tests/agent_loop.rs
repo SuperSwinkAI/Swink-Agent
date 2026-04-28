@@ -252,6 +252,23 @@ fn default_config(stream_fn: Arc<dyn StreamFn>) -> AgentLoopConfig {
     }
 }
 
+fn terminal_done_events(text: &str, stop_reason: StopReason) -> Vec<AssistantMessageEvent> {
+    vec![
+        AssistantMessageEvent::Start,
+        AssistantMessageEvent::TextStart { content_index: 0 },
+        AssistantMessageEvent::TextDelta {
+            content_index: 0,
+            delta: text.to_string(),
+        },
+        AssistantMessageEvent::TextEnd { content_index: 0 },
+        AssistantMessageEvent::Done {
+            stop_reason,
+            usage: Usage::default(),
+            cost: Cost::default(),
+        },
+    ]
+}
+
 /// Collect all events from a loop stream.
 async fn collect_events(stream: Pin<Box<dyn Stream<Item = AgentEvent> + Send>>) -> Vec<AgentEvent> {
     stream.collect().await
@@ -581,6 +598,47 @@ async fn transform_context_ordering() {
 
     assert!(has_event(&events, "AgentEnd"));
     assert!(counter.load(Ordering::SeqCst) > 0);
+}
+
+#[tokio::test]
+async fn pre_turn_policy_observes_transformed_context() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("ok")]));
+    let observations = Arc::new(Mutex::new(Vec::new()));
+
+    let mut config = default_config(stream_fn);
+    config.transform_context = Some(Arc::new(
+        move |msgs: &mut Vec<AgentMessage>, _overflow: bool| {
+            if let Some(AgentMessage::Llm(LlmMessage::User(user))) = msgs.first_mut() {
+                user.content = vec![ContentBlock::Text {
+                    text: "transformed prompt".to_string(),
+                }];
+            }
+        },
+    ));
+    config.pre_turn_policies = vec![Arc::new(RecordingPreTurnPolicy {
+        observations: Arc::clone(&observations),
+    })];
+
+    let events = collect_events(agent_loop(
+        vec![common::user_msg("original prompt")],
+        "system".to_string(),
+        config,
+        CancellationToken::new(),
+    ))
+    .await;
+
+    assert!(has_event(&events, "AgentEnd"));
+    let recorded = observations.lock().unwrap().clone();
+    assert_eq!(recorded.len(), 1, "pre-turn policy should run once");
+    assert_eq!(
+        recorded[0],
+        RecordedPreTurnBatch {
+            turn_index: 0,
+            message_count: 1,
+            new_messages: vec!["transformed prompt".to_string()],
+        },
+        "pre-turn policies must inspect the transformed context sent toward the provider"
+    );
 }
 
 // ─── 3.5: get_api_key ────────────────────────────────────────────────────
@@ -1544,6 +1602,42 @@ async fn panicking_tool_produces_error_result() {
 
     assert!(has_event(&events, "AgentEnd"), "loop should complete");
 
+    let panic_starts = events
+        .iter()
+        .filter(|event| {
+            matches!(
+                event,
+                AgentEvent::ToolExecutionStart { id, .. } if id == "tc_panic"
+            )
+        })
+        .count();
+    let panic_ends: Vec<&AgentToolResult> = events
+        .iter()
+        .filter_map(|event| match event {
+            AgentEvent::ToolExecutionEnd {
+                id,
+                result,
+                is_error,
+                ..
+            } if id == "tc_panic" && *is_error => Some(result),
+            _ => None,
+        })
+        .collect();
+
+    assert_eq!(
+        panic_starts, 1,
+        "panicking tool should still emit exactly one start event"
+    );
+    assert_eq!(
+        panic_ends.len(),
+        1,
+        "panicking tool should emit a terminal error event"
+    );
+    assert!(
+        ContentBlock::extract_text(&panic_ends[0].content).contains("deliberate test panic"),
+        "terminal event should carry the panic payload"
+    );
+
     // The panicked tool should produce a TurnEnd with an error tool result.
     let panic_tool_results: Vec<&ToolResultMessage> = events
         .iter()
@@ -1995,6 +2089,88 @@ async fn post_turn_context_messages_include_committed_assistant_without_tools() 
             last_message_kind: "assistant",
         },
         "post-turn policies should observe the committed assistant snapshot even on text-only turns"
+    );
+}
+
+#[tokio::test]
+async fn post_turn_policies_run_on_terminal_error_stop() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![terminal_done_events(
+        "fatal",
+        StopReason::Error,
+    )]));
+    let observations = Arc::new(Mutex::new(Vec::new()));
+
+    let mut config = default_config(stream_fn);
+    config.post_turn_policies = vec![Arc::new(RecordingPostTurnPolicy {
+        observations: Arc::clone(&observations),
+    })];
+
+    let events = collect_events(agent_loop(
+        vec![],
+        "system".to_string(),
+        config,
+        CancellationToken::new(),
+    ))
+    .await;
+
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AgentEvent::TurnEnd {
+            reason: swink_agent::TurnEndReason::Error,
+            ..
+        }
+    )));
+    let recorded = observations.lock().unwrap().clone();
+    assert_eq!(recorded.len(), 1, "post-turn policy should run once");
+    assert_eq!(
+        recorded[0],
+        RecordedTurnContext {
+            message_count: 1,
+            tool_result_count: 0,
+            last_message_kind: "assistant",
+        },
+        "terminal error turns should still expose the committed assistant snapshot to post-turn policies"
+    );
+}
+
+#[tokio::test]
+async fn post_turn_policies_run_on_terminal_aborted_stop() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![terminal_done_events(
+        "partial",
+        StopReason::Aborted,
+    )]));
+    let observations = Arc::new(Mutex::new(Vec::new()));
+
+    let mut config = default_config(stream_fn);
+    config.post_turn_policies = vec![Arc::new(RecordingPostTurnPolicy {
+        observations: Arc::clone(&observations),
+    })];
+
+    let events = collect_events(agent_loop(
+        vec![],
+        "system".to_string(),
+        config,
+        CancellationToken::new(),
+    ))
+    .await;
+
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AgentEvent::TurnEnd {
+            reason: swink_agent::TurnEndReason::Aborted,
+            ..
+        }
+    )));
+    let recorded = observations.lock().unwrap().clone();
+    assert_eq!(recorded.len(), 1, "post-turn policy should run once");
+    assert_eq!(
+        recorded[0],
+        RecordedTurnContext {
+            message_count: 1,
+            tool_result_count: 0,
+            last_message_kind: "assistant",
+        },
+        "terminal aborted turns should still expose the committed assistant snapshot to post-turn policies"
     );
 }
 

@@ -73,6 +73,7 @@ jobs:
               return;
             }
 
+            let isApprovedContributor = false;
             if (!isCollaborator) {
               const fs = require('fs');
               let approved = { lgtm: [] };
@@ -89,11 +90,12 @@ jobs:
                 );
                 return;
               }
+              isApprovedContributor = true;
             }
 
             // ── Gate 2: must reference an approved issue ──────────────
-            // Applies to outside contributors only; collaborators are exempt.
-            if (isCollaborator) return;
+            // Collaborators and approved lgtm contributors (e.g. dependabot) are exempt.
+            if (isCollaborator || isApprovedContributor) return;
 
             // Extract all #N references from title and body.
             const refs = [...new Set(

@@ -7,7 +7,7 @@
 
 ## System Overview
 
-The Swink Agent is a Rust workspace composed of thirteen library/binary/plugin crates plus an `xtask` build-tooling crate that provide the core scaffolding for building LLM-powered agentic applications. The **core library** (`swink-agent`) manages the agent loop, message context, tool dispatch, streaming, lifecycle events, model catalogs, agent registries, loop policies, middleware, and inter-agent messaging. The **adapters crate** (`swink-agent-adapters`) provides ready-made `StreamFn` implementations for nine LLM providers: Anthropic, Azure, AWS Bedrock, Google Gemini, Mistral, Ollama, OpenAI (multi-provider compatible), Proxy, and xAI. The **policies crate** (`swink-agent-policies`) provides the shared reusable policy implementations built against the core policy trait API, each feature-gated independently, while plugin crates can also define crate-local policies. The **memory crate** (`swink-agent-memory`) provides session persistence and summarization-aware context compaction. The **local-llm crate** (`swink-agent-local-llm`) provides on-device inference via llama.cpp (Rust bindings: `llama-cpp-2`) with SmolLM3-3B for text/tool generation and EmbeddingGemma-300M for embeddings. All models use GGUF format. The **eval crate** (`swink-agent-eval`) provides trajectory tracing, golden path verification, response matching, and cost/latency governance for agent evaluation. The **artifacts crate** (`swink-agent-artifacts`) provides versioned artifact storage with filesystem and in-memory backends. The **auth crate** (`swink-agent-auth`) provides OAuth2 credential management and refresh. The **macros crate** (`swink-agent-macros`) provides derive macros for the agent framework. The **MCP crate** (`swink-agent-mcp`) provides Model Context Protocol integration (stdio/SSE). The **patterns crate** (`swink-agent-patterns`) provides multi-agent orchestration patterns (pipeline, parallel, loop). The **web plugin** (`swink-agent-plugin-web`) provides web browsing and search tools as a plugin. The **TUI crate** (`swink-agent-tui`) is a binary that provides an interactive terminal interface. All LLM provider access is delegated to a `StreamFn` implementation, keeping the core harness fully provider-agnostic.
+The Swink Agent is a Rust workspace composed of fourteen library/binary/plugin crates plus an `xtask` build-tooling crate that provide the core scaffolding for building LLM-powered agentic applications. The **core library** (`swink-agent`) manages the agent loop, message context, tool dispatch, streaming, lifecycle events, model catalogs, agent registries, loop policies, middleware, and inter-agent messaging. The **adapters crate** (`swink-agent-adapters`) provides ready-made `StreamFn` implementations for nine LLM providers: Anthropic, Azure, AWS Bedrock, Google Gemini, Mistral, Ollama, OpenAI (multi-provider compatible), Proxy, and xAI. The **policies crate** (`swink-agent-policies`) provides the shared reusable policy implementations built against the core policy trait API, each feature-gated independently, while plugin crates can also define crate-local policies. The **memory crate** (`swink-agent-memory`) provides session persistence and summarization-aware context compaction. The **local-llm crate** (`swink-agent-local-llm`) provides on-device inference via llama.cpp (Rust bindings: `llama-cpp-2`) with SmolLM3-3B for text/tool generation and EmbeddingGemma-300M for embeddings. All models use GGUF format. The **eval crate** (`swink-agent-eval`) provides trajectory tracing, golden path verification, response matching, cost/latency governance, plus (spec 043) a versioned prompt-template registry, 24 judge-backed/deterministic evaluators across seven families, multi-turn simulation (`ActorSimulator` / `ToolSimulator`), auto-generation (`ExperimentGenerator`), OTel / Langfuse / OpenSearch / CloudWatch trace ingestion, Console/JSON/Markdown/HTML reporters, a LangSmith exporter, and a `swink-eval` CLI binary. The **eval-judges crate** (`swink-agent-eval-judges`, new in spec 043) hosts per-provider `JudgeClient` implementations (Anthropic, OpenAI, Bedrock, Gemini, Mistral, Azure, xAI, Ollama, Proxy) behind feature flags, plus synchronous `Blocking<Provider>JudgeClient` wrappers. The **artifacts crate** (`swink-agent-artifacts`) provides versioned artifact storage with filesystem and in-memory backends. The **auth crate** (`swink-agent-auth`) provides OAuth2 credential management and refresh. The **macros crate** (`swink-agent-macros`) provides derive macros for the agent framework. The **MCP crate** (`swink-agent-mcp`) provides Model Context Protocol integration (stdio/SSE). The **patterns crate** (`swink-agent-patterns`) provides multi-agent orchestration patterns (pipeline, parallel, loop). The **web plugin** (`swink-agent-plugin-web`) provides web browsing and search tools as a plugin. The **TUI crate** (`swink-agent-tui`) is a binary that provides an interactive terminal interface. All LLM provider access is delegated to a `StreamFn` implementation, keeping the core harness fully provider-agnostic.
 
 ---
 
@@ -27,7 +27,8 @@ flowchart TB
         Adapters["swink-agent-adapters<br/>LLM provider adapters<br/>(Anthropic, Azure, Bedrock,<br/>Gemini, Mistral, Ollama,<br/>OpenAI, Proxy, xAI)"]
         Memory["swink-agent-memory<br/>Session persistence,<br/>summarization compaction"]
         LocalLLM["swink-agent-local-llm<br/>On-device inference<br/>(SmolLM3-3B, EmbeddingGemma-300M)"]
-        Eval["swink-agent-eval<br/>Trajectory tracing,<br/>golden path verification,<br/>cost governance"]
+        Eval["swink-agent-eval<br/>Judge-backed evals,<br/>simulation, reporting,<br/>trace ingestion"]
+        EvalJudges["swink-agent-eval-judges<br/>Provider JudgeClient<br/>implementations"]
     end
 
     subgraph ExternalSystems["🌐 External Systems"]
@@ -44,6 +45,8 @@ flowchart TB
     Memory -->|"Uses core types"| Harness
     LocalLLM -->|"Implements StreamFn,<br/>uses core types"| Harness
     Eval -->|"Consumes AgentEvent stream,<br/>uses core types"| Harness
+    Eval -->|"Dispatches judge requests via"| EvalJudges
+    EvalJudges -->|"Provider-specific judge calls"| LLMProvider
     Harness -->|"AgentEvent stream"| TUI
     Adapters -->|"Streaming inference<br/>via OllamaStreamFn (NDJSON)"| LLMProvider
     Adapters -->|"Streaming inference<br/>via ProxyStreamFn (SSE)"| ProxyServer
@@ -54,7 +57,7 @@ flowchart TB
     classDef externalStyle fill:#e0e0e0,stroke:#424242,stroke-width:2px,color:#000
 
     class App,TUI callerStyle
-    class Harness,Adapters,Memory,LocalLLM,Eval harnessStyle
+    class Harness,Adapters,Memory,LocalLLM,Eval,EvalJudges harnessStyle
     class LLMProvider,ProxyServer externalStyle
 ```
 
@@ -67,7 +70,9 @@ flowchart TB
 | Adapters → LLM Provider / Proxy | Outbound | Nine adapters stream inference to their respective providers: `AnthropicStreamFn` (SSE), `AzureStreamFn` (SSE), `BedrockStreamFn` (SSE), `GeminiStreamFn` (SSE), `MistralStreamFn` (SSE), `OllamaStreamFn` (NDJSON), `OpenAiStreamFn` (SSE, multi-provider), `ProxyStreamFn` (SSE, forwards to proxy), `XAiStreamFn` (SSE) |
 | Proxy Server → LLM Provider | Outbound | Proxy handles auth and routes to the actual provider |
 | LocalLLM → Harness | Internal | Implements `StreamFn` via `LocalStreamFn` for on-device inference (SmolLM3-3B); provides `EmbeddingModel` for text vectorization |
-| Eval → Harness | Internal | Eval consumes `AgentEvent` stream via `TrajectoryCollector`, uses core types (`Usage`, `Cost`, `AssistantMessage`) for invocation traces |
+| Eval → Harness | Internal | Eval consumes `AgentEvent` stream via `TrajectoryCollector`, uses core types for invocations, and layers judge-backed evaluators, simulation, generation, reporting, telemetry, and trace ingestion on top |
+| Eval → EvalJudges | Internal | Judge-backed evaluators delegate provider-specific dispatch, retry, and batching to `swink-agent-eval-judges` |
+| EvalJudges → LLM Provider | Outbound | Feature-gated `JudgeClient` implementations call Anthropic, OpenAI, Bedrock, Gemini, Mistral, Azure, xAI, Ollama, or Proxy endpoints |
 | TUI → Adapters | Internal | The default TUI build selects among the compiled remote adapters via environment variables; optional `local`/`full` features add on-device local-llm support |
 
 ---
@@ -147,9 +152,13 @@ flowchart TB
     subgraph EvalLayer["📊 Evaluation"]
         EvalRunner["EvalRunner<br/>Orchestration pipeline"]
         TrajectoryCollector["TrajectoryCollector<br/>AgentEvent → Invocation"]
-        EvalRegistry["EvaluatorRegistry<br/>TrajectoryMatcher,<br/>BudgetEvaluator,<br/>ResponseMatcher,<br/>EfficiencyEvaluator"]
+        EvalRegistry["EvaluatorRegistry<br/>Judge-backed + deterministic<br/>evaluator families,<br/>aggregation + gates"]
+        PromptRegistry["PromptTemplateRegistry<br/>Versioned judge prompts"]
+        SimGen["Simulation / Generation<br/>ActorSimulator,<br/>ToolSimulator,<br/>ExperimentGenerator"]
+        TraceReport["Trace + Report<br/>TraceProvider,<br/>reporters, telemetry"]
         AuditTrail["AuditedInvocation<br/>SHA-256 hash chain"]
         EvalStore["EvalStore<br/>FsEvalStore (JSON)"]
+        EvalJudges["swink-agent-eval-judges<br/>JudgeClient providers"]
     end
 
     subgraph MemoryLayer["🧠 Memory"]
@@ -210,7 +219,11 @@ flowchart TB
     EvalRunner -->|"create_agent"| Agent
     Events -->|"subscribe"| TrajectoryCollector
     TrajectoryCollector -->|"Invocation"| EvalRegistry
+    PromptRegistry -->|"render prompts"| EvalRegistry
+    SimGen -->|"produces cases / invocations"| EvalRunner
+    EvalRegistry -->|"judge dispatch"| EvalJudges
     EvalRegistry -->|"EvalSetResult"| EvalStore
+    TraceReport -->|"trace reload / reporters / spans"| EvalRunner
     Compactor -->|"wraps"| StreamFn
     SessionStore -->|"persists"| Events
     TUIApp -->|"save / load"| SessionStore
@@ -243,7 +256,7 @@ flowchart TB
     class LocalStream,LocalModel,EmbeddingModel localStyle
     class Events,Retry,Cancel,Errors,Catalog,Registry,Mailbox,Policy,StreamMW,Emission,Orchestrator,Checkpoint,BuiltinPolicies,Fallback,CtxTransformer,CtxVersion,ToolExecPolicy,Metrics infraStyle
     class SessionStore,Compactor memoryStyle
-    class EvalRunner,TrajectoryCollector,EvalRegistry,AuditTrail,EvalStore evalStyle
+    class EvalRunner,TrajectoryCollector,EvalRegistry,PromptRegistry,SimGen,TraceReport,AuditTrail,EvalStore,EvalJudges evalStyle
     class TUIApp,ConvView,InputEditor,ToolPanel,HelpPanel,DiffView,StatusBar tuiStyle
     class LLMProvider,ProxyServer externalStyle
 ```
@@ -406,11 +419,22 @@ flowchart TB
         eval_lib["lib.rs<br/>re-exports"]
         eval_trajectory["trajectory.rs<br/>TrajectoryCollector,<br/>AgentEvent → Invocation"]
         eval_evaluator["evaluator.rs<br/>Evaluator trait,<br/>EvaluatorRegistry"]
-        eval_runner["runner.rs<br/>EvalRunner,<br/>AgentFactory trait"]
-        eval_builtins["match_.rs, budget.rs,<br/>response.rs, efficiency.rs<br/>Built-in evaluators (5)"]
+        eval_runner["runner.rs<br/>EvalRunner,<br/>parallel runs + cache"]
+        eval_prompt["prompt/<br/>PromptTemplateRegistry,<br/>versioned templates"]
+        eval_judge["judge.rs<br/>JudgeRegistry,<br/>dispatch_judge"]
+        eval_evals["evaluators/<br/>quality, safety, rag,<br/>agent, code, simple,<br/>structured, multimodal"]
+        eval_sim["simulation/ + generation/<br/>ActorSimulator,<br/>ToolSimulator,<br/>ExperimentGenerator"]
+        eval_trace["trace/ + telemetry.rs<br/>TraceProvider,<br/>mappers, emitters"]
+        eval_report["report/ + bin/<br/>console/json/markdown/html,<br/>langsmith, swink-eval CLI"]
         eval_gate["gate.rs<br/>GateConfig, check_gate,<br/>CI/CD gating"]
         eval_audit["audit.rs<br/>AuditedInvocation,<br/>SHA-256 hash chain"]
         eval_store["store.rs<br/>EvalStore trait,<br/>FsEvalStore"]
+    end
+
+    subgraph EvalJudgesCrate["🧑‍⚖️ swink-agent-eval-judges"]
+        judges_lib["lib.rs<br/>re-exports"]
+        judges_client["client.rs<br/>retry, batching,<br/>blocking wrappers"]
+        judges_providers["anthropic.rs, openai.rs,<br/>bedrock.rs, gemini.rs,<br/>mistral.rs, azure.rs,<br/>xai.rs, ollama.rs, proxy.rs"]
     end
 
     subgraph PoliciesCrate["🛡️ swink-agent-policies"]
@@ -554,7 +578,7 @@ flowchart TB
 
 **Memory is a separate crate.** Session persistence and context compaction strategies live in `swink-agent-memory`, keeping storage dependencies (filesystem, future vector stores) out of the core. The memory crate consumes core's extension hooks (`TransformContextFn`, `AsyncContextTransformer`, `ConvertToLlmFn`) without modifying core internals. `TransformContextFn` is the synchronous closure-based hook; `AsyncContextTransformer` is a public trait (exported from `src/lib.rs`) that enables async context rewriting, useful when compaction requires LLM calls (e.g., summarization). See `memory/docs/architecture/` for the compaction architecture. Advanced memory research (RAG, explicit memory tools) lives in a separate repository.
 
-**Evaluation is a separate crate.** The evaluation framework lives in `swink-agent-eval`, keeping test/benchmark dependencies out of the core. It consumes the `AgentEvent` stream via `TrajectoryCollector` — the same subscription mechanism available to any caller. The eval crate depends only on `swink-agent` core, not on adapters or memory. The `Evaluator` trait and `EvaluatorRegistry` pattern enables custom scoring metrics without modifying the framework. Full `Invocation` traces are stored per result to support future comparative analysis across models and configurations.
+**Evaluation is a separate subsystem.** The evaluation framework lives primarily in `swink-agent-eval`, with provider-specific judge clients split into `swink-agent-eval-judges` so the default eval crate can stay provider-agnostic and feature-gated. `swink-agent-eval` consumes the `AgentEvent` stream via `TrajectoryCollector`, then layers versioned prompt templates, judge-backed/deterministic evaluators, simulation/generation, trace ingestion, reporting, telemetry, and the `swink-eval` CLI on top of the same public core types. Full `Invocation` traces and persisted `EvalSetResult` artifacts support rerendering, gating, and comparative analysis across models, prompts, and configurations.
 
 **TUI is a separate crate.** The terminal interface is a library crate with an associated binary that depends on the core library and memory crate, with adapter and local-LLM support enabled through its own feature flags rather than the root crate. This keeps the core harness free of terminal dependencies and allows the TUI to evolve independently. The TUI consumes the same public API that any other application would use.
 

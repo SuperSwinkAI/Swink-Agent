@@ -1,5 +1,7 @@
 //! Built-in tool for writing content to a file.
 
+use std::path::{Path, PathBuf};
+
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::Value;
@@ -12,6 +14,7 @@ use crate::types::ContentBlock;
 /// needed.
 pub struct WriteFileTool {
     schema: Value,
+    execution_root: Option<PathBuf>,
 }
 
 impl WriteFileTool {
@@ -20,7 +23,15 @@ impl WriteFileTool {
     pub fn new() -> Self {
         Self {
             schema: validated_schema_for::<Params>(),
+            execution_root: None,
         }
+    }
+
+    /// Set the working directory used to resolve relative file paths.
+    #[must_use]
+    pub fn with_execution_root(mut self, root: impl Into<PathBuf>) -> Self {
+        self.execution_root = Some(root.into());
+        self
     }
 }
 
@@ -57,6 +68,10 @@ impl AgentTool for WriteFileTool {
         &self.schema
     }
 
+    fn execution_root(&self) -> Option<&Path> {
+        self.execution_root.as_deref()
+    }
+
     fn requires_approval(&self) -> bool {
         true
     }
@@ -80,10 +95,10 @@ impl AgentTool for WriteFileTool {
                 return AgentToolResult::error("cancelled");
             }
 
-            let path = std::path::Path::new(&parsed.path);
+            let path = resolve_path(&parsed.path, self.execution_root.as_deref());
 
             // Read existing content for diff (empty string if file doesn't exist)
-            let old_content = tokio::fs::read_to_string(path).await.unwrap_or_default();
+            let old_content = tokio::fs::read_to_string(&path).await.unwrap_or_default();
 
             if let Some(parent) = path.parent()
                 && let Err(e) = tokio::fs::create_dir_all(parent).await
@@ -95,16 +110,16 @@ impl AgentTool for WriteFileTool {
             }
 
             let bytes_written = parsed.content.len();
-            match tokio::fs::write(path, &parsed.content).await {
+            match tokio::fs::write(&path, &parsed.content).await {
                 Ok(()) => AgentToolResult {
                     content: vec![ContentBlock::Text {
                         text: format!(
                             "Successfully wrote {bytes_written} bytes to {}",
-                            parsed.path
+                            path.display()
                         ),
                     }],
                     details: serde_json::json!({
-                        "path": parsed.path,
+                        "path": path,
                         "bytes_written": bytes_written,
                         "is_new_file": old_content.is_empty(),
                         "old_content": old_content,
@@ -114,9 +129,20 @@ impl AgentTool for WriteFileTool {
                     transfer_signal: None,
                 },
                 Err(e) => {
-                    AgentToolResult::error(format!("failed to write file {}: {e}", parsed.path))
+                    AgentToolResult::error(format!("failed to write file {}: {e}", path.display()))
                 }
             }
         })
+    }
+}
+
+fn resolve_path(path: &str, execution_root: Option<&Path>) -> PathBuf {
+    let path = Path::new(path);
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else if let Some(root) = execution_root {
+        root.join(path)
+    } else {
+        path.to_path_buf()
     }
 }

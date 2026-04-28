@@ -120,6 +120,23 @@ A developer resizes their terminal window while the TUI is running. The TUI dete
 
 ---
 
+### User Story 7 - Use Transport Abstraction for Agent Communication (Priority: P2)
+
+A developer integrates the TUI into their own application. The TUI communicates with the agent through a `TuiTransport` trait rather than direct `Agent` struct access. By default, `InProcessTransport` wraps the existing in-process `Agent` channel, producing zero behavior change. When the `remote` feature is enabled and a `--connect <socket-path>` flag is passed, `SocketTransport` connects to an external JSON-RPC endpoint over a Unix socket, allowing the TUI to drive a remote agent process without modification.
+
+**Why this priority**: The transport abstraction is architectural groundwork for future remote sessions and embedding. The default `InProcessTransport` must be a drop-in wrapper that changes no existing behavior.
+
+**Independent Test**: Can be tested by constructing `InProcessTransport` with a mock agent and verifying that `send()` and `recv()` produce the same results as direct agent access. A mock transport can be injected to test the TUI event loop in isolation.
+
+**Acceptance Scenarios**:
+
+1. **Given** a TUI launched without `--connect`, **When** the event loop runs, **Then** `InProcessTransport` is used and behavior is identical to the existing agent path.
+2. **Given** `InProcessTransport` wrapping an agent, **When** `send()` is called with user input, **Then** the agent receives and processes the message.
+3. **Given** `InProcessTransport` wrapping an agent, **When** the agent produces events, **Then** `recv()` returns each event in order.
+4. **Given** the `remote` feature is disabled, **When** the codebase is built, **Then** `SocketTransport` is not compiled and the default build is in-process only.
+
+---
+
 ### Edge Cases
 
 - What happens when the TUI is launched in a non-interactive context (e.g., piped input, no TTY)?
@@ -147,6 +164,9 @@ A developer resizes their terminal window while the TUI is running. The TUI dete
 - **FR-010**: The TUI MUST detect and respond to terminal resize events, recalculating layout and re-rendering.
 - **FR-011**: The TUI MUST display a warning when the terminal size is below 120 columns by 30 rows.
 - **FR-012**: The TUI MUST detect non-interactive terminals and exit with a clear error message rather than crashing.
+- **FR-013**: The TUI MUST communicate with the agent backend through a `TuiTransport` trait, with `InProcessTransport` as the default implementation that preserves all existing behavior.
+- **FR-014**: When the `remote` feature gate is enabled, a `SocketTransport` implementation MUST be available (at minimum as a stub that returns an appropriate error) for future remote agent connectivity.
+- **FR-015**: A `--connect <socket-path>` CLI flag MUST select `SocketTransport` when the `remote` feature is enabled.
 
 ### Key Entities
 

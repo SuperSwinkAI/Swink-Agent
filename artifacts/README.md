@@ -18,8 +18,8 @@ Versioned artifact storage backends for [`swink-agent`](https://crates.io/crates
 
 ```toml
 [dependencies]
-swink-agent = { version = "0.8", features = ["artifact-store"] }
-swink-agent-artifacts = "0.8"
+swink-agent = { version = "0.9.0", features = ["artifact-store"] }
+swink-agent-artifacts = "0.9.0"
 tokio = { version = "1", features = ["full"] }
 ```
 

@@ -3,6 +3,8 @@
 //! Hash commands (`#help`, `#clear`, etc.) are TUI-internal.
 //! Slash commands (`/quit`, `/thinking`, etc.) affect agent configuration.
 
+use swink_agent::ThinkingLevel;
+
 /// Result of parsing and executing a command.
 #[derive(Debug)]
 pub enum CommandResult {
@@ -13,7 +15,7 @@ pub enum CommandResult {
     /// Command requests clearing conversation.
     Clear,
     /// Command requests thinking level change.
-    SetThinking(String),
+    SetThinking(ThinkingLevel),
     /// Command requests system prompt change.
     SetSystemPrompt(String),
     /// Command requests agent reset.
@@ -100,20 +102,11 @@ pub fn execute_command(input: &str) -> CommandResult {
 #[must_use]
 pub fn is_sensitive_input(input: &str) -> bool {
     input.lines().any(|line| {
-        let Some(rest) = line.trim_start().strip_prefix('#') else {
-            return false;
-        };
-        let Some(after_key) = rest.trim_start().strip_prefix("key") else {
-            return false;
-        };
-        // Require whitespace after `key` so `#keys` is NOT flagged.
-        let Some(args) = after_key.strip_prefix(|c: char| c.is_whitespace()) else {
-            return false;
-        };
-        // Must contain both a provider and a key.
-        args.trim()
-            .split_once(char::is_whitespace)
-            .is_some_and(|(_, key)| !key.trim().is_empty())
+        line.trim_start()
+            .strip_prefix('#')
+            .and_then(hash_key_args)
+            .and_then(parse_key_provider_and_value)
+            .is_some()
     })
 }
 
@@ -136,12 +129,11 @@ fn execute_hash_command(cmd: &str) -> CommandResult {
                 CommandResult::LoadSession(id.to_string())
             }
         }
-        _ if cmd.starts_with("key ") => {
-            let rest = cmd.strip_prefix("key ").unwrap_or("").trim();
-            if let Some((provider, key)) = rest.split_once(' ') {
+        _ if let Some(args) = hash_key_args(cmd) => {
+            if let Some((provider, key)) = parse_key_provider_and_value(args) {
                 CommandResult::StoreKey {
-                    provider: provider.trim().to_string(),
-                    key: key.trim().to_string(),
+                    provider: provider.to_string(),
+                    key: key.to_string(),
                 }
             } else {
                 CommandResult::Feedback("Usage: #key <provider> <api-key>".to_string())
@@ -169,6 +161,33 @@ fn execute_hash_command(cmd: &str) -> CommandResult {
     }
 }
 
+fn hash_key_args(cmd: &str) -> Option<&str> {
+    if cmd.contains(['\r', '\n']) {
+        return None;
+    }
+
+    let cmd = cmd.trim();
+    let after_key = cmd.strip_prefix("key")?;
+    if after_key.is_empty() {
+        return None;
+    }
+
+    after_key.strip_prefix(|c: char| c.is_ascii_whitespace())
+}
+
+fn parse_key_provider_and_value(args: &str) -> Option<(&str, &str)> {
+    let args = args.trim_matches(|c: char| c.is_ascii_whitespace());
+    let split = args.find(|c: char| c.is_ascii_whitespace())?;
+    let provider = &args[..split];
+    let key = args[split..].trim_matches(|c: char| c.is_ascii_whitespace());
+
+    if provider.is_empty() || key.is_empty() {
+        None
+    } else {
+        Some((provider, key))
+    }
+}
+
 fn execute_slash_command(cmd: &str) -> CommandResult {
     let (name, args) = cmd.split_once(' ').unwrap_or((cmd, ""));
     let args = args.trim();
@@ -177,9 +196,18 @@ fn execute_slash_command(cmd: &str) -> CommandResult {
         "quit" | "q" => CommandResult::Quit,
         "thinking" => {
             if args.is_empty() {
-                CommandResult::Feedback("Usage: /thinking <off|low|medium|high>".to_string())
+                CommandResult::Feedback(
+                    "Usage: /thinking <off|minimal|low|medium|high|extra-high>".to_string(),
+                )
             } else {
-                CommandResult::SetThinking(args.to_string())
+                parse_thinking_level(args).map_or_else(
+                    || {
+                        CommandResult::Feedback(
+                            "Usage: /thinking <off|minimal|low|medium|high|extra-high>".to_string(),
+                        )
+                    },
+                    CommandResult::SetThinking,
+                )
             }
         }
         "system" => {
@@ -195,6 +223,18 @@ fn execute_slash_command(cmd: &str) -> CommandResult {
         _ => CommandResult::Feedback(format!(
             "Unknown command: /{name}\nType #help for available commands."
         )),
+    }
+}
+
+fn parse_thinking_level(level: &str) -> Option<ThinkingLevel> {
+    match level {
+        "off" => Some(ThinkingLevel::Off),
+        "minimal" => Some(ThinkingLevel::Minimal),
+        "low" => Some(ThinkingLevel::Low),
+        "medium" => Some(ThinkingLevel::Medium),
+        "high" => Some(ThinkingLevel::High),
+        "extra-high" => Some(ThinkingLevel::ExtraHigh),
+        _ => None,
     }
 }
 
@@ -314,6 +354,17 @@ mod tests {
     }
 
     #[test]
+    fn hash_key_accepts_ascii_whitespace_separators() {
+        match execute_command("#key\topenai\t sk-abc123") {
+            CommandResult::StoreKey { provider, key } => {
+                assert_eq!(provider, "openai");
+                assert_eq!(key, "sk-abc123");
+            }
+            other => panic!("expected StoreKey, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn hash_keys_returns_list_keys() {
         assert!(matches!(execute_command("#keys"), CommandResult::ListKeys));
     }
@@ -395,7 +446,7 @@ mod tests {
     #[test]
     fn slash_thinking_with_arg() {
         match execute_command("/thinking high") {
-            CommandResult::SetThinking(level) => assert_eq!(level, "high"),
+            CommandResult::SetThinking(level) => assert_eq!(level, ThinkingLevel::High),
             other => panic!("expected SetThinking, got {other:?}"),
         }
     }
@@ -404,6 +455,17 @@ mod tests {
     fn slash_thinking_without_arg_returns_usage() {
         match execute_command("/thinking") {
             CommandResult::Feedback(msg) => assert!(msg.contains("Usage")),
+            other => panic!("expected Feedback, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn slash_thinking_invalid_arg_returns_usage() {
+        match execute_command("/thinking maximum") {
+            CommandResult::Feedback(msg) => {
+                assert!(msg.contains("Usage"));
+                assert!(msg.contains("extra-high"));
+            }
             other => panic!("expected Feedback, got {other:?}"),
         }
     }
@@ -490,6 +552,11 @@ mod tests {
     }
 
     #[test]
+    fn hash_key_with_ascii_whitespace_is_sensitive() {
+        assert!(is_sensitive_input("#key\tanthropic\t sk-ant-xyz"));
+    }
+
+    #[test]
     fn hash_key_only_is_not_sensitive() {
         // `#key` alone (no provider/key) exposes no secret.
         assert!(!is_sensitive_input("#key"));
@@ -500,6 +567,12 @@ mod tests {
         // No key present yet; treat as non-secret so the usage hint is
         // recallable via history.
         assert!(!is_sensitive_input("#key openai"));
+    }
+
+    #[test]
+    fn hash_key_args_rejects_bare_key_command() {
+        assert_eq!(hash_key_args("key"), None);
+        assert_eq!(hash_key_args(" key "), None);
     }
 
     #[test]

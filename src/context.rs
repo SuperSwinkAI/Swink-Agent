@@ -65,6 +65,61 @@ fn is_tool_result(messages: &[AgentMessage], idx: usize) -> bool {
     )
 }
 
+fn tool_call_ids(message: &AgentMessage) -> Option<Vec<&str>> {
+    match message {
+        AgentMessage::Llm(LlmMessage::Assistant(assistant)) => {
+            let ids: Vec<&str> = assistant
+                .content
+                .iter()
+                .filter_map(|block| match block {
+                    ContentBlock::ToolCall { id, .. } => Some(id.as_str()),
+                    _ => None,
+                })
+                .collect();
+            (!ids.is_empty()).then_some(ids)
+        }
+        _ => None,
+    }
+}
+
+fn tool_result_id(message: &AgentMessage) -> Option<&str> {
+    match message {
+        AgentMessage::Llm(LlmMessage::ToolResult(result)) => Some(result.tool_call_id.as_str()),
+        _ => None,
+    }
+}
+
+fn extend_anchor_for_tool_results(messages: &[AgentMessage], anchor_end: usize) -> usize {
+    if anchor_end == 0 || anchor_end >= messages.len() {
+        return anchor_end;
+    }
+
+    let mut assistant_idx = anchor_end - 1;
+    while is_tool_result(messages, assistant_idx) {
+        if assistant_idx == 0 {
+            return anchor_end;
+        }
+        assistant_idx -= 1;
+    }
+
+    let Some(call_ids) = tool_call_ids(&messages[assistant_idx]) else {
+        return anchor_end;
+    };
+
+    let mut group_end = assistant_idx + 1;
+    while group_end < messages.len() {
+        let Some(result_id) = tool_result_id(&messages[group_end]) else {
+            break;
+        };
+        if !call_ids.contains(&result_id) {
+            break;
+        }
+        group_end += 1;
+    }
+
+    anchor_end.max(group_end)
+}
+
 /// Result of a context transformation pass.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompactionReport {
@@ -121,7 +176,7 @@ pub fn compact_sliding_window_with(
     }
 
     let len = messages.len();
-    let effective_anchor = anchor.min(len);
+    let effective_anchor = extend_anchor_for_tool_results(messages, anchor.min(len));
 
     // Calculate tokens used by anchor messages.
     let anchor_tokens: usize = messages[..effective_anchor].iter().map(count).sum();
@@ -258,6 +313,29 @@ mod tests {
                 arguments: serde_json::json!({}),
                 partial_json: None,
             }],
+            provider: String::new(),
+            model_id: String::new(),
+            usage: Usage::default(),
+            cost: Cost::default(),
+            stop_reason: StopReason::ToolUse,
+            error_message: None,
+            error_kind: None,
+            timestamp: 0,
+            cache_hint: None,
+        }))
+    }
+
+    fn multi_tool_call_message(ids: &[&str]) -> AgentMessage {
+        AgentMessage::Llm(LlmMessage::Assistant(AssistantMessage {
+            content: ids
+                .iter()
+                .map(|id| ContentBlock::ToolCall {
+                    id: (*id).into(),
+                    name: "test".into(),
+                    arguments: serde_json::json!({}),
+                    partial_json: None,
+                })
+                .collect(),
             provider: String::new(),
             model_id: String::new(),
             usage: Usage::default(),
@@ -453,6 +531,102 @@ mod tests {
         if has_result {
             assert!(has_call, "tool result kept without its preceding tool call");
         }
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn anchor_boundary_keeps_result_with_anchor_tool_call() {
+        let body = "x".repeat(400); // 100 tokens each
+        let compact = sliding_window(250, 100, 2);
+        let mut messages = vec![
+            text_message(&body),               // anchor
+            tool_call_message("tc1"),          // anchor ends on tool call
+            tool_result_message("tc1", &body), // must stay with anchor tool call
+            text_message(&body),               // removable middle
+            text_message(&body),               // removable tail candidate
+        ];
+
+        compact(&mut messages, false);
+
+        let has_call = messages.iter().any(|message| {
+            matches!(
+                message,
+                AgentMessage::Llm(LlmMessage::Assistant(assistant))
+                    if assistant.content.iter().any(|block| matches!(
+                        block,
+                        ContentBlock::ToolCall { id, .. } if id == "tc1"
+                    ))
+            )
+        });
+        let has_result = messages.iter().any(|message| {
+            matches!(
+                message,
+                AgentMessage::Llm(LlmMessage::ToolResult(result))
+                    if result.tool_call_id == "tc1"
+            )
+        });
+
+        assert!(has_call, "anchor tool call should still be present");
+        assert!(
+            has_result,
+            "anchor-side compaction must keep the matching tool result"
+        );
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn anchor_boundary_keeps_all_results_for_multi_tool_call_message() {
+        let body = "x".repeat(400); // 100 tokens each
+        let compact = sliding_window(250, 100, 2);
+        let mut messages = vec![
+            text_message(&body),
+            multi_tool_call_message(&["tc1", "tc2"]),
+            tool_result_message("tc1", &body),
+            tool_result_message("tc2", &body),
+            text_message(&body),
+        ];
+
+        compact(&mut messages, false);
+
+        let kept_results: Vec<&str> = messages
+            .iter()
+            .filter_map(|message| match message {
+                AgentMessage::Llm(LlmMessage::ToolResult(result)) => {
+                    Some(result.tool_call_id.as_str())
+                }
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(kept_results, vec!["tc1", "tc2"]);
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn anchor_boundary_inside_multi_tool_results_keeps_whole_group() {
+        let body = "x".repeat(400); // 100 tokens each
+        let compact = sliding_window(250, 100, 3);
+        let mut messages = vec![
+            text_message(&body),
+            multi_tool_call_message(&["tc1", "tc2"]),
+            tool_result_message("tc1", &body),
+            tool_result_message("tc2", &body),
+            text_message(&body),
+        ];
+
+        compact(&mut messages, false);
+
+        let kept_results: Vec<&str> = messages
+            .iter()
+            .filter_map(|message| match message {
+                AgentMessage::Llm(LlmMessage::ToolResult(result)) => {
+                    Some(result.tool_call_id.as_str())
+                }
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(kept_results, vec!["tc1", "tc2"]);
     }
 
     #[test]

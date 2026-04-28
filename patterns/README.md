@@ -20,8 +20,8 @@ Multi-agent pipeline patterns for [`swink-agent`](https://crates.io/crates/swink
 
 ```toml
 [dependencies]
-swink-agent = "0.8"
-swink-agent-patterns = "0.8"
+swink-agent = "0.9.0"
+swink-agent-patterns = "0.9.0"
 tokio = { version = "1", features = ["full"] }
 ```
 

@@ -3,10 +3,11 @@
 //! [`TrajectoryCollector`] observes [`AgentEvent`]s and builds an
 //! [`Invocation`] trace containing every turn, tool call, and timing metric.
 
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use futures::{Stream, StreamExt};
-use swink_agent::{AgentEvent, ContentBlock, Cost, ModelSpec, StopReason, Usage};
+use swink_agent::{AgentEvent, AssistantMessage, ContentBlock, Cost, ModelSpec, StopReason, Usage};
 
 use crate::types::{Invocation, RecordedToolCall, TurnRecord};
 
@@ -91,11 +92,12 @@ impl TrajectoryCollector {
                     self.accumulated_usage += assistant_message.usage.clone();
                     self.accumulated_cost += assistant_message.cost.clone();
                     self.last_stop_reason = assistant_message.stop_reason;
+                    let tool_calls = finalize_tool_calls(builder.tool_calls, assistant_message);
 
                     self.turns.push(TurnRecord {
                         turn_index: builder.turn_index,
                         assistant_message: assistant_message.clone(),
-                        tool_calls: builder.tool_calls,
+                        tool_calls,
                         tool_results: tool_results.clone(),
                         duration,
                     });
@@ -131,6 +133,27 @@ impl TrajectoryCollector {
         }
     }
 
+    /// Number of completed turns observed so far.
+    ///
+    /// Used by the multi-turn simulation orchestrator to attach simulated tool
+    /// results to the most recently completed turn without waiting for
+    /// [`Self::finish`].
+    #[must_use]
+    pub fn turns_len_hint(&self) -> usize {
+        self.turns.len()
+    }
+
+    /// Append a synthesized tool result to the turn at `index`, if present.
+    ///
+    /// Used by the multi-turn simulation orchestrator when a `ToolSimulator`
+    /// (see `crate::simulation`, feature-gated on `simulation`) provides a
+    /// deterministic tool response for a recorded tool call.
+    pub fn append_tool_result(&mut self, index: usize, result: swink_agent::ToolResultMessage) {
+        if let Some(turn) = self.turns.get_mut(index) {
+            turn.tool_results.push(result);
+        }
+    }
+
     /// Convenience: collect from an entire event stream.
     pub async fn collect_from_stream(stream: impl Stream<Item = AgentEvent>) -> Invocation {
         let mut collector = Self::new();
@@ -145,5 +168,109 @@ impl TrajectoryCollector {
 impl Default for TrajectoryCollector {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+fn finalize_tool_calls(
+    observed_tool_calls: Vec<RecordedToolCall>,
+    assistant_message: &AssistantMessage,
+) -> Vec<RecordedToolCall> {
+    let mut observed_by_id: HashMap<String, RecordedToolCall> = observed_tool_calls
+        .into_iter()
+        .map(|tool_call| (tool_call.id.clone(), tool_call))
+        .collect();
+    let mut finalized = Vec::new();
+
+    for content_block in &assistant_message.content {
+        if let ContentBlock::ToolCall {
+            id,
+            name,
+            arguments,
+            ..
+        } = content_block
+        {
+            finalized.push(
+                observed_by_id
+                    .remove(id)
+                    .unwrap_or_else(|| RecordedToolCall {
+                        id: id.clone(),
+                        name: name.clone(),
+                        arguments: arguments.clone(),
+                    }),
+            );
+        }
+    }
+
+    finalized.extend(observed_by_id.into_values());
+    finalized
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn finalize_tool_calls_backfills_missing_starts_from_assistant_message() {
+        let assistant_message = AssistantMessage {
+            content: vec![ContentBlock::ToolCall {
+                id: "call_1".to_string(),
+                name: "write_file".to_string(),
+                arguments: serde_json::json!({"path": "notes.txt"}),
+                partial_json: None,
+            }],
+            provider: "test".to_string(),
+            model_id: "test-model".to_string(),
+            usage: Usage::default(),
+            cost: Cost::default(),
+            stop_reason: StopReason::ToolUse,
+            error_message: None,
+            error_kind: None,
+            timestamp: 0,
+            cache_hint: None,
+        };
+
+        let tool_calls = finalize_tool_calls(Vec::new(), &assistant_message);
+
+        assert_eq!(tool_calls.len(), 1);
+        assert_eq!(tool_calls[0].id, "call_1");
+        assert_eq!(tool_calls[0].name, "write_file");
+        assert_eq!(
+            tool_calls[0].arguments,
+            serde_json::json!({"path": "notes.txt"})
+        );
+    }
+
+    #[test]
+    fn finalize_tool_calls_prefers_execution_start_arguments_when_present() {
+        let assistant_message = AssistantMessage {
+            content: vec![ContentBlock::ToolCall {
+                id: "call_1".to_string(),
+                name: "write_file".to_string(),
+                arguments: serde_json::json!({"path": "original.txt"}),
+                partial_json: None,
+            }],
+            provider: "test".to_string(),
+            model_id: "test-model".to_string(),
+            usage: Usage::default(),
+            cost: Cost::default(),
+            stop_reason: StopReason::ToolUse,
+            error_message: None,
+            error_kind: None,
+            timestamp: 0,
+            cache_hint: None,
+        };
+        let observed_tool_calls = vec![RecordedToolCall {
+            id: "call_1".to_string(),
+            name: "write_file".to_string(),
+            arguments: serde_json::json!({"path": "rewritten.txt"}),
+        }];
+
+        let tool_calls = finalize_tool_calls(observed_tool_calls, &assistant_message);
+
+        assert_eq!(tool_calls.len(), 1);
+        assert_eq!(
+            tool_calls[0].arguments,
+            serde_json::json!({"path": "rewritten.txt"})
+        );
     }
 }

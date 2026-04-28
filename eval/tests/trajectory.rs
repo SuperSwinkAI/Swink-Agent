@@ -281,3 +281,105 @@ async fn us1_text_only_response_captured() {
         Some("The answer is 42.")
     );
 }
+
+#[tokio::test]
+async fn rejected_tool_call_without_execution_start_is_still_captured() {
+    let events = vec![
+        AgentEvent::AgentStart,
+        AgentEvent::BeforeLlmCall {
+            system_prompt: "test".to_string(),
+            messages: vec![],
+            model: ModelSpec::new("test", "test-model"),
+        },
+        AgentEvent::TurnStart,
+        AgentEvent::ToolApprovalRequested {
+            id: "call_reject".to_string(),
+            name: "write_file".to_string(),
+            arguments: json!({"path": "draft.txt"}),
+        },
+        AgentEvent::ToolApprovalResolved {
+            id: "call_reject".to_string(),
+            name: "write_file".to_string(),
+            approved: false,
+        },
+        AgentEvent::ToolExecutionEnd {
+            id: "call_reject".to_string(),
+            name: "write_file".to_string(),
+            result: swink_agent::AgentToolResult::error(
+                "Tool call 'write_file' was rejected by the approval gate.",
+            ),
+            is_error: true,
+        },
+        AgentEvent::TurnEnd {
+            assistant_message: assistant_msg(
+                None,
+                &[("call_reject", "write_file", json!({"path": "draft.txt"}))],
+                StopReason::ToolUse,
+            ),
+            tool_results: vec![tool_result_error(
+                "call_reject",
+                "Tool call 'write_file' was rejected by the approval gate.",
+            )],
+            reason: swink_agent::TurnEndReason::ToolsExecuted,
+            snapshot: empty_snapshot(),
+        },
+        AgentEvent::AgentEnd {
+            messages: Arc::new(vec![]),
+        },
+    ];
+
+    let invocation = TrajectoryCollector::collect_from_stream(stream::iter(events)).await;
+
+    assert_eq!(invocation.turns.len(), 1);
+    let turn = &invocation.turns[0];
+    assert_eq!(turn.tool_calls.len(), 1);
+    assert_eq!(turn.tool_calls[0].id, "call_reject");
+    assert_eq!(turn.tool_calls[0].name, "write_file");
+    assert_eq!(turn.tool_calls[0].arguments, json!({"path": "draft.txt"}));
+    assert!(turn.tool_results[0].is_error);
+}
+
+#[tokio::test]
+async fn pre_dispatch_skip_without_execution_start_is_still_captured() {
+    let events = vec![
+        AgentEvent::AgentStart,
+        AgentEvent::BeforeLlmCall {
+            system_prompt: "test".to_string(),
+            messages: vec![],
+            model: ModelSpec::new("test", "test-model"),
+        },
+        AgentEvent::TurnStart,
+        AgentEvent::ToolExecutionEnd {
+            id: "call_skip".to_string(),
+            name: "delete_file".to_string(),
+            result: swink_agent::AgentToolResult::error("blocked by pre-dispatch policy"),
+            is_error: true,
+        },
+        AgentEvent::TurnEnd {
+            assistant_message: assistant_msg(
+                None,
+                &[("call_skip", "delete_file", json!({"path": "secret.txt"}))],
+                StopReason::ToolUse,
+            ),
+            tool_results: vec![tool_result_error(
+                "call_skip",
+                "blocked by pre-dispatch policy",
+            )],
+            reason: swink_agent::TurnEndReason::ToolsExecuted,
+            snapshot: empty_snapshot(),
+        },
+        AgentEvent::AgentEnd {
+            messages: Arc::new(vec![]),
+        },
+    ];
+
+    let invocation = TrajectoryCollector::collect_from_stream(stream::iter(events)).await;
+
+    assert_eq!(invocation.turns.len(), 1);
+    let turn = &invocation.turns[0];
+    assert_eq!(turn.tool_calls.len(), 1);
+    assert_eq!(turn.tool_calls[0].id, "call_skip");
+    assert_eq!(turn.tool_calls[0].name, "delete_file");
+    assert_eq!(turn.tool_calls[0].arguments, json!({"path": "secret.txt"}));
+    assert!(turn.tool_results[0].is_error);
+}

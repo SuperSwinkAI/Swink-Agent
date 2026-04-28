@@ -33,9 +33,19 @@ cargo test --workspace
 cargo build --workspace
 cargo test --workspace --features testkit
 cargo test -p swink-agent --no-default-features
+cargo adapters-no-default-features
+cargo local-llm-no-default-features
+cargo workspace-no-default-features
+cargo eval-no-default-features
+cargo eval-advanced-no-default-features
+cargo publish --workspace --dry-run --locked --allow-dirty
 ```
 
 `just validate` and `just check` run this exact command set.
+
+These validation commands intentionally do not load `.env`; they should not
+inherit provider API keys or cloud credentials. Live-provider tests load
+credentials from the environment only when you run those tests explicitly.
 
 ## 4. Get API Keys
 
@@ -154,6 +164,10 @@ cargo run -p swink-agent-tui
 ```
 
 The TUI auto-loads `.env` via dotenvy — no need to source it manually. If no API keys are found (env or keychain), the first-run wizard prompts for provider selection and key entry.
+
+The development `justfile` does not load `.env` globally. `just validate`,
+`just check`, and `just package-preflight` therefore run without provider
+secrets unless you exported them in your shell.
 
 ## 7. Verify Each Provider
 

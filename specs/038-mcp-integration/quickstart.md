@@ -31,6 +31,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tool_prefix: Some("fs".into()),
         tool_filter: None,
         requires_approval: true,
+        connect_timeout_ms: Some(5_000),
+        discovery_timeout_ms: Some(5_000),
     };
 
     // Connect and discover tools
@@ -68,6 +70,8 @@ let configs = vec![
             deny: None,
         }),
         requires_approval: true,
+        connect_timeout_ms: Some(5_000),
+        discovery_timeout_ms: Some(5_000),
     },
     McpServerConfig {
         name: "web_search".into(),
@@ -79,6 +83,8 @@ let configs = vec![
         tool_prefix: None,
         tool_filter: None,
         requires_approval: false,
+        connect_timeout_ms: Some(5_000),
+        discovery_timeout_ms: Some(5_000),
     },
 ];
 

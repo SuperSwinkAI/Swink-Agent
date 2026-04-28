@@ -1,14 +1,20 @@
 name: Benchmarks
 
 on:
-  pull_request:
+  schedule:
+    # 06:00 UTC daily against the default branch (integration). Keeps
+    # regression signal without gating every PR on a flaky critcmp install.
+    - cron: '0 6 * * *'
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
 
 jobs:
   bench:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      pull-requests: write
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
@@ -16,53 +22,13 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
-      - uses: cargo-bins/cargo-binstall@dc19f1e48450eefe5a29b8da6c6b00a87d730b37 # v1.18.1
 
-      - name: Install critcmp
-        shell: bash
-        run: |
-          set -euo pipefail
-          critcmp_bin="$CARGO_HOME/bin/critcmp"
+      - name: Bench
+        run: cargo bench -p swink-agent --bench context
 
-          if [ ! -x "$critcmp_bin" ]; then
-            cargo binstall --no-confirm --force critcmp
-          fi
-
-          if [ ! -x "$critcmp_bin" ]; then
-            cargo install --locked --force critcmp
-          fi
-
-          "$critcmp_bin" --version
-
-      - name: Bench PR
-        run: cargo bench -p swink-agent --bench context -- --save-baseline pr
-
-      - name: Export PR baseline
-        run: '"$CARGO_HOME/bin/critcmp" --export pr > "$RUNNER_TEMP/pr.json"'
-
-      - name: Add base worktree
-        run: git worktree add ../bench-base ${{ github.event.pull_request.base.sha }}
-
-      - name: Bench base
-        working-directory: ../bench-base
-        run: cargo bench -p swink-agent --bench context -- --save-baseline base
-
-      - name: Export base baseline
-        working-directory: ../bench-base
-        run: '"$CARGO_HOME/bin/critcmp" --export base > "$RUNNER_TEMP/base.json"'
-
-      - name: Compare
-        run: '"$CARGO_HOME/bin/critcmp" "$RUNNER_TEMP/base.json" "$RUNNER_TEMP/pr.json" | tee bench-diff.txt'
-
-      - name: Post comment
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+      - name: Upload criterion artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          script: |
-            const fs = require('fs');
-            const diff = fs.readFileSync('bench-diff.txt', 'utf8');
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: '## Benchmark comparison\n```\n' + diff + '\n```'
-            });
+          name: criterion-${{ github.run_id }}
+          path: target/criterion
+          retention-days: 30

@@ -1,16 +1,19 @@
 //! Built-in tool for reading file contents.
 
+use std::path::{Path, PathBuf};
+
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
-use super::MAX_OUTPUT_BYTES;
+use super::{MAX_OUTPUT_BYTES, truncate_utf8_to_boundary};
 use crate::tool::{AgentTool, AgentToolResult, ToolFuture, validated_schema_for};
 
 /// Built-in tool that reads a file and returns its contents.
 pub struct ReadFileTool {
     schema: Value,
+    execution_root: Option<PathBuf>,
 }
 
 impl ReadFileTool {
@@ -19,7 +22,15 @@ impl ReadFileTool {
     pub fn new() -> Self {
         Self {
             schema: validated_schema_for::<Params>(),
+            execution_root: None,
         }
+    }
+
+    /// Set the working directory used to resolve relative file paths.
+    #[must_use]
+    pub fn with_execution_root(mut self, root: impl Into<PathBuf>) -> Self {
+        self.execution_root = Some(root.into());
+        self
     }
 }
 
@@ -54,6 +65,10 @@ impl AgentTool for ReadFileTool {
         &self.schema
     }
 
+    fn execution_root(&self) -> Option<&Path> {
+        self.execution_root.as_deref()
+    }
+
     fn execute(
         &self,
         _tool_call_id: &str,
@@ -73,18 +88,120 @@ impl AgentTool for ReadFileTool {
                 return AgentToolResult::error("cancelled");
             }
 
-            match tokio::fs::read_to_string(&parsed.path).await {
-                Ok(mut content) => {
-                    if content.len() > MAX_OUTPUT_BYTES {
-                        content.truncate(MAX_OUTPUT_BYTES);
-                        content.push_str("\n[truncated]");
+            let path = resolve_path(&parsed.path, self.execution_root.as_deref());
+
+            match read_limited_utf8_file(&path).await {
+                Ok((mut content, truncated)) => {
+                    if truncated {
+                        truncate_utf8_to_boundary(&mut content, MAX_OUTPUT_BYTES);
                     }
                     AgentToolResult::text(content)
                 }
                 Err(e) => {
-                    AgentToolResult::error(format!("failed to read file {}: {e}", parsed.path))
+                    AgentToolResult::error(format!("failed to read file {}: {e}", path.display()))
                 }
             }
         })
+    }
+}
+
+fn resolve_path(path: &str, execution_root: Option<&Path>) -> PathBuf {
+    let path = Path::new(path);
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else if let Some(root) = execution_root {
+        root.join(path)
+    } else {
+        path.to_path_buf()
+    }
+}
+
+async fn read_limited_utf8_file(path: &Path) -> std::io::Result<(String, bool)> {
+    use tokio::io::AsyncReadExt;
+
+    let file = tokio::fs::File::open(path).await?;
+    let mut bytes = Vec::with_capacity(MAX_OUTPUT_BYTES + 1);
+    let mut reader = file.take((MAX_OUTPUT_BYTES + 1) as u64);
+    reader.read_to_end(&mut bytes).await?;
+
+    let truncated = bytes.len() > MAX_OUTPUT_BYTES;
+    match String::from_utf8(bytes) {
+        Ok(content) => Ok((content, truncated)),
+        Err(error) if truncated && error.utf8_error().error_len().is_none() => {
+            let valid_up_to = error.utf8_error().valid_up_to();
+            let bytes = error.into_bytes();
+            let content = String::from_utf8(bytes[..valid_up_to].to_vec())
+                .expect("valid UTF-8 prefix should decode");
+            Ok((content, truncated))
+        }
+        Err(error) => Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            error.utf8_error(),
+        )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, RwLock};
+
+    use serde_json::json;
+    use tokio_util::sync::CancellationToken;
+
+    use super::*;
+    use crate::SessionState;
+    use crate::types::ContentBlock;
+
+    fn result_text(result: &AgentToolResult) -> &str {
+        match result.content.first() {
+            Some(ContentBlock::Text { text }) => text.as_str(),
+            _ => panic!("expected text content"),
+        }
+    }
+
+    #[tokio::test]
+    async fn read_file_truncates_multibyte_content_on_char_boundary() {
+        let temp = tempfile::NamedTempFile::new().unwrap();
+        let content = "€".repeat((MAX_OUTPUT_BYTES / "€".len()) + 1);
+        tokio::fs::write(temp.path(), content).await.unwrap();
+
+        let result = ReadFileTool::new()
+            .execute(
+                "call-1",
+                json!({ "path": temp.path().to_str().unwrap() }),
+                CancellationToken::new(),
+                None,
+                Arc::new(RwLock::new(SessionState::new())),
+                None,
+            )
+            .await;
+
+        let text = result_text(&result);
+        assert!(!result.is_error);
+        assert!(text.contains("[truncated]"), "expected marker in: {text}");
+        assert!(text.is_char_boundary(text.len()));
+    }
+
+    #[tokio::test]
+    async fn read_file_resolves_relative_path_against_execution_root() {
+        let temp = tempfile::tempdir().unwrap();
+        tokio::fs::write(temp.path().join("relative.txt"), "rooted")
+            .await
+            .unwrap();
+
+        let result = ReadFileTool::new()
+            .with_execution_root(temp.path())
+            .execute(
+                "call-1",
+                json!({ "path": "relative.txt" }),
+                CancellationToken::new(),
+                None,
+                Arc::new(RwLock::new(SessionState::new())),
+                None,
+            )
+            .await;
+
+        assert!(!result.is_error);
+        assert_eq!(result_text(&result), "rooted");
     }
 }

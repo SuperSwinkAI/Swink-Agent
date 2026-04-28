@@ -18,10 +18,11 @@ rustdoc-args = ["--cfg", "docsrs"]
 gemma4 = []
 metal = ["llama-cpp-2/metal"]
 cuda = ["llama-cpp-2/cuda"]
+cudnn = ["cuda"]
 vulkan = ["llama-cpp-2/vulkan"]
 
 [dependencies]
-swink-agent = { path = "..", version = "0.8.1", default-features = false }
+swink-agent = { path = "..", version = "0.9.0", default-features = false }
 llama-cpp-2 = "0.1"
 hf-hub = { version = "0.5", features = ["tokio"] }
 tokio = { workspace = true, features = ["rt", "sync"] }

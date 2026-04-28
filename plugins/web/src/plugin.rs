@@ -77,9 +77,7 @@ impl WebPlugin {
     pub fn from_config(config: WebPluginConfig) -> Result<Self, WebPluginError> {
         let http_client = reqwest::Client::builder()
             .user_agent(&config.user_agent)
-            .redirect(reqwest::redirect::Policy::limited(
-                config.max_redirects as usize,
-            ))
+            .redirect(reqwest::redirect::Policy::none())
             .timeout(config.request_timeout)
             .build()?;
 
@@ -151,30 +149,47 @@ impl Plugin for WebPlugin {
     }
 
     fn tools(&self) -> Vec<Arc<dyn AgentTool>> {
+        let domain_filter = DomainFilter {
+            allowlist: self.config.domain_allowlist.clone(),
+            denylist: self.config.domain_denylist.clone(),
+            block_private_ips: self.config.block_private_ips,
+        };
+
         vec![
-            Arc::new(FetchTool::new(
-                self.http_client.clone(),
-                self.config.max_content_length,
-                self.config.request_timeout,
-            )),
+            Arc::new(
+                FetchTool::new(
+                    self.http_client.clone(),
+                    self.config.max_content_length,
+                    self.config.request_timeout,
+                )
+                .with_domain_filter(domain_filter.clone(), self.config.max_redirects)
+                .with_sanitizer_enabled(self.config.sanitizer_enabled),
+            ),
             Arc::new(SearchTool::new(
                 self.search_provider.clone(),
                 self.config.max_search_results,
             )),
-            Arc::new(ScreenshotTool::new(
-                self.playwright_bridge.clone(),
-                self.config.playwright_path.clone(),
-                Viewport {
-                    width: self.config.viewport_width,
-                    height: self.config.viewport_height,
-                },
-                self.config.screenshot_timeout,
-            )),
-            Arc::new(ExtractTool::new(
-                self.playwright_bridge.clone(),
-                self.config.playwright_path.clone(),
-                self.config.screenshot_timeout,
-            )),
+            Arc::new(
+                ScreenshotTool::new(
+                    self.playwright_bridge.clone(),
+                    self.config.playwright_path.clone(),
+                    Viewport {
+                        width: self.config.viewport_width,
+                        height: self.config.viewport_height,
+                    },
+                    self.config.screenshot_timeout,
+                )
+                .with_domain_filter(domain_filter.clone()),
+            ),
+            Arc::new(
+                ExtractTool::new(
+                    self.playwright_bridge.clone(),
+                    self.config.playwright_path.clone(),
+                    self.config.screenshot_timeout,
+                )
+                .with_domain_filter(domain_filter)
+                .with_sanitizer_enabled(self.config.sanitizer_enabled),
+            ),
         ]
     }
 

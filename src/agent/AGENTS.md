@@ -1,8 +1,13 @@
 # Agent Lessons
 
-- `pause()` must snapshot the full in-flight message history, not just `in_flight_llm_messages`. The LLM-only snapshot intentionally drops `CustomMessage`, so streamed pause/resume needs a separate authoritative in-flight message clone to avoid serializing stale or incomplete checkpoints.
-- Checkpoint restore must validate the optional `session_state` snapshot before mutating `messages`, `system_prompt`, `model`, or live queues. A corrupt state snapshot must leave the in-memory agent unchanged.
-- `restore_from_checkpoint()` and `load_and_restore_checkpoint()` must reject active runs with `io::ErrorKind::WouldBlock` instead of clearing transient runtime state under a live loop. Raw checkpoint restore now has the same idle precondition as `resume*()`.
-- `pause()` also has to snapshot loop-local `pending_messages`, not only the live steering/follow-up queues. Follow-up or steering items can already be drained out of the shared queues and staged for the next turn when pause is requested; without the mirrored pending snapshot, those messages disappear from the checkpoint.
-- `new_blocking_runtime()` must propagate Tokio runtime construction failures as `AgentError::RuntimeInit` instead of panicking. The sync invoke helpers already return `Result`, so runtime bootstrap failures are part of the public error contract.
-- `continue_*()` from an assistant tail must drain any queued steering/follow-up messages into the resumed history before the first new streamed turn. Otherwise text-only turns can re-poll those already-pending queues after `TurnEnd`, spuriously creating an extra turn and surfacing `StopReason::Error`.
+## Core Mechanics
+- `dispatch_event` catches panics via `catch_unwind`: panicking subscribers auto-removed, panicking forwarders logged and skipped.
+- `in_flight_llm_messages` filters out `CustomMessage`. Queues use `Arc<Mutex<>>` with `PoisonError::into_inner()`.
+- `AgentId` in `src/agent_id.rs` (breaks `agent.rs` ↔ `registry.rs` circular import).
+- `reset()` must call `idle_notify.notify_waiters()` after clearing `loop_active`.
+
+## Lifecycle
+- `pause()` must snapshot full in-flight message history (not LLM-only) and loop-local `pending_messages`.
+- Checkpoint restore validates `session_state` before mutating; rejects active runs with `WouldBlock`.
+- `continue_*()` from assistant tail must drain queued steering/follow-up before first new turn.
+- `new_blocking_runtime()` propagates failures as `AgentError::RuntimeInit`.

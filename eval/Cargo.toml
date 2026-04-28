@@ -14,9 +14,14 @@ categories = ["development-tools", "development-tools::testing"]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
+[[bin]]
+name = "swink-eval"
+path = "src/bin/swink_eval.rs"
+required-features = ["cli"]
+
 [dependencies]
-swink-agent = { path = "..", version = "0.8.1", default-features = false }
-swink-agent-policies = { path = "../policies", version = "0.8.1", default-features = false, features = ["budget", "max-turns"] }
+swink-agent = { path = "..", version = "0.9.0", default-features = false }
+swink-agent-policies = { path = "../policies", version = "0.9.0", default-features = false, features = ["budget", "max-turns"] }
 serde.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true, features = ["macros", "time"] }
@@ -24,17 +29,16 @@ futures.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 tokio-util.workspace = true
-bincode = "1"
 uuid = { workspace = true, features = ["v5"] }
 regex.workspace = true
 sha2.workspace = true
-async-trait = "0.1"
 minijinja = { workspace = true, optional = true }
 backon = { workspace = true, optional = true }
 strsim = { workspace = true, optional = true }
 jsonschema = { workspace = true, optional = true }
 reqwest = { workspace = true, optional = true }
 url = "2"
+tempfile.workspace = true
 opentelemetry = { workspace = true, optional = true }
 opentelemetry_sdk = { workspace = true, optional = true }
 opentelemetry-otlp = { workspace = true, optional = true }
@@ -51,9 +55,9 @@ evaluator-quality = ["judge-core"]
 evaluator-safety = ["judge-core"]
 evaluator-rag = ["judge-core"]
 evaluator-agent = ["judge-core"]
-evaluator-structured = ["dep:jsonschema"]
-evaluator-simple = ["dep:strsim"]
-evaluator-code = []
+evaluator-structured = ["judge-core", "dep:jsonschema"]
+evaluator-simple = ["judge-core", "dep:strsim"]
+evaluator-code = ["judge-core"]
 evaluator-sandbox = ["evaluator-code", "dep:libc"]
 multimodal = ["judge-core", "dep:reqwest"]
 all-evaluators = [
@@ -67,23 +71,54 @@ all-evaluators = [
     "evaluator-sandbox",
     "multimodal",
 ]
-simulation = ["judge-core"]
+simulation = ["judge-core", "dep:jsonschema"]
 generation = ["judge-core"]
-trace-ingest = ["dep:opentelemetry_sdk"]
-trace-otlp = ["trace-ingest", "dep:opentelemetry-otlp"]
+trace-ingest = ["dep:opentelemetry", "dep:opentelemetry_sdk", "opentelemetry_sdk/testing"]
+trace-otlp = ["trace-ingest", "dep:opentelemetry-otlp", "dep:reqwest"]
 trace-langfuse = ["trace-ingest", "dep:reqwest"]
 trace-opensearch = ["trace-ingest", "dep:reqwest"]
 trace-cloudwatch = ["trace-ingest"]
 telemetry = ["dep:opentelemetry", "dep:opentelemetry_sdk"]
 html-report = ["dep:askama"]
 langsmith = ["dep:reqwest"]
-cli = ["dep:clap"]
+cli = ["dep:clap", "swink-agent/testkit"]
+training-export = []
 
 [dev-dependencies]
 swink-agent = { path = "..", default-features = false, features = ["testkit"] }
-tempfile.workspace = true
 tokio = { workspace = true, features = ["full", "test-util"] }
 pretty_assertions.workspace = true
+wiremock.workspace = true
+jsonschema.workspace = true
+serde_yaml.workspace = true
 
-[lints]
-workspace = true
+# FR-049 carve-out: the `evaluators::code::sandbox::posix` submodule needs
+# `#![allow(unsafe_code)]` for POSIX rlimit FFI. `forbid` cannot be relaxed
+# by a nested `allow`, so we mirror the workspace lints here but relax
+# `unsafe_code` from `forbid` to `deny` — still a hard compile error for any
+# stray `unsafe` outside the single authorised submodule. Every other crate
+# in the workspace continues to inherit `forbid` via `lints.workspace = true`.
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+redundant_pub_crate = "allow"
+missing_const_for_fn = "allow"
+duration_suboptimal_units = "allow"
+cast_possible_truncation = "allow"
+items_after_statements = "allow"
+manual_let_else = "allow"
+option_if_let_else = "allow"
+significant_drop_tightening = "allow"
+doc_markdown = "allow"
+redundant_closure_for_method_calls = "allow"
+trivially_copy_pass_by_ref = "allow"
+format_push_string = "allow"
+unnecessary_literal_bound = "allow"

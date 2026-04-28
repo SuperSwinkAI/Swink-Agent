@@ -96,8 +96,7 @@ impl StreamingArtifactStore for FileArtifactStore {
 
         let mut meta = self.read_meta(session_id, name).await?;
 
-        #[allow(clippy::cast_possible_truncation)]
-        let next_version = meta.versions.len() as u32 + 1;
+        let next_version = self.next_version(session_id, name, &meta).await?;
         let now = chrono::Utc::now();
         let content_path = self.version_path(session_id, name, next_version);
         let temp_path = temp_version_path(&content_path)?;
@@ -124,7 +123,10 @@ impl StreamingArtifactStore for FileArtifactStore {
             content_type,
         };
         meta.versions.push(record);
-        self.write_meta(session_id, name, &meta).await?;
+        if let Err(error) = self.write_meta(session_id, name, &meta).await {
+            Self::rollback_version_file(&content_path).await;
+            return Err(error);
+        }
 
         tracing::info!(
             session_id,

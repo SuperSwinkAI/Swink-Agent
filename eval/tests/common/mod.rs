@@ -1,5 +1,7 @@
 //! Shared test helpers for eval integration tests.
 
+pub mod judge_fixtures;
+
 use std::time::Duration;
 
 use swink_agent::{AssistantMessage, Cost, ModelSpec, StopReason, Usage};
@@ -88,9 +90,14 @@ pub fn case_with_trajectory(expected: Vec<ExpectedToolCall>) -> EvalCase {
         user_messages: vec!["test prompt".to_string()],
         expected_trajectory: Some(expected),
         expected_response: None,
+        expected_assertion: None,
+        expected_interactions: None,
+        few_shot_examples: vec![],
         budget: None,
         evaluators: vec![],
         metadata: serde_json::Value::Null,
+        attachments: vec![],
+        session_id: None,
         expected_environment_state: None,
         expected_tool_intent: None,
         semantic_tool_selection: false,
@@ -109,9 +116,14 @@ pub fn case_with_response(criteria: ResponseCriteria) -> EvalCase {
         user_messages: vec!["test prompt".to_string()],
         expected_trajectory: None,
         expected_response: Some(criteria),
+        expected_assertion: None,
+        expected_interactions: None,
+        few_shot_examples: vec![],
         budget: None,
         evaluators: vec![],
         metadata: serde_json::Value::Null,
+        attachments: vec![],
+        session_id: None,
         expected_environment_state: None,
         expected_tool_intent: None,
         semantic_tool_selection: false,
@@ -179,9 +191,14 @@ pub fn case_with_budget(budget: BudgetConstraints) -> EvalCase {
         user_messages: vec!["test prompt".to_string()],
         expected_trajectory: None,
         expected_response: None,
+        expected_assertion: None,
+        expected_interactions: None,
+        few_shot_examples: vec![],
         budget: Some(budget),
         evaluators: vec![],
         metadata: serde_json::Value::Null,
+        attachments: vec![],
+        session_id: None,
         expected_environment_state: None,
         expected_tool_intent: None,
         semantic_tool_selection: false,
@@ -203,9 +220,14 @@ pub fn case_with_trajectory_and_response(
         user_messages: vec!["test prompt".to_string()],
         expected_trajectory: Some(expected),
         expected_response: Some(criteria),
+        expected_assertion: None,
+        expected_interactions: None,
+        few_shot_examples: vec![],
         budget: None,
         evaluators: vec![],
         metadata: serde_json::Value::Null,
+        attachments: vec![],
+        session_id: None,
         expected_environment_state: None,
         expected_tool_intent: None,
         semantic_tool_selection: false,
@@ -217,4 +239,33 @@ pub fn case_with_trajectory_and_response(
 #[allow(dead_code)]
 pub fn mock_invocation_with_response(tool_names: &[&str], response: &str) -> Invocation {
     mock_invocation(tool_names, Some(response), 0.01, 500)
+}
+
+/// Build a minimal `EvalCase` suitable for runner integration tests.
+///
+/// Spec 043 US2 helper — extracted so runner-extension tests share a stable
+/// case shape without each re-declaring every field.
+#[allow(dead_code)]
+pub fn make_case(id: &str) -> EvalCase {
+    EvalCase {
+        id: id.to_string(),
+        name: format!("Case {id}"),
+        description: None,
+        system_prompt: "You are a test agent.".to_string(),
+        user_messages: vec!["hello".to_string()],
+        expected_trajectory: None,
+        expected_response: None,
+        expected_assertion: None,
+        expected_interactions: None,
+        few_shot_examples: vec![],
+        budget: None,
+        evaluators: vec![],
+        metadata: serde_json::Value::Null,
+        attachments: vec![],
+        session_id: None,
+        expected_environment_state: None,
+        expected_tool_intent: None,
+        semantic_tool_selection: false,
+        state_capture: None,
+    }
 }

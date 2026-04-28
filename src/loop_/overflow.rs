@@ -16,7 +16,7 @@ use crate::types::{AgentMessage, LlmMessage, StopReason};
 use super::stream::stream_with_retry;
 use super::turn::{
     build_llm_messages, build_snapshot, emit_turn_end_and_agent_end,
-    handle_started_turn_cancellation, run_context_transformers,
+    handle_started_turn_cancellation, run_context_transformers, run_post_turn_policy_check,
 };
 use super::{
     AgentEvent, AgentLoopConfig, LoopState, StreamResult, TurnEndReason, TurnOutcome,
@@ -51,13 +51,13 @@ pub(super) async fn attempt_overflow_recovery(
     // Guard 1: Already attempted recovery this turn — surface error.
     if state.overflow_recovery_attempted {
         debug!("second overflow in same turn — surfacing error");
-        return overflow_error(config, state, tx).await;
+        return overflow_error(config, state, system_prompt, tx).await;
     }
 
     // Guard 2: No transformer configured — cannot compact.
     if config.async_transform_context.is_none() && config.transform_context.is_none() {
         debug!("no context transformer configured — cannot recover from overflow");
-        return overflow_error(config, state, tx).await;
+        return overflow_error(config, state, system_prompt, tx).await;
     }
 
     // Mark recovery as attempted for this turn.
@@ -72,7 +72,7 @@ pub(super) async fn attempt_overflow_recovery(
     // Guard 3: Transformers ran but neither reported compaction — no point retrying.
     if !any_compacted {
         debug!("transformers ran but no compaction occurred — surfacing error");
-        return overflow_error(config, state, tx).await;
+        return overflow_error(config, state, system_prompt, tx).await;
     }
 
     // Check cancellation before retrying.
@@ -101,7 +101,7 @@ pub(super) async fn attempt_overflow_recovery(
     // If the retry also overflows, surface the error — no further recovery.
     if matches!(retry_result, StreamResult::ContextOverflow) {
         debug!("retry after compaction still overflowed — surfacing error");
-        return overflow_error(config, state, tx).await;
+        return overflow_error(config, state, system_prompt, tx).await;
     }
 
     OverflowRecoveryResult::Recovered(Box::new(retry_result))
@@ -111,6 +111,7 @@ pub(super) async fn attempt_overflow_recovery(
 pub(super) async fn overflow_error(
     config: &Arc<AgentLoopConfig>,
     state: &mut LoopState,
+    system_prompt: &str,
     tx: &mpsc::Sender<AgentEvent>,
 ) -> OverflowRecoveryResult {
     let error = crate::error::AgentError::ContextWindowOverflow {
@@ -130,7 +131,16 @@ pub(super) async fn overflow_error(
     )
     .await;
 
+    let assistant_ctx_index = state.context_messages.len() - 1;
+    let (msg_for_event, policy_stop) =
+        run_post_turn_policy_check(&msg_for_event, &[], state, config, system_prompt);
+    state.context_messages[assistant_ctx_index] =
+        AgentMessage::Llm(LlmMessage::Assistant(msg_for_event.clone()));
+
     let snapshot = build_snapshot(state, StopReason::Error, None);
+    if let Some(reason) = policy_stop {
+        tracing::info!("post-turn policy stopped agent: {reason}");
+    }
     OverflowRecoveryResult::Failed(
         emit_turn_end_and_agent_end(
             msg_for_event,

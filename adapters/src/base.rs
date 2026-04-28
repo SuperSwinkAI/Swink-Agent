@@ -1,5 +1,11 @@
 #![forbid(unsafe_code)]
 
+use std::future::Future;
+
+use tokio_util::sync::CancellationToken;
+
+const MAX_ERROR_BODY_BYTES: usize = 64 * 1024;
+
 /// Shared base for remote HTTP/SSE stream adapters.
 ///
 /// Bundles the three fields that every reqwest-based adapter carries:
@@ -77,9 +83,79 @@ pub fn cancelled_error(message: impl Into<String>) -> swink_agent::AssistantMess
     }
 }
 
+/// Race a pre-stream async operation against cancellation.
+///
+/// Adapters should use this around the initial HTTP send so cancellation can
+/// short-circuit before any provider bytes arrive.
+pub async fn race_pre_stream_cancellation<T, F>(
+    cancellation_token: &CancellationToken,
+    cancelled_message: &'static str,
+    operation: F,
+) -> Result<T, swink_agent::AssistantMessageEvent>
+where
+    F: Future<Output = Result<T, swink_agent::AssistantMessageEvent>>,
+{
+    if cancellation_token.is_cancelled() {
+        return Err(cancelled_error(cancelled_message));
+    }
+
+    tokio::select! {
+        () = cancellation_token.cancelled() => Err(cancelled_error(cancelled_message)),
+        result = operation => result,
+    }
+}
+
+/// Read an HTTP error response body without letting cancellation or very large
+/// bodies keep an adapter alive indefinitely.
+pub async fn read_error_body_or_cancelled(
+    mut response: reqwest::Response,
+    cancellation_token: &CancellationToken,
+    cancelled_message: &'static str,
+) -> Result<String, swink_agent::AssistantMessageEvent> {
+    let mut bytes = Vec::new();
+    let mut truncated = false;
+
+    loop {
+        tokio::select! {
+            biased;
+            () = cancellation_token.cancelled() => {
+                return Err(cancelled_error(cancelled_message));
+            }
+            chunk = response.chunk() => {
+                match chunk {
+                    Ok(Some(chunk)) => {
+                        let remaining = MAX_ERROR_BODY_BYTES.saturating_sub(bytes.len());
+                        if remaining == 0 {
+                            truncated = true;
+                            break;
+                        }
+                        if remaining > 0 {
+                            let take = remaining.min(chunk.len());
+                            bytes.extend_from_slice(&chunk[..take]);
+                        }
+                        if chunk.len() > remaining {
+                            truncated = true;
+                            break;
+                        }
+                    }
+                    Ok(None) | Err(_) => break,
+                }
+            }
+        }
+    }
+
+    let mut body = String::from_utf8_lossy(&bytes).into_owned();
+    if truncated {
+        body.push_str("...[truncated]");
+    }
+    Ok(body)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+    use tokio::net::TcpListener;
 
     #[test]
     fn trailing_slash_stripped() {
@@ -121,5 +197,98 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[tokio::test]
+    async fn race_pre_stream_cancellation_short_circuits() {
+        let token = CancellationToken::new();
+        token.cancel();
+
+        let result =
+            race_pre_stream_cancellation(&token, "cancelled", async { Ok::<_, _>("ok") }).await;
+
+        assert!(matches!(
+            result,
+            Err(swink_agent::AssistantMessageEvent::Error {
+                stop_reason: swink_agent::StopReason::Aborted,
+                ..
+            })
+        ));
+    }
+
+    #[tokio::test]
+    async fn read_error_body_returns_aborted_when_cancelled_mid_body() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        tokio::spawn(async move {
+            if let Ok((mut socket, _)) = listener.accept().await {
+                let mut request = [0u8; 1024];
+                let _ = socket.read(&mut request).await;
+                let response = concat!(
+                    "HTTP/1.1 500 Internal Server Error\r\n",
+                    "Content-Length: 128\r\n\r\n",
+                    "partial",
+                );
+                let _ = socket.write_all(response.as_bytes()).await;
+                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+            }
+        });
+
+        let response = reqwest::Client::new()
+            .get(format!("http://{addr}/"))
+            .send()
+            .await
+            .unwrap();
+        let token = CancellationToken::new();
+        let cancel = token.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            cancel.cancel();
+        });
+
+        let result = read_error_body_or_cancelled(response, &token, "cancelled").await;
+
+        assert!(matches!(
+            result,
+            Err(swink_agent::AssistantMessageEvent::Error {
+                stop_reason: swink_agent::StopReason::Aborted,
+                ..
+            })
+        ));
+    }
+
+    #[tokio::test]
+    async fn read_error_body_is_size_bounded() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let body = "x".repeat(MAX_ERROR_BODY_BYTES + 16);
+
+        tokio::spawn(async move {
+            if let Ok((mut socket, _)) = listener.accept().await {
+                let mut request = [0u8; 1024];
+                let _ = socket.read(&mut request).await;
+                let header = format!(
+                    "HTTP/1.1 500 Internal Server Error\r\nContent-Length: {}\r\n\r\n",
+                    body.len()
+                );
+                let _ = socket.write_all(header.as_bytes()).await;
+                let _ = socket.write_all(body.as_bytes()).await;
+            }
+        });
+
+        let response = reqwest::Client::new()
+            .get(format!("http://{addr}/"))
+            .send()
+            .await
+            .unwrap();
+        let token = CancellationToken::new();
+
+        let body = read_error_body_or_cancelled(response, &token, "cancelled")
+            .await
+            .unwrap();
+
+        assert_eq!(body.len(), MAX_ERROR_BODY_BYTES + "...[truncated]".len());
+        assert!(body.ends_with("...[truncated]"));
     }
 }

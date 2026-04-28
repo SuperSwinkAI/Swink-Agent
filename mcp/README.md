@@ -20,8 +20,8 @@ Model Context Protocol (MCP) integration for [`swink-agent`](https://crates.io/c
 
 ```toml
 [dependencies]
-swink-agent = "0.8"
-swink-agent-mcp = "0.8"
+swink-agent = "0.9.0"
+swink-agent-mcp = "0.9.0"
 tokio = { version = "1", features = ["full"] }
 ```
 
@@ -36,11 +36,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             command: "npx".into(),
             args: vec!["-y".into(), "@modelcontextprotocol/server-filesystem".into()],
             env: Default::default(),
-        },
-        tool_prefix: Some("fs".into()),
-        tool_filter: None,
-        requires_approval: true,
-    }];
+    },
+    tool_prefix: Some("fs".into()),
+    tool_filter: None,
+    requires_approval: true,
+    connect_timeout_ms: Some(5_000),
+    discovery_timeout_ms: Some(5_000),
+}];
 
     let mut mcp = McpManager::new(configs);
     mcp.connect_all().await?;

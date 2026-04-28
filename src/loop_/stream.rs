@@ -49,6 +49,7 @@ pub async fn stream_with_retry(
         emit_message_start,
         cancellation_token,
         tx,
+        config.fallback.as_ref().is_some_and(|fb| !fb.is_empty()),
     )
     .await;
 
@@ -74,7 +75,10 @@ pub async fn stream_with_retry(
 
     let mut last_result = StreamResult::Message(last_error_msg);
 
-    for (fb_model, fb_stream_fn) in fallback.models() {
+    let fallback_models = fallback.models();
+    let fallback_count = fallback_models.len();
+
+    for (index, (fb_model, fb_stream_fn)) in fallback_models.iter().enumerate() {
         // Emit the fallback event.
         if !emit(
             tx,
@@ -102,9 +106,10 @@ pub async fn stream_with_retry(
             llm_messages,
             system_prompt,
             api_key.clone(),
-            emit_message_start,
+            false,
             cancellation_token,
             tx,
+            index + 1 < fallback_count,
         )
         .await;
 
@@ -154,6 +159,7 @@ async fn stream_with_retry_single(
     emit_message_start: bool,
     cancellation_token: &CancellationToken,
     tx: &mpsc::Sender<AgentEvent>,
+    defer_fallback_eligible_fatal_errors: bool,
 ) -> StreamResult {
     let llm_span = info_span!(
         "agent.llm_call",
@@ -241,11 +247,15 @@ async fn stream_with_retry_single(
                     continue;
                 }
                 StreamErrorAction::FatalError { result, message } => {
-                    if let Some(exit) = emit_attempt_deltas(&events, tx).await {
-                        return exit;
-                    }
-                    if !emit(tx, AgentEvent::MessageEnd { message }).await {
-                        return StreamResult::ChannelClosed;
+                    if !defer_fallback_eligible_fatal_errors
+                        || !is_fallback_eligible_error(&message)
+                    {
+                        if let Some(exit) = emit_attempt_deltas(&events, tx).await {
+                            return exit;
+                        }
+                        if !emit(tx, AgentEvent::MessageEnd { message }).await {
+                            return StreamResult::ChannelClosed;
+                        }
                     }
                     llm_span.record("otel.status_code", "ERROR");
                     return result;

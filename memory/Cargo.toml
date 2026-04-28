@@ -14,8 +14,13 @@ categories = ["development-tools", "data-structures"]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
+[features]
+## Enables tantivy-backed full-text search index for `JsonlSessionStore`.
+## Without this feature, `SessionStore::search()` falls back to the linear scan.
+search = ["dep:tantivy"]
+
 [dependencies]
-swink-agent = { path = "..", version = "0.8.1", default-features = false }
+swink-agent = { path = "..", version = "0.9.0", default-features = false }
 serde.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true, features = ["rt"] }
@@ -23,6 +28,7 @@ dirs.workspace = true
 tracing.workspace = true
 chrono.workspace = true
 uuid.workspace = true
+tantivy = { version = "0.22", optional = true }
 
 [dev-dependencies]
 tempfile.workspace = true

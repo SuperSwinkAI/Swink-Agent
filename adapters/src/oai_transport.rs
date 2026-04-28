@@ -229,7 +229,19 @@ pub fn oai_send_and_parse<'a>(
         let status = response.status();
         if !status.is_success() {
             let code = status.as_u16();
-            let body = response.text().await.unwrap_or_default();
+            let body = match crate::base::read_error_body_or_cancelled(
+                response,
+                &cancellation_token,
+                "operation cancelled",
+            )
+            .await
+            {
+                Ok(body) => body,
+                Err(event) => {
+                    return stream::iter(Vec::from(crate::base::pre_stream_error(event)))
+                        .left_stream();
+                }
+            };
             warn!(status = code, "{provider} HTTP error");
 
             if let Some(event) = classify_error(code, &body) {

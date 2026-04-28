@@ -11,7 +11,6 @@ use futures::stream::{self, Stream, StreamExt as _};
 use llama_cpp_2::model::LlamaChatMessage;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, warn};
-#[cfg(feature = "gemma4")]
 use uuid::Uuid;
 
 use swink_agent::stream_assembly::{BlockAccumulator, finalize_blocks};
@@ -20,6 +19,7 @@ use swink_agent::{
     Usage,
 };
 
+use crate::error::LocalModelError;
 use crate::loader::LoaderState;
 use crate::model::LocalModel;
 use crate::runner::{FinishReason, GenerateOptions, TokenEvent};
@@ -381,6 +381,21 @@ mod channel_thought {
 
             (thinking_out, text_out)
         }
+
+        pub fn finish(&mut self) -> (Option<String>, Option<String>) {
+            if self.buffer.is_empty() {
+                return (None, None);
+            }
+
+            let buffered = std::mem::take(&mut self.buffer);
+            let state = self.state;
+            self.state = State::Normal;
+
+            match state {
+                State::Normal | State::PartialOpen => (None, Some(buffered)),
+                State::InThinking | State::PartialClose => (Some(buffered), None),
+            }
+        }
     }
 
     fn append(target: &mut Option<String>, s: &str) {
@@ -403,6 +418,12 @@ mod tool_call {
     pub(super) struct ParsedToolCall {
         pub name: String,
         pub args: String,
+    }
+
+    #[derive(Debug, PartialEq, Eq)]
+    pub(super) enum ToolCallFinish {
+        Text(String),
+        PartialToolCall { name: String, args: String },
     }
 
     #[derive(Debug)]
@@ -555,6 +576,301 @@ mod tool_call {
 
             (calls, text_out)
         }
+
+        pub fn finish(&mut self, preserve_partial_tool_call: bool) -> Option<ToolCallFinish> {
+            if self.buffer.is_empty() && self.name_buf.is_empty() && self.args_buf.is_empty() {
+                self.state = State::Normal;
+                return None;
+            }
+
+            if preserve_partial_tool_call
+                && matches!(self.state, State::InArgs | State::PartialClose)
+                && !self.name_buf.trim().is_empty()
+            {
+                let result = ToolCallFinish::PartialToolCall {
+                    name: self.name_buf.trim().to_string(),
+                    args: self.args_buf.clone(),
+                };
+                self.reset();
+                return Some(result);
+            }
+
+            let mut text = String::new();
+            match self.state {
+                State::Normal | State::PartialOpen => text.push_str(&self.buffer),
+                State::InName => {
+                    text.push_str(OPEN_DELIM);
+                    text.push_str(&self.name_buf);
+                    text.push_str(&self.buffer);
+                }
+                State::InArgs | State::PartialClose => {
+                    text.push_str(OPEN_DELIM);
+                    text.push_str(&self.name_buf);
+                    text.push_str(&self.args_buf);
+                    text.push_str(&self.buffer);
+                }
+            }
+
+            self.reset();
+            (!text.is_empty()).then_some(ToolCallFinish::Text(text))
+        }
+
+        fn reset(&mut self) {
+            self.buffer.clear();
+            self.name_buf.clear();
+            self.args_buf.clear();
+            self.state = State::Normal;
+        }
+    }
+
+    fn append(target: &mut Option<String>, s: &str) {
+        match target {
+            Some(existing) => existing.push_str(s),
+            None => *target = Some(s.to_string()),
+        }
+    }
+}
+
+// ─── Default ToolCallParser ────────────────────────────────────────────────
+
+mod default_tool_call {
+    use super::delimiter::partial_prefix_at_end;
+
+    const OPEN_DELIM: &str = "call:";
+
+    pub(super) struct ParsedToolCall {
+        pub name: String,
+        pub args: String,
+    }
+
+    #[derive(Debug)]
+    pub(super) struct ToolCallParser {
+        state: State,
+        buffer: String,
+        name_buf: String,
+        args_buf: String,
+        json_depth: usize,
+        in_string: bool,
+        escape: bool,
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum State {
+        Normal,
+        PartialOpen,
+        InName,
+        InArgs,
+    }
+
+    impl ToolCallParser {
+        pub const fn new() -> Self {
+            Self {
+                state: State::Normal,
+                buffer: String::new(),
+                name_buf: String::new(),
+                args_buf: String::new(),
+                json_depth: 0,
+                in_string: false,
+                escape: false,
+            }
+        }
+
+        #[allow(clippy::too_many_lines)]
+        pub fn process(&mut self, content: &str) -> (Vec<ParsedToolCall>, Option<String>) {
+            self.buffer.push_str(content);
+
+            let mut calls = Vec::new();
+            let mut text_out = None;
+
+            loop {
+                match self.state {
+                    State::Normal => {
+                        if let Some(pos) = self.buffer.find(OPEN_DELIM) {
+                            let before = &self.buffer[..pos];
+                            if !before.is_empty() {
+                                append(&mut text_out, before);
+                            }
+                            self.buffer = self.buffer[pos + OPEN_DELIM.len()..].to_string();
+                            self.name_buf.clear();
+                            self.args_buf.clear();
+                            self.reset_json_state();
+                            self.state = State::InName;
+                            continue;
+                        }
+                        if let Some(partial_len) = partial_prefix_at_end(&self.buffer, OPEN_DELIM) {
+                            let flush_end = self.buffer.len() - partial_len;
+                            let flush = &self.buffer[..flush_end];
+                            if !flush.is_empty() {
+                                append(&mut text_out, flush);
+                            }
+                            self.buffer = self.buffer[flush_end..].to_string();
+                            self.state = State::PartialOpen;
+                            break;
+                        }
+                        if !self.buffer.is_empty() {
+                            append(&mut text_out, &self.buffer.clone());
+                            self.buffer.clear();
+                        }
+                        break;
+                    }
+                    State::PartialOpen => {
+                        if self.buffer.len() >= OPEN_DELIM.len() {
+                            if self.buffer.starts_with(OPEN_DELIM) {
+                                self.buffer = self.buffer[OPEN_DELIM.len()..].to_string();
+                                self.name_buf.clear();
+                                self.args_buf.clear();
+                                self.reset_json_state();
+                                self.state = State::InName;
+                                continue;
+                            }
+                            self.state = State::Normal;
+                            continue;
+                        }
+                        if OPEN_DELIM.starts_with(&self.buffer) {
+                            break;
+                        }
+                        self.state = State::Normal;
+                    }
+                    State::InName => {
+                        if let Some(pos) = self.buffer.find('{') {
+                            let candidate = &self.buffer[..pos];
+                            if !candidate.chars().all(is_tool_name_char) {
+                                self.flush_invalid_call(&mut text_out);
+                                self.state = State::Normal;
+                                continue;
+                            }
+                            self.name_buf.push_str(candidate);
+                            if self.name_buf.is_empty() {
+                                self.flush_invalid_call(&mut text_out);
+                                self.state = State::Normal;
+                                continue;
+                            }
+                            self.buffer = self.buffer[pos..].to_string();
+                            self.state = State::InArgs;
+                            continue;
+                        }
+
+                        let valid_prefix_len = self
+                            .buffer
+                            .char_indices()
+                            .find_map(|(idx, ch)| (!is_tool_name_char(ch)).then_some(idx))
+                            .unwrap_or(self.buffer.len());
+                        if valid_prefix_len < self.buffer.len() {
+                            self.name_buf.push_str(&self.buffer[..valid_prefix_len]);
+                            self.flush_invalid_call(&mut text_out);
+                            self.buffer = self.buffer[valid_prefix_len..].to_string();
+                            self.state = State::Normal;
+                            continue;
+                        }
+
+                        self.name_buf.push_str(&self.buffer);
+                        self.buffer.clear();
+                        break;
+                    }
+                    State::InArgs => {
+                        if let Some(end_idx) = self.consume_args_buffer() {
+                            calls.push(ParsedToolCall {
+                                name: self.name_buf.trim().to_string(),
+                                args: self.args_buf.clone(),
+                            });
+                            self.buffer = self.buffer[end_idx..].to_string();
+                            self.name_buf.clear();
+                            self.args_buf.clear();
+                            self.reset_json_state();
+                            self.state = State::Normal;
+                            continue;
+                        }
+                        self.buffer.clear();
+                        break;
+                    }
+                }
+            }
+
+            (calls, text_out)
+        }
+
+        pub fn finish(&mut self) -> Option<String> {
+            if self.buffer.is_empty() && self.name_buf.is_empty() && self.args_buf.is_empty() {
+                self.state = State::Normal;
+                return None;
+            }
+
+            let mut text = String::new();
+            match self.state {
+                State::Normal | State::PartialOpen => text.push_str(&self.buffer),
+                State::InName => {
+                    text.push_str(OPEN_DELIM);
+                    text.push_str(&self.name_buf);
+                    text.push_str(&self.buffer);
+                }
+                State::InArgs => {
+                    text.push_str(OPEN_DELIM);
+                    text.push_str(&self.name_buf);
+                    text.push_str(&self.args_buf);
+                    text.push_str(&self.buffer);
+                }
+            }
+
+            self.buffer.clear();
+            self.name_buf.clear();
+            self.args_buf.clear();
+            self.reset_json_state();
+            self.state = State::Normal;
+
+            (!text.is_empty()).then_some(text)
+        }
+
+        fn consume_args_buffer(&mut self) -> Option<usize> {
+            for (idx, ch) in self.buffer.char_indices() {
+                self.args_buf.push(ch);
+
+                if self.escape {
+                    self.escape = false;
+                    continue;
+                }
+
+                if self.in_string {
+                    match ch {
+                        '\\' => self.escape = true,
+                        '"' => self.in_string = false,
+                        _ => {}
+                    }
+                    continue;
+                }
+
+                match ch {
+                    '"' => self.in_string = true,
+                    '{' => self.json_depth += 1,
+                    '}' => {
+                        self.json_depth = self.json_depth.saturating_sub(1);
+                        if self.json_depth == 0 {
+                            return Some(idx + ch.len_utf8());
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
+            None
+        }
+
+        fn flush_invalid_call(&mut self, text_out: &mut Option<String>) {
+            append(text_out, OPEN_DELIM);
+            append(text_out, &self.name_buf);
+            self.name_buf.clear();
+            self.args_buf.clear();
+            self.reset_json_state();
+        }
+
+        fn reset_json_state(&mut self) {
+            self.json_depth = 0;
+            self.in_string = false;
+            self.escape = false;
+        }
+    }
+
+    fn is_tool_name_char(ch: char) -> bool {
+        ch.is_ascii_alphanumeric() || ch == '_' || ch == '-'
     }
 
     fn append(target: &mut Option<String>, s: &str) {
@@ -576,6 +892,7 @@ struct StreamState {
     finish_reason: FinishReason,
     saw_done: bool,
     think_parser: think_tags::ThinkTagParser,
+    default_tool_call_parser: default_tool_call::ToolCallParser,
     #[cfg(feature = "gemma4")]
     channel_parser: Option<channel_thought::ChannelThoughtParser>,
     #[cfg(feature = "gemma4")]
@@ -596,6 +913,7 @@ impl StreamState {
             finish_reason: FinishReason::Stop,
             saw_done: false,
             think_parser: think_tags::ThinkTagParser::new(),
+            default_tool_call_parser: default_tool_call::ToolCallParser::new(),
             #[cfg(feature = "gemma4")]
             channel_parser: if is_gemma4 {
                 Some(channel_thought::ChannelThoughtParser::new())
@@ -628,23 +946,25 @@ impl StreamState {
             self.events.extend(self.blocks.thinking_delta(think));
         }
 
-        // Step 2: Pass text through Gemma 4 tool call parser or emit directly.
+        // Step 2: Pass text through the model-family tool call parser.
         #[cfg(feature = "gemma4")]
         let final_text = if let Some(text) = text_part {
             if let Some(parser) = self.tool_call_parser.as_mut() {
                 let (calls, remaining) = parser.process(&text);
                 for call in calls {
-                    self.emit_gemma4_tool_call(call);
+                    self.emit_tool_call(call.name, call.args);
                 }
                 remaining
             } else {
-                Some(text)
+                self.process_default_tool_call_text(&text)
             }
         } else {
             None
         };
         #[cfg(not(feature = "gemma4"))]
-        let final_text = text_part;
+        let final_text = text_part
+            .as_deref()
+            .and_then(|text| self.process_default_tool_call_text(text));
 
         if let Some(text) = final_text
             && !text.is_empty()
@@ -655,35 +975,98 @@ impl StreamState {
         }
     }
 
-    #[cfg(feature = "gemma4")]
-    fn emit_gemma4_tool_call(&mut self, call: tool_call::ParsedToolCall) {
+    fn process_default_tool_call_text(&mut self, text: &str) -> Option<String> {
+        let (calls, remaining) = self.default_tool_call_parser.process(text);
+        for call in calls {
+            self.emit_tool_call(call.name, call.args);
+        }
+        remaining
+    }
+
+    fn emit_tool_call(&mut self, name: String, args: String) {
         self.events.extend(self.blocks.close_text());
         self.events.extend(self.blocks.close_thinking(None));
 
         let id = Uuid::new_v4().to_string();
         self.has_tool_calls = true;
-        let (tc_content_index, start_ev) = self.blocks.open_tool_call(id.clone(), call.name);
+        let (tc_content_index, start_ev) = self.blocks.open_tool_call(id, name);
         self.events.push(start_ev);
 
-        if !call.args.is_empty() {
-            self.events.push(BlockAccumulator::tool_call_delta(
-                tc_content_index,
-                call.args,
-            ));
+        if !args.is_empty() {
+            self.events
+                .push(BlockAccumulator::tool_call_delta(tc_content_index, args));
         }
     }
 
-    fn flush_pending_non_gemma_thinking(&mut self) {
-        let (thinking_part, text_part) = self.think_parser.finish();
+    fn flush_pending_parsers(&mut self, preserve_partial_tool_call: bool) {
+        #[cfg(not(feature = "gemma4"))]
+        let _ = preserve_partial_tool_call;
 
+        #[cfg(feature = "gemma4")]
+        if let Some(parser) = self.channel_parser.as_mut() {
+            let (thinking_part, text_part) = parser.finish();
+            self.emit_thinking(thinking_part);
+
+            if let Some(text) = text_part
+                && !text.is_empty()
+            {
+                self.process_gemma_tool_call_text(&text);
+            }
+
+            self.flush_pending_gemma_tool_call(preserve_partial_tool_call);
+            return;
+        }
+
+        let (thinking_part, text_part) = self.think_parser.finish();
+        self.emit_thinking(thinking_part);
+
+        if let Some(text) = text_part
+            && !text.is_empty()
+        {
+            let final_text = self.process_default_tool_call_text(&text);
+            self.emit_text(final_text);
+        }
+
+        let pending_tool_text = self.default_tool_call_parser.finish();
+        self.emit_text(pending_tool_text);
+    }
+
+    fn emit_thinking(&mut self, thinking_part: Option<String>) {
         if let Some(think) = thinking_part
             && !think.is_empty()
         {
             self.events.extend(self.blocks.ensure_thinking_open());
             self.events.extend(self.blocks.thinking_delta(think));
         }
+    }
 
-        if let Some(text) = text_part
+    #[cfg(feature = "gemma4")]
+    fn process_gemma_tool_call_text(&mut self, text: &str) {
+        if let Some(parser) = self.tool_call_parser.as_mut() {
+            let (calls, remaining) = parser.process(text);
+            for call in calls {
+                self.emit_tool_call(call.name, call.args);
+            }
+            self.emit_text(remaining);
+        }
+    }
+
+    #[cfg(feature = "gemma4")]
+    fn flush_pending_gemma_tool_call(&mut self, preserve_partial_tool_call: bool) {
+        if let Some(parser) = self.tool_call_parser.as_mut()
+            && let Some(finished) = parser.finish(preserve_partial_tool_call)
+        {
+            match finished {
+                tool_call::ToolCallFinish::Text(text) => self.emit_text(Some(text)),
+                tool_call::ToolCallFinish::PartialToolCall { name, args } => {
+                    self.emit_tool_call(name, args);
+                }
+            }
+        }
+    }
+
+    fn emit_text(&mut self, text: Option<String>) {
+        if let Some(text) = text
             && !text.is_empty()
         {
             self.events.extend(self.blocks.close_thinking(None));
@@ -693,7 +1076,8 @@ impl StreamState {
     }
 
     fn finalize(mut self) -> Vec<AssistantMessageEvent> {
-        self.flush_pending_non_gemma_thinking();
+        let preserve_partial_tool_call = self.finish_reason == FinishReason::Length;
+        self.flush_pending_parsers(preserve_partial_tool_call);
         self.events.extend(finalize_blocks(&mut self.blocks));
 
         let stop_reason = match self.finish_reason {
@@ -717,7 +1101,7 @@ impl StreamState {
     }
 
     fn finalize_error(mut self, message: impl Into<String>) -> Vec<AssistantMessageEvent> {
-        self.flush_pending_non_gemma_thinking();
+        self.flush_pending_parsers(false);
         self.events.extend(finalize_blocks(&mut self.blocks));
         self.events
             .push(AssistantMessageEvent::error(message.into()));
@@ -725,7 +1109,7 @@ impl StreamState {
     }
 
     fn finalize_cancelled(mut self) -> Vec<AssistantMessageEvent> {
-        self.flush_pending_non_gemma_thinking();
+        self.flush_pending_parsers(false);
         self.events.extend(finalize_blocks(&mut self.blocks));
         self.events
             .push(cancelled_event("local inference cancelled"));
@@ -746,6 +1130,23 @@ fn cancelled_event(message: impl Into<String>) -> AssistantMessageEvent {
     }
 }
 
+async fn race_pre_stream_cancellation<T, F>(
+    cancellation_token: &CancellationToken,
+    operation: F,
+) -> Result<T, AssistantMessageEvent>
+where
+    F: std::future::Future<Output = Result<T, AssistantMessageEvent>>,
+{
+    if cancellation_token.is_cancelled() {
+        return Err(cancelled_event("local inference cancelled"));
+    }
+
+    tokio::select! {
+        () = cancellation_token.cancelled() => Err(cancelled_event("local inference cancelled")),
+        result = operation => result,
+    }
+}
+
 // ─── Stream implementation ──────────────────────────────────────────────────
 
 #[allow(clippy::too_many_lines)]
@@ -757,23 +1158,15 @@ fn local_stream<'a>(
     cancellation_token: CancellationToken,
 ) -> impl Stream<Item = AssistantMessageEvent> + Send + 'a {
     stream::once(async move {
-        if cancellation_token.is_cancelled() {
-            return stream::iter(vec![
-                AssistantMessageEvent::Start,
-                cancelled_event("local inference cancelled"),
-            ]);
-        }
-        if let Err(e) = local_model.ensure_ready().await {
-            return stream::iter(vec![
-                AssistantMessageEvent::Start,
-                AssistantMessageEvent::error(format!("local model not ready: {e}")),
-            ]);
-        }
-        if cancellation_token.is_cancelled() {
-            return stream::iter(vec![
-                AssistantMessageEvent::Start,
-                cancelled_event("local inference cancelled"),
-            ]);
+        if let Err(event) = race_pre_stream_cancellation(&cancellation_token, async {
+            local_model
+                .ensure_ready()
+                .await
+                .map_err(|e| AssistantMessageEvent::error(format!("local model not ready: {e}")))
+        })
+        .await
+        {
+            return stream::iter(vec![AssistantMessageEvent::Start, event]);
         }
 
         #[cfg(feature = "gemma4")]
@@ -822,43 +1215,30 @@ fn local_stream<'a>(
         #[cfg(not(feature = "gemma4"))]
         let use_manual_format = false;
 
-        let prompt = if use_manual_format {
-            #[cfg(feature = "gemma4")]
-            {
-                let p = crate::convert::format_gemma4_prompt(&local_messages);
-                debug!(prompt_len = p.len(), "gemma4 prompt formatted manually");
-                p
-            }
-            #[cfg(not(feature = "gemma4"))]
-            unreachable!()
-        } else {
-            let chat_messages: Vec<LlamaChatMessage> = local_messages
-                .into_iter()
-                .filter_map(|m| {
-                    match LlamaChatMessage::new(m.role.clone(), m.content) {
-                        Ok(msg) => Some(msg),
-                        Err(e) => {
-                            warn!(role = %m.role, error = %e, "failed to create chat message, skipping");
-                            None
-                        }
-                    }
-                })
-                .collect();
-
-            debug!(chat_message_count = chat_messages.len(), "built chat messages");
-
-            match runner.apply_chat_template(&chat_messages, true) {
-                Ok(p) => {
-                    debug!(prompt_len = p.len(), "chat template applied");
-                    p
-                }
+        let max_prompt_tokens = prompt_token_budget(local_model.config().context_length);
+        let local_messages =
+            match truncate_messages_to_context(local_messages, max_prompt_tokens, |messages| {
+                let prompt = build_prompt(runner, messages, use_manual_format)?;
+                runner.tokenize(&prompt).map(|tokens| tokens.len())
+            }) {
+                Ok(messages) => messages,
                 Err(e) => {
-                    error!(error = %e, "chat template application failed");
+                    error!(error = %e, "prompt truncation failed");
                     return stream::iter(vec![
                         AssistantMessageEvent::Start,
-                        AssistantMessageEvent::error(format!("chat template error: {e}")),
+                        AssistantMessageEvent::error(format!("prompt truncation error: {e}")),
                     ]);
                 }
+            };
+
+        let prompt = match build_prompt(runner, &local_messages, use_manual_format) {
+            Ok(prompt) => prompt,
+            Err(e) => {
+                error!(error = %e, "chat template application failed");
+                return stream::iter(vec![
+                    AssistantMessageEvent::Start,
+                    AssistantMessageEvent::error(format!("chat template error: {e}")),
+                ]);
             }
         };
 
@@ -875,7 +1255,7 @@ fn local_stream<'a>(
 
         debug!(token_count = tokens.len(), "prompt tokenized");
 
-        let mut rx = runner.generate_stream(
+        let rx = runner.generate_stream(
             tokens,
             generation_options_from_stream_options(options),
             cancellation_token.clone(),
@@ -885,41 +1265,134 @@ fn local_stream<'a>(
         // Arc keeps the model alive independently.
         drop(state_guard);
 
-        let mut state = StreamState::new(is_gemma4);
-        while let Some(event) = rx.recv().await {
-            if cancellation_token.is_cancelled() {
-                return stream::iter(state.finalize_cancelled());
-            }
-            match event {
-                TokenEvent::Token(text) => state.process_token(&text),
-                TokenEvent::Done {
-                    prompt_tokens,
-                    completion_tokens,
-                    finish_reason,
-                } => {
-                    state.prompt_tokens = prompt_tokens;
-                    state.completion_tokens = completion_tokens;
-                    state.finish_reason = finish_reason;
-                    state.saw_done = true;
-                    break;
-                }
-                TokenEvent::Error(msg) => {
-                    error!(error = %msg, "error during local streaming");
-                    return stream::iter(
-                        state.finalize_error(format!("local inference error: {msg}"))
-                    );
-                }
-            }
-        }
-
-        if state.saw_done {
-            stream::iter(state.finalize())
-        } else {
-            warn!("local stream ended without Done; emitting terminal error");
-            stream::iter(state.finalize_eof_without_done())
-        }
+        let events = drain_token_stream(rx, &cancellation_token, is_gemma4).await;
+        stream::iter(events)
     })
     .flatten()
+}
+
+// ─── Context truncation ─────────────────────────────────────────────────────
+
+fn build_prompt(
+    runner: &crate::runner::LlamaRunner,
+    messages: &[crate::convert::LocalMessage],
+    use_manual_format: bool,
+) -> Result<String, LocalModelError> {
+    #[cfg(feature = "gemma4")]
+    if use_manual_format {
+        let prompt = crate::convert::format_gemma4_prompt(messages);
+        debug!(
+            prompt_len = prompt.len(),
+            "gemma4 prompt formatted manually"
+        );
+        return Ok(prompt);
+    }
+    #[cfg(not(feature = "gemma4"))]
+    let _ = use_manual_format;
+
+    let chat_messages: Vec<LlamaChatMessage> = messages
+        .iter()
+        .filter_map(
+            |m| match LlamaChatMessage::new(m.role.clone(), m.content.clone()) {
+                Ok(msg) => Some(msg),
+                Err(e) => {
+                    warn!(role = %m.role, error = %e, "failed to create chat message, skipping");
+                    None
+                }
+            },
+        )
+        .collect();
+
+    debug!(
+        chat_message_count = chat_messages.len(),
+        "built chat messages"
+    );
+    let prompt = runner.apply_chat_template(&chat_messages, true)?;
+    debug!(prompt_len = prompt.len(), "chat template applied");
+    Ok(prompt)
+}
+
+fn prompt_token_budget(context_length: usize) -> usize {
+    if context_length <= 1 {
+        context_length
+    } else {
+        context_length - 1
+    }
+}
+
+fn truncate_messages_to_context<E>(
+    mut messages: Vec<crate::convert::LocalMessage>,
+    max_prompt_tokens: usize,
+    token_count: impl Fn(&[crate::convert::LocalMessage]) -> Result<usize, E>,
+) -> Result<Vec<crate::convert::LocalMessage>, E> {
+    loop {
+        if token_count(&messages)? <= max_prompt_tokens {
+            return Ok(messages);
+        }
+
+        let Some(drop_idx) = messages.iter().position(|m| m.role != "system") else {
+            return Ok(messages);
+        };
+
+        messages.remove(drop_idx);
+        drop_leading_tool_results(&mut messages);
+    }
+}
+
+fn drop_leading_tool_results(messages: &mut Vec<crate::convert::LocalMessage>) {
+    while let Some(idx) = messages.iter().position(|m| m.role != "system")
+        && messages[idx].role == "tool"
+    {
+        messages.remove(idx);
+    }
+}
+
+async fn drain_token_stream(
+    mut rx: tokio::sync::mpsc::Receiver<TokenEvent>,
+    cancellation_token: &CancellationToken,
+    is_gemma4: bool,
+) -> Vec<AssistantMessageEvent> {
+    let mut state = StreamState::new(is_gemma4);
+    loop {
+        let event = tokio::select! {
+            biased;
+            () = cancellation_token.cancelled() => {
+                drop(rx);
+                return state.finalize_cancelled();
+            }
+            event = rx.recv() => event,
+        };
+
+        let Some(event) = event else {
+            break;
+        };
+
+        match event {
+            TokenEvent::Token(text) => state.process_token(&text),
+            TokenEvent::Done {
+                prompt_tokens,
+                completion_tokens,
+                finish_reason,
+            } => {
+                state.prompt_tokens = prompt_tokens;
+                state.completion_tokens = completion_tokens;
+                state.finish_reason = finish_reason;
+                state.saw_done = true;
+                break;
+            }
+            TokenEvent::Error(msg) => {
+                error!(error = %msg, "error during local streaming");
+                return state.finalize_error(format!("local inference error: {msg}"));
+            }
+        }
+    }
+
+    if state.saw_done {
+        state.finalize()
+    } else {
+        warn!("local stream ended without Done; emitting terminal error");
+        state.finalize_eof_without_done()
+    }
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -946,6 +1419,134 @@ mod tests {
     use super::delimiter::partial_prefix_at_end;
     use super::think_tags::ThinkTagParser;
     use super::*;
+
+    fn local_message(role: &str, content: &str) -> crate::convert::LocalMessage {
+        crate::convert::LocalMessage {
+            role: role.to_string(),
+            content: content.to_string(),
+        }
+    }
+
+    fn content_token_count(
+        messages: &[crate::convert::LocalMessage],
+    ) -> Result<usize, std::convert::Infallible> {
+        Ok(messages
+            .iter()
+            .map(|message| message.content.split_whitespace().count())
+            .sum())
+    }
+
+    #[test]
+    fn prompt_token_budget_reserves_generation_room() {
+        assert_eq!(prompt_token_budget(0), 0);
+        assert_eq!(prompt_token_budget(1), 1);
+        assert_eq!(prompt_token_budget(4), 3);
+    }
+
+    #[test]
+    fn context_truncation_keeps_messages_when_prompt_fits() {
+        let messages = vec![
+            local_message("system", "sys"),
+            local_message("user", "hello"),
+            local_message("assistant", "hi"),
+        ];
+
+        let truncated =
+            truncate_messages_to_context(messages.clone(), 8, content_token_count).unwrap();
+
+        assert_eq!(truncated, messages);
+    }
+
+    #[test]
+    fn context_truncation_drops_oldest_non_system_messages() {
+        let messages = vec![
+            local_message("system", "sys"),
+            local_message("user", "old user"),
+            local_message("assistant", "old assistant"),
+            local_message("user", "recent user"),
+        ];
+
+        let truncated = truncate_messages_to_context(messages, 3, content_token_count).unwrap();
+
+        assert_eq!(
+            truncated,
+            vec![
+                local_message("system", "sys"),
+                local_message("user", "recent user"),
+            ]
+        );
+    }
+
+    #[test]
+    fn context_truncation_removes_orphaned_leading_tool_results() {
+        let messages = vec![
+            local_message("system", "sys"),
+            local_message("user", "old user"),
+            local_message("assistant", "called tool"),
+            local_message("tool", "tool result"),
+            local_message("user", "recent"),
+        ];
+
+        let truncated = truncate_messages_to_context(messages, 2, content_token_count).unwrap();
+
+        assert_eq!(
+            truncated,
+            vec![
+                local_message("system", "sys"),
+                local_message("user", "recent"),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn token_stream_cancellation_wins_while_waiting_for_runner_event() {
+        let (_tx, rx) = tokio::sync::mpsc::channel(1);
+        let token = CancellationToken::new();
+        let cancel_token = token.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            cancel_token.cancel();
+        });
+
+        let events = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            drain_token_stream(rx, &token, false),
+        )
+        .await
+        .expect("cancellation should interrupt a quiet runner channel");
+
+        assert!(matches!(
+            events.last(),
+            Some(AssistantMessageEvent::Error {
+                stop_reason: StopReason::Aborted,
+                ..
+            })
+        ));
+    }
+
+    #[tokio::test]
+    async fn token_stream_cancellation_beats_ready_buffered_event() {
+        let (tx, rx) = tokio::sync::mpsc::channel(1);
+        tx.send(TokenEvent::Done {
+            prompt_tokens: 1,
+            completion_tokens: 0,
+            finish_reason: FinishReason::Stop,
+        })
+        .await
+        .unwrap();
+        let token = CancellationToken::new();
+        token.cancel();
+
+        let events = drain_token_stream(rx, &token, false).await;
+
+        assert!(matches!(
+            events.last(),
+            Some(AssistantMessageEvent::Error {
+                stop_reason: StopReason::Aborted,
+                ..
+            })
+        ));
+    }
 
     #[test]
     fn think_tag_single_chunk() {
@@ -1028,6 +1629,112 @@ mod tests {
     }
 
     #[test]
+    fn default_tool_call_single_chunk() {
+        let mut parser = default_tool_call::ToolCallParser::new();
+        let (calls, text) = parser.process(r#"call:read_file{"path":"foo.rs"}"#);
+
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "read_file");
+        assert_eq!(calls[0].args, r#"{"path":"foo.rs"}"#);
+        assert!(text.is_none());
+        assert!(parser.finish().is_none());
+    }
+
+    #[test]
+    fn default_tool_call_cross_chunk() {
+        let mut parser = default_tool_call::ToolCallParser::new();
+        let (calls1, text1) = parser.process(r"call:read_");
+        assert!(calls1.is_empty());
+        assert!(text1.is_none());
+
+        let (calls2, text2) = parser.process(r#"file{"path":"foo.rs"} trailing"#);
+        assert_eq!(calls2.len(), 1);
+        assert_eq!(calls2[0].name, "read_file");
+        assert_eq!(calls2[0].args, r#"{"path":"foo.rs"}"#);
+        assert_eq!(text2.as_deref(), Some(" trailing"));
+    }
+
+    #[test]
+    fn default_tool_call_handles_nested_json_and_strings() {
+        let mut parser = default_tool_call::ToolCallParser::new();
+        let (calls, text) =
+            parser.process(r#"prefix call:write_file{"text":"{\"k\":1}","meta":{"n":1}}"#);
+
+        assert_eq!(text.as_deref(), Some("prefix "));
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "write_file");
+        assert_eq!(calls[0].args, r#"{"text":"{\"k\":1}","meta":{"n":1}}"#);
+    }
+
+    #[test]
+    fn default_tool_call_invalid_shape_remains_text() {
+        let mut parser = default_tool_call::ToolCallParser::new();
+        let (calls, text) = parser.process("please call: read_file next");
+
+        assert!(calls.is_empty());
+        assert_eq!(text.as_deref(), Some("please call: read_file next"));
+        assert!(parser.finish().is_none());
+    }
+
+    #[test]
+    fn default_tool_call_incomplete_flushes_as_text_on_finalize() {
+        let mut state = StreamState::new(false);
+        state.process_token("Before call:read_file{\"path\"");
+
+        let events = state.finalize();
+        let text_deltas: Vec<&str> = events
+            .iter()
+            .filter_map(|event| match event {
+                AssistantMessageEvent::TextDelta { delta, .. } => Some(delta.as_str()),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(text_deltas, vec!["Before ", "call:read_file{\"path\""]);
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, AssistantMessageEvent::ToolCallStart { .. }))
+        );
+    }
+
+    #[test]
+    fn non_gemma_stream_state_emits_tool_call_events() {
+        let mut state = StreamState::new(false);
+        state.process_token(r#"I'll inspect that. call:read_file{"path":"foo.rs"}"#);
+
+        let events = state.finalize();
+
+        assert!(
+            events.iter().any(|event| matches!(
+                event,
+                AssistantMessageEvent::ToolCallStart { name, .. } if name == "read_file"
+            )),
+            "expected tool call start in events: {events:?}"
+        );
+        assert!(
+            events.iter().any(|event| matches!(
+                event,
+                AssistantMessageEvent::ToolCallDelta { delta, .. } if delta == r#"{"path":"foo.rs"}"#
+            )),
+            "expected tool call delta in events: {events:?}"
+        );
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, AssistantMessageEvent::ToolCallEnd { .. })),
+            "expected tool call end in events: {events:?}"
+        );
+        assert!(matches!(
+            events.last(),
+            Some(AssistantMessageEvent::Done {
+                stop_reason: StopReason::ToolUse,
+                ..
+            })
+        ));
+    }
+
+    #[test]
     fn finalize_cancelled_emits_error_terminal() {
         let mut state = StreamState::new(false);
         let start = state.blocks.ensure_text_open();
@@ -1074,6 +1781,52 @@ mod tests {
             }
             other => panic!("expected Error terminal, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn race_pre_stream_cancellation_short_circuits() {
+        let token = CancellationToken::new();
+        token.cancel();
+
+        let result =
+            race_pre_stream_cancellation(&token, async { Ok::<_, AssistantMessageEvent>("ok") })
+                .await;
+
+        assert!(matches!(
+            result,
+            Err(AssistantMessageEvent::Error {
+                stop_reason: StopReason::Aborted,
+                ..
+            })
+        ));
+    }
+
+    #[tokio::test]
+    async fn race_pre_stream_cancellation_aborts_in_flight_readiness() {
+        let token = CancellationToken::new();
+        let cancel_token = token.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            cancel_token.cancel();
+        });
+
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            race_pre_stream_cancellation(&token, async {
+                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                Ok::<_, AssistantMessageEvent>("ready")
+            }),
+        )
+        .await
+        .expect("cancellation should resolve promptly");
+
+        assert!(matches!(
+            result,
+            Err(AssistantMessageEvent::Error {
+                stop_reason: StopReason::Aborted,
+                ..
+            })
+        ));
     }
 
     #[tokio::test]
@@ -1303,6 +2056,7 @@ mod tests {
     mod gemma4_tests {
         use super::super::channel_thought::ChannelThoughtParser;
         use super::super::delimiter::partial_prefix_at_end;
+        use super::*;
 
         #[test]
         fn channel_thought_single_chunk() {
@@ -1334,6 +2088,18 @@ mod tests {
             let (t2, txt2) = parser.process("nel|>after text");
             assert!(t2.is_none());
             assert_eq!(txt2.as_deref(), Some("after text"));
+        }
+
+        #[test]
+        fn channel_thought_finish_flushes_unclosed_thinking() {
+            let mut parser = ChannelThoughtParser::new();
+            let (thinking, text) = parser.process("<|channel>thought\nreasoning<chan");
+            assert_eq!(thinking.as_deref(), Some("reasoning"));
+            assert!(text.is_none());
+
+            let (thinking, text) = parser.finish();
+            assert_eq!(thinking.as_deref(), Some("<chan"));
+            assert!(text.is_none());
         }
 
         #[test]
@@ -1417,10 +2183,45 @@ mod tests {
         }
 
         #[test]
+        fn tool_call_finish_flushes_incomplete_call_as_text_by_default() {
+            use super::super::tool_call::{ToolCallFinish, ToolCallParser};
+
+            let mut parser = ToolCallParser::new();
+            let (calls, text) = parser.process(r#"<|tool_call>call:read_file{"path""#);
+            assert!(calls.is_empty());
+            assert!(text.is_none());
+
+            match parser.finish(false) {
+                Some(ToolCallFinish::Text(text)) => {
+                    assert_eq!(text, r#"<|tool_call>call:read_file{"path""#);
+                }
+                other => panic!("expected text flush, got {other:?}"),
+            }
+        }
+
+        #[test]
+        fn tool_call_finish_preserves_length_truncated_call() {
+            use super::super::tool_call::{ToolCallFinish, ToolCallParser};
+
+            let mut parser = ToolCallParser::new();
+            let (calls, text) = parser.process(r#"<|tool_call>call:read_file{"path""#);
+            assert!(calls.is_empty());
+            assert!(text.is_none());
+
+            match parser.finish(true) {
+                Some(ToolCallFinish::PartialToolCall { name, args }) => {
+                    assert_eq!(name, "read_file");
+                    assert_eq!(args, r#"{"path""#);
+                }
+                other => panic!("expected partial tool call, got {other:?}"),
+            }
+        }
+
+        #[test]
         fn tool_call_partial_match_is_utf8_safe() {
             use super::super::tool_call::ToolCallParser;
 
-            let haystack = r#"prefix🙂<tool_cal"#;
+            let haystack = r"prefix🙂<tool_cal";
             assert_eq!(partial_prefix_at_end(haystack, "<tool_call|>"), Some(9));
 
             let mut parser = ToolCallParser::new();
@@ -1459,7 +2260,76 @@ reasoning<channel|><|tool_call>call:read_file{"path":"foo.rs"}<tool_call|>"#;
             let (calls, remaining) = tool_parser.process(&text);
             assert_eq!(calls.len(), 1);
             assert_eq!(calls[0].name, "read_file");
-            assert!(remaining.filter(|s| !s.is_empty()).is_none());
+            assert!(remaining.as_ref().is_none_or(|s| s.is_empty()));
+        }
+
+        #[test]
+        fn gemma_finalize_flushes_unclosed_thinking() {
+            let mut state = StreamState::new(true);
+            state.process_token("<|channel>thought\nreasoning<chan");
+
+            let events = state.finalize();
+            let thinking_deltas: Vec<&str> = events
+                .iter()
+                .filter_map(|event| match event {
+                    AssistantMessageEvent::ThinkingDelta { delta, .. } => Some(delta.as_str()),
+                    _ => None,
+                })
+                .collect();
+
+            assert_eq!(thinking_deltas, vec!["reasoning", "<chan"]);
+            assert!(
+                events
+                    .iter()
+                    .any(|event| matches!(event, AssistantMessageEvent::ThinkingEnd { .. }))
+            );
+        }
+
+        #[test]
+        fn gemma_finalize_flushes_incomplete_tool_call_as_text_on_stop() {
+            let mut state = StreamState::new(true);
+            state.process_token(r#"<|tool_call>call:read_file{"path""#);
+
+            let events = state.finalize();
+            let text_deltas: Vec<&str> = events
+                .iter()
+                .filter_map(|event| match event {
+                    AssistantMessageEvent::TextDelta { delta, .. } => Some(delta.as_str()),
+                    _ => None,
+                })
+                .collect();
+
+            assert_eq!(text_deltas, vec![r#"<|tool_call>call:read_file{"path""#]);
+            assert!(
+                !events
+                    .iter()
+                    .any(|event| matches!(event, AssistantMessageEvent::ToolCallStart { .. }))
+            );
+        }
+
+        #[test]
+        fn gemma_finalize_preserves_length_truncated_tool_call() {
+            let mut state = StreamState::new(true);
+            state.finish_reason = FinishReason::Length;
+            state.process_token(r#"<|tool_call>call:read_file{"path""#);
+
+            let events = state.finalize();
+
+            assert!(events.iter().any(|event| matches!(
+                event,
+                AssistantMessageEvent::ToolCallStart { name, .. } if name == "read_file"
+            )));
+            assert!(events.iter().any(|event| matches!(
+                event,
+                AssistantMessageEvent::ToolCallDelta { delta, .. } if delta == r#"{"path""#
+            )));
+            assert!(matches!(
+                events.last(),
+                Some(AssistantMessageEvent::Done {
+                    stop_reason: StopReason::Length,
+                    ..
+                })
+            ));
         }
 
         #[test]

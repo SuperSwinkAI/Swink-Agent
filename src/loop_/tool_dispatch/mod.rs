@@ -262,6 +262,7 @@ pub async fn execute_tools_concurrently(
             &steering_detected,
             &transfer_detected,
             &batch_token,
+            tx,
         )
         .await;
 
@@ -471,6 +472,9 @@ mod tests {
 
     struct StopBatchPolicy;
     struct StopOnToolTwoPolicy;
+    struct SkipRewrittenPathPolicy {
+        evaluations: Arc<AtomicU32>,
+    }
     struct OriginalIndexStrategy;
     struct DuplicateIndexStrategy;
 
@@ -511,6 +515,29 @@ mod tests {
                 .unwrap()
                 .push(ctx.execution_root.map(std::path::Path::to_path_buf));
             PreDispatchVerdict::Continue
+        }
+    }
+
+    impl PreDispatchPolicy for SkipRewrittenPathPolicy {
+        fn name(&self) -> &'static str {
+            "skip-rewritten-path"
+        }
+
+        fn evaluate(&self, ctx: &mut ToolDispatchContext<'_>) -> PreDispatchVerdict {
+            self.evaluations.fetch_add(1, Ordering::SeqCst);
+
+            if ctx
+                .arguments
+                .get("path")
+                .and_then(serde_json::Value::as_str)
+                == Some("rewritten.txt")
+            {
+                PreDispatchVerdict::Skip(
+                    "rewritten approval arguments must still pass pre-dispatch policy".to_string(),
+                )
+            } else {
+                PreDispatchVerdict::Continue
+            }
         }
     }
 
@@ -973,6 +1000,63 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn synchronous_approval_panic_rejects_without_dispatch() {
+        let tool = Arc::new(MockTool::new("delete_file").with_requires_approval(true));
+        let approve_tool: Box<crate::agent_options::ApproveToolFn> =
+            Box::new(|_request| panic!("sync approval panic"));
+        let config = test_loop_config_with_options(
+            vec![],
+            vec![tool.clone() as Arc<dyn crate::tool::AgentTool>],
+            Some(approve_tool),
+            ApprovalMode::Enabled,
+            ToolExecutionPolicy::Concurrent,
+        );
+        let tool_calls = vec![ToolCallInfo {
+            id: "call_sync_panic".to_string(),
+            name: "delete_file".to_string(),
+            arguments: json!({ "path": "danger.txt" }),
+            is_incomplete: false,
+        }];
+        let cancellation_token = CancellationToken::new();
+        let (tx, mut rx) = mpsc::channel(8);
+
+        let outcome =
+            execute_tools_concurrently(&config, &tool_calls, &cancellation_token, &tx).await;
+
+        let ToolExecOutcome::Completed { results, .. } = outcome else {
+            panic!("expected completed outcome");
+        };
+        assert_eq!(results.len(), 1);
+        assert!(results[0].is_error);
+        assert_eq!(tool.execution_count(), 0);
+        assert!(matches!(
+            results[0].content.as_slice(),
+            [ContentBlock::Text { text }] if text.contains("approval callback panicked")
+        ));
+
+        let events = drain_events(&mut rx);
+        let start_count = events
+            .iter()
+            .filter(|event| matches!(event, AgentEvent::ToolExecutionStart { .. }))
+            .count();
+        assert_eq!(
+            start_count, 0,
+            "synchronous approval panic must not look started"
+        );
+        assert!(matches!(
+            events.as_slice(),
+            [
+                AgentEvent::ToolApprovalRequested { .. },
+                AgentEvent::ToolApprovalResolved {
+                    approved: false,
+                    ..
+                },
+                AgentEvent::ToolExecutionEnd { .. }
+            ]
+        ));
+    }
+
+    #[tokio::test]
     async fn tool_execution_start_uses_approved_arguments() {
         let tool = Arc::new(MockTool::new("write_file"));
         let approve_tool: Box<crate::agent_options::ApproveToolFn> = Box::new(|_request| {
@@ -1031,6 +1115,69 @@ mod tests {
                 "path": "rewritten.txt",
                 "content": "updated"
             })
+        );
+    }
+
+    #[tokio::test]
+    async fn approved_argument_rewrites_rerun_pre_dispatch_policies() {
+        let tool = Arc::new(MockTool::new("write_file"));
+        let policy_evaluations = Arc::new(AtomicU32::new(0));
+        let approve_tool: Box<crate::agent_options::ApproveToolFn> = Box::new(|_request| {
+            Box::pin(async {
+                ToolApproval::ApprovedWith(json!({
+                    "path": "rewritten.txt",
+                    "content": "updated"
+                }))
+            })
+        });
+        let config = test_loop_config_with_options(
+            vec![Arc::new(SkipRewrittenPathPolicy {
+                evaluations: Arc::clone(&policy_evaluations),
+            })],
+            vec![tool.clone() as Arc<dyn crate::tool::AgentTool>],
+            Some(approve_tool),
+            ApprovalMode::Enabled,
+            ToolExecutionPolicy::Concurrent,
+        );
+        let tool_calls = vec![ToolCallInfo {
+            id: "call_rewritten".to_string(),
+            name: "write_file".to_string(),
+            arguments: json!({
+                "path": "original.txt",
+                "content": "old"
+            }),
+            is_incomplete: false,
+        }];
+        let cancellation_token = CancellationToken::new();
+        let (tx, mut rx) = mpsc::channel(8);
+
+        let outcome =
+            execute_tools_concurrently(&config, &tool_calls, &cancellation_token, &tx).await;
+
+        let ToolExecOutcome::Completed { results, .. } = outcome else {
+            panic!("expected completed outcome");
+        };
+        assert_eq!(results.len(), 1);
+        assert!(results[0].is_error);
+        assert_eq!(tool.execution_count(), 0);
+        assert_eq!(
+            policy_evaluations.load(Ordering::SeqCst),
+            2,
+            "pre-dispatch policies should run again on approval-rewritten arguments"
+        );
+        assert!(matches!(
+            results[0].content.as_slice(),
+            [ContentBlock::Text { text }]
+                if text.contains("rewritten approval arguments must still pass pre-dispatch policy")
+        ));
+
+        let start_count = drain_events(&mut rx)
+            .into_iter()
+            .filter(|event| matches!(event, AgentEvent::ToolExecutionStart { .. }))
+            .count();
+        assert_eq!(
+            start_count, 0,
+            "policy-rejected approval rewrites must not emit ToolExecutionStart"
         );
     }
 

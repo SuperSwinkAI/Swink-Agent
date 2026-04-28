@@ -8,6 +8,8 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter};
 use tokio::process::{Child, Command};
 
+use crate::domain::DomainFilter;
+
 /// Viewport dimensions for screenshots.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Viewport {
@@ -25,11 +27,33 @@ pub enum ExtractionPreset {
 }
 
 /// A single extracted element from a web page.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExtractedElement {
     pub tag: String,
     pub text: String,
     pub attributes: HashMap<String, String>,
+}
+
+/// Screenshot response plus the browser's final URL after redirects.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScreenshotOutput {
+    pub base64: String,
+    pub final_url: String,
+}
+
+/// Extraction response plus the browser's final URL after redirects.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExtractOutput {
+    pub elements: Vec<ExtractedElement>,
+    pub final_url: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct BrowserNavigationFilter {
+    allowlist: Vec<String>,
+    denylist: Vec<String>,
+    block_private_ips: bool,
 }
 
 /// Request sent to the Playwright bridge subprocess.
@@ -40,12 +64,14 @@ pub enum PlaywrightRequest {
         id: u64,
         url: String,
         viewport: Option<Viewport>,
+        filter: Option<BrowserNavigationFilter>,
     },
     Extract {
         id: u64,
         url: String,
         selector: Option<String>,
         preset: Option<ExtractionPreset>,
+        filter: Option<BrowserNavigationFilter>,
     },
     Ping {
         id: u64,
@@ -173,13 +199,15 @@ impl PlaywrightBridge {
         &mut self,
         url: &str,
         viewport: Option<Viewport>,
-    ) -> Result<String, PlaywrightError> {
+        domain_filter: Option<&DomainFilter>,
+    ) -> Result<ScreenshotOutput, PlaywrightError> {
         let id = self.next_id();
         let resp = self
             .send_request(PlaywrightRequest::Screenshot {
                 id,
                 url: url.to_owned(),
                 viewport,
+                filter: domain_filter.map(BrowserNavigationFilter::from),
             })
             .await?;
 
@@ -189,9 +217,7 @@ impl PlaywrightBridge {
             ));
         }
 
-        resp.data
-            .and_then(|v| v.as_str().map(String::from))
-            .ok_or_else(|| PlaywrightError::Communication("missing screenshot data".into()))
+        parse_screenshot_data(resp.data, url)
     }
 
     /// Extract elements from a web page using a CSS selector or preset.
@@ -200,7 +226,8 @@ impl PlaywrightBridge {
         url: &str,
         selector: Option<&str>,
         preset: Option<ExtractionPreset>,
-    ) -> Result<Vec<ExtractedElement>, PlaywrightError> {
+        domain_filter: Option<&DomainFilter>,
+    ) -> Result<ExtractOutput, PlaywrightError> {
         let id = self.next_id();
         let resp = self
             .send_request(PlaywrightRequest::Extract {
@@ -208,6 +235,7 @@ impl PlaywrightBridge {
                 url: url.to_owned(),
                 selector: selector.map(String::from),
                 preset,
+                filter: domain_filter.map(BrowserNavigationFilter::from),
             })
             .await?;
 
@@ -217,12 +245,7 @@ impl PlaywrightBridge {
             ));
         }
 
-        let data = resp
-            .data
-            .ok_or_else(|| PlaywrightError::Communication("missing extraction data".into()))?;
-
-        serde_json::from_value(data)
-            .map_err(|e| PlaywrightError::Communication(format!("failed to parse elements: {e}")))
+        parse_extract_data(resp.data, url)
     }
 
     // ── Internals ──────────────────────────────────────────────────────────
@@ -281,6 +304,80 @@ impl PlaywrightBridge {
     }
 }
 
+impl From<&DomainFilter> for BrowserNavigationFilter {
+    fn from(filter: &DomainFilter) -> Self {
+        Self {
+            allowlist: filter.allowlist.clone(),
+            denylist: filter.denylist.clone(),
+            block_private_ips: filter.block_private_ips,
+        }
+    }
+}
+
+fn parse_screenshot_data(
+    data: Option<serde_json::Value>,
+    requested_url: &str,
+) -> Result<ScreenshotOutput, PlaywrightError> {
+    let data =
+        data.ok_or_else(|| PlaywrightError::Communication("missing screenshot data".into()))?;
+
+    if let Some(base64) = data.as_str() {
+        return Ok(ScreenshotOutput {
+            base64: base64.to_owned(),
+            final_url: requested_url.to_owned(),
+        });
+    }
+
+    let base64 = data
+        .get("image")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| PlaywrightError::Communication("missing screenshot image data".into()))?
+        .to_owned();
+    let final_url = data
+        .get("finalUrl")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or(requested_url)
+        .to_owned();
+
+    Ok(ScreenshotOutput { base64, final_url })
+}
+
+fn parse_extract_data(
+    data: Option<serde_json::Value>,
+    requested_url: &str,
+) -> Result<ExtractOutput, PlaywrightError> {
+    let data =
+        data.ok_or_else(|| PlaywrightError::Communication("missing extraction data".into()))?;
+
+    if data.is_array() {
+        let elements = serde_json::from_value(data).map_err(|error| {
+            PlaywrightError::Communication(format!("failed to parse elements: {error}"))
+        })?;
+        return Ok(ExtractOutput {
+            elements,
+            final_url: requested_url.to_owned(),
+        });
+    }
+
+    let elements_value = data
+        .get("elements")
+        .cloned()
+        .ok_or_else(|| PlaywrightError::Communication("missing extraction elements".into()))?;
+    let elements = serde_json::from_value(elements_value).map_err(|error| {
+        PlaywrightError::Communication(format!("failed to parse elements: {error}"))
+    })?;
+    let final_url = data
+        .get("finalUrl")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or(requested_url)
+        .to_owned();
+
+    Ok(ExtractOutput {
+        elements,
+        final_url,
+    })
+}
+
 async fn write_bridge_script_temp_file() -> Result<PathBuf, PlaywrightError> {
     let sequence = BRIDGE_SCRIPT_COUNTER.fetch_add(1, Ordering::Relaxed);
     let timestamp = SystemTime::now()
@@ -324,7 +421,12 @@ mod tests {
     use std::path::Path;
     use std::process::Command as StdCommand;
 
-    use super::{BRIDGE_SCRIPT, resolve_node_path, write_bridge_script_temp_file};
+    use serde_json::json;
+
+    use super::{
+        BRIDGE_SCRIPT, parse_extract_data, parse_screenshot_data, resolve_node_path,
+        write_bridge_script_temp_file,
+    };
 
     #[tokio::test]
     async fn writes_unique_bridge_scripts_for_concurrent_startups() {
@@ -351,6 +453,124 @@ mod tests {
                 .await
                 .expect("temp script cleanup should succeed");
         }
+    }
+
+    #[test]
+    fn bridge_script_blocks_special_use_hosts() {
+        let bridge_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/playwright_bridge.js");
+        let node_script = format!(
+            r"
+const bridge = require({bridge_path});
+
+for (const host of [
+  '0.0.0.0',
+  '100.64.0.1',
+  '198.18.0.1',
+  '192.0.2.1',
+  '224.0.0.1',
+  '::',
+  '::1',
+  'fc00::1',
+  'fd00::1',
+  'fe80::1',
+  'ff02::1',
+  '2001:db8::1',
+  '::ffff:10.0.0.1',
+  '::ffff:127.0.0.1',
+  '0:0:0:0:0:ffff:c0a8:0101',
+]) {{
+  if (!bridge.isBlockedPrivateHost(host)) {{
+    throw new Error('private host should be blocked: ' + host);
+  }}
+}}
+for (const host of ['93.184.216.34', '2606:4700:4700::1111', '::ffff:93.184.216.34']) {{
+  if (bridge.isBlockedPrivateHost(host)) {{
+    throw new Error('public host should not be blocked: ' + host);
+  }}
+}}
+",
+            bridge_path = serde_json::to_string(&bridge_path.display().to_string())
+                .expect("path should serialize"),
+        );
+
+        let output = StdCommand::new(resolve_node_path(None))
+            .arg("-e")
+            .arg(node_script)
+            .output()
+            .expect("node should run bridge host assertions");
+
+        assert!(
+            output.status.success(),
+            "node assertions failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    fn bridge_script_filters_requests_without_playwright() {
+        let bridge_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/playwright_bridge.js");
+        let node_script = format!(
+            r"
+const bridge = require({bridge_path});
+
+void (async () => {{
+async function resolvesTo(addresses) {{
+  return addresses.map((address) => {{
+    const family = address.includes(':') ? 6 : 4;
+    return {{ address, family }};
+  }});
+}}
+
+if (!bridge.isBlockedPrivateHost('127.0.0.1') || !bridge.isBlockedPrivateHost('localhost')) {{
+  throw new Error('private host detection failed');
+}}
+if (await bridge.blockedByFilter('https://evil.com/path', {{ allowlist: [], denylist: ['evil.com'], blockPrivateIps: true }}) === null) {{
+  throw new Error('denylist filter failed');
+}}
+if (await bridge.blockedByFilter('http://127.0.0.1/admin', {{ allowlist: [], denylist: [], blockPrivateIps: true }}) === null) {{
+  throw new Error('private IP filter failed');
+}}
+if (await bridge.blockedByFilter(
+  'https://internal.example/admin',
+  {{ allowlist: [], denylist: [], blockPrivateIps: true }},
+  async () => resolvesTo(['10.0.0.5'])
+) === null) {{
+  throw new Error('resolved private subresource filter failed');
+}}
+if (await bridge.blockedByFilter(
+  'https://public.example/',
+  {{ allowlist: [], denylist: [], blockPrivateIps: true }},
+  async () => resolvesTo(['93.184.216.34'])
+) !== null) {{
+  throw new Error('public resolved address should not be blocked');
+}}
+if (!String(await bridge.blockedByFilter(
+  'https://unresolvable.example/',
+  {{ allowlist: [], denylist: [], blockPrivateIps: true }},
+  async () => {{ throw new Error('lookup failed'); }}
+)).includes('DNS resolution failed')) {{
+  throw new Error('DNS failures should fail closed');
+}}
+}})().catch((error) => {{
+  console.error(error.stack || error);
+  process.exit(1);
+}});
+",
+            bridge_path = serde_json::to_string(&bridge_path.display().to_string())
+                .expect("path should serialize"),
+        );
+
+        let output = StdCommand::new(resolve_node_path(None))
+            .arg("-e")
+            .arg(node_script)
+            .output()
+            .expect("node should run bridge filter assertions");
+
+        assert!(
+            output.status.success(),
+            "node assertions failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 
     #[test]
@@ -451,5 +671,42 @@ if (tableElement.tag !== 'table' || !tableElement.text.includes('<tbody>')) {{
             "node assertions failed: {}",
             String::from_utf8_lossy(&output.stderr)
         );
+    }
+
+    #[test]
+    fn screenshot_data_carries_final_url() {
+        let output = parse_screenshot_data(
+            Some(json!({
+                "image": "abc123",
+                "finalUrl": "https://example.com/final",
+            })),
+            "https://example.com/start",
+        )
+        .unwrap();
+
+        assert_eq!(output.base64, "abc123");
+        assert_eq!(output.final_url, "https://example.com/final");
+    }
+
+    #[test]
+    fn extract_data_carries_final_url() {
+        let output = parse_extract_data(
+            Some(json!({
+                "elements": [
+                    {
+                        "tag": "a",
+                        "text": "Docs",
+                        "attributes": { "href": "/docs" },
+                    }
+                ],
+                "finalUrl": "https://example.com/final",
+            })),
+            "https://example.com/start",
+        )
+        .unwrap();
+
+        assert_eq!(output.final_url, "https://example.com/final");
+        assert_eq!(output.elements.len(), 1);
+        assert_eq!(output.elements[0].tag, "a");
     }
 }

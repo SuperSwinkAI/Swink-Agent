@@ -1015,3 +1015,168 @@ async fn entra_id_token_endpoint_failure() {
         _ => unreachable!(),
     }
 }
+
+#[tokio::test]
+async fn entra_id_token_endpoint_auth_failure_is_terminal() {
+    let token_server = MockServer::start().await;
+    let api_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/token"))
+        .respond_with(ResponseTemplate::new(401).set_body_string("invalid_client"))
+        .mount(&token_server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(sse_response(&simple_sse_body()))
+        .expect(0)
+        .mount(&api_server)
+        .await;
+
+    let token_url = format!("{}/token", token_server.uri());
+    let stream_fn = entra_stream_fn(&api_server, &token_url);
+    let events = collect_events(&stream_fn).await;
+
+    assert!(
+        matches!(events.first(), Some(AssistantMessageEvent::Start)),
+        "pre-stream token failures must start with Start: {events:?}"
+    );
+
+    let error_event = events
+        .iter()
+        .find(|e| matches!(e, AssistantMessageEvent::Error { .. }));
+    assert!(
+        error_event.is_some(),
+        "expected an Error event for token auth failure, got: {events:?}"
+    );
+    match error_event.unwrap() {
+        AssistantMessageEvent::Error {
+            error_kind,
+            error_message,
+            ..
+        } => {
+            assert_eq!(*error_kind, Some(StreamErrorKind::Auth));
+            assert!(
+                error_message.contains("token endpoint auth error"),
+                "error message should mention auth classification: {error_message}"
+            );
+        }
+        _ => unreachable!(),
+    }
+}
+
+#[tokio::test]
+async fn entra_id_token_endpoint_configuration_4xx_is_auth_failure() {
+    let token_server = MockServer::start().await;
+    let api_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/token"))
+        .respond_with(ResponseTemplate::new(404).set_body_string("tenant not found"))
+        .mount(&token_server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(sse_response(&simple_sse_body()))
+        .expect(0)
+        .mount(&api_server)
+        .await;
+
+    let token_url = format!("{}/token", token_server.uri());
+    let stream_fn = entra_stream_fn(&api_server, &token_url);
+    let events = collect_events(&stream_fn).await;
+
+    assert!(
+        matches!(events.first(), Some(AssistantMessageEvent::Start)),
+        "pre-stream token failures must start with Start: {events:?}"
+    );
+
+    let error_event = events
+        .iter()
+        .find(|e| matches!(e, AssistantMessageEvent::Error { .. }));
+    assert!(
+        error_event.is_some(),
+        "expected an Error event for token configuration failure, got: {events:?}"
+    );
+    match error_event.unwrap() {
+        AssistantMessageEvent::Error {
+            error_kind,
+            error_message,
+            ..
+        } => {
+            assert_eq!(*error_kind, Some(StreamErrorKind::Auth));
+            assert!(
+                error_message.contains("token endpoint auth error"),
+                "error message should mention auth classification: {error_message}"
+            );
+            assert!(
+                error_message.contains("tenant not found"),
+                "error message should preserve token endpoint diagnostics: {error_message}"
+            );
+        }
+        _ => unreachable!(),
+    }
+}
+
+#[tokio::test]
+async fn entra_id_cancellation_during_token_refresh_is_promptly_aborted() {
+    let token_server = MockServer::start().await;
+    let api_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/token"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(token_response_body("slow-token", 3600))
+                .set_delay(Duration::from_secs(30)),
+        )
+        .expect(1)
+        .mount(&token_server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(sse_response(&simple_sse_body()))
+        .expect(0)
+        .mount(&api_server)
+        .await;
+
+    let token_url = format!("{}/token", token_server.uri());
+    let stream_fn = entra_stream_fn(&api_server, &token_url);
+    let token = CancellationToken::new();
+    let cancel_token = token.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        cancel_token.cancel();
+    });
+
+    let events = tokio::time::timeout(
+        Duration::from_secs(2),
+        stream_fn
+            .stream(
+                &test_model(),
+                &test_context(),
+                &StreamOptions::default(),
+                token,
+            )
+            .collect::<Vec<_>>(),
+    )
+    .await
+    .expect("Azure cancellation should not wait for token refresh");
+
+    assert!(
+        matches!(events.first(), Some(AssistantMessageEvent::Start)),
+        "pre-stream cancellation must start with Start: {events:?}"
+    );
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AssistantMessageEvent::Error {
+            stop_reason: StopReason::Aborted,
+            error_kind: None,
+            error_message,
+            ..
+        } if error_message.contains("Azure request cancelled")
+    )));
+}

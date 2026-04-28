@@ -5,6 +5,7 @@ use ratatui::layout::Rect;
 use tempfile::tempdir;
 
 use swink_agent::testing::ScriptedStreamFn;
+use swink_agent::{AgentEvent, ModelSpec, ThinkingLevel};
 
 use crate::config::TuiConfig;
 use crate::session::{JsonlSessionStore, SessionMeta, SessionStore};
@@ -519,6 +520,151 @@ async fn hash_help_toggles_panel() {
     assert!(app.help_panel.visible);
 }
 
+#[tokio::test]
+async fn slash_thinking_updates_agent_model_and_display_flag() {
+    let stream_fn = Arc::new(ScriptedStreamFn::new(vec![]));
+    let agent = make_test_agent(stream_fn);
+    let mut app = App::new(TuiConfig::default());
+    app.set_agent(agent);
+
+    type_input(&mut app, "/thinking medium");
+    app.submit_input();
+
+    assert_eq!(
+        app.agent.as_ref().unwrap().state().model.thinking_level,
+        ThinkingLevel::Medium
+    );
+    assert!(app.config.show_thinking);
+    assert!(
+        app.messages
+            .last()
+            .is_some_and(|msg| msg.content.contains("Medium"))
+    );
+
+    type_input(&mut app, "/thinking off");
+    app.submit_input();
+
+    assert_eq!(
+        app.agent.as_ref().unwrap().state().model.thinking_level,
+        ThinkingLevel::Off
+    );
+    assert!(!app.config.show_thinking);
+}
+
+#[tokio::test]
+async fn slash_thinking_updates_pending_model_before_next_send() {
+    let primary_model = ModelSpec::new("anthropic", "primary-model");
+    let extra_model = ModelSpec::new("openai", "extra-model");
+    let primary_stream = Arc::new(ScriptedStreamFn::new(vec![]));
+    let extra_stream = Arc::new(ScriptedStreamFn::new(vec![]));
+
+    let agent = make_test_agent_with_models(
+        primary_model,
+        primary_stream,
+        vec![(extra_model, extra_stream)],
+    );
+    let mut app = App::new(TuiConfig::default());
+    app.set_agent(agent);
+    app.cycle_model();
+
+    type_input(&mut app, "/thinking high");
+    app.submit_input();
+
+    assert_eq!(
+        app.pending_model.as_ref().map(|model| model.thinking_level),
+        Some(ThinkingLevel::High)
+    );
+    assert_eq!(
+        app.available_models[app.model_index].thinking_level,
+        ThinkingLevel::High
+    );
+}
+
+#[tokio::test]
+async fn running_clear_command_is_blocked_without_clearing_messages() {
+    let mut app = App::new(TuiConfig::default());
+    app.status = AgentStatus::Running;
+    app.messages.push(make_user_message("keep me"));
+
+    type_input(&mut app, "#clear");
+    app.submit_input();
+
+    assert!(
+        app.messages
+            .iter()
+            .any(|message| message.role == MessageRole::User && message.content == "keep me"),
+        "running #clear must not remove existing transcript messages"
+    );
+    assert!(
+        app.messages.iter().any(|message| {
+            message.role == MessageRole::System && message.content.contains("agent is running")
+        }),
+        "blocked command should tell the user why it was rejected"
+    );
+    assert_eq!(app.status, AgentStatus::Running);
+}
+
+#[tokio::test]
+async fn running_load_command_is_blocked_without_switching_sessions() {
+    let tempdir = tempdir().unwrap();
+    let store = JsonlSessionStore::new(tempdir.path().to_path_buf()).unwrap();
+    let now = swink_agent_memory::now_utc();
+    let meta = SessionMeta {
+        id: "saved-session".to_string(),
+        title: "saved-model".to_string(),
+        created_at: now,
+        updated_at: now,
+        version: 1,
+        sequence: 0,
+    };
+    store
+        .save("saved-session", &meta, &[make_user_agent_message("loaded")])
+        .unwrap();
+
+    let mut app =
+        App::new(TuiConfig::default()).with_session_store(store, "active-session".to_string());
+    app.status = AgentStatus::Running;
+    app.messages.push(make_user_message("active"));
+
+    type_input(&mut app, "#load saved-session");
+    app.submit_input();
+
+    assert_eq!(app.session_id, "active-session");
+    assert!(
+        app.messages
+            .iter()
+            .any(|message| message.role == MessageRole::User && message.content == "active"),
+        "running #load must not replace the active transcript"
+    );
+    assert!(
+        !app.messages
+            .iter()
+            .any(|message| message.role == MessageRole::User && message.content == "loaded"),
+        "running #load must not restore another session"
+    );
+}
+
+#[tokio::test]
+async fn running_reset_command_is_blocked_without_resetting_state() {
+    let mut app = App::new(TuiConfig::default());
+    app.status = AgentStatus::Running;
+    app.operating_mode = OperatingMode::Plan;
+    app.session_trusted_tools.insert("write_file".to_string());
+    app.messages.push(make_user_message("keep me"));
+
+    type_input(&mut app, "/reset");
+    app.submit_input();
+
+    assert_eq!(app.operating_mode, OperatingMode::Plan);
+    assert!(app.session_trusted_tools.contains("write_file"));
+    assert!(
+        app.messages
+            .iter()
+            .any(|message| message.role == MessageRole::User && message.content == "keep me"),
+        "running /reset must not clear current UI state"
+    );
+}
+
 /// Helper: type a literal string into the input editor.
 fn type_input(app: &mut App, s: &str) {
     for c in s.chars() {
@@ -580,6 +726,38 @@ async fn multiline_hash_key_submission_is_fully_redacted() {
     );
 }
 
+/// Regression: secret-bearing submissions that do not parse as a single
+/// `#key <provider> <api-key>` command must fail closed instead of being echoed
+/// into the transcript or forwarded as plain user text.
+#[tokio::test]
+async fn malformed_sensitive_submission_is_blocked_without_user_echo() {
+    let mut app = App::new(TuiConfig::default());
+
+    type_input(&mut app, "preamble");
+    app.input.insert_newline();
+    type_input(&mut app, "#key\topenai\t sk-leak-sentinel-block");
+    app.input.insert_newline();
+    type_input(&mut app, "epilogue");
+
+    app.submit_input();
+
+    assert!(
+        !app.messages.iter().any(|message| {
+            message.role == MessageRole::User && message.content.contains("sk-leak-sentinel-block")
+        }),
+        "malformed sensitive input must not be echoed as a user message"
+    );
+    assert!(
+        app.messages.iter().any(|message| {
+            message.role == MessageRole::System
+                && message
+                    .content
+                    .contains("Blocked secret-bearing input that did not parse")
+        }),
+        "malformed sensitive input should produce a blocking system message"
+    );
+}
+
 /// Regression: non-sensitive commands must continue to enter history so
 /// users can recall them with Up-arrow.
 #[tokio::test]
@@ -613,4 +791,65 @@ async fn plain_text_submission_is_recallable_via_history() {
         &["hello world".to_string()],
         "plain text should remain recallable via history"
     );
+}
+
+#[tokio::test]
+async fn editor_style_submission_queues_once_while_running() {
+    let stream_fn = Arc::new(ScriptedStreamFn::new(vec![]));
+    let agent = make_test_agent(stream_fn);
+
+    let mut app = App::new(TuiConfig::default());
+    app.set_agent(agent);
+    app.status = AgentStatus::Running;
+
+    app.submit_user_text("queued from editor".to_string());
+
+    assert!(
+        !app.messages
+            .iter()
+            .any(|message| message.role == MessageRole::User
+                && message.content == "queued from editor"),
+        "running submission should stay queued until MessageStart promotion"
+    );
+    assert_eq!(app.pending_steered, vec!["queued from editor".to_string()]);
+
+    app.handle_agent_event(AgentEvent::MessageStart);
+
+    assert_eq!(
+        app.messages
+            .iter()
+            .filter(|message| {
+                message.role == MessageRole::User && message.content == "queued from editor"
+            })
+            .count(),
+        1,
+        "queued submission should be promoted into the transcript exactly once"
+    );
+    assert!(
+        app.messages
+            .last()
+            .is_some_and(|message| message.role == MessageRole::Assistant && message.is_streaming),
+        "assistant streaming placeholder should still be added after promotion"
+    );
+    assert!(
+        app.pending_steered.is_empty(),
+        "queued submission should be drained after MessageStart promotion"
+    );
+}
+
+#[test]
+fn copy_code_extracts_all_fenced_blocks_from_last_assistant_message() {
+    let mut app = App::new(TuiConfig::default());
+    app.messages.push(make_assistant_message(
+        "Intro\n```rust\nlet first = 1;\n```\ntext\n```json\n{\"second\":2}\n```",
+    ));
+
+    let copied = app
+        .messages
+        .iter()
+        .rev()
+        .find(|message| message.role == MessageRole::Assistant)
+        .and_then(|message| super::super::render_helpers::extract_code_blocks(&message.content));
+
+    assert_eq!(copied, Some("let first = 1;\n\n{\"second\":2}".to_string()));
 }

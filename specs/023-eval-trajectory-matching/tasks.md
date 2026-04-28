@@ -88,7 +88,7 @@
 - [x] T023 [P] [US3] Add acceptance test: empty trajectory (zero tool calls) → evaluator returns `None` (spec AS-3.3)
 - [x] T024 [US3] Add acceptance test: compare two trajectories for same task → more efficient one scores higher (spec AS-3.4)
 - [x] T025 [US3] Add edge case test: efficiency with `budget.max_turns` set — verify `ideal_turns` uses budget value, not `unique_call_count` in `eval/tests/efficiency.rs`
-- [ ] T025a [US3] Add determinism assertion (SC-003): in `eval/tests/efficiency.rs`, call `EfficiencyEvaluator::evaluate()` twice on the same `(case, invocation)` pair, assert `EvalMetricResult` is equal (same `score.value`, same `details`). One-line addition to an existing test is fine.
+- [x] T025a [US3] Add determinism assertion (SC-003): in `eval/tests/efficiency.rs`, call `EfficiencyEvaluator::evaluate()` twice on the same `(case, invocation)` pair, assert `EvalMetricResult` is equal (same `score.value`, same `details`). One-line addition to an existing test is fine.
 - [x] T026 [US3] Verify all US3 tests pass with `cargo test -p swink-agent-eval --test efficiency`
 
 **Checkpoint**: Efficiency scoring verified against exact formula with all weight combinations.
@@ -191,15 +191,15 @@
 
 **Independent Test**: Case with `expected_environment_state: [{name: "created_file", state: "out.md"}]` plus a capture callback that lists the working dir. Agent writes `out.md`. Evaluator returns Pass.
 
-- [ ] T064 [US7] Create `eval/src/environment_state.rs`: `EnvironmentStateEvaluator` (no fields). Calls `case.state_capture` (wrapped in `catch_unwind`), compares each expected named state to actual via full JSON equality. Returns `None` when callback absent or `expected_environment_state` absent (FR-013).
-- [ ] T065 [P] [US7] Acceptance test in `eval/tests/environment_state.rs`: all named states match → Pass with matched names in details (AS-7.1).
-- [ ] T066 [P] [US7] Acceptance test: missing expected name → Fail identifying missing name (AS-7.2).
-- [ ] T067 [P] [US7] Acceptance test: value mismatch → Fail with expected and actual JSON in details (AS-7.3).
-- [ ] T068 [US7] Acceptance test: case with `expected_environment_state` but no `state_capture` → `None`; eval set continues (AS-7.4).
-- [ ] T069 [US7] Edge case test: capture callback panics → `Score::fail()` with panic message in details, no propagation (AS-7.5). Use `panic::catch_unwind(AssertUnwindSafe(...))` per registry convention.
-- [ ] T070 [US7] Edge case test: captured snapshot contains extra names not in expected → ignored, evaluator still Pass (per edge case list).
-- [ ] T071 [US7] Wire `EnvironmentStateEvaluator` into `EvaluatorRegistry::with_defaults()` — this one is deterministic so it's safe to register unconditionally (returns `None` when callback absent).
-- [ ] T072 [US7] Verify `cargo test -p swink-agent-eval --test environment_state` passes.
+- [x] T064 [US7] Create `eval/src/environment_state.rs`: `EnvironmentStateEvaluator` (no fields). Calls `case.state_capture` (wrapped in `catch_unwind`), compares each expected named state to actual via full JSON equality. Returns `None` when callback absent or `expected_environment_state` absent (FR-013).
+- [x] T065 [P] [US7] Acceptance test in `eval/tests/environment_state.rs`: all named states match → Pass with matched names in details (AS-7.1).
+- [x] T066 [P] [US7] Acceptance test: missing expected name → Fail identifying missing name (AS-7.2).
+- [x] T067 [P] [US7] Acceptance test: value mismatch → Fail with expected and actual JSON in details (AS-7.3).
+- [x] T068 [US7] Acceptance test: case with `expected_environment_state` but no `state_capture` → `None`; eval set continues (AS-7.4).
+- [x] T069 [US7] Edge case test: capture callback panics → `Score::fail()` with panic message in details, no propagation (AS-7.5). Use `panic::catch_unwind(AssertUnwindSafe(...))` per registry convention.
+- [x] T070 [US7] Edge case test: captured snapshot contains extra names not in expected → ignored, evaluator still Pass (per edge case list).
+- [x] T071 [US7] Wire `EnvironmentStateEvaluator` into `EvaluatorRegistry::with_defaults()` — this one is deterministic so it's safe to register unconditionally (returns `None` when callback absent).
+- [x] T072 [US7] Verify `cargo test -p swink-agent-eval --test environment_state` passes.
 
 **Checkpoint**: US7 fully tested; FR-013 + FR-014 + FR-015 + SC-007 + SC-009 coverage verified.
 
@@ -242,6 +242,51 @@
 - [ ] T094 Verify `cargo test --workspace` — no regressions in other crates (particularly `runner.rs` consumers in integration tests).
 
 **Checkpoint**: `BudgetGuard` fully removed. `BudgetConstraints` reshaped. Factory owns policy attach. Accepted-loss capabilities (`max_duration`, mid-turn cancel) documented as out-of-scope for 023.
+
+---
+
+## Phase 14: User Story 8 — Training-format Trace Export (Priority: P3)
+
+**Purpose**: Export `Invocation` traces as fine-tuning data for LLM training
+pipelines (SFT, DPO, RLHF). Extends the eval crate with a new
+`training-export` feature gate.
+
+**Scope**: `eval/src/training.rs` + `eval/tests/training_export.rs` + spec
+artifacts. CLI `--export-training` flag is out of scope (future work).
+
+- [x] T095 Add `training-export` feature to `eval/Cargo.toml` (no additional deps required — all serialization uses existing `serde_json`).
+- [x] T096 Create `eval/src/training.rs` (feature-gated) with:
+  - `TrainingFormat` enum: `ChatMlSft`, `DpoPairs`, `ShareGpt`
+  - `ExportOptions` struct: `format`, `quality_threshold: f32`, `include_metadata: bool`
+  - `ScoredTrace` struct: `invocation: Invocation`, `score: f64`, `case_id: String`
+  - `ScoredTrace::from_case_result(result: &EvalCaseResult) -> Self` (averages metric scores)
+  - `TrainingExporter` trait: `fn export(&self, traces: &[ScoredTrace], opts: &ExportOptions) -> Result<Vec<u8>, ExportError>`
+  - `ExportError` enum: `Serialization`, `NotImplemented`, `NothingToExport`
+- [x] T097 Implement `ChatMlExporter` (full): JSONL with ChatML role/content/tool_calls schema per OpenAI convention, quality threshold filtering, optional metadata record.
+- [x] T098 Implement `DpoExporter`: group by `case_id`, pair highest vs lowest scoring trace per case as chosen/rejected; emit `NothingToExport` when no case has ≥ 2 traces.
+- [x] T099 Implement `ShareGptExporter`: `conversations` array with `from: system/human/gpt` turns; optional metadata; quality threshold filtering.
+- [x] T100 Implement `TrainingReporter` implementing the existing `Reporter` trait: converts `EvalSetResult.case_results` → `Vec<ScoredTrace>`, calls `export_traces`, returns `ReporterOutput::Artifact`.
+- [x] T101 Add `training` module and public re-exports to `eval/src/lib.rs` (behind `#[cfg(feature = "training-export")]`).
+- [x] T102 Write integration tests in `eval/tests/training_export.rs` (feature-gated):
+  - `chatml_export_produces_valid_jsonl_with_correct_turn_structure`
+  - `chatml_export_includes_tool_calls_on_assistant_turns`
+  - `chatml_export_includes_metadata_when_requested`
+  - `chatml_export_omits_metadata_when_not_requested`
+  - `quality_threshold_filters_low_score_traces`
+  - `export_empty_when_all_traces_below_threshold`
+  - `export_empty_slice_returns_nothing_to_export`
+  - `dpo_pairs_created_from_high_and_low_score_on_same_case`
+  - `dpo_pairs_emits_nothing_for_single_trace_case`
+  - `dpo_pairs_uses_highest_and_lowest_score_traces`
+  - `sharegpt_export_produces_valid_jsonl_with_human_gpt_turns`
+  - `scored_trace_from_case_result_averages_metric_scores`
+  - `scored_trace_from_case_result_handles_no_metrics`
+  - `chatml_multiple_traces_produce_one_line_each`
+- [x] T103 Verify `cargo test -p swink-agent-eval --features training-export` passes (14 new tests).
+- [x] T104 Verify `cargo test -p swink-agent-eval` (no features) passes — zero regressions.
+- [x] T105 Verify `cargo clippy -p swink-agent-eval --features training-export -- -D warnings` is clean.
+
+**Checkpoint**: `TrainingExporter` trait + ChatML/SFT (full), DPO pairs, ShareGPT exporters delivered. `TrainingReporter` integrates with existing `Reporter` trait. Score-based quality gate via `ExportOptions.quality_threshold`. All feature-gated under `training-export`.
 
 ---
 

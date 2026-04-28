@@ -6,9 +6,12 @@ rust-version.workspace = true
 description = "Judge client implementations for swink-agent-eval"
 license.workspace = true
 repository.workspace = true
-readme = "../README.md"
+readme = "README.md"
 keywords = ["llm", "eval", "judge", "adapter", "testing"]
 categories = ["development-tools", "api-bindings", "asynchronous"]
+# Spec 043 shipped the crate surface into the workspace at 0.9, but releases
+# still keep this package unpublished while the provider API settles.
+publish = false
 
 [package.metadata.docs.rs]
 all-features = true
@@ -27,22 +30,22 @@ all-judges = [
     "ollama",
     "proxy",
 ]
-anthropic = ["dep:swink-agent-adapters", "swink-agent-eval/judge-core"]
-openai = ["dep:swink-agent-adapters", "swink-agent-eval/judge-core"]
-bedrock = ["dep:swink-agent-adapters", "swink-agent-eval/judge-core"]
-gemini = ["dep:swink-agent-adapters", "swink-agent-eval/judge-core"]
-mistral = ["dep:swink-agent-adapters", "swink-agent-eval/judge-core"]
-azure = ["dep:swink-agent-adapters", "swink-agent-eval/judge-core"]
-xai = ["dep:swink-agent-adapters", "swink-agent-eval/judge-core"]
-ollama = ["dep:swink-agent-adapters", "swink-agent-eval/judge-core"]
-proxy = ["dep:swink-agent-adapters", "swink-agent-eval/judge-core"]
+anthropic = ["dep:swink-agent-adapters", "swink-agent-eval/judge-core", "dep:reqwest"]
+openai = ["dep:swink-agent-adapters", "swink-agent-eval/judge-core", "dep:reqwest"]
+bedrock = ["dep:swink-agent-adapters", "swink-agent-eval/judge-core", "dep:reqwest"]
+gemini = ["dep:swink-agent-adapters", "swink-agent-eval/judge-core", "dep:reqwest"]
+mistral = ["dep:swink-agent-adapters", "swink-agent-eval/judge-core", "dep:reqwest"]
+azure = ["dep:swink-agent-adapters", "swink-agent-eval/judge-core", "dep:reqwest"]
+xai = ["dep:swink-agent-adapters", "swink-agent-eval/judge-core", "dep:reqwest"]
+ollama = ["dep:swink-agent-adapters", "swink-agent-eval/judge-core", "dep:reqwest"]
+proxy = ["dep:swink-agent-adapters", "swink-agent-eval/judge-core", "dep:reqwest"]
 live-judges = []
 
 [dependencies]
-swink-agent-eval = { path = "../eval", version = "0.8.1", default-features = false }
-swink-agent-adapters = { path = "../adapters", version = "0.8.1", default-features = false, optional = true }
-async-trait = "0.1"
-backon.workspace = true
+swink-agent-eval = { path = "../eval", version = "0.9.0", default-features = false }
+swink-agent-adapters = { path = "../adapters", version = "0.9.0", default-features = false, optional = true }
+backon = { workspace = true, features = ["tokio-sleep"] }
+reqwest = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
@@ -51,6 +54,8 @@ tokio-util.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+swink-agent-eval = { path = "../eval", default-features = false, features = ["judge-core"] }
+tokio = { workspace = true, features = ["full", "test-util"] }
 wiremock.workspace = true
 
 [lints]

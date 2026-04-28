@@ -10,7 +10,9 @@ use tracing::{info, warn};
 
 use crate::agent_options::{ApproveToolFn, GetApiKeyFn};
 use crate::error::AgentError;
-use crate::loop_::{AgentEvent, AgentLoopConfig, agent_loop, agent_loop_continue};
+use crate::loop_::{
+    AgentEvent, AgentLoopConfig, agent_loop_continue, agent_loop_with_initial_new_messages_len,
+};
 use crate::message_provider::MessageProvider;
 use crate::types::message_codec::clone_messages_for_send;
 use crate::types::{AgentMessage, AgentResult, ContentBlock, LlmMessage};
@@ -254,14 +256,18 @@ impl Agent {
             })
             .collect();
 
+        let mut initial_new_messages_len = input.len();
         let messages_for_loop = if is_continue {
             let mut msgs = std::mem::take(&mut self.state.messages);
             if matches!(
                 msgs.last(),
                 Some(AgentMessage::Llm(LlmMessage::Assistant(_)))
             ) {
-                msgs.extend(drain_messages_from_queue(&self.steering_queue));
-                msgs.extend(drain_messages_from_queue(&self.follow_up_queue));
+                let steering_messages = drain_messages_from_queue(&self.steering_queue);
+                let follow_up_messages = drain_messages_from_queue(&self.follow_up_queue);
+                initial_new_messages_len = steering_messages.len() + follow_up_messages.len();
+                msgs.extend(steering_messages);
+                msgs.extend(follow_up_messages);
             }
             msgs
         } else {
@@ -272,9 +278,21 @@ impl Agent {
         let in_flight_messages = clone_messages_for_send(&messages_for_loop);
 
         let raw_stream = if is_continue {
-            agent_loop_continue(messages_for_loop, system_prompt, config, token)
+            agent_loop_continue(
+                messages_for_loop,
+                initial_new_messages_len,
+                system_prompt,
+                config,
+                token,
+            )
         } else {
-            agent_loop(messages_for_loop, system_prompt, config, token)
+            agent_loop_with_initial_new_messages_len(
+                messages_for_loop,
+                initial_new_messages_len,
+                system_prompt,
+                config,
+                token,
+            )
         };
 
         self.in_flight_llm_messages = Some(in_flight_llm_messages);

@@ -25,6 +25,7 @@ mod ui;
 mod app;
 mod config;
 mod error;
+pub mod transport;
 
 #[cfg(feature = "cli")]
 pub mod credentials;
@@ -56,6 +57,7 @@ pub use config::TuiConfig;
 pub use error::TuiError;
 pub use session::JsonlSessionStore;
 pub use swink_agent::ApprovalMode;
+pub use transport::{InProcessTransport, TransportError, TuiTransport, UserInput};
 pub use ui::conversation::ConversationView;
 pub use ui::input::InputEditor;
 pub use ui::markdown::markdown_to_lines;

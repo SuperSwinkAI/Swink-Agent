@@ -17,7 +17,11 @@ fn validate_checkpoint_id(id: &str) -> io::Result<()> {
             "checkpoint ID must not be empty",
         ));
     }
-    if id.contains('/') || id.contains('\\') || id.contains("..") || id.contains('\0') {
+    if id.contains('/')
+        || id.contains('\\')
+        || id.contains("..")
+        || id.chars().any(|c| c == ':' || c.is_ascii_control())
+    {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             format!("checkpoint ID contains unsafe characters: {id:?}"),
@@ -30,7 +34,8 @@ fn validate_checkpoint_id(id: &str) -> io::Result<()> {
 ///
 /// Checkpoints are written atomically, so a failed save never leaves a partial
 /// or zero-length live file behind. Checkpoint IDs are validated before file
-/// access and therefore must not contain path separators, `..`, or null bytes.
+/// access and therefore must not contain path separators, `..`, `:`, or ASCII
+/// control characters.
 pub struct FileCheckpointStore {
     checkpoints_dir: PathBuf,
 }
@@ -135,7 +140,7 @@ impl CheckpointStore for FileCheckpointStore {
 mod tests {
     use std::io;
 
-    use super::FileCheckpointStore;
+    use super::{FileCheckpointStore, validate_checkpoint_id};
     use swink_agent::{Checkpoint, CheckpointStore};
 
     #[tokio::test]
@@ -175,6 +180,18 @@ mod tests {
         let store = FileCheckpointStore::new(dir.path().to_path_buf()).unwrap();
 
         let err = store.load_checkpoint("../escape").await.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn validate_checkpoint_id_rejects_colon() {
+        let err = validate_checkpoint_id("C:drive").unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn validate_checkpoint_id_rejects_control_chars() {
+        let err = validate_checkpoint_id("checkpoint\nid").unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
     }
 }

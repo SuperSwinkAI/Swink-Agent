@@ -2,32 +2,17 @@
 
 ## Scope
 
-`policies/` — Policy implementations for `swink-agent`. Separate crate to keep implementations optional and independently feature-gated. Depends only on `swink-agent` public API (no internal imports).
+`policies/` — Policy implementations. Separate crate, depends only on `swink-agent` public API.
 
 ## Key Facts
 
-- **10 policies total:**
-  - Core (6): `BudgetPolicy`, `MaxTurnsPolicy`, `ToolDenyListPolicy`, `SandboxPolicy`, `LoopDetectionPolicy`, `CheckpointPolicy`
-  - Application (4): `PromptInjectionGuard`, `PiiRedactor`, `ContentFilter`, `AuditLogger`
-- Each feature-gated independently: defaults are minimal, `full` enables the batteries-included set, and individual flags remain available (`budget`, `max-turns`, `deny-list`, `sandbox`, `loop-detection`, `checkpoint`, `prompt-guard`, `pii`, `content-filter`, `audit`)
-- All implementations depend only on `swink-agent` public API — no internal imports
-- Policy traits take `&self` — stateful policies use interior mutability (`Mutex`)
+- **10 policies**: BudgetPolicy, MaxTurnsPolicy, ToolDenyListPolicy, SandboxPolicy, LoopDetectionPolicy, CheckpointPolicy, PromptInjectionGuard, PiiRedactor, ContentFilter, AuditLogger.
+- Feature-gated individually; `full` enables all. Traits take `&self`; stateful policies use interior mutability.
 
-## Lessons Learned
+## Key Invariants
 
-- `CheckpointPolicy` bridges sync/async via `tokio::spawn` fire-and-forget. Captures `Handle::current()` at construction.
-- `SandboxPolicy` checks configured field names (default: `["path", "file_path", "file"]`) — Skip with error, no silent rewriting.
-- `PromptInjectionGuard` implements both `PreTurnPolicy` and `PostTurnPolicy` — single struct, dual trait.
-- `PiiRedactor` Inject verdict constructs `AgentMessage::Llm(LlmMessage::Assistant(...))` preserving original metadata.
-- `ContentFilter` converts keywords to regex at construction time (`\b` for whole-word, `(?i)` for case-insensitive).
-- `AuditSink` trait is sync (`fn write(&self, record: &AuditRecord)`) — defined in this crate, not in core.
-- All regex patterns compiled once at construction, `evaluate()` only runs matches.
-- Slot runner uses `AssertUnwindSafe` + `catch_unwind` — policy traits only need `Send + Sync`, not `UnwindSafe`.
-
-## Build & Test
-
-```bash
-cargo build -p swink-agent-policies
-cargo test -p swink-agent-policies
-cargo clippy -p swink-agent-policies -- -D warnings
-```
+- `CheckpointPolicy` bridges sync/async via `tokio::spawn` fire-and-forget (`Handle::current()` at construction).
+- `SandboxPolicy` checks path fields (`path`, `file_path`, `file`) — Skip with error, no rewriting. Must resolve against canonical root + `execution_root`.
+- `PromptInjectionGuard` implements both `PreTurnPolicy` and `PostTurnPolicy`.
+- `ContentFilter` compiles keyword regexes at construction (`\b`, `(?i)`). All regex patterns compiled once.
+- `AuditSink` trait is sync, defined in this crate (not core).

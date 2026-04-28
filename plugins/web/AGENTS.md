@@ -1,8 +1,10 @@
 # AGENTS.md — plugins/web
 
-## Lessons Learned
+## Key Invariants
 
-- `src/playwright.rs` must write a unique temp bridge script per `PlaywrightBridge::start()` call. Reusing one fixed temp filename is race-prone when multiple bridge instances start concurrently.
-- `src/playwright_bridge.js` must lazy-load the `playwright` package inside browser startup instead of at module load time. That keeps the bridge's pure extraction helpers testable from plain Node without requiring Playwright to be installed for unit tests.
-- `src/policy/rate_limiter.rs` must treat `Instant::checked_sub()` underflow as a no-prune tick instead of unwrapping. Short-uptime hosts can otherwise panic in the live rate-limit path.
-- `src/tools/screenshot.rs` must drop the shared `PlaywrightBridge` after a screenshot request is cancelled or times out. Once the JSON request is written, abandoning the response read can leave a stale line on stdout that corrupts the next bridge exchange.
+- Playwright bridge scripts must be unique per `start()` call (no shared temp filename).
+- `playwright_bridge.js` lazy-loads playwright inside browser startup, not at module load (keeps extraction helpers testable without Playwright installed).
+- `Instant::checked_sub()` underflow in rate limiter -> no-prune tick, not panic.
+- Screenshot and extract tools must drop shared `PlaywrightBridge` after cancel/timeout (stale stdout line corrupts next exchange).
+- Web content sanitization happens before tools return `AgentToolResult::text`; post-turn sanitizer is only an audit backstop.
+- Web tools must re-run `DomainFilter` on redirect/final navigation targets inside the tool; PreDispatch only sees the original `url` argument.

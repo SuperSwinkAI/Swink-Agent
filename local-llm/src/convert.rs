@@ -15,6 +15,7 @@ use crate::model::ModelConfig;
 // ─── Intermediate message type ──────────────────────────────────────────────
 
 /// A role + content pair for building chat template input.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LocalMessage {
     pub role: String,
     pub content: String,
@@ -44,7 +45,7 @@ impl MessageConverter for LocalConverter {
     fn assistant_message(assistant: &AssistantMessage) -> Self::Message {
         LocalMessage {
             role: "assistant".to_string(),
-            content: ContentBlock::extract_text(&assistant.content),
+            content: format_assistant_content(&assistant.content),
         }
     }
 
@@ -56,6 +57,41 @@ impl MessageConverter for LocalConverter {
             content,
         }
     }
+}
+
+fn format_assistant_content(blocks: &[ContentBlock]) -> String {
+    let mut content = String::new();
+
+    for block in blocks {
+        match block {
+            ContentBlock::Text { text } => content.push_str(text),
+            ContentBlock::ToolCall {
+                id,
+                name,
+                arguments,
+                partial_json,
+            } => {
+                if !content.is_empty() && !content.ends_with('\n') {
+                    content.push('\n');
+                }
+                let rendered_arguments;
+                let arguments_text = if let Some(partial_json) = partial_json.as_deref() {
+                    partial_json
+                } else {
+                    rendered_arguments = arguments.to_string();
+                    rendered_arguments.as_str()
+                };
+                content.push_str("[tool_call_id: ");
+                content.push_str(id);
+                content.push_str("]\ncall:");
+                content.push_str(name);
+                content.push_str(arguments_text);
+            }
+            _ => {}
+        }
+    }
+
+    content
 }
 
 // ─── Gemma 4 converter ──────────────────────────────────────────────────────
@@ -250,6 +286,39 @@ mod tests {
         let ctx = make_context("sys", vec![msg]);
         let msgs = convert_context_messages(&ctx, &smollm_config(), false);
         assert_eq!(msgs[1].role, "assistant");
+    }
+
+    #[test]
+    fn assistant_tool_calls_preserved() {
+        let msg = AgentMessage::Llm(LlmMessage::Assistant(AssistantMessage {
+            content: vec![
+                ContentBlock::Text {
+                    text: "I need to inspect the file.".to_string(),
+                },
+                ContentBlock::ToolCall {
+                    id: "tc-1".to_string(),
+                    name: "read_file".to_string(),
+                    arguments: json!({ "path": "Cargo.toml" }),
+                    partial_json: None,
+                },
+            ],
+            provider: String::new(),
+            model_id: String::new(),
+            usage: Usage::default(),
+            cost: Cost::default(),
+            stop_reason: StopReason::ToolUse,
+            error_message: None,
+            error_kind: None,
+            timestamp: 0,
+            cache_hint: None,
+        }));
+        let ctx = make_context("sys", vec![msg]);
+        let msgs = convert_context_messages(&ctx, &smollm_config(), false);
+
+        assert_eq!(
+            msgs[1].content,
+            "I need to inspect the file.\n[tool_call_id: tc-1]\ncall:read_file{\"path\":\"Cargo.toml\"}"
+        );
     }
 
     #[test]

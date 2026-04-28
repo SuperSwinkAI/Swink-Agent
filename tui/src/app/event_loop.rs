@@ -16,7 +16,7 @@ use crate::commands::{self, ApprovalModeArg, ClipboardContent, CommandResult};
 use crate::theme;
 use crate::ui;
 
-use super::render_helpers::extract_last_code_block;
+use super::render_helpers::extract_code_blocks;
 use super::state::{AgentStatus, App, DisplayMessage, Focus, MessageRole, OperatingMode};
 use super::{AppResult, MOUSE_SCROLL_STEP};
 
@@ -85,11 +85,7 @@ impl App {
 
                 match result {
                     Ok(Some(content)) => {
-                        self.messages
-                            .push(DisplayMessage::new(MessageRole::User, content.clone()));
-                        self.trim_messages_to_recent_turns();
-                        self.conversation.auto_scroll = true;
-                        self.send_to_agent(content);
+                        self.submit_user_text(content);
                     }
                     Ok(None) => {
                         self.push_system_message(
@@ -453,6 +449,27 @@ impl App {
         }
     }
 
+    pub(super) fn submit_user_text(&mut self, text: String) {
+        if self.status != AgentStatus::Running {
+            self.messages
+                .push(DisplayMessage::new(MessageRole::User, text.clone()));
+            self.trim_messages_to_recent_turns();
+        }
+        self.conversation.auto_scroll = true;
+        self.send_to_agent(text);
+    }
+
+    fn command_mutates_session_during_stream(command: &CommandResult) -> bool {
+        matches!(
+            command,
+            CommandResult::Clear
+                | CommandResult::SetSystemPrompt(_)
+                | CommandResult::Reset
+                | CommandResult::SaveSession
+                | CommandResult::LoadSession(_)
+        )
+    }
+
     #[allow(clippy::too_many_lines)]
     pub(super) fn submit_input(&mut self) {
         // Classify the pending input BEFORE draining the editor so that
@@ -469,7 +486,34 @@ impl App {
             return;
         };
 
-        match commands::execute_command(&text) {
+        let command = commands::execute_command(&text);
+
+        if sensitive {
+            match command {
+                CommandResult::StoreKey { provider, key } => {
+                    self.store_key(&provider, &key);
+                }
+                _ => {
+                    self.push_system_message(
+                        "Blocked secret-bearing input that did not parse as `#key <provider> <api-key>`."
+                            .to_string(),
+                    );
+                }
+            }
+            return;
+        }
+
+        if self.status == AgentStatus::Running
+            && Self::command_mutates_session_during_stream(&command)
+        {
+            self.push_system_message(
+                "Command blocked while the agent is running. Stop the active stream and try again."
+                    .to_string(),
+            );
+            return;
+        }
+
+        match command {
             CommandResult::NotACommand => {}
             CommandResult::Quit => {
                 self.should_quit = true;
@@ -495,7 +539,8 @@ impl App {
                 return;
             }
             CommandResult::SetThinking(level) => {
-                self.push_system_message(format!("Thinking level set to: {level}"));
+                self.set_thinking_level(level);
+                self.push_system_message(format!("Thinking level set to: {level:?}"));
                 return;
             }
             CommandResult::SetSystemPrompt(prompt) => {
@@ -615,16 +660,7 @@ impl App {
             }
         }
 
-        // Only add to the visible conversation immediately when the agent is idle.
-        // Mid-stream submissions are held in `pending_steered` by `send_to_agent`
-        // and promoted into `messages` at AgentEnd, after the current response.
-        if self.status != AgentStatus::Running {
-            self.messages
-                .push(DisplayMessage::new(MessageRole::User, text.clone()));
-            self.trim_messages_to_recent_turns();
-        }
-        self.conversation.auto_scroll = true;
-        self.send_to_agent(text);
+        self.submit_user_text(text);
     }
 
     fn copy_to_clipboard(&mut self, content: ClipboardContent) {
@@ -658,7 +694,7 @@ impl App {
                 .iter()
                 .rev()
                 .find(|message| message.role == MessageRole::Assistant)
-                .and_then(|message| extract_last_code_block(&message.content)),
+                .and_then(|message| extract_code_blocks(&message.content)),
         };
 
         let feedback = text.map_or_else(

@@ -56,6 +56,26 @@ async fn aborted_preprocess_outcome(
     .await
 }
 
+async fn stopped_preprocess_outcome(
+    tool_calls: &[ToolCallInfo],
+    reason: String,
+    results: &Arc<tokio::sync::Mutex<Vec<(usize, crate::types::ToolResultMessage)>>>,
+    tool_timings: &Arc<tokio::sync::Mutex<Vec<crate::metrics::ToolExecMetrics>>>,
+    injected_messages: Vec<AgentMessage>,
+    tx: &mpsc::Sender<AgentEvent>,
+) -> ToolExecOutcome {
+    emit_batch_stop_results(tool_calls, &reason, results, tx).await;
+    let all_results = std::mem::take(&mut *results.lock().await);
+    let ordered = order_results_by_tool_calls(tool_calls, &all_results);
+    let collected_timings = std::mem::take(&mut *tool_timings.lock().await);
+    ToolExecOutcome::Stopped {
+        results: ordered,
+        tool_metrics: collected_timings,
+        reason,
+        injected_messages,
+    }
+}
+
 /// Result of checking the approval gate for a single tool call.
 enum ApprovalOutcome {
     Approved,
@@ -109,11 +129,14 @@ pub(super) async fn preprocess_tool_calls(
 
         // ── PreDispatch policies ──
         let mut effective_arguments = tc.arguments.clone();
+        let execution_root = tool_map
+            .get(tc.name.as_str())
+            .and_then(|tool| tool.execution_root());
         let mut dispatch_ctx = ToolDispatchContext {
             tool_name: &tc.name,
             tool_call_id: &tc.id,
             arguments: &mut effective_arguments,
-            execution_root: None,
+            execution_root,
             state: &state_snapshot,
         };
         match run_pre_dispatch_policies(&config.pre_dispatch_policies, &mut dispatch_ctx) {
@@ -142,16 +165,15 @@ pub(super) async fn preprocess_tool_calls(
     }
 
     if let Some(reason) = batch_stop_reason {
-        emit_batch_stop_results(tool_calls, &reason, results, tx).await;
-        let all_results = std::mem::take(&mut *results.lock().await);
-        let ordered = order_results_by_tool_calls(tool_calls, &all_results);
-        let collected_timings = std::mem::take(&mut *tool_timings.lock().await);
-        return Err(ToolExecOutcome::Stopped {
-            results: ordered,
-            tool_metrics: collected_timings,
+        return Err(stopped_preprocess_outcome(
+            tool_calls,
             reason,
+            results,
+            tool_timings,
             injected_messages,
-        });
+            tx,
+        )
+        .await);
     }
 
     // A later `Stop` must abort the entire batch before any approval side
@@ -220,6 +242,47 @@ pub(super) async fn preprocess_tool_calls(
                     ApprovalOutcome::Approved => {}
                     ApprovalOutcome::ApprovedWith(new_params) => {
                         effective_arguments = new_params;
+                        let execution_root = tool_map
+                            .get(tc.name.as_str())
+                            .and_then(|tool| tool.execution_root());
+                        let mut dispatch_ctx = ToolDispatchContext {
+                            tool_name: &tc.name,
+                            tool_call_id: &tc.id,
+                            arguments: &mut effective_arguments,
+                            execution_root,
+                            state: &state_snapshot,
+                        };
+                        match run_pre_dispatch_policies(
+                            &config.pre_dispatch_policies,
+                            &mut dispatch_ctx,
+                        ) {
+                            PreDispatchVerdict::Continue => {}
+                            PreDispatchVerdict::Inject(msgs) => {
+                                injected_messages.extend(msgs);
+                            }
+                            PreDispatchVerdict::Skip(error_text) => {
+                                let error_result = AgentToolResult {
+                                    content: vec![ContentBlock::Text { text: error_text }],
+                                    details: serde_json::Value::Null,
+                                    is_error: true,
+                                    transfer_signal: None,
+                                };
+                                emit_error_result(&tc.name, &tc.id, error_result, idx, results, tx)
+                                    .await;
+                                continue;
+                            }
+                            PreDispatchVerdict::Stop(reason) => {
+                                return Err(stopped_preprocess_outcome(
+                                    tool_calls,
+                                    reason,
+                                    results,
+                                    tool_timings,
+                                    injected_messages,
+                                    tx,
+                                )
+                                .await);
+                            }
+                        }
                     }
                     ApprovalOutcome::Rejected => continue,
                     ApprovalOutcome::Cancelled => {
@@ -262,6 +325,33 @@ async fn emit_approval_resolved(
         },
     )
     .await
+}
+
+async fn reject_approval_panic(
+    tc: &ToolCallInfo,
+    idx: usize,
+    panic_message: &str,
+    results: &Arc<tokio::sync::Mutex<Vec<(usize, crate::types::ToolResultMessage)>>>,
+    tx: &mpsc::Sender<AgentEvent>,
+) -> ApprovalOutcome {
+    if !emit_approval_resolved(tx, tc, false).await {
+        return ApprovalOutcome::ChannelClosed;
+    }
+
+    emit_error_result(
+        &tc.name,
+        &tc.id,
+        AgentToolResult::error(format!(
+            "Tool call '{}' was rejected because the approval callback panicked: \
+             {panic_message}",
+            tc.name
+        )),
+        idx,
+        results,
+        tx,
+    )
+    .await;
+    ApprovalOutcome::Rejected
 }
 
 // ─── Approval helper ────────────────────────────────────────────────────────
@@ -327,6 +417,19 @@ async fn check_approval(
         requires_approval,
         context: approval_context,
     };
+    let approval_future =
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| approve_fn(request))) {
+            Ok(future) => future,
+            Err(panic_value) => {
+                let panic_message = panic_payload_message(panic_value.as_ref());
+                error!(
+                    tool_call_id = %tc.id,
+                    tool_name = %tc.name,
+                    "approval callback panicked before returning a future: {panic_message}"
+                );
+                return reject_approval_panic(tc, idx, &panic_message, results, tx).await;
+            }
+        };
     let decision = match tokio::select! {
         biased;
         () = cancellation_token.cancelled() => {
@@ -336,7 +439,7 @@ async fn check_approval(
 
             return ApprovalOutcome::Cancelled;
         }
-        decision = std::panic::AssertUnwindSafe(approve_fn(request)).catch_unwind() => decision
+        decision = std::panic::AssertUnwindSafe(approval_future).catch_unwind() => decision
     } {
         Ok(decision) => decision,
         Err(panic_value) => {
@@ -346,25 +449,7 @@ async fn check_approval(
                 tool_name = %tc.name,
                 "approval callback panicked: {panic_message}"
             );
-
-            if !emit_approval_resolved(tx, tc, false).await {
-                return ApprovalOutcome::ChannelClosed;
-            }
-
-            emit_error_result(
-                &tc.name,
-                &tc.id,
-                AgentToolResult::error(format!(
-                    "Tool call '{}' was rejected because the approval callback panicked: \
-                     {panic_message}",
-                    tc.name
-                )),
-                idx,
-                results,
-                tx,
-            )
-            .await;
-            return ApprovalOutcome::Rejected;
+            return reject_approval_panic(tc, idx, &panic_message, results, tx).await;
         }
     };
     let approved = !matches!(decision, ToolApproval::Rejected);

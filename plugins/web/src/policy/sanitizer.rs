@@ -5,12 +5,13 @@ use swink_agent::{ContentBlock, PolicyContext, PolicyVerdict, PostTurnPolicy, Tu
 
 /// `PostTurnPolicy` that detects known prompt injection patterns in web content.
 ///
-/// After each turn, this policy scans tool results from `web_*` tools for text
-/// matching common prompt-injection signatures (e.g. "ignore previous
-/// instructions", "you are now", fake `system:` prefixes). Because `PostTurnPolicy`
-/// runs after messages are already committed to context, this policy **logs
-/// warnings** via `tracing::warn!` rather than modifying content. It always
-/// returns [`PolicyVerdict::Continue`].
+/// The policy owns the shared text sanitizer used by web tools before they
+/// return fetched content. After each turn, this policy also scans tool results
+/// from `web_*` tools for text matching common prompt-injection signatures
+/// (e.g. "ignore previous instructions", "you are now", fake `system:`
+/// prefixes). Because `PostTurnPolicy` runs after messages are already committed
+/// to context, this policy's post-turn pass logs warnings via `tracing::warn!`
+/// rather than modifying content. It always returns [`PolicyVerdict::Continue`].
 ///
 /// This is defense-in-depth: the primary value is detection and auditing.
 pub struct ContentSanitizerPolicy {

@@ -15,6 +15,14 @@ fn pattern_bytes(size: usize) -> Vec<u8> {
         .collect()
 }
 
+fn text_data(content: &str) -> ArtifactData {
+    ArtifactData {
+        content: content.as_bytes().to_vec(),
+        content_type: "text/plain".to_string(),
+        metadata: HashMap::new(),
+    }
+}
+
 /// Collect a streaming load result into a `Vec<u8>`.
 async fn collect_stream(
     stream: std::pin::Pin<Box<dyn futures::Stream<Item = Result<Bytes, ArtifactError>> + Send>>,
@@ -37,6 +45,20 @@ fn assert_invalid_data_storage_error(err: ArtifactError, expected_snippet: &str)
     assert!(
         io.to_string().contains(expected_snippet),
         "expected error message to contain '{expected_snippet}', got '{io}'"
+    );
+}
+
+fn assert_storage_error_kind(err: ArtifactError, expected_kinds: &[ErrorKind]) {
+    let ArtifactError::Storage(source) = err else {
+        panic!("expected storage error, got {err:?}");
+    };
+    let io = source
+        .downcast_ref::<std::io::Error>()
+        .expect("storage error should wrap std::io::Error");
+    assert!(
+        expected_kinds.contains(&io.kind()),
+        "expected one of {expected_kinds:?}, got {:?}",
+        io.kind()
     );
 }
 
@@ -218,6 +240,58 @@ async fn non_streaming_api_still_works() {
 }
 
 #[tokio::test]
+async fn streaming_save_rolls_back_new_content_when_metadata_write_fails() {
+    let tmpdir = tempfile::TempDir::new().unwrap();
+    let store = FileArtifactStore::new(tmpdir.path());
+
+    let initial_stream = Box::pin(stream::iter(vec![Ok(Bytes::from_static(b"v1"))]));
+    store
+        .save_stream(
+            "sess-rollback",
+            "report.md",
+            "text/plain".to_string(),
+            HashMap::new(),
+            initial_stream,
+        )
+        .await
+        .expect("initial save_stream should succeed");
+
+    let artifact_dir = tmpdir.path().join("sess-rollback").join("report.md");
+    let meta_path = artifact_dir.join("meta.json");
+    tokio::fs::remove_file(&meta_path)
+        .await
+        .expect("meta.json should be removable");
+    tokio::fs::create_dir(&meta_path)
+        .await
+        .expect("directory replacement should succeed");
+
+    let next_stream = Box::pin(stream::iter(vec![Ok(Bytes::from_static(b"v2"))]));
+    let err = store
+        .save_stream(
+            "sess-rollback",
+            "report.md",
+            "text/plain".to_string(),
+            HashMap::new(),
+            next_stream,
+        )
+        .await
+        .expect_err("save_stream should fail when meta.json cannot be replaced");
+    // Linux surfaces the failure as PermissionDenied; macOS (and other BSD
+    // family kernels) surface it as IsADirectory. Both shapes are acceptable
+    // — the contract is that the save errors, not the specific errno.
+    assert_storage_error_kind(err, &[ErrorKind::PermissionDenied, ErrorKind::IsADirectory]);
+
+    assert!(
+        !artifact_dir.join("v2.bin").exists(),
+        "new streamed content file should be rolled back on metadata write failure"
+    );
+    assert!(
+        artifact_dir.join("v1.bin").exists(),
+        "previous committed content must remain intact"
+    );
+}
+
+#[tokio::test]
 async fn streaming_load_returns_invalid_data_when_latest_content_file_is_missing() {
     let tmpdir = tempfile::TempDir::new().unwrap();
     let store = FileArtifactStore::new(tmpdir.path());
@@ -280,6 +354,43 @@ async fn streaming_load_returns_invalid_data_for_orphaned_explicit_version_file(
         .err()
         .expect("orphaned content should be surfaced as corruption");
     assert_invalid_data_storage_error(err, "without metadata membership");
+}
+
+#[tokio::test]
+async fn streaming_save_refuses_to_overwrite_orphaned_next_version_file() {
+    let tmpdir = tempfile::TempDir::new().unwrap();
+    let store = FileArtifactStore::new(tmpdir.path());
+
+    store
+        .save("sess-stream-orphan-save", "report.md", text_data("v1"))
+        .await
+        .expect("initial save should succeed");
+
+    let artifact_dir = tmpdir
+        .path()
+        .join("sess-stream-orphan-save")
+        .join("report.md");
+    let orphan_path = artifact_dir.join("v2.bin");
+    tokio::fs::write(&orphan_path, b"orphan")
+        .await
+        .expect("orphaned content file should be creatable");
+
+    let err = store
+        .save_stream(
+            "sess-stream-orphan-save",
+            "report.md",
+            "text/plain".to_string(),
+            HashMap::new(),
+            Box::pin(stream::iter(vec![Ok(Bytes::from_static(b"v2"))])),
+        )
+        .await
+        .expect_err("save_stream should fail instead of overwriting orphaned content");
+    assert_invalid_data_storage_error(err, "without metadata membership");
+
+    let orphan = tokio::fs::read(&orphan_path)
+        .await
+        .expect("orphaned content should remain for diagnosis");
+    assert_eq!(orphan, b"orphan");
 }
 
 // T065: streaming_save_error_does_not_publish_partial_version

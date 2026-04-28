@@ -278,7 +278,13 @@ fn gemini_stream<'a>(
     cancellation_token: CancellationToken,
 ) -> impl Stream<Item = AssistantMessageEvent> + Send + 'a {
     stream::once(async move {
-        let response = match send_request(gemini, model, context, options).await {
+        let response = match crate::base::race_pre_stream_cancellation(
+            &cancellation_token,
+            "Google request cancelled",
+            send_request(gemini, model, context, options),
+        )
+        .await
+        {
             Ok(response) => response,
             Err(event) => return stream::iter(crate::base::pre_stream_error(event)).left_stream(),
         };
@@ -286,7 +292,18 @@ fn gemini_stream<'a>(
         let status = response.status();
         if !status.is_success() {
             let code = status.as_u16();
-            let body = response.text().await.unwrap_or_default();
+            let body = match crate::base::read_error_body_or_cancelled(
+                response,
+                &cancellation_token,
+                "Google request cancelled",
+            )
+            .await
+            {
+                Ok(body) => body,
+                Err(event) => {
+                    return stream::iter(crate::base::pre_stream_error(event)).left_stream();
+                }
+            };
             warn!(status = code, "Google Gemini HTTP error");
             let event = crate::classify::error_event_from_status(code, &body, "Google");
             return stream::iter(crate::base::pre_stream_error(event)).left_stream();
@@ -932,5 +949,41 @@ mod tests {
                 .any(|event| matches!(event, AssistantMessageEvent::Done { .. })),
             "terminal error path must not emit Done"
         );
+    }
+
+    #[tokio::test]
+    async fn pre_cancelled_stream_aborts_before_request_send() {
+        let gemini = GeminiStreamFn::new("http://127.0.0.1:1", "api-key", ApiVersion::V1beta);
+        let model = ModelSpec::new("google", "gemini-2.0-flash");
+        let context = AgentContext {
+            system_prompt: String::new(),
+            messages: vec![],
+            tools: vec![],
+        };
+        let options = StreamOptions::default();
+        let token = CancellationToken::new();
+        token.cancel();
+
+        let events: Vec<_> = gemini
+            .stream(&model, &context, &options, token)
+            .collect()
+            .await;
+
+        assert_eq!(events.len(), 2, "expected Start + Error: {events:?}");
+        assert!(matches!(events[0], AssistantMessageEvent::Start));
+        match &events[1] {
+            AssistantMessageEvent::Error {
+                stop_reason,
+                error_message,
+                ..
+            } => {
+                assert_eq!(*stop_reason, StopReason::Aborted);
+                assert!(
+                    error_message.contains("cancelled"),
+                    "unexpected cancellation message: {error_message}"
+                );
+            }
+            other => panic!("expected aborted terminal event, got {other:?}"),
+        }
     }
 }

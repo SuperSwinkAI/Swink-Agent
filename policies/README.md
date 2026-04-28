@@ -28,8 +28,8 @@ All policies slot into the four core hook points (`pre_turn`, `pre_dispatch`, `p
 
 ```toml
 [dependencies]
-swink-agent = "0.8"
-swink-agent-policies = { version = "0.8", features = ["budget", "max-turns", "deny-list"] }
+swink-agent = "0.9.0"
+swink-agent-policies = { version = "0.9.0", features = ["budget", "max-turns", "deny-list"] }
 tokio = { version = "1", features = ["full"] }
 ```
 

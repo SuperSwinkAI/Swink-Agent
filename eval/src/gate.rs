@@ -2,16 +2,26 @@
 
 use std::time::Duration;
 
+use serde::{Deserialize, Serialize};
+
 use crate::types::EvalSetResult;
 
 /// Configuration for CI/CD gate checks against evaluation results.
-#[derive(Debug, Clone, Default)]
+///
+/// Serde-ready so consumers (notably the `swink-eval gate` subcommand)
+/// can load thresholds from a YAML/JSON file without re-declaring the
+/// shape.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub struct GateConfig {
     /// Minimum fraction of cases that must pass (e.g. 0.95 for 95%).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min_pass_rate: Option<f64>,
     /// Maximum total cost in dollars.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_cost: Option<f64>,
     /// Maximum total wall-clock duration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_duration: Option<Duration>,
 }
 
