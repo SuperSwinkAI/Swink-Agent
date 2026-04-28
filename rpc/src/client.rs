@@ -3,11 +3,9 @@
 use std::path::Path;
 
 use swink_agent::{AgentEvent, ToolApproval, ToolApprovalRequest};
-use tracing::{debug, warn};
+use tracing::warn;
 
-use crate::dto::{
-    InitializeParams, PROTOCOL_VERSION, PromptParams, PromptResult, ToolApprovalDto, method,
-};
+use crate::dto::{PromptParams, PromptResult, ToolApprovalDto, method};
 use crate::jsonrpc::{IncomingMessage, JsonRpcPeer, RpcError};
 
 /// A client that drives a remote `AgentServer` over a Unix socket.
@@ -28,6 +26,8 @@ impl AgentClient {
     /// Returns an error if the socket cannot be connected or the handshake fails.
     #[cfg(unix)]
     pub async fn connect(path: impl AsRef<Path>) -> Result<Self, RpcError> {
+        use crate::dto::{InitializeParams, PROTOCOL_VERSION};
+
         use tokio::net::UnixStream;
 
         let stream = UnixStream::connect(path.as_ref())
@@ -54,7 +54,7 @@ impl AgentClient {
         // Await `initialized`.
         match peer.recv_incoming().await {
             Some(IncomingMessage::Notification { method: m, .. }) if m == method::INITIALIZED => {
-                debug!("handshake complete");
+                tracing::debug!("handshake complete");
             }
             Some(other) => {
                 warn!("unexpected message during handshake: {other:?}");
@@ -74,6 +74,7 @@ impl AgentClient {
     /// Not available on this platform.
     #[cfg(not(unix))]
     pub async fn connect(_path: impl AsRef<Path>) -> Result<Self, RpcError> {
+        std::future::ready(()).await;
         Err(RpcError::unavailable(
             "Unix socket transport requires a Unix host",
         ))

@@ -2,7 +2,6 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 use swink_agent::AgentOptions;
 
@@ -82,7 +81,7 @@ impl AgentServer {
         info!("swink-agentd listening on {}", self.path.display());
         let _cleanup = SocketCleanup(self.path.clone());
 
-        let session_active = Arc::new(AtomicBool::new(false));
+        let session_active = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let shutdown = Arc::new(Notify::new());
         let shutdown2 = Arc::clone(&shutdown);
 
@@ -119,6 +118,9 @@ impl AgentServer {
     /// Not available on this platform.
     #[cfg(not(unix))]
     pub async fn serve(self) -> std::io::Result<()> {
+        let Self { path, factory } = self;
+        drop((path, factory));
+        std::future::ready(()).await;
         Err(std::io::Error::new(
             std::io::ErrorKind::Unsupported,
             "Unix socket transport requires a Unix host",
@@ -143,9 +145,11 @@ impl Drop for SocketCleanup {
 #[cfg(unix)]
 async fn handle_connection(
     stream: tokio::net::UnixStream,
-    session_active: Arc<AtomicBool>,
+    session_active: Arc<std::sync::atomic::AtomicBool>,
     factory: Arc<dyn Fn() -> AgentOptions + Send + Sync>,
 ) {
+    use std::sync::atomic::Ordering;
+
     use tracing::{info, warn};
 
     // Peer credential check: only allow connections from the same effective user.
