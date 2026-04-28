@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use swink_agent::{Cost, ModelSpec, StopReason, Usage};
 use swink_agent_eval::{
-    Detail, EvalCase, Invocation, JudgeClient, JudgeError, JudgeEvaluatorConfig,
+    Detail, EvalCase, Invocation, JudgeClient, JudgeEvaluatorConfig,
     JudgePromptTemplate, JudgeRegistry, JudgeVerdict, MinijinjaTemplate, PromptContext,
     PromptFamily, PromptTemplateRegistry, dispatch_judge, finish_metric_result,
 };

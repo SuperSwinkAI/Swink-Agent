@@ -22,7 +22,7 @@ use swink_agent_eval::{
     EvalCase, EvalMetricResult, Evaluator, EvaluatorRegistry, ExpectedToolCall, FairnessEvaluator,
     FaithfulnessEvaluator, FewShotExample, GoalSuccessRateEvaluator, HallucinationEvaluator,
     HarmfulnessEvaluator, HelpfulnessEvaluator, ImageSafetyEvaluator, InteractionExpectation,
-    InteractionsEvaluator, Invocation, JudgeClient, JudgeError, JudgeEvaluatorConfig,
+    InteractionsEvaluator, Invocation, JudgeClient, JudgeEvaluatorConfig,
     JudgeRegistry, JudgeVerdict, KnowledgeRetentionEvaluator, LanguageDetectionEvaluator,
     LazinessEvaluator, MinijinjaTemplate, PIIClass, PIILeakageEvaluator, PerceivedErrorEvaluator,
     PlanAdherenceEvaluator, PromptError, PromptFamily, PromptInjectionEvaluator,

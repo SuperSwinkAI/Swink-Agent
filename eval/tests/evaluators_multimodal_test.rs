@@ -8,7 +8,7 @@ use std::time::Duration;
 use swink_agent::{Cost, ModelSpec, StopReason, Usage};
 use swink_agent_eval::{
     Attachment, DefaultUrlFilter, EvalCase, Evaluator, ImageSafetyEvaluator, Invocation,
-    JudgeClient, JudgeError, JudgeEvaluatorConfig, JudgeRegistry, JudgeVerdict,
+    JudgeClient, JudgeEvaluatorConfig, JudgeRegistry, JudgeVerdict,
     materialize_case_attachments,
 };
 
