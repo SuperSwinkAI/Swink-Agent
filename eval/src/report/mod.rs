@@ -9,7 +9,7 @@
 //! * [`JsonReporter`] — self-contained JSON matching
 //!   `specs/043-evals-adv-features/contracts/eval-result.schema.json`.
 //! * [`MarkdownReporter`] — PR-comment-ready Markdown table.
-//! * [`HtmlReporter`] — self-contained HTML artifact using native
+//! * `HtmlReporter` — self-contained HTML artifact using native
 //!   `<details>` / `<summary>` disclosure (behind `html-report`).
 //!
 //! LangSmith export (behind `langsmith`) follows in a later task.

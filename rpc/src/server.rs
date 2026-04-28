@@ -1,4 +1,4 @@
-//! Agent JSON-RPC server — hosts an [`Agent`] behind a Unix socket.
+//! Agent JSON-RPC server — hosts an `Agent` behind a Unix socket.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

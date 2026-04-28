@@ -1,4 +1,4 @@
-//! JSON-RPC agent client — connects to an [`AgentServer`] over a Unix socket.
+//! JSON-RPC agent client — connects to an `AgentServer` over a Unix socket.
 
 use std::path::Path;
 
@@ -10,10 +10,10 @@ use crate::dto::{
 };
 use crate::jsonrpc::{IncomingMessage, JsonRpcPeer, RpcError};
 
-/// A client that drives a remote [`AgentServer`] over a Unix socket.
+/// A client that drives a remote `AgentServer` over a Unix socket.
 ///
 /// Connect with [`AgentClient::connect`], then use [`prompt_text`](Self::prompt_text)
-/// or [`prompt_stream`](Self::prompt_stream) to interact with the remote agent.
+/// to interact with the remote agent.
 pub struct AgentClient {
     peer: JsonRpcPeer,
     approval_handler: Option<Box<dyn Fn(ToolApprovalRequest) -> ToolApproval + Send + Sync>>,

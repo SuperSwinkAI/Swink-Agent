@@ -11,7 +11,7 @@ fn make_peer_pair() -> (JsonRpcPeer, JsonRpcPeer) {
 
 #[tokio::test]
 async fn notification_round_trip() {
-    let (mut a, mut b) = make_peer_pair();
+    let (a, mut b) = make_peer_pair();
 
     a.sender()
         .notify("ping", &serde_json::json!({"seq": 1}))
@@ -31,7 +31,7 @@ async fn notification_round_trip() {
 
 #[tokio::test]
 async fn request_response_round_trip() {
-    let (mut a, mut b) = make_peer_pair();
+    let (a, mut b) = make_peer_pair();
 
     let sender_b = b.sender();
     let server = tokio::spawn(async move {
@@ -57,7 +57,7 @@ async fn request_response_round_trip() {
 
 #[tokio::test]
 async fn error_response_surfaces_as_err() {
-    let (mut a, mut b) = make_peer_pair();
+    let (a, mut b) = make_peer_pair();
 
     let sender_b = b.sender();
     tokio::spawn(async move {
@@ -98,7 +98,7 @@ async fn pending_requests_fail_on_disconnect() {
 
 #[tokio::test]
 async fn concurrent_requests_correlate_correctly() {
-    let (mut a, mut b) = make_peer_pair();
+    let (a, mut b) = make_peer_pair();
 
     let sender_b = b.sender();
     tokio::spawn(async move {
