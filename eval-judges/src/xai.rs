@@ -16,6 +16,7 @@ use tokio_util::sync::CancellationToken;
 use swink_agent_eval::judge::{JudgeClient, JudgeError, JudgeVerdict, RetryPolicy};
 
 use crate::client::{BlockingExt, is_retryable, parse_verdict_text, retry_with_cancel};
+use crate::util::truncate_http_body;
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(60);
 const DEFAULT_TEMPERATURE: f32 = 0.0;
@@ -222,18 +223,17 @@ struct XaiChoiceMessage {
 
 fn classify_http_error(status: StatusCode, body: &str) -> JudgeError {
     if status == StatusCode::TOO_MANY_REQUESTS || status.is_server_error() {
-        JudgeError::Transport(format!("xai http {}: {}", status.as_u16(), truncate(body)))
+        JudgeError::Transport(format!(
+            "xai http {}: {}",
+            status.as_u16(),
+            truncate_http_body(body)
+        ))
     } else {
-        JudgeError::Other(format!("xai http {}: {}", status.as_u16(), truncate(body)))
-    }
-}
-
-fn truncate(body: &str) -> String {
-    const LIMIT: usize = 512;
-    if body.len() <= LIMIT {
-        body.to_string()
-    } else {
-        format!("{}…", &body[..LIMIT])
+        JudgeError::Other(format!(
+            "xai http {}: {}",
+            status.as_u16(),
+            truncate_http_body(body)
+        ))
     }
 }
 
