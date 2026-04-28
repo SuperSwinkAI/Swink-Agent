@@ -241,6 +241,8 @@ impl ToolWatcher {
         let (tx, rx) = mpsc::channel(100);
 
         let mut watcher = notify::recommended_watcher(move |res| {
+            // The watcher can outlive the async loop during shutdown; a closed
+            // receiver only means there is no longer anyone to consume events.
             let _ = tx.blocking_send(res);
         })
         .map_err(|e| e.to_string())?;
@@ -290,6 +292,8 @@ impl ToolWatcher {
                         tools.insert(path, tool);
                     }
                 }
+                // If the caller has dropped the update stream during shutdown,
+                // the initial snapshot is no longer observable and can be ignored.
                 let _ = update_tx.send(self.build_tool_list(&tools)).await;
             }
 
@@ -346,6 +350,8 @@ impl ToolWatcher {
                         }
 
                         if changed {
+                            // Dropped receivers are expected when the watcher is
+                            // being stopped; the in-memory tool map is still updated.
                             let _ = update_tx.send(self.build_tool_list(&tools)).await;
                         }
                     }
