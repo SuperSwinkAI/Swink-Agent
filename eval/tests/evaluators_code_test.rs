@@ -13,7 +13,7 @@ use std::time::Duration;
 use regex::Regex;
 use swink_agent::{Cost, ModelSpec, StopReason, Usage};
 use swink_agent_eval::{
-    CodeExtractor, CodeExtractorStrategy, EvalCase, Evaluator, Invocation, JudgeClient, JudgeError,
+    CodeExtractor, CodeExtractorStrategy, EvalCase, Evaluator, Invocation, JudgeClient,
     JudgeVerdict,
 };
 
