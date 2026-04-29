@@ -21,7 +21,7 @@ use swink_agent::{
     AssistantMessageEvent, ContentBlock, Cost, CustomMessage, DefaultRetryStrategy, LlmMessage,
     MessageProvider, PolicyContext, PolicyVerdict, PostTurnPolicy, PreTurnPolicy, StopReason,
     StreamFn, StreamOptions, ToolResultMessage, TurnPolicyContext, TurnSnapshot, Usage,
-    UserMessage, agent_loop,
+    UserMessage, agent_loop, agent_loop_continue,
 };
 
 // ─── MockUpdatingTool ─────────────────────────────────────────────────────────
@@ -383,6 +383,31 @@ struct InjectingOncePostTurnPolicy {
     text: String,
 }
 
+struct InjectingOncePreTurnPolicy {
+    injected: AtomicBool,
+    text: String,
+}
+
+impl PreTurnPolicy for InjectingOncePreTurnPolicy {
+    fn name(&self) -> &'static str {
+        "injecting-once-pre-turn"
+    }
+
+    fn evaluate(&self, _ctx: &PolicyContext<'_>) -> PolicyVerdict {
+        if self.injected.swap(true, Ordering::SeqCst) {
+            PolicyVerdict::Continue
+        } else {
+            PolicyVerdict::Inject(vec![AgentMessage::Llm(LlmMessage::User(UserMessage {
+                content: vec![ContentBlock::Text {
+                    text: self.text.clone(),
+                }],
+                timestamp: 0,
+                cache_hint: None,
+            }))])
+        }
+    }
+}
+
 impl PostTurnPolicy for InjectingOncePostTurnPolicy {
     fn name(&self) -> &'static str {
         "injecting-once-post-turn"
@@ -638,6 +663,88 @@ async fn pre_turn_policy_observes_transformed_context() {
             new_messages: vec!["transformed prompt".to_string()],
         },
         "pre-turn policies must inspect the transformed context sent toward the provider"
+    );
+}
+
+#[tokio::test]
+async fn pre_turn_new_messages_survive_context_compaction() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("ok")]));
+    let observations = Arc::new(Mutex::new(Vec::new()));
+
+    let mut config = default_config(stream_fn);
+    config.transform_context = Some(Arc::new(
+        move |msgs: &mut Vec<AgentMessage>, _overflow: bool| {
+            if !msgs.is_empty() {
+                msgs.remove(0);
+            }
+        },
+    ));
+    config.pre_turn_policies = vec![Arc::new(RecordingPreTurnPolicy {
+        observations: Arc::clone(&observations),
+    })];
+
+    let events = collect_events(agent_loop_continue(
+        vec![
+            common::user_msg("prior conversation"),
+            common::user_msg("fresh prompt"),
+        ],
+        1,
+        "system".to_string(),
+        config,
+        CancellationToken::new(),
+    ))
+    .await;
+
+    assert!(has_event(&events, "AgentEnd"));
+    let recorded = observations.lock().unwrap().clone();
+    assert_eq!(recorded.len(), 1, "pre-turn policy should run once");
+    assert_eq!(
+        recorded[0],
+        RecordedPreTurnBatch {
+            turn_index: 0,
+            message_count: 1,
+            new_messages: vec!["fresh prompt".to_string()],
+        },
+        "compaction must not make the fresh pre-turn batch empty or polluted"
+    );
+}
+
+#[tokio::test]
+async fn pre_turn_injections_reach_imminent_provider_call() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("ok")]));
+    let mut config = default_config(stream_fn);
+    config.pre_turn_policies = vec![Arc::new(InjectingOncePreTurnPolicy {
+        injected: AtomicBool::new(false),
+        text: "policy context".to_string(),
+    })];
+
+    let events = collect_events(agent_loop(
+        vec![common::user_msg("start")],
+        "system".to_string(),
+        config,
+        CancellationToken::new(),
+    ))
+    .await;
+
+    assert!(has_event(&events, "AgentEnd"));
+    let before_llm_messages = events
+        .iter()
+        .find_map(|event| match event {
+            AgentEvent::BeforeLlmCall { messages, .. } => Some(messages),
+            _ => None,
+        })
+        .expect("provider call should emit BeforeLlmCall");
+    let input_text: Vec<String> = before_llm_messages
+        .iter()
+        .filter_map(|message| match message {
+            LlmMessage::User(user) => Some(ContentBlock::extract_text(&user.content)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        input_text,
+        vec!["start".to_string(), "policy context".to_string()],
+        "pre-turn injected messages must be present in the current provider input"
     );
 }
 

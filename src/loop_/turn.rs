@@ -41,8 +41,9 @@ pub async fn run_single_turn(
     state.overflow_recovery_attempted = false;
 
     // i. Inject any pending messages into context.
-    // Track where new messages start so PreTurn policies only see the fresh batch.
-    let new_messages_start = if state.turn_index == 0 {
+    // Track fresh input count across transformation so PreTurn policies do not
+    // rescan retained history if compaction removes earlier context.
+    let fresh_messages_start = if state.turn_index == 0 {
         state
             .context_messages
             .len()
@@ -53,6 +54,7 @@ pub async fn run_single_turn(
     if !state.pending_messages.is_empty() {
         state.context_messages.append(&mut state.pending_messages);
     }
+    let fresh_messages_len = state.context_messages.len() - fresh_messages_start;
     state.initial_new_messages_len = 0;
     clear_pending_message_snapshot(config);
     // Sync the full context (including newly consumed pending messages) to the
@@ -114,7 +116,10 @@ pub async fn run_single_turn(
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             guard.clone()
         };
-        let new_messages_start = new_messages_start.min(state.context_messages.len());
+        let new_messages_start = state
+            .context_messages
+            .len()
+            .saturating_sub(fresh_messages_len);
         let policy_ctx = PolicyContext {
             turn_index: state.turn_index,
             accumulated_usage: &state.accumulated_usage,
@@ -139,8 +144,8 @@ pub async fn run_single_turn(
                 return TurnOutcome::Return;
             }
             PolicyVerdict::Inject(msgs) => {
-                state.pending_messages.extend(msgs);
-                sync_pending_message_snapshot(config, state);
+                state.context_messages.extend(msgs);
+                sync_loop_context_snapshot(config, state);
             }
         }
     }
