@@ -66,7 +66,7 @@ impl PostTurnPolicy for CheckpointPolicy {
     }
 
     fn evaluate(&self, ctx: &PolicyContext<'_>, turn: &TurnPolicyContext<'_>) -> PolicyVerdict {
-        let checkpoint = Checkpoint::new(
+        let mut checkpoint = Checkpoint::new(
             format!("turn-{}", ctx.turn_index),
             turn.system_prompt,
             &turn.model_spec.provider,
@@ -76,6 +76,10 @@ impl PostTurnPolicy for CheckpointPolicy {
         .with_turn_count(ctx.turn_index)
         .with_usage(ctx.accumulated_usage.clone())
         .with_cost(ctx.accumulated_cost.clone());
+
+        if !ctx.state.is_empty() {
+            checkpoint = checkpoint.with_state(ctx.state.snapshot());
+        }
 
         let store = Arc::clone(&self.store);
         self.handle.spawn(async move {
@@ -401,5 +405,61 @@ mod tests {
         // Restore messages and verify content
         let restored = loaded.restore_messages(None);
         assert_eq!(restored.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn checkpoint_contains_restorable_session_state() {
+        let store = Arc::new(MockCheckpointStore::new());
+        let policy = CheckpointPolicy::new(store.clone() as Arc<dyn CheckpointStore>);
+
+        let usage = Usage::default();
+        let cost = Cost::default();
+        let mut state = swink_agent::SessionState::new();
+        state.set("workflow_id", "wf-123").unwrap();
+        state
+            .set("profile", serde_json::json!({"tier": "pro", "score": 42}))
+            .unwrap();
+        let ctx = PolicyContext {
+            turn_index: 4,
+            accumulated_usage: &usage,
+            accumulated_cost: &cost,
+            message_count: 2,
+            overflow_signal: false,
+            new_messages: &[],
+            state: &state,
+        };
+        let msg = sample_assistant_message();
+        let model = sample_model_spec();
+        let messages = sample_messages();
+        let turn = TurnPolicyContext {
+            assistant_message: &msg,
+            tool_results: &[],
+            stop_reason: StopReason::Stop,
+            system_prompt: "Track session state.",
+            model_spec: &model,
+            context_messages: &messages,
+        };
+
+        policy.evaluate(&ctx, &turn);
+        tokio::task::yield_now().await;
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        let loaded = store
+            .load_checkpoint("turn-4")
+            .await
+            .expect("load should succeed")
+            .expect("checkpoint should exist");
+        let restored = swink_agent::SessionState::restore_from_snapshot(
+            loaded
+                .state
+                .expect("checkpoint should include session state"),
+        )
+        .expect("state snapshot should restore");
+
+        assert_eq!(restored.get::<String>("workflow_id"), Some("wf-123".into()));
+        assert_eq!(
+            restored.get_raw("profile"),
+            Some(&serde_json::json!({"tier": "pro", "score": 42}))
+        );
     }
 }
