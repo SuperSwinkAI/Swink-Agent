@@ -2,10 +2,60 @@
 mod common;
 
 use std::sync::Arc;
+use std::sync::{Mutex, PoisonError};
 use std::time::Duration;
 
 use common::*;
-use swink_agent::{Agent, AgentHandle, AgentOptions};
+use swink_agent::{Agent, AgentEvent, AgentHandle, AgentOptions};
+use tokio::sync::oneshot;
+
+fn notify_on_tool_start(agent: &mut Agent, expected_name: &'static str) -> oneshot::Receiver<()> {
+    let (tx, rx) = oneshot::channel();
+    let tx = Arc::new(Mutex::new(Some(tx)));
+
+    agent.subscribe({
+        let tx = Arc::clone(&tx);
+        move |event| {
+            if let AgentEvent::ToolExecutionStart { name, .. } = event
+                && name == expected_name
+                && let Some(tx) = tx.lock().unwrap_or_else(PoisonError::into_inner).take()
+            {
+                let _ = tx.send(());
+            }
+        }
+    });
+
+    rx
+}
+
+fn notify_on_agent_end(agent: &mut Agent) -> oneshot::Receiver<()> {
+    let (tx, rx) = oneshot::channel();
+    let tx = Arc::new(Mutex::new(Some(tx)));
+
+    agent.subscribe({
+        let tx = Arc::clone(&tx);
+        move |event| {
+            if matches!(event, AgentEvent::AgentEnd { .. })
+                && let Some(tx) = tx.lock().unwrap_or_else(PoisonError::into_inner).take()
+            {
+                let _ = tx.send(());
+            }
+        }
+    });
+
+    rx
+}
+
+async fn await_try_result(
+    mut handle: AgentHandle,
+) -> Result<swink_agent::AgentResult, swink_agent::AgentError> {
+    loop {
+        if let Some(result) = handle.try_result() {
+            return result;
+        }
+        tokio::task::yield_now().await;
+    }
+}
 
 #[tokio::test]
 async fn spawn_completes_successfully() {
@@ -45,11 +95,11 @@ async fn cancel_running_agent() {
         ])),
     )
     .with_tools(vec![tool]);
-    let agent = Agent::new(options);
+    let mut agent = Agent::new(options);
+    let tool_started = notify_on_tool_start(&mut agent, "slow_tool");
     let handle = AgentHandle::spawn_text(agent, "run the tool");
 
-    // Give the task a moment to start, then cancel.
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    tool_started.await.unwrap();
     handle.cancel();
 
     let result = handle.result().await;
@@ -84,14 +134,13 @@ async fn is_done_reflects_status() {
         ])),
     )
     .with_tools(vec![tool]);
-    let agent = Agent::new(options);
+    let mut agent = Agent::new(options);
+    let tool_started = notify_on_tool_start(&mut agent, "slow");
     let handle = AgentHandle::spawn_text(agent, "go");
 
-    // Should not be done immediately (tool has a 30s delay).
-    tokio::time::sleep(Duration::from_millis(20)).await;
+    tool_started.await.unwrap();
     assert!(!handle.is_done());
 
-    // Cancel so the test doesn't hang.
     handle.cancel();
     let _ = handle.result().await;
 }
@@ -108,13 +157,13 @@ async fn try_result_returns_none_while_running() {
         ])),
     )
     .with_tools(vec![tool]);
-    let agent = Agent::new(options);
+    let mut agent = Agent::new(options);
+    let tool_started = notify_on_tool_start(&mut agent, "slow");
     let mut handle = AgentHandle::spawn_text(agent, "go");
 
-    tokio::time::sleep(Duration::from_millis(20)).await;
+    tool_started.await.unwrap();
     assert!(handle.try_result().is_none());
 
-    // Clean up.
     handle.cancel();
     let _ = handle.result().await;
 }
@@ -126,12 +175,11 @@ async fn try_result_returns_some_when_done() {
         default_model(),
         Arc::new(MockStreamFn::new(vec![text_only_events("done")])),
     );
-    let agent = Agent::new(options);
-    let mut handle = AgentHandle::spawn_text(agent, "go");
+    let mut agent = Agent::new(options);
+    let agent_ended = notify_on_agent_end(&mut agent);
+    let handle = AgentHandle::spawn_text(agent, "go");
 
-    // Wait for the task to finish.
-    tokio::time::sleep(Duration::from_millis(200)).await;
-    let result = handle.try_result();
-    assert!(result.is_some());
-    assert!(result.unwrap().is_ok());
+    agent_ended.await.unwrap();
+    let result = await_try_result(handle).await;
+    assert!(result.is_ok());
 }
