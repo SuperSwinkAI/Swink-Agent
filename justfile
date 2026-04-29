@@ -13,6 +13,10 @@ test:
 test-testkit:
     {{cargo}} test --workspace --features testkit
 
+# Run core plugin tests with the feature combination required by all plugin regressions
+test-plugins:
+    {{cargo}} test -p swink-agent --features plugins,testkit --test plugin_integration --test plugin_registry
+
 # Run core crate tests with no default features (verifies builtin-tools disabled)
 test-no-features:
     {{cargo}} nextest run -p swink-agent --no-default-features
@@ -63,6 +67,7 @@ validate:
     {{cargo}} test --workspace
     {{cargo}} build --workspace
     {{cargo}} test --workspace --features testkit
+    just test-plugins
     just no-default-sentinels
     just package-preflight
 
