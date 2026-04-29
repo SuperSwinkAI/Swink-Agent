@@ -21,7 +21,7 @@ use tokio_util::sync::CancellationToken;
 
 use swink_agent_eval::judge::{JudgeClient, JudgeError, JudgeVerdict, RetryPolicy};
 
-use crate::client::{is_retryable, parse_verdict_text, retry_with_cancel};
+use crate::client::{block_on_judge, is_retryable, parse_verdict_text, retry_with_cancel};
 use crate::util::truncate_http_body;
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(60);
@@ -201,11 +201,11 @@ impl BlockingOpenAiJudgeClient {
         Self { inner }
     }
 
-    /// Run a single judge call synchronously on the current Tokio runtime.
+    /// Run a single judge call synchronously.
     pub fn judge(&self, prompt: &str) -> Result<JudgeVerdict, JudgeError> {
         let client = self.inner.clone();
         let prompt = prompt.to_string();
-        tokio::runtime::Handle::current().block_on(async move { client.judge(&prompt).await })
+        block_on_judge(async move { client.judge(&prompt).await })
     }
 
     /// Borrow the underlying async client for mixed sync/async call sites.
