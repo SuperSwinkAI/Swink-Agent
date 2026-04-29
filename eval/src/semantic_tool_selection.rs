@@ -74,10 +74,15 @@ impl Evaluator for SemanticToolSelectionEvaluator {
         }
 
         // Empty trajectory → not applicable (spec Edge Cases list).
-        let calls: Vec<(usize, &RecordedToolCall)> = invocation
+        let calls: Vec<(usize, RecordedToolCall)> = invocation
             .turns
             .iter()
-            .flat_map(|turn| turn.tool_calls.iter().map(move |tc| (turn.turn_index, tc)))
+            .flat_map(|turn| {
+                turn.tool_calls
+                    .iter()
+                    .cloned()
+                    .map(move |tc| (turn.turn_index, tc))
+            })
             .collect();
         if calls.is_empty() {
             return None;
@@ -85,6 +90,8 @@ impl Evaluator for SemanticToolSelectionEvaluator {
 
         let goal = goal_from_case(case);
         let tool_menu = available_tool_menu(invocation);
+        let judge = Arc::clone(&self.judge);
+        let timeout_limit = self.timeout;
 
         // Judge each call. The Evaluator trait is sync; the async judge is
         // driven through whichever runtime context the caller provides:
@@ -93,19 +100,21 @@ impl Evaluator for SemanticToolSelectionEvaluator {
         //   or `flavor = "multi_thread"`): use `block_in_place` + the
         //   ambient `Handle::block_on` so the active runtime keeps
         //   scheduling other tasks while this evaluator waits.
-        // - Outside a Tokio runtime (or inside a current-thread flavor
-        //   where `block_in_place` is unsupported): build an ephemeral
-        //   current-thread runtime and `block_on` it.
+        // - Inside a current-thread runtime: delegate to a helper thread
+        //   with its own current-thread runtime because Tokio cannot block
+        //   the runtime's only worker thread.
+        // - Outside a Tokio runtime: build an ephemeral current-thread
+        //   runtime and `block_on` it.
         //
         // This keeps the evaluator usable from plain `#[test]` functions
         // and other sync callers without panicking on
         // `Handle::current()`.
-        let outcomes: Vec<CallOutcome> = drive_judge_calls(|| async {
+        let outcomes: Vec<CallOutcome> = drive_judge_calls(move || async move {
             let mut results = Vec::with_capacity(calls.len());
             let mut history = String::new();
             for (turn_index, call) in &calls {
                 let prompt = build_prompt(&goal, &tool_menu, &history, *turn_index, call);
-                let outcome = match timeout(self.timeout, self.judge.judge(&prompt)).await {
+                let outcome = match timeout(timeout_limit, judge.judge(&prompt)).await {
                     Ok(Ok(verdict)) => CallOutcome::Verdict {
                         tool: call.name.clone(),
                         verdict,
@@ -116,7 +125,7 @@ impl Evaluator for SemanticToolSelectionEvaluator {
                     },
                     Err(_elapsed) => CallOutcome::OuterTimeout {
                         tool: call.name.clone(),
-                        limit: self.timeout,
+                        limit: timeout_limit,
                     },
                 };
                 // Append this call to the running history view so later
@@ -141,23 +150,17 @@ impl Evaluator for SemanticToolSelectionEvaluator {
 /// * Multi-thread runtime active → `block_in_place` + the ambient
 ///   `Handle::block_on` so the host runtime keeps scheduling other tasks
 ///   while we wait on the judge.
+/// * Current-thread runtime active → move the work onto a helper thread
+///   with its own current-thread runtime, avoiding Tokio's nested-runtime
+///   panic.
 /// * No runtime → build an ephemeral current-thread runtime and
 ///   `block_on` it. Keeps the evaluator usable from plain `#[test]`
 ///   functions and other sync callers.
-///
-/// ## Known limitation
-///
-/// Running the evaluator from *inside* a single-threaded Tokio runtime
-/// (e.g. `#[tokio::test(flavor = "current_thread")]` or a manually built
-/// `new_current_thread` runtime) will panic with "Cannot start a runtime
-/// from within a runtime". This is an inherent Tokio constraint, not a
-/// bug in this helper — see
-/// <https://docs.rs/tokio/latest/tokio/task/fn.block_in_place.html>. Use
-/// a multi-thread runtime or call from plain sync context.
 fn drive_judge_calls<F, Fut, T>(make_future: F) -> T
 where
-    F: FnOnce() -> Fut,
-    Fut: std::future::Future<Output = T>,
+    F: FnOnce() -> Fut + Send + 'static,
+    Fut: std::future::Future<Output = T> + Send + 'static,
+    T: Send + 'static,
 {
     use tokio::runtime::{Handle, RuntimeFlavor};
 
@@ -167,6 +170,23 @@ where
         return tokio::task::block_in_place(|| handle.block_on(make_future()));
     }
 
+    if Handle::try_current().is_ok() {
+        return std::thread::Builder::new()
+            .name("swink-eval-judge".to_string())
+            .spawn(|| block_on_owned_runtime(make_future))
+            .expect("spawn current-thread judge helper")
+            .join()
+            .expect("current-thread judge helper panicked");
+    }
+
+    block_on_owned_runtime(make_future)
+}
+
+fn block_on_owned_runtime<F, Fut, T>(make_future: F) -> T
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = T>,
+{
     // No runtime active — build a short-lived one. `.expect` here is
     // unreachable in practice: runtime construction fails only on OS-level
     // resource exhaustion, at which point the evaluator cannot function.
@@ -430,5 +450,27 @@ mod tests {
         let judge: Arc<dyn JudgeClient> = Arc::new(MockJudge::always_pass());
         let evaluator = SemanticToolSelectionEvaluator::new(judge);
         assert_eq!(evaluator.timeout, Duration::from_mins(5));
+    }
+
+    #[test]
+    fn evaluates_inside_current_thread_runtime() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("current-thread runtime");
+
+        runtime.block_on(async {
+            let case = simple_case();
+            let invocation = invocation_with_calls(&["read_file"]);
+            let judge = Arc::new(MockJudge::always_pass());
+            let evaluator = SemanticToolSelectionEvaluator::new(judge.clone());
+
+            let result = evaluator
+                .evaluate(&case, &invocation)
+                .expect("semantic tool selection should apply");
+
+            assert!(result.score.verdict().is_pass());
+            assert_eq!(judge.call_count(), 1);
+        });
     }
 }

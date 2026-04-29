@@ -527,15 +527,13 @@ pub async fn dispatch_judge(
 ///
 /// Multi-thread runtime active → `block_in_place` + the ambient
 /// `Handle::block_on` so the host runtime keeps scheduling other tasks.
-/// Otherwise → build an ephemeral current-thread runtime and `block_on` it.
-///
-/// ## Known limitation
-/// Running from *inside* a single-threaded Tokio runtime will panic with
-/// "Cannot start a runtime from within a runtime". This is an inherent
-/// Tokio constraint — use a multi-thread runtime or call from sync context.
+/// Current-thread runtime active → offload to a helper thread with its own
+/// current-thread runtime. No runtime active → build an ephemeral
+/// current-thread runtime and `block_on` it.
 pub fn block_on<F, T>(future: F) -> T
 where
-    F: std::future::Future<Output = T>,
+    F: std::future::Future<Output = T> + Send,
+    T: Send,
 {
     use tokio::runtime::{Handle, RuntimeFlavor};
 
@@ -545,6 +543,22 @@ where
         return tokio::task::block_in_place(|| handle.block_on(future));
     }
 
+    if Handle::try_current().is_ok() {
+        return std::thread::scope(|scope| {
+            scope
+                .spawn(move || block_on_future(future))
+                .join()
+                .expect("current-thread evaluator helper panicked")
+        });
+    }
+
+    block_on_future(future)
+}
+
+fn block_on_future<F, T>(future: F) -> T
+where
+    F: std::future::Future<Output = T>,
+{
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -603,13 +617,14 @@ pub fn finish_metric_result(
 /// Mirrors the pattern documented on
 /// [`crate::SemanticToolSelectionEvaluator`] (spec 023): when a multi-thread
 /// Tokio runtime is active we use `block_in_place` + the ambient
-/// `Handle::block_on`; otherwise we build an ephemeral current-thread runtime.
-/// Calling this from inside a single-threaded runtime will panic — an
-/// inherent Tokio constraint, not a bug.
+/// `Handle::block_on`; when a current-thread runtime is active we offload to
+/// a helper thread with its own runtime; otherwise we build an ephemeral
+/// current-thread runtime.
 pub fn drive_judge_call<F, Fut, T>(make_future: F) -> T
 where
-    F: FnOnce() -> Fut,
-    Fut: std::future::Future<Output = T>,
+    F: FnOnce() -> Fut + Send,
+    Fut: std::future::Future<Output = T> + Send,
+    T: Send,
 {
     use tokio::runtime::{Handle, RuntimeFlavor};
 
@@ -619,6 +634,23 @@ where
         return tokio::task::block_in_place(|| handle.block_on(make_future()));
     }
 
+    if Handle::try_current().is_ok() {
+        return std::thread::scope(|scope| {
+            scope
+                .spawn(move || block_on_judge_future(make_future))
+                .join()
+                .expect("current-thread judge helper panicked")
+        });
+    }
+
+    block_on_judge_future(make_future)
+}
+
+fn block_on_judge_future<F, Fut, T>(make_future: F) -> T
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = T>,
+{
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -913,6 +945,22 @@ mod tests {
         let details = result.details.expect("missing template is reported");
         assert!(details.contains("dispatch error"));
         assert!(details.contains("built-in template missing_v0 is missing"));
+    }
+
+    #[test]
+    fn sync_bridges_work_inside_current_thread_runtime() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("current-thread runtime");
+
+        runtime.block_on(async {
+            let block_result = block_on(async { 7usize });
+            let judge_result = drive_judge_call(|| async { 11usize });
+
+            assert_eq!(block_result, 7);
+            assert_eq!(judge_result, 11);
+        });
     }
 
     #[test]
