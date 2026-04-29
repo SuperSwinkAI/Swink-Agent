@@ -1,0 +1,5 @@
+error: #[tool] requires an async function
+ --> tests/ui/fail/non_async_tool.rs:4:1
+  |
+4 | fn sync_tool() -> swink_agent::AgentToolResult {
+  | ^^

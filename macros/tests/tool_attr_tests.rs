@@ -73,6 +73,23 @@ fn tool_attr_schema_no_params() {
     );
 }
 
+#[tokio::test]
+async fn tool_attr_zero_param_tool_falls_back_to_empty_object() {
+    let result = PingTool
+        .execute(
+            "call-ping",
+            json!("ignored"),
+            CancellationToken::new(),
+            None,
+            Arc::new(RwLock::new(SessionState::new())),
+            None,
+        )
+        .await;
+
+    assert!(!result.is_error);
+    assert_eq!(first_text(&result), "pong");
+}
+
 // ── CancellationToken not leaked into schema ─────────────────────────────────
 //
 // A CancellationToken parameter must be excluded from the generated schema and
