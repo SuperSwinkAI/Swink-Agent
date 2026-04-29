@@ -14,7 +14,7 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 use swink_agent::{
     AssistantMessageEvent, ModelSpec, StopReason, StreamErrorKind, StreamFn, StreamOptions,
 };
-use swink_agent_adapters::{AzureAuth, AzureStreamFn};
+use swink_agent_adapters::{AzureAuth, AzureCloud, AzureStreamFn};
 
 use common::{event_name, sse_response, test_context};
 
@@ -465,6 +465,50 @@ fn entra_stream_fn(api_server: &MockServer, token_url: &str) -> AzureStreamFn {
         },
     )
     .with_token_endpoint(token_url.to_string())
+}
+
+#[tokio::test]
+async fn entra_id_cloud_authority_builds_tenant_token_url() {
+    let token_server = MockServer::start().await;
+    let api_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/test-tenant/oauth2/v2.0/token"))
+        .and(body_string_contains("grant_type=client_credentials"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_string(token_response_body("cloud-token", 3600)),
+        )
+        .expect(1)
+        .mount(&token_server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .and(header("Authorization", "Bearer cloud-token"))
+        .respond_with(sse_response(&simple_sse_body()))
+        .expect(1)
+        .mount(&api_server)
+        .await;
+
+    let stream_fn = AzureStreamFn::new(
+        api_server.uri(),
+        AzureAuth::EntraId {
+            tenant_id: "test-tenant".into(),
+            client_id: "test-client-id".into(),
+            client_secret: "test-client-secret".into(),
+        },
+    )
+    .with_cloud(AzureCloud::CustomAuthorityHost(token_server.uri()));
+
+    let events = collect_events(&stream_fn).await;
+
+    assert!(events.iter().any(|e| matches!(
+        e,
+        AssistantMessageEvent::Done {
+            stop_reason: StopReason::Stop,
+            ..
+        }
+    )));
 }
 
 // ── T032: Entra ID token acquisition — verify POST params ─────────────────

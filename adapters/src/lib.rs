@@ -132,7 +132,7 @@ pub use proxy::ProxyStreamFn;
 #[cfg(feature = "azure")]
 mod azure;
 #[cfg(feature = "azure")]
-pub use azure::{AzureAuth, AzureStreamFn};
+pub use azure::{AzureAuth, AzureCloud, AzureStreamFn};
 
 #[cfg(feature = "bedrock")]
 mod bedrock;

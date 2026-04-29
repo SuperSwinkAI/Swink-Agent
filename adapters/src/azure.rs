@@ -31,6 +31,32 @@ pub enum AzureAuth {
     },
 }
 
+/// Azure authority host selection for Entra ID token acquisition.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum AzureCloud {
+    /// Azure public cloud.
+    Public,
+    /// Microsoft commercial GCC cloud.
+    Gcc,
+    /// Azure US Government / GCC High cloud.
+    GccHigh,
+    /// Azure US Government DoD cloud.
+    Dod,
+    /// Custom Entra authority host, for sovereign clouds or private test hosts.
+    CustomAuthorityHost(String),
+}
+
+impl AzureCloud {
+    fn token_url(&self, tenant_id: &str) -> String {
+        let authority_host = match self {
+            Self::Public | Self::Gcc => "https://login.microsoftonline.com",
+            Self::GccHigh | Self::Dod => "https://login.microsoftonline.us",
+            Self::CustomAuthorityHost(host) => host.trim_end_matches('/'),
+        };
+        format!("{authority_host}/{tenant_id}/oauth2/v2.0/token")
+    }
+}
+
 impl std::fmt::Debug for AzureAuth {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -67,7 +93,8 @@ pub struct AzureStreamFn {
     shell: OaiAdapterShell,
     auth: AzureAuth,
     token_source: SingleFlightTokenSource<String, TokenAcquireError>,
-    /// Override token endpoint URL (for testing). `None` = use Microsoft default.
+    cloud: AzureCloud,
+    /// Override the complete token endpoint URL.
     token_endpoint_override: Option<String>,
 }
 
@@ -88,11 +115,19 @@ impl AzureStreamFn {
             ),
             auth,
             token_source: SingleFlightTokenSource::new(REFRESH_MARGIN),
+            cloud: AzureCloud::Public,
             token_endpoint_override: None,
         }
     }
 
-    /// Set a custom token endpoint URL (for testing with wiremock).
+    /// Select the Azure cloud authority used for Entra ID token acquisition.
+    #[must_use]
+    pub fn with_cloud(mut self, cloud: AzureCloud) -> Self {
+        self.cloud = cloud;
+        self
+    }
+
+    /// Set a custom complete token endpoint URL.
     #[must_use]
     pub fn with_token_endpoint(mut self, url: impl Into<String>) -> Self {
         self.token_endpoint_override = Some(url.into());
@@ -173,12 +208,11 @@ impl AzureStreamFn {
             .await
     }
 
-    /// Build the token endpoint URL. Uses override if set, otherwise Microsoft default.
+    /// Build the token endpoint URL.
     fn token_url(&self, tenant_id: &str) -> String {
-        self.token_endpoint_override.as_ref().map_or_else(
-            || format!("https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"),
-            Clone::clone,
-        )
+        self.token_endpoint_override
+            .as_ref()
+            .map_or_else(|| self.cloud.token_url(tenant_id), Clone::clone)
     }
 
     /// Apply Azure-specific auth headers to the request builder.
@@ -321,3 +355,33 @@ const _: () = {
     const fn assert_send_sync<T: Send + Sync>() {}
     assert_send_sync::<AzureStreamFn>();
 };
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn azure_clouds_build_expected_token_urls() {
+        assert_eq!(
+            AzureCloud::Public.token_url("tenant"),
+            "https://login.microsoftonline.com/tenant/oauth2/v2.0/token"
+        );
+        assert_eq!(
+            AzureCloud::Gcc.token_url("tenant"),
+            "https://login.microsoftonline.com/tenant/oauth2/v2.0/token"
+        );
+        assert_eq!(
+            AzureCloud::GccHigh.token_url("tenant"),
+            "https://login.microsoftonline.us/tenant/oauth2/v2.0/token"
+        );
+        assert_eq!(
+            AzureCloud::Dod.token_url("tenant"),
+            "https://login.microsoftonline.us/tenant/oauth2/v2.0/token"
+        );
+        assert_eq!(
+            AzureCloud::CustomAuthorityHost("https://login.example/".to_string())
+                .token_url("tenant"),
+            "https://login.example/tenant/oauth2/v2.0/token"
+        );
+    }
+}

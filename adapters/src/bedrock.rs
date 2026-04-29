@@ -677,20 +677,25 @@ fn process_smithy_message(
 /// Unknown exception types fall through to a generic (unclassified) error so they
 /// are not silently treated as retryable.
 fn classify_bedrock_exception(exc_type: &str, payload: &str) -> AssistantMessageEvent {
-    let lower = exc_type.to_lowercase();
+    let exception_name = canonical_bedrock_exception_name(exc_type);
 
-    if lower.contains("throttl") || lower.contains("toomanyrequests") {
+    if matches!(
+        exception_name.as_str(),
+        "throttlingexception" | "toomanyrequestsexception"
+    ) {
         AssistantMessageEvent::error_throttled(format!("Bedrock throttled: {payload}"))
-    } else if lower.contains("accessdenied")
-        || lower.contains("validation")
-        || lower.contains("resourcenotfound")
-    {
+    } else if matches!(
+        exception_name.as_str(),
+        "accessdeniedexception" | "validationexception" | "resourcenotfoundexception"
+    ) {
         AssistantMessageEvent::error_auth(format!("Bedrock client error ({exc_type}): {payload}"))
-    } else if lower.contains("internalserver")
-        || lower.contains("modelstreamerror")
-        || lower.contains("modeltimeout")
-        || lower.contains("serviceunavailable")
-    {
+    } else if matches!(
+        exception_name.as_str(),
+        "internalserverexception"
+            | "modelstreamerrorexception"
+            | "modeltimeoutexception"
+            | "serviceunavailableexception"
+    ) {
         AssistantMessageEvent::error_network(format!(
             "Bedrock server error ({exc_type}): {payload}"
         ))
@@ -698,6 +703,15 @@ fn classify_bedrock_exception(exc_type: &str, payload: &str) -> AssistantMessage
         // Unknown exception type — do not assume retryable.
         AssistantMessageEvent::error(format!("Bedrock exception ({exc_type}): {payload}"))
     }
+}
+
+fn canonical_bedrock_exception_name(exc_type: &str) -> String {
+    exc_type
+        .trim()
+        .rsplit(['#', '.', '/'])
+        .next()
+        .unwrap_or(exc_type)
+        .to_ascii_lowercase()
 }
 
 fn parse_metadata_frame(
@@ -1048,6 +1062,7 @@ const _: () = {
 mod tests {
     use super::*;
     use reqwest::header::{CONTENT_TYPE, HOST};
+    use swink_agent::StreamErrorKind;
 
     #[test]
     fn sigv4_signs_request_with_expected_headers() {
@@ -1241,6 +1256,30 @@ mod tests {
         );
         assert_eq!(map_stop_reason(None).unwrap(), StopReason::Stop);
         assert!(map_stop_reason(Some("guardrail_intervened")).is_err());
+    }
+
+    #[test]
+    fn bedrock_exception_classification_uses_exact_suffix() {
+        let throttled = classify_bedrock_exception(
+            "com.amazonaws.bedrockruntime#ThrottlingException",
+            "slow down",
+        );
+        assert!(matches!(
+            throttled,
+            AssistantMessageEvent::Error {
+                error_kind: Some(StreamErrorKind::Throttled),
+                ..
+            }
+        ));
+
+        let false_positive = classify_bedrock_exception("NotThrottlingException", "plain error");
+        assert!(matches!(
+            false_positive,
+            AssistantMessageEvent::Error {
+                error_kind: None,
+                ..
+            }
+        ));
     }
 
     #[test]
