@@ -31,9 +31,60 @@ impl<T> ExpiringValue<T> {
 
 type RefreshFuture<T, E> = Shared<BoxFuture<'static, Result<ExpiringValue<T>, E>>>;
 
+struct InFlightRefresh<T, E> {
+    generation: u64,
+    future: RefreshFuture<T, E>,
+}
+
+struct InFlightState<T, E> {
+    current: Option<InFlightRefresh<T, E>>,
+    next_generation: u64,
+}
+
+impl<T, E> InFlightState<T, E> {
+    fn new() -> Self {
+        Self {
+            current: None,
+            next_generation: 0,
+        }
+    }
+
+    fn get_or_start_with(
+        &mut self,
+        start: impl FnOnce() -> RefreshFuture<T, E>,
+    ) -> (u64, RefreshFuture<T, E>) {
+        if let Some(current) = self.current.as_ref() {
+            return (current.generation, current.future.clone());
+        }
+
+        let generation = self.next_generation;
+        self.next_generation = self
+            .next_generation
+            .checked_add(1)
+            .expect("single-flight refresh generation overflowed");
+        let future = start();
+        self.current = Some(InFlightRefresh {
+            generation,
+            future: future.clone(),
+        });
+
+        (generation, future)
+    }
+
+    fn clear_generation(&mut self, generation: u64) {
+        if self
+            .current
+            .as_ref()
+            .is_some_and(|current| current.generation == generation)
+        {
+            self.current = None;
+        }
+    }
+}
+
 pub struct SingleFlightTokenSource<T, E = String> {
     cached: RwLock<Option<ExpiringValue<T>>>,
-    in_flight: Mutex<Option<RefreshFuture<T, E>>>,
+    in_flight: Mutex<InFlightState<T, E>>,
     refresh_margin: Duration,
 }
 
@@ -46,7 +97,7 @@ where
     pub fn new(refresh_margin: Duration) -> Self {
         Self {
             cached: RwLock::new(None),
-            in_flight: Mutex::new(None),
+            in_flight: Mutex::new(InFlightState::new()),
             refresh_margin,
         }
     }
@@ -65,15 +116,9 @@ where
             }
         }
 
-        let shared_future = {
+        let (generation, shared_future) = {
             let mut in_flight = self.in_flight.lock().await;
-            if let Some(existing) = in_flight.as_ref() {
-                existing.clone()
-            } else {
-                let shared = refresh().boxed().shared();
-                *in_flight = Some(shared.clone());
-                shared
-            }
+            in_flight.get_or_start_with(|| refresh().boxed().shared())
         };
 
         let refreshed = shared_future.await;
@@ -81,7 +126,7 @@ where
             *self.cached.write().unwrap_or_else(PoisonError::into_inner) = Some(value.clone());
         }
 
-        self.in_flight.lock().await.take();
+        self.in_flight.lock().await.clear_generation(generation);
         refreshed.map(|value| value.value().clone())
     }
 
@@ -104,5 +149,38 @@ impl<T, E> std::fmt::Debug for SingleFlightTokenSource<T, E> {
             .field("has_cached", &has_cached)
             .field("refresh_margin", &self.refresh_margin)
             .finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ready_refresh(value: &str) -> RefreshFuture<String, String> {
+        let value = value.to_string();
+        async move {
+            Ok(ExpiringValue::new(
+                value,
+                Instant::now() + Duration::from_secs(300),
+            ))
+        }
+        .boxed()
+        .shared()
+    }
+
+    #[test]
+    fn stale_generation_clear_preserves_newer_refresh() {
+        let mut state = InFlightState::new();
+        let (old_generation, _) = state.get_or_start_with(|| ready_refresh("old"));
+
+        state.clear_generation(old_generation);
+        let (new_generation, _) = state.get_or_start_with(|| ready_refresh("new"));
+
+        state.clear_generation(old_generation);
+
+        assert_eq!(
+            state.current.as_ref().map(|current| current.generation),
+            Some(new_generation)
+        );
     }
 }
