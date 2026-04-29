@@ -581,16 +581,13 @@ fn parse_sse_stream(
 ) -> impl Stream<Item = AssistantMessageEvent> + Send {
     let line_stream = sse_data_lines_with_callback(response.bytes_stream(), on_raw_payload);
 
-    // NOTE: Google's cancel behavior differs from Anthropic/OpenAI — it uses
-    // error_network (retryable) rather than Aborted. We preserve this via a
-    // custom cancel handler in on_item's None branch, and accept the generic
-    // Aborted from sse_adapter_stream's cancel path. This is a semantic
-    // simplification: cancellation is non-retryable regardless of error_kind.
-    crate::sse::sse_adapter_stream(
+    // Gemini buffers full tool-call argument snapshots, so cancellation needs
+    // an adapter-specific finalizer that flushes those snapshots before closing
+    // open blocks.
+    crate::sse::sse_adapter_stream_with_cancel_finalizer(
         line_stream,
         cancellation_token,
         GeminiStreamState::default(),
-        "Google request cancelled",
         |item, state| match item {
             None => {
                 // If we already emitted a terminal event (e.g. SAFETY error),
@@ -665,6 +662,17 @@ fn parse_sse_stream(
             ),
             Some(_) => SseAction::Skip,
         },
+        |state| {
+            state.emit_terminal_error(
+                AssistantMessageEvent::Error {
+                    stop_reason: StopReason::Aborted,
+                    error_message: "Google request cancelled".to_string(),
+                    usage: None,
+                    error_kind: None,
+                },
+                true,
+            )
+        },
     )
 }
 
@@ -727,15 +735,9 @@ fn process_chunk(
     }
 
     if let Some(ref finish_reason) = candidate.finish_reason {
-        if finish_reason == "SAFETY" {
-            warn!("Google Gemini response blocked by safety filter");
-            events.extend(state.emit_final_tool_deltas());
-            events.extend(state.blocks.close_text());
-            events.extend(state.blocks.close_thinking(None));
-            events.extend(crate::finalize::finalize_blocks(state));
-            events.push(AssistantMessageEvent::error_content_filtered(
-                "Google Gemini: response blocked by safety filter",
-            ));
+        if let Some(error) = terminal_error_for_finish_reason(finish_reason) {
+            warn!(%finish_reason, "Google Gemini response ended with terminal error");
+            events.extend(state.emit_terminal_error(error, true));
             state.terminated = true;
         } else {
             state.stop_reason = Some(map_finish_reason(finish_reason, state.saw_tool_call));
@@ -789,6 +791,31 @@ fn map_finish_reason(finish_reason: &str, saw_tool_call: bool) -> StopReason {
         "MAX_TOKENS" => StopReason::Length,
         _ if saw_tool_call => StopReason::ToolUse,
         _ => StopReason::Stop,
+    }
+}
+
+fn terminal_error_for_finish_reason(finish_reason: &str) -> Option<AssistantMessageEvent> {
+    let message = format!("Google Gemini: terminal finish reason {finish_reason}");
+    match finish_reason {
+        "SAFETY" => Some(AssistantMessageEvent::error_content_filtered(
+            "Google Gemini: response blocked by safety filter",
+        )),
+        "RECITATION"
+        | "BLOCKLIST"
+        | "PROHIBITED_CONTENT"
+        | "SPII"
+        | "IMAGE_SAFETY"
+        | "IMAGE_PROHIBITED_CONTENT"
+        | "IMAGE_RECITATION" => Some(AssistantMessageEvent::error_content_filtered(message)),
+        "MALFORMED_FUNCTION_CALL" | "LANGUAGE" | "OTHER" | "IMAGE_OTHER" | "NO_IMAGE" => {
+            Some(AssistantMessageEvent::Error {
+                stop_reason: StopReason::Error,
+                error_message: message,
+                usage: None,
+                error_kind: None,
+            })
+        }
+        _ => None,
     }
 }
 

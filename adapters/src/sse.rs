@@ -456,10 +456,61 @@ where
     L: Send + 'static,
     F: FnMut(Option<L>, &mut S) -> SseAction + Send + 'static,
 {
+    sse_adapter_stream_with_cancel_finalizer(
+        line_stream,
+        cancellation_token,
+        state,
+        on_item,
+        move |state| {
+            let mut events = crate::finalize::finalize_blocks(state);
+            events.push(AssistantMessageEvent::Error {
+                stop_reason: StopReason::Aborted,
+                error_message: cancel_message.to_string(),
+                usage: None,
+                error_kind: None,
+            });
+            events
+        },
+    )
+}
+
+/// Like [`sse_adapter_stream`] with adapter-specific cancellation finalization.
+///
+/// Use this when an adapter must flush provider-specific buffered state before
+/// the shared block finalizer drains open blocks.
+pub fn sse_adapter_stream_with_cancel_finalizer<S, L, F, C>(
+    line_stream: Pin<Box<dyn Stream<Item = L> + Send>>,
+    cancellation_token: CancellationToken,
+    state: S,
+    on_item: F,
+    on_cancel: C,
+) -> Pin<Box<dyn Stream<Item = AssistantMessageEvent> + Send>>
+where
+    S: StreamFinalize + Send + 'static,
+    L: Send + 'static,
+    F: FnMut(Option<L>, &mut S) -> SseAction + Send + 'static,
+    C: FnMut(&mut S) -> Vec<AssistantMessageEvent> + Send + 'static,
+{
     Box::pin(
         stream::unfold(
-            (line_stream, cancellation_token, state, false, true, on_item),
-            move |(mut lines, token, mut state, mut done, first, mut on_item)| async move {
+            (
+                line_stream,
+                cancellation_token,
+                state,
+                false,
+                true,
+                on_item,
+                on_cancel,
+            ),
+            move |(
+                mut lines,
+                token,
+                mut state,
+                mut done,
+                first,
+                mut on_item,
+                mut on_cancel,
+            )| async move {
                 if done {
                     return None;
                 }
@@ -467,35 +518,29 @@ where
                 if first {
                     return Some((
                         vec![AssistantMessageEvent::Start],
-                        (lines, token, state, done, false, on_item),
+                        (lines, token, state, done, false, on_item, on_cancel),
                     ));
                 }
 
                 tokio::select! {
                     biased;
                     () = token.cancelled() => {
-                        let mut events = crate::finalize::finalize_blocks(&mut state);
-                        events.push(AssistantMessageEvent::Error {
-                            stop_reason: StopReason::Aborted,
-                            error_message: cancel_message.to_string(),
-                            usage: None,
-                            error_kind: None,
-                        });
+                        let events = on_cancel(&mut state);
                         done = true;
-                        Some((events, (lines, token, state, done, false, on_item)))
+                        Some((events, (lines, token, state, done, false, on_item, on_cancel)))
                     }
                     item = lines.next() => {
                         let action = on_item(item, &mut state);
                         match action {
                             SseAction::Continue(events) => {
-                                Some((events, (lines, token, state, done, false, on_item)))
+                                Some((events, (lines, token, state, done, false, on_item, on_cancel)))
                             }
                             SseAction::Done(events) => {
                                 done = true;
-                                Some((events, (lines, token, state, done, false, on_item)))
+                                Some((events, (lines, token, state, done, false, on_item, on_cancel)))
                             }
                             SseAction::Skip => {
-                                Some((vec![], (lines, token, state, done, false, on_item)))
+                                Some((vec![], (lines, token, state, done, false, on_item, on_cancel)))
                             }
                         }
                     }
