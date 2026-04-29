@@ -589,6 +589,42 @@ impl JsonlSessionStore {
         f(&index_clone)
     }
 
+    #[cfg(feature = "search")]
+    fn active_tantivy_index(&self) -> Option<crate::search::index::TantivyIndex> {
+        self.tantivy_index
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
+    #[cfg(feature = "search")]
+    fn refresh_active_search_index(&self, id: &str, operation: &str) {
+        let Some(index) = self.active_tantivy_index() else {
+            return;
+        };
+
+        match self.load_entries(id) {
+            Ok((meta, entries)) => {
+                if let Err(err) = index.index_session(&meta, &entries) {
+                    tracing::warn!(
+                        session_id = %id,
+                        error = %err,
+                        operation,
+                        "failed to update search index after session mutation"
+                    );
+                }
+            }
+            Err(err) => {
+                tracing::warn!(
+                    session_id = %id,
+                    error = %err,
+                    operation,
+                    "failed to load session for search index refresh"
+                );
+            }
+        }
+    }
+
     /// Register session migrators for automatic schema upgrades on load.
     #[must_use]
     pub fn with_migrators(
@@ -616,7 +652,10 @@ impl SessionStore for JsonlSessionStore {
     fn save(&self, id: &str, meta: &SessionMeta, messages: &[AgentMessage]) -> io::Result<()> {
         validate_session_id(id)?;
         let path = session_path(&self.sessions_dir, id);
-        save_messages_with_hooks(&path, id, meta, messages, || Ok(()), write_messages_locked)
+        save_messages_with_hooks(&path, id, meta, messages, || Ok(()), write_messages_locked)?;
+        #[cfg(feature = "search")]
+        self.refresh_active_search_index(id, "save");
+        Ok(())
     }
 
     fn save_full(
@@ -660,7 +699,10 @@ impl SessionStore for JsonlSessionStore {
             messages
                 .iter()
                 .filter_map(|msg| SessionRecord::from_message(msg, id)),
-        )
+        )?;
+        #[cfg(feature = "search")]
+        self.refresh_active_search_index(id, "append");
+        Ok(())
     }
 
     fn load(
@@ -816,21 +858,19 @@ impl SessionStore for JsonlSessionStore {
 
     fn load_interrupt(&self, id: &str) -> io::Result<Option<InterruptState>> {
         validate_session_id(id)?;
-        if !session_path(&self.sessions_dir, id).exists() {
-            return Ok(None);
-        }
-        let path = interrupt_path(&self.sessions_dir, id);
-        if !path.exists() {
-            return Ok(None);
-        }
-        let contents = std::fs::read_to_string(&path)?;
-        let state: InterruptState = serde_json::from_str(&contents).map_err(|e| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("corrupted interrupt file for session {id}: {e}"),
-            )
-        })?;
-        Ok(Some(state))
+        with_session_lock(&self.sessions_dir, id, |session, path| {
+            if !session.exists() || !path.exists() {
+                return Ok(None);
+            }
+            let contents = std::fs::read_to_string(path)?;
+            let state: InterruptState = serde_json::from_str(&contents).map_err(|e| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("corrupted interrupt file for session {id}: {e}"),
+                )
+            })?;
+            Ok(Some(state))
+        })
     }
 
     fn clear_interrupt(&self, id: &str) -> io::Result<()> {

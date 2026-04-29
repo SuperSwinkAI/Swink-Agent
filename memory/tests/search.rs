@@ -269,6 +269,76 @@ mod tantivy_tests {
         );
     }
 
+    /// `save()` keeps an already-open index fresh after rewriting transcript messages.
+    #[test]
+    fn tantivy_save_updates_warm_index() {
+        let (store, _dir) = make_store();
+        save_session_with_text(
+            &store,
+            "save-refresh",
+            "Save Refresh",
+            &["obsolete indexed phrase"],
+        );
+
+        let before = store
+            .search("obsolete indexed", &SessionSearchOptions::default())
+            .expect("warm search");
+        assert_eq!(before.len(), 1);
+
+        let (meta, _) = store.load_entries("save-refresh").expect("load meta");
+        store
+            .save(
+                "save-refresh",
+                &meta,
+                &[common::user_message("fresh replacement phrase")],
+            )
+            .expect("save replacement");
+
+        let stale = store
+            .search("obsolete indexed", &SessionSearchOptions::default())
+            .expect("search stale term");
+        assert!(
+            stale.is_empty(),
+            "rewritten message should leave no stale hit"
+        );
+
+        let fresh = store
+            .search("fresh replacement", &SessionSearchOptions::default())
+            .expect("search fresh term");
+        assert_eq!(fresh.len(), 1);
+        assert_eq!(fresh[0].session_id, "save-refresh");
+    }
+
+    /// `append()` keeps an already-open index fresh after adding transcript messages.
+    #[test]
+    fn tantivy_append_updates_warm_index() {
+        let (store, _dir) = make_store();
+        save_session_with_text(
+            &store,
+            "append-refresh",
+            "Append Refresh",
+            &["initial indexed phrase"],
+        );
+
+        let before = store
+            .search("initial indexed", &SessionSearchOptions::default())
+            .expect("warm search");
+        assert_eq!(before.len(), 1);
+
+        store
+            .append(
+                "append-refresh",
+                &[common::user_message("new appended phrase")],
+            )
+            .expect("append message");
+
+        let fresh = store
+            .search("new appended", &SessionSearchOptions::default())
+            .expect("search appended term");
+        assert_eq!(fresh.len(), 1);
+        assert_eq!(fresh[0].session_id, "append-refresh");
+    }
+
     /// `rebuild_search_index` re-indexes all current sessions.
     #[test]
     fn rebuild_search_index_repopulates() {
