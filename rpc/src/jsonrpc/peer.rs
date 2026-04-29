@@ -1,12 +1,13 @@
 //! JSON-RPC 2.0 peer — reads and writes NDJSON messages over an async I/O pair.
 
 use std::collections::HashMap;
+use std::io;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, warn};
 
@@ -193,15 +194,10 @@ async fn reader_task<R: tokio::io::AsyncRead + Unpin>(
     inner: Arc<PeerInner>,
     incoming_tx: mpsc::Sender<IncomingMessage>,
 ) {
-    let buf = BufReader::new(read);
-    let mut lines = buf.lines();
+    let mut buf = BufReader::new(read);
     loop {
-        match lines.next_line().await {
+        match read_bounded_line(&mut buf).await {
             Ok(Some(line)) => {
-                if line.len() > MAX_LINE_BYTES {
-                    warn!("JSON-RPC line exceeds {MAX_LINE_BYTES} bytes; closing");
-                    break;
-                }
                 dispatch_line(&line, &inner, &incoming_tx).await;
             }
             Ok(None) => break, // EOF
@@ -216,6 +212,53 @@ async fn reader_task<R: tokio::io::AsyncRead + Unpin>(
     for (_, tx) in guard.drain() {
         let _ = tx.send(Err(RpcError::disconnected()));
     }
+}
+
+async fn read_bounded_line<R: AsyncBufRead + Unpin>(reader: &mut R) -> io::Result<Option<String>> {
+    let mut line = Vec::new();
+
+    loop {
+        let available = reader.fill_buf().await?;
+        if available.is_empty() {
+            if line.is_empty() {
+                return Ok(None);
+            }
+            return decode_line(line);
+        }
+
+        if let Some(newline_index) = available.iter().position(|byte| *byte == b'\n') {
+            if line.len() + newline_index > MAX_LINE_BYTES {
+                return Err(line_too_long());
+            }
+            line.extend_from_slice(&available[..newline_index]);
+            reader.consume(newline_index + 1);
+            if line.last() == Some(&b'\r') {
+                line.pop();
+            }
+            return decode_line(line);
+        }
+
+        if line.len() + available.len() > MAX_LINE_BYTES {
+            return Err(line_too_long());
+        }
+
+        line.extend_from_slice(available);
+        let consumed = available.len();
+        reader.consume(consumed);
+    }
+}
+
+fn decode_line(line: Vec<u8>) -> io::Result<Option<String>> {
+    String::from_utf8(line)
+        .map(Some)
+        .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))
+}
+
+fn line_too_long() -> io::Error {
+    io::Error::new(
+        io::ErrorKind::InvalidData,
+        format!("JSON-RPC line exceeds {MAX_LINE_BYTES} bytes"),
+    )
 }
 
 async fn dispatch_line(
