@@ -63,7 +63,6 @@ impl std::fmt::Debug for Credential {
                 .finish(),
             Self::OAuth2 {
                 expires_at,
-                token_url,
                 client_id,
                 scopes,
                 ..
@@ -72,7 +71,7 @@ impl std::fmt::Debug for Credential {
                 .field("access_token", &"[REDACTED]")
                 .field("refresh_token", &"[REDACTED]")
                 .field("expires_at", expires_at)
-                .field("token_url", token_url)
+                .field("token_url", &"[REDACTED]")
                 .field("client_id", client_id)
                 .field("client_secret", &"[REDACTED]")
                 .field("scopes", scopes)
@@ -488,6 +487,37 @@ mod tests {
             !debug.contains("token=secret-value"),
             "Debug leaks backend secret"
         );
+        assert!(debug.contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn oauth2_debug_redacts_token_url() {
+        let cred = Credential::OAuth2 {
+            access_token: "access-secret".into(),
+            refresh_token: Some("refresh-secret".into()),
+            expires_at: None,
+            token_url: "https://client:token-secret@auth.example.com/token?api_key=query-secret"
+                .into(),
+            client_id: "client-1".into(),
+            client_secret: Some("client-secret".into()),
+            scopes: vec!["read".into()],
+        };
+
+        let debug = format!("{cred:?}");
+
+        for secret in [
+            "access-secret",
+            "refresh-secret",
+            "client-secret",
+            "token-secret",
+            "query-secret",
+        ] {
+            assert!(
+                !debug.contains(secret),
+                "Debug leaks OAuth2 secret {secret}"
+            );
+        }
+        assert!(debug.contains("token_url"));
         assert!(debug.contains("[REDACTED]"));
     }
 
