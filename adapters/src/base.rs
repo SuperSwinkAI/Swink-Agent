@@ -1,10 +1,13 @@
 #![forbid(unsafe_code)]
 
 use std::future::Future;
+use std::time::Duration;
 
 use tokio_util::sync::CancellationToken;
 
 const MAX_ERROR_BODY_BYTES: usize = 64 * 1024;
+const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
+const DEFAULT_READ_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// Shared base for remote HTTP/SSE stream adapters.
 ///
@@ -49,7 +52,7 @@ impl AdapterBase {
         Self {
             base_url: base_url.into().trim_end_matches('/').to_string(),
             api_key: api_key.into(),
-            client: reqwest::Client::new(),
+            client: adapter_http_client(),
         }
     }
 }
@@ -81,6 +84,27 @@ pub fn cancelled_error(message: impl Into<String>) -> swink_agent::AssistantMess
         usage: None,
         error_kind: None,
     }
+}
+
+/// Build the default HTTP client used by remote adapters.
+///
+/// Streaming endpoints should not use an overall request deadline, because a
+/// valid response can run for minutes. Connect and per-read timeouts still keep
+/// dead sockets from pinning a turn forever.
+#[must_use]
+pub(crate) fn adapter_http_client() -> reqwest::Client {
+    adapter_http_client_with_timeouts(DEFAULT_CONNECT_TIMEOUT, DEFAULT_READ_TIMEOUT)
+}
+
+fn adapter_http_client_with_timeouts(
+    connect_timeout: Duration,
+    read_timeout: Duration,
+) -> reqwest::Client {
+    reqwest::Client::builder()
+        .connect_timeout(connect_timeout)
+        .read_timeout(read_timeout)
+        .build()
+        .expect("adapter HTTP client builder should be valid")
 }
 
 /// Race a pre-stream async operation against cancellation.
@@ -290,5 +314,40 @@ mod tests {
 
         assert_eq!(body.len(), MAX_ERROR_BODY_BYTES + "...[truncated]".len());
         assert!(body.ends_with("...[truncated]"));
+    }
+
+    #[tokio::test]
+    async fn adapter_http_client_times_out_between_body_reads() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        tokio::spawn(async move {
+            if let Ok((mut socket, _)) = listener.accept().await {
+                let mut request = [0u8; 1024];
+                let _ = socket.read(&mut request).await;
+                let response = concat!(
+                    "HTTP/1.1 200 OK\r\n",
+                    "Content-Length: 128\r\n\r\n",
+                    "partial",
+                );
+                let _ = socket.write_all(response.as_bytes()).await;
+                tokio::time::sleep(Duration::from_secs(5)).await;
+            }
+        });
+
+        let client =
+            adapter_http_client_with_timeouts(Duration::from_secs(1), Duration::from_millis(50));
+        let response = client
+            .get(format!("http://{addr}/"))
+            .send()
+            .await
+            .expect("connect");
+
+        let err = tokio::time::timeout(Duration::from_secs(2), response.bytes())
+            .await
+            .expect("body read should complete with a reqwest timeout")
+            .expect_err("body read should time out");
+
+        assert!(err.is_timeout(), "expected reqwest timeout, got: {err}");
     }
 }

@@ -314,7 +314,7 @@ impl BedrockStreamFn {
             access_key_id: access_key_id.into(),
             secret_access_key: secret_access_key.into(),
             session_token,
-            client: Client::new(),
+            client: crate::base::adapter_http_client(),
         }
     }
 
@@ -332,7 +332,7 @@ impl BedrockStreamFn {
             access_key_id: access_key_id.into(),
             secret_access_key: secret_access_key.into(),
             session_token,
-            client: Client::new(),
+            client: crate::base::adapter_http_client(),
         }
     }
 }

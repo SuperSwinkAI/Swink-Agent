@@ -122,7 +122,7 @@ impl ProxyStreamFn {
         Self {
             base_url: base_url.into().trim_end_matches('/').to_string(),
             bearer_token: bearer_token.into(),
-            client: Client::new(),
+            client: crate::base::adapter_http_client(),
         }
     }
 

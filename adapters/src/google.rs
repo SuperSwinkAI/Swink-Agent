@@ -230,7 +230,7 @@ impl GeminiStreamFn {
             base_url: base_url.into().trim_end_matches('/').to_string(),
             api_key: api_key.into(),
             api_version,
-            client: Client::new(),
+            client: crate::base::adapter_http_client(),
         }
     }
 

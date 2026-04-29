@@ -144,7 +144,7 @@ impl OllamaStreamFn {
     pub fn new(base_url: impl Into<String>) -> Self {
         Self {
             base_url: base_url.into().trim_end_matches('/').to_string(),
-            client: Client::new(),
+            client: crate::base::adapter_http_client(),
         }
     }
 }
