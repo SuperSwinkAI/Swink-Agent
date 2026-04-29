@@ -53,7 +53,10 @@ impl AgentClient {
 
         // Await `initialized`.
         match peer.recv_incoming().await {
-            Some(IncomingMessage::Notification { method: m, .. }) if m == method::INITIALIZED => {
+            Some(IncomingMessage::Notification { method: m, params })
+                if m == method::INITIALIZED =>
+            {
+                crate::dto::parse_initialized_params(params)?;
                 tracing::debug!("handshake complete");
             }
             Some(other) => {

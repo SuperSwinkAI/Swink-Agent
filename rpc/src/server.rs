@@ -201,7 +201,7 @@ async fn run_session(
 ) -> Result<(), crate::jsonrpc::RpcError> {
     use crate::dto::{
         InitializedParams, PROTOCOL_VERSION, ServerInfo, ToolApprovalDto, ToolApprovalRequestDto,
-        method,
+        method, parse_initialize_params,
     };
     use crate::jsonrpc::{IncomingMessage, RpcError};
     use swink_agent::{Agent, ToolApproval};
@@ -209,7 +209,8 @@ async fn run_session(
 
     // Handshake: await `initialize` notification.
     match peer.recv_incoming().await {
-        Some(IncomingMessage::Notification { method: m, .. }) if m == method::INITIALIZE => {
+        Some(IncomingMessage::Notification { method: m, params }) if m == method::INITIALIZE => {
+            parse_initialize_params(params)?;
             debug!("received initialize");
         }
         Some(other) => {
