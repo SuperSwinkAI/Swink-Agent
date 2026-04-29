@@ -26,7 +26,7 @@ pub enum HttpErrorKind {
     Auth,
     /// Rate limit / throttle (429).
     Throttled,
-    /// Server or network error (5xx).
+    /// Server, timeout, or network-like error (408, 5xx).
     Network,
 }
 
@@ -40,7 +40,7 @@ pub const fn classify_http_status(code: u16) -> Option<HttpErrorKind> {
     match code {
         401 | 403 => Some(HttpErrorKind::Auth),
         429 => Some(HttpErrorKind::Throttled),
-        500..=599 => Some(HttpErrorKind::Network),
+        408 | 500..=599 => Some(HttpErrorKind::Network),
         _ => None,
     }
 }
@@ -69,6 +69,7 @@ pub fn classify_with_overrides(
 ///
 /// Returns a classified error event:
 /// - 401/403 → `error_auth`
+/// - 408     → `error_network`
 /// - 429     → `error_throttled`
 /// - 5xx     → `error_network`
 /// - other   → generic `error` (unclassified)
@@ -137,6 +138,11 @@ mod tests {
     #[test]
     fn classify_429_is_throttled() {
         assert_eq!(classify_http_status(429), Some(HttpErrorKind::Throttled));
+    }
+
+    #[test]
+    fn classify_408_is_network() {
+        assert_eq!(classify_http_status(408), Some(HttpErrorKind::Network));
     }
 
     #[test]
@@ -209,6 +215,22 @@ mod tests {
                 ..
             } => {
                 assert!(error_message.contains("500"));
+                assert_eq!(error_kind, Some(swink_agent::StreamErrorKind::Network));
+            }
+            other => panic!("expected Error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn error_event_408_is_network() {
+        let event = error_event_from_status(408, "timeout", "TestProvider");
+        match event {
+            AssistantMessageEvent::Error {
+                error_kind,
+                error_message,
+                ..
+            } => {
+                assert!(error_message.contains("408"));
                 assert_eq!(error_kind, Some(swink_agent::StreamErrorKind::Network));
             }
             other => panic!("expected Error, got {other:?}"),
@@ -320,8 +342,8 @@ mod tests {
             other => panic!("expected Error, got {other:?}"),
         }
 
-        // Server errors
-        for code in [500, 502, 503, 529] {
+        // Request timeout and server errors
+        for code in [408, 500, 502, 503, 529] {
             let event = error_event_from_status_with_overrides(
                 code,
                 "server error",
