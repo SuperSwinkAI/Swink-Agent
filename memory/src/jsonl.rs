@@ -150,7 +150,7 @@ fn read_meta_and_message_lines(path: &Path, id: &str) -> io::Result<(SessionMeta
     let mut lines = reader.lines();
 
     let meta_line = lines.next().ok_or_else(empty_file)??;
-    let meta = serde_json::from_str(&meta_line).map_err(invalid_meta)?;
+    let meta = canonical_meta_for_id(serde_json::from_str(&meta_line).map_err(invalid_meta)?, id);
     let remaining_lines = lines.collect::<io::Result<Vec<_>>>()?;
 
     Ok((meta, remaining_lines))
@@ -177,8 +177,16 @@ fn read_meta_with_line_len(path: &Path, id: &str) -> io::Result<(SessionMeta, us
     }
 
     let line_len = first_line.len();
-    let meta = serde_json::from_str(first_line.trim_end()).map_err(invalid_meta)?;
+    let meta = canonical_meta_for_id(
+        serde_json::from_str(first_line.trim_end()).map_err(invalid_meta)?,
+        id,
+    );
     Ok((meta, line_len))
+}
+
+fn canonical_meta_for_id(mut meta: SessionMeta, id: &str) -> SessionMeta {
+    meta.id = id.to_string();
+    meta
 }
 
 fn rewrite_session_file_locked(
@@ -249,6 +257,7 @@ where
         after_validation()?;
 
         let mut write_meta = meta.clone();
+        write_meta.id = id.to_string();
         write_meta.sequence += 1;
         write_op(path, &write_meta, messages, id)
     })
@@ -672,6 +681,7 @@ impl SessionStore for JsonlSessionStore {
             check_sequence_path(&path, id, meta.sequence)?;
 
             let mut write_meta = meta.clone();
+            write_meta.id = id.to_string();
             write_meta.sequence += 1;
 
             let mut preserved_lines =
@@ -754,20 +764,26 @@ impl SessionStore for JsonlSessionStore {
                 let Some(first_line) = reader.lines().next() else {
                     return Ok(None);
                 };
-                first_line.map(Some)
+                let Some(file_id) = path.file_stem().and_then(|stem| stem.to_str()) else {
+                    return Ok(None);
+                };
+                validate_session_id(file_id)?;
+                first_line.map(|line| Some((file_id.to_string(), line)))
             });
 
             match read_meta {
-                Ok(Some(first_line)) => match serde_json::from_str::<SessionMeta>(&first_line) {
-                    Ok(meta) => sessions.push(meta),
-                    Err(e) => {
-                        tracing::warn!(
-                            path = %path.display(),
-                            error = %e,
-                            "skipping session file with invalid metadata"
-                        );
+                Ok(Some((file_id, first_line))) => {
+                    match serde_json::from_str::<SessionMeta>(&first_line) {
+                        Ok(meta) => sessions.push(canonical_meta_for_id(meta, &file_id)),
+                        Err(e) => {
+                            tracing::warn!(
+                                path = %path.display(),
+                                error = %e,
+                                "skipping session file with invalid metadata"
+                            );
+                        }
                     }
-                },
+                }
                 Ok(None) => {}
                 Err(error) => {
                     tracing::warn!(
@@ -1036,6 +1052,7 @@ impl JsonlSessionStore {
 
             // Increment sequence for the write
             let mut write_meta = meta.clone();
+            write_meta.id = id.to_string();
             write_meta.sequence += 1;
             let preserved_lines = preserve_existing_lines(&path, id, preserve_for_entry_save)?;
 
@@ -1962,6 +1979,78 @@ mod tests {
         assert_eq!(hits[0].session_title, "Auth notes");
         assert!(hits[0].snippet.contains("auth middleware"));
         assert!(matches!(hits[0].entry, SessionEntry::Message(_)));
+    }
+
+    #[test]
+    fn save_canonicalizes_mismatched_metadata_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = JsonlSessionStore::new(dir.path().to_path_buf()).unwrap();
+
+        store
+            .save(
+                "canonical-save",
+                &fresh_meta("wrong-save"),
+                &[user_msg("canonical metadata", 10)],
+            )
+            .unwrap();
+
+        let session_file = dir.path().join("canonical-save.jsonl");
+        let first_line = std::fs::read_to_string(session_file)
+            .unwrap()
+            .lines()
+            .next()
+            .unwrap()
+            .to_string();
+        let raw_meta: SessionMeta = serde_json::from_str(&first_line).unwrap();
+        assert_eq!(raw_meta.id, "canonical-save");
+
+        let (loaded_meta, _) = store.load("canonical-save", None).unwrap();
+        assert_eq!(loaded_meta.id, "canonical-save");
+
+        let listed = store.list().unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].id, "canonical-save");
+    }
+
+    #[test]
+    fn save_full_canonicalizes_returned_and_persisted_metadata_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = JsonlSessionStore::new(dir.path().to_path_buf()).unwrap();
+
+        let returned = store
+            .save_full(
+                "canonical-full",
+                &fresh_meta("wrong-full"),
+                &[user_msg("full canonical metadata", 10)],
+                &serde_json::json!({"persisted": true}),
+            )
+            .unwrap();
+
+        assert_eq!(returned.id, "canonical-full");
+        let (loaded_meta, _, loaded_state) = store.load_full("canonical-full", None).unwrap();
+        assert_eq!(loaded_meta.id, "canonical-full");
+        assert_eq!(loaded_state, Some(serde_json::json!({"persisted": true})));
+    }
+
+    #[test]
+    fn search_uses_canonical_session_id_for_mismatched_saved_metadata() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = JsonlSessionStore::new(dir.path().to_path_buf()).unwrap();
+
+        store
+            .save_entries(
+                "canonical-search",
+                &fresh_meta("wrong-search"),
+                &[user_entry("canonical search metadata", 10)],
+            )
+            .unwrap();
+
+        let hits = store
+            .search("canonical metadata", &SessionSearchOptions::default())
+            .unwrap();
+
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].session_id, "canonical-search");
     }
 
     #[test]
