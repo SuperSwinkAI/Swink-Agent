@@ -165,10 +165,10 @@ impl Plugin for WebPlugin {
                 .with_domain_filter(domain_filter.clone(), self.config.max_redirects)
                 .with_sanitizer_enabled(self.config.sanitizer_enabled),
             ),
-            Arc::new(SearchTool::new(
-                self.search_provider.clone(),
-                self.config.max_search_results,
-            )),
+            Arc::new(
+                SearchTool::new(self.search_provider.clone(), self.config.max_search_results)
+                    .with_sanitizer_enabled(self.config.sanitizer_enabled),
+            ),
             Arc::new(
                 ScreenshotTool::new(
                     self.playwright_bridge.clone(),
