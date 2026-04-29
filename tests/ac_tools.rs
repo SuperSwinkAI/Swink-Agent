@@ -458,6 +458,32 @@ impl swink_agent::PreDispatchPolicy for RecordStateSnapshotPolicy {
     }
 }
 
+struct StopOnFirstToolPolicy {
+    observed_tools: Arc<Mutex<Vec<String>>>,
+}
+
+impl swink_agent::PreDispatchPolicy for StopOnFirstToolPolicy {
+    fn name(&self) -> &'static str {
+        "stop_on_first_tool"
+    }
+
+    fn evaluate(
+        &self,
+        ctx: &mut swink_agent::ToolDispatchContext<'_>,
+    ) -> swink_agent::PreDispatchVerdict {
+        self.observed_tools
+            .lock()
+            .unwrap()
+            .push(ctx.tool_name.to_string());
+
+        if ctx.tool_name == "tool_a" {
+            swink_agent::PreDispatchVerdict::Stop("halt batch".into())
+        } else {
+            swink_agent::PreDispatchVerdict::Continue
+        }
+    }
+}
+
 #[tokio::test]
 async fn tool_call_transformation() {
     let tool = Arc::new(MockArgCapturingTool::new(
@@ -595,6 +621,39 @@ async fn pre_dispatch_reuses_one_session_state_snapshot_per_batch() {
         unique.len(),
         1,
         "all tool calls in the same batch should reuse one session-state snapshot"
+    );
+}
+
+#[tokio::test]
+async fn pre_dispatch_stop_short_circuits_remaining_batch_policy_checks() {
+    let tool_a = Arc::new(MockTool::new("tool_a"));
+    let tool_b = Arc::new(MockTool::new("tool_b"));
+    let observed_tools = Arc::new(Mutex::new(Vec::new()));
+
+    let stream_fn = Arc::new(MockStreamFn::new(vec![tool_call_events_multi(&[
+        ("call_a", "tool_a", "{}"),
+        ("call_b", "tool_b", "{}"),
+    ])]));
+
+    let mut agent = Agent::new(
+        AgentOptions::new("test", default_model(), stream_fn, default_convert)
+            .with_tools(vec![tool_a.clone(), tool_b.clone()])
+            .with_pre_dispatch_policy(StopOnFirstToolPolicy {
+                observed_tools: observed_tools.clone(),
+            })
+            .with_retry_strategy(fast_retry()),
+    );
+
+    let _ = agent.prompt_async(vec![user_msg("run all")]).await.unwrap();
+
+    assert_eq!(
+        *observed_tools.lock().unwrap(),
+        vec!["tool_a".to_string()],
+        "Stop must abort the batch before later tool calls run pre-dispatch policies"
+    );
+    assert!(
+        !tool_a.was_executed() && !tool_b.was_executed(),
+        "Stop should synthesize errors without executing any tools"
     );
 }
 
