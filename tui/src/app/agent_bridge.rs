@@ -237,10 +237,13 @@ impl App {
     pub(super) fn approve_plan(&mut self) {
         self.pending_plan_approval = false;
 
-        // Collect all assistant messages from plan mode.
+        let session_start = self.plan_session_start.unwrap_or(0);
+
+        // Collect assistant messages from the active plan-mode session.
         let plan_messages: Vec<String> = self
             .messages
             .iter()
+            .skip(session_start)
             .filter(|m| m.plan_mode && m.role == MessageRole::Assistant)
             .map(|m| m.content.clone())
             .collect();
@@ -271,6 +274,7 @@ impl App {
         let (saved_tools, saved_prompt) = agent.enter_plan_mode();
         self.saved_tools = Some(saved_tools);
         self.saved_system_prompt = Some(saved_prompt);
+        self.plan_session_start = Some(self.messages.len());
 
         self.operating_mode = OperatingMode::Plan;
         self.push_system_message("Entered plan mode — read-only tools only.".to_string());
@@ -288,6 +292,7 @@ impl App {
         }
 
         self.operating_mode = OperatingMode::Execute;
+        self.plan_session_start = None;
         self.push_system_message("Exited plan mode — all tools available.".to_string());
     }
 }

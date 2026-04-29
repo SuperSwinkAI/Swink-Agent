@@ -353,11 +353,7 @@ fn summarize_arguments(args: &Value) -> String {
                     Value::String(s) => s.clone(),
                     other => other.to_string(),
                 };
-                let truncated = if val_str.len() > 60 {
-                    format!("{}...", &val_str[..57])
-                } else {
-                    val_str
-                };
+                let truncated = truncate_with_ellipsis(&val_str, 60);
                 return format!("{key}={truncated}");
             }
             String::new()
@@ -377,13 +373,22 @@ fn summarize_arguments(args: &Value) -> String {
         }
         other => {
             let s = other.to_string();
-            if s.len() > 60 {
-                format!("{}...", &s[..57])
-            } else {
-                s
-            }
+            truncate_with_ellipsis(&s, 60)
         }
     }
+}
+
+fn truncate_with_ellipsis(text: &str, max_chars: usize) -> String {
+    if text.chars().nth(max_chars).is_none() {
+        return text.to_string();
+    }
+
+    let keep_chars = max_chars.saturating_sub(3);
+    let keep_bytes = text
+        .char_indices()
+        .nth(keep_chars)
+        .map_or(text.len(), |(index, _)| index);
+    format!("{}...", &text[..keep_bytes])
 }
 
 fn truncate_preview(text: &str, max_chars: usize) -> String {
@@ -427,6 +432,29 @@ mod tests {
         panel.set_awaiting_approval("t1", "bash", &args);
         assert_eq!(panel.pending_approvals.len(), 1);
         assert_eq!(panel.pending_approvals[0].name, "bash");
+    }
+
+    #[test]
+    fn set_awaiting_approval_truncates_unicode_object_argument() {
+        let mut panel = ToolPanel::new();
+        let args = serde_json::json!({"command": "é".repeat(61)});
+
+        panel.set_awaiting_approval("t1", "bash", &args);
+
+        let summary = &panel.pending_approvals[0].arguments_summary;
+        assert!(summary.starts_with("command="));
+        assert!(summary.ends_with("..."));
+        assert_eq!(summary.trim_start_matches("command=").chars().count(), 60);
+    }
+
+    #[test]
+    fn summarize_arguments_truncates_unicode_non_object_argument() {
+        let args = serde_json::json!("é".repeat(61));
+
+        let summary = summarize_arguments(&args);
+
+        assert!(summary.ends_with("..."));
+        assert_eq!(summary.chars().count(), 60);
     }
 
     #[test]

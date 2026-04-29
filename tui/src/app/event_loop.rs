@@ -565,6 +565,7 @@ impl App {
                 self.trust_follow_up = None;
                 self.operating_mode = OperatingMode::Execute;
                 self.pending_plan_approval = false;
+                self.plan_session_start = None;
                 self.model_index = 0;
                 self.pending_model = None;
                 self.saved_tools = None;

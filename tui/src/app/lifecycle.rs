@@ -75,6 +75,7 @@ impl App {
             trust_follow_up: None,
             operating_mode: OperatingMode::Execute,
             pending_plan_approval: false,
+            plan_session_start: None,
             available_models: Vec::new(),
             model_index: 0,
             pending_model: None,

@@ -336,6 +336,36 @@ async fn plan_messages_concatenated_with_separator() {
 }
 
 #[tokio::test]
+async fn plan_approval_ignores_prior_plan_sessions() {
+    let stream_fn = Arc::new(ScriptedStreamFn::new(vec![text_events("ok")]));
+    let agent = make_test_agent_with_tools(stream_fn);
+    let mut app = App::new(TuiConfig::default());
+    app.set_agent(agent);
+
+    let mut stale_plan = DisplayMessage::new(MessageRole::Assistant, "stale plan".to_string());
+    stale_plan.plan_mode = true;
+    app.messages.push(stale_plan);
+
+    app.enter_plan_mode();
+
+    let mut current_plan = DisplayMessage::new(MessageRole::Assistant, "current plan".to_string());
+    current_plan.plan_mode = true;
+    app.messages.push(current_plan);
+
+    app.pending_plan_approval = true;
+    app.approve_plan();
+
+    let plan_msg = app
+        .messages
+        .iter()
+        .find(|m| m.role == MessageRole::User && m.content.contains("current plan"))
+        .expect("should send the active plan as a user message");
+
+    assert_eq!(plan_msg.content, "current plan");
+    assert!(!plan_msg.content.contains("stale plan"));
+}
+
+#[tokio::test]
 async fn plan_mode_only_collects_assistant_messages() {
     let stream_fn = Arc::new(ScriptedStreamFn::new(vec![text_events("ok")]));
     let agent = make_test_agent_with_tools(stream_fn);
