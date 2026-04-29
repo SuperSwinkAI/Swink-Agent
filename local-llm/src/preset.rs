@@ -1,6 +1,6 @@
 use std::{str::FromStr, sync::Arc};
 
-use swink_agent::{ModelConnection, ProviderKind, model_catalog};
+use swink_agent::{CatalogPreset, ModelConnection, ProviderKind, model_catalog};
 use thiserror::Error;
 
 use crate::embedding::EmbeddingConfig;
@@ -18,6 +18,10 @@ pub enum LocalPresetError {
     MissingRepoId { preset_id: &'static str },
     #[error("local.{preset_id} is missing filename in the model catalog")]
     MissingFilename { preset_id: &'static str },
+    #[error("local.{preset_id} is missing context_window_tokens in the model catalog")]
+    MissingContextWindow { preset_id: &'static str },
+    #[error("local.{preset_id} has invalid context_window_tokens in the model catalog")]
+    InvalidContextWindow { preset_id: &'static str },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -81,23 +85,60 @@ where
         .unwrap_or(default)
 }
 
-fn default_chat_preset_defaults() -> ChatPresetDefaults {
+fn built_in_chat_preset_defaults() -> ChatPresetDefaults {
+    ChatPresetDefaults {
+        repo_id: "unsloth/SmolLM3-3B-GGUF".to_string(),
+        filename: "SmolLM3-3B-Q4_K_M.gguf".to_string(),
+        context_length: 8192,
+    }
+}
+
+fn chat_preset_defaults_from_catalog(
+    preset: CatalogPreset,
+) -> Result<ChatPresetDefaults, LocalPresetError> {
+    chat_preset_defaults_from_parts(
+        preset.repo_id,
+        preset.filename,
+        preset.context_window_tokens,
+    )
+}
+
+fn chat_preset_defaults_from_parts(
+    repo_id: Option<String>,
+    filename: Option<String>,
+    context_window_tokens: Option<u64>,
+) -> Result<ChatPresetDefaults, LocalPresetError> {
+    let repo_id = repo_id.ok_or(LocalPresetError::MissingRepoId {
+        preset_id: DEFAULT_LOCAL_PRESET_ID,
+    })?;
+    let filename = filename.ok_or(LocalPresetError::MissingFilename {
+        preset_id: DEFAULT_LOCAL_PRESET_ID,
+    })?;
+    let context_length = context_window_tokens
+        .ok_or(LocalPresetError::MissingContextWindow {
+            preset_id: DEFAULT_LOCAL_PRESET_ID,
+        })
+        .and_then(|tokens| {
+            usize::try_from(tokens).map_err(|_| LocalPresetError::InvalidContextWindow {
+                preset_id: DEFAULT_LOCAL_PRESET_ID,
+            })
+        })?;
+
+    Ok(ChatPresetDefaults {
+        repo_id,
+        filename,
+        context_length,
+    })
+}
+
+fn default_chat_preset_defaults() -> Result<ChatPresetDefaults, LocalPresetError> {
     let preset = model_catalog()
         .preset("local", DEFAULT_LOCAL_PRESET_ID)
-        .expect("local default preset must exist in src/model_catalog.toml");
+        .ok_or(LocalPresetError::MissingDefaultPreset {
+            preset_id: DEFAULT_LOCAL_PRESET_ID,
+        })?;
 
-    ChatPresetDefaults {
-        repo_id: preset
-            .repo_id
-            .expect("local default preset must define repo_id"),
-        filename: preset
-            .filename
-            .expect("local default preset must define filename"),
-        context_length: preset
-            .context_window_tokens
-            .and_then(|tokens| usize::try_from(tokens).ok())
-            .expect("local default preset must define a valid context window"),
-    }
+    chat_preset_defaults_from_catalog(preset)
 }
 
 fn default_embedding_preset_defaults() -> EmbeddingPresetDefaults {
@@ -121,7 +162,9 @@ fn gemma4_config(repo_id: &str, filename: &str, context_length: usize) -> ModelC
 }
 
 pub(crate) fn default_chat_model_config() -> ModelConfig {
-    default_chat_preset_defaults().into_config()
+    default_chat_preset_defaults()
+        .unwrap_or_else(|_| built_in_chat_preset_defaults())
+        .into_config()
 }
 
 pub(crate) fn default_embedding_model_config() -> ModelConfig {
@@ -161,9 +204,9 @@ pub enum ModelPreset {
 
 impl ModelPreset {
     /// Convert this preset to a [`ModelConfig`] for inference models.
-    pub fn config(&self) -> ModelConfig {
-        match self {
-            Self::SmolLM3_3B => default_chat_model_config(),
+    pub fn try_config(&self) -> Result<ModelConfig, LocalPresetError> {
+        Ok(match self {
+            Self::SmolLM3_3B => default_chat_preset_defaults()?.into_config(),
             Self::EmbeddingGemma300M => default_embedding_model_config(),
             #[cfg(feature = "gemma4")]
             Self::Gemma4E2B => gemma4_config(
@@ -189,7 +232,14 @@ impl ModelPreset {
                 "google_gemma-4-31B-it-Q4_K_M.gguf",
                 262_144,
             ),
-        }
+        })
+    }
+
+    /// Convert this preset to a [`ModelConfig`] for inference models.
+    #[must_use]
+    pub fn config(&self) -> ModelConfig {
+        self.try_config()
+            .unwrap_or_else(|_| built_in_chat_preset_defaults().into_config())
     }
 
     /// Convert this preset to an [`EmbeddingConfig`] for embedding models.
@@ -197,7 +247,8 @@ impl ModelPreset {
         match self {
             Self::EmbeddingGemma300M => default_embedding_config(),
             Self::SmolLM3_3B => {
-                let defaults = default_chat_preset_defaults();
+                let defaults = default_chat_preset_defaults()
+                    .unwrap_or_else(|_| built_in_chat_preset_defaults());
                 EmbeddingConfig {
                     repo_id: defaults.repo_id,
                     filename: defaults.filename,
@@ -275,7 +326,7 @@ pub fn default_local_connection() -> Result<ModelConnection, LocalPresetError> {
         preset_id: DEFAULT_LOCAL_PRESET_ID,
     })?;
 
-    let model = LocalModel::new(default_chat_model_config());
+    let model = LocalModel::new(default_chat_preset_defaults()?.into_config());
     Ok(ModelConnection::new(
         model_spec,
         Arc::new(LocalStreamFn::new(Arc::new(model))),
@@ -290,6 +341,59 @@ mod tests {
     fn default_local_connection_succeeds() {
         let result = default_local_connection();
         assert!(result.is_ok(), "default_local_connection should succeed");
+    }
+
+    #[test]
+    fn try_config_returns_default_chat_config() {
+        let config = ModelPreset::SmolLM3_3B
+            .try_config()
+            .unwrap_or_else(|err| panic!("default chat preset should be valid: {err}"));
+
+        assert!(config.repo_id.contains("SmolLM3"));
+        assert!(config.filename.contains("SmolLM3"));
+        assert_eq!(config.context_length, 8192);
+    }
+
+    #[test]
+    fn chat_preset_defaults_report_missing_repo_id() {
+        let result =
+            chat_preset_defaults_from_parts(None, Some("model.gguf".to_string()), Some(8192));
+
+        assert_eq!(
+            result,
+            Err(LocalPresetError::MissingRepoId {
+                preset_id: DEFAULT_LOCAL_PRESET_ID
+            })
+        );
+    }
+
+    #[test]
+    fn chat_preset_defaults_report_missing_filename() {
+        let result =
+            chat_preset_defaults_from_parts(Some("owner/repo".to_string()), None, Some(8192));
+
+        assert_eq!(
+            result,
+            Err(LocalPresetError::MissingFilename {
+                preset_id: DEFAULT_LOCAL_PRESET_ID
+            })
+        );
+    }
+
+    #[test]
+    fn chat_preset_defaults_report_missing_context_window() {
+        let result = chat_preset_defaults_from_parts(
+            Some("owner/repo".to_string()),
+            Some("model.gguf".to_string()),
+            None,
+        );
+
+        assert_eq!(
+            result,
+            Err(LocalPresetError::MissingContextWindow {
+                preset_id: DEFAULT_LOCAL_PRESET_ID
+            })
+        );
     }
 
     #[test]

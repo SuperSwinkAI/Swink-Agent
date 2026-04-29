@@ -1427,6 +1427,7 @@ mod tests {
         }
     }
 
+    #[allow(clippy::unnecessary_wraps)]
     fn content_token_count(
         messages: &[crate::convert::LocalMessage],
     ) -> Result<usize, std::convert::Infallible> {

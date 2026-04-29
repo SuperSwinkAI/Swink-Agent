@@ -445,7 +445,7 @@ const _: () = {
 #[cfg(test)]
 mod tests {
     use std::path::Path;
-    use std::sync::{Arc, Mutex};
+    use std::sync::{Arc, Mutex, PoisonError};
 
     use super::{GenerateOptions, RunnerConfig, initialize_runner_parts};
     use crate::error::LocalModelError;
@@ -456,7 +456,10 @@ mod tests {
         let messages_clone = Arc::clone(&messages);
         let callback: ProgressCallbackFn = Arc::new(move |event| {
             if let ProgressEvent::LoadingProgress { message } = event {
-                messages_clone.lock().unwrap().push(message);
+                messages_clone
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .push(message);
             }
         });
         (callback, messages)
@@ -546,12 +549,12 @@ mod tests {
                 Ok::<_, LocalModelError>("model")
             },
         )
-        .unwrap();
+        .unwrap_or_else(|err| panic!("synthetic runner parts should initialize: {err}"));
 
         assert_eq!(backend, "backend");
         assert_eq!(model, "model");
         assert_eq!(
-            *messages.lock().unwrap(),
+            *messages.lock().unwrap_or_else(PoisonError::into_inner),
             vec![
                 "initializing llama backend".to_string(),
                 "loading GGUF model".to_string()
@@ -574,7 +577,7 @@ mod tests {
 
         assert!(err.to_string().contains("backend init failed"));
         assert_eq!(
-            *messages.lock().unwrap(),
+            *messages.lock().unwrap_or_else(PoisonError::into_inner),
             vec!["initializing llama backend".to_string()]
         );
     }
