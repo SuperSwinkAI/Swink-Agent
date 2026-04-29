@@ -215,8 +215,14 @@ impl EvalRunner {
         if let Some(state) = &initial_session {
             factory.with_initial_session(state);
         }
-        let invocation =
-            invoke_agent_impl(case, factory, self.cancel.as_ref(), &self.agent_invocations).await?;
+        let invocation = invoke_agent_impl(
+            case,
+            factory,
+            self.cancel.as_ref(),
+            initial_session.as_ref(),
+            &self.agent_invocations,
+        )
+        .await?;
         let metric_results = self.registry.evaluate(case, &invocation);
         Ok(scored_case_result(case, invocation, metric_results))
     }
@@ -263,6 +269,7 @@ impl EvalRunner {
             let registry = &self.registry;
             let num_runs = self.num_runs;
             let cancel = self.cancel.clone();
+            let initial_session_state = initial_session.clone();
             let initial_session_value = initial_session_json.clone();
             let agent_invocations = Arc::clone(&self.agent_invocations);
             let eval_set_id = eval_set_id.clone();
@@ -307,6 +314,7 @@ impl EvalRunner {
                     registry,
                     num_runs,
                     cancel.as_ref(),
+                    initial_session_state.as_ref(),
                     initial_session_value.as_ref(),
                     &agent_invocations,
                     #[cfg(feature = "telemetry")]
@@ -409,6 +417,7 @@ async fn execute_case(
     registry: &EvaluatorRegistry,
     num_runs: u32,
     cancel: Option<&CancellationToken>,
+    initial_session: Option<&SessionState>,
     initial_session_json: Option<&serde_json::Value>,
     agent_invocations: &AtomicUsize,
     #[cfg(feature = "telemetry")] telemetry: Option<&EvalsTelemetry>,
@@ -439,7 +448,8 @@ async fn execute_case(
         debug!(case_id = %case.id, "cache hit");
         inv
     } else {
-        let inv = invoke_agent_impl(case, factory, cancel, agent_invocations).await?;
+        let inv =
+            invoke_agent_impl(case, factory, cancel, initial_session, agent_invocations).await?;
         if let Some(store) = cache
             && let Err(err) = store.put(eval_set_id, &case.id, &cache_key, &inv)
         {
@@ -498,10 +508,17 @@ async fn invoke_agent_impl(
     case: &EvalCase,
     factory: &dyn AgentFactory,
     cancel: Option<&CancellationToken>,
+    initial_session: Option<&SessionState>,
     agent_invocations: &AtomicUsize,
 ) -> Result<Invocation, EvalError> {
     agent_invocations.fetch_add(1, Ordering::SeqCst);
     let (mut agent, factory_cancel) = factory.create_agent(case)?;
+    if let Some(state) = initial_session {
+        *agent
+            .session_state()
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = state.clone();
+    }
     let _factory_cancel = FactoryCancellationGuard(factory_cancel);
     let messages: Vec<_> = case
         .user_messages

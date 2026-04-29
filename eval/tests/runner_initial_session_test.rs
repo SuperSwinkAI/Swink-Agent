@@ -1,7 +1,7 @@
 //! US2 / T101: `EvalRunner::with_initial_session_file` loader tests.
 
 use std::fs;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 
 use tempfile::TempDir;
 use tokio_util::sync::CancellationToken;
@@ -37,6 +37,34 @@ impl AgentFactory for RecordingFactory {
     }
 }
 
+struct HooklessRecordingFactory {
+    created_sessions: Arc<Mutex<Vec<Arc<RwLock<SessionState>>>>>,
+}
+
+impl HooklessRecordingFactory {
+    fn new() -> Self {
+        Self {
+            created_sessions: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+}
+
+impl AgentFactory for HooklessRecordingFactory {
+    fn create_agent(&self, case: &EvalCase) -> Result<(Agent, CancellationToken), EvalError> {
+        let options = AgentOptions::new_simple(
+            &case.system_prompt,
+            ModelSpec::new("test", "test-model"),
+            Arc::new(SimpleMockStreamFn::new(vec!["ok".to_string()])),
+        );
+        let agent = Agent::new(options);
+        self.created_sessions
+            .lock()
+            .unwrap()
+            .push(Arc::clone(agent.session_state()));
+        Ok((agent, CancellationToken::new()))
+    }
+}
+
 fn eval_set() -> EvalSet {
     EvalSet {
         id: "init-suite".into(),
@@ -46,9 +74,7 @@ fn eval_set() -> EvalSet {
     }
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn valid_session_file_is_surfaced_to_factory() {
-    let dir = TempDir::new().unwrap();
+fn write_initial_session(dir: &TempDir) -> std::path::PathBuf {
     let path = dir.path().join("initial_session.json");
     fs::write(
         &path,
@@ -58,6 +84,13 @@ async fn valid_session_file_is_surfaced_to_factory() {
         .unwrap(),
     )
     .unwrap();
+    path
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn valid_session_file_is_surfaced_to_factory() {
+    let dir = TempDir::new().unwrap();
+    let path = write_initial_session(&dir);
 
     let factory = RecordingFactory::new();
     let observed = Arc::clone(&factory.latest_session);
@@ -74,6 +107,32 @@ async fn valid_session_file_is_surfaced_to_factory() {
         .expect("factory should see initial session");
     let greeting: Option<String> = seen.get("greeting");
     assert_eq!(greeting.as_deref(), Some("hello world"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn initial_session_is_applied_to_each_created_agent() {
+    let dir = TempDir::new().unwrap();
+    let path = write_initial_session(&dir);
+    let factory = HooklessRecordingFactory::new();
+    let observed = Arc::clone(&factory.created_sessions);
+    let set = EvalSet {
+        cases: vec![common::make_case("c1"), common::make_case("c2")],
+        ..eval_set()
+    };
+
+    let _ = EvalRunner::new(EvaluatorRegistry::new())
+        .with_parallelism(2)
+        .with_initial_session_file(path)
+        .run_set(&set, &factory)
+        .await
+        .unwrap();
+
+    let sessions = observed.lock().unwrap();
+    assert_eq!(sessions.len(), 2);
+    for state in sessions.iter() {
+        let greeting: Option<String> = state.read().unwrap().get("greeting");
+        assert_eq!(greeting.as_deref(), Some("hello world"));
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
