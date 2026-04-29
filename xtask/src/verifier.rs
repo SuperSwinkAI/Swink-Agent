@@ -185,3 +185,62 @@ fn extract_array_ids(json: &Value, array_key: &str, id_key: &str) -> HashSet<Str
         })
         .unwrap_or_default()
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
+
+    use serde_json::json;
+
+    use crate::catalog::{ProviderEndpoint, VerifyTask};
+
+    fn task(model_id: &str) -> VerifyTask {
+        VerifyTask {
+            provider_key: "provider".to_owned(),
+            preset_id: model_id.to_owned(),
+            preset_display: model_id.to_owned(),
+            model_id: model_id.to_owned(),
+            endpoint: ProviderEndpoint::Skipped { reason: "test" },
+        }
+    }
+
+    #[test]
+    fn check_membership_marks_known_models_as_passes() {
+        let ids = HashSet::from(["known-model".to_owned()]);
+        let rows = super::check_membership(vec![task("known-model"), task("missing-model")], &ids);
+
+        assert!(matches!(rows[0].result, super::PresetResult::Pass));
+        assert!(matches!(
+            rows[1].result,
+            super::PresetResult::Fail { available_count: 1 }
+        ));
+    }
+
+    #[test]
+    fn error_rows_preserve_task_context() {
+        let rows = super::error_rows(vec![task("model-a"), task("model-b")], "HTTP 500");
+
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].task.model_id, "model-a");
+        assert!(matches!(
+            &rows[0].result,
+            super::PresetResult::NetworkError { error } if error == "HTTP 500"
+        ));
+        assert_eq!(rows[1].task.model_id, "model-b");
+    }
+
+    #[test]
+    fn extract_array_ids_ignores_missing_or_non_string_ids() {
+        let json = json!({
+            "data": [
+                { "id": "model-a" },
+                { "id": 42 },
+                { "name": "model-b" }
+            ]
+        });
+
+        let ids = super::extract_array_ids(&json, "data", "id");
+
+        assert_eq!(ids, HashSet::from(["model-a".to_owned()]));
+    }
+}

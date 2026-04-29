@@ -73,6 +73,16 @@ pub fn write_github_summary(rows: &[VerifyRow]) -> std::io::Result<()> {
         eprintln!("GITHUB_STEP_SUMMARY not set; skipping summary write");
         return Ok(());
     };
+    let md = github_summary_markdown(rows)?;
+    let mut file = std::fs::OpenOptions::new()
+        .append(true)
+        .create(true)
+        .open(&summary_path)?;
+    file.write_all(md.as_bytes())?;
+    Ok(())
+}
+
+fn github_summary_markdown(rows: &[VerifyRow]) -> std::io::Result<String> {
     let mut md = String::from("## Catalog Verification\n\n");
     let counts = ResultCounts::from_rows(rows);
     writeln!(
@@ -90,12 +100,7 @@ pub fn write_github_summary(rows: &[VerifyRow]) -> std::io::Result<()> {
         let result = result_label(&row.result);
         writeln!(md, "| {key} | {preset} | {model} | {result} |").map_err(std::io::Error::other)?;
     }
-    let mut file = std::fs::OpenOptions::new()
-        .append(true)
-        .create(true)
-        .open(&summary_path)?;
-    file.write_all(md.as_bytes())?;
-    Ok(())
+    Ok(md)
 }
 
 struct ResultCounts {
@@ -122,5 +127,91 @@ impl ResultCounts {
             }
         }
         counts
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::catalog::{ProviderEndpoint, VerifyTask};
+    use crate::verifier::{PresetResult, VerifyRow};
+
+    fn row(provider_key: &str, preset_display: &str, result: PresetResult) -> VerifyRow {
+        VerifyRow {
+            task: VerifyTask {
+                provider_key: provider_key.to_owned(),
+                preset_id: preset_display.to_lowercase().replace(' ', "-"),
+                preset_display: preset_display.to_owned(),
+                model_id: format!("{provider_key}-model"),
+                endpoint: ProviderEndpoint::Skipped { reason: "test" },
+            },
+            result,
+        }
+    }
+
+    #[test]
+    fn result_counts_classify_each_outcome() {
+        let rows = vec![
+            row("anthropic", "Claude", PresetResult::Pass),
+            row(
+                "openai",
+                "GPT",
+                PresetResult::Fail {
+                    available_count: 12,
+                },
+            ),
+            row(
+                "google",
+                "Gemini",
+                PresetResult::Skipped {
+                    reason: "missing credential",
+                },
+            ),
+            row(
+                "proxy",
+                "Proxy",
+                PresetResult::NetworkError {
+                    error: "timeout".to_owned(),
+                },
+            ),
+        ];
+
+        let counts = super::ResultCounts::from_rows(&rows);
+
+        assert_eq!(counts.passed, 1);
+        assert_eq!(counts.failed, 1);
+        assert_eq!(counts.skipped, 1);
+        assert_eq!(counts.network_errors, 1);
+    }
+
+    #[test]
+    fn github_summary_includes_counts_and_result_labels() {
+        let rows = vec![
+            row("anthropic", "Claude", PresetResult::Pass),
+            row("openai", "GPT", PresetResult::Fail { available_count: 2 }),
+            row(
+                "google",
+                "Gemini",
+                PresetResult::Skipped {
+                    reason: "missing credential",
+                },
+            ),
+            row(
+                "proxy",
+                "Proxy",
+                PresetResult::NetworkError {
+                    error: "timeout".to_owned(),
+                },
+            ),
+        ];
+
+        let markdown = super::github_summary_markdown(&rows).expect("summary builds");
+
+        assert!(markdown.contains("**Summary:** 1 passed, 1 failed, 1 skipped, 1 network errors"));
+        assert!(markdown.contains("| anthropic | Claude | anthropic-model | PASS |"));
+        assert!(markdown.contains("| openai | GPT | openai-model | FAIL (2 models available) |"));
+        assert!(
+            markdown.contains("| google | Gemini | google-model | SKIPPED (missing credential) |")
+        );
+        assert!(markdown.contains("| proxy | Proxy | proxy-model | ERROR (timeout) |"));
     }
 }
