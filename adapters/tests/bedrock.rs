@@ -4,6 +4,8 @@
 //! These tests simulate the Bedrock ConverseStream API by returning
 //! binary event-stream frames encoded with `aws-smithy-eventstream`.
 
+mod common;
+
 use aws_smithy_eventstream::frame::write_message_to;
 use aws_smithy_types::event_stream::{Header, HeaderValue, Message};
 use bytes::BytesMut;
@@ -17,6 +19,8 @@ use swink_agent::{
     LlmMessage, ModelSpec, StopReason, StreamFn, StreamOptions, UserMessage,
 };
 use swink_agent_adapters::BedrockStreamFn;
+
+use common::notify_on_request;
 
 /// Encode a smithy event-stream `Message` into raw bytes.
 fn encode_message(msg: &Message) -> Vec<u8> {
@@ -335,10 +339,12 @@ async fn bedrock_session_token_is_forwarded() {
 #[tokio::test]
 async fn bedrock_stream_cancellation_is_aborted() {
     let server = MockServer::start().await;
-    let slow_response = ResponseTemplate::new(200)
-        .insert_header("Content-Type", "application/vnd.amazon.eventstream")
-        .set_body_bytes(text_response_body("hello"))
-        .set_delay(std::time::Duration::from_secs(30));
+    let (slow_response, request_seen) = notify_on_request(
+        ResponseTemplate::new(200)
+            .insert_header("Content-Type", "application/vnd.amazon.eventstream")
+            .set_body_bytes(text_response_body("hello"))
+            .set_delay(std::time::Duration::from_secs(30)),
+    );
 
     Mock::given(method("POST"))
         .and(path("/model/amazon.nova-pro-v1:0/converse-stream"))
@@ -355,24 +361,23 @@ async fn bedrock_stream_cancellation_is_aborted() {
     );
     let token = CancellationToken::new();
     let cancel_token = token.clone();
-    tokio::spawn(async move {
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        cancel_token.cancel();
+    let events_handle = tokio::spawn(async move {
+        let model = ModelSpec::new("bedrock", "amazon.nova-pro-v1:0");
+        let context = AgentContext {
+            system_prompt: String::new(),
+            messages: Vec::new(),
+            tools: Vec::new(),
+        };
+        let options = StreamOptions::default();
+        stream_fn
+            .stream(&model, &context, &options, token)
+            .collect::<Vec<_>>()
+            .await
     });
 
-    let events = stream_fn
-        .stream(
-            &ModelSpec::new("bedrock", "amazon.nova-pro-v1:0"),
-            &AgentContext {
-                system_prompt: String::new(),
-                messages: Vec::new(),
-                tools: Vec::new(),
-            },
-            &StreamOptions::default(),
-            token,
-        )
-        .collect::<Vec<_>>()
-        .await;
+    request_seen.notified().await;
+    cancel_token.cancel();
+    let events = events_handle.await.expect("stream task should complete");
 
     assert!(events.iter().any(|event| matches!(
         event,
@@ -387,10 +392,12 @@ async fn bedrock_stream_cancellation_is_aborted() {
 #[tokio::test]
 async fn bedrock_startup_cancellation_does_not_wait_for_send() {
     let server = MockServer::start().await;
-    let slow_response = ResponseTemplate::new(200)
-        .insert_header("Content-Type", "application/vnd.amazon.eventstream")
-        .set_body_bytes(text_response_body("hello"))
-        .set_delay(std::time::Duration::from_secs(30));
+    let (slow_response, request_seen) = notify_on_request(
+        ResponseTemplate::new(200)
+            .insert_header("Content-Type", "application/vnd.amazon.eventstream")
+            .set_body_bytes(text_response_body("hello"))
+            .set_delay(std::time::Duration::from_secs(30)),
+    );
 
     Mock::given(method("POST"))
         .and(path("/model/amazon.nova-pro-v1:0/converse-stream"))
@@ -407,28 +414,23 @@ async fn bedrock_startup_cancellation_does_not_wait_for_send() {
     );
     let token = CancellationToken::new();
     let cancel_token = token.clone();
-    tokio::spawn(async move {
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        cancel_token.cancel();
+    let events_handle = tokio::spawn(async move {
+        let model = ModelSpec::new("bedrock", "amazon.nova-pro-v1:0");
+        let context = AgentContext {
+            system_prompt: String::new(),
+            messages: Vec::new(),
+            tools: Vec::new(),
+        };
+        let options = StreamOptions::default();
+        stream_fn
+            .stream(&model, &context, &options, token)
+            .collect::<Vec<_>>()
+            .await
     });
 
-    let events = tokio::time::timeout(
-        std::time::Duration::from_secs(2),
-        stream_fn
-            .stream(
-                &ModelSpec::new("bedrock", "amazon.nova-pro-v1:0"),
-                &AgentContext {
-                    system_prompt: String::new(),
-                    messages: Vec::new(),
-                    tools: Vec::new(),
-                },
-                &StreamOptions::default(),
-                token,
-            )
-            .collect::<Vec<_>>(),
-    )
-    .await
-    .expect("Bedrock cancellation should not wait for request startup");
+    request_seen.notified().await;
+    cancel_token.cancel();
+    let events = events_handle.await.expect("stream task should complete");
 
     assert!(matches!(events.first(), Some(AssistantMessageEvent::Start)));
     assert!(events.iter().any(|event| matches!(

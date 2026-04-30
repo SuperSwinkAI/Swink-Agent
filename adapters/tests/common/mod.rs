@@ -5,8 +5,11 @@
 
 #![allow(dead_code)]
 
+use std::sync::Arc;
+
 use swink_agent::{AgentContext, AssistantMessageEvent, StopReason};
-use wiremock::ResponseTemplate;
+use tokio::sync::Notify;
+use wiremock::{Request, Respond, ResponseTemplate};
 
 /// Return a human-readable name for an `AssistantMessageEvent` variant.
 pub const fn event_name(event: &AssistantMessageEvent) -> &'static str {
@@ -48,6 +51,19 @@ pub fn sse_response(body: &str) -> ResponseTemplate {
     ResponseTemplate::new(200)
         .insert_header("Content-Type", "text/event-stream")
         .set_body_string(body.to_owned())
+}
+
+/// Return a responder and notifier that fires when the mock handles a request.
+pub fn notify_on_request(response: ResponseTemplate) -> (impl Respond, Arc<Notify>) {
+    let request_seen = Arc::new(Notify::new());
+    let responder_request_seen = Arc::clone(&request_seen);
+
+    let responder = move |_request: &Request| {
+        responder_request_seen.notify_one();
+        response.clone()
+    };
+
+    (responder, request_seen)
 }
 
 /// Build a minimal `AgentContext` for testing.

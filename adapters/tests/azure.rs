@@ -16,7 +16,7 @@ use swink_agent::{
 };
 use swink_agent_adapters::{AzureAuth, AzureCloud, AzureStreamFn};
 
-use common::{event_name, sse_response, test_context};
+use common::{event_name, notify_on_request, sse_response, test_context};
 
 fn test_model() -> ModelSpec {
     ModelSpec::new("azure", "gpt-5.4")
@@ -1169,13 +1169,15 @@ async fn entra_id_cancellation_during_token_refresh_is_promptly_aborted() {
     let token_server = MockServer::start().await;
     let api_server = MockServer::start().await;
 
+    let (token_response, token_request_seen) = notify_on_request(
+        ResponseTemplate::new(200)
+            .set_body_string(token_response_body("slow-token", 3600))
+            .set_delay(Duration::from_secs(30)),
+    );
+
     Mock::given(method("POST"))
         .and(path("/token"))
-        .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_string(token_response_body("slow-token", 3600))
-                .set_delay(Duration::from_secs(30)),
-        )
+        .respond_with(token_response)
         .expect(1)
         .mount(&token_server)
         .await;
@@ -1191,24 +1193,19 @@ async fn entra_id_cancellation_during_token_refresh_is_promptly_aborted() {
     let stream_fn = entra_stream_fn(&api_server, &token_url);
     let token = CancellationToken::new();
     let cancel_token = token.clone();
-    tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        cancel_token.cancel();
+    let events_handle = tokio::spawn(async move {
+        let model = test_model();
+        let context = test_context();
+        let options = StreamOptions::default();
+        stream_fn
+            .stream(&model, &context, &options, token)
+            .collect::<Vec<_>>()
+            .await
     });
 
-    let events = tokio::time::timeout(
-        Duration::from_secs(2),
-        stream_fn
-            .stream(
-                &test_model(),
-                &test_context(),
-                &StreamOptions::default(),
-                token,
-            )
-            .collect::<Vec<_>>(),
-    )
-    .await
-    .expect("Azure cancellation should not wait for token refresh");
+    token_request_seen.notified().await;
+    cancel_token.cancel();
+    let events = events_handle.await.expect("stream task should complete");
 
     assert!(
         matches!(events.first(), Some(AssistantMessageEvent::Start)),

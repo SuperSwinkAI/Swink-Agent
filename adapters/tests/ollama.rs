@@ -13,7 +13,7 @@ use tokio_util::sync::CancellationToken;
 use wiremock::matchers::{body_string_contains, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-use common::test_context;
+use common::{notify_on_request, test_context};
 use swink_agent::{
     AssistantMessageEvent, ModelCapabilities, ModelSpec, StopReason, StreamFn, StreamOptions,
     ThinkingLevel,
@@ -327,11 +327,11 @@ async fn ollama_malformed_json() {
 async fn ollama_cancellation() {
     let server = MockServer::start().await;
     // Use a slow response so the cancellation can fire before it completes
-    let slow_response = ndjson_response(&[
+    let (slow_response, request_seen) = notify_on_request(ndjson_response(&[
         r#"{"message":{"role":"assistant","content":"hello"},"done":false}"#,
         r#"{"message":{"role":"assistant","content":""},"done":true,"done_reason":"stop","prompt_eval_count":1,"eval_count":1}"#,
     ])
-    .set_delay(std::time::Duration::from_secs(30));
+    .set_delay(std::time::Duration::from_secs(30)));
 
     Mock::given(method("POST"))
         .and(path("/api/chat"))
@@ -346,13 +346,16 @@ async fn ollama_cancellation() {
     let token = CancellationToken::new();
 
     let cancel_token = token.clone();
-    tokio::spawn(async move {
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        cancel_token.cancel();
+    let events_handle = tokio::spawn(async move {
+        ollama
+            .stream(&model, &context, &options, token)
+            .collect::<Vec<_>>()
+            .await
     });
 
-    let stream = ollama.stream(&model, &context, &options, token);
-    let events: Vec<_> = stream.collect().await;
+    request_seen.notified().await;
+    cancel_token.cancel();
+    let events = events_handle.await.expect("stream task should complete");
 
     let has_aborted = events.iter().any(|e| match e {
         AssistantMessageEvent::Error { stop_reason, .. } => *stop_reason == StopReason::Aborted,
