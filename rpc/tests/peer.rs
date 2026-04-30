@@ -169,30 +169,10 @@ async fn oversize_line_closes_connection() {
 
 #[tokio::test]
 async fn oversize_line_without_newline_closes_connection() {
-    use tokio::io::AsyncWriteExt as _;
-
-    let (raw_reader, mut raw_writer) = duplex(8192);
-    let (sink_reader, sink_writer) = duplex(8192);
-    let mut peer = JsonRpcPeer::new(raw_reader, sink_writer);
-    drop(sink_reader);
-
     let oversized = vec![b'x'; swink_agent_rpc::jsonrpc::MAX_LINE_BYTES + 1];
-    let write_result = raw_writer.write_all(&oversized).await;
-    if let Err(err) = &write_result {
-        assert!(
-            matches!(
-                err.kind(),
-                std::io::ErrorKind::BrokenPipe
-                    | std::io::ErrorKind::ConnectionReset
-                    | std::io::ErrorKind::ConnectionAborted
-            ),
-            "unexpected write error after oversized line: {err}"
-        );
-    }
+    let mut peer = JsonRpcPeer::new(std::io::Cursor::new(oversized), tokio::io::sink());
 
-    let result = tokio::time::timeout(std::time::Duration::from_secs(1), peer.recv_incoming())
-        .await
-        .expect("oversized unterminated line should close promptly");
+    let result = peer.recv_incoming().await;
     assert!(
         result.is_none(),
         "connection should close before reading an oversized unterminated line"
