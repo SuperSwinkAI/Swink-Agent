@@ -129,6 +129,7 @@ otel = ["dep:tracing-opentelemetry", "dep:opentelemetry", "dep:opentelemetry_sdk
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+tempfile.workspace = true
 tokio = { workspace = true, features = ["fs", "io-util", "macros", "process", "rt", "rt-multi-thread", "sync", "time"] }
 tokio-util.workspace = true
 futures.workspace = true
@@ -159,7 +160,6 @@ harness = false
 swink-agent-adapters = { path = "adapters", features = ["proxy"] }
 dotenvy.workspace = true
 pretty_assertions.workspace = true
-tempfile.workspace = true
 criterion.workspace = true
 tokio = { workspace = true, features = ["full", "test-util"] }
 wiremock.workspace = true
