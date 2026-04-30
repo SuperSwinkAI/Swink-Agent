@@ -214,7 +214,7 @@ async fn wait_for_session_cleanup(session_manager: &Arc<LocalSessionManager>) {
             Instant::now() < deadline,
             "expected SSE sessions to be released after collision rollback"
         );
-        tokio::time::sleep(Duration::from_millis(25)).await;
+        tokio::task::yield_now().await;
     }
 }
 

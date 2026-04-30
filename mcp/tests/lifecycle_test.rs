@@ -320,17 +320,10 @@ async fn monitor_detects_transport_close_and_emits_event() {
     let _ = cancel_tx.send(());
     let _ = server_task.await;
 
-    let deadline = std::time::Instant::now() + Duration::from_secs(2);
-    loop {
-        if conn.status() == McpConnectionStatus::Disconnected {
-            break;
-        }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "monitor did not detect disconnect within 2 seconds"
-        );
-        tokio::time::sleep(Duration::from_millis(25)).await;
-    }
+    let event = tokio::time::timeout(Duration::from_secs(2), event_rx.recv())
+        .await
+        .expect("monitor did not emit disconnect within 2 seconds")
+        .expect("event channel should remain open");
 
     assert_eq!(
         conn.status(),
@@ -338,9 +331,6 @@ async fn monitor_detects_transport_close_and_emits_event() {
         "monitor should have transitioned status to Disconnected"
     );
 
-    let event = event_rx
-        .try_recv()
-        .expect("McpServerDisconnected event should be in channel");
     match event {
         AgentEvent::McpServerDisconnected { server_name, .. } => {
             assert_eq!(server_name, "crash-test-server");
