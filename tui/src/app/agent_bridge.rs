@@ -280,19 +280,23 @@ impl App {
         self.push_system_message("Entered plan mode — read-only tools only.".to_string());
     }
 
-    pub(super) fn exit_plan_mode(&mut self) {
-        let Some(agent) = &mut self.agent else {
-            return;
-        };
-
-        if let (Some(tools), Some(prompt)) =
-            (self.saved_tools.take(), self.saved_system_prompt.take())
+    pub(super) fn restore_plan_mode_state(&mut self) {
+        if let Some(agent) = &mut self.agent
+            && let (Some(tools), Some(prompt)) =
+                (self.saved_tools.take(), self.saved_system_prompt.take())
         {
             agent.exit_plan_mode(tools, prompt);
         }
 
+        self.saved_tools = None;
+        self.saved_system_prompt = None;
         self.operating_mode = OperatingMode::Execute;
+        self.pending_plan_approval = false;
         self.plan_session_start = None;
+    }
+
+    pub(super) fn exit_plan_mode(&mut self) {
+        self.restore_plan_mode_state();
         self.push_system_message("Exited plan mode — all tools available.".to_string());
     }
 }

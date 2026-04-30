@@ -121,6 +121,24 @@ impl App {
         self.dirty = true;
     }
 
+    pub(super) fn reset_session_state(&mut self) {
+        self.restore_plan_mode_state();
+        if let Some(agent) = &mut self.agent {
+            agent.reset();
+        }
+        self.messages.clear();
+        self.conversation = ConversationView::new();
+        self.total_input_tokens = 0;
+        self.total_output_tokens = 0;
+        self.total_cost = 0.0;
+        self.context_tokens_used = 0;
+        self.session_trusted_tools.clear();
+        self.trust_follow_up = None;
+        self.model_index = 0;
+        self.pending_model = None;
+        self.push_system_message("Agent state reset.".to_string());
+    }
+
     /// Tick handler for animations.
     pub fn tick(&mut self) {
         self.tick_count += 1;

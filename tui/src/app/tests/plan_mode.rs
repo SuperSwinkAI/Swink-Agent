@@ -131,6 +131,38 @@ async fn reset_exits_plan_mode() {
 }
 
 #[tokio::test]
+async fn reset_command_restores_agent_after_plan_mode() {
+    let stream_fn = Arc::new(ScriptedStreamFn::new(vec![]));
+    let agent = make_test_agent_with_tools(stream_fn);
+
+    let mut app = App::new(TuiConfig::default());
+    app.set_agent(agent);
+    let original_prompt = app.agent.as_ref().unwrap().state().system_prompt.clone();
+
+    app.enter_plan_mode();
+    assert_eq!(app.agent.as_ref().unwrap().state().tools.len(), 1);
+    assert!(
+        app.agent
+            .as_ref()
+            .unwrap()
+            .state()
+            .system_prompt
+            .contains("planning mode")
+    );
+
+    type_input(&mut app, "/reset");
+    app.submit_input();
+
+    let agent = app.agent.as_ref().unwrap();
+    assert_eq!(app.operating_mode, OperatingMode::Execute);
+    assert_eq!(agent.state().tools.len(), 2);
+    assert_eq!(agent.state().system_prompt, original_prompt);
+    assert!(app.saved_tools.is_none());
+    assert!(app.saved_system_prompt.is_none());
+    assert!(!app.pending_plan_approval);
+}
+
+#[tokio::test]
 async fn shift_tab_toggles_plan_mode() {
     let stream_fn = Arc::new(ScriptedStreamFn::new(vec![]));
     let agent = make_test_agent_with_tools(stream_fn);
@@ -558,4 +590,10 @@ async fn shift_tab_ignored_while_running() {
         OperatingMode::Execute,
         "Shift+Tab should be ignored while running"
     );
+}
+
+fn type_input(app: &mut App, s: &str) {
+    for c in s.chars() {
+        app.input.insert_char(c);
+    }
 }
