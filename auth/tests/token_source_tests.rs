@@ -1,48 +1,54 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::task::Poll;
 use std::time::{Duration, Instant};
 
+use futures::poll;
 use swink_agent_auth::{ExpiringValue, SingleFlightTokenSource};
+use tokio::sync::Notify;
 
 #[tokio::test]
 async fn concurrent_refresh_deduplicates_single_token_source() {
     let source = Arc::new(SingleFlightTokenSource::new(Duration::from_secs(60)));
     let refreshes = Arc::new(AtomicUsize::new(0));
+    let refresh_started = Arc::new(Notify::new());
+    let release_refresh = Arc::new(Notify::new());
 
     let left_source = Arc::clone(&source);
     let left_refreshes = Arc::clone(&refreshes);
-    let right_source = Arc::clone(&source);
+    let left_refresh_started = Arc::clone(&refresh_started);
+    let left_release_refresh = Arc::clone(&release_refresh);
+
+    let left = tokio::spawn(async move {
+        left_source
+            .get_or_refresh(move || async move {
+                left_refreshes.fetch_add(1, Ordering::SeqCst);
+                left_refresh_started.notify_one();
+                left_release_refresh.notified().await;
+                Ok::<_, String>(ExpiringValue::new(
+                    "shared-token".to_string(),
+                    Instant::now(),
+                ))
+            })
+            .await
+    });
+
+    refresh_started.notified().await;
+
     let right_refreshes = Arc::clone(&refreshes);
+    let mut right = Box::pin(source.get_or_refresh(move || async move {
+        right_refreshes.fetch_add(1, Ordering::SeqCst);
+        Ok::<_, String>(ExpiringValue::new(
+            "unexpected-token".to_string(),
+            Instant::now() + Duration::from_secs(300),
+        ))
+    }));
 
-    let (left, right) = tokio::join!(
-        tokio::spawn(async move {
-            left_source
-                .get_or_refresh(move || async move {
-                    left_refreshes.fetch_add(1, Ordering::SeqCst);
-                    tokio::time::sleep(Duration::from_millis(50)).await;
-                    Ok::<_, String>(ExpiringValue::new(
-                        "shared-token".to_string(),
-                        Instant::now() + Duration::from_secs(300),
-                    ))
-                })
-                .await
-        }),
-        tokio::spawn(async move {
-            right_source
-                .get_or_refresh(move || async move {
-                    right_refreshes.fetch_add(1, Ordering::SeqCst);
-                    tokio::time::sleep(Duration::from_millis(50)).await;
-                    Ok::<_, String>(ExpiringValue::new(
-                        "shared-token".to_string(),
-                        Instant::now() + Duration::from_secs(300),
-                    ))
-                })
-                .await
-        }),
-    );
+    assert!(matches!(poll!(&mut right), Poll::Pending));
+    release_refresh.notify_one();
 
-    assert_eq!(left.unwrap().unwrap(), "shared-token");
-    assert_eq!(right.unwrap().unwrap(), "shared-token");
+    assert_eq!(left.await.unwrap().unwrap(), "shared-token");
+    assert_eq!(right.await.unwrap(), "shared-token");
     assert_eq!(refreshes.load(Ordering::SeqCst), 1);
 }
 
