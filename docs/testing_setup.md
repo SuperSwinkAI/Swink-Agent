@@ -47,6 +47,20 @@ These validation commands intentionally do not load `.env`; they should not
 inherit provider API keys or cloud credentials. Live-provider tests load
 credentials from the environment only when you run those tests explicitly.
 
+## 3a. Run Local Coverage
+
+The repository includes a root `tarpaulin.toml` for local coverage runs. Install
+`cargo-tarpaulin` once, then run:
+
+```bash
+cargo install cargo-tarpaulin
+just coverage
+```
+
+Reports are written under `target/tarpaulin/`. Coverage is not part of
+`just validate`; run it explicitly when working on coverage gaps or test
+hardening.
+
 ## 4. Get API Keys
 
 You need at least one provider key. Set up whichever providers you want to test.

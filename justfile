@@ -13,6 +13,10 @@ test:
 test-testkit:
     {{cargo}} test --workspace --features testkit
 
+# Generate local coverage reports with the root tarpaulin.toml config
+coverage:
+    {{cargo}} tarpaulin --config tarpaulin.toml
+
 # Run core plugin tests with the feature combination required by all plugin regressions
 test-plugins:
     {{cargo}} test -p swink-agent --features plugins,testkit --test plugin_integration --test plugin_registry

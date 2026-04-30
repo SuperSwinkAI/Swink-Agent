@@ -1,0 +1,14 @@
+[workspace_coverage]
+workspace = true
+locked = true
+engine = "Llvm"
+skip-clean = true
+run-types = ["AllTargets"]
+test-timeout = "10m"
+output-dir = "target/tarpaulin"
+generate = ["Html", "Lcov", "Json"]
+include-tests = false
+exclude-files = [
+    "target/*",
+    "*/tests/*_live.rs",
+]
