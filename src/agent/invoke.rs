@@ -30,6 +30,7 @@ use super::{Agent, SharedRetryStrategy};
 /// guard from clearing the flag for a newer run.
 struct LoopGuardStream {
     inner: Pin<Box<dyn Stream<Item = AgentEvent> + Send>>,
+    cancellation_token: CancellationToken,
     loop_active: Arc<AtomicBool>,
     idle_notify: Arc<Notify>,
     pending_message_snapshot: Arc<crate::pause_state::PendingMessageSnapshot>,
@@ -52,6 +53,7 @@ impl Drop for LoopGuardStream {
         // A newer start_loop will have incremented loop_generation, making
         // this guard's generation stale.
         if self.expected_generation.load(Ordering::Acquire) == self.generation {
+            self.cancellation_token.cancel();
             self.loop_active.store(false, Ordering::Release);
             self.pending_message_snapshot.clear();
             self.loop_context_snapshot.clear();
@@ -283,7 +285,7 @@ impl Agent {
                 initial_new_messages_len,
                 system_prompt,
                 config,
-                token,
+                token.clone(),
             )
         } else {
             agent_loop_with_initial_new_messages_len(
@@ -291,7 +293,7 @@ impl Agent {
                 initial_new_messages_len,
                 system_prompt,
                 config,
-                token,
+                token.clone(),
             )
         };
 
@@ -300,6 +302,7 @@ impl Agent {
 
         let guarded: Pin<Box<dyn Stream<Item = AgentEvent> + Send>> = Box::pin(LoopGuardStream {
             inner: raw_stream,
+            cancellation_token: token,
             loop_active: Arc::clone(&self.loop_active),
             idle_notify: Arc::clone(&self.idle_notify),
             pending_message_snapshot: Arc::clone(&self.pending_message_snapshot),
@@ -416,7 +419,9 @@ mod tests {
         UserMessage,
     };
     use futures::Stream;
+    use futures::StreamExt;
     use serde_json::Value;
+    use tokio::sync::Notify;
     use tokio_util::sync::CancellationToken;
 
     struct StopEveryToolPolicy;
@@ -426,6 +431,13 @@ mod tests {
     }
     struct CountingTool {
         executions: Arc<AtomicU32>,
+    }
+    struct DroppableTool {
+        executions: Arc<AtomicU32>,
+        dropped: Arc<Notify>,
+    }
+    struct DropNotify {
+        dropped: Arc<Notify>,
     }
 
     impl PreDispatchPolicy for StopEveryToolPolicy {
@@ -497,6 +509,51 @@ mod tests {
         ) -> ToolFuture<'_> {
             self.executions.fetch_add(1, Ordering::SeqCst);
             Box::pin(async { AgentToolResult::text("ok") })
+        }
+    }
+
+    impl Drop for DropNotify {
+        fn drop(&mut self) {
+            self.dropped.notify_waiters();
+        }
+    }
+
+    impl AgentTool for DroppableTool {
+        fn name(&self) -> &'static str {
+            "droppable_tool"
+        }
+
+        fn label(&self) -> &'static str {
+            "droppable_tool"
+        }
+
+        fn description(&self) -> &'static str {
+            "test tool"
+        }
+
+        fn parameters_schema(&self) -> &Value {
+            static SCHEMA: std::sync::OnceLock<Value> = std::sync::OnceLock::new();
+            SCHEMA.get_or_init(permissive_object_schema)
+        }
+
+        fn execute(
+            &self,
+            _tool_call_id: &str,
+            _params: Value,
+            cancellation_token: CancellationToken,
+            _on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
+            _state: std::sync::Arc<std::sync::RwLock<crate::SessionState>>,
+            _credential: Option<crate::credential::ResolvedCredential>,
+        ) -> ToolFuture<'_> {
+            self.executions.fetch_add(1, Ordering::SeqCst);
+            let guard = DropNotify {
+                dropped: Arc::clone(&self.dropped),
+            };
+            Box::pin(async move {
+                let _guard = guard;
+                cancellation_token.cancelled().await;
+                AgentToolResult::error("cancelled")
+            })
         }
     }
 
@@ -593,5 +650,52 @@ mod tests {
                     && tool_result.tool_call_id == "call_1"
                     && tool_result.is_error
         ));
+    }
+
+    #[tokio::test]
+    async fn dropping_prompt_stream_cancels_active_loop() {
+        let stream_fn = Arc::new(CountingStreamFn::new(vec![
+            AssistantMessageEvent::text_response("second"),
+            tool_call_events("call_1", "droppable_tool", "{}"),
+        ]));
+        let executions = Arc::new(AtomicU32::new(0));
+        let dropped = Arc::new(Notify::new());
+        let tool = Arc::new(DroppableTool {
+            executions: Arc::clone(&executions),
+            dropped: Arc::clone(&dropped),
+        });
+        let options = AgentOptions::new(
+            "sys",
+            ModelSpec::new("test", "test-model"),
+            Arc::clone(&stream_fn) as Arc<dyn StreamFn>,
+            crate::agent::default_convert,
+        )
+        .with_tools(vec![tool as Arc<dyn crate::tool::AgentTool>])
+        .with_approval_mode(ApprovalMode::Bypassed);
+        let mut agent = Agent::new(options);
+
+        let mut stream = agent
+            .prompt_stream(vec![user_msg("run the tool")])
+            .expect("prompt_stream should start");
+        while let Some(event) = stream.next().await {
+            if matches!(event, crate::loop_::AgentEvent::ToolExecutionStart { .. }) {
+                break;
+            }
+        }
+        let dropped_notified = dropped.notified();
+        drop(stream);
+
+        tokio::time::timeout(std::time::Duration::from_secs(1), dropped_notified)
+            .await
+            .expect("dropping the stream should tear down active tool work");
+
+        let result = agent
+            .prompt_async(vec![user_msg("run again")])
+            .await
+            .expect("a new run should be allowed after dropping the old stream");
+
+        assert_eq!(executions.load(Ordering::SeqCst), 1);
+        assert_eq!(stream_fn.call_count.load(Ordering::SeqCst), 2);
+        assert_eq!(result.stop_reason, StopReason::Stop);
     }
 }
