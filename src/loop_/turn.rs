@@ -116,17 +116,18 @@ pub async fn run_single_turn(
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             guard.clone()
         };
-        let new_messages_start = state
-            .context_messages
-            .len()
-            .saturating_sub(fresh_messages_len);
+        let new_messages_range = pre_turn_new_messages_range(
+            state.context_messages.len(),
+            fresh_messages_start,
+            fresh_messages_len,
+        );
         let policy_ctx = PolicyContext {
             turn_index: state.turn_index,
             accumulated_usage: &state.accumulated_usage,
             accumulated_cost: &state.accumulated_cost,
             message_count: state.context_messages.len(),
             overflow_signal: state.overflow_signal,
-            new_messages: &state.context_messages[new_messages_start..],
+            new_messages: &state.context_messages[new_messages_range],
             state: &state_snapshot,
         };
         match run_policies(&config.pre_turn_policies, &policy_ctx) {
@@ -416,6 +417,17 @@ pub(super) fn build_llm_messages(
     }
 
     llm_messages
+}
+
+fn pre_turn_new_messages_range(
+    transformed_len: usize,
+    original_start: usize,
+    fresh_len: usize,
+) -> std::ops::Range<usize> {
+    let latest_possible_start = transformed_len.saturating_sub(fresh_len);
+    let start = original_start.min(latest_possible_start);
+    let end = start.saturating_add(fresh_len).min(transformed_len);
+    start..end
 }
 
 // ─── Context transformer runner ─────────────────────────────────────────

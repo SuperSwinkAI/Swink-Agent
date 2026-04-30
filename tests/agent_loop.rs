@@ -743,6 +743,47 @@ async fn pre_turn_new_messages_survive_context_compaction() {
 }
 
 #[tokio::test]
+async fn pre_turn_new_messages_exclude_transformer_appends() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("ok")]));
+    let observations = Arc::new(Mutex::new(Vec::new()));
+
+    let mut config = default_config(stream_fn);
+    config.transform_context = Some(Arc::new(
+        move |msgs: &mut Vec<AgentMessage>, _overflow: bool| {
+            msgs.push(common::user_msg("retrieved context"));
+        },
+    ));
+    config.pre_turn_policies = vec![Arc::new(RecordingPreTurnPolicy {
+        observations: Arc::clone(&observations),
+    })];
+
+    let events = collect_events(agent_loop_continue(
+        vec![
+            common::user_msg("prior conversation"),
+            common::user_msg("fresh prompt"),
+        ],
+        1,
+        "system".to_string(),
+        config,
+        CancellationToken::new(),
+    ))
+    .await;
+
+    assert!(has_event(&events, "AgentEnd"));
+    let recorded = observations.lock().unwrap().clone();
+    assert_eq!(recorded.len(), 1, "pre-turn policy should run once");
+    assert_eq!(
+        recorded[0],
+        RecordedPreTurnBatch {
+            turn_index: 0,
+            message_count: 3,
+            new_messages: vec!["fresh prompt".to_string()],
+        },
+        "transformer-appended context must not replace the fresh pre-turn batch"
+    );
+}
+
+#[tokio::test]
 async fn pre_turn_injections_reach_imminent_provider_call() {
     let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("ok")]));
     let mut config = default_config(stream_fn);
