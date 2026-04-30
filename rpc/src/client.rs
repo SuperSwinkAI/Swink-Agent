@@ -125,42 +125,59 @@ impl AgentClient {
         loop {
             tokio::select! {
                 result = &mut prompt_fut => {
-                    // Prompt request finished; drain any remaining incoming messages.
                     result?;
+                    self.drain_ready_incoming(&mut events)?;
                     break;
                 }
                 incoming = self.peer.recv_incoming() => {
                     match incoming {
                         None => return Err(RpcError::disconnected()),
-                        Some(IncomingMessage::Notification { method: m, params })
-                            if m == method::AGENT_EVENT =>
-                        {
-                            if let Some(event) = params
-                                .and_then(|v| serde_json::from_value::<AgentEvent>(v).ok())
-                            {
-                                events.push(event);
-                            }
-                        }
-                        Some(IncomingMessage::Request { id, method: m, params })
-                            if m == method::TOOL_APPROVE =>
-                        {
-                            let approval = self.handle_approval(params);
-                            let dto = ToolApprovalDto::from(&approval);
-                            self.peer.sender().respond_ok(id, dto)?;
-                        }
-                        Some(IncomingMessage::Request { id, method: m, .. }) => {
-                            self.peer.sender().respond_err(
-                                id,
-                                RpcError::method_not_found(&m),
-                            )?;
-                        }
-                        Some(_) => {}
+                        Some(incoming) => self.handle_incoming(incoming, &mut events)?,
                     }
                 }
             }
         }
 
         Ok(events)
+    }
+
+    fn drain_ready_incoming(&mut self, events: &mut Vec<AgentEvent>) -> Result<(), RpcError> {
+        while let Some(incoming) = self.peer.try_recv_incoming() {
+            self.handle_incoming(incoming, events)?;
+        }
+        Ok(())
+    }
+
+    fn handle_incoming(
+        &self,
+        incoming: IncomingMessage,
+        events: &mut Vec<AgentEvent>,
+    ) -> Result<(), RpcError> {
+        match incoming {
+            IncomingMessage::Notification { method: m, params } if m == method::AGENT_EVENT => {
+                if let Some(event) =
+                    params.and_then(|v| serde_json::from_value::<AgentEvent>(v).ok())
+                {
+                    events.push(event);
+                }
+            }
+            IncomingMessage::Request {
+                id,
+                method: m,
+                params,
+            } if m == method::TOOL_APPROVE => {
+                let approval = self.handle_approval(params);
+                let dto = ToolApprovalDto::from(&approval);
+                self.peer.sender().respond_ok(id, dto)?;
+            }
+            IncomingMessage::Request { id, method: m, .. } => {
+                self.peer
+                    .sender()
+                    .respond_err(id, RpcError::method_not_found(&m))?;
+            }
+            IncomingMessage::Notification { .. } => {}
+        }
+        Ok(())
     }
 
     fn handle_approval(&self, params: Option<serde_json::Value>) -> ToolApproval {
@@ -205,5 +222,115 @@ impl AgentClient {
             .sender()
             .notify(method::SHUTDOWN, &serde_json::Value::Null)
             .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use swink_agent::{AgentEvent, ToolApproval};
+    use tokio::io::duplex;
+
+    use super::*;
+    use crate::dto::{PromptResult, ToolApprovalRequestDto};
+    use crate::jsonrpc::IncomingMessage;
+
+    fn make_client_pair() -> (AgentClient, JsonRpcPeer) {
+        let (client_read, server_write) = duplex(8192);
+        let (server_read, client_write) = duplex(8192);
+        let client = AgentClient {
+            peer: JsonRpcPeer::new(client_read, client_write),
+            approval_handler: None,
+        };
+        let server = JsonRpcPeer::new(server_read, server_write);
+        (client, server)
+    }
+
+    #[tokio::test]
+    async fn prompt_text_collects_agent_events_until_prompt_response() {
+        let (mut client, mut server) = make_client_pair();
+        let server_sender = server.sender();
+
+        let server_task = tokio::spawn(async move {
+            let incoming = server.recv_incoming().await.unwrap();
+            let IncomingMessage::Request { id, method, params } = incoming else {
+                panic!("expected prompt request");
+            };
+
+            assert_eq!(method, method::PROMPT);
+            let params: PromptParams = serde_json::from_value(params.unwrap()).unwrap();
+            assert_eq!(params.text, "hello rpc");
+
+            server_sender
+                .notify(method::AGENT_EVENT, &AgentEvent::AgentStart)
+                .await
+                .unwrap();
+            server_sender
+                .notify(method::AGENT_EVENT, &AgentEvent::TurnStart)
+                .await
+                .unwrap();
+            server_sender
+                .respond_ok(
+                    id,
+                    PromptResult {
+                        turn_id: "1".into(),
+                    },
+                )
+                .unwrap();
+        });
+
+        let events = client.prompt_text("hello rpc").await.unwrap();
+
+        assert_eq!(events.len(), 2);
+        assert!(matches!(events[0], AgentEvent::AgentStart));
+        assert!(matches!(events[1], AgentEvent::TurnStart));
+        server_task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn prompt_text_answers_tool_approval_requests() {
+        let (client, mut server) = make_client_pair();
+        let mut client = client.with_approval_handler(|req| {
+            assert_eq!(req.tool_call_id, "call-1");
+            assert_eq!(req.tool_name, "dangerous_tool");
+            ToolApproval::Rejected
+        });
+        let server_sender = server.sender();
+
+        let server_task = tokio::spawn(async move {
+            let incoming = server.recv_incoming().await.unwrap();
+            let IncomingMessage::Request { id, method, .. } = incoming else {
+                panic!("expected prompt request");
+            };
+            assert_eq!(method, method::PROMPT);
+
+            let approval = server_sender
+                .request::<_, ToolApprovalDto>(
+                    method::TOOL_APPROVE,
+                    &ToolApprovalRequestDto {
+                        id: "call-1".into(),
+                        name: "dangerous_tool".into(),
+                        arguments: serde_json::json!({"path": "/tmp/example"}),
+                        requires_approval: true,
+                        context: None,
+                    },
+                )
+                .await
+                .unwrap();
+            assert!(matches!(approval, ToolApprovalDto::Rejected));
+
+            server_sender
+                .respond_ok(
+                    id,
+                    PromptResult {
+                        turn_id: "2".into(),
+                    },
+                )
+                .unwrap();
+        });
+
+        let events = client.prompt_text("run tool").await.unwrap();
+
+        assert!(events.is_empty());
+        server_task.await.unwrap();
     }
 }

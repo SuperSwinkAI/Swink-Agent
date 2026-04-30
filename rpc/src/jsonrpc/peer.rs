@@ -164,6 +164,14 @@ impl JsonRpcPeer {
     pub async fn recv_incoming(&mut self) -> Option<IncomingMessage> {
         self.incoming_rx.recv().await
     }
+
+    /// Return the next already-buffered incoming message without waiting.
+    ///
+    /// Returns `None` when no message is currently buffered or the peer has
+    /// disconnected.
+    pub fn try_recv_incoming(&mut self) -> Option<IncomingMessage> {
+        self.incoming_rx.try_recv().ok()
+    }
 }
 
 // ─── Tasks ────────────────────────────────────────────────────────────────────
