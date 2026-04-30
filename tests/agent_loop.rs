@@ -17,11 +17,11 @@ use serde_json::json;
 use tokio_util::sync::CancellationToken;
 
 use swink_agent::{
-    AgentEvent, AgentLoopConfig, AgentMessage, AgentTool, AgentToolResult, AssistantMessage,
-    AssistantMessageEvent, ContentBlock, Cost, CustomMessage, DefaultRetryStrategy, LlmMessage,
-    MessageProvider, PolicyContext, PolicyVerdict, PostTurnPolicy, PreTurnPolicy, StopReason,
-    StreamFn, StreamOptions, ToolResultMessage, TurnPolicyContext, TurnSnapshot, Usage,
-    UserMessage, agent_loop, agent_loop_continue,
+    AgentContext, AgentEvent, AgentLoopConfig, AgentMessage, AgentTool, AgentToolResult,
+    AssistantMessage, AssistantMessageEvent, ContentBlock, Cost, CustomMessage,
+    DefaultRetryStrategy, LlmMessage, MessageProvider, ModelSpec, PolicyContext, PolicyVerdict,
+    PostTurnPolicy, PreTurnPolicy, StopReason, StreamFn, StreamOptions, ToolResultMessage,
+    TurnPolicyContext, TurnSnapshot, Usage, UserMessage, agent_loop, agent_loop_continue,
 };
 
 // ─── MockUpdatingTool ─────────────────────────────────────────────────────────
@@ -127,6 +127,39 @@ impl AgentTool for MockCancellationIgnoringTool {
         _credential: Option<swink_agent::ResolvedCredential>,
     ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>> {
         Box::pin(async move { std::future::pending::<AgentToolResult>().await })
+    }
+}
+
+struct CancelsOnTextStartStreamFn;
+
+impl StreamFn for CancelsOnTextStartStreamFn {
+    fn stream<'a>(
+        &'a self,
+        _model: &'a ModelSpec,
+        _context: &'a AgentContext,
+        _options: &'a StreamOptions,
+        cancellation_token: CancellationToken,
+    ) -> Pin<Box<dyn Stream<Item = AssistantMessageEvent> + Send + 'a>> {
+        let events = vec![
+            AssistantMessageEvent::Start,
+            AssistantMessageEvent::TextStart { content_index: 0 },
+            AssistantMessageEvent::TextDelta {
+                content_index: 0,
+                delta: "unreachable".to_string(),
+            },
+            AssistantMessageEvent::TextEnd { content_index: 0 },
+            AssistantMessageEvent::Done {
+                stop_reason: StopReason::Stop,
+                usage: Usage::default(),
+                cost: Cost::default(),
+            },
+        ];
+
+        Box::pin(futures::stream::iter(events).inspect(move |event| {
+            if matches!(event, AssistantMessageEvent::TextStart { .. }) {
+                cancellation_token.cancel();
+            }
+        }))
     }
 }
 
@@ -1185,35 +1218,19 @@ async fn error_exit_no_follow_up() {
 #[tokio::test]
 async fn abort() {
     let token = CancellationToken::new();
-    let token_clone = token.clone();
-
-    let stream_fn = Arc::new(MockStreamFn::new(vec![{
-        let mut events = vec![AssistantMessageEvent::Start];
-        for i in 0..100 {
-            events.push(AssistantMessageEvent::TextStart { content_index: i });
-            events.push(AssistantMessageEvent::TextDelta {
-                content_index: i,
-                delta: "x".to_string(),
-            });
-            events.push(AssistantMessageEvent::TextEnd { content_index: i });
-        }
-        events.push(AssistantMessageEvent::Done {
-            stop_reason: StopReason::Stop,
-            usage: Usage::default(),
-            cost: Cost::default(),
-        });
-        events
-    }]));
+    let token_for_assertion = token.clone();
+    let stream_fn = Arc::new(CancelsOnTextStartStreamFn);
 
     let config = default_config(stream_fn);
 
-    tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(5)).await;
-        token_clone.cancel();
-    });
-
     let events = collect_events(agent_loop(vec![], "system".to_string(), config, token)).await;
 
+    assert!(token_for_assertion.is_cancelled());
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AgentEvent::MessageEnd { message }
+            if message.stop_reason == StopReason::Aborted
+    )));
     assert!(has_event(&events, "AgentEnd"));
 }
 
