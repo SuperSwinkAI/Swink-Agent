@@ -45,6 +45,21 @@ pub(super) fn drain_agent_events(app: &mut App) {
     }
 }
 
+pub(super) async fn drain_agent_events_until_idle(app: &mut App) {
+    loop {
+        drain_agent_events(app);
+        if app.status != AgentStatus::Running {
+            break;
+        }
+
+        let event = tokio::time::timeout(Duration::from_secs(1), app.agent_rx.recv())
+            .await
+            .expect("agent should emit an event while running")
+            .expect("agent event channel should stay open while running");
+        app.handle_agent_event(event);
+    }
+}
+
 pub(super) fn make_tool_result_message(content: &str) -> DisplayMessage {
     let summary = content
         .lines()

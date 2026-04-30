@@ -26,9 +26,7 @@ async fn multi_turn_send_and_receive() {
     app.send_to_agent("hello".to_string());
     assert_eq!(app.status, AgentStatus::Running);
 
-    tokio::task::yield_now().await;
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    drain_agent_events(&mut app);
+    drain_agent_events_until_idle(&mut app).await;
 
     assert_eq!(
         app.status,
@@ -45,9 +43,7 @@ async fn multi_turn_send_and_receive() {
     app.send_to_agent("follow up".to_string());
     assert_eq!(app.status, AgentStatus::Running);
 
-    tokio::task::yield_now().await;
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    drain_agent_events(&mut app);
+    drain_agent_events_until_idle(&mut app).await;
 
     assert_eq!(
         app.status,
@@ -105,9 +101,7 @@ async fn three_turn_conversation() {
 
     for (i, prompt) in ["first", "second", "third"].iter().enumerate() {
         app.send_to_agent(prompt.to_string());
-        tokio::task::yield_now().await;
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        drain_agent_events(&mut app);
+        drain_agent_events_until_idle(&mut app).await;
 
         assert_eq!(
             app.status,
@@ -204,9 +198,7 @@ async fn error_response_allows_retry() {
     app.set_agent(agent);
 
     app.send_to_agent("hello".to_string());
-    tokio::task::yield_now().await;
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    drain_agent_events(&mut app);
+    drain_agent_events_until_idle(&mut app).await;
 
     assert_eq!(
         app.status,
@@ -221,9 +213,7 @@ async fn error_response_allows_retry() {
     );
 
     app.send_to_agent("try again".to_string());
-    tokio::task::yield_now().await;
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    drain_agent_events(&mut app);
+    drain_agent_events_until_idle(&mut app).await;
 
     assert_eq!(app.status, AgentStatus::Idle);
     assert!(
@@ -261,9 +251,7 @@ async fn cycle_model_applies_and_restores_provider_binding_on_send() {
     assert_eq!(app.pending_model, Some(extra_model.clone()));
 
     app.send_to_agent("hello extra".to_string());
-    tokio::task::yield_now().await;
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    drain_agent_events(&mut app);
+    drain_agent_events_until_idle(&mut app).await;
 
     assert!(
         app.messages
@@ -277,9 +265,7 @@ async fn cycle_model_applies_and_restores_provider_binding_on_send() {
     assert_eq!(app.pending_model, Some(primary_model.clone()));
 
     app.send_to_agent("hello primary".to_string());
-    tokio::task::yield_now().await;
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    drain_agent_events(&mut app);
+    drain_agent_events_until_idle(&mut app).await;
 
     assert!(
         app.messages
