@@ -1,5 +1,6 @@
 //! Built-in tool for making surgical find-and-replace edits to a file.
 
+use std::io::Write as _;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 
@@ -9,7 +10,7 @@ use serde_json::Value;
 use sha2::{Digest as _, Sha256};
 use tokio_util::sync::CancellationToken;
 
-use super::path::{resolve_existing_path, resolve_writable_path};
+use super::path::resolve_existing_path;
 use crate::tool::{AgentTool, AgentToolResult, ToolFuture, validated_schema_for};
 use crate::types::ContentBlock;
 
@@ -239,23 +240,51 @@ fn apply_op(content: &str, op: &EditOp) -> Result<String, String> {
 }
 
 // ---------------------------------------------------------------------------
-// Atomic write
+// Locked read-modify-write
 // ---------------------------------------------------------------------------
 
-/// Write `content` to `path` atomically: write to a sibling `.swink-edit.tmp`
-/// file then rename it over the target.  On most Unix filesystems `rename` is
-/// atomic when src and dst share a directory.
-async fn atomic_write(path: &std::path::Path, content: &str) -> std::io::Result<()> {
-    let tmp = {
-        let name = path
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .into_owned();
-        path.with_file_name(format!("{name}.swink-edit.tmp"))
-    };
-    tokio::fs::write(&tmp, content).await?;
-    tokio::fs::rename(&tmp, path).await
+/// Apply edits and write the result while holding the shared per-target lock.
+fn edit_file_locked(
+    path: &Path,
+    expected_hash: Option<&str>,
+    edits: &[EditOp],
+) -> Result<(String, String), String> {
+    crate::atomic_fs::with_target_lock(path, || Ok(edit_file_unlocked(path, expected_hash, edits)))
+        .map_err(|error| format!("failed to lock {}: {error}", path.display()))?
+}
+
+fn edit_file_unlocked(
+    path: &Path,
+    expected_hash: Option<&str>,
+    edits: &[EditOp],
+) -> Result<(String, String), String> {
+    let raw_bytes = std::fs::read(path)
+        .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
+
+    let original = std::str::from_utf8(&raw_bytes)
+        .map_err(|_| format!("{} is not valid UTF-8", path.display()))?
+        .to_owned();
+
+    if let Some(expected) = expected_hash {
+        let actual = sha256_hex(&raw_bytes);
+        if actual != expected.to_ascii_lowercase() {
+            return Err(format!(
+                "{} has changed since it was last read (hash mismatch); \
+                 re-read the file before editing",
+                path.display()
+            ));
+        }
+    }
+
+    let mut content = original.clone();
+    for (i, op) in edits.iter().enumerate() {
+        content = apply_op(&content, op).map_err(|msg| format!("edit {}: {msg}", i + 1))?;
+    }
+
+    crate::atomic_fs::atomic_write_unlocked(path, |writer| writer.write_all(content.as_bytes()))
+        .map_err(|error| format!("failed to write {}: {error}", path.display()))?;
+
+    Ok((original, content))
 }
 
 // ---------------------------------------------------------------------------
@@ -316,68 +345,44 @@ impl AgentTool for EditFileTool {
                     Err(error) => return AgentToolResult::error(error),
                 };
 
-            let raw_bytes = match tokio::fs::read(&path).await {
-                Ok(b) => b,
-                Err(e) => {
-                    return AgentToolResult::error(format!(
-                        "failed to read {}: {e}",
-                        path.display()
-                    ));
-                }
-            };
-
-            let original = match std::str::from_utf8(&raw_bytes) {
-                Ok(s) => s.to_owned(),
-                Err(_) => {
-                    return AgentToolResult::error(format!(
-                        "{} is not valid UTF-8",
-                        path.display()
-                    ));
-                }
-            };
-
-            // Stale-read check.
-            if let Some(expected) = &parsed.expected_hash {
-                let actual = sha256_hex(&raw_bytes);
-                if actual != expected.to_ascii_lowercase() {
-                    return AgentToolResult::error(format!(
-                        "{} has changed since it was last read (hash mismatch); \
-                         re-read the file before editing",
-                        path.display()
-                    ));
-                }
+            if cancellation_token.is_cancelled() {
+                return AgentToolResult::error("cancelled");
             }
+
+            let path = if self.execution_root.is_none() {
+                match tokio::fs::canonicalize(&path).await {
+                    Ok(path) => path,
+                    Err(error) => {
+                        return AgentToolResult::error(format!(
+                            "failed to resolve path {}: {error}",
+                            path.display()
+                        ));
+                    }
+                }
+            } else {
+                path
+            };
 
             if parsed.edits.is_empty() {
                 return AgentToolResult::text("no edits specified; file unchanged");
             }
 
-            // Apply all edits in-memory (fail-fast — no partial writes).
-            let mut content = original.clone();
-            for (i, op) in parsed.edits.iter().enumerate() {
-                content = match apply_op(&content, op) {
-                    Ok(updated) => updated,
-                    Err(msg) => {
-                        return AgentToolResult::error(format!("edit {}: {msg}", i + 1));
-                    }
-                };
-            }
-
-            if cancellation_token.is_cancelled() {
-                return AgentToolResult::error("cancelled");
-            }
-
-            let path =
-                match resolve_writable_path(&parsed.path, self.execution_root.as_deref()).await {
-                    Ok(path) => path,
-                    Err(error) => return AgentToolResult::error(error),
-                };
-
-            if let Err(e) = atomic_write(&path, &content).await {
-                return AgentToolResult::error(format!("failed to write {}: {e}", path.display()));
-            }
-
             let n = parsed.edits.len();
+            let expected_hash = parsed.expected_hash;
+            let edits = parsed.edits;
+            let edit_path = path.clone();
+            let edit_result = tokio::task::spawn_blocking(move || {
+                edit_file_locked(&edit_path, expected_hash.as_deref(), &edits)
+            })
+            .await;
+            let (original, content) = match edit_result {
+                Ok(Ok(result)) => result,
+                Ok(Err(error)) => return AgentToolResult::error(error),
+                Err(error) => {
+                    return AgentToolResult::error(format!("edit task failed: {error}"));
+                }
+            };
+
             AgentToolResult {
                 content: vec![ContentBlock::Text {
                     text: format!(
@@ -657,5 +662,129 @@ mod tests {
         assert!(text.contains("escapes execution root"), "got: {text}");
         let on_disk = tokio::fs::read_to_string(&outside).await.unwrap();
         assert_eq!(on_disk, "hello world\n");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_same_target_edits_preserve_disjoint_changes() {
+        use std::sync::{Arc, RwLock};
+
+        use serde_json::json;
+        use tokio::sync::Barrier;
+
+        use crate::SessionState;
+        use crate::tool::AgentTool;
+
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("test.txt");
+        let original = (0..16)
+            .map(|i| format!("line-{i:02}\n"))
+            .collect::<String>();
+        tokio::fs::write(&file, original).await.unwrap();
+
+        let tool = Arc::new(EditFileTool::new());
+        let barrier = Arc::new(Barrier::new(16));
+        let mut handles = Vec::new();
+        for i in 0..16 {
+            let tool = Arc::clone(&tool);
+            let barrier = Arc::clone(&barrier);
+            let file = file.clone();
+            handles.push(tokio::spawn(async move {
+                barrier.wait().await;
+                tool.execute(
+                    "id",
+                    json!({
+                        "path": file.to_str().unwrap(),
+                        "edits": [{
+                            "old_string": format!("line-{i:02}"),
+                            "new_string": format!("edited-{i:02}")
+                        }]
+                    }),
+                    CancellationToken::new(),
+                    None,
+                    Arc::new(RwLock::new(SessionState::default())),
+                    None,
+                )
+                .await
+            }));
+        }
+
+        for handle in handles {
+            let result = handle.await.unwrap();
+            assert!(
+                !result.is_error,
+                "unexpected edit failure: {:?}",
+                result.content
+            );
+        }
+
+        let on_disk = tokio::fs::read_to_string(&file).await.unwrap();
+        for i in 0..16 {
+            assert!(
+                on_disk.contains(&format!("edited-{i:02}")),
+                "missing concurrent edit {i}; final content:\n{on_disk}"
+            );
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn concurrent_same_hash_edits_recheck_staleness_under_lock() {
+        use std::sync::{Arc, RwLock};
+
+        use serde_json::json;
+        use tokio::sync::Barrier;
+
+        use crate::SessionState;
+        use crate::tool::AgentTool;
+
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("test.txt");
+        let original = "line-00\nline-01\n";
+        tokio::fs::write(&file, original).await.unwrap();
+        let expected_hash = sha256_hex(original.as_bytes());
+
+        let tool = Arc::new(EditFileTool::new());
+        let barrier = Arc::new(Barrier::new(2));
+        let mut handles = Vec::new();
+        for i in 0..2 {
+            let tool = Arc::clone(&tool);
+            let barrier = Arc::clone(&barrier);
+            let file = file.clone();
+            let expected_hash = expected_hash.clone();
+            handles.push(tokio::spawn(async move {
+                barrier.wait().await;
+                tool.execute(
+                    "id",
+                    json!({
+                        "path": file.to_str().unwrap(),
+                        "expected_hash": expected_hash,
+                        "edits": [{
+                            "old_string": format!("line-{i:02}"),
+                            "new_string": format!("edited-{i:02}")
+                        }]
+                    }),
+                    CancellationToken::new(),
+                    None,
+                    Arc::new(RwLock::new(SessionState::default())),
+                    None,
+                )
+                .await
+            }));
+        }
+
+        let mut successes = 0;
+        let mut stale_rejections = 0;
+        for handle in handles {
+            let result = handle.await.unwrap();
+            if result.is_error {
+                let text = ContentBlock::extract_text(&result.content);
+                assert!(text.contains("hash mismatch"), "unexpected error: {text}");
+                stale_rejections += 1;
+            } else {
+                successes += 1;
+            }
+        }
+
+        assert_eq!(successes, 1);
+        assert_eq!(stale_rejections, 1);
     }
 }
