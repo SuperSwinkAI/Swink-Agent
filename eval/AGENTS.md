@@ -16,6 +16,7 @@
 ## Key Invariants
 
 - Code-family evaluators invoke helpers at runtime — their deps (e.g. `tempfile`) go in `[dependencies]`, not `[dev-dependencies]`.
+- Unsafe code is denied everywhere in `eval` except the Unix-only `evaluators::code::sandbox::posix` rlimit FFI layer. The crate root uses `#![deny(unsafe_code)]`, not `forbid`, solely because `forbid` cannot be relaxed by that documented nested carve-out.
 - `FsEvalStore` validates set IDs (reject empty, `..`, NUL, separators) and persists via `atomic_fs`.
 - Evaluator panics isolated via `tokio::spawn`/`catch_unwind` → failing metric, not suite abort.
 - Empty evaluator output = failed case (`no_applicable_evaluators`), not vacuous pass.
