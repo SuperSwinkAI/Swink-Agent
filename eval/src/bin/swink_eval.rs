@@ -29,7 +29,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use swink_agent_eval::HtmlReporter;
 use swink_agent_eval::{
     ConsoleReporter, EvalError, EvalSet, EvalSetResult, GateConfig, JsonReporter, MarkdownReporter,
-    Reporter, ReporterOutput, check_gate,
+    Reporter, ReporterOutput, check_gate, decode_result_json,
 };
 
 const EXIT_OK: u8 = 0;
@@ -273,7 +273,7 @@ fn load_eval_set(path: &Path) -> Result<EvalSet, String> {
 
 fn load_result(path: &Path) -> Result<EvalSetResult, String> {
     let bytes = fs::read(path).map_err(|e| e.to_string())?;
-    serde_json::from_slice::<EvalSetResult>(&bytes).map_err(|e| e.to_string())
+    decode_result_json(&bytes).map_err(|e| e.to_string())
 }
 
 fn load_gate_config(path: &Path) -> Result<GateConfig, String> {

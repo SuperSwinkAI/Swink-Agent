@@ -136,6 +136,7 @@ pub use prompt::{
 pub use report::HtmlReporter;
 pub use report::{
     ConsoleReporter, JsonReporter, MarkdownReporter, Reporter, ReporterError, ReporterOutput,
+    decode_result_json,
 };
 #[cfg(feature = "langsmith")]
 pub use report::{LangSmithExportError, LangSmithExporter};

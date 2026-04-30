@@ -17,7 +17,10 @@ use std::process::Command;
 use std::time::Duration;
 
 use swink_agent::{Cost, ModelSpec, StopReason, Usage};
-use swink_agent_eval::{EvalCaseResult, EvalSetResult, EvalSummary, Invocation, Verdict};
+use swink_agent_eval::{
+    EvalCaseResult, EvalSetResult, EvalSummary, Invocation, JsonReporter, Reporter, ReporterOutput,
+    Verdict,
+};
 use tempfile::TempDir;
 
 fn binary_path() -> &'static str {
@@ -68,6 +71,16 @@ fn sample_result(pass_rate: f64) -> EvalSetResult {
 fn write_json<T: serde::Serialize>(dir: &TempDir, name: &str, value: &T) -> std::path::PathBuf {
     let path = dir.path().join(name);
     fs::write(&path, serde_json::to_vec_pretty(value).expect("encode")).expect("write");
+    path
+}
+
+fn write_reporter_json(dir: &TempDir, name: &str, result: &EvalSetResult) -> std::path::PathBuf {
+    let path = dir.path().join(name);
+    let output = JsonReporter::new().render(result).expect("render json");
+    let ReporterOutput::Artifact { bytes, .. } = output else {
+        panic!("JsonReporter should emit an artifact");
+    };
+    fs::write(&path, bytes).expect("write");
     path
 }
 
@@ -128,6 +141,34 @@ fn report_renders_json_format_matching_in_process_reporter() {
 }
 
 #[test]
+fn report_accepts_json_reporter_artifact() {
+    let dir = TempDir::new().unwrap();
+    let result = sample_result(1.0);
+    let result_path = write_reporter_json(&dir, "reporter-result.json", &result);
+
+    let out = Command::new(binary_path())
+        .args([
+            "report",
+            "--result",
+            result_path.to_str().unwrap(),
+            "--format",
+            "console",
+        ])
+        .output()
+        .expect("spawn");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("cli-test") && stdout.contains("case-00"),
+        "console output should surface reporter artifact ids; got: {stdout}"
+    );
+}
+
+#[test]
 fn gate_returns_zero_when_thresholds_met() {
     let dir = TempDir::new().unwrap();
     let result_path = write_json(&dir, "result.json", &sample_result(1.0));
@@ -148,6 +189,33 @@ fn gate_returns_zero_when_thresholds_met() {
         .status()
         .expect("spawn");
     assert_eq!(status.code(), Some(0), "gate should pass at 100% pass rate");
+}
+
+#[test]
+fn gate_accepts_json_reporter_artifact() {
+    let dir = TempDir::new().unwrap();
+    let result_path = write_reporter_json(&dir, "reporter-result.json", &sample_result(1.0));
+    let cfg_path = write_json(
+        &dir,
+        "gate.json",
+        &serde_json::json!({ "min_pass_rate": 0.9 }),
+    );
+
+    let status = Command::new(binary_path())
+        .args([
+            "gate",
+            "--result",
+            result_path.to_str().unwrap(),
+            "--gate-config",
+            cfg_path.to_str().unwrap(),
+        ])
+        .status()
+        .expect("spawn");
+    assert_eq!(
+        status.code(),
+        Some(0),
+        "gate should load reporter JSON artifacts"
+    );
 }
 
 #[test]
