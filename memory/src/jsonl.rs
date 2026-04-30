@@ -677,7 +677,7 @@ impl SessionStore for JsonlSessionStore {
         validate_session_id(id)?;
 
         let path = session_path(&self.sessions_dir, id);
-        with_target_lock(&path, || {
+        let persisted_meta = with_target_lock(&path, || {
             check_sequence_path(&path, id, meta.sequence)?;
 
             let mut write_meta = meta.clone();
@@ -696,7 +696,12 @@ impl SessionStore for JsonlSessionStore {
             )?;
 
             Ok(write_meta)
-        })
+        })?;
+
+        #[cfg(feature = "search")]
+        self.refresh_active_search_index(id, "save_full");
+
+        Ok(persisted_meta)
     }
 
     fn append(&self, id: &str, messages: &[AgentMessage]) -> io::Result<()> {
@@ -2469,6 +2474,47 @@ mod tests {
         assert_eq!(
             store.load_state("save-full").unwrap(),
             Some(serde_json::json!({ "cursor": 9, "draft": "synced" }))
+        );
+    }
+
+    #[cfg(feature = "search")]
+    #[test]
+    fn save_full_updates_warm_search_index() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = JsonlSessionStore::new(dir.path().to_path_buf()).unwrap();
+
+        let meta = fresh_meta("save-full-search");
+        store.open_search_index().unwrap();
+        store
+            .save(
+                "save-full-search",
+                &meta,
+                &[user_msg("stale auth decision", 1)],
+            )
+            .unwrap();
+
+        let (loaded_meta, _) = store.load("save-full-search", None).unwrap();
+        store
+            .save_full(
+                "save-full-search",
+                &loaded_meta,
+                &[user_msg("fresh billing decision", 2)],
+                &serde_json::json!({ "cursor": 2 }),
+            )
+            .unwrap();
+
+        let fresh_hits = store
+            .search("fresh billing", &SessionSearchOptions::default())
+            .unwrap();
+        assert_eq!(fresh_hits.len(), 1);
+        assert_eq!(fresh_hits[0].session_id, "save-full-search");
+
+        let stale_hits = store
+            .search("stale auth", &SessionSearchOptions::default())
+            .unwrap();
+        assert!(
+            stale_hits.is_empty(),
+            "save_full should replace stale search documents"
         );
     }
 
