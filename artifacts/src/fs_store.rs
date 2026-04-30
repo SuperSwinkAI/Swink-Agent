@@ -649,10 +649,9 @@ mod tests {
     use std::collections::HashMap;
     use std::io::ErrorKind;
     use std::sync::Arc;
-    use std::time::Duration;
 
     use tokio::sync::oneshot;
-    use tokio::time::sleep;
+    use tokio::task::yield_now;
 
     use super::FileArtifactStore;
     use swink_agent::{ArtifactData, ArtifactError, ArtifactStore};
@@ -679,6 +678,14 @@ mod tests {
         );
     }
 
+    async fn assert_delete_waits_for_lock<T>(
+        delete_task: &tokio::task::JoinHandle<T>,
+        reason: &str,
+    ) {
+        yield_now().await;
+        assert!(!delete_task.is_finished(), "{reason}");
+    }
+
     #[tokio::test]
     async fn delete_waits_for_in_flight_artifact_lock() {
         let tmpdir = tempfile::TempDir::new().expect("tempdir");
@@ -699,12 +706,11 @@ mod tests {
         });
 
         started_rx.await.expect("delete task started");
-        sleep(Duration::from_millis(50)).await;
-        let delete_finished = delete_task.is_finished();
-        assert!(
-            !delete_finished,
-            "delete should wait for the per-artifact lock before removing files"
-        );
+        assert_delete_waits_for_lock(
+            &delete_task,
+            "delete should wait for the per-artifact lock before removing files",
+        )
+        .await;
 
         drop(guard);
 
@@ -746,11 +752,11 @@ mod tests {
         });
 
         started_rx.await.expect("delete task started");
-        sleep(Duration::from_millis(50)).await;
-        assert!(
-            !delete_task.is_finished(),
-            "a second store instance should wait on the root-wide artifact lock"
-        );
+        assert_delete_waits_for_lock(
+            &delete_task,
+            "a second store instance should wait on the root-wide artifact lock",
+        )
+        .await;
 
         drop(guard);
 
