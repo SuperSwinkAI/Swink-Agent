@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use futures::stream::StreamExt;
 use opentelemetry::trace::TracerProvider as _;
-use opentelemetry_sdk::trace::{InMemorySpanExporterBuilder, SdkTracerProvider};
+use opentelemetry_sdk::trace::{InMemorySpanExporterBuilder, SdkTracerProvider, SpanData};
 
 use tokio_util::sync::CancellationToken;
 use tracing_subscriber::prelude::*;
@@ -95,6 +95,26 @@ fn setup_otel_tracing() -> (
     (exporter, guard)
 }
 
+async fn collect_finished_spans_until<F>(
+    exporter: &opentelemetry_sdk::trace::InMemorySpanExporter,
+    is_ready: F,
+) -> Vec<SpanData>
+where
+    F: Fn(&[SpanData]) -> bool,
+{
+    let mut spans = Vec::new();
+
+    for _ in 0..16 {
+        spans = exporter.get_finished_spans().unwrap();
+        if is_ready(&spans) {
+            return spans;
+        }
+        tokio::task::yield_now().await;
+    }
+
+    spans
+}
+
 #[tokio::test]
 async fn otel_span_hierarchy() {
     let (exporter, _guard) = setup_otel_tracing();
@@ -110,10 +130,12 @@ async fn otel_span_hierarchy() {
     );
     let _events: Vec<AgentEvent> = stream.collect().await;
 
-    // Small delay for the simple exporter to flush.
-    tokio::time::sleep(Duration::from_millis(50)).await;
-
-    let spans = exporter.get_finished_spans().unwrap();
+    let spans = collect_finished_spans_until(&exporter, |spans| {
+        spans.iter().any(|s| s.name == "agent.run")
+            && spans.iter().any(|s| s.name == "agent.turn")
+            && spans.iter().any(|s| s.name == "agent.llm_call")
+    })
+    .await;
     let span_names: Vec<&str> = spans.iter().map(|s| s.name.as_ref()).collect();
 
     assert!(
@@ -161,9 +183,11 @@ async fn otel_span_attributes() {
     );
     let _events: Vec<AgentEvent> = stream.collect().await;
 
-    tokio::time::sleep(Duration::from_millis(50)).await;
-
-    let spans = exporter.get_finished_spans().unwrap();
+    let spans = collect_finished_spans_until(&exporter, |spans| {
+        spans.iter().any(|s| s.name == "agent.turn")
+            && spans.iter().any(|s| s.name == "agent.llm_call")
+    })
+    .await;
 
     // Check agent.turn has turn_index attribute
     let turn_span = spans.iter().find(|s| s.name == "agent.turn").unwrap();
@@ -212,9 +236,10 @@ async fn otel_tool_spans() {
     );
     let _events: Vec<AgentEvent> = stream.collect().await;
 
-    tokio::time::sleep(Duration::from_millis(50)).await;
-
-    let spans = exporter.get_finished_spans().unwrap();
+    let spans = collect_finished_spans_until(&exporter, |spans| {
+        spans.iter().any(|s| s.name == "agent.tool")
+    })
+    .await;
     let span_names: Vec<&str> = spans.iter().map(|s| s.name.as_ref()).collect();
 
     assert!(
@@ -257,9 +282,7 @@ async fn otel_spans_exclude_content() {
     );
     let _events: Vec<AgentEvent> = stream.collect().await;
 
-    tokio::time::sleep(Duration::from_millis(50)).await;
-
-    let spans = exporter.get_finished_spans().unwrap();
+    let spans = collect_finished_spans_until(&exporter, |spans| !spans.is_empty()).await;
 
     // Verify no span contains prompt text, tool arguments, or tool results
     for span in &spans {
@@ -313,10 +336,8 @@ async fn otel_coexists_with_metrics_collector() {
     );
     let _events: Vec<AgentEvent> = stream.collect().await;
 
-    tokio::time::sleep(Duration::from_millis(50)).await;
-
     // OTel exporter received spans
-    let spans = exporter.get_finished_spans().unwrap();
+    let spans = collect_finished_spans_until(&exporter, |spans| !spans.is_empty()).await;
     assert!(
         !spans.is_empty(),
         "OTel exporter should have received spans"
@@ -369,9 +390,10 @@ async fn otel_model_fallback_spans() {
     );
     let _events: Vec<AgentEvent> = stream.collect().await;
 
-    tokio::time::sleep(Duration::from_millis(50)).await;
-
-    let spans = exporter.get_finished_spans().unwrap();
+    let spans = collect_finished_spans_until(&exporter, |spans| {
+        spans.iter().filter(|s| s.name == "agent.llm_call").count() == 2
+    })
+    .await;
 
     // Should have two agent.llm_call spans — one for primary (failed) and one for fallback.
     let llm_spans: Vec<_> = spans
