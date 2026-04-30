@@ -25,7 +25,9 @@ async fn notification_round_trip() {
             assert_eq!(method, "ping");
             assert_eq!(params.unwrap()["seq"], 1);
         }
-        other => panic!("expected notification, got {other:?}"),
+        other @ IncomingMessage::Request { .. } => {
+            panic!("expected notification, got {other:?}")
+        }
     }
 }
 
@@ -41,7 +43,9 @@ async fn request_response_round_trip() {
                 assert_eq!(method, "echo");
                 sender_b.respond_ok(id, params.unwrap()).unwrap();
             }
-            other => panic!("expected request, got {other:?}"),
+            other @ IncomingMessage::Notification { .. } => {
+                panic!("expected request, got {other:?}")
+            }
         }
     });
 

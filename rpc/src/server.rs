@@ -194,7 +194,7 @@ async fn handle_connection(
 
 // ─── Session ──────────────────────────────────────────────────────────────────
 
-#[cfg(unix)]
+#[cfg(any(unix, test))]
 async fn run_session(
     peer: &mut crate::jsonrpc::JsonRpcPeer,
     factory: &(dyn Fn() -> AgentOptions + Send + Sync),
@@ -290,7 +290,7 @@ async fn run_session(
     Ok(())
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, test))]
 async fn run_prompt(
     peer: &mut crate::jsonrpc::JsonRpcPeer,
     agent: &mut swink_agent::Agent,
@@ -383,4 +383,159 @@ fn peer_uid(stream: &tokio::net::UnixStream) -> std::io::Result<u32> {
 fn peer_uid(_stream: &tokio::net::UnixStream) -> std::io::Result<u32> {
     tracing::warn!("peer credential check not supported on this Unix variant; allowing connection");
     Ok(effective_uid())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use swink_agent::{AgentEvent, AgentOptions, StreamFn};
+    use tokio::io::duplex;
+
+    use super::*;
+    use crate::dto::{
+        ClientInfo, InitializeParams, PROTOCOL_VERSION, PromptParams, PromptResult, method,
+    };
+    use crate::jsonrpc::{IncomingMessage, JsonRpcPeer};
+
+    fn make_peer_pair() -> (JsonRpcPeer, JsonRpcPeer) {
+        let (client_read, server_write) = duplex(8192);
+        let (server_read, client_write) = duplex(8192);
+        (
+            JsonRpcPeer::new(client_read, client_write),
+            JsonRpcPeer::new(server_read, server_write),
+        )
+    }
+
+    fn test_agent_options(response: &'static str) -> AgentOptions {
+        let stream_fn: Arc<dyn StreamFn> = Arc::new(
+            swink_agent::testing::SimpleMockStreamFn::from_text(response),
+        );
+        AgentOptions::new(
+            "test system",
+            swink_agent::testing::default_model(),
+            stream_fn,
+            swink_agent::testing::default_convert,
+        )
+    }
+
+    async fn initialize(peer: &mut JsonRpcPeer) {
+        peer.sender()
+            .notify(
+                method::INITIALIZE,
+                &InitializeParams {
+                    protocol_version: PROTOCOL_VERSION.into(),
+                    client: ClientInfo {
+                        name: "test-client".into(),
+                        version: "0.1.0".into(),
+                    },
+                },
+            )
+            .await
+            .unwrap();
+
+        let Some(IncomingMessage::Notification { method: m, .. }) = peer.recv_incoming().await
+        else {
+            panic!("expected initialized notification");
+        };
+        assert_eq!(m, method::INITIALIZED);
+    }
+
+    #[tokio::test]
+    async fn run_session_streams_prompt_events_and_turn_response() {
+        let (mut client, mut server) = make_peer_pair();
+
+        let server_task = tokio::spawn(async move {
+            run_session(&mut server, &|| test_agent_options("hello from rpc server"))
+                .await
+                .unwrap();
+        });
+
+        initialize(&mut client).await;
+
+        let sender = client.sender();
+        let params = PromptParams {
+            text: "hello rpc".into(),
+            session_id: None,
+        };
+        let prompt = sender.request::<_, PromptResult>(method::PROMPT, &params);
+        let mut prompt = std::pin::pin!(prompt);
+        let mut events = Vec::new();
+        let result = loop {
+            tokio::select! {
+                result = &mut prompt => {
+                    let result = result.unwrap();
+                    while let Some(incoming) = client.try_recv_incoming() {
+                        collect_agent_event(incoming, &mut events);
+                    }
+                    break result;
+                }
+                incoming = client.recv_incoming() => {
+                    let incoming = incoming.expect("server should stay connected while prompt runs");
+                    collect_agent_event(incoming, &mut events);
+                }
+            }
+        };
+
+        assert!(!result.turn_id.is_empty());
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, AgentEvent::TurnStart)),
+            "server should stream turn lifecycle events"
+        );
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, AgentEvent::MessageEnd { message } if message
+                    .content
+                    .iter()
+                    .any(|block| matches!(block, swink_agent::ContentBlock::Text { text } if text == "hello from rpc server")))),
+            "server should stream the assistant response body"
+        );
+
+        client
+            .sender()
+            .notify(method::SHUTDOWN, &serde_json::Value::Null)
+            .await
+            .unwrap();
+        server_task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn run_session_rejects_protocol_version_mismatch() {
+        let (mut client, mut server) = make_peer_pair();
+
+        let server_task = tokio::spawn(async move {
+            run_session(&mut server, &|| test_agent_options("unused"))
+                .await
+                .unwrap_err()
+        });
+
+        client
+            .sender()
+            .notify(
+                method::INITIALIZE,
+                &InitializeParams {
+                    protocol_version: "0.9".into(),
+                    client: ClientInfo::default(),
+                },
+            )
+            .await
+            .unwrap();
+
+        let err = server_task.await.unwrap();
+        assert_eq!(err.code, crate::jsonrpc::RpcError::PROTOCOL_MISMATCH);
+        assert!(client.try_recv_incoming().is_none());
+    }
+
+    fn collect_agent_event(incoming: IncomingMessage, events: &mut Vec<AgentEvent>) {
+        let IncomingMessage::Notification { method: m, params } = incoming else {
+            panic!("unexpected request while collecting prompt events");
+        };
+        assert_eq!(m, method::AGENT_EVENT);
+        let event = serde_json::from_value(params.expect("agent.event should carry params"))
+            .expect("agent.event should deserialize");
+        events.push(event);
+    }
 }
