@@ -688,6 +688,18 @@ fn process_sse_event(
                             });
                         }
                     }
+                    "signature_delta" => {
+                        debug_assert!(
+                            matches!(block_type, BlockType::Thinking),
+                            "signature_delta on non-thinking provider block"
+                        );
+                        if matches!(block_type, BlockType::Thinking)
+                            && let Some(signature) =
+                                parsed.pointer("/delta/signature").and_then(Value::as_str)
+                        {
+                            state.blocks.set_thinking_signature(signature.to_string());
+                        }
+                    }
                     "input_json_delta" => {
                         if let Some(json) = parsed
                             .pointer("/delta/partial_json")

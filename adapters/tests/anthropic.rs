@@ -170,6 +170,9 @@ async fn anthropic_thinking_stream() {
         "event: content_block_delta",
         r#"data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Let me think..."}}"#,
         "",
+        "event: content_block_delta",
+        r#"data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"sig_abc123"}}"#,
+        "",
         "event: content_block_stop",
         r#"data: {"type":"content_block_stop","index":0}"#,
         "",
@@ -227,6 +230,12 @@ async fn anthropic_thinking_stream() {
         thinking_end_pos < text_start_pos,
         "ThinkingEnd should precede TextStart"
     );
+
+    let thinking_signature = events.iter().find_map(|event| match event {
+        AssistantMessageEvent::ThinkingEnd { signature, .. } => signature.as_deref(),
+        _ => None,
+    });
+    assert_eq!(thinking_signature, Some("sig_abc123"));
 }
 
 #[tokio::test]
