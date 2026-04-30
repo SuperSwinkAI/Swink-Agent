@@ -102,18 +102,30 @@ mod tests {
     /// Minimal in-memory checkpoint store for testing.
     struct MockCheckpointStore {
         data: std::sync::Mutex<HashMap<String, String>>,
+        saved: tokio::sync::Notify,
     }
 
     impl MockCheckpointStore {
         fn new() -> Self {
             Self {
                 data: std::sync::Mutex::new(HashMap::new()),
+                saved: tokio::sync::Notify::new(),
             }
         }
 
         fn get(&self, id: &str) -> Option<Checkpoint> {
             let guard = self.data.lock().unwrap();
             guard.get(id).map(|s| serde_json::from_str(s).unwrap())
+        }
+
+        async fn wait_for_checkpoint(&self, id: &str) -> Checkpoint {
+            loop {
+                if let Some(checkpoint) = self.get(id) {
+                    return checkpoint;
+                }
+
+                self.saved.notified().await;
+            }
         }
     }
 
@@ -123,6 +135,7 @@ mod tests {
             let id = checkpoint.id;
             Box::pin(async move {
                 self.data.lock().unwrap().insert(id, json);
+                self.saved.notify_waiters();
                 Ok(())
             })
         }
@@ -259,11 +272,8 @@ mod tests {
         };
 
         policy.evaluate(&ctx, &turn);
-        // Let spawned task complete
-        tokio::task::yield_now().await;
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
-        let cp = store.get("turn-0").expect("checkpoint should exist");
+        let cp = store.wait_for_checkpoint("turn-0").await;
         assert_eq!(cp.system_prompt, "You are a helpful math tutor.");
     }
 
@@ -297,10 +307,8 @@ mod tests {
         };
 
         policy.evaluate(&ctx, &turn);
-        tokio::task::yield_now().await;
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
-        let cp = store.get("turn-1").expect("checkpoint should exist");
+        let cp = store.wait_for_checkpoint("turn-1").await;
         assert_eq!(cp.provider, "anthropic");
         assert_eq!(cp.model_id, "claude-sonnet-4-20250514");
     }
@@ -335,10 +343,8 @@ mod tests {
         };
 
         policy.evaluate(&ctx, &turn);
-        tokio::task::yield_now().await;
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
-        let cp = store.get("turn-0").expect("checkpoint should exist");
+        let cp = store.wait_for_checkpoint("turn-0").await;
         assert_eq!(
             cp.messages.len(),
             2,
@@ -384,8 +390,7 @@ mod tests {
         };
 
         policy.evaluate(&ctx, &turn);
-        tokio::task::yield_now().await;
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        store.wait_for_checkpoint("turn-3").await;
 
         // Load via the CheckpointStore trait
         let loaded = store
@@ -441,8 +446,7 @@ mod tests {
         };
 
         policy.evaluate(&ctx, &turn);
-        tokio::task::yield_now().await;
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        store.wait_for_checkpoint("turn-4").await;
 
         let loaded = store
             .load_checkpoint("turn-4")
