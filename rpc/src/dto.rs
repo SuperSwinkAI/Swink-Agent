@@ -234,4 +234,82 @@ mod tests {
 
         assert_eq!(err.code, RpcError::INVALID_REQUEST);
     }
+
+    #[test]
+    fn prompt_params_omit_absent_session_id_and_round_trip_present_session_id() {
+        let params = PromptParams {
+            text: "hello rpc".into(),
+            session_id: None,
+        };
+
+        let encoded = serde_json::to_value(&params).unwrap();
+
+        assert_eq!(encoded["text"], "hello rpc");
+        assert!(
+            encoded.get("session_id").is_none(),
+            "empty session ids should stay off the wire"
+        );
+
+        let decoded: PromptParams = serde_json::from_value(serde_json::json!({
+            "text": "continue",
+            "session_id": "session-1"
+        }))
+        .unwrap();
+
+        assert_eq!(decoded.text, "continue");
+        assert_eq!(decoded.session_id.as_deref(), Some("session-1"));
+    }
+
+    #[test]
+    fn tool_approval_request_dto_preserves_core_request_payload() {
+        let request = ToolApprovalRequest {
+            tool_call_id: "call-1".into(),
+            tool_name: "write_file".into(),
+            arguments: serde_json::json!({"path": "notes.md", "content": "ok"}),
+            requires_approval: true,
+            context: Some(serde_json::json!({"cwd": "/workspace"})),
+        };
+
+        let dto = ToolApprovalRequestDto::from(&request);
+        let encoded = serde_json::to_value(&dto).unwrap();
+
+        assert_eq!(encoded["id"], "call-1");
+        assert_eq!(encoded["name"], "write_file");
+        assert_eq!(encoded["arguments"]["path"], "notes.md");
+        assert_eq!(encoded["requires_approval"], true);
+        assert_eq!(encoded["context"]["cwd"], "/workspace");
+    }
+
+    #[test]
+    fn tool_approval_dto_round_trips_all_decisions() {
+        let approved =
+            serde_json::to_value(ToolApprovalDto::from(&ToolApproval::Approved)).unwrap();
+        let rejected =
+            serde_json::to_value(ToolApprovalDto::from(&ToolApproval::Rejected)).unwrap();
+        let modified_value = serde_json::json!({"path": "safe.md"});
+        let modified = serde_json::to_value(ToolApprovalDto::from(&ToolApproval::ApprovedWith(
+            modified_value.clone(),
+        )))
+        .unwrap();
+
+        assert_eq!(approved, serde_json::json!({"decision": "approved"}));
+        assert_eq!(rejected, serde_json::json!({"decision": "rejected"}));
+        assert_eq!(
+            modified,
+            serde_json::json!({"decision": "approved_with", "value": modified_value})
+        );
+
+        assert!(matches!(
+            ToolApproval::from(serde_json::from_value::<ToolApprovalDto>(approved).unwrap()),
+            ToolApproval::Approved
+        ));
+        assert!(matches!(
+            ToolApproval::from(serde_json::from_value::<ToolApprovalDto>(rejected).unwrap()),
+            ToolApproval::Rejected
+        ));
+        assert!(matches!(
+            ToolApproval::from(serde_json::from_value::<ToolApprovalDto>(modified).unwrap()),
+            ToolApproval::ApprovedWith(value) if value == modified_value
+        ));
+    }
 }
