@@ -1,3 +1,7 @@
+use std::io;
+use std::pin::Pin;
+use std::task::{Context, Poll};
+
 use swink_agent_rpc::jsonrpc::{IncomingMessage, JsonRpcPeer, RpcError};
 use tokio::io::duplex;
 
@@ -83,15 +87,8 @@ async fn error_response_surfaces_as_err() {
 }
 
 #[tokio::test]
-#[ignore = "hangs on GH Actions ubuntu runners; reader task may not detect duplex drop promptly"]
 async fn pending_requests_fail_on_disconnect() {
-    let (a_read, b_write) = duplex(8192);
-    let (b_read, a_write) = duplex(8192);
-    let a = JsonRpcPeer::new(a_read, a_write);
-    let b = JsonRpcPeer::new(b_read, b_write);
-
-    // Drop b immediately to simulate peer disconnect.
-    drop(b);
+    let a = JsonRpcPeer::new(std::io::Cursor::new(Vec::new()), tokio::io::sink());
 
     let result: Result<serde_json::Value, RpcError> = a
         .sender()
@@ -99,6 +96,42 @@ async fn pending_requests_fail_on_disconnect() {
         .await;
 
     assert_eq!(result.unwrap_err().code, RpcError::DISCONNECTED);
+}
+
+#[tokio::test]
+async fn pending_requests_fail_on_writer_disconnect() {
+    let (reader, _remote_writer) = duplex(8192);
+    let a = JsonRpcPeer::new(reader, FailingWrite);
+
+    let result: Result<serde_json::Value, RpcError> = a
+        .sender()
+        .request("anything", &serde_json::Value::Null)
+        .await;
+
+    assert_eq!(result.unwrap_err().code, RpcError::DISCONNECTED);
+}
+
+struct FailingWrite;
+
+impl tokio::io::AsyncWrite for FailingWrite {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+        _buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        Poll::Ready(Err(io::Error::new(
+            io::ErrorKind::BrokenPipe,
+            "writer disconnected",
+        )))
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Poll::Ready(Ok(()))
+    }
 }
 
 #[tokio::test]
