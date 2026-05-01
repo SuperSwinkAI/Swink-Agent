@@ -189,6 +189,7 @@ struct GeminiUsageMetadata {
 struct GeminiToolCallState {
     /// Harness-side content index returned by [`BlockAccumulator::open_tool_call`].
     content_index: usize,
+    name: String,
     /// Latest full arguments snapshot from Gemini.  Updated on every chunk but
     /// only emitted as a single [`AssistantMessageEvent::ToolCallDelta`] at
     /// finalization to avoid corrupted concatenation when Gemini rewrites
@@ -200,9 +201,11 @@ struct GeminiToolCallState {
 struct GeminiStreamState {
     /// Shared block lifecycle accumulator (index allocation, open/close, drain).
     blocks: crate::block_accumulator::BlockAccumulator,
-    /// Provider-part-index → harness state.  Kept for argument diffing and
-    /// delta event emission; block lifecycle is owned by `blocks`.
-    tool_calls: HashMap<usize, GeminiToolCallState>,
+    /// Provider tool-call identity → harness state.  Kept for argument diffing
+    /// and delta event emission; block lifecycle is owned by `blocks`.
+    tool_calls: HashMap<String, GeminiToolCallState>,
+    generated_tool_call_keys_by_part_index: HashMap<usize, String>,
+    next_generated_tool_call: usize,
     saw_tool_call: bool,
     usage: Usage,
     stop_reason: Option<StopReason>,
@@ -751,19 +754,17 @@ fn process_function_call(
     state: &mut GeminiStreamState,
     events: &mut Vec<AssistantMessageEvent>,
 ) {
-    // Open a new tool-call block the first time we see this part_index.
-    if !state.tool_calls.contains_key(&part_index) {
+    let (key, id) = tool_call_identity(part_index, &function_call, state);
+
+    if !state.tool_calls.contains_key(&key) {
         state.saw_tool_call = true;
-        let id = function_call
-            .id
-            .clone()
-            .unwrap_or_else(|| format!("gemini-tool-{part_index}"));
         let (content_index, start_ev) = state.blocks.open_tool_call(id, function_call.name.clone());
         events.push(start_ev);
         state.tool_calls.insert(
-            part_index,
+            key.clone(),
             GeminiToolCallState {
                 content_index,
+                name: function_call.name.clone(),
                 arguments: String::new(),
             },
         );
@@ -771,7 +772,7 @@ fn process_function_call(
 
     let entry = state
         .tool_calls
-        .get_mut(&part_index)
+        .get_mut(&key)
         .expect("just inserted or already present");
 
     // Gemini sends full argument snapshots, not deltas.  We buffer the latest
@@ -784,6 +785,39 @@ fn process_function_call(
         value => value.to_string(),
     };
     entry.arguments = serialized_args;
+}
+
+fn tool_call_identity(
+    part_index: usize,
+    function_call: &GeminiFunctionCall,
+    state: &mut GeminiStreamState,
+) -> (String, String) {
+    if let Some(id) = function_call.id.clone() {
+        return (format!("provider:{id}"), id);
+    }
+
+    if let Some(existing_key) = state
+        .generated_tool_call_keys_by_part_index
+        .get(&part_index)
+        && state
+            .tool_calls
+            .get(existing_key)
+            .is_some_and(|tool_call| tool_call.name == function_call.name)
+    {
+        let id = existing_key.strip_prefix("generated:").map_or_else(
+            || existing_key.clone(),
+            |sequence| format!("gemini-tool-{sequence}"),
+        );
+        return (existing_key.clone(), id);
+    }
+
+    let sequence = state.next_generated_tool_call;
+    state.next_generated_tool_call += 1;
+    let key = format!("generated:{sequence}");
+    state
+        .generated_tool_call_keys_by_part_index
+        .insert(part_index, key.clone());
+    (key, format!("gemini-tool-{sequence}"))
 }
 
 fn map_finish_reason(finish_reason: &str, saw_tool_call: bool) -> StopReason {
@@ -933,9 +967,10 @@ mod tests {
             .blocks
             .open_tool_call("call_1".into(), "read_file".into());
         state.tool_calls.insert(
-            0,
+            "provider:call_1".into(),
             GeminiToolCallState {
                 content_index,
+                name: "read_file".into(),
                 arguments: r#"{"path":"foo.rs"}"#.into(),
             },
         );

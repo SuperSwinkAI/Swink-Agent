@@ -476,6 +476,67 @@ async fn google_multiple_tool_calls() {
 }
 
 #[tokio::test]
+async fn google_tool_calls_at_same_part_index_in_separate_chunks_remain_distinct() {
+    let body = [
+        r#"data: {"candidates":[{"content":{"parts":[{"functionCall":{"id":"c1","name":"get_weather","args":{"city":"Paris"}}}]}}]}"#,
+        "",
+        r#"data: {"candidates":[{"content":{"parts":[{"functionCall":{"id":"c2","name":"get_time","args":{"tz":"UTC"}}}]}}]}"#,
+        "",
+        r#"data: {"candidates":[{"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":12,"totalTokenCount":22}}"#,
+        "",
+        "data: [DONE]",
+        "",
+    ]
+    .join("\n");
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path(
+            "/v1beta/models/gemini-3-flash-preview:streamGenerateContent",
+        ))
+        .and(query_param("alt", "sse"))
+        .respond_with(sse_response(&body))
+        .mount(&server)
+        .await;
+
+    let stream_fn = GeminiStreamFn::new(server.uri(), "test-key", ApiVersion::V1beta);
+    let events = collect_events(&stream_fn).await;
+
+    let starts: Vec<_> = events
+        .iter()
+        .filter_map(|event| match event {
+            AssistantMessageEvent::ToolCallStart {
+                content_index,
+                id,
+                name,
+            } => Some((*content_index, id.as_str(), name.as_str())),
+            _ => None,
+        })
+        .collect();
+    let deltas: Vec<_> = events
+        .iter()
+        .filter_map(|event| match event {
+            AssistantMessageEvent::ToolCallDelta {
+                content_index,
+                delta,
+            } => Some((*content_index, delta.as_str())),
+            _ => None,
+        })
+        .collect();
+
+    assert_eq!(
+        starts,
+        vec![(0, "c1", "get_weather"), (1, "c2", "get_time")],
+        "separate provider tool calls must not collapse by chunk-local part index"
+    );
+    assert_eq!(
+        deltas,
+        vec![(0, r#"{"city":"Paris"}"#), (1, r#"{"tz":"UTC"}"#)],
+        "final tool-call deltas must stay attached to their original starts"
+    );
+}
+
+#[tokio::test]
 async fn google_on_raw_payload_observes_runtime_sse_lines() {
     let body = [
         r#"data: {"candidates":[{"content":{"parts":[{"text":"hello"}]}}]}"#,
