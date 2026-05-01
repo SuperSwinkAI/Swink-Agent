@@ -389,12 +389,13 @@ fn peer_uid(_stream: &tokio::net::UnixStream) -> std::io::Result<u32> {
 mod tests {
     use std::sync::Arc;
 
-    use swink_agent::{AgentEvent, AgentOptions, StreamFn};
+    use swink_agent::{AgentEvent, AgentOptions, AgentTool, StreamFn};
     use tokio::io::duplex;
 
     use super::*;
     use crate::dto::{
-        ClientInfo, InitializeParams, PROTOCOL_VERSION, PromptParams, PromptResult, method,
+        ClientInfo, InitializeParams, PROTOCOL_VERSION, PromptParams, PromptResult,
+        ToolApprovalDto, ToolApprovalRequestDto, method,
     };
     use crate::jsonrpc::{IncomingMessage, JsonRpcPeer};
 
@@ -503,6 +504,82 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn run_session_round_trips_tool_approval_during_prompt() {
+        let (mut client, mut server) = make_peer_pair();
+        let stream_fn: Arc<dyn StreamFn> = Arc::new(swink_agent::testing::MockStreamFn::new(vec![
+            swink_agent::testing::tool_call_events(
+                "call-1",
+                "dangerous_tool",
+                r#"{"path":"/tmp/example"}"#,
+            ),
+            swink_agent::testing::text_only_events("done after approval"),
+        ]));
+        let tool = Arc::new(
+            swink_agent::testing::MockTool::new("dangerous_tool").with_requires_approval(true),
+        );
+        let executed_tool = Arc::clone(&tool);
+
+        let server_task = tokio::spawn(async move {
+            let factory = || {
+                AgentOptions::new(
+                    "test system",
+                    swink_agent::testing::default_model(),
+                    Arc::clone(&stream_fn),
+                    swink_agent::testing::default_convert,
+                )
+                .with_tools(vec![Arc::clone(&tool) as Arc<dyn AgentTool>])
+            };
+
+            run_session(&mut server, &factory).await.unwrap();
+        });
+
+        initialize(&mut client).await;
+
+        let sender = client.sender();
+        let params = PromptParams {
+            text: "run approved tool".into(),
+            session_id: None,
+        };
+        let prompt = sender.request::<_, PromptResult>(method::PROMPT, &params);
+        let mut prompt = std::pin::pin!(prompt);
+        let mut events = Vec::new();
+        let mut approvals = 0;
+        let result = loop {
+            tokio::select! {
+                result = &mut prompt => {
+                    let result = result.unwrap();
+                    while let Some(incoming) = client.try_recv_incoming() {
+                        handle_prompt_incoming(incoming, &sender, &mut events, &mut approvals);
+                    }
+                    break result;
+                }
+                incoming = client.recv_incoming() => {
+                    let incoming = incoming.expect("server should stay connected while prompt runs");
+                    handle_prompt_incoming(incoming, &sender, &mut events, &mut approvals);
+                }
+            }
+        };
+
+        assert!(!result.turn_id.is_empty());
+        assert_eq!(approvals, 1);
+        assert!(executed_tool.was_executed());
+        assert!(
+            events.iter().any(|event| matches!(
+                event,
+                AgentEvent::ToolApprovalResolved { approved, .. } if *approved
+            )),
+            "server should continue the turn after receiving approval"
+        );
+
+        client
+            .sender()
+            .notify(method::SHUTDOWN, &serde_json::Value::Null)
+            .await
+            .unwrap();
+        server_task.await.unwrap();
+    }
+
+    #[tokio::test]
     async fn run_session_rejects_protocol_version_mismatch() {
         let (mut client, mut server) = make_peer_pair();
 
@@ -537,6 +614,40 @@ mod tests {
         let event = serde_json::from_value(params.expect("agent.event should carry params"))
             .expect("agent.event should deserialize");
         events.push(event);
+    }
+
+    fn handle_prompt_incoming(
+        incoming: IncomingMessage,
+        sender: &crate::jsonrpc::PeerSender,
+        events: &mut Vec<AgentEvent>,
+        approvals: &mut usize,
+    ) {
+        match incoming {
+            IncomingMessage::Notification { method: m, params } => {
+                assert_eq!(m, method::AGENT_EVENT);
+                let event =
+                    serde_json::from_value(params.expect("agent.event should carry params"))
+                        .expect("agent.event should deserialize");
+                events.push(event);
+            }
+            IncomingMessage::Request {
+                id,
+                method: m,
+                params,
+            } => {
+                assert_eq!(m, method::TOOL_APPROVE);
+                let request: ToolApprovalRequestDto =
+                    serde_json::from_value(params.expect("tool.approve should carry params"))
+                        .expect("tool.approve params should deserialize");
+                assert_eq!(request.id, "call-1");
+                assert_eq!(request.name, "dangerous_tool");
+                assert_eq!(request.arguments["path"], "/tmp/example");
+                assert!(request.requires_approval);
+
+                *approvals += 1;
+                sender.respond_ok(id, ToolApprovalDto::Approved).unwrap();
+            }
+        }
     }
 
     #[cfg(not(unix))]
