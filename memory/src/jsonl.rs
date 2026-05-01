@@ -28,6 +28,7 @@ const META_LINE_PADDING: usize = 64;
 enum SessionRecord {
     Llm(Box<LlmMessage>),
     Custom(serde_json::Value),
+    Meta(Box<SessionMeta>),
     State(serde_json::Value),
 }
 
@@ -37,7 +38,7 @@ impl SessionRecord {
         match Self::parse(&line).ok()? {
             Self::Llm(llm) => Some(Self::Llm(llm)),
             Self::Custom(envelope) => Some(Self::Custom(envelope)),
-            Self::State(_) => None,
+            Self::Meta(_) | Self::State(_) => None,
         }
     }
 
@@ -49,6 +50,11 @@ impl SessionRecord {
         match self {
             Self::Llm(message) => serde_json::to_string(message).map_err(io::Error::other),
             Self::Custom(envelope) => serde_json::to_string(envelope).map_err(io::Error::other),
+            Self::Meta(meta) => serde_json::to_string(&serde_json::json!({
+                "_meta": true,
+                "data": meta
+            }))
+            .map_err(io::Error::other),
             Self::State(state) => serde_json::to_string(&serde_json::json!({
                 "_state": true,
                 "data": state
@@ -66,6 +72,17 @@ impl SessionRecord {
                     .cloned()
                     .unwrap_or(serde_json::Value::Null),
             ));
+        }
+        if value.get("_meta").and_then(serde_json::Value::as_bool) == Some(true) {
+            return serde_json::from_value::<SessionMeta>(
+                value
+                    .get("data")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null),
+            )
+            .map(Box::new)
+            .map(Self::Meta)
+            .map_err(io::Error::other);
         }
         if value.get("_custom").and_then(serde_json::Value::as_bool) == Some(true) {
             return Ok(Self::Custom(value));
@@ -150,8 +167,19 @@ fn read_meta_and_message_lines(path: &Path, id: &str) -> io::Result<(SessionMeta
     let mut lines = reader.lines();
 
     let meta_line = lines.next().ok_or_else(empty_file)??;
-    let meta = canonical_meta_for_id(serde_json::from_str(&meta_line).map_err(invalid_meta)?, id);
-    let remaining_lines = lines.collect::<io::Result<Vec<_>>>()?;
+    let mut meta =
+        canonical_meta_for_id(serde_json::from_str(&meta_line).map_err(invalid_meta)?, id);
+    let mut remaining_lines = Vec::new();
+    for line in lines {
+        let line = line?;
+        match SessionRecord::parse(&line) {
+            Ok(SessionRecord::Meta(meta_update)) => {
+                meta = canonical_meta_for_id(*meta_update, id);
+            }
+            Ok(SessionRecord::Llm(_) | SessionRecord::Custom(_) | SessionRecord::State(_))
+            | Err(_) => remaining_lines.push(line),
+        }
+    }
 
     Ok((meta, remaining_lines))
 }
@@ -177,10 +205,16 @@ fn read_meta_with_line_len(path: &Path, id: &str) -> io::Result<(SessionMeta, us
     }
 
     let line_len = first_line.len();
-    let meta = canonical_meta_for_id(
+    let mut meta = canonical_meta_for_id(
         serde_json::from_str(first_line.trim_end()).map_err(invalid_meta)?,
         id,
     );
+    for line in reader.lines() {
+        let line = line?;
+        if let Ok(SessionRecord::Meta(meta_update)) = SessionRecord::parse(&line) {
+            meta = canonical_meta_for_id(*meta_update, id);
+        }
+    }
     Ok((meta, line_len))
 }
 
@@ -225,7 +259,7 @@ fn preserve_existing_lines(
 fn preserve_for_message_save(line: &str) -> bool {
     match SessionRecord::parse(line) {
         Ok(SessionRecord::State(_)) => true,
-        Ok(SessionRecord::Llm(_) | SessionRecord::Custom(_)) => false,
+        Ok(SessionRecord::Llm(_) | SessionRecord::Custom(_) | SessionRecord::Meta(_)) => false,
         Err(_) => matches!(
             SessionEntry::parse(line),
             Ok(entry) if !matches!(entry, SessionEntry::Message(_))
@@ -345,7 +379,7 @@ fn append_records_in_place_with_hook(
     meta: &SessionMeta,
     meta_line_len: usize,
     record_lines: &[String],
-    after_meta_patch: impl FnOnce(&mut std::fs::File) -> io::Result<()>,
+    after_commit_append: impl FnOnce(&mut std::fs::File) -> io::Result<()>,
 ) -> io::Result<bool> {
     let meta_line = serde_json::to_string(meta).map_err(io::Error::other)?;
     if meta_line.len() + 1 > meta_line_len {
@@ -356,9 +390,6 @@ fn append_records_in_place_with_hook(
         .read(true)
         .write(true)
         .open(path)?;
-    write_meta_line_in_place(&mut file, &meta_line, meta_line_len)?;
-    file.flush()?;
-    after_meta_patch(&mut file)?;
 
     file.seek(SeekFrom::End(0))?;
     for line in record_lines {
@@ -366,6 +397,15 @@ fn append_records_in_place_with_hook(
             writeln!(file, "{line}")?;
         }
     }
+    writeln!(
+        file,
+        "{}",
+        SessionRecord::Meta(Box::new(meta.clone())).to_json_line()?
+    )?;
+    file.flush()?;
+    after_commit_append(&mut file)?;
+
+    write_meta_line_in_place(&mut file, &meta_line, meta_line_len)?;
     file.flush()?;
     Ok(true)
 }
@@ -764,30 +804,17 @@ impl SessionStore for JsonlSessionStore {
             }
 
             let read_meta = with_target_lock(&path, || {
-                let file = std::fs::File::open(&path)?;
-                let reader = io::BufReader::new(file);
-                let Some(first_line) = reader.lines().next() else {
-                    return Ok(None);
-                };
                 let Some(file_id) = path.file_stem().and_then(|stem| stem.to_str()) else {
                     return Ok(None);
                 };
                 validate_session_id(file_id)?;
-                first_line.map(|line| Some((file_id.to_string(), line)))
+                read_meta_with_line_len(&path, file_id)
+                    .map(|(meta, _)| Some((file_id.to_string(), meta)))
             });
 
             match read_meta {
-                Ok(Some((file_id, first_line))) => {
-                    match serde_json::from_str::<SessionMeta>(&first_line) {
-                        Ok(meta) => sessions.push(canonical_meta_for_id(meta, &file_id)),
-                        Err(e) => {
-                            tracing::warn!(
-                                path = %path.display(),
-                                error = %e,
-                                "skipping session file with invalid metadata"
-                            );
-                        }
-                    }
+                Ok(Some((file_id, meta))) => {
+                    sessions.push(canonical_meta_for_id(meta, &file_id));
                 }
                 Ok(None) => {}
                 Err(error) => {
@@ -2183,7 +2210,11 @@ mod tests {
             after_lines[1], before_message_line,
             "append must leave existing record bytes untouched"
         );
-        assert_eq!(after_lines.len(), 3);
+        assert_eq!(
+            after_lines.len(),
+            4,
+            "append should add the record plus an internal metadata commit line"
+        );
 
         let (loaded_meta, loaded_messages) = store.load("append-in-place", None).unwrap();
         assert_eq!(loaded_meta.sequence, 2);
@@ -2191,56 +2222,75 @@ mod tests {
     }
 
     #[test]
-    fn append_failure_after_metadata_patch_rejects_stale_save_without_new_records() {
+    fn append_failure_before_metadata_cache_patch_recovers_committed_records() {
         let dir = tempfile::tempdir().unwrap();
         let store = JsonlSessionStore::new(dir.path().to_path_buf()).unwrap();
 
-        let meta = fresh_meta("append-meta-first");
+        let meta = fresh_meta("append-commit-first");
         store
-            .save("append-meta-first", &meta, &[user_msg("first", 1)])
+            .save("append-commit-first", &meta, &[user_msg("first", 1)])
             .unwrap();
 
-        let path = session_path(dir.path(), "append-meta-first");
+        let path = session_path(dir.path(), "append-commit-first");
         let (mut append_meta, meta_line_len) =
-            read_meta_with_line_len(&path, "append-meta-first").unwrap();
+            read_meta_with_line_len(&path, "append-commit-first").unwrap();
         append_meta.updated_at = now_utc();
         append_meta.sequence += 1;
-        let second_line = SessionRecord::from_message(&user_msg("second", 2), "append-meta-first")
-            .unwrap()
-            .to_json_line()
-            .unwrap();
+        let second_line =
+            SessionRecord::from_message(&user_msg("second", 2), "append-commit-first")
+                .unwrap()
+                .to_json_line()
+                .unwrap();
 
         let err = append_records_in_place_with_hook(
             &path,
             &append_meta,
             meta_line_len,
             &[second_line],
-            |_| Err(io::Error::other("simulated record write failure")),
+            |_| Err(io::Error::other("simulated cache patch failure")),
         )
         .unwrap_err();
-        assert_eq!(err.to_string(), "simulated record write failure");
+        assert_eq!(err.to_string(), "simulated cache patch failure");
 
-        let (loaded_meta, loaded_messages) = store.load("append-meta-first", None).unwrap();
+        let first_line_meta: SessionMeta = serde_json::from_str(
+            std::fs::read_to_string(&path)
+                .unwrap()
+                .lines()
+                .next()
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            first_line_meta.sequence, 1,
+            "line 1 remains the old cache if the metadata patch is interrupted"
+        );
+
+        let (loaded_meta, loaded_messages) = store.load("append-commit-first", None).unwrap();
         assert_eq!(
             loaded_meta.sequence, 2,
-            "metadata sequence must be visible before any appended records"
+            "load must recover the committed metadata record after an interrupted cache patch"
+        );
+        let listed = store.list().unwrap();
+        assert_eq!(
+            listed[0].sequence, 2,
+            "list must recover the committed metadata record after an interrupted cache patch"
         );
         assert_eq!(
             loaded_messages.len(),
-            1,
-            "failed append must not expose uncommitted record lines"
+            2,
+            "committed append records must remain recoverable after cache patch failure"
         );
 
         let mut stale = meta;
         stale.sequence = 1;
         let err = store
-            .save("append-meta-first", &stale, &[user_msg("stale", 3)])
+            .save("append-commit-first", &stale, &[user_msg("stale", 3)])
             .unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
     }
 
     #[test]
-    fn load_waits_for_in_flight_append_metadata_patch() {
+    fn load_waits_for_in_flight_append_commit_before_metadata_cache_patch() {
         use std::sync::mpsc;
         use std::thread;
         use std::time::Duration;
@@ -2296,7 +2346,7 @@ mod tests {
 
         assert!(
             loaded_rx.recv_timeout(Duration::from_millis(100)).is_err(),
-            "load must wait for an append that has patched metadata but not records"
+            "load must wait for an append that has committed records but not patched line 1"
         );
 
         resume_tx.send(()).unwrap();
@@ -2311,7 +2361,7 @@ mod tests {
         assert_eq!(
             loaded_messages.len(),
             2,
-            "load must not expose bumped metadata without appended records"
+            "load must expose committed records and metadata together"
         );
     }
 
