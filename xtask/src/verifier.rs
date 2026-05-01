@@ -204,6 +204,68 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn verify_all_groups_skipped_tasks_and_sorts_rows() {
+        let tasks = vec![
+            VerifyTask {
+                provider_key: "zeta".to_owned(),
+                preset_id: "second".to_owned(),
+                preset_display: "Second".to_owned(),
+                model_id: "zeta-second".to_owned(),
+                endpoint: ProviderEndpoint::Skipped {
+                    reason: "missing credential",
+                },
+            },
+            VerifyTask {
+                provider_key: "alpha".to_owned(),
+                preset_id: "first".to_owned(),
+                preset_display: "First".to_owned(),
+                model_id: "alpha-first".to_owned(),
+                endpoint: ProviderEndpoint::Skipped {
+                    reason: "local provider",
+                },
+            },
+            VerifyTask {
+                provider_key: "zeta".to_owned(),
+                preset_id: "first".to_owned(),
+                preset_display: "First".to_owned(),
+                model_id: "zeta-first".to_owned(),
+                endpoint: ProviderEndpoint::Skipped {
+                    reason: "missing credential",
+                },
+            },
+        ];
+
+        let rows = super::verify_all(tasks).await;
+
+        let ordered_keys: Vec<_> = rows
+            .iter()
+            .map(|row| (row.task.provider_key.as_str(), row.task.preset_id.as_str()))
+            .collect();
+        assert_eq!(
+            ordered_keys,
+            vec![("alpha", "first"), ("zeta", "first"), ("zeta", "second")]
+        );
+        assert!(matches!(
+            rows[0].result,
+            super::PresetResult::Skipped {
+                reason: "local provider"
+            }
+        ));
+        assert!(matches!(
+            rows[1].result,
+            super::PresetResult::Skipped {
+                reason: "missing credential"
+            }
+        ));
+        assert!(matches!(
+            rows[2].result,
+            super::PresetResult::Skipped {
+                reason: "missing credential"
+            }
+        ));
+    }
+
     #[test]
     fn check_membership_marks_known_models_as_passes() {
         let ids = HashSet::from(["known-model".to_owned()]);
