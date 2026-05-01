@@ -674,7 +674,7 @@ async fn transform_context_ordering() {
 }
 
 #[tokio::test]
-async fn pre_turn_policy_observes_transformed_context() {
+async fn pre_turn_policy_keeps_fresh_batch_when_transformer_rewrites_context() {
     let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("ok")]));
     let observations = Arc::new(Mutex::new(Vec::new()));
 
@@ -708,9 +708,28 @@ async fn pre_turn_policy_observes_transformed_context() {
         RecordedPreTurnBatch {
             turn_index: 0,
             message_count: 1,
-            new_messages: vec!["transformed prompt".to_string()],
+            new_messages: vec!["original prompt".to_string()],
         },
-        "pre-turn policies must inspect the transformed context sent toward the provider"
+        "pre-turn policies should inspect the immutable fresh batch"
+    );
+
+    let before_llm_messages = events
+        .iter()
+        .find_map(|event| match event {
+            AgentEvent::BeforeLlmCall { messages, .. } => Some(messages),
+            _ => None,
+        })
+        .expect("provider call should emit BeforeLlmCall");
+    let provider_text = before_llm_messages
+        .first()
+        .and_then(|message| match message {
+            LlmMessage::User(user) => Some(ContentBlock::extract_text(&user.content)),
+            _ => None,
+        })
+        .expect("provider input should include transformed user text");
+    assert_eq!(
+        provider_text, "transformed prompt",
+        "transformers should still affect the provider-bound context"
     );
 }
 

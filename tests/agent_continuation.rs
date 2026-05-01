@@ -204,6 +204,45 @@ async fn prompt_pre_turn_policies_receive_only_fresh_prompt_batch() {
 }
 
 #[tokio::test]
+async fn pre_turn_policies_receive_fresh_batch_before_transform_reorders_context() {
+    let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events("response")]));
+    let observations = Arc::new(Mutex::new(Vec::new()));
+    let mut agent = Agent::new(
+        AgentOptions::new(
+            "test system prompt",
+            default_model(),
+            stream_fn,
+            default_convert,
+        )
+        .with_retry_strategy(Box::new(
+            DefaultRetryStrategy::default()
+                .with_jitter(false)
+                .with_base_delay(Duration::from_millis(1)),
+        ))
+        .with_transform_context_fn(|messages, _overflow| {
+            messages.insert(0, user_msg("synthetic history"));
+        })
+        .with_pre_turn_policy(ContinueBatchRecorder {
+            observations: Arc::clone(&observations),
+        }),
+    );
+
+    let result = agent
+        .prompt_async(vec![user_msg("real user input")])
+        .await
+        .unwrap();
+    assert_eq!(result.stop_reason, StopReason::Stop);
+
+    let recorded = observations.lock().unwrap().clone();
+    assert_eq!(recorded.len(), 1, "policy should run once");
+    assert_eq!(
+        recorded[0],
+        vec!["real user input".to_string()],
+        "PreTurn new_messages should come from the pre-transform fresh batch"
+    );
+}
+
+#[tokio::test]
 async fn continue_from_tool_result() {
     let stream_fn = Arc::new(MockStreamFn::new(vec![text_only_events(
         "continued response",

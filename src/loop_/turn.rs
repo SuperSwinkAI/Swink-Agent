@@ -41,8 +41,9 @@ pub async fn run_single_turn(
     state.overflow_recovery_attempted = false;
 
     // i. Inject any pending messages into context.
-    // Track fresh input count across transformation so PreTurn policies do not
-    // rescan retained history if compaction removes earlier context.
+    // Snapshot fresh input before transformation so PreTurn policies inspect the
+    // actual pending batch even if transformers prepend, remove, or reorder
+    // context messages.
     let fresh_messages_start = if state.turn_index == 0 {
         state
             .context_messages
@@ -54,7 +55,8 @@ pub async fn run_single_turn(
     if !state.pending_messages.is_empty() {
         state.context_messages.append(&mut state.pending_messages);
     }
-    let fresh_messages_len = state.context_messages.len() - fresh_messages_start;
+    let fresh_messages =
+        clone_messages_for_policy_snapshot(&state.context_messages[fresh_messages_start..]);
     state.initial_new_messages_len = 0;
     clear_pending_message_snapshot(config);
     // Sync the full context (including newly consumed pending messages) to the
@@ -116,18 +118,13 @@ pub async fn run_single_turn(
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             guard.clone()
         };
-        let new_messages_range = pre_turn_new_messages_range(
-            state.context_messages.len(),
-            fresh_messages_start,
-            fresh_messages_len,
-        );
         let policy_ctx = PolicyContext {
             turn_index: state.turn_index,
             accumulated_usage: &state.accumulated_usage,
             accumulated_cost: &state.accumulated_cost,
             message_count: state.context_messages.len(),
             overflow_signal: state.overflow_signal,
-            new_messages: &state.context_messages[new_messages_range],
+            new_messages: &fresh_messages,
             state: &state_snapshot,
         };
         match run_policies(&config.pre_turn_policies, &policy_ctx) {
@@ -419,15 +416,23 @@ pub(super) fn build_llm_messages(
     llm_messages
 }
 
-fn pre_turn_new_messages_range(
-    transformed_len: usize,
-    original_start: usize,
-    fresh_len: usize,
-) -> std::ops::Range<usize> {
-    let latest_possible_start = transformed_len.saturating_sub(fresh_len);
-    let start = original_start.min(latest_possible_start);
-    let end = start.saturating_add(fresh_len).min(transformed_len);
-    start..end
+fn clone_messages_for_policy_snapshot(messages: &[AgentMessage]) -> Vec<AgentMessage> {
+    messages
+        .iter()
+        .filter_map(|message| match message {
+            AgentMessage::Llm(llm) => Some(AgentMessage::Llm(llm.clone())),
+            AgentMessage::Custom(custom) => custom.clone_box().map_or_else(
+                || {
+                    tracing::warn!(
+                        "CustomMessage {:?} does not support clone_box; dropped from pre-turn policy fresh-message snapshot",
+                        custom
+                    );
+                    None
+                },
+                |cloned| Some(AgentMessage::Custom(cloned)),
+            ),
+        })
+        .collect()
 }
 
 // ─── Context transformer runner ─────────────────────────────────────────
