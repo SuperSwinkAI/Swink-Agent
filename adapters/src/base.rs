@@ -180,6 +180,7 @@ mod tests {
     use super::*;
     use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
     use tokio::net::TcpListener;
+    use tokio::sync::oneshot;
 
     #[test]
     fn trailing_slash_stripped() {
@@ -244,6 +245,8 @@ mod tests {
     async fn read_error_body_returns_aborted_when_cancelled_mid_body() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
+        let (write_body_tx, write_body_rx) = oneshot::channel::<()>();
+        let (body_written_tx, body_written_rx) = oneshot::channel::<()>();
 
         tokio::spawn(async move {
             if let Ok((mut socket, _)) = listener.accept().await {
@@ -252,10 +255,12 @@ mod tests {
                 let response = concat!(
                     "HTTP/1.1 500 Internal Server Error\r\n",
                     "Content-Length: 128\r\n\r\n",
-                    "partial",
                 );
                 let _ = socket.write_all(response.as_bytes()).await;
-                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                let _ = write_body_rx.await;
+                let _ = socket.write_all(b"partial").await;
+                let _ = body_written_tx.send(());
+                std::future::pending::<()>().await;
             }
         });
 
@@ -266,12 +271,14 @@ mod tests {
             .unwrap();
         let token = CancellationToken::new();
         let cancel = token.clone();
-        tokio::spawn(async move {
-            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
-            cancel.cancel();
-        });
 
-        let result = read_error_body_or_cancelled(response, &token, "cancelled").await;
+        let read_task = tokio::spawn(async move {
+            read_error_body_or_cancelled(response, &token, "cancelled").await
+        });
+        write_body_tx.send(()).unwrap();
+        body_written_rx.await.unwrap();
+        cancel.cancel();
+        let result = read_task.await.unwrap();
 
         assert!(matches!(
             result,
@@ -331,7 +338,7 @@ mod tests {
                     "partial",
                 );
                 let _ = socket.write_all(response.as_bytes()).await;
-                tokio::time::sleep(Duration::from_secs(5)).await;
+                std::future::pending::<()>().await;
             }
         });
 
