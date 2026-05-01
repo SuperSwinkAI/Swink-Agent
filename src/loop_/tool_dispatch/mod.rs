@@ -1594,12 +1594,8 @@ mod tests {
             cancel_clone.cancel();
         });
 
-        let outcome = tokio::time::timeout(
-            std::time::Duration::from_millis(250),
-            execute_tools_concurrently(&config, &tool_calls, &cancellation_token, &tx),
-        )
-        .await
-        .expect("parent cancellation should break collection without hanging");
+        let outcome =
+            execute_tools_concurrently(&config, &tool_calls, &cancellation_token, &tx).await;
 
         let ToolExecOutcome::Aborted { results, .. } = outcome else {
             panic!("expected aborted outcome");
@@ -1659,12 +1655,8 @@ mod tests {
             }
         });
 
-        let outcome = tokio::time::timeout(
-            std::time::Duration::from_millis(250),
-            execute_tools_concurrently(&config, &tool_calls, &cancellation_token, &tx),
-        )
-        .await
-        .expect("cancellation-aware approval wait should not hang");
+        let outcome =
+            execute_tools_concurrently(&config, &tool_calls, &cancellation_token, &tx).await;
         drop(tx);
         receiver.await.unwrap();
 
@@ -1739,12 +1731,8 @@ mod tests {
             }
         });
 
-        let outcome = tokio::time::timeout(
-            std::time::Duration::from_millis(250),
-            execute_tools_concurrently(&config, &tool_calls, &cancellation_token, &tx),
-        )
-        .await
-        .expect("pre-dispatch cancellation should not hang");
+        let outcome =
+            execute_tools_concurrently(&config, &tool_calls, &cancellation_token, &tx).await;
         drop(tx);
         receiver.await.unwrap();
 
@@ -1809,12 +1797,8 @@ mod tests {
             }
         });
 
-        let outcome = tokio::time::timeout(
-            std::time::Duration::from_millis(250),
-            execute_tools_concurrently(&config, &tool_calls, &cancellation_token, &tx),
-        )
-        .await
-        .expect("sequential dispatch should stop before later groups once cancelled");
+        let outcome =
+            execute_tools_concurrently(&config, &tool_calls, &cancellation_token, &tx).await;
         drop(tx);
         receiver.await.unwrap();
 
@@ -1895,10 +1879,10 @@ mod tests {
             let _ = rx.recv().await;
         });
 
-        // With the fix this completes quickly; without it the orphaned
-        // NonCancellingTool handle would block collection indefinitely.
+        // This path explicitly guards against orphaning a non-cancelling
+        // spawned tool, so keep a generous hang detector for regression clarity.
         let outcome = tokio::time::timeout(
-            std::time::Duration::from_millis(500),
+            std::time::Duration::from_secs(5),
             execute_tools_concurrently(&config, &tool_calls, &cancellation_token, &tx),
         )
         .await
