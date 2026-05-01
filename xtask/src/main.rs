@@ -97,6 +97,8 @@ fn verify_catalog_exit_code(rows: &[verifier::VerifyRow], allow_skipped: bool) -
 
 #[cfg(test)]
 mod tests {
+    use clap::Parser;
+
     use crate::catalog::{ProviderEndpoint, VerifyTask};
     use crate::verifier::{PresetResult, VerifyRow};
 
@@ -111,6 +113,44 @@ mod tests {
             },
             result,
         }
+    }
+
+    #[test]
+    fn verify_catalog_cli_parses_provider_and_output_flags() {
+        let cli = super::Cli::parse_from([
+            "xtask",
+            "verify-catalog",
+            "--provider",
+            "openai",
+            "--github",
+            "--allow-skipped",
+        ]);
+
+        let super::Commands::VerifyCatalog {
+            provider,
+            github,
+            allow_skipped,
+        } = cli.command;
+        assert_eq!(provider.as_deref(), Some("openai"));
+        assert!(github);
+        assert!(allow_skipped);
+    }
+
+    #[test]
+    fn verify_catalog_cli_rejects_unknown_subcommands() {
+        let err = match super::Cli::try_parse_from(["xtask", "missing-command"]) {
+            Ok(_) => panic!("unknown subcommand should fail to parse"),
+            Err(err) => err,
+        };
+
+        assert_eq!(err.kind(), clap::error::ErrorKind::InvalidSubcommand);
+    }
+
+    #[test]
+    fn successful_rows_exit_successfully() {
+        let rows = vec![row(PresetResult::Pass)];
+
+        assert_eq!(super::verify_catalog_exit_code(&rows, false), 0);
     }
 
     #[test]
