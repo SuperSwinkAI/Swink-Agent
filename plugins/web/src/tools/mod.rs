@@ -105,12 +105,12 @@ mod tests {
         assert!(matches!(outcome, OperationOutcome::Cancelled));
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn await_with_cancellation_returns_timed_out_for_slow_operations() {
         let outcome = await_with_cancellation(
             &CancellationToken::new(),
             Duration::from_millis(10),
-            tokio::time::sleep(Duration::from_millis(50)),
+            pending::<()>(),
         )
         .await;
 

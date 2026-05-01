@@ -138,11 +138,9 @@ impl AgentTool for SearchTool {
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
-    use std::time::Duration;
 
     use serde_json::json;
     use swink_agent::{AgentTool, SessionState};
-    use tokio::time::timeout;
     use tokio_util::sync::CancellationToken;
 
     use super::SearchTool;
@@ -359,19 +357,16 @@ mod tests {
         let cancellation_token = CancellationToken::new();
         cancellation_token.cancel();
 
-        let result = timeout(
-            Duration::from_millis(100),
-            tool.execute(
+        let result = tool
+            .execute(
                 "call-4",
                 json!({"query": "cancel me"}),
                 cancellation_token,
                 None,
                 state,
                 None,
-            ),
-        )
-        .await
-        .expect("cancelled search should not hang");
+            )
+            .await;
 
         assert!(result.is_error);
         let text = format!("{:?}", result.content);
