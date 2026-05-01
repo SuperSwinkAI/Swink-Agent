@@ -228,7 +228,7 @@ impl AgentClient {
 #[cfg(test)]
 mod tests {
     use swink_agent::{AgentEvent, ToolApproval};
-    use tokio::io::duplex;
+    use tokio::{io::duplex, sync::oneshot};
 
     use super::*;
     use crate::dto::{PromptResult, ToolApprovalRequestDto};
@@ -249,6 +249,7 @@ mod tests {
     async fn prompt_text_collects_agent_events_until_prompt_response() {
         let (mut client, mut server) = make_client_pair();
         let server_sender = server.sender();
+        let (client_done_tx, client_done_rx) = oneshot::channel();
 
         let server_task = tokio::spawn(async move {
             let incoming = server.recv_incoming().await.unwrap();
@@ -276,9 +277,11 @@ mod tests {
                     },
                 )
                 .unwrap();
+            let _ = client_done_rx.await;
         });
 
         let events = client.prompt_text("hello rpc").await.unwrap();
+        let _ = client_done_tx.send(());
 
         assert_eq!(events.len(), 2);
         assert!(matches!(events[0], AgentEvent::AgentStart));
@@ -295,6 +298,7 @@ mod tests {
             ToolApproval::Rejected
         });
         let server_sender = server.sender();
+        let (client_done_tx, client_done_rx) = oneshot::channel();
 
         let server_task = tokio::spawn(async move {
             let incoming = server.recv_incoming().await.unwrap();
@@ -326,11 +330,28 @@ mod tests {
                     },
                 )
                 .unwrap();
+            let _ = client_done_rx.await;
         });
 
         let events = client.prompt_text("run tool").await.unwrap();
+        let _ = client_done_tx.send(());
 
         assert!(events.is_empty());
         server_task.await.unwrap();
+    }
+
+    #[cfg(not(unix))]
+    #[tokio::test]
+    async fn connect_reports_unix_transport_unavailable_on_non_unix_hosts() {
+        let Err(err) = AgentClient::connect("unused.sock").await else {
+            panic!("non-Unix client connect should fail");
+        };
+
+        assert_eq!(err.code, RpcError::UNAVAILABLE);
+        assert!(
+            err.message.contains("Unix socket transport"),
+            "unexpected error message: {}",
+            err.message
+        );
     }
 }

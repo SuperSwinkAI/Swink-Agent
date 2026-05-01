@@ -538,4 +538,18 @@ mod tests {
             .expect("agent.event should deserialize");
         events.push(event);
     }
+
+    #[cfg(not(unix))]
+    #[tokio::test]
+    async fn serve_reports_unix_transport_unavailable_on_non_unix_hosts() {
+        let server = AgentServer::bind_force("unused.sock", || test_agent_options("unused"));
+
+        let err = server.serve().await.unwrap_err();
+
+        assert_eq!(err.kind(), std::io::ErrorKind::Unsupported);
+        assert!(
+            err.to_string().contains("Unix socket transport"),
+            "unexpected error message: {err}"
+        );
+    }
 }
