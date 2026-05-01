@@ -643,6 +643,12 @@ mod default_tool_call {
         pub args: String,
     }
 
+    #[derive(Debug, PartialEq, Eq)]
+    pub(super) enum ToolCallFinish {
+        Text(String),
+        PartialToolCall { name: String, args: String },
+    }
+
     #[derive(Debug)]
     pub(super) struct ToolCallParser {
         state: State,
@@ -789,10 +795,22 @@ mod default_tool_call {
             (calls, text_out)
         }
 
-        pub fn finish(&mut self) -> Option<String> {
+        pub fn finish(&mut self, preserve_partial_tool_call: bool) -> Option<ToolCallFinish> {
             if self.buffer.is_empty() && self.name_buf.is_empty() && self.args_buf.is_empty() {
                 self.state = State::Normal;
                 return None;
+            }
+
+            if preserve_partial_tool_call
+                && matches!(self.state, State::InArgs)
+                && !self.name_buf.trim().is_empty()
+            {
+                let result = ToolCallFinish::PartialToolCall {
+                    name: self.name_buf.trim().to_string(),
+                    args: self.args_buf.clone(),
+                };
+                self.reset();
+                return Some(result);
             }
 
             let mut text = String::new();
@@ -811,13 +829,16 @@ mod default_tool_call {
                 }
             }
 
+            self.reset();
+            (!text.is_empty()).then_some(ToolCallFinish::Text(text))
+        }
+
+        fn reset(&mut self) {
             self.buffer.clear();
             self.name_buf.clear();
             self.args_buf.clear();
             self.reset_json_state();
             self.state = State::Normal;
-
-            (!text.is_empty()).then_some(text)
         }
 
         fn consume_args_buffer(&mut self) -> Option<usize> {
@@ -999,9 +1020,6 @@ impl StreamState {
     }
 
     fn flush_pending_parsers(&mut self, preserve_partial_tool_call: bool) {
-        #[cfg(not(feature = "gemma4"))]
-        let _ = preserve_partial_tool_call;
-
         #[cfg(feature = "gemma4")]
         if let Some(parser) = self.channel_parser.as_mut() {
             let (thinking_part, text_part) = parser.finish();
@@ -1027,8 +1045,7 @@ impl StreamState {
             self.emit_text(final_text);
         }
 
-        let pending_tool_text = self.default_tool_call_parser.finish();
-        self.emit_text(pending_tool_text);
+        self.flush_pending_default_tool_call(preserve_partial_tool_call);
     }
 
     fn emit_thinking(&mut self, thinking_part: Option<String>) {
@@ -1059,6 +1076,20 @@ impl StreamState {
             match finished {
                 tool_call::ToolCallFinish::Text(text) => self.emit_text(Some(text)),
                 tool_call::ToolCallFinish::PartialToolCall { name, args } => {
+                    self.emit_tool_call(name, args);
+                }
+            }
+        }
+    }
+
+    fn flush_pending_default_tool_call(&mut self, preserve_partial_tool_call: bool) {
+        if let Some(finished) = self
+            .default_tool_call_parser
+            .finish(preserve_partial_tool_call)
+        {
+            match finished {
+                default_tool_call::ToolCallFinish::Text(text) => self.emit_text(Some(text)),
+                default_tool_call::ToolCallFinish::PartialToolCall { name, args } => {
                     self.emit_tool_call(name, args);
                 }
             }
@@ -1638,7 +1669,7 @@ mod tests {
         assert_eq!(calls[0].name, "read_file");
         assert_eq!(calls[0].args, r#"{"path":"foo.rs"}"#);
         assert!(text.is_none());
-        assert!(parser.finish().is_none());
+        assert!(parser.finish(false).is_none());
     }
 
     #[test]
@@ -1674,7 +1705,7 @@ mod tests {
 
         assert!(calls.is_empty());
         assert_eq!(text.as_deref(), Some("please call: read_file next"));
-        assert!(parser.finish().is_none());
+        assert!(parser.finish(false).is_none());
     }
 
     #[test]
@@ -1697,6 +1728,69 @@ mod tests {
                 .iter()
                 .any(|event| matches!(event, AssistantMessageEvent::ToolCallStart { .. }))
         );
+    }
+
+    #[test]
+    fn default_tool_call_finish_preserves_length_truncated_call() {
+        let mut parser = default_tool_call::ToolCallParser::new();
+        let (calls, text) = parser.process(r#"call:read_file{"path""#);
+        assert!(calls.is_empty());
+        assert!(text.is_none());
+
+        match parser.finish(true) {
+            Some(default_tool_call::ToolCallFinish::PartialToolCall { name, args }) => {
+                assert_eq!(name, "read_file");
+                assert_eq!(args, r#"{"path""#);
+            }
+            other => panic!("expected partial tool call, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn default_tool_call_finish_flushes_incomplete_call_as_text_by_default() {
+        let mut parser = default_tool_call::ToolCallParser::new();
+        let (calls, text) = parser.process(r#"call:read_file{"path""#);
+        assert!(calls.is_empty());
+        assert!(text.is_none());
+
+        match parser.finish(false) {
+            Some(default_tool_call::ToolCallFinish::Text(text)) => {
+                assert_eq!(text, r#"call:read_file{"path""#);
+            }
+            other => panic!("expected text flush, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn default_finalize_preserves_length_truncated_tool_call() {
+        let mut state = StreamState::new(false);
+        state.finish_reason = FinishReason::Length;
+        state.process_token(r#"call:read_file{"path""#);
+
+        let events = state.finalize();
+
+        assert!(events.iter().any(|event| matches!(
+            event,
+            AssistantMessageEvent::ToolCallStart { name, .. } if name == "read_file"
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            AssistantMessageEvent::ToolCallDelta { delta, .. } if delta == r#"{"path""#
+        )));
+        assert!(
+            !events.iter().any(|event| matches!(
+                event,
+                AssistantMessageEvent::TextDelta { delta, .. } if delta == r#"call:read_file{"path""#
+            )),
+            "truncated tool call should not be emitted as assistant text: {events:?}"
+        );
+        assert!(matches!(
+            events.last(),
+            Some(AssistantMessageEvent::Done {
+                stop_reason: StopReason::Length,
+                ..
+            })
+        ));
     }
 
     #[test]
