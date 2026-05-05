@@ -305,7 +305,9 @@ fn strip_code_fence(text: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc as StdArc;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use tokio::sync::Notify;
 
     struct CountingJudge {
         calls: AtomicUsize,
@@ -437,6 +439,37 @@ mod tests {
             Err(JudgeError::Other(msg)) => assert!(msg.contains("cancel")),
             other => panic!("expected cancellation, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn retry_cancels_in_flight_attempt() {
+        let policy = fast_test_policy();
+        let cancel = CancellationToken::new();
+        let attempts = StdArc::new(AtomicUsize::new(0));
+        let started = StdArc::new(Notify::new());
+
+        let task = {
+            let cancel = cancel.clone();
+            let attempts = StdArc::clone(&attempts);
+            let started = StdArc::clone(&started);
+            tokio::spawn(async move {
+                retry_with_cancel(&policy, &cancel, is_retryable, || {
+                    attempts.fetch_add(1, Ordering::SeqCst);
+                    started.notify_one();
+                    async { std::future::pending::<Result<JudgeVerdict, JudgeError>>().await }
+                })
+                .await
+            })
+        };
+
+        started.notified().await;
+        cancel.cancel();
+
+        match task.await.expect("retry task should finish") {
+            Err(JudgeError::Other(msg)) => assert!(msg.contains("cancel")),
+            other => panic!("expected in-flight cancellation, got {other:?}"),
+        }
+        assert_eq!(attempts.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]
