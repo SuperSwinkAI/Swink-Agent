@@ -5,9 +5,11 @@
 
 mod common;
 
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use common::{
     EventCollector, MockContextCapturingStreamFn, MockStreamFn, MockTool, default_convert,
@@ -15,11 +17,13 @@ use common::{
 };
 use futures::stream::StreamExt;
 use serde_json::json;
+use tokio::sync::Notify;
+use tokio_util::sync::CancellationToken;
 
 use swink_agent::{
     Agent, AgentError, AgentEvent, AgentMessage, AgentOptions, AgentTool, AgentToolResult,
     AssistantMessageEvent, ContentBlock, Cost, DefaultRetryStrategy, LlmMessage, ModelSpec,
-    StopReason, StreamFn, StreamOptions, Usage, UserMessage,
+    SessionState, StopReason, StreamFn, StreamOptions, Usage, UserMessage,
 };
 
 // ─── Helpers ─────────────────────────────────────────────────────────────
@@ -45,6 +49,64 @@ fn make_agent_with_tools(stream_fn: Arc<dyn StreamFn>, tools: Vec<Arc<dyn AgentT
                     .with_base_delay(Duration::from_millis(1)),
             )),
     )
+}
+
+struct ConcurrentGateTool {
+    name: &'static str,
+    schema: serde_json::Value,
+    started: Arc<Notify>,
+    peer_started: Arc<Notify>,
+}
+
+impl ConcurrentGateTool {
+    fn new(name: &'static str, started: Arc<Notify>, peer_started: Arc<Notify>) -> Self {
+        Self {
+            name,
+            schema: json!({
+                "type": "object",
+                "properties": {},
+                "additionalProperties": true
+            }),
+            started,
+            peer_started,
+        }
+    }
+}
+
+impl AgentTool for ConcurrentGateTool {
+    fn name(&self) -> &str {
+        self.name
+    }
+
+    fn label(&self) -> &str {
+        self.name
+    }
+
+    fn description(&self) -> &'static str {
+        "concurrent gate tool"
+    }
+
+    fn parameters_schema(&self) -> &serde_json::Value {
+        &self.schema
+    }
+
+    fn execute(
+        &self,
+        _tool_call_id: &str,
+        _params: serde_json::Value,
+        _cancellation_token: CancellationToken,
+        _on_update: Option<Box<dyn Fn(AgentToolResult) + Send + Sync>>,
+        _state: Arc<std::sync::RwLock<SessionState>>,
+        _credential: Option<swink_agent::ResolvedCredential>,
+    ) -> Pin<Box<dyn Future<Output = AgentToolResult> + Send + '_>> {
+        let started = Arc::clone(&self.started);
+        let peer_started = Arc::clone(&self.peer_started);
+        Box::pin(async move {
+            started.notify_one();
+            peer_started.notified().await;
+            AgentToolResult::text("ok")
+        })
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -131,9 +193,17 @@ async fn invalid_tool_args_produce_error_without_execute() {
 
 #[tokio::test]
 async fn tools_execute_concurrently() {
-    let delay = Duration::from_millis(200);
-    let tool_a = Arc::new(MockTool::new("tool_a").with_delay(delay));
-    let tool_b = Arc::new(MockTool::new("tool_b").with_delay(delay));
+    let gates = (Arc::new(Notify::new()), Arc::new(Notify::new()));
+    let tool_a = Arc::new(ConcurrentGateTool::new(
+        "tool_a",
+        Arc::clone(&gates.0),
+        Arc::clone(&gates.1),
+    ));
+    let tool_b = Arc::new(ConcurrentGateTool::new(
+        "tool_b",
+        Arc::clone(&gates.1),
+        Arc::clone(&gates.0),
+    ));
 
     // Stream events with two tool calls in the same response.
     let two_tool_events = vec![
@@ -171,15 +241,13 @@ async fn tools_execute_concurrently() {
     ]));
     let mut agent = make_agent_with_tools(stream_fn, vec![tool_a, tool_b]);
 
-    let start = Instant::now();
-    let _result = agent.prompt_async(vec![user_msg("go")]).await.unwrap();
-    let elapsed = start.elapsed();
-
-    // If sequential, would take >= 400ms. Concurrent should be close to 200ms.
-    assert!(
-        elapsed < Duration::from_millis(380),
-        "tools should run concurrently, took {elapsed:?}"
-    );
+    tokio::time::timeout(
+        Duration::from_secs(5),
+        agent.prompt_async(vec![user_msg("go")]),
+    )
+    .await
+    .expect("tools should not deadlock under concurrent dispatch")
+    .unwrap();
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
